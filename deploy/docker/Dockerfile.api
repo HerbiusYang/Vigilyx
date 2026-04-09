@@ -1,0 +1,108 @@
+# ═══════════════════════════════════════════════════
+# Vigilyx main-service Dockerfile (API + Engine + Frontend)
+# ═══════════════════════════════════════════════════
+#
+# Architecture notes:
+#   API (vigilyx-api) and Engine (vigilyx-engine) must run in the same container because:
+#     1. They share the PostgreSQL connection (via the DATABASE_URL environment variable)
+#     2. They share the UDS socket (data/vigilyx.sock) as a fallback channel when Redis is unavailable
+#     3. Engine writes a heartbeat file (data/engine-status.json) that the API reads
+#   After the frontend is built into static files, it is served directly by the API via axum ServeDir.
+#
+# Build:
+#   docker build -f deploy/docker/Dockerfile.api -t vigilyx:latest .
+#
+# Run:
+#   docker run -d --name vigilyx \
+#     -p 8088:8088 \
+#     -v vigilyx_data:/app/data \
+#     -e REDIS_URL=redis://redis:6379 \
+#     vigilyx:latest
+
+# -- Stage 1: cargo-chef - extract the dependency recipe --
+FROM rust:1.94.1-bookworm AS chef
+RUN cargo install cargo-chef --locked
+WORKDIR /app
+
+# -- Stage 2: generate the dependency recipe (no source files, only Cargo.toml/Cargo.lock) --
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+RUN cargo chef prepare --recipe-path recipe.json
+
+# -- Stage 3: build dependencies (accelerated with BuildKit cache mounts) --
+FROM chef AS rust-deps
+COPY --from=planner /app/recipe.json recipe.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo chef cook --release --recipe-path recipe.json && \
+    rm -rf /app/target/release/.fingerprint/vigilyx-*
+
+# -- Stage 4: build Rust binaries --
+FROM rust-deps AS rust-builder
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY shared ./shared
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release -p vigilyx-api -p vigilyx-engine && \
+    cp /app/target/release/vigilyx-api /app/vigilyx-api && \
+    cp /app/target/release/vigilyx-engine /app/vigilyx-engine
+
+# -- Stage 5: build the frontend --
+FROM node:20-alpine AS frontend-builder
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm ci --prefer-offline
+COPY frontend ./
+RUN npm run build
+
+# -- Stage 6: final runtime image --
+FROM debian:bookworm-slim
+
+# Runtime dependencies (ca-certificates: HTTPS; tini: PID 1 signal forwarding; curl: health checks)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    tini \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy Rust binaries (artifacts produced by the cache-mount stage)
+COPY --from=rust-builder /app/vigilyx-api ./
+COPY --from=rust-builder /app/vigilyx-engine ./
+
+# Copy frontend static files (API ServeDir::new("frontend/dist") expects this path)
+COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
+
+# Copy the entrypoint script
+COPY deploy/docker/entrypoint.sh ./
+RUN chmod +x entrypoint.sh
+
+# Create the data directory (UDS socket + heartbeat files + logs)
+RUN mkdir -p /app/data /app/logs
+
+# SEC-C01: run as a non-root user (CWE-250)
+RUN groupadd -r vigilyx && useradd -r -g vigilyx -d /app vigilyx \
+    && chown -R vigilyx:vigilyx /app
+USER vigilyx
+
+# Default environment variables
+ENV RUST_LOG=info,vigilyx_api=info,vigilyx_engine=info \
+    LOG_FORMAT=json \
+    API_HOST=0.0.0.0 \
+    API_PORT=8088 \
+    DATABASE_URL=postgres://vigilyx:MUST_SET_VIA_ENV@postgres:5432/vigilyx \
+    REDIS_URL=redis://redis:6379
+
+EXPOSE 8088
+
+# Health check: readiness probe (checks DB + Redis + Engine heartbeat)
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -sf http://127.0.0.1:8088/api/health/ready || exit 1
+
+# tini runs as PID 1 so signals are forwarded correctly to child processes (API + Engine)
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["./entrypoint.sh"]

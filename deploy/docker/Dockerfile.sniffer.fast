@@ -1,0 +1,42 @@
+# ═══════════════════════════════════════════════════
+# Vigilyx Sniffer - fast-packaging Dockerfile (only COPY prebuilt binaries)
+# ═══════════════════════════════════════════════════
+#
+# Used with the persistent build container; see the comments in Dockerfile.api.fast.
+#
+# Prerequisite: .build-output/ already contains a built vigilyx-sniffer binary
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpcap0.8 \
+    libssl3 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the prebuilt Sniffer binary
+COPY .build-output/vigilyx-sniffer ./
+
+RUN mkdir -p /app/data
+
+# SEC-C01: create a non-root user
+# Sniffer needs CAP_NET_RAW/CAP_NET_ADMIN for packet capture, so it starts as root and then
+# drops privileges to the vigilyx user via setpriv while retaining capture capabilities
+RUN groupadd -r vigilyx && useradd -r -g vigilyx -d /app vigilyx \
+    && chown -R vigilyx:vigilyx /app
+
+# Default environment variables
+ENV RUST_LOG=info,vigilyx_sniffer=info \
+    SNIFFER_INTERFACE=eth0 \
+    SNIFFER_PROMISCUOUS=true \
+    REDIS_URL=redis://127.0.0.1:6379 \
+    API_HOST=127.0.0.1 \
+    API_PORT=8088 \
+    SMTP_PORTS=25,465,587,2525,2526 \
+    POP3_PORTS=110,995 \
+    IMAP_PORTS=143,993
+
+# Start as root, then use setpriv to drop to vigilyx while injecting ambient capabilities
+ENTRYPOINT ["setpriv", "--reuid=vigilyx", "--regid=vigilyx", "--init-groups", "--inh-caps=+net_raw,+net_admin", "--ambient-caps=+net_raw,+net_admin", "--", "./vigilyx-sniffer"]

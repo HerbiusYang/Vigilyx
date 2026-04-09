@@ -1,0 +1,16 @@
+# Docker Compose Override: development frontend asset mount
+# Keeps the default deployment immutable while letting local `frontend/dist`
+# override the container's bundled SPA during development.
+#
+# Usage:
+#   cd deploy/docker
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#   cd ../../frontend && npm run build -- --watch
+#
+# Optional:
+#   Set FRONTEND_DIST in deploy/docker/.env if your dist path differs.
+
+services:
+  vigilyx:
+    volumes:
+      - ${FRONTEND_DIST:-../../frontend/dist}:/app/frontend/dist:ro

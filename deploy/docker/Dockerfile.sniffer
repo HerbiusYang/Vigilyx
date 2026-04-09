@@ -1,0 +1,86 @@
+# ═══════════════════════════════════════════════════
+# Vigilyx Sniffer Dockerfile (traffic-capture probe)
+# ═══════════════════════════════════════════════════
+#
+# Special requirements:
+#   - Must use --network=host to capture host NIC traffic
+#   - Must add --cap-add=NET_RAW --cap-add=NET_ADMIN
+#   - Publishes captured mail data to API/Engine through Redis
+#
+# Build:
+#   docker build -f deploy/docker/Dockerfile.sniffer -t vigilyx-sniffer:latest .
+#
+# Run:
+#   docker run -d --name vigilyx-sniffer \
+#     --network=host \
+#     --cap-add=NET_RAW --cap-add=NET_ADMIN \
+#     -e SNIFFER_INTERFACE=eth0 \
+#     -e REDIS_URL=redis://127.0.0.1:6379 \
+#     -e API_HOST=127.0.0.1 \
+#     -e API_PORT=8088 \
+#     vigilyx-sniffer:latest
+
+# -- Stage 1: cargo-chef - extract the dependency recipe --
+FROM rust:1.94.1-bookworm AS chef
+RUN cargo install cargo-chef --locked
+WORKDIR /app
+
+# -- Stage 2: generate the dependency recipe --
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+RUN cargo chef prepare --recipe-path recipe.json
+
+# -- Stage 3: build dependencies (accelerated with BuildKit cache mounts) --
+FROM chef AS rust-deps
+# libpcap development libraries (required to build the pcap crate)
+RUN apt-get update && apt-get install -y --no-install-recommends libpcap-dev && rm -rf /var/lib/apt/lists/*
+COPY --from=planner /app/recipe.json recipe.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo chef cook --release --recipe-path recipe.json && \
+    rm -rf /app/target/release/.fingerprint/vigilyx-*
+
+# -- Stage 4: build the Sniffer binary --
+FROM rust-deps AS builder
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release -p vigilyx-sniffer && \
+    cp /app/target/release/vigilyx-sniffer /app/vigilyx-sniffer
+
+# -- Stage 5: runtime image --
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpcap0.8 \
+    libssl3 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /app/vigilyx-sniffer ./
+
+RUN mkdir -p /app/data
+
+# SEC-C01: create a non-root user
+# Sniffer needs CAP_NET_RAW/CAP_NET_ADMIN for packet capture, so it starts as root and then
+# drops privileges to the vigilyx user via setpriv while retaining capture capabilities
+RUN groupadd -r vigilyx && useradd -r -g vigilyx -d /app vigilyx \
+    && chown -R vigilyx:vigilyx /app
+
+# Default environment variables
+ENV RUST_LOG=info,vigilyx_sniffer=info \
+    SNIFFER_INTERFACE=eth0 \
+    SNIFFER_PROMISCUOUS=true \
+    REDIS_URL=redis://127.0.0.1:6379 \
+    API_HOST=127.0.0.1 \
+    API_PORT=8088 \
+    SMTP_PORTS=25,465,587,2525,2526 \
+    POP3_PORTS=110,995 \
+    IMAP_PORTS=143,993
+
+# Start as root, then use setpriv to drop to vigilyx while injecting ambient capabilities
+ENTRYPOINT ["setpriv", "--reuid=vigilyx", "--regid=vigilyx", "--init-groups", "--inh-caps=+net_raw,+net_admin", "--ambient-caps=+net_raw,+net_admin", "--", "./vigilyx-sniffer"]

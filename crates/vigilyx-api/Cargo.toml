@@ -1,0 +1,91 @@
+[package]
+name = "vigilyx-api"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Vigilyx Web API 服务"
+
+[[bin]]
+name = "vigilyx-api"
+path = "src/main.rs"
+
+[dependencies]
+vigilyx-core = { path = "../vigilyx-core" }
+vigilyx-db = { path = "../vigilyx-db" }
+vigilyx-engine = { path = "../vigilyx-engine" }
+vigilyx-soar = { path = "../vigilyx-soar" }
+
+# Async runtime
+tokio.workspace = true
+
+# Web framework
+axum.workspace = true
+tower-http.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Database
+sqlx.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Error handling
+anyhow.workspace = true
+
+# Time
+chrono.workspace = true
+
+# UUID
+uuid.workspace = true
+
+# WebSocket
+futures = "0.3.31"
+tokio-stream = "0.1.18"
+
+# Authentication
+jsonwebtoken = "9.3"  # CVE-2026-25537 mitigated via required_spec_claims; upgrade to 10.x pending
+argon2 = "0.5"
+axum-extra = { version = "0.9", features = ["typed-header"] }
+
+# Security: constant-time comparison (prevents timing attacks)
+subtle = "2"
+# SEC-M01: hash before constant-time comparison (eliminates length side channels)
+sha2 = "0.10"
+# SEC-REMAINING-004: protect sensitive data in memory (zeroize on drop + masked Debug)
+secrecy = { version = "0.10", features = ["serde"] }
+zeroize = "1"
+# SEC-REMAINING-001: encrypted storage for config values (AES-256-GCM)
+aes-gcm = "0.10"
+base64 = "0.22"
+getrandom = "0.3"
+
+# Per-IP login rate limiting (lock-free concurrent HashMap)
+dashmap = "6.1"
+
+# HTTP client (proxy requests to the Python AI service)
+reqwest = { version = "0.12", features = ["json"] }
+
+# System metrics
+sysinfo = "0.32"
+
+# Prometheus metric export
+prometheus = "0.13"
+
+# YARA rule validation
+yara-x = "1.14"
+
+# SEC-NEW-001: SSRF URL parsing (instead of substring matching)
+url = "2"
+regex = "1"
+
+# Disk usage (statvfs)
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[lints]
+workspace = true

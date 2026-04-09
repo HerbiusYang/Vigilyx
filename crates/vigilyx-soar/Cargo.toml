@@ -1,0 +1,30 @@
+[package]
+name = "vigilyx-soar"
+description = "Vigilyx SOAR - Security Orchestration, Automation and Response"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+vigilyx-core = { path = "../vigilyx-core" }
+vigilyx-db = { path = "../vigilyx-db", default-features = false, features = ["postgres"] }
+
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+reqwest = { version = "0.12", features = ["json"] }
+url = "2"
+lettre = { version = "0.11", features = ["tokio1-native-tls", "builder", "smtp-transport"] }
+
+# SEC-REMAINING-001: decrypt encrypted config values stored in the DB
+aes-gcm = "0.10"
+sha2 = "0.10"
+base64 = "0.22"
+
+[lints]
+workspace = true

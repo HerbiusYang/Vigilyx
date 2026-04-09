@@ -1,0 +1,117 @@
+# ═══════════════════════════════════════════════════
+# CAPEv2 sandbox - autoscaled Kubernetes deployment
+# ═══════════════════════════════════════════════════
+#
+# Prerequisites:
+#   - Nodes must support nested KVM virtualization (label: sandbox-capable=true)
+#   - Nodes must have preconfigured Windows analysis VM images
+#   - The StorageClass must support ReadWriteOnce
+#
+# Deployment command:
+#   kubectl apply -f deploy/k8s/
+#
+# Scale out:
+#   kubectl scale deployment vigilyx-sandbox --replicas=3
+#   Or let the HPA scale automatically
+# ═══════════════════════════════════════════════════
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vigilyx-sandbox
+  namespace: vigilyx
+  labels:
+    app: vigilyx
+    component: sandbox
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vigilyx
+      component: sandbox
+  template:
+    metadata:
+      labels:
+        app: vigilyx
+        component: sandbox
+    spec:
+      # Schedule onto nodes that support KVM
+      nodeSelector:
+        sandbox-capable: "true"
+      tolerations:
+        - key: "sandbox"
+          operator: "Equal"
+          value: "true"
+          effect: "NoSchedule"
+      containers:
+        - name: cape
+          image: celyrin/cape:latest
+          ports:
+            - containerPort: 8000
+              name: api
+          env:
+            - name: http_proxy
+              valueFrom:
+                configMapKeyRef:
+                  name: vigilyx-sandbox-config
+                  key: HTTP_PROXY
+                  optional: true
+            - name: https_proxy
+              valueFrom:
+                configMapKeyRef:
+                  name: vigilyx-sandbox-config
+                  key: HTTPS_PROXY
+                  optional: true
+          resources:
+            requests:
+              memory: "4Gi"
+              cpu: "2"
+            limits:
+              memory: "8Gi"
+              cpu: "4"
+          securityContext:
+            privileged: true  # Required by KVM
+          volumeMounts:
+            - name: storage
+              mountPath: /opt/CAPEv2/storage
+            - name: kvm-device
+              mountPath: /dev/kvm
+          readinessProbe:
+            httpGet:
+              path: /apiv2/cuckoo/status/
+              port: 8000
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /apiv2/cuckoo/status/
+              port: 8000
+            initialDelaySeconds: 300
+            periodSeconds: 60
+            timeoutSeconds: 15
+            failureThreshold: 3
+      volumes:
+        - name: kvm-device
+          hostPath:
+            path: /dev/kvm
+            type: CharDevice
+  volumeClaimTemplates: []  # Use a PVC template (see the StatefulSet alternative below)
+
+---
+# If you need persistent storage, replace the Deployment with a StatefulSet:
+# apiVersion: apps/v1
+# kind: StatefulSet
+# metadata:
+#   name: vigilyx-sandbox
+# spec:
+#   serviceName: vigilyx-sandbox
+#   replicas: 1
+#   volumeClaimTemplates:
+#     - metadata:
+#         name: storage
+#       spec:
+#         accessModes: ["ReadWriteOnce"]
+#         storageClassName: fast-ssd
+#         resources:
+#           requests:
+#             storage: 100Gi

@@ -1,0 +1,54 @@
+[package]
+name = "vigilyx-engine"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "vigilyx-engine"
+path = "src/bin/vigilyx_engine.rs"
+
+[dependencies]
+vigilyx-core = { path = "../vigilyx-core" }
+vigilyx-db = { path = "../vigilyx-db" }
+vigilyx-soar = { path = "../vigilyx-soar" }
+
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+async-trait = "0.1"
+dashmap = "6.1"
+petgraph.workspace = true
+reqwest = { version = "0.12", features = ["json", "multipart"] }
+regex = "1"
+sha2 = "0.10"
+aes-gcm = "0.10"
+base64 = "0.22"
+scraper = "0.22"
+rqrr = "0.8"
+futures = "0.3"
+url = "2"
+hickory-resolver = { version = "0.24", features = ["tokio-runtime"] }
+num_cpus.workspace = true
+rayon.workspace = true
+rustc-hash.workspace = true
+clap = { version = "4", features = ["derive", "env"] }
+dotenvy.workspace = true
+unicode-normalization = "0.1"
+yara-x = "1.14"
+zip = "8"
+
+[dev-dependencies]
+tempfile = "3"
+proptest = "1.4"
+
+[lints]
+workspace = true

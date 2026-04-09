@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://vigilyx.io/schemas/email_session.json",
+  "title": "EmailSession",
+  "description": "Email session data model",
+  "type": "object",
+  "required": ["id", "protocol", "client_ip", "client_port", "server_ip", "server_port", "started_at", "status"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique session identifier"
+    },
+    "protocol": {
+      "type": "string",
+      "enum": ["SMTP", "POP3", "IMAP", "UNKNOWN"],
+      "description": "Email protocol type"
+    },
+    "client_ip": {
+      "type": "string",
+      "description": "Client IP address"
+    },
+    "client_port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "Client port"
+    },
+    "server_ip": {
+      "type": "string",
+      "description": "Server IP address"
+    },
+    "server_port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "Server port"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Session start time"
+    },
+    "ended_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Session end time"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "completed", "timeout", "error"],
+      "description": "Session status"
+    },
+    "packet_count": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "Packet count"
+    },
+    "total_bytes": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "Total bytes"
+    },
+    "mail_from": {
+      "type": ["string", "null"],
+      "description": "Sender email address"
+    },
+    "rcpt_to": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Recipient email address list"
+    },
+    "subject": {
+      "type": ["string", "null"],
+      "description": "Email subject"
+    }
+  }
+}

@@ -1,0 +1,42 @@
+[package]
+name = "vigilyx-parser"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Vigilyx 邮件协议解析库 (SMTP/MIME)"
+
+[dependencies]
+vigilyx-core = { path = "../vigilyx-core" }
+
+# Zero-copy byte buffers
+bytes = "1.11.1"
+
+# Small stack-allocated arrays
+smallvec = { version = "1.15.1", features = ["union"] }
+
+# SIMD-accelerated byte search
+memchr = "2.7.6"
+
+# Hashing (attachment fingerprints)
+sha2 = "0.10.9"
+hex = "0.4.3"
+
+# URL decoding (MIME filename parsing)
+urlencoding = "2.1.3"
+
+# Charset conversion (GBK/GB2312/Big5/ISO-8859 -> UTF-8)
+encoding_rs = "0.8.35"
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Time
+chrono.workspace = true
+
+[lints]
+workspace = true

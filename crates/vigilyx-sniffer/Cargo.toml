@@ -1,0 +1,101 @@
+[package]
+name = "vigilyx-sniffer"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Vigilyx 高性能流量监听引擎"
+
+[[bin]]
+name = "vigilyx-sniffer"
+path = "src/main.rs"
+
+[dependencies]
+vigilyx-core = { path = "../vigilyx-core" }
+vigilyx-parser = { path = "../vigilyx-parser" }
+vigilyx-db = { path = "../vigilyx-db", default-features = false, features = ["redis"] }
+
+# Async runtime
+tokio.workspace = true
+
+# Network capture
+pnet.workspace = true
+pcap = "2.4.0"                          # High-performance capture (via libpcap)
+
+# Concurrent data structures
+crossbeam = "0.8.4"                     # Lock-free queue
+dashmap = "6.1.0"                       # Lock-free HashMap
+
+# Memory optimization
+smallvec = { version = "1.15.1", features = ["union"] }  # Small stack-allocated arrays
+bytes = "1.11.1"                         # Zero-copy byte buffers (CVE-2026-25541: >=1.11.1)
+
+# High-performance hashing (FxHash - 2-4x faster than SipHash)
+rustc-hash = "2.1.1"
+
+# SIMD-accelerated byte search (10x+ faster than handwritten loops)
+memchr = "2.7.6"
+
+# Hashing (for attachment fingerprints)
+sha2 = "0.10.9"
+hex = "0.4.3"
+
+# URL decoding (for MIME filename parsing)
+urlencoding = "2.1.3"
+
+# Charset conversion (GBK/GB2312/Big5/ISO-8859, etc. -> UTF-8)
+encoding_rs = "0.8.35"
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Error handling
+anyhow.workspace = true
+
+# Time
+chrono.workspace = true
+
+# UUID
+uuid.workspace = true
+
+# System information
+num_cpus = "1.17.0"                     # Detect CPU core count
+
+# TCP socket configuration (Keepalive, etc.)
+socket2 = { version = "0.5.10", features = ["all"] }
+
+# CLI arguments
+clap = { version = "4.5.56", features = ["derive"] }
+
+# .env loading (must be explicit under sudo)
+dotenvy = "0.15"
+
+# HTTP protocol parsing (zero-copy, used by the data-security module)
+httparse = "1"
+
+# HTTP client (used to send data directly to the API)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Async streams (used for Redis Pub/Sub subscriptions)
+futures = "0.3"
+
+# Linux CPU affinity (optional)
+[target.'cfg(target_os = "linux")'.dependencies]
+core_affinity = "0.8"
+# AF_XDP support (optional, requires the feature flag)
+# afxdp = { version = "0.4", optional = true }
+
+[features]
+default = []
+# Enable AF_XDP high-performance capture (Linux 4.18+)
+af_xdp = []
+# Enable profiling
+perf = []
+
+[lints]
+workspace = true

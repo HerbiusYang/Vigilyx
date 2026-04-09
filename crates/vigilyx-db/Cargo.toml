@@ -1,0 +1,53 @@
+[package]
+name = "vigilyx-db"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Vigilyx 统一数据层 - PostgreSQL 持久化 + Redis 消息队列"
+
+[features]
+default = ["postgres", "redis"]
+postgres = ["dep:sqlx", "dep:sysinfo", "dep:libc"]
+redis = ["dep:redis", "dep:backoff", "dep:async-channel"]
+
+[dependencies]
+vigilyx-core = { path = "../vigilyx-core" }
+
+# Async runtime
+tokio.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Time handling
+chrono.workspace = true
+
+# UUID
+uuid.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# === postgres feature ===
+sqlx = { workspace = true, optional = true }
+sysinfo = { version = "0.32", optional = true }
+
+# === redis feature ===
+redis = { workspace = true, optional = true }
+backoff = { workspace = true, optional = true }
+async-channel = { workspace = true, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
