@@ -1,0 +1,119 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in Vigilyx
+title: "[Bug]: "
+labels: ["bug", "triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+        Please fill in as much detail as possible so we can reproduce and fix the issue.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected Component
+      description: Which part of the system is affected?
+      options:
+        - Backend API (vigilyx-api)
+        - Detection Engine (vigilyx-engine)
+        - MTA Proxy (vigilyx-mta)
+        - Network Sniffer (vigilyx-sniffer)
+        - Protocol Parser (vigilyx-parser)
+        - Database Layer (vigilyx-db)
+        - Core Types (vigilyx-core)
+        - SOAR / Automation (vigilyx-soar)
+        - Frontend (React)
+        - AI Service (Python)
+        - Docker / Deployment
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: How severe is the impact?
+      options:
+        - Critical (data loss, security vulnerability, service crash)
+        - High (major feature broken, significant false negatives)
+        - Medium (feature partially broken, false positives)
+        - Low (cosmetic, minor inconvenience)
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of the bug.
+      placeholder: What happened? What did you expect to happen instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Minimal steps to reproduce the behavior.
+      placeholder: |
+        1. Send an email with subject "..."
+        2. Open the dashboard at /emails
+        3. Click on the session row
+        4. Observe incorrect threat level
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened? Include error messages, screenshots, or log excerpts.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs
+      description: |
+        Paste any relevant log output.
+        Engine: `docker exec vigilyx tail -100 /app/logs/engine.log`
+        API: `docker exec vigilyx tail -100 /app/logs/api.log`
+        Sniffer: `docker compose logs --tail 50 sniffer`
+        MTA: `docker compose logs --tail 50 mta`
+      render: text
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Deployment details.
+      placeholder: |
+        - Vigilyx version / commit: ...
+        - Deployment: Docker Compose / bare metal
+        - OS: Rocky Linux 9.5 / Ubuntu 24.04 / ...
+        - Browser (if frontend): Chrome 130 / Firefox 133 / ...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I searched existing issues and this has not been reported before.
+          required: true
+        - label: I am running the latest version from main branch.
+          required: false

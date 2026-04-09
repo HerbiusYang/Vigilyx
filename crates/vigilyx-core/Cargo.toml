@@ -1,0 +1,21 @@
+[package]
+name = "vigilyx-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Vigilyx 核心共享库"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+dotenvy.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+proptest = "1.4"
+
+[lints]
+workspace = true

@@ -1,0 +1,120 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/vigilyx-core",
+    "crates/vigilyx-parser",
+    "crates/vigilyx-db",
+    "crates/vigilyx-sniffer",
+    "crates/vigilyx-api",
+    "crates/vigilyx-engine",
+    "crates/vigilyx-soar",
+    "crates/vigilyx-mta",
+]
+
+[workspace.package]
+version = "0.9.0"
+edition = "2024"
+authors = ["Vigilyx Open Source Team"]
+license = "AGPL-3.0-only"
+description = "Real-time email threat detection platform with passive network capture and Dempster-Shafer evidence fusion"
+repository = "https://github.com/DoHeras/Vigilyx"
+homepage = "https://github.com/DoHeras/Vigilyx"
+keywords = ["email-security", "threat-detection", "phishing", "network-capture", "dempster-shafer"]
+categories = ["network-programming", "command-line-utilities"]
+
+# Workspace-level lint configuration
+# Rust 1.94 added a doc-formatting lint, and the current codebase still has many non-compliant blank-line patterns.
+# These are purely documentation-formatting issues and do not affect correctness or security.
+[workspace.lints.clippy]
+doc_lazy_continuation = "allow"
+empty_line_after_doc_comments = "allow"
+empty_line_after_outer_attr = "allow"
+
+[workspace.dependencies]
+# Serialization
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+
+# Async runtime
+tokio = { version = "1.49.0", features = ["full"] }
+
+# Time handling
+chrono = { version = "0.4.41", features = ["serde"] }
+
+# Error handling
+thiserror = "2.0.12"
+anyhow = "1.0.98"
+
+# Logging
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
+
+# Environment variables
+dotenvy = "0.15"
+
+# Network capture
+pnet = "0.35"
+
+# Web framework
+axum = { version = "0.8.8", features = ["ws"] }
+tower-http = { version = "0.6.8", features = ["cors", "fs", "set-header"] }
+
+# Database
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "postgres", "json"] }
+
+# UUID
+uuid = { version = "1.20.0", features = ["v4", "serde"] }
+
+# Redis message queue
+redis = { version = "1.0.3", features = ["tokio-comp", "connection-manager"] }
+
+# Async channels
+async-channel = "2.3"
+
+# Retry logic
+backoff = { version = "0.4", features = ["tokio"] }
+
+# Mail sending
+lettre = { version = "0.11", features = ["tokio1-native-tls", "builder", "smtp-transport"] }
+
+# Graph algorithms (DAG orchestration)
+petgraph = "0.7"
+
+# CPU core detection
+num_cpus = "1.16"
+
+# Data parallelism (rayon)
+rayon = "1.10"
+
+# High-performance hashing (FxHash: non-cryptographic, 5-8x faster than SipHash)
+rustc-hash = "2"
+
+# ============================================
+# Performance tuning
+# ============================================
+
+[profile.release]
+lto = "fat"                           # Link-time optimization (max performance)
+codegen-units = 1                     # Single codegen unit (better optimization)
+panic = "abort"                       # Reduce code size
+opt-level = 3                         # Highest optimization level
+strip = true                          # Strip symbol tables
+
+[profile.release.build-override]
+opt-level = 3
+
+# Fast release: quick builds with acceptable runtime performance (for day-to-day development)
+# Usage: cargo build --profile release-fast
+[profile.release-fast]
+inherits = "release"
+lto = "thin"                          # Thin LTO: much faster compilation, slightly lower performance
+codegen-units = 16                    # Multi-core parallel code generation
+strip = false                         # Skip strip to save time
+incremental = true                    # Incremental compilation (do not rebuild everything for one-line changes)
+
+# Enable some optimization in dev builds too
+[profile.dev]
+opt-level = 1                         # Enable basic optimization in dev builds
+
+[profile.dev.package."*"]
+opt-level = 2                         # Apply higher optimization to dependencies

@@ -1,0 +1,23 @@
+# Docker Compose override: fast mode
+# Override the Dockerfile references from the main docker-compose.yml and use prebuilt binaries
+# Used automatically by deploy.sh; no manual action is needed
+# Different from docker-compose.dev.yml, which mounts frontend assets for development
+#
+# Usage: docker compose -f docker-compose.yml -f docker-compose.fast.yml build
+
+services:
+  vigilyx:
+    build:
+      dockerfile: deploy/docker/Dockerfile.api.fast
+
+  sniffer:
+    build:
+      dockerfile: deploy/docker/Dockerfile.sniffer.fast
+
+  mta:
+    build:
+      dockerfile: deploy/docker/Dockerfile.mta.fast
+
+  engine:
+    build:
+      dockerfile: deploy/docker/Dockerfile.engine.fast

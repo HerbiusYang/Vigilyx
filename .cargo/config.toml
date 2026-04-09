@@ -1,0 +1,24 @@
+# ============================================
+# Cargo 编译加速配置
+# ============================================
+
+[build]
+# Cargo 默认已使用所有 CPU 核心编译，无需配置
+
+[target.x86_64-unknown-linux-gnu]
+# Linux: 使用 mold 链接器 (最快的链接器)
+# 需安装: sudo dnf install mold 或 sudo apt install mold
+# 如果没有 mold，回退到系统默认链接器 (注释掉下面这行)
+# rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+[target.aarch64-apple-darwin]
+# macOS Apple Silicon: 系统链接器已经很快
+rustflags = []
+
+[target.x86_64-apple-darwin]
+# macOS Intel
+rustflags = []
+
+# 注册表配置
+[registries.crates-io]
+protocol = "sparse"

@@ -1,0 +1,19 @@
+# ============================================
+# Vigilyx deployment configuration
+# ============================================
+#
+# Usage:
+#   cp deploy.conf.example deploy.conf
+#   Edit deploy.conf and fill in your server information
+#
+# This file will not be committed to git (.gitignore already excludes it)
+# ============================================
+
+# SSH target server (format: user@host)
+VIGILYX_SERVER="root@your-server-ip"
+
+# Local project path (default: the directory containing deploy.sh)
+# VIGILYX_LOCAL_DIR="/path/to/vigilyx/"
+
+# Remote server project path
+VIGILYX_REMOTE_DIR="/home/vigilyx"

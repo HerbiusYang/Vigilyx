@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vigilyx-sandbox-config
+  namespace: vigilyx
+data:
+  # CAPEv2 REST API endpoint (inside K8s, use the Service name)
+  SANDBOX_URL: "http://vigilyx-sandbox:8000"
+  # API auth token (use a Secret in production)
+  # SANDBOX_API_TOKEN: ""
+  # Analysis timeout (seconds)
+  SANDBOX_TIMEOUT_SECS: "300"
+  # Proxy settings (configure only if needed)
+  HTTP_PROXY: ""
+  HTTPS_PROXY: ""
+
+---
+# Production: store the API token in a Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: vigilyx-sandbox-secret
+  namespace: vigilyx
+type: Opaque
+stringData:
+  SANDBOX_API_TOKEN: ""  # Replace with the real token

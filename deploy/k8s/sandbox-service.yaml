@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: vigilyx-sandbox
+  namespace: vigilyx
+  labels:
+    app: vigilyx
+    component: sandbox
+spec:
+  selector:
+    app: vigilyx
+    component: sandbox
+  ports:
+    - name: api
+      port: 8000
+      targetPort: 8000
+      protocol: TCP
+  # ClusterIP: internal cluster access (Engine -> Sandbox)
+  type: ClusterIP

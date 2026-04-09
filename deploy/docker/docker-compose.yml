@@ -1,0 +1,429 @@
+# ═══════════════════════════════════════════════════
+# Vigilyx Docker Compose orchestration
+# ═══════════════════════════════════════════════════
+#
+# Architecture:
+#   postgres   = PostgreSQL 17 database
+#   vigilyx    = API + Engine + Frontend (same container)
+#   sniffer    = traffic-capture probe (host networking + NET_RAW)
+#   ai         = Python NLP/LLM service (optional, enable as needed)
+#   clamav     = ClamAV virus scanning (optional, enable as needed)
+#   redis      = message bus (Pub/Sub)
+#
+# Usage:
+#   Passive mirror deployment:
+#     docker compose --profile mirror up -d
+#
+#   Passive mirror deployment (with AI):
+#     docker compose --profile mirror --profile ai up -d
+#
+#   Passive mirror deployment (with AI + antivirus):
+#     docker compose --profile mirror --profile ai --profile antivirus up -d
+#
+#   Inline MTA deployment:
+#     docker compose --profile mta up -d
+#
+#   Mainland China (use the HF mirror):
+#     HF_ENDPOINT=https://hf-mirror.com docker compose --profile mirror --profile ai up -d
+#
+#   TLS termination:
+#     Recommended for production: host Caddy/Nginx reverse-proxying to 127.0.0.1:8088
+#     Built-in Compose Caddy: domains use automatic ACME; IP/localhost defaults to the internal CA;
+#                       ./deploy.sh --tls switches to file-certificate mode
+#
+#   View logs:
+#     docker exec vigilyx tail -f /app/logs/api.log
+#     docker exec vigilyx tail -f /app/logs/engine.log
+#     docker compose logs -f sniffer
+#
+#   Specify the network interface:
+#     SNIFFER_INTERFACE=eth0 docker compose --profile mirror up -d
+#
+# Password management:
+#   All secrets are managed through the .env file (never committed to git).
+#   Before the first deployment, you must create .env:
+#     cd project-root && bash scripts/generate-secrets.sh
+#   Or edit .env manually and set strong passwords.
+#
+# ═══════════════════════════════════════════════════
+
+name: vigilyx
+
+services:
+
+  # -- PostgreSQL database --
+  postgres:
+    # SECURITY: Pin to specific patch version to avoid silent CVE regressions.
+    # Review and bump periodically. For maximum reproducibility, pin to digest:
+    #   image: postgres@sha256:<digest>
+    image: postgres:17.4-alpine
+    container_name: vigilyx-postgres
+    ports:
+      - "127.0.0.1:${PG_PORT:-5433}:5432"
+    volumes:
+      - vigilyx_pgdata:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=${PG_USER:-vigilyx}
+      - POSTGRES_PASSWORD=${PG_PASSWORD:?请在 .env 中设置 PG_PASSWORD}
+      - POSTGRES_DB=${PG_DB:-vigilyx}
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c work_mem=16MB
+      -c maintenance_work_mem=128MB
+      -c effective_cache_size=512MB
+      -c max_connections=100
+      -c wal_buffers=16MB
+      -c checkpoint_completion_target=0.9
+      -c random_page_cost=1.1
+      -c log_min_duration_statement=1000
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-vigilyx} -d ${PG_DB:-vigilyx}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # -- Valkey message bus (Redis 7.4+ switched to the non-open RSALv2/SSPLv1 license, so it was replaced with BSD-3-Clause Valkey) --
+  redis:
+    # SECURITY: Pin to specific patch version. Review and bump periodically.
+    image: valkey/valkey:8.0.2-alpine
+    container_name: vigilyx-redis
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?请在 .env 中设置 REDIS_PASSWORD}
+    command: valkey-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD}
+    healthcheck:
+      # Pass the password via env vars so the -a flag does not expose it in ps/docker inspect
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$REDIS_PASSWORD valkey-cli ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # -- Main service: API + Security Engine + Frontend --
+  vigilyx:
+    build:
+      context: ../..
+      # Default: full mode (built inside Docker; first build ~8 minutes, faster incrementals afterward)
+      # Development: switch to Dockerfile.api.fast (run deploy.sh --init first to initialize the build container)
+      dockerfile: deploy/docker/Dockerfile.api
+    container_name: vigilyx
+    ports:
+      - "${API_LISTEN:-127.0.0.1}:${API_PORT:-8088}:8088"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - vigilyx_data:/app/data
+      - /sys/class/net:/host/sys/class/net:ro
+      # Docker is accessed through the proxy instead of mounting the raw socket directly (reduces RCE risk)
+    environment:
+      - RUST_LOG=${RUST_LOG:-info,vigilyx_api=info,vigilyx_engine=info}
+      - API_HOST=0.0.0.0
+      - API_PORT=8088
+      # Authentication secrets (read from .env)
+      - API_JWT_SECRET=${API_JWT_SECRET:?请在 .env 中设置 API_JWT_SECRET}
+      - API_PASSWORD=${API_PASSWORD:?请在 .env 中设置 API_PASSWORD}
+      # Trusted reverse proxies (defaults already cover host Caddy/Nginx and the built-in Compose Caddy)
+      - TRUSTED_PROXY_IPS=${TRUSTED_PROXY_IPS:-127.0.0.1,::1}
+      - TRUSTED_PROXY_HOSTS=${TRUSTED_PROXY_HOSTS:-localhost,host.docker.internal,caddy,vigilyx-caddy}
+      # Internal inter-service auth token (sniffer/engine -> API)
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?请在 .env 中设置 INTERNAL_API_TOKEN}
+      # Dedicated internal auth token for the AI service (API/engine -> AI); must differ from INTERNAL_API_TOKEN
+      - AI_INTERNAL_TOKEN=${AI_INTERNAL_TOKEN:?请在 .env 中设置 AI_INTERNAL_TOKEN}
+      - DATABASE_URL=postgres://${PG_USER:-vigilyx}:${PG_PASSWORD}@postgres:5432/${PG_DB:-vigilyx}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      # AI service address (container-to-container communication over the Docker network)
+      - AI_SERVICE_URL=http://ai:8900
+      - AI_ENABLED=${AI_ENABLED:-false}
+      - CLAMAV_ENABLED=${CLAMAV_ENABLED:-false}
+      # Inbound mail-server IPs (comma-separated): once configured, the engine analyzes only sessions delivered to these IPs,
+      # skipping intermediate forwarding hops. If unset, it analyzes all sessions.
+      - INBOUND_MAIL_SERVERS=${INBOUND_MAIL_SERVERS:-}
+      # ClamAV virus scanning (container-to-container over the Docker network)
+      - CLAMAV_HOST=${CLAMAV_HOST:-clamav}
+      - CLAMAV_PORT=${CLAMAV_PORT:-3310}
+      # CAPEv2 sandbox (container-to-container over the Docker network)
+      - SANDBOX_URL=${SANDBOX_URL:-http://sandbox:8000}
+      - SANDBOX_API_TOKEN=${SANDBOX_API_TOKEN:-}
+      - SANDBOX_TIMEOUT_SECS=${SANDBOX_TIMEOUT_SECS:-300}
+      # Portal mode: when true, visiting / automatically redirects to /portal (simplified mail-security UI)
+      - PORTAL_MODE=${PORTAL_MODE:-false}
+      # Deployment mode: mirror (out-of-band mirroring, default) | mta (MTA proxy)
+      # Once set, the frontend automatically switches its navigation and settings; env vars override DB values
+      - VIGILYX_MODE=${VIGILYX_MODE:-}
+      # Prevent internal service requests from going through a proxy (ai/clamav/sandbox containers connect directly over the Docker network)
+      - no_proxy=localhost,127.0.0.1,redis,ai,postgres,clamav,sandbox
+      - NO_PROXY=localhost,127.0.0.1,redis,ai,postgres,clamav
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # -- Traffic-capture probe --
+  # Host networking is required to capture traffic from host NICs
+  sniffer:
+    build:
+      context: ../..
+      # Default: full mode (build inside Docker)
+      # Development: switch to Dockerfile.sniffer.fast (run deploy.sh --init first)
+      dockerfile: deploy/docker/Dockerfile.sniffer
+    container_name: vigilyx-sniffer
+    network_mode: host
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    environment:
+      - RUST_LOG=${RUST_LOG_SNIFFER:-info,vigilyx_sniffer=info}
+      - SNIFFER_INTERFACE=${SNIFFER_INTERFACE:-eth0}
+      - SNIFFER_PROMISCUOUS=${SNIFFER_PROMISCUOUS:-true}
+      # Connect directly to the host under host-network mode
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@127.0.0.1:${REDIS_PORT:-6379}
+      # Note: PG is mapped to host port 5433 (matching the postgres service ports setting)
+      - DATABASE_URL=postgres://${PG_USER:-vigilyx}:${PG_PASSWORD}@127.0.0.1:${PG_PORT:-5433}/${PG_DB:-vigilyx}
+      - API_HOST=127.0.0.1
+      - API_PORT=${API_PORT:-8088}
+      # Internal inter-service auth token (must match the vigilyx container)
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN}
+      - SNIFFER_CAPTURE_BUFFER_MB=${SNIFFER_CAPTURE_BUFFER_MB:-256}
+      - SMTP_PORTS=${SMTP_PORTS:-25,465,587,2525,2526}
+      - POP3_PORTS=${POP3_PORTS:-110,995}
+      - IMAP_PORTS=${IMAP_PORTS:-143,993}
+      - HTTP_PORTS=${HTTP_PORTS:-80,443,8080}
+      # Data security: webmail servers are configured through the UI settings page and stored in the Redis key vigilyx:config:sniffer
+    depends_on:
+      redis:
+        condition: service_healthy
+    profiles:
+      - mirror
+    restart: unless-stopped
+
+  # -- Python AI service (optional) --
+  # Enable with: docker compose --profile ai up -d
+  ai:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.ai
+    container_name: vigilyx-ai
+    ports:
+      - "127.0.0.1:8900:8900"
+    volumes:
+      # Shared data volume: fine-tuned models are stored in data/nlp_models/
+      - vigilyx_data:/app/data
+      # HuggingFace model cache (persisted to avoid repeated downloads)
+      - hf_cache:/app/.hf_cache
+    environment:
+      - HF_HOME=/app/.hf_cache
+      - HF_ENDPOINT=${HF_ENDPOINT:-https://huggingface.co}
+      - VIGILYX_NUM_THREADS=${VIGILYX_NUM_THREADS:-32}
+      - PYTHONUNBUFFERED=1
+      # SEC-H07: internal AI-service auth token (shared only with components that call AI; do not reuse INTERNAL_API_TOKEN)
+      - AI_INTERNAL_TOKEN=${AI_INTERNAL_TOKEN:?请在 .env 中设置 AI_INTERNAL_TOKEN}
+    depends_on:
+      redis:
+        condition: service_healthy
+    profiles:
+      - ai
+    restart: unless-stopped
+
+  # -- Standalone Security Engine (future: separate container) --
+  # Currently the engine is embedded in the main `vigilyx` container (entrypoint.sh starts both).
+  # This service definition prepares for Phase 6 service separation.
+  # Enable with: docker compose --profile engine-standalone up -d
+  engine:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.engine.fast
+    container_name: vigilyx-engine-standalone
+    environment:
+      - RUST_LOG=${RUST_LOG:-info,vigilyx_engine=info}
+      - LOG_FORMAT=json
+      - DATABASE_URL=postgres://${PG_USER:-vigilyx}:${PG_PASSWORD}@postgres:5432/${PG_DB:-vigilyx}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - AI_SERVICE_URL=http://ai:8900
+      - AI_ENABLED=${AI_ENABLED:-false}
+      - CLAMAV_ENABLED=${CLAMAV_ENABLED:-false}
+      - AI_INTERNAL_TOKEN=${AI_INTERNAL_TOKEN:-}
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    profiles:
+      - engine-standalone
+    restart: unless-stopped
+
+  # -- ClamAV antivirus (optional) --
+  # Enable with: docker compose --profile antivirus up -d
+  # First startup needs 2-5 minutes to download virus signatures (~350MB)
+  clamav:
+    # SECURITY: Pin to specific patch version. Review and bump periodically.
+    image: clamav/clamav:1.4.2
+    container_name: vigilyx-clamav
+    ports:
+      - "127.0.0.1:3310:3310"
+    volumes:
+      - clamav_db:/var/lib/clamav
+    environment:
+      - CLAMAV_NO_FRESHCLAMD=false
+      - http_proxy=${HTTP_PROXY:-}
+      - https_proxy=${HTTPS_PROXY:-}
+    healthcheck:
+      test: ["CMD-SHELL", "echo PING | nc localhost 3310 | grep -q PONG || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 180s
+      retries: 5
+    profiles:
+      - antivirus
+    restart: unless-stopped
+
+  # -- CAPEv2 mail sandbox (optional, isolated environment) --
+  # Enable with: docker compose --profile sandbox up -d
+  # Prerequisites:
+  #   1. Host KVM is enabled (modprobe kvm_intel nested=1 && ls /dev/kvm)
+  #   2. First build: docker compose --profile sandbox build sandbox
+  #   3. The Windows analysis VM must be created inside the container via virt-manager
+  # Standalone container: bundles MongoDB + QEMU/KVM + the full CAPEv2 stack
+  sandbox:
+    build:
+      context: ./sandbox
+      dockerfile: Dockerfile
+      args:
+        # Must be pinned to an immutable tag/commit in .env or on the command line; the Dockerfile rejects empty values or drifting HEAD refs
+        CAPEV2_REF: ${CAPEV2_REF:-}
+    image: vigilyx-sandbox:latest
+    container_name: vigilyx-sandbox
+    privileged: true  # Required by KVM/libvirt; the build chain now pins refs and fails closed
+    ports:
+      - "127.0.0.1:8000:8000"  # CAPEv2 REST API
+      - "127.0.0.1:2042:2042"  # ResultServer (VM -> CAPE callback path)
+    volumes:
+      - sandbox_data:/opt/CAPEv2/storage
+      - /dev/kvm:/dev/kvm
+      - /var/run/libvirt:/var/run/libvirt  # Shared libvirt socket
+    # Note: CAPEv2's configparser imports every ENV value into the config,
+    # so no_proxy/NO_PROXY case conflicts can trigger DuplicateOptionError.
+    # Therefore the sandbox container does not set proxy environment variables.
+    environment: []
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/apiv2/cuckoo/status/ || exit 1"]
+      interval: 60s
+      timeout: 15s
+      start_period: 300s
+      retries: 3
+    profiles:
+      - sandbox
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 4G
+
+  # -- Caddy TLS reverse proxy (optional) --
+  # Recommended production setup: terminate TLS on host Caddy/Nginx while vigilyx listens on 127.0.0.1
+  # Built-in Compose Caddy:
+  #   - VIGILYX_DOMAIN=domain     -> automatically request Let's Encrypt certificates by default
+  #   - VIGILYX_DOMAIN=IP/localhost -> use the Caddy internal CA by default
+  #   - ./deploy.sh --tls      -> automatically switch to file-certificate mode
+  # Note: once Caddy is enabled, access happens via 443 (HTTPS) or 80 (auto-redirect),
+  #       while port 8088 can still reach the API directly for internal debugging/sniffer use.
+  caddy:
+    # SECURITY: Pin to specific patch version. Review and bump periodically.
+    image: caddy:2
+    container_name: vigilyx-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy-entrypoint.sh:/etc/caddy/start-caddy.sh:ro
+      - ./certs:/etc/caddy/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    entrypoint: ["/bin/sh", "/etc/caddy/start-caddy.sh"]
+    environment:
+      - VIGILYX_DOMAIN=${VIGILYX_DOMAIN:-}
+      - CADDY_TLS_MODE=${CADDY_TLS_MODE:-}
+      - CADDY_ACME_EMAIL=${CADDY_ACME_EMAIL:-}
+      - VIGILYX_TLS_CERT_FILE=${VIGILYX_TLS_CERT_FILE:-/data/vigilyx.crt}
+      - VIGILYX_TLS_KEY_FILE=${VIGILYX_TLS_KEY_FILE:-/data/vigilyx.key}
+      # Caddy reverse proxying must connect directly to the backend without an external proxy
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - http_proxy=
+      - https_proxy=
+      - no_proxy=*
+    depends_on:
+      - vigilyx
+    profiles:
+      - tls
+    restart: unless-stopped
+
+  # -- MTA proxy (optional, replaces the sniffer inline-detection mode) --
+  # Enable with: docker compose --profile mta up -d
+  mta:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.mta
+    container_name: vigilyx-mta
+    # Expose only 25/465. Keep 587 submission closed until SMTP AUTH is implemented to avoid an unauthenticated relay surface.
+    ports:
+      - "${MTA_LISTEN:-0.0.0.0}:${MTA_SMTP_PORT:-25}:25"
+      - "${MTA_LISTEN:-0.0.0.0}:${MTA_SMTPS_PORT:-465}:465"
+    volumes:
+      - vigilyx_data:/app/data
+    environment:
+      - RUST_LOG=${RUST_LOG_MTA:-info,vigilyx_mta=info,vigilyx_engine=info}
+      - DATABASE_URL=postgres://${PG_USER:-vigilyx}:${PG_PASSWORD}@postgres:5432/${PG_DB:-vigilyx}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - MTA_DOWNSTREAM_HOST=${MTA_DOWNSTREAM_HOST:-127.0.0.1}
+      - MTA_DOWNSTREAM_PORT=${MTA_DOWNSTREAM_PORT:-25}
+      - MTA_DOWNSTREAM_STARTTLS=${MTA_DOWNSTREAM_STARTTLS:-true}
+      # Outbound routing (internal -> external; if unset, reuse the inbound downstream)
+      - MTA_OUTBOUND_HOST=${MTA_OUTBOUND_HOST:-}
+      - MTA_OUTBOUND_PORT=${MTA_OUTBOUND_PORT:-25}
+      - MTA_OUTBOUND_STARTTLS=${MTA_OUTBOUND_STARTTLS:-true}
+      # Local-domain allowlist; leaving it empty makes the MTA reject all RCPT TO commands in fail-closed mode
+      - MTA_LOCAL_DOMAINS=${MTA_LOCAL_DOMAINS:-}
+      - MTA_TLS_CERT=${MTA_TLS_CERT:-}
+      - MTA_TLS_KEY=${MTA_TLS_KEY:-}
+      - MTA_HOSTNAME=${MTA_HOSTNAME:-vigilyx-mta}
+      - MTA_INLINE_TIMEOUT_SECS=${MTA_INLINE_TIMEOUT_SECS:-8}
+      - MTA_FAIL_OPEN=${MTA_FAIL_OPEN:-false}
+      - MTA_MAX_CONNECTIONS=${MTA_MAX_CONNECTIONS:-100}
+      # AI service (optional)
+      - AI_SERVICE_URL=${AI_SERVICE_URL:-http://ai:8900}
+      - AI_ENABLED=${AI_ENABLED:-false}
+      # Internal inter-service auth token (must match the vigilyx container)
+      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN}
+      # Proxy configuration (for external intel lookups)
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - NO_PROXY=localhost,127.0.0.1,redis,ai,postgres
+      - no_proxy=localhost,127.0.0.1,redis,ai,postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    profiles:
+      - mta
+    restart: unless-stopped
+
+volumes:
+  redis_data:       # Docker Compose manages lifecycle
+  vigilyx_data:     # Docker Compose manages lifecycle
+  vigilyx_pgdata:   # Docker Compose manages lifecycle
+  hf_cache:         # Docker Compose manages lifecycle
+  clamav_db:        # Docker Compose manages lifecycle
+  sandbox_data:     # Docker Compose manages lifecycle
+  caddy_data:       # Caddy TLS certificates + ACME state
+  caddy_config:     # Caddy runtime configuration

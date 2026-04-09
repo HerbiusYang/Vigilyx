@@ -1,0 +1,60 @@
+# ═══════════════════════════════════════════════════
+# Vigilyx main service - fast-packaging Dockerfile (only COPY prebuilt binaries)
+# ═══════════════════════════════════════════════════
+#
+# Used together with the persistent build container:
+#   1. Initialize the build container with deploy/docker/setup-builder.sh (first time only)
+#   2. deploy.sh incrementally builds inside the build container and packages with this Dockerfile
+#
+# Manual build:
+#   docker build -f deploy/docker/Dockerfile.api.fast -t vigilyx:latest .
+#
+# Prerequisite: .build-output/ already contains built vigilyx-api and vigilyx-engine binaries
+
+# -- Runtime image --
+FROM debian:bookworm-slim
+
+# Runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl3 \
+    tini \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy prebuilt Rust binaries
+COPY .build-output/vigilyx-api ./
+COPY .build-output/vigilyx-engine ./
+
+# Copy frontend static files (served by axum ServeDir)
+COPY frontend/dist ./frontend/dist
+
+# Copy the entrypoint script
+COPY deploy/docker/entrypoint.sh ./
+RUN chmod +x entrypoint.sh
+
+# Create the data directory
+RUN mkdir -p /app/data /app/logs
+
+# SEC-C01: run as a non-root user (CWE-250)
+RUN groupadd -r vigilyx && useradd -r -g vigilyx -d /app vigilyx \
+    && chown -R vigilyx:vigilyx /app
+USER vigilyx
+
+# Default environment variables
+ENV RUST_LOG=info,vigilyx_api=info,vigilyx_engine=info \
+    LOG_FORMAT=json \
+    API_HOST=0.0.0.0 \
+    API_PORT=8088 \
+    REDIS_URL=redis://redis:6379
+
+EXPOSE 8088
+
+# Health check: readiness probe (checks DB + Redis + Engine heartbeat)
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -sf http://127.0.0.1:8088/api/health/ready || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["./entrypoint.sh"]

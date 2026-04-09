@@ -1,0 +1,86 @@
+# ═══════════════════════════════════════════════════
+# Vigilyx MTA proxy Dockerfile (SMTP relay + embedded engine)
+# ═══════════════════════════════════════════════════
+#
+# Full-build mode: multi-stage cargo-chef build inside Docker, suitable for CI/CD and clean environments.
+# For day-to-day development, use Dockerfile.mta.fast with the persistent build container.
+#
+# Build:
+#   docker build -f deploy/docker/Dockerfile.mta -t vigilyx-mta:latest .
+#
+# Run:
+#   docker run -d --name vigilyx-mta \
+#     -p 25:25 -p 465:465 \
+#     -e DATABASE_URL=postgres://vigilyx:xxx@postgres:5432/vigilyx \
+#     -e REDIS_URL=redis://redis:6379 \
+#     -e MTA_DOWNSTREAM_HOST=10.1.246.33 \
+#     vigilyx-mta:latest
+
+# -- Stage 1: cargo-chef - extract the dependency recipe --
+FROM rust:1.94.1-bookworm AS chef
+RUN cargo install cargo-chef --locked
+WORKDIR /app
+
+# -- Stage 2: generate the dependency recipe --
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+RUN cargo chef prepare --recipe-path recipe.json
+
+# -- Stage 3: build dependencies (accelerated with BuildKit cache mounts) --
+FROM chef AS rust-deps
+COPY --from=planner /app/recipe.json recipe.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo chef cook --release --recipe-path recipe.json && \
+    rm -rf /app/target/release/.fingerprint/vigilyx-*
+
+# -- Stage 4: build the MTA binary --
+FROM rust-deps AS builder
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY shared ./shared
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release -p vigilyx-mta && \
+    cp /app/target/release/vigilyx-mta /app/vigilyx-mta
+
+# -- Stage 5: runtime image --
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 \
+    ca-certificates \
+    curl \
+    tini \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /app/vigilyx-mta ./
+
+RUN mkdir -p /app/data /app/logs /app/certs
+
+# SEC-C01: non-root user
+RUN groupadd -r vigilyx && useradd -r -g vigilyx -d /app vigilyx \
+    && chown -R vigilyx:vigilyx /app
+USER vigilyx
+
+# Default environment variables
+ENV RUST_LOG=info,vigilyx_mta=info,vigilyx_engine=info \
+    MTA_LISTEN_HOST=0.0.0.0 \
+    MTA_SMTP_PORT=25 \
+    MTA_INLINE_TIMEOUT_SECS=8 \
+    MTA_FAIL_OPEN=true \
+    MTA_MAX_CONNECTIONS=100 \
+    MTA_HOSTNAME=vigilyx-mta
+
+# Health check: attempt an SMTP connection
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
+    CMD echo "QUIT" | curl -s telnet://127.0.0.1:25 || exit 1
+
+# SMTP ports
+EXPOSE 25 465
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["./vigilyx-mta"]

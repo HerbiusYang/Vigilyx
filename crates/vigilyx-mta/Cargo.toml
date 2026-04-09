@@ -1,0 +1,67 @@
+[package]
+name = "vigilyx-mta"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Vigilyx MTA 代理 — SMTP 中继 + 内嵌安全引擎"
+
+[[bin]]
+name = "vigilyx-mta"
+path = "src/main.rs"
+
+[dependencies]
+vigilyx-core = { path = "../vigilyx-core" }
+vigilyx-parser = { path = "../vigilyx-parser" }
+vigilyx-db = { path = "../vigilyx-db" }
+vigilyx-engine = { path = "../vigilyx-engine" }
+vigilyx-soar = { path = "../vigilyx-soar" }
+
+# Async runtime
+tokio.workspace = true
+
+# TLS
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pemfile = "2"
+
+# DB (load UI settings from the database)
+sqlx.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Error handling
+anyhow.workspace = true
+
+# Time
+chrono.workspace = true
+
+# UUID
+uuid.workspace = true
+
+# Zero-copy byte buffers
+bytes = "1.11.1"
+
+# CLI arguments
+clap = { version = "4", features = ["derive"] }
+
+# .env
+dotenvy.workspace = true
+
+# Redis (MQ)
+redis.workspace = true
+
+# SMTP relay (downstream MTA)
+lettre.workspace = true
+
+# Async stream (Redis PubSub subscription)
+futures = "0.3"
+
+[lints]
+workspace = true

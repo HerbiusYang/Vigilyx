@@ -1,0 +1,46 @@
+# ═══════════════════════════════════════════════════
+# Vigilyx MTA proxy - fast-packaging Dockerfile (only COPY prebuilt binaries)
+# ═══════════════════════════════════════════════════
+#
+# Used together with the persistent build container.
+# Prerequisite: .build-output/ already contains a built vigilyx-mta binary
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 \
+    ca-certificates \
+    curl \
+    tini \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the prebuilt MTA binary
+COPY .build-output/vigilyx-mta ./
+
+RUN mkdir -p /app/data /app/logs /app/certs
+
+# SEC-C01: non-root user
+RUN groupadd -r vigilyx && useradd -r -g vigilyx -d /app vigilyx \
+    && chown -R vigilyx:vigilyx /app
+USER vigilyx
+
+# Default environment variables
+ENV RUST_LOG=info,vigilyx_mta=info,vigilyx_engine=info \
+    MTA_LISTEN_HOST=0.0.0.0 \
+    MTA_SMTP_PORT=25 \
+    MTA_INLINE_TIMEOUT_SECS=8 \
+    MTA_FAIL_OPEN=true \
+    MTA_MAX_CONNECTIONS=100 \
+    MTA_HOSTNAME=vigilyx-mta
+
+# Health check: attempt an SMTP connection
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
+    CMD echo "QUIT" | curl -s telnet://127.0.0.1:25 || exit 1
+
+# SMTP ports (keep 587 submission closed until SMTP AUTH is implemented)
+EXPOSE 25 465
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["./vigilyx-mta"]

@@ -1,0 +1,87 @@
+# Rust
+/target/
+**/*.rs.bk
+*.bak
+*.bak2
+.build-output/
+
+# Runtime
+.pids
+# NOTE: Cargo.lock is intentionally tracked for reproducible builds.
+# Only library crates should ignore Cargo.lock; Vigilyx is an application.
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 环境配置 (密码文件不提交)
+.env
+.env.local
+.env.production
+**/.env
+!**/.env.example
+
+# 密钥和证书
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.jks
+
+# Claude Code 开发指南 (包含部署环境敏感信息，不上传)
+AGENTS.md
+AGENTS.local.md
+CLAUDE.md
+.claude/
+
+# 部署配置 (包含服务器地址等环境特定信息)
+deploy.conf
+
+# 数据库
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# 日志
+*.log
+logs/
+artifacts/
+*.pid
+
+# macOS
+.DS_Store
+
+# Node.js (前端)
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# 测试覆盖率
+coverage/
+*.lcov
+
+# 临时文件
+tmp/
+temp/
+
+# Python
+__pycache__/
+python/__pycache__/
+python/**/__pycache__/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+python/*.egg-info/
+python/.venv/
+python/venv/
+python/.mypy_cache/
+python/.pytest_cache/
+python/.ruff_cache/
+*.pyc
+*.pyo

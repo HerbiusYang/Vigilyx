@@ -1,0 +1,62 @@
+# Rust build artifacts (full mode builds inside Docker, so host target/ is unnecessary)
+target/
+
+# Fast mode: prebuilt binaries must stay in the build context
+!.build-output/
+
+# Node dependencies (reinstalled inside the container)
+frontend/node_modules/
+
+# Fast mode: frontend dist must stay in the build context (full mode builds it inside Docker)
+# Note: frontend/dist/ is no longer excluded
+
+# Python caches
+python/__pycache__/
+python/**/__pycache__/
+python/*.egg-info/
+python/.mypy_cache/
+python/.ruff_cache/
+
+# Local data
+data/
+logs/
+*.db
+*.db-wal
+*.db-shm
+
+# Environment configuration (sensitive)
+.env
+**/.env
+deploy.conf
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation (not needed in the image)
+docs/
+*.md
+!frontend/README.md
+AGENTS.md
+AGENTS.local.md
+CLAUDE.md
+
+# Deployment scripts (do not package themselves)
+deploy/systemd/
+deploy/email-capture.sh
+scripts/
+
+# Other
+.cargo/
+.pids
+*.bak
+*.bak2
