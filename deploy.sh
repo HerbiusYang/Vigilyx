@@ -127,6 +127,33 @@ step() { echo ""; echo "━━━ $1 ━━━"; }
 elapsed() { echo "  Time: $(( $(date +%s) - $1 ))s"; }
 TOTAL_START=$(date +%s)
 
+RSYNC_EXCLUDES=(
+    "target"
+    "node_modules"
+    ".claude"
+    ".codex"
+    "/data"
+    "logs"
+    "frontend/dist"
+    ".build-output"
+    ".env"
+    "deploy.conf"
+    ".git/"
+    ".DS_Store"
+    "Thumbs.db"
+    "__pycache__/"
+    "*.pyc"
+    "*.pyo"
+    "*.pyd"
+    ".pytest_cache/"
+    ".mypy_cache/"
+    ".ruff_cache/"
+    ".venv/"
+    "venv/"
+    ".coverage"
+    ".pids"
+)
+
 compose_up_with_retry() {
     local label="$1"
     local remote_cmd="$2"
@@ -153,20 +180,42 @@ apply_capture_host_tuning() {
     ssh "$SERVER" "cd '${REMOTE_DIR}' && bash scripts/apply-capture-host-tuning.sh --env-file '${REMOTE_DIR}/deploy/docker/.env'"
 }
 
+rsync_source_tree() {
+    local rsync_args=(-avz --no-times --delete)
+    local pattern
+    for pattern in "${RSYNC_EXCLUDES[@]}"; do
+        rsync_args+=(--exclude "$pattern")
+    done
+    rsync "${rsync_args[@]}" "$LOCAL_DIR" "${SERVER}:${REMOTE_DIR}/"
+}
+
+cleanup_remote_sync_junk() {
+    ssh "$SERVER" "cd '${REMOTE_DIR}' && \
+        find . -type d \\( \
+            -name '.git' -o \
+            -name '__pycache__' -o \
+            -name '.pytest_cache' -o \
+            -name '.mypy_cache' -o \
+            -name '.ruff_cache' -o \
+            -name '.venv' -o \
+            -name 'venv' \
+        \\) -prune -exec rm -rf -- {} + && \
+        find . -type f \\( \
+            -name '.DS_Store' -o \
+            -name 'Thumbs.db' -o \
+            -name '.coverage' -o \
+            -name '.pids' -o \
+            -name '*.pyc' -o \
+            -name '*.pyo' -o \
+            -name '*.pyd' \
+        \\) -delete"
+}
+
 # -- Step 0: initial setup (optional) --
 if $DO_INIT; then
     step "Initial setup: sync source to remote server"
-    rsync -avz --no-times --delete \
-        --exclude 'target' \
-        --exclude 'node_modules' \
-        --exclude '.claude' \
-        --exclude '/data' \
-        --exclude 'logs' \
-        --exclude 'frontend/dist' \
-        --exclude '.build-output' \
-        --exclude '.env' \
-        --exclude 'deploy.conf' \
-        "$LOCAL_DIR" "${SERVER}:${REMOTE_DIR}/"
+    rsync_source_tree
+    cleanup_remote_sync_junk
 
     step "Initial setup: generate remote .env (if missing)"
     ssh "$SERVER" "
@@ -201,17 +250,8 @@ fi
 # -- Step 1: sync source code --
 step "Sync source to remote server"
 T=$(date +%s)
-rsync -avz --no-times --delete \
-    --exclude 'target' \
-    --exclude 'node_modules' \
-    --exclude '.claude' \
-    --exclude '/data' \
-    --exclude 'logs' \
-    --exclude 'frontend/dist' \
-    --exclude '.build-output' \
-    --exclude '.env' \
-    --exclude 'deploy.conf' \
-    "$LOCAL_DIR" "${SERVER}:${REMOTE_DIR}/"
+rsync_source_tree
+cleanup_remote_sync_junk
 elapsed $T
 
 # -- Step 1.5: preflight-check remote .env --

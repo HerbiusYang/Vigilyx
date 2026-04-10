@@ -20,7 +20,7 @@
 #     vigilyx:latest
 
 # -- Stage 1: cargo-chef - extract the dependency recipe --
-FROM rust:1.94.1-bookworm AS chef
+FROM rust:1.94.1-bookworm@sha256:6ae102bdbf528294bc79ad6e1fae682f6f7c2a6e6621506ba959f9685b308a55 AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /app
 
@@ -50,7 +50,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp /app/target/release/vigilyx-engine /app/vigilyx-engine
 
 # -- Stage 5: build the frontend --
-FROM node:20-alpine AS frontend-builder
+FROM node:20-alpine@sha256:f598378b5240225e6beab68fa9f356db1fb8efe55173e6d4d8153113bb8f333c AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci --prefer-offline
@@ -58,7 +58,7 @@ COPY frontend ./
 RUN npm run build
 
 # -- Stage 6: final runtime image --
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:4724b8cc51e33e398f0e2e15e18d5ec2851ff0c2280647e1310bc1642182655d
 
 # Runtime dependencies (ca-certificates: HTTPS; tini: PID 1 signal forwarding; curl: health checks)
 RUN apt-get update && apt-get install -y --no-install-recommends \

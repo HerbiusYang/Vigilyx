@@ -87,7 +87,9 @@ const BIGRAM_UNIQUE_THRESHOLD: f64 = 0.92;
 
 /// NLP remote timeout. Semantic NLP is supplementary; a long wait should not
 /// stall the whole verdict path when the AI side is overloaded.
-const NLP_TIMEOUT: Duration = Duration::from_secs(4);
+/// Raised from 4s → 8s because the 55-core server under load regularly
+/// exceeds 4s, causing unnecessary backoff escalation.
+const NLP_TIMEOUT: Duration = Duration::from_secs(8);
 
 // Unicode range detection
 

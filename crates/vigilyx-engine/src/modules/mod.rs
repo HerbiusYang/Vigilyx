@@ -1,4 +1,5 @@
 pub mod anomaly_detect;
+pub mod attach_qr_scan;
 pub mod attach_content;
 pub mod attach_hash;
 pub mod attach_scan;
@@ -11,6 +12,7 @@ pub mod header_scan;
 pub mod html_pixel_art;
 pub mod html_scan;
 pub mod identity_anomaly;
+pub mod landing_page_scan;
 pub mod link_content;
 pub mod link_reputation;
 pub mod link_scan;

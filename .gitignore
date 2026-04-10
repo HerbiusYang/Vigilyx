@@ -31,6 +31,7 @@
 *.pfx
 *.crt
 *.jks
+credentials*
 
 # Claude Code 开发指南 (包含部署环境敏感信息，不上传)
 AGENTS.md

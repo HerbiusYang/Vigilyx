@@ -132,8 +132,8 @@ pub async fn update_mta_status(
 
 /// /sys/class/net/, Sniffer Redis
 pub async fn get_host_interfaces(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-   // /sys/class/net/
-    if let Ok(interfaces) = read_host_interfaces()
+   // /sys/class/net/ (spawn_blocking to avoid blocking the async runtime)
+    if let Ok(Ok(interfaces)) = tokio::task::spawn_blocking(read_host_interfaces).await
         && !interfaces.is_empty()
     {
         return ApiResponse::ok(interfaces);

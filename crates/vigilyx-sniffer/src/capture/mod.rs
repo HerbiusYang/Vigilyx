@@ -1110,7 +1110,10 @@ impl HighPerformanceCapturer {
         stop_flag: Arc<AtomicBool>,
     ) -> Result<()> {
         let capture_buffer_mb = capture_buffer_size_mb();
-        let capture_buffer_bytes = (capture_buffer_mb * 1024 * 1024) as i32;
+        // SECURITY: Defensive i32 conversion — current MAX_CAPTURE_BUFFER_MB (1024) is
+        // well within i32::MAX, but guard against future constant changes (CWE-190).
+        let capture_buffer_bytes = i32::try_from(capture_buffer_mb * 1024 * 1024)
+            .expect("capture buffer exceeds i32::MAX; MAX_CAPTURE_BUFFER_MB must be ≤ 2047");
 
        // OpenCapture (Performance optimizationsConfiguration)
         let mut cap = Capture::from_device(device)?

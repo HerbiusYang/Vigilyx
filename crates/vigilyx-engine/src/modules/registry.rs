@@ -16,6 +16,7 @@ use crate::remote::RemoteModuleProxy;
 
 use super::anomaly_detect::AnomalyDetectModule;
 use super::attach_content::AttachContentModule;
+use super::attach_qr_scan::AttachmentQrScanModule;
 use super::attach_hash::AttachHashModule;
 use super::attach_scan::AttachScanModule;
 use super::av_attach_scan::AvAttachScanModule;
@@ -25,6 +26,7 @@ use super::domain_verify::DomainVerifyModule;
 use super::header_scan::HeaderScanModule;
 use super::html_scan::HtmlScanModule;
 use super::identity_anomaly::IdentityAnomalyModule;
+use super::landing_page_scan::LandingPageScanModule;
 use super::link_content::LinkContentModule;
 use super::link_reputation::LinkReputationModule;
 use super::link_scan::LinkScanModule;
@@ -98,7 +100,13 @@ pub async fn build_module_registry(
     register(
         &mut modules,
         Arc::new(AttachContentModule::new_with_keyword_lists(
-            effective_keyword_lists,
+            effective_keyword_lists.clone(),
+        )),
+    );
+    register(
+        &mut modules,
+        Arc::new(AttachmentQrScanModule::new_with_keyword_lists(
+            effective_keyword_lists.clone(),
         )),
     );
     register(&mut modules, Arc::new(AttachHashModule::new(intel.clone())));
@@ -113,7 +121,18 @@ pub async fn build_module_registry(
     );
     register(&mut modules, Arc::new(LinkScanModule::new()));
     register(&mut modules, Arc::new(LinkReputationModule::new(intel)));
-    register(&mut modules, Arc::new(LinkContentModule::new()));
+    register(
+        &mut modules,
+        Arc::new(LinkContentModule::new_with_keyword_lists(
+            effective_keyword_lists.clone(),
+        )),
+    );
+    register(
+        &mut modules,
+        Arc::new(LandingPageScanModule::new_with_keyword_lists(
+            effective_keyword_lists.clone(),
+        )),
+    );
     register(&mut modules, Arc::new(AnomalyDetectModule::new()));
     register(&mut modules, Arc::new(SemanticScanModule::new(nlp_remote)));
     register(&mut modules, Arc::new(DomainVerifyModule::new()));
@@ -312,26 +331,31 @@ async fn build_ai_remote(db: &VigilDb) -> Option<RemoteModuleProxy> {
 
     let proxy = RemoteModuleProxy::new(ai_config.service_url.clone());
 
-    // Health check (500ms timeout): verify Python NLP service is reachable
-    match tokio::time::timeout(std::time::Duration::from_millis(500), proxy.health_check()).await {
+    // Health check (5s timeout): verify Python NLP service is reachable.
+    // AI model loading can take 5-10 minutes, so a startup failure is normal.
+    // The background health probe will clear the cooldown once the service
+    // becomes available — we intentionally do NOT call note_probe_failure()
+    // here to avoid entering cooldown before the service has finished loading.
+    match tokio::time::timeout(std::time::Duration::from_millis(5000), proxy.health_check()).await {
         Ok(true) => {
             info!(
                 "NLP phishing detection service connected: {}",
                 ai_config.service_url
             );
-            Some(proxy)
         }
         _ => {
-            proxy.note_probe_failure();
             info!(
-                "NLP phishing detection service not ready ({}), semantic detection will use rule-only mode",
+                "NLP phishing detection service not ready ({}), background probe will auto-recover",
                 ai_config.service_url,
             );
-            // Return proxy anyway; module will retry at runtime
-            // (service may start later)
-            Some(proxy)
         }
     }
+
+    // Always spawn background health probe — it will periodically check the
+    // service during cooldown and clear backoff state on success.
+    proxy.spawn_background_probe();
+
+    Some(proxy)
 }
 
 /// Load intel source config from DB and build IntelLayer.

@@ -6,12 +6,12 @@
 //! - TimeoutAndErrorProcess
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::{error, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::module::ThreatLevel;
 
@@ -77,6 +77,9 @@ impl AiAnalysisResponse {
 const AI_BACKOFF_BASE: Duration = Duration::from_secs(30);
 const AI_BACKOFF_MAX: Duration = Duration::from_secs(300);
 
+/// Background health probe interval during cooldown.
+const HEALTH_PROBE_INTERVAL: Duration = Duration::from_secs(30);
+
 struct RemoteAvailabilityState {
     unavailable_until_epoch_secs: AtomicU64,
     consecutive_failures: AtomicU32,
@@ -125,6 +128,9 @@ pub struct RemoteModuleProxy {
    /// SEC-H07: AI service-scoped internal authentication token
     internal_token: String,
     availability: Arc<RemoteAvailabilityState>,
+    /// Controls the background health probe task lifetime.
+    /// Set to `false` when the proxy is no longer needed.
+    alive: Arc<AtomicBool>,
 }
 
 impl RemoteModuleProxy {
@@ -140,7 +146,96 @@ impl RemoteModuleProxy {
             client,
             internal_token,
             availability: Arc::new(RemoteAvailabilityState::default()),
+            alive: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    /// Spawn a background tokio task that periodically probes the AI service
+    /// health during cooldown periods. When the service becomes reachable
+    /// again the cooldown is cleared automatically, breaking the
+    /// "fail → backoff → no requests → never recover" loop.
+    ///
+    /// The task runs until `alive` is set to `false` (i.e. the proxy is dropped).
+    pub fn spawn_background_probe(&self) {
+        let client = self.client.clone();
+        let base_url = self.base_url.clone();
+        let availability = Arc::clone(&self.availability);
+        let alive = Arc::clone(&self.alive);
+        let internal_token = self.internal_token.clone();
+
+        tokio::spawn(async move {
+            // Wait a short initial delay before starting periodic probes
+            tokio::time::sleep(Duration::from_secs(10)).await;
+
+            loop {
+                if !alive.load(Ordering::Relaxed) {
+                    debug!("AI background health probe stopped (proxy dropped)");
+                    break;
+                }
+
+                tokio::time::sleep(HEALTH_PROBE_INTERVAL).await;
+
+                if !alive.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                // Only probe when we are in cooldown — no need to waste
+                // cycles when the service is already marked available.
+                let until = availability
+                    .unavailable_until_epoch_secs
+                    .load(Ordering::Relaxed);
+                if until == 0 || now_epoch_secs() >= until {
+                    continue;
+                }
+
+                // Perform a lightweight health check with a short timeout
+                let ready_url = format!("{}/health/ready", base_url);
+                let probe_timeout = Duration::from_secs(5);
+
+                let ok = match tokio::time::timeout(probe_timeout, async {
+                    let mut req = client.get(&ready_url);
+                    if !internal_token.is_empty() {
+                        req = req.header("X-Internal-Token", &internal_token);
+                    }
+                    match req.send().await {
+                        Ok(resp) if resp.status().is_success() => true,
+                        Ok(resp) if resp.status() == reqwest::StatusCode::NOT_FOUND => {
+                            // /health/ready not implemented, try /health
+                            let liveness_url = format!("{}/health", base_url);
+                            let mut req2 = client.get(&liveness_url);
+                            if !internal_token.is_empty() {
+                                req2 = req2.header("X-Internal-Token", &internal_token);
+                            }
+                            matches!(req2.send().await, Ok(r) if r.status().is_success())
+                        }
+                        _ => false,
+                    }
+                })
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => false, // probe timed out
+                };
+
+                if ok {
+                    availability
+                        .consecutive_failures
+                        .store(0, Ordering::Relaxed);
+                    availability
+                        .unavailable_until_epoch_secs
+                        .store(0, Ordering::Relaxed);
+                    info!(
+                        base_url = %base_url,
+                        "AI service recovered — background probe cleared cooldown"
+                    );
+                } else {
+                    debug!(
+                        base_url = %base_url,
+                        "AI background probe: service still unavailable"
+                    );
+                }
+            }
+        });
     }
 
     pub fn is_request_available(&self) -> bool {
@@ -163,7 +258,7 @@ impl RemoteModuleProxy {
         self.record_failure("request_timeout");
     }
 
-    fn note_success(&self) {
+    pub fn note_success(&self) {
         self.availability
             .consecutive_failures
             .store(0, Ordering::Relaxed);
@@ -293,6 +388,12 @@ impl RemoteModuleProxy {
         })?;
         self.note_success();
         Ok(parsed)
+    }
+}
+
+impl Drop for RemoteModuleProxy {
+    fn drop(&mut self) {
+        self.alive.store(false, Ordering::Relaxed);
     }
 }
 

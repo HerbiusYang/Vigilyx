@@ -9,7 +9,7 @@ use chrono::Utc;
 use regex::Regex;
 use std::sync::{LazyLock, OnceLock, RwLock};
 
-use super::common::{extract_domain_from_url, extract_redirect_target_urls};
+use super::common::{extract_domain_from_url, extract_redirect_target_urls, percent_decode};
 use crate::context::SecurityContext;
 use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
@@ -47,6 +47,12 @@ static RE_IP_URL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}").unwrap());
 static RE_DOMAINISH_TEXT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b").unwrap()
+});
+static RE_EMAIL_TEXT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}",
+    )
+    .unwrap()
 });
 
 #[cfg(test)]
@@ -174,6 +180,19 @@ fn looks_like_urlish_link_text(text: &str) -> bool {
         || RE_DOMAINISH_TEXT.is_match(&normalized)
 }
 
+fn link_text_matches_embedded_contact_context(text: &str, analysis_url: &str) -> bool {
+    let emails: Vec<String> = RE_EMAIL_TEXT
+        .find_iter(text)
+        .map(|m| m.as_str().to_ascii_lowercase())
+        .collect();
+    if emails.is_empty() {
+        return false;
+    }
+
+    let decoded_url = percent_decode(analysis_url).to_ascii_lowercase();
+    emails.iter().all(|email| decoded_url.contains(email))
+}
+
 #[cfg(test)]
 pub(crate) fn lock_url_domain_set_test_guard() -> std::sync::MutexGuard<'static, ()> {
     URL_DOMAIN_SET_TEST_GUARD
@@ -284,6 +303,7 @@ impl SecurityModule for LinkScanModule {
                 let text_lower = text.to_lowercase();
                // If the link text looks like a URL or contains a domain, check for mismatch
                 if looks_like_urlish_link_text(&text_lower)
+                    && !link_text_matches_embedded_contact_context(&text_lower, analysis_url)
                     && !text_lower.contains(&url_domain)
                 {
                     total_score += 0.30;
@@ -452,6 +472,15 @@ mod tests {
     use std::sync::Arc;
     use vigilyx_core::models::{EmailContent, EmailLink, EmailSession, Protocol};
 
+    fn analyze_with_runtime(module: &LinkScanModule, ctx: &SecurityContext) -> ModuleResult {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(module.analyze(ctx))
+            .unwrap()
+    }
+
     fn make_ctx(url: &str, text: Option<&str>) -> SecurityContext {
         let mut session = EmailSession::new(
             Protocol::Smtp,
@@ -471,8 +500,8 @@ mod tests {
         SecurityContext::new(Arc::new(session))
     }
 
-    #[tokio::test]
-    async fn test_gateway_target_ip_url_is_analyzed() {
+    #[test]
+    fn test_gateway_target_ip_url_is_analyzed() {
         let _guard = lock_url_domain_set_test_guard();
         set_trusted_url_domains(Arc::new(HashSet::new()));
         let module = LinkScanModule::new();
@@ -481,13 +510,13 @@ mod tests {
             None,
         );
 
-        let result = module.analyze(&ctx).await.unwrap();
+        let result = analyze_with_runtime(&module, &ctx);
 
         assert!(result.categories.contains(&"ip_url".to_string()));
     }
 
-    #[tokio::test]
-    async fn test_gateway_target_used_for_href_text_mismatch() {
+    #[test]
+    fn test_gateway_target_used_for_href_text_mismatch() {
         let _guard = lock_url_domain_set_test_guard();
         set_trusted_url_domains(Arc::new(HashSet::new()));
         let module = LinkScanModule::new();
@@ -496,13 +525,13 @@ mod tests {
             Some("https://portal.example.com"),
         );
 
-        let result = module.analyze(&ctx).await.unwrap();
+        let result = analyze_with_runtime(&module, &ctx);
 
         assert!(result.categories.contains(&"href_text_mismatch".to_string()));
     }
 
-    #[tokio::test]
-    async fn test_descriptive_filename_text_is_not_treated_as_href_mismatch() {
+    #[test]
+    fn test_descriptive_filename_text_is_not_treated_as_href_mismatch() {
         let _guard = lock_url_domain_set_test_guard();
         set_trusted_url_domains(Arc::new(HashSet::new()));
         let module = LinkScanModule::new();
@@ -511,11 +540,30 @@ mod tests {
             Some("攻击检测引擎升级包5.11.24-arm64"),
         );
 
-        let result = module.analyze(&ctx).await.unwrap();
+        let result = analyze_with_runtime(&module, &ctx);
 
         assert!(
             !result.categories.contains(&"href_text_mismatch".to_string()),
             "descriptive link labels with version numbers should not be treated as URL/domain text: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_business_card_email_text_matching_url_context_is_not_href_mismatch() {
+        let _guard = lock_url_domain_set_test_guard();
+        set_trusted_url_domains(Arc::new(HashSet::new()));
+        let module = LinkScanModule::new();
+        let ctx = make_ctx(
+            "https://wx.mail.qq.com/home/index?t=readmail_businesscard_midpage&mail=2428735896%40qq.com&code=abc",
+            Some("丁小帅 2428735896@qq.com"),
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            !result.categories.contains(&"href_text_mismatch".to_string()),
+            "contact-card text whose email is embedded in the destination URL should not be treated as a deceptive URL label: {:?}",
             result.categories
         );
     }

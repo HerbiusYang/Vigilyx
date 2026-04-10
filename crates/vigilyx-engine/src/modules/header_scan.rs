@@ -272,6 +272,16 @@ impl SecurityModule for HeaderScanModule {
             }
         }
 
+       // Pre-compute internal sender flags (reused by no_auth_results + no_received)
+        let is_internal = ctx.session.client_ip.starts_with("10.")
+            || ctx.session.client_ip.starts_with("192.168.");
+        let sender_is_internal_domain = ctx
+            .session
+            .mail_from
+            .as_deref()
+            .and_then(extract_domain)
+            .is_some_and(|d| ctx.is_internal_domain(&d));
+
        // --- 1c. SPF/DKIM/DMARC Authentication-Results Parse ---
        // Parse Authentication-Results / ARC-Authentication-Results headers (Exchange, Postfix, etc.)
        // spf=fail/none or dmarc=fail/none are strong spoofing signals.
@@ -337,9 +347,7 @@ impl SecurityModule for HeaderScanModule {
 
            // Missing Authentication-Results on external email -> suspicious
             if !auth_results_found && !headers.is_empty() {
-                let is_internal = ctx.session.client_ip.starts_with("10.")
-                    || ctx.session.client_ip.starts_with("192.168.");
-                if !is_internal && ctx.session.content.is_complete {
+                if !is_internal && !sender_is_internal_domain && ctx.session.content.is_complete {
                     total_score += 0.10;
                     categories.push("no_auth_results".to_string());
                     evidence.push(Evidence {
@@ -429,7 +437,9 @@ impl SecurityModule for HeaderScanModule {
         }
 
        // --- 5. Received chain analysis ---
-        if received_count == 0 && !headers.is_empty() {
+        if received_count == 0 && !headers.is_empty()
+            && !is_internal && !sender_is_internal_domain
+        {
             total_score += 0.10;
             categories.push("no_received".to_string());
             evidence.push(Evidence {

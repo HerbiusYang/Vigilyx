@@ -17,6 +17,7 @@ use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModu
 use crate::modules::common::{
     extract_domain_from_url, is_probable_cloud_asset_host, is_probable_static_asset_path,
 };
+use crate::modules::content_scan::{EffectiveKeywordLists, normalize_text};
 
 /// Long random hex string detection (DGA indicators) - static to avoid recompilation
 static RE_HEX_DGA: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[0-9a-f]{8,}").unwrap());
@@ -26,6 +27,7 @@ const TYPO_PAR_THRESHOLD: usize = 20;
 
 pub struct LinkContentModule {
     meta: ModuleMetadata,
+    phishing_keywords: Vec<String>,
 }
 
 impl Default for LinkContentModule {
@@ -36,6 +38,16 @@ impl Default for LinkContentModule {
 
 impl LinkContentModule {
     pub fn new() -> Self {
+        Self::new_with_keyword_lists(EffectiveKeywordLists::default())
+    }
+
+    pub fn new_with_keyword_lists(effective: EffectiveKeywordLists) -> Self {
+        let mut phishing_keywords = effective.phishing_keywords;
+        for keyword in effective.weak_phishing_keywords {
+            if !phishing_keywords.contains(&keyword) {
+                phishing_keywords.push(keyword);
+            }
+        }
         Self {
             meta: ModuleMetadata {
                 id: "link_content".to_string(),
@@ -49,6 +61,7 @@ impl LinkContentModule {
                 cpu_bound: true,
                 inline_priority: None,
             },
+            phishing_keywords,
         }
     }
 }
@@ -146,6 +159,38 @@ const COMMON_URL_WORDS: &[&str] = &[
     "query",
     "result",
     "report",
+];
+
+const AUTH_BARRIER_TERMS: &[&str] = &[
+    "captcha",
+    "turnstile",
+    "cloudflare",
+    "verify-human",
+    "verify you are human",
+    "prove you are human",
+    "security-check",
+    "security check",
+    "human verification",
+    "checking your browser",
+];
+const OAUTH_FLOW_TERMS: &[&str] = &[
+    "oauth2",
+    "/authorize",
+    "client_id=",
+    "redirect_uri=",
+    "response_type=",
+    "prompt=consent",
+    "scope=",
+    "offline_access",
+];
+const OFFICIAL_LOGIN_SUFFIXES: &[&str] = &[
+    "microsoft.com",
+    "microsoftonline.com",
+    "office.com",
+    "office365.com",
+    "live.com",
+    "okta.com",
+    "google.com",
 ];
 
 /// Compute edit distance (Levenshtein distance) between two strings
@@ -287,6 +332,62 @@ fn detect_typos(text: &str) -> (f64, Vec<(String, String)>) {
    // Each typosquatting finding is a moderate signal; cap at 3+ findings
     let score = (findings.len() as f64 * 0.10).min(0.30);
     (score, findings)
+}
+
+fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| haystack.contains(needle))
+}
+
+fn domain_matches_suffix(domain: &str, suffixes: &[&str]) -> bool {
+    suffixes
+        .iter()
+        .any(|suffix| domain == *suffix || domain.ends_with(&format!(".{}", suffix)))
+}
+
+fn build_email_context(ctx: &SecurityContext) -> String {
+    let mut context = String::new();
+    if let Some(subject) = ctx.session.subject.as_deref() {
+        context.push_str(subject);
+        context.push(' ');
+    }
+    if let Some(body) = ctx.session.content.body_text.as_deref() {
+        context.push_str(body);
+        context.push(' ');
+    }
+    if let Some(body_html) = ctx.session.content.body_html.as_deref() {
+        context.push_str(body_html);
+        context.push(' ');
+    }
+    for link in &ctx.session.content.links {
+        if let Some(text) = link.text.as_deref() {
+            context.push_str(text);
+            context.push(' ');
+        }
+    }
+    for attachment in &ctx.session.content.attachments {
+        context.push_str(&attachment.filename);
+        context.push(' ');
+    }
+    context.to_lowercase()
+}
+
+fn has_keyword_context(text: &str, keywords: &[String]) -> bool {
+    let normalized = normalize_text(text);
+    keywords.iter().any(|keyword| normalized.contains(keyword))
+}
+
+fn url_looks_like_device_code_flow(url_lower: &str) -> bool {
+    url_lower.contains("microsoft.com/devicelogin")
+        || url_lower.contains("/deviceauth")
+        || (url_lower.contains("device") && url_lower.contains("code"))
+}
+
+fn url_looks_like_oauth_flow(url_lower: &str) -> bool {
+    contains_any(url_lower, OAUTH_FLOW_TERMS)
+}
+
+fn url_looks_like_auth_barrier(url_lower: &str) -> bool {
+    contains_any(url_lower, AUTH_BARRIER_TERMS)
 }
 
 /// URL heuristic analysis (includes fragment and typosquatting detection)
@@ -811,6 +912,98 @@ impl SecurityModule for LinkContentModule {
             }
         }
 
+        let email_context = build_email_context(ctx);
+        let keyword_context = has_keyword_context(&email_context, &self.phishing_keywords);
+
+        if keyword_context {
+            for link in links {
+                let effective_url =
+                    crate::modules::link_scan::unwrap_mail_security_gateway_target(&link.url)
+                        .unwrap_or_else(|| link.url.clone());
+                let effective_lower = effective_url.to_lowercase();
+                let link_domain = extract_domain_from_url(&effective_lower);
+
+                if url_looks_like_device_code_flow(&effective_lower) {
+                    total_score += 0.40;
+                    categories.push("device_code_phishing".to_string());
+                    evidence.push(Evidence {
+                        description:
+                            "Email uses a device-code lure and links to a device-login workflow"
+                                .to_string(),
+                        location: Some("links".to_string()),
+                        snippet: Some(effective_url),
+                    });
+                    break;
+                }
+
+                if link_domain
+                    .as_deref()
+                    .is_some_and(|domain| domain_matches_suffix(domain, OFFICIAL_LOGIN_SUFFIXES))
+                    && url_looks_like_oauth_flow(&effective_lower)
+                {
+                    total_score += 0.25;
+                    categories.push("oauth_device_flow".to_string());
+                    evidence.push(Evidence {
+                        description:
+                            "Email pairs a device-code lure with an OAuth authorization URL"
+                                .to_string(),
+                        location: Some("links".to_string()),
+                        snippet: Some(effective_url),
+                    });
+                    break;
+                }
+            }
+        }
+
+        if keyword_context {
+            for link in links {
+                let effective_url =
+                    crate::modules::link_scan::unwrap_mail_security_gateway_target(&link.url)
+                        .unwrap_or_else(|| link.url.clone());
+                let effective_lower = effective_url.to_lowercase();
+                if contains_any(&effective_lower, SUSPICIOUS_PATH_KEYWORDS)
+                    || url_looks_like_oauth_flow(&effective_lower)
+                    || url_looks_like_device_code_flow(&effective_lower)
+                {
+                    total_score += 0.20;
+                    categories.push("qr_to_login_chain".to_string());
+                    evidence.push(Evidence {
+                        description:
+                            "Email contains a QR lure and a follow-on login / authorization URL"
+                                .to_string(),
+                        location: Some("links".to_string()),
+                        snippet: Some(effective_url),
+                    });
+                    break;
+                }
+            }
+        }
+
+        if keyword_context {
+            for link in links {
+                let effective_url =
+                    crate::modules::link_scan::unwrap_mail_security_gateway_target(&link.url)
+                        .unwrap_or_else(|| link.url.clone());
+                let effective_lower = effective_url.to_lowercase();
+                if url_looks_like_auth_barrier(&effective_lower)
+                    && (contains_any(&effective_lower, SUSPICIOUS_PATH_KEYWORDS)
+                        || url_looks_like_oauth_flow(&effective_lower)
+                        || url_looks_like_device_code_flow(&effective_lower))
+                {
+                    total_score += 0.18;
+                    categories.push("auth_barrier_url".to_string());
+                    evidence.push(Evidence {
+                        description:
+                            "Login-themed email routes through a CAPTCHA / auth-barrier URL"
+                                .to_string(),
+                        location: Some("links".to_string()),
+                        snippet: Some(effective_url),
+                    });
+                    break;
+                }
+            }
+        }
+
         total_score = total_score.min(1.0);
         categories.sort();
         categories.dedup();
@@ -866,12 +1059,21 @@ mod tests {
     use std::sync::Arc;
     use vigilyx_core::models::{EmailContent, EmailLink, EmailSession, Protocol};
 
+    fn analyze_with_runtime(module: &LinkContentModule, ctx: &SecurityContext) -> ModuleResult {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(module.analyze(ctx))
+            .unwrap()
+    }
+
     fn reset_url_domain_sets() {
         crate::modules::link_scan::set_trusted_url_domains(Arc::new(HashSet::new()));
         crate::modules::link_scan::set_well_known_safe_domains(Arc::new(HashSet::new()));
     }
 
-    fn make_ctx(link: &str) -> SecurityContext {
+    fn make_ctx_with_body(link: &str, body_text: Option<&str>, subject: Option<&str>) -> SecurityContext {
         let mut session = EmailSession::new(
             Protocol::Smtp,
             "10.0.0.1".to_string(),
@@ -879,8 +1081,10 @@ mod tests {
             "10.0.0.2".to_string(),
             25,
         );
+        session.subject = subject.map(str::to_string);
         session.rcpt_to.push("victim@example.com".to_string());
         session.content = EmailContent {
+            body_text: body_text.map(str::to_string),
             links: vec![EmailLink {
                 url: link.to_string(),
                 text: None,
@@ -891,8 +1095,19 @@ mod tests {
         SecurityContext::new(Arc::new(session))
     }
 
-    #[tokio::test]
-    async fn test_gateway_target_url_is_used_for_recipient_matching() {
+    fn make_ctx(link: &str) -> SecurityContext {
+        make_ctx_with_body(link, None, None)
+    }
+
+    fn make_module_with_keywords(keywords: &[&str]) -> LinkContentModule {
+        LinkContentModule::new_with_keyword_lists(EffectiveKeywordLists {
+            phishing_keywords: keywords.iter().map(|keyword| normalize_text(keyword)).collect(),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn test_gateway_target_url_is_used_for_recipient_matching() {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
         let module = LinkContentModule::new();
@@ -900,19 +1115,19 @@ mod tests {
             "https://safelinks.protection.outlook.com/?url=https%3A%2F%2Fevil.example%2Flogin%3Fuser%3Dvictim%40example.com",
         );
 
-        let result = module.analyze(&ctx).await.unwrap();
+        let result = analyze_with_runtime(&module, &ctx);
 
         assert!(result.categories.contains(&"recipient_in_url".to_string()));
     }
 
-    #[tokio::test]
-    async fn test_legitimate_brand_label_is_not_marked_as_dga() {
+    #[test]
+    fn test_legitimate_brand_label_is_not_marked_as_dga() {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
         let module = LinkContentModule::new();
         let ctx = make_ctx("https://rep.hundsun.cn/report/clearance");
 
-        let result = module.analyze(&ctx).await.unwrap();
+        let result = analyze_with_runtime(&module, &ctx);
 
         assert!(
             !result.categories.contains(&"dga_random_domain".to_string()),
@@ -921,8 +1136,8 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_object_storage_static_asset_is_not_flagged() {
+    #[test]
+    fn test_object_storage_static_asset_is_not_flagged() {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
         let module = LinkContentModule::new();
@@ -930,14 +1145,14 @@ mod tests {
             "https://qfk-files.oss-cn-hangzhou.aliyuncs.com/assets/login-banner.png?x-oss-process=image/resize,w_600",
         );
 
-        let result = module.analyze(&ctx).await.unwrap();
+        let result = analyze_with_runtime(&module, &ctx);
 
         assert!(result.categories.is_empty(), "static cloud asset should be ignored: {:?}", result.categories);
         assert_eq!(result.threat_level, ThreatLevel::Safe);
     }
 
-    #[tokio::test]
-    async fn test_well_known_safe_cdn_asset_is_not_flagged_as_dga() {
+    #[test]
+    fn test_well_known_safe_cdn_asset_is_not_flagged_as_dga() {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
         crate::modules::link_scan::set_well_known_safe_domains(Arc::new(HashSet::from([
@@ -948,7 +1163,7 @@ mod tests {
             "https://mail-online.nosdn.127.net/wzpmmc/b7713ee39fc6d0272a61196c395ab44e.jpg",
         );
 
-        let result = module.analyze(&ctx).await.unwrap();
+        let result = analyze_with_runtime(&module, &ctx);
 
         assert_eq!(result.threat_level, ThreatLevel::Safe);
         assert!(
@@ -969,14 +1184,14 @@ mod tests {
             .any(|(_, category)| category == "suspicious_path"));
     }
 
-    #[tokio::test]
-    async fn test_hyphenated_human_readable_domain_is_not_marked_as_dga() {
+    #[test]
+    fn test_hyphenated_human_readable_domain_is_not_marked_as_dga() {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
         let module = LinkContentModule::new();
         let ctx = make_ctx("https://product-support.chaitin.cn/package/detail?id=12345");
 
-        let result = module.analyze(&ctx).await.unwrap();
+        let result = analyze_with_runtime(&module, &ctx);
 
         assert!(
             !result.categories.contains(&"dga_random_domain".to_string()),
@@ -995,6 +1210,62 @@ mod tests {
             !findings.iter().any(|(_, category)| category == "url_typo"),
             "common verbs like receive should not be treated as receipt typos: {:?}",
             findings
+        );
+    }
+
+    #[test]
+    fn test_device_code_flow_requires_keyword_context() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = make_module_with_keywords(&["secure voicemail", "device code"]);
+        let ctx = make_ctx_with_body(
+            "https://microsoft.com/devicelogin",
+            Some("Secure voicemail: enter the device code"),
+            Some("Secure message"),
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            result.categories.contains(&"device_code_phishing".to_string()),
+            "device-code structure should only fire with keyword context: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_device_code_flow_without_keyword_context_stays_clean() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = LinkContentModule::new();
+        let ctx = make_ctx("https://microsoft.com/devicelogin");
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            !result.categories.contains(&"device_code_phishing".to_string()),
+            "device-code URL alone should not trip the dynamic-keyword gate: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_auth_barrier_url_uses_dynamic_keyword_context() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = make_module_with_keywords(&["mailbox alert", "review now"]);
+        let ctx = make_ctx_with_body(
+            "https://example.com/security-check/captcha?redirect_uri=https://login.microsoftonline.com",
+            Some("Mailbox alert review now"),
+            Some("Mailbox alert"),
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            result.categories.contains(&"auth_barrier_url".to_string()),
+            "auth-barrier URL should use runtime keywords instead of hardcoded lure text: {:?}",
+            result.categories
         );
     }
 }

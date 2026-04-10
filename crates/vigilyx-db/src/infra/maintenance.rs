@@ -70,7 +70,8 @@ impl VigilDb {
        // 4. VACUUM
         sqlx::query("VACUUM").execute(&self.pool).await?;
         sqlx::query("ANALYZE").execute(&self.pool).await?;
-        cleanup_all_http_temp_files();
+        // SEC-M02: avoid blocking the async runtime with std::fs operations
+        let _ = tokio::task::spawn_blocking(cleanup_all_http_temp_files).await;
 
         Ok(())
     }
@@ -108,7 +109,7 @@ impl VigilDb {
 
         sqlx::query("VACUUM").execute(&self.pool).await?;
         sqlx::query("ANALYZE").execute(&self.pool).await?;
-        cleanup_all_http_temp_files();
+        let _ = tokio::task::spawn_blocking(cleanup_all_http_temp_files).await;
 
         Ok(())
     }
@@ -143,7 +144,7 @@ impl VigilDb {
 
         self.init().await?;
         self.init_security_tables().await?;
-        cleanup_all_http_temp_files();
+        let _ = tokio::task::spawn_blocking(cleanup_all_http_temp_files).await;
 
         Ok(())
     }
@@ -222,7 +223,7 @@ impl VigilDb {
         .await?;
 
         tx.commit().await?;
-        cleanup_all_http_temp_files();
+        let _ = tokio::task::spawn_blocking(cleanup_all_http_temp_files).await;
 
         Ok(())
     }
@@ -435,22 +436,25 @@ impl VigilDb {
             .rows_affected();
         security_deleted += dsh;
 
-       // SEC: Clean up orphaned HTTP body temp files to prevent sensitive data residue
+       // SEC-M02: Clean up orphaned HTTP body temp files (spawn_blocking to avoid blocking async runtime)
         if !doomed_ids.is_empty() {
-            let mut files_cleaned = 0u64;
-            for id in &doomed_ids {
-                let path = format!("data/tmp/http/{}.bin", id);
-                if std::path::Path::new(&path).exists() {
-                    if let Err(e) = std::fs::remove_file(&path) {
-                        tracing::warn!(path, "Failed to remove HTTP temp file: {}", e);
-                    } else {
-                        files_cleaned += 1;
+            let ids = doomed_ids.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                let mut files_cleaned = 0u64;
+                for id in &ids {
+                    let path = format!("data/tmp/http/{}.bin", id);
+                    if std::path::Path::new(&path).exists() {
+                        if let Err(e) = std::fs::remove_file(&path) {
+                            tracing::warn!(path, "Failed to remove HTTP temp file: {}", e);
+                        } else {
+                            files_cleaned += 1;
+                        }
                     }
                 }
-            }
-            if files_cleaned > 0 {
-                tracing::info!(files_cleaned, "Cleaned up HTTP body temp files");
-            }
+                if files_cleaned > 0 {
+                    tracing::info!(files_cleaned, "Cleaned up HTTP body temp files");
+                }
+            }).await;
         }
 
        // 5. security_feedback

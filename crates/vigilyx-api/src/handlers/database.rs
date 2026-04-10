@@ -433,7 +433,9 @@ async fn clear_sessions_precisely(db: &Database, cutoff: Option<&str>) -> anyhow
     }
 
     tx.commit().await?;
-    cleanup_http_temp_files(&http_temp_ids);
+    // SEC-M01: avoid blocking the async runtime with std::fs operations
+    let ids = http_temp_ids;
+    let _ = tokio::task::spawn_blocking(move || cleanup_http_temp_files(&ids)).await;
     Ok(())
 }
 
@@ -482,7 +484,9 @@ async fn clear_all_session_and_security_data(db: &Database) -> anyhow::Result<()
     clear_all_session_and_security_rows(&mut tx).await?;
     execute_tx(&mut tx, "DELETE FROM sessions", None).await?;
     tx.commit().await?;
-    cleanup_http_temp_files(&http_temp_ids);
+    // SEC-M01: avoid blocking the async runtime with std::fs operations
+    let ids = http_temp_ids;
+    let _ = tokio::task::spawn_blocking(move || cleanup_http_temp_files(&ids)).await;
     Ok(())
 }
 
