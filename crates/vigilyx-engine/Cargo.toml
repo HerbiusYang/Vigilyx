@@ -12,6 +12,7 @@ path = "src/bin/vigilyx_engine.rs"
 [dependencies]
 vigilyx-core = { path = "../vigilyx-core" }
 vigilyx-db = { path = "../vigilyx-db" }
+vigilyx-parser = { path = "../vigilyx-parser" }
 vigilyx-soar = { path = "../vigilyx-soar" }
 
 serde.workspace = true
@@ -34,6 +35,8 @@ aes-gcm = "0.10"
 base64 = "0.22"
 scraper = "0.22"
 rqrr = "0.8"
+crc32fast = "1"
+flate2 = "1"
 futures = "0.3"
 url = "2"
 hickory-resolver = { version = "0.24", features = ["tokio-runtime"] }

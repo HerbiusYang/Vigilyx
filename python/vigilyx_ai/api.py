@@ -197,7 +197,7 @@ async def analyze_content(request: ContentAnalysisRequest) -> AiAnalysisResponse
             status_code=503,
             content={
                 "error": "MODEL_UNAVAILABLE",
-                "message": str(exc),
+                "message": "NLP model is temporarily unavailable",
                 "retry_after_secs": exc.retry_after_secs,
                 "model_status": model_status,
             },
@@ -212,7 +212,9 @@ async def analyze_content(request: ContentAnalysisRequest) -> AiAnalysisResponse
             status_code=500,
             content={
                 "error": "ANALYSIS_FAILED",
-                "message": str(exc),
+                # SECURITY: Do not expose str(exc) — it may leak internal paths,
+                # model names, or stack details.  The full error is already logged above.
+                "message": "Internal analysis error",
             },
         )
 

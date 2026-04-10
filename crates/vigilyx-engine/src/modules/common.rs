@@ -4,6 +4,10 @@
 //! link_scan, and link_reputation modules.
 
 use std::collections::HashSet;
+use std::sync::LazyLock;
+
+use regex::Regex;
+use vigilyx_parser::mime::decode_rfc2047;
 
 /// Extract domain from an email address string.
 
@@ -22,22 +26,45 @@ use std::collections::HashSet;
 /// Some("corp.com".to_string()),
 
 
-pub fn extract_domain_from_email(addr: &str) -> Option<String> {
-   // Try to find <...> first (display-name format)
-    let email = if let Some(start) = addr.find('<') {
-        if let Some(end) = addr[start..].find('>') {
-            &addr[start + 1..start + end]
-        } else {
-            addr
-        }
-    } else {
-        addr.trim()
-    };
+static RE_EMAIL_ADDR: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?i)[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+",
+    )
+    .unwrap()
+});
 
+fn normalize_address_header(input: &str) -> String {
+    let unfolded = input.replace(['\r', '\n'], " ");
+    let collapsed = unfolded.split_whitespace().collect::<Vec<_>>().join(" ");
+    decode_rfc2047(collapsed.trim())
+}
+
+fn extract_email_address(addr: &str) -> Option<String> {
+    let normalized = normalize_address_header(addr);
+    if normalized.is_empty() {
+        return None;
+    }
+
+   // Prefer the address inside angle brackets, but fall back to scanning the whole header.
+    if let Some(start) = normalized.rfind('<')
+        && let Some(end_rel) = normalized[start..].find('>')
+    {
+        let candidate = &normalized[start + 1..start + end_rel];
+        if let Some(m) = RE_EMAIL_ADDR.find(candidate) {
+            return Some(m.as_str().to_ascii_lowercase());
+        }
+    }
+
+    RE_EMAIL_ADDR
+        .find(&normalized)
+        .map(|m| m.as_str().to_ascii_lowercase())
+}
+
+pub fn extract_domain_from_email(addr: &str) -> Option<String> {
+    let email = extract_email_address(addr)?;
     email
-        .rsplit('@')
-        .next()
-        .map(|d| d.trim().to_lowercase())
+        .rsplit_once('@')
+        .map(|(_, d)| d.trim().to_ascii_lowercase())
         .filter(|d| !d.is_empty())
 }
 
@@ -303,12 +330,8 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_domain_from_email_no_at_returns_input_as_domain() {
-       // rsplit('@').next() returns the whole string when no '@' is present
-        assert_eq!(
-            extract_domain_from_email("nodomain"),
-            Some("nodomain".to_string()),
-        );
+    fn test_extract_domain_from_email_no_at_returns_none() {
+        assert_eq!(extract_domain_from_email("nodomain"), None);
     }
 
     #[test]
@@ -327,6 +350,19 @@ mod tests {
             extract_domain_from_email("  user@padded.com  "),
             Some("padded.com".to_string()),
         );
+    }
+
+    #[test]
+    fn test_extract_domain_from_email_decodes_rfc2047_display_name() {
+        assert_eq!(
+            extract_domain_from_email("=?utf-8?B?5byg5LiJ?= <user@example.com>"),
+            Some("example.com".to_string()),
+        );
+    }
+
+    #[test]
+    fn test_extract_domain_from_email_ignores_malformed_folded_header_without_address() {
+        assert_eq!(extract_domain_from_email("\"=?utf-8?B?OTE5NzA4NzQx"), None);
     }
 
     

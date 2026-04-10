@@ -26,6 +26,7 @@ import time
 try:
     import psycopg2
     import psycopg2.extras
+    from psycopg2 import sql as pgsql
 except ImportError:
     print("ERROR: psycopg2 未安装。运行: pip3 install psycopg2-binary")
     sys.exit(1)
@@ -83,7 +84,7 @@ def _validate_identifier(name, allowed):
 def get_sqlite_columns(sqlite_cur, table_name):
     """Return the column names for a SQLite table."""
     _validate_identifier(table_name, set(MIGRATION_ORDER))
-    sqlite_cur.execute(f"PRAGMA table_info('{table_name}')")
+    sqlite_cur.execute(f"PRAGMA table_info({table_name})")
     return [row[1] for row in sqlite_cur.fetchall()]
 
 
@@ -137,8 +138,11 @@ def migrate_table(sqlite_cur, pg_cur, table_name, dry_run=False):
         print(f"  [SKIP] {table_name}: 无共同列")
         return 0
 
-    # Read SQLite data
+    # Read SQLite data (table_name validated at top of function; column names from PRAGMA are safe)
     cols_sql = ", ".join(common_cols)
+    for col in common_cols:
+        if not all(c.isalnum() or c == '_' for c in col):
+            raise ValueError(f"列名包含非法字符: '{col}'")
     sqlite_cur.execute(f"SELECT {cols_sql} FROM {table_name}")
     rows = sqlite_cur.fetchall()
     total = len(rows)
@@ -152,11 +156,16 @@ def migrate_table(sqlite_cur, pg_cur, table_name, dry_run=False):
         return total
 
     # Truncate the PostgreSQL target table (CASCADE)
-    pg_cur.execute(f"TRUNCATE {table_name} CASCADE")
+    pg_cur.execute(pgsql.SQL("TRUNCATE {} CASCADE").format(pgsql.Identifier(table_name)))
 
-    # Bulk insert
-    placeholders = ", ".join(["%s"] * len(common_cols))
-    insert_sql = f"INSERT INTO {table_name} ({cols_sql}) VALUES ({placeholders})"
+    # Bulk insert (use psycopg2.sql for safe identifier quoting)
+    cols_ident = pgsql.SQL(", ").join(pgsql.Identifier(c) for c in common_cols)
+    placeholders_sql = pgsql.SQL(", ").join(pgsql.Placeholder() for _ in common_cols)
+    insert_composed = pgsql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
+        pgsql.Identifier(table_name), cols_ident, placeholders_sql
+    )
+    # execute_batch needs a plain string; render via the connection
+    insert_sql = insert_composed.as_string(pg_cur.connection)
 
     batch_size = 5000
     inserted = 0
@@ -196,15 +205,17 @@ def verify_counts(sqlite_cur, pg_cur):
     """Verify row-count consistency after migration."""
     print("\n=== 数据验证 ===")
     all_ok = True
+    allowed_tables = set(MIGRATION_ORDER)
     for table in MIGRATION_ORDER:
         try:
+            _validate_identifier(table, allowed_tables)
             sqlite_cur.execute(f"SELECT COUNT(*) FROM {table}")
             sqlite_count = sqlite_cur.fetchone()[0]
         except sqlite3.OperationalError:
             continue
 
         try:
-            pg_cur.execute(f"SELECT COUNT(*) FROM {table}")
+            pg_cur.execute(pgsql.SQL("SELECT COUNT(*) FROM {}").format(pgsql.Identifier(table)))
             pg_count = pg_cur.fetchone()[0]
         except Exception:
             continue

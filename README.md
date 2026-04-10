@@ -12,53 +12,76 @@
 
 ---
 
-Two deployment modes: **Mirror** (passive network capture) and **MTA Proxy** (inline SMTP relay with block/quarantine). Vigilyx ships a 20-module detection stack, Dempster-Shafer based evidence fusion, DLP, automated response, and a React dashboard in one Docker Compose deployment.
+Two deployment modes: **Mirror** (passive network capture) and **MTA Proxy** (inline SMTP relay with block/quarantine). Vigilyx ships a default 20-entry mail-analysis pipeline, clustered Dempster-Shafer based evidence fusion, DLP, automated response, and a React dashboard in one Docker Compose deployment.
 
 ### Architecture
 
+```text
+Default runtime (`docker compose up -d`)
+
+                           optional integrations
+                    +----------+----------+----------+
+                    |    AI    |  ClamAV  | Sandbox  |
+                    +-----+----+-----+----+-----+----+
+                          \          |          /
+                           \         |         /
+                            v        v        v
+┌──────────────────────────────────────────────────────────────┐
+│ vigilyx                                                     │
+│ API + frontend + standalone Engine                          │
+│ - consumes session streams and engine control topics        │
+│ - persists sessions, verdicts, stats, and config state      │
+│ - pushes WebSocket updates                                  │
+│ - executes SOAR / disposition flows                         │
+└───────────────┬──────────────────────────────────────┬───────┘
+                │                                      │
+                │ SESSION_* / STATS_* / ENGINE_*       │ SQL
+                │ Streams + Pub/Sub                    │
+                │                                      │
+┌───────────────▼───────────────┐        ┌─────────────▼─────────────┐
+│ Valkey / Redis                │        │ PostgreSQL                │
+│ Streams + Pub/Sub             │        │ sessions / verdicts       │
+│ transport + control bus       │        │ config / audit / state    │
+└───────────────▲───────────────┘        └───────────────────────────┘
+                │
+                │ mirror ingress only
+                │
+┌───────────────┴───────────────┐
+│ vigilyx-sniffer               │
+│ libpcap capture               │
+│ -> Streams (primary)          │
+│ -> Pub/Sub (shadow/control)   │
+└───────────────────────────────┘
 ```
-Current Compose runtime (default services)
 
-                         +----------------------------------+
-                         | vigilyx                          |
-                         | API + Frontend + DB workers      |
-                         | + standalone Engine (default)    |
-                         +----------------------------------+
-                           ^              |             |
-                           |              |             +--> SOAR / disposition logic
-                           |              |
-SESSION_* / STATS_* /      |              +--> optional AI / ClamAV / Sandbox
-ENGINE_* topics            |
-                           |
-+---------------------+    |      +--------------------------+
-| Valkey / Redis      |----+----->| PostgreSQL               |
-| Streams + Pub/Sub   |           | sessions / verdicts      |
-+---------------------+           +--------------------------+
-      ^           ^
-      |           |
-      |           +--> Engine consumes Streams and publishes verdict/status
-      |
-      +--> API subscribes sniffer + engine topics, persists session data, and broadcasts updates
+```text
+Inline MTA add-on (`--profile mta`)
 
-Mirror add-on (`--profile mirror`)
-Sniffer (libpcap) -> Redis Streams (primary) + Pub/Sub (shadow/control)
-
-MTA add-on (`--profile mta`)
-Mail client / upstream MTA -> vigilyx-mta (SMTP proxy + embedded Engine)
-                               -> accept / reject / quarantine -> downstream MTA
-                               -> PostgreSQL / Redis for config, state, verdicts
+Mail client / upstream MTA
+            |
+            v
+┌──────────────────────────────────────────────────────────────┐
+│ vigilyx-mta                                                 │
+│ SMTP proxy + embedded Engine                                │
+│ - accepts, rejects, or quarantines inline                   │
+│ - reads config and stores verdict state via PostgreSQL      │
+│ - uses Redis for shared transport / control paths           │
+└──────────────────────────────────────────────────────────────┘
+            |
+            v
+      downstream MTA
 ```
 
 - `SOAR` is library logic executed inside the engine and API flows, not a standalone container.
 - `AI`, `ClamAV`, and `Sandbox` are engine-side integrations used by the standalone engine and the embedded MTA engine when enabled.
-- In the current `docker-compose.yml` defaults, `docker compose --profile mta up -d` adds `vigilyx-mta`; it does not automatically disable the standalone engine inside `vigilyx`. Doing that requires wiring `STANDALONE_ENGINE=false` into the `vigilyx` container.
+- In the current `docker-compose.yml` defaults, `docker compose --profile mta up -d` adds `vigilyx-mta`; it does not automatically disable the standalone engine inside `vigilyx`. An MTA-only topology requires a custom compose override; there is no tracked `STANDALONE_ENGINE` toggle in the default deployment files.
 
 ### Features
 
 - **Dual Mode**: passive mirror mode or inline MTA proxy mode
 - **MTA Proxy**: inbound SMTP relay for local domains, TLS support, sub-8 second inline verdicts, configurable fail-open or fail-closed behavior
 - **Passive Capture**: libpcap-based SMTP/POP3/IMAP/HTTP sniffing with no mail server integration
-- **20 Detection Modules**: parallel DAG pipeline with `ds_murphy`, `tbm_v5`, `noisy_or`, and `weighted_max`
+- **20 Pipeline Entries by Default**: 17 always-registered analyzers, 2 conditional ClamAV analyzers, and a final `verdict` stage; runtime aggregation defaults to clustered D-S fusion (`clustered_ds_v1`, exposed as `ds_murphy` for backward compatibility), with `tbm_v5`, `noisy_or`, and `weighted_max` also available
 - **Threat Intel**: OTX, VirusTotal, and AbuseIPDB with a local IOC cache
 - **DLP**: 30 sensitive-data patterns, HTTP session analysis, draft box abuse, file transit, self-send, and chunked upload tracking
 - **YARA**: built-in and database-backed YARA rule scanning
@@ -77,7 +100,8 @@ bash scripts/generate-secrets.sh
 # 2. Edit configuration
 vi deploy/docker/.env
 # Required: set SNIFFER_INTERFACE to your capture NIC (for mirror mode)
-# Optional: set AI_ENABLED=true to enable NLP phishing analysis
+# Optional: set AI_ENABLED=true to let the engine call the AI service
+#           Start the AI container separately with `--profile ai`
 # Optional: set HF_ENDPOINT=https://hf-mirror.com for mainland China
 # Optional: set CADDY_TLS_MODE=internal for IP-based HTTPS access
 # Optional: set API_LISTEN=0.0.0.0 only for temporary non-TLS remote testing
@@ -124,7 +148,7 @@ Login as `admin` with `API_PASSWORD` from `deploy/docker/.env`.
 | `vigilyx-mta` | 25 / 465 | `mta` | SMTP proxy relay with embedded engine |
 | `vigilyx-postgres` | 5433 local | default | PostgreSQL persistence |
 | `vigilyx-redis` | 6379 local | default | Streams + Pub/Sub message bus |
-| `vigilyx-ai` | 8900 local | `ai` | NLP and VT scrape service |
+| `vigilyx-ai` | 8900 local | `ai` | Optional semantic/NLP and VT scrape service |
 | `vigilyx-clamav` | 3310 local | `antivirus` | Antivirus scanning |
 | `vigilyx-sandbox` | 8000 local | `sandbox` | Experimental CAPEv2 detonation |
 | `vigilyx-caddy` | 80 / 443 | `tls` | Bundled TLS reverse proxy |
@@ -133,7 +157,7 @@ Login as `admin` with `API_PASSWORD` from `deploy/docker/.env`.
 
 ### Detection Modules
 
-**17 built-in detection modules**:
+**17 always-registered analyzers in the default engine build**:
 
 | Module | Detection Target |
 |--------|------------------|
@@ -155,11 +179,13 @@ Login as `admin` with `API_PASSWORD` from `deploy/docker/.env`.
 | `transaction_correlation` | Cross-session fraud and business-process correlation |
 | `anomaly_detect` | Statistical feature anomalies |
 
-**3 external-service modules**:
+**Additional pipeline entries and optional integrations**:
 
-- `av_eml_scan`
-- `av_attach_scan`
-- `sandbox_scan`
+- `av_eml_scan` and `av_attach_scan`: enabled by configuration, but only registered when ClamAV is reachable
+- `verdict`: final aggregation stage for all module output
+- `sandbox_scan`: extra optional analyzer when the CAPEv2 sandbox integration is configured
+
+This yields the default 20-entry pipeline documented above: 17 always-registered analyzers + 2 conditional ClamAV analyzers + 1 final `verdict` stage. `sandbox_scan` is outside that baseline and remains an optional add-on.
 
 **Subsystems**: Data Security Engine (HTTP DLP, 30 patterns), temporal analyzer (CUSUM/EWMA/Hawkes/HMM), and verdict fusion with circuit breakers.
 
@@ -265,7 +291,7 @@ All runtime configuration lives in `deploy/docker/.env`.
 | `SNIFFER_HOST_TUNING` | No | `true` | Let `deploy.sh` apply host-side NIC/sysctl/RPS tuning for the capture interface |
 | `SNIFFER_HOST_IRQ_REBALANCE` | No | `true` | Rebalance capture NIC IRQs away from reserved sniffer worker CPUs |
 | `SNIFFER_HOST_IRQ_CPU_LIST` | No | empty | Optional explicit CPU list for NIC IRQs, e.g. `16-23,32-39` |
-| `AI_ENABLED` | No | `false` | Enable AI features; also start the `ai` profile |
+| `AI_ENABLED` | No | `false` | Allow `vigilyx` and the engine to call the AI service; still start `vigilyx-ai` with the `ai` profile |
 | `VIGILYX_MODE` | No | empty | Lock frontend deployment mode to `mirror` or `mta` |
 | `MTA_LOCAL_DOMAINS` | MTA | -- | Comma-separated local recipient domains accepted by the MTA |
 | `MTA_DOWNSTREAM_HOST` | MTA | -- | Downstream MTA address |

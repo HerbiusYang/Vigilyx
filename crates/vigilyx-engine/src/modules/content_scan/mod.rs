@@ -12,6 +12,7 @@ use std::sync::LazyLock;
 
 use unicode_normalization::UnicodeNormalization;
 
+use super::common::{extract_domain_from_url, percent_decode};
 use crate::context::SecurityContext;
 use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
@@ -94,6 +95,9 @@ const KEYWORD_PAR_THRESHOLD: usize = 50_000;
 
 static RE_PARAGRAPH_BREAK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\r?\n\s*\r?\n+").expect("valid paragraph break regex"));
+static RE_EMAIL_TEXT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}").expect("valid email regex")
+});
 
 pub struct ContentScanModule {
     meta: ModuleMetadata,
@@ -1077,9 +1081,19 @@ impl SecurityModule for ContentScanModule {
                 html_lower.contains("<img") || html_lower.contains("background-image")
             });
             let has_links = !ctx.session.content.links.is_empty();
+            let is_contact_card_layout = is_embedded_contact_card_layout(ctx);
+
+            // 内部域名豁免：银行员工发扫描件/截图报告天然命中少文字+图片+链接
+            let sender_is_internal = ctx
+                .session
+                .mail_from
+                .as_deref()
+                .and_then(|addr| addr.split('@').nth(1))
+                .map(|d| ctx.is_internal_domain(&d.to_lowercase()))
+                .unwrap_or(false);
 
            // ofImagePhishing: Plain textAnd HTML allnot
-            if effective_text_len < 50 && has_html_images && has_links {
+            if effective_text_len < 50 && has_html_images && has_links && !is_contact_card_layout && !sender_is_internal {
                 total_score += 0.15;
                 categories.push("image_only_phishing".to_string());
                 evidence.push(Evidence {
@@ -1625,6 +1639,81 @@ fn decode_html_entities(text: &str) -> String {
     }
 
     result
+}
+
+fn extract_normalized_email(text: &str) -> Option<String> {
+    RE_EMAIL_TEXT
+        .find(text)
+        .map(|m| m.as_str().to_ascii_lowercase())
+}
+
+fn detect_contact_card_email(ctx: &SecurityContext) -> Option<String> {
+    ctx.session
+        .mail_from
+        .as_deref()
+        .and_then(extract_normalized_email)
+        .or_else(|| {
+            ctx.session
+                .content
+                .body_text
+                .as_deref()
+                .and_then(extract_normalized_email)
+        })
+        .or_else(|| {
+            ctx.session
+                .content
+                .links
+                .iter()
+                .filter_map(|link| link.text.as_deref())
+                .find_map(extract_normalized_email)
+        })
+}
+
+fn is_business_card_profile_url(url: &str, contact_email: &str) -> bool {
+    let decoded = percent_decode(url).to_ascii_lowercase();
+    let Some(domain) = extract_domain_from_url(&decoded) else {
+        return false;
+    };
+
+    matches!(domain.as_str(), "wx.mail.qq.com" | "mail.qq.com")
+        && decoded.contains("readmail_businesscard_midpage")
+        && decoded.contains(contact_email)
+}
+
+fn is_business_card_avatar_url(url: &str) -> bool {
+    extract_domain_from_url(url)
+        .is_some_and(|domain| domain.ends_with("qlogo.cn"))
+}
+
+fn is_embedded_contact_card_layout(ctx: &SecurityContext) -> bool {
+    let Some(contact_email) = detect_contact_card_email(ctx) else {
+        return false;
+    };
+    let Some(body_html) = ctx.session.content.body_html.as_deref() else {
+        return false;
+    };
+    let html_lower = body_html.to_ascii_lowercase();
+    let has_contact_card_markup = html_lower.contains("xm_write_card")
+        || html_lower.contains("readmail_businesscard_midpage")
+        || html_lower.contains("qlogo.cn");
+
+    if !has_contact_card_markup {
+        return false;
+    }
+
+    let mut business_card_links = 0usize;
+    for link in &ctx.session.content.links {
+        if is_business_card_profile_url(&link.url, &contact_email) {
+            business_card_links += 1;
+            continue;
+        }
+        if is_business_card_avatar_url(&link.url) {
+            continue;
+        }
+        return false;
+    }
+
+    business_card_links > 0
 }
 
 #[cfg(test)]

@@ -301,7 +301,14 @@ services:
         CAPEV2_REF: ${CAPEV2_REF:-}
     image: vigilyx-sandbox:latest
     container_name: vigilyx-sandbox
-    privileged: true  # Required by KVM/libvirt; the build chain now pins refs and fails closed
+    # SECURITY ACCEPTED RISK: privileged is required by KVM/libvirt for VM-based
+    # malware analysis.  The sandbox profile is opt-in (--profile sandbox) and the
+    # container is network-isolated.  Mitigations:
+    #   - Build pins CAPEV2_REF to an immutable commit (Dockerfile rejects empty/HEAD)
+    #   - REST API (8000) and ResultServer (2042) bind to 127.0.0.1 only
+    #   - NOPASSWD sudo is scoped to the cape user inside the container
+    # Review periodically; replace with rootless Podman + sysbox when feasible.
+    privileged: true
     ports:
       - "127.0.0.1:8000:8000"  # CAPEv2 REST API
       - "127.0.0.1:2042:2042"  # ResultServer (VM -> CAPE callback path)
@@ -338,8 +345,9 @@ services:
   # Note: once Caddy is enabled, access happens via 443 (HTTPS) or 80 (auto-redirect),
   #       while port 8088 can still reach the API directly for internal debugging/sniffer use.
   caddy:
-    # SECURITY: Pin to specific patch version. Review and bump periodically.
-    image: caddy:2
+    # SECURITY: Pin to minor version. Review and bump periodically.
+    # TODO: Lock to SHA256 digest once the deployment environment can pull and verify.
+    image: caddy:2.9-alpine
     container_name: vigilyx-caddy
     ports:
       - "80:80"

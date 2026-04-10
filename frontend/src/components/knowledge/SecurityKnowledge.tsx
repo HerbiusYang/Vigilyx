@@ -231,7 +231,7 @@ function SecurityKnowledge() {
 
   const handleExportPdf = useCallback(() => {
     if (!activeTopic) return
-    window.open(`/knowledge?export=${activeTopic}`, '_blank')
+    window.open(`/knowledge?export=${activeTopic}`, '_blank', 'noopener,noreferrer')
   }, [activeTopic])
 
   const showSearchResults = searchQuery.trim().length > 0

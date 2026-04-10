@@ -21,6 +21,7 @@ use crate::bpa::Bpa;
 use crate::context::SecurityContext;
 use crate::db_service::DbQueryService;
 use crate::error::EngineError;
+use crate::modules::common::extract_domain_from_email;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
 
 /// Maximum score from all checks combined.
@@ -70,6 +71,11 @@ const COMMON_EN_WORDS: &[&str] = &[
     "helper", "admin", "test", "notify", "alert", "bot", "system", "service", "noreply", "support",
     "info", "news", "mail", "smtp", "auto", "mp", "pay", "shop", "store", "cloud", "dev", "api",
     "app", "web", "net", "push", "hub", "lab", "do", "no", "go", "hi", "my",
+    // Financial / industry high-frequency words (added to reduce false positives on Chinese finance domains)
+    "fund", "trust", "credit", "wealth", "health", "capital", "asset",
+    "invest", "finance", "securities", "insurance", "digital", "fintech",
+    "payment", "trading", "exchange", "clearing", "custody", "advisory",
+    "bank", "soft", "tech", "data", "group", "online", "global",
 ];
 
 /// Legitimate vendor or product labels that can look consonant-heavy, but are not DGA domains.
@@ -85,7 +91,34 @@ const BENIGN_BRAND_DOMAIN_LABELS: &[&str] = &[
     "cmbchina",
     "ccabchina",
     "nbcb",
+    // Chinese financial institution domains (pinyin abbreviations that look consonant-heavy)
+    "baihangcredit",
+    "crctrust",
+    "cjhxfund",
+    "psbc",
+    "unionpay",
 ];
+
+/// Chinese pinyin initials (声母). Used to support pinyin-initial abbreviations like
+/// "sxyhxh" (陕西银行协会 = S-X-Y-H-X-H). Each letter is a valid pinyin initial.
+/// Note: 'w' and 'y' are included because they commonly appear in abbreviations
+/// (e.g., 'w' for 网/文, 'y' for 银/余).
+const PINYIN_INITIALS: &[u8] = b"bpmfdtnlgkhjqxrzcsyw";
+
+/// Check whether a short string consists entirely of valid pinyin initials.
+/// This catches abbreviations like "sxyhxh" (陕西银行协会), "dhcc" (东华软件),
+/// "psbc" (邮储银行). Only applies to short labels (2-6 chars) to avoid
+/// false negatives on longer DGA strings.
+fn is_pinyin_initial_abbreviation(s: &str) -> bool {
+    let len = s.len();
+    // Only treat very short labels as possible abbreviations (2-6 chars)
+    // Real Chinese org abbreviations rarely exceed 6 initials
+    if len < 2 || len > 6 {
+        return false;
+    }
+    s.bytes()
+        .all(|b| PINYIN_INITIALS.contains(&b.to_ascii_lowercase()))
+}
 
 /// Check whether a username can be decomposed into pinyin syllables + common English words.
 /// If decomposable, it is a legitimate name (e.g., weixinmphelper = weixin + mp + helper), not random.
@@ -121,6 +154,7 @@ pub fn is_pinyin_english_name(name: &str) -> bool {
 pub fn is_human_readable_domain_label(name: &str) -> bool {
     let normalized = name.to_ascii_lowercase();
     is_pinyin_english_name(&normalized)
+        || is_pinyin_initial_abbreviation(&normalized)
         || BENIGN_BRAND_DOMAIN_LABELS
             .iter()
             .any(|label| normalized == *label)
@@ -393,38 +427,8 @@ impl IdentityAnomalyModule {
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case("from"))
             .map(|(_, v)| v.as_str())?;
-
-       // Extract domain from envelope (handle "Name <user@domain>" format)
-        let env_email = if let Some(start) = envelope_from.find('<') {
-            if let Some(end) = envelope_from[start..].find('>') {
-                &envelope_from[start + 1..start + end]
-            } else {
-                envelope_from.trim()
-            }
-        } else {
-            envelope_from.trim()
-        };
-        let env_domain = env_email
-            .rsplit('@')
-            .next()
-            .filter(|d| !d.is_empty())?
-            .to_ascii_lowercase();
-
-       // Extract domain from header (may have display name, quoted strings, encoded words)
-        let header_email = if let Some(start) = header_from.rfind('<') {
-            if let Some(end) = header_from[start..].find('>') {
-                &header_from[start + 1..start + end]
-            } else {
-                header_from.trim()
-            }
-        } else {
-            header_from.trim()
-        };
-        let hdr_domain = header_email
-            .rsplit('@')
-            .next()
-            .filter(|d| !d.is_empty())?
-            .to_ascii_lowercase();
+        let env_domain = extract_domain_from_email(envelope_from)?;
+        let hdr_domain = extract_domain_from_email(header_from)?;
 
         if env_domain != hdr_domain {
             return Some((
@@ -556,15 +560,18 @@ impl SecurityModule for IdentityAnomalyModule {
             let main_part = sender_domain.split('.').next().unwrap_or("");
             
             
-           // (a) 3+ consecutive consonants -> likely random/DGA (snajgc, bncgjwl)
+           // (a) 5+ consecutive consonants -> likely random/DGA (snajgc, bncgjwl)
            // (b) Short mixed alphanumeric -> likely random (8t5om, ycgg4)
            // Excludes pinyin+English names (qingcloud = qing+cloud)
-           // Excludes known domains (example.com, support.example.com)
-            if main_part.len() >= 4 && !is_pinyin_english_name(main_part) && !is_internal {
+           // Excludes pinyin-initial abbreviations (sxyhxh = 陕西银行协会)
+           // Excludes known brand domains (hundsun, cmbchina, etc.)
+            if main_part.len() >= 4 && !is_human_readable_domain_label(main_part) && !is_internal {
                 let mut is_random = false;
                 let mut reason = String::new();
 
-               // (a): Check for 3+ consecutive consonants
+               // (a) 5+ consecutive consonants -> likely random/DGA (snajgc, bncgjwl)
+                // Chinese pinyin abbreviations naturally produce 3-4 consonant clusters
+                // (e.g., "nkw" in hzbankwealth, "ngcr" in baihangcredit), so threshold is 5
                 let consecutive_consonants = {
                     let mut max_run = 0u32;
                     let mut run = 0u32;
@@ -580,7 +587,7 @@ impl SecurityModule for IdentityAnomalyModule {
                     }
                     max_run
                 };
-                if consecutive_consonants >= 3 {
+                if consecutive_consonants >= 5 {
                     is_random = true;
                     reason = format!("{} consecutive consonants", consecutive_consonants);
                 }
@@ -777,5 +784,109 @@ mod tests {
         assert!(is_human_readable_domain_label("smartx"));
         assert!(is_human_readable_domain_label("aishu"));
         assert!(!is_human_readable_domain_label("xvkrnbstq"));
+    }
+
+    #[test]
+    fn test_chinese_finance_domains_not_flagged_as_random() {
+        // Pinyin + English word combinations
+        assert!(
+            is_human_readable_domain_label("baihangcredit"),
+            "baihangcredit = bai+hang+credit (百行征信)"
+        );
+        assert!(
+            is_human_readable_domain_label("hzbankwealth"),
+            "hzbankwealth should pass: even if not decomposable, consecutive consonants < 5"
+        );
+
+        // Brand list entries
+        assert!(
+            is_human_readable_domain_label("cjhxfund"),
+            "cjhxfund is in BENIGN_BRAND_DOMAIN_LABELS (长安华信基金)"
+        );
+        assert!(
+            is_human_readable_domain_label("crctrust"),
+            "crctrust is in BENIGN_BRAND_DOMAIN_LABELS (华润信托)"
+        );
+
+        // Pinyin initial abbreviations
+        assert!(
+            is_human_readable_domain_label("sxyhxh"),
+            "sxyhxh = pinyin initials S-X-Y-H-X-H (陕西银行协会)"
+        );
+        assert!(
+            is_human_readable_domain_label("dhcc"),
+            "dhcc = pinyin initials D-H-C-C (东华软件)"
+        );
+        assert!(
+            is_human_readable_domain_label("psbc"),
+            "psbc = pinyin initials P-S-B-C (邮储银行)"
+        );
+    }
+
+    #[test]
+    fn test_pinyin_initial_abbreviation_rejects_long_random_strings() {
+        // Strings > 6 chars should NOT be treated as pinyin abbreviations
+        assert!(
+            !is_pinyin_initial_abbreviation("xhjqwzk"),
+            "7-char string too long for abbreviation"
+        );
+        assert!(
+            !is_pinyin_initial_abbreviation("bdfghjk"),
+            "7-char string too long for abbreviation"
+        );
+        // Strings with non-initial letters
+        assert!(
+            !is_pinyin_initial_abbreviation("xvkr"),
+            "v is not a pinyin initial"
+        );
+    }
+
+    #[test]
+    fn test_new_common_en_words_recognized() {
+        // Words added for financial domain support
+        assert!(
+            is_pinyin_english_name("fund"),
+            "fund should be in COMMON_EN_WORDS"
+        );
+        assert!(
+            is_pinyin_english_name("trust"),
+            "trust should be in COMMON_EN_WORDS"
+        );
+        assert!(
+            is_pinyin_english_name("credit"),
+            "credit should be in COMMON_EN_WORDS"
+        );
+        assert!(
+            is_pinyin_english_name("wealth"),
+            "wealth should be in COMMON_EN_WORDS"
+        );
+        // Compound: pinyin + new English word
+        assert!(
+            is_pinyin_english_name("baihangcredit"),
+            "baihangcredit = bai+hang+credit"
+        );
+    }
+
+    #[test]
+    fn test_envelope_mismatch_ignores_malformed_from_header_without_address() {
+        let module = IdentityAnomalyModule::new(None);
+        let headers = vec![("From".to_string(), "\"=?utf-8?B?OTE5NzA4NzQx".to_string())];
+
+        let result = module.check_envelope_mismatch(Some("919708741@qq.com"), &headers);
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_envelope_mismatch_still_detects_real_cross_domain_mismatch() {
+        let module = IdentityAnomalyModule::new(None);
+        let headers = vec![(
+            "From".to_string(),
+            "Trusted Sender <notice@example.com>".to_string(),
+        )];
+
+        let result = module.check_envelope_mismatch(Some("bounce@mailer.other.com"), &headers);
+
+        assert!(result.is_some());
     }
 }

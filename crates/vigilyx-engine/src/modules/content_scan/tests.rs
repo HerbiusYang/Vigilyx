@@ -1,4 +1,9 @@
 use super::*;
+use std::sync::Arc;
+
+use crate::context::SecurityContext;
+use crate::module::SecurityModule;
+use vigilyx_core::models::{EmailContent, EmailLink, EmailSession, Protocol};
 
 #[test]
 fn system_seed_keywords_are_normalized_out_of_user_added() {
@@ -196,4 +201,94 @@ fn single_weak_bec_hint_does_not_create_bec_category() {
     assert_eq!(score, 0.0);
     assert!(categories.is_empty());
     assert!(evidence.is_empty());
+}
+
+fn analyze_with_runtime(module: &ContentScanModule, ctx: &SecurityContext) -> ModuleResult {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(module.analyze(ctx))
+        .unwrap()
+}
+
+fn make_ctx(
+    body_text: Option<&str>,
+    body_html: Option<&str>,
+    links: Vec<EmailLink>,
+    mail_from: Option<&str>,
+) -> SecurityContext {
+    let mut session = EmailSession::new(
+        Protocol::Smtp,
+        "10.0.0.1".to_string(),
+        2525,
+        "10.0.0.2".to_string(),
+        25,
+    );
+    session.mail_from = mail_from.map(str::to_string);
+    session.rcpt_to.push("victim@example.com".to_string());
+    session.content = EmailContent {
+        body_text: body_text.map(str::to_string),
+        body_html: body_html.map(str::to_string),
+        links,
+        ..Default::default()
+    };
+    SecurityContext::new(Arc::new(session))
+}
+
+#[test]
+fn embedded_business_card_layout_is_not_marked_as_image_only_phishing() {
+    let module = ContentScanModule::new();
+    let ctx = make_ctx(
+        Some("弦上沽酒\n347831865@qq.com"),
+        Some(
+            r#"<div><a class="xm_write_card" href="https://wx.mail.qq.com/home/index?t=readmail_businesscard_midpage&mail=347831865%40qq.com&code=abc"><img src="http://thirdqq.qlogo.cn/qq_product/AQWJ/example.jpg" />弦上沽酒 347831865@qq.com</a></div>"#,
+        ),
+        vec![
+            EmailLink {
+                url: "https://wx.mail.qq.com/home/index?t=readmail_businesscard_midpage&mail=347831865%40qq.com&code=abc".to_string(),
+                text: Some("弦上沽酒 347831865@qq.com".to_string()),
+                suspicious: false,
+            },
+            EmailLink {
+                url: "http://thirdqq.qlogo.cn/qq_product/AQWJ/example.jpg".to_string(),
+                text: None,
+                suspicious: false,
+            },
+        ],
+        Some("347831865@qq.com"),
+    );
+
+    let result = analyze_with_runtime(&module, &ctx);
+
+    assert!(
+        !result.categories.contains(&"image_only_phishing".to_string()),
+        "contact-card layouts should not be classified as image-only phishing: {:?}",
+        result.categories
+    );
+}
+
+#[test]
+fn real_short_text_image_lure_still_triggers_image_only_phishing() {
+    let module = ContentScanModule::new();
+    let ctx = make_ctx(
+        Some("请查看"),
+        Some(
+            r#"<html><body><a href="https://evil.example/verify"><img src="https://evil.example/banner.png" /></a></body></html>"#,
+        ),
+        vec![EmailLink {
+            url: "https://evil.example/verify".to_string(),
+            text: Some("立即查看".to_string()),
+            suspicious: false,
+        }],
+        Some("notify@example.com"),
+    );
+
+    let result = analyze_with_runtime(&module, &ctx);
+
+    assert!(
+        result.categories.contains(&"image_only_phishing".to_string()),
+        "true short-text image lures should still be flagged: {:?}",
+        result.categories
+    );
 }

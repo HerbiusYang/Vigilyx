@@ -5,6 +5,8 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use vigilyx_core::models::EmailAttachment;
+use vigilyx_parser::mime::decode_rfc2047;
 
 use crate::context::SecurityContext;
 use crate::error::EngineError;
@@ -37,6 +39,43 @@ impl AnomalyDetectModule {
             },
         }
     }
+}
+
+const HIGH_RISK_EMPTY_SUBJECT_EXTENSIONS: &[&str] = &[
+    "exe", "scr", "js", "vbs", "bat", "cmd", "ps1", "hta", "msi", "dll", "com", "pif", "wsf",
+    "wsh", "zip", "rar", "7z", "iso", "img", "html", "htm", "eml", "lnk", "url",
+];
+
+const COMMON_BUSINESS_ATTACHMENT_EXTENSIONS: &[&str] = &[
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", "jpg", "jpeg", "png",
+];
+
+fn decoded_attachment_filename(filename: &str) -> String {
+    decode_rfc2047(filename).trim().trim_matches('"').to_string()
+}
+
+fn attachment_extension(att: &EmailAttachment) -> Option<String> {
+    let filename = decoded_attachment_filename(&att.filename);
+    let (_, ext) = filename.rsplit_once('.')?;
+    let ext = ext.trim().trim_end_matches("?=").to_ascii_lowercase();
+    if ext.is_empty() { None } else { Some(ext) }
+}
+
+fn is_high_risk_empty_subject_attachment(att: &EmailAttachment) -> bool {
+    let ext = attachment_extension(att);
+    let content_type = att.content_type.to_ascii_lowercase();
+    ext.as_deref()
+        .is_some_and(|ext| HIGH_RISK_EMPTY_SUBJECT_EXTENSIONS.contains(&ext))
+        || content_type.contains("html")
+        || content_type.contains("javascript")
+        || content_type.contains("zip")
+        || content_type.contains("rar")
+}
+
+fn is_common_business_attachment(att: &EmailAttachment) -> bool {
+    attachment_extension(att)
+        .as_deref()
+        .is_some_and(|ext| COMMON_BUSINESS_ATTACHMENT_EXTENSIONS.contains(&ext))
 }
 
 #[async_trait]
@@ -81,20 +120,52 @@ impl SecurityModule for AnomalyDetectModule {
 
        // --- 2. Empty subject with attachments ---
         if subject.trim().is_empty() && has_attachments {
-            total_score += 0.20;
-            categories.push("empty_subject_with_attachment".to_string());
             let filenames: Vec<String> = ctx
                 .session
                 .content
                 .attachments
                 .iter()
-                .map(|a| a.filename.clone())
+                .map(|a| decoded_attachment_filename(&a.filename))
                 .collect();
+            let attachment_count = ctx.session.content.attachments.len();
+            let high_risk_count = ctx
+                .session
+                .content
+                .attachments
+                .iter()
+                .filter(|att| is_high_risk_empty_subject_attachment(att))
+                .count();
+            let common_business_count = ctx
+                .session
+                .content
+                .attachments
+                .iter()
+                .filter(|att| is_common_business_attachment(att))
+                .count();
+
+           // Empty-subject attachments are common for business and mobile-sharing workflows.
+           // Keep the signal only when the attachment profile itself is risky, or when the
+           // message sprays multiple files with no subject.
+            let empty_subject_score = if high_risk_count > 0 {
+                0.20
+            } else if attachment_count > 1 {
+                0.16
+            } else if common_business_count == attachment_count {
+                0.08
+            } else {
+                0.12
+            };
+
+            total_score += empty_subject_score;
+            if empty_subject_score >= 0.15 {
+                categories.push("empty_subject_with_attachment".to_string());
+            }
             evidence.push(Evidence {
                 description: format!(
-                    "Empty subject with {} attachment(s): {}",
-                    filenames.len(),
-                    filenames.join(", ")
+                    "Empty subject with {} attachment(s): {} (risk profile score {:.2})",
+                    attachment_count,
+                    filenames.join(", "),
+                    empty_subject_score,
                 ),
                 location: Some("subject + attachments".to_string()),
                 snippet: None,
@@ -237,5 +308,66 @@ impl SecurityModule for AnomalyDetectModule {
             bpa: None,
             engine_id: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use vigilyx_core::models::{EmailAttachment, EmailContent, EmailSession, Protocol};
+
+    fn make_ctx(attachments: Vec<EmailAttachment>) -> SecurityContext {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.subject = Some(String::new());
+        session.mail_from = Some("sender@example.com".to_string());
+        session
+            .rcpt_to
+            .push("recipient@example.com".to_string());
+        session.content = EmailContent {
+            attachments,
+            ..Default::default()
+        };
+        SecurityContext::new(Arc::new(session))
+    }
+
+    fn attachment(filename: &str, content_type: &str) -> EmailAttachment {
+        EmailAttachment {
+            filename: filename.to_string(),
+            content_type: content_type.to_string(),
+            size: 1024,
+            hash: "deadbeef".to_string(),
+            content_base64: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_empty_subject_single_business_doc_is_treated_as_safe() {
+        let module = AnomalyDetectModule::new();
+        let ctx = make_ctx(vec![attachment(
+            "=?utf-8?B?6YKA6K+35Ye95YaF5a65LmRvY3g=?=",
+            "application/octet-stream",
+        )]);
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+    }
+
+    #[tokio::test]
+    async fn test_empty_subject_archive_attachment_remains_low_risk() {
+        let module = AnomalyDetectModule::new();
+        let ctx = make_ctx(vec![attachment("invoice.zip", "application/zip")]);
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Low);
+        assert!(result.categories.contains(&"empty_subject_with_attachment".to_string()));
     }
 }

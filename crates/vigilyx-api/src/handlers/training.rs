@@ -29,7 +29,7 @@ pub async fn get_training_samples(
     Query(params): Query<PaginationParams>,
 ) -> impl IntoResponse {
     let limit = params.limit.min(200);
-    let offset = params.page.saturating_sub(1) * params.limit;
+    let offset = params.page.saturating_sub(1) * limit; // use clamped `limit`, not raw input
 
     match state.engine_db.list_training_samples(limit, offset).await {
         Ok(samples) => ApiResponse::ok(serde_json::to_value(samples).unwrap_or_default()),
