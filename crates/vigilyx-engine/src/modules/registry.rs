@@ -80,6 +80,9 @@ pub async fn build_module_registry(
         &keyword_system_seed,
         &keyword_overrides,
     );
+    crate::pipeline::verdict::set_runtime_scenario_patterns(
+        crate::pipeline::verdict::ScenarioPatternLists::from(&effective_keyword_lists),
+    );
     register(
         &mut modules,
         Arc::new(ContentScanModule::new_with_keyword_lists(
@@ -319,6 +322,7 @@ async fn build_ai_remote(db: &VigilDb) -> Option<RemoteModuleProxy> {
             Some(proxy)
         }
         _ => {
+            proxy.note_probe_failure();
             info!(
                 "NLP phishing detection service not ready ({}), semantic detection will use rule-only mode",
                 ai_config.service_url,

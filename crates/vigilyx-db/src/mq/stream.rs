@@ -10,7 +10,11 @@
 
 use super::client::MqClient;
 use super::error::{MqError, MqResult};
+use redis::aio::MultiplexedConnection;
 use serde::{de::DeserializeOwned, Serialize};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 /// High-level Redis Streams client with consumer group support.
@@ -22,6 +26,7 @@ pub struct StreamClient {
     mq: MqClient,
     group: String,
     consumer: String,
+    read_conn: Arc<Mutex<Option<MultiplexedConnection>>>,
 }
 
 impl StreamClient {
@@ -33,6 +38,7 @@ impl StreamClient {
             mq,
             group: group.into(),
             consumer: consumer.into(),
+            read_conn: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -40,7 +46,12 @@ impl StreamClient {
     pub fn with_auto_consumer(mq: MqClient, group: impl Into<String>) -> Self {
         let group = group.into();
         let consumer = format!("{}-{}", &group, std::process::id());
-        Self { mq, group, consumer }
+        Self {
+            mq,
+            group,
+            consumer,
+            read_conn: Arc::new(Mutex::new(None)),
+        }
     }
 
     // ── Producer methods ──
@@ -127,30 +138,64 @@ impl StreamClient {
 
     /// Read new messages from a stream using consumer group.
     ///
-    /// Blocks for `block_ms` milliseconds waiting for new messages.
+    /// When `block_ms` is `Some`, blocks for that many milliseconds.
+    /// When `block_ms` is `None`, the read is non-blocking.
     /// Returns `(message_id, deserialized_data)` pairs.
     /// The `>` special ID means "only new, undelivered messages".
     pub async fn xreadgroup<T: DeserializeOwned>(
         &self,
         stream: &str,
         count: usize,
-        block_ms: usize,
+        block_ms: Option<usize>,
     ) -> MqResult<Vec<(String, T)>> {
-        let mut conn = self.mq.get_conn().await?;
+        // Blocking stream reads must not share the general-purpose Redis connection
+        // manager used by publish/XADD traffic, or stream consumption can starve
+        // producers and trigger timeout/reconnect loops under load.
+        let mut guard = self.read_conn.lock().await;
+        if guard.is_none() {
+            let conn = self.mq.new_stream_read_connection().await?;
+            debug!(stream, "Created dedicated Redis stream read connection");
+            *guard = Some(conn);
+        }
+        let conn = guard
+            .as_mut()
+            .expect("stream read connection must exist after initialization");
 
-        let result: redis::Value = redis::cmd("XREADGROUP")
-            .arg("GROUP")
+        let mut cmd = redis::cmd("XREADGROUP");
+        cmd.arg("GROUP")
             .arg(&self.group)
             .arg(&self.consumer)
             .arg("COUNT")
-            .arg(count)
-            .arg("BLOCK")
-            .arg(block_ms)
-            .arg("STREAMS")
-            .arg(stream)
-            .arg(">")
-            .query_async(&mut conn)
-            .await?;
+            .arg(count);
+        let read_timeout = block_ms
+            .map(|ms| Duration::from_millis(ms as u64).saturating_add(Duration::from_secs(2)))
+            .unwrap_or_else(|| Duration::from_secs(2));
+        if let Some(block_ms) = block_ms {
+            cmd.arg("BLOCK").arg(block_ms);
+        }
+        let result = tokio::time::timeout(
+            read_timeout,
+            cmd.arg("STREAMS").arg(stream).arg(">").query_async(conn),
+        )
+        .await;
+
+        let result = match result {
+            Ok(Ok(result)) => result,
+            Ok(Err(err)) => {
+                warn!(stream, error = %err, "Dedicated Redis stream read connection failed; resetting it");
+                *guard = None;
+                return Err(MqError::Redis(err));
+            }
+            Err(_) => {
+                warn!(
+                    stream,
+                    timeout_ms = read_timeout.as_millis(),
+                    "Dedicated Redis stream read timed out; resetting connection"
+                );
+                *guard = None;
+                return Err(MqError::Timeout);
+            }
+        };
 
         // XREADGROUP returns same format as XREAD:
         // [[stream_name, [[id, [field, value, ...]], ...]]]

@@ -6,6 +6,7 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::Utc;
+use secrecy::ExposeSecret;
 use serde::Deserialize;
 use std::sync::Arc;
 use url::Url;
@@ -13,6 +14,7 @@ use uuid::Uuid;
 use vigilyx_db::DispositionRuleRow;
 
 use super::super::ApiResponse;
+use super::alerts::encrypt_config_value;
 use crate::AppState;
 
 
@@ -65,6 +67,40 @@ fn mask_webhook_url(raw: &str) -> String {
 
 fn action_type(action: &serde_json::Value) -> Option<&str> {
     action.get("action_type").and_then(|value| value.as_str())
+}
+
+fn encrypt_action_secrets(actions_json: &str, jwt_secret: &str) -> Result<String, String> {
+    let mut actions: Vec<serde_json::Value> =
+        serde_json::from_str(actions_json).map_err(|e| format!("动作解析失败: {e}"))?;
+
+    for action in &mut actions {
+        if let Some(webhook_url) = action.get_mut("webhook_url")
+            && let Some(raw) = webhook_url.as_str()
+            && !raw.trim().is_empty()
+            && !raw.starts_with("ENC:")
+        {
+            let encrypted = encrypt_config_value(raw, jwt_secret)?;
+            *webhook_url = serde_json::Value::String(encrypted);
+        }
+
+        if let Some(headers) = action.get_mut("headers").and_then(|value| value.as_object_mut()) {
+            for (key, value) in headers.iter_mut() {
+                if !is_sensitive_header(key) {
+                    continue;
+                }
+                let Some(raw) = value.as_str() else {
+                    continue;
+                };
+                if raw.is_empty() || raw == MASKED_SECRET || raw.starts_with("ENC:") {
+                    continue;
+                }
+                let encrypted = encrypt_config_value(raw, jwt_secret)?;
+                *value = serde_json::Value::String(encrypted);
+            }
+        }
+    }
+
+    serde_json::to_string(&actions).map_err(|e| format!("动作序列化失败: {e}"))
 }
 
 fn restore_masked_action_secrets(existing_actions_json: &str, incoming_actions_json: &str) -> String {
@@ -198,6 +234,27 @@ pub async fn create_disposition_rule(
     Json(req): Json<CreateDispositionRuleRequest>,
 ) -> axum::response::Response {
     let now = Utc::now().to_rfc3339();
+    let actions_raw = match serde_json::to_string(&req.actions) {
+        Ok(s) => s,
+        Err(e) => {
+            return ApiResponse::<serde_json::Value>::bad_request(format!(
+                "序列化动作failed: {}",
+                e
+            ))
+            .into_response();
+        }
+    };
+    let actions = match encrypt_action_secrets(
+        &actions_raw,
+        state.auth.config.jwt_secret.expose_secret(),
+    ) {
+        Ok(actions) => actions,
+        Err(e) => {
+            return ApiResponse::<serde_json::Value>::server_error(&e, "Operation failed")
+                .into_response();
+        }
+    };
+
     let rule = vigilyx_db::DispositionRuleRow {
         id: Uuid::new_v4().to_string(),
         name: req.name,
@@ -214,16 +271,7 @@ pub async fn create_disposition_rule(
                 .into_response();
             }
         },
-        actions: match serde_json::to_string(&req.actions) {
-            Ok(s) => s,
-            Err(e) => {
-                return ApiResponse::<serde_json::Value>::bad_request(format!(
-                    "序列化动作failed: {}",
-                    e
-                ))
-                .into_response();
-            }
-        },
+        actions,
         created_at: now.clone(),
         updated_at: now,
     };
@@ -263,6 +311,13 @@ pub async fn update_disposition_rule(
                 e
             ))
             .into_response();
+        }
+    };
+    let actions = match encrypt_action_secrets(&actions, state.auth.config.jwt_secret.expose_secret()) {
+        Ok(actions) => actions,
+        Err(e) => {
+            return ApiResponse::<serde_json::Value>::server_error(&e, "Operation failed")
+                .into_response();
         }
     };
 

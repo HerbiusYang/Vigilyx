@@ -24,7 +24,7 @@ use crate::capture::RawpacketInfo;
 use crate::parser::http_state::HttpRequestStateMachine;
 use crate::parser::mime::MimeParser;
 use crate::parser::smtp_state::{SmtpCommand, SmtpResponse, SmtpStateMachine};
-use crate::stream::{TcpHalfStream, TcpSegment};
+use crate::stream::{TcpHalfStream, TcpPendingSegmentsDiag, TcpSegment};
 use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
@@ -49,19 +49,17 @@ use rate_limit::{IpRateLimitEntry, RATE_LIMIT_WINDOW_SECS};
 use smtp_relay::SmtpRelayCorrelationProbe;
 use types::SidUserEntry;
 
-
 // Processing result enum (Avoid unnecessary cloning)
-
 
 /// packet processing result
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum ProcessResult {
-   /// Existing session
+    /// Existing session
     Existing,
-   /// Newly created session (Requires full session data)
+    /// Newly created session (Requires full session data)
     New(EmailSession),
-   /// Rejected (Security restrictions)
+    /// Rejected (Security restrictions)
     Rejected,
 }
 
@@ -93,59 +91,82 @@ type FxBuildHasher = BuildHasherDefault<FxHasher>;
 /// DashMap using FxHash
 type FxDashMap<K, V> = DashMap<K, V, FxBuildHasher>;
 
+struct SmtpRestoreDiagSnapshot {
+    restore_diag_hint: &'static str,
+    buffered_email_bytes: usize,
+    in_data_mode: bool,
+    data_pending: bool,
+    saw_354: bool,
+    client_pending_diag: TcpPendingSegmentsDiag,
+    server_pending_diag: TcpPendingSegmentsDiag,
+    client_gap_bytes: usize,
+    server_gap_bytes: usize,
+    client_pending_segments: usize,
+    server_pending_segments: usize,
+    client_prepend_shift: usize,
+    server_prepend_shift: usize,
+    client_reassembled_len: usize,
+    server_reassembled_len: usize,
+    client_first_seq: Option<u32>,
+    server_first_seq: Option<u32>,
+    client_next_seq: Option<u32>,
+    server_next_seq: Option<u32>,
+    dialog_tail: Vec<String>,
+}
+
 // ============================================
 // Sharded session manager (High-performance)
 // ============================================
 
 /// Sharded session manager (Lock-free concurrent, with safety limits)
 pub struct ShardedSessionManager {
-   /// session storage (FxHash DashMap)
+    /// session storage (FxHash DashMap)
     pub(super) sessions: FxDashMap<SessionKey, Sessiondata>,
-   /// IP rate limiter (FxHash DashMap)
+    /// IP rate limiter (FxHash DashMap)
     pub(super) ip_rate_limits: FxDashMap<CompactIp, IpRateLimitEntry>,
-   /// Cache-line aligned statistics
+    /// Cache-line aligned statistics
     pub(super) stats: AlignedSessionStats,
-   /// Rejectedof connectioncount (Security)
+    /// Rejectedof connectioncount (Security)
     pub(super) rejected_connections: AtomicU64,
-   /// Session timeout duration
+    /// Session timeout duration
     pub(super) timeout: Duration,
-   /// SMTP pending DATA idle timeout duration
+    /// SMTP pending DATA idle timeout duration
     pub(super) smtp_pending_timeout: Duration,
-   /// SIMD handler (precompiled mode)
+    /// SIMD handler (precompiled mode)
     #[allow(dead_code)]
     pub(super) mail_from_finder: memmem::Finder<'static>,
     #[allow(dead_code)]
     pub(super) rcpt_to_finder: memmem::Finder<'static>,
     pub(super) subject_finder: memmem::Finder<'static>,
-   /// Reuseof MIME Parsehandler (Avoid email SIMD Finder)
+    /// Reuseof MIME Parsehandler (Avoid email SIMD Finder)
     pub(super) mime_parser: MimeParser,
-   /// Dirty session queue (O(dirty_count))
+    /// Dirty session queue (O(dirty_count))
     pub(super) dirty_queue: SegQueue<SessionKey>,
-   /// Post-restore relay-hop probes that are correlated outside the DashMap session lock.
+    /// Post-restore relay-hop probes that are correlated outside the DashMap session lock.
     pub(super) smtp_relay_diag_queue: SegQueue<SmtpRelayCorrelationProbe>,
-   /// HTTP SessionQueue (dataSecuritydetect, From HTTP Stream MediumExtract)
+    /// HTTP SessionQueue (dataSecuritydetect, From HTTP Stream MediumExtract)
     pub(super) http_session_queue: SegQueue<HttpSession>,
-   /// HTTP SessionQueueWhenfirstdepth (HTTP_SESSION_QUEUE_CAPACITY Capacitylimit)
+    /// HTTP SessionQueueWhenfirstdepth (HTTP_SESSION_QUEUE_CAPACITY Capacitylimit)
     pub(super) http_queue_len: AtomicU64,
-   /// Coremail sid -> useremailMapping (From compose body / socket.io auth learn)
-   /// valuepacketContainslastaccesstimestamp Used for LRU eviction
+    /// Coremail sid -> useremailMapping (From compose body / socket.io auth learn)
+    /// valuepacketContainslastaccesstimestamp Used for LRU eviction
     pub(super) sid_to_user: FxDashMap<String, SidUserEntry>,
-   /// Add newof sid -> user MappingWaitwrite Redis ofbuffer (Avoidevery insert allwrite Redis)
+    /// Add newof sid -> user MappingWaitwrite Redis ofbuffer (Avoidevery insert allwrite Redis)
     pub(super) sid_user_pending: std::sync::Mutex<Vec<(String, String)>>,
 }
 
 impl ShardedSessionManager {
-   /// CreateNew session manager
+    /// CreateNew session manager
     pub fn new() -> Self {
         Self::with_timeout(Duration::from_secs(900)) // 15minute,givinglargeemailenoughtimestamp
     }
 
-   /// CreatewithTimeout session manager
+    /// CreatewithTimeout session manager
     pub fn with_timeout(timeout: Duration) -> Self {
         Self::with_timeouts(timeout, SMTP_PENDING_DATA_IDLE_TIMEOUT)
     }
 
-   /// Createwith independent session and SMTP pending DATA timeouts
+    /// Createwith independent session and SMTP pending DATA timeouts
     pub fn with_timeouts(timeout: Duration, smtp_pending_timeout: Duration) -> Self {
         Self {
             sessions: DashMap::with_hasher(FxBuildHasher::default()),
@@ -154,27 +175,31 @@ impl ShardedSessionManager {
             rejected_connections: AtomicU64::new(0),
             timeout,
             smtp_pending_timeout,
-           // Precompile SIMD search mode
+            // Precompile SIMD search mode
             mail_from_finder: memmem::Finder::new(b"MAIL FROM:").into_owned(),
             rcpt_to_finder: memmem::Finder::new(b"RCPT TO:").into_owned(),
             subject_finder: memmem::Finder::new(b"Subject:").into_owned(),
-           // Reuse MIME Parsehandler (Shared SIMD Finder)
+            // Reuse MIME Parsehandler (Shared SIMD Finder)
             mime_parser: MimeParser::new(),
-           // Dirty session queue
+            // Dirty session queue
             dirty_queue: SegQueue::new(),
-           // SMTP relay-hop diagnostics queue
+            // SMTP relay-hop diagnostics queue
             smtp_relay_diag_queue: SegQueue::new(),
-           // HTTP dataSecuritySessionQueue
+            // HTTP dataSecuritySessionQueue
             http_session_queue: SegQueue::new(),
             http_queue_len: AtomicU64::new(0),
-           // Coremail sid -> user Mapping (LRU)
+            // Coremail sid -> user Mapping (LRU)
             sid_to_user: DashMap::with_hasher(FxBuildHasher::default()),
             sid_user_pending: std::sync::Mutex::new(Vec::new()),
         }
     }
 
     #[inline]
-    fn refresh_packet_activity(session_data: &mut Sessiondata, packet: &RawpacketInfo, now: Instant) {
+    fn refresh_packet_activity(
+        session_data: &mut Sessiondata,
+        packet: &RawpacketInfo,
+        now: Instant,
+    ) {
         session_data.last_activity = now;
         session_data.last_packet_at = chrono::Utc::now();
         session_data.last_packet_direction = packet.direction;
@@ -194,7 +219,7 @@ impl ShardedSessionManager {
             Ordering::Relaxed,
             |v| v.checked_sub(1),
         );
-       *active_counter_open = false;
+        *active_counter_open = false;
     }
 
     #[inline]
@@ -227,7 +252,7 @@ impl ShardedSessionManager {
     #[inline]
     fn mark_session_dirty(&self, dirty: &mut bool, key: &SessionKey) {
         if !*dirty {
-           *dirty = true;
+            *dirty = true;
             self.dirty_queue.push(key.clone());
         }
     }
@@ -268,10 +293,7 @@ impl ShardedSessionManager {
             for part in decoded.split(',') {
                 let part = part.trim();
                 let addr = if let Some(start) = part.rfind('<') {
-                    part[start + 1..]
-                        .trim_end_matches('>')
-                        .trim()
-                        .to_string()
+                    part[start + 1..].trim_end_matches('>').trim().to_string()
                 } else {
                     part.to_string()
                 };
@@ -382,6 +404,9 @@ impl ShardedSessionManager {
         restore_origin: &str,
         parse_context: &str,
     ) {
+        let diag_snapshot = Self::collect_smtp_restore_diag_snapshot(session_data);
+        let should_log_resolution =
+            Self::should_log_smtp_restore_resolution(session_data, &diag_snapshot, restore_origin);
         session_data.session.email_count += 1;
 
         let email_data = {
@@ -419,16 +444,30 @@ impl ShardedSessionManager {
                     .smtp_pipeline
                     .smtp_mime_parse_failed
                     .fetch_add(1, Ordering::Relaxed);
-                warn!(
-                    session_id = %session_data.session.id,
-                    payload_bytes = email_data.len(),
-                    client_gap_bytes = session_data.client_stream.gap_bytes_skipped,
-                    server_gap_bytes = session_data.server_stream.gap_bytes_skipped,
-                    "SMTP MIME parse failed {}: {:?}",
+                self.log_smtp_mime_parse_failure(
+                    session_data,
+                    &diag_snapshot,
+                    email_data.len(),
                     parse_context,
-                    e
+                    Some(restore_origin),
+                    None,
+                    None,
+                    diag_snapshot.buffered_email_bytes,
+                    &e,
                 );
             }
+        }
+
+        if should_log_resolution && Self::smtp_session_has_restored_payload(&session_data.session) {
+            self.log_smtp_restore_resolution(
+                session_data,
+                &diag_snapshot,
+                restore_origin,
+                parse_context,
+                None,
+                None,
+                diag_snapshot.buffered_email_bytes,
+            );
         }
     }
 
@@ -468,12 +507,16 @@ impl ShardedSessionManager {
             if let Some(text) = dialog_text
                 && session_data.session.content.smtp_dialog.len() < MAX_SMTP_DIALOG_ENTRIES
             {
-                session_data.session.content.smtp_dialog.push(SmtpDialogEntry {
-                    direction: Direction::Outbound,
-                    command: text,
-                    size: 0,
-                    timestamp: chrono::Utc::now(),
-                });
+                session_data
+                    .session
+                    .content
+                    .smtp_dialog
+                    .push(SmtpDialogEntry {
+                        direction: Direction::Outbound,
+                        command: text,
+                        size: 0,
+                        timestamp: chrono::Utc::now(),
+                    });
             }
 
             match cmd {
@@ -496,11 +539,7 @@ impl ShardedSessionManager {
                     debug!("RCPT TO: {:?}", session_data.session.rcpt_to);
                 }
                 SmtpCommand::DataEnd => {
-                    self.finalize_completed_smtp_email(
-                        session_data,
-                        "data_end",
-                        "after DATA",
-                    );
+                    self.finalize_completed_smtp_email(session_data, "data_end", "after DATA");
                 }
                 SmtpCommand::Quit => {
                     if session_data.session.status != SessionStatus::Timeout
@@ -604,16 +643,20 @@ impl ShardedSessionManager {
                     550..=554 => "事务failed",
                     _ => "",
                 };
-                session_data.session.content.smtp_dialog.push(SmtpDialogEntry {
-                    direction: Direction::Inbound,
-                    command: if desc.is_empty() {
-                        format!("{}", resp.code)
-                    } else {
-                        format!("{} {}", resp.code, desc)
-                    },
-                    size: 0,
-                    timestamp: chrono::Utc::now(),
-                });
+                session_data
+                    .session
+                    .content
+                    .smtp_dialog
+                    .push(SmtpDialogEntry {
+                        direction: Direction::Inbound,
+                        command: if desc.is_empty() {
+                            format!("{}", resp.code)
+                        } else {
+                            format!("{} {}", resp.code, desc)
+                        },
+                        size: 0,
+                        timestamp: chrono::Utc::now(),
+                    });
             }
         }
 
@@ -652,6 +695,10 @@ impl ShardedSessionManager {
                     let tcp_closed =
                         session_data.client_tcp_closed && session_data.server_tcp_closed;
                     if pending_data && !tcp_closed {
+                        let client_pending_diag =
+                            session_data.client_stream.pending_segments_diag();
+                        let server_pending_diag =
+                            session_data.server_stream.pending_segments_diag();
                         if saw_354 || buffered_email_bytes > 0 {
                             if session_data.session.status != SessionStatus::Timeout
                                 && self.complete_session_if_needed(
@@ -669,23 +716,55 @@ impl ShardedSessionManager {
                                     total_bytes = session_data.session.total_bytes,
                                     buffered_email_bytes,
                                     saw_354,
+                                    restore_diag_hint = Self::smtp_restore_diag_hint(session_data),
+                                    client_pending_segments = session_data.client_stream.pending_segments(),
+                                    server_pending_segments = session_data.server_stream.pending_segments(),
+                                    client_pending_bytes = client_pending_diag.pending_bytes,
+                                    server_pending_bytes = server_pending_diag.pending_bytes,
+                                    client_waiting_for_seq = ?client_pending_diag.waiting_for_seq,
+                                    server_waiting_for_seq = ?server_pending_diag.waiting_for_seq,
+                                    client_first_pending_seq = ?client_pending_diag.first_pending_seq,
+                                    server_first_pending_seq = ?server_pending_diag.first_pending_seq,
+                                    client_gap_before_first_pending_bytes = client_pending_diag.first_gap_bytes,
+                                    server_gap_before_first_pending_bytes = server_pending_diag.first_gap_bytes,
+                                    client_pending_explanation = Self::smtp_pending_explanation(&client_pending_diag),
+                                    server_pending_explanation = Self::smtp_pending_explanation(&server_pending_diag),
+                                    client_pending_summary = %client_pending_diag,
+                                    server_pending_summary = %server_pending_diag,
                                     client_closed = session_data.client_tcp_closed,
                                     server_closed = session_data.server_tcp_closed,
                                     "Completing SMTP session on server 221 with pending DATA; salvaging without waiting for TCP close"
                                 );
-                                pending_restore_issue_trigger
-                                    .get_or_insert("server_221_salvage");
+                                pending_restore_issue_trigger.get_or_insert("server_221_salvage");
                             }
                             continue;
                         }
 
-                        self.maybe_log_smtp_pending_diagnostics(session_data, "server_221_deferred");
+                        self.maybe_log_smtp_pending_diagnostics(
+                            session_data,
+                            "server_221_deferred",
+                        );
                         warn!(
                             session_id = %session_data.session.id,
                             packet_count = session_data.session.packet_count,
                             total_bytes = session_data.session.total_bytes,
                             buffered_email_bytes,
                             saw_354,
+                            restore_diag_hint = Self::smtp_restore_diag_hint(session_data),
+                            client_pending_segments = session_data.client_stream.pending_segments(),
+                            server_pending_segments = session_data.server_stream.pending_segments(),
+                            client_pending_bytes = client_pending_diag.pending_bytes,
+                            server_pending_bytes = server_pending_diag.pending_bytes,
+                            client_waiting_for_seq = ?client_pending_diag.waiting_for_seq,
+                            server_waiting_for_seq = ?server_pending_diag.waiting_for_seq,
+                            client_first_pending_seq = ?client_pending_diag.first_pending_seq,
+                            server_first_pending_seq = ?server_pending_diag.first_pending_seq,
+                            client_gap_before_first_pending_bytes = client_pending_diag.first_gap_bytes,
+                            server_gap_before_first_pending_bytes = server_pending_diag.first_gap_bytes,
+                            client_pending_explanation = Self::smtp_pending_explanation(&client_pending_diag),
+                            server_pending_explanation = Self::smtp_pending_explanation(&server_pending_diag),
+                            client_pending_summary = %client_pending_diag,
+                            server_pending_summary = %server_pending_diag,
                             "Deferring SMTP 221 completion until TCP close/timeout"
                         );
                         continue;
@@ -735,6 +814,7 @@ impl ShardedSessionManager {
             .as_ref()
             .map(|s| s.buffered_email_bytes())
             .unwrap_or(0);
+        let diag_snapshot = Self::collect_smtp_restore_diag_snapshot(session_data);
 
         let pending_email = {
             let Some(smtp_state) = session_data.smtp_state.as_mut() else {
@@ -780,6 +860,19 @@ impl ShardedSessionManager {
                 ) {
                     self.enqueue_smtp_relay_probe(session_data, message_id);
                 }
+                self.log_smtp_restore_resolution(
+                    session_data,
+                    &diag_snapshot,
+                    if had_terminator {
+                        "close_salvage_terminated"
+                    } else {
+                        "close_salvage_truncated"
+                    },
+                    "close salvage",
+                    Some(trigger),
+                    Some(had_terminator),
+                    pending_buffer_bytes,
+                );
                 if !has_message_id || !has_subject || (body_text_len == 0 && body_html_len == 0) {
                     self.stats
                         .smtp_pipeline
@@ -790,6 +883,7 @@ impl ShardedSessionManager {
                         trigger,
                         had_terminator,
                         created_without_syn = session_data.created_without_syn,
+                        restore_diag_hint = diag_snapshot.restore_diag_hint,
                         pending_buffer_bytes,
                         headers_len,
                         has_message_id,
@@ -798,12 +892,35 @@ impl ShardedSessionManager {
                         body_html_len,
                         client_pending_segments = session_data.client_stream.pending_segments(),
                         server_pending_segments = session_data.server_stream.pending_segments(),
+                        client_pending_bytes = diag_snapshot.client_pending_diag.pending_bytes,
+                        server_pending_bytes = diag_snapshot.server_pending_diag.pending_bytes,
+                        client_waiting_for_seq = ?diag_snapshot.client_pending_diag.waiting_for_seq,
+                        server_waiting_for_seq = ?diag_snapshot.server_pending_diag.waiting_for_seq,
+                        client_first_pending_seq = ?diag_snapshot.client_pending_diag.first_pending_seq,
+                        server_first_pending_seq = ?diag_snapshot.server_pending_diag.first_pending_seq,
+                        client_gap_before_first_pending_bytes = diag_snapshot.client_pending_diag.first_gap_bytes,
+                        server_gap_before_first_pending_bytes = diag_snapshot.server_pending_diag.first_gap_bytes,
+                        client_pending_explanation = Self::smtp_pending_explanation(&diag_snapshot.client_pending_diag),
+                        server_pending_explanation = Self::smtp_pending_explanation(&diag_snapshot.server_pending_diag),
+                        client_pending_summary = %diag_snapshot.client_pending_diag,
+                        server_pending_summary = %diag_snapshot.server_pending_diag,
                         client_processed_offset = session_data.client_processed_offset,
                         server_processed_offset = session_data.server_processed_offset,
                         client_reassembled_len = session_data.client_stream.reassembled_len(),
                         server_reassembled_len = session_data.server_stream.reassembled_len(),
                         client_gap_bytes = session_data.client_stream.gap_bytes_skipped,
                         server_gap_bytes = session_data.server_stream.gap_bytes_skipped,
+                        owner_worker_id = ?session_data.owner_worker_id,
+                        last_worker_id = ?session_data.last_worker_id,
+                        worker_switch_count = session_data.worker_switch_count,
+                        last_packet_at = %session_data.last_packet_at,
+                        last_packet_direction = ?session_data.last_packet_direction,
+                        last_packet_seq = session_data.last_packet_seq,
+                        last_packet_payload_len = session_data.last_packet_payload_len,
+                        last_packet_tcp_flags = session_data.last_packet_tcp_flags,
+                        client_closed = session_data.client_tcp_closed,
+                        server_closed = session_data.server_tcp_closed,
+                        dialog_tail = ?diag_snapshot.dialog_tail,
                         header_names = ?header_names,
                         "SMTP close salvage restored only partial headers/body"
                     );
@@ -814,32 +931,31 @@ impl ShardedSessionManager {
                     .smtp_pipeline
                     .smtp_mime_parse_failed
                     .fetch_add(1, Ordering::Relaxed);
-                warn!(
-                    session_id = %session_data.session.id,
-                    trigger,
-                    payload_bytes = email_data.len(),
-                    created_without_syn = session_data.created_without_syn,
+                self.log_smtp_mime_parse_failure(
+                    session_data,
+                    &diag_snapshot,
+                    email_data.len(),
+                    "close salvage",
+                    Some(if had_terminator {
+                        "close_salvage_terminated"
+                    } else {
+                        "close_salvage_truncated"
+                    }),
+                    Some(trigger),
+                    Some(had_terminator),
                     pending_buffer_bytes,
-                    had_terminator,
-                    client_pending_segments = session_data.client_stream.pending_segments(),
-                    server_pending_segments = session_data.server_stream.pending_segments(),
-                    client_processed_offset = session_data.client_processed_offset,
-                    server_processed_offset = session_data.server_processed_offset,
-                    client_gap_bytes = session_data.client_stream.gap_bytes_skipped,
-                    server_gap_bytes = session_data.server_stream.gap_bytes_skipped,
-                    "SMTP MIME parse failed during close salvage: {:?}",
-                    e
+                    &e,
                 );
             }
         }
     }
 
     fn try_lossy_fill_pending_smtp_client_bytes_on_close(&self, session_data: &mut Sessiondata) {
-       // : has_pending_data() && buffered_email_bytes() == 0
-       // : (buffered_email_bytes> 0)
-       // TcpHalfStream pending segments, lossy reassembly,
-       // MIME parse().
-       // : pending segments SMTP, lossy fill.
+        // : has_pending_data() && buffered_email_bytes() == 0
+        // : (buffered_email_bytes> 0)
+        // TcpHalfStream pending segments, lossy reassembly,
+        // MIME parse().
+        // : pending segments SMTP, lossy fill.
         let smtp_has_pending = session_data
             .smtp_state
             .as_ref()
@@ -866,7 +982,10 @@ impl ShardedSessionManager {
                     .smtp_state
                     .as_mut()
                     .expect("smtp state exists")
-                    .process_late_client_prepend(&reassembled[..prepend_len], already_processed_suffix)
+                    .process_late_client_prepend(
+                        &reassembled[..prepend_len],
+                        already_processed_suffix,
+                    )
             } else {
                 SmallVec::new()
             };
@@ -881,7 +1000,12 @@ impl ShardedSessionManager {
                 SmallVec::new()
             };
 
-            (prepend_commands, commands, reassembled.len(), total_gap_bytes)
+            (
+                prepend_commands,
+                commands,
+                reassembled.len(),
+                total_gap_bytes,
+            )
         };
 
         if total_gap_bytes > session_data.client_gap_logged_bytes {
@@ -895,12 +1019,19 @@ impl ShardedSessionManager {
                 .smtp_client_gap_bytes_total
                 .fetch_add(new_gap_bytes as u64, Ordering::Relaxed);
             session_data.client_gap_logged_bytes = total_gap_bytes;
+            let client_pending_diag = session_data.client_stream.pending_segments_diag();
             warn!(
                 session_id = %session_data.session.id,
                 created_without_syn = session_data.created_without_syn,
                 new_gap_bytes,
                 total_gap_bytes,
                 client_pending_segments = session_data.client_stream.pending_segments(),
+                client_pending_bytes = client_pending_diag.pending_bytes,
+                client_waiting_for_seq = ?client_pending_diag.waiting_for_seq,
+                client_first_pending_seq = ?client_pending_diag.first_pending_seq,
+                client_gap_before_first_pending_bytes = client_pending_diag.first_gap_bytes,
+                client_pending_explanation = Self::smtp_pending_explanation(&client_pending_diag),
+                client_pending_summary = %client_pending_diag,
                 client_processed_offset = session_data.client_processed_offset,
                 client_reassembled_len = session_data.client_stream.reassembled_len(),
                 "SMTP close-path lossy gap skip: direction=client_to_server"
@@ -913,7 +1044,11 @@ impl ShardedSessionManager {
             prepend_commands,
             &mut pending_restore_issue_trigger,
         );
-        self.handle_smtp_client_commands(session_data, commands, &mut pending_restore_issue_trigger);
+        self.handle_smtp_client_commands(
+            session_data,
+            commands,
+            &mut pending_restore_issue_trigger,
+        );
 
         session_data.client_processed_offset = reassembled_len;
         session_data.client_stream.prepend_shift = 0;
@@ -927,7 +1062,277 @@ impl ShardedSessionManager {
     }
 
     #[inline]
-    fn smtp_pending_idle_timeout_applies(&self, session_data: &Sessiondata, idle: Duration) -> bool {
+    fn smtp_dialog_tail(session_data: &Sessiondata) -> Vec<String> {
+        session_data
+            .session
+            .content
+            .smtp_dialog
+            .iter()
+            .rev()
+            .take(4)
+            .map(|entry| entry.command.clone())
+            .collect()
+    }
+
+    #[inline]
+    fn smtp_pending_explanation(diag: &TcpPendingSegmentsDiag) -> &'static str {
+        if diag.pending_segments == 0 {
+            "no_pending_segments_buffered_in_reassembly"
+        } else if diag.first_gap_bytes > 0 {
+            "waiting_for_missing_bytes_before_buffered_segments"
+        } else if diag.waiting_for_seq.is_some() && diag.waiting_for_seq == diag.first_pending_seq {
+            "buffered_segments_start_exactly_at_expected_seq"
+        } else {
+            "pending_segments_exist_but_head_gap_is_not_visible"
+        }
+    }
+
+    #[inline]
+    fn collect_smtp_restore_diag_snapshot(session_data: &Sessiondata) -> SmtpRestoreDiagSnapshot {
+        let buffered_email_bytes = session_data
+            .smtp_state
+            .as_ref()
+            .map(|s| s.buffered_email_bytes())
+            .unwrap_or(0);
+        let in_data_mode = session_data
+            .smtp_state
+            .as_ref()
+            .map(|s| s.is_in_data_mode())
+            .unwrap_or(false);
+        let data_pending = session_data
+            .smtp_state
+            .as_ref()
+            .map(|s| s.has_pending_data())
+            .unwrap_or(false);
+        let client_pending_diag = session_data.client_stream.pending_segments_diag();
+        let server_pending_diag = session_data.server_stream.pending_segments_diag();
+
+        SmtpRestoreDiagSnapshot {
+            restore_diag_hint: Self::smtp_restore_diag_hint(session_data),
+            buffered_email_bytes,
+            in_data_mode,
+            data_pending,
+            saw_354: Self::smtp_session_saw_354(&session_data.session),
+            client_pending_segments: client_pending_diag.pending_segments,
+            server_pending_segments: server_pending_diag.pending_segments,
+            client_pending_diag,
+            server_pending_diag,
+            client_gap_bytes: session_data.client_stream.gap_bytes_skipped,
+            server_gap_bytes: session_data.server_stream.gap_bytes_skipped,
+            client_prepend_shift: session_data.client_stream.prepend_shift,
+            server_prepend_shift: session_data.server_stream.prepend_shift,
+            client_reassembled_len: session_data.client_stream.reassembled_len(),
+            server_reassembled_len: session_data.server_stream.reassembled_len(),
+            client_first_seq: session_data.client_stream.first_seq(),
+            server_first_seq: session_data.server_stream.first_seq(),
+            client_next_seq: session_data.client_stream.next_seq(),
+            server_next_seq: session_data.server_stream.next_seq(),
+            dialog_tail: Self::smtp_dialog_tail(session_data),
+        }
+    }
+
+    #[inline]
+    fn should_log_smtp_restore_resolution(
+        session_data: &Sessiondata,
+        snapshot: &SmtpRestoreDiagSnapshot,
+        restore_origin: &str,
+    ) -> bool {
+        restore_origin.starts_with("close_salvage")
+            || restore_origin == "server_pending_data_end"
+            || session_data.smtp_pending_diag_logged
+            || session_data.worker_switch_count > 0
+            || session_data.created_without_syn
+            || snapshot.data_pending
+            || snapshot.in_data_mode
+            || snapshot.client_gap_bytes > 0
+            || snapshot.server_gap_bytes > 0
+            || snapshot.client_pending_segments > 0
+            || snapshot.server_pending_segments > 0
+            || snapshot.client_prepend_shift > 0
+            || snapshot.server_prepend_shift > 0
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn log_smtp_restore_resolution(
+        &self,
+        session_data: &Sessiondata,
+        snapshot: &SmtpRestoreDiagSnapshot,
+        restore_origin: &str,
+        parse_context: &str,
+        trigger: Option<&str>,
+        had_terminator: Option<bool>,
+        pending_buffer_bytes: usize,
+    ) {
+        let body_text_len = session_data
+            .session
+            .content
+            .body_text
+            .as_ref()
+            .map_or(0, |body| body.len());
+        let body_html_len = session_data
+            .session
+            .content
+            .body_html
+            .as_ref()
+            .map_or(0, |body| body.len());
+        let should_warn = !session_data.session.content.is_complete
+            || restore_origin.starts_with("close_salvage")
+            || session_data.worker_switch_count > 0;
+
+        macro_rules! emit_restore_resolution {
+            ($log:path) => {
+                $log!(
+                    session_id = %session_data.session.id,
+                    trigger,
+                    restore_origin,
+                    parse_context,
+                    had_terminator = ?had_terminator,
+                    pending_diag_logged = session_data.smtp_pending_diag_logged,
+                    created_without_syn = session_data.created_without_syn,
+                    restore_diag_hint = snapshot.restore_diag_hint,
+                    mail_from = ?session_data.session.mail_from,
+                    rcpt_to_count = session_data.session.rcpt_to.len(),
+                    subject = ?session_data.session.subject,
+                    email_count = session_data.session.email_count,
+                    is_complete = session_data.session.content.is_complete,
+                    body_text_len,
+                    body_html_len,
+                    attachments = session_data.session.content.attachments.len(),
+                    links = session_data.session.content.links.len(),
+                    pending_buffer_bytes,
+                    buffered_email_bytes_before_parse = snapshot.buffered_email_bytes,
+                    in_data_mode_before_parse = snapshot.in_data_mode,
+                    data_pending_before_parse = snapshot.data_pending,
+                    saw_354 = snapshot.saw_354,
+                    client_gap_bytes = snapshot.client_gap_bytes,
+                    server_gap_bytes = snapshot.server_gap_bytes,
+                    client_pending_segments_before_parse = snapshot.client_pending_segments,
+                    server_pending_segments_before_parse = snapshot.server_pending_segments,
+                    client_pending_bytes_before_parse = snapshot.client_pending_diag.pending_bytes,
+                    server_pending_bytes_before_parse = snapshot.server_pending_diag.pending_bytes,
+                    client_waiting_for_seq_before_parse = ?snapshot.client_pending_diag.waiting_for_seq,
+                    server_waiting_for_seq_before_parse = ?snapshot.server_pending_diag.waiting_for_seq,
+                    client_first_pending_seq_before_parse = ?snapshot.client_pending_diag.first_pending_seq,
+                    server_first_pending_seq_before_parse = ?snapshot.server_pending_diag.first_pending_seq,
+                    client_gap_before_first_pending_bytes = snapshot.client_pending_diag.first_gap_bytes,
+                    server_gap_before_first_pending_bytes = snapshot.server_pending_diag.first_gap_bytes,
+                    client_pending_explanation = Self::smtp_pending_explanation(&snapshot.client_pending_diag),
+                    server_pending_explanation = Self::smtp_pending_explanation(&snapshot.server_pending_diag),
+                    client_pending_summary = %snapshot.client_pending_diag,
+                    server_pending_summary = %snapshot.server_pending_diag,
+                    client_prepend_shift_before_parse = snapshot.client_prepend_shift,
+                    server_prepend_shift_before_parse = snapshot.server_prepend_shift,
+                    client_processed_offset = session_data.client_processed_offset,
+                    server_processed_offset = session_data.server_processed_offset,
+                    client_reassembled_len = snapshot.client_reassembled_len,
+                    server_reassembled_len = snapshot.server_reassembled_len,
+                    client_first_seq = ?snapshot.client_first_seq,
+                    server_first_seq = ?snapshot.server_first_seq,
+                    client_next_seq = ?snapshot.client_next_seq,
+                    server_next_seq = ?snapshot.server_next_seq,
+                    owner_worker_id = ?session_data.owner_worker_id,
+                    last_worker_id = ?session_data.last_worker_id,
+                    worker_switch_count = session_data.worker_switch_count,
+                    last_packet_at = %session_data.last_packet_at,
+                    last_packet_direction = ?session_data.last_packet_direction,
+                    last_packet_seq = session_data.last_packet_seq,
+                    last_packet_payload_len = session_data.last_packet_payload_len,
+                    last_packet_tcp_flags = session_data.last_packet_tcp_flags,
+                    client_closed = session_data.client_tcp_closed,
+                    server_closed = session_data.server_tcp_closed,
+                    dialog_tail = ?snapshot.dialog_tail,
+                    "SMTP restore path resolved with diagnostic context"
+                );
+            };
+        }
+
+        if should_warn {
+            emit_restore_resolution!(warn);
+        } else {
+            emit_restore_resolution!(info);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn log_smtp_mime_parse_failure<E: std::fmt::Debug>(
+        &self,
+        session_data: &Sessiondata,
+        snapshot: &SmtpRestoreDiagSnapshot,
+        payload_bytes: usize,
+        parse_context: &str,
+        restore_origin: Option<&str>,
+        trigger: Option<&str>,
+        had_terminator: Option<bool>,
+        pending_buffer_bytes: usize,
+        error: &E,
+    ) {
+        warn!(
+            session_id = %session_data.session.id,
+            trigger,
+            parse_context,
+            restore_origin = restore_origin.unwrap_or("direct_parse"),
+            had_terminator = ?had_terminator,
+            pending_diag_logged = session_data.smtp_pending_diag_logged,
+            created_without_syn = session_data.created_without_syn,
+            restore_diag_hint = snapshot.restore_diag_hint,
+            payload_bytes,
+            pending_buffer_bytes,
+            buffered_email_bytes_before_parse = snapshot.buffered_email_bytes,
+            in_data_mode_before_parse = snapshot.in_data_mode,
+            data_pending_before_parse = snapshot.data_pending,
+            saw_354 = snapshot.saw_354,
+            mail_from = ?session_data.session.mail_from,
+            rcpt_to_count = session_data.session.rcpt_to.len(),
+            subject = ?session_data.session.subject,
+            email_count = session_data.session.email_count,
+            client_gap_bytes = snapshot.client_gap_bytes,
+            server_gap_bytes = snapshot.server_gap_bytes,
+            client_pending_segments_before_parse = snapshot.client_pending_segments,
+            server_pending_segments_before_parse = snapshot.server_pending_segments,
+            client_pending_bytes_before_parse = snapshot.client_pending_diag.pending_bytes,
+            server_pending_bytes_before_parse = snapshot.server_pending_diag.pending_bytes,
+            client_waiting_for_seq_before_parse = ?snapshot.client_pending_diag.waiting_for_seq,
+            server_waiting_for_seq_before_parse = ?snapshot.server_pending_diag.waiting_for_seq,
+            client_first_pending_seq_before_parse = ?snapshot.client_pending_diag.first_pending_seq,
+            server_first_pending_seq_before_parse = ?snapshot.server_pending_diag.first_pending_seq,
+            client_gap_before_first_pending_bytes = snapshot.client_pending_diag.first_gap_bytes,
+            server_gap_before_first_pending_bytes = snapshot.server_pending_diag.first_gap_bytes,
+            client_pending_explanation = Self::smtp_pending_explanation(&snapshot.client_pending_diag),
+            server_pending_explanation = Self::smtp_pending_explanation(&snapshot.server_pending_diag),
+            client_pending_summary = %snapshot.client_pending_diag,
+            server_pending_summary = %snapshot.server_pending_diag,
+            client_prepend_shift_before_parse = snapshot.client_prepend_shift,
+            server_prepend_shift_before_parse = snapshot.server_prepend_shift,
+            client_processed_offset = session_data.client_processed_offset,
+            server_processed_offset = session_data.server_processed_offset,
+            client_reassembled_len = snapshot.client_reassembled_len,
+            server_reassembled_len = snapshot.server_reassembled_len,
+            client_first_seq = ?snapshot.client_first_seq,
+            server_first_seq = ?snapshot.server_first_seq,
+            client_next_seq = ?snapshot.client_next_seq,
+            server_next_seq = ?snapshot.server_next_seq,
+            owner_worker_id = ?session_data.owner_worker_id,
+            last_worker_id = ?session_data.last_worker_id,
+            worker_switch_count = session_data.worker_switch_count,
+            last_packet_at = %session_data.last_packet_at,
+            last_packet_direction = ?session_data.last_packet_direction,
+            last_packet_seq = session_data.last_packet_seq,
+            last_packet_payload_len = session_data.last_packet_payload_len,
+            last_packet_tcp_flags = session_data.last_packet_tcp_flags,
+            client_closed = session_data.client_tcp_closed,
+            server_closed = session_data.server_tcp_closed,
+            dialog_tail = ?snapshot.dialog_tail,
+            "SMTP MIME parse failed: {:?}",
+            error
+        );
+    }
+
+    #[inline]
+    fn smtp_pending_idle_timeout_applies(
+        &self,
+        session_data: &Sessiondata,
+        idle: Duration,
+    ) -> bool {
         if idle < self.smtp_pending_timeout
             || session_data.session.protocol != Protocol::Smtp
             || session_data.session.status != SessionStatus::Active
@@ -941,6 +1346,78 @@ impl ShardedSessionManager {
             .as_ref()
             .map(|state| state.has_pending_data())
             .unwrap_or(false)
+    }
+
+    #[inline]
+    fn observe_session_worker(
+        &self,
+        session_data: &mut Sessiondata,
+        packet: &RawpacketInfo,
+        worker_id: Option<usize>,
+    ) {
+        let Some(worker_id) = worker_id else {
+            return;
+        };
+
+        let owner_worker_id = *session_data.owner_worker_id.get_or_insert(worker_id);
+        let last_worker_id = session_data.last_worker_id;
+        session_data.last_worker_id = Some(worker_id);
+
+        if owner_worker_id == worker_id {
+            return;
+        }
+
+        session_data.worker_switch_count = session_data.worker_switch_count.saturating_add(1);
+        if session_data.session.protocol == Protocol::Smtp {
+            self.stats
+                .smtp_pipeline
+                .smtp_worker_mismatch_events
+                .fetch_add(1, Ordering::Relaxed);
+        }
+
+        if session_data.worker_switch_count == 1 {
+            warn!(
+                session_id = %session_data.session.id,
+                owner_worker_id,
+                current_worker_id = worker_id,
+                previous_worker_id = ?last_worker_id,
+                packet_direction = ?packet.direction,
+                packet_seq = packet.tcp_seq,
+                packet_payload_len = packet.payload.len(),
+                packet_tcp_flags = packet.tcp_flags,
+                created_without_syn = session_data.created_without_syn,
+                "Session packets observed on multiple workers; investigate worker routing / scheduling path"
+            );
+        }
+    }
+
+    #[inline]
+    fn smtp_restore_diag_hint(session_data: &Sessiondata) -> &'static str {
+        let has_gap_signal = session_data.client_stream.gap_bytes_skipped > 0
+            || session_data.server_stream.gap_bytes_skipped > 0;
+        let has_pending_segments = session_data.client_stream.pending_segments() > 0
+            || session_data.server_stream.pending_segments() > 0
+            || session_data.client_stream.prepend_shift > 0
+            || session_data.server_stream.prepend_shift > 0;
+        let smtp_data_pending = session_data
+            .smtp_state
+            .as_ref()
+            .map(|s| s.has_pending_data())
+            .unwrap_or(false);
+
+        if session_data.worker_switch_count > 0 {
+            "cross_worker_processing_detected"
+        } else if has_gap_signal {
+            "tcp_gap_or_packet_loss_detected"
+        } else if session_data.created_without_syn {
+            "midstream_capture_or_missing_syn"
+        } else if has_pending_segments {
+            "out_of_order_or_missing_segment"
+        } else if smtp_data_pending {
+            "smtp_data_stalled_waiting_for_terminator_or_354"
+        } else {
+            "no_capture_side_signal"
+        }
     }
 
     fn maybe_log_smtp_pending_diagnostics(&self, session_data: &mut Sessiondata, trigger: &str) {
@@ -987,6 +1464,8 @@ impl ShardedSessionManager {
             .take(4)
             .map(|entry| entry.command.clone())
             .collect();
+        let client_pending_diag = session_data.client_stream.pending_segments_diag();
+        let server_pending_diag = session_data.server_stream.pending_segments_diag();
 
         session_data.smtp_pending_diag_logged = true;
         warn!(
@@ -998,6 +1477,7 @@ impl ShardedSessionManager {
             server_ip = %session_data.session.server_ip,
             server_port = session_data.session.server_port,
             status = ?session_data.session.status,
+            restore_diag_hint = Self::smtp_restore_diag_hint(session_data),
             packet_count = session_data.session.packet_count,
             total_bytes = session_data.session.total_bytes,
             email_count = session_data.session.email_count,
@@ -1023,10 +1503,25 @@ impl ShardedSessionManager {
             server_next_seq = ?session_data.server_stream.next_seq(),
             client_pending_segments = session_data.client_stream.pending_segments(),
             server_pending_segments = session_data.server_stream.pending_segments(),
+            client_pending_bytes = client_pending_diag.pending_bytes,
+            server_pending_bytes = server_pending_diag.pending_bytes,
+            client_waiting_for_seq = ?client_pending_diag.waiting_for_seq,
+            server_waiting_for_seq = ?server_pending_diag.waiting_for_seq,
+            client_first_pending_seq = ?client_pending_diag.first_pending_seq,
+            server_first_pending_seq = ?server_pending_diag.first_pending_seq,
+            client_gap_before_first_pending_bytes = client_pending_diag.first_gap_bytes,
+            server_gap_before_first_pending_bytes = server_pending_diag.first_gap_bytes,
+            client_pending_explanation = Self::smtp_pending_explanation(&client_pending_diag),
+            server_pending_explanation = Self::smtp_pending_explanation(&server_pending_diag),
+            client_pending_summary = %client_pending_diag,
+            server_pending_summary = %server_pending_diag,
             client_processed_offset = session_data.client_processed_offset,
             server_processed_offset = session_data.server_processed_offset,
             client_prepend_shift = session_data.client_stream.prepend_shift,
             server_prepend_shift = session_data.server_stream.prepend_shift,
+            owner_worker_id = ?session_data.owner_worker_id,
+            last_worker_id = ?session_data.last_worker_id,
+            worker_switch_count = session_data.worker_switch_count,
             client_closed = session_data.client_tcp_closed,
             server_closed = session_data.server_tcp_closed,
             dialog_tail = ?dialog_tail,
@@ -1100,6 +1595,8 @@ impl ShardedSessionManager {
             .map(|entry| entry.command.clone())
             .collect();
         let status = session_data.session.status;
+        let client_pending_diag = session_data.client_stream.pending_segments_diag();
+        let server_pending_diag = session_data.server_stream.pending_segments_diag();
 
         session_data.smtp_restore_issue_logged = true;
         if reason == "data_command_aborted_before_payload" {
@@ -1116,6 +1613,7 @@ impl ShardedSessionManager {
                 rcpt_to_count,
                 subject = ?subject,
                 email_count,
+                restore_diag_hint = Self::smtp_restore_diag_hint(session_data),
                 client_gap_bytes,
                 server_gap_bytes,
                 buffered_email_bytes,
@@ -1123,6 +1621,18 @@ impl ShardedSessionManager {
                 data_pending,
                 client_pending_segments = session_data.client_stream.pending_segments(),
                 server_pending_segments = session_data.server_stream.pending_segments(),
+                client_pending_bytes = client_pending_diag.pending_bytes,
+                server_pending_bytes = server_pending_diag.pending_bytes,
+                client_waiting_for_seq = ?client_pending_diag.waiting_for_seq,
+                server_waiting_for_seq = ?server_pending_diag.waiting_for_seq,
+                client_first_pending_seq = ?client_pending_diag.first_pending_seq,
+                server_first_pending_seq = ?server_pending_diag.first_pending_seq,
+                client_gap_before_first_pending_bytes = client_pending_diag.first_gap_bytes,
+                server_gap_before_first_pending_bytes = server_pending_diag.first_gap_bytes,
+                client_pending_explanation = Self::smtp_pending_explanation(&client_pending_diag),
+                server_pending_explanation = Self::smtp_pending_explanation(&server_pending_diag),
+                client_pending_summary = %client_pending_diag,
+                server_pending_summary = %server_pending_diag,
                 client_processed_offset = session_data.client_processed_offset,
                 server_processed_offset = session_data.server_processed_offset,
                 client_reassembled_len = session_data.client_stream.reassembled_len(),
@@ -1133,6 +1643,9 @@ impl ShardedSessionManager {
                 last_packet_seq = session_data.last_packet_seq,
                 last_packet_payload_len = session_data.last_packet_payload_len,
                 last_packet_tcp_flags = session_data.last_packet_tcp_flags,
+                owner_worker_id = ?session_data.owner_worker_id,
+                last_worker_id = ?session_data.last_worker_id,
+                worker_switch_count = session_data.worker_switch_count,
                 status = ?status,
                 client_closed = session_data.client_tcp_closed,
                 server_closed = session_data.server_tcp_closed,
@@ -1193,6 +1706,7 @@ impl ShardedSessionManager {
             rcpt_to_count,
             subject = ?subject,
             email_count,
+            restore_diag_hint = Self::smtp_restore_diag_hint(session_data),
             client_gap_bytes,
             server_gap_bytes,
             buffered_email_bytes,
@@ -1200,6 +1714,18 @@ impl ShardedSessionManager {
             data_pending,
             client_pending_segments = session_data.client_stream.pending_segments(),
             server_pending_segments = session_data.server_stream.pending_segments(),
+            client_pending_bytes = client_pending_diag.pending_bytes,
+            server_pending_bytes = server_pending_diag.pending_bytes,
+            client_waiting_for_seq = ?client_pending_diag.waiting_for_seq,
+            server_waiting_for_seq = ?server_pending_diag.waiting_for_seq,
+            client_first_pending_seq = ?client_pending_diag.first_pending_seq,
+            server_first_pending_seq = ?server_pending_diag.first_pending_seq,
+            client_gap_before_first_pending_bytes = client_pending_diag.first_gap_bytes,
+            server_gap_before_first_pending_bytes = server_pending_diag.first_gap_bytes,
+            client_pending_explanation = Self::smtp_pending_explanation(&client_pending_diag),
+            server_pending_explanation = Self::smtp_pending_explanation(&server_pending_diag),
+            client_pending_summary = %client_pending_diag,
+            server_pending_summary = %server_pending_diag,
             client_processed_offset = session_data.client_processed_offset,
             server_processed_offset = session_data.server_processed_offset,
             client_reassembled_len = session_data.client_stream.reassembled_len(),
@@ -1210,6 +1736,9 @@ impl ShardedSessionManager {
             last_packet_seq = session_data.last_packet_seq,
             last_packet_payload_len = session_data.last_packet_payload_len,
             last_packet_tcp_flags = session_data.last_packet_tcp_flags,
+            owner_worker_id = ?session_data.owner_worker_id,
+            last_worker_id = ?session_data.last_worker_id,
+            worker_switch_count = session_data.worker_switch_count,
             status = ?status,
             client_closed = session_data.client_tcp_closed,
             server_closed = session_data.server_tcp_closed,
@@ -1218,11 +1747,12 @@ impl ShardedSessionManager {
         );
     }
 
-   /// Processdatapacket,ReturnProcessResult
-   ///
-   /// Performance optimizations:
-   /// - Existing sessiononlyReturn ID,Avoid Session
-   /// - Receive Option<&str> Reference,Avoid command
+    /// Processdatapacket,ReturnProcessResult
+    ///
+    /// Performance optimizations:
+    /// - Existing sessiononlyReturn ID,Avoid Session
+    /// - Receive Option<&str> Reference,Avoid command
+    #[cfg(test)]
     #[inline]
     pub fn process_packet(
         &self,
@@ -1230,9 +1760,20 @@ impl ShardedSessionManager {
         command: Option<&str>,
         now: Instant,
     ) -> ProcessResult {
+        self.process_packet_with_worker(packet, command, now, None)
+    }
+
+    #[inline]
+    pub fn process_packet_with_worker(
+        &self,
+        packet: &RawpacketInfo,
+        command: Option<&str>,
+        now: Instant,
+        worker_id: Option<usize>,
+    ) -> ProcessResult {
         let key = SessionKey::new(packet);
 
-       // UpdateStatistics (Use Relaxed, High-performance)
+        // UpdateStatistics (Use Relaxed, High-performance)
         self.stats
             .packets
             .total_packets
@@ -1242,7 +1783,7 @@ impl ShardedSessionManager {
             .total_bytes
             .fetch_add(packet.payload.len() as u64, Ordering::Relaxed);
 
-       // HTTP pipeline Statistics: packet
+        // HTTP pipeline Statistics: packet
         if packet.protocol == Protocol::Http {
             self.stats
                 .http_pipeline
@@ -1250,17 +1791,18 @@ impl ShardedSessionManager {
                 .fetch_add(1, Ordering::Relaxed);
         }
 
-       // path: CheckSessionwhetherstored
+        // path: CheckSessionwhetherstored
         if let Some(mut session_ref) = self.sessions.get_mut(&key) {
-           // Update found an existing session
+            // Update found an existing session
             session_ref.session.packet_count += 1;
             session_ref.session.total_bytes += packet.payload.len();
             Self::refresh_packet_activity(&mut session_ref, packet, now);
+            self.observe_session_worker(&mut session_ref, packet, worker_id);
 
-           // Save session ID (FreeLock first)
+            // Save session ID (FreeLock first)
             let session_id = session_ref.session.id;
 
-           // packetlog: downgradelevel trace (pathPerformance notes)
+            // packetlog: downgradelevel trace (pathPerformance notes)
             if packet.protocol == Protocol::Smtp {
                 trace!(
                     "📦 Session {} Received {:?} packet #{} | {} Byte | in_data_mode={}, state={:?}",
@@ -1277,30 +1819,30 @@ impl ShardedSessionManager {
                 );
             }
 
-           // SMTP dataParse (UseState machineAnd SIMD)
-           // SMTP Recording parse_smtp_data_simd Internalcomplete(Pipeline Command)
+            // SMTP dataParse (UseState machineAnd SIMD)
+            // SMTP Recording parse_smtp_data_simd Internalcomplete(Pipeline Command)
             if packet.protocol == Protocol::Smtp {
                 self.parse_smtp_data_simd(&mut session_ref, packet, command, now);
             }
 
-           // HTTP Login detection + dataSecuritydetect (Use TCP stream reassembly)
+            // HTTP Login detection + dataSecuritydetect (Use TCP stream reassembly)
             if packet.protocol == Protocol::Http {
                 self.parse_http_login(&mut session_ref, packet);
                 self.parse_http_data_security(&mut session_ref, packet);
             }
 
-           // onlyReturn ID,Avoid Session!
+            // onlyReturn ID,Avoid Session!
             return ProcessResult::Existing;
         }
 
-       // Mirror port tolerance: allow session creation without SYN.
-       // Port mirroring commonly misses SYN packets (late start, dropped first packet,
-       // one direction arriving first). Rejecting these loses entire SMTP connections.
-       // Only skip pure ACKs with no payload (no useful data to start a session with).
+        // Mirror port tolerance: allow session creation without SYN.
+        // Port mirroring commonly misses SYN packets (late start, dropped first packet,
+        // one direction arriving first). Rejecting these loses entire SMTP connections.
+        // Only skip pure ACKs with no payload (no useful data to start a session with).
         const TCP_SYN: u8 = 0x02;
         let has_syn = (packet.tcp_flags & TCP_SYN) != 0;
         if !has_syn && packet.payload.is_empty() {
-           // Pure ACK with no data - not useful for starting a session
+            // Pure ACK with no data - not useful for starting a session
             if packet.protocol == Protocol::Http {
                 self.stats
                     .http_pipeline
@@ -1310,11 +1852,11 @@ impl ShardedSessionManager {
             return ProcessResult::Rejected;
         }
 
-       // path: Need/RequireCreateNewSession
-        self.create_new_session(packet, key, command, now)
+        // path: Need/RequireCreateNewSession
+        self.create_new_session(packet, key, command, now, worker_id)
     }
 
-   /// CreateNewSession (path,withSecurityCheck)
+    /// CreateNewSession (path,withSecurityCheck)
     #[cold]
     fn create_new_session(
         &self,
@@ -1322,8 +1864,9 @@ impl ShardedSessionManager {
         key: SessionKey,
         command: Option<&str>,
         now: Instant,
+        worker_id: Option<usize>,
     ) -> ProcessResult {
-       // SecurityCheck 1: SessionCountlimit
+        // SecurityCheck 1: SessionCountlimit
         if self.sessions.len() >= MAX_SESSIONS {
             self.rejected_connections.fetch_add(1, Ordering::Relaxed);
             warn!(
@@ -1333,10 +1876,10 @@ impl ShardedSessionManager {
             return ProcessResult::Rejected;
         }
 
-       // Getclient IP
+        // Getclient IP
         let client_ip = SessionKey::client_ip_from_packet(packet);
 
-       // SecurityCheck 2: IP rate limiting
+        // SecurityCheck 2: IP rate limiting
         let should_reject = {
             let entry = self
                 .ip_rate_limits
@@ -1344,13 +1887,13 @@ impl ShardedSessionManager {
                 .or_insert_with(IpRateLimitEntry::new);
             let rate_entry = entry.value();
 
-           // Check Expired
+            // Check Expired
             rate_entry.check_and_maybe_reset();
 
             if rate_entry.should_limit() {
                 true
             } else {
-               // AddAddcount
+                // AddAddcount
                 rate_entry.new_session_count.fetch_add(1, Ordering::Relaxed);
                 rate_entry
                     .active_session_count
@@ -1368,13 +1911,15 @@ impl ShardedSessionManager {
             return ProcessResult::Rejected;
         }
 
-       // CreateNewSessiondata (possibly drop,if 1Thread)
-        let session_data = self.create_session_data(packet, now, key.clone());
+        // CreateNewSessiondata (possibly drop,if 1Thread)
+        let mut session_data = self.create_session_data(packet, now, key.clone());
+        session_data.owner_worker_id = worker_id;
+        session_data.last_worker_id = worker_id;
 
-       // : Use Entry API get_mut -> insert of TOCTOU
+        // : Use Entry API get_mut -> insert of TOCTOU
         match self.sessions.entry(key) {
             Entry::Vacant(vacant) => {
-               // ofNewSession - UpdateStatistics
+                // ofNewSession - UpdateStatistics
                 let mut session_entry = vacant.insert(session_data);
 
                 self.stats
@@ -1428,8 +1973,13 @@ impl ShardedSessionManager {
                     }
                 );
                 if packet.protocol == Protocol::Smtp && session_entry.created_without_syn {
+                    self.stats
+                        .smtp_pipeline
+                        .smtp_sessions_created_without_syn
+                        .fetch_add(1, Ordering::Relaxed);
                     warn!(
                         session_id = %session_entry.session.id,
+                        owner_worker_id = ?session_entry.owner_worker_id,
                         client_ip = %session_entry.session.client_ip,
                         client_port = session_entry.session.client_port,
                         server_ip = %session_entry.session.server_ip,
@@ -1442,9 +1992,9 @@ impl ShardedSessionManager {
                     );
                 }
 
-               // SMTP dataParse (UseState machineAnd SIMD)
+                // SMTP dataParse (UseState machineAnd SIMD)
                 if packet.protocol == Protocol::Smtp {
-                   // SMTP Command session content
+                    // SMTP Command session content
                     if let Some(ref cmd) = command
                         && session_entry.session.content.smtp_dialog.len() < MAX_SMTP_DIALOG_ENTRIES
                     {
@@ -1462,22 +2012,22 @@ impl ShardedSessionManager {
                     self.parse_smtp_data_simd(&mut session_entry, packet, command, now);
                 }
 
-               // HTTP Login detection
+                // HTTP Login detection
                 if packet.protocol == Protocol::Http {
                     self.parse_http_login(&mut session_entry, packet);
                 }
 
-               // ReturnNewSession (Need/Require,Butonly NewSession Occur)
+                // ReturnNewSession (Need/Require,Butonly NewSession Occur)
                 ProcessResult::New(session_entry.session.clone())
             }
             Entry::Occupied(occupied) => {
-               // 1Threadalready Create Session - According toalready SessionProcess
+                // 1Threadalready Create Session - According toalready SessionProcess
                 let mut session_ref = occupied.into_ref();
                 session_ref.session.packet_count += 1;
                 session_ref.session.total_bytes += packet.payload.len();
                 Self::refresh_packet_activity(&mut session_ref, packet, now);
 
-               // IP rate limitingof Add
+                // IP rate limitingof Add
                 if let Some(entry) = self.ip_rate_limits.get(&client_ip) {
                     entry
                         .value()
@@ -1489,12 +2039,12 @@ impl ShardedSessionManager {
                         .fetch_sub(1, Ordering::Relaxed);
                 }
 
-               // SMTP dataParse (Recording parse_smtp_data_simd Internal)
+                // SMTP dataParse (Recording parse_smtp_data_simd Internal)
                 if packet.protocol == Protocol::Smtp {
                     self.parse_smtp_data_simd(&mut session_ref, packet, command, now);
                 }
 
-               // HTTP Login + dataSecuritydetect
+                // HTTP Login + dataSecuritydetect
                 if packet.protocol == Protocol::Http {
                     self.parse_http_login(&mut session_ref, packet);
                     self.parse_http_data_security(&mut session_ref, packet);
@@ -1505,7 +2055,7 @@ impl ShardedSessionManager {
         }
     }
 
-   /// CreateNewSessiondata
+    /// CreateNewSessiondata
     #[inline(always)]
     pub(super) fn create_session_data(
         &self,
@@ -1538,19 +2088,19 @@ impl ShardedSessionManager {
         session.packet_count = 1;
         session.total_bytes = packet.payload.len();
 
-       // Checkwhether EncryptPort
+        // Checkwhether EncryptPort
         if Protocol::is_encrypted_port(server_port) {
             session.content.is_encrypted = true;
         }
 
-       // SMTP SessionCreateState machine
+        // SMTP SessionCreateState machine
         let smtp_state = if packet.protocol == Protocol::Smtp {
             Some(SmtpStateMachine::new())
         } else {
             None
         };
 
-       // HTTP SessionCreateRequestState machine
+        // HTTP SessionCreateRequestState machine
         let http_state = if packet.protocol == Protocol::Http {
             Some(HttpRequestStateMachine::new())
         } else {
@@ -1580,6 +2130,9 @@ impl ShardedSessionManager {
             client_tcp_closed: false,
             server_tcp_closed: false,
             created_without_syn: (packet.tcp_flags & TCP_SYN) == 0,
+            owner_worker_id: None,
+            last_worker_id: None,
+            worker_switch_count: 0,
             smtp_restore_issue_logged: false,
             smtp_pending_diag_logged: false,
             dirty: false,
@@ -1588,9 +2141,9 @@ impl ShardedSessionManager {
         }
     }
 
-   /// Use TCP stream reassemblyAnd SIMD Add Parse SMTP SessionInfo
-   ///
-   /// TCP stream reassemblyEnsuredatapacketAccording toSequenceNumber Process,immediately NetworkTransmissionMedium
+    /// Use TCP stream reassemblyAnd SIMD Add Parse SMTP SessionInfo
+    ///
+    /// TCP stream reassemblyEnsuredatapacketAccording toSequenceNumber Process,immediately NetworkTransmissionMedium
     #[inline]
     fn parse_smtp_data_simd(
         &self,
@@ -1599,7 +2152,7 @@ impl ShardedSessionManager {
         _command: Option<&str>,
         now: Instant,
     ) {
-       // packet: Markdirty dirtyQueue
+        // packet: Markdirty dirtyQueue
         macro_rules! mark_dirty {
             ($sd:expr) => {
                 if !$sd.dirty {
@@ -1610,7 +2163,7 @@ impl ShardedSessionManager {
         }
         let mut pending_restore_issue_trigger: Option<&'static str> = None;
 
-       // packetlog: downgradelevel trace (pathPerformance notes)
+        // packetlog: downgradelevel trace (pathPerformance notes)
         trace!(
             "📬 SMTP datapacket: {} | {:?} | seq={} | {} Byte",
             session_data.session.id,
@@ -1619,7 +2172,7 @@ impl ShardedSessionManager {
             packet.payload.len(),
         );
 
-       // TCP Constant
+        // TCP Constant
         const TCP_FIN: u8 = 0x01;
         const TCP_RST: u8 = 0x04;
         let saw_fin = (packet.tcp_flags & TCP_FIN) != 0;
@@ -1631,9 +2184,9 @@ impl ShardedSessionManager {
             }
         }
 
-       // Midstream TLS detection: if payload starts with TLS record header (0x16 0x03 xx)
-       // this is a session that entered STARTTLS before we started capturing.
-       // Mark encrypted to avoid feeding TLS garbage into the SMTP parser.
+        // Midstream TLS detection: if payload starts with TLS record header (0x16 0x03 xx)
+        // this is a session that entered STARTTLS before we started capturing.
+        // Mark encrypted to avoid feeding TLS garbage into the SMTP parser.
         let packet_looks_like_tls = packet.payload.len() >= 3
             && packet.payload[0] == 0x16 // TLS Handshake
             && packet.payload[1] == 0x03 // TLS version major
@@ -1650,7 +2203,7 @@ impl ShardedSessionManager {
                 return;
             }
 
-           // Create TCP Segment Add Streambuffer
+            // Create TCP Segment Add Streambuffer
             let segment = TcpSegment {
                 seq: packet.tcp_seq,
                 data: packet.payload.clone(), // Arc refcount +1, Avoid O(n) memcpy
@@ -1659,10 +2212,10 @@ impl ShardedSessionManager {
                 timestamp: now,
             };
 
-           // according to Add ofStreambuffer
+            // according to Add ofStreambuffer
             match packet.direction {
                 Direction::Outbound => {
-                   // clientdata (Command emailContent)
+                    // clientdata (Command emailContent)
                     if session_data.client_stream.add_segment(segment).is_err() {
                         self.stats
                             .smtp_pipeline
@@ -1691,6 +2244,7 @@ impl ShardedSessionManager {
                     let (prepend_commands, commands, reassembled_len) = {
                         let (reassembled, total_gap_bytes) =
                             session_data.client_stream.get_data_and_gap_bytes();
+                        let reassembled_len = reassembled.len();
                         if packet.protocol == Protocol::Smtp
                             && total_gap_bytes > session_data.client_gap_logged_bytes
                         {
@@ -1714,6 +2268,29 @@ impl ShardedSessionManager {
                                 session_data.session.client_port,
                                 session_data.session.server_ip,
                                 session_data.session.server_port
+                            );
+                        }
+
+                        if prepend_shift > 0 {
+                            self.stats
+                                .smtp_pipeline
+                                .smtp_client_late_prepend_events
+                                .fetch_add(1, Ordering::Relaxed);
+                            self.stats
+                                .smtp_pipeline
+                                .smtp_client_late_prepend_bytes_total
+                                .fetch_add(prepend_shift as u64, Ordering::Relaxed);
+                            warn!(
+                                session_id = %session_data.session.id,
+                                prepend_bytes = prepend_shift,
+                                total_gap_bytes,
+                                client_processed_offset = session_data.client_processed_offset,
+                                client_reassembled_len = reassembled_len,
+                                created_without_syn = session_data.created_without_syn,
+                                owner_worker_id = ?session_data.owner_worker_id,
+                                last_worker_id = ?session_data.last_worker_id,
+                                worker_switch_count = session_data.worker_switch_count,
+                                "SMTP client stream prepended older bytes after newer bytes were already reassembled"
                             );
                         }
 
@@ -1766,7 +2343,7 @@ impl ShardedSessionManager {
                     session_data.client_stream.prepend_shift = 0;
                 }
                 Direction::Inbound => {
-                   // ServicehandlerResponsedata (downgradelevel trace)
+                    // ServicehandlerResponsedata (downgradelevel trace)
                     trace!(
                         "📥 SMTP ServiceDevice/HandlerResponse: {} | seq={} | {} Byte",
                         session_data.session.id,
@@ -1802,6 +2379,7 @@ impl ShardedSessionManager {
                     let (prepend_responses, responses, reassembled_len) = {
                         let (reassembled, total_gap_bytes) =
                             session_data.server_stream.get_data_and_gap_bytes();
+                        let reassembled_len = reassembled.len();
                         if packet.protocol == Protocol::Smtp
                             && total_gap_bytes > session_data.server_gap_logged_bytes
                         {
@@ -1825,6 +2403,29 @@ impl ShardedSessionManager {
                                 session_data.session.client_port,
                                 session_data.session.server_ip,
                                 session_data.session.server_port
+                            );
+                        }
+
+                        if prepend_shift > 0 {
+                            self.stats
+                                .smtp_pipeline
+                                .smtp_server_late_prepend_events
+                                .fetch_add(1, Ordering::Relaxed);
+                            self.stats
+                                .smtp_pipeline
+                                .smtp_server_late_prepend_bytes_total
+                                .fetch_add(prepend_shift as u64, Ordering::Relaxed);
+                            warn!(
+                                session_id = %session_data.session.id,
+                                prepend_bytes = prepend_shift,
+                                total_gap_bytes,
+                                server_processed_offset = session_data.server_processed_offset,
+                                server_reassembled_len = reassembled_len,
+                                created_without_syn = session_data.created_without_syn,
+                                owner_worker_id = ?session_data.owner_worker_id,
+                                last_worker_id = ?session_data.last_worker_id,
+                                worker_switch_count = session_data.worker_switch_count,
+                                "SMTP server stream prepended older bytes after newer bytes were already reassembled"
                             );
                         }
 
@@ -1910,7 +2511,7 @@ impl ShardedSessionManager {
                 }
             }
 
-           // : SIMD (Used for DATA Segmentof Parse)
+            // : SIMD (Used for DATA Segmentof Parse)
             if !session_data
                 .smtp_state
                 .as_ref()
@@ -1918,17 +2519,13 @@ impl ShardedSessionManager {
                 .is_in_data_mode()
             {
                 let payload = &packet.payload[..];
-               // SIMD Subject: (possibly emailHeaderMedium)
+                // SIMD Subject: (possibly emailHeaderMedium)
                 if session_data.session.subject.is_none()
-                    && let Some(subject) =
-                        self.extract_subject_from_payload_fast(payload)
+                    && let Some(subject) = self.extract_subject_from_payload_fast(payload)
                 {
                     session_data.session.subject = Some(subject);
                     mark_dirty!(session_data);
-                    debug!(
-                        "Subject (快速Parse): {:?}",
-                        session_data.session.subject
-                    );
+                    debug!("Subject (快速Parse): {:?}", session_data.session.subject);
                 }
             }
         }
@@ -1966,29 +2563,29 @@ impl ShardedSessionManager {
         }
     }
 
-   /// ExtractemailAddress (Use memchr SIMD)
+    /// ExtractemailAddress (Use memchr SIMD)
     #[inline(always)]
     #[allow(dead_code)]
     fn extract_email_fast(data: &[u8]) -> Option<String> {
         const MAX_EMAIL_LEN: usize = 256;
 
-       // SIMD < And >
+        // SIMD < And >
         let start = memchr::memchr(b'<', data)?;
         let end = memchr::memchr(b'>', &data[start + 1..])?;
 
         let email_bytes = &data[start + 1..start + 1 + end];
 
-       // LengthCheck
+        // LengthCheck
         if email_bytes.len() > MAX_EMAIL_LEN {
             return None;
         }
 
-       // ASCII Check
+        // ASCII Check
         if email_bytes
             .iter()
             .all(|&b| b.is_ascii_alphanumeric() || b"@.-_+".contains(&b))
         {
-           // All bytes verified as ASCII subset -> valid UTF-8
+            // All bytes verified as ASCII subset -> valid UTF-8
             Some(
                 String::from_utf8(email_bytes.to_vec())
                     .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
@@ -2000,8 +2597,8 @@ impl ShardedSessionManager {
 
     #[inline]
     pub(super) fn extract_subject_from_payload_fast(&self, payload: &[u8]) -> Option<String> {
-       // Only scan the header section. This avoids false positives from MIME bodies
-       // and DKIM h= parameter lists that happen to contain "Subject:".
+        // Only scan the header section. This avoids false positives from MIME bodies
+        // and DKIM h= parameter lists that happen to contain "Subject:".
         let header_end = memmem::find(payload, b"\r\n\r\n")
             .map(|pos| pos + 4)
             .or_else(|| memmem::find(payload, b"\n\n").map(|pos| pos + 2))
@@ -2031,27 +2628,27 @@ impl ShardedSessionManager {
         pos == 0 || data.get(pos.wrapping_sub(1)) == Some(&b'\n')
     }
 
-   /// Extract Subject
+    /// Extract Subject
     #[inline(always)]
     fn extract_subject_fast(data: &[u8]) -> Option<String> {
-       // hops "Subject:" (8 Byte)
+        // hops "Subject:" (8 Byte)
         if data.len() < 9 {
             return None;
         }
 
         let rest = &data[8..];
 
-       // SIMD line
+        // SIMD line
         let end = memchr::memchr2(b'\r', b'\n', rest).unwrap_or(rest.len().min(200));
 
         let subject_bytes = &rest[..end];
 
-       // UTF-8 Convert
+        // UTF-8 Convert
         let subject = std::str::from_utf8(subject_bytes).ok()?.trim();
 
-       // : DKIM h= ("Subject:"
-       // DKIM-Signature h=From:To:Subject:Date;).
-       // header.
+        // : DKIM h= ("Subject:"
+        // DKIM-Signature h=From:To:Subject:Date;).
+        // header.
         if subject.is_empty()
             || (subject.len() < 10 && subject.ends_with(';') && !subject.contains(' '))
         {
@@ -2061,12 +2658,12 @@ impl ShardedSessionManager {
         Some(subject.to_string())
     }
 
-   /// Extract Mark dirtyofSession (dirtyMark)
-   /// Comment retained in English.
-   /// O(dirty_count) : onlylookupdirtyQueueMediumofSession
-   /// Performance optimizations: Batch key, AddLockProcess, Lock timestamp
+    /// Extract Mark dirtyofSession (dirtyMark)
+    /// Comment retained in English.
+    /// O(dirty_count) : onlylookupdirtyQueueMediumofSession
+    /// Performance optimizations: Batch key, AddLockProcess, Lock timestamp
     pub fn take_dirty_sessions(&self) -> Vec<EmailSession> {
-       // 1. Batch pop key (LockOperations)
+        // 1. Batch pop key (LockOperations)
         let mut keys = Vec::with_capacity(64);
         while let Some(key) = self.dirty_queue.pop() {
             keys.push(key);
@@ -2076,7 +2673,7 @@ impl ShardedSessionManager {
             return Vec::new();
         }
 
-       // 2. short AddLockExtract dirtyMark
+        // 2. short AddLockExtract dirtyMark
         let mut dirty = Vec::with_capacity(keys.len());
         for key in keys {
             if let Some(mut entry) = self.sessions.get_mut(&key)
@@ -2085,13 +2682,13 @@ impl ShardedSessionManager {
                 entry.dirty = false;
                 dirty.push(entry.session.clone());
             }
-           // entry guard immediatelyFree, small Lock
+            // entry guard immediatelyFree, small Lock
         }
         self.process_smtp_relay_diag_queue();
         dirty
     }
 
-   /// RecordingalreadyPublishof HTTP SessionCount (By worker_loop)
+    /// RecordingalreadyPublishof HTTP SessionCount (By worker_loop)
     pub fn record_http_sessions_published(&self, count: u64) {
         self.stats
             .http_pipeline
@@ -2099,7 +2696,7 @@ impl ShardedSessionManager {
             .fetch_add(count, Ordering::Relaxed);
     }
 
-   /// GetStatisticsInfo
+    /// GetStatisticsInfo
     pub fn get_stats(&self) -> TrafficStats {
         TrafficStats {
             total_sessions: self.stats.total.total_sessions.load(Ordering::Relaxed),
@@ -2114,16 +2711,16 @@ impl ShardedSessionManager {
         }
     }
 
-   /// Get HTTP SessionQueueWhenfirstdepth
+    /// Get HTTP SessionQueueWhenfirstdepth
     pub fn http_queue_depth(&self) -> u64 {
         self.http_queue_len.load(Ordering::Relaxed)
     }
 
-   /// Output SMTP restoration pipeline statistics log.
-   /// Comment retained in English.
-   /// This is the fast health signal for mirror-mode SMTP restoration:
-   /// if complete mirrored packets are not reaching the restored-email path,
-   /// the failure counters below should move immediately.
+    /// Output SMTP restoration pipeline statistics log.
+    /// Comment retained in English.
+    /// This is the fast health signal for mirror-mode SMTP restoration:
+    /// if complete mirrored packets are not reaching the restored-email path,
+    /// the failure counters below should move immediately.
     pub fn log_smtp_pipeline_stats(&self) {
         let sp = &self.stats.smtp_pipeline;
         let restored_ok = sp.smtp_restored_ok.load(Ordering::Relaxed);
@@ -2133,8 +2730,23 @@ impl ShardedSessionManager {
         let client_gap_bytes_total = sp.smtp_client_gap_bytes_total.load(Ordering::Relaxed);
         let server_gap_events = sp.smtp_server_gap_events.load(Ordering::Relaxed);
         let server_gap_bytes_total = sp.smtp_server_gap_bytes_total.load(Ordering::Relaxed);
+        let sessions_created_without_syn =
+            sp.smtp_sessions_created_without_syn.load(Ordering::Relaxed);
+        let worker_mismatch_events = sp.smtp_worker_mismatch_events.load(Ordering::Relaxed);
+        let client_late_prepend_events = sp.smtp_client_late_prepend_events.load(Ordering::Relaxed);
+        let client_late_prepend_bytes_total = sp
+            .smtp_client_late_prepend_bytes_total
+            .load(Ordering::Relaxed);
+        let server_late_prepend_events = sp.smtp_server_late_prepend_events.load(Ordering::Relaxed);
+        let server_late_prepend_bytes_total = sp
+            .smtp_server_late_prepend_bytes_total
+            .load(Ordering::Relaxed);
         let client_stream_overflow = sp.smtp_client_stream_overflow.load(Ordering::Relaxed);
         let server_stream_overflow = sp.smtp_server_stream_overflow.load(Ordering::Relaxed);
+        let timeout_sessions_total = sp.smtp_timeout_sessions_total.load(Ordering::Relaxed);
+        let pending_idle_timeout_sessions = sp
+            .smtp_pending_idle_timeout_sessions
+            .load(Ordering::Relaxed);
         let plaintext_tcp_close_without_restore = sp
             .smtp_plaintext_tcp_close_without_restore
             .load(Ordering::Relaxed);
@@ -2164,6 +2776,22 @@ impl ShardedSessionManager {
             + mime_parse_failed
             + unrestored_total
             + plaintext_aborted_before_payload;
+        let capture_side_anomalies = sessions_created_without_syn
+            + client_gap_events
+            + server_gap_events
+            + client_late_prepend_events
+            + server_late_prepend_events
+            + client_stream_overflow
+            + server_stream_overflow
+            + pending_idle_timeout_sessions;
+        let concurrency_side_anomalies = worker_mismatch_events;
+        let restore_diag_hint = if worker_mismatch_events > 0 {
+            "cross_worker_processing_detected"
+        } else if capture_side_anomalies > 0 {
+            "capture_gap_or_out_of_order_detected"
+        } else {
+            "no_concurrency_or_capture_signal"
+        };
         let incomplete_or_failed =
             restored_with_gaps + mime_parse_failed + unrestored_total + close_salvage_partial;
         let incomplete_pct = if total_observed == 0 {
@@ -2181,8 +2809,16 @@ impl ShardedSessionManager {
                 client_gap_bytes_total = client_gap_bytes_total,
                 server_gap_events = server_gap_events,
                 server_gap_bytes_total = server_gap_bytes_total,
+                sessions_created_without_syn = sessions_created_without_syn,
+                worker_mismatch_events = worker_mismatch_events,
+                client_late_prepend_events = client_late_prepend_events,
+                client_late_prepend_bytes_total = client_late_prepend_bytes_total,
+                server_late_prepend_events = server_late_prepend_events,
+                server_late_prepend_bytes_total = server_late_prepend_bytes_total,
                 client_stream_overflow = client_stream_overflow,
                 server_stream_overflow = server_stream_overflow,
+                timeout_sessions_total = timeout_sessions_total,
+                pending_idle_timeout_sessions = pending_idle_timeout_sessions,
                 plaintext_tcp_close_without_restore = plaintext_tcp_close_without_restore,
                 plaintext_timeout_without_restore = plaintext_timeout_without_restore,
                 plaintext_aborted_before_payload = plaintext_aborted_before_payload,
@@ -2191,13 +2827,18 @@ impl ShardedSessionManager {
                 unrestored_missing_354 = unrestored_missing_354,
                 unrestored_mime_or_empty = unrestored_mime_or_empty,
                 close_salvage_partial = close_salvage_partial,
+                concurrency_side_anomalies = concurrency_side_anomalies,
+                capture_side_anomalies = capture_side_anomalies,
+                restore_diag_hint = restore_diag_hint,
                 incomplete_pct = incomplete_pct,
                 total_observed = total_observed,
                 "SMTP restore health degraded | restored_ok={} restored_with_gaps={} mime_parse_failed={} \
                  gap_events(client/server)={}/{} gap_bytes(client/server)={}/{} \
-                 stream_overflow(client/server)={}/{} plaintext_without_restore(tcp_close/timeout)={}/{} \
+                 created_without_syn={} worker_mismatch={} late_prepend(client/server)={}/{} bytes={}/{} \
+                 stream_overflow(client/server)={}/{} timeout(total/pending_idle)={}/{} \
+                 plaintext_without_restore(tcp_close/timeout)={}/{} \
                  reasons(stream_gap/truncated/missing_354/mime_or_empty)={}/{}/{}/{} \
-                 partial_salvage={} aborted_before_payload={} incomplete_pct={:.2}%",
+                 partial_salvage={} aborted_before_payload={} diag_hint={} incomplete_pct={:.2}%",
                 restored_ok,
                 restored_with_gaps,
                 mime_parse_failed,
@@ -2205,8 +2846,16 @@ impl ShardedSessionManager {
                 server_gap_events,
                 client_gap_bytes_total,
                 server_gap_bytes_total,
+                sessions_created_without_syn,
+                worker_mismatch_events,
+                client_late_prepend_events,
+                server_late_prepend_events,
+                client_late_prepend_bytes_total,
+                server_late_prepend_bytes_total,
                 client_stream_overflow,
                 server_stream_overflow,
+                timeout_sessions_total,
+                pending_idle_timeout_sessions,
                 plaintext_tcp_close_without_restore,
                 plaintext_timeout_without_restore,
                 unrestored_stream_gap,
@@ -2215,6 +2864,7 @@ impl ShardedSessionManager {
                 unrestored_mime_or_empty,
                 close_salvage_partial,
                 plaintext_aborted_before_payload,
+                restore_diag_hint,
                 incomplete_pct
             );
         } else {
@@ -2226,12 +2876,24 @@ impl ShardedSessionManager {
                 client_gap_bytes_total = client_gap_bytes_total,
                 server_gap_events = server_gap_events,
                 server_gap_bytes_total = server_gap_bytes_total,
+                sessions_created_without_syn = sessions_created_without_syn,
+                worker_mismatch_events = worker_mismatch_events,
+                client_late_prepend_events = client_late_prepend_events,
+                client_late_prepend_bytes_total = client_late_prepend_bytes_total,
+                server_late_prepend_events = server_late_prepend_events,
+                server_late_prepend_bytes_total = server_late_prepend_bytes_total,
                 client_stream_overflow = client_stream_overflow,
                 server_stream_overflow = server_stream_overflow,
+                timeout_sessions_total = timeout_sessions_total,
+                pending_idle_timeout_sessions = pending_idle_timeout_sessions,
+                concurrency_side_anomalies = concurrency_side_anomalies,
+                capture_side_anomalies = capture_side_anomalies,
+                restore_diag_hint = restore_diag_hint,
                 total_observed = total_observed,
                 "SMTP restore health clean | restored_ok={} restored_with_gaps={} mime_parse_failed={} \
                  gap_events(client/server)={}/{} gap_bytes(client/server)={}/{} \
-                 stream_overflow(client/server)={}/{} total_observed={}",
+                 created_without_syn={} worker_mismatch={} late_prepend(client/server)={}/{} bytes={}/{} \
+                 stream_overflow(client/server)={}/{} timeout(total/pending_idle)={}/{} diag_hint={} total_observed={}",
                 restored_ok,
                 restored_with_gaps,
                 mime_parse_failed,
@@ -2239,17 +2901,26 @@ impl ShardedSessionManager {
                 server_gap_events,
                 client_gap_bytes_total,
                 server_gap_bytes_total,
+                sessions_created_without_syn,
+                worker_mismatch_events,
+                client_late_prepend_events,
+                server_late_prepend_events,
+                client_late_prepend_bytes_total,
+                server_late_prepend_bytes_total,
                 client_stream_overflow,
                 server_stream_overflow,
+                timeout_sessions_total,
+                pending_idle_timeout_sessions,
+                restore_diag_hint,
                 total_observed
             );
         }
     }
 
-   /// Output HTTP dataSecurity pipeline Statisticslog
-   /// Comment retained in English.
-   /// linktracing: packet -> stream reassembly -> Requestsplit -> Sessionconstruct -> Queue -> Publish
-   /// Any drop at any stage will be reflected here, used for troubleshooting.
+    /// Output HTTP dataSecurity pipeline Statisticslog
+    /// Comment retained in English.
+    /// linktracing: packet -> stream reassembly -> Requestsplit -> Sessionconstruct -> Queue -> Publish
+    /// Any drop at any stage will be reflected here, used for troubleshooting.
     pub fn log_http_pipeline_stats(&self) {
         let hp = &self.stats.http_pipeline;
         let packets_total = hp.http_packets_total.load(Ordering::Relaxed);
@@ -2295,7 +2966,7 @@ impl ShardedSessionManager {
             queue_depth,
         );
 
-       // dropAlert: dropall Critical
+        // dropAlert: dropall Critical
         if dropped_queue > 0 {
             warn!(
                 dropped = dropped_queue,
@@ -2311,22 +2982,22 @@ impl ShardedSessionManager {
         }
     }
 
-   /// CleanupTimeoutSession
-   /// Comment retained in English.
-   /// SegmentCleanup: Mark Timeout + flush dirty, Time/Count
-   /// EnsureTimeoutSessionof Status Publish API, Avoiddata
-   /// CleanupTimeoutSession (Periodic, Default 60)
-   /// Comment retained in English.
-   /// PerformanceAnalyze (O(n)):
-   /// - DashMap::retain Traverse, Eachentry Instant (~5ns)
-   /// - 50,000 sessions x 5ns = ~250μs Time/Count
-   /// - 60, <5μs CPU,
-   /// - 100,000 sessions (MAX_SESSIONS) ~500μs
-   ///   Comment retained in English.
-   ///   (timeout_candidates priorityQueue) Whenfirst value :
-   /// - AddAddEach process_packet of (path writeQueue)
-   /// - Need/RequireProcess / entry (Session Updatetimestamp)
-   /// - When sessions 500K Performance notes
+    /// CleanupTimeoutSession
+    /// Comment retained in English.
+    /// SegmentCleanup: Mark Timeout + flush dirty, Time/Count
+    /// EnsureTimeoutSessionof Status Publish API, Avoiddata
+    /// CleanupTimeoutSession (Periodic, Default 60)
+    /// Comment retained in English.
+    /// PerformanceAnalyze (O(n)):
+    /// - DashMap::retain Traverse, Eachentry Instant (~5ns)
+    /// - 50,000 sessions x 5ns = ~250μs Time/Count
+    /// - 60, <5μs CPU,
+    /// - 100,000 sessions (MAX_SESSIONS) ~500μs
+    ///   Comment retained in English.
+    ///   (timeout_candidates priorityQueue) Whenfirst value :
+    /// - AddAddEach process_packet of (path writeQueue)
+    /// - Need/RequireProcess / entry (Session Updatetimestamp)
+    /// - When sessions 500K Performance notes
     pub fn cleanup_timeout_sessions(&self) {
         let now = Instant::now();
         let mut timed_out = 0;
@@ -2357,6 +3028,18 @@ impl ShardedSessionManager {
                 } else {
                     "timeout"
                 };
+                if data.session.protocol == Protocol::Smtp {
+                    self.stats
+                        .smtp_pipeline
+                        .smtp_timeout_sessions_total
+                        .fetch_add(1, Ordering::Relaxed);
+                    if smtp_pending_idle_timeout {
+                        self.stats
+                            .smtp_pipeline
+                            .smtp_pending_idle_timeout_sessions
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
+                }
                 let timeout_budget_secs = if smtp_pending_idle_timeout {
                     self.smtp_pending_timeout.as_secs_f32()
                 } else {
@@ -2375,6 +3058,8 @@ impl ShardedSessionManager {
                     .as_ref()
                     .map(|s| s.buffered_email_bytes())
                     .unwrap_or(0);
+                let client_pending_diag = data.client_stream.pending_segments_diag();
+                let server_pending_diag = data.server_stream.pending_segments_diag();
                 let has_content = data.session.content.body_text.is_some()
                     || data.session.content.body_html.is_some();
 
@@ -2383,6 +3068,7 @@ impl ShardedSessionManager {
                     trigger = timeout_trigger,
                     protocol = %data.session.protocol,
                     created_without_syn = data.created_without_syn,
+                    restore_diag_hint = Self::smtp_restore_diag_hint(data),
                     idle_secs = idle.as_secs_f32(),
                     timeout_budget_secs,
                     smtp_in_data_mode,
@@ -2410,10 +3096,25 @@ impl ShardedSessionManager {
                     server_next_seq = ?data.server_stream.next_seq(),
                     client_pending_segments = data.client_stream.pending_segments(),
                     server_pending_segments = data.server_stream.pending_segments(),
+                    client_pending_bytes = client_pending_diag.pending_bytes,
+                    server_pending_bytes = server_pending_diag.pending_bytes,
+                    client_waiting_for_seq = ?client_pending_diag.waiting_for_seq,
+                    server_waiting_for_seq = ?server_pending_diag.waiting_for_seq,
+                    client_first_pending_seq = ?client_pending_diag.first_pending_seq,
+                    server_first_pending_seq = ?server_pending_diag.first_pending_seq,
+                    client_gap_before_first_pending_bytes = client_pending_diag.first_gap_bytes,
+                    server_gap_before_first_pending_bytes = server_pending_diag.first_gap_bytes,
+                    client_pending_explanation = Self::smtp_pending_explanation(&client_pending_diag),
+                    server_pending_explanation = Self::smtp_pending_explanation(&server_pending_diag),
+                    client_pending_summary = %client_pending_diag,
+                    server_pending_summary = %server_pending_diag,
                     client_processed_offset = data.client_processed_offset,
                     server_processed_offset = data.server_processed_offset,
                     client_prepend_shift = data.client_stream.prepend_shift,
                     server_prepend_shift = data.server_stream.prepend_shift,
+                    owner_worker_id = ?data.owner_worker_id,
+                    last_worker_id = ?data.last_worker_id,
+                    worker_switch_count = data.worker_switch_count,
                     "⚠️ SessionTimeout fired"
                 );
 
@@ -2451,11 +3152,11 @@ impl ShardedSessionManager {
             info!("Cleanupalready刷Newof非活跃Session: {} ", removed);
         }
 
-       // CleanupExpiredof IP rate limitingentry
+        // CleanupExpiredof IP rate limitingentry
         self.cleanup_ip_rate_limits();
     }
 
-   /// CleanupExpiredof IP rate limitingentry
+    /// CleanupExpiredof IP rate limitingentry
     fn cleanup_ip_rate_limits(&self) {
         let now_ns = IpRateLimitEntry::now_ns();
         let window_ns = RATE_LIMIT_WINDOW_SECS * 2 * 1_000_000_000;
@@ -2467,9 +3168,7 @@ impl ShardedSessionManager {
             !(active == 0 && window_expired)
         });
     }
-
 }
-
 
 impl Default for ShardedSessionManager {
     fn default() -> Self {

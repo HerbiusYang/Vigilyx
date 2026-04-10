@@ -439,46 +439,34 @@ pub async fn download_http_session_body(
         }
     };
 
-   // File - CRLF (CWE-113)
-    let raw_name = session
-        .uploaded_filename
-        .unwrap_or_else(|| format!("{}.bin", uuid));
-    let download_name: String = raw_name
-        .chars()
-        .filter(|c| !c.is_control() && *c != '"')
-        .take(255)
-        .collect();
-
-   // Content-Type - Security MIME Type, octet-stream
     let raw_ct = session
         .content_type
         .unwrap_or_else(|| "application/octet-stream".to_string());
-    let raw_ct_lower = raw_ct.to_ascii_lowercase();
-    let data = if is_redactable_content_type(Some(&raw_ct)) {
-        match String::from_utf8(raw_data.clone()) {
-            Ok(body) => redact_request_body(&body, Some(&raw_ct)).into_bytes(),
-            Err(_) => raw_data,
+
+    let data = match build_redacted_download_payload(
+        &raw_data,
+        Some(&raw_ct),
+        session.body_is_binary,
+    ) {
+        Ok(data) => data,
+        Err(message) => {
+            tracing::warn!(
+                session_id = %uuid,
+                body_is_binary = session.body_is_binary,
+                content_type = %raw_ct,
+                "Blocked unsafe HTTP body download: {}",
+                message
+            );
+            return (axum::http::StatusCode::FORBIDDEN, message).into_response();
         }
-    } else {
-        raw_data
     };
-    let content_type = if raw_ct_lower.starts_with("image/")
-        || raw_ct_lower.starts_with("text/plain")
-        || raw_ct_lower.contains("json")
-        || raw_ct_lower.contains("xml")
-        || raw_ct_lower.contains("javascript")
-        || raw_ct_lower.contains("x-www-form-urlencoded")
-        || raw_ct_lower == "application/pdf"
-        || raw_ct_lower == "application/octet-stream"
-    {
-        raw_ct
-    } else {
-        "application/octet-stream".to_string()
-    };
+    let download_name =
+        build_redacted_download_name(session.uploaded_filename.as_deref(), &uuid.to_string());
 
     axum::http::Response::builder()
         .status(axum::http::StatusCode::OK)
-        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+        .header(header::CACHE_CONTROL, "no-store")
         .header(
             header::CONTENT_DISPOSITION,
             format!("attachment; filename=\"{}\"", download_name),
@@ -512,10 +500,13 @@ const SENSITIVE_KEY_FRAGMENTS: &[&str] = &[
 
 fn redact_request_body(body: &str, content_type: Option<&str>) -> String {
     let ct = content_type.map(|value| value.to_ascii_lowercase());
+    let trimmed = body.trim_start();
 
-    if ct
+    if (ct
         .as_deref()
         .is_some_and(|value| value.contains("json") || value.ends_with("+json"))
+        || trimmed.starts_with('{')
+        || trimmed.starts_with('['))
         && let Some(redacted) = redact_json_credentials(body)
     {
         return redacted;
@@ -525,6 +516,7 @@ fn redact_request_body(body: &str, content_type: Option<&str>) -> String {
     if ct
         .as_deref()
         .is_some_and(|value| value.contains("xml") || value.ends_with("+xml"))
+        || trimmed.starts_with('<')
     {
         redacted = redact_xml_tag_credentials(&redacted);
     }
@@ -609,16 +601,36 @@ fn redacted_literal(value: &str, prefix: &str) -> String {
     }
 }
 
-fn is_redactable_content_type(content_type: Option<&str>) -> bool {
-    let Some(content_type) = content_type else {
-        return false;
+fn build_redacted_download_payload(
+    raw_data: &[u8],
+    content_type: Option<&str>,
+    body_is_binary: bool,
+) -> Result<Vec<u8>, &'static str> {
+    if body_is_binary {
+        return Err("出于安全考虑，二进制请求体的原始下载已禁用");
+    }
+
+    let body = std::str::from_utf8(raw_data)
+        .map_err(|_| "请求体不是可安全导出的 UTF-8 文本内容")?;
+
+    Ok(redact_request_body(body, content_type).into_bytes())
+}
+
+fn build_redacted_download_name(raw_name: Option<&str>, fallback_stem: &str) -> String {
+    let safe_name: String = raw_name
+        .unwrap_or("http-request-body")
+        .chars()
+        .filter(|c| !c.is_control() && *c != '"' && *c != '/' && *c != '\\')
+        .take(180)
+        .collect();
+
+    let safe_name = if safe_name.trim().is_empty() {
+        fallback_stem.to_string()
+    } else {
+        safe_name
     };
-    let content_type = content_type.to_ascii_lowercase();
-    content_type.starts_with("text/")
-        || content_type.contains("json")
-        || content_type.contains("xml")
-        || content_type.contains("javascript")
-        || content_type.contains("x-www-form-urlencoded")
+
+    format!("{safe_name}.redacted.txt")
 }
 
 fn is_sensitive_key(key: &str) -> bool {
@@ -678,7 +690,9 @@ fn xml_tag_regex() -> &'static Regex {
 
 #[cfg(test)]
 mod tests {
-    use super::redact_request_body;
+    use super::{
+        build_redacted_download_name, build_redacted_download_payload, redact_request_body,
+    };
     use serde_json::Value;
 
     #[test]
@@ -727,5 +741,44 @@ mod tests {
 
         assert!(redacted.contains(r#"password: "[REDACTED]""#));
         assert!(redacted.contains(r#"apiKey: "[REDACTED]""#));
+    }
+
+    #[test]
+    fn redacts_json_credentials_when_content_type_is_generic() {
+        let redacted = redact_request_body(
+            r#"{"username":"alice","password":"secret","nested":{"access_token":"abc"}}"#,
+            Some("application/octet-stream"),
+        );
+        let value: Value = serde_json::from_str(&redacted).expect("valid json");
+
+        assert_eq!(value["password"], "[REDACTED]");
+        assert_eq!(value["nested"]["access_token"], "[REDACTED]");
+    }
+
+    #[test]
+    fn blocks_binary_body_downloads() {
+        let result = build_redacted_download_payload(b"\x89PNG\r\n", Some("image/png"), true);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn exports_redacted_text_body_downloads() {
+        let result = build_redacted_download_payload(
+            b"username=alice&password=secret",
+            Some("application/octet-stream"),
+            false,
+        )
+        .expect("utf8 text payload");
+
+        assert_eq!(
+            String::from_utf8(result).expect("utf8"),
+            "username=alice&password=[REDACTED]"
+        );
+    }
+
+    #[test]
+    fn marks_download_name_as_redacted() {
+        let filename = build_redacted_download_name(Some("invoice.pdf"), "fallback");
+        assert_eq!(filename, "invoice.pdf.redacted.txt");
     }
 }

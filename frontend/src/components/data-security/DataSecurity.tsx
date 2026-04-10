@@ -90,6 +90,33 @@ function formatSize(b: number): string {
   return `${(b / 1048576).toFixed(1)} MB`
 }
 
+function sanitizeDownloadName(name: string): string {
+  const cleaned = name.replace(/[\\/\u0000-\u001f\u007f"]/g, '').trim()
+  return cleaned || 'http-request-body.redacted.txt'
+}
+
+function getDownloadName(headers: Headers, fallback: string): string {
+  const disposition = headers.get('content-disposition')
+  if (!disposition) return sanitizeDownloadName(fallback)
+
+  const encodedMatch = disposition.match(/filename\*\s*=\s*([^;]+)/i)
+  if (encodedMatch) {
+    const encoded = encodedMatch[1].trim().replace(/^UTF-8''/i, '').replace(/^"(.*)"$/, '$1')
+    try {
+      return sanitizeDownloadName(decodeURIComponent(encoded))
+    } catch {
+      return sanitizeDownloadName(encoded)
+    }
+  }
+
+  const plainMatch = disposition.match(/filename\s*=\s*("?)([^";]+)\1/i)
+  if (plainMatch) {
+    return sanitizeDownloadName(plainMatch[2])
+  }
+
+  return sanitizeDownloadName(fallback)
+}
+
 function formatRelativeTime(ts: string): string {
   let n = ts
   if (ts && !ts.endsWith('Z') && !/[+-]\d{2}:?\d{2}$/.test(ts)) n = ts + 'Z'
@@ -629,13 +656,13 @@ function IncidentDetail({ incident, onClose, privacyMode }: { incident: DataSecu
         </div>
       )}
 
-      {/* Raw request body */}
+      {/* Redacted request body */}
       <div className="ds3-detail-section" style={{ paddingBottom: 20 }}>
         <button className="ds3-collapse-btn ds3-collapse-btn--v2" onClick={() => setShowBody(!showBody)}>
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ transform: showBody ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s ease' }}>
             <polyline points="9 18 15 12 9 6" />
           </svg>
-          <span>原始请求体</span>
+          <span>请求体内容</span>
           {rs && rs.request_body_size > 0 && <span className="ds3-body-sz">{formatSize(rs.request_body_size)}</span>}
         </button>
         {showBody && (
@@ -652,16 +679,32 @@ function IncidentDetail({ incident, onClose, privacyMode }: { incident: DataSecu
                       <span className="sec-mono" style={{ color: 'var(--text-primary)' }}>{rs.uploaded_filename}</span>
                       {rs.uploaded_file_size != null && <span className="ds3-dtl-file-sz">{formatSize(rs.uploaded_file_size)}</span>}
                     </div>
-                    <button className="ds3-dl-btn ds3-dl-btn--v2" onClick={async () => {
+                    <div className="ds3-inline-msg" style={{ color: 'var(--text-secondary)', marginBottom: 10 }}>
+                      {rs.body_is_binary ? '二进制请求体仅保留元数据，原始导出已禁用。' : '导出内容为服务端脱敏后的文本副本。'}
+                    </div>
+                    <button
+                      className="ds3-dl-btn ds3-dl-btn--v2"
+                      disabled={rs.body_is_binary}
+                      style={rs.body_is_binary ? { opacity: 0.55, cursor: 'not-allowed' } : undefined}
+                      onClick={async () => {
+                      if (rs.body_is_binary) return
                       try {
                         const r = await apiFetch(`/api/data-security/http-sessions/${rs.id}/body`)
-                        if (!r.ok) { alert('文件不存在或已过期'); return }
+                        if (!r.ok) {
+                          const message = (await r.text().catch(() => '导出失败')).trim()
+                          alert(message || '导出失败')
+                          return
+                        }
                         const b = await r.blob(), u = URL.createObjectURL(b), a = document.createElement('a')
-                        a.href = u; a.download = rs.uploaded_filename || 'download'; a.click(); URL.revokeObjectURL(u)
+                        a.href = u
+                        a.download = getDownloadName(r.headers, rs.uploaded_filename || 'http-request-body.redacted.txt')
+                        a.click()
+                        URL.revokeObjectURL(u)
                       } catch { alert('下载失败') }
-                    }}>
+                    }}
+                    >
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>
-                      下载文件
+                      导出脱敏内容
                     </button>
                   </div>)
                 ) : <div className="ds3-inline-msg" style={{ color: 'var(--text-tertiary)' }}>{!rs ? '无法加载' : rs.request_body_size === 0 ? '请求体为空' : '请求体未存储'}</div>}

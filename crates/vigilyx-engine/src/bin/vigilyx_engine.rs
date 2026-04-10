@@ -15,7 +15,7 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
-use vigilyx_core::models::{EmailSession, HttpSession, SessionStatus, WsMessage};
+use vigilyx_core::models::{EmailSession, HttpSession, WsMessage};
 use vigilyx_db::VigilDb;
 use vigilyx_db::mq::{MqClient, MqConfig, StreamClient, consumer_groups, keys, streams, topics};
 #[cfg(unix)]
@@ -590,7 +590,7 @@ fn dispatch_uds_input(state: &Arc<EngineState>, msg: UdsMessage) {
     match msg.topic.as_str() {
         topics::SESSION_NEW | topics::SESSION_UPDATE => {
             if let Ok(session) = serde_json::from_value::<EmailSession>(msg.payload)
-                && session.status == SessionStatus::Completed
+                && session.is_terminal_for_analysis()
             {
                 if session.has_analyzable_content() {
                     submit_to_security_engine(state, session);
@@ -811,15 +811,15 @@ async fn stream_input_loop(state: &Arc<EngineState>, stream: &StreamClient) -> R
     loop {
         // Read email sessions (block up to 2s)
         let email_msgs: Vec<(String, EmailSession)> = stream
-            .xreadgroup(streams::EMAIL_SESSIONS, 50, 2000)
+            .xreadgroup(streams::EMAIL_SESSIONS, 50, Some(2000))
             .await?;
         for (id, session) in email_msgs {
             stream_process_email(state, stream, &id, session).await;
         }
 
-        // Read HTTP sessions (non-blocking check)
+        // Read HTTP sessions without BLOCK so the command is truly non-blocking.
         let http_msgs: Vec<(String, Vec<HttpSession>)> = stream
-            .xreadgroup(streams::HTTP_SESSIONS, 10, 0)
+            .xreadgroup(streams::HTTP_SESSIONS, 10, None)
             .await?;
         for (id, sessions) in http_msgs {
             stream_process_http(state, stream, &id, sessions).await;
@@ -834,9 +834,9 @@ async fn stream_process_email(
     msg_id: &str,
     session: EmailSession,
 ) {
-    // Only analyze completed sessions
-    if session.status != SessionStatus::Completed {
-        // ACK immediately — non-completed sessions don't need analysis
+    // Only analyze terminal sessions.
+    if !session.is_terminal_for_analysis() {
+        // ACK immediately — non-terminal sessions don't need analysis yet.
         let _ = stream.xack(streams::EMAIL_SESSIONS, &[msg_id]).await;
         return;
     }
@@ -928,7 +928,7 @@ async fn redis_input_loop(state: &Arc<EngineState>, mq: &MqClient) -> Result<()>
         match channel.as_str() {
             topics::SESSION_NEW | topics::SESSION_UPDATE => {
                 if let Ok(session) = serde_json::from_str::<EmailSession>(&payload)
-                    && session.status == SessionStatus::Completed
+                    && session.is_terminal_for_analysis()
                 {
                     if session.has_analyzable_content() {
                        // : Redis

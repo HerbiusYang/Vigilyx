@@ -8,7 +8,7 @@
 
 use super::error::{MqError, MqResult};
 use super::topics;
-use redis::aio::ConnectionManager;
+use redis::aio::{ConnectionManager, MultiplexedConnection};
 use redis::{AsyncCommands, Client};
 use serde::{Serialize, de::DeserializeOwned};
 use std::sync::Arc;
@@ -164,10 +164,32 @@ impl MqClient {
         }
     }
 
-   /// Try connect
-    async fn try_connect(&self) -> MqResult<()> {
+   /// Create a fresh Redis connection manager.
+    pub(crate) async fn new_connection_manager(&self) -> MqResult<ConnectionManager> {
         let client = Client::open(self.config.redis_url.clone())?;
         let conn = ConnectionManager::new(client).await?;
+        Ok(conn)
+    }
+
+   /// Create a dedicated async connection for stream reads.
+   ///
+   /// Redis stream consumers intentionally issue blocking `XREADGROUP` calls, so
+   /// the default 500ms async response timeout used by the redis crate would
+   /// incorrectly abort healthy reads before Redis returns. Stream consumers use a
+   /// separate connection with no built-in response timeout and rely on the caller
+   /// to apply an explicit timeout matched to the chosen `BLOCK` window.
+    pub(crate) async fn new_stream_read_connection(&self) -> MqResult<MultiplexedConnection> {
+        let client = Client::open(self.config.redis_url.clone())?;
+        let config = redis::AsyncConnectionConfig::new().set_response_timeout(None);
+        let conn = client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await?;
+        Ok(conn)
+    }
+
+   /// Try connect
+    async fn try_connect(&self) -> MqResult<()> {
+        let conn = self.new_connection_manager().await?;
 
         let mut guard = self.conn.write().await;
        *guard = Some(conn);

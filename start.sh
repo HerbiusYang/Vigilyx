@@ -385,7 +385,7 @@ echo -e "   ${BOLD}Access${NC}"
 echo -e "   ────────────────────────────────────"
 echo -e "   Open in browser: ${CYAN}http://localhost:3000${NC}"
 echo -e "   Login user:      ${YELLOW}admin${NC}"
-echo -e "   Login password:  ${DIM}See API_PASSWORD in .env; admin123 only works when VIGILYX_ALLOW_DEFAULT_CREDS=true is explicitly enabled${NC}"
+echo -e "   Login password:  ${DIM}See API_PASSWORD in .env${NC}"
 echo ""
 
 # Logs and processes

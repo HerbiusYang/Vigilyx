@@ -85,6 +85,22 @@ async fn spa_fallback() -> axum::response::Response {
     }
 }
 
+fn validate_internal_token_scope_split() -> Result<()> {
+    let internal_api_token = std::env::var("INTERNAL_API_TOKEN").unwrap_or_default();
+    let ai_internal_token = std::env::var("AI_INTERNAL_TOKEN").unwrap_or_default();
+
+    if !internal_api_token.is_empty()
+        && !ai_internal_token.is_empty()
+        && internal_api_token == ai_internal_token
+    {
+        anyhow::bail!(
+            "AI_INTERNAL_TOKEN must differ from INTERNAL_API_TOKEN to preserve internal service boundaries"
+        );
+    }
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
    // Global panic hook: Records full stack trace before panic=abort terminates
@@ -109,6 +125,7 @@ async fn main() -> Result<()> {
     }
 
     info!("Vigilyx API service starting...");
+    validate_internal_token_scope_split()?;
 
    // Load configuration
     let config = Config::from_env()?;
@@ -172,24 +189,12 @@ async fn main() -> Result<()> {
             config
         }
         Err(e) => {
-           // SEC: Default credentials only with explicit opt-in, prevent production admin/admin123 (CWE-798)
-            if std::env::var("VIGILYX_ALLOW_DEFAULT_CREDS").unwrap_or_default() == "true" {
-                warn!(
-                    "Auth config loading failed: {}, using fallback credentials (VIGILYX_ALLOW_DEFAULT_CREDS=true)",
-                    e
-                );
-                warn!(
-                    "Using default credentials admin/admin123, password change required on first login"
-                );
-                AuthConfig::fallback()
-            } else {
-                error!(
-                    "Auth config loading failed: {}. Set API_JWT_SECRET and API_PASSWORD in the environment. \
-                     If you must temporarily allow the fallback credentials, set VIGILYX_ALLOW_DEFAULT_CREDS=true.",
-                    e
-                );
-                std::process::exit(1);
-            }
+            error!(
+                "Auth config loading failed: {}. Set API_JWT_SECRET and API_PASSWORD in the environment. \
+                 Default fallback credentials are disabled.",
+                e
+            );
+            std::process::exit(1);
         }
     };
    // Load saved password from database (overrides env variable defaults if user changed it)

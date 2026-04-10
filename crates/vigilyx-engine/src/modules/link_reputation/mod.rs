@@ -30,14 +30,32 @@ use data::{
     SUSPICIOUS_SENDING_DOMAINS,
 };
 use heuristics::{
-    analyze_domain_heuristics, extract_redirect_target_urls_full, extract_redirect_targets,
-    get_registered_domain, get_tld,
+    analyze_domain_heuristics, extract_redirect_target_urls_full, get_registered_domain, get_tld,
 };
 
 /// NS cacheentry
 struct NsCacheEntry {
     ns_base_domains: HashSet<String>,
     created_at: Instant,
+}
+
+#[derive(Default, Clone, Copy)]
+struct DomainUrlProfile {
+    observed_urls: u32,
+    non_asset_urls: u32,
+}
+
+impl DomainUrlProfile {
+    fn observe_url(&mut self, url: &str) {
+        self.observed_urls += 1;
+        if !crate::modules::common::is_probable_cloud_asset_url(url) {
+            self.non_asset_urls += 1;
+        }
+    }
+
+    fn is_static_cloud_asset_only(&self) -> bool {
+        self.observed_urls > 0 && self.non_asset_urls == 0
+    }
 }
 
 /// NS cache TTL: 1 small
@@ -189,12 +207,16 @@ impl SecurityModule for LinkReputationModule {
 
        // Collect unique domains (Contains TargetParse)
         let mut unique_domains: HashSet<String> = HashSet::new();
-        let mut redirect_targets: HashSet<String> = HashSet::new(); // From URL ParameterMediumDecodeof TargetDomain
         let mut redirect_target_urls: HashSet<String> = HashSet::new(); // From URL ParameterMediumDecodeof full TargetURL
         let mut redirect_exempt_outer: HashSet<String> = HashSet::new(); // already ServiceofOuter layerDomain (Analyze)
+        let mut domain_profiles: HashMap<String, DomainUrlProfile> = HashMap::new();
         for link in links {
             if let Some(domain) = extract_domain_from_url(&link.url) {
                 unique_domains.insert(domain.clone());
+                domain_profiles
+                    .entry(domain.clone())
+                    .or_default()
+                    .observe_url(&link.url);
 
                // Check if this is a tracking/redirect service or mail security gateway.
                // Gateway domains (Trend Micro DDEI, Proofpoint, etc.) rewrite URLs
@@ -207,21 +229,21 @@ impl SecurityModule for LinkReputationModule {
                         &link.url.to_lowercase(),
                     );
                 let target_urls = extract_redirect_target_urls_full(&link.url);
-                let targets = extract_redirect_targets(&link.url);
                 for target_url in &target_urls {
                     redirect_target_urls.insert(target_url.clone());
+                    if let Some(target_domain) = extract_domain_from_url(target_url) {
+                        unique_domains.insert(target_domain.clone());
+                        domain_profiles
+                            .entry(target_domain)
+                            .or_default()
+                            .observe_url(target_url);
+                    }
                 }
-                if !targets.is_empty() {
-                    for target in &targets {
-                        redirect_targets.insert(target.clone());
-                        unique_domains.insert(target.clone());
-                    }
-                    if is_redirect_service {
-                       // already Service (if adnxs.com, doubleclick.net),
-                       // Outer layerDomain Legitimate,hopsHeuristicAnalyzeAnd Query.
-                       // Decode ofTargetDomain NormalAnalyze.
-                        redirect_exempt_outer.insert(domain);
-                    }
+                if !target_urls.is_empty() && is_redirect_service {
+                   // already Service (if adnxs.com, doubleclick.net),
+                   // Outer layerDomain Legitimate,hopsHeuristicAnalyzeAnd Query.
+                   // Decode ofTargetDomain NormalAnalyze.
+                    redirect_exempt_outer.insert(domain);
                 }
             }
         }
@@ -282,6 +304,21 @@ impl SecurityModule for LinkReputationModule {
                     description: format!("Parent domain {} matched malicious domain blocklist", reg_domain),
                     location: Some("links".to_string()),
                     snippet: Some(format!("{} -> {}", domain, reg_domain)),
+                });
+                continue;
+            }
+
+            if domain_profiles
+                .get(domain)
+                .is_some_and(DomainUrlProfile::is_static_cloud_asset_only)
+            {
+                evidence.push(Evidence {
+                    description: format!(
+                        "Skipping cloud object-storage asset domain: {} (only static asset URLs observed)",
+                        domain
+                    ),
+                    location: Some("links:asset".to_string()),
+                    snippet: Some(domain.clone()),
                 });
                 continue;
             }
@@ -354,6 +391,12 @@ impl SecurityModule for LinkReputationModule {
                 }
                // already ServiceOuter layerDomain (if adnxs.com)
                 if redirect_exempt_outer.contains(domain) {
+                    continue;
+                }
+                if domain_profiles
+                    .get(domain)
+                    .is_some_and(DomainUrlProfile::is_static_cloud_asset_only)
+                {
                     continue;
                 }
 
@@ -473,6 +516,9 @@ impl SecurityModule for LinkReputationModule {
                         break;
                     }
                     if !candidate.starts_with("http://") && !candidate.starts_with("https://") {
+                        continue;
+                    }
+                    if crate::modules::common::is_probable_cloud_asset_url(&candidate) {
                         continue;
                     }
                     if queried_urls.insert(candidate.clone()) {
@@ -741,6 +787,22 @@ mod tests {
         assert_eq!(result.threat_level, ThreatLevel::Safe);
     }
 
+    #[tokio::test]
+    async fn test_object_storage_static_asset_domain_is_skipped() {
+        let module = LinkReputationModule::new(None);
+        let ctx = make_ctx(&[
+            "https://qfk-files.oss-cn-hangzhou.aliyuncs.com/assets/login-banner.png?x-oss-process=image/resize,w_600",
+        ]);
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert!(
+            !result.categories.contains(&"random_domain".to_string()),
+            "object-storage asset domain should not be treated as suspicious: {:?}",
+            result.categories
+        );
+    }
+
     
    // Malicious/Suspicious URL Test
     
@@ -799,6 +861,18 @@ mod tests {
         let result = module.analyze(&ctx).await.unwrap();
         assert_ne!(result.threat_level, ThreatLevel::Safe);
         assert!(result.categories.contains(&"random_domain".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_legitimate_hundsun_domain_is_not_random() {
+        let module = LinkReputationModule::new(None);
+        let ctx = make_ctx(&["https://rep.hundsun.cn/report/clearance"]);
+        let result = module.analyze(&ctx).await.unwrap();
+        assert!(
+            !result.categories.contains(&"random_domain".to_string()),
+            "Brand-like business domains should not be marked as random: {:?}",
+            result.categories
+        );
     }
 
     #[tokio::test]

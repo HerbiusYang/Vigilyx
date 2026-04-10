@@ -72,6 +72,21 @@ const COMMON_EN_WORDS: &[&str] = &[
     "app", "web", "net", "push", "hub", "lab", "do", "no", "go", "hi", "my",
 ];
 
+/// Legitimate vendor or product labels that can look consonant-heavy, but are not DGA domains.
+const BENIGN_BRAND_DOMAIN_LABELS: &[&str] = &[
+    "hundsun",
+    "smartx",
+    "aishu",
+    "alipay",
+    "wechat",
+    "weixin",
+    "foxmail",
+    "qichacha",
+    "cmbchina",
+    "ccabchina",
+    "nbcb",
+];
+
 /// Check whether a username can be decomposed into pinyin syllables + common English words.
 /// If decomposable, it is a legitimate name (e.g., weixinmphelper = weixin + mp + helper), not random.
 pub fn is_pinyin_english_name(name: &str) -> bool {
@@ -101,6 +116,14 @@ pub fn is_pinyin_english_name(name: &str) -> bool {
         }
     }
     can_cover[n]
+}
+
+pub fn is_human_readable_domain_label(name: &str) -> bool {
+    let normalized = name.to_ascii_lowercase();
+    is_pinyin_english_name(&normalized)
+        || BENIGN_BRAND_DOMAIN_LABELS
+            .iter()
+            .any(|label| normalized == *label)
 }
 
 pub struct IdentityAnomalyModule {
@@ -746,5 +769,13 @@ mod tests {
         assert!(!is_pinyin_english_name("ktipfnl"), "ktipfnl is random");
         assert!(!is_pinyin_english_name("xhjqwzk"), "xhjqwzk is random");
         assert!(!is_pinyin_english_name("bdfghjk"), "bdfghjk is random");
+    }
+
+    #[test]
+    fn test_human_readable_brand_labels_not_treated_as_random() {
+        assert!(is_human_readable_domain_label("hundsun"));
+        assert!(is_human_readable_domain_label("smartx"));
+        assert!(is_human_readable_domain_label("aishu"));
+        assert!(!is_human_readable_domain_label("xvkrnbstq"));
     }
 }

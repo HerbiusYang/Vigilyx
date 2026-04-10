@@ -1,5 +1,5 @@
-use super::*;
 use super::smtp_relay;
+use super::*;
 use crate::capture::{IpAddr, RawpacketInfo};
 use bytes::Bytes;
 use std::net::Ipv4Addr;
@@ -135,8 +135,7 @@ fn insert_first_hop_session(
 #[test]
 fn fast_subject_scan_ignores_dkim_h_tag_false_positive() {
     let manager = ShardedSessionManager::new();
-    let payload =
-        b"DKIM-Signature: v=1; h=From:To:Subject:Date; b=abc123\r\n\r\nbody";
+    let payload = b"DKIM-Signature: v=1; h=From:To:Subject:Date; b=abc123\r\n\r\nbody";
 
     assert_eq!(manager.extract_subject_from_payload_fast(payload), None);
 }
@@ -147,7 +146,9 @@ fn fast_subject_scan_prefers_real_subject_header_line() {
     let payload = b"Received: from relay.example\r\nDKIM-Signature: v=1; h=From:To:Subject:Date; b=abc123\r\nSubject: Quarterly update\r\n\r\nbody";
 
     assert_eq!(
-        manager.extract_subject_from_payload_fast(payload).as_deref(),
+        manager
+            .extract_subject_from_payload_fast(payload)
+            .as_deref(),
         Some("Quarterly update")
     );
 }
@@ -192,6 +193,37 @@ fn quit_completes_session_and_decrements_active_once() {
 
     let _ = manager.process_packet(&bye, None, Instant::now());
     assert_eq!(manager.get_stats().active_sessions, 0);
+}
+
+#[test]
+fn same_session_on_different_workers_records_diagnostic_signal() {
+    let manager = ShardedSessionManager::new();
+    let packet1 = smtp_packet(Direction::Outbound, 35011, 25, 100, 0x18, b"EHLO test\r\n");
+    let packet2 = smtp_packet(
+        Direction::Outbound,
+        35011,
+        25,
+        120,
+        0x18,
+        b"MAIL FROM:<sender@example.com>\r\n",
+    );
+    let key = SessionKey::new(&packet1);
+
+    let _ = manager.process_packet_with_worker(&packet1, None, Instant::now(), Some(1));
+    let _ = manager.process_packet_with_worker(&packet2, None, Instant::now(), Some(2));
+
+    let entry = manager.sessions.get(&key).expect("session must exist");
+    assert_eq!(entry.owner_worker_id, Some(1));
+    assert_eq!(entry.last_worker_id, Some(2));
+    assert_eq!(entry.worker_switch_count, 1);
+    assert_eq!(
+        manager
+            .stats
+            .smtp_pipeline
+            .smtp_worker_mismatch_events
+            .load(Ordering::Relaxed),
+        1
+    );
 }
 
 #[test]
@@ -533,10 +565,7 @@ fn smtp_pending_data_idle_timeout_salvages_before_global_timeout() {
     let session = manager.sessions.get(&key).expect("session must exist");
     assert_eq!(session.session.status, SessionStatus::Timeout);
     assert_eq!(session.session.email_count, 1);
-    assert_eq!(
-        session.session.subject.as_deref(),
-        Some("idle-timeout")
-    );
+    assert_eq!(session.session.subject.as_deref(), Some("idle-timeout"));
     assert!(session.session.ended_at.is_some());
 }
 

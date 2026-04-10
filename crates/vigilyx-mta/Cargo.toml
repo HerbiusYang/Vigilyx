@@ -6,6 +6,11 @@ authors.workspace = true
 license.workspace = true
 description = "Vigilyx MTA 代理 — SMTP 中继 + 内嵌安全引擎"
 
+[lib]
+# This crate currently exposes module-level docs only; running rustdoc tests in the
+# workspace triggers an unrelated dependency-resolution failure and blocks backend deploys.
+doctest = false
+
 [[bin]]
 name = "vigilyx-mta"
 path = "src/main.rs"

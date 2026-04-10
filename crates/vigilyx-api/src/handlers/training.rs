@@ -14,6 +14,7 @@ use axum::{
     response::IntoResponse,
 };
 use std::sync::Arc;
+use vigilyx_core::{DEFAULT_INTERNAL_SERVICE_HOSTS, validate_internal_service_url};
 
 use super::{ApiResponse, PaginationParams};
 use crate::AppState;
@@ -67,7 +68,10 @@ pub async fn get_training_stats(State(state): State<Arc<AppState>>) -> impl Into
 
    // Fetch model status from Python AI service
     let ai_url = get_ai_service_url(&state).await;
-    let url = format!("{}/training/status", ai_url);
+    let url = match build_ai_service_endpoint(&ai_url, "training/status") {
+        Ok(url) => url,
+        Err(error) => return ApiResponse::<serde_json::Value>::internal_err(&error, "Operation failed"),
+    };
 
     let client = &state.http_client;
     let model_status = match tokio::time::timeout(
@@ -167,7 +171,10 @@ pub async fn trigger_nlp_training(State(state): State<Arc<AppState>>) -> impl In
         .collect();
 
     let ai_url = get_ai_service_url(&state).await;
-    let url = format!("{}/training/train", ai_url);
+    let url = match build_ai_service_endpoint(&ai_url, "training/train") {
+        Ok(url) => url,
+        Err(error) => return ApiResponse::<serde_json::Value>::internal_err(&error, "Operation failed"),
+    };
 
     let client = &state.http_client;
    // CPU-intensive training; 24h timeout (Python handles progress internally)
@@ -198,7 +205,10 @@ pub async fn trigger_nlp_training(State(state): State<Arc<AppState>>) -> impl In
 /// Query NLP model status from Python AI service
 pub async fn get_nlp_training_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let ai_url = get_ai_service_url(&state).await;
-    let url = format!("{}/training/status", ai_url);
+    let url = match build_ai_service_endpoint(&ai_url, "training/status") {
+        Ok(url) => url,
+        Err(error) => return ApiResponse::<serde_json::Value>::internal_err(&error, "Operation failed"),
+    };
 
     let client = &state.http_client;
     match tokio::time::timeout(std::time::Duration::from_secs(5), client.get(&url).send()).await {
@@ -219,7 +229,10 @@ pub async fn get_nlp_training_status(State(state): State<Arc<AppState>>) -> impl
 /// Query training progress from Python AI service
 pub async fn get_training_progress(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let ai_url = get_ai_service_url(&state).await;
-    let url = format!("{}/training/progress", ai_url);
+    let url = match build_ai_service_endpoint(&ai_url, "training/progress") {
+        Ok(url) => url,
+        Err(error) => return ApiResponse::<serde_json::Value>::internal_err(&error, "Operation failed"),
+    };
 
     let client = &state.http_client;
     match tokio::time::timeout(std::time::Duration::from_secs(3), client.get(&url).send()).await {
@@ -288,6 +301,13 @@ pub async fn update_training_sample(
 
 /// Get AI service URL from DB, with runtime allowlist validation (CWE-918).
 /// Falls back to default if DB value fails validation (DB poisoning protection).
+fn build_ai_service_endpoint(base_url: &str, endpoint: &str) -> Result<String, String> {
+    let base = url::Url::parse(base_url).map_err(|e| format!("Invalid AI service URL: {e}"))?;
+    base.join(endpoint)
+        .map(|url| url.to_string())
+        .map_err(|e| format!("Failed to build AI service endpoint: {e}"))
+}
+
 async fn get_ai_service_url(state: &AppState) -> String {
     let default_url = vigilyx_engine::config::AiServiceConfig::default().service_url;
     let url = match state.engine_db.get_config("ai_service_config").await {
@@ -301,15 +321,10 @@ async fn get_ai_service_url(state: &AppState) -> String {
     };
 
    // SEC: Validate URL allowlist at runtime - same as API save-time check
-    if let Ok(parsed) = url::Url::parse(&url)
-        && let Some(host) = parsed.host_str()
-    {
-        let h = host.to_lowercase();
-        const ALLOWED: &[&str] = &["ai", "vigilyx-ai", "localhost", "127.0.0.1"];
-        if ALLOWED.iter().any(|a| h == *a) {
-            return url;
-        }
+    if validate_internal_service_url(&url, DEFAULT_INTERNAL_SERVICE_HOSTS).is_ok() {
+        return url;
     }
+
     tracing::warn!(
         url,
         "SEC: AI service URL from DB failed runtime allowlist, using default"

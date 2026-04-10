@@ -45,6 +45,13 @@ impl LinkScanModule {
 
 static RE_IP_URL: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}").unwrap());
+static RE_DOMAINISH_TEXT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}\b").unwrap()
+});
+
+#[cfg(test)]
+static URL_DOMAIN_SET_TEST_GUARD: LazyLock<std::sync::Mutex<()>> =
+    LazyLock::new(|| std::sync::Mutex::new(()));
 
 const URL_SHORTENERS: &[&str] = &[
     "bit.ly",
@@ -159,6 +166,21 @@ pub fn is_well_known_safe_domain(domain: &str) -> bool {
     domain_in_set(&set, domain)
 }
 
+fn looks_like_urlish_link_text(text: &str) -> bool {
+    let normalized = text.trim().to_ascii_lowercase();
+    normalized.contains("http://")
+        || normalized.contains("https://")
+        || normalized.contains("www.")
+        || RE_DOMAINISH_TEXT.is_match(&normalized)
+}
+
+#[cfg(test)]
+pub(crate) fn lock_url_domain_set_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    URL_DOMAIN_SET_TEST_GUARD
+        .lock()
+        .expect("url domain set test guard poisoned")
+}
+
 #[async_trait]
 impl SecurityModule for LinkScanModule {
     fn metadata(&self) -> &ModuleMetadata {
@@ -261,9 +283,7 @@ impl SecurityModule for LinkScanModule {
             {
                 let text_lower = text.to_lowercase();
                // If the link text looks like a URL or contains a domain, check for mismatch
-                if (text_lower.contains("http://")
-                    || text_lower.contains("https://")
-                    || text_lower.contains('.'))
+                if looks_like_urlish_link_text(&text_lower)
                     && !text_lower.contains(&url_domain)
                 {
                     total_score += 0.30;
@@ -453,6 +473,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_gateway_target_ip_url_is_analyzed() {
+        let _guard = lock_url_domain_set_test_guard();
         set_trusted_url_domains(Arc::new(HashSet::new()));
         let module = LinkScanModule::new();
         let ctx = make_ctx(
@@ -467,6 +488,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_gateway_target_used_for_href_text_mismatch() {
+        let _guard = lock_url_domain_set_test_guard();
         set_trusted_url_domains(Arc::new(HashSet::new()));
         let module = LinkScanModule::new();
         let ctx = make_ctx(
@@ -479,8 +501,28 @@ mod tests {
         assert!(result.categories.contains(&"href_text_mismatch".to_string()));
     }
 
+    #[tokio::test]
+    async fn test_descriptive_filename_text_is_not_treated_as_href_mismatch() {
+        let _guard = lock_url_domain_set_test_guard();
+        set_trusted_url_domains(Arc::new(HashSet::new()));
+        let module = LinkScanModule::new();
+        let ctx = make_ctx(
+            "https://product-support.chaitin.cn/package/detail?id=18557ddf86cb4f28a89c4cfbf5cc726c7476",
+            Some("攻击检测引擎升级包5.11.24-arm64"),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert!(
+            !result.categories.contains(&"href_text_mismatch".to_string()),
+            "descriptive link labels with version numbers should not be treated as URL/domain text: {:?}",
+            result.categories
+        );
+    }
+
     #[test]
     fn test_safe_and_trusted_domain_sets_are_separate() {
+        let _guard = lock_url_domain_set_test_guard();
         let mut trusted = HashSet::new();
         trusted.insert("mail.qq.com".to_string());
         set_trusted_url_domains(Arc::new(trusted));

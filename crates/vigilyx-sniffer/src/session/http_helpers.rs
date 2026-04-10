@@ -7,9 +7,7 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{fs::OpenOptions, io::Write};
 use uuid::Uuid;
 
-
 // HTTP Body tempFilewrite
-
 
 /// HTTP body tempFileDirectory
 const HTTP_TEMP_DIR: &str = "data/tmp/http";
@@ -18,7 +16,7 @@ const HTTP_TEMP_DIR: &str = "data/tmp/http";
 ///
 /// ReturnFilepath `data/tmp/http/{session_id}.bin`
 pub(super) fn write_body_temp_file(session_id: &Uuid, body: &[u8]) -> std::io::Result<String> {
-   // EnsureDirectorystored
+    // EnsureDirectorystored
     std::fs::create_dir_all(HTTP_TEMP_DIR)?;
     #[cfg(unix)]
     std::fs::set_permissions(HTTP_TEMP_DIR, std::fs::Permissions::from_mode(0o700))?;
@@ -35,15 +33,13 @@ pub(super) fn write_body_temp_file(session_id: &Uuid, body: &[u8]) -> std::io::R
     Ok(path)
 }
 
-
 // HTTP formcredentialsExtract
-
 
 /// From URL-encoded form body MediumExtractuserNameAndPassword
 ///
 /// match SegmentName: username, user, login, email, uid, account, passwd, password, pass, pwd
 pub(super) fn extract_form_credentials(body: &[u8]) -> Option<(String, String)> {
-   // limitParseLength,prevent large POST body
+    // limitParseLength,prevent large POST body
     let len = body.len().min(4096);
     let body_str = std::str::from_utf8(&body[..len]).ok()?;
 
@@ -139,11 +135,11 @@ pub(super) fn extract_sid_from_uri(uri: &str) -> Option<String> {
 ///
 /// : `42["auth",{"clientId":"...","sid":"...","username":"user@domain.com"}]`
 pub(super) fn extract_socketio_auth_user(body: &str) -> Option<String> {
-   // Exclude: packetContains "auth" And "username"
+    // Exclude: packetContains "auth" And "username"
     if !body.contains("\"auth\"") || !body.contains("\"username\"") {
         return None;
     }
-   // find JSON
+    // find JSON
     let start = body.find('{').unwrap_or(body.len());
     let end = body.rfind('}').map(|i| i + 1).unwrap_or(body.len());
     if start >= end {
@@ -164,11 +160,11 @@ pub(super) fn extract_socketio_auth_user(body: &str) -> Option<String> {
 ///
 /// Coremail compose.jsp POST body: `{"attrs":{"account":"<user@domain.com>",...}, "action":"deliver"}`
 pub(super) fn extract_coremail_account_from_body(body: &str) -> Option<String> {
-   // Exclude:compose body packetContains "attrs" And "account"
+    // Exclude:compose body packetContains "attrs" And "account"
     if !body.contains("\"attrs\"") || !body.contains("\"account\"") {
         return None;
     }
-   // limitParseLength
+    // limitParseLength
     let end = body.len().min(4096);
     let mut safe_end = end;
     while safe_end > 0 && !body.is_char_boundary(safe_end) {
@@ -176,7 +172,7 @@ pub(super) fn extract_coremail_account_from_body(body: &str) -> Option<String> {
     }
     let val: serde_json::Value = serde_json::from_str(&body[..safe_end]).ok()?;
     let account = val.get("attrs")?.get("account")?.as_str()?;
-   // Extract <email> Mediumofemail
+    // Extract <email> Mediumofemail
     if let Some(start) = account.find('<')
         && let Some(end_pos) = account.find('>')
     {
@@ -185,7 +181,7 @@ pub(super) fn extract_coremail_account_from_body(body: &str) -> Option<String> {
             return Some(email.to_lowercase());
         }
     }
-   // email
+    // email
     let trimmed = account.trim().trim_matches('"').trim();
     if trimmed.contains('@') {
         Some(trimmed.to_lowercase())

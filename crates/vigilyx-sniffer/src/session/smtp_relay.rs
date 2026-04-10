@@ -109,7 +109,9 @@ impl ShardedSessionManager {
         Self::normalized_rcpt_list(probe_rcpt_to) == Self::normalized_rcpt_list(&candidate.rcpt_to)
     }
 
-    pub(super) fn summarize_relay_candidate(session_data: &Sessiondata) -> SmtpRelayCandidateSummary {
+    pub(super) fn summarize_relay_candidate(
+        session_data: &Sessiondata,
+    ) -> SmtpRelayCandidateSummary {
         SmtpRelayCandidateSummary {
             session_id: session_data.session.id.to_string(),
             started_at: session_data.session.started_at,

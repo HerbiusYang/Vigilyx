@@ -112,6 +112,135 @@ function scoreIndicatorLabel(score: number): string {
   return String(score)
 }
 
+type SemanticAiStatus = 'ok' | 'disabled' | 'cooldown' | 'timeout' | 'error'
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value : null
+}
+
+function readNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function getSemanticAiState(mr: ModuleResult): {
+  status: SemanticAiStatus
+  label: string
+  color: string
+  background: string
+  border: string
+  message: string | null
+  retryAfterSecs: number | null
+  timeoutSecs: number | null
+} | null {
+  if (mr.module_id !== 'semantic_scan') return null
+
+  const details = asRecord(mr.details) ?? {}
+  const rawStatus = readString(details.nlp_status)
+  const retryAfterSecs = readNumber(details.nlp_retry_after_secs)
+  const timeoutSecs = readNumber(details.nlp_timeout_secs)
+  let status: SemanticAiStatus | null = null
+
+  if (rawStatus === 'ok' || rawStatus === 'disabled' || rawStatus === 'cooldown' || rawStatus === 'timeout' || rawStatus === 'error') {
+    status = rawStatus
+  } else if (details.nlp_enabled === true) {
+    status = 'ok'
+  } else if (details.nlp_configured === false) {
+    status = 'disabled'
+  } else if (details.nlp_skipped_temporarily === true) {
+    status = 'cooldown'
+  } else if (mr.evidence.some(ev => /timeout/i.test(ev.description))) {
+    status = 'timeout'
+  } else if (/not configured|not enabled/i.test(mr.summary)) {
+    status = 'disabled'
+  }
+
+  if (!status) return null
+
+  const localizedMessage = (() => {
+    switch (status) {
+      case 'ok':
+        return 'AI/NLP 已完成分析，并已与规则引擎结果合并。'
+      case 'disabled':
+        return '当前部署未配置 AI/NLP 服务，本次仅执行规则检测。'
+      case 'cooldown':
+        return retryAfterSecs != null
+          ? `AI/NLP 服务暂时不可用，本次已回退为规则检测，预计约 ${retryAfterSecs} 秒后可重试。`
+          : 'AI/NLP 服务暂时不可用，本次已回退为规则检测。'
+      case 'timeout':
+        return timeoutSecs != null
+          ? `AI/NLP 请求在 ${timeoutSecs} 秒后超时，本次已回退为规则检测。`
+          : 'AI/NLP 请求超时，本次已回退为规则检测。'
+      case 'error':
+        return 'AI/NLP 请求失败，本次已回退为规则检测。'
+    }
+  })()
+
+  const message = localizedMessage
+
+  switch (status) {
+    case 'ok':
+      return {
+        status,
+        label: 'AI已启用',
+        color: '#16a34a',
+        background: 'rgba(22,163,74,0.12)',
+        border: 'rgba(22,163,74,0.28)',
+        message,
+        retryAfterSecs,
+        timeoutSecs,
+      }
+    case 'disabled':
+      return {
+        status,
+        label: 'AI未配置',
+        color: '#9ca3af',
+        background: 'rgba(156,163,175,0.12)',
+        border: 'rgba(156,163,175,0.24)',
+        message,
+        retryAfterSecs,
+        timeoutSecs,
+      }
+    case 'cooldown':
+      return {
+        status,
+        label: 'AI冷却中',
+        color: '#f59e0b',
+        background: 'rgba(245,158,11,0.12)',
+        border: 'rgba(245,158,11,0.28)',
+        message,
+        retryAfterSecs,
+        timeoutSecs,
+      }
+    case 'timeout':
+      return {
+        status,
+        label: 'AI超时',
+        color: '#ea580c',
+        background: 'rgba(234,88,12,0.12)',
+        border: 'rgba(234,88,12,0.28)',
+        message,
+        retryAfterSecs,
+        timeoutSecs,
+      }
+    case 'error':
+      return {
+        status,
+        label: 'AI异常',
+        color: '#dc2626',
+        background: 'rgba(220,38,38,0.12)',
+        border: 'rgba(220,38,38,0.28)',
+        message,
+        retryAfterSecs,
+        timeoutSecs,
+      }
+  }
+}
+
 // ════════════════════════════════════════════════════════════════
 // Styles
 // ════════════════════════════════════════════════════════════════
@@ -660,6 +789,7 @@ function EngineDetail({ engineId, bpa, modules, expandedModules, toggleModuleExp
       {modules.map(mr => {
         const isSafe = mr.threat_level === 'safe'
         const isOpen = expandedModules?.has(mr.module_id) ?? !isSafe
+        const semanticAiState = getSemanticAiState(mr)
         return (
           <div key={mr.module_id} style={{ marginBottom: 4 }}>
             <div
@@ -678,6 +808,19 @@ function EngineDetail({ engineId, bpa, modules, expandedModules, toggleModuleExp
                 <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {MODULE_CN[mr.module_id] ?? mr.module_name}
                 </span>
+                {semanticAiState && (
+                  <span style={{
+                    fontSize: 10,
+                    color: semanticAiState.color,
+                    background: semanticAiState.background,
+                    border: `1px solid ${semanticAiState.border}`,
+                    padding: '1px 6px',
+                    borderRadius: 999,
+                    flexShrink: 0,
+                  }}>
+                    {semanticAiState.label}
+                  </span>
+                )}
               </div>
               <div style={S.moduleRowRight}>
                 <span style={{ fontSize: 10, color: threatColor(mr.threat_level), fontWeight: 500 }}>
@@ -724,6 +867,7 @@ function ModuleList({ moduleResults, expandedModules, toggleModuleExpand }: {
       {moduleResults.map(mr => {
         const isSafe = mr.threat_level === 'safe'
         const isOpen = expandedModules?.has(mr.module_id) ?? !isSafe
+        const semanticAiState = getSemanticAiState(mr)
         return (
           <div key={mr.module_id} style={{ marginBottom: 2 }}>
             <div
@@ -743,6 +887,19 @@ function ModuleList({ moduleResults, expandedModules, toggleModuleExpand }: {
                 <span style={{ fontSize: 13, fontWeight: 500, color: isSafe ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.85)' }}>
                   {MODULE_CN[mr.module_id] ?? mr.module_name}
                 </span>
+                {semanticAiState && (
+                  <span style={{
+                    fontSize: 10,
+                    color: semanticAiState.color,
+                    background: semanticAiState.background,
+                    border: `1px solid ${semanticAiState.border}`,
+                    padding: '1px 6px',
+                    borderRadius: 999,
+                    flexShrink: 0,
+                  }}>
+                    {semanticAiState.label}
+                  </span>
+                )}
                 <span style={{
                   fontSize: 10, color: 'rgba(255,255,255,0.3)',
                   background: 'rgba(255,255,255,0.04)', padding: '2px 6px', borderRadius: 4,
@@ -784,6 +941,8 @@ function ModuleList({ moduleResults, expandedModules, toggleModuleExpand }: {
 // ════════════════════════════════════════════════════════════════
 
 function ModuleExpandedContent({ mr }: { mr: ModuleResult }) {
+  const semanticAiState = getSemanticAiState(mr)
+
   return (
     <div style={{ padding: '4px 12px 10px 26px' }}>
       <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', margin: '0 0 6px', lineHeight: 1.5 }}>
@@ -806,6 +965,49 @@ function ModuleExpandedContent({ mr }: { mr: ModuleResult }) {
             <span>D={(mr.bpa.d ?? 0).toFixed(2)}</span>
             <span>U={(mr.bpa.u ?? 0).toFixed(2)}</span>
           </div>
+        </div>
+      )}
+
+      {semanticAiState && (
+        <div style={{
+          ...S.evidenceItem,
+          marginBottom: mr.evidence.length > 0 ? 6 : 0,
+          background: semanticAiState.background,
+          border: `1px solid ${semanticAiState.border}`,
+        }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            flexWrap: 'wrap',
+          }}>
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>AI/NLP 状态</span>
+            <span style={{
+              fontSize: 10,
+              color: semanticAiState.color,
+              background: 'rgba(255,255,255,0.02)',
+              border: `1px solid ${semanticAiState.border}`,
+              padding: '1px 6px',
+              borderRadius: 999,
+            }}>
+              {semanticAiState.label}
+            </span>
+            {semanticAiState.retryAfterSecs != null && (
+              <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontFamily: MONO }}>
+                retry~{semanticAiState.retryAfterSecs}s
+              </span>
+            )}
+            {semanticAiState.status === 'timeout' && semanticAiState.timeoutSecs != null && (
+              <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontFamily: MONO }}>
+                timeout={semanticAiState.timeoutSecs}s
+              </span>
+            )}
+          </div>
+          {semanticAiState.message && (
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.65)', marginTop: 6, lineHeight: 1.5 }}>
+              {semanticAiState.message}
+            </div>
+          )}
         </div>
       )}
 

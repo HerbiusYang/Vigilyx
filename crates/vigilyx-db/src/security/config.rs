@@ -1,6 +1,7 @@
 //! SecurityEngineConfigurationData (pipeline, AI service, email alert)
 
 use anyhow::Result;
+use std::collections::HashSet;
 
 use crate::VigilDb;
 
@@ -53,6 +54,24 @@ impl VigilDb {
    /// Email alert configuration JSON
     pub async fn set_email_alert_config(&self, json: &str) -> Result<()> {
         sqlx::query("INSERT INTO config (key, value) VALUES ('email_alert_config', $1) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value")
+            .bind(json)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+   /// Get WeChat alert configuration JSON
+    pub async fn get_wechat_alert_config(&self) -> Result<Option<String>> {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT value FROM config WHERE key = 'wechat_alert_config'")
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.map(|(v,)| v))
+    }
+
+   /// WeChat alert configuration JSON
+    pub async fn set_wechat_alert_config(&self, json: &str) -> Result<()> {
+        sqlx::query("INSERT INTO config (key, value) VALUES ('wechat_alert_config', $1) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value")
             .bind(json)
             .execute(&self.pool)
             .await?;
@@ -131,6 +150,15 @@ impl VigilDb {
         Ok(())
     }
 
+   /// Get inbound target IP rules from ui_preferences.capture.inbound_dst.
+    pub async fn get_capture_inbound_target_ips(&self) -> Result<HashSet<String>> {
+        let raw = self.get_config("ui_preferences").await?;
+        Ok(raw
+            .as_deref()
+            .map(parse_capture_inbound_target_ips)
+            .unwrap_or_default())
+    }
+
    /// Domain
    ///
    /// :Statistics N Day, DomainReceived SenderDomain.
@@ -172,4 +200,23 @@ impl VigilDb {
         .await?;
         Ok(rows)
     }
+}
+
+fn parse_capture_inbound_target_ips(raw: &str) -> HashSet<String> {
+    let parsed = match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(value) => value,
+        Err(_) => return HashSet::new(),
+    };
+
+    parsed
+        .get("capture")
+        .and_then(|capture| capture.get("inbound_dst"))
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|ip| !ip.is_empty())
+        .map(str::to_string)
+        .collect()
 }

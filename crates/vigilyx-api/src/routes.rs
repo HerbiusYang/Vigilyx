@@ -319,7 +319,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
        // (K8s)
         .route("/health", get(handlers::health_check))
         .route("/health/live", get(handlers::health::liveness))
-        .route("/health/ready", get(handlers::health::readiness))
+        .route("/health/ready", get(handlers::health::public_readiness))
        // login
         .route("/auth/login", post(login));
 
@@ -555,9 +555,21 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/security/email-alert",
             put(security_handlers::update_email_alert_config),
         )
-        .route(
+       .route(
             "/security/email-alert/test",
             post(security_handlers::test_email_alert),
+        )
+        .route(
+            "/security/wechat-alert",
+            get(security_handlers::get_wechat_alert_config),
+        )
+        .route(
+            "/security/wechat-alert",
+            put(security_handlers::update_wechat_alert_config),
+        )
+        .route(
+            "/security/wechat-alert/test",
+            post(security_handlers::test_wechat_alert),
         )
        // Comment retained in English.
         .route(
@@ -656,6 +668,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
     let internal_routes = Router::new()
        // SEC-M06: Prometheus (internalRoad, Token authentication, CWE-306)
         .route("/metrics", get(crate::metrics::metrics_handler))
+        .route("/internal/health/ready", get(handlers::health::readiness))
        // status
         .route("/system/sniffer", post(handlers::update_sniffer_status))
        // MTA proxy status

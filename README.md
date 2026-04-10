@@ -113,7 +113,7 @@ After TLS is provisioned, open `https://<server-or-domain>`. Without TLS, access
 
 Login as `admin` with `API_PASSWORD` from `deploy/docker/.env`.
 
-> **Important**: the fallback password `admin123` only works if `VIGILYX_ALLOW_DEFAULT_CREDS=true` is explicitly set in `.env`. Otherwise the service refuses to start when `API_PASSWORD` is unset.
+> **Important**: `API_PASSWORD` must be set explicitly in `.env`. Default fallback credentials are disabled.
 
 ### Services
 
@@ -204,6 +204,7 @@ $EDITOR deploy.conf
 ./deploy.sh --backend
 ./deploy.sh --frontend
 ./deploy.sh --sniffer
+./deploy.sh --sniffer --config-only
 
 # Release-grade builds
 ./deploy.sh --production
@@ -212,7 +213,13 @@ $EDITOR deploy.conf
 ./deploy.sh --production --sniffer
 ```
 
-`./deploy.sh` defaults to the fast developer path (`release-fast` + `docker-compose.fast.yml`). `./deploy.sh --production` switches back to the full Dockerfiles and Docker-side `cargo --release` image builds.
+`./deploy.sh` defaults to the fast developer path (`release-fast` + `docker-compose.fast.yml`). `./deploy.sh --production` switches back to the full Dockerfiles and Docker-side `cargo --release` image builds. For env/compose/host-tuning adjustments that do not need a rebuild, use `./deploy.sh --config-only` with the relevant component flag.
+
+Passive mirror deployments can also reuse the host-side capture tuning helper directly:
+
+```bash
+ssh <server> "cd <repo-root> && bash scripts/apply-capture-host-tuning.sh --env-file deploy/docker/.env"
+```
 
 Manual verification on the remote build host:
 
@@ -254,6 +261,10 @@ All runtime configuration lives in `deploy/docker/.env`.
 | `INTERNAL_API_TOKEN` | Yes | -- | Internal token for sniffer and engine to API |
 | `AI_INTERNAL_TOKEN` | Yes | -- | AI-scoped token for API and engine to AI |
 | `SNIFFER_INTERFACE` | No | `eth0` | Capture network interface |
+| `SNIFFER_WORKERS` | No | `16` | Sniffer worker thread count; mirrored email traffic usually does not need dozens of workers |
+| `SNIFFER_HOST_TUNING` | No | `true` | Let `deploy.sh` apply host-side NIC/sysctl/RPS tuning for the capture interface |
+| `SNIFFER_HOST_IRQ_REBALANCE` | No | `true` | Rebalance capture NIC IRQs away from reserved sniffer worker CPUs |
+| `SNIFFER_HOST_IRQ_CPU_LIST` | No | empty | Optional explicit CPU list for NIC IRQs, e.g. `16-23,32-39` |
 | `AI_ENABLED` | No | `false` | Enable AI features; also start the `ai` profile |
 | `VIGILYX_MODE` | No | empty | Lock frontend deployment mode to `mirror` or `mta` |
 | `MTA_LOCAL_DOMAINS` | MTA | -- | Comma-separated local recipient domains accepted by the MTA |

@@ -23,6 +23,7 @@ use crate::bpa::Bpa;
 use crate::context::SecurityContext;
 use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
+use crate::modules::common::looks_like_raw_mime_container_text;
 
 /// Patterns for financial entity extraction
 static RE_IBAN: LazyLock<Regex> = LazyLock::new(|| {
@@ -150,7 +151,9 @@ impl TransactionCorrelationModule {
     fn get_text_content(ctx: &SecurityContext) -> String {
         let mut text = String::with_capacity(4096);
 
-        if let Some(ref body) = ctx.session.content.body_text {
+        if let Some(ref body) = ctx.session.content.body_text
+            && !looks_like_raw_mime_container_text(body)
+        {
             text.push_str(body);
             text.push('\n');
         }
@@ -275,6 +278,11 @@ impl SecurityModule for TransactionCorrelationModule {
         let mut categories = Vec::new();
         let mut total_score: f64 = 0.0;
         let mut financial_entity_count: u32 = 0;
+        let mut actionable_signal_count: u32 = 0;
+        let mut reference_entity_count: u32 = 0;
+        let mut has_payment_change = false;
+        let mut has_wire_instruction = false;
+        let mut has_amount_reference = false;
 
        // 1. IBAN detection (with country code validation to reduce false positives)
         let iban_matches: Vec<_> = RE_IBAN
@@ -283,6 +291,7 @@ impl SecurityModule for TransactionCorrelationModule {
             .collect();
         if !iban_matches.is_empty() {
             financial_entity_count += iban_matches.len() as u32;
+            actionable_signal_count += iban_matches.len() as u32;
             total_score += W_FINANCIAL_ENTITY;
             categories.push("iban_detected".to_string());
             evidence.push(Evidence {
@@ -295,6 +304,7 @@ impl SecurityModule for TransactionCorrelationModule {
        // 2. SWIFT/BIC code
         if RE_SWIFT.is_match(&text) {
             financial_entity_count += 1;
+            actionable_signal_count += 1;
             total_score += W_FINANCIAL_ENTITY;
             categories.push("swift_code_detected".to_string());
             evidence.push(Evidence {
@@ -308,6 +318,7 @@ impl SecurityModule for TransactionCorrelationModule {
         let acct_matches: Vec<_> = RE_BANK_ACCOUNT.find_iter(&text).collect();
         if !acct_matches.is_empty() {
             financial_entity_count += acct_matches.len() as u32;
+            actionable_signal_count += acct_matches.len() as u32;
             total_score += W_FINANCIAL_ENTITY;
             categories.push("bank_account_detected".to_string());
             evidence.push(Evidence {
@@ -323,6 +334,7 @@ impl SecurityModule for TransactionCorrelationModule {
        // 4. Monetary amounts
         let amount_matches: Vec<_> = RE_AMOUNT.find_iter(&text).collect();
         if !amount_matches.is_empty() {
+            has_amount_reference = true;
             total_score += W_AMOUNT_PRESENT;
             evidence.push(Evidence {
                 description: format!("Detected {} monetary amount reference(s)", amount_matches.len()),
@@ -335,6 +347,7 @@ impl SecurityModule for TransactionCorrelationModule {
         let invoice_matches: Vec<_> = RE_INVOICE.find_iter(&text).collect();
         if !invoice_matches.is_empty() {
             financial_entity_count += invoice_matches.len() as u32;
+            reference_entity_count += invoice_matches.len() as u32;
             total_score += W_FINANCIAL_ENTITY * 0.5;
             evidence.push(Evidence {
                 description: format!(
@@ -348,6 +361,8 @@ impl SecurityModule for TransactionCorrelationModule {
 
        // 6. Wire transfer instructions
         if RE_WIRE_INSTRUCTION.is_match(&text) {
+            has_wire_instruction = true;
+            actionable_signal_count += 1;
             total_score += W_WIRE_INSTRUCTION;
             categories.push("wire_transfer".to_string());
             evidence.push(Evidence {
@@ -362,6 +377,7 @@ impl SecurityModule for TransactionCorrelationModule {
        // 6b. Cryptocurrency wallet addresses (sextortion/ransomware)
         let btc_matches: Vec<_> = RE_BTC_ADDR.find_iter(&text).collect();
         if !btc_matches.is_empty() {
+            actionable_signal_count += btc_matches.len() as u32;
             total_score += 0.40; // BTC wallet address in email is highly suspicious
             categories.push("crypto_wallet".to_string());
             evidence.push(Evidence {
@@ -375,6 +391,7 @@ impl SecurityModule for TransactionCorrelationModule {
         }
         let eth_matches: Vec<_> = RE_ETH_ADDR.find_iter(&text).collect();
         if !eth_matches.is_empty() {
+            actionable_signal_count += eth_matches.len() as u32;
             total_score += 0.35;
             categories.push("crypto_wallet".to_string());
             evidence.push(Evidence {
@@ -389,28 +406,37 @@ impl SecurityModule for TransactionCorrelationModule {
 
        // 7. Payment change (BEC signature)
         if let Some((score, ev)) = Self::check_payment_change(&text) {
+            has_payment_change = true;
+            actionable_signal_count += 1;
             total_score += score;
             categories.push("payment_change".to_string());
             evidence.push(ev);
         }
 
-        let has_financial = financial_entity_count > 0;
+        let has_actionable_payment_signal = actionable_signal_count > 0;
 
        // 8. Urgency + financial entity combo
-        if let Some((score, ev)) = Self::check_urgency_combo(&text, has_financial) {
+        if let Some((score, ev)) = Self::check_urgency_combo(&text, has_actionable_payment_signal)
+        {
             total_score += score;
             categories.push("urgency_financial_combo".to_string());
             evidence.push(ev);
         }
 
        // 9. Multiple financial entities bonus
-        if financial_entity_count >= 3 {
+        let corroborating_reference_count =
+            u32::from(reference_entity_count > 0) + u32::from(has_amount_reference);
+        if actionable_signal_count >= 2
+            || (actionable_signal_count >= 1 && corroborating_reference_count >= 2)
+        {
             total_score += W_MULTI_FINANCIAL;
             categories.push("multi_financial_entities".to_string());
             evidence.push(Evidence {
                 description: format!(
-                    "Detected {} financial entities (accounts/codes/invoices) — multi-entity risk accumulation",
-                    financial_entity_count
+                    "Detected corroborating payment signals (actionable={}, references={}, amount_ref={}) — multi-entity risk accumulation",
+                    actionable_signal_count,
+                    reference_entity_count,
+                    has_amount_reference
                 ),
                 location: Some("body".to_string()),
                 snippet: None,
@@ -431,7 +457,12 @@ impl SecurityModule for TransactionCorrelationModule {
                 categories: vec![],
                 summary: "No transaction-related content detected".to_string(),
                 evidence: vec![],
-                details: serde_json::json!({ "score": 0.0, "financial_entities": 0 }),
+                details: serde_json::json!({
+                    "score": 0.0,
+                    "financial_entities": 0,
+                    "actionable_payment_signals": 0,
+                    "reference_entities": 0,
+                }),
                 duration_ms,
                 analyzed_at: Utc::now(),
                 bpa: Some(Bpa::vacuous()),
@@ -463,7 +494,11 @@ impl SecurityModule for TransactionCorrelationModule {
             details: serde_json::json!({
                 "score": total_score,
                 "financial_entities": financial_entity_count,
-                "has_wire_instruction": RE_WIRE_INSTRUCTION.is_match(&text),
+                "actionable_payment_signals": actionable_signal_count,
+                "reference_entities": reference_entity_count,
+                "has_wire_instruction": has_wire_instruction,
+                "has_payment_change": has_payment_change,
+                "has_amount_reference": has_amount_reference,
             }),
             duration_ms,
             analyzed_at: Utc::now(),
@@ -476,6 +511,25 @@ impl SecurityModule for TransactionCorrelationModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline::context::SecurityContext;
+    use std::sync::Arc;
+    use vigilyx_core::models::{EmailContent, EmailSession, Protocol};
+
+    fn make_ctx(body_text: Option<&str>, subject: Option<&str>) -> SecurityContext {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.subject = subject.map(str::to_string);
+        session.content = EmailContent {
+            body_text: body_text.map(str::to_string),
+            ..Default::default()
+        };
+        SecurityContext::new(Arc::new(session))
+    }
 
     #[test]
     fn test_valid_iban_country_codes() {
@@ -513,5 +567,67 @@ mod tests {
             .filter(|m| is_valid_iban_country(m.as_str()))
             .collect();
         assert_eq!(matches_fake.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_raw_mime_container_body_is_ignored() {
+        let module = TransactionCorrelationModule::new();
+        let ctx = make_ctx(
+            Some(
+                "--=_NextPart_123\r\nContent-Type: text/plain; charset=\"utf-8\"\r\nContent-Transfer-Encoding: base64\r\n\r\nMHgxMjM0NTY3ODkwYWJjZGVmMTIzNDU2Nzg5MGFiY2RlZjEyMzQ1Njc4OTA=\r\n",
+            ),
+            None,
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert!(result.categories.is_empty());
+        assert!(
+            result.summary.contains("No analyzable text content")
+                || result.summary.contains("No transaction-related content")
+        );
+    }
+
+    #[tokio::test]
+    async fn invoice_references_with_immediately_do_not_trigger_bec_combo() {
+        let module = TransactionCorrelationModule::new();
+        let ctx = make_ctx(
+            Some(
+                "Please review invoice INV-2026-1007 and purchase order PO-88421 immediately. Receipt REF-7781 is attached for reconciliation.",
+            ),
+            Some("Invoice notice"),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert!(!result
+            .categories
+            .contains(&"urgency_financial_combo".to_string()));
+        assert!(!result
+            .categories
+            .contains(&"multi_financial_entities".to_string()));
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+    }
+
+    #[tokio::test]
+    async fn urgent_wire_with_banking_details_still_triggers_multi_signal_risk() {
+        let module = TransactionCorrelationModule::new();
+        let ctx = make_ctx(
+            Some(
+                "Please process this wire transfer immediately to DE89370400440532013000. SWIFT: DEUTDEFF. Amount: USD 24,500.",
+            ),
+            Some("Urgent payment update"),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert!(result
+            .categories
+            .contains(&"urgency_financial_combo".to_string()));
+        assert!(result
+            .categories
+            .contains(&"multi_financial_entities".to_string()));
+        assert_ne!(result.threat_level, ThreatLevel::Safe);
     }
 }

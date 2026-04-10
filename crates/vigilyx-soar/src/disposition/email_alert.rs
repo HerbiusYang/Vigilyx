@@ -1,5 +1,7 @@
 //! Email alert pipeline: SMTP config, HTML builder, send logic, connection testing.
 
+use std::collections::HashSet;
+
 use lettre::message::{Mailbox, header::ContentType};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
@@ -9,7 +11,10 @@ use vigilyx_core::security::{SecurityVerdict, ThreatLevel};
 
 use crate::config::EmailAlertConfig;
 
-use super::DispositionEngine;
+use super::{
+    DispositionAction, DispositionEngine, infer_external_ip, infer_mail_direction,
+    render_action_message_template,
+};
 
 
 // Helper functions
@@ -92,6 +97,10 @@ fn html_escape(s: &str) -> String {
         .replace('\'', "&#x27;")
 }
 
+fn html_escape_multiline(s: &str) -> String {
+    html_escape(s).replace('\n', "<br/>")
+}
+
 
 // SMTP transport builder
 
@@ -102,36 +111,53 @@ fn build_smtp_transport(
     validate_network_target(&config.smtp_host, DEFAULT_BLOCKED_HOSTNAMES)
         .map_err(|reason| format!("SMTP host blocked (SSRF prevention): {reason}"))?;
 
-    let creds = Credentials::new(config.smtp_username.clone(), config.smtp_password.clone());
+    let auth = smtp_auth_fields(config)?;
 
     let transport = match config.smtp_tls.as_str() {
-        "tls" => AsyncSmtpTransport::<Tokio1Executor>::relay(&config.smtp_host)
-            .map_err(|e| format!("SMTP relay error: {}", e))?
-            .port(config.smtp_port)
-            .credentials(creds)
-            .build(),
-        "starttls" => AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.smtp_host)
-            .map_err(|e| format!("SMTP STARTTLS error: {}", e))?
-            .port(config.smtp_port)
-            .credentials(creds)
-            .build(),
+        "tls" => {
+            let builder = AsyncSmtpTransport::<Tokio1Executor>::relay(&config.smtp_host)
+                .map_err(|e| format!("SMTP relay error: {}", e))?
+                .port(config.smtp_port);
+            if let Some((username, password)) = &auth {
+                builder
+                    .credentials(Credentials::new(username.clone(), password.clone()))
+                    .build()
+            } else {
+                builder.build()
+            }
+        }
+        "starttls" => {
+            let builder = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.smtp_host)
+                .map_err(|e| format!("SMTP STARTTLS error: {}", e))?
+                .port(config.smtp_port);
+            if let Some((username, password)) = &auth {
+                builder
+                    .credentials(Credentials::new(username.clone(), password.clone()))
+                    .build()
+            } else {
+                builder.build()
+            }
+        }
         "none" => {
-           // Plaintext SMTP requires explicit opt-in via environment variable.
+           // Plaintext SMTP requires explicit admin opt-in in the persisted alert config.
            // Without this guard, a misconfiguration could leak credentials in cleartext.
-            let allowed = std::env::var("VIGILYX_ALLOW_PLAINTEXT_SMTP")
-                .map(|v| v == "true" || v == "1")
-                .unwrap_or(false);
-            if !allowed {
+            if !config.allow_plaintext_smtp {
                 return Err(
-                    "SMTP plaintext mode blocked: set VIGILYX_ALLOW_PLAINTEXT_SMTP=true to allow"
+                    "SMTP plaintext mode blocked: enable the admin plaintext SMTP switch to allow"
                         .to_string(),
                 );
             }
-            warn!("SMTP transport configured without TLS — credentials sent in plaintext!");
-            AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&config.smtp_host)
-                .port(config.smtp_port)
-                .credentials(creds)
-                .build()
+            warn!("SMTP transport configured without TLS");
+            let builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&config.smtp_host)
+                .port(config.smtp_port);
+            if let Some((username, password)) = &auth {
+                warn!("SMTP credentials will be sent in plaintext!");
+                builder
+                    .credentials(Credentials::new(username.clone(), password.clone()))
+                    .build()
+            } else {
+                builder.build()
+            }
         }
         other => {
            // Unknown TLS mode -> default to STARTTLS rather than plaintext
@@ -139,15 +165,36 @@ fn build_smtp_transport(
                 smtp_tls = other,
                 "Unknown SMTP TLS mode, defaulting to STARTTLS"
             );
-            AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.smtp_host)
+            let builder = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.smtp_host)
                 .map_err(|e| format!("SMTP STARTTLS error: {}", e))?
-                .port(config.smtp_port)
-                .credentials(creds)
-                .build()
+                .port(config.smtp_port);
+            if let Some((username, password)) = &auth {
+                builder
+                    .credentials(Credentials::new(username.clone(), password.clone()))
+                    .build()
+            } else {
+                builder.build()
+            }
         }
     };
 
     Ok(transport)
+}
+
+fn smtp_auth_fields(config: &EmailAlertConfig) -> Result<Option<(String, String)>, String> {
+    let username = config.smtp_username.trim().to_string();
+    let password = config.smtp_password.clone();
+    let has_username = !username.is_empty();
+    let has_password = !password.is_empty();
+
+    match (has_username, has_password) {
+        (false, false) => Ok(None),
+        (true, true) => Ok(Some((username, password))),
+        _ => Err(
+            "SMTP username and password must either both be filled or both be left empty"
+                .to_string(),
+        ),
+    }
 }
 
 
@@ -155,10 +202,21 @@ fn build_smtp_transport(
 
 
 /// BuildAlert HTML
-fn build_alert_html(verdict: &SecurityVerdict, session: &EmailSession) -> String {
+fn build_alert_html(
+    verdict: &SecurityVerdict,
+    session: &EmailSession,
+    custom_message: Option<&str>,
+    internal_domains: &HashSet<String>,
+    inbound_mail_servers: &HashSet<String>,
+) -> String {
     let level = threat_level_label(&verdict.threat_level);
     let color = threat_level_color(&verdict.threat_level);
     let confidence_pct = (verdict.confidence * 100.0) as u32;
+    let mail_direction = infer_mail_direction(session, internal_domains, inbound_mail_servers)
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let external_ip = infer_external_ip(session, internal_domains, inbound_mail_servers)
+        .unwrap_or_else(|| "-".to_string());
    // HTML-escape all user-controlled content to prevent XSS
     let mail_from = html_escape(session.mail_from.as_deref().unwrap_or("(unknown)"));
     let rcpt_to = if session.rcpt_to.is_empty() {
@@ -167,6 +225,10 @@ fn build_alert_html(verdict: &SecurityVerdict, session: &EmailSession) -> String
         html_escape(&session.rcpt_to.join(", "))
     };
     let subject = html_escape(session.subject.as_deref().unwrap_or("(no subject)"));
+    let client_ip = html_escape(&session.client_ip);
+    let server_ip = html_escape(&session.server_ip);
+    let external_ip = html_escape(&external_ip);
+    let mail_direction = html_escape(&mail_direction);
     let categories = if verdict.categories.is_empty() {
         "-".to_string()
     } else {
@@ -176,6 +238,19 @@ fn build_alert_html(verdict: &SecurityVerdict, session: &EmailSession) -> String
         .created_at
         .format("%Y-%m-%d %H:%M:%S UTC")
         .to_string();
+    let custom_message_block = custom_message
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|message| {
+            format!(
+                r#"<div style="margin:0 0 16px;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px">
+      <div style="font-size:12px;font-weight:600;color:#475569;margin-bottom:6px">自定义告警内容</div>
+      <div style="font-size:14px;line-height:1.7;color:#1e293b">{}</div>
+    </div>"#,
+                html_escape_multiline(message)
+            )
+        })
+        .unwrap_or_default();
 
     format!(
         r#"<!DOCTYPE html>
@@ -190,6 +265,7 @@ fn build_alert_html(verdict: &SecurityVerdict, session: &EmailSession) -> String
   </div>
   <!-- Body -->
   <div style="padding:24px">
+    {custom_message_block}
     <table style="width:100%;border-collapse:collapse;font-size:14px">
       <tr>
         <td style="padding:8px 0;color:#666;width:100px">Detection Time</td>
@@ -210,6 +286,22 @@ fn build_alert_html(verdict: &SecurityVerdict, session: &EmailSession) -> String
       <tr>
         <td style="padding:8px 0;color:#666">Threat Category</td>
         <td style="padding:8px 0"><code style="background:#f0f0f0;padding:2px 6px;border-radius:3px;font-size:13px">{categories}</code></td>
+      </tr>
+      <tr>
+        <td style="padding:8px 0;color:#666">Mail Direction</td>
+        <td style="padding:8px 0;font-weight:500">{mail_direction}</td>
+      </tr>
+      <tr>
+        <td style="padding:8px 0;color:#666">Client IP</td>
+        <td style="padding:8px 0;font-weight:500">{client_ip}</td>
+      </tr>
+      <tr>
+        <td style="padding:8px 0;color:#666">Server IP</td>
+        <td style="padding:8px 0;font-weight:500">{server_ip}</td>
+      </tr>
+      <tr>
+        <td style="padding:8px 0;color:#666">External IP</td>
+        <td style="padding:8px 0;font-weight:500">{external_ip}</td>
       </tr>
       <tr>
         <td style="padding:8px 0;color:#666">检测Module</td>
@@ -235,8 +327,13 @@ fn build_alert_html(verdict: &SecurityVerdict, session: &EmailSession) -> String
         rcpt_to = rcpt_to,
         subject = subject,
         categories = categories,
+        mail_direction = mail_direction,
+        client_ip = client_ip,
+        server_ip = server_ip,
+        external_ip = external_ip,
         modules_run = verdict.modules_run,
         modules_flagged = verdict.modules_flagged,
+        custom_message_block = custom_message_block,
         summary = html_escape(&verdict.summary),
         session_id = verdict.session_id,
     )
@@ -247,11 +344,14 @@ fn build_alert_html(verdict: &SecurityVerdict, session: &EmailSession) -> String
 
 
 impl DispositionEngine {
-   /// Email alert configuration items Alert
-    pub(super) async fn check_and_send_email_alert(
+   /// Execute an email alert action using the saved email channel config.
+    pub(super) async fn execute_email_action(
         &self,
+        action: &DispositionAction,
         verdict: &SecurityVerdict,
         session: &EmailSession,
+        internal_domains: &HashSet<String>,
+        inbound_mail_servers: &HashSet<String>,
     ) {
         let config = match self.load_email_alert_config().await {
             Some(c) => c,
@@ -267,6 +367,42 @@ impl DispositionEngine {
         if verdict.threat_level < min_level {
             return;
         }
+
+        let custom_message = action
+            .message_template
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|template| {
+                render_action_message_template(
+                    template,
+                    verdict,
+                    session,
+                    internal_domains,
+                    inbound_mail_servers,
+                )
+            });
+
+        self.send_email_alert_with_config(
+            &config,
+            verdict,
+            session,
+            custom_message.as_deref(),
+            internal_domains,
+            inbound_mail_servers,
+        )
+        .await;
+    }
+
+    async fn send_email_alert_with_config(
+        &self,
+        config: &EmailAlertConfig,
+        verdict: &SecurityVerdict,
+        session: &EmailSession,
+        custom_message: Option<&str>,
+        internal_domains: &HashSet<String>,
+        inbound_mail_servers: &HashSet<String>,
+    ) {
 
        // Recipient
         let mut recipients: Vec<String> = Vec::new();
@@ -294,12 +430,18 @@ impl DispositionEngine {
             threat_level_label(&verdict.threat_level),
             subject_text
         );
-        let html_body = build_alert_html(verdict, session);
+        let html_body = build_alert_html(
+            verdict,
+            session,
+            custom_message,
+            internal_domains,
+            inbound_mail_servers,
+        );
 
        // Recipient
         for to_addr in &recipients {
             if let Err(e) = self
-                .send_alert_email(&config, to_addr, &mail_subject, &html_body)
+                .send_alert_email(config, to_addr, &mail_subject, &html_body)
                 .await
             {
                 error!(
@@ -434,7 +576,7 @@ impl DispositionEngine {
 mod tests {
     use super::*;
     use chrono::Utc;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
     use uuid::Uuid;
     use vigilyx_core::models::Protocol;
 
@@ -479,6 +621,10 @@ mod tests {
         session
     }
 
+    fn build_html(verdict: &SecurityVerdict, session: &EmailSession) -> String {
+        build_alert_html(verdict, session, None, &HashSet::new(), &HashSet::new())
+    }
+
     fn make_smtp_config(tls_mode: &str) -> EmailAlertConfig {
         EmailAlertConfig {
             enabled: true,
@@ -487,12 +633,34 @@ mod tests {
             smtp_username: "user".to_string(),
             smtp_password: "pass".to_string(),
             smtp_tls: tls_mode.to_string(),
+            allow_plaintext_smtp: false,
             from_address: "alert@example.com".to_string(),
             admin_email: "admin@example.com".to_string(),
             min_threat_level: "medium".to_string(),
             notify_recipient: false,
             notify_admin: true,
         }
+    }
+
+    #[test]
+    fn test_smtp_auth_fields_allows_no_auth_when_both_empty() {
+        let mut config = make_smtp_config("starttls");
+        config.smtp_username.clear();
+        config.smtp_password.clear();
+        assert!(smtp_auth_fields(&config).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_smtp_auth_fields_rejects_partial_credentials() {
+        let mut config = make_smtp_config("starttls");
+        config.smtp_password.clear();
+        let result = smtp_auth_fields(&config);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .contains("must either both be filled or both be left empty")
+        );
     }
 
     
@@ -724,25 +892,33 @@ mod tests {
 
     
    // build_smtp_transport - plaintext rejection
-    
+
 
     #[test]
-    fn test_build_smtp_transport_rejects_plaintext_without_env() {
-       // Ensure the env var is NOT set (clean environment)
-       // SAFETY: test-only, single-threaded test runner
-        unsafe { std::env::remove_var("VIGILYX_ALLOW_PLAINTEXT_SMTP") };
-
+    fn test_build_smtp_transport_rejects_plaintext_without_opt_in() {
         let config = make_smtp_config("none");
         let result = build_smtp_transport(&config);
         assert!(
             result.is_err(),
-            "Plaintext SMTP should be blocked without VIGILYX_ALLOW_PLAINTEXT_SMTP"
+            "Plaintext SMTP should be blocked without allow_plaintext_smtp"
         );
         let err_msg = result.unwrap_err();
         assert!(
             err_msg.contains("plaintext mode blocked"),
             "Error message should mention plaintext blocking, got: {}",
             err_msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_build_smtp_transport_allows_plaintext_with_opt_in() {
+        let mut config = make_smtp_config("none");
+        config.allow_plaintext_smtp = true;
+        let result = build_smtp_transport(&config);
+        assert!(
+            result.is_ok(),
+            "Plaintext SMTP should build when allow_plaintext_smtp=true: {:?}",
+            result.err()
         );
     }
 
@@ -801,7 +977,7 @@ mod tests {
             vec!["victim@company.com"],
             Some("Urgent: Account Verification"),
         );
-        let html = build_alert_html(&verdict, &session);
+        let html = build_html(&verdict, &session);
 
         assert!(
             html.contains("High"),
@@ -825,7 +1001,7 @@ mod tests {
             vec!["user@corp.com"],
             Some("Password Reset Required"),
         );
-        let html = build_alert_html(&verdict, &session);
+        let html = build_html(&verdict, &session);
 
         assert!(
             html.contains("phisher@fake.com"),
@@ -857,7 +1033,7 @@ mod tests {
             vec!["rcpt@test.com"],
             Some("<script>alert('xss')</script>"),
         );
-        let html = build_alert_html(&verdict, &session);
+        let html = build_html(&verdict, &session);
 
         assert!(
             !html.contains("<script>"),
@@ -877,7 +1053,7 @@ mod tests {
             vec!["rcpt@test.com"],
             Some("Normal subject"),
         );
-        let html = build_alert_html(&verdict, &session);
+        let html = build_html(&verdict, &session);
 
         assert!(
             !html.contains("<img"),
@@ -890,7 +1066,7 @@ mod tests {
         let verdict = make_verdict(ThreatLevel::Safe, vec![], "Clean email");
        // mail_from = None, rcpt_to = empty, subject = None
         let session = make_session(None, vec![], None);
-        let html = build_alert_html(&verdict, &session);
+        let html = build_html(&verdict, &session);
 
         assert!(
             html.contains("(unknown)"),
@@ -907,7 +1083,7 @@ mod tests {
         let mut verdict = make_verdict(ThreatLevel::High, vec![], "test");
         verdict.confidence = 0.73;
         let session = make_session(Some("a@b.com"), vec!["c@d.com"], Some("test"));
-        let html = build_alert_html(&verdict, &session);
+        let html = build_html(&verdict, &session);
 
         assert!(html.contains("73%"), "Confidence 0.73 should appear as 73%");
     }
@@ -917,7 +1093,7 @@ mod tests {
         let verdict = make_verdict(ThreatLevel::Low, vec![], "test");
         let session_id_str = verdict.session_id.to_string();
         let session = make_session(Some("a@b.com"), vec!["c@d.com"], Some("test"));
-        let html = build_alert_html(&verdict, &session);
+        let html = build_html(&verdict, &session);
 
         assert!(
             html.contains(&session_id_str),
@@ -929,7 +1105,7 @@ mod tests {
     fn test_build_alert_html_modules_count() {
         let verdict = make_verdict(ThreatLevel::Medium, vec![], "test");
         let session = make_session(Some("a@b.com"), vec!["c@d.com"], Some("test"));
-        let html = build_alert_html(&verdict, &session);
+        let html = build_html(&verdict, &session);
 
         assert!(
             html.contains("15"),
@@ -945,7 +1121,7 @@ mod tests {
     fn test_build_alert_html_empty_categories_shows_dash() {
         let verdict = make_verdict(ThreatLevel::Low, vec![], "test");
         let session = make_session(Some("a@b.com"), vec!["c@d.com"], Some("test"));
-        let html = build_alert_html(&verdict, &session);
+        let html = build_html(&verdict, &session);
 
        // The categories field should contain "-" when empty
         assert!(
@@ -962,11 +1138,43 @@ mod tests {
             vec!["alice@corp.com", "bob@corp.com"],
             Some("test"),
         );
-        let html = build_alert_html(&verdict, &session);
+        let html = build_html(&verdict, &session);
 
         assert!(
             html.contains("alice@corp.com, bob@corp.com"),
             "Multiple recipients should be comma-separated"
         );
+    }
+
+    #[test]
+    fn test_build_alert_html_contains_custom_message_and_ip_fields() {
+        let verdict = make_verdict(ThreatLevel::High, vec!["phishing".to_string()], "test");
+        let session = make_session(
+            Some("attacker@evil.com"),
+            vec!["user@corp.com"],
+            Some("invoice"),
+        );
+        let internal_domains = HashSet::from([String::from("corp.com")]);
+        let custom_message = render_action_message_template(
+            "方向={{mail_direction}} 外网IP={{external_ip}}",
+            &verdict,
+            &session,
+            &internal_domains,
+            &HashSet::new(),
+        );
+        let html = build_alert_html(
+            &verdict,
+            &session,
+            Some(&custom_message),
+            &internal_domains,
+            &HashSet::new(),
+        );
+
+        assert!(html.contains("自定义告警内容"));
+        assert!(html.contains("方向=inbound"));
+        assert!(html.contains("外网IP=10.0.0.1"));
+        assert!(html.contains("Client IP"));
+        assert!(html.contains("Server IP"));
+        assert!(html.contains("External IP"));
     }
 }

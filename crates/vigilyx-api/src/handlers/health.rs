@@ -41,6 +41,13 @@ pub struct ReadinessResponse {
     pub checks: ReadinessChecks,
 }
 
+/// Public readiness response
+#[derive(Debug, Serialize)]
+pub struct PublicReadinessResponse {
+   /// "ready" | "not_ready"
+    pub status: &'static str,
+}
+
 /// Comment retained in English.
 #[derive(Debug, Serialize)]
 pub struct ReadinessChecks {
@@ -72,6 +79,27 @@ pub async fn liveness() -> impl IntoResponse {
 /// , 1failed 503 Service Unavailable.
 /// All timeout,.
 pub async fn readiness(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let (http_status, response) = build_readiness_response(&state).await;
+    (http_status, Json(response))
+}
+
+/// `GET /health/ready` (public) - aggregate only
+///
+/// Public callers only need the overall readiness status. Detailed dependency
+/// information is available on the internal-token protected route.
+pub async fn public_readiness(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let (http_status, response) = build_readiness_response(&state).await;
+    (
+        http_status,
+        Json(PublicReadinessResponse {
+            status: response.status,
+        }),
+    )
+}
+
+async fn build_readiness_response(
+    state: &Arc<AppState>,
+) -> (StatusCode, ReadinessResponse) {
    // 1. Database check (5s timeout)
     let db_check = {
         let start = Instant::now();
@@ -146,7 +174,7 @@ pub async fn readiness(State(state): State<Arc<AppState>>) -> impl IntoResponse 
 
    // 3. Engine check (via cached heartbeat)
     let engine_check = {
-        match crate::handlers::security::load_engine_status_snapshot(&state).await {
+        match crate::handlers::security::load_engine_status_snapshot(state).await {
             Some(snapshot) => {
                 let engine_status = match snapshot.heartbeat_secs {
                     age if age <= 60 => "up",
@@ -185,7 +213,7 @@ pub async fn readiness(State(state): State<Arc<AppState>>) -> impl IntoResponse 
         StatusCode::SERVICE_UNAVAILABLE
     };
 
-    (http_status, Json(response))
+    (http_status, response)
 }
 
 
@@ -290,5 +318,13 @@ mod tests {
         let json = serde_json::to_value(&check).expect("serialize");
         assert_eq!(json["status"], "degraded");
         assert_eq!(json["last_heartbeat_secs"], 90);
+    }
+
+    #[test]
+    fn test_public_readiness_response_serializes_without_checks() {
+        let resp = PublicReadinessResponse { status: "ready" };
+        let json = serde_json::to_value(&resp).expect("serialize");
+        assert_eq!(json["status"], "ready");
+        assert!(json.get("checks").is_none());
     }
 }

@@ -35,11 +35,23 @@ impl VigilDb {
             "DROP TABLE IF EXISTS security_entity_risk",
             "DROP TABLE IF EXISTS security_alerts",
             "DROP TABLE IF EXISTS security_config",
+            "DROP TABLE IF EXISTS security_yara_rules",
             "DROP TABLE IF EXISTS quarantine",
+            "DROP TABLE IF EXISTS security_threat_scenes",
+            "DROP TABLE IF EXISTS security_scene_rules",
             "DROP TABLE IF EXISTS training_samples",
             "DROP TABLE IF EXISTS sessions",
             "DROP TABLE IF EXISTS data_security_incidents",
             "DROP TABLE IF EXISTS data_security_http_sessions",
+            "DROP TABLE IF EXISTS config_security_pipeline",
+            "DROP TABLE IF EXISTS config_sniffer",
+            "DROP TABLE IF EXISTS config_ai_service",
+            "DROP TABLE IF EXISTS config_email_alert",
+            "DROP TABLE IF EXISTS config_syslog",
+            "DROP TABLE IF EXISTS config_time_policy",
+            "DROP TABLE IF EXISTS config_deployment",
+            "DROP TABLE IF EXISTS config_internal_domains",
+            "DROP TABLE IF EXISTS auth_credentials",
             "DROP TABLE IF EXISTS stats_cache",
             "DROP TABLE IF EXISTS audit_logs",
             "DROP TABLE IF EXISTS login_history",
@@ -78,10 +90,14 @@ impl VigilDb {
             "DROP TABLE IF EXISTS security_entity_risk",
             "DROP TABLE IF EXISTS security_alerts",
             "DROP TABLE IF EXISTS security_config",
+            "DROP TABLE IF EXISTS quarantine",
+            "DROP TABLE IF EXISTS security_threat_scenes",
+            "DROP TABLE IF EXISTS training_samples",
             "DROP TABLE IF EXISTS sessions",
            // Data security engine tables
             "DROP TABLE IF EXISTS data_security_incidents",
             "DROP TABLE IF EXISTS data_security_http_sessions",
+            "DROP TABLE IF EXISTS stats_cache",
         ];
         for sql in drop_tables {
             sqlx::query(sql).execute(&self.pool).await?;
@@ -112,10 +128,14 @@ impl VigilDb {
             "DROP TABLE IF EXISTS security_entity_risk",
             "DROP TABLE IF EXISTS security_alerts",
             "DROP TABLE IF EXISTS security_config",
+            "DROP TABLE IF EXISTS quarantine",
+            "DROP TABLE IF EXISTS security_threat_scenes",
+            "DROP TABLE IF EXISTS training_samples",
             "DROP TABLE IF EXISTS sessions",
            // Data security engine tables
             "DROP TABLE IF EXISTS data_security_incidents",
             "DROP TABLE IF EXISTS data_security_http_sessions",
+            "DROP TABLE IF EXISTS stats_cache",
         ];
         for sql in drop_tables {
             sqlx::query(sql).execute(&self.pool).await?;
@@ -168,6 +188,15 @@ impl VigilDb {
         sqlx::query("DELETE FROM security_config")
             .execute(&mut *tx)
             .await?;
+        sqlx::query("DELETE FROM quarantine")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM security_threat_scenes")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM training_samples")
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("DELETE FROM sessions")
             .execute(&mut *tx)
             .await?;
@@ -178,6 +207,19 @@ impl VigilDb {
         sqlx::query("DELETE FROM data_security_http_sessions")
             .execute(&mut *tx)
             .await?;
+        sqlx::query("DELETE FROM stats_cache")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            r#"
+            INSERT INTO stats_cache (
+                id, total_sessions, active_sessions, total_bytes, total_packets,
+                smtp_sessions, pop3_sessions, imap_sessions, http_sessions
+            ) VALUES (1, 0, 0, 0, 0, 0, 0, 0, 0)
+            "#,
+        )
+        .execute(&mut *tx)
+        .await?;
 
         tx.commit().await?;
         cleanup_all_http_temp_files();

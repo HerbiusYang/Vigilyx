@@ -597,6 +597,44 @@ impl VigilDb {
         )
         .await?;
 
+        let seed_v3 = serde_json::to_string(&serde_json::from_str::<serde_json::Value>(
+            KEYWORD_SYSTEM_SEED_JSON,
+        )?)?;
+        sqlx::query(
+            "INSERT INTO config (key, value) VALUES ($1, $2) \
+             ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value",
+        )
+        .bind("keyword_system_seed")
+        .bind(seed_v3)
+        .execute(&self.pool)
+        .await?;
+
+        record_migration(
+            &self.pool,
+            "115_keyword_system_seed_v3",
+            "extend keyword seed with runtime scenario banner, DSN, and auto-reply phrase sets",
+        )
+        .await?;
+
+        let seed_v4 = serde_json::to_string(&serde_json::from_str::<serde_json::Value>(
+            KEYWORD_SYSTEM_SEED_JSON,
+        )?)?;
+        sqlx::query(
+            "INSERT INTO config (key, value) VALUES ($1, $2) \
+             ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value",
+        )
+        .bind("keyword_system_seed")
+        .bind(seed_v4)
+        .execute(&self.pool)
+        .await?;
+
+        record_migration(
+            &self.pool,
+            "116_keyword_system_seed_v4",
+            "refresh keyword seed with production gateway warning phrases used by content prefilter",
+        )
+        .await?;
+
         Ok(())
     }
 }

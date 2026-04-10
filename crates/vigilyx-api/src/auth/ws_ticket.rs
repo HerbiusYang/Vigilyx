@@ -102,6 +102,14 @@ impl WsTicketStore {
         tickets.remove(ticket);
         true
     }
+
+    pub fn clear(&self) {
+        let mut tickets = self.tickets.lock().unwrap_or_else(|poisoned| {
+            tracing::warn!("WsTicketStore lock was poisoned, recovering");
+            poisoned.into_inner()
+        });
+        tickets.clear();
+    }
 }
 
 #[cfg(test)]

@@ -241,9 +241,12 @@ impl HighPerformanceCapturer {
     fn dispatch_packet(
         worker_txs: &[Sender<RawpacketInfo>],
         packet_info: RawpacketInfo,
-    ) -> Result<(), TrySendError<RawpacketInfo>> {
+    ) -> Result<usize, (usize, TrySendError<RawpacketInfo>)> {
         let worker_idx = Self::worker_index_for_packet(&packet_info, worker_txs.len());
-        worker_txs[worker_idx].try_send(packet_info)
+        worker_txs[worker_idx]
+            .try_send(packet_info)
+            .map(|_| worker_idx)
+            .map_err(|err| (worker_idx, err))
     }
 
    /// Create a new high-performance capture engine.
@@ -1031,14 +1034,26 @@ impl HighPerformanceCapturer {
 
                 match Self::dispatch_packet(worker_txs.as_slice(), packet_info) {
                     Ok(_) => {}
-                    Err(TrySendError::Full(_)) => {
+                    Err((worker_idx, TrySendError::Full(packet_info))) => {
                         local_dropped += 1;
                         stats
                             .worker_queue_full_drops
                             .fetch_add(1, Ordering::Relaxed);
-                        warn!("Worker queuealreadyfull，dropdatapacket");
+                        warn!(
+                            worker_id = worker_idx,
+                            src_ip = %packet_info.src_ip,
+                            src_port = packet_info.src_port,
+                            dst_ip = %packet_info.dst_ip,
+                            dst_port = packet_info.dst_port,
+                            protocol = %packet_info.protocol,
+                            direction = ?packet_info.direction,
+                            tcp_seq = packet_info.tcp_seq,
+                            tcp_flags = packet_info.tcp_flags,
+                            payload_len = packet_info.payload.len(),
+                            "Worker queue full; dropping packet before session assembly"
+                        );
                     }
-                    Err(TrySendError::Disconnected(_)) => {
+                    Err((_worker_idx, TrySendError::Disconnected(_))) => {
                         break;
                     }
                 }
@@ -1164,14 +1179,26 @@ impl HighPerformanceCapturer {
 
                         match Self::dispatch_packet(worker_txs.as_slice(), packet_info) {
                             Ok(_) => {}
-                            Err(TrySendError::Full(_)) => {
+                            Err((worker_idx, TrySendError::Full(packet_info))) => {
                                 stats.packets_dropped.fetch_add(1, Ordering::Relaxed);
                                 stats
                                     .worker_queue_full_drops
                                     .fetch_add(1, Ordering::Relaxed);
-                                warn!("Worker queuealreadyfull，dropdatapacket");
+                                warn!(
+                                    worker_id = worker_idx,
+                                    src_ip = %packet_info.src_ip,
+                                    src_port = packet_info.src_port,
+                                    dst_ip = %packet_info.dst_ip,
+                                    dst_port = packet_info.dst_port,
+                                    protocol = %packet_info.protocol,
+                                    direction = ?packet_info.direction,
+                                    tcp_seq = packet_info.tcp_seq,
+                                    tcp_flags = packet_info.tcp_flags,
+                                    payload_len = packet_info.payload.len(),
+                                    "Worker queue full; dropping live-capture packet before session assembly"
+                                );
                             }
-                            Err(TrySendError::Disconnected(_)) => {
+                            Err((_worker_idx, TrySendError::Disconnected(_))) => {
                                 break;
                             }
                         }
@@ -1342,7 +1369,12 @@ impl HighPerformanceCapturer {
                     let command = parser.parse(&packet_info.payload, packet_info.protocol);
 
                    // Session updates are keyed by flow and performed inside the manager.
-                    match session_manager.process_packet(&packet_info, command.as_deref(), now) {
+                    match session_manager.process_packet_with_worker(
+                        &packet_info,
+                        command.as_deref(),
+                        now,
+                        Some(worker_id),
+                    ) {
                         ProcessResult::Existing => {}
                         ProcessResult::New(session) => {
                             sessions_front.push(session); // Connect,
@@ -1479,14 +1511,26 @@ impl HighPerformanceCapturer {
 
                             match Self::dispatch_packet(worker_txs.as_slice(), packet_info) {
                                 Ok(_) => {}
-                                Err(TrySendError::Full(_)) => {
+                                Err((worker_idx, TrySendError::Full(packet_info))) => {
                                     stats.packets_dropped.fetch_add(1, Ordering::Relaxed);
                                     stats
                                         .worker_queue_full_drops
                                         .fetch_add(1, Ordering::Relaxed);
-                                    warn!("Worker queuealreadyfull，dropdatapacket");
+                                    warn!(
+                                        worker_id = worker_idx,
+                                        src_ip = %packet_info.src_ip,
+                                        src_port = packet_info.src_port,
+                                        dst_ip = %packet_info.dst_ip,
+                                        dst_port = packet_info.dst_port,
+                                        protocol = %packet_info.protocol,
+                                        direction = ?packet_info.direction,
+                                        tcp_seq = packet_info.tcp_seq,
+                                        tcp_flags = packet_info.tcp_flags,
+                                        payload_len = packet_info.payload.len(),
+                                        "Worker queue full; dropping file-protocol packet before session assembly"
+                                    );
                                 }
-                                Err(TrySendError::Disconnected(_)) => {
+                                Err((_worker_idx, TrySendError::Disconnected(_))) => {
                                     info!("工作QueuealreadyBreak/Judge开");
                                     let (file, off) = protocol_reader.resume_position();
                                     return Ok((file.map(|s| s.to_string()), off));

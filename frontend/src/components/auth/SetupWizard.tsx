@@ -17,6 +17,25 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1073741824).toFixed(1)} GB`
 }
 
+const PLAINTEXT_SMTP_LOCK_MESSAGE =
+  '当前选择了无加密 SMTP。若确需使用，请先开启“允许明文 SMTP（管理员开关）”；该设置会持久化保存。'
+
+function normalizeSmtpUiError(message: string): string {
+  if (
+    message.includes('SMTP plaintext mode blocked') ||
+    message.includes('allow_plaintext_smtp')
+  ) {
+    return PLAINTEXT_SMTP_LOCK_MESSAGE
+  }
+  if (message.includes('No compatible authentication mechanism')) {
+    return '当前 SMTP 服务器未提供可用的 AUTH 认证能力。若该服务器允许内网免认证发送，请将用户名和密码留空后重试。'
+  }
+  if (message.includes('must either both be filled or both be left empty')) {
+    return 'SMTP 用户名和密码要么同时填写，要么同时留空。'
+  }
+  return message
+}
+
 /** Static glow palette for the setup wizard background */
 function useWizardGlows() {
   const ref = useRef<Record<string, string>>({})
@@ -151,6 +170,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
   const [smtpUser, setSmtpUser] = useState('')
   const [smtpPass, setSmtpPass] = useState('')
   const [smtpTls, setSmtpTls] = useState('tls')
+  const [allowPlaintextSmtp, setAllowPlaintextSmtp] = useState(false)
   const [alertFrom, setAlertFrom] = useState('')
   const [alertTo, setAlertTo] = useState('')
   const [alertLevel, setAlertLevel] = useState('high')
@@ -259,6 +279,9 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
         })
       } else if (currentStep.id === 'alerts') {
         if (alertEnabled) {
+          if (smtpTls === 'none' && !allowPlaintextSmtp) {
+            throw new Error(PLAINTEXT_SMTP_LOCK_MESSAGE)
+          }
           await apiFetch('/api/security/email-alert', {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
@@ -269,6 +292,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
               smtp_username: smtpUser,
               smtp_password: smtpPass,
               smtp_tls: smtpTls,
+              allow_plaintext_smtp: allowPlaintextSmtp,
               from_address: alertFrom,
               admin_email: alertTo,
               min_threat_level: alertLevel,
@@ -295,7 +319,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : '保存失败'
-      setError(msg)
+      setError(normalizeSmtpUiError(msg))
       setSaving(false)
       return false
     }
@@ -766,13 +790,43 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                     </div>
                     <div className="setup-field setup-field--sm">
                       <label className="setup-label">加密</label>
-                      <select className="grok-input" value={smtpTls} onChange={e => setSmtpTls(e.target.value)}>
-                        <option value="tls">TLS</option>
-                        <option value="starttls">STARTTLS</option>
-                        <option value="none">无</option>
-                      </select>
+                      <div className="setup-segmented" role="group" aria-label="SMTP 加密方式">
+                        <button
+                          type="button"
+                          className={`setup-seg-btn ${smtpTls === 'tls' ? 'active' : ''}`}
+                          onClick={() => setSmtpTls('tls')}
+                        >
+                          TLS
+                        </button>
+                        <button
+                          type="button"
+                          className={`setup-seg-btn ${smtpTls === 'starttls' ? 'active' : ''}`}
+                          onClick={() => setSmtpTls('starttls')}
+                        >
+                          STARTTLS
+                        </button>
+                        <button
+                          type="button"
+                          className={`setup-seg-btn setup-seg-btn--blocked ${smtpTls === 'none' ? 'active' : ''}`}
+                          onClick={() => setSmtpTls('none')}
+                          title="启用前请先打开下方管理员开关"
+                        >
+                          无加密
+                        </button>
+                      </div>
                     </div>
                   </div>
+                  <p className="setup-security-note">
+                    无加密 SMTP 属于高风险选项。只有在你明确开启下方管理员开关后，系统才会允许保存并测试明文 SMTP。
+                  </p>
+                  <label className="setup-label" style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
+                    <input
+                      type="checkbox"
+                      checked={allowPlaintextSmtp}
+                      onChange={e => setAllowPlaintextSmtp(e.target.checked)}
+                    />
+                    <span>允许明文 SMTP（管理员开关）</span>
+                  </label>
                   <div className="setup-row">
                     <div className="setup-field">
                       <label className="setup-label">用户名</label>
@@ -783,6 +837,9 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                       <input type="password" className="grok-input" placeholder="SMTP 密码" value={smtpPass} onChange={e => setSmtpPass(e.target.value)} />
                     </div>
                   </div>
+                  <p className="setup-security-note">
+                    如果 SMTP 服务器走内网免认证，请将用户名和密码同时留空。
+                  </p>
                   <div className="setup-row">
                     <div className="setup-field">
                       <label className="setup-label">发件地址</label>

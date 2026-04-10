@@ -185,6 +185,7 @@ impl MimeParser {
         let idx = HeaderIndex::build(&headers);
         let content_type = idx.content_type(&headers);
         let encoding = idx.encoding(&headers);
+        let missing_top_level_content_type = idx.content_type.is_none();
 
        // Parsebody (Use ascii_starts_with_ci Avoid to_lowercase Allocate)
         if ascii_starts_with_ci(content_type, "multipart/") {
@@ -204,6 +205,10 @@ impl MimeParser {
             } else if ascii_contains_ci(content_type, "text/html") {
                 content.body_html = Some(decode_charset(&decoded, content_type));
             }
+
+            if missing_top_level_content_type {
+                self.try_salvage_embedded_multipart(&mut content, body_bytes)?;
+            }
         }
 
        // ExtractlinkConnect
@@ -216,6 +221,206 @@ impl MimeParser {
 
         content.is_complete = true;
         Ok(content)
+    }
+
+    fn try_salvage_embedded_multipart(
+        &self,
+        content: &mut EmailContent,
+        body: &[u8],
+    ) -> Result<(), MimeError> {
+        if !Self::looks_like_embedded_multipart_body(body) {
+            return Ok(());
+        }
+
+        let Some(boundary) = Self::extract_embedded_boundary(body) else {
+            return Ok(());
+        };
+
+        let mut salvaged = EmailContent::new();
+        let mut total_parts = 0usize;
+        let synthetic_content_type = format!("multipart/mixed; boundary=\"{}\"", boundary);
+        self.parse_multipart_inner(
+            &mut salvaged,
+            &synthetic_content_type,
+            body,
+            0,
+            &mut total_parts,
+        )?;
+
+        let relaxed = self.salvage_embedded_parts_relaxed(body)?;
+        if salvaged.body_text.is_none() {
+            salvaged.body_text = relaxed.body_text;
+        }
+        if salvaged.body_html.is_none() {
+            salvaged.body_html = relaxed.body_html;
+        }
+        if !relaxed.attachments.is_empty() {
+            let mut seen_hashes: HashSet<String> = salvaged
+                .attachments
+                .iter()
+                .map(|att| att.hash.clone())
+                .collect();
+            for attachment in relaxed.attachments {
+                if seen_hashes.insert(attachment.hash.clone()) {
+                    salvaged.attachments.push(attachment);
+                }
+            }
+        }
+
+        if salvaged.body_text.is_none()
+            && salvaged.body_html.is_none()
+            && salvaged.attachments.is_empty()
+        {
+            return Ok(());
+        }
+
+        content.body_text = salvaged.body_text;
+        content.body_html = salvaged.body_html;
+        content.attachments = salvaged.attachments;
+        Ok(())
+    }
+
+    fn salvage_embedded_parts_relaxed(&self, body: &[u8]) -> Result<EmailContent, MimeError> {
+        let trimmed = Self::trim_ascii_leading_newlines(body);
+        let mut content = EmailContent::new();
+        let mut cursor = 0usize;
+
+        while let Some(boundary_start) = Self::find_boundary_line_start(trimmed, cursor) {
+            let boundary_line_end = Self::line_end_index(trimmed, boundary_start);
+            let boundary_line = Self::trim_line_ending(&trimmed[boundary_start..boundary_line_end]);
+
+            cursor = boundary_line_end;
+            if boundary_line.ends_with(b"--") {
+                continue;
+            }
+
+            while cursor < trimmed.len() && matches!(trimmed[cursor], b'\r' | b'\n') {
+                cursor += 1;
+            }
+            if cursor >= trimmed.len() {
+                break;
+            }
+
+            let next_boundary = Self::find_boundary_line_start(trimmed, cursor).unwrap_or(trimmed.len());
+            let part_bytes = &trimmed[cursor..next_boundary];
+            cursor = next_boundary;
+
+            let Ok((part_headers, part_body)) = self.split_headers_body(part_bytes) else {
+                continue;
+            };
+            let headers = self.parse_headers(part_headers).unwrap_or_default();
+            if headers.is_empty() {
+                continue;
+            }
+
+            let idx = HeaderIndex::build(&headers);
+            let part_content_type = idx.content_type(&headers);
+            let part_encoding = idx.encoding(&headers);
+            let decoded = self.decode_content(part_body, part_encoding)?;
+            let content_disposition = idx.disposition(&headers);
+            let is_attachment = ascii_contains_ci(content_disposition, "attachment")
+                || Self::extract_filename(content_disposition).is_some()
+                || Self::extract_filename(part_content_type).is_some();
+
+            self.apply_decoded_part(
+                &mut content,
+                part_content_type,
+                content_disposition,
+                is_attachment,
+                decoded,
+            );
+        }
+
+        Ok(content)
+    }
+
+    fn looks_like_embedded_multipart_body(body: &[u8]) -> bool {
+        let trimmed = Self::trim_ascii_leading_newlines(body);
+        if trimmed.len() < 32 || !trimmed.starts_with(b"--") {
+            return false;
+        }
+
+        let preview_len = trimmed.len().min(2048);
+        let preview = String::from_utf8_lossy(&trimmed[..preview_len]);
+        let preview_lower = preview.to_ascii_lowercase();
+        let marker_count = [
+            "content-type:",
+            "content-transfer-encoding:",
+            "content-disposition:",
+        ]
+        .iter()
+        .filter(|needle| preview_lower.contains(**needle))
+        .count();
+
+        let boundary_like = preview
+            .lines()
+            .next()
+            .map(|line| line.trim_start().starts_with("--"))
+            .unwrap_or(false);
+
+        boundary_like && marker_count >= 2
+    }
+
+    fn extract_embedded_boundary(body: &[u8]) -> Option<String> {
+        let trimmed = Self::trim_ascii_leading_newlines(body);
+        let first_line = trimmed
+            .split(|&b| b == b'\n')
+            .next()
+            .unwrap_or(trimmed)
+            .strip_suffix(b"\r")
+            .unwrap_or(trimmed);
+        let boundary_line = std::str::from_utf8(first_line).ok()?.trim();
+        let boundary = boundary_line.strip_prefix("--")?;
+        if boundary.is_empty() || boundary.contains(char::is_whitespace) {
+            return None;
+        }
+        let boundary = boundary.strip_suffix("--").unwrap_or(boundary).trim();
+        if boundary.len() < 3 {
+            return None;
+        }
+        Some(boundary.to_string())
+    }
+
+    fn trim_ascii_leading_newlines(bytes: &[u8]) -> &[u8] {
+        let start = bytes
+            .iter()
+            .position(|b| !matches!(b, b'\r' | b'\n'))
+            .unwrap_or(bytes.len());
+        &bytes[start..]
+    }
+
+    fn find_boundary_line_start(bytes: &[u8], from: usize) -> Option<usize> {
+        if from >= bytes.len() {
+            return None;
+        }
+
+        let mut pos = from;
+        while pos < bytes.len() {
+            if (pos == 0 || bytes[pos - 1] == b'\n')
+                && bytes.get(pos) == Some(&b'-')
+                && bytes.get(pos + 1) == Some(&b'-')
+                && bytes.get(pos + 2).is_some_and(|b| !matches!(b, b'\r' | b'\n'))
+            {
+                return Some(pos);
+            }
+            pos += 1;
+        }
+        None
+    }
+
+    fn line_end_index(bytes: &[u8], start: usize) -> usize {
+        start
+            + bytes[start..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map(|idx| idx + 1)
+                .unwrap_or(bytes.len() - start)
+    }
+
+    fn trim_line_ending(line: &[u8]) -> &[u8] {
+        line.strip_suffix(b"\n")
+            .and_then(|rest| rest.strip_suffix(b"\r").or(Some(rest)))
+            .unwrap_or(line)
     }
 
    /// HeaderAndbody (\r\n\r\n And \n\n delimited)
@@ -379,69 +584,82 @@ impl MimeParser {
                     || Self::extract_filename(content_disposition).is_some()
                     || Self::extract_filename(part_content_type).is_some();
 
-                if is_attachment {
-                    if content.attachments.len() >= MAX_ATTACHMENTS {
-                        warn!("AttachmentCount超限，hops");
-                        continue;
-                    }
-
-                    let filename = Self::extract_filename(content_disposition)
-                        .or_else(|| Self::extract_filename(part_content_type))
-                        .unwrap_or_else(|| format!("attachment_{}", content.attachments.len()));
-
-                    let hash = Self::compute_hash(&decoded);
-                    let size = decoded.len();
-
-                   // Attachmentsize limit Save base64 ContentFor
-                    let content_base64 = if size <= MAX_ATTACHMENT_SAVE_SIZE {
-                        Some(Self::encode_base64(&decoded))
-                    } else {
-                       // SEC: Attachments exceeding limit bypass AV/YARA/Sandbox/content scanning
-                        warn!(
-                            filename = %filename,
-                            size_bytes = size,
-                            limit_bytes = MAX_ATTACHMENT_SAVE_SIZE,
-                            "SEC: Oversized attachment — content scanning bypassed, only hash/metadata checks apply"
-                        );
-                        None
-                    };
-
-                    content.attachments.push(EmailAttachment {
-                        filename,
-                        content_type: Self::extract_mime_type(part_content_type).to_string(),
-                        size,
-                        hash,
-                        content_base64,
-                    });
-
-                    if let Some(att) = content.attachments.last() {
-                        debug!(
-                            "ExtractAttachment: {} ({} bytes, Contentalready{})",
-                            att.filename,
-                            size,
-                            if att.content_base64.is_some() {
-                                "Save"
-                            } else {
-                                "hops"
-                            }
-                        );
-                    }
-                } else {
-                   // body (Use ascii_contains_ci Avoid to_lowercase)
-                    if ascii_contains_ci(part_content_type, "text/plain")
-                        && content.body_text.is_none()
-                    {
-                        content.body_text = Some(decode_charset(&decoded, part_content_type));
-                    } else if ascii_contains_ci(part_content_type, "text/html")
-                        && content.body_html.is_none()
-                    {
-                        content.body_html = Some(decode_charset(&decoded, part_content_type));
-                    }
-                }
+                self.apply_decoded_part(
+                    content,
+                    part_content_type,
+                    content_disposition,
+                    is_attachment,
+                    decoded,
+                );
             }
         }
 
         Ok(())
+    }
+
+    fn apply_decoded_part(
+        &self,
+        content: &mut EmailContent,
+        part_content_type: &str,
+        content_disposition: &str,
+        is_attachment: bool,
+        decoded: Vec<u8>,
+    ) {
+        if is_attachment {
+            if content.attachments.len() >= MAX_ATTACHMENTS {
+                warn!("AttachmentCount超限，hops");
+                return;
+            }
+
+            let filename = Self::extract_filename(content_disposition)
+                .or_else(|| Self::extract_filename(part_content_type))
+                .unwrap_or_else(|| format!("attachment_{}", content.attachments.len()));
+
+            let hash = Self::compute_hash(&decoded);
+            let size = decoded.len();
+
+            let content_base64 = if size <= MAX_ATTACHMENT_SAVE_SIZE {
+                Some(Self::encode_base64(&decoded))
+            } else {
+                warn!(
+                    filename = %filename,
+                    size_bytes = size,
+                    limit_bytes = MAX_ATTACHMENT_SAVE_SIZE,
+                    "SEC: Oversized attachment — content scanning bypassed, only hash/metadata checks apply"
+                );
+                None
+            };
+
+            content.attachments.push(EmailAttachment {
+                filename,
+                content_type: Self::extract_mime_type(part_content_type).to_string(),
+                size,
+                hash,
+                content_base64,
+            });
+
+            if let Some(att) = content.attachments.last() {
+                debug!(
+                    "ExtractAttachment: {} ({} bytes, Contentalready{})",
+                    att.filename,
+                    size,
+                    if att.content_base64.is_some() {
+                        "Save"
+                    } else {
+                        "hops"
+                    }
+                );
+            }
+
+            return;
+        }
+
+        if ascii_contains_ci(part_content_type, "text/plain") && content.body_text.is_none() {
+            content.body_text = Some(decode_charset(&decoded, part_content_type));
+        } else if ascii_contains_ci(part_content_type, "text/html") && content.body_html.is_none()
+        {
+            content.body_html = Some(decode_charset(&decoded, part_content_type));
+        }
     }
 
    /// Extract boundary Parameter
@@ -1035,6 +1253,77 @@ mod tests {
         let ct = "multipart/mixed; boundary=\"----=_Part_123\"";
         let boundary = MimeParser::extract_boundary(ct);
         assert_eq!(boundary, Some("----=_Part_123".to_string()));
+    }
+
+    #[test]
+    fn test_salvages_embedded_multipart_body_without_top_level_content_type() {
+        let parser = MimeParser::new();
+        let email = b"From: sender@example.com\r\n\
+To: recipient@example.com\r\n\
+Subject: Business Card\r\n\
+\r\n\
+------=_NextPart_123\r\n\
+Content-Type: text/plain; charset=\"utf-8\"\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+5b6u5a2Q55m7\r\n\
+\r\n\
+------=_NextPart_123\r\n\
+Content-Type: text/html; charset=\"utf-8\"\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+PGRpdj48Yj5XZWljaTwvYj48L2Rpdj4=\r\n\
+\r\n\
+------=_NextPart_123--\r\n";
+
+        let content = parser.parse(email).unwrap();
+
+        assert_eq!(content.body_text.as_deref(), Some("微子登"));
+        assert_eq!(content.body_html.as_deref(), Some("<div><b>Weici</b></div>"));
+    }
+
+    #[test]
+    fn test_salvages_fragmented_embedded_mime_parts_without_top_level_content_type() {
+        let parser = MimeParser::new();
+        let email = b"From: sender@example.com\r\n\
+To: recipient@example.com\r\n\
+Subject: Warning\r\n\
+\r\n\
+------=_NextPart_alt\r\n\
+Content-Transfer-Encoding: base64\r\n\
+MIME-Version: 1.0\r\n\
+Content-Type: text/plain; charset=\"utf-8\"\r\n\
+\r\n\
+6K+l6YKu5Lu25Y+v6IO95a2Y5Zyo5oG25oSP5YaF5a6577yM6K+36LCo5oWO55SE5Yir6YKu5Lu277yM5aaC5pyJ55aR6Zeu77yM6K+36IGU57O76YKu5Lu257O757uf566h55CG5ZGY44CC6K+35rOo5oSP77yM5LiA5a6a5LuU57uG5qC45a+55Y+R5Lu25Lq65Zyw5Z2A5piv5ZCm5Li65q2j56Gu5Zyw5Z2A77yM5LiN6KaB5Zyo5aSW572R55S16ISR5Y2V5Ye75Lu75L2V6ZO+5o6l44CCCgrmo4DmtYvnu5PmnpzvvJrlnoPlnLrpgq7ku7bjgIIK\r\n\
+------=_NextPart_alt\r\n\
+Content-Transfer-Encoding: base64\r\n\
+MIME-Version: 1.0\r\n\
+Content-Type: text/html; charset=\"utf-8\"\r\n\
+\r\n\
+PHAgc3R5bGU9ImZvbnQtc2l6ZToxMDAlO2NvbG9yOiNGRjAwMDAiPuivpemCruS7tuWPr+iDveWtmOWcqOaBtuaEj+WGheWuue+8jOivt+iwqOaFjueUhOWIq+mCruS7tu+8jOWmguacieeWkemXru+8jOivt+iBlOezu+mCruS7tuezu+e7n+euoeeQhuWRmOOAguivt+azqOaEj++8jOS4gOWumuS7lOe7huaguOWvueWPkeS7tuS6uuWcsOWdgOaYr+WQpuS4uuato+ehruWcsOWdgO+8jOS4jeimgeWcqOWklue9keeUteiEkeWNleWHu+S7u+S9lemTvuaOpeOAgjwvcD48Zm9udCBzdHlsZT0iZm9udC1zaXplOjEwMCU7Y29sb3I6I0ZGMDAwMCI+5qOA5rWL57uT5p6c77ya5Z6D5Zy+6YKu5Lu244CCPC9mb250PjxkaXY+PGJyICAvPjwvZGl2PjxkaXY+PCEtLWVtcHR5c2lnbi0tPjwvZGl2Pg==\r\n\
+------=_NextPart_alt--\r\n\
+\r\n\
+------=_NextPart_attach\r\n\
+Content-Type: application/octet-stream; name=\"warn.jpg\"\r\n\
+Content-Disposition: attachment; filename=\"warn.jpg\"\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA==\r\n\
+------=_NextPart_attach--\r\n";
+
+        let content = parser.parse(email).unwrap();
+
+        assert!(content
+            .body_text
+            .as_deref()
+            .is_some_and(|body| body.contains("该邮件可能存在恶意内容")));
+        assert!(content
+            .body_html
+            .as_deref()
+            .is_some_and(|body| body.contains("检测结果：垃圾邮件")));
+        assert_eq!(content.attachments.len(), 1);
+        assert_eq!(content.attachments[0].filename, "warn.jpg");
+        assert!(content.attachments[0].content_base64.is_some());
     }
 
     #[test]
