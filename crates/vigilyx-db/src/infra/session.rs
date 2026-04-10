@@ -821,6 +821,47 @@ impl VigilDb {
 
         Ok(sessions)
     }
+
+   /// Find downstream delivery hops for the same mail envelope.
+    pub async fn find_downstream_sessions_by_envelope(
+        &self,
+        session: &EmailSession,
+        exclude_id: Uuid,
+        lookahead_seconds: i64,
+    ) -> Result<Vec<EmailSession>> {
+        let rcpt_to = serde_json::to_string(&session.rcpt_to)?;
+        let started_at = session.started_at.to_rfc3339();
+        let deadline =
+            (session.started_at + chrono::Duration::seconds(lookahead_seconds)).to_rfc3339();
+        let rows: Vec<SessionRow> = sqlx::query_as(
+            "SELECT id, protocol, client_ip, client_port, server_ip, server_port, \
+             started_at, ended_at, status, packet_count, total_bytes, \
+             mail_from, rcpt_to, subject, content::TEXT as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info \
+             FROM sessions \
+             WHERE id != $1 \
+               AND client_ip = $2 \
+               AND mail_from IS NOT DISTINCT FROM $3 \
+               AND rcpt_to = $4 \
+               AND started_at::timestamptz >= $5::timestamptz \
+               AND started_at::timestamptz <= $6::timestamptz \
+             ORDER BY started_at::timestamptz ASC"
+        )
+        .bind(exclude_id.to_string())
+        .bind(&session.server_ip)
+        .bind(&session.mail_from)
+        .bind(&rcpt_to)
+        .bind(&started_at)
+        .bind(&deadline)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let sessions: Vec<EmailSession> = rows
+            .into_iter()
+            .filter_map(|row| row_to_session(row).ok())
+            .collect();
+
+        Ok(sessions)
+    }
 }
 
 /// EmailSession

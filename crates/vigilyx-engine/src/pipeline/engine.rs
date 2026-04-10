@@ -25,6 +25,35 @@ use vigilyx_soar::disposition::DispositionEngine;
 use super::internal_domains::{load_internal_domains, refresh_internal_domains};
 use super::post_verdict::{PostVerdictContext, run_post_verdict};
 
+fn load_inbound_mail_servers_from_env() -> HashSet<String> {
+    std::env::var("INBOUND_MAIL_SERVERS")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+async fn load_inbound_mail_servers(db: &VigilDb) -> HashSet<String> {
+    match db.get_capture_inbound_target_ips().await {
+        Ok(servers) if !servers.is_empty() => servers,
+        Ok(_) => load_inbound_mail_servers_from_env(),
+        Err(err) => {
+            warn!("Failed to load inbound targets from ui_preferences: {}", err);
+            load_inbound_mail_servers_from_env()
+        }
+    }
+}
+
+fn log_inbound_mail_servers(servers: &HashSet<String>) {
+    if !servers.is_empty() {
+        info!(
+            servers = ?servers,
+            "Inbound mail server filter active: only analyzing sessions delivered to these IPs"
+        );
+    }
+}
+
 
 // MTA Inline Verdict - (oneshot, vigilyx-core)
 
@@ -345,19 +374,29 @@ impl SecurityEngine {
         // has the most complete information (gateway headers, all Received hops).
         // Intermediate relay hops are skipped entirely.
         // Format: comma-separated IPs, e.g. "10.7.126.68,10.1.246.41"
-        let inbound_mail_servers: HashSet<String> = std::env::var("INBOUND_MAIL_SERVERS")
-            .unwrap_or_default()
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        if !inbound_mail_servers.is_empty() {
-            info!(
-                servers = ?inbound_mail_servers,
-                "Inbound mail server filter active: only analyzing sessions delivered to these IPs"
-            );
+        let inbound_mail_servers =
+            Arc::new(RwLock::new(load_inbound_mail_servers(&engine_db).await));
+        {
+            let servers = inbound_mail_servers.read().await;
+            log_inbound_mail_servers(&servers);
         }
-        let inbound_mail_servers = Arc::new(inbound_mail_servers);
+
+        {
+            let inbound_mail_servers = inbound_mail_servers.clone();
+            let db = engine_db.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+                loop {
+                    interval.tick().await;
+                    let refreshed = load_inbound_mail_servers(&db).await;
+                    let mut current = inbound_mail_servers.write().await;
+                    if *current != refreshed {
+                        *current = refreshed;
+                        log_inbound_mail_servers(&current);
+                    }
+                }
+            });
+        }
 
         // Message-ID dedup: same email captured at multiple network hops
         // should only produce one verdict (the final inbound hop).
@@ -453,8 +492,12 @@ impl SecurityEngine {
                     }
                     let results = inline_outcome.results;
 
-                    let verdict_result =
-                        crate::verdict::aggregate_verdict(session_id, &results, &config.verdict_config);
+                    let verdict_result = crate::verdict::aggregate_verdict_with_session(
+                        Some(session.as_ref()),
+                        session_id,
+                        &results,
+                        &config.verdict_config,
+                    );
 
                     let disposition = VerdictDisposition::from_threat_level(
                         verdict_result.threat_level,
@@ -532,9 +575,15 @@ impl SecurityEngine {
             //     only analyze sessions delivered TO those IPs (the final hop).
             //     Intermediate relay hops are skipped — the final inbound has
             //     the most complete info (gateway headers, all Received hops).
-            if !inbound_mail_servers.is_empty()
-                && !inbound_mail_servers.contains(&session.server_ip)
-            {
+            let inbound_filter_active = {
+                let servers = inbound_mail_servers.read().await;
+                !servers.is_empty()
+            };
+            let is_inbound_target = {
+                let servers = inbound_mail_servers.read().await;
+                servers.contains(&session.server_ip)
+            };
+            if inbound_filter_active && !is_inbound_target {
                 debug!(
                     session_id = %session_id,
                     server_ip = %session.server_ip,
@@ -547,7 +596,7 @@ impl SecurityEngine {
             //     When inbound filter is active, same email at the same inbound
             //     server should only produce one verdict.
             //     When inbound filter is NOT set, all sessions are analyzed (no dedup).
-            if !inbound_mail_servers.is_empty()
+            if inbound_filter_active
                 && let Some(ref mid) = session.message_id
             {
                 let norm_mid = mid.trim().trim_matches(|c| c == '<' || c == '>').to_lowercase();
@@ -695,8 +744,12 @@ impl SecurityEngine {
                 }
 
                // Aggregate verdict (synchronous, <1ms)
-                let verdict_result =
-                    crate::verdict::aggregate_verdict(session_id, &results, &cfg.verdict_config);
+                let verdict_result = crate::verdict::aggregate_verdict_with_session(
+                    Some(session.as_ref()),
+                    session_id,
+                    &results,
+                    &cfg.verdict_config,
+                );
 
                 info!(
                     session_id = %session_id,

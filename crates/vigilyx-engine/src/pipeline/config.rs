@@ -297,7 +297,7 @@ impl Default for AiServiceConfig {
     }
 }
 
-pub use vigilyx_soar::config::EmailAlertConfig;
+pub use vigilyx_soar::config::{EmailAlertConfig, WechatAlertConfig};
 
 fn default_modules() -> Vec<ModuleConfig> {
     vec![

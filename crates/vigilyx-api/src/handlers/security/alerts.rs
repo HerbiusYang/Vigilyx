@@ -34,7 +34,7 @@ fn derive_encryption_key(jwt_secret: &str) -> [u8; 32] {
 }
 
 /// Configurationvalue (AES-256-GCM)
-fn encrypt_config_value(plaintext: &str, jwt_secret: &str) -> Result<String, String> {
+pub(super) fn encrypt_config_value(plaintext: &str, jwt_secret: &str) -> Result<String, String> {
     use aes_gcm::aead::Aead;
     use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 
@@ -67,7 +67,7 @@ fn encrypt_config_value(plaintext: &str, jwt_secret: &str) -> Result<String, Str
 
 /// Decrypt config value (AES-256-GCM)
 #[allow(dead_code)]
-fn decrypt_config_value(stored: &str, jwt_secret: &str) -> Result<String, String> {
+pub(super) fn decrypt_config_value(stored: &str, jwt_secret: &str) -> Result<String, String> {
     use aes_gcm::aead::Aead;
     use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 
@@ -265,8 +265,10 @@ fn is_allowed_internal_url(url: &str) -> bool {
 pub async fn get_email_alert_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match state.engine_db.get_email_alert_config().await {
         Ok(Some(json)) => {
-            let mut value: serde_json::Value =
-                serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
+            let mut value = match serde_json::from_str::<vigilyx_engine::config::EmailAlertConfig>(&json) {
+                Ok(config) => serde_json::to_value(&config).unwrap_or(serde_json::Value::Null),
+                Err(_) => serde_json::from_str(&json).unwrap_or(serde_json::Value::Null),
+            };
             mask_smtp_password(&mut value);
             ApiResponse::ok(value)
         }
@@ -434,6 +436,179 @@ fn mask_smtp_password(value: &mut serde_json::Value) {
         obj.insert(
             "smtp_password_set".to_string(),
             serde_json::json!(has_password),
+        );
+    }
+}
+
+/// Get WeChat alert configuration (webhook desensitized)
+pub async fn get_wechat_alert_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match state.engine_db.get_wechat_alert_config().await {
+        Ok(Some(json)) => {
+            let mut value =
+                match serde_json::from_str::<vigilyx_engine::config::WechatAlertConfig>(&json) {
+                    Ok(config) => serde_json::to_value(&config).unwrap_or(serde_json::Value::Null),
+                    Err(_) => serde_json::from_str(&json).unwrap_or(serde_json::Value::Null),
+                };
+            mask_wechat_webhook_url(&mut value);
+            ApiResponse::ok(value)
+        }
+        Ok(None) => {
+            let default_cfg = vigilyx_engine::config::WechatAlertConfig::default();
+            let mut value = serde_json::to_value(&default_cfg).unwrap_or_default();
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("webhook_url_set".to_string(), serde_json::json!(false));
+            }
+            ApiResponse::ok(value)
+        }
+        Err(e) => ApiResponse::<serde_json::Value>::internal_err(&e, "Operation failed"),
+    }
+}
+
+pub async fn update_wechat_alert_config(
+    State(state): State<Arc<AppState>>,
+    Json(mut body): Json<serde_json::Value>,
+) -> axum::response::Response {
+    if let Some(obj) = body.as_object_mut() {
+        obj.remove("webhook_url_set");
+
+        if let Some(webhook_val) = obj.get("webhook_url").and_then(|value| value.as_str())
+            && (webhook_val.contains("...") || webhook_val == "****" || webhook_val.is_empty())
+            && let Ok(Some(existing_json)) = state.engine_db.get_wechat_alert_config().await
+            && let Ok(existing) = serde_json::from_str::<serde_json::Value>(&existing_json)
+            && let Some(real_url) = existing.get("webhook_url")
+        {
+            obj.insert("webhook_url".to_string(), real_url.clone());
+        }
+    }
+
+    let parsed: vigilyx_engine::config::WechatAlertConfig =
+        match serde_json::from_value(body.clone()) {
+            Ok(config) => config,
+            Err(e) => {
+                return ApiResponse::<serde_json::Value>::bad_request(format!(
+                    "Invalid WeChat alert config: {}",
+                    e
+                ))
+                .into_response();
+            }
+        };
+
+    if !parsed.webhook_url.is_empty()
+        && let Err(reason) =
+            vigilyx_soar::disposition::validate_wechat_webhook_url(&parsed.webhook_url)
+    {
+        return ApiResponse::<serde_json::Value>::bad_request(reason).into_response();
+    }
+
+    if let Some(obj) = body.as_object_mut()
+        && let Some(webhook_url) = obj
+            .get("webhook_url")
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string())
+        && !webhook_url.is_empty()
+        && !webhook_url.starts_with("ENC:")
+    {
+        use secrecy::ExposeSecret;
+        match encrypt_config_value(&webhook_url, state.auth.config.jwt_secret.expose_secret()) {
+            Ok(encrypted) => {
+                obj.insert("webhook_url".to_string(), serde_json::json!(encrypted));
+            }
+            Err(e) => {
+                tracing::error!("WeChat webhook encryption failed: {}", e);
+                return ApiResponse::<serde_json::Value>::internal_err(&e, "Operation failed")
+                    .into_response();
+            }
+        }
+    }
+
+    let json_str = match serde_json::to_string(&body) {
+        Ok(json) => json,
+        Err(e) => {
+            return ApiResponse::<serde_json::Value>::bad_request(format!(
+                "WeChat alert config serialization failed: {}",
+                e
+            ))
+            .into_response();
+        }
+    };
+
+    match state.engine_db.set_wechat_alert_config(&json_str).await {
+        Ok(()) => ApiResponse::ok(serde_json::json!({ "saved": true })).into_response(),
+        Err(e) => {
+            ApiResponse::<serde_json::Value>::server_error(&e, "Operation failed").into_response()
+        }
+    }
+}
+
+pub async fn test_wechat_alert(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<serde_json::Value>,
+) -> axum::response::Response {
+    let mut config: vigilyx_engine::config::WechatAlertConfig =
+        match serde_json::from_value(body.clone()) {
+            Ok(config) => config,
+            Err(e) => {
+                return ApiResponse::<serde_json::Value>::bad_request(format!(
+                    "Invalid WeChat alert config: {}",
+                    e
+                ))
+                .into_response();
+            }
+        };
+
+    if (config.webhook_url.contains("...") || config.webhook_url == "****" || config.webhook_url.is_empty())
+        && let Ok(Some(existing_json)) = state.engine_db.get_wechat_alert_config().await
+        && let Ok(existing) =
+            serde_json::from_str::<vigilyx_engine::config::WechatAlertConfig>(&existing_json)
+    {
+        config.webhook_url = existing.webhook_url;
+    }
+
+    if config.webhook_url.starts_with("ENC:") {
+        use secrecy::ExposeSecret;
+
+        match decrypt_config_value(
+            &config.webhook_url,
+            state.auth.config.jwt_secret.expose_secret(),
+        ) {
+            Ok(webhook_url) => config.webhook_url = webhook_url,
+            Err(e) => {
+                tracing::error!("WeChat webhook decrypt failed during test: {}", e);
+                return ApiResponse::<serde_json::Value>::internal_err(&e, "Operation failed")
+                    .into_response();
+            }
+        }
+    }
+
+    if !config.webhook_url.is_empty()
+        && let Err(reason) =
+            vigilyx_soar::disposition::validate_wechat_webhook_url(&config.webhook_url)
+    {
+        return ApiResponse::<serde_json::Value>::bad_request(reason).into_response();
+    }
+
+    match state
+        .managers
+        .disposition_engine
+        .test_wechat_alert(&config)
+        .await
+    {
+        Ok(msg) => ApiResponse::ok(serde_json::json!({
+            "success": true,
+            "message": msg,
+        }))
+        .into_response(),
+        Err(e) => ApiResponse::<serde_json::Value>::err(e).into_response(),
+    }
+}
+
+fn mask_wechat_webhook_url(value: &mut serde_json::Value) {
+    if let Some(obj) = value.as_object_mut() {
+        let has_webhook = matches!(obj.get("webhook_url").and_then(|value| value.as_str()), Some(url) if !url.is_empty());
+        obj.insert("webhook_url".to_string(), serde_json::json!(""));
+        obj.insert(
+            "webhook_url_set".to_string(),
+            serde_json::json!(has_webhook),
         );
     }
 }

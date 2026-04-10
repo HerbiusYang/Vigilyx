@@ -1,6 +1,8 @@
-//! Verdict aggregation: dispatches to one of four fusion strategies.
+//! Verdict aggregation: dispatches to one of several fusion strategies.
 
+mod clustered_ds_v1;
 mod ds_murphy;
+mod evidence_clusters;
 mod noisy_or;
 mod tbm;
 mod weighted_max;
@@ -10,10 +12,12 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
+use vigilyx_core::models::EmailSession;
 use vigilyx_core::security::{ModuleResult, ThreatLevel};
 
 // Re-export for backward compatibility
 pub use vigilyx_core::security::{EngineBpaDetail, FusionDetails, SecurityVerdict};
+pub use evidence_clusters::{ScenarioPatternLists, set_runtime_scenario_patterns};
 
 use crate::config::VerdictConfig;
 
@@ -27,11 +31,25 @@ pub fn aggregate_verdict(
     results: &HashMap<String, ModuleResult>,
     config: &VerdictConfig,
 ) -> SecurityVerdict {
+    aggregate_verdict_with_session(None, session_id, results, config)
+}
+
+/// Aggregate module results into a final verdict with optional session context.
+pub fn aggregate_verdict_with_session(
+    session: Option<&EmailSession>,
+    session_id: Uuid,
+    results: &HashMap<String, ModuleResult>,
+    config: &VerdictConfig,
+) -> SecurityVerdict {
     match config.aggregation.as_str() {
         "tbm_v5" => tbm::aggregate_tbm_v5(session_id, results, config),
         "weighted_max" => weighted_max::aggregate_weighted_max(session_id, results, config),
         "noisy_or" => noisy_or::aggregate_noisy_or(session_id, results, config),
-        _ => ds_murphy::aggregate_ds_murphy(session_id, results, config),
+        "legacy_ds_murphy" => ds_murphy::aggregate_ds_murphy(session_id, results, config),
+        "clustered_ds_v1" | "ds_murphy" => {
+            clustered_ds_v1::aggregate_clustered_ds_v1(session, session_id, results, config)
+        }
+        _ => clustered_ds_v1::aggregate_clustered_ds_v1(session, session_id, results, config),
     }
 }
 
@@ -62,12 +80,82 @@ fn empty_verdict(session_id: Uuid, now: DateTime<Utc>) -> SecurityVerdict {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Once;
+
+    use super::aggregate_verdict_with_session;
     use super::ds_murphy::aggregate_ds_murphy;
     use super::noisy_or::aggregate_noisy_or;
     use super::tbm::aggregate_tbm_v5;
     use super::*;
 
+    use crate::modules::content_scan::{
+        KeywordCategoryOverride, KeywordOverrides, build_effective_keyword_lists,
+    };
+    use vigilyx_core::models::{EmailContent, EmailSession, Protocol};
     use vigilyx_core::security::Pillar;
+
+    static SCENARIO_PATTERNS_INIT: Once = Once::new();
+
+    fn init_test_scenario_patterns() {
+        SCENARIO_PATTERNS_INIT.call_once(|| {
+            let system_seed = KeywordOverrides {
+                gateway_banner_patterns: KeywordCategoryOverride {
+                    added: vec![
+                        "[注意风险邮件]".to_string(),
+                        "[外部邮件]".to_string(),
+                        "风险邮件".to_string(),
+                        "外部邮件".to_string(),
+                        "this email may".to_string(),
+                        "potentially malicious".to_string(),
+                        "external email".to_string(),
+                        "suspicious email".to_string(),
+                    ],
+                    removed: vec![],
+                },
+                notice_banner_patterns: KeywordCategoryOverride {
+                    added: vec![
+                        "无法扫描邮件附件".to_string(),
+                        "请确认邮件来源以及真实性".to_string(),
+                        "联系科技部网络安全管理员处置".to_string(),
+                        "联系网络安全管理员处置".to_string(),
+                        "unable to scan attachment".to_string(),
+                        "unable to scan email attachment".to_string(),
+                        "verify the sender and authenticity".to_string(),
+                    ],
+                    removed: vec![],
+                },
+                dsn_patterns: KeywordCategoryOverride {
+                    added: vec![
+                        "delivery status notification".to_string(),
+                        "delivery failed".to_string(),
+                        "undeliverable".to_string(),
+                        "returned mail".to_string(),
+                        "mail delivery subsystem".to_string(),
+                        "failure notice".to_string(),
+                        "退信".to_string(),
+                        "投递失败".to_string(),
+                    ],
+                    removed: vec![],
+                },
+                auto_reply_patterns: KeywordCategoryOverride {
+                    added: vec![
+                        "自动回复".to_string(),
+                        "自动答复".to_string(),
+                        "auto reply".to_string(),
+                        "autoreply".to_string(),
+                        "automatic reply".to_string(),
+                        "out of office".to_string(),
+                        "vacation reply".to_string(),
+                    ],
+                    removed: vec![],
+                },
+                ..KeywordOverrides::default()
+            };
+            let effective =
+                build_effective_keyword_lists(&system_seed, &KeywordOverrides::default());
+            set_runtime_scenario_patterns(ScenarioPatternLists::from(&effective));
+        });
+    }
 
     fn make_result(
         module_id: &str,
@@ -93,6 +181,18 @@ mod tests {
         }
     }
 
+    fn make_result_with_confidence(
+        module_id: &str,
+        pillar: Pillar,
+        score: f64,
+        confidence: f64,
+        categories: Vec<&str>,
+    ) -> ModuleResult {
+        let mut result = make_result(module_id, pillar, score, categories);
+        result.confidence = confidence;
+        result
+    }
+
    // Noisy-OR tests (preserved)
 
     #[test]
@@ -108,7 +208,11 @@ mod tests {
             ..VerdictConfig::default()
         };
         let verdict = aggregate_noisy_or(Uuid::new_v4(), &results, &config);
-        assert_eq!(verdict.threat_level, ThreatLevel::Low);
+        assert!(
+            verdict.threat_level <= ThreatLevel::Low,
+            "DSN/system mail should not escalate beyond Low: {:?}",
+            verdict.threat_level
+        );
         assert!(verdict.pillar_scores["package"] > 0.19);
     }
 
@@ -234,7 +338,11 @@ mod tests {
             ..VerdictConfig::default()
         };
         let verdict = aggregate_verdict(Uuid::new_v4(), &results, &config);
-        assert_eq!(verdict.threat_level, ThreatLevel::Low);
+        assert!(
+            verdict.threat_level <= ThreatLevel::Low,
+            "DSN/system mail should not escalate beyond Low: {:?}",
+            verdict.threat_level
+        );
     }
 
     #[test]
@@ -418,7 +526,7 @@ mod tests {
     }
 
     #[test]
-    fn test_aggregate_verdict_dispatches_ds_murphy() {
+    fn test_aggregate_verdict_dispatches_clustered_default() {
         let mut results = HashMap::new();
         results.insert(
             "content_scan".into(),
@@ -428,6 +536,798 @@ mod tests {
         let config = VerdictConfig::default(); // "ds_murphy"
         let verdict = aggregate_verdict(Uuid::new_v4(), &results, &config);
         assert!(verdict.fusion_details.is_some());
+        assert_eq!(
+            verdict
+                .fusion_details
+                .as_ref()
+                .and_then(|details| details.fusion_method.as_deref()),
+            Some("clustered_ds_v1")
+        );
+    }
+
+    fn make_session(subject: &str, body: &str, mail_from: &str) -> EmailSession {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.10".to_string(),
+            34567,
+            "10.0.0.20".to_string(),
+            25,
+        );
+        session.subject = Some(subject.to_string());
+        session.mail_from = Some(mail_from.to_string());
+        session.content = EmailContent {
+            headers: vec![],
+            body_text: Some(body.to_string()),
+            body_html: None,
+            attachments: vec![],
+            links: vec![],
+            raw_size: body.len(),
+            is_complete: true,
+            is_encrypted: false,
+            smtp_dialog: vec![],
+        };
+        session
+    }
+
+    fn make_domain_verify_result(alignment_score: f64) -> ModuleResult {
+        let mut result = ModuleResult::safe_analyzed(
+            "domain_verify",
+            "domain_verify",
+            Pillar::Package,
+            "sender alignment verified",
+            1,
+        );
+        result.details = serde_json::json!({
+            "alignment_score": alignment_score,
+            "trust_score": alignment_score
+        });
+        result
+    }
+
+    #[test]
+    fn test_clustered_gateway_banner_pollution_capped_low() {
+        init_test_scenario_patterns();
+        let session = make_session(
+            "[外部邮件] Monthly report",
+            "This email may be malicious. Please use caution.",
+            "alerts@qq.com",
+        );
+        let mut results = HashMap::new();
+        results.insert(
+            "content_scan".into(),
+            make_result(
+                "content_scan",
+                Pillar::Content,
+                0.32,
+                vec!["gateway_pre_classified"],
+            ),
+        );
+        results.insert(
+            "semantic_scan".into(),
+            make_result(
+                "semantic_scan",
+                Pillar::Semantic,
+                0.58,
+                vec!["nlp_phishing", "nlp_scam", "nonsensical_spam"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert!(
+            verdict.threat_level <= ThreatLevel::Low,
+            "DSN/system mail should not escalate beyond Low: {:?}",
+            verdict.threat_level
+        );
+        assert!(
+            verdict.summary.contains("gateway_banner_polluted"),
+            "Expected gateway banner context in summary: {}",
+            verdict.summary
+        );
+        assert!(
+            verdict.fusion_details.as_ref().unwrap().risk_single <= 0.35,
+            "Gateway-polluted verdict should be capped to Low"
+        );
+    }
+
+    #[test]
+    fn test_clustered_gateway_prior_only_noise_drops_to_safe() {
+        init_test_scenario_patterns();
+        let session = make_session(
+            "[注意风险邮件]长盈聚金白金专属系列年定开场内电子数据20260409",
+            "该邮件可能存在恶意内容，请谨慎甄别邮件，不要在外网电脑单击任何链接。\n检测结果：垃圾邮件。\n\n本邮件及其附件含有中信建投证券股份有限公司的保密信息。",
+            "trustdata@csc.com.cn",
+        );
+        let mut results = HashMap::new();
+        results.insert(
+            "content_scan".into(),
+            make_result(
+                "content_scan",
+                Pillar::Content,
+                0.32,
+                vec!["gateway_pre_classified"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert_eq!(
+            verdict.threat_level,
+            ThreatLevel::Safe,
+            "Gateway prior alone should collapse to safe noise: {:?}",
+            verdict.threat_level
+        );
+        assert!(
+            verdict.summary.contains("gateway_banner_polluted"),
+            "Expected gateway banner context in summary: {}",
+            verdict.summary
+        );
+        assert!(
+            verdict.fusion_details.as_ref().unwrap().risk_single <= 0.12,
+            "Gateway-only prior should be capped to safe noise"
+        );
+    }
+
+    #[test]
+    fn test_clustered_dsn_like_system_mail_capped_low() {
+        init_test_scenario_patterns();
+        let mut session = make_session(
+            "Delivery Status Notification (Failure)",
+            "Returned mail: see transcript for details.",
+            "MAILER-DAEMON@ddei2.localdomain",
+        );
+        session.content.headers.push((
+            "Auto-Submitted".to_string(),
+            "auto-generated".to_string(),
+        ));
+
+        let mut results = HashMap::new();
+        results.insert(
+            "header_scan".into(),
+            make_result(
+                "header_scan",
+                Pillar::Package,
+                0.52,
+                vec!["no_auth_results", "no_received"],
+            ),
+        );
+        results.insert(
+            "identity_anomaly".into(),
+            make_result(
+                "identity_anomaly",
+                Pillar::Semantic,
+                0.44,
+                vec!["random_domain"],
+            ),
+        );
+        results.insert(
+            "semantic_scan".into(),
+            make_result(
+                "semantic_scan",
+                Pillar::Semantic,
+                0.41,
+                vec!["foreign_to_cn_corp", "nonsensical_spam"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert!(
+            verdict.threat_level <= ThreatLevel::Low,
+            "DSN/system mail should not escalate beyond Low: {:?}",
+            verdict.threat_level
+        );
+        assert!(
+            verdict.summary.contains("dsn_like_system_mail"),
+            "Expected DSN context in summary: {}",
+            verdict.summary
+        );
+        assert!(
+            verdict.fusion_details.as_ref().unwrap().risk_single <= 0.30,
+            "DSN/system mail should remain capped below Medium"
+        );
+    }
+
+    #[test]
+    fn test_clustered_notice_banner_nlp_only_drops_to_safe() {
+        init_test_scenario_patterns();
+        let session = make_session(
+            "[警告：无法扫描邮件附件 - 请确认邮件来源以及真实性 / 或联系科技部网络安全管理员处置]5c2c3f14d027a237283ad8d35936ca5b",
+            "发自我的iPhone",
+            "1738338551@qq.com",
+        );
+        let mut results = HashMap::new();
+        results.insert(
+            "semantic_scan".into(),
+            make_result(
+                "semantic_scan",
+                Pillar::Semantic,
+                0.58,
+                vec!["nlp_bec", "nlp_phishing", "nlp_scam"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert_eq!(
+            verdict.threat_level,
+            ThreatLevel::Safe,
+            "Notice-banner NLP noise should be suppressed to Safe: {:?}",
+            verdict.threat_level
+        );
+        assert!(
+            verdict.summary.contains("notice_banner_polluted"),
+            "Expected notice banner context in summary: {}",
+            verdict.summary
+        );
+        assert!(
+            verdict.fusion_details.as_ref().unwrap().risk_single <= 0.12,
+            "Notice-banner NLP-only signal should be capped to Safe"
+        );
+    }
+
+    #[test]
+    fn test_clustered_auto_reply_nlp_only_drops_to_safe() {
+        init_test_scenario_patterns();
+        let mut session = make_session(
+            "CFP 自动回复: 西安经开区支行关于2026年一季度110报警测试专项检查的通报",
+            "谢谢来信，我已收到。",
+            "engram@yeah.net",
+        );
+        session.content.headers.push((
+            "Auto-Submitted".to_string(),
+            "auto-replied".to_string(),
+        ));
+        let mut results = HashMap::new();
+        results.insert(
+            "semantic_scan".into(),
+            make_result(
+                "semantic_scan",
+                Pillar::Semantic,
+                0.56,
+                vec!["nlp_bec", "nlp_phishing", "nlp_scam"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert_eq!(
+            verdict.threat_level,
+            ThreatLevel::Safe,
+            "Auto-reply NLP-only signal should be suppressed to Safe: {:?}",
+            verdict.threat_level
+        );
+        assert!(
+            verdict.summary.contains("auto_reply_like"),
+            "Expected auto-reply context in summary: {}",
+            verdict.summary
+        );
+        assert!(
+            verdict.fusion_details.as_ref().unwrap().risk_single <= 0.12,
+            "Auto-reply NLP-only signal should be capped to Safe"
+        );
+    }
+
+    #[test]
+    fn test_clustered_semantic_nlp_only_signal_capped_to_low_floor() {
+        init_test_scenario_patterns();
+        let session = make_session(
+            "关于陕西交控投资集团有限公司开立银行账户不可归集情况说明",
+            "请查收相关说明材料。",
+            "hao0821@vip.qq.com",
+        );
+        let mut results = HashMap::new();
+        results.insert(
+            "semantic_scan".into(),
+            make_result(
+                "semantic_scan",
+                Pillar::Semantic,
+                0.62,
+                vec!["nlp_phishing", "nlp_scam"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert!(
+            verdict.threat_level <= ThreatLevel::Low,
+            "Single-cluster NLP signal should not float near Medium: {:?}",
+            verdict.threat_level
+        );
+        assert!(
+            verdict.fusion_details.as_ref().unwrap().risk_single <= 0.24,
+            "Single-cluster NLP signal should be capped to the low floor"
+        );
+        assert!(
+            verdict.summary.contains("semantic_nlp_only_signal"),
+            "Expected semantic-only context in summary: {}",
+            verdict.summary
+        );
+    }
+
+    #[test]
+    fn test_clustered_transcript_like_structure_semantic_noise_soft_capped() {
+        init_test_scenario_patterns();
+        let session = make_session(
+            "\"文件传输助手\"和\"坐看云舒\"的聊天记录",
+            "李华 15:20\n资料发你了\n王强 15:21\n收到，谢谢\n李华 15:22\n明天再看",
+            "zuokanyunshu@qq.com",
+        );
+        let mut results = HashMap::new();
+        results.insert(
+            "semantic_scan".into(),
+            make_result(
+                "semantic_scan",
+                Pillar::Semantic,
+                0.61,
+                vec!["nlp_bec", "nlp_phishing", "nlp_scam"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert!(
+            verdict.threat_level <= ThreatLevel::Low,
+            "Chat transcript NLP-only signal should stay low or below: {:?}",
+            verdict.threat_level
+        );
+        assert!(
+            verdict.summary.contains("transcript_like_structure"),
+            "Expected transcript structure context in summary: {}",
+            verdict.summary
+        );
+        assert!(
+            verdict.fusion_details.as_ref().unwrap().risk_single <= 0.18,
+            "Transcript-like semantic noise should be softly capped"
+        );
+    }
+
+    #[test]
+    fn test_clustered_dsn_identity_only_drops_to_safe() {
+        init_test_scenario_patterns();
+        let session = make_session(
+            "Undelivered Mail Returned to Sender",
+            "This is the mail system at host example.com.",
+            "MAILER-DAEMON@example.com",
+        );
+        let mut results = HashMap::new();
+        results.insert(
+            "identity_anomaly".into(),
+            make_result(
+                "identity_anomaly",
+                Pillar::Semantic,
+                0.29,
+                vec!["random_domain"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert_eq!(
+            verdict.threat_level,
+            ThreatLevel::Safe,
+            "DSN identity-only signal should be suppressed to Safe: {:?}",
+            verdict.threat_level
+        );
+        assert!(
+            verdict.summary.contains("dsn_like_system_mail"),
+            "Expected DSN context in summary: {}",
+            verdict.summary
+        );
+        assert!(
+            verdict.fusion_details.as_ref().unwrap().risk_single <= 0.12,
+            "DSN identity-only signal should be capped to Safe"
+        );
+    }
+
+    #[test]
+    fn test_clustered_targeted_credential_combo_reaches_high() {
+        init_test_scenario_patterns();
+        let session = make_session(
+            "Apple ID security alert",
+            "Please verify your account immediately.",
+            "notifications@id.apple.com",
+        );
+        let mut results = HashMap::new();
+        results.insert(
+            "header_scan".into(),
+            make_result(
+                "header_scan",
+                Pillar::Package,
+                0.62,
+                vec!["brand_spoof_reply_to", "domain_mismatch"],
+            ),
+        );
+        results.insert(
+            "link_content".into(),
+            make_result(
+                "link_content",
+                Pillar::Link,
+                0.82,
+                vec![
+                    "at_sign_obfuscation",
+                    "recipient_in_url",
+                    "targeted_credential_phishing",
+                ],
+            ),
+        );
+        results.insert(
+            "content_scan".into(),
+            make_result(
+                "content_scan",
+                Pillar::Content,
+                0.58,
+                vec!["account_security_phishing"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert!(
+            verdict.threat_level >= ThreatLevel::High,
+            "Identity + targeted link phishing should remain High: {:?}",
+            verdict.threat_level
+        );
+    }
+
+    #[test]
+    fn test_clustered_aligned_credential_phish_with_ioc_reaches_high() {
+        init_test_scenario_patterns();
+        let session = make_session(
+            "[注意风险邮件]请尽快更新密码以确保账户安全",
+            "请点击链接更新密码以确保账户安全。",
+            "jiajia@change-meme.com",
+        );
+        let mut results = HashMap::new();
+        results.insert("domain_verify".into(), make_domain_verify_result(0.75));
+        results.insert(
+            "content_scan".into(),
+            make_result_with_confidence(
+                "content_scan",
+                Pillar::Content,
+                0.99,
+                0.85,
+                vec![
+                    "account_security_phishing",
+                    "bec",
+                    "gateway_pre_classified",
+                    "phishing",
+                ],
+            ),
+        );
+        results.insert(
+            "header_scan".into(),
+            make_result_with_confidence(
+                "header_scan",
+                Pillar::Package,
+                0.40,
+                0.80,
+                vec!["ioc_ip_hit"],
+            ),
+        );
+        results.insert(
+            "link_scan".into(),
+            make_result_with_confidence(
+                "link_scan",
+                Pillar::Link,
+                0.15,
+                0.85,
+                vec!["suspicious_params"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+
+        let social_cluster = verdict
+            .fusion_details
+            .as_ref()
+            .and_then(|details| {
+                details
+                    .engine_details
+                    .iter()
+                    .find(|detail| detail.engine_id == "social_engineering_intent")
+            })
+            .expect("social cluster should exist");
+
+        assert!(
+            verdict.threat_level >= ThreatLevel::High,
+            "Credential phishing with malicious IOC and credential-bearing link should reach High even when sender alignment exists: {:?}",
+            verdict.threat_level
+        );
+        assert!(
+            verdict.fusion_details.as_ref().unwrap().risk_single >= 0.65,
+            "Credential phishing triad should stay above High threshold"
+        );
+        assert!(
+            verdict.summary.contains("account_security_phishing"),
+            "High-risk summary should foreground credential-phishing evidence: {}",
+            verdict.summary
+        );
+        assert!(
+            !verdict.summary.contains("gateway_pre_classified"),
+            "High-risk summary should not foreground weak gateway priors: {}",
+            verdict.summary
+        );
+        assert!(
+            social_cluster
+                .key_factors
+                .iter()
+                .any(|factor| factor.to_ascii_lowercase().contains("account security phishing")),
+            "Social cluster factors should reflect credential-phishing evidence, not gateway-banner noise: {:?}",
+            social_cluster.key_factors
+        );
+        assert!(
+            social_cluster
+                .key_factors
+                .iter()
+                .any(|factor| factor.contains("Business Email Compromise")),
+            "Acronym-style factors should be humanized for analyst readability: {:?}",
+            social_cluster.key_factors
+        );
+    }
+
+    #[test]
+    fn test_clustered_credential_link_and_malicious_ioc_reaches_medium_without_account_theme() {
+        init_test_scenario_patterns();
+        let session = make_session(
+            "[注意风险邮件]账号即将到期，立即采取行动",
+            "请点击链接完成处理。",
+            "jiajia@change-meme.com",
+        );
+        let mut results = HashMap::new();
+        results.insert("domain_verify".into(), make_domain_verify_result(0.72));
+        results.insert(
+            "content_scan".into(),
+            make_result_with_confidence(
+                "content_scan",
+                Pillar::Content,
+                0.62,
+                0.72,
+                vec!["bec", "phishing"],
+            ),
+        );
+        results.insert(
+            "header_scan".into(),
+            make_result_with_confidence(
+                "header_scan",
+                Pillar::Package,
+                0.36,
+                0.73,
+                vec!["ioc_ip_hit"],
+            ),
+        );
+        results.insert(
+            "link_scan".into(),
+            make_result_with_confidence(
+                "link_scan",
+                Pillar::Link,
+                0.15,
+                0.85,
+                vec!["suspicious_params"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+
+        assert!(
+            verdict.threat_level >= ThreatLevel::Medium,
+            "Credential-link + malicious IOC phishing should not stay Low: {:?}",
+            verdict.threat_level
+        );
+        assert!(
+            verdict.fusion_details.as_ref().unwrap().risk_single >= 0.56,
+            "Credential-link + IOC floor should lift generic phishing above Medium"
+        );
+    }
+
+    #[test]
+    fn test_clustered_gateway_polluted_structural_phish_stays_medium() {
+        init_test_scenario_patterns();
+        let session = make_session(
+            "[注意风险邮件]密码快到期，请尽快确认您的信息",
+            "该邮件可能存在恶意内容，请谨慎甄别邮件，不要在外网电脑单击任何链接。\n请点击链接处理。",
+            "jiajia@fsroushi.com",
+        );
+        let mut results = HashMap::new();
+        results.insert("domain_verify".into(), make_domain_verify_result(0.75));
+        results.insert(
+            "content_scan".into(),
+            make_result_with_confidence(
+                "content_scan",
+                Pillar::Content,
+                0.35,
+                0.85,
+                vec!["bec", "gateway_pre_classified"],
+            ),
+        );
+        results.insert(
+            "identity_anomaly".into(),
+            make_result_with_confidence(
+                "identity_anomaly",
+                Pillar::Semantic,
+                0.25,
+                0.70,
+                vec!["random_domain"],
+            ),
+        );
+        results.insert(
+            "header_scan".into(),
+            make_result_with_confidence(
+                "header_scan",
+                Pillar::Package,
+                0.40,
+                0.80,
+                vec!["ioc_ip_hit"],
+            ),
+        );
+        results.insert(
+            "link_scan".into(),
+            make_result_with_confidence(
+                "link_scan",
+                Pillar::Link,
+                0.15,
+                0.85,
+                vec!["suspicious_params"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+
+        assert!(
+            verdict.threat_level >= ThreatLevel::Medium,
+            "Gateway-polluted credential phish with IOC and sender anomaly should not collapse to Safe: {:?}",
+            verdict.threat_level
+        );
+        assert!(
+            verdict.fusion_details.as_ref().unwrap().risk_single >= 0.48,
+            "Structural phishing triad should hold a Medium floor even when social evidence is weak"
+        );
+        assert!(
+            verdict.summary.contains("credential_link_signal"),
+            "Summary should retain credential-link context for analyst review: {}",
+            verdict.summary
+        );
+    }
+
+    #[test]
+    fn test_clustered_business_sensitivity_with_trust_stays_low() {
+        init_test_scenario_patterns();
+        let session = make_session(
+            "Quarterly settlement notice",
+            "Attached are account updates and payment references.",
+            "service@ccabchina.com",
+        );
+        let mut results = HashMap::new();
+        results.insert("domain_verify".into(), make_domain_verify_result(0.82));
+        results.insert(
+            "transaction_correlation".into(),
+            make_result(
+                "transaction_correlation",
+                Pillar::Semantic,
+                0.58,
+                vec![
+                    "bank_account_detected",
+                    "multi_financial_entities",
+                    "urgency_financial_combo",
+                ],
+            ),
+        );
+        results.insert(
+            "content_scan".into(),
+            make_result(
+                "content_scan",
+                Pillar::Content,
+                0.45,
+                vec!["dlp_api_key"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert!(
+            verdict.threat_level <= ThreatLevel::Low,
+            "Trusted transactional sensitivity should not escalate into Medium/High: {:?}",
+            verdict.threat_level
+        );
+    }
+
+    #[test]
+    fn test_clustered_intel_only_signal_cannot_reach_high() {
+        let session = make_session(
+            "Marketing campaign",
+            "View the latest offer online.",
+            "marketing@mkt.aishu.cn",
+        );
+        let mut results = HashMap::new();
+        results.insert(
+            "link_reputation".into(),
+            make_result(
+                "link_reputation",
+                Pillar::Link,
+                0.72,
+                vec!["intel_malicious"],
+            ),
+        );
+        results.insert(
+            "header_scan".into(),
+            make_result(
+                "header_scan",
+                Pillar::Package,
+                0.46,
+                vec!["sender_ip_suspicious"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert!(
+            verdict.threat_level <= ThreatLevel::Medium,
+            "Intel-only signals should not reach High without payload/link deception corroboration: {:?}",
+            verdict.threat_level
+        );
+        assert!(
+            verdict.fusion_details.as_ref().unwrap().risk_single <= 0.55,
+            "Intel-only path should be capped below High threshold"
+        );
     }
 
    // TBM v5 tests

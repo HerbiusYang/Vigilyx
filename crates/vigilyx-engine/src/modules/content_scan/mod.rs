@@ -42,6 +42,14 @@ pub struct KeywordOverrides {
     pub bec_phrases: KeywordCategoryOverride,
     #[serde(default)]
     pub internal_authority_phrases: KeywordCategoryOverride,
+    #[serde(default)]
+    pub gateway_banner_patterns: KeywordCategoryOverride,
+    #[serde(default)]
+    pub notice_banner_patterns: KeywordCategoryOverride,
+    #[serde(default)]
+    pub dsn_patterns: KeywordCategoryOverride,
+    #[serde(default)]
+    pub auto_reply_patterns: KeywordCategoryOverride,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -50,6 +58,10 @@ pub struct EffectiveKeywordLists {
     pub weak_phishing_keywords: Vec<String>,
     pub bec_phrases: Vec<String>,
     pub internal_authority_phrases: Vec<String>,
+    pub gateway_banner_patterns: Vec<String>,
+    pub notice_banner_patterns: Vec<String>,
+    pub dsn_patterns: Vec<String>,
+    pub auto_reply_patterns: Vec<String>,
 }
 
 /// Unicode NFKC + charactersCleanup + ->
@@ -80,6 +92,9 @@ pub(crate) fn normalize_text(text: &str) -> String {
 /// Minimum text length to trigger parallel keyword scanning.
 const KEYWORD_PAR_THRESHOLD: usize = 50_000;
 
+static RE_PARAGRAPH_BREAK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\r?\n\s*\r?\n+").expect("valid paragraph break regex"));
+
 pub struct ContentScanModule {
     meta: ModuleMetadata,
    /// ofPhishingKeywordsList (builtin - removed + added)
@@ -90,6 +105,10 @@ pub struct ContentScanModule {
     bec_phrases: Vec<String>,
    /// ofInternal short List
     internal_authority_phrases: Vec<String>,
+    gateway_banner_patterns: Vec<String>,
+    notice_banner_patterns: Vec<String>,
+    dsn_patterns: Vec<String>,
+    auto_reply_patterns: Vec<String>,
 }
 
 impl Default for ContentScanModule {
@@ -122,6 +141,10 @@ impl ContentScanModule {
             weak_phishing_keywords: effective.weak_phishing_keywords,
             bec_phrases: effective.bec_phrases,
             internal_authority_phrases: effective.internal_authority_phrases,
+            gateway_banner_patterns: effective.gateway_banner_patterns,
+            notice_banner_patterns: effective.notice_banner_patterns,
+            dsn_patterns: effective.dsn_patterns,
+            auto_reply_patterns: effective.auto_reply_patterns,
         }
     }
 
@@ -132,6 +155,10 @@ impl ContentScanModule {
             "weak_phishing_keywords": self.weak_phishing_keywords,
             "bec_phrases": self.bec_phrases,
             "internal_authority_phrases": self.internal_authority_phrases,
+            "gateway_banner_patterns": self.gateway_banner_patterns,
+            "notice_banner_patterns": self.notice_banner_patterns,
+            "dsn_patterns": self.dsn_patterns,
+            "auto_reply_patterns": self.auto_reply_patterns,
         })
     }
 }
@@ -211,6 +238,14 @@ pub fn normalize_system_keyword_seed(system_seed: &KeywordOverrides) -> KeywordO
         internal_authority_phrases: normalize_system_category_seed(
             &system_seed.internal_authority_phrases,
         ),
+        gateway_banner_patterns: normalize_system_category_seed(
+            &system_seed.gateway_banner_patterns,
+        ),
+        notice_banner_patterns: normalize_system_category_seed(
+            &system_seed.notice_banner_patterns,
+        ),
+        dsn_patterns: normalize_system_category_seed(&system_seed.dsn_patterns),
+        auto_reply_patterns: normalize_system_category_seed(&system_seed.auto_reply_patterns),
     }
 }
 
@@ -221,6 +256,10 @@ fn build_system_keyword_lists(system_seed: &KeywordOverrides) -> EffectiveKeywor
         weak_phishing_keywords: normalized_seed.weak_phishing_keywords.added,
         bec_phrases: normalized_seed.bec_phrases.added,
         internal_authority_phrases: normalized_seed.internal_authority_phrases.added,
+        gateway_banner_patterns: normalized_seed.gateway_banner_patterns.added,
+        notice_banner_patterns: normalized_seed.notice_banner_patterns.added,
+        dsn_patterns: normalized_seed.dsn_patterns.added,
+        auto_reply_patterns: normalized_seed.auto_reply_patterns.added,
     }
 }
 
@@ -273,6 +312,22 @@ pub fn normalize_user_keyword_overrides(
             &overrides.internal_authority_phrases,
             &builtin.internal_authority_phrases,
         ),
+        gateway_banner_patterns: normalize_user_category_overrides(
+            &overrides.gateway_banner_patterns,
+            &builtin.gateway_banner_patterns,
+        ),
+        notice_banner_patterns: normalize_user_category_overrides(
+            &overrides.notice_banner_patterns,
+            &builtin.notice_banner_patterns,
+        ),
+        dsn_patterns: normalize_user_category_overrides(
+            &overrides.dsn_patterns,
+            &builtin.dsn_patterns,
+        ),
+        auto_reply_patterns: normalize_user_category_overrides(
+            &overrides.auto_reply_patterns,
+            &builtin.auto_reply_patterns,
+        ),
     }
 }
 
@@ -296,6 +351,19 @@ pub fn build_effective_keyword_lists(
             &builtin.internal_authority_phrases,
             &overrides.internal_authority_phrases,
         ),
+        gateway_banner_patterns: apply_overrides_to_builtin(
+            &builtin.gateway_banner_patterns,
+            &overrides.gateway_banner_patterns,
+        ),
+        notice_banner_patterns: apply_overrides_to_builtin(
+            &builtin.notice_banner_patterns,
+            &overrides.notice_banner_patterns,
+        ),
+        dsn_patterns: apply_overrides_to_builtin(&builtin.dsn_patterns, &overrides.dsn_patterns),
+        auto_reply_patterns: apply_overrides_to_builtin(
+            &builtin.auto_reply_patterns,
+            &overrides.auto_reply_patterns,
+        ),
     }
 }
 
@@ -308,6 +376,10 @@ pub fn get_builtin_keyword_lists(system_seed: &KeywordOverrides) -> serde_json::
         "weak_phishing_keywords": builtin.weak_phishing_keywords,
         "bec_phrases": builtin.bec_phrases,
         "internal_authority_phrases": builtin.internal_authority_phrases,
+        "gateway_banner_patterns": builtin.gateway_banner_patterns,
+        "notice_banner_patterns": builtin.notice_banner_patterns,
+        "dsn_patterns": builtin.dsn_patterns,
+        "auto_reply_patterns": builtin.auto_reply_patterns,
     })
 }
 
@@ -360,7 +432,7 @@ pub fn get_builtin_rules(system_seed: &KeywordOverrides) -> serde_json::Value {
             {
                 "id": "api_key",
                 "name": "API Key",
-                "description": "32+ contiguous字母数字",
+                "description": "32+ contiguous字母数字 with surrounding API/secret/token context",
                 "pattern": r"\b[A-Za-z0-9]{32,}\b",
                 "score_weight": 0.2
             }
@@ -386,6 +458,21 @@ static RE_CREDIT_CARD: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b").unwrap());
 static RE_CHINESE_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b\d{17}[\dXx]\b").unwrap());
 static RE_API_KEY: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b[A-Za-z0-9]{32,}\b").unwrap());
+const API_KEY_CONTEXT_KEYWORDS: &[&str] = &[
+    "api key",
+    "apikey",
+    "access key",
+    "secret",
+    "token",
+    "credential",
+    "auth",
+    "authorization",
+    "client secret",
+    "client_id",
+    "client id",
+    "appkey",
+    "appsecret",
+];
 
 /// Check if a string looks like it could pass the Luhn algorithm (credit card)
 fn contains_credit_card(text: &str) -> Vec<String> {
@@ -439,13 +526,43 @@ fn find_api_keys(text: &str) -> Vec<String> {
             let is_pure_hex = s
                 .chars()
                 .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c.to_ascii_lowercase()));
-            if is_pure_hex {
+            if is_pure_hex || !looks_like_api_key_shape(s) || !has_api_key_context(text, m.start(), m.end()) {
                 None
             } else {
                 Some(s.to_string())
             }
         })
         .collect()
+}
+
+fn looks_like_api_key_shape(candidate: &str) -> bool {
+    let has_upper = candidate.chars().any(|c| c.is_ascii_uppercase());
+    let has_lower = candidate.chars().any(|c| c.is_ascii_lowercase());
+    let has_digit = candidate.chars().any(|c| c.is_ascii_digit());
+    let unique_chars = candidate.chars().collect::<HashSet<_>>().len();
+    let class_count = [has_upper, has_lower, has_digit]
+        .into_iter()
+        .filter(|present| *present)
+        .count();
+
+    class_count >= 2 && unique_chars >= 10
+}
+
+fn has_api_key_context(text: &str, start: usize, end: usize) -> bool {
+    let before: String = text[..start]
+        .chars()
+        .rev()
+        .take(48)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    let after: String = text[end..].chars().take(48).collect();
+    let context = format!("{before}{}{after}", &text[start..end]).to_lowercase();
+
+    API_KEY_CONTEXT_KEYWORDS
+        .iter()
+        .any(|keyword| context.contains(keyword))
 }
 
 fn scan_text(
@@ -512,6 +629,10 @@ fn scan_text(
     }
 
    // --- BEC impersonation ---
+   // Single-token urgency words from the keyword manager (e.g. "immediately",
+   // "asap") are too weak on their own. Treat them as weak BEC hints and only
+   // score when multiple weak hits co-occur, while keeping multi-token phrases
+   // as strong BEC evidence.
     let bec_hits: Vec<String> = if text_lower.len() >= KEYWORD_PAR_THRESHOLD {
         bec_ph
             .par_iter()
@@ -525,14 +646,33 @@ fn scan_text(
             .cloned()
             .collect()
     };
-    if !bec_hits.is_empty() {
-        let count = bec_hits.len();
+    let (strong_bec_hits, weak_bec_hits): (Vec<String>, Vec<String>) = bec_hits
+        .into_iter()
+        .partition(|phrase| is_strong_bec_phrase(phrase));
+    if !strong_bec_hits.is_empty() {
+        let count = strong_bec_hits.len();
         score += (count as f64 * 0.15).min(0.5);
         categories.push("bec".to_string());
         evidence.push(Evidence {
-            description: format!("Found {}  BEC 冒充short语: {}", count, bec_hits.join(", ")),
+            description: format!(
+                "Found {} strong BEC phrases: {}",
+                count,
+                strong_bec_hits.join(", ")
+            ),
             location: Some("body".to_string()),
-            snippet: Some(bec_hits.join(", ")),
+            snippet: Some(strong_bec_hits.join(", ")),
+        });
+    } else if weak_bec_hits.len() >= 2 {
+        score += (weak_bec_hits.len() as f64 * 0.05).min(0.15);
+        categories.push("bec".to_string());
+        evidence.push(Evidence {
+            description: format!(
+                "Found {} weak BEC hints that co-occur: {}",
+                weak_bec_hits.len(),
+                weak_bec_hits.join(", ")
+            ),
+            location: Some("body".to_string()),
+            snippet: Some(weak_bec_hits.join(", ")),
         });
     }
 
@@ -596,7 +736,7 @@ fn scan_text(
         categories.push("dlp_api_key".to_string());
         evidence.push(Evidence {
             description: format!(
-                "Found {} 疑似 API Key（32+ characterscontiguous字母数字）",
+                "Found {} suspected API key(s) with nearby secret/token context",
                 api_keys.len()
             ),
             location: Some("body".to_string()),
@@ -617,6 +757,143 @@ fn scan_text(
     }
 
     score
+}
+
+fn is_strong_bec_phrase(phrase: &str) -> bool {
+    let normalized = normalize_text(&phrase.to_lowercase());
+    let word_count = normalized
+        .split_whitespace()
+        .filter(|segment| !segment.is_empty())
+        .count();
+    if word_count >= 2 {
+        return true;
+    }
+
+    let cjk_count = normalized
+        .chars()
+        .filter(|ch| ('\u{4E00}'..='\u{9FFF}').contains(ch))
+        .count();
+    cjk_count >= 4
+}
+
+fn matches_any_pattern(text_lower: &str, patterns: &[String]) -> bool {
+    patterns.iter().any(|pattern| {
+        let normalized = normalize_text(&pattern.to_lowercase());
+        text_lower.contains(normalized.as_str())
+    })
+}
+
+fn split_first_paragraph(text: &str) -> (&str, &str) {
+    if let Some(m) = RE_PARAGRAPH_BREAK.find(text) {
+        (&text[..m.start()], &text[m.end()..])
+    } else {
+        (text, "")
+    }
+}
+
+fn strip_leading_notice_sections<'a>(text: &'a str, patterns: &[String]) -> (&'a str, bool) {
+    let mut remaining = text.trim_start();
+    let mut removed_any = false;
+
+    for _ in 0..6 {
+        if remaining.is_empty() {
+            return (remaining, removed_any);
+        }
+
+        let (paragraph, rest) = split_first_paragraph(remaining);
+        let paragraph_lower = normalize_text(&paragraph.to_lowercase());
+        if matches_any_pattern(&paragraph_lower, patterns) {
+            removed_any = true;
+            remaining = rest.trim_start();
+        } else {
+            break;
+        }
+    }
+
+    (remaining, removed_any)
+}
+
+fn separator_lead_len(line: &str) -> usize {
+    line.trim_start()
+        .chars()
+        .take_while(|c| matches!(c, '_' | '-' | '=' | '*' | '·'))
+        .count()
+}
+
+fn strip_trailing_footer_after_separator(text: &str) -> String {
+    let mut offset = 0usize;
+    let trimmed = text.trim();
+
+    for line in trimmed.split_inclusive('\n') {
+        let line_trimmed = line.trim();
+        let separator_len = separator_lead_len(line_trimmed);
+        let tail_start = offset;
+        let tail = &trimmed[tail_start..];
+
+        if separator_len >= 4 && tail.len() >= 160 && tail_start >= 48 {
+            return trimmed[..tail_start].trim_end().to_string();
+        }
+
+        offset += line.len();
+    }
+
+    trimmed.to_string()
+}
+
+fn sanitize_body_for_keyword_scan(
+    text: &str,
+    gateway_banner_patterns: &[String],
+    notice_banner_patterns: &[String],
+    dsn_patterns: &[String],
+    auto_reply_patterns: &[String],
+) -> String {
+    let mut notice_patterns = Vec::with_capacity(
+        gateway_banner_patterns.len()
+            + notice_banner_patterns.len()
+            + dsn_patterns.len()
+            + auto_reply_patterns.len(),
+    );
+    notice_patterns.extend(gateway_banner_patterns.iter().cloned());
+    notice_patterns.extend(notice_banner_patterns.iter().cloned());
+    notice_patterns.extend(dsn_patterns.iter().cloned());
+    notice_patterns.extend(auto_reply_patterns.iter().cloned());
+
+    let (without_notice, removed_notice) = strip_leading_notice_sections(text, &notice_patterns);
+    let trimmed = without_notice.trim_start();
+    if removed_notice
+        && separator_lead_len(trimmed.lines().next().unwrap_or_default()) >= 4
+    {
+        return String::new();
+    }
+
+    strip_trailing_footer_after_separator(without_notice)
+}
+
+fn collect_gateway_prior_hits(prefix_text: &str, gateway_banner_patterns: &[String]) -> Vec<String> {
+    let prefix_lower = normalize_text(&prefix_text.to_lowercase());
+    gateway_banner_patterns
+        .iter()
+        .filter(|pattern| {
+            let normalized = normalize_text(&pattern.to_lowercase());
+            prefix_lower.contains(normalized.as_str())
+        })
+        .cloned()
+        .collect()
+}
+
+fn strip_subject_banner_prefixes(
+    subject: &str,
+    gateway_banner_patterns: &[String],
+    notice_banner_patterns: &[String],
+) -> String {
+    let mut cleaned = subject.to_string();
+    for pattern in gateway_banner_patterns
+        .iter()
+        .chain(notice_banner_patterns.iter())
+    {
+        cleaned = cleaned.replace(pattern, "");
+    }
+    cleaned.trim().to_string()
 }
 
 #[async_trait]
@@ -644,26 +921,22 @@ impl SecurityModule for ContentScanModule {
                 .unwrap_or("");
 
             let gw_prefix: String = body_for_gw.chars().take(500).collect();
-            let gw_lower = gw_prefix.to_lowercase();
+            let mut gw_hits = collect_gateway_prior_hits(&gw_prefix, &self.gateway_banner_patterns);
+            if let Some(subject) = ctx.session.subject.as_deref() {
+                let subject_hits =
+                    collect_gateway_prior_hits(subject, &self.gateway_banner_patterns);
+                for hit in subject_hits {
+                    if !gw_hits.contains(&hit) {
+                        gw_hits.push(hit);
+                    }
+                }
+            }
 
-            let gw_spam = gw_lower.contains("检测结果：垃圾邮件")
-                || gw_lower.contains("检测结果:垃圾邮件");
-            let gw_malicious = gw_lower.contains("该邮件可能存在恶意内容")
-                || gw_lower.contains("此邮件可能存在恶意内容");
-
-            if gw_spam || gw_malicious {
-                let gw_score = if gw_malicious { 0.25 } else { 0.20 };
-                total_score += gw_score;
+            if !gw_hits.is_empty() {
+                total_score += 0.20;
                 categories.push("gateway_pre_classified".to_string());
                 evidence.push(Evidence {
-                    description: format!(
-                        "上游邮件网关已标记: {}",
-                        if gw_malicious {
-                            "恶意内容"
-                        } else {
-                            "垃圾邮件"
-                        }
-                    ),
+                    description: format!("Upstream security banner or gateway prior detected: {}", gw_hits.join(", ")),
                     location: Some("body:gateway_tag".to_string()),
                     snippet: Some(gw_prefix.chars().take(120).collect()),
                 });
@@ -675,11 +948,11 @@ impl SecurityModule for ContentScanModule {
        // Note: email first AddSecurity if "[]",
        // packetContains"Risk"waitKeywords, first, Internal email.
         if let Some(ref subject) = ctx.session.subject {
-            let cleaned_subject = subject
-                .replace("[注意风险邮件]", "")
-                .replace("【注意风险邮件】", "")
-                .replace("[外部邮件]", "")
-                .replace("【外部邮件】", "");
+            let cleaned_subject = strip_subject_banner_prefixes(
+                subject,
+                &self.gateway_banner_patterns,
+                &self.notice_banner_patterns,
+            );
             let sub_lower = normalize_text(&cleaned_subject.to_lowercase());
 
            // Mediumof PhishingKeywords
@@ -725,29 +998,54 @@ impl SecurityModule for ContentScanModule {
 
        // only 1bodyVersion,Avoid text + html Content
        // priorityUsePlain text (); Plain text HTML ofText
-        let body_for_cross = if let Some(ref body_text) = ctx.session.content.body_text {
-            total_score += scan_text(
-                body_text,
-                &self.phishing_keywords,
-                &self.weak_phishing_keywords,
-                &self.bec_phrases,
-                &mut evidence,
-                &mut categories,
-            );
-            Some(body_text.clone())
-        } else if let Some(ref body_html) = ctx.session.content.body_html {
-            let stripped = strip_html_tags(body_html);
-            total_score += scan_text(
-                &stripped,
-                &self.phishing_keywords,
-                &self.weak_phishing_keywords,
-                &self.bec_phrases,
-                &mut evidence,
-                &mut categories,
-            );
-            Some(stripped)
-        } else {
-            None
+        let body_for_cross = {
+            let text_candidate = ctx
+                .session
+                .content
+                .body_text
+                .as_ref()
+                .map(|body_text| {
+                    sanitize_body_for_keyword_scan(
+                        body_text,
+                        &self.gateway_banner_patterns,
+                        &self.notice_banner_patterns,
+                        &self.dsn_patterns,
+                        &self.auto_reply_patterns,
+                    )
+                })
+                .filter(|sanitized| !sanitized.trim().is_empty());
+
+            let selected = if let Some(text) = text_candidate {
+                Some(text)
+            } else {
+                ctx.session.content.body_html.as_ref().and_then(|body_html| {
+                    let stripped = sanitize_body_for_keyword_scan(
+                        &strip_html_tags(body_html),
+                        &self.gateway_banner_patterns,
+                        &self.notice_banner_patterns,
+                        &self.dsn_patterns,
+                        &self.auto_reply_patterns,
+                    );
+                    if stripped.trim().is_empty() {
+                        None
+                    } else {
+                        Some(stripped)
+                    }
+                })
+            };
+
+            if let Some(ref sanitized) = selected {
+                total_score += scan_text(
+                    sanitized,
+                    &self.phishing_keywords,
+                    &self.weak_phishing_keywords,
+                    &self.bec_phrases,
+                    &mut evidence,
+                    &mut categories,
+                );
+            }
+
+            selected
         };
 
        // ImagePhishingdetect: body + HTML Image

@@ -13,6 +13,7 @@ chrono.workspace = true
 thiserror.workspace = true
 dotenvy.workspace = true
 uuid.workspace = true
+url = "2"
 
 [dev-dependencies]
 proptest = "1.4"

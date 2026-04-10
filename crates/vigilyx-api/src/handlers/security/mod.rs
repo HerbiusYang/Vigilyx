@@ -33,8 +33,9 @@ pub mod threat_scene;
 // Re-export all public handlers so routes.rs paths remain unchanged
 pub use alerts::{
     add_intel_clean, delete_intel_whitelist, get_ai_config, get_email_alert_config,
-    get_intel_config, list_intel_whitelist, test_ai_connection, test_email_alert, update_ai_config,
-    update_email_alert_config, update_intel_config,
+    get_intel_config, get_wechat_alert_config, list_intel_whitelist, test_ai_connection,
+    test_email_alert, test_wechat_alert, update_ai_config, update_email_alert_config,
+    update_intel_config, update_wechat_alert_config,
 };
 pub use disposition::{
     create_disposition_rule, delete_disposition_rule, list_disposition_rules,

@@ -24,11 +24,11 @@ pub(super) const MAX_NEW_SESSIONS_PER_IP_PER_MINUTE: u64 = 10_000;
 /// IP rate limit entry (cache-line aligned)
 #[repr(C, align(64))]
 pub(crate) struct IpRateLimitEntry {
-   /// New session count
+    /// New session count
     pub new_session_count: AtomicU64,
-   /// Active session count
+    /// Active session count
     pub active_session_count: AtomicU64,
-   /// Window start time (stored in nanoseconds)
+    /// Window start time (stored in nanoseconds)
     pub(super) window_start_ns: AtomicU64,
     _pad: [u8; 40],
 }
@@ -45,24 +45,24 @@ impl IpRateLimitEntry {
 
     #[inline(always)]
     pub fn now_ns() -> u64 {
-       // Use Instant converted to nanoseconds
+        // Use Instant converted to nanoseconds
         static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
         let start = START.get_or_init(Instant::now);
         start.elapsed().as_nanos() as u64
     }
 
-   /// Check if this IP should be rate limited (returns true to reject)
+    /// Check if this IP should be rate limited (returns true to reject)
     #[inline(always)]
     pub fn should_limit(&self) -> bool {
         let active = self.active_session_count.load(Ordering::Relaxed);
         let new_count = self.new_session_count.load(Ordering::Relaxed);
 
-       // Check active session count limit
+        // Check active session count limit
         if active >= MAX_SESSIONS_PER_IP as u64 {
             return true;
         }
 
-       // Check rate limit
+        // Check rate limit
         if new_count >= MAX_NEW_SESSIONS_PER_IP_PER_MINUTE {
             return true;
         }
@@ -70,7 +70,7 @@ impl IpRateLimitEntry {
         false
     }
 
-   /// Check and reset window (if expired) - lock-free design
+    /// Check and reset window (if expired) - lock-free design
     #[inline(always)]
     pub fn check_and_maybe_reset(&self) -> bool {
         let now = Self::now_ns();
@@ -78,24 +78,24 @@ impl IpRateLimitEntry {
         let elapsed_secs = (now.saturating_sub(window_start)) / 1_000_000_000;
 
         if elapsed_secs >= RATE_LIMIT_WINDOW_SECS {
-           // CAS attempt to reset window - only one thread wins the race
+            // CAS attempt to reset window - only one thread wins the race
             if self
                 .window_start_ns
                 .compare_exchange(window_start, now, Ordering::AcqRel, Ordering::Relaxed)
                 .is_ok()
             {
-               // NOTE: There is a tiny race window between CAS success and swap(0):
-               // Concurrent threads may have executed fetch_add(1) during this window,
-               // which will be zeroed by swap.
-               // This is acceptable for rate limiting - at most 1-2 counts may be lost,
-               // which won't affect security (only makes limit slightly looser momentarily).
-               // Using swap(0) instead of store(0) ensures read and clear are atomic,
-               // avoiding ABA problems (store could overwrite values just written by other threads).
+                // NOTE: There is a tiny race window between CAS success and swap(0):
+                // Concurrent threads may have executed fetch_add(1) during this window,
+                // which will be zeroed by swap.
+                // This is acceptable for rate limiting - at most 1-2 counts may be lost,
+                // which won't affect security (only makes limit slightly looser momentarily).
+                // Using swap(0) instead of store(0) ensures read and clear are atomic,
+                // avoiding ABA problems (store could overwrite values just written by other threads).
                 let _old_new = self.new_session_count.swap(0, Ordering::Relaxed);
-               // SEC: Do NOT reset active_session_count here - it tracks long-lived sessions
-               // and must only decrement when sessions actually close. Resetting it every 60s
-               // allowed attackers to batch long-lived connections across windows to exhaust
-               // MAX_SESSIONS. Active count is decremented in session_closed().
+                // SEC: Do NOT reset active_session_count here - it tracks long-lived sessions
+                // and must only decrement when sessions actually close. Resetting it every 60s
+                // allowed attackers to batch long-lived connections across windows to exhaust
+                // MAX_SESSIONS. Active count is decremented in session_closed().
 
                 return true;
             }

@@ -4,19 +4,11 @@
 //! heuristic scoring for suspicious domain characteristics.
 
 use super::data::{FREE_HOSTING_DOMAINS, RE_RANDOM_DOMAIN, SUSPICIOUS_TLDS};
-use crate::modules::common::{extract_domain_from_url, extract_redirect_target_urls};
+use crate::modules::common::extract_redirect_target_urls;
 
 /// Extract redirect target URLs from tracking/security-gateway links.
 pub(super) fn extract_redirect_target_urls_full(url: &str) -> Vec<String> {
     extract_redirect_target_urls(url)
-}
-
-/// From URL ParameterMediumExtract Target URL,ReturnTarget URL ofDomainList
-pub(super) fn extract_redirect_targets(url: &str) -> Vec<String> {
-    extract_redirect_target_urls(url)
-        .into_iter()
-        .filter_map(|target| extract_domain_from_url(&target))
-        .collect()
 }
 
 /// GetRegisterDomain (Domain)
@@ -102,7 +94,7 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
    // 6a. Consecutive consonant cluster (4+) - classic DGA pattern
     if main_part.len() >= 6
         && RE_RANDOM_DOMAIN.is_match(main_part)
-        && !crate::modules::identity_anomaly::is_pinyin_english_name(main_part)
+        && !crate::modules::identity_anomaly::is_human_readable_domain_label(main_part)
     {
         score += 0.20;
         findings.push((
@@ -114,7 +106,7 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
    // the consecutive run (e.g., "fdtujh" has 5/6 = 83% consonants but only 3
    // consecutive). Threshold:>=70% consonants in 5+ char domain.
     else if main_part.len() >= 5
-        && !crate::modules::identity_anomaly::is_pinyin_english_name(main_part)
+        && !crate::modules::identity_anomaly::is_human_readable_domain_label(main_part)
     {
         let consonants = main_part
             .chars()

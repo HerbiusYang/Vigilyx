@@ -1,7 +1,7 @@
 //! Domain verification module - checks sender IP/domain/DKIM consistency.
 //!
-//! When IP and domain are consistent, outputs a trust signal (trust_score)
-//! used by the verdict layer to downgrade low-risk assessments.
+//! This module emits an alignment signal, not a benignity signal.
+//! A domain can be perfectly self-consistent and still be malicious.
 
 use std::time::Instant;
 
@@ -10,7 +10,7 @@ use chrono::Utc;
 use regex::Regex;
 use std::sync::LazyLock;
 
-use super::common::{extract_domain_from_email, extract_domain_from_url};
+use super::common::extract_domain_from_email;
 use crate::context::SecurityContext;
 use crate::error::EngineError;
 use crate::module::{
@@ -33,7 +33,7 @@ impl DomainVerifyModule {
             meta: ModuleMetadata {
                 id: "domain_verify".to_string(),
                 name: "Domain Verification".to_string(),
-                description: "Checks sender IP/domain/DKIM consistency and provides trust signal".to_string(),
+                description: "Checks sender IP/domain/DKIM consistency and provides alignment signal".to_string(),
                 pillar: Pillar::Package,
                 depends_on: vec![],
                 timeout_ms: 3000,
@@ -175,7 +175,7 @@ impl SecurityModule for DomainVerifyModule {
         let start = Instant::now();
         let headers = &ctx.session.content.headers;
 
-        let mut trust_score: f64 = 0.0;
+        let mut alignment_score: f64 = 0.0;
         let mut evidence = Vec::new();
         let mut verified = false;
 
@@ -200,6 +200,7 @@ impl SecurityModule for DomainVerifyModule {
                     evidence: vec![],
                     details: serde_json::json!({
                         "verified": false,
+                        "alignment_score": 0.0,
                         "trust_score": 0.0,
                     }),
                     duration_ms,
@@ -221,7 +222,7 @@ impl SecurityModule for DomainVerifyModule {
             {
                 let hostname = hostname.as_str().to_lowercase();
                 if is_subdomain_of(&hostname, &sender_domain) {
-                    trust_score += 0.40;
+                    alignment_score += 0.40;
                     verified = true;
                     evidence.push(Evidence {
                         description: format!(
@@ -246,7 +247,7 @@ impl SecurityModule for DomainVerifyModule {
             {
                 let dkim_domain = dkim_domain.as_str().to_lowercase();
                 if dkim_domain == sender_domain || is_subdomain_of(&sender_domain, &dkim_domain) {
-                    trust_score += 0.35;
+                    alignment_score += 0.35;
                     verified = true;
                     evidence.push(Evidence {
                         description: format!(
@@ -261,37 +262,8 @@ impl SecurityModule for DomainVerifyModule {
             }
         }
 
-       // Check 3: link domain consistency
-        let links = &ctx.session.content.links;
-        if !links.is_empty() {
-            let matching_links = links
-                .iter()
-                .filter(|link| {
-                    extract_domain_from_url(&link.url)
-                        .map(|d| is_subdomain_of(&d, &sender_domain))
-                        .unwrap_or(false)
-                })
-                .count();
-
-            let ratio = matching_links as f64 / links.len() as f64;
-            if ratio >= 0.8 {
-                trust_score += 0.25;
-                evidence.push(Evidence {
-                    description: format!(
-                        "{:.0}% of link domains match sender domain {} ({}/{})",
-                        ratio * 100.0,
-                        sender_domain,
-                        matching_links,
-                        links.len()
-                    ),
-                    location: Some("links".to_string()),
-                    snippet: None,
-                });
-            }
-        }
-
-        trust_score = trust_score.min(1.0);
-        if trust_score > 0.0 {
+        alignment_score = alignment_score.min(1.0);
+        if alignment_score > 0.0 {
             verified = true;
         }
 
@@ -310,10 +282,10 @@ impl SecurityModule for DomainVerifyModule {
         };
 
         if envelope_mismatch {
-            if trust_score > 0.0 {
+            if alignment_score > 0.0 {
                 evidence.push(Evidence {
                     description: format!(
-                        "Envelope forgery: From header domain ({}) does not match MAIL FROM domain ({}), trust score suppressed",
+                        "Envelope forgery: From header domain ({}) does not match MAIL FROM domain ({}), alignment score suppressed",
                         from_header_domain.as_deref().unwrap_or("?"),
                         sender_domain
                     ),
@@ -321,7 +293,7 @@ impl SecurityModule for DomainVerifyModule {
                     snippet: None,
                 });
             }
-            trust_score = 0.0;
+            alignment_score = 0.0;
             verified = false;
         }
 
@@ -362,7 +334,7 @@ impl SecurityModule for DomainVerifyModule {
                             .any(|ls| sender_domain.contains(ls));
                         if !domain_is_legit {
                             
-                            trust_score = (trust_score - 0.50).max(0.0);
+                            alignment_score = (alignment_score - 0.50).max(0.0);
                             evidence.push(Evidence {
                                 description: format!(
                                     "Display name brand impersonation: \"{}\" claims to be a known brand, but sender domain {} does not match",
@@ -378,6 +350,10 @@ impl SecurityModule for DomainVerifyModule {
             }
         }
 
+        if alignment_score <= 0.0 {
+            verified = false;
+        }
+
         let duration_ms = start.elapsed().as_millis() as u64;
 
         let summary = if envelope_mismatch {
@@ -388,11 +364,11 @@ impl SecurityModule for DomainVerifyModule {
             )
         } else if verified {
             format!(
-                "Domain verification passed (trust score {:.2}), sender domain: {}",
-                trust_score, sender_domain
+                "Sender alignment verified (alignment score {:.2}), sender domain: {}",
+                alignment_score, sender_domain
             )
         } else {
-            format!("Domain verification failed, sender domain: {}", sender_domain)
+            format!("Sender alignment not established, sender domain: {}", sender_domain)
         };
 
         Ok(ModuleResult {
@@ -406,7 +382,8 @@ impl SecurityModule for DomainVerifyModule {
             evidence,
             details: serde_json::json!({
                 "verified": verified,
-                "trust_score": trust_score,
+                "alignment_score": alignment_score,
+                "trust_score": alignment_score,
                 "sender_domain": sender_domain,
             }),
             duration_ms,
@@ -414,5 +391,112 @@ impl SecurityModule for DomainVerifyModule {
             bpa: Some(Bpa::safe_analyzed()),
             engine_id: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use vigilyx_core::models::{EmailContent, EmailLink, EmailSession, Protocol};
+
+    fn make_context(
+        mail_from: &str,
+        headers: Vec<(String, String)>,
+        links: Vec<EmailLink>,
+    ) -> SecurityContext {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.10".to_string(),
+            34567,
+            "10.0.0.20".to_string(),
+            25,
+        );
+        session.mail_from = Some(mail_from.to_string());
+        session.content = EmailContent {
+            headers,
+            body_text: Some("Please review the message.".to_string()),
+            body_html: None,
+            attachments: vec![],
+            links,
+            raw_size: 128,
+            is_complete: true,
+            is_encrypted: false,
+            smtp_dialog: vec![],
+        };
+        SecurityContext::new(Arc::new(session))
+    }
+
+    #[tokio::test]
+    async fn test_domain_verify_ignores_attacker_controlled_link_alignment() {
+        let ctx = make_context(
+            "alerts@change-meme.com",
+            vec![
+                (
+                    "Received".to_string(),
+                    "from mail.change-meme.com (unknown [43.243.73.163])".to_string(),
+                ),
+                (
+                    "DKIM-Signature".to_string(),
+                    "v=1; a=rsa-sha256; d=change-meme.com; s=mail;".to_string(),
+                ),
+                (
+                    "From".to_string(),
+                    "alerts@change-meme.com".to_string(),
+                ),
+            ],
+            vec![EmailLink {
+                url: "https://login.change-meme.com/reset?token=abc123".to_string(),
+                text: Some("Reset password".to_string()),
+                suspicious: false,
+            }],
+        );
+
+        let result = DomainVerifyModule::new().analyze(&ctx).await.unwrap();
+        let alignment = result
+            .details
+            .get("alignment_score")
+            .and_then(|value| value.as_f64())
+            .unwrap();
+
+        assert!(
+            (alignment - 0.75).abs() < f64::EPSILON,
+            "Link/domain self-alignment must not raise the sender alignment score"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_domain_verify_brand_impersonation_reduces_alignment() {
+        let ctx = make_context(
+            "alerts@change-meme.com",
+            vec![
+                (
+                    "Received".to_string(),
+                    "from mail.change-meme.com (unknown [43.243.73.163])".to_string(),
+                ),
+                (
+                    "DKIM-Signature".to_string(),
+                    "v=1; a=rsa-sha256; d=change-meme.com; s=mail;".to_string(),
+                ),
+                (
+                    "From".to_string(),
+                    "\"Microsoft\" <alerts@change-meme.com>".to_string(),
+                ),
+            ],
+            vec![],
+        );
+
+        let result = DomainVerifyModule::new().analyze(&ctx).await.unwrap();
+        let alignment = result
+            .details
+            .get("alignment_score")
+            .and_then(|value| value.as_f64())
+            .unwrap();
+
+        assert!(
+            (alignment - 0.25).abs() < f64::EPSILON,
+            "Brand impersonation should suppress the alignment score even when Received/DKIM align"
+        );
     }
 }

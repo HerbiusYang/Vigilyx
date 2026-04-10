@@ -122,6 +122,10 @@ impl LoginRateLimiter {
         self.failures.remove(&ip);
     }
 
+    pub fn clear_all(&self) {
+        self.failures.clear();
+    }
+
    /// Remove all entries whose window has expired.
     
    /// Call this periodically (e.g. every 5 minutes) to bound memory.

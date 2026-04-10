@@ -443,11 +443,20 @@ export interface EmailAlertConfig {
   smtp_password: string
   smtp_password_set?: boolean
   smtp_tls: string
+  allow_plaintext_smtp?: boolean
   from_address: string
   admin_email: string
   min_threat_level: string
   notify_recipient: boolean
   notify_admin: boolean
+}
+
+export interface WechatAlertConfig {
+  enabled: boolean
+  webhook_url: string
+  webhook_url_set?: boolean
+  min_threat_level: string
+  mentioned_mobile_list: string[]
 }
 
 // Alert severity (P0-P3)

@@ -126,17 +126,27 @@ pub fn validate_internal_service_url(target: &str, allowed_hosts: &[&str]) -> Re
         return Err("Target is empty".to_string());
     }
 
-    let (scheme, _) = trimmed
-        .split_once("://")
-        .ok_or_else(|| "Target must include http:// or https:// scheme".to_string())?;
-    let scheme = scheme.to_ascii_lowercase();
+    let parsed =
+        url::Url::parse(trimmed).map_err(|e| format!("Invalid target URL: {e}"))?;
+    let scheme = parsed.scheme().to_ascii_lowercase();
     if scheme != "http" && scheme != "https" {
         return Err(format!("Disallowed scheme: {scheme}"));
     }
 
-    let host = extract_host_from_network_target(trimmed)
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("Target must not contain userinfo".to_string());
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err("Target must not contain query or fragment".to_string());
+    }
+    if parsed.path() != "/" {
+        return Err("Target path must be empty or /".to_string());
+    }
+
+    let host = parsed
+        .host_str()
+        .map(normalize_host)
         .ok_or_else(|| "Target has no host".to_string())?;
-    let host = normalize_host(&host);
     if host.is_empty() {
         return Err("Host is empty".to_string());
     }
@@ -203,6 +213,46 @@ mod tests {
         );
         assert!(
             validate_internal_service_url("ai:8900", DEFAULT_INTERNAL_SERVICE_HOSTS).is_err()
+        );
+    }
+
+    #[test]
+    fn blocks_internal_service_url_with_non_root_path() {
+        assert!(
+            validate_internal_service_url(
+                "http://vigilyx-ai:8900/training/status",
+                DEFAULT_INTERNAL_SERVICE_HOSTS
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn blocks_internal_service_url_with_query_or_fragment() {
+        assert!(
+            validate_internal_service_url(
+                "http://127.0.0.1:8900/?x=1",
+                DEFAULT_INTERNAL_SERVICE_HOSTS
+            )
+            .is_err()
+        );
+        assert!(
+            validate_internal_service_url(
+                "http://127.0.0.1:8900/#frag",
+                DEFAULT_INTERNAL_SERVICE_HOSTS
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn blocks_internal_service_url_with_userinfo() {
+        assert!(
+            validate_internal_service_url(
+                "http://user:pass@vigilyx-ai:8900",
+                DEFAULT_INTERNAL_SERVICE_HOSTS
+            )
+            .is_err()
         );
     }
 }

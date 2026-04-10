@@ -10,7 +10,7 @@ use vigilyx_core::{EmailSession, TrafficStats, WsMessage};
 
 use super::ApiResponse;
 use crate::AppState;
-use crate::auth::AuthenticatedUser;
+use crate::auth::{AuthenticatedUser, build_clear_cookie};
 use crate::db::Database;
 
 /// Unix timestamp of last rotation check (throttled: once per 60 seconds)
@@ -75,11 +75,11 @@ pub async fn import_sessions(
        // Engine processes sessions via Redis topic
        // API does not run SecurityEngine directly
 
-       // UDS: push completed sessions to Engine via Unix domain socket
+       // UDS: push terminal sessions with analyzable content to the Engine.
         #[cfg(unix)]
         if let Some(ref uds_tx) = state.messaging.uds_tx
-            && broadcast_session.status == vigilyx_core::SessionStatus::Completed
-            && broadcast_session.is_email_complete()
+            && broadcast_session.is_terminal_for_analysis()
+            && broadcast_session.has_analyzable_content()
             && let Ok(payload) = serde_json::to_value(&broadcast_session)
         {
             let msg = vigilyx_db::mq::UdsMessage {
@@ -214,6 +214,15 @@ pub async fn factory_reset(
 ) -> axum::response::Response {
     let start = std::time::Instant::now();
 
+    if let Err(e) = crate::auth::AuthConfig::validate_factory_reset_prereqs() {
+        tracing::error!("Factory reset blocked: {}", e);
+        return ApiResponse::<serde_json::Value>::server_error(
+            &e,
+            "Factory reset requires API_PASSWORD to be configured in the environment",
+        )
+        .into_response();
+    }
+
     
     let _ = state
         .engine_db
@@ -229,10 +238,40 @@ pub async fn factory_reset(
 
     match state.db.factory_reset().await {
         Ok(()) => {
+            let new_token_version = match state.auth.config.reset_after_factory_reset().await {
+                Ok(version) => version,
+                Err(e) => {
+                    tracing::error!("Factory reset completed, but auth runtime reset failed: {}", e);
+                    return ApiResponse::<serde_json::Value>::server_error(
+                        &e,
+                        "Factory reset completed but auth reset failed",
+                    )
+                    .into_response();
+                }
+            };
+
+            if let Err(e) = state
+                .engine_db
+                .set_config("auth_token_version", &new_token_version.to_string())
+                .await
+            {
+                tracing::error!(
+                    "Factory reset completed, but auth token version persistence failed: {}",
+                    e
+                );
+                return ApiResponse::<serde_json::Value>::server_error(
+                    &e,
+                    "Factory reset completed but auth reset failed",
+                )
+                .into_response();
+            }
+
+            state.auth.login_rate_limiter.clear_all();
+            state.ws_tickets.clear();
+
             let elapsed_ms = start.elapsed().as_millis();
             tracing::warn!("FACTORY RESET completed in {}ms — all data and config cleared", elapsed_ms);
 
-            
             let zeroed_stats = TrafficStats {
                 total_sessions: 0,
                 active_sessions: 0,
@@ -246,11 +285,20 @@ pub async fn factory_reset(
             };
             let _ = state.messaging.ws_tx.send(WsMessage::StatsUpdate(zeroed_stats));
 
-            ApiResponse::ok(serde_json::json!({
-                "message": "System has been reset to factory defaults. All data and configuration cleared. Please log in with the default password.",
-                "elapsed_ms": elapsed_ms,
-            }))
-            .into_response()
+            let mut headers = axum::http::HeaderMap::new();
+            if let Ok(val) = build_clear_cookie(state.secure_cookie).parse() {
+                headers.insert(axum::http::header::SET_COOKIE, val);
+            }
+
+            (
+                headers,
+                ApiResponse::ok(serde_json::json!({
+                    "mode": "factory_reset",
+                    "message": "System has been reset to factory defaults. All active sessions were invalidated. Please log in again with the configured admin password.",
+                    "elapsed_ms": elapsed_ms,
+                })),
+            )
+                .into_response()
         }
         Err(e) => {
             tracing::error!("Factory reset failed: {}", e);
@@ -411,6 +459,12 @@ async fn clear_verdicts_precisely(db: &Database, threat_level: Option<&str>) -> 
         execute_tx(&mut tx, "DELETE FROM security_alerts", None).await?;
         execute_tx(
             &mut tx,
+            "DELETE FROM quarantine WHERE verdict_id IS NOT NULL",
+            None,
+        )
+        .await?;
+        execute_tx(
+            &mut tx,
             "DELETE FROM training_samples WHERE verdict_id IS NOT NULL",
             None,
         )
@@ -438,6 +492,8 @@ async fn clear_all_session_and_security_rows(
     execute_tx(tx, "DELETE FROM security_module_results", None).await?;
     execute_tx(tx, "DELETE FROM security_feedback", None).await?;
     execute_tx(tx, "DELETE FROM security_alerts", None).await?;
+    execute_tx(tx, "DELETE FROM quarantine", None).await?;
+    execute_tx(tx, "DELETE FROM security_threat_scenes", None).await?;
     execute_tx(tx, "DELETE FROM training_samples", None).await?;
     execute_tx(tx, "DELETE FROM security_verdicts", None).await?;
     Ok(())
@@ -523,6 +579,17 @@ async fn delete_session_linked_rows(
     .await?;
     execute_tx(
         tx,
+        "DELETE FROM quarantine \
+         WHERE session_id IN (SELECT id FROM sessions WHERE started_at < $1) \
+            OR verdict_id IN ( \
+                SELECT id FROM security_verdicts \
+                WHERE session_id IN (SELECT id FROM sessions WHERE started_at < $1) \
+            )",
+        Some(cutoff),
+    )
+    .await?;
+    execute_tx(
+        tx,
         "DELETE FROM training_samples \
          WHERE session_id IN (SELECT id FROM sessions WHERE started_at < $1) \
             OR verdict_id IN ( \
@@ -532,6 +599,7 @@ async fn delete_session_linked_rows(
         Some(cutoff),
     )
     .await?;
+    execute_tx(tx, "DELETE FROM security_threat_scenes", None).await?;
     Ok(())
 }
 
@@ -556,6 +624,13 @@ async fn delete_verdict_linked_rows(
     execute_tx(
         tx,
         "DELETE FROM security_alerts \
+         WHERE verdict_id IN (SELECT id FROM security_verdicts WHERE threat_level = $1)",
+        Some(threat_level),
+    )
+    .await?;
+    execute_tx(
+        tx,
+        "DELETE FROM quarantine \
          WHERE verdict_id IN (SELECT id FROM security_verdicts WHERE threat_level = $1)",
         Some(threat_level),
     )

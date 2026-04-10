@@ -14,7 +14,7 @@ use vigilyx_core::security::{
 use crate::config::VerdictConfig;
 
 use super::empty_verdict;
-use super::noisy_or::{DANGEROUS_COMBOS, apply_trust_discount, build_summary};
+use super::noisy_or::{DANGEROUS_COMBOS, apply_alignment_discount, build_summary};
 
 pub(super) fn aggregate_weighted_max(
     session_id: Uuid,
@@ -101,7 +101,7 @@ pub(super) fn aggregate_weighted_max(
     }
 
     let mut boosted_score = (max_score + boost).min(1.0);
-    boosted_score = apply_trust_discount(boosted_score, results);
+    boosted_score = apply_alignment_discount(boosted_score, results);
 
     let final_level = ThreatLevel::from_score(boosted_score);
     let summary = build_summary(

@@ -22,6 +22,9 @@ pub struct EmailAlertConfig {
    /// Encryption method: "none" | "starttls" | "tls"
     #[serde(default = "default_smtp_tls")]
     pub smtp_tls: String,
+   /// Explicit admin opt-in for plaintext SMTP
+    #[serde(default)]
+    pub allow_plaintext_smtp: bool,
    /// Sender address
     #[serde(default)]
     pub from_address: String,
@@ -55,6 +58,7 @@ impl std::fmt::Debug for EmailAlertConfig {
                 },
             )
             .field("smtp_tls", &self.smtp_tls)
+            .field("allow_plaintext_smtp", &self.allow_plaintext_smtp)
             .field("from_address", &self.from_address)
             .finish()
     }
@@ -85,11 +89,58 @@ impl Default for EmailAlertConfig {
             smtp_username: String::new(),
             smtp_password: String::new(),
             smtp_tls: default_smtp_tls(),
+            allow_plaintext_smtp: false,
             from_address: String::new(),
             admin_email: String::new(),
             min_threat_level: default_min_alert_level(),
             notify_recipient: false,
             notify_admin: true,
+        }
+    }
+}
+
+/// WeChat alert configuration (stored in config table, key = 'wechat_alert_config')
+#[derive(Clone, Serialize, Deserialize)]
+pub struct WechatAlertConfig {
+   /// Whether to enable WeChat alerts
+    #[serde(default)]
+    pub enabled: bool,
+   /// Enterprise WeChat bot webhook URL
+    #[serde(default)]
+    pub webhook_url: String,
+   /// Minimum alert level: "medium" | "high" | "critical"
+    #[serde(default = "default_min_alert_level")]
+    pub min_threat_level: String,
+   /// Mentioned mobile numbers for text alerts
+    #[serde(default)]
+    pub mentioned_mobile_list: Vec<String>,
+}
+
+impl std::fmt::Debug for WechatAlertConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WechatAlertConfig")
+            .field("enabled", &self.enabled)
+            .field(
+                "webhook_url",
+                &if self.webhook_url.is_empty() {
+                    "(empty)"
+                } else {
+                    "***"
+                },
+            )
+            .field("min_threat_level", &self.min_threat_level)
+            .field("mentioned_mobile_list", &self.mentioned_mobile_list)
+            .finish()
+    }
+}
+
+impl Default for WechatAlertConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            webhook_url: String::new(),
+            min_threat_level: default_min_alert_level(),
+            mentioned_mobile_list: Vec::new(),
         }
     }
 }

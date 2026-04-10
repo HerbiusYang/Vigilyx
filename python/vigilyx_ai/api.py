@@ -8,7 +8,8 @@ Endpoints:
   GET  /training/status            - Query training and model status
   GET  /training/progress          - Query live training progress
   POST /training/update-base-model - Refresh the local base-model snapshot
-  GET  /health                     - Health check
+  GET  /health                     - Liveness check
+  GET  /health/ready               - Model-readiness check
 """
 
 import hmac
@@ -23,7 +24,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .scraper import get_scraper
-from .nlp_phishing import analyze_phishing_nlp, get_model_manager
+from .nlp_phishing import ModelUnavailableError, analyze_phishing_nlp, get_model_manager
 from .trainer import get_trainer, get_base_model_info, get_training_progress, BASE_MODEL_HF, NUM_LABELS, LABEL_NAMES, BASE_MODEL_DIR, MIN_SAMPLES
 from .vt_models import VtScrapeRequest, VtScrapeResponse
 
@@ -87,7 +88,7 @@ _INTERNAL_TOKEN = os.environ.get("AI_INTERNAL_TOKEN", "")
 @app.middleware("http")
 async def verify_internal_token(request: Request, call_next):
     # Health and docs endpoints stay unauthenticated.
-    if request.url.path in ("/health", "/docs", "/openapi.json"):
+    if request.url.path in ("/health", "/health/ready", "/docs", "/openapi.json"):
         return await call_next(request)
 
     if not _INTERNAL_TOKEN:
@@ -124,8 +125,35 @@ class AiAnalysisResponse(BaseModel):
 
 @app.get("/health")
 async def health():
-    """Health check."""
-    return {"status": "ok", "service": "vigilyx-ai"}
+    """Liveness check that also exposes current model-readiness details."""
+    manager = get_model_manager(warmup=False)
+    model_status = manager.readiness_report()
+    return {
+        "status": "ok",
+        "service": "vigilyx-ai",
+        "ready": model_status["ready"],
+        "model_status": model_status,
+    }
+
+
+@app.get("/health/ready")
+async def health_ready():
+    """Readiness check used by the Rust engine before sending NLP work."""
+    manager = get_model_manager(warmup=False)
+    model_status = manager.readiness_report()
+    if model_status["ready"]:
+        return {"status": "ready", "service": "vigilyx-ai", "model_status": model_status}
+
+    return JSONResponse(
+        status_code=503,
+        content={
+            "status": "not_ready",
+            "service": "vigilyx-ai",
+            "error": "MODEL_UNAVAILABLE",
+            "retry_after_secs": model_status["retry_after_secs"],
+            "model_status": model_status,
+        },
+    )
 
 
 @app.post("/analyze/content", response_model=AiAnalysisResponse)
@@ -148,13 +176,45 @@ async def analyze_content(request: ContentAnalysisRequest) -> AiAnalysisResponse
         mail_from=request.mail_from,
     )
 
-    result = await analyze_phishing_nlp(
-        subject=request.subject,
-        body_text=request.body_text,
-        body_html=request.body_html,
-        mail_from=request.mail_from,
-        rcpt_to=request.rcpt_to,
-    )
+    try:
+        result = await analyze_phishing_nlp(
+            subject=request.subject,
+            body_text=request.body_text,
+            body_html=request.body_html,
+            mail_from=request.mail_from,
+            rcpt_to=request.rcpt_to,
+        )
+    except ModelUnavailableError as exc:
+        manager = get_model_manager(warmup=False)
+        model_status = exc.status or manager.readiness_report()
+        logger.warning(
+            "NLP phishing analysis unavailable",
+            session_id=request.session_id,
+            retry_after_secs=exc.retry_after_secs,
+            error=str(exc),
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "MODEL_UNAVAILABLE",
+                "message": str(exc),
+                "retry_after_secs": exc.retry_after_secs,
+                "model_status": model_status,
+            },
+        )
+    except Exception as exc:
+        logger.exception(
+            "NLP phishing analysis failed unexpectedly",
+            session_id=request.session_id,
+            error=str(exc),
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "ANALYSIS_FAILED",
+                "message": str(exc),
+            },
+        )
 
     logger.info(
         "NLP phishing analysis result",
@@ -258,7 +318,7 @@ async def train(request: TrainingRequest):
     if result.get("ok"):
         model_dir = result.get("model_dir", "")
         if model_dir:
-            manager = get_model_manager()
+            manager = get_model_manager(warmup=False)
             await manager.hot_swap(model_dir)
             result["model_swapped"] = True
             logger.info("Model hot-swapped after training", model_dir=model_dir)
@@ -269,13 +329,14 @@ async def train(request: TrainingRequest):
 @app.get("/training/status")
 async def training_status():
     """Query model and training status."""
-    manager = get_model_manager()
+    manager = get_model_manager(warmup=False)
     trainer = get_trainer()
     base_info = get_base_model_info()
 
     return {
         "model_version": manager.model_version,
         "has_finetuned": manager.has_finetuned,
+        "model_status": manager.readiness_report(),
         "is_training": trainer.is_training,
         "last_trained": trainer.last_trained,
         "base_model": base_info,

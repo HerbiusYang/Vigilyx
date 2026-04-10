@@ -24,7 +24,8 @@ use tracing::{debug, warn};
 use crate::context::SecurityContext;
 use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
-use crate::remote::{ContentAnalysisRequest, RemoteModuleProxy};
+use crate::modules::common::looks_like_raw_mime_container_text;
+use crate::remote::{ContentAnalysisRequest, RemoteError, RemoteModuleProxy};
 
 /// Minimum CJK character count to trigger parallel bigram analysis.
 const BIGRAM_PAR_THRESHOLD: usize = 10_000;
@@ -84,8 +85,9 @@ const RARE_CJK_THRESHOLD: f64 = 0.05;
 /// Bigram uniqueness threshold: normal text reuses bigrams; gibberish has near 100% unique bigrams
 const BIGRAM_UNIQUE_THRESHOLD: f64 = 0.92;
 
-/// NLP remote timeout (reduced from 60s to 10s since 60s verdicts took 30s+)
-const NLP_TIMEOUT: Duration = Duration::from_secs(10);
+/// NLP remote timeout. Semantic NLP is supplementary; a long wait should not
+/// stall the whole verdict path when the AI side is overloaded.
+const NLP_TIMEOUT: Duration = Duration::from_secs(4);
 
 // Unicode range detection
 
@@ -135,7 +137,6 @@ fn is_katakana(ch: char) -> bool {
 fn is_japanese_kana(ch: char) -> bool {
     is_hiragana(ch) || is_katakana(ch)
 }
-
 // CJK gibberish analysis dimensions
 
 /// Dimension 1: Rare CJK character ratio
@@ -354,38 +355,82 @@ impl SecurityModule for SemanticScanModule {
         let start = Instant::now();
 
        // Get email body text
-        let body = if let Some(ref text) = ctx.session.content.body_text {
-            text.clone()
-        } else if let Some(ref html) = ctx.session.content.body_html {
-            strip_html_tags(html)
-        } else {
-            let duration_ms = start.elapsed().as_millis() as u64;
-            return Ok(ModuleResult::not_applicable(
-                &self.meta.id,
-                &self.meta.name,
-                self.meta.pillar,
-                "No email body, skipping semantic analysis",
-                duration_ms,
-            ));
+        let body = match (
+            ctx.session.content.body_text.as_ref(),
+            ctx.session.content.body_html.as_ref(),
+        ) {
+            (Some(text), Some(html)) if looks_like_raw_mime_container_text(text) => strip_html_tags(html),
+            (Some(text), None) if looks_like_raw_mime_container_text(text) => {
+                let duration_ms = start.elapsed().as_millis() as u64;
+                return Ok(ModuleResult::not_applicable(
+                    &self.meta.id,
+                    &self.meta.name,
+                    self.meta.pillar,
+                    "Body appears to be raw MIME container text, skipping semantic analysis",
+                    duration_ms,
+                ));
+            }
+            (Some(text), _) => text.clone(),
+            (None, Some(html)) => strip_html_tags(html),
+            (None, None) => {
+                let duration_ms = start.elapsed().as_millis() as u64;
+                return Ok(ModuleResult::not_applicable(
+                    &self.meta.id,
+                    &self.meta.name,
+                    self.meta.pillar,
+                    "No email body, skipping semantic analysis",
+                    duration_ms,
+                ));
+            }
         };
 
         
        // Engine B: NLP phishing detection - fire request immediately (async, non-blocking)
         
+        let nlp_configured = self.remote.is_some();
+        let mut nlp_skipped_temporarily = false;
+        let mut nlp_status = if nlp_configured { "pending" } else { "disabled" };
+        let mut nlp_retry_after_secs: Option<u64> = None;
+        let mut nlp_status_message = if nlp_configured {
+            None
+        } else {
+            Some("AI/NLP service is not configured; using rule-based analysis only".to_string())
+        };
         let nlp_handle = if let Some(ref remote) = self.remote {
-            let req = ContentAnalysisRequest {
-                session_id: ctx.session.id.to_string(),
-                subject: ctx.session.subject.clone(),
-                body_text: Some(body.clone()),
-                body_html: ctx.session.content.body_html.clone(),
-                mail_from: ctx.session.mail_from.clone(),
-                rcpt_to: ctx.session.rcpt_to.clone(),
-            };
-            debug!("Firing NLP request first (most time-consuming)");
-            let remote = remote.clone();
-            Some(tokio::spawn(async move {
-                tokio::time::timeout(NLP_TIMEOUT, remote.analyze_content(&req)).await
-            }))
+            if !remote.is_request_available() {
+                nlp_skipped_temporarily = true;
+                nlp_status = "cooldown";
+                nlp_retry_after_secs = Some(remote.cooldown_remaining_secs());
+                nlp_status_message = Some(format!(
+                    "AI/NLP service is temporarily unavailable; retry after about {}s",
+                    nlp_retry_after_secs.unwrap_or_default()
+                ));
+                debug!(
+                    retry_after_secs = remote.cooldown_remaining_secs(),
+                    "Skipping NLP request while AI remote is in cooldown"
+                );
+                None
+            } else {
+                let req = ContentAnalysisRequest {
+                    session_id: ctx.session.id.to_string(),
+                    subject: ctx.session.subject.clone(),
+                    body_text: Some(body.clone()),
+                    body_html: ctx.session.content.body_html.clone(),
+                    mail_from: ctx.session.mail_from.clone(),
+                    rcpt_to: ctx.session.rcpt_to.clone(),
+                };
+                debug!("Firing NLP request first (most time-consuming)");
+                let remote = remote.clone();
+                Some(tokio::spawn(async move {
+                    match tokio::time::timeout(NLP_TIMEOUT, remote.analyze_content(&req)).await {
+                        Ok(result) => result,
+                        Err(_) => {
+                            remote.note_timeout();
+                            Err(RemoteError::Timeout)
+                        }
+                    }
+                }))
+            }
         } else {
             None
         };
@@ -584,8 +629,13 @@ impl SecurityModule for SemanticScanModule {
 
         if let Some(handle) = nlp_handle {
             match handle.await {
-                Ok(Ok(Ok(ai_resp))) => {
+                Ok(Ok(ai_resp)) => {
                     nlp_used = true;
+                    nlp_status = "ok";
+                    nlp_status_message = Some(
+                        "AI/NLP analysis completed and was fused with the rule engine"
+                            .to_string(),
+                    );
                     let nlp_threat = ai_resp.to_threat_level();
                     let nlp_confidence = ai_resp.confidence;
 
@@ -627,18 +677,33 @@ impl SecurityModule for SemanticScanModule {
 
                     nlp_details = ai_resp.details.unwrap_or(serde_json::Value::Null);
                 }
-                Ok(Ok(Err(e))) => {
-                    warn!("NLP service error: {}, falling back to rule-based", e);
+                Ok(Err(RemoteError::TemporarilyUnavailable { retry_after_secs })) => {
+                    nlp_skipped_temporarily = true;
+                    nlp_status = "cooldown";
+                    nlp_retry_after_secs = Some(retry_after_secs);
+                    nlp_status_message = Some(format!(
+                        "AI/NLP service is temporarily unavailable; retry after about {}s",
+                        retry_after_secs
+                    ));
+                    warn!(
+                        retry_after_secs,
+                        "NLP service temporarily unavailable, skipping semantic NLP"
+                    );
                     evidence.push(Evidence {
                         description: format!(
-                            "NLP service call failed: {} (falling back to rule-based detection)",
-                            e
+                            "NLP service temporarily unavailable (retry after ~{}s); falling back to rule-based detection",
+                            retry_after_secs
                         ),
                         location: Some("body:nlp".to_string()),
                         snippet: None,
                     });
                 }
-                Ok(Err(_)) => {
+                Ok(Err(RemoteError::Timeout)) => {
+                    nlp_status = "timeout";
+                    nlp_status_message = Some(format!(
+                        "AI/NLP request timed out after {}s; using rule-based analysis only",
+                        NLP_TIMEOUT.as_secs()
+                    ));
                     warn!(
                         "NLP service timeout ({}s), falling back to rule-based",
                         NLP_TIMEOUT.as_secs()
@@ -652,7 +717,28 @@ impl SecurityModule for SemanticScanModule {
                         snippet: None,
                     });
                 }
+                Ok(Err(e)) => {
+                    nlp_status = "error";
+                    nlp_status_message = Some(format!(
+                        "AI/NLP request failed: {}; using rule-based analysis only",
+                        e
+                    ));
+                    warn!("NLP service error: {}, falling back to rule-based", e);
+                    evidence.push(Evidence {
+                        description: format!(
+                            "NLP service call failed: {} (falling back to rule-based detection)",
+                            e
+                        ),
+                        location: Some("body:nlp".to_string()),
+                        snippet: None,
+                    });
+                }
                 Err(e) => {
+                    nlp_status = "error";
+                    nlp_status_message = Some(format!(
+                        "AI/NLP task terminated unexpectedly: {}; using rule-based analysis only",
+                        e
+                    ));
                     warn!("NLP task panicked: {}, falling back to rule-based", e);
                     evidence.push(Evidence {
                         description: format!("NLP task abnormal: {} (falling back to rule-based detection)", e),
@@ -676,6 +762,25 @@ impl SecurityModule for SemanticScanModule {
         if threat_level == ThreatLevel::Safe {
             let summary = if nlp_used {
                 "NLP + rule engine combined analysis: email body semantics normal".to_string()
+            } else if nlp_status == "timeout" {
+                format!(
+                    "Rule engine analysis completed after NLP timeout ({}s)",
+                    NLP_TIMEOUT.as_secs()
+                )
+            } else if nlp_skipped_temporarily {
+                if let Some(retry_after_secs) = nlp_retry_after_secs {
+                    format!(
+                        "Rule engine analysis completed while NLP service cooldown was active (retry after ~{}s)",
+                        retry_after_secs
+                    )
+                } else {
+                    "Rule engine analysis completed while NLP service cooldown was active"
+                        .to_string()
+                }
+            } else if nlp_status == "error" {
+                "Rule engine analysis completed because AI/NLP request failed".to_string()
+            } else if nlp_status == "disabled" {
+                "Rule engine analysis completed (AI/NLP not configured)".to_string()
             } else if is_non_chinese {
                 "Pure foreign-language email, below threat threshold (NLP service not enabled)".to_string()
             } else {
@@ -693,7 +798,13 @@ impl SecurityModule for SemanticScanModule {
                 evidence,
                 details: serde_json::json!({
                     "score": score,
+                    "nlp_configured": nlp_configured,
                     "nlp_enabled": nlp_used,
+                    "nlp_status": nlp_status,
+                    "nlp_status_message": nlp_status_message,
+                    "nlp_skipped_temporarily": nlp_skipped_temporarily,
+                    "nlp_retry_after_secs": nlp_retry_after_secs,
+                    "nlp_timeout_secs": NLP_TIMEOUT.as_secs(),
                     "nlp_details": nlp_details,
                     "analysis_type": if nlp_used { "nlp+rules" } else { "rules_only" },
                 }),
@@ -714,6 +825,35 @@ impl SecurityModule for SemanticScanModule {
                 score,
                 evidence.len()
             )
+        } else if nlp_status == "timeout" {
+            format!(
+                "Semantic anomaly detected (score {:.2}); NLP timed out after {}s and rule-based detection continued",
+                score,
+                NLP_TIMEOUT.as_secs()
+            )
+        } else if nlp_status == "disabled" {
+            format!(
+                "Semantic anomaly detected (score {:.2}) using rule-based analysis only (AI/NLP not configured)",
+                score
+            )
+        } else if nlp_status == "error" {
+            format!(
+                "Semantic anomaly detected (score {:.2}) after AI/NLP request failure; rule-based detection continued",
+                score
+            )
+        } else if nlp_skipped_temporarily {
+            if let Some(retry_after_secs) = nlp_retry_after_secs {
+                format!(
+                    "Semantic anomaly detected (score {:.2}) while AI/NLP service cooldown was active (~{}s retry)",
+                    score,
+                    retry_after_secs
+                )
+            } else {
+                format!(
+                    "Semantic anomaly detected (score {:.2}) while AI/NLP service cooldown was active",
+                    score
+                )
+            }
         } else {
             format!(
                 "Semantic anomaly detected (score {:.2}), found {} anomalous evidence items",
@@ -733,7 +873,13 @@ impl SecurityModule for SemanticScanModule {
             evidence,
             details: serde_json::json!({
                 "score": score,
+                "nlp_configured": nlp_configured,
                 "nlp_enabled": nlp_used,
+                "nlp_status": nlp_status,
+                "nlp_status_message": nlp_status_message,
+                "nlp_skipped_temporarily": nlp_skipped_temporarily,
+                "nlp_retry_after_secs": nlp_retry_after_secs,
+                "nlp_timeout_secs": NLP_TIMEOUT.as_secs(),
                 "nlp_details": nlp_details,
                 "analysis_type": if nlp_used { "nlp+rules" } else { "rules_only" },
             }),
@@ -742,5 +888,60 @@ impl SecurityModule for SemanticScanModule {
             bpa: None,
             engine_id: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::context::SecurityContext;
+    use std::sync::Arc;
+    use vigilyx_core::models::{EmailContent, EmailSession, Protocol};
+
+    fn make_ctx(body_text: Option<&str>, body_html: Option<&str>) -> SecurityContext {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.content = EmailContent {
+            body_text: body_text.map(str::to_string),
+            body_html: body_html.map(str::to_string),
+            ..Default::default()
+        };
+        SecurityContext::new(Arc::new(session))
+    }
+
+    #[tokio::test]
+    async fn test_raw_mime_container_text_is_skipped() {
+        let module = SemanticScanModule::new(None);
+        let ctx = make_ctx(
+            Some(
+                "--=_NextPart_123\r\nContent-Type: text/plain; charset=\"utf-8\"\r\nContent-Transfer-Encoding: base64\r\n\r\nU29tZSBiYXNlNjQgcGF5bG9hZA==\r\n",
+            ),
+            None,
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert!(result.summary.contains("raw MIME container text"));
+        assert!(result.categories.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_semantic_scan_reports_nlp_disabled_when_unconfigured() {
+        let module = SemanticScanModule::new(None);
+        let ctx = make_ctx(Some("这是一封正常的中文业务邮件。"), None);
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert_eq!(result.details["nlp_configured"], serde_json::json!(false));
+        assert_eq!(result.details["nlp_status"], serde_json::json!("disabled"));
+        assert_eq!(result.details["analysis_type"], serde_json::json!("rules_only"));
+        assert!(result.summary.contains("AI/NLP not configured"));
     }
 }

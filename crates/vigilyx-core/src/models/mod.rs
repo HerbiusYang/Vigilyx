@@ -325,6 +325,11 @@ impl EmailSession {
         self.content.is_complete
     }
 
+   /// Return whether the session has reached a terminal state that can be analyzed.
+    pub fn is_terminal_for_analysis(&self) -> bool {
+        matches!(self.status, SessionStatus::Completed | SessionStatus::Timeout)
+    }
+
    /// Return whether the session contains enough content for downstream analysis.
     pub fn has_analyzable_content(&self) -> bool {
         self.mail_from.as_ref().is_some_and(|s| !s.is_empty())
@@ -1125,7 +1130,7 @@ pub enum WsMessage {
 
 #[cfg(test)]
 mod tests {
-    use super::EmailContent;
+    use super::{EmailContent, EmailSession, Protocol, SessionStatus};
 
     #[test]
     fn test_extract_links_from_html_captures_anchor_text() {
@@ -1142,5 +1147,24 @@ mod tests {
             content.links[0].text.as_deref(),
             Some("https://portal.example.com")
         );
+    }
+
+    #[test]
+    fn test_timeout_session_is_terminal_for_analysis() {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+
+        assert!(!session.is_terminal_for_analysis());
+
+        session.status = SessionStatus::Timeout;
+        assert!(session.is_terminal_for_analysis());
+
+        session.status = SessionStatus::Completed;
+        assert!(session.is_terminal_for_analysis());
     }
 }

@@ -80,12 +80,6 @@ const HTML_PATTERNS: &[HtmlPattern] = &[
         category: "xss",
     },
     HtmlPattern {
-        pattern: "onclick=",
-        severity: 0.15,
-        label: "Event handler onclick",
-        category: "xss",
-    },
-    HtmlPattern {
         pattern: "javascript:",
         severity: 0.30,
         label: "javascript: protocol link",
@@ -133,6 +127,18 @@ const DANGEROUS_SCRIPT_OPS: &[&str] = &[
     "createelement(",
 ];
 
+const DANGEROUS_ONCLICK_OPS: &[&str] = &[
+    "window.location",
+    "document.location",
+    "location.href",
+    "location=",
+    "javascript:",
+    "eval(",
+    "fetch(",
+    "xmlhttprequest",
+    "atob(",
+];
+
 /// Analyze <script> tags in HTML: extract content and check for dangerous operations
 fn analyze_scripts(html_lower: &str, html_original: &str) -> (f64, Vec<Evidence>) {
     let mut score = 0.0f64;
@@ -177,6 +183,49 @@ fn analyze_scripts(html_lower: &str, html_original: &str) -> (f64, Vec<Evidence>
     }
 
     (score, evidence)
+}
+
+fn check_suspicious_onclick_handlers(
+    html_lower: &str,
+    html_original: &str,
+) -> Vec<(String, Option<String>)> {
+    let mut findings = Vec::new();
+    let mut search_from = 0usize;
+
+    while let Some(rel_idx) = html_lower[search_from..].find("onclick=") {
+        let abs_idx = search_from + rel_idx;
+        let value_start = abs_idx + "onclick=".len();
+        let Some(quote) = html_lower[value_start..].chars().next() else {
+            break;
+        };
+        if quote != '"' && quote != '\'' {
+            search_from = value_start;
+            continue;
+        }
+
+        let content_start = value_start + quote.len_utf8();
+        let rest = &html_lower[content_start..];
+        let Some(end_rel) = rest.find(quote) else {
+            break;
+        };
+        let handler = &rest[..end_rel];
+
+        if DANGEROUS_ONCLICK_OPS
+            .iter()
+            .any(|op| handler.contains(op))
+        {
+            let snip_start = abs_idx.saturating_sub(20);
+            let snip_end = (content_start + end_rel + 40).min(html_original.len());
+            findings.push((
+                handler.to_string(),
+                Some(html_original[snip_start..snip_end].to_string()),
+            ));
+        }
+
+        search_from = content_start + end_rel + quote.len_utf8();
+    }
+
+    findings
 }
 
 /// Check for base64-encoded data URIs (often used to embed malicious payloads)
@@ -262,6 +311,19 @@ impl SecurityModule for HtmlScanModule {
             total_score += script_score;
             categories.push("xss".to_string());
             evidence.extend(script_evidence);
+        }
+
+        let onclick_findings = check_suspicious_onclick_handlers(&html_lower, body_html);
+        if !onclick_findings.is_empty() {
+            total_score += 0.15 * onclick_findings.len() as f64;
+            categories.push("xss".to_string());
+            for (handler, snippet) in onclick_findings {
+                evidence.push(Evidence {
+                    description: format!("Suspicious onclick handler: {}", handler),
+                    location: Some("body_html".to_string()),
+                    snippet,
+                });
+            }
         }
 
        // Check base64 data URIs
@@ -395,5 +457,26 @@ impl SecurityModule for HtmlScanModule {
             bpa: None,
             engine_id: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn benign_onclick_toggle_is_not_flagged() {
+        let html =
+            "<div onclick=\"document.getElementById('panel').style.display='block'\">open</div>";
+        let findings = check_suspicious_onclick_handlers(&html.to_lowercase(), html);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn redirecting_onclick_is_flagged() {
+        let html = "<div onclick=\"window.location='https://evil.test/login'\">open</div>";
+        let findings = check_suspicious_onclick_handlers(&html.to_lowercase(), html);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].0.contains("window.location"));
     }
 }

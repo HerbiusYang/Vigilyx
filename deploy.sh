@@ -13,6 +13,7 @@
 #   ./deploy.sh --skip-test      # Skip tests (for emergency fixes)
 #   ./deploy.sh --skip-lint      # Skip clippy (for emergency fixes)
 #   ./deploy.sh --sniffer        # Sniffer only
+#   ./deploy.sh --config-only    # Sync config/scripts and recreate services without rebuilding images
 #   ./deploy.sh --antivirus      # Enable/start ClamAV antivirus profile
 #   ./deploy.sh --mta            # MTA proxy only
 #   ./deploy.sh --tls            # Enable HTTPS (Caddy reverse proxy + self-signed/Let's Encrypt)
@@ -56,6 +57,7 @@ DO_INIT=false
 DO_TLS=false
 DO_PRODUCTION=false
 DO_ANTIVIRUS=false
+DO_CONFIG_ONLY=false
 
 # -- Parse arguments --
 while [[ $# -gt 0 ]]; do
@@ -93,6 +95,9 @@ while [[ $# -gt 0 ]]; do
         --skip-lint)
             DO_LINT=false
             shift ;;
+        --config-only)
+            DO_CONFIG_ONLY=true
+            shift ;;
         --tls)
             DO_TLS=true
             shift ;;
@@ -122,6 +127,19 @@ step() { echo ""; echo "━━━ $1 ━━━"; }
 elapsed() { echo "  Time: $(( $(date +%s) - $1 ))s"; }
 TOTAL_START=$(date +%s)
 
+compose_up_with_retry() {
+    local label="$1"
+    local remote_cmd="$2"
+
+    if ssh "$SERVER" "$remote_cmd"; then
+        return 0
+    fi
+
+    echo "  ${label} deployment hit a transient Docker Compose conflict; retrying once..."
+    sleep 3
+    ssh "$SERVER" "$remote_cmd"
+}
+
 is_truthy() {
     case "${1:-}" in
         1|true|TRUE|True|yes|YES|Yes|on|ON|On)
@@ -132,102 +150,7 @@ is_truthy() {
 }
 
 apply_capture_host_tuning() {
-    ssh "$SERVER" "
-        IFACE=\$(grep '^SNIFFER_INTERFACE=' '${REMOTE_DIR}/deploy/docker/.env' 2>/dev/null | cut -d= -f2 | tr -d '\"' | tr -d \"'\")
-        IFACE=\${IFACE:-eth0}
-
-        if [ ! -d /sys/class/net/\$IFACE ]; then
-            echo \"  Capture interface \$IFACE does not exist; skipping host network tuning\"
-            exit 0
-        fi
-
-        CHANGED=0
-        FLOW_ENTRIES=65536
-        CPU_COUNT=\$(nproc 2>/dev/null || echo 1)
-        RX_QUEUE_COUNT=\$(find /sys/class/net/\$IFACE/queues -maxdepth 1 -type d -name 'rx-*' | wc -l | tr -d ' ')
-
-        format_cpumask() {
-            local raw=\"\$1\"
-            local grouped=\"\"
-            while [ \${#raw} -gt 8 ]; do
-                grouped=\",\${raw: -8}\${grouped}\"
-                raw=\"\${raw:0:\${#raw}-8}\"
-            done
-            printf '%s' \"\${raw}\${grouped}\"
-        }
-
-        MAX_RX=\$(ethtool -g \$IFACE 2>/dev/null | awk '/Pre-set maximums:/,/Current hardware settings:/{if(/^RX:/){print \$2; exit}}')
-        MAX_TX=\$(ethtool -g \$IFACE 2>/dev/null | awk '/Pre-set maximums:/,/Current hardware settings:/{if(/^TX:/){print \$2; exit}}')
-        CUR_RX=\$(ethtool -g \$IFACE 2>/dev/null | awk '/Current hardware settings:/,0{if(/^RX:/){print \$2; exit}}')
-        CUR_TX=\$(ethtool -g \$IFACE 2>/dev/null | awk '/Current hardware settings:/,0{if(/^TX:/){print \$2; exit}}')
-        if [ -n \"\$MAX_RX\" ] && [ \"\$CUR_RX\" != \"\$MAX_RX\" ]; then
-            ethtool -G \$IFACE rx \$MAX_RX tx \${MAX_TX:-\$MAX_RX} 2>/dev/null && \
-                echo \"  NIC \$IFACE ring buffer: RX \${CUR_RX:-unknown} -> \$MAX_RX, TX \${CUR_TX:-unknown} -> \${MAX_TX:-\$MAX_RX}\" && CHANGED=1
-        fi
-
-        if [ \"\$CPU_COUNT\" -gt 0 ] && [ \"\$CPU_COUNT\" -lt 64 ] && [ \"\$RX_QUEUE_COUNT\" -gt 0 ]; then
-            MASK_RAW=\$(printf '%x' \$(( (1 << CPU_COUNT) - 1 )))
-            RPS_MASK=\$(format_cpumask \"\$MASK_RAW\")
-            PER_QUEUE=\$(( FLOW_ENTRIES / RX_QUEUE_COUNT ))
-            [ \"\$PER_QUEUE\" -lt 4096 ] && PER_QUEUE=4096
-
-            CUR_FLOW=\$(cat /proc/sys/net/core/rps_sock_flow_entries 2>/dev/null || echo 0)
-            if [ \"\$CUR_FLOW\" != \"\$FLOW_ENTRIES\" ]; then
-                sysctl -qw net.core.rps_sock_flow_entries=\$FLOW_ENTRIES >/dev/null 2>&1 && \
-                    echo \"  RFS flow entries: \$CUR_FLOW → \$FLOW_ENTRIES\" && CHANGED=1
-            fi
-
-            for q in /sys/class/net/\$IFACE/queues/rx-*; do
-                [ -d \"\$q\" ] || continue
-                CUR_MASK=\$(cat \"\$q/rps_cpus\" 2>/dev/null || echo '')
-                if [ \"\$CUR_MASK\" != \"\$RPS_MASK\" ]; then
-                    echo \"\$RPS_MASK\" > \"\$q/rps_cpus\" 2>/dev/null && CHANGED=1
-                fi
-                CUR_QUEUE_FLOW=\$(cat \"\$q/rps_flow_cnt\" 2>/dev/null || echo 0)
-                if [ \"\$CUR_QUEUE_FLOW\" != \"\$PER_QUEUE\" ]; then
-                    echo \"\$PER_QUEUE\" > \"\$q/rps_flow_cnt\" 2>/dev/null && CHANGED=1
-                fi
-            done
-
-            DISPATCHER=/etc/NetworkManager/dispatcher.d/99-\${IFACE}-capture-tuning
-            cat > \$DISPATCHER <<EOFD
-#!/bin/bash
-if [ \"\\\$1\" = \"\$IFACE\" ] && [ \"\\\$2\" = \"up\" ]; then
-    ethtool -G \$IFACE rx \$MAX_RX tx \${MAX_TX:-\$MAX_RX} 2>/dev/null || true
-    sysctl -qw net.core.rps_sock_flow_entries=\$FLOW_ENTRIES >/dev/null 2>&1 || true
-    for q in /sys/class/net/\$IFACE/queues/rx-*; do
-        [ -d \"\\\$q\" ] || continue
-        echo \"\$RPS_MASK\" > \"\\\$q/rps_cpus\" 2>/dev/null || true
-        echo \"\$PER_QUEUE\" > \"\\\$q/rps_flow_cnt\" 2>/dev/null || true
-    done
-fi
-EOFD
-            chmod +x \$DISPATCHER
-            echo \"  RPS/RFS configured: mask=\$RPS_MASK, per_queue=\$PER_QUEUE, queues=\$RX_QUEUE_COUNT\"
-        else
-            echo \"  CPU count \$CPU_COUNT is outside the script's safe range or RX queues are unavailable; skipping automatic RPS/RFS tuning\"
-        fi
-
-        SYSCTL_CONF=/etc/sysctl.d/99-vigilyx-capture.conf
-        cat > \$SYSCTL_CONF <<'EOSYS'
-# Vigilyx high-traffic packet-capture tuning
-net.core.rmem_max = 1073741824
-net.core.rmem_default = 67108864
-net.core.netdev_max_backlog = 250000
-net.core.netdev_budget = 1200
-net.core.netdev_budget_usecs = 8000
-net.core.rps_sock_flow_entries = 65536
-net.core.somaxconn = 4096
-net.ipv4.tcp_max_syn_backlog = 4096
-EOSYS
-        sysctl -p \$SYSCTL_CONF >/dev/null 2>&1 && CHANGED=1
-
-        if [ \$CHANGED -eq 0 ]; then
-            echo '  Network tuning is already in place; no changes needed'
-        fi
-
-        exit 0
-    "
+    ssh "$SERVER" "cd '${REMOTE_DIR}' && bash scripts/apply-capture-host-tuning.sh --env-file '${REMOTE_DIR}/deploy/docker/.env'"
 }
 
 # -- Step 0: initial setup (optional) --
@@ -266,7 +189,7 @@ fi
 
 # -- Derived flags --
 NEED_RUST_ARTIFACTS=false
-if $DO_BACKEND || $DO_SNIFFER || $DO_MTA || $DO_ENGINE; then
+if ! $DO_CONFIG_ONLY && ($DO_BACKEND || $DO_SNIFFER || $DO_MTA || $DO_ENGINE); then
     NEED_RUST_ARTIFACTS=true
 fi
 
@@ -361,52 +284,57 @@ if $NEED_RUST_ARTIFACTS; then
 fi
 
 # -- Step 6: build the frontend if needed --
-if $DO_FRONTEND && ! $DO_PRODUCTION; then
+if $DO_FRONTEND && ! $DO_PRODUCTION && ! $DO_CONFIG_ONLY; then
     step "Build frontend"
     T=$(date +%s)
     ssh "$SERVER" "cd ${REMOTE_DIR}/frontend && npx vite build"
     elapsed $T
-elif $DO_FRONTEND && $DO_PRODUCTION; then
+elif $DO_FRONTEND && $DO_PRODUCTION && ! $DO_CONFIG_ONLY; then
     echo ""
     echo "━━━ Production-mode frontend build ━━━"
     echo "  The frontend will be built and packaged by Dockerfile.api during image build."
 fi
 
 # -- Step 7: package the Docker runtime image --
-step "Build runtime Docker images"
-T=$(date +%s)
+if ! $DO_CONFIG_ONLY; then
+    step "Build runtime Docker images"
+    T=$(date +%s)
 
-COMPOSE_CMD="cd ${REMOTE_DIR}"
-BUILD_TARGETS=""
+    COMPOSE_CMD="cd ${REMOTE_DIR}"
+    BUILD_TARGETS=""
 
-if $DO_BACKEND || $DO_FRONTEND; then
-    BUILD_TARGETS="$BUILD_TARGETS vigilyx"
-fi
-if $DO_SNIFFER; then
-    BUILD_TARGETS="$BUILD_TARGETS sniffer"
-fi
-if $DO_MTA; then
-    BUILD_TARGETS="$BUILD_TARGETS mta"
-fi
-if $DO_ENGINE; then
-    BUILD_TARGETS="$BUILD_TARGETS engine"
-fi
-
-if [ -n "$BUILD_TARGETS" ]; then
-    if $DO_PRODUCTION; then
-        ssh "$SERVER" "cd ${REMOTE_DIR} && \
-            set -a && \
-            [ -f deploy/docker/.env ] && . deploy/docker/.env >/dev/null 2>&1 || true && \
-            set +a && \
-            docker compose -f ${COMPOSE_FILE} build $BUILD_TARGETS"
-    else
-        # Use the fast override: Dockerfile.api.fast only COPYs prebuilt binaries (~5s packaging)
-        ssh "$SERVER" "cd ${REMOTE_DIR} && \
-            docker compose -f ${COMPOSE_FILE} -f ${FAST_OVERRIDE} build $BUILD_TARGETS"
+    if $DO_BACKEND || $DO_FRONTEND; then
+        BUILD_TARGETS="$BUILD_TARGETS vigilyx"
     fi
-fi
+    if $DO_SNIFFER; then
+        BUILD_TARGETS="$BUILD_TARGETS sniffer"
+    fi
+    if $DO_MTA; then
+        BUILD_TARGETS="$BUILD_TARGETS mta"
+    fi
+    if $DO_ENGINE; then
+        BUILD_TARGETS="$BUILD_TARGETS engine"
+    fi
 
-elapsed $T
+    if [ -n "$BUILD_TARGETS" ]; then
+        if $DO_PRODUCTION; then
+            ssh "$SERVER" "cd ${REMOTE_DIR} && \
+                set -a && \
+                [ -f deploy/docker/.env ] && . deploy/docker/.env >/dev/null 2>&1 || true && \
+                set +a && \
+                docker compose -f ${COMPOSE_FILE} build $BUILD_TARGETS"
+        else
+            # Use the fast override: Dockerfile.api.fast only COPYs prebuilt binaries (~5s packaging)
+            ssh "$SERVER" "cd ${REMOTE_DIR} && \
+                docker compose -f ${COMPOSE_FILE} -f ${FAST_OVERRIDE} build $BUILD_TARGETS"
+        fi
+    fi
+
+    elapsed $T
+else
+    step "Build runtime Docker images"
+    echo "  Skipped image build (--config-only)"
+fi
 
 # -- Step 8: deploy (targeted restart to avoid unnecessary sniffer packet loss) --
 step "Deploy containers"
@@ -502,12 +430,12 @@ fi
 
 # Start non-sniffer/non-mta services first to ensure Redis/API are ready
 if [ -n "$UP_TARGETS" ]; then
-    ssh "$SERVER" "cd ${REMOTE_DIR} && \
+    compose_up_with_retry "Main service" "cd ${REMOTE_DIR} && \
         docker compose -f ${COMPOSE_FILE} ${MODE_PROFILE} --profile ai ${ANTIVIRUS_PROFILE} ${TLS_PROFILE} up -d $UP_TARGETS"
 fi
 
 if [ -n "$ANTIVIRUS_PROFILE" ]; then
-    ssh "$SERVER" "cd ${REMOTE_DIR} && \
+    compose_up_with_retry "ClamAV" "cd ${REMOTE_DIR} && \
         docker compose -f ${COMPOSE_FILE} --profile antivirus up -d clamav"
 fi
 
@@ -519,7 +447,7 @@ fi
 # Start the data-plane service for the active mode (sniffer or mta)
 if $DO_SNIFFER && [ "$DEPLOY_MODE" = "mirror" ]; then
     echo "  Restarting sniffer (capture gap ~3s)..."
-    ssh "$SERVER" "cd ${REMOTE_DIR} && \
+    compose_up_with_retry "Sniffer" "cd ${REMOTE_DIR} && \
         docker compose -f ${COMPOSE_FILE} --profile mirror up -d sniffer"
 fi
 
@@ -527,10 +455,10 @@ fi
 if $DO_MTA || [ "$DEPLOY_MODE" = "mta" ]; then
     echo "  Starting MTA proxy..."
     if $DO_PRODUCTION; then
-        ssh "$SERVER" "cd ${REMOTE_DIR} && \
+        compose_up_with_retry "MTA proxy" "cd ${REMOTE_DIR} && \
             docker compose -f ${COMPOSE_FILE} --profile mta ${ANTIVIRUS_PROFILE} up -d mta"
     else
-        ssh "$SERVER" "cd ${REMOTE_DIR} && \
+        compose_up_with_retry "MTA proxy" "cd ${REMOTE_DIR} && \
             docker compose -f ${COMPOSE_FILE} -f ${FAST_OVERRIDE} --profile mta ${ANTIVIRUS_PROFILE} up -d mta"
     fi
 fi
@@ -538,14 +466,14 @@ fi
 # Engine standalone deployment (explicit --engine)
 if $DO_ENGINE; then
     echo "  Starting standalone Engine container..."
-    ssh "$SERVER" "cd ${REMOTE_DIR} && \
+    compose_up_with_retry "Standalone engine" "cd ${REMOTE_DIR} && \
         docker compose -f ${COMPOSE_FILE} -f ${FAST_OVERRIDE} --profile engine-standalone up -d engine"
 fi
 
 elapsed $T
 
 # -- Step 9: verify frontend dist inside the image --
-if ! $DO_PRODUCTION && { $DO_BACKEND || $DO_FRONTEND; }; then
+if ! $DO_PRODUCTION && ! $DO_CONFIG_ONLY && { $DO_BACKEND || $DO_FRONTEND; }; then
     step "Verify frontend dist availability"
     ssh "$SERVER" "
         # Frontend is baked into the Docker image (no host volume mount).

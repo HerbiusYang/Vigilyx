@@ -7,6 +7,7 @@
 //! Authentication: Token-based (Authorization: Token <key>)
 
 use std::fmt;
+use std::net::{IpAddr, ToSocketAddrs};
 use std::time::Duration;
 
 use reqwest::multipart;
@@ -149,6 +150,7 @@ impl SandboxClient {
         let http = reqwest::Client::builder()
             .timeout(HTTP_TIMEOUT)
             .pool_max_idle_per_host(4)
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .unwrap_or_default();
 
@@ -165,18 +167,9 @@ impl SandboxClient {
         let url = std::env::var("SANDBOX_URL").ok()?;
 
        // SSRF :
-        if let Ok(parsed) = url::Url::parse(&url) {
-            let host = parsed.host_str().unwrap_or("");
-            let is_blocked = host.starts_with("169.254.")
-                || host.starts_with("fe80")
-                || host == "metadata.google.internal"
-                || host.ends_with(".internal")
-                || parsed.scheme() == "file"
-                || parsed.scheme() == "gopher";
-            if is_blocked {
-                tracing::error!(url = %url, "Sandbox URL blocked by SSRF protection");
-                return None;
-            }
+        if let Err(reason) = validate_sandbox_base_url(&url) {
+            tracing::error!(url = %url, reason = %reason, "Sandbox URL blocked by SSRF protection");
+            return None;
         }
 
         let token = std::env::var("SANDBOX_API_TOKEN").ok();
@@ -425,6 +418,81 @@ impl SandboxClient {
     }
 }
 
+fn validate_sandbox_base_url(raw: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(raw).map_err(|e| format!("invalid sandbox URL: {e}"))?;
+
+    match parsed.scheme() {
+        "http" | "https" => {}
+        other => {
+            return Err(format!(
+                "unsupported sandbox URL scheme: {other} (only http/https allowed)"
+            ));
+        }
+    }
+
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("sandbox URL must not contain userinfo".to_string());
+    }
+
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err("sandbox URL must not contain query parameters or fragments".to_string());
+    }
+
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "sandbox URL must contain a host".to_string())?;
+    validate_sandbox_host(host)
+}
+
+fn validate_sandbox_host(host: &str) -> Result<(), String> {
+    let normalized = host.trim().trim_matches(['[', ']']).to_ascii_lowercase();
+
+    let blocked_host = matches!(
+        normalized.as_str(),
+        "localhost"
+            | "host.docker.internal"
+            | "gateway.docker.internal"
+            | "metadata.google.internal"
+    ) || normalized.ends_with(".internal");
+    if blocked_host {
+        return Err(format!("sandbox host is blocked: {normalized}"));
+    }
+
+    if let Ok(ip) = normalized.parse::<IpAddr>() {
+        return validate_sandbox_ip(ip);
+    }
+
+    if let Ok(resolved) = (normalized.as_str(), 0).to_socket_addrs() {
+        for addr in resolved {
+            validate_sandbox_ip(addr.ip())?;
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_sandbox_ip(ip: IpAddr) -> Result<(), String> {
+    if is_blocked_sandbox_ip(ip) {
+        return Err(format!("sandbox address is blocked: {ip}"));
+    }
+    Ok(())
+}
+
+fn is_blocked_sandbox_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(addr) => addr.is_loopback() || addr.is_unspecified() || addr.is_link_local(),
+        IpAddr::V6(addr) => {
+            if addr.is_loopback() || addr.is_unspecified() || addr.is_unicast_link_local() {
+                return true;
+            }
+
+            addr.to_ipv4_mapped().is_some_and(|mapped| {
+                mapped.is_loopback() || mapped.is_unspecified() || mapped.is_link_local()
+            })
+        }
+    }
+}
+
 /// From CAPEv2 JSON MediumExtractSecuritydetectNeed/Requireof Segment
 fn parse_cape_report(body: &serde_json::Value) -> Result<SandboxReport, SandboxError> {
     let info = body.get("info").unwrap_or(body);
@@ -579,5 +647,31 @@ mod tests {
             task_ids: Some(vec![10, 20]),
         };
         assert_eq!(r2.get_task_id(), Some(10));
+    }
+
+    #[test]
+    fn test_validate_sandbox_rejects_loopback_ip() {
+        let err = validate_sandbox_base_url("http://127.0.0.1:8090")
+            .expect_err("loopback must be blocked");
+        assert!(err.contains("blocked"));
+    }
+
+    #[test]
+    fn test_validate_sandbox_rejects_metadata_host() {
+        let err = validate_sandbox_base_url("http://metadata.google.internal:8090")
+            .expect_err("metadata host must be blocked");
+        assert!(err.contains("metadata.google.internal"));
+    }
+
+    #[test]
+    fn test_validate_sandbox_rejects_userinfo() {
+        let err = validate_sandbox_base_url("http://user:pass@10.0.0.8:8090")
+            .expect_err("userinfo must be blocked");
+        assert!(err.contains("userinfo"));
+    }
+
+    #[test]
+    fn test_validate_sandbox_allows_private_lab_ip() {
+        validate_sandbox_base_url("http://10.0.0.8:8090").expect("private sandbox lab should pass");
     }
 }

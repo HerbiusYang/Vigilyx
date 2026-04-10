@@ -1,13 +1,25 @@
 import { useState, useEffect } from 'react'
 import { apiFetch } from '../../utils/api'
 
-type KwCategory = 'phishing_keywords' | 'weak_phishing_keywords' | 'bec_phrases' | 'internal_authority_phrases'
+type KwCategory =
+  | 'phishing_keywords'
+  | 'weak_phishing_keywords'
+  | 'bec_phrases'
+  | 'internal_authority_phrases'
+  | 'gateway_banner_patterns'
+  | 'notice_banner_patterns'
+  | 'dsn_patterns'
+  | 'auto_reply_patterns'
 interface KwCatOverride { added: string[]; removed: string[] }
 interface KwOverrides {
   phishing_keywords: KwCatOverride
   weak_phishing_keywords: KwCatOverride
   bec_phrases: KwCatOverride
   internal_authority_phrases: KwCatOverride
+  gateway_banner_patterns: KwCatOverride
+  notice_banner_patterns: KwCatOverride
+  dsn_patterns: KwCatOverride
+  auto_reply_patterns: KwCatOverride
 }
 
 const KW_CATEGORY_LABELS: Record<KwCategory, string> = {
@@ -15,6 +27,10 @@ const KW_CATEGORY_LABELS: Record<KwCategory, string> = {
   weak_phishing_keywords: '弱钓鱼关键词',
   bec_phrases: 'BEC 短语',
   internal_authority_phrases: '内部冒充短语',
+  gateway_banner_patterns: '网关提示短语',
+  notice_banner_patterns: '通知横幅短语',
+  dsn_patterns: '退信系统短语',
+  auto_reply_patterns: '自动回复短语',
 }
 
 export default function KeywordsTab() {

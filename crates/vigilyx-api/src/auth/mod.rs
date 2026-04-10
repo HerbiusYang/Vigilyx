@@ -21,9 +21,8 @@ mod ws_ticket;
 // Re-exports: keep the public API stable
 
 pub use handlers::{
-    ChangePasswordRequest, ChangePasswordResponse, LoginRequest,
-    build_token_cookie, handle_change_password, handle_login, handle_logout,
-    handle_me,
+    ChangePasswordRequest, ChangePasswordResponse, LoginRequest, build_clear_cookie,
+    build_token_cookie, handle_change_password, handle_login, handle_logout, handle_me,
 };
 pub use middleware::{AuthenticatedUser, require_auth, require_internal_token};
 pub use password::hash_password;
@@ -87,6 +86,16 @@ impl Clone for AuthConfig {
 }
 
 impl AuthConfig {
+    fn hash_runtime_password_from_env() -> Result<String, AuthError> {
+        let password = std::env::var("API_PASSWORD").map_err(|_| {
+            AuthError::ConfigError(
+                "API_PASSWORD is not set; runtime auth reset requires an explicit admin password"
+                    .into(),
+            )
+        })?;
+        hash_password(&password)
+    }
+
    /// Load configuration from environment variables.
     pub fn from_env() -> Result<Self, AuthError> {
         let jwt_secret = std::env::var("API_JWT_SECRET")
@@ -121,16 +130,15 @@ impl AuthConfig {
         })
     }
 
-   /// Create a fallback configuration with a secure random JWT secret.
-    
-   /// The fallback configuration uses the default password `admin123` and forces a password change on first login.
-    pub fn fallback() -> Self {
-        use std::fmt::Write;
+   /// Validate that runtime auth reset has the required environment configuration.
+    pub fn validate_factory_reset_prereqs() -> Result<(), AuthError> {
+        Self::hash_runtime_password_from_env().map(|_| ())
+    }
 
-        warn!(
-            "Security warning: API_JWT_SECRET / API_PASSWORD are not configured; using default credentials \
-             (admin / admin123). First login will require a password change. Configure secure values in .env."
-        );
+   /// Create a test-only configuration with a secure random JWT secret.
+    #[cfg(test)]
+    fn test_config(password: &str) -> Self {
+        use std::fmt::Write;
 
        // Generate a 64-byte random JWT secret
         let mut secret = String::with_capacity(128);
@@ -143,7 +151,7 @@ impl AuthConfig {
         for b in &random_bytes {
             let _ = write!(secret, "{:02x}", b);
         }
-        let password_hash = hash_password("admin123").expect("Failed to hash default password");
+        let password_hash = hash_password(password).expect("Failed to hash test password");
         Self {
             jwt_secret: SecretString::from(secret),
             username: "admin".to_string(),
@@ -183,6 +191,14 @@ impl AuthConfig {
                 warn!("Load token version failed: {}", e);
             }
         }
+    }
+
+    pub async fn reset_after_factory_reset(&self) -> Result<u64, AuthError> {
+        let hash = Self::hash_runtime_password_from_env()?;
+       *self.password_hash.write().await = hash;
+       *self.password_changed.write().await = false;
+        let next_tv = self.token_version.fetch_add(1, Ordering::SeqCst) + 1;
+        Ok(next_tv)
     }
 }
 
@@ -295,6 +311,8 @@ mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr};
 
+    const TEST_ADMIN_PASSWORD: &str = "TestAdmin!2345";
+
    /// Test helper: a deterministic IP for unit tests.
     fn test_ip() -> IpAddr {
         IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))
@@ -315,7 +333,7 @@ mod tests {
 
     #[test]
     fn test_token_generation_and_verification() {
-        let config = AuthConfig::fallback();
+        let config = AuthConfig::test_config(TEST_ADMIN_PASSWORD);
         let token = generate_token(&config, "testuser", "admin").unwrap();
         let claims = jwt::verify_token(&config, &token).unwrap();
         assert_eq!(claims.sub, "testuser");
@@ -324,14 +342,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_login() {
-        let config = AuthConfig::fallback();
+        let config = AuthConfig::test_config(TEST_ADMIN_PASSWORD);
         let limiter = test_limiter();
         let ip = test_ip();
 
        // login (default password,)
         let request = LoginRequest {
             username: "admin".to_string(),
-            password: "admin123".to_string(),
+            password: TEST_ADMIN_PASSWORD.to_string(),
         };
         let response = handle_login(&config, &limiter, ip, &request).await;
         assert!(response.success);
@@ -349,7 +367,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_login_after_password_change() {
-        let config = AuthConfig::fallback();
+        let config = AuthConfig::test_config(TEST_ADMIN_PASSWORD);
         let limiter = test_limiter();
         let ip = test_ip();
        // Password
@@ -357,7 +375,7 @@ mod tests {
 
         let request = LoginRequest {
             username: "admin".to_string(),
-            password: "admin123".to_string(),
+            password: TEST_ADMIN_PASSWORD.to_string(),
         };
         let response = handle_login(&config, &limiter, ip, &request).await;
         assert!(response.success);
@@ -366,7 +384,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_login_rate_limit_per_ip() {
-        let config = AuthConfig::fallback();
+        let config = AuthConfig::test_config(TEST_ADMIN_PASSWORD);
         let limiter = test_limiter();
         let attacker_ip: IpAddr = "10.0.0.1".parse().expect("valid IP");
         let innocent_ip: IpAddr = "10.0.0.2".parse().expect("valid IP");
@@ -383,7 +401,7 @@ mod tests {
        // Attacker is now blocked (even with correct password)
         let request = LoginRequest {
             username: "admin".to_string(),
-            password: "admin123".to_string(),
+            password: TEST_ADMIN_PASSWORD.to_string(),
         };
         let response = handle_login(&config, &limiter, attacker_ip, &request).await;
         assert!(!response.success);
@@ -392,7 +410,7 @@ mod tests {
        // Innocent user from different IP is NOT affected
         let request = LoginRequest {
             username: "admin".to_string(),
-            password: "admin123".to_string(),
+            password: TEST_ADMIN_PASSWORD.to_string(),
         };
         let response = handle_login(&config, &limiter, innocent_ip, &request).await;
         assert!(
@@ -403,7 +421,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_login_success_resets_failure_count() {
-        let config = AuthConfig::fallback();
+        let config = AuthConfig::test_config(TEST_ADMIN_PASSWORD);
         let limiter = test_limiter();
         let ip = test_ip();
 
@@ -419,7 +437,7 @@ mod tests {
        // Successful login resets the counter
         let request = LoginRequest {
             username: "admin".to_string(),
-            password: "admin123".to_string(),
+            password: TEST_ADMIN_PASSWORD.to_string(),
         };
         let response = handle_login(&config, &limiter, ip, &request).await;
         assert!(response.success);

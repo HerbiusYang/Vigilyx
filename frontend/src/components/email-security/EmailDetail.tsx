@@ -4,6 +4,7 @@ import type { EmailSession, ApiResponse, SecurityVerdict, ModuleResult } from '.
 import { decodeMimeWord } from '../../utils/mime'
 import { formatBytes, formatDateFull, isEncryptedPort, getFileIcon } from '../../utils/format'
 import { apiFetch } from '../../utils/api'
+import { buildEmailPreviewDoc } from '../../utils/emailHtml'
 import SecurityAnalysisView, { RadarChart } from './SecurityAnalysisView'
 
 const THREAT_CN: Record<string, string> = {
@@ -154,6 +155,12 @@ export default function EmailDetail() {
   const headerCount = session.content?.headers?.length || 0
   const linkCount = session.content?.links?.length || 0
   const suspiciousLinkCount = session.content?.links?.filter(l => l.suspicious).length || 0
+  const riskPct = verdict
+    ? Math.round((verdict.fusion_details?.risk_single ?? verdict.confidence) * 100)
+    : 0
+  const safeHtmlPreview = session.content?.body_html
+    ? buildEmailPreviewDoc(session.content.body_html)
+    : ''
 
   // Mask SMTP AUTH credentials in dialog display
   const maskAuthCredentials = (cmd: string): string => {
@@ -189,7 +196,7 @@ export default function EmailDetail() {
                 pillarPcts={Object.fromEntries(
                   Object.entries(verdict.pillar_scores).map(([k, v]) => [k, Math.round(v * 100)])
                 )}
-                riskPct={Math.round(verdict.confidence * 100)}
+                riskPct={riskPct}
                 threatLevel={verdict.threat_level}
                 size={210}
               />
@@ -203,7 +210,7 @@ export default function EmailDetail() {
           <div className="ed-badges">
             {verdict && (
               <span className={`ed-threat-tag ed-threat--${verdict.threat_level}`}>
-                {THREAT_CN[verdict.threat_level] || verdict.threat_level} {(verdict.confidence * 100).toFixed(0)}%
+                {THREAT_CN[verdict.threat_level] || verdict.threat_level} {riskPct}%
               </span>
             )}
             <span className={`protocol-badge ${session.protocol.toLowerCase()}`}>{session.protocol}</span>
@@ -473,7 +480,7 @@ export default function EmailDetail() {
                 {session.content?.body_html ? (
                   <div className="email-body-container">
                     <div className="body-header">
-                      <span className="body-type-badge html">HTML 格式</span>
+                      <span className="body-type-badge html">HTML 安全预览</span>
                       {session.content?.body_text && (
                         <span className="body-type-hint">同时包含纯文本版本</span>
                       )}
@@ -482,7 +489,7 @@ export default function EmailDetail() {
                       {/* SEC: sandbox="" uses the strictest mode - no scripts, same-origin access, forms, or popups
                           Do not use allow-same-origin, or malicious mail CSS could read data from the parent page */}
                       <iframe
-                        srcDoc={session.content.body_html}
+                        srcDoc={safeHtmlPreview}
                         sandbox=""
                         title="邮件内容"
                         referrerPolicy="no-referrer"

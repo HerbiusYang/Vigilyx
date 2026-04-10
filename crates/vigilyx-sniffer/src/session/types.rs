@@ -9,16 +9,14 @@ use crate::stream::TcpHalfStream;
 use std::time::Instant;
 use vigilyx_core::{Direction, EmailSession};
 
-
 // Session (store + FxHash)
-
 
 /// Session (store)
 #[derive(Clone, Hash, Eq, PartialEq)]
 pub struct SessionKey {
-   /// Use u128 store IP, Hash
+    /// Use u128 store IP, Hash
     ip_pair: u128,
-   /// Port packet 1 u32
+    /// Port packet 1 u32
     port_pair: u32,
 }
 
@@ -87,15 +85,15 @@ impl SessionKey {
             ),
         };
 
-       // IP Composition1 u128 Used for Hash
-       // Use XOR Ensure
+        // IP Composition1 u128 Used for Hash
+        // Use XOR Ensure
         let ip_pair = client_ip.to_u128() ^ server_ip.to_u128().rotate_left(64);
         let port_pair = ((client_port as u32) << 16) | (server_port as u32);
 
         Self { ip_pair, port_pair }
     }
 
-   /// Getclient IP (Used forrate limiting)
+    /// Getclient IP (Used forrate limiting)
     #[inline(always)]
     pub fn client_ip_from_packet(packet: &RawpacketInfo) -> CompactIp {
         match packet.direction {
@@ -109,49 +107,55 @@ impl SessionKey {
 pub struct Sessiondata {
     pub session: EmailSession,
     pub last_activity: Instant,
-   /// 1 packet, timeout/
+    /// 1 packet, timeout/
     pub last_packet_at: chrono::DateTime<chrono::Utc>,
-   /// 1 packet
+    /// 1 packet
     pub last_packet_direction: Direction,
-   /// 1 packet TCP flags
+    /// 1 packet TCP flags
     pub last_packet_tcp_flags: u8,
-   /// 1 packet sequence number
+    /// 1 packet sequence number
     pub last_packet_seq: u32,
-   /// 1 packet payload
+    /// 1 packet payload
     pub last_packet_payload_len: usize,
-   /// SMTP State machine (Used fortracing DATA SegmentAndParseemailContent)
+    /// SMTP State machine (Used fortracing DATA SegmentAndParseemailContent)
     pub smtp_state: Option<SmtpStateMachine>,
-   /// HTTP RequestState machine (Used forFrom TCP StreamMediumsplitcomplete HTTP Request)
+    /// HTTP RequestState machine (Used forFrom TCP StreamMediumsplitcomplete HTTP Request)
     pub http_state: Option<HttpRequestStateMachine>,
-   /// client Servicehandlerof TCP Streambuffer (Used forStreamreassemble)
+    /// client Servicehandlerof TCP Streambuffer (Used forStreamreassemble)
     pub client_stream: TcpHalfStream,
-   /// Servicehandler clientof TCP Streambuffer (Used forStreamreassemble)
+    /// Servicehandler clientof TCP Streambuffer (Used forStreamreassemble)
     pub server_stream: TcpHalfStream,
-   /// Time/CountProcessofclientdata
+    /// Time/CountProcessofclientdata
     pub client_processed_offset: usize,
-   /// Time/CountProcessofServicehandlerdata
+    /// Time/CountProcessofServicehandlerdata
     pub server_processed_offset: usize,
-   /// client->server gap,
+    /// client->server gap,
     pub client_gap_logged_bytes: usize,
-   /// server->client gap,
+    /// server->client gap,
     pub server_gap_logged_bytes: usize,
-   /// active_sessions,
+    /// active_sessions,
     pub active_counter_open: bool,
-   /// client TCP FIN/RST
+    /// client TCP FIN/RST
     pub client_tcp_closed: bool,
-   /// server TCP FIN/RST
+    /// server TCP FIN/RST
     pub server_tcp_closed: bool,
-   /// SYN ()
+    /// SYN ()
     pub created_without_syn: bool,
-   /// " SMTP ",
+    /// First worker that handled this session.
+    pub owner_worker_id: Option<usize>,
+    /// Most recent worker that handled this session.
+    pub last_worker_id: Option<usize>,
+    /// Number of times packets for this session were seen on a non-owner worker.
+    pub worker_switch_count: u32,
+    /// " SMTP ",
     pub smtp_restore_issue_logged: bool,
-   /// "SMTP DATA/ ",
+    /// "SMTP DATA/ ",
     pub smtp_pending_diag_logged: bool,
-   /// dirtyMark: SessiondataOccur ofUpdate, Need/Require NewPublish API
+    /// dirtyMark: SessiondataOccur ofUpdate, Need/Require NewPublish API
     pub dirty: bool,
-   /// Session (Used fordirtyQueuelookup)
+    /// Session (Used fordirtyQueuelookup)
     pub key: SessionKey,
-   /// client IP (Used forSession IP rate limitingcounter)
+    /// client IP (Used forSession IP rate limitingcounter)
     pub client_compact_ip: CompactIp,
 }
 

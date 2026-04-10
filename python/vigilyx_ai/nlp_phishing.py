@@ -76,6 +76,21 @@ class NLPPhishingResult:
     inference_ms: int = 0
 
 
+class ModelUnavailableError(RuntimeError):
+    """Raised when no usable NLP model is currently available."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retry_after_secs: int = 0,
+        status: Optional[dict[str, object]] = None,
+    ):
+        super().__init__(message)
+        self.retry_after_secs = retry_after_secs
+        self.status = status or {}
+
+
 # Zero-shot candidate labels
 CANDIDATE_LABELS_EN = [
     "phishing email trying to steal credentials or personal information",
@@ -224,11 +239,79 @@ class ModelManager:
         self._finetuned_version: str = ""
         # Status
         self._model_version: str = "base"
+        self._warmup_state: str = "idle"
+        self._last_error: Optional[str] = None
+        self._unavailable_until_ts: float = 0.0
+        self._consecutive_failures: int = 0
+
+    def _clear_failure_state(self):
+        self._last_error = None
+        self._unavailable_until_ts = 0.0
+        self._consecutive_failures = 0
+
+    def _mark_unavailable(self, message: str) -> int:
+        self._last_error = message
+        self._consecutive_failures += 1
+        shift = min(self._consecutive_failures - 1, 4)
+        backoff_secs = min(30 * (2 ** shift), 300)
+        self._unavailable_until_ts = time.time() + backoff_secs
+        return backoff_secs
+
+    def cooldown_remaining_secs(self) -> int:
+        return max(0, int(self._unavailable_until_ts - time.time()))
+
+    def readiness_report(self) -> dict[str, object]:
+        retry_after_secs = self.cooldown_remaining_secs()
+        if self._finetuned_model is not None:
+            ready = True
+            mode = "fine_tuned"
+            active_model = f"fine-tuned/{self._finetuned_version}"
+        elif self._zeroshot_pipeline is not None:
+            ready = True
+            mode = "zero_shot"
+            active_model = self._zeroshot_model_name or "zero-shot"
+        elif self._warmup_state == "running":
+            ready = False
+            mode = "warming_up"
+            active_model = None
+        elif retry_after_secs > 0:
+            ready = False
+            mode = "cooldown"
+            active_model = None
+        elif self._warmup_state == "failed" or self._last_error:
+            ready = False
+            mode = "failed"
+            active_model = None
+        else:
+            ready = False
+            mode = "uninitialized"
+            active_model = None
+
+        return {
+            "ready": ready,
+            "mode": mode,
+            "active_model": active_model,
+            "model_version": self._model_version,
+            "has_finetuned": self._finetuned_model is not None,
+            "zero_shot_loaded": self._zeroshot_pipeline is not None,
+            "zero_shot_model": self._zeroshot_model_name,
+            "warmup_state": self._warmup_state,
+            "retry_after_secs": retry_after_secs,
+            "last_error": self._last_error,
+        }
 
     def _load_zeroshot(self):
         """Lazily load the zero-shot model."""
         if self._zeroshot_pipeline is not None:
             return self._zeroshot_pipeline
+
+        retry_after_secs = self.cooldown_remaining_secs()
+        if retry_after_secs > 0:
+            raise ModelUnavailableError(
+                f"Zero-shot NLP model load is in cooldown; retry after about {retry_after_secs}s",
+                retry_after_secs=retry_after_secs,
+                status=self.readiness_report(),
+            )
 
         logger.info("Loading zero-shot NLP model...")
         start = time.time()
@@ -251,6 +334,7 @@ class ModelManager:
                 )
                 self._zeroshot_model_name = model_id
                 self._zeroshot_load_time = time.time() - start
+                self._clear_failure_state()
                 logger.info(
                     "Zero-shot model loaded",
                     model=model_id,
@@ -262,19 +346,37 @@ class ModelManager:
                 logger.warning(f"Failed to load {model_id}: {e}")
                 continue
 
-        raise RuntimeError("All zero-shot NLP models failed to load")
+        backoff_secs = self._mark_unavailable("All zero-shot NLP models failed to load")
+        raise ModelUnavailableError(
+            f"All zero-shot NLP models failed to load; retry after about {backoff_secs}s",
+            retry_after_secs=backoff_secs,
+            status=self.readiness_report(),
+        )
 
     def warmup(self):
         """Warm up the model so the first real request avoids JIT/setup cost."""
         logger.info("Warming up NLP model with dummy inference...")
         start = time.time()
+        self._warmup_state = "running"
         try:
-            self._load_zeroshot()
             dummy_text = "This is a test email for model warmup."
-            self._predict_zeroshot(dummy_text, "en")
+            if self._finetuned_model is not None:
+                self._predict_finetuned(dummy_text)
+            else:
+                self._load_zeroshot()
+                self._predict_zeroshot(dummy_text, "en")
             warmup_ms = int((time.time() - start) * 1000)
+            self._warmup_state = "ready"
             logger.info("Model warmup complete", warmup_ms=warmup_ms)
+        except ModelUnavailableError as e:
+            self._warmup_state = "failed"
+            logger.warning(
+                "Model warmup deferred because no NLP model is currently available",
+                retry_after_secs=e.retry_after_secs,
+                error=str(e),
+            )
         except Exception as e:
+            self._warmup_state = "failed"
             logger.warning(f"Model warmup failed (non-fatal): {e}")
 
     def try_load_finetuned(self):
@@ -300,6 +402,7 @@ class ModelManager:
                 self._finetuned_model = self._finetuned_model.to(_TORCH_DEVICE)
             self._finetuned_version = os.path.basename(model_dir)
             self._model_version = self._finetuned_version
+            self._clear_failure_state()
 
             logger.info(
                 "Fine-tuned model loaded",
@@ -338,6 +441,8 @@ class ModelManager:
             self._finetuned_model = model
             self._finetuned_version = os.path.basename(model_dir)
             self._model_version = self._finetuned_version
+            self._clear_failure_state()
+            self._warmup_state = "ready"
 
             logger.info(
                 "Fine-tuned model hot-swapped",
@@ -623,14 +728,4 @@ async def analyze_phishing_nlp(
 
     manager = get_model_manager()
 
-    try:
-        return await manager.predict(text, lang)
-    except Exception as e:
-        logger.error(f"NLP analysis failed: {e}")
-        return NLPPhishingResult(
-            is_phishing=False,
-            threat_level="safe",
-            confidence=0.0,
-            summary=f"NLP analysis failed: {e}",
-            model_name="error",
-        )
+    return await manager.predict(text, lang)

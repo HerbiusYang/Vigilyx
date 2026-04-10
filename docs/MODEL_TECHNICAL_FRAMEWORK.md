@@ -187,9 +187,144 @@ The registry in `crates/vigilyx-engine/src/modules/registry.rs` currently builds
 
 - `verdict`
 
-## 7. Eight-Engine Fusion Layout
+## 7. Default Verdict Path: Clustered Evidence Fusion
 
-The D-S fusion layer groups most modules into eight conceptual engines.
+The default runtime verdict path is no longer the legacy A-H engine grouping.
+
+The current default dispatcher treats `aggregation = "ds_murphy"` as a compatibility alias for
+`clustered_ds_v1`. The old grouped engine map still exists, but it is only used when the
+configuration explicitly selects `legacy_ds_murphy`.
+
+### Normalization stage
+
+Before fusion, raw `(module_id, category)` outputs are normalized into eight evidence clusters:
+
+| Cluster | Meaning |
+|---------|---------|
+| `inherited_gateway_prior` | Upstream gateway banners or pre-classification labels |
+| `delivery_integrity` | Header completeness, protocol anomalies, delivery-chain weaknesses |
+| `sender_identity_authenticity` | Sender and display-name authenticity anomalies |
+| `link_and_html_deception` | Credential links, redirects, URL tricks, deceptive HTML |
+| `payload_malware` | Attachments, AV, YARA, sandbox, overt malicious payload signals |
+| `external_reputation_ioc` | IOC and external-intel matches |
+| `social_engineering_intent` | Phishing, BEC, coercion, and credential-theft language |
+| `business_sensitivity` | DLP and transaction-sensitive content |
+
+This clustered path is designed to stop correlated weak signals from being counted as if they were
+independent engines.
+
+### Scenario recognition
+
+The normalizer also derives context tags used for caps, floors, and explainability:
+
+- `gateway_banner_polluted`
+- `notice_banner_polluted`
+- `dsn_like_system_mail`
+- `auto_reply_like`
+- `semantic_nlp_only_signal`
+- `transcript_like_structure`
+- `sender_alignment_verified`
+- `account_security_signal`
+- `credential_link_signal`
+- `malicious_ioc_signal`
+- `payment_change_signal`
+
+The phrase dictionaries behind `gateway_banner_polluted`, `notice_banner_polluted`,
+`dsn_like_system_mail`, and `auto_reply_like` are no longer intended to be maintained in Rust
+logic. They are sourced from `keyword_system_seed` / `keyword_overrides`, so operational tuning
+goes through the keyword-management surface instead of hardcoded verdict-layer edits.
+
+The parser and semantic layers also include a structural MIME-container safeguard:
+
+- when the shared MIME parser receives a message whose top-level `Content-Type` is missing, but
+  the body itself clearly starts with multipart boundaries and MIME-part headers, it attempts a
+  multipart-body salvage instead of storing the raw container text as `body_text`
+- the salvage path is not limited to a single clean multipart wrapper; it also reconstructs
+  fragmented MIME bodies where text/html parts and attachment parts are split across broken or
+  mismatched boundary fragments
+- when a module still receives raw MIME container text (boundary lines, `Content-Type`,
+  `Content-Transfer-Encoding`, long base64 payload lines), `semantic_scan` and
+  `transaction_correlation` suppress that container text rather than treating it as human-readable
+  mail body
+- before `content_scan` runs keyword/BEC matching, it strips leading gateway or security-notice
+  banner sections using the runtime keyword-management lists, and trims separator-delimited footer
+  disclaimers so legal boilerplate is not double-counted as social-engineering content
+- `content_scan` does not treat a lone single-token BEC keyword such as `immediately` or `asap`
+  as BEC evidence by itself; single-token hits are weak hints and need co-occurrence, while
+  multi-token phrases remain strong BEC signals
+- `transaction_correlation` separates actionable payment signals (IBAN, SWIFT, bank account,
+  wire instruction, payment-change request, crypto wallet) from reference-only business markers
+  such as invoice or PO numbers; urgency escalation and multi-entity boosts require actionable
+  payment context, not just invoice references
+- `link_content` / `link_reputation` structurally suppress object-storage static assets
+  (for example `*.oss-*.aliyuncs.com/...png`) so CDN bucket labels and provider parent domains
+  do not inflate phishing scores on ordinary embedded images
+
+This is intentionally structure-based. It is not a sender whitelist, a "file assistant" special
+case, or a hardcoded keyword bypass.
+
+### Low-noise suppression rules
+
+`clustered_ds_v1` now includes explicit low-risk suppression for the most common false-positive
+patterns seen in production:
+
+- `notice_banner_polluted`
+  Internal warning templates such as "unable to scan attachment", "please verify the sender",
+  or "contact the security administrator" are treated as upstream notice text rather than threat
+  body content. When no link, payload, identity, or IOC signal reinforces the email, the social
+  cluster is heavily discounted and the final risk is capped to a `Safe`-equivalent floor.
+- `gateway_banner_polluted`
+  Upstream gateway headers and body banners can still be preserved as provenance, but if
+  `gateway_pre_classified` is the only surviving signal and there is no local corroboration from
+  link, payload, identity, IOC, delivery, or business-sensitivity clusters, the inherited prior
+  is collapsed to `Safe`-equivalent noise instead of remaining as an analyst-facing `Low`.
+- `auto_reply_like`
+  Auto-replies, out-of-office messages, and DSN-like notices can still be fully analyzed, but
+  weak semantic or sender-anomaly hits are suppressed when stronger threat clusters are absent.
+- `semantic_nlp_only_signal`
+  When the only flagged module is `semantic_scan`, and its categories are limited to weak NLP
+  intent labels such as `nlp_phishing`, `nlp_scam`, `nlp_bec`, `nlp_spam`, or
+  `nonsensical_spam`, the result is treated as low-confidence semantic noise instead of
+  multi-source evidence.
+- `transcript_like_structure`
+  This is a structure-based semantic-only downgrading signal, not a sender, subject, or keyword
+  whitelist. It is only set when the only flagged module is `semantic_scan` and the message body
+  looks like a multi-turn transcript based on generic text-shape features such as repeated short
+  lines, speaker-turn separators, or timestamp density. The goal is to reduce transcript-style
+  false positives without trusting attacker-controlled labels such as "file assistant".
+- benign interactive HTML wrappers in exported chat or office-sharing messages are also treated
+  conservatively: a lone `onclick` attribute is no longer classified as XSS unless the handler
+  actually performs redirect or script-execution behavior such as `window.location`, `eval`, or
+  `fetch`
+
+Current cap behavior:
+
+- notice-banner / auto-reply / DSN-like semantic noise is capped to `risk <= 0.12`
+- transcript-structure semantic-only noise is capped to `risk <= 0.18`
+- generic semantic-only weak NLP noise is capped to `risk <= 0.24`
+- these caps do not apply when `account_security_signal`, `credential_link_signal`, or
+  `malicious_ioc_signal` is present
+- a structural phishing triad of `credential_link_signal + malicious_ioc_signal + sender-identity anomaly`
+  now forces at least `Medium`, even when the body text itself is weak, polluted by gateway banners,
+  or intentionally disguised to avoid obvious phishing wording
+- real phishing samples that combine link deception, account-security lures, and IOC evidence
+  are therefore still expected to remain `High`
+
+### Alignment handling
+
+`domain_verify` does not contribute a threat cluster of its own in the default path.
+Instead, its `alignment_score` is consumed as context.
+
+Important current behavior:
+
+- alignment can reduce weak structural noise
+- alignment does **not** discount payload, link-deception, IOC, or social-engineering evidence
+- aligned attacker-owned phishing domains are therefore still allowed to reach `High`
+- the legacy `trust_score` field is retained in JSON details only for backward compatibility
+
+### Legacy engine map
+
+The older A-H grouped engine map still exists for `legacy_ds_murphy`:
 
 | Engine | Label | Modules |
 |--------|-------|---------|
@@ -201,11 +336,6 @@ The D-S fusion layer groups most modules into eight conceptual engines.
 | F | `semantic_intent` | `semantic_scan` |
 | G | `identity_anomaly` | `identity_anomaly` |
 | H | `transaction_correlation` | `transaction_correlation` |
-
-Important nuance:
-
-- `sandbox_scan` is currently **not** mapped into the A-H engine table in `module_to_engine()`
-- it still participates in the broader module result set and can influence the final verdict path outside the grouped engine fusion map
 
 ## 8. MTA Inline Tiering
 
@@ -270,7 +400,9 @@ Important built-in BPA helpers:
 
 The current pipeline supports:
 
-- `ds_murphy` (default)
+- `ds_murphy` (default config name, dispatched to `clustered_ds_v1`)
+- `clustered_ds_v1` (explicit name for the current default path)
+- `legacy_ds_murphy`
 - `tbm_v5`
 - `noisy_or`
 - `weighted_max`
@@ -290,11 +422,18 @@ From `pipeline/config.rs`:
 | `convergence_base_floor` | `0.40` |
 | `convergence_belief_threshold` | `0.10` |
 
+Important current nuance:
+
+- the persisted config still defaults to the string `ds_murphy`
+- the runtime dispatcher maps that string to `clustered_ds_v1`
+- selecting the old grouped-engine fusion now requires `legacy_ds_murphy`
+
 The practical effect is:
 
-- uncertainty contributes 30% of its mass to risk in the default D-S path
-- a single strong module can force a floor through the circuit breaker
-- two or more sufficiently aligned modules can force at least Medium severity through the convergence floor
+- uncertainty still contributes 30% of its mass to risk
+- clustered evidence, not raw module count, drives the default D-S path
+- strong corroborated link/social/IOC combinations can reach `High` even when sender alignment exists
+- weak gateway-banner or DSN-style noise is capped before it dominates the verdict
 
 ## 10. Data Security Pipeline
 
@@ -369,11 +508,11 @@ There are two supported build paths:
 
 ## 14. Operational Caveats That Matter
 
-- `VIGILYX_ALLOW_DEFAULT_CREDS` must be explicitly enabled before fallback credentials are allowed
+- `API_PASSWORD` and `API_JWT_SECRET` must always be set explicitly; fallback credentials are disabled
 - the API defaults to `127.0.0.1:8088`, so host-level TLS termination is the preferred public deployment pattern
 - `--profile mta` does not disable the standalone engine automatically
 - submission port 587 is still intentionally disabled
-- older documents that mention SQLite persistence, Pub/Sub-only transport, or custom per-module BPA math for `domain_verify` are out of date
+- older documents that mention SQLite persistence, Pub/Sub-only transport, default A-H grouped engine fusion, or generalized `trust` semantics for `domain_verify` are out of date
 
 ## 15. Bottom Line
 

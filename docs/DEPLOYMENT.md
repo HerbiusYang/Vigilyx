@@ -280,6 +280,7 @@ vi deploy/docker/.env
 # Required: SNIFFER_INTERFACE=<your capture interface>
 # Optional: AI_ENABLED=true (also pass --profile ai to docker compose)
 # Optional: HF_ENDPOINT=https://hf-mirror.com (China mainland)
+# Optional: SNIFFER_WORKERS / SNIFFER_HOST_* for mirrored high-traffic NIC tuning
 ```
 
 ### 4.3 Persistent Volumes
@@ -329,6 +330,7 @@ If you deploy from a local checkout through the helper script, use the explicit 
 ```
 
 `./deploy.sh` without `--production` remains the fast developer path (`release-fast` + `docker-compose.fast.yml`).
+For host-side capture tuning or compose/env-only changes, use `./deploy.sh --config-only --sniffer`.
 
 If you terminate TLS with host-level Caddy or Nginx in section 5, keep the container bound to localhost and do not enable the Compose `tls` profile.
 In the current Compose defaults, `--profile mta` adds `vigilyx-mta`; it does not automatically disable the standalone engine inside `vigilyx`.

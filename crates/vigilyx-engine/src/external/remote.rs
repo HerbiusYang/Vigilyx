@@ -5,7 +5,12 @@
 //! - /analyze/content, /analyze/attachment, /analyze/link
 //! - TimeoutAndErrorProcess
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tracing::{error, warn};
 
 use crate::module::ThreatLevel;
@@ -69,6 +74,49 @@ impl AiAnalysisResponse {
     }
 }
 
+const AI_BACKOFF_BASE: Duration = Duration::from_secs(30);
+const AI_BACKOFF_MAX: Duration = Duration::from_secs(300);
+
+struct RemoteAvailabilityState {
+    unavailable_until_epoch_secs: AtomicU64,
+    consecutive_failures: AtomicU32,
+}
+
+impl Default for RemoteAvailabilityState {
+    fn default() -> Self {
+        Self {
+            unavailable_until_epoch_secs: AtomicU64::new(0),
+            consecutive_failures: AtomicU32::new(0),
+        }
+    }
+}
+
+fn now_epoch_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn extract_retry_after_secs(body: &str) -> Option<u64> {
+    fn extract(value: &Value) -> Option<u64> {
+        match value {
+            Value::Number(num) => num.as_u64(),
+            Value::String(s) => s.parse().ok(),
+            Value::Object(map) => map
+                .get("retry_after_secs")
+                .and_then(extract)
+                .or_else(|| map.get("detail").and_then(extract))
+                .or_else(|| map.get("model_status").and_then(extract)),
+            _ => None,
+        }
+    }
+
+    serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|value| extract(&value))
+}
+
 /// Remote AI
 #[derive(Clone)]
 pub struct RemoteModuleProxy {
@@ -76,6 +124,7 @@ pub struct RemoteModuleProxy {
     client: reqwest::Client,
    /// SEC-H07: AI service-scoped internal authentication token
     internal_token: String,
+    availability: Arc<RemoteAvailabilityState>,
 }
 
 impl RemoteModuleProxy {
@@ -90,14 +139,81 @@ impl RemoteModuleProxy {
             base_url,
             client,
             internal_token,
+            availability: Arc::new(RemoteAvailabilityState::default()),
         }
+    }
+
+    pub fn is_request_available(&self) -> bool {
+        self.cooldown_remaining_secs() == 0
+    }
+
+    pub fn cooldown_remaining_secs(&self) -> u64 {
+        let until = self
+            .availability
+            .unavailable_until_epoch_secs
+            .load(Ordering::Relaxed);
+        until.saturating_sub(now_epoch_secs())
+    }
+
+    pub fn note_probe_failure(&self) {
+        self.record_failure("startup_health_probe");
+    }
+
+    pub fn note_timeout(&self) {
+        self.record_failure("request_timeout");
+    }
+
+    fn note_success(&self) {
+        self.availability
+            .consecutive_failures
+            .store(0, Ordering::Relaxed);
+        self.availability
+            .unavailable_until_epoch_secs
+            .store(0, Ordering::Relaxed);
+    }
+
+    fn record_failure(&self, reason: &str) {
+        let failures = self
+            .availability
+            .consecutive_failures
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
+        let shift = failures.saturating_sub(1).min(4);
+        let backoff_secs =
+            (AI_BACKOFF_BASE.as_secs() << shift).min(AI_BACKOFF_MAX.as_secs());
+        let until = now_epoch_secs().saturating_add(backoff_secs);
+        self.availability
+            .unavailable_until_epoch_secs
+            .store(until, Ordering::Relaxed);
+        warn!(
+            base_url = %self.base_url,
+            reason,
+            failures,
+            backoff_secs,
+            "AI remote unavailable, enabling temporary cooldown"
+        );
     }
 
    /// Check AI Servicewhether
     pub async fn health_check(&self) -> bool {
-        let url = format!("{}/health", self.base_url);
-        match self.client.get(&url).send().await {
-            Ok(resp) => resp.status().is_success(),
+        let ready_url = format!("{}/health/ready", self.base_url);
+        match self.client.get(&ready_url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                self.note_success();
+                return true;
+            }
+            Ok(resp) if resp.status() == reqwest::StatusCode::NOT_FOUND => {}
+            Ok(_) => return false,
+            Err(_) => return false,
+        }
+
+        let liveness_url = format!("{}/health", self.base_url);
+        match self.client.get(&liveness_url).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                self.note_success();
+                true
+            }
+            Ok(_) => false,
             Err(_) => false,
         }
     }
@@ -134,6 +250,12 @@ impl RemoteModuleProxy {
         url: &str,
         body: &T,
     ) -> Result<AiAnalysisResponse, RemoteError> {
+        if !self.is_request_available() {
+            return Err(RemoteError::TemporarilyUnavailable {
+                retry_after_secs: self.cooldown_remaining_secs(),
+            });
+        }
+
         let mut req = self.client.post(url).json(body);
        // SEC-H07: AddInternalServiceAuthentication
         if !self.internal_token.is_empty() {
@@ -141,6 +263,7 @@ impl RemoteModuleProxy {
         }
         let response = req.send().await.map_err(|e| {
             error!(url, "AI service request failed: {}", e);
+            self.record_failure("connection_failed");
             RemoteError::ConnectionFailed(e.to_string())
         })?;
 
@@ -148,16 +271,28 @@ impl RemoteModuleProxy {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             warn!(url, %status, "AI service returned error: {}", body);
+            if status.is_server_error() || status.as_u16() == 429 {
+                self.record_failure("service_error");
+                if matches!(status.as_u16(), 429 | 503) {
+                    return Err(RemoteError::TemporarilyUnavailable {
+                        retry_after_secs: extract_retry_after_secs(&body)
+                            .unwrap_or_else(|| self.cooldown_remaining_secs().max(1)),
+                    });
+                }
+            }
             return Err(RemoteError::ServiceError {
                 status: status.as_u16(),
                 message: body,
             });
         }
 
-        response.json::<AiAnalysisResponse>().await.map_err(|e| {
+        let parsed = response.json::<AiAnalysisResponse>().await.map_err(|e| {
             error!(url, "Failed to parse AI response: {}", e);
+            self.record_failure("parse_error");
             RemoteError::ParseError(e.to_string())
-        })
+        })?;
+        self.note_success();
+        Ok(parsed)
     }
 }
 
@@ -168,6 +303,7 @@ pub enum RemoteError {
     ServiceError { status: u16, message: String },
     ParseError(String),
     Timeout,
+    TemporarilyUnavailable { retry_after_secs: u64 },
 }
 
 impl std::fmt::Display for RemoteError {
@@ -179,8 +315,57 @@ impl std::fmt::Display for RemoteError {
             }
             RemoteError::ParseError(e) => write!(f, "Parse error: {}", e),
             RemoteError::Timeout => write!(f, "Request timeout"),
+            RemoteError::TemporarilyUnavailable { retry_after_secs } => {
+                write!(f, "Temporarily unavailable, retry after {}s", retry_after_secs)
+            }
         }
     }
 }
 
 impl std::error::Error for RemoteError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_retry_after_secs_reads_nested_payloads() {
+        let body = r#"{"error":"MODEL_UNAVAILABLE","retry_after_secs":120,"detail":{"retry_after_secs":"45"}}"#;
+        assert_eq!(extract_retry_after_secs(body), Some(120));
+
+        let nested = r#"{"detail":{"model_status":{"retry_after_secs":33}}}"#;
+        assert_eq!(extract_retry_after_secs(nested), Some(33));
+    }
+
+    #[test]
+    fn extract_retry_after_secs_returns_none_for_invalid_payloads() {
+        assert_eq!(extract_retry_after_secs("not-json"), None);
+        assert_eq!(
+            extract_retry_after_secs(r#"{"detail":{"retry_after_secs":"soon"}}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn timeout_marks_proxy_temporarily_unavailable() {
+        let proxy = RemoteModuleProxy::new("http://127.0.0.1:8900".to_string());
+        assert!(proxy.is_request_available());
+
+        proxy.note_timeout();
+
+        assert!(!proxy.is_request_available());
+        assert!(proxy.cooldown_remaining_secs() > 0);
+    }
+
+    #[test]
+    fn successful_health_probe_clears_cooldown_state() {
+        let proxy = RemoteModuleProxy::new("http://127.0.0.1:8900".to_string());
+        proxy.note_timeout();
+        assert!(!proxy.is_request_available());
+
+        proxy.note_success();
+
+        assert!(proxy.is_request_available());
+        assert_eq!(proxy.cooldown_remaining_secs(), 0);
+    }
+}

@@ -14,7 +14,9 @@ use regex::Regex;
 use crate::context::SecurityContext;
 use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
-use crate::modules::common::extract_domain_from_url;
+use crate::modules::common::{
+    extract_domain_from_url, is_probable_cloud_asset_host, is_probable_static_asset_path,
+};
 
 /// Long random hex string detection (DGA indicators) - static to avoid recompilation
 static RE_HEX_DGA: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[0-9a-f]{8,}").unwrap());
@@ -198,6 +200,44 @@ fn extract_url_words(text: &str) -> Vec<String> {
     words
 }
 
+fn consonant_metrics(alpha_bytes: &[u8]) -> (u32, f64) {
+    let vowels = b"aeiou";
+    let mut max_consonant_run = 0u32;
+    let mut current_run = 0u32;
+    for &b in alpha_bytes {
+        if !vowels.contains(&b.to_ascii_lowercase()) {
+            current_run += 1;
+            max_consonant_run = max_consonant_run.max(current_run);
+        } else {
+            current_run = 0;
+        }
+    }
+
+    let consonant_count = alpha_bytes
+        .iter()
+        .filter(|b| !vowels.contains(&b.to_ascii_lowercase()))
+        .count();
+    let consonant_ratio = consonant_count as f64 / alpha_bytes.len() as f64;
+
+    (max_consonant_run, consonant_ratio)
+}
+
+fn is_human_readable_label_segment(segment: &str) -> bool {
+    let normalized = segment.to_ascii_lowercase();
+    if crate::modules::identity_anomaly::is_human_readable_domain_label(&normalized) {
+        return true;
+    }
+    if normalized.len() < 4 || !normalized.bytes().all(|b| b.is_ascii_lowercase()) {
+        return false;
+    }
+    let alpha_bytes = normalized.as_bytes();
+    let has_vowel = alpha_bytes
+        .iter()
+        .any(|b| b"aeiou".contains(&b.to_ascii_lowercase()));
+    let (max_consonant_run, consonant_ratio) = consonant_metrics(alpha_bytes);
+    has_vowel && max_consonant_run <= 2 && consonant_ratio < 0.75
+}
+
 /// Check one word against the dictionary for near-misses.
 fn find_typo_match(word: &str) -> Option<(String, String)> {
     for &dict_word in COMMON_URL_WORDS {
@@ -206,7 +246,9 @@ fn find_typo_match(word: &str) -> Option<(String, String)> {
             continue;
         }
         let dist = edit_distance(word, dict_word);
-        if dist == 1 || (dist == 2 && word.len() >= 6) {
+        let same_boundary_chars = word.chars().next() == dict_word.chars().next()
+            && word.chars().last() == dict_word.chars().last();
+        if dist == 1 || (dist == 2 && word.len() >= 6 && same_boundary_chars) {
             return Some((
                 format!(
                     "URL path typosquatting: \"{}\" likely misspelling of \"{}\" (edit distance={})",
@@ -262,23 +304,6 @@ fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
     let url_lower = effective_url.to_lowercase();
     let used_gateway_target = effective_url != url_decoded;
 
-   // Skip structural checks for trusted domains and mail security gateways.
-   // Trusted domains (e.g., QQ mail download URLs) naturally have long params.
-   // Security gateways (e.g., Trend Micro DDEI, Proofpoint) rewrite URLs with
-   // redirect/auth params that would otherwise trigger false positives.
-    let host_for_check = url_lower
-        .strip_prefix("https://")
-        .or_else(|| url_lower.strip_prefix("http://"))
-        .and_then(|s| s.split('/').next())
-        .and_then(|h| h.split(':').next())
-        .unwrap_or("");
-    if crate::modules::link_scan::is_trusted_url_domain(host_for_check)
-        || (!used_gateway_target
-            && crate::modules::link_scan::is_mail_security_gateway_pub(&url_lower))
-    {
-        return (score, findings);
-    }
-
    // Parse URL: scheme://host/path?query#fragment
     let after_scheme = url_lower
         .strip_prefix("https://")
@@ -297,6 +322,35 @@ fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
     };
 
     let path = host_path.find('/').map(|i| &host_path[i..]).unwrap_or("/");
+    let host_for_check = host_path
+        .split('/')
+        .next()
+        .and_then(|h| h.split(':').next())
+        .unwrap_or("");
+    let host_under_safe_domain =
+        crate::modules::link_scan::is_well_known_safe_domain(host_for_check);
+
+   // Static image/font/script assets hosted on object storage frequently use
+   // bucket labels and long query strings, but they are not landing pages and
+   // should not trigger login-path/DGA heuristics on their own. The same
+   // treatment applies to static assets hosted under curated well-known safe
+   // domains such as provider CDN roots (for example *.127.net).
+    if (is_probable_cloud_asset_host(host_for_check) || host_under_safe_domain)
+        && is_probable_static_asset_path(path)
+    {
+        return (score, findings);
+    }
+
+   // Skip structural checks for trusted domains and mail security gateways.
+   // Trusted domains (e.g., QQ mail download URLs) naturally have long params.
+   // Security gateways (e.g., Trend Micro DDEI, Proofpoint) rewrite URLs with
+   // redirect/auth params that would otherwise trigger false positives.
+    if crate::modules::link_scan::is_trusted_url_domain(host_for_check)
+        || (!used_gateway_target
+            && crate::modules::link_scan::is_mail_security_gateway_pub(&url_lower))
+    {
+        return (score, findings);
+    }
 
    // 1. Suspicious path keywords (check both path and fragment)
     let combined_path = if let Some(frag) = fragment {
@@ -402,13 +456,10 @@ fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
 
    // 5b. DGA/random domain detection (consonant clustering analysis)
    // e.g., rqvzkqb.shbllgs.cn is likely DGA-generated
-    {
-        let host = host_path.split('/').next().unwrap_or("");
-        let domain_part = host.split(':').next().unwrap_or(host);
+    if !host_under_safe_domain {
+        let domain_part = host_for_check;
        // Split into domain labels (excluding TLD)
         let labels: Vec<&str> = domain_part.split('.').collect();
-       // DGA consonant analysis
-        let vowels = b"aeiou";
         for label in &labels {
             if label.len() < 5 {
                 continue;
@@ -417,42 +468,54 @@ fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
             if !label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
                 continue;
             }
-            let alpha_bytes: Vec<u8> = label
-                .bytes()
-                .filter(|b| b.is_ascii_alphabetic())
-                .collect();
-            if alpha_bytes.len() < 5 {
+            let normalized_label = label.to_ascii_lowercase();
+            let label_segments: Vec<&str> =
+                normalized_label.split('-').filter(|segment| !segment.is_empty()).collect();
+            if label_segments.len() > 1
+                && label_segments
+                    .iter()
+                    .all(|segment| is_human_readable_label_segment(segment))
+            {
                 continue;
             }
-            
-            let mut max_consonant_run = 0u32;
-            let mut current_run = 0u32;
-            for &b in &alpha_bytes {
-                if !vowels.contains(&b.to_ascii_lowercase()) {
-                    current_run += 1;
-                    max_consonant_run = max_consonant_run.max(current_run);
-                } else {
-                    current_run = 0;
+
+            let dga_candidates: Vec<&str> = if label_segments.len() > 1 {
+                label_segments
+            } else {
+                vec![normalized_label.as_str()]
+            };
+            for candidate in dga_candidates {
+                let alpha_bytes: Vec<u8> = candidate
+                    .bytes()
+                    .filter(|b| b.is_ascii_alphabetic())
+                    .collect();
+                if alpha_bytes.len() < 5 {
+                    continue;
+                }
+                if crate::modules::identity_anomaly::is_human_readable_domain_label(candidate) {
+                    continue;
+                }
+
+                let (max_consonant_run, consonant_ratio) = consonant_metrics(&alpha_bytes);
+                if max_consonant_run >= 4 || (max_consonant_run >= 3 && consonant_ratio > 0.70) {
+                    let dga_weight = if domain_trusted { 0.05 } else { 0.30 };
+                    score += dga_weight;
+                    findings.push((
+                        format!(
+                            "Domain label \"{}\" likely DGA-generated (consecutive consonants={}, consonant ratio={:.0}%)",
+                            candidate, max_consonant_run, consonant_ratio * 100.0
+                        ),
+                        "dga_random_domain".to_string(),
+                    ));
+                    break; // One DGA finding per URL is sufficient
                 }
             }
-            
-            let consonant_count = alpha_bytes
-                .iter()
-                .filter(|b| !vowels.contains(&b.to_ascii_lowercase()))
-                .count();
-            let consonant_ratio = consonant_count as f64 / alpha_bytes.len() as f64;
 
-            if max_consonant_run >= 4 || (max_consonant_run >= 3 && consonant_ratio > 0.70) {
-                let dga_weight = if domain_trusted { 0.05 } else { 0.30 };
-                score += dga_weight;
-                findings.push((
-                    format!(
-                        "Domain label \"{}\" likely DGA-generated (consecutive consonants={}, consonant ratio={:.0}%)",
-                        label, max_consonant_run, consonant_ratio * 100.0
-                    ),
-                    "dga_random_domain".to_string(),
-                ));
-                break; // One DGA finding per URL is sufficient
+            if findings
+                .iter()
+                .any(|(_, category)| category == "dga_random_domain")
+            {
+                break;
             }
         }
     }
@@ -803,6 +866,11 @@ mod tests {
     use std::sync::Arc;
     use vigilyx_core::models::{EmailContent, EmailLink, EmailSession, Protocol};
 
+    fn reset_url_domain_sets() {
+        crate::modules::link_scan::set_trusted_url_domains(Arc::new(HashSet::new()));
+        crate::modules::link_scan::set_well_known_safe_domains(Arc::new(HashSet::new()));
+    }
+
     fn make_ctx(link: &str) -> SecurityContext {
         let mut session = EmailSession::new(
             Protocol::Smtp,
@@ -825,7 +893,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_gateway_target_url_is_used_for_recipient_matching() {
-        crate::modules::link_scan::set_trusted_url_domains(Arc::new(HashSet::new()));
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
         let module = LinkContentModule::new();
         let ctx = make_ctx(
             "https://safelinks.protection.outlook.com/?url=https%3A%2F%2Fevil.example%2Flogin%3Fuser%3Dvictim%40example.com",
@@ -834,5 +903,98 @@ mod tests {
         let result = module.analyze(&ctx).await.unwrap();
 
         assert!(result.categories.contains(&"recipient_in_url".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_legitimate_brand_label_is_not_marked_as_dga() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = LinkContentModule::new();
+        let ctx = make_ctx("https://rep.hundsun.cn/report/clearance");
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert!(
+            !result.categories.contains(&"dga_random_domain".to_string()),
+            "Known brand labels should not be marked as DGA: {:?}",
+            result.categories
+        );
+    }
+
+    #[tokio::test]
+    async fn test_object_storage_static_asset_is_not_flagged() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = LinkContentModule::new();
+        let ctx = make_ctx(
+            "https://qfk-files.oss-cn-hangzhou.aliyuncs.com/assets/login-banner.png?x-oss-process=image/resize,w_600",
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert!(result.categories.is_empty(), "static cloud asset should be ignored: {:?}", result.categories);
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+    }
+
+    #[tokio::test]
+    async fn test_well_known_safe_cdn_asset_is_not_flagged_as_dga() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        crate::modules::link_scan::set_well_known_safe_domains(Arc::new(HashSet::from([
+            "127.net".to_string(),
+        ])));
+        let module = LinkContentModule::new();
+        let ctx = make_ctx(
+            "https://mail-online.nosdn.127.net/wzpmmc/b7713ee39fc6d0272a61196c395ab44e.jpg",
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert!(
+            !result.categories.contains(&"dga_random_domain".to_string()),
+            "curated safe CDN assets should not trip DGA heuristics: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_login_landing_page_still_has_structural_path_signal() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let (_, findings) = analyze_url("https://pro.qcc.com/login?path=investigation/automation-check");
+
+        assert!(findings
+            .iter()
+            .any(|(_, category)| category == "suspicious_path"));
+    }
+
+    #[tokio::test]
+    async fn test_hyphenated_human_readable_domain_is_not_marked_as_dga() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = LinkContentModule::new();
+        let ctx = make_ctx("https://product-support.chaitin.cn/package/detail?id=12345");
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert!(
+            !result.categories.contains(&"dga_random_domain".to_string()),
+            "human-readable hyphenated labels should not be marked as DGA: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_receive_path_is_not_treated_as_receipt_typo() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let (_, findings) = analyze_url("https://product-support.chaitin.cn/message/receive?id=12345");
+
+        assert!(
+            !findings.iter().any(|(_, category)| category == "url_typo"),
+            "common verbs like receive should not be treated as receipt typos: {:?}",
+            findings
+        );
     }
 }

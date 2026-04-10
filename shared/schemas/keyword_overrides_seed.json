@@ -4564,5 +4564,59 @@
       "팀 빌딩 행사"
     ],
     "removed": []
+  },
+  "gateway_banner_patterns": {
+    "added": [
+      "[注意风险邮件]",
+      "[外部邮件]",
+      "风险邮件",
+      "外部邮件",
+      "该邮件可能存在恶意内容，请谨慎甄别邮件",
+      "此邮件可能存在恶意内容，请谨慎甄别邮件",
+      "检测结果：垃圾邮件",
+      "检测结果:垃圾邮件",
+      "this email may",
+      "potentially malicious",
+      "external email",
+      "suspicious email"
+    ],
+    "removed": []
+  },
+  "notice_banner_patterns": {
+    "added": [
+      "无法扫描邮件附件",
+      "请确认邮件来源以及真实性",
+      "联系科技部网络安全管理员处置",
+      "联系网络安全管理员处置",
+      "unable to scan attachment",
+      "unable to scan email attachment",
+      "verify the sender and authenticity"
+    ],
+    "removed": []
+  },
+  "dsn_patterns": {
+    "added": [
+      "delivery status notification",
+      "delivery failed",
+      "undeliverable",
+      "returned mail",
+      "mail delivery subsystem",
+      "failure notice",
+      "退信",
+      "投递失败"
+    ],
+    "removed": []
+  },
+  "auto_reply_patterns": {
+    "added": [
+      "自动回复",
+      "自动答复",
+      "auto reply",
+      "autoreply",
+      "automatic reply",
+      "out of office",
+      "vacation reply"
+    ],
+    "removed": []
   }
 }

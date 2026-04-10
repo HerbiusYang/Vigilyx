@@ -1,87 +1,78 @@
-# Engine A: Sender Reputation
+# `domain_verify`: Sender Alignment Context
 
-This document describes the current implementation of Engine A in Vigilyx.
+This document describes the current implementation role of `domain_verify` in Vigilyx.
 
 Source of truth:
 
 - `crates/vigilyx-engine/src/modules/domain_verify.rs`
-- `crates/vigilyx-engine/src/fusion/engine_map.rs`
+- `crates/vigilyx-engine/src/pipeline/verdict/evidence_clusters.rs`
+- `crates/vigilyx-engine/src/pipeline/verdict/clustered_ds_v1.rs`
+- `crates/vigilyx-engine/src/pipeline/verdict/noisy_or.rs`
 - `crates/vigilyx-core/src/security/mod.rs`
 
 ## Summary
 
 | Field | Value |
 |------|-------|
-| Engine label | `sender_reputation` (`EngineId::A`) |
-| Current module set | `domain_verify` |
+| Module id | `domain_verify` |
 | Module metadata name | `Domain Verification` |
 | Pillar | `Package` |
 | Timeout | `3000 ms` |
 | CPU-bound | Yes |
 | Remote call | No |
 | AI dependency | No |
+| Default verdict role | alignment context, not a threat cluster |
+| Legacy grouped-engine role | `sender_reputation` (`Engine A`) in `legacy_ds_murphy` only |
 
-Engine A produces a **trust-oriented signal**. It does not try to prove that a message is malicious. Instead, it contributes benign evidence when sender-domain alignment looks consistent.
+`domain_verify` emits an **alignment signal**, not a benignity verdict. A sender domain can be
+perfectly self-consistent and still be malicious.
 
 ## Position in the Current Fusion Model
 
-The eight conceptual engines are defined in `fusion/engine_map.rs`.
+In the current default verdict path, `domain_verify` is **not** treated as an independent threat
+engine. Instead:
 
-Engine A is the sender-reputation engine:
+- the module still returns `ThreatLevel::Safe`
+- its `alignment_score` is extracted by the verdict normalizer
+- the normalizer adds context such as `sender_alignment_verified`
+- that context can reduce weak structural noise
+- it cannot suppress corroborated phishing, IOC, malicious-link, or payload evidence
 
-```text
-A  sender_reputation       -> domain_verify
-B  content_analysis        -> content_scan, html_scan, html_pixel_art, attach_scan,
-                              attach_content, attach_hash, yara_scan, av_eml_scan, av_attach_scan
-C  behavior_baseline       -> anomaly_detect
-D  url_analysis            -> link_scan, link_reputation, link_content
-E  protocol_compliance     -> header_scan, mime_scan
-F  semantic_intent         -> semantic_scan
-G  identity_anomaly        -> identity_anomaly
-H  transaction_correlation -> transaction_correlation
-```
-
-Default cross-engine correlation with Engine A:
-
-| Engine | Correlation |
-|--------|-------------|
-| B | `0.10` |
-| C | `0.05` |
-| D | `0.05` |
-| E | `0.15` |
-| F | `0.05` |
-| G | `0.10` |
-| H | `0.05` |
-
-Engine E has the highest default correlation with Engine A because both rely on sender and header alignment signals.
+The old A-H engine table is still relevant only for `legacy_ds_murphy`, where `domain_verify`
+remains mapped to `Engine A / sender_reputation`.
 
 ## What `domain_verify` Actually Checks
 
-The module is intentionally lightweight and local. It does **not** perform live DNS lookups, SPF evaluation, DMARC validation, or external reputation queries by itself.
+The module is intentionally lightweight and local. It does **not** perform live DNS lookups, SPF
+evaluation, DMARC validation, or external reputation queries by itself.
 
 Current checks:
 
 1. Received-host alignment
-   - Extracts the hostname from `Received` headers with `from\s+...`
-   - Grants `+0.40` trust when the hostname equals the sender domain or is its subdomain
+   - extracts a hostname from `Received` headers
+   - adds alignment when that hostname matches the sender domain or its subdomain
 
 2. DKIM signing-domain alignment
-   - Extracts the `d=` domain from `DKIM-Signature`
-   - Grants `+0.35` trust when the DKIM domain matches the sender domain or is its parent domain
+   - extracts the `d=` domain from `DKIM-Signature`
+   - adds alignment when the DKIM domain matches the sender domain or its parent domain
 
-3. Link-domain consistency
-   - Extracts domains from parsed links in the message body
-   - Grants `+0.25` trust when at least 80% of link domains align with the sender domain
+3. Envelope mismatch suppression
+   - compares the `From` header domain with the SMTP `MAIL FROM` domain
+   - if they differ, the module suppresses the accumulated alignment score back to `0.0`
 
-4. Envelope mismatch suppression
-   - Compares the `From` header domain with the SMTP `MAIL FROM` domain
-   - If they differ, the module resets the accumulated trust score to `0.0`
+4. Display-name brand impersonation penalty
+   - extracts the human-readable display name from the `From` header
+   - reduces the alignment score when the display name claims a major brand but the sender domain
+     does not match the expected brand family
 
-5. Display-name brand impersonation suppression
-   - Extracts the human-readable display name from the `From` header
-   - Applies a trust penalty when the display name claims to be a known brand but the sender domain does not match expected brand-domain fragments
+Important current behavior:
 
-Known built-in brand checks include examples such as Amazon, Microsoft, Apple, Google, PayPal, DHL, FedEx, UPS, Japan Post, Sagawa, and Yamato.
+- link-domain consistency is **no longer** used as a positive trust signal
+- attacker-controlled domains therefore do not gain extra benign weight merely because their
+  embedded links point back to the same domain
+
+Known built-in brand checks include examples such as Amazon, Microsoft, Apple, Google, PayPal,
+DHL, FedEx, UPS, Japan Post, Sagawa, and Yamato.
 
 ## Inputs
 
@@ -89,11 +80,11 @@ Known built-in brand checks include examples such as Amazon, Microsoft, Apple, G
 |--------|-------|
 | Envelope sender | `ctx.session.mail_from` |
 | Message headers | `ctx.session.content.headers` |
-| Parsed links | `ctx.session.content.links` |
 
 ## Output Behavior
 
-`domain_verify` always returns `ThreatLevel::Safe`. Its job is to contribute safe evidence or remain weakly informative, not to emit a threat verdict on its own.
+`domain_verify` always returns `ThreatLevel::Safe`. Its job is to expose sender-alignment context,
+not to declare a message benign or malicious on its own.
 
 There are two important cases:
 
@@ -103,17 +94,17 @@ If `MAIL FROM` is missing or cannot be parsed:
 
 - `confidence = 0.0`
 - `verified = false`
-- `trust_score = 0.0`
+- `alignment_score = 0.0`
 - `bpa = Bpa::vacuous()`
 
-This means Engine A contributes no information.
+This means the module contributes no information.
 
 ### Sender domain available
 
 If a sender domain exists:
 
-- `confidence = 0.90` when verification succeeds
-- `confidence = 0.50` when verification does not succeed
+- `confidence = 0.90` when alignment is established
+- `confidence = 0.50` when alignment is not established
 - `bpa = Bpa::safe_analyzed()`
 
 `Bpa::safe_analyzed()` is defined in `vigilyx-core` as:
@@ -122,30 +113,67 @@ If a sender domain exists:
 { b = 0.0, d = 0.15, u = 0.85, epsilon = 0.0 }
 ```
 
-That is a weak benign signal with high uncertainty. It is intentionally non-absorbing: strong threat evidence from other modules still survives Dempster-style combination.
+That is a weak benign-style signal with high uncertainty. It is intentionally non-absorbing.
+Strong threat evidence from other modules survives Dempster-style combination.
+
+## JSON Details
+
+Current `details` fields include:
+
+- `verified`
+- `alignment_score`
+- `trust_score`
+- `sender_domain`
+
+Important nuance:
+
+- `trust_score` is retained only as a compatibility mirror of `alignment_score`
+- callers should interpret it as alignment metadata, not as proof of benignity
+
+## How the Default Clustered Path Uses Alignment
+
+In `clustered_ds_v1` and the updated fallback aggregators:
+
+- alignment may reduce weak structural clusters such as delivery-integrity noise
+- alignment may reduce inherited gateway prior weight
+- alignment may reduce business-sensitivity-only inflation
+- alignment does **not** reduce:
+  - `link_and_html_deception`
+  - `external_reputation_ioc`
+  - `social_engineering_intent`
+  - `payload_malware`
+
+This is deliberate. A self-consistent attacker domain should not be able to hide a credential
+phishing campaign simply by aligning its own headers and DKIM.
 
 ## Summary Strings
 
 Current summary behavior:
 
-- Sender missing: `"No sender domain available, unable to verify"`
-- Mismatch case: `"Domain verification anomaly: From header (...) does not match envelope sender domain (...)"`
-- Verified case: `"Domain verification passed (trust score X.XX), sender domain: ..."`
-- Unverified case: `"Domain verification failed, sender domain: ..."`
+- sender missing: `"No sender domain available, unable to verify"`
+- mismatch case: `"Domain verification anomaly: From header (...) does not match envelope sender domain (...)"`
+- verified case: `"Sender alignment verified (alignment score X.XX), sender domain: ..."`
+- unverified case: `"Sender alignment not established, sender domain: ..."`
 
 ## Important Constraints
 
-- This module does not execute DNS, SPF, or DMARC resolution.
-- It does not query OTX, VirusTotal, AbuseIPDB, or any other external service.
-- It does not create a custom BPA from `trust_score`; it uses the standard `safe_analyzed()` and `vacuous()` helpers.
-- It is mapped into Engine A for fusion purposes even though its own `ModuleResult` leaves `engine_id` unset; the aggregation layer resolves that through `module_to_engine("domain_verify")`.
+- this module does not execute DNS, SPF, or DMARC resolution
+- it does not query OTX, VirusTotal, AbuseIPDB, or any other external service
+- it does not create a custom BPA from `alignment_score`
+- in the default path it is consumed as context, not as a standalone threat cluster
+- in `legacy_ds_murphy`, it is still part of the old `sender_reputation` engine map
 
 ## Why This Matters
 
-Older documentation often described `domain_verify` as a generalized sender-authentication engine. That is no longer accurate. In the current codebase, it is a narrow sender-alignment and trust-suppression module whose main purpose is:
+Older documentation described `domain_verify` as a generalized sender-reputation or trust engine.
+That is no longer accurate.
 
-- reward obvious sender-domain consistency
-- suppress trust when header and envelope domains diverge
-- suppress trust when the display name impersonates a major brand
+In the current codebase, its role is narrower:
 
-That behavior is materially different from full SPF, DKIM, or DMARC enforcement and should be documented separately from `header_scan`.
+- measure sender-side alignment from locally available headers
+- suppress weak structural noise when alignment is good
+- penalize header-envelope mismatch and display-name brand impersonation
+- avoid granting attacker-controlled link alignment any extra benign weight
+
+That behavior is materially different from full SPF, DKIM, or DMARC enforcement and should be
+understood as verdict context, not as standalone sender reputation.

@@ -120,8 +120,8 @@ pub(super) fn aggregate_noisy_or(
         s_amp
     };
 
-   // Step 5: Domain
-    let s_final = apply_trust_discount(s_boosted, results);
+   // Step 5: Sender alignment
+    let s_final = apply_alignment_discount(s_boosted, results);
 
     let final_level = ThreatLevel::from_score(s_final);
     let summary = build_summary(
@@ -156,14 +156,56 @@ pub(super) const DANGEROUS_COMBOS: &[(&str, &str)] = &[
     ("phishing", "nonsensical_spam"),
 ];
 
-/// Domain: trust_score=1.0 -> 0.6x, trust_score=0 ->
-pub(super) fn apply_trust_discount(score: f64, results: &HashMap<String, ModuleResult>) -> f64 {
+/// Sender alignment can soften low-confidence structural anomalies,
+/// but it must not discount corroborated phishing/malware evidence.
+pub(super) fn apply_alignment_discount(score: f64, results: &HashMap<String, ModuleResult>) -> f64 {
+    let flagged_modules = results
+        .values()
+        .filter(|result| result.threat_level > ThreatLevel::Safe)
+        .count();
+    let has_corroborated_threat = results.values().any(|result| {
+        if result.threat_level <= ThreatLevel::Safe {
+            return false;
+        }
+        matches!(
+            result.module_id.as_str(),
+            "link_scan"
+                | "link_content"
+                | "link_reputation"
+                | "attach_hash"
+                | "av_eml_scan"
+                | "av_attach_scan"
+                | "sandbox_scan"
+                | "yara_scan"
+        ) || result.categories.iter().any(|category| {
+            matches!(
+                category.as_str(),
+                "phishing"
+                    | "account_security_phishing"
+                    | "targeted_credential_phishing"
+                    | "ioc_ip_hit"
+                    | "sender_ip_malicious"
+                    | "malware_hash"
+                    | "virus_detected"
+                    | "suspicious_params"
+            )
+        })
+    });
+
+    if flagged_modules > 1 || has_corroborated_threat {
+        return score;
+    }
+
     if let Some(dv) = results.get("domain_verify")
         && dv.threat_level == ThreatLevel::Safe
-        && let Some(trust) = dv.details.get("trust_score").and_then(|v| v.as_f64())
-        && trust > 0.0
+        && let Some(alignment) = dv
+            .details
+            .get("alignment_score")
+            .or_else(|| dv.details.get("trust_score"))
+            .and_then(|v| v.as_f64())
+        && alignment > 0.0
     {
-        let discount = 1.0 - trust * TRUST_DISCOUNT_FACTOR;
+        let discount = 1.0 - alignment * TRUST_DISCOUNT_FACTOR;
         return score * discount;
     }
     score

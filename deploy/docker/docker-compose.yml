@@ -191,6 +191,7 @@ services:
       # Internal inter-service auth token (must match the vigilyx container)
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN}
       - SNIFFER_CAPTURE_BUFFER_MB=${SNIFFER_CAPTURE_BUFFER_MB:-256}
+      - SNIFFER_WORKERS=${SNIFFER_WORKERS:-16}
       - SMTP_PORTS=${SMTP_PORTS:-25,465,587,2525,2526}
       - POP3_PORTS=${POP3_PORTS:-110,995}
       - IMAP_PORTS=${IMAP_PORTS:-143,993}
