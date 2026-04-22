@@ -12,13 +12,13 @@ members = [
 ]
 
 [workspace.package]
-version = "0.9.0"
+version = "0.9.1"
 edition = "2024"
 authors = ["Vigilyx Open Source Team"]
 license = "AGPL-3.0-only"
 description = "Real-time email threat detection platform with passive network capture and Dempster-Shafer evidence fusion"
-repository = "https://github.com/DoHeras/Vigilyx"
-homepage = "https://github.com/DoHeras/Vigilyx"
+repository = "https://github.com/HerbiusYang/Vigilyx"
+homepage = "https://github.com/HerbiusYang/Vigilyx"
 keywords = ["email-security", "threat-detection", "phishing", "network-capture", "dempster-shafer"]
 categories = ["network-programming", "command-line-utilities"]
 

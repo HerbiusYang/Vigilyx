@@ -4,6 +4,14 @@ All notable changes to Vigilyx are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the project follows [Semantic Versioning](https://semver.org/).
 
+## [0.9.1] - 2026-04-21
+
+### Changed
+
+- Pinned the frontend toolchain to `Node 24.15.0` and `npm 11.12.1` across local development, CI, remote deploys, and production Docker builds
+- Added frontend toolchain verification and containerized frontend builds in `deploy.sh` so remote deployments no longer depend on the host Node.js version
+- Refreshed release metadata and UI version strings to `0.9.1`
+
 ## [0.9.0] - 2026-03-31
 
 Initial open-source release.
