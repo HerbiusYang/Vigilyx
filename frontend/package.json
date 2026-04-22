@@ -5,8 +5,13 @@
   "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
-    "url": "https://github.com/DoHeras/Vigilyx"
+    "url": "https://github.com/HerbiusYang/Vigilyx"
   },
+  "engines": {
+    "node": ">=24.15.0 <25",
+    "npm": ">=11.12.1 <12"
+  },
+  "packageManager": "npm@11.12.1",
   "type": "module",
   "scripts": {
     "dev": "vite",

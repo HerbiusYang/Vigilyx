@@ -90,12 +90,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 24
+      - name: Setup Node.js 24.15.0
         uses: actions/setup-node@v4
         with:
-          node-version: "24"
+          node-version-file: .nvmrc
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Pin npm 11.12.1
+        run: npm install -g npm@11.12.1
+
+      - name: Verify pinned frontend toolchain
+        run: bash ../scripts/check-frontend-toolchain.sh
 
       - name: Install dependencies
         run: npm ci
