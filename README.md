@@ -260,12 +260,29 @@ ssh <server> "docker exec vigilyx-rust-builder cargo test --workspace"
 ssh <server> "docker exec vigilyx-rust-builder cargo fmt --check"
 ```
 
+Frontend toolchain:
+
+```bash
+nvm use
+bash scripts/check-frontend-toolchain.sh
+cd frontend
+npm ci
+```
+
+- Frontend development is pinned to `Node 24.15.0` via [`.nvmrc`](.nvmrc).
+- Use `npm 11.12.1` for lockfile updates. The repo declares this in [frontend/package.json](frontend/package.json) and enforces it with [frontend/.npmrc](frontend/.npmrc).
+- Run [scripts/check-frontend-toolchain.sh](scripts/check-frontend-toolchain.sh) before local or remote frontend work if you need to confirm the active Node/npm pair.
+- `./deploy.sh --frontend` and the production [deploy/docker/Dockerfile.api](deploy/docker/Dockerfile.api) both build the frontend with the same pinned `Node 24.15.0 + npm 11.12.1` toolchain.
+- For routine installs, use `npm ci`.
+- When changing dependencies, run `npm install ...` in `frontend/` and commit the updated `package-lock.json` in the same change.
+
 Optional local Vite HMR:
 
 ```bash
+nvm use
 ssh -L 8088:127.0.0.1:8088 <server>
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
@@ -274,8 +291,9 @@ Containerized frontend override for local development only:
 ```bash
 cd deploy/docker
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+nvm use
 cd ../../frontend
-npm install
+npm ci
 npm run build -- --watch
 ```
 

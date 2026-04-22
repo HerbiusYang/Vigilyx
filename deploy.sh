@@ -44,6 +44,24 @@ REMOTE_DIR="${VIGILYX_REMOTE_DIR:-/home/vigilyx}"
 COMPOSE_FILE="deploy/docker/docker-compose.yml"
 FAST_OVERRIDE="deploy/docker/docker-compose.fast.yml"
 BUILDER_NAME="vigilyx-rust-builder"
+LOCAL_REPO_ROOT="${LOCAL_DIR%/}"
+FRONTEND_NODE_VERSION="$(tr -d '[:space:]' < "${LOCAL_REPO_ROOT}/.nvmrc")"
+FRONTEND_NPM_VERSION="$(
+    python3 - <<'PY' "${LOCAL_REPO_ROOT}/frontend/package.json"
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as fh:
+    package_json = json.load(fh)
+
+package_manager = package_json.get("packageManager", "")
+if not package_manager.startswith("npm@"):
+    raise SystemExit("frontend/package.json must declare packageManager as npm@<version>")
+
+print(package_manager.split("@", 1)[1])
+PY
+)"
+FRONTEND_NODE_IMAGE="node:${FRONTEND_NODE_VERSION}-bookworm"
 
 # Default options
 DO_FRONTEND=true
@@ -208,6 +226,19 @@ cleanup_remote_sync_junk() {
         \\) -delete"
 }
 
+run_remote_frontend_toolchain() {
+    local task="$1"
+
+    ssh "$SERVER" "cd '${REMOTE_DIR}' && \
+        docker run --rm \
+            -v '${REMOTE_DIR}:/workspace' \
+            -w /workspace/frontend \
+            ${FRONTEND_NODE_IMAGE} \
+            bash -lc 'npm install -g npm@${FRONTEND_NPM_VERSION} >/dev/null 2>&1 && \
+                bash ../scripts/check-frontend-toolchain.sh && \
+                ${task}'"
+}
+
 # -- Step 0: initial setup (optional) --
 if $DO_INIT; then
     step "Initial setup: sync source to remote server"
@@ -324,7 +355,7 @@ fi
 if $DO_FRONTEND && ! $DO_PRODUCTION && ! $DO_CONFIG_ONLY; then
     step "Build frontend"
     T=$(date +%s)
-    ssh "$SERVER" "cd ${REMOTE_DIR}/frontend && npx vite build"
+    run_remote_frontend_toolchain "npm ci && npx vite build"
     elapsed $T
 elif $DO_FRONTEND && $DO_PRODUCTION && ! $DO_CONFIG_ONLY; then
     echo ""
@@ -529,16 +560,13 @@ elapsed $T
 # -- Step 9: verify frontend dist inside the image --
 if ! $DO_PRODUCTION && ! $DO_CONFIG_ONLY && { $DO_BACKEND || $DO_FRONTEND; }; then
     step "Verify frontend dist availability"
-    ssh "$SERVER" "
-        # Frontend is baked into the Docker image (no host volume mount).
-        # If the image was built without frontend dist, rebuild it.
-        if ! docker exec vigilyx test -f /app/frontend/dist/index.html 2>/dev/null; then
-            echo 'Frontend dist is missing inside the image; rebuilding frontend and repackaging...'
-            cd '${REMOTE_DIR}/frontend' && npx vite build
-            cd '${REMOTE_DIR}' && docker compose -f ${COMPOSE_FILE} -f deploy/docker/docker-compose.fast.yml build vigilyx
-            docker compose -f ${COMPOSE_FILE} ${MODE_PROFILE} --profile ai ${ANTIVIRUS_PROFILE} ${TLS_PROFILE} up -d vigilyx
-        fi
-    "
+    if ! ssh "$SERVER" "docker exec vigilyx test -f /app/frontend/dist/index.html 2>/dev/null"; then
+        echo "Frontend dist is missing inside the image; rebuilding frontend and repackaging..."
+        run_remote_frontend_toolchain "npm ci && npx vite build"
+        ssh "$SERVER" "cd '${REMOTE_DIR}' && \
+            docker compose -f ${COMPOSE_FILE} -f ${FAST_OVERRIDE} build vigilyx && \
+            docker compose -f ${COMPOSE_FILE} ${MODE_PROFILE} --profile ai ${ANTIVIRUS_PROFILE} ${TLS_PROFILE} up -d vigilyx"
+    fi
 fi
 
 # -- Done --
