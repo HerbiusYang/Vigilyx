@@ -5429,7 +5429,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vigilyx-api"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -5470,7 +5470,7 @@ dependencies = [
 
 [[package]]
 name = "vigilyx-core"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "chrono",
  "dotenvy",
@@ -5485,7 +5485,7 @@ dependencies = [
 
 [[package]]
 name = "vigilyx-db"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -5507,7 +5507,7 @@ dependencies = [
 
 [[package]]
 name = "vigilyx-engine"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -5554,7 +5554,7 @@ dependencies = [
 
 [[package]]
 name = "vigilyx-mta"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5584,7 +5584,7 @@ dependencies = [
 
 [[package]]
 name = "vigilyx-parser"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "bytes",
  "chrono",
@@ -5602,7 +5602,7 @@ dependencies = [
 
 [[package]]
 name = "vigilyx-sniffer"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -5639,7 +5639,7 @@ dependencies = [
 
 [[package]]
 name = "vigilyx-soar"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "aes-gcm",
  "base64",

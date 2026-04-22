@@ -15,7 +15,7 @@ export default function OpenSourceCommunity() {
   ], [t])
 
   const OPEN_SOURCE_ROADMAP: { phase: string; title: string; status: 'done' | 'current' | 'planned'; date: string; items: string[] }[] = useMemo(() => [
-    { phase: 'v0.9.0', title: t('community.ossRoadmapCoreEngineTitle'), status: 'current' as const, date: '2026 Q1',
+    { phase: 'v0.9.1', title: t('community.ossRoadmapCoreEngineTitle'), status: 'current' as const, date: '2026 Q1',
       items: [t('community.ossRoadmapCoreItem1'), t('community.ossRoadmapCoreItem2'), t('community.ossRoadmapCoreItem3'), t('community.ossRoadmapCoreItem4'), t('community.ossRoadmapCoreItem5')] },
     { phase: 'v1.0.0', title: t('community.ossRoadmapReleaseTitle'), status: 'planned' as const, date: '2026 Q2',
       items: [t('community.ossRoadmapReleaseItem1'), t('community.ossRoadmapReleaseItem2'), t('community.ossRoadmapReleaseItem3'), t('community.ossRoadmapReleaseItem4')] },

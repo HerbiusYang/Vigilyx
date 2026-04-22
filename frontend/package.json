@@ -1,6 +1,6 @@
 {
   "name": "vigilyx-frontend",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Vigilyx real-time email threat detection dashboard",
   "license": "AGPL-3.0-only",
   "repository": {
