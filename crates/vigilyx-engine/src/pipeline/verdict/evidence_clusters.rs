@@ -95,7 +95,6 @@ impl EvidenceClusterId {
             Self::BusinessSensitivity => 0.45,
         }
     }
-
 }
 
 #[derive(Debug, Clone)]
@@ -117,10 +116,22 @@ pub struct ScenarioContext {
     pub semantic_nlp_only_signal: bool,
     pub transcript_like_structure: bool,
     pub sender_alignment_verified: bool,
+    pub has_header_spoof_signal: bool,
     pub has_payment_change_signal: bool,
     pub has_account_security_signal: bool,
     pub has_credential_link_signal: bool,
     pub has_malicious_ioc_signal: bool,
+    pub has_subsidy_fraud_signal: bool,
+    pub has_invoice_spam_signal: bool,
+    pub has_crypto_wallet_signal: bool,
+    pub has_attachment_phishing_signal: bool,
+    pub has_attachment_sensitive_data_signal: bool,
+    pub has_high_risk_attachment_content: bool,
+    pub has_encrypted_attachment_signal: bool,
+    /// Structural threat signals independent of NLP/banner text pollution.
+    /// Includes: DGA domains, brand impersonation, domain mismatches,
+    /// suspicious TLDs, language inconsistency, attachment type mismatches.
+    pub has_structural_threat_signal: bool,
     pub alignment_score: f64,
 }
 
@@ -146,8 +157,7 @@ impl From<&EffectiveKeywordLists> for ScenarioPatternLists {
 static GLOBAL_SCENARIO_PATTERNS: OnceLock<Arc<RwLock<ScenarioPatternLists>>> = OnceLock::new();
 
 fn scenario_patterns_handle() -> &'static Arc<RwLock<ScenarioPatternLists>> {
-    GLOBAL_SCENARIO_PATTERNS
-        .get_or_init(|| Arc::new(RwLock::new(ScenarioPatternLists::default())))
+    GLOBAL_SCENARIO_PATTERNS.get_or_init(|| Arc::new(RwLock::new(ScenarioPatternLists::default())))
 }
 
 pub fn set_runtime_scenario_patterns(patterns: ScenarioPatternLists) {
@@ -161,6 +171,10 @@ fn current_scenario_patterns() -> ScenarioPatternLists {
         .read()
         .expect("scenario pattern lock poisoned")
         .clone()
+}
+
+pub fn runtime_scenario_patterns() -> ScenarioPatternLists {
+    current_scenario_patterns()
 }
 
 #[derive(Debug, Clone)]
@@ -207,7 +221,10 @@ pub fn normalize_results(
     let mut modules_flagged = 0u32;
     let mut total_duration_ms = 0u64;
 
-    for result in results.values().filter(|result| result.module_id != "verdict") {
+    for result in results
+        .values()
+        .filter(|result| result.module_id != "verdict")
+    {
         modules_run += 1;
         total_duration_ms += result.duration_ms;
 
@@ -216,7 +233,11 @@ pub fn normalize_results(
         }
 
         modules_flagged += 1;
-        let module_weight = config.weights.get(&result.module_id).copied().unwrap_or(1.0);
+        let module_weight = config
+            .weights
+            .get(&result.module_id)
+            .copied()
+            .unwrap_or(1.0);
         let base_score = (result.raw_score() * module_weight).clamp(0.0, 1.0);
         let confidence = result.confidence.clamp(0.0, 1.0);
         for category in &result.categories {
@@ -227,7 +248,9 @@ pub fn normalize_results(
                 cluster.modules.insert(result.module_id.clone());
 
                 let family = cluster.families.entry(mapped.family).or_default();
-                family.score = family.score.max((base_score * mapped.scale).clamp(0.0, 1.0));
+                family.score = family
+                    .score
+                    .max((base_score * mapped.scale).clamp(0.0, 1.0));
                 family.confidence = family.confidence.max(confidence);
                 family.categories.insert(category.clone());
                 family.modules.insert(result.module_id.clone());
@@ -252,7 +275,10 @@ pub fn normalize_results(
         let mut family_scores: Vec<f64> = cluster.families.values().map(|f| f.score).collect();
         family_scores.sort_by(|a, b| b.total_cmp(a));
 
-        let base_score = 1.0 - family_scores.iter().fold(1.0, |acc, score| acc * (1.0 - score));
+        let base_score = 1.0
+            - family_scores
+                .iter()
+                .fold(1.0, |acc, score| acc * (1.0 - score));
         let synergy = (cluster.families.len().saturating_sub(1).min(3) as f64) * 0.04;
         let score = (base_score + synergy).min(cluster_id.score_cap());
 
@@ -414,6 +440,7 @@ fn detect_scenarios(
                 | "bank_account_detected"
                 | "iban_detected"
                 | "swift_code_detected"
+                | "crypto_wallet"
         )
     }) {
         context.has_payment_change_signal = true;
@@ -437,6 +464,7 @@ fn detect_scenarios(
                 | "recipient_in_url"
                 | "at_sign_obfuscation"
                 | "targeted_credential_phishing"
+                | "attachment_phishing_url"
                 | "redirect_target"
                 | "redirect_url"
                 | "href_text_mismatch"
@@ -460,6 +488,96 @@ fn detect_scenarios(
         context.tags.push("malicious_ioc_signal".to_string());
     }
 
+    // Structural threat signals that are independent of NLP/banner text.
+    // These come from DNS, header analysis, attachment analysis etc.,
+    // NOT from scanning email body text (which the gateway banner pollutes).
+    if categories.iter().any(|category| {
+        matches!(
+            category.as_str(),
+            "brand_spoof_reply_to"
+                | "protected_domain_spoof"
+                | "envelope_spoofing"
+                | "display_name_spoof"
+                | "external_impersonation"
+                | "domain_mismatch"
+        )
+    }) {
+        context.has_header_spoof_signal = true;
+        context.tags.push("header_spoof_signal".to_string());
+    }
+
+    if categories.contains("subsidy_fraud") {
+        context.has_subsidy_fraud_signal = true;
+        context.tags.push("subsidy_fraud_signal".to_string());
+    }
+
+    if categories.contains("invoice_spam") {
+        context.has_invoice_spam_signal = true;
+        context.tags.push("invoice_spam_signal".to_string());
+    }
+
+    if categories
+        .iter()
+        .any(|category| matches!(category.as_str(), "crypto_wallet" | "ransomware_indicator"))
+    {
+        context.has_crypto_wallet_signal = true;
+        context.tags.push("crypto_wallet_signal".to_string());
+    }
+
+    if let Some(attach_result) = results.get("attach_content") {
+        if attach_result.categories.iter().any(|category| {
+            matches!(
+                category.as_str(),
+                "phishing" | "bec" | "weak_phishing" | "attachment_phishing_url"
+            )
+        }) {
+            context.has_attachment_phishing_signal = true;
+            context.tags.push("attachment_phishing_signal".to_string());
+        }
+        if attach_result.categories.iter().any(|category| {
+            matches!(category.as_str(), "dlp_credit_card" | "dlp_id_number")
+        }) {
+            context.has_attachment_sensitive_data_signal = true;
+            context
+                .tags
+                .push("attachment_sensitive_data_signal".to_string());
+        }
+        if attach_result.threat_level >= vigilyx_core::security::ThreatLevel::High {
+            context.has_high_risk_attachment_content = true;
+            context.tags.push("high_risk_attachment_content".to_string());
+        }
+    }
+
+    if let Some(attach_scan_result) = results.get("attach_scan")
+        && attach_scan_result.categories.iter().any(|category| {
+            matches!(
+                category.as_str(),
+                "encrypted_attachment" | "encrypted_archive" | "encrypted_pdf"
+            )
+        })
+    {
+        context.has_encrypted_attachment_signal = true;
+        context.tags.push("encrypted_attachment_signal".to_string());
+    }
+
+    if categories.iter().any(|category| {
+        matches!(
+            category.as_str(),
+            "dga_random_domain"
+                | "external_impersonation"
+                | "domain_mismatch"
+                | "suspicious_tld"
+                | "lang_inconsistency"
+                | "type_mismatch"
+                | "idn_homograph"
+                | "mixed_script_domain"
+                | "attachment_phishing_url"
+        )
+    }) {
+        context.has_structural_threat_signal = true;
+        context.tags.push("structural_threat_signal".to_string());
+    }
+
     context
 }
 
@@ -473,7 +591,10 @@ fn has_transcript_like_structure(text: &str) -> bool {
         return false;
     }
 
-    let short_lines = lines.iter().filter(|line| line.chars().count() <= 48).count();
+    let short_lines = lines
+        .iter()
+        .filter(|line| line.chars().count() <= 48)
+        .count();
     let speaker_turns = lines
         .iter()
         .filter(|line| looks_like_speaker_turn(line))
@@ -547,9 +668,7 @@ fn humanize_category(category: &str) -> String {
             } else {
                 let mut chars = segment.chars();
                 match chars.next() {
-                    Some(first) => {
-                        first.to_uppercase().collect::<String>() + chars.as_str()
-                    }
+                    Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
                     None => String::new(),
                 }
             }
@@ -645,13 +764,12 @@ fn map_content_signal(category: &str) -> Option<MappedSignal> {
         "gateway_pre_classified" => Some(MappedSignal {
             cluster: EvidenceClusterId::InheritedGatewayPrior,
             family: "gateway_banner",
-            scale: 0.60,
+            scale: 0.18,
         }),
-        "dlp_credit_card" | "dlp_id_number" | "dlp_api_key" => Some(MappedSignal {
-            cluster: EvidenceClusterId::BusinessSensitivity,
-            family: "sensitive_content",
-            scale: if category == "dlp_api_key" { 0.58 } else { 0.66 },
-        }),
+        // DLP categories are recorded in verdict.categories for compliance visibility
+        // but excluded from threat scoring — for banks, credit card / ID numbers in email
+        // are normal business, not security threats.
+        "dlp_credit_card" | "dlp_id_number" | "dlp_api_key" => None,
         "external_impersonation" => Some(MappedSignal {
             cluster: EvidenceClusterId::SenderIdentityAuthenticity,
             family: "external_impersonation",
@@ -664,6 +782,7 @@ fn map_content_signal(category: &str) -> Option<MappedSignal> {
         | "image_only_phishing"
         | "account_security_phishing"
         | "subsidy_fraud"
+        | "invoice_spam"
         | "phone_in_body"
         | "lang_inconsistency" => Some(MappedSignal {
             cluster: EvidenceClusterId::SocialEngineeringIntent,
@@ -676,15 +795,22 @@ fn map_content_signal(category: &str) -> Option<MappedSignal> {
 
 fn map_attach_content_signal(category: &str) -> Option<MappedSignal> {
     match category {
-        "dlp_credit_card" | "dlp_id_number" => Some(MappedSignal {
-            cluster: EvidenceClusterId::BusinessSensitivity,
-            family: "attachment_dlp",
-            scale: 0.64,
+        // DLP in attachments: same policy — record but don't score
+        "dlp_credit_card" | "dlp_id_number" => None,
+        "attachment_phishing_url" => Some(MappedSignal {
+            cluster: EvidenceClusterId::LinkAndHtmlDeception,
+            family: "attachment_embedded_url",
+            scale: 0.74,
         }),
         "phishing" | "bec" => Some(MappedSignal {
             cluster: EvidenceClusterId::SocialEngineeringIntent,
             family: social_family(category),
             scale: 0.74,
+        }),
+        "weak_phishing" => Some(MappedSignal {
+            cluster: EvidenceClusterId::SocialEngineeringIntent,
+            family: "attachment_weak_phishing",
+            scale: 0.42,
         }),
         _ => None,
     }
@@ -695,15 +821,20 @@ fn map_header_signal(category: &str) -> Option<MappedSignal> {
         "ioc_ip_hit" | "sender_ip_malicious" | "sender_ip_suspicious" => Some(MappedSignal {
             cluster: EvidenceClusterId::ExternalReputationIoc,
             family: "sender_ip_reputation",
-            scale: if category == "sender_ip_malicious" { 0.88 } else { 0.72 },
+            scale: if category == "sender_ip_malicious" {
+                0.88
+            } else {
+                0.72
+            },
         }),
-        "domain_mismatch" | "brand_spoof_reply_to" | "envelope_spoofing" | "protected_domain_spoof" => {
-            Some(MappedSignal {
-                cluster: EvidenceClusterId::SenderIdentityAuthenticity,
-                family: "header_identity",
-                scale: 0.80,
-            })
-        }
+        "domain_mismatch"
+        | "brand_spoof_reply_to"
+        | "envelope_spoofing"
+        | "protected_domain_spoof" => Some(MappedSignal {
+            cluster: EvidenceClusterId::SenderIdentityAuthenticity,
+            family: "header_identity",
+            scale: 0.80,
+        }),
         "auth_spf_dmarc_fail"
         | "auth_spf_fail"
         | "auth_dmarc_fail"
@@ -829,7 +960,7 @@ fn social_family(category: &str) -> &'static str {
         | "image_only_phishing"
         | "targeted_credential_phishing" => "credential_theft_intent",
         "bec" | "nlp_bec" => "bec_intent",
-        "subsidy_fraud" | "nlp_scam" => "financial_fraud_intent",
+        "subsidy_fraud" | "invoice_spam" | "nlp_scam" => "financial_fraud_intent",
         "sextortion" | "extortion_threat" => "extortion_intent",
         "nlp_spam" | "nonsensical_spam" | "mass_mailing" | "spam_cannon" => "bulk_spam_intent",
         "foreign_to_cn_corp" | "japanese_to_cn_corp" | "japanese_unexpected" => "language_context",
@@ -844,7 +975,7 @@ fn social_scale(category: &str) -> f64 {
         "account_security_phishing" => 0.88,
         "phishing" | "phishing_subject" | "nlp_phishing" => 0.76,
         "bec" | "nlp_bec" => 0.72,
-        "subsidy_fraud" | "nlp_scam" => 0.66,
+        "subsidy_fraud" | "invoice_spam" | "nlp_scam" => 0.66,
         "sextortion" | "extortion_threat" => 0.82,
         "gateway_pre_classified" => 0.30,
         "foreign_to_cn_corp" | "japanese_to_cn_corp" | "japanese_unexpected" => 0.42,
@@ -855,9 +986,7 @@ fn social_scale(category: &str) -> f64 {
 
 fn transaction_family(category: &str) -> &'static str {
     match category {
-        "iban_detected" | "swift_code_detected" | "bank_account_detected" => {
-            "banking_identifier"
-        }
+        "iban_detected" | "swift_code_detected" | "bank_account_detected" => "banking_identifier",
         "wire_transfer" | "crypto_wallet" => "payment_rail",
         "payment_change" => "payment_change",
         "urgency_financial_combo" => "financial_urgency",
@@ -893,9 +1022,7 @@ fn link_content_family(category: &str) -> &'static str {
 fn link_content_scale(category: &str) -> f64 {
     match category {
         "targeted_credential_phishing" => 0.92,
-        "recipient_in_url" | "at_sign_obfuscation" | "idn_homograph" | "org_domain_mimicry" => {
-            0.82
-        }
+        "recipient_in_url" | "at_sign_obfuscation" | "idn_homograph" | "org_domain_mimicry" => 0.82,
         "dga_random_domain" => 0.72,
         "mobile_redirect" => 0.60,
         _ => 0.66,
@@ -923,12 +1050,8 @@ fn link_reputation_scale(category: &str) -> f64 {
 
 fn external_family(category: &str) -> &'static str {
     match category {
-        "intel_malicious" | "url_intel_malicious" | "hash_intel_malicious" => {
-            "malicious_intel"
-        }
-        "intel_suspicious" | "url_intel_suspicious" | "hash_intel_suspicious" => {
-            "suspicious_intel"
-        }
+        "intel_malicious" | "url_intel_malicious" | "hash_intel_malicious" => "malicious_intel",
+        "intel_suspicious" | "url_intel_suspicious" | "hash_intel_suspicious" => "suspicious_intel",
         "blacklisted_domain" | "blacklisted_parent_domain" => "blacklist",
         "ioc_ip_hit" | "sender_ip_malicious" | "sender_ip_suspicious" => "sender_ip_ioc",
         "suspicious_sender_domain" => "sender_domain_reputation",
@@ -944,5 +1067,162 @@ fn external_scale(category: &str) -> f64 {
             0.70
         }
         _ => 0.64,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use serde_json::json;
+    use std::collections::{BTreeSet, HashMap};
+    use vigilyx_core::models::{EmailContent, EmailSession, Protocol};
+    use vigilyx_core::security::{ModuleResult, Pillar, ThreatLevel};
+
+    fn make_session(subject: &str, body: &str, sender: &str) -> EmailSession {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            2525,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.subject = Some(subject.to_string());
+        session.mail_from = Some(sender.to_string());
+        session.content = EmailContent {
+            body_text: Some(body.to_string()),
+            ..Default::default()
+        };
+        session
+    }
+
+    fn make_result(
+        module_id: &str,
+        pillar: Pillar,
+        threat_level: ThreatLevel,
+        categories: &[&str],
+    ) -> ModuleResult {
+        ModuleResult {
+            module_id: module_id.to_string(),
+            module_name: module_id.to_string(),
+            pillar,
+            threat_level,
+            confidence: 0.85,
+            categories: categories.iter().map(|c| (*c).to_string()).collect(),
+            summary: "test".to_string(),
+            evidence: vec![],
+            details: json!({ "score": 0.80 }),
+            duration_ms: 5,
+            analyzed_at: Utc::now(),
+            bpa: None,
+            engine_id: None,
+        }
+    }
+
+    #[test]
+    fn detect_scenarios_marks_attachment_phish_and_sensitive_data_flags() {
+        let session = make_session(
+            "微信聊天记录",
+            "附件中包含密码重置提示与卡号信息",
+            "799422752@qq.com",
+        );
+        let mut categories = BTreeSet::new();
+        categories.insert("phishing".to_string());
+        categories.insert("dlp_credit_card".to_string());
+        categories.insert("attachment_phishing_url".to_string());
+
+        let mut results = HashMap::new();
+        results.insert(
+            "attach_content".to_string(),
+            make_result(
+                "attach_content",
+                Pillar::Attachment,
+                ThreatLevel::High,
+                &["phishing", "dlp_credit_card", "attachment_phishing_url"],
+            ),
+        );
+
+        let scenario = detect_scenarios(Some(&session), &categories, &results);
+
+        assert!(scenario.has_attachment_phishing_signal);
+        assert!(scenario.has_attachment_sensitive_data_signal);
+        assert!(scenario.has_high_risk_attachment_content);
+        assert!(scenario.has_credential_link_signal);
+        assert!(scenario.has_structural_threat_signal);
+    }
+
+    #[test]
+    fn detect_scenarios_marks_subsidy_invoice_crypto_and_spoof_flags() {
+        let session = make_session(
+            "外贸货款对公 平台结算",
+            "请尽快处理补贴款，另可加Q 3826878185 办理增值税发票并使用钱包地址支付",
+            "yleqte@qq.com",
+        );
+        let categories = BTreeSet::from([
+            "subsidy_fraud".to_string(),
+            "invoice_spam".to_string(),
+            "crypto_wallet".to_string(),
+            "envelope_spoofing".to_string(),
+        ]);
+        let mut results = HashMap::new();
+        results.insert(
+            "content_scan".to_string(),
+            make_result(
+                "content_scan",
+                Pillar::Content,
+                ThreatLevel::High,
+                &["subsidy_fraud"],
+            ),
+        );
+        results.insert(
+            "transaction_correlation".to_string(),
+            make_result(
+                "transaction_correlation",
+                Pillar::Semantic,
+                ThreatLevel::Medium,
+                &["crypto_wallet"],
+            ),
+        );
+        results.insert(
+            "header_scan".to_string(),
+            make_result(
+                "header_scan",
+                Pillar::Package,
+                ThreatLevel::Medium,
+                &["envelope_spoofing"],
+            ),
+        );
+
+        let scenario = detect_scenarios(Some(&session), &categories, &results);
+
+        assert!(scenario.has_subsidy_fraud_signal);
+        assert!(scenario.has_invoice_spam_signal);
+        assert!(scenario.has_crypto_wallet_signal);
+        assert!(scenario.has_header_spoof_signal);
+        assert!(scenario.has_payment_change_signal);
+    }
+
+    #[test]
+    fn detect_scenarios_marks_encrypted_attachment_flag() {
+        let session = make_session(
+            "请查收",
+            "附件为加密压缩包，请按提示打开。",
+            "sender@example.com",
+        );
+        let categories = BTreeSet::from(["encrypted_archive".to_string()]);
+        let mut results = HashMap::new();
+        results.insert(
+            "attach_scan".to_string(),
+            make_result(
+                "attach_scan",
+                Pillar::Attachment,
+                ThreatLevel::Low,
+                &["encrypted_attachment", "encrypted_archive"],
+            ),
+        );
+
+        let scenario = detect_scenarios(Some(&session), &categories, &results);
+
+        assert!(scenario.has_encrypted_attachment_signal);
     }
 }

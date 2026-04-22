@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { TrafficStats } from '../types'
+import { EVENTS } from '../utils/events'
 
 interface RealtimeTrafficSnapshot {
   stats: TrafficStats | null
@@ -40,7 +41,7 @@ function initStore() {
   if (initialized || typeof window === 'undefined') return
   initialized = true
 
-  window.addEventListener('vigilyx:stats-update', (event: Event) => {
+  window.addEventListener(EVENTS.STATS_UPDATE, (event: Event) => {
     const detail = (event as CustomEvent).detail
     emitIfChanged({
       stats: detail?.stats ?? snapshot.stats,
@@ -48,7 +49,7 @@ function initStore() {
     })
   })
 
-  window.addEventListener('vigilyx:connection-change', (event: Event) => {
+  window.addEventListener(EVENTS.CONNECTION_CHANGE, (event: Event) => {
     const detail = (event as CustomEvent).detail
     if (typeof detail?.connected !== 'boolean') return
     emitIfChanged({

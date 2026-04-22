@@ -12,6 +12,8 @@ use axum::{
 use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
 use std::net::SocketAddr;
+use std::sync::atomic::Ordering;
+use std::time::Duration;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 use tracing::{debug, error, info, warn};
@@ -25,6 +27,12 @@ use crate::routes::{extract_client_ip, extract_user_agent};
 const MAX_WS_PER_IP: usize = 20;
 static WS_PER_IP: std::sync::LazyLock<dashmap::DashMap<std::net::IpAddr, usize>> =
     std::sync::LazyLock::new(dashmap::DashMap::new);
+const WS_AUTH_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+
+pub fn invalidate_websocket_sessions(state: &crate::AppState) {
+    state.ws_auth_epoch.fetch_add(1, Ordering::SeqCst);
+    let _ = state.messaging.ws_tx.send(WsMessage::SessionInvalidated);
+}
 
 /// WebSocket authentication query parameter
 
@@ -67,6 +75,8 @@ pub async fn ws_handler(
         return Err(StatusCode::FORBIDDEN);
     }
 
+    let auth_epoch = state.ws_auth_epoch.load(Ordering::Acquire);
+
     // SEC: per-IP connection limit (prevents fd exhaustion)
     let mut current = WS_PER_IP.entry(client_ip).or_insert(0);
     if *current >= MAX_WS_PER_IP {
@@ -83,7 +93,7 @@ pub async fn ws_handler(
         .on_upgrade(move |socket| {
             let ip = client_ip;
             async move {
-                handle_socket(socket, state).await;
+                handle_socket(socket, state, auth_epoch).await;
                 // Decrement the counter on disconnect
                 WS_PER_IP.entry(ip).and_modify(|c| *c = c.saturating_sub(1));
             }
@@ -91,7 +101,7 @@ pub async fn ws_handler(
 }
 
 /// Process WebSocket Connection
-async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
+async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_epoch: u64) {
     let (mut sender, mut receiver) = socket.split();
 
    // Broadcast channel
@@ -109,49 +119,69 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     }
 
    // receive message send client
-    let send_task = tokio::spawn(async move {
+    let send_state = state.clone();
+    let mut send_task = tokio::spawn(async move {
+        let mut auth_check = tokio::time::interval(WS_AUTH_CHECK_INTERVAL);
         loop {
-            match rx.recv().await {
-                Ok(msg) => {
-                    match serde_json::to_string(&msg) {
-                        Ok(json) => {
-                            if sender.send(Message::Text(json.into())).await.is_err() {
-                                break; // client
-                            }
-                        }
-                        Err(e) => {
-                            error!("序列化messagefailed: {}", e);
-                        }
-                    }
-                }
-                Err(RecvError::Lagged(n)) => {
-                   // receive send, n items message
-                    warn!(
-                        "WebSocket receive方落后，跳过 {} itemsmessage，通知前端刷New",
-                        n
-                    );
-                   // message, New
-                    let refresh_msg = serde_json::json!({
-                        "type": "RefreshNeeded",
-                        "data": { "skipped": n }
-                    });
-                    if let Ok(json) = serde_json::to_string(&refresh_msg)
-                        && sender.send(Message::Text(json.into())).await.is_err()
-                    {
+            tokio::select! {
+                _ = auth_check.tick() => {
+                    let current_epoch = send_state.ws_auth_epoch.load(Ordering::Acquire);
+                    let password_changed = *send_state.auth.config.password_changed.read().await;
+                    if current_epoch != auth_epoch || !password_changed {
+                        info!("WebSocket auth state changed, closing connection");
                         break;
                     }
-                   // break - receive message
                 }
-                Err(RecvError::Closed) => {
-                   // Broadcast channel shutdown (Service shutdown)
-                    break;
+                msg = rx.recv() => match msg {
+                    Ok(WsMessage::SessionInvalidated) => {
+                        info!("WebSocket session invalidated, closing connection");
+                        break;
+                    }
+                    Ok(msg) => {
+                        match serde_json::to_string(&msg) {
+                            Ok(json) => {
+                                if sender.send(Message::Text(json.into())).await.is_err() {
+                                    break; // client
+                                }
+                            }
+                            Err(e) => {
+                                error!("序列化messagefailed: {}", e);
+                            }
+                        }
+                    }
+                    Err(RecvError::Lagged(n)) => {
+                       // receive send, n items message
+                        warn!(
+                            "WebSocket receive方落后，跳过 {} itemsmessage，通知前端刷New",
+                            n
+                        );
+                        if send_state.ws_auth_epoch.load(Ordering::Acquire) != auth_epoch {
+                            info!("WebSocket auth state changed while lagged, closing connection");
+                            break;
+                        }
+                       // message, New
+                        let refresh_msg = serde_json::json!({
+                            "type": "RefreshNeeded",
+                            "data": { "skipped": n }
+                        });
+                        if let Ok(json) = serde_json::to_string(&refresh_msg)
+                            && sender.send(Message::Text(json.into())).await.is_err()
+                        {
+                            break;
+                        }
+                       // break - receive message
+                    }
+                    Err(RecvError::Closed) => {
+                       // Broadcast channel shutdown (Service shutdown)
+                        break;
+                    }
                 }
             }
         }
     });
 
    // receiveclientmessage
-    let recv_task = tokio::spawn(async move {
+    let mut recv_task = tokio::spawn(async move {
         while let Some(msg) = receiver.next().await {
             match msg {
                 Ok(Message::Text(text)) => {
@@ -176,8 +206,12 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
 
     
     tokio::select! {
-        _ = send_task => {},
-        _ = recv_task => {},
+        _ = &mut send_task => {
+            recv_task.abort();
+        },
+        _ = &mut recv_task => {
+            send_task.abort();
+        },
     }
 
     

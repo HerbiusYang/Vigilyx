@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { loadCachedUiPreferences, saveUiPreferencesPatch, syncUiPreferencesFromServer } from '../../utils/uiPreferences'
 
 /**
@@ -18,6 +19,7 @@ function expandIpInput(raw: string): string[] {
 }
 
 export default function CaptureSettings() {
+  const { t } = useTranslation()
   const cached = loadCachedUiPreferences()
   // Protocol display toggles
   const [captureSmtp, setCaptureSmtp] = useState(
@@ -104,21 +106,21 @@ export default function CaptureSettings() {
           <span className="s-section-icon capture">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
           </span>
-          显示设置
+          {t('settings.capture.title')}
         </h2>
-        <p className="s-section-subtitle">设置前端显示的协议与流量过滤规则 (后端始终捕获全部协议)</p>
+        <p className="s-section-subtitle">{t('settings.capture.subtitle')}</p>
       </div>
 
       <div className="s-setting-group">
-        <div className="s-setting-group-header">协议过滤</div>
+        <div className="s-setting-group-header">{t('settings.capture.protocolFilter')}</div>
 
         <div className="s-setting-row">
           <div className="s-setting-info">
             <span className="s-setting-label">
               <span className="s-protocol-dot smtp" />
-              显示 SMTP
+              {t('settings.capture.showSmtp')}
             </span>
-            <span className="s-setting-desc">在仪表盘和邮件流量中显示 SMTP 协议 (端口 25/465/587)</span>
+            <span className="s-setting-desc">{t('settings.capture.showSmtpDesc')}</span>
           </div>
           <label className="s-toggle">
             <input type="checkbox" checked={captureSmtp} onChange={e => setCaptureSmtp(e.target.checked)} />
@@ -130,9 +132,9 @@ export default function CaptureSettings() {
           <div className="s-setting-info">
             <span className="s-setting-label">
               <span className="s-protocol-dot pop3" />
-              显示 POP3
+              {t('settings.capture.showPop3')}
             </span>
-            <span className="s-setting-desc">在仪表盘和邮件流量中显示 POP3 协议 (端口 110/995)</span>
+            <span className="s-setting-desc">{t('settings.capture.showPop3Desc')}</span>
           </div>
           <label className="s-toggle">
             <input type="checkbox" checked={capturePop3} onChange={e => setCapturePop3(e.target.checked)} />
@@ -144,9 +146,9 @@ export default function CaptureSettings() {
           <div className="s-setting-info">
             <span className="s-setting-label">
               <span className="s-protocol-dot imap" />
-              显示 IMAP
+              {t('settings.capture.showImap')}
             </span>
-            <span className="s-setting-desc">在仪表盘和邮件流量中显示 IMAP 协议 (端口 143/993)</span>
+            <span className="s-setting-desc">{t('settings.capture.showImapDesc')}</span>
           </div>
           <label className="s-toggle">
             <input type="checkbox" checked={captureImap} onChange={e => setCaptureImap(e.target.checked)} />
@@ -156,17 +158,17 @@ export default function CaptureSettings() {
       </div>
 
       <div className="s-setting-group">
-        <div className="s-setting-group-header">流量规则</div>
+        <div className="s-setting-group-header">{t('settings.capture.trafficRules')}</div>
 
         <div className="s-setting-info s-group-hint">
           <span className="s-setting-desc">
-            配置入站和出站的 IP 规则，在邮件流量页面可按方向筛选。源 IP 对应连接发起方 (client_ip)，目标 IP 对应连接目标 (server_ip)。留空的一侧表示不限制。
+            {t('settings.capture.trafficRulesDesc')}
           </span>
         </div>
 
         {/* Inbound rules */}
         <div className="s-rule-row">
-          <span className="s-rule-badge inbound">入站</span>
+          <span className="s-rule-badge inbound">{t('settings.capture.inbound')}</span>
           <div className="s-rule-flow">
             <div className="s-ip-tags">
               {inboundSrc.map((ip, i) => (
@@ -190,7 +192,7 @@ export default function CaptureSettings() {
                   }
                   if (e.key === 'Backspace' && !inSrcInput && inboundSrc.length > 0) setInboundSrc(prev => prev.slice(0, -1))
                 }}
-                placeholder={inboundSrc.length === 0 ? '源 IP（如 192.168.1.10）' : '添加...'}
+                placeholder={inboundSrc.length === 0 ? t('settings.capture.srcIpPlaceholder') : t('settings.capture.addMore')}
               />
             </div>
             <span className="s-rule-arrow">&rarr;</span>
@@ -216,7 +218,7 @@ export default function CaptureSettings() {
                   }
                   if (e.key === 'Backspace' && !inDstInput && inboundDst.length > 0) setInboundDst(prev => prev.slice(0, -1))
                 }}
-                placeholder={inboundDst.length === 0 ? '目标 IP（支持 192.168.1.10/11）' : '添加...'}
+                placeholder={inboundDst.length === 0 ? t('settings.capture.dstIpPlaceholder') : t('settings.capture.addMore')}
               />
             </div>
           </div>
@@ -224,7 +226,7 @@ export default function CaptureSettings() {
 
         {/* Outbound rules */}
         <div className="s-rule-row">
-          <span className="s-rule-badge outbound">出站</span>
+          <span className="s-rule-badge outbound">{t('settings.capture.outbound')}</span>
           <div className="s-rule-flow">
             <div className="s-ip-tags">
               {outboundSrc.map((ip, i) => (
@@ -248,7 +250,7 @@ export default function CaptureSettings() {
                   }
                   if (e.key === 'Backspace' && !outSrcInput && outboundSrc.length > 0) setOutboundSrc(prev => prev.slice(0, -1))
                 }}
-                placeholder={outboundSrc.length === 0 ? '源 IP（如 192.168.1.10）' : '添加...'}
+                placeholder={outboundSrc.length === 0 ? t('settings.capture.srcIpPlaceholder') : t('settings.capture.addMore')}
               />
             </div>
             <span className="s-rule-arrow">&rarr;</span>
@@ -274,7 +276,7 @@ export default function CaptureSettings() {
                   }
                   if (e.key === 'Backspace' && !outDstInput && outboundDst.length > 0) setOutboundDst(prev => prev.slice(0, -1))
                 }}
-                placeholder={outboundDst.length === 0 ? '目标 IP（留空=全部外部）' : '添加...'}
+                placeholder={outboundDst.length === 0 ? t('settings.capture.dstIpAllExternal') : t('settings.capture.addMore')}
               />
             </div>
           </div>
@@ -283,7 +285,7 @@ export default function CaptureSettings() {
         {rulesResetMsg && (
           <div className="s-alert success in-group">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-            <span>规则已重置，当前无任何 IP 限制，将显示全部方向的邮件流量</span>
+            <span>{t('settings.capture.rulesResetSuccess')}</span>
           </div>
         )}
 
@@ -299,16 +301,16 @@ export default function CaptureSettings() {
           <div className="s-rules-saved-summary">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
             <span>
-              当前生效规则：
+              {t('settings.capture.currentRules')}
               {(inboundSrc.length > 0 || inboundDst.length > 0) && (
-                <> 入站 {inboundSrc.length > 0 ? inboundSrc.join(', ') : '全部'}
-                  {inboundDst.length > 0 ? ` \u2192 ${inboundDst.join(', ')}` : ' \u2192 全部'}
+                <> {t('settings.capture.inbound')} {inboundSrc.length > 0 ? inboundSrc.join(', ') : t('settings.capture.all')}
+                  {inboundDst.length > 0 ? ` \u2192 ${inboundDst.join(', ')}` : ` \u2192 ${t('settings.capture.all')}`}
                 </>
               )}
-              {(inboundSrc.length > 0 || inboundDst.length > 0) && (outboundSrc.length > 0 || outboundDst.length > 0) && '；'}
+              {(inboundSrc.length > 0 || inboundDst.length > 0) && (outboundSrc.length > 0 || outboundDst.length > 0) && '\uff1b'}
               {(outboundSrc.length > 0 || outboundDst.length > 0) && (
-                <> 出站 {outboundSrc.length > 0 ? outboundSrc.join(', ') : '全部'}
-                  {outboundDst.length > 0 ? ` \u2192 ${outboundDst.join(', ')}` : ' \u2192 全部外部'}
+                <> {t('settings.capture.outbound')} {outboundSrc.length > 0 ? outboundSrc.join(', ') : t('settings.capture.all')}
+                  {outboundDst.length > 0 ? ` \u2192 ${outboundDst.join(', ')}` : ` \u2192 ${t('settings.capture.allExternal')}`}
                 </>
               )}
             </span>
@@ -342,12 +344,12 @@ export default function CaptureSettings() {
                 setRulesResetMsg(true)
                 setTimeout(() => { setRulesSaved(false); setRulesResetMsg(false) }, 3000)
               } catch (e) {
-                setRulesError(e instanceof Error ? e.message : '规则重置失败')
+                setRulesError(e instanceof Error ? e.message : t('settings.capture.rulesResetFailed'))
               }
             }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
-            重置规则
+            {t('settings.capture.resetRules')}
           </button>
           <button
             className={`s-btn-primary ${rulesSaved ? 's-btn-saved' : ''}`}
@@ -381,23 +383,23 @@ export default function CaptureSettings() {
               }
 
               const allIps = [
-                ...finalInSrc.map(ip => ({ ip, label: '入站源' })),
-                ...finalInDst.map(ip => ({ ip, label: '入站目标' })),
-                ...finalOutSrc.map(ip => ({ ip, label: '出站源' })),
-                ...finalOutDst.map(ip => ({ ip, label: '出站目标' })),
+                ...finalInSrc.map(ip => ({ ip, label: t('settings.capture.inboundSrc') })),
+                ...finalInDst.map(ip => ({ ip, label: t('settings.capture.inboundDst') })),
+                ...finalOutSrc.map(ip => ({ ip, label: t('settings.capture.outboundSrc') })),
+                ...finalOutDst.map(ip => ({ ip, label: t('settings.capture.outboundDst') })),
               ]
 
               const invalid = allIps.filter(({ ip }) => !validateIp(ip))
               if (invalid.length > 0) {
                 const detail = invalid.map(({ ip, label }) => `${label}: ${ip}`).join('\u3001')
-                setRulesError(`IP 格式无效 \u2014 ${detail}`)
+                setRulesError(t('settings.capture.invalidIp', { detail }))
                 return
               }
 
               const hasInbound = finalInSrc.length > 0 || finalInDst.length > 0
               const hasOutbound = finalOutSrc.length > 0 || finalOutDst.length > 0
               if (!hasInbound && !hasOutbound) {
-                setRulesError('请至少配置入站或出站规则中的一条')
+                setRulesError(t('settings.capture.atLeastOneRule'))
                 return
               }
 
@@ -414,27 +416,27 @@ export default function CaptureSettings() {
                 setRulesSaved(true)
                 setTimeout(() => setRulesSaved(false), 2000)
               } catch (e) {
-                setRulesError(e instanceof Error ? e.message : '规则保存失败')
+                setRulesError(e instanceof Error ? e.message : t('settings.capture.rulesSaveFailed'))
               }
             }}
           >
             {rulesSaved ? (
               <>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                已应用
+                {t('settings.capture.applied')}
               </>
-            ) : '应用规则'}
+            ) : t('settings.capture.applyRules')}
           </button>
         </div>
       </div>
 
       <div className="s-setting-group">
-        <div className="s-setting-group-header">高级选项</div>
+        <div className="s-setting-group-header">{t('settings.capture.advancedOptions')}</div>
 
         <div className="s-setting-row">
           <div className="s-setting-info">
-            <span className="s-setting-label">自动还原邮件</span>
-            <span className="s-setting-desc">自动从捕获的数据包中还原邮件内容</span>
+            <span className="s-setting-label">{t('settings.capture.autoRestore')}</span>
+            <span className="s-setting-desc">{t('settings.capture.autoRestoreDesc')}</span>
           </div>
           <label className="s-toggle">
             <input type="checkbox" checked={autoRestore} onChange={e => setAutoRestore(e.target.checked)} />
@@ -444,8 +446,8 @@ export default function CaptureSettings() {
 
         <div className="s-setting-row">
           <div className="s-setting-info">
-            <span className="s-setting-label">最大数据包大小</span>
-            <span className="s-setting-desc">单个捕获数据包的最大字节数</span>
+            <span className="s-setting-label">{t('settings.capture.maxPacketSize')}</span>
+            <span className="s-setting-desc">{t('settings.capture.maxPacketSizeDesc')}</span>
           </div>
           <select
             className="s-select"

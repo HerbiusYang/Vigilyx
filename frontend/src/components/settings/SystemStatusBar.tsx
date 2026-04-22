@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { formatBytes } from '../../utils/format'
+import { useTranslation } from 'react-i18next'
+import { formatBytes, formatClockTime, syncServerClock } from '../../utils/format'
 import { apiFetch } from '../../utils/api'
+import { EVENTS } from '../../utils/events'
 
 interface SnifferStatus {
   online: boolean
@@ -31,9 +33,12 @@ interface SystemStatusData {
   sniffer: SnifferStatus
   mta: MtaStatus
   server_time: string
+  server_timezone?: string
+  server_utc_offset_minutes?: number
 }
 
 function SystemStatusBar() {
+  const { t } = useTranslation()
   const [status, setStatus] = useState<SystemStatusData | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [deployMode, setDeployMode] = useState(() => localStorage.getItem('vigilyx-deploy-mode') || 'mirror')
@@ -46,8 +51,8 @@ function SystemStatusBar() {
       const mode = (e as CustomEvent).detail
       if (mode === 'mirror' || mode === 'mta') setDeployMode(mode)
     }
-    window.addEventListener('vigilyx:deploy-mode-changed', handler)
-    return () => window.removeEventListener('vigilyx:deploy-mode-changed', handler)
+    window.addEventListener(EVENTS.DEPLOY_MODE_CHANGED, handler)
+    return () => window.removeEventListener(EVENTS.DEPLOY_MODE_CHANGED, handler)
   }, [])
 
   const fetchStatus = async () => {
@@ -55,6 +60,7 @@ function SystemStatusBar() {
       const res = await apiFetch('/api/system/status')
       const data = await res.json()
       if (data.success) {
+        syncServerClock(data.data)
         const json = JSON.stringify(data.data)
         if (json !== prevJson.current) {
           prevJson.current = json
@@ -97,17 +103,17 @@ function SystemStatusBar() {
   }
 
   const getSnifferStatusText = () => {
-    if (!status) return '加载中...'
+    if (!status) return t('settings.statusBar.loading')
     switch (status.sniffer.connection_status) {
-      case 'connected': return '运行中'
-      case 'connecting': return '连接中'
-      case 'error': return '错误'
-      default: return '离线'
+      case 'connected': return t('settings.statusBar.running')
+      case 'connecting': return t('settings.statusBar.connecting')
+      case 'error': return t('settings.statusBar.error')
+      default: return t('settings.statusBar.offline')
     }
   }
 
   const getOverallStatus = () => {
-    if (!status) return { color: '#6b7280', text: '检测中' }
+    if (!status) return { color: '#6b7280', text: t('settings.statusBar.detecting') }
     // Determine data-plane service state from the deployment mode
     const dataPlaneOk = deployMode === 'mta'
       ? status.mta?.online
@@ -119,9 +125,9 @@ function SystemStatusBar() {
     const allOk = status.api_online && status.database_online && dataPlaneOk
     const hasError = dataPlaneError || !status.database_online
 
-    if (allOk) return { color: '#22c55e', text: '正常' }
-    if (hasError) return { color: '#ef4444', text: '异常' }
-    return { color: '#f59e0b', text: '部分' }
+    if (allOk) return { color: '#22c55e', text: t('settings.statusBar.normal') }
+    if (hasError) return { color: '#ef4444', text: t('settings.statusBar.abnormal') }
+    return { color: '#f59e0b', text: t('settings.statusBar.partial') }
   }
 
   const overall = getOverallStatus()
@@ -131,7 +137,7 @@ function SystemStatusBar() {
       <button
         className="status-bar-trigger"
         onClick={() => setExpanded(!expanded)}
-        title={`系统状态: ${overall.text}`}
+        title={`${t('settings.statusBar.systemStatusColon')} ${overall.text}`}
       >
         <span className="status-indicator" style={{ backgroundColor: overall.color, boxShadow: `0 0 6px ${overall.color}55` }}></span>
         <span className="status-text">{overall.text}</span>
@@ -141,9 +147,9 @@ function SystemStatusBar() {
       {expanded && status && (
         <div className="status-dropdown">
           <div className="dropdown-header">
-            <span>系统状态监控</span>
+            <span>{t('settings.statusBar.systemMonitor')}</span>
             <span className="update-time">
-              {new Date(status.server_time).toLocaleTimeString('zh-CN')}
+              {formatClockTime(status.server_time)}
             </span>
           </div>
 
@@ -152,10 +158,10 @@ function SystemStatusBar() {
             <div className="status-item">
               <div className="item-header">
                 <span className="item-dot" style={{ backgroundColor: status.api_online ? '#22c55e' : '#ef4444' }}></span>
-                <span className="item-name">API 服务</span>
+                <span className="item-name">{t('settings.statusBar.apiService')}</span>
               </div>
               <div className="item-detail">
-                <span>{status.api_online ? '运行中' : '离线'}</span>
+                <span>{status.api_online ? t('settings.statusBar.running') : t('settings.statusBar.offline')}</span>
                 <span className="version">v{status.api_version}</span>
               </div>
             </div>
@@ -164,10 +170,10 @@ function SystemStatusBar() {
             <div className="status-item">
               <div className="item-header">
                 <span className="item-dot" style={{ backgroundColor: status.database_online ? '#22c55e' : '#ef4444' }}></span>
-                <span className="item-name">数据库</span>
+                <span className="item-name">{t('settings.statusBar.database')}</span>
               </div>
               <div className="item-detail">
-                <span>{status.database_online ? '正常' : '异常'}</span>
+                <span>{status.database_online ? t('settings.statusBar.normal') : t('settings.statusBar.abnormal')}</span>
                 <span className="size">{formatBytes(status.database_size)}</span>
               </div>
             </div>
@@ -177,15 +183,15 @@ function SystemStatusBar() {
               <div className="status-item">
                 <div className="item-header">
                   <span className="item-dot" style={{ backgroundColor: status.mta?.online ? '#22c55e' : '#6b7280' }}></span>
-                  <span className="item-name">MTA 网关</span>
+                  <span className="item-name">{t('settings.statusBar.mtaGateway')}</span>
                 </div>
                 <div className="item-detail">
-                  <span>{status.mta?.online ? '运行中' : '离线'}</span>
+                  <span>{status.mta?.online ? t('settings.statusBar.running') : t('settings.statusBar.offline')}</span>
                   {status.mta?.online && <span className="mode">{status.mta.downstream_host}:{status.mta.downstream_port}</span>}
                 </div>
                 {status.mta?.online && status.mta.active_connections > 0 && (
                   <div className="item-stats">
-                    <span>{status.mta.active_connections} 活跃连接</span>
+                    <span>{status.mta.active_connections} {t('settings.statusBar.activeConnections')}</span>
                   </div>
                 )}
               </div>
@@ -193,15 +199,15 @@ function SystemStatusBar() {
               <div className="status-item sniffer">
                 <div className="item-header">
                   <span className="item-dot" style={{ backgroundColor: getSnifferStatusColor() }}></span>
-                  <span className="item-name">流量探针</span>
+                  <span className="item-name">{t('settings.statusBar.sniffer')}</span>
                 </div>
                 <div className="item-detail">
                   <span>{getSnifferStatusText()}</span>
-                  <span className="mode">{status.sniffer.capture_mode || '未知'}</span>
+                  <span className="mode">{status.sniffer.capture_mode || t('settings.statusBar.unknown')}</span>
                 </div>
                 {status.sniffer.connection_status === 'connected' && (
                   <div className="item-stats">
-                    <span>{status.sniffer.packets_processed.toLocaleString()} 包</span>
+                    <span>{status.sniffer.packets_processed.toLocaleString()} {t('settings.statusBar.packets')}</span>
                     <span>{formatBytes(status.sniffer.bytes_processed)}</span>
                   </div>
                 )}
@@ -220,7 +226,7 @@ function SystemStatusBar() {
                 <span className="item-name">Redis</span>
               </div>
               <div className="item-detail">
-                <span>{status.redis_online ? '已连接' : '未使用'}</span>
+                <span>{status.redis_online ? t('settings.statusBar.connected') : t('settings.statusBar.unused')}</span>
               </div>
             </div>
           </div>

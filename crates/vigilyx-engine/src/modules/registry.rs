@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use tracing::{info, warn};
@@ -14,6 +14,7 @@ use crate::ioc::IocManager;
 use crate::module::SecurityModule;
 use crate::remote::RemoteModuleProxy;
 
+use super::aitm_detect::AitmDetectModule;
 use super::anomaly_detect::AnomalyDetectModule;
 use super::attach_content::AttachContentModule;
 use super::attach_qr_scan::AttachmentQrScanModule;
@@ -39,6 +40,51 @@ use super::yara_scan::YaraScanModule;
 /// Safe-domain handle type returned alongside the module registry.
 pub type SafeDomainsHandle = Arc<std::sync::RwLock<HashSet<String>>>;
 
+#[derive(Default)]
+struct BuiltinWhitelistSeed {
+    well_known_safe: HashSet<String>,
+    url_trusted: HashSet<String>,
+}
+
+fn extract_seed_domains(seed: &serde_json::Value, section: &str) -> HashSet<String> {
+    seed.get(section)
+        .and_then(|value| value.get("items"))
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|value| value.as_str())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn builtin_whitelist_seed() -> &'static BuiltinWhitelistSeed {
+    static SEED: OnceLock<BuiltinWhitelistSeed> = OnceLock::new();
+
+    SEED.get_or_init(|| {
+        let seed_json = include_str!("../../../../shared/schemas/system_whitelist_seed.json");
+        let seed: serde_json::Value = match serde_json::from_str(seed_json) {
+            Ok(seed) => seed,
+            Err(error) => {
+                warn!("Failed to parse system whitelist seed for runtime merge: {}", error);
+                return BuiltinWhitelistSeed::default();
+            }
+        };
+
+        let intel_safe = extract_seed_domains(&seed, "intel_safe");
+        let url_trusted = extract_seed_domains(&seed, "url_trusted");
+        let mut well_known_safe = intel_safe;
+        well_known_safe.extend(url_trusted.iter().cloned());
+
+        BuiltinWhitelistSeed {
+            well_known_safe,
+            url_trusted,
+        }
+    })
+}
+
 /// Build the full module registry with all available modules.
 /// Also returns the safe-domains handle (if intel is enabled) for use by `reload_runtime_ioc_caches`.
 pub async fn build_module_registry(
@@ -48,6 +94,9 @@ pub async fn build_module_registry(
     Option<SafeDomainsHandle>,
 ) {
     let mut modules: HashMap<String, Arc<dyn SecurityModule>> = HashMap::new();
+
+    // Initialize the global module data registry (replaces all hardcoded static lists)
+    crate::module_data::init_module_data_from_db(db).await;
 
     let register = |modules: &mut HashMap<String, Arc<dyn SecurityModule>>,
                     m: Arc<dyn SecurityModule>| {
@@ -134,6 +183,7 @@ pub async fn build_module_registry(
         )),
     );
     register(&mut modules, Arc::new(AnomalyDetectModule::new()));
+    register(&mut modules, Arc::new(AitmDetectModule::new()));
     register(&mut modules, Arc::new(SemanticScanModule::new(nlp_remote)));
     register(&mut modules, Arc::new(DomainVerifyModule::new()));
     register(
@@ -266,30 +316,40 @@ pub async fn reload_runtime_ioc_caches(
 
 /// Load trusted URL domains from DB (used by link_scan / link_content structural checks).
 async fn load_trusted_url_domains(db: &VigilDb) -> HashSet<String> {
+    let mut set = builtin_whitelist_seed().url_trusted.clone();
     match db.load_url_trusted_domains().await {
         Ok(domains) => {
-            let set: HashSet<String> = domains.into_iter().collect();
+            set.extend(domains);
             info!("Trusted URL domains loaded: {} entries", set.len());
             set
         }
         Err(e) => {
-            warn!("Failed to load trusted URL domains: {}, using empty set", e);
-            HashSet::new()
+            warn!(
+                "Failed to load trusted URL domains from DB: {}, using built-in seed only ({} entries)",
+                e,
+                set.len()
+            );
+            set
         }
     }
 }
 
 /// Load well-known built-in safe domains used by sender-domain heuristics.
 async fn load_well_known_safe_domains(db: &VigilDb) -> HashSet<String> {
+    let mut set = builtin_whitelist_seed().well_known_safe.clone();
     match db.load_system_clean_domains().await {
         Ok(domains) => {
-            let set: HashSet<String> = domains.into_iter().collect();
+            set.extend(domains);
             info!("Well-known safe domains loaded: {} entries", set.len());
             set
         }
         Err(e) => {
-            warn!("Failed to load well-known safe domains: {}, using empty set", e);
-            HashSet::new()
+            warn!(
+                "Failed to load well-known safe domains from DB: {}, using built-in seed only ({} entries)",
+                e,
+                set.len()
+            );
+            set
         }
     }
 }
@@ -662,5 +722,20 @@ async fn build_sandbox_client() -> Option<Arc<crate::external::sandbox::SandboxC
             info!("CAPEv2 sandbox service connection timed out, sandbox module disabled");
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_whitelist_seed_keeps_key_runtime_domains_available() {
+        let seed = builtin_whitelist_seed();
+
+        assert!(seed.url_trusted.contains("aliyuncs.com"));
+        assert!(seed.url_trusted.contains("email.amazonaws.cn"));
+        assert!(seed.well_known_safe.contains("aliyuncs.com"));
+        assert!(seed.well_known_safe.contains("qichacha.com.cn"));
     }
 }

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use super::super::ApiResponse;
 use super::publish_engine_reload;
 use crate::AppState;
+use crate::auth::AuthenticatedUser;
 
 async fn load_keyword_system_seed(
     state: &Arc<AppState>,
@@ -50,16 +51,34 @@ pub async fn get_pipeline_config(State(state): State<Arc<AppState>>) -> impl Int
 /// NewStream Configuration
 pub async fn update_pipeline_config(
     State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
     Json(config): Json<serde_json::Value>,
 ) -> axum::response::Response {
    // verifyConfigurationformat
-    let _: vigilyx_engine::config::PipelineConfig = match serde_json::from_value(config.clone()) {
-        Ok(c) => c,
-        Err(e) => {
-            return ApiResponse::<serde_json::Value>::bad_request(format!("Invalid config: {}", e))
+    let parsed: vigilyx_engine::config::PipelineConfig =
+        match serde_json::from_value(config.clone()) {
+            Ok(c) => c,
+            Err(e) => {
+                return ApiResponse::<serde_json::Value>::bad_request(format!(
+                    "Invalid config: {}",
+                    e
+                ))
                 .into_response();
-        }
-    };
+            }
+        };
+
+    // Validate security-critical VerdictConfig ranges (A03 hardening)
+    if let Err(violations) = parsed.verdict_config.validate() {
+        tracing::warn!(
+            violations = ?violations,
+            "VerdictConfig API update rejected — potential security config tampering"
+        );
+        return ApiResponse::<serde_json::Value>::bad_request(format!(
+            "VerdictConfig validation failed: {}",
+            violations.join("; ")
+        ))
+        .into_response();
+    }
 
     let json_str = match serde_json::to_string(&config) {
         Ok(s) => s,
@@ -75,6 +94,14 @@ pub async fn update_pipeline_config(
         Ok(()) => {
            // Engine process NewConfiguration
             publish_engine_reload(&state, "config").await;
+            crate::handlers::spawn_audit_log(
+                state.engine_db.clone(),
+                user.username,
+                "update_pipeline_config",
+                Some("security"),
+                Some("security_pipeline".to_string()),
+                None,
+            );
             ApiResponse::ok(config).into_response()
         }
         Err(e) => {
@@ -217,6 +244,7 @@ pub async fn get_keyword_overrides(State(state): State<Arc<AppState>>) -> axum::
 /// New Configuration
 pub async fn update_keyword_overrides(
     State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
     Json(payload): Json<serde_json::Value>,
 ) -> axum::response::Response {
     use vigilyx_engine::modules::content_scan::{
@@ -258,10 +286,88 @@ pub async fn update_keyword_overrides(
         Ok(()) => {
            // Engine New (When)
             publish_engine_reload(&state, "keywords").await;
+            crate::handlers::spawn_audit_log(
+                state.engine_db.clone(),
+                user.username,
+                "update_keyword_overrides",
+                Some("security"),
+                Some("keyword_overrides".to_string()),
+                None,
+            );
             ApiResponse::ok(normalized_overrides).into_response()
         }
         Err(e) => {
             ApiResponse::<serde_json::Value>::server_error(&e, "save关键词Configurationfailed")
+                .into_response()
+        }
+    }
+}
+
+// ── Module Data Overrides ──────────────────────────────────────────
+
+/// GET /api/security/module-data-overrides
+/// Returns the current module data overrides stored in DB (empty object if none).
+pub async fn get_module_data_overrides(
+    State(state): State<Arc<AppState>>,
+) -> axum::response::Response {
+    let overrides: serde_json::Value =
+        match state.engine_db.get_config("engine_module_data_overrides").await {
+            Ok(Some(json)) => serde_json::from_str(&json).unwrap_or(serde_json::json!({})),
+            Ok(None) => serde_json::json!({}),
+            Err(e) => {
+                return ApiResponse::<serde_json::Value>::internal_err(
+                    &e,
+                    "读取模块数据覆盖配置失败",
+                )
+                .into_response();
+            }
+        };
+
+    ApiResponse::ok(overrides).into_response()
+}
+
+/// PUT /api/security/module-data-overrides
+/// Accepts a JSON object of overrides, persists to DB, and triggers engine reload.
+pub async fn update_module_data_overrides(
+    State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
+    Json(payload): Json<serde_json::Value>,
+) -> axum::response::Response {
+    // Validate: must be a JSON object
+    if !payload.is_object() {
+        return ApiResponse::<serde_json::Value>::bad_request(
+            "模块数据覆盖配置必须是 JSON 对象".to_string(),
+        )
+        .into_response();
+    }
+
+    let json_str = match serde_json::to_string(&payload) {
+        Ok(s) => s,
+        Err(e) => {
+            return ApiResponse::<serde_json::Value>::bad_request(format!("序列化失败: {}", e))
+                .into_response();
+        }
+    };
+
+    match state
+        .engine_db
+        .set_config("engine_module_data_overrides", &json_str)
+        .await
+    {
+        Ok(()) => {
+            publish_engine_reload(&state, "module_data").await;
+            crate::handlers::spawn_audit_log(
+                state.engine_db.clone(),
+                user.username,
+                "update_module_data_overrides",
+                Some("security"),
+                Some("engine_module_data_overrides".to_string()),
+                None,
+            );
+            ApiResponse::ok(payload).into_response()
+        }
+        Err(e) => {
+            ApiResponse::<serde_json::Value>::server_error(&e, "保存模块数据覆盖配置失败")
                 .into_response()
         }
     }

@@ -1,9 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { apiFetch } from '../../utils/api'
+import { EVENTS } from '../../utils/events'
 
 type DeployMode = 'mirror' | 'mta'
 
 export default function DeploymentSettings() {
+  const { t } = useTranslation()
   const [deployMode, setDeployMode] = useState<DeployMode>(
     () => (localStorage.getItem('vigilyx-deploy-mode') as DeployMode) || 'mirror'
   )
@@ -102,22 +105,23 @@ export default function DeploymentSettings() {
       const data = await res.json()
       if (data.success) {
         if (data.data?.detected_services) setDetectedServices(data.data.detected_services)
-        window.dispatchEvent(new CustomEvent('vigilyx:deploy-mode-changed', { detail: mode }))
-        setSwitchMsg({ type: 'success', text: mode === 'mta' ? '已切换到 MTA 网关模式，Sniffer 已停止' : '已切换到镜像监听模式，MTA 已停止' })
+        window.dispatchEvent(new CustomEvent(EVENTS.DEPLOY_MODE_CHANGED, { detail: mode }))
+        setSwitchMsg({ type: 'success', text: mode === 'mta' ? t('settings.deployment.switchedToMta') : t('settings.deployment.switchedToMirror') })
       } else {
-        setSwitchMsg({ type: 'error', text: data.error || '切换失败' })
+        setSwitchMsg({ type: 'error', text: data.error || t('settings.deployment.switchFailed') })
         // Roll back
         const prev: DeployMode = mode === 'mta' ? 'mirror' : 'mta'
         setDeployMode(prev)
         setDetectedServices({ sniffer_online: prev === 'mirror', mta_online: prev === 'mta' })
       }
     } catch {
-      setSwitchMsg({ type: 'error', text: '网络错误，请重试' })
+      setSwitchMsg({ type: 'error', text: t('settings.deployment.networkError') })
     } finally {
       setDeploySaving(false)
       setTimeout(() => setSwitchMsg(null), 6000)
     }
-  }, [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [t])
 
   // Auto-save all MTA parameters (1.5s debounce)
   useEffect(() => {
@@ -162,23 +166,23 @@ export default function DeploymentSettings() {
               <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>
             </svg>
           </span>
-          部署模式
+          {t('settings.deployment.title')}
         </h2>
-        <p className="s-section-subtitle">系统运行模式与网卡配置</p>
+        <p className="s-section-subtitle">{t('settings.deployment.subtitle')}</p>
       </div>
 
       {/* Operating mode */}
       <div className="s-setting-group">
-        <div className="s-setting-group-header">运行模式</div>
+        <div className="s-setting-group-header">{t('settings.deployment.operatingMode')}</div>
         {deployModeLocked && (
           <div style={{ margin: '0 12px 8px', padding: '8px 12px', borderRadius: 8, fontSize: 12, background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.2)', color: '#eab308' }}>
-            模式已被环境变量 VIGILYX_MODE 锁定为 <strong>{deployMode}</strong>，如需切换请修改 .env 并重新部署
+            {t('settings.deployment.modeLocked', { mode: deployMode })}
           </div>
         )}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, padding: '0 12px 12px' }}>
           {([
-            { mode: 'mirror' as DeployMode, title: '网络镜像监听', desc: '旁路监听 \u00B7 零侵入', online: detectedServices.sniffer_online, color: '#3b82f6' },
-            { mode: 'mta' as DeployMode, title: 'MTA 邮件网关', desc: '串联部署 \u00B7 实时拦截', online: detectedServices.mta_online, color: '#f97316' },
+            { mode: 'mirror' as DeployMode, title: t('settings.deployment.mirrorTitle'), desc: t('settings.deployment.mirrorDesc'), online: detectedServices.sniffer_online, color: '#3b82f6' },
+            { mode: 'mta' as DeployMode, title: t('settings.deployment.mtaTitle'), desc: t('settings.deployment.mtaDesc'), online: detectedServices.mta_online, color: '#f97316' },
           ]).map(card => {
             const active = deployMode === card.mode
             return (
@@ -198,7 +202,7 @@ export default function DeploymentSettings() {
                     fontSize: 9, fontWeight: 600, padding: '2px 8px', borderRadius: 4,
                     background: card.online ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.04)',
                     color: card.online ? '#22c55e' : 'var(--text-tertiary)',
-                  }}>{card.online ? '运行中' : '未运行'}</span>
+                  }}>{card.online ? t('settings.deployment.running') : t('settings.deployment.notRunning')}</span>
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{card.desc}</div>
               </div>
@@ -210,9 +214,9 @@ export default function DeploymentSettings() {
       {/* Status mismatch notice */}
       {!deploySaving && !switchMsg && ((deployMode === 'mta' && !detectedServices.mta_online) || (deployMode === 'mirror' && !detectedServices.sniffer_online)) && (
         <div style={{ padding: '10px 16px', borderRadius: 10, fontSize: 12, background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.2)', color: '#eab308', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span>当前选择的模式与实际运行的服务不一致</span>
+          <span>{t('settings.deployment.modeMismatch')}</span>
           <button onClick={() => switchDeployMode(deployMode)} disabled={deploySaving} style={{ fontSize: 12, padding: '4px 12px', borderRadius: 6, border: '1px solid rgba(234,179,8,0.3)', background: 'rgba(234,179,8,0.1)', color: '#eab308', cursor: 'pointer' }}>
-            立即同步
+            {t('settings.deployment.syncNow')}
           </button>
         </div>
       )}
@@ -220,7 +224,7 @@ export default function DeploymentSettings() {
       {/* Switch-result notice */}
       {deploySaving && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px', borderRadius: 10, background: 'rgba(34,211,238,0.06)', border: '1px solid rgba(34,211,238,0.2)', fontSize: 13, color: '#67e8f9' }}>
-          <span className="grok-spinner" /> 正在切换模式...
+          <span className="grok-spinner" /> {t('settings.deployment.switchingMode')}
         </div>
       )}
       {switchMsg && (
@@ -233,42 +237,42 @@ export default function DeploymentSettings() {
       {deployMode === 'mirror' && (
       <div className="s-setting-group">
         <div className="s-setting-group-header" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span>Sniffer 网卡配置</span>
-          {detectedServices.sniffer_online && <span style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: 'rgba(59,130,246,0.12)', color: '#3b82f6', fontWeight: 700 }}>运行中</span>}
+          <span>{t('settings.deployment.snifferNicConfig')}</span>
+          {detectedServices.sniffer_online && <span style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: 'rgba(59,130,246,0.12)', color: '#3b82f6', fontWeight: 700 }}>{t('settings.deployment.running')}</span>}
         </div>
         {!detectedServices.sniffer_online && (
-          <div style={{ padding: '0 16px 8px', fontSize: 11, color: 'var(--text-tertiary)' }}>Sniffer 未运行，以下配置将在启动后生效</div>
+          <div style={{ padding: '0 16px 8px', fontSize: 11, color: 'var(--text-tertiary)' }}>{t('settings.deployment.snifferOfflineNote')}</div>
         )}
 
-          <div style={{ padding: '0 16px 8px', fontSize: 11, color: 'var(--text-tertiary)', opacity: 0.8 }}>以下参数由容器环境变量控制（SNIFFER_INTERFACE, SMTP_PORTS 等），修改需重新部署容器</div>
+          <div style={{ padding: '0 16px 8px', fontSize: 11, color: 'var(--text-tertiary)', opacity: 0.8 }}>{t('settings.deployment.envVarNote')}</div>
 
           <div className="s-setting-row">
             <div className="s-setting-info">
-              <span className="s-setting-label">监听网卡</span>
-              <span className="s-setting-desc">由环境变量 SNIFFER_INTERFACE 控制，此处仅供参考</span>
+              <span className="s-setting-label">{t('settings.deployment.listenInterface')}</span>
+              <span className="s-setting-desc">{t('settings.deployment.listenInterfaceDesc')}</span>
             </div>
             <input
               className="s-input"
               style={{ width: 160, textAlign: 'center', fontFamily: 'var(--font-mono)', opacity: 0.6 }}
               value={snifferInterface}
               readOnly
-              title="由容器环境变量 SNIFFER_INTERFACE 控制"
+              title={t('settings.deployment.listenInterfaceDesc')}
               placeholder="eth0"
             />
           </div>
 
           <div className="s-setting-row">
             <div className="s-setting-info">
-              <span className="s-setting-label">捕获模式</span>
-              <span className="s-setting-desc">使用 libpcap 混杂模式捕获所有经过该网卡的数据包</span>
+              <span className="s-setting-label">{t('settings.deployment.captureMode')}</span>
+              <span className="s-setting-desc">{t('settings.deployment.captureModeDesc')}</span>
             </div>
             <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)', padding: '6px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: 6, border: '1px solid var(--border-muted)' }}>promiscuous</span>
           </div>
 
           <div className="s-setting-row">
             <div className="s-setting-info">
-              <span className="s-setting-label">协议端口</span>
-              <span className="s-setting-desc">由环境变量 SMTP_PORTS / POP3_PORTS / IMAP_PORTS 控制</span>
+              <span className="s-setting-label">{t('settings.deployment.protocolPorts')}</span>
+              <span className="s-setting-desc">{t('settings.deployment.protocolPortsDesc')}</span>
             </div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {[
@@ -290,13 +294,13 @@ export default function DeploymentSettings() {
       {deployMode === 'mta' && (<>
       <div className="s-setting-group">
         <div className="s-setting-group-header" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span>MTA 网关配置</span>
-          {detectedServices.mta_online && <span style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: 'rgba(249,115,22,0.12)', color: '#f97316', fontWeight: 700 }}>运行中</span>}
+          <span>{t('settings.deployment.mtaGatewayConfig')}</span>
+          {detectedServices.mta_online && <span style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: 'rgba(249,115,22,0.12)', color: '#f97316', fontWeight: 700 }}>{t('settings.deployment.running')}</span>}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0', padding: '0' }}>
           <div className="s-setting-row">
-            <div className="s-setting-info"><span className="s-setting-label">下游 MTA</span></div>
+            <div className="s-setting-info"><span className="s-setting-label">{t('settings.deployment.downstreamMta')}</span></div>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <input className="s-input" style={{ width: 140, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 12 }}
                 value={mtaDownstreamHost} onChange={e => { setMtaDownstreamHost(e.target.value); localStorage.setItem('vigilyx-mta-downstream-host', e.target.value) }}
@@ -307,7 +311,7 @@ export default function DeploymentSettings() {
             </div>
           </div>
           <div className="s-setting-row">
-            <div className="s-setting-info"><span className="s-setting-label">本地域名</span></div>
+            <div className="s-setting-info"><span className="s-setting-label">{t('settings.deployment.localDomains')}</span></div>
             <input className="s-input" style={{ width: 200, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 11 }}
               value={mtaLocalDomains} onChange={e => { setMtaLocalDomains(e.target.value); localStorage.setItem('vigilyx-mta-local-domains', e.target.value) }}
               placeholder="example.com" />
@@ -316,15 +320,15 @@ export default function DeploymentSettings() {
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0' }}>
           <div className="s-setting-row">
-            <div className="s-setting-info"><span className="s-setting-label">检测超时</span></div>
+            <div className="s-setting-info"><span className="s-setting-label">{t('settings.deployment.detectionTimeout')}</span></div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <input className="s-input" style={{ width: 55, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 12 }}
                 type="number" value={mtaTimeout} onChange={e => { setMtaTimeout(e.target.value); localStorage.setItem('vigilyx-mta-timeout', e.target.value) }} />
-              <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>秒</span>
+              <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{t('settings.deployment.seconds')}</span>
             </div>
           </div>
           <div className="s-setting-row">
-            <div className="s-setting-info"><span className="s-setting-label">故障策略</span></div>
+            <div className="s-setting-info"><span className="s-setting-label">{t('settings.deployment.failurePolicy')}</span></div>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
               <input type="checkbox" checked={mtaFailOpen}
                 onChange={e => { setMtaFailOpen(e.target.checked) }} />
@@ -342,17 +346,17 @@ export default function DeploymentSettings() {
               <input type="checkbox" checked={mtaStarttls}
                 onChange={e => { setMtaStarttls(e.target.checked); localStorage.setItem('vigilyx-mta-starttls', String(e.target.checked)) }} />
               <span style={{ fontSize: 11, color: mtaStarttls ? 'var(--accent-emerald)' : 'var(--text-tertiary)' }}>
-                {mtaStarttls ? '已启用' : '已关闭'}
+                {mtaStarttls ? t('settings.deployment.enabled') : t('settings.deployment.disabled')}
               </span>
             </label>
           </div>
           <div className="s-setting-row">
-            <div className="s-setting-info"><span className="s-setting-label">出站 DLP</span></div>
+            <div className="s-setting-info"><span className="s-setting-label">{t('settings.deployment.outboundDlp')}</span></div>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
               <input type="checkbox" checked={mtaDlpEnabled}
                 onChange={e => { setMtaDlpEnabled(e.target.checked); localStorage.setItem('vigilyx-mta-dlp-enabled', String(e.target.checked)) }} />
               <span style={{ fontSize: 11, color: mtaDlpEnabled ? 'var(--accent-emerald)' : 'var(--text-tertiary)' }}>
-                {mtaDlpEnabled ? '已启用' : '已关闭'}
+                {mtaDlpEnabled ? t('settings.deployment.enabled') : t('settings.deployment.disabled')}
               </span>
             </label>
           </div>
@@ -360,12 +364,12 @@ export default function DeploymentSettings() {
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0' }}>
           <div className="s-setting-row">
-            <div className="s-setting-info"><span className="s-setting-label">最大连接</span></div>
+            <div className="s-setting-info"><span className="s-setting-label">{t('settings.deployment.maxConnections')}</span></div>
             <input className="s-input" style={{ width: 70, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 12 }}
               type="number" value={mtaMaxConn} onChange={e => { setMtaMaxConn(e.target.value); localStorage.setItem('vigilyx-mta-max-conn', e.target.value) }} />
           </div>
           <div className="s-setting-row">
-            <div className="s-setting-info"><span className="s-setting-label">主机名</span></div>
+            <div className="s-setting-info"><span className="s-setting-label">{t('settings.deployment.hostname')}</span></div>
             <input className="s-input" style={{ width: 140, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 12 }}
               value={mtaHostname} onChange={e => { setMtaHostname(e.target.value); localStorage.setItem('vigilyx-mta-hostname', e.target.value) }}
               placeholder="vigilyx-mta" />
@@ -378,7 +382,7 @@ export default function DeploymentSettings() {
       {deploySaved && (
         <div className="s-deploy-success" style={{ marginTop: 12 }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-          配置已保存，需重启 MTA 容器生效
+          {t('settings.deployment.configSaved')}
         </div>
       )}
     </div>

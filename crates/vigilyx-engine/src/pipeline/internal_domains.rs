@@ -8,29 +8,20 @@ use std::collections::HashSet;
 use tracing::{info, warn};
 use vigilyx_db::VigilDb;
 
+use crate::module_data::module_data;
+
 /// InternalDomaindetectThreshold: DomainAt least Countof SameSendingDomain Internal
 const INTERNAL_DOMAIN_MIN_SENDERS: i32 = 5;
 /// detect:recent Dayofemaildata
 const INTERNAL_DOMAIN_SCAN_DAYS: i32 = 30;
-/// already of emailServiceDomain(Exclude, InternalDomain)
-const PUBLIC_MAIL_DOMAINS: &[&str] = &[
-    "qq.com",
-    "163.com",
-    "126.com",
-    "gmail.com",
-    "outlook.com",
-    "hotmail.com",
-    "yahoo.com",
-    "sina.com",
-    "sohu.com",
-    "foxmail.com",
-    "vip.qq.com",
-    "vip.163.com",
-    "139.com",
-    "189.cn",
-    "wo.cn",
-    "aliyun.com",
-];
+/// Check whether a domain is a well-known public email service domain.
+/// Delegates to the runtime `module_data()` registry (key `public_mail_domains`).
+/// Used to:
+/// 1. Exclude from internal domain auto-detection
+/// 2. Skip "first contact" checks in identity_anomaly (millions of users share these domains)
+pub(crate) fn is_public_mail_domain(domain: &str) -> bool {
+    module_data().contains("public_mail_domains", domain)
+}
 
 /// From DB LoadalreadydetectofInternalDomain,if not Firstdetect
 pub(crate) async fn load_internal_domains(db: &VigilDb) -> HashSet<String> {
@@ -74,7 +65,7 @@ pub(crate) async fn refresh_internal_domains(db: &VigilDb) -> HashSet<String> {
         Ok(detected) => {
             for (domain, sender_count) in &detected {
                // Exclude emailServiceDomain
-                if PUBLIC_MAIL_DOMAINS.contains(&domain.as_str()) {
+                if is_public_mail_domain(domain) {
                     continue;
                 }
                 info!(

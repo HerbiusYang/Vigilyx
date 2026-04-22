@@ -39,8 +39,8 @@ class TestFormatAnalyzePrompt:
     def test_long_content_truncated(self):
         long_content = "X" * 5000
         result = format_analyze_prompt(
-            mail_from="sender@test.com",
-            rcpt_to=["r@test.com"],
+            mail_from="sender@example.test",
+            rcpt_to=["recipient@example.test"],
             subject="Test",
             protocol="SMTP",
             content_preview=long_content,
@@ -51,17 +51,17 @@ class TestFormatAnalyzePrompt:
 
     def test_recipient_list_formatted(self):
         result = format_analyze_prompt(
-            mail_from="a@b.com",
-            rcpt_to=["x@y.com", "z@w.com", "q@p.com"],
+            mail_from="author@example.test",
+            rcpt_to=["first@example.com", "second@example.net", "third@example.org"],
             subject="Hi",
             protocol="SMTP",
             content_preview="test",
         )
-        assert "x@y.com, z@w.com, q@p.com" in result
+        assert "first@example.com, second@example.net, third@example.org" in result
 
     def test_empty_recipient_list(self):
         result = format_analyze_prompt(
-            mail_from="a@b.com",
+            mail_from="author@example.test",
             rcpt_to=[],
             subject="Hi",
             protocol="SMTP",

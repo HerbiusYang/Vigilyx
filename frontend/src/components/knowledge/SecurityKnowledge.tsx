@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { type TopicId, type CategoryFilter, topicEntries, getTopicEntry, categoryFilters } from './knowledgeData'
+import { useTranslation } from 'react-i18next'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { type TopicId, type CategoryFilter, topicEntries, getTopicEntry, categoryFilters, isTopicId, getTopicPath, getLocalizedTopicContent } from './knowledgeData'
 import { searchTopics, type SearchResult, type SearchSnippet } from './knowledgeSearch'
-import { TopicMTA, TopicOpportunisticTLS, TopicMandatoryTLS, TopicSTARTTLS, TopicSPF, TopicDSFusion, TopicTemporalEVT, TopicModulePipeline, TopicPhishingDetection, TopicIocIntel, TopicAiNlp, TopicSoarAlerts, TopicDataSecurity } from './knowledgeArticles'
+import { TopicVisualShowcase } from './knowledgeVisuals'
+import { formatDateOnly, getServerNowMs } from '../../utils/format'
 
 type ViewMode = 'browse' | 'read'
 
@@ -43,22 +45,35 @@ function HighlightText({ text, highlights }: { text: string; highlights: [number
 }
 
 /* ====== Article Renderer ====== */
+function GenericTopicArticle({ topicId }: { topicId: TopicId }) {
+  const { i18n } = useTranslation()
+  const entry = getTopicEntry(topicId)
+  if (!entry) return null
+  const primary = getLocalizedTopicContent(entry, i18n.language)
+
+  return (
+    <article className="sk-article">
+      <div className="sk-article-header">
+        <span className={`sk-tag ${entry.tagClass}`}>{primary.tag}</span>
+        <h1>{primary.title}</h1>
+        <p className="sk-article-subtitle">{primary.subtitle}</p>
+        <p className="sk-lead">{primary.lead}</p>
+      </div>
+
+      <TopicVisualShowcase topicId={topicId} language={i18n.language} />
+
+      {primary.sections.map((section, index) => (
+        <section className="sk-section" key={`${section.heading}-${index}`}>
+          <h2>{section.heading}</h2>
+          <p>{section.plainText}</p>
+        </section>
+      ))}
+    </article>
+  )
+}
+
 function ArticleRenderer({ topicId }: { topicId: TopicId }) {
-  switch (topicId) {
-    case 'mta': return <TopicMTA />
-    case 'opportunistic-tls': return <TopicOpportunisticTLS />
-    case 'mandatory-tls': return <TopicMandatoryTLS />
-    case 'starttls': return <TopicSTARTTLS />
-    case 'spf-dkim-dmarc': return <TopicSPF />
-    case 'ds-fusion': return <TopicDSFusion />
-    case 'temporal-evt': return <TopicTemporalEVT />
-    case 'module-pipeline': return <TopicModulePipeline />
-    case 'phishing-detection': return <TopicPhishingDetection />
-    case 'ioc-intel': return <TopicIocIntel />
-    case 'ai-nlp': return <TopicAiNlp />
-    case 'soar-alerts': return <TopicSoarAlerts />
-    case 'data-security': return <TopicDataSecurity />
-  }
+  return <GenericTopicArticle topicId={topicId} />
 }
 
 /* ====== Table of Contents ====== */
@@ -68,6 +83,7 @@ interface TocItem {
 }
 
 function TableOfContents({ articleRef, topicId }: { articleRef: React.RefObject<HTMLDivElement | null>; topicId: TopicId | null }) {
+  const { t } = useTranslation()
   const [items, setItems] = useState<TocItem[]>([])
   const [activeId, setActiveId] = useState('')
 
@@ -116,7 +132,7 @@ function TableOfContents({ articleRef, topicId }: { articleRef: React.RefObject<
 
   return (
     <aside className="sk-reader-toc">
-      <div className="sk-toc-title">目录</div>
+      <div className="sk-toc-title">{t('knowledge.toc')}</div>
       <nav className="sk-toc">
         {items.map(item => (
           <button
@@ -134,15 +150,25 @@ function TableOfContents({ articleRef, topicId }: { articleRef: React.RefObject<
 
 /* ====== Main Component ====== */
 function SecurityKnowledge() {
+  const { t, i18n } = useTranslation()
+  const navigate = useNavigate()
+  const { topicId: topicParam } = useParams<{ topicId?: string }>()
   const [searchParams] = useSearchParams()
-  const exportTopicId = searchParams.get('export') as TopicId | null
+  const routeTopicId = isTopicId(topicParam) ? topicParam : null
+  const legacyExportParam = searchParams.get('export')
+  const exportTopicId = isTopicId(legacyExportParam)
+    ? legacyExportParam
+    : legacyExportParam === '1'
+      ? routeTopicId
+      : null
+  const viewMode: ViewMode = routeTopicId ? 'read' : 'browse'
+  const activeTopic = exportTopicId ?? routeTopicId
+  const invalidTopic = Boolean(topicParam && !routeTopicId)
 
-  const [viewMode, setViewMode] = useState<ViewMode>('browse')
-  const [activeTopic, setActiveTopic] = useState<TopicId | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
   const [readingProgress, setReadingProgress] = useState(0)
-  const [activeCategory, setActiveCategory] = useState<CategoryFilter>('全部')
+  const [activeCategory, setActiveCategory] = useState<CategoryFilter>('all')
 
   const searchInputRef = useRef<HTMLInputElement>(null)
   const searchDebounceRef = useRef<number>(0)
@@ -163,13 +189,13 @@ function SecurityKnowledge() {
       return
     }
     searchDebounceRef.current = window.setTimeout(() => {
-      const results = searchTopics(searchQuery, topicEntries)
+      const results = searchTopics(searchQuery, topicEntries, i18n.language)
       setSearchResults(results)
     }, 200)
     return () => {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current)
     }
-  }, [searchQuery])
+  }, [searchQuery, i18n.language])
 
   // Keyboard shortcut: "/" to focus search
   useEffect(() => {
@@ -214,47 +240,58 @@ function SecurityKnowledge() {
   }, [viewMode, activeTopic])
 
   const handleSelectTopic = useCallback((topicId: TopicId) => {
-    setActiveTopic(topicId)
-    setViewMode('read')
+    navigate(getTopicPath(topicId))
     setSearchQuery('')
     setSearchResults([])
     window.scrollTo({ top: 0, behavior: 'smooth' })
-  }, [])
+  }, [navigate])
 
   const handleBackToBrowse = useCallback(() => {
-    setViewMode('browse')
-    setActiveTopic(null)
+    navigate('/knowledge')
     setReadingProgress(0)
-  }, [])
+  }, [navigate])
 
   const activeEntry = activeTopic ? getTopicEntry(activeTopic) : null
+  const activeEntryLocalized = activeEntry ? getLocalizedTopicContent(activeEntry, i18n.language) : null
 
   const handleExportPdf = useCallback(() => {
     if (!activeTopic) return
-    window.open(`/knowledge?export=${activeTopic}`, '_blank', 'noopener,noreferrer')
+    window.open(`${getTopicPath(activeTopic)}?export=1`, '_blank', 'noopener,noreferrer')
   }, [activeTopic])
 
   const showSearchResults = searchQuery.trim().length > 0
-  const filteredEntries = activeCategory === '全部'
+  const filteredEntries = activeCategory === 'all'
     ? topicEntries
     : topicEntries.filter(e => e.category === activeCategory)
 
   /* ====== EXPORT MODE ====== */
   if (exportTopicId) {
     const exportEntry = getTopicEntry(exportTopicId)
-    if (!exportEntry) return <div>文章不存在</div>
+    if (!exportEntry) return <div>{t('knowledge.articleNotFound')}</div>
     return (
       <div className="sk-export-wrap">
         <div className="sk-export-banner">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           <div className="sk-export-banner-text">
-            <span className="sk-export-banner-title">Vigilyx 安全知识库</span>
+            <span className="sk-export-banner-title">{t('knowledge.brandTitle')}</span>
             <span className="sk-export-banner-sep">|</span>
-            <span className="sk-export-banner-article">{exportEntry.title}</span>
+            <span className="sk-export-banner-article">{getLocalizedTopicContent(exportEntry, i18n.language).title}</span>
           </div>
-          <span className="sk-export-banner-date">{new Date().toLocaleDateString('zh-CN')}</span>
+          <span className="sk-export-banner-date">{formatDateOnly(new Date(getServerNowMs()).toISOString())}</span>
         </div>
         <ArticleRenderer topicId={exportTopicId} />
+      </div>
+    )
+  }
+
+  if (invalidTopic) {
+    return (
+      <div className="sk-browse">
+        <div className="sk-empty-state">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <div className="sk-empty-title">{t('knowledge.articleNotFound')}</div>
+          <button className="sk-empty-browse" onClick={handleBackToBrowse}>{t('knowledge.backToLibrary')}</button>
+        </div>
       </div>
     )
   }
@@ -269,9 +306,9 @@ function SecurityKnowledge() {
           <div className="sk-hero-content">
             <h1 className="sk-hero-title">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-              Vigilyx 安全知识库
+              {t('knowledge.brandTitle')}
             </h1>
-            <p className="sk-hero-desc">深入理解邮件安全协议与威胁分析</p>
+            <p className="sk-hero-desc">{t('knowledge.heroDesc')}</p>
           </div>
 
           {/* Search bar */}
@@ -281,7 +318,7 @@ function SecurityKnowledge() {
               <input
                 ref={searchInputRef}
                 type="text"
-                placeholder="搜索文章标题、内容或关键词..."
+                placeholder={t('knowledge.searchPlaceholder')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="sk-search-input"
@@ -304,7 +341,7 @@ function SecurityKnowledge() {
                 className={`sk-filter-tag ${activeCategory === cat ? 'active' : ''}`}
                 onClick={() => setActiveCategory(cat)}
               >
-                {cat}
+                {t(`knowledge.category.${cat}`)}
               </button>
             ))}
           </div>
@@ -316,11 +353,11 @@ function SecurityKnowledge() {
             {searchResults.length > 0 ? (
               <>
                 <div className="sk-search-count">
-                  找到 <strong>{searchResults.length}</strong> 篇相关文章
+                  {t('knowledge.searchCount', { count: searchResults.length })}
                 </div>
-                {searchResults.map((result, idx) => (
-                  <button
-                    key={result.topicId}
+              {searchResults.map((result, idx) => (
+                <button
+                  key={result.topicId}
                     className="sk-search-result"
                     style={{ animationDelay: `${idx * 40}ms` }}
                     onClick={() => handleSelectTopic(result.topicId)}
@@ -328,7 +365,7 @@ function SecurityKnowledge() {
                     <div className="sk-search-result-icon">
                       <TopicIcon type={result.iconType} size={20} />
                     </div>
-                    <div className="sk-search-result-body">
+                  <div className="sk-search-result-body">
                       <div className="sk-search-result-header">
                         <span className="sk-search-result-title">{result.title}</span>
                         <span className={`sk-tag ${result.tagClass}`}>{result.tag}</span>
@@ -352,43 +389,46 @@ function SecurityKnowledge() {
             ) : (
               <div className="sk-empty-state">
                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                <div className="sk-empty-title">未找到相关内容</div>
-                <div className="sk-empty-desc">尝试不同的关键词，或浏览下方的全部文章</div>
-                <button className="sk-empty-browse" onClick={() => setSearchQuery('')}>浏览全部文章</button>
+                <div className="sk-empty-title">{t('knowledge.noResults')}</div>
+                <div className="sk-empty-desc">{t('knowledge.noResultsHint')}</div>
+                <button className="sk-empty-browse" onClick={() => setSearchQuery('')}>{t('knowledge.browseAll')}</button>
               </div>
             )}
           </div>
         ) : (
           <>
             <div className="sk-grid-header">
-              <span className="sk-grid-count">{filteredEntries.length} 篇文章</span>
+              <span className="sk-grid-count">{t('knowledge.articleCount', { count: filteredEntries.length })}</span>
             </div>
             <div className="sk-card-grid">
-              {filteredEntries.map((entry, idx) => (
-                <button
-                  key={entry.id}
-                  className="sk-topic-card"
-                  style={{ animationDelay: `${idx * 60}ms` }}
-                  onClick={() => handleSelectTopic(entry.id)}
-                >
-                  <div className="sk-card-top">
-                    <div className={`sk-card-icon ${entry.tagClass.replace('sk-tag-', 'sk-icon-')}`}>
-                      <TopicIcon type={entry.iconType} size={22} />
+              {filteredEntries.map((entry, idx) => {
+                const localizedEntry = getLocalizedTopicContent(entry, i18n.language)
+                return (
+                  <button
+                    key={entry.id}
+                    className="sk-topic-card"
+                    style={{ animationDelay: `${idx * 60}ms` }}
+                    onClick={() => handleSelectTopic(entry.id)}
+                  >
+                    <div className="sk-card-top">
+                      <div className={`sk-card-icon ${entry.tagClass.replace('sk-tag-', 'sk-icon-')}`}>
+                        <TopicIcon type={entry.iconType} size={22} />
+                      </div>
+                      <span className={`sk-tag ${entry.tagClass}`}>{localizedEntry.tag}</span>
                     </div>
-                    <span className={`sk-tag ${entry.tagClass}`}>{entry.tag}</span>
-                  </div>
-                  <div className="sk-card-title">{entry.title}</div>
-                  <div className="sk-card-subtitle">{entry.subtitle}</div>
-                  <div className="sk-card-bottom">
-                    <span className="sk-card-time">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                      {entry.readingTime} 分钟
-                    </span>
-                    <span className="sk-card-sections">{entry.sections.length} 个章节</span>
-                    <svg className="sk-card-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
-                  </div>
-                </button>
-              ))}
+                    <div className="sk-card-title">{localizedEntry.title}</div>
+                    <div className="sk-card-subtitle">{localizedEntry.subtitle}</div>
+                    <div className="sk-card-bottom">
+                      <span className="sk-card-time">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                        {t('knowledge.readingTime', { min: entry.readingTime })}
+                      </span>
+                      <span className="sk-card-sections">{t('knowledge.sectionCount', { count: entry.sections.length })}</span>
+                      <svg className="sk-card-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                    </div>
+                  </button>
+                )
+              })}
             </div>
           </>
         )}
@@ -408,14 +448,14 @@ function SecurityKnowledge() {
           <div className="sk-reader-nav">
             <button className="sk-back-btn" onClick={handleBackToBrowse}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
-              返回知识库
+              {t('knowledge.backToLibrary')}
             </button>
             <div className="sk-breadcrumb">
-              <span className="sk-breadcrumb-root" onClick={handleBackToBrowse}>知识库</span>
+              <span className="sk-breadcrumb-root" onClick={handleBackToBrowse}>{t('knowledge.breadcrumb')}</span>
               <span className="sk-breadcrumb-sep">/</span>
-              {activeEntry && <span className={`sk-tag ${activeEntry.tagClass}`}>{activeEntry.tag}</span>}
+              {activeEntry && <span className={`sk-tag ${activeEntry.tagClass}`}>{activeEntryLocalized?.tag}</span>}
               <span className="sk-breadcrumb-sep">/</span>
-              <span className="sk-breadcrumb-current">{activeEntry?.title}</span>
+              <span className="sk-breadcrumb-current">{activeEntryLocalized?.title}</span>
             </div>
             {activeEntry?.referenceUrl && (
               <a
@@ -423,16 +463,16 @@ function SecurityKnowledge() {
                 href={activeEntry.referenceUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                title="查看外部参考资料"
+                title={t('knowledge.viewReference')}
                 style={{ textDecoration: 'none' }}
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                参考资料
+                {t('knowledge.reference')}
               </a>
             )}
-            <button className="sk-export-btn" onClick={handleExportPdf} title="导出为 PDF">
+            <button className="sk-export-btn" onClick={handleExportPdf} title={t('knowledge.exportPdf')}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              导出 PDF
+              {t('knowledge.exportPdf')}
             </button>
           </div>
 

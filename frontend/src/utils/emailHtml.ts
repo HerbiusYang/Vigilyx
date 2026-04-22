@@ -1,3 +1,5 @@
+import i18n from '../i18n'
+
 const ALLOWED_TAGS = new Set([
   'article', 'aside', 'blockquote', 'br', 'code', 'div', 'em', 'figcaption',
   'figure', 'footer', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'header', 'hr', 'li',
@@ -77,7 +79,7 @@ export function buildEmailPreviewDoc(html: string): string {
       }
     </style>
   </head>
-  <body>${safeContent || '<p class="email-preview-empty">该 HTML 邮件在安全净化后没有保留可展示的内容。</p>'}</body>
+  <body>${safeContent || `<p class="email-preview-empty">${i18n.t('emailHtml.sanitizedEmpty')}</p>`}</body>
 </html>`
 }
 
@@ -136,9 +138,9 @@ function clampTableSpan(value: string | null): string {
 
 function escapeHtml(text: string): string {
   return text
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }

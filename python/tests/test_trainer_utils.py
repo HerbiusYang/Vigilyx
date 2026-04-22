@@ -26,7 +26,7 @@ class TestSimpleAugment:
         assert lines[1] == "Subject: Hello"
 
     def test_body_is_augmented(self):
-        text = "From: user@ex.com\nSubject: Test\nWord1 Word2 Word3 Word4 Word5 Word6 Word7"
+        text = "From: user@example.test\nSubject: Test\nWord1 Word2 Word3 Word4 Word5 Word6 Word7"
         rng = random.Random(42)
         result = _simple_augment(text, rng)
         # The body part should be different from the original (with high probability)
@@ -38,7 +38,7 @@ class TestSimpleAugment:
         assert len(result_lines) == 3
 
     def test_very_short_body_unchanged(self):
-        text = "From: u@e.com\nSubject: S\nHi me"
+        text = "From: tiny@example.test\nSubject: S\nHi me"
         rng = random.Random(42)
         result = _simple_augment(text, rng)
         # <=3 body words → returned unchanged
@@ -53,13 +53,13 @@ class TestSimpleAugment:
         assert len(result) > 0
 
     def test_deterministic_with_same_seed(self):
-        text = "From: a@b.com\nSubject: T\nAlpha Beta Gamma Delta Epsilon Zeta Eta"
+        text = "From: author@example.test\nSubject: T\nAlpha Beta Gamma Delta Epsilon Zeta Eta"
         r1 = _simple_augment(text, random.Random(99))
         r2 = _simple_augment(text, random.Random(99))
         assert r1 == r2
 
     def test_different_seeds_different_results(self):
-        text = "From: a@b.com\nSubject: T\nAlpha Beta Gamma Delta Epsilon Zeta Eta Theta Iota Kappa Lambda"
+        text = "From: author@example.test\nSubject: T\nAlpha Beta Gamma Delta Epsilon Zeta Eta Theta Iota Kappa Lambda"
         r1 = _simple_augment(text, random.Random(1))
         r2 = _simple_augment(text, random.Random(2))
         # Different seeds should produce different augmentations with high probability
@@ -68,7 +68,7 @@ class TestSimpleAugment:
         assert r1 != r2
 
     def test_empty_body_with_headers(self):
-        text = "From: a@b.com\nSubject: S"
+        text = "From: author@example.test\nSubject: S"
         rng = random.Random(42)
         result = _simple_augment(text, rng)
         # Body is empty → words is empty (<=3) → returned unchanged

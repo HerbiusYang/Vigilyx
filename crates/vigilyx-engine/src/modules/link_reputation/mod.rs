@@ -17,18 +17,18 @@ use hickory_resolver::TokioAsyncResolver;
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 use tokio::sync::RwLock;
 
-use super::common::extract_domain_from_url;
+use super::common::{
+    extract_domain_from_url, host_matches_domain_or_subdomain, is_probable_cloud_asset_host,
+    is_probable_non_clickable_render_asset_url, is_probable_schema_reference_url,
+};
 use crate::context::SecurityContext;
 use crate::error::EngineError;
 use crate::intel::IntelLayer;
 use crate::module::{
     Bpa, Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel,
 };
+use crate::module_data::module_data;
 
-use data::{
-    BRAND_ANCHOR_DOMAINS, REDIRECT_SERVICE_DOMAINS, SHARED_DNS_PROVIDERS,
-    SUSPICIOUS_SENDING_DOMAINS,
-};
 use heuristics::{
     analyze_domain_heuristics, extract_redirect_target_urls_full, get_registered_domain, get_tld,
 };
@@ -48,13 +48,79 @@ struct DomainUrlProfile {
 impl DomainUrlProfile {
     fn observe_url(&mut self, url: &str) {
         self.observed_urls += 1;
-        if !crate::modules::common::is_probable_cloud_asset_url(url) {
+        if !crate::modules::common::is_probable_safe_static_asset_url(url) {
             self.non_asset_urls += 1;
         }
     }
 
     fn is_static_cloud_asset_only(&self) -> bool {
         self.observed_urls > 0 && self.non_asset_urls == 0
+    }
+}
+
+fn is_public_mail_service_domain(domain: &str) -> bool {
+    let registered = get_registered_domain(domain);
+    crate::pipeline::internal_domains::is_public_mail_domain(&registered)
+}
+
+fn should_skip_domain_reputation(domain: &str) -> bool {
+    is_public_mail_service_domain(domain)
+        || crate::modules::link_scan::is_well_known_safe_domain(domain)
+        || crate::modules::link_scan::is_trusted_url_domain(domain)
+}
+
+fn should_skip_registered_domain_intel_for_host(domain: &str, registered_domain: &str) -> bool {
+    domain != registered_domain
+        && should_skip_domain_reputation(registered_domain)
+        && is_probable_cloud_asset_host(domain)
+}
+
+fn sender_registered_domain(ctx: &SecurityContext) -> Option<String> {
+    ctx.session
+        .mail_from
+        .as_deref()
+        .and_then(|mail_from| mail_from.rsplit('@').next())
+        .map(get_registered_domain)
+}
+
+fn is_otx_only_source(source: &str) -> bool {
+    let mut saw_any = false;
+    for part in source.split('+') {
+        if part != "otx" {
+            return false;
+        }
+        saw_any = true;
+    }
+    saw_any
+}
+
+fn suspicious_domain_intel_score(
+    source: &str,
+    registered_domain: &str,
+    sender_reg_domain: Option<&str>,
+) -> Option<f64> {
+    let same_org_family = sender_reg_domain.is_some_and(|sender| {
+        let sender_registered = get_registered_domain(sender);
+        let sender_stem = sender_registered
+            .split('.')
+            .next()
+            .unwrap_or("");
+        let domain_registered = get_registered_domain(registered_domain);
+        let domain_stem = domain_registered
+            .split('.')
+            .next()
+            .unwrap_or("");
+        !sender_stem.is_empty() && sender_stem == domain_stem
+    });
+
+    if is_otx_only_source(source)
+        && (sender_reg_domain == Some(registered_domain) || same_org_family)
+    {
+        None
+    } else if is_otx_only_source(source) {
+        Some(0.10)
+    } else {
+        Some(0.25)
     }
 }
 
@@ -157,10 +223,10 @@ impl LinkReputationModule {
             return Some(false); // NS Same -> Same
         }
 
-       // DNS (Shared DNS For DescriptionOwnership)
+       // DNS providers (Shared DNS providers do not prove ownership)
         let meaningful: Vec<_> = overlap
             .iter()
-            .filter(|d| !SHARED_DNS_PROVIDERS.contains(&d.as_str()))
+            .filter(|d| !module_data().contains("shared_dns_providers", d))
             .collect();
 
         if !meaningful.is_empty() {
@@ -182,6 +248,7 @@ impl SecurityModule for LinkReputationModule {
     async fn analyze(&self, ctx: &SecurityContext) -> Result<ModuleResult, EngineError> {
         let start = Instant::now();
         let links = &ctx.session.content.links;
+        let sender_reg_domain = sender_registered_domain(ctx);
 
         if links.is_empty() {
             let duration_ms = start.elapsed().as_millis() as u64;
@@ -211,6 +278,23 @@ impl SecurityModule for LinkReputationModule {
         let mut redirect_exempt_outer: HashSet<String> = HashSet::new(); // already ServiceofOuter layerDomain (Analyze)
         let mut domain_profiles: HashMap<String, DomainUrlProfile> = HashMap::new();
         for link in links {
+            if is_probable_schema_reference_url(&link.url) {
+                continue;
+            }
+            let target_urls = extract_redirect_target_urls_full(&link.url);
+            let link_text_empty = link
+                .text
+                .as_deref()
+                .map(str::trim)
+                .is_none_or(str::is_empty);
+            if link_text_empty
+                && (is_probable_non_clickable_render_asset_url(&link.url)
+                    || target_urls
+                        .iter()
+                        .any(|target| is_probable_non_clickable_render_asset_url(target)))
+            {
+                continue;
+            }
             if let Some(domain) = extract_domain_from_url(&link.url) {
                 unique_domains.insert(domain.clone());
                 domain_profiles
@@ -219,17 +303,21 @@ impl SecurityModule for LinkReputationModule {
                     .observe_url(&link.url);
 
                // Check if this is a tracking/redirect service or mail security gateway.
-               // Gateway domains (Trend Micro DDEI, Proofpoint, etc.) rewrite URLs
-               // with redirect params - the outer domain is legitimate and should be
-               // exempt from heuristic analysis and intel queries.
-                let is_redirect_service = REDIRECT_SERVICE_DOMAINS
+                // Gateway domains (Trend Micro DDEI, Proofpoint, etc.) rewrite URLs
+                // with redirect params - the outer domain is legitimate and should be
+                // exempt from heuristic analysis and intel queries.
+                let md = module_data();
+                let redirect_domains = md.get_list("redirect_service_domains");
+                let is_redirect_service = redirect_domains
                     .iter()
-                    .any(|&rd| domain.contains(rd) || domain.ends_with(rd))
+                    .any(|rd| host_matches_domain_or_subdomain(&domain, rd))
                     || crate::modules::link_scan::is_mail_security_gateway_pub(
                         &link.url.to_lowercase(),
                     );
-                let target_urls = extract_redirect_target_urls_full(&link.url);
                 for target_url in &target_urls {
+                    if is_probable_schema_reference_url(target_url) {
+                        continue;
+                    }
                     redirect_target_urls.insert(target_url.clone());
                     if let Some(target_domain) = extract_domain_from_url(target_url) {
                         unique_domains.insert(target_domain.clone());
@@ -252,6 +340,10 @@ impl SecurityModule for LinkReputationModule {
         let mut categories = Vec::new();
         let mut total_score: f64 = 0.0;
         let mut suspicious_domains: Vec<String> = Vec::new();
+        // Track heuristic DGA/random_domain scores per registered domain,
+        // so VT clean results can suppress them (defense-in-depth).
+        let mut heuristic_dga_scores: std::collections::HashMap<String, f64> =
+            std::collections::HashMap::new();
 
        // Recording TargetDomain (Info According to, Add).
        // TargetDomain ofHeuristicAnalyzeAnd QueryMediumindependent.
@@ -323,10 +415,33 @@ impl SecurityModule for LinkReputationModule {
                 continue;
             }
 
+            // Skip public mail providers and other known-clean domains. These
+            // domains are legitimate service infrastructure and frequently show
+            // up in external intel feeds despite being benign in normal mail.
+            if should_skip_domain_reputation(domain) {
+                evidence.push(Evidence {
+                    description: format!(
+                        "Skipping known-clean service domain from reputation heuristics: {}",
+                        domain
+                    ),
+                    location: Some("links:safe".to_string()),
+                    snippet: Some(domain.clone()),
+                });
+                continue;
+            }
+
            // --- HeuristicAnalyze (Contains detect) ---
             let (domain_score, findings) = analyze_domain_heuristics(domain);
             if domain_score > 0.0 {
                 total_score += domain_score;
+                // Track DGA/random_domain heuristic scores for VT suppression
+                let has_dga_finding = findings
+                    .iter()
+                    .any(|(_, cat)| cat == "random_domain" || cat == "dga_random_domain");
+                if has_dga_finding {
+                    let reg = get_registered_domain(domain);
+                    *heuristic_dga_scores.entry(reg).or_default() += domain_score;
+                }
                 suspicious_domains.push(domain.clone());
                 for (desc, category) in findings {
                     categories.push(category);
@@ -338,25 +453,46 @@ impl SecurityModule for LinkReputationModule {
                 }
             }
 
-           // --- detect (DNS NS) ---
+           // --- Brand impersonation detection (DNS NS comparison) ---
             let tld = get_tld(domain);
             let domain_no_tld = domain.strip_suffix(&format!(".{}", tld)).unwrap_or(domain);
-            for &(brand, anchor) in BRAND_ANCHOR_DOMAINS {
-                if !domain_no_tld.contains(brand) {
+
+            // Get brand anchor domains from module data registry
+            // Collect into owned Vec before any .await to avoid holding RwLockReadGuard across await
+            let brand_entries: Vec<(String, String)> = {
+                let md = module_data();
+                md.get_structured("brand_anchor_domains")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|entry| {
+                                let brand = entry.get("keyword").and_then(|v| v.as_str())?;
+                                let anchor = entry.get("domain").and_then(|v| v.as_str())?;
+                                if brand.is_empty() || anchor.is_empty() {
+                                    return None;
+                                }
+                                Some((brand.to_string(), anchor.to_string()))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            for (brand, anchor) in &brand_entries {
+                if !domain_no_tld.contains(brand.as_str()) {
                     continue;
                 }
-               // if RegisterDomain Domain -> Official
-                if reg_domain == anchor {
+                // If registered domain matches anchor domain -> official
+                if reg_domain == anchor.as_str() {
                     break;
                 }
-               // DNS NS: Query NS,JudgewhetherSame1
+                // DNS NS comparison: query NS records to determine if same org
                 match self.is_same_org_by_ns(&reg_domain, anchor).await {
                     Some(true) => {
-                       // NS Same -> Same1,
+                        // NS matches -> same org, not suspicious
                         break;
                     }
                     Some(false) => {
-                       // NS Same -> large
+                        // NS differs -> likely impersonation
                         total_score += 0.35;
                         categories.push("brand_impersonation".to_string());
                         suspicious_domains.push(domain.clone());
@@ -371,7 +507,7 @@ impl SecurityModule for LinkReputationModule {
                         break;
                     }
                     None => {
-                       // DNS QueryFailed allUse DNS -> Judge, Add
+                        // DNS query failed or all using shared DNS -> cannot determine
                         break;
                     }
                 }
@@ -399,9 +535,18 @@ impl SecurityModule for LinkReputationModule {
                 {
                     continue;
                 }
+                // Skip public mail providers and other known-clean domains to
+                // prevent OTX/VT pollution from escalating legitimate service
+                // links such as qq.com / 163.com / gmail.com.
+                if should_skip_domain_reputation(domain) {
+                    continue;
+                }
 
                // According toRegisterDomainDeduplicate (Same1RegisterDomainonly 1Time/Count)
                 let reg_domain = get_registered_domain(domain);
+                if should_skip_registered_domain_intel_for_host(domain, &reg_domain) {
+                    continue;
+                }
                 if queried_reg_domains.contains(&reg_domain) {
                     continue;
                 }
@@ -456,16 +601,45 @@ impl SecurityModule for LinkReputationModule {
                             });
                         }
                         "suspicious" => {
-                            total_score += 0.25;
-                            categories.push("intel_suspicious".to_string());
+                            let otx_only = is_otx_only_source(&intel_result.source);
+                            let suspicious_score = suspicious_domain_intel_score(
+                                &intel_result.source,
+                                &domain,
+                                sender_reg_domain.as_deref(),
+                            );
+                            if suspicious_score.is_none() {
+                                evidence.push(Evidence {
+                                    description: format!(
+                                        "Ignoring OTX-only weak intel hit on sender-owned domain: {} ({})",
+                                        domain,
+                                        intel_result.details.as_deref().unwrap_or("no additional details")
+                                    ),
+                                    location: Some("intel".to_string()),
+                                    snippet: Some(domain),
+                                });
+                                continue;
+                            }
+
+                            total_score += suspicious_score.unwrap_or(0.0);
+                            if !otx_only {
+                                categories.push("intel_suspicious".to_string());
+                            }
                             suspicious_domains.push(domain.clone());
                             evidence.push(Evidence {
-                                description: format!(
-                                    "External intel flagged as suspicious: {} (source: {}, {})",
-                                    domain,
-                                    intel_result.source,
-                                    intel_result.details.as_deref().unwrap_or("")
-                                ),
+                                description: if otx_only {
+                                    format!(
+                                        "OTX-only weak intel flagged domain as suspicious: {} ({})",
+                                        domain,
+                                        intel_result.details.as_deref().unwrap_or("no additional details")
+                                    )
+                                } else {
+                                    format!(
+                                        "External intel flagged as suspicious: {} (source: {}, {})",
+                                        domain,
+                                        intel_result.source,
+                                        intel_result.details.as_deref().unwrap_or("")
+                                    )
+                                },
                                 location: Some("intel".to_string()),
                                 snippet: Some(domain),
                             });
@@ -481,8 +655,24 @@ impl SecurityModule for LinkReputationModule {
                                     intel_result.details.as_deref().unwrap_or("no threat records")
                                 ),
                                 location: Some("intel".to_string()),
-                                snippet: Some(domain),
+                                snippet: Some(domain.clone()),
                             });
+                            // VT/intel clean result suppresses heuristic DGA/random_domain
+                            // score for this domain. VT's reputation (94 vendors) is far
+                            // more authoritative than consonant-pattern heuristics.
+                            if let Some(dga_score) = heuristic_dga_scores.remove(&domain) {
+                                total_score -= dga_score;
+                                // Also remove from suspicious_domains since VT clears it
+                                suspicious_domains.retain(|d| get_registered_domain(d) != domain);
+                                evidence.push(Evidence {
+                                    description: format!(
+                                        "VT clean result suppressed heuristic DGA score for {} (-{:.2})",
+                                        domain, dga_score
+                                    ),
+                                    location: Some("intel:dga_suppression".to_string()),
+                                    snippet: Some(domain.clone()),
+                                });
+                            }
                         }
                     }
                 }
@@ -514,6 +704,9 @@ impl SecurityModule for LinkReputationModule {
                 for candidate in candidates {
                     if intel_urls.len() >= 5 {
                         break;
+                    }
+                    if is_probable_schema_reference_url(&candidate) {
+                        continue;
                     }
                     if !candidate.starts_with("http://") && !candidate.starts_with("https://") {
                         continue;
@@ -607,17 +800,17 @@ impl SecurityModule for LinkReputationModule {
             }
         }
 
-       // --- SendingDomainReputationCheck ---
+       // --- Sending domain reputation check ---
         for (name, value) in &ctx.session.content.headers {
             if name.to_lowercase() == "received" {
                 let val_lower = value.to_lowercase();
-                for &sus_domain in SUSPICIOUS_SENDING_DOMAINS {
+                for sus_domain in module_data().get_list("suspicious_sending_domains") {
                     if val_lower.contains(sus_domain) {
                         total_score += 0.15;
                         categories.push("suspicious_sender_domain".to_string());
                         evidence.push(Evidence {
                             description: format!(
-                                "SendServiceDevice/HandlerDomainSuspicious: {}",
+                                "Suspicious sending service domain: {}",
                                 sus_domain
                             ),
                             location: Some("headers:Received".to_string()),
@@ -700,6 +893,7 @@ mod tests {
     use super::*;
     use crate::context::SecurityContext;
     use crate::module::SecurityModule;
+    use std::collections::HashSet;
     use std::sync::Arc;
     use vigilyx_core::models::{EmailContent, EmailLink, EmailSession, Protocol};
 
@@ -826,6 +1020,15 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_suspicious_tld_lol() {
+        let module = LinkReputationModule::new(None);
+        let ctx = make_ctx(&["https://iosmaziprices.lol"]);
+        let result = module.analyze(&ctx).await.unwrap();
+        assert_ne!(result.threat_level, ThreatLevel::Safe);
+        assert!(result.categories.contains(&"suspicious_tld".to_string()));
+    }
+
+    #[tokio::test]
     async fn test_free_hosting_ngrok() {
         let module = LinkReputationModule::new(None);
         let ctx = make_ctx(&["https://abc123.ngrok-free.app/phish"]);
@@ -854,6 +1057,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_numbered_www_subdomain_is_not_impersonation() {
+        let module = LinkReputationModule::new(None);
+        let ctx = make_ctx(&["https://www2.swift.com/knowledgecentre/kb_articles/87276"]);
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert!(
+            !result.categories.contains(&"www_impersonation".to_string()),
+            "numbered www subdomains are commonly legitimate infrastructure: {:?}",
+            result.categories
+        );
+    }
+
+    #[tokio::test]
     async fn test_random_domain_dga() {
         let module = LinkReputationModule::new(None);
        // DGA ofrandomDomain
@@ -873,6 +1089,68 @@ mod tests {
             "Brand-like business domains should not be marked as random: {:?}",
             result.categories
         );
+    }
+
+    #[tokio::test]
+    async fn test_seeded_safe_sendcloud_domain_skips_reputation_heuristics() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard_async().await;
+        crate::modules::link_scan::set_well_known_safe_domains(Arc::new(HashSet::from([
+            "sendcloud.net".to_string(),
+        ])));
+        let module = LinkReputationModule::new(None);
+        let ctx = make_ctx(&["https://sctrack.sendcloud.net/track/open2/test.gif"]);
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert!(
+            !result.categories.contains(&"random_domain".to_string()),
+            "seeded safe domains should skip sendcloud tracking heuristics: {:?}",
+            result.categories
+        );
+        crate::modules::link_scan::set_well_known_safe_domains(Arc::new(HashSet::new()));
+    }
+
+    #[tokio::test]
+    async fn test_trusted_url_domain_skips_reputation_heuristics_even_without_safe_domain_seed() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard_async().await;
+        crate::modules::link_scan::set_trusted_url_domains(Arc::new(HashSet::from([
+            "aliyuncs.com".to_string(),
+        ])));
+        crate::modules::link_scan::set_well_known_safe_domains(Arc::new(HashSet::new()));
+
+        let module = LinkReputationModule::new(None);
+        let ctx = make_ctx(&[
+            "https://qfk-files.oss-cn-hangzhou.aliyuncs.com/offline-export?id=116eb8a2&token=aa6d62d9ef98b077a3fd3cc6ddbff7e3",
+        ]);
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert!(
+            !result.categories.contains(&"random_domain".to_string()),
+            "trusted URL domains should bypass reputation heuristics even if they are not in the safe-domain seed: {:?}",
+            result.categories
+        );
+
+        crate::modules::link_scan::set_trusted_url_domains(Arc::new(HashSet::new()));
+    }
+
+    #[test]
+    fn test_cloud_asset_subdomain_skips_registered_domain_intel_when_root_is_trusted() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        crate::modules::link_scan::set_trusted_url_domains(Arc::new(HashSet::from([
+            "aliyuncs.com".to_string(),
+        ])));
+
+        assert!(should_skip_registered_domain_intel_for_host(
+            "qfk-files.oss-cn-hangzhou.aliyuncs.com",
+            "aliyuncs.com"
+        ));
+        assert!(!should_skip_registered_domain_intel_for_host(
+            "login.evil-example.com",
+            "evil-example.com"
+        ));
+
+        crate::modules::link_scan::set_trusted_url_domains(Arc::new(HashSet::new()));
     }
 
     #[tokio::test]
@@ -911,6 +1189,19 @@ mod tests {
         let result = module.analyze(&ctx).await.unwrap();
         assert_ne!(result.threat_level, ThreatLevel::Safe);
         assert!(result.categories.contains(&"numeric_domain".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_known_numeric_brand_domain_is_not_flagged() {
+        let module = LinkReputationModule::new(None);
+        let ctx = make_ctx(&["https://www.12306.cn"]);
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert!(
+            !result.categories.contains(&"numeric_domain".to_string()),
+            "seeded numeric brand domains should bypass numeric-domain heuristic: {:?}",
+            result.categories
+        );
     }
 
     
@@ -1023,6 +1314,30 @@ mod tests {
         let (score, findings) = analyze_domain_heuristics("wwwsafe.evil.com");
         assert!(score >= 0.25);
         assert!(findings.iter().any(|(_, cat)| cat == "www_impersonation"));
+    }
+
+    #[test]
+    fn test_otx_only_sender_owned_domain_is_ignored() {
+        assert_eq!(
+            suspicious_domain_intel_score("otx", "swift.com", Some("swift.com")),
+            None
+        );
+    }
+
+    #[test]
+    fn test_otx_only_non_sender_domain_is_only_weak_signal() {
+        assert_eq!(
+            suspicious_domain_intel_score("otx", "12306.cn", Some("rails.com.cn")),
+            Some(0.10)
+        );
+    }
+
+    #[test]
+    fn test_otx_only_same_brand_cross_tld_is_ignored() {
+        assert_eq!(
+            suspicious_domain_intel_score("otx", "hundsun.com", Some("hundsun.cn")),
+            None
+        );
     }
 
    /// Domain Test - completeAnalyze
@@ -1392,6 +1707,22 @@ mod tests {
             !suspicious.iter().any(|d| d.contains("adnxs.com")),
             "Outer redirect service domain should NOT be in suspicious_domains: {:?}",
             suspicious
+        );
+    }
+
+    #[tokio::test]
+    async fn test_gateway_wrapped_showimg_asset_is_ignored() {
+        let module = LinkReputationModule::new(None);
+        let ctx = make_ctx(&[
+            "https://ddei3-0-ctp.asiainfo-sec.com:443/wis/clicktime/v1/query?url=http%3a%2f%2fhome.sumscope.com%3a8050%2fportal%2fsendcloud%2fshowImg%3fid%3d74916bf1ba5d4f7f9731941883c1ffc0&umid=test&auth=test",
+        ]);
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert!(
+            !result.categories.contains(&"redirect_target".to_string()),
+            "non-clickable render assets should not emit redirect_target: {:?}",
+            result.categories
         );
     }
 }

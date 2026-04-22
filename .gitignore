@@ -42,10 +42,8 @@ CLAUDE.md
 # 部署配置 (包含服务器地址等环境特定信息)
 deploy.conf
 
-# 数据库
-data/*.db
-data/*.db-shm
-data/*.db-wal
+# 数据库和运行时数据 (模型、附件、缓存等)
+data/
 
 # 日志
 *.log
@@ -57,7 +55,7 @@ artifacts/
 .DS_Store
 
 # Node.js (前端)
-frontend/node_modules/
+node_modules/
 frontend/dist/
 frontend/.vite/
 

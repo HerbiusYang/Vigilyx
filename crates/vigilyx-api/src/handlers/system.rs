@@ -1,6 +1,7 @@
 //! systemstatusProcess: systemstatus, Sniffer status, system
 
 use axum::{Json, extract::State, response::IntoResponse};
+use chrono::{Local, Offset};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -64,6 +65,10 @@ pub struct SystemStatus {
     pub mta: MtaStatus,
    /// Service time
     pub server_time: String,
+   /// Service timezone name (prefer IANA, fallback to UTC offset label)
+    pub server_timezone: String,
+   /// Service UTC offset in minutes
+    pub server_utc_offset_minutes: i32,
 }
 
 /// System
@@ -95,6 +100,8 @@ pub async fn get_system_status(State(state): State<Arc<AppState>>) -> impl IntoR
    // get MTA status
     let mta = state.monitoring.mta_status.read().await.clone();
 
+    let local_now = Local::now();
+    let server_utc_offset_minutes = local_now.offset().fix().local_minus_utc() / 60;
     let status = SystemStatus {
         api_online: true,
         api_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -103,10 +110,48 @@ pub async fn get_system_status(State(state): State<Arc<AppState>>) -> impl IntoR
         redis_online,
         sniffer,
         mta,
-        server_time: chrono::Utc::now().to_rfc3339(),
+        server_time: local_now.to_rfc3339(),
+        server_timezone: detect_server_timezone(server_utc_offset_minutes),
+        server_utc_offset_minutes,
     };
 
     ApiResponse::ok(status)
+}
+
+fn detect_server_timezone(server_utc_offset_minutes: i32) -> String {
+    if let Ok(tz) = std::env::var("TZ") {
+        let tz = tz.trim();
+        if !tz.is_empty() {
+            return tz.to_string();
+        }
+    }
+
+    if let Ok(target) = std::fs::canonicalize("/etc/localtime") {
+        let zoneinfo_root = std::path::Path::new("/usr/share/zoneinfo");
+        if let Ok(relative) = target.strip_prefix(zoneinfo_root) {
+            let tz = relative.to_string_lossy().trim_start_matches('/').to_string();
+            if !tz.is_empty() {
+                return tz;
+            }
+        }
+    }
+
+    if let Ok(tz) = std::fs::read_to_string("/etc/timezone") {
+        let tz = tz.trim();
+        if !tz.is_empty() {
+            return tz.to_string();
+        }
+    }
+
+    format_utc_offset(server_utc_offset_minutes)
+}
+
+fn format_utc_offset(total_minutes: i32) -> String {
+    let sign = if total_minutes >= 0 { '+' } else { '-' };
+    let abs_minutes = total_minutes.abs();
+    let hours = abs_minutes / 60;
+    let minutes = abs_minutes % 60;
+    format!("UTC{}{:02}:{:02}", sign, hours, minutes)
 }
 
 /// New Sniffer status (For sniffer)

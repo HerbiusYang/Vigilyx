@@ -1,37 +1,35 @@
+import { useTranslation } from 'react-i18next'
 import type { SecurityStats, EngineStatus, ModuleMetadata } from '../../types'
 
-const THREAT_LEVELS = [
-  { key: 'safe', label: '安全', color: '#22c55e' },
-  { key: 'low', label: '低危', color: '#3b82f6' },
-  { key: 'medium', label: '中危', color: '#eab308' },
-  { key: 'high', label: '高危', color: '#f97316' },
-  { key: 'critical', label: '严重', color: '#ef4444' },
-]
-
-const MODULE_CN: Record<string, string> = {
-  content_scan: '内容检测',
-  html_scan: 'HTML 检测',
-  attach_scan: '附件类型检测',
-  attach_content: '附件内容检测',
-  attach_hash: '附件哈希信誉',
-  mime_scan: 'MIME 结构检测',
-  header_scan: '邮件头检测',
-  link_scan: 'URL 模式检测',
-  link_reputation: 'URL 信誉查询',
-  link_content: 'URL 内容检测',
-  anomaly_detect: '异常行为检测',
-  semantic_scan: '语义检测',
-  domain_verify: '域名验证',
-  identity_anomaly: '身份行为异常',
-  transaction_correlation: '交易语义关联',
-  av_eml_scan: '邮件病毒扫描',
-  av_attach_scan: '附件病毒扫描',
-  yara_scan: 'YARA 规则扫描',
-  verdict: '综合判定',
+const THREAT_LEVEL_KEYS = ['safe', 'low', 'medium', 'high', 'critical'] as const
+const THREAT_LEVEL_COLORS: Record<string, string> = {
+  safe: '#22c55e',
+  low: '#3b82f6',
+  medium: '#eab308',
+  high: '#f97316',
+  critical: '#ef4444',
 }
 
-function getModuleCN(id: string): string {
-  return MODULE_CN[id] || id
+const MODULE_CN_KEYS: Record<string, string> = {
+  content_scan: 'emailSecurity.moduleContentScan',
+  html_scan: 'emailSecurity.moduleHtmlScan',
+  attach_scan: 'emailSecurity.moduleAttachScan',
+  attach_content: 'emailSecurity.moduleAttachContent',
+  attach_hash: 'emailSecurity.moduleAttachHash',
+  mime_scan: 'emailSecurity.moduleMimeScan',
+  header_scan: 'emailSecurity.moduleHeaderScan',
+  link_scan: 'emailSecurity.moduleLinkScan',
+  link_reputation: 'emailSecurity.moduleLinkReputation',
+  link_content: 'emailSecurity.moduleLinkContent',
+  anomaly_detect: 'emailSecurity.moduleAnomalyDetect',
+  semantic_scan: 'emailSecurity.moduleSemanticScan',
+  domain_verify: 'emailSecurity.moduleDomainVerify',
+  identity_anomaly: 'emailSecurity.moduleIdentityAnomaly',
+  transaction_correlation: 'emailSecurity.moduleTransactionCorrelation',
+  av_eml_scan: 'emailSecurity.moduleAvEmlScan',
+  av_attach_scan: 'emailSecurity.moduleAvAttachScan',
+  yara_scan: 'emailSecurity.moduleYaraScan',
+  verdict: 'emailSecurity.moduleVerdict',
 }
 
 interface OverviewTabProps {
@@ -41,6 +39,19 @@ interface OverviewTabProps {
 }
 
 export default function OverviewTab({ stats, engineStatus }: OverviewTabProps) {
+  const { t } = useTranslation()
+
+  const THREAT_LEVELS = THREAT_LEVEL_KEYS.map(key => ({
+    key,
+    label: t(`emailSecurity.threat_${key}`),
+    color: THREAT_LEVEL_COLORS[key],
+  }))
+
+  function getModuleCN(id: string): string {
+    const tKey = MODULE_CN_KEYS[id]
+    return tKey ? t(tKey) : id
+  }
+
   const threatTotal = stats
     ? THREAT_LEVELS.reduce((sum, lv) => sum + (stats.level_counts?.[lv.key] ?? 0), 0)
     : 0
@@ -55,7 +66,7 @@ export default function OverviewTab({ stats, engineStatus }: OverviewTabProps) {
           </div>
           <div className="sec-stat-body">
             <span className="sec-stat-val">{(stats?.total_scanned ?? 0).toLocaleString()}</span>
-            <span className="sec-stat-lbl">已扫描邮件</span>
+            <span className="sec-stat-lbl">{t('emailSecurity.scannedEmails')}</span>
           </div>
         </div>
         <div className="sec-stat-card">
@@ -64,7 +75,7 @@ export default function OverviewTab({ stats, engineStatus }: OverviewTabProps) {
           </div>
           <div className="sec-stat-body">
             <span className="sec-stat-val">{(stats?.ioc_count ?? 0).toLocaleString()}</span>
-            <span className="sec-stat-lbl">IOC 指标</span>
+            <span className="sec-stat-lbl">{t('emailSecurity.iocIndicators')}</span>
           </div>
         </div>
         <div className="sec-stat-card">
@@ -73,16 +84,16 @@ export default function OverviewTab({ stats, engineStatus }: OverviewTabProps) {
           </div>
           <div className="sec-stat-body">
             <span className="sec-stat-val">{(engineStatus?.total_verdicts_produced ?? 0).toLocaleString()}</span>
-            <span className="sec-stat-lbl">已产出判定</span>
+            <span className="sec-stat-lbl">{t('emailSecurity.verdictsProduced')}</span>
           </div>
         </div>
       </div>
 
       {/* Threat-level distribution - bar chart */}
       <div className="sec-card">
-        <h3 className="sec-card-title">威胁等级分布</h3>
+        <h3 className="sec-card-title">{t('emailSecurity.threatLevelDistribution')}</h3>
         {threatTotal === 0 ? (
-          <div className="sec-empty-hint">暂无判定数据</div>
+          <div className="sec-empty-hint">{t('emailSecurity.noVerdictData')}</div>
         ) : (
           <>
             <div className="sec-threat-bar">
@@ -119,17 +130,17 @@ export default function OverviewTab({ stats, engineStatus }: OverviewTabProps) {
       {/* -- Module performance overview (compact table) -- */}
       {engineStatus && engineStatus.module_metrics?.length > 0 && (
         <div className="sec-card">
-          <h3 className="sec-card-title">模块性能</h3>
+          <h3 className="sec-card-title">{t('emailSecurity.modulePerformance')}</h3>
           <div className="sec-table-wrap">
             <table className="sec-table">
               <thead>
                 <tr>
-                  <th>模块</th>
-                  <th className="sec-th-r">执行</th>
-                  <th className="sec-th-r">平均耗时</th>
-                  <th className="sec-th-r">成功率</th>
-                  <th className="sec-th-r">失败</th>
-                  <th className="sec-th-r">超时</th>
+                  <th>{t('emailSecurity.thModule')}</th>
+                  <th className="sec-th-r">{t('emailSecurity.thRuns')}</th>
+                  <th className="sec-th-r">{t('emailSecurity.thAvgDuration')}</th>
+                  <th className="sec-th-r">{t('emailSecurity.thSuccessRate')}</th>
+                  <th className="sec-th-r">{t('emailSecurity.thFailures')}</th>
+                  <th className="sec-th-r">{t('emailSecurity.thTimeouts')}</th>
                 </tr>
               </thead>
               <tbody>

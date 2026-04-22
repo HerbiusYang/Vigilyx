@@ -1,18 +1,14 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { apiFetch } from '../../utils/api'
+import { formatTime } from '../../utils/format'
 import type { ApiResponse, IocEntry, SecurityStats } from '../../types'
 
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso)
-    const pad = (n: number) => String(n).padStart(2, '0')
-    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-  } catch {
-    return iso
-  }
-}
-
 const PAGE_SIZE = 30
+
+function isMaskedSecretValue(value: string): boolean {
+  return value.includes('...') || value === '****'
+}
 
 interface IntelConfigTabProps {
   stats: SecurityStats | null
@@ -20,10 +16,13 @@ interface IntelConfigTabProps {
 }
 
 export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTabProps) {
+  const { t } = useTranslation()
+
   // Intel source config (VT/AbuseIPDB/OTX)
   const [intelConfig, setIntelConfig] = useState<Record<string, any> | null>(null)
   const [intelConfigDraft, setIntelConfigDraft] = useState<Record<string, any> | null>(null)
   const [savingIntelConfig, setSavingIntelConfig] = useState(false)
+  const [intelConfigMsg, setIntelConfigMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
   // Intel whitelist
   const [intelWlList, setIntelWlList] = useState<IocEntry[]>([])
@@ -72,19 +71,29 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
     fetchIntelWhitelist()
   }, [fetchIntelConfig, fetchIntelWhitelist])
 
+  const updateIntelConfigDraft = (patch: Record<string, unknown>) => {
+    setIntelConfigMsg(null)
+    setIntelConfigDraft(prev => (prev ? { ...prev, ...patch } : prev))
+  }
+
   const saveIntelConfig = async () => {
     if (!intelConfigDraft) return
     setSavingIntelConfig(true)
+    setIntelConfigMsg(null)
     try {
       const payload: Record<string, unknown> = {
         otx_enabled: intelConfigDraft.otx_enabled,
         vt_scrape_enabled: intelConfigDraft.vt_scrape_enabled,
         abuseipdb_enabled: intelConfigDraft.abuseipdb_enabled,
       }
-      if (intelConfigDraft.virustotal_api_key && !intelConfigDraft.virustotal_api_key.includes('...') && intelConfigDraft.virustotal_api_key !== '****') {
+      if (intelConfigDraft.virustotal_api_key === '') {
+        payload.virustotal_api_key = null
+      } else if (!isMaskedSecretValue(intelConfigDraft.virustotal_api_key)) {
         payload.virustotal_api_key = intelConfigDraft.virustotal_api_key
       }
-      if (intelConfigDraft.abuseipdb_api_key && !intelConfigDraft.abuseipdb_api_key.includes('...') && intelConfigDraft.abuseipdb_api_key !== '****') {
+      if (intelConfigDraft.abuseipdb_api_key === '') {
+        payload.abuseipdb_api_key = null
+      } else if (!isMaskedSecretValue(intelConfigDraft.abuseipdb_api_key)) {
         payload.abuseipdb_api_key = intelConfigDraft.abuseipdb_api_key
       }
       const res = await apiFetch('/api/security/intel-config', {
@@ -94,10 +103,14 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
       })
       const data: ApiResponse<any> = await res.json()
       if (data.success) {
-        fetchIntelConfig()
+        await fetchIntelConfig()
+        setIntelConfigMsg({ ok: true, text: t('saveSuccess') })
+      } else {
+        setIntelConfigMsg({ ok: false, text: data.error || t('saveFailed') })
       }
     } catch (e) {
       console.error('Failed to save intel config:', e)
+      setIntelConfigMsg({ ok: false, text: t('networkError') })
     } finally {
       setSavingIntelConfig(false)
     }
@@ -134,7 +147,7 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
       const res = await apiFetch(`/api/security/intel-whitelist/${id}`, { method: 'DELETE' })
       const data = await res.json()
       if (!data.success) {
-        alert(data.error || '删除失败')
+        alert(data.error || t('emailSecurity.deleteFailed'))
         return
       }
       fetchIntelWhitelist()
@@ -152,9 +165,9 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
             </svg>
-            威胁情报源
+            {t('emailSecurity.intelSourcesTitle')}
           </h2>
-          <p className="intel-hero-desc">接入外部威胁情报以增强邮件安全检测能力，情报数据用于 IP/域名/URL/哈希信誉查询</p>
+          <p className="intel-hero-desc">{t('emailSecurity.intelSourcesDesc')}</p>
         </div>
       </div>
 
@@ -170,14 +183,14 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
             </div>
             <div className="intel-card-title-group">
               <h3 className="intel-card-title">VirusTotal</h3>
-              <span className="intel-card-subtitle">文件 / URL / 域名 / IP 多引擎扫描</span>
+              <span className="intel-card-subtitle">{t('emailSecurity.vtSubtitle')}</span>
             </div>
             {intelConfigDraft && (
               <label className="intel-toggle">
                 <input
                   type="checkbox"
                   checked={intelConfigDraft.vt_scrape_enabled ?? false}
-                  onChange={e => setIntelConfigDraft({ ...intelConfigDraft, vt_scrape_enabled: e.target.checked })}
+                  onChange={e => updateIntelConfigDraft({ vt_scrape_enabled: e.target.checked })}
                 />
                 <span className="intel-toggle-track">
                   <span className="intel-toggle-thumb" />
@@ -187,19 +200,18 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
           </div>
           <div className="intel-card-body">
             <p className="intel-card-desc">
-              聚合 70+ 安全厂商检测结果，查询 URL/域名/IP/文件哈希的恶意评判。
-              每分钟 4 次免费查询配额。
+              {t('emailSecurity.vtDesc')}
             </p>
             <div className="intel-card-status-row">
               {intelConfig?.virustotal_api_key_set ? (
                 <span className="intel-status-badge intel-status--configured">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
-                  API Key 已配置
+                  {t('emailSecurity.apiKeyConfigured')}
                 </span>
               ) : (
                 <span className="intel-status-badge intel-status--unconfigured">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-                  未配置
+                  {t('emailSecurity.notConfigured')}
                 </span>
               )}
             </div>
@@ -209,12 +221,17 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
                 <div className="intel-config-input-wrap">
                   <input
                     type="password"
-                    className="intel-config-input"
-                    placeholder={intelConfig?.virustotal_api_key_set ? '已设置（留空保持不变）' : '输入 VirusTotal API Key'}
-                    value={intelConfigDraft.virustotal_api_key ?? ''}
-                    onChange={e => setIntelConfigDraft({ ...intelConfigDraft, virustotal_api_key: e.target.value })}
-                  />
+                  className="intel-config-input"
+                  placeholder={intelConfig?.virustotal_api_key_set ? t('emailSecurity.apiKeySetPlaceholder') : t('emailSecurity.vtApiKeyPlaceholder')}
+                  value={intelConfigDraft.virustotal_api_key ?? ''}
+                  onChange={e => updateIntelConfigDraft({ virustotal_api_key: e.target.value })}
+                />
                 </div>
+                {intelConfig?.virustotal_api_key_set && (
+                  <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '8px' }}>
+                    {t('emailSecurity.apiKeyClearHint')}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -230,14 +247,14 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
             </div>
             <div className="intel-card-title-group">
               <h3 className="intel-card-title">AbuseIPDB</h3>
-              <span className="intel-card-subtitle">IP 地址信誉评分与滥用举报</span>
+              <span className="intel-card-subtitle">{t('emailSecurity.abuseipdbSubtitle')}</span>
             </div>
             {intelConfigDraft && (
               <label className="intel-toggle">
                 <input
                   type="checkbox"
                   checked={intelConfigDraft.abuseipdb_enabled ?? false}
-                  onChange={e => setIntelConfigDraft({ ...intelConfigDraft, abuseipdb_enabled: e.target.checked })}
+                  onChange={e => updateIntelConfigDraft({ abuseipdb_enabled: e.target.checked })}
                 />
                 <span className="intel-toggle-track">
                   <span className="intel-toggle-thumb" />
@@ -247,19 +264,18 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
           </div>
           <div className="intel-card-body">
             <p className="intel-card-desc">
-              基于社区举报的 IP 信誉数据库，返回 0-100 滥用置信度评分和历史举报详情。
-              每日 1000 次免费查询。
+              {t('emailSecurity.abuseipdbDesc')}
             </p>
             <div className="intel-card-status-row">
               {intelConfig?.abuseipdb_api_key_set ? (
                 <span className="intel-status-badge intel-status--configured">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
-                  API Key 已配置
+                  {t('emailSecurity.apiKeyConfigured')}
                 </span>
               ) : (
                 <span className="intel-status-badge intel-status--unconfigured">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-                  未配置
+                  {t('emailSecurity.notConfigured')}
                 </span>
               )}
             </div>
@@ -269,12 +285,17 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
                 <div className="intel-config-input-wrap">
                   <input
                     type="password"
-                    className="intel-config-input"
-                    placeholder={intelConfig?.abuseipdb_api_key_set ? '已设置（留空保持不变）' : '输入 AbuseIPDB API Key'}
-                    value={intelConfigDraft.abuseipdb_api_key ?? ''}
-                    onChange={e => setIntelConfigDraft({ ...intelConfigDraft, abuseipdb_api_key: e.target.value })}
-                  />
+                  className="intel-config-input"
+                  placeholder={intelConfig?.abuseipdb_api_key_set ? t('emailSecurity.apiKeySetPlaceholder') : t('emailSecurity.abuseipdbApiKeyPlaceholder')}
+                  value={intelConfigDraft.abuseipdb_api_key ?? ''}
+                  onChange={e => updateIntelConfigDraft({ abuseipdb_api_key: e.target.value })}
+                />
                 </div>
+                {intelConfig?.abuseipdb_api_key_set && (
+                  <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', marginTop: '8px' }}>
+                    {t('emailSecurity.apiKeyClearHint')}
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -290,14 +311,14 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
             </div>
             <div className="intel-card-title-group">
               <h3 className="intel-card-title">OTX AlienVault</h3>
-              <span className="intel-card-subtitle">开放威胁情报交换平台</span>
+              <span className="intel-card-subtitle">{t('emailSecurity.otxSubtitle')}</span>
             </div>
             {intelConfigDraft && (
               <label className="intel-toggle">
                 <input
                   type="checkbox"
                   checked={intelConfigDraft.otx_enabled !== false}
-                  onChange={e => setIntelConfigDraft({ ...intelConfigDraft, otx_enabled: e.target.checked })}
+                  onChange={e => updateIntelConfigDraft({ otx_enabled: e.target.checked })}
                 />
                 <span className="intel-toggle-track">
                   <span className="intel-toggle-thumb" />
@@ -307,13 +328,12 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
           </div>
           <div className="intel-card-body">
             <p className="intel-card-desc">
-              社区驱动的威胁情报平台，提供 IP/域名的 Pulse 关联数据。
-              内置集成，无需 API Key 即可使用。
+              {t('emailSecurity.otxDesc')}
             </p>
             <div className="intel-card-status-row">
               <span className="intel-status-badge intel-status--builtin">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
-                内置（无需 API Key）
+                {t('emailSecurity.builtinNoApiKey')}
               </span>
             </div>
           </div>
@@ -328,27 +348,26 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
               </svg>
             </div>
             <div className="intel-card-title-group">
-              <h3 className="intel-card-title">本地 IOC 库</h3>
-              <span className="intel-card-subtitle">自建威胁指标数据库</span>
+              <h3 className="intel-card-title">{t('emailSecurity.localIocTitle')}</h3>
+              <span className="intel-card-subtitle">{t('emailSecurity.localIocSubtitle')}</span>
             </div>
-            <span className="intel-builtin-badge">内置</span>
+            <span className="intel-builtin-badge">{t('emailSecurity.builtin')}</span>
           </div>
           <div className="intel-card-body">
             <p className="intel-card-desc">
-              引擎自动记录和管理员手动添加的 IOC 指标，包含 IP/域名/URL/哈希/邮箱。
-              当前 {(stats?.ioc_count ?? 0).toLocaleString()} 条。
+              {t('emailSecurity.localIocDesc', { count: stats?.ioc_count ?? 0 })}
             </p>
             <div className="intel-card-status-row">
               <span className="intel-status-badge intel-status--builtin">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
-                始终启用
+                {t('emailSecurity.alwaysEnabled')}
               </span>
               <button
                 className="sec-btn sec-btn--sm sec-btn--ghost"
                 onClick={onNavigateToIoc}
                 style={{ marginLeft: 'auto' }}
               >
-                管理 IOC
+                {t('emailSecurity.manageIoc')}
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginLeft: 4 }}><polyline points="9 18 15 12 9 6"/></svg>
               </button>
             </div>
@@ -358,19 +377,29 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
 
       {/* -- Save button -- */}
       {intelConfigDraft && (
-        <div className="intel-save-bar">
-          <button
-            className="sec-btn sec-btn--primary"
-            onClick={saveIntelConfig}
-            disabled={savingIntelConfig}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
-            </svg>
-            {savingIntelConfig ? '保存中...' : '保存情报源配置'}
-          </button>
-          <span className="intel-save-hint">修改 API Key 或启用状态后需保存，重启引擎生效</span>
-        </div>
+        <>
+          {intelConfigMsg && (
+            <div
+              className={intelConfigMsg.ok ? 's-deploy-success' : ''}
+              style={intelConfigMsg.ok ? { marginTop: 16 } : { color: '#ef4444', fontSize: 12, marginTop: 16, marginBottom: 8 }}
+            >
+              {intelConfigMsg.text}
+            </div>
+          )}
+          <div className="intel-save-bar">
+            <button
+              className="sec-btn sec-btn--primary"
+              onClick={saveIntelConfig}
+              disabled={savingIntelConfig}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+              </svg>
+              {savingIntelConfig ? t('emailSecurity.saving') : t('emailSecurity.saveIntelConfig')}
+            </button>
+            <span className="intel-save-hint">{t('emailSecurity.saveIntelConfigHint')}</span>
+          </div>
+        </>
       )}
 
       {/* -- Intel whitelist (merged into the intel-source page) -- */}
@@ -381,9 +410,9 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>
               </svg>
-              情报白名单
+              {t('emailSecurity.intelWhitelistTitle')}
             </h3>
-            <span className="intel-wl-desc">仅展示系统/管理员情报白名单；命中后跳过外部情报查询，避免误报。</span>
+            <span className="intel-wl-desc">{t('emailSecurity.intelWhitelistDesc')}</span>
           </div>
         </div>
 
@@ -394,7 +423,7 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
             </svg>
             <input
               type="text"
-              placeholder="搜索白名单指标..."
+              placeholder={t('emailSecurity.searchWhitelistPlaceholder')}
               value={intelWlSearch}
               onChange={e => { setIntelWlSearch(e.target.value); setIntelWlPage(0) }}
             />
@@ -404,16 +433,16 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
             value={intelWlTypeFilter}
             onChange={e => { setIntelWlTypeFilter(e.target.value); setIntelWlPage(0) }}
           >
-            <option value="">全部类型</option>
+            <option value="">{t('emailSecurity.allTypes')}</option>
             <option value="ip">IP</option>
-            <option value="domain">域名</option>
+            <option value="domain">{t('emailSecurity.typeDomain')}</option>
             <option value="url">URL</option>
-            <option value="hash">哈希</option>
+            <option value="hash">{t('emailSecurity.typeHash')}</option>
           </select>
           <div className="sec-ioc-actions">
-            <span className="sec-ioc-total">共 {intelWlTotal} 条</span>
+            <span className="sec-ioc-total">{t('emailSecurity.totalCount', { count: intelWlTotal })}</span>
             <button className="sec-btn sec-btn--primary sec-btn--sm" onClick={() => setShowAddIntelWl(!showAddIntelWl)}>
-              {showAddIntelWl ? '取消' : '+ 添加'}
+              {showAddIntelWl ? t('emailSecurity.cancel') : t('emailSecurity.addEntry')}
             </button>
           </div>
         </div>
@@ -422,34 +451,34 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
           <div className="sec-ioc-add-form">
             <div className="sec-form-row">
               <div className="sec-form-group" style={{ flex: 2 }}>
-                <label className="sec-form-label">指标值</label>
+                <label className="sec-form-label">{t('emailSecurity.indicatorValue')}</label>
                 <input
                   type="text"
                   className="sec-form-input"
-                  placeholder="如: example.com / 1.2.3.4"
+                  placeholder={t('emailSecurity.indicatorPlaceholder')}
                   value={intelWlForm.indicator}
                   onChange={e => setIntelWlForm({ ...intelWlForm, indicator: e.target.value })}
                 />
               </div>
               <div className="sec-form-group">
-                <label className="sec-form-label">类型</label>
+                <label className="sec-form-label">{t('emailSecurity.type')}</label>
                 <select
                   className="sec-form-select"
                   value={intelWlForm.ioc_type}
                   onChange={e => setIntelWlForm({ ...intelWlForm, ioc_type: e.target.value })}
                 >
-                  <option value="domain">域名</option>
+                  <option value="domain">{t('emailSecurity.typeDomain')}</option>
                   <option value="ip">IP</option>
                   <option value="url">URL</option>
-                  <option value="hash">哈希</option>
+                  <option value="hash">{t('emailSecurity.typeHash')}</option>
                 </select>
               </div>
               <div className="sec-form-group" style={{ flex: 2 }}>
-                <label className="sec-form-label">说明</label>
+                <label className="sec-form-label">{t('emailSecurity.description')}</label>
                 <input
                   type="text"
                   className="sec-form-input"
-                  placeholder="可选备注"
+                  placeholder={t('emailSecurity.optionalNote')}
                   value={intelWlForm.description}
                   onChange={e => setIntelWlForm({ ...intelWlForm, description: e.target.value })}
                 />
@@ -460,7 +489,7 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
                   onClick={handleAddIntelWl}
                   disabled={addingIntelWl || !intelWlForm.indicator.trim()}
                 >
-                  {addingIntelWl ? '添加中...' : '确认添加'}
+                  {addingIntelWl ? t('emailSecurity.adding') : t('emailSecurity.confirmAdd')}
                 </button>
               </div>
             </div>
@@ -470,20 +499,20 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
         {intelWlList.length === 0 ? (
           <div className="sec-empty">
             <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.3"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-            <p>暂无白名单数据</p>
+            <p>{t('emailSecurity.noWhitelistData')}</p>
           </div>
         ) : (
           <div className="sec-table-wrap">
             <table className="sec-table">
               <thead>
                 <tr>
-                  <th>指标值</th>
-                  <th>类型</th>
-                  <th>来源</th>
-                  <th className="sec-th-r">置信度</th>
-                  <th className="sec-th-r">命中</th>
-                  <th>过期时间</th>
-                  <th className="sec-th-r">操作</th>
+                  <th>{t('emailSecurity.indicatorValue')}</th>
+                  <th>{t('emailSecurity.type')}</th>
+                  <th>{t('emailSecurity.source')}</th>
+                  <th className="sec-th-r">{t('emailSecurity.colConfidence')}</th>
+                  <th className="sec-th-r">{t('emailSecurity.hitCount')}</th>
+                  <th>{t('emailSecurity.expiresAt')}</th>
+                  <th className="sec-th-r">{t('emailSecurity.action')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -493,9 +522,9 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
                     <td><span className="sec-badge sec-badge--type">{entry.ioc_type}</span></td>
                     <td>
                       {entry.source === 'system' ? (
-                        <span className="sec-badge sec-badge--system">系统内置</span>
+                        <span className="sec-badge sec-badge--system">{t('emailSecurity.sourceSystem')}</span>
                       ) : entry.source === 'admin_clean' ? (
-                        <span className="sec-badge sec-badge--admin">管理员</span>
+                        <span className="sec-badge sec-badge--admin">{t('emailSecurity.sourceAdmin')}</span>
                       ) : (
                         <span className="sec-badge sec-badge--auto">{entry.source}</span>
                       )}
@@ -503,11 +532,11 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
                     <td className="sec-td-r sec-mono">{(entry.confidence * 100).toFixed(0)}%</td>
                     <td className="sec-td-r sec-mono">{entry.hit_count}</td>
                     <td className="sec-mono">
-                      {entry.expires_at ? formatTime(entry.expires_at) : '永不过期'}
+                      {entry.expires_at ? formatTime(entry.expires_at) : t('emailSecurity.neverExpires')}
                     </td>
                     <td className="sec-td-r">
                       <button className="sec-btn-del" onClick={() => handleDeleteIntelWl(entry.id)}>
-                        撤销
+                        {t('emailSecurity.revoke')}
                       </button>
                     </td>
                   </tr>
@@ -524,17 +553,17 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
               disabled={intelWlPage === 0}
               onClick={() => setIntelWlPage(p => p - 1)}
             >
-              上一页
+              {t('emailSecurity.prevPage')}
             </button>
             <span className="sec-page-info">
-              第 {intelWlPage + 1} / {Math.ceil(intelWlTotal / PAGE_SIZE)} 页
+              {t('emailSecurity.pageInfo', { current: intelWlPage + 1, total: Math.ceil(intelWlTotal / PAGE_SIZE) })}
             </span>
             <button
               className="sec-page-btn"
               disabled={(intelWlPage + 1) * PAGE_SIZE >= intelWlTotal}
               onClick={() => setIntelWlPage(p => p + 1)}
             >
-              下一页
+              {t('emailSecurity.nextPage')}
             </button>
           </div>
         )}

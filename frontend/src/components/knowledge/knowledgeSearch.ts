@@ -1,4 +1,4 @@
-import { type TopicId, type TopicEntry } from './knowledgeData'
+import { type TopicId, type TopicEntry, getLocalizedTopicContent } from './knowledgeData'
 
 export interface SearchSnippet {
   text: string
@@ -62,7 +62,7 @@ function extractSnippet(
   }
 }
 
-export function searchTopics(query: string, topics: TopicEntry[]): SearchResult[] {
+export function searchTopics(query: string, topics: TopicEntry[], language = 'zh-CN'): SearchResult[] {
   const trimmed = query.trim()
   if (!trimmed) return []
 
@@ -72,28 +72,30 @@ export function searchTopics(query: string, topics: TopicEntry[]): SearchResult[
   const results: SearchResult[] = []
 
   for (const topic of topics) {
+    const localized = getLocalizedTopicContent(topic, language)
     let score = 0
 
     // Title match (highest priority)
-    score += countMatches(topic.title, tokens) * 100
+    score += countMatches(localized.title, tokens) * 100
+    score += countMatches(topic.searchableText, tokens) * 10
 
     // Keyword match
     const keywordsJoined = topic.keywords.join(' ')
     score += countMatches(keywordsJoined, tokens) * 50
 
     // Subtitle match
-    score += countMatches(topic.subtitle, tokens) * 30
+    score += countMatches(localized.subtitle, tokens) * 30
 
     // Lead match
-    score += countMatches(topic.lead, tokens) * 20
+    score += countMatches(localized.lead, tokens) * 20
 
     // Section heading match
-    for (const section of topic.sections) {
+    for (const section of localized.sections) {
       score += countMatches(section.heading, tokens) * 15
     }
 
     // Body text match
-    for (const section of topic.sections) {
+    for (const section of localized.sections) {
       score += countMatches(section.plainText, tokens) * 5
     }
 
@@ -104,7 +106,7 @@ export function searchTopics(query: string, topics: TopicEntry[]): SearchResult[
     const maxSnippets = 2
 
     // Try matching the full query string first
-    for (const section of topic.sections) {
+    for (const section of localized.sections) {
       if (snippets.length >= maxSnippets) break
       const snippet = extractSnippet(section.plainText, trimmed, section.heading)
       if (snippet) snippets.push(snippet)
@@ -115,13 +117,13 @@ export function searchTopics(query: string, topics: TopicEntry[]): SearchResult[
       for (const token of tokens) {
         if (snippets.length >= maxSnippets) break
         // Try lead first
-        const leadSnippet = extractSnippet(topic.lead, token, '')
+        const leadSnippet = extractSnippet(localized.lead, token, '')
         if (leadSnippet) {
           snippets.push(leadSnippet)
           continue
         }
         // Then sections
-        for (const section of topic.sections) {
+        for (const section of localized.sections) {
           if (snippets.length >= maxSnippets) break
           const snippet = extractSnippet(section.plainText, token, section.heading)
           if (snippet) {
@@ -134,9 +136,9 @@ export function searchTopics(query: string, topics: TopicEntry[]): SearchResult[
 
     results.push({
       topicId: topic.id,
-      title: topic.title,
-      subtitle: topic.subtitle,
-      tag: topic.tag,
+      title: localized.title,
+      subtitle: localized.subtitle,
+      tag: localized.tag,
       tagClass: topic.tagClass,
       iconType: topic.iconType,
       snippets,

@@ -37,6 +37,35 @@ use serde::{Deserialize, Serialize};
 
 use crate::error_codes;
 
+pub(crate) fn spawn_audit_log(
+    db: vigilyx_db::VigilDb,
+    operator: String,
+    operation: &'static str,
+    resource_type: Option<&'static str>,
+    resource_id: Option<String>,
+    detail: Option<String>,
+) {
+    tokio::spawn(async move {
+        if let Err(error) = db
+            .write_audit_log(
+                &operator,
+                operation,
+                resource_type,
+                resource_id.as_deref(),
+                detail.as_deref(),
+                None,
+            )
+            .await
+        {
+            tracing::error!(
+                operation,
+                error = %error,
+                "Audit: failed to write audit log"
+            );
+        }
+    });
+}
+
 /// Paginationparameter
 #[derive(Debug, Deserialize)]
 pub struct PaginationParams {

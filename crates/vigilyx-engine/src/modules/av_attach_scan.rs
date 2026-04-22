@@ -3,16 +3,18 @@
 //! Decodes `content_base64` of each attachment independently and sends to ClamAV.
 //! Attachments are scanned concurrently for high throughput.
 //!
-//! - Attachments >10MB without `content_base64` are skipped with evidence recorded.
+//! - Attachments >10MB without `content_base64` are flagged as `scan_skipped_size_limit`
+//!   with a low suspicion score (BPA b=0.08) — they are NOT marked as safe.
 //! - If any attachment is detected as infected, the verdict is immediately Critical.
-//! - If ClamAV is unavailable, returns `not_applicable` (graceful degradation).
+//! - If ClamAV is unavailable, returns `scan_incomplete` with a low suspicion score
+//!   (BPA b=0.08) — NOT `not_applicable` / safe (CWE-636 fail-open prevention).
 
 use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::context::SecurityContext;
 use crate::error::EngineError;
@@ -211,38 +213,73 @@ impl SecurityModule for AvAttachScanModule {
         let duration_ms = start.elapsed().as_millis() as u64;
 
        // If ClamAV was completely unavailable (all scans failed, none succeeded)
+       // F01 fix: Return scan_incomplete with non-zero suspicion instead of
+       // not_applicable (vacuous BPA), so the verdict pipeline knows the scan
+       // was NOT completed — not that the attachments are safe.
         if clamav_error && scanned_count == 0 && infected_files.is_empty() {
-            return Ok(ModuleResult::not_applicable(
-                &self.meta.id,
-                &self.meta.name,
-                self.meta.pillar,
-                "ClamAV unavailable, attachment virus scan skipped",
-                duration_ms,
-            ));
-        }
-
-       // All attachments were skipped (no content_base64, all>10MB)
-        if scanned_count == 0 && infected_files.is_empty() && skipped_count > 0 {
+            warn!(
+                module = "av_attach_scan",
+                attachment_count = attachments.len(),
+                "ClamAV unavailable — all attachment scans failed, marking as incomplete"
+            );
             return Ok(ModuleResult {
                 module_id: self.meta.id.clone(),
                 module_name: self.meta.name.clone(),
                 pillar: self.meta.pillar,
-                threat_level: ThreatLevel::Safe,
-                confidence: 0.0,
-                categories: vec![],
+                threat_level: ThreatLevel::Low,
+                confidence: 0.10,
+                categories: vec!["scan_incomplete".to_string()],
                 summary: format!(
-                    "{} attachment(s) skipped virus scan due to large size, no scannable attachments",
-                    skipped_count
+                    "Antivirus scan could not be completed — ClamAV unavailable ({} attachment(s) not scanned)",
+                    attachments.len()
                 ),
                 evidence,
                 details: serde_json::json!({
+                    "scan_status": "incomplete",
+                    "reason": "clamav_unavailable",
                     "scanned_count": 0,
                     "skipped_count": skipped_count,
                     "total_attachments": attachments.len(),
                 }),
                 duration_ms,
                 analyzed_at: Utc::now(),
-                bpa: Some(vigilyx_core::security::Bpa::vacuous()),
+                bpa: Some(vigilyx_core::security::Bpa::new(0.08, 0.0, 0.92)),
+                engine_id: None,
+            });
+        }
+
+       // All attachments were skipped (no content_base64, all>10MB)
+       // F03 fix: Return scan_skipped with non-zero suspicion instead of Safe.
+       // Large attachments that bypass AV scanning represent unknown risk.
+        if scanned_count == 0 && infected_files.is_empty() && skipped_count > 0 {
+            info!(
+                module = "av_attach_scan",
+                skipped_count,
+                total = attachments.len(),
+                "All attachments exceed size limit for antivirus scanning, scan skipped"
+            );
+            return Ok(ModuleResult {
+                module_id: self.meta.id.clone(),
+                module_name: self.meta.name.clone(),
+                pillar: self.meta.pillar,
+                threat_level: ThreatLevel::Low,
+                confidence: 0.10,
+                categories: vec!["scan_skipped_size_limit".to_string()],
+                summary: format!(
+                    "{} attachment(s) exceed size limit for antivirus scanning (>10MB), scan skipped",
+                    skipped_count
+                ),
+                evidence,
+                details: serde_json::json!({
+                    "scan_status": "skipped",
+                    "reason": "attachments_exceed_size_limit",
+                    "scanned_count": 0,
+                    "skipped_count": skipped_count,
+                    "total_attachments": attachments.len(),
+                }),
+                duration_ms,
+                analyzed_at: Utc::now(),
+                bpa: Some(vigilyx_core::security::Bpa::new(0.08, 0.0, 0.92)),
                 engine_id: None,
             });
         }
@@ -358,13 +395,14 @@ mod tests {
         let ctx = crate::context::SecurityContext::new(make_session_with_attachments(vec![att]));
 
         let result = module.analyze(&ctx).await.unwrap();
-       // All attachments were skipped, ClamAV never called -> not_applicable
-        assert_eq!(result.threat_level, ThreatLevel::Safe);
+       // All attachments were skipped due to size -> scan_skipped (not Safe)
+        assert_eq!(result.threat_level, ThreatLevel::Low);
+        assert!(result.categories.contains(&"scan_skipped_size_limit".to_string()));
         assert!(
             result
                 .evidence
                 .iter()
-                .any(|e| e.description.contains("large"))
+                .any(|e| e.description.contains("large") || e.description.contains("too large"))
         );
     }
 

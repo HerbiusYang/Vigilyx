@@ -152,7 +152,7 @@ async fn build_readiness_response(
                 message: None,
             },
             Ok(false) if state.messaging.mq.is_none() => {
-               // No Redis configured - running in local/UDS mode, acceptable
+                // No Redis configured - running in local mode, acceptable
                 CheckResult {
                     status: "up",
                     latency_ms,

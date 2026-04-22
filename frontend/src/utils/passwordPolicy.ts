@@ -1,3 +1,5 @@
+import i18n from '../i18n'
+
 const MIN_PASSWORD_LENGTH = 12
 const PASSPHRASE_PASSWORD_LENGTH = 16
 
@@ -23,7 +25,9 @@ const WEAK_SEQUENCES = [
   'qwertyuiopasdfghjklzxcvbnmqwertyuiopasdfghjklzxcvbnm',
 ]
 
-export const PASSWORD_POLICY_HINT = '至少 12 位；12-15 位需包含大写、小写、数字、符号中的至少 3 类，16 位及以上仍需至少 2 类；不能为纯空白或常见弱口令。'
+export function getPasswordPolicyHint(): string {
+  return i18n.t('password.policyHint')
+}
 
 function normalizePassword(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -56,29 +60,29 @@ function isCommonWeakPassword(normalizedPassword: string): boolean {
 
 export function validatePasswordInput(password: string): string | null {
   if (password.trim().length === 0) {
-    return '新密码不能仅由空白字符组成'
+    return i18n.t('password.noWhitespaceOnly')
   }
 
   if (/[\u0000-\u001F\u007F]/.test(password)) {
-    return '新密码不能包含控制字符'
+    return i18n.t('password.noControlChars')
   }
 
   if (password.length < MIN_PASSWORD_LENGTH) {
-    return '新密码至少需要 12 位'
+    return i18n.t('password.tooShort')
   }
 
   const normalizedPassword = normalizePassword(password)
   if (isCommonWeakPassword(normalizedPassword)) {
-    return '新密码过于常见或模式过于简单，请使用更强的密码'
+    return i18n.t('password.tooCommon')
   }
 
   const classes = countCharacterClasses(password)
   if (classes < 2) {
-    return '新密码至少需要包含 2 类字符'
+    return i18n.t('password.needTwoClasses')
   }
 
   if (password.length < PASSPHRASE_PASSWORD_LENGTH && classes < 3) {
-    return '12-15 位密码需至少包含大写字母、小写字母、数字、符号中的 3 类'
+    return i18n.t('password.needThreeClasses')
   }
 
   return null

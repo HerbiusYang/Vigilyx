@@ -1,0 +1,79 @@
+# ═══════════════════════════════════════════════════
+# Vigilyx Security Engine - production Dockerfile (multi-stage cargo-chef build)
+# ═══════════════════════════════════════════════════
+#
+# Builds the standalone security engine binary from source using cargo-chef
+# for optimal Docker layer caching.
+#
+# Build:
+#   docker build -f deploy/docker/Dockerfile.engine -t vigilyx-engine:latest .
+#
+# Run:
+#   docker run -d --name vigilyx-engine \
+#     -v vigilyx_data:/app/data \
+#     -e DATABASE_URL=postgres://vigilyx:pass@postgres:5432/vigilyx \
+#     -e REDIS_URL=redis://:pass@redis:6379 \
+#     vigilyx-engine:latest
+
+# -- Stage 1: cargo-chef - extract the dependency recipe --
+FROM rust:1.95.0-bookworm AS chef
+RUN cargo install cargo-chef --locked
+WORKDIR /app
+
+# -- Stage 2: generate the dependency recipe --
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+RUN cargo chef prepare --recipe-path recipe.json
+
+# -- Stage 3: build dependencies (accelerated with BuildKit cache mounts) --
+FROM chef AS rust-deps
+COPY --from=planner /app/recipe.json recipe.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo chef cook --release --recipe-path recipe.json && \
+    rm -rf /app/target/release/.fingerprint/vigilyx-*
+
+# -- Stage 4: build the engine binary --
+FROM rust-deps AS rust-builder
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY shared ./shared
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/target \
+    cargo build --release -p vigilyx-engine && \
+    cp /app/target/release/vigilyx-engine /app/vigilyx-engine
+
+# -- Stage 5: final runtime image --
+FROM debian:bookworm-slim@sha256:4724b8cc51e33e398f0e2e15e18d5ec2851ff0c2280647e1310bc1642182655d
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3 \
+    ca-certificates \
+    curl \
+    tini \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the engine binary
+COPY --from=rust-builder /app/vigilyx-engine ./
+
+RUN mkdir -p /app/data
+
+# SEC-C01: non-root user
+RUN groupadd -r vigilyx && useradd -r -g vigilyx -d /app vigilyx \
+    && chown -R vigilyx:vigilyx /app
+USER vigilyx
+
+# Default environment variables
+ENV RUST_LOG=info,vigilyx_engine=info \
+    LOG_FORMAT=json
+
+# Engine has no HTTP port — it communicates via Redis Streams and PostgreSQL.
+# Health is checked via the local heartbeat file (written every 5s by the engine process).
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+    CMD [ -f /app/data/engine-status.json ] && [ $(( $(date +%s) - $(stat -c %Y /app/data/engine-status.json) )) -lt 30 ] || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["./vigilyx-engine"]

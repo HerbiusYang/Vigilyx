@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { apiFetch } from '../../utils/api'
 
 type KwCategory =
@@ -22,18 +23,19 @@ interface KwOverrides {
   auto_reply_patterns: KwCatOverride
 }
 
-const KW_CATEGORY_LABELS: Record<KwCategory, string> = {
-  phishing_keywords: '钓鱼关键词',
-  weak_phishing_keywords: '弱钓鱼关键词',
-  bec_phrases: 'BEC 短语',
-  internal_authority_phrases: '内部冒充短语',
-  gateway_banner_patterns: '网关提示短语',
-  notice_banner_patterns: '通知横幅短语',
-  dsn_patterns: '退信系统短语',
-  auto_reply_patterns: '自动回复短语',
-}
+const KW_CATEGORY_KEYS: KwCategory[] = [
+  'phishing_keywords',
+  'weak_phishing_keywords',
+  'bec_phrases',
+  'internal_authority_phrases',
+  'gateway_banner_patterns',
+  'notice_banner_patterns',
+  'dsn_patterns',
+  'auto_reply_patterns',
+]
 
 export default function KeywordsTab() {
+  const { t } = useTranslation()
   const [kwBuiltin, setKwBuiltin] = useState<Record<string, string[]>>({})
   const [kwOverrides, setKwOverrides] = useState<KwOverrides | null>(null)
   const [kwLoaded, setKwLoaded] = useState(false)
@@ -41,6 +43,17 @@ export default function KeywordsTab() {
   const [kwNewKeyword, setKwNewKeyword] = useState('')
   const [kwActiveCategory, setKwActiveCategory] = useState<KwCategory>('phishing_keywords')
   const [kwMsg, setKwMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  const KW_CATEGORY_LABELS: Record<KwCategory, string> = {
+    phishing_keywords: t('emailSecurity.kwPhishingKeywords'),
+    weak_phishing_keywords: t('emailSecurity.kwWeakPhishingKeywords'),
+    bec_phrases: t('emailSecurity.kwBecPhrases'),
+    internal_authority_phrases: t('emailSecurity.kwInternalAuthorityPhrases'),
+    gateway_banner_patterns: t('emailSecurity.kwGatewayBannerPatterns'),
+    notice_banner_patterns: t('emailSecurity.kwNoticeBannerPatterns'),
+    dsn_patterns: t('emailSecurity.kwDsnPatterns'),
+    auto_reply_patterns: t('emailSecurity.kwAutoReplyPatterns'),
+  }
 
   useEffect(() => {
     if (!kwLoaded) {
@@ -111,20 +124,20 @@ export default function KeywordsTab() {
       })
       const data = await res.json()
       if (data.success) {
-        setKwMsg({ type: 'success', text: '关键词配置已保存，需重启引擎生效' })
+        setKwMsg({ type: 'success', text: t('emailSecurity.kwSaveSuccess') })
         setKwLoaded(false)
       } else {
-        setKwMsg({ type: 'error', text: data.error || '保存失败' })
+        setKwMsg({ type: 'error', text: data.error || t('emailSecurity.saveFailed') })
       }
-    } catch { setKwMsg({ type: 'error', text: '网络错误' }) }
+    } catch { setKwMsg({ type: 'error', text: t('emailSecurity.networkError') }) }
     finally { setKwSaving(false) }
   }
 
   return (
     <div className="sec-panel">
       <div className="sec-panel-header">
-        <h3>关键词管理</h3>
-        <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: '4px 0 0' }}>管理邮件安全检测引擎使用的关键词库。系统预置已包含平台种子词库，点击标签可屏蔽或恢复，支持搜索过滤。</p>
+        <h3>{t('emailSecurity.kwManageTitle')}</h3>
+        <p style={{ fontSize: 13, color: 'var(--text-tertiary)', margin: '4px 0 0' }}>{t('emailSecurity.kwManageDesc')}</p>
       </div>
       <div className="sec-panel-body" style={{ padding: '1.25rem' }}>
         {!kwLoaded ? (
@@ -132,7 +145,7 @@ export default function KeywordsTab() {
             <div className="page-loading" style={{ minHeight: 200 }} />
           </div>
         ) : !kwOverrides ? (
-          <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)' }}>加载关键词配置失败</div>
+          <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-secondary)' }}>{t('emailSecurity.kwLoadFailed')}</div>
         ) : (() => {
           const cat = kwActiveCategory
           const builtinList: string[] = kwBuiltin[cat] || []
@@ -154,7 +167,7 @@ export default function KeywordsTab() {
           return <div className="kw-grid">
             {/* Left-side category navigation */}
             <div className="kw-cats">
-              {(Object.keys(KW_CATEGORY_LABELS) as KwCategory[]).map(k => {
+              {KW_CATEGORY_KEYS.map(k => {
                 const bl = kwBuiltin[k] || []
                 const ov = kwOverrides[k]
                 const eff = bl.length - ov.removed.length + ov.added.length
@@ -175,28 +188,28 @@ export default function KeywordsTab() {
                 <div className="kw-search-wrap">
                   <svg className="kw-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
                   <input className="kw-search" value={kwNewKeyword} onChange={e => setKwNewKeyword(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleKwAdd()} placeholder="搜索或输入新关键词，回车添加..." />
+                    onKeyDown={e => e.key === 'Enter' && handleKwAdd()} placeholder={t('emailSecurity.kwSearchPlaceholder')} />
                 </div>
-                <button className="kw-add-btn" onClick={handleKwAdd} disabled={!kwNewKeyword.trim()}>添加</button>
-                <button className="kw-save-btn" onClick={handleKwSave} disabled={kwSaving}>{kwSaving ? '保存中...' : '保存配置'}</button>
+                <button className="kw-add-btn" onClick={handleKwAdd} disabled={!kwNewKeyword.trim()}>{t('emailSecurity.add')}</button>
+                <button className="kw-save-btn" onClick={handleKwSave} disabled={kwSaving}>{kwSaving ? t('emailSecurity.saving') : t('emailSecurity.saveConfig')}</button>
                 {kwMsg && <span className={`kw-save-msg ${kwMsg.type === 'success' ? 'ok' : 'err'}`}>{kwMsg.text}</span>}
               </div>
 
               {/* Statistics */}
               <div className="kw-stats">
-                <span>系统 <strong className="n-sys">{builtinList.length}</strong></span>
-                <span>已屏蔽 <strong className="n-off">{removedSet.size}</strong></span>
-                <span>自定义 <strong className="n-add">{customAdded.length}</strong></span>
-                <span>生效 <strong className="n-eff">{totalEffective}</strong></span>
+                <span>{t('emailSecurity.kwSystem')} <strong className="n-sys">{builtinList.length}</strong></span>
+                <span>{t('emailSecurity.kwDisabled')} <strong className="n-off">{removedSet.size}</strong></span>
+                <span>{t('emailSecurity.kwCustom')} <strong className="n-add">{customAdded.length}</strong></span>
+                <span>{t('emailSecurity.kwEffective')} <strong className="n-eff">{totalEffective}</strong></span>
               </div>
 
               {/* Custom additions */}
               {customAdded.length > 0 && (
                 <div className="kw-section">
-                  <div className="kw-section-hd">自定义添加</div>
+                  <div className="kw-section-hd">{t('emailSecurity.kwCustomAdded')}</div>
                   <div className="kw-tags">
                     {customAdded.filter(matchesSearch).map(kw => (
-                      <span key={`c-${kw}`} className="kw-tag kw-tag--add" onClick={() => handleKwRemove(kw)} title="点击删除">
+                      <span key={`c-${kw}`} className="kw-tag kw-tag--add" onClick={() => handleKwRemove(kw)} title={t('emailSecurity.kwClickToDelete')}>
                         {hl(kw)}<span className="kw-tag-x">×</span>
                       </span>
                     ))}
@@ -207,10 +220,10 @@ export default function KeywordsTab() {
               {/* Hidden items */}
               {removedBuiltin.length > 0 && (
                 <div className="kw-section">
-                  <div className="kw-section-hd">已屏蔽（点击恢复）</div>
+                  <div className="kw-section-hd">{t('emailSecurity.kwDisabledClickRestore')}</div>
                   <div className="kw-tags">
                     {removedBuiltin.filter(matchesSearch).map(kw => (
-                      <span key={`r-${kw}`} className="kw-tag kw-tag--off" onClick={() => handleKwRestore(kw)} title="点击恢复">
+                      <span key={`r-${kw}`} className="kw-tag kw-tag--off" onClick={() => handleKwRestore(kw)} title={t('emailSecurity.kwClickToRestore')}>
                         {hl(kw)}<span className="kw-tag-x">↩</span>
                       </span>
                     ))}
@@ -220,17 +233,17 @@ export default function KeywordsTab() {
 
               {/* Built-in presets */}
               <div className="kw-section">
-                <div className="kw-section-hd">系统预置（点击屏蔽）</div>
+                <div className="kw-section-hd">{t('emailSecurity.kwBuiltinClickDisable')}</div>
                 <div className="kw-tags-scroll">
                   <div className="kw-tags">
                     {activeBuiltin.filter(matchesSearch).map(kw => (
-                      <span key={`b-${kw}`} className="kw-tag kw-tag--sys" onClick={() => handleKwRemove(kw)} title="点击屏蔽">
+                      <span key={`b-${kw}`} className="kw-tag kw-tag--sys" onClick={() => handleKwRemove(kw)} title={t('emailSecurity.kwClickToDisable')}>
                         {hl(kw)}
                       </span>
                     ))}
                     {activeBuiltin.filter(matchesSearch).length === 0 && searchLower.length >= 2 && (
                       <span style={{ fontSize: 13, color: 'var(--text-tertiary)', padding: '8px 0' }}>
-                        没有匹配「{kwNewKeyword.trim()}」的关键词 — 按回车可添加为自定义词
+                        {t('emailSecurity.kwNoMatch', { keyword: kwNewKeyword.trim() })}
                       </span>
                     )}
                   </div>

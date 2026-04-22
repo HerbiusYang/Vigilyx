@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { AiServiceConfig, EngineStatus, ApiResponse } from '../../types'
 import { apiFetch } from '../../utils/api'
 
@@ -8,6 +9,7 @@ interface AiConfigTabProps {
 }
 
 export default function AiConfigTab({ engineStatus, onStatsRefresh }: AiConfigTabProps) {
+  const { t } = useTranslation()
   const [aiConfig, setAiConfig] = useState<AiServiceConfig | null>(null)
   const [aiConfigDraft, setAiConfigDraft] = useState<AiServiceConfig | null>(null)
   const [savingAi, setSavingAi] = useState(false)
@@ -83,13 +85,13 @@ export default function AiConfigTab({ engineStatus, onStatsRefresh }: AiConfigTa
         <div className="sec-ai-status-item">
           <span className={`sec-ai-status-dot ${engineStatus?.ai_service_available ? 'online' : 'offline'}`} />
           <span className="sec-ai-status-label">
-            {engineStatus?.ai_service_available ? 'AI 服务在线' : 'AI 服务离线'}
+            {engineStatus?.ai_service_available ? t('emailSecurity.aiServiceOnline') : t('emailSecurity.aiServiceOffline')}
           </span>
         </div>
         {aiConfig?.provider && (
           <div className="sec-ai-status-item">
             <span className="sec-ai-status-provider">
-              {aiConfig.provider === 'claude' ? 'Claude' : aiConfig.provider === 'openai' ? 'OpenAI' : '本地模型'}
+              {aiConfig.provider === 'claude' ? 'Claude' : aiConfig.provider === 'openai' ? 'OpenAI' : t('emailSecurity.localModel')}
             </span>
           </div>
         )}
@@ -108,12 +110,12 @@ export default function AiConfigTab({ engineStatus, onStatsRefresh }: AiConfigTa
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
               </svg>
-              <span>服务连接</span>
+              <span>{t('emailSecurity.serviceConnection')}</span>
             </div>
             <div className="sec-ai-section-body">
               <div className="sec-form-row sec-form-row--2">
                 <div className="sec-form-group">
-                  <label className="sec-form-label">AI 服务地址</label>
+                  <label className="sec-form-label">{t('emailSecurity.aiServiceUrl')}</label>
                   <input
                     type="text"
                     className="sec-form-input"
@@ -121,10 +123,10 @@ export default function AiConfigTab({ engineStatus, onStatsRefresh }: AiConfigTa
                     onChange={e => setAiConfigDraft({ ...aiConfigDraft, service_url: e.target.value })}
                     placeholder="http://127.0.0.1:8900"
                   />
-                  <span className="sec-form-hint">Python AI 服务的 HTTP 地址</span>
+                  <span className="sec-form-hint">{t('emailSecurity.aiServiceUrlHint')}</span>
                 </div>
                 <div className="sec-form-group">
-                  <label className="sec-form-label">LLM 提供商</label>
+                  <label className="sec-form-label">{t('emailSecurity.llmProvider')}</label>
                   <select
                     className="sec-form-select"
                     value={aiConfigDraft.provider}
@@ -132,7 +134,7 @@ export default function AiConfigTab({ engineStatus, onStatsRefresh }: AiConfigTa
                   >
                     <option value="claude">Claude (Anthropic)</option>
                     <option value="openai">OpenAI</option>
-                    <option value="local">本地模型</option>
+                    <option value="local">{t('emailSecurity.localModel')}</option>
                   </select>
                 </div>
               </div>
@@ -146,7 +148,7 @@ export default function AiConfigTab({ engineStatus, onStatsRefresh }: AiConfigTa
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                 </svg>
-                <span>认证与模型</span>
+                <span>{t('emailSecurity.authAndModel')}</span>
               </div>
               <div className="sec-ai-section-body">
                 <div className="sec-form-row sec-form-row--2">
@@ -157,14 +159,16 @@ export default function AiConfigTab({ engineStatus, onStatsRefresh }: AiConfigTa
                       className="sec-form-input"
                       value={aiConfigDraft.api_key}
                       onChange={e => setAiConfigDraft({ ...aiConfigDraft, api_key: e.target.value })}
-                      placeholder={aiConfig?.api_key_set ? '已设置 (留空保持不变)' : '输入 API Key'}
+                      placeholder={aiConfig?.api_key_set ? t('emailSecurity.apiKeySetPlaceholder') : t('emailSecurity.enterApiKey')}
                     />
                     {aiConfig?.api_key_set && (
-                      <span className="sec-form-hint sec-form-hint--ok">API Key 已配置</span>
+                      <span className="sec-form-hint sec-form-hint--ok">
+                        {t('emailSecurity.apiKeyClearHint')}
+                      </span>
                     )}
                   </div>
                   <div className="sec-form-group">
-                    <label className="sec-form-label">模型名称</label>
+                    <label className="sec-form-label">{t('emailSecurity.modelName')}</label>
                     <input
                       type="text"
                       className="sec-form-input"
@@ -184,7 +188,7 @@ export default function AiConfigTab({ engineStatus, onStatsRefresh }: AiConfigTa
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>
               </svg>
-              <span>推理参数</span>
+              <span>{t('emailSecurity.inferenceParams')}</span>
             </div>
             <div className="sec-ai-section-body">
               <div className="sec-form-row sec-form-row--3">
@@ -199,10 +203,10 @@ export default function AiConfigTab({ engineStatus, onStatsRefresh }: AiConfigTa
                         onChange={e => setAiConfigDraft({ ...aiConfigDraft, temperature: parseFloat(e.target.value) || 0 })}
                         min={0} max={1} step={0.1}
                       />
-                      <span className="sec-form-hint">0 = 确定性，1 = 创造性</span>
+                      <span className="sec-form-hint">{t('emailSecurity.temperatureHint')}</span>
                     </div>
                     <div className="sec-form-group">
-                      <label className="sec-form-label">最大 Token</label>
+                      <label className="sec-form-label">{t('emailSecurity.maxTokens')}</label>
                       <input
                         type="number"
                         className="sec-form-input"
@@ -210,12 +214,12 @@ export default function AiConfigTab({ engineStatus, onStatsRefresh }: AiConfigTa
                         onChange={e => setAiConfigDraft({ ...aiConfigDraft, max_tokens: parseInt(e.target.value) || 4096 })}
                         min={256} max={32768} step={256}
                       />
-                      <span className="sec-form-hint">单次分析输出上限</span>
+                      <span className="sec-form-hint">{t('emailSecurity.maxTokensHint')}</span>
                     </div>
                   </>
                 )}
                 <div className="sec-form-group">
-                  <label className="sec-form-label">超时 (秒)</label>
+                  <label className="sec-form-label">{t('emailSecurity.timeout')}</label>
                   <input
                     type="number"
                     className="sec-form-input"
@@ -223,7 +227,7 @@ export default function AiConfigTab({ engineStatus, onStatsRefresh }: AiConfigTa
                     onChange={e => setAiConfigDraft({ ...aiConfigDraft, timeout_secs: parseInt(e.target.value) || 60 })}
                     min={5} max={300} step={5}
                   />
-                  <span className="sec-form-hint">请求超时时间</span>
+                  <span className="sec-form-hint">{t('emailSecurity.timeoutHint')}</span>
                 </div>
               </div>
             </div>
@@ -240,8 +244,8 @@ export default function AiConfigTab({ engineStatus, onStatsRefresh }: AiConfigTa
                   }
                 </svg>
                 {aiTestResult.reachable
-                  ? 'AI 服务连接成功'
-                  : 'AI 服务无法连接，请检查地址和服务状态'}
+                  ? t('emailSecurity.aiTestSuccess')
+                  : t('emailSecurity.aiTestFailed')}
               </div>
             )}
             <div className="sec-ai-actions">
@@ -250,14 +254,14 @@ export default function AiConfigTab({ engineStatus, onStatsRefresh }: AiConfigTa
                 onClick={testAiConnection}
                 disabled={testingAi}
               >
-                {testingAi ? '测试中...' : '测试连接'}
+                {testingAi ? t('emailSecurity.testing') : t('emailSecurity.testConnection')}
               </button>
               <button
                 className="sec-btn sec-btn--primary"
                 onClick={saveAiConfig}
                 disabled={savingAi}
               >
-                {savingAi ? '保存中...' : '保存配置'}
+                {savingAi ? t('emailSecurity.saving') : t('emailSecurity.saveConfig')}
               </button>
             </div>
           </div>

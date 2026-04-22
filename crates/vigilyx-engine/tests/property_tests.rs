@@ -420,7 +420,7 @@ proptest! {
 #[test]
 fn test_luhn_known_valid_cards() {
    // Visa test number
-    assert!(luhn_check("4532015112830366"));
+    assert!(luhn_check("4111111111111111"));
    // Mastercard test number
     assert!(luhn_check("5425233430109903"));
    // AMEX test number

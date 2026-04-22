@@ -275,6 +275,19 @@ impl VigilDb {
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<IocEntry>, u64)> {
+        self.list_ioc_filtered(ioc_type, source, search, None, limit, offset).await
+    }
+
+    /// IOC with verdict filter (Pagination)
+    pub async fn list_ioc_filtered(
+        &self,
+        ioc_type: Option<&str>,
+        source: Option<&str>,
+        search: Option<&str>,
+        verdicts: Option<&[String]>,
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<IocEntry>, u64)> {
         let mut sql = String::from(
             r#"SELECT id, indicator, ioc_type, source, verdict, confidence, attack_type,
                       first_seen, last_seen, hit_count, context, expires_at,
@@ -295,6 +308,18 @@ impl VigilDb {
         if let Some(q) = search {
             binds.push(format!("%{q}%"));
             sql.push_str(&format!(" AND indicator LIKE ${}", binds.len()));
+        }
+        if let Some(v) = verdicts
+            && !v.is_empty()
+        {
+            let placeholders: Vec<String> = v
+                .iter()
+                .map(|val| {
+                    binds.push(val.clone());
+                    format!("${}", binds.len())
+                })
+                .collect();
+            sql.push_str(&format!(" AND verdict IN ({})", placeholders.join(",")));
         }
 
         sql.push_str(" ORDER BY last_seen DESC");
@@ -460,12 +485,16 @@ impl VigilDb {
         Ok(rows.into_iter().map(|(ind,)| ind).collect())
     }
 
-   /// Load built-in clean domains only (used by well-known sender heuristics).
+   /// Load clean domains used by well-known sender heuristics.
+    ///
+    /// Includes both built-in system seeds and admin-curated whitelist entries.
+    /// Admin-added clean domains should be treated as safe everywhere — not
+    /// just by the intel module.
     pub async fn load_system_clean_domains(&self) -> Result<Vec<String>> {
         let rows: Vec<(String,)> = sqlx::query_as(
             r#"SELECT indicator FROM security_ioc
                WHERE ioc_type = 'domain' AND verdict = 'clean'
-               AND source = 'system'
+               AND source IN ('system', 'admin_clean')
                AND (expires_at IS NULL OR expires_at::timestamptz > NOW())"#,
         )
         .fetch_all(&self.pool)
@@ -473,12 +502,19 @@ impl VigilDb {
         Ok(rows.into_iter().map(|(ind,)| ind).collect())
     }
 
-   /// Load URL-structure trusted domains only (used by link structural checks).
+   /// Load URL-structure trusted domains (used by link structural checks).
+    ///
+    /// Includes system seeds with `context='url_trusted'` AND all admin-curated
+    /// clean domains (if an admin explicitly marks a domain clean, it should
+    /// be trusted for URL structural checks as well).
     pub async fn load_url_trusted_domains(&self) -> Result<Vec<String>> {
         let rows: Vec<(String,)> = sqlx::query_as(
             r#"SELECT indicator FROM security_ioc
                WHERE ioc_type = 'domain' AND verdict = 'clean'
-               AND source = 'system' AND context = 'url_trusted'
+               AND (
+                   (source = 'system' AND context = 'url_trusted')
+                   OR source = 'admin_clean'
+               )
                AND (expires_at IS NULL OR expires_at::timestamptz > NOW())"#,
         )
         .fetch_all(&self.pool)
@@ -486,69 +522,36 @@ impl VigilDb {
         Ok(rows.into_iter().map(|(ind,)| ind).collect())
     }
 
-   /// (EngineStart, ON CONFLICT DO NOTHING)
+   /// Seed or refresh the built-in system whitelist at startup.
    ///
    /// Domain:
    /// - `intel_safe`: Query (OTX/VT) SecurityDomain
    /// - `url_trusted`: URL ServiceDomain
     pub async fn seed_system_whitelist(&self) -> Result<u64> {
-       // Query - Domain OTX pulse ButDomain
-        let intel_safe: &[&str] = &[
-           // Stream Service
-            "qq.com",
-            "163.com",
-            "126.com",
-            "yeah.net",
-            "sina.com",
-            "sina.cn",
-            "foxmail.com",
-            "139.com",
-            "189.cn",
-           // ServiceDomain
-            "qlogo.cn",
-            "gtimg.cn",
-           // CDN
-            "127.net",
-            "126.net",
-           // (According to)
-           // Stream Service
-            "gmail.com",
-            "outlook.com",
-            "hotmail.com",
-            "yahoo.com",
-            "icloud.com",
-            "microsoft.com",
-            "googleusercontent.com",
-            "cloudflare.com",
-           // Stream
-            "tencent.com",
-            "weixin.qq.com",
-            "alipay.com",
-            "taobao.com",
-            "baidu.com",
-            "jd.com",
-            "bytedance.com",
-           // Service
-            "rails.com.cn",
-            "12306.cn",
-           // (According to)
-        ];
+       // Load from compiled-in JSON seed file (shared/schemas/system_whitelist_seed.json)
+        let seed_json: &str = include_str!("../../../../shared/schemas/system_whitelist_seed.json");
+        let seed: serde_json::Value = serde_json::from_str(seed_json)
+            .map_err(|e| anyhow::anyhow!("system_whitelist_seed.json parse error: {}", e))?;
 
-       // URL - Service URL Day Contains token
-        let url_trusted: &[&str] = &[
-            "mail.qq.com",
-            "wx.mail.qq.com",
-            "mail.163.com",
-            "mail.126.com",
-            "mail.yeah.net",
-            "mail.sina.com.cn",
-        ];
+        let intel_safe: Vec<&str> = seed
+            .get("intel_safe")
+            .and_then(|v| v.get("items"))
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+
+        let url_trusted: Vec<&str> = seed
+            .get("url_trusted")
+            .and_then(|v| v.get("items"))
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
 
         let now = Utc::now().to_rfc3339();
         let mut inserted: u64 = 0;
         let mut tx = self.pool.begin().await?;
 
-        for &domain in intel_safe {
+        for &domain in &intel_safe {
             let id = Uuid::new_v4().to_string();
             let result = sqlx::query(
                 r#"INSERT INTO security_ioc
@@ -556,7 +559,16 @@ impl VigilDb {
                      first_seen, last_seen, hit_count, context, expires_at, created_at, updated_at)
                    VALUES ($1, $2, 'domain', 'system', 'clean', 1.0, '',
                            $3, $3, 0, 'intel_safe', NULL, $3, $3)
-                   ON CONFLICT(ioc_type, indicator) DO NOTHING"#,
+                   ON CONFLICT(ioc_type, indicator) DO UPDATE
+                   SET source = 'system',
+                       verdict = 'clean',
+                       confidence = 1.0,
+                       attack_type = '',
+                       context = 'intel_safe',
+                       expires_at = NULL,
+                       updated_at = EXCLUDED.updated_at
+                   WHERE security_ioc.source NOT IN ('manual', 'admin_clean')
+                     AND COALESCE(security_ioc.context, '') <> 'system_malicious'"#,
             )
             .bind(&id)
             .bind(domain)
@@ -566,7 +578,7 @@ impl VigilDb {
             inserted += result.rows_affected();
         }
 
-        for &domain in url_trusted {
+        for &domain in &url_trusted {
             let id = Uuid::new_v4().to_string();
             let result = sqlx::query(
                 r#"INSERT INTO security_ioc
@@ -574,11 +586,67 @@ impl VigilDb {
                      first_seen, last_seen, hit_count, context, expires_at, created_at, updated_at)
                    VALUES ($1, $2, 'domain', 'system', 'clean', 1.0, '',
                            $3, $3, 0, 'url_trusted', NULL, $3, $3)
-                   ON CONFLICT(ioc_type, indicator) DO NOTHING"#,
+                   ON CONFLICT(ioc_type, indicator) DO UPDATE
+                   SET source = 'system',
+                       verdict = 'clean',
+                       confidence = 1.0,
+                       attack_type = '',
+                       context = 'url_trusted',
+                       expires_at = NULL,
+                       updated_at = EXCLUDED.updated_at
+                   WHERE security_ioc.source NOT IN ('manual', 'admin_clean')
+                     AND COALESCE(security_ioc.context, '') <> 'system_malicious'"#,
             )
             .bind(&id)
             .bind(domain)
             .bind(&now)
+            .execute(&mut *tx)
+            .await?;
+            inserted += result.rows_affected();
+        }
+
+        // --- Seed malicious domains ---
+        let malicious_domains: Vec<&serde_json::Value> = seed
+            .get("malicious_domains")
+            .and_then(|v| v.get("items"))
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().collect())
+            .unwrap_or_default();
+
+        for item in &malicious_domains {
+            let indicator = item.get("indicator").and_then(|v| v.as_str()).unwrap_or("");
+            let confidence = item.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.9);
+            let attack_type = item.get("attack_type").and_then(|v| v.as_str()).unwrap_or("");
+            let description = item.get("description").and_then(|v| v.as_str()).unwrap_or("");
+            let context = if description.is_empty() {
+                "system_malicious".to_string()
+            } else {
+                format!("system_malicious: {}", description)
+            };
+            if indicator.is_empty() {
+                continue;
+            }
+            let id = Uuid::new_v4().to_string();
+            let result = sqlx::query(
+                r#"INSERT INTO security_ioc
+                    (id, indicator, ioc_type, source, verdict, confidence, attack_type,
+                     first_seen, last_seen, hit_count, context, expires_at, created_at, updated_at)
+                   VALUES ($1, $2, 'domain', 'system', 'malicious', $3, $4,
+                           $5, $5, 0, $6, NULL, $5, $5)
+                   ON CONFLICT(ioc_type, indicator) DO UPDATE
+                   SET verdict = 'malicious',
+                       confidence = EXCLUDED.confidence,
+                       attack_type = EXCLUDED.attack_type,
+                       source = 'system',
+                       context = EXCLUDED.context,
+                       updated_at = EXCLUDED.updated_at"#,
+            )
+            .bind(&id)
+            .bind(indicator)
+            .bind(confidence)
+            .bind(attack_type)
+            .bind(&now)
+            .bind(&context)
             .execute(&mut *tx)
             .await?;
             inserted += result.rows_affected();

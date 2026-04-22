@@ -1,0 +1,808 @@
+{
+  "version": 1,
+  "description": "All hardcoded static string data lists extracted from the VIGILYX engine crate. These are detection module data, NOT numeric thresholds or regex patterns.",
+  "lists": {
+    "suspicious_tlds": {
+      "description": "Top-level domains commonly associated with phishing and abuse",
+      "category": "link_reputation",
+      "source_file": "modules/link_reputation/data.rs",
+      "items": [
+        "tk", "ml", "ga", "cf", "gq",
+        "xyz", "top", "buzz", "icu", "club",
+        "work", "click", "link", "surf", "lol",
+        "info", "biz", "online", "site",
+        "pw", "cc", "ws"
+      ]
+    },
+    "compound_tlds": {
+      "description": "Known compound TLDs (two-part public suffixes) for correct registrable domain extraction. Without this, .com.cn domains would extract 'com' instead of the actual domain label.",
+      "category": "link_reputation",
+      "source_file": "modules/link_reputation/heuristics.rs",
+      "items": [
+        "com.cn", "net.cn", "org.cn", "gov.cn", "ac.cn", "edu.cn",
+        "com.tw", "net.tw", "org.tw", "gov.tw",
+        "com.hk", "net.hk", "org.hk",
+        "co.uk", "org.uk", "ac.uk", "gov.uk",
+        "co.jp", "ne.jp", "or.jp", "ac.jp",
+        "com.au", "net.au", "org.au",
+        "com.sg", "net.sg", "org.sg",
+        "co.kr", "or.kr",
+        "com.br", "net.br", "org.br",
+        "co.in", "com.in", "net.in", "org.in",
+        "co.nz", "net.nz", "org.nz",
+        "com.mx", "net.mx", "org.mx",
+        "co.za", "org.za",
+        "com.ru", "org.ru"
+      ]
+    },
+    "brand_anchor_domains": {
+      "description": "Brand keyword to legitimate domain mapping for DNS NS comparison. If a domain contains the keyword but its NS differs from the anchor domain NS, it is suspicious.",
+      "category": "link_reputation",
+      "source_file": "modules/link_reputation/data.rs",
+      "items": [
+        {"keyword": "qq", "domain": "qq.com"},
+        {"keyword": "tencent", "domain": "tencent.com"},
+        {"keyword": "wechat", "domain": "wechat.com"},
+        {"keyword": "microsoft", "domain": "microsoft.com"},
+        {"keyword": "apple", "domain": "apple.com"},
+        {"keyword": "google", "domain": "google.com"},
+        {"keyword": "amazon", "domain": "amazon.com"},
+        {"keyword": "paypal", "domain": "paypal.com"},
+        {"keyword": "netflix", "domain": "netflix.com"},
+        {"keyword": "facebook", "domain": "facebook.com"},
+        {"keyword": "instagram", "domain": "instagram.com"},
+        {"keyword": "whatsapp", "domain": "whatsapp.com"},
+        {"keyword": "linkedin", "domain": "linkedin.com"},
+        {"keyword": "twitter", "domain": "twitter.com"},
+        {"keyword": "alibaba", "domain": "alibaba.com"},
+        {"keyword": "alipay", "domain": "alipay.com"},
+        {"keyword": "taobao", "domain": "taobao.com"},
+        {"keyword": "jd", "domain": "jd.com"},
+        {"keyword": "baidu", "domain": "baidu.com"},
+        {"keyword": "163", "domain": "163.com"},
+        {"keyword": "126", "domain": "126.com"},
+        {"keyword": "sina", "domain": "sina.com"},
+        {"keyword": "sohu", "domain": "sohu.com"},
+        {"keyword": "icbc", "domain": "icbc.com.cn"},
+        {"keyword": "ccb", "domain": "ccb.com"},
+        {"keyword": "boc", "domain": "boc.cn"},
+        {"keyword": "abc", "domain": "abchina.com"},
+        {"keyword": "dhl", "domain": "dhl.com"},
+        {"keyword": "fedex", "domain": "fedex.com"},
+        {"keyword": "ups", "domain": "ups.com"},
+        {"keyword": "ems", "domain": "ems.com.cn"},
+        {"keyword": "office365", "domain": "microsoft.com"},
+        {"keyword": "outlook", "domain": "microsoft.com"},
+        {"keyword": "onedrive", "domain": "microsoft.com"},
+        {"keyword": "dropbox", "domain": "dropbox.com"}
+      ]
+    },
+    "shared_dns_providers": {
+      "description": "DNS registrar/provider domains whose NS records are shared by many unrelated domains, so NS match alone does not prove brand affiliation",
+      "category": "link_reputation",
+      "source_file": "modules/link_reputation/data.rs",
+      "items": [
+        "dnspod.net", "dnspod.com", "cloudflare.com",
+        "awsdns.com", "awsdns.net", "awsdns.org", "awsdns.co.uk",
+        "azure-dns.com", "azure-dns.net", "azure-dns.org", "azure-dns.info",
+        "alidns.com", "hichina.com", "domaincontrol.com", "registrar-servers.com",
+        "dnsv5.com", "dnsv4.com", "dnsv3.com", "ns.cloudflare.com",
+        "googledomains.com", "name-services.com",
+        "ultradns.com", "ultradns.net", "nsone.net"
+      ]
+    },
+    "free_hosting_domains": {
+      "description": "Free web hosting, PaaS, tunneling, and dynamic DNS domains commonly abused for phishing",
+      "category": "link_reputation",
+      "source_file": "modules/link_reputation/data.rs",
+      "items": [
+        "000webhostapp.com", "weebly.com", "wixsite.com", "blogspot.com", "wordpress.com",
+        "herokuapp.com", "netlify.app", "vercel.app", "firebaseapp.com", "web.app",
+        "pages.dev", "workers.dev",
+        "serveo.net", "ngrok.io", "ngrok-free.app",
+        "no-ip.com", "ddns.net", "hopto.org", "zapto.org", "sytes.net",
+        "myftp.biz", "myftp.org", "myvnc.com", "serveftp.com", "servequake.com", "servegame.com",
+        "duckdns.org",
+        "mooo.com", "afraid.org", "us.to", "chickenkiller.com", "ignorelist.com",
+        "strangled.net", "twillightparadox.com",
+        "dynu.com", "dynu.net", "changeip.com", "changeip.net", "ddns.me", "freedns.org",
+        "privcat.com", "myds.me", "synology.me"
+      ]
+    },
+    "suspicious_sending_domains": {
+      "description": "Known suspicious email sending domains",
+      "category": "link_reputation",
+      "source_file": "modules/link_reputation/data.rs",
+      "items": ["xianlai-inc.com"]
+    },
+    "redirect_service_domains": {
+      "description": "Known ad tracking and email redirect service domains. The outer URL is legitimate but the embedded target URL needs analysis.",
+      "category": "link_reputation",
+      "source_file": "modules/link_reputation/data.rs",
+      "items": [
+        "adnxs.com", "doubleclick.net", "googleadservices.com", "go.microsoft.com",
+        "click.email.", "track.", "redirect.", "r.email.", "links.m.", "sendgrid.net",
+        "sendcloud.net"
+      ]
+    },
+    "opaque_mail_callback_domains": {
+      "description": "Known mail-platform callback domains that carry opaque encrypted tracking tokens rather than user-facing landing-page paths.",
+      "category": "link_content",
+      "source_file": "modules/common.rs",
+      "items": [
+        "callback.cloudses.com"
+      ]
+    },
+    "known_numeric_domains": {
+      "description": "Well-known domains that are purely numeric (not suspicious despite numeric pattern)",
+      "category": "link_reputation",
+      "source_file": "modules/link_reputation/heuristics.rs",
+      "items": ["163.com", "126.com", "51.com", "360.cn", "58.com", "12306.cn"]
+    },
+    "pinyin_syllables": {
+      "description": "Chinese pinyin syllable table for distinguishing legitimate pinyin domains from DGA-generated random strings",
+      "category": "identity_anomaly",
+      "source_file": "modules/identity_anomaly.rs",
+      "items": [
+        "zhuang", "shuang", "chuang", "xiang", "jiang", "liang", "niang", "qiang", "guang", "huang",
+        "kuang", "zhuai", "shuai", "zhang", "zheng", "zhong", "zhuai", "chang", "cheng", "chong",
+        "chuai", "shang", "sheng", "shuai", "xiao", "xian", "xing", "xiong", "xuan", "zhan", "zhao",
+        "zhen", "zhi", "zhou", "zhua", "zhui", "zhun", "zhuo", "chai", "chan", "chao", "chen", "chi",
+        "chou", "chua", "chui", "chun", "chuo", "shan", "shao", "shen", "shi", "shou", "shua", "shui",
+        "shun", "shuo", "bang", "beng", "bing", "biao", "bian", "cang", "ceng", "cong", "dang", "deng",
+        "ding", "dong", "dian", "diao", "duan", "fang", "feng", "gang", "geng", "gong", "guan", "hang",
+        "heng", "hong", "huan", "jian", "jiao", "jing", "jion", "juan", "kang", "keng", "kong", "kuan",
+        "lang", "leng", "ling", "long", "lian", "liao", "luan", "mang", "meng", "ming", "mian", "miao",
+        "nang", "neng", "ning", "nong", "nian", "niao", "nuan", "pang", "peng", "ping", "pian", "piao",
+        "rang", "reng", "rong", "ruan", "sang", "seng", "song", "suan", "tang", "teng", "ting", "tong",
+        "tian", "tiao", "tuan", "wang", "weng", "yang", "ying", "yong", "yuan", "zang", "zeng", "zong",
+        "zuan", "bai", "ban", "bao", "bei", "ben", "bi", "bo", "bu", "cai", "can", "cao", "ce", "ci",
+        "cu", "cuo", "dai", "dan", "dao", "de", "dei", "di", "diu", "du", "duo", "dui", "dun", "fan",
+        "fei", "fen", "fo", "fu", "gai", "gan", "gao", "ge", "gei", "gu", "gua", "gui", "gun", "guo",
+        "hai", "han", "hao", "he", "hei", "hen", "hu", "hua", "hui", "hun", "huo", "ji", "jia", "jie",
+        "jin", "jiu", "ju", "jue", "jun", "ka", "kai", "kan", "kao", "ke", "ken", "ku", "kua", "kui",
+        "kun", "kuo", "la", "lai", "lan", "lao", "le", "lei", "li", "lia", "lie", "lin", "liu", "lo",
+        "lu", "lv", "luo", "lun", "ma", "mai", "man", "mao", "me", "mei", "men", "mi", "mie", "min",
+        "miu", "mo", "mu", "na", "nai", "nan", "nao", "ne", "nei", "nen", "ni", "nie", "nin", "niu",
+        "nu", "nv", "nuo", "nun", "ou", "pa", "pai", "pan", "pao", "pei", "pen", "pi", "pie", "pin",
+        "po", "pu", "qi", "qia", "qie", "qin", "qiu", "qu", "que", "qun", "ran", "rao", "re", "ren",
+        "ri", "rou", "ru", "rua", "rui", "run", "ruo", "sa", "sai", "san", "sao", "se", "si", "su",
+        "sui", "sun", "suo", "ta", "tai", "tan", "tao", "te", "ti", "tie", "tou", "tu", "tui", "tun",
+        "tuo", "wa", "wai", "wan", "wei", "wen", "wo", "wu", "xi", "xia", "xie", "xin", "xiu", "xu",
+        "xue", "xun", "ya", "yan", "yao", "ye", "yi", "yin", "you", "yu", "yue", "yun", "za", "zai",
+        "zan", "zao", "ze", "zei", "zi", "zu", "zui", "zun", "zuo", "a", "ai", "an", "ang", "ao", "e",
+        "ei", "en", "er", "o"
+      ]
+    },
+    "common_en_words": {
+      "description": "Common short English words used for username validation and DGA false positive reduction",
+      "category": "identity_anomaly",
+      "source_file": "modules/identity_anomaly.rs",
+      "items": [
+        "helper", "admin", "test", "notify", "alert", "bot", "system", "service", "noreply", "support",
+        "info", "news", "mail", "smtp", "auto", "mp", "pay", "shop", "store", "cloud", "dev", "api",
+        "app", "web", "net", "push", "hub", "lab", "do", "no", "go", "hi", "my",
+        "fund", "trust", "credit", "wealth", "health", "capital", "asset",
+        "invest", "finance", "securities", "insurance", "digital", "fintech",
+        "payment", "trading", "exchange", "clearing", "custody", "advisory",
+        "bank", "soft", "tech", "data", "group", "online", "global",
+        "registry", "cdn", "res", "byte", "scan", "portal", "center", "platform",
+        "manager", "monitor", "proxy", "cache", "edge", "node", "sync", "log",
+        "report", "share", "link", "open", "docs", "code", "build", "deploy",
+        "static", "asset", "media", "image", "video", "file", "down", "load",
+        "download", "upload", "token", "auth", "sign", "login", "verify",
+        "config", "setting", "status", "check", "ping", "live", "chat",
+        "hd", "sd", "pc", "tv", "db", "hr", "pr", "vr", "vpn", "ssl", "dns", "ftp",
+        "cms", "crm", "erp", "seo", "iot",
+        "scanner", "server", "finder", "reader", "writer", "tracker", "viewer", "player",
+        "maker", "tools", "works", "master", "host", "home", "page", "site",
+        "safe", "plus", "pro", "max", "box", "fast", "smart", "direct", "express", "search"
+      ]
+    },
+    "benign_brand_domain_labels": {
+      "description": "Legitimate vendor/product labels that look consonant-heavy but are NOT DGA domains",
+      "category": "identity_anomaly",
+      "source_file": "modules/identity_anomaly.rs",
+      "items": [
+        "hundsun", "smartx", "aishu", "alipay", "wechat", "weixin", "foxmail",
+        "qichacha", "cmbchina", "ccabchina", "nbcb",
+        "baihangcredit", "crctrust", "cjhxfund", "hzbankwealth", "psbc", "unionpay",
+        "rescdn", "bytetos", "mzstatic", "akamaihd", "kycregistry", "qqmail",
+        "sendcloud", "intsig", "qixin",
+        "dingtalk", "feishu", "venustech", "sangfor", "nsfocus", "dbappsecurity",
+        "topsec", "hillstonenet", "swift"
+      ]
+    },
+    "suspicious_user_agents": {
+      "description": "Suspicious HTTP user-agent strings indicating automated/scripted email sending",
+      "category": "identity_anomaly",
+      "source_file": "modules/identity_anomaly.rs",
+      "items": [
+        "python-requests", "curl/", "wget/", "go-http-client", "php/", "java/", "libwww-perl"
+      ]
+    },
+    "display_name_impersonation_targets": {
+      "description": "Brand names checked in display name vs sender domain mismatch detection",
+      "category": "identity_anomaly",
+      "source_file": "modules/identity_anomaly.rs",
+      "items": [
+        "microsoft", "office365", "outlook", "google", "paypal",
+        "apple", "amazon", "dhl", "fedex", "ups", "bank"
+      ]
+    },
+    "url_shorteners": {
+      "description": "Known URL shortener domains",
+      "category": "link_scan",
+      "source_file": "modules/link_scan.rs",
+      "items": [
+        "bit.ly", "t.co", "goo.gl", "tinyurl.com", "is.gd",
+        "ow.ly", "buff.ly", "rebrand.ly", "cutt.ly", "rb.gy", "short.io"
+      ]
+    },
+    "mail_security_gateways": {
+      "description": "Email security gateway URL rewrite domains. URLs from these domains should be unwrapped to analyze the embedded target URL.",
+      "category": "link_scan",
+      "source_file": "modules/link_scan.rs",
+      "items": [
+        "asiainfo-sec.com",
+        "urldefense.proofpoint.com",
+        "safelinks.protection.outlook.com",
+        "url.emailprotection.link",
+        "urlsand.com",
+        "secureweb.cisco.com",
+        "click.pstmrk.it"
+      ]
+    },
+    "aitm_platform_domain_suffixes": {
+      "description": "Domain suffixes of known AitM (Adversary-in-the-Middle) phishing proxy hosting platforms",
+      "category": "aitm_detect",
+      "source_file": "modules/aitm_detect.rs",
+      "items": [
+        ".workers.dev", ".pages.dev", ".trycloudflare.com",
+        ".ngrok.io", ".ngrok-free.app", ".serveo.net", ".loca.lt", ".tunnel.run",
+        ".evilginx.", ".evilproxy."
+      ]
+    },
+    "official_sso_domains": {
+      "description": "Official OAuth/SSO provider login domains (legitimate endpoints)",
+      "category": "aitm_detect",
+      "source_file": "modules/aitm_detect.rs",
+      "items": [
+        "login.microsoftonline.com", "login.microsoft.com", "login.live.com",
+        "accounts.google.com", "appleid.apple.com", "login.yahoo.com",
+        "auth.atlassian.com", "login.salesforce.com", "sso.godaddy.com",
+        "id.okta.com", "login.okta.com", "accounts.zoho.com",
+        "login.aol.com", "auth0.com"
+      ]
+    },
+    "oauth_redirect_params": {
+      "description": "OAuth parameter names that indicate a redirect flow (checked for AitM redirect anomalies)",
+      "category": "aitm_detect",
+      "source_file": "modules/aitm_detect.rs",
+      "items": [
+        "redirect_uri", "redirect_url", "return_url", "returnurl",
+        "callback", "post_login_url", "continue", "relay_state", "RelayState"
+      ]
+    },
+    "mfa_bait_phrases_en": {
+      "description": "English MFA/2FA bait phrases used in AitM phishing detection (case-insensitive)",
+      "category": "aitm_detect",
+      "source_file": "modules/aitm_detect.rs",
+      "items": [
+        "verify your identity", "security verification", "confirm authentication",
+        "mfa required", "multi-factor authentication", "two-factor authentication",
+        "two-step verification", "2fa verification", "authentication required",
+        "verify your account", "identity verification required", "additional verification",
+        "security challenge", "one-time password", "one-time passcode",
+        "enter verification code", "enter the code", "session expired",
+        "re-authenticate", "reauthenticate", "sign-in verification"
+      ]
+    },
+    "mfa_bait_phrases_zh": {
+      "description": "Chinese MFA/2FA bait phrases used in AitM phishing detection",
+      "category": "aitm_detect",
+      "source_file": "modules/aitm_detect.rs",
+      "items": [
+        "验证身份", "二次验证", "安全认证", "身份确认", "多重认证",
+        "双重验证", "双因素认证", "两步验证", "身份验证", "安全验证",
+        "验证码", "动态口令", "短信验证", "二次认证", "重新登录",
+        "会话已过期", "重新验证"
+      ]
+    },
+    "aitm_urgency_phrases": {
+      "description": "Urgency amplifier phrases that co-occur with MFA bait to trigger AitM detection (mixed EN/ZH)",
+      "category": "aitm_detect",
+      "source_file": "modules/aitm_detect.rs",
+      "items": [
+        "immediately", "urgent", "within 24 hours", "within 48 hours",
+        "account will be", "account suspended", "access will be", "failure to verify",
+        "立即", "紧急", "24小时内", "48小时内",
+        "账户将被", "帐户将被", "否则将", "逾期未",
+        "即将关闭", "即将冻结", "限时"
+      ]
+    },
+    "aitm_toolkit_path_patterns": {
+      "description": "URI path patterns characteristic of AitM phishing kits",
+      "category": "aitm_detect",
+      "source_file": "modules/aitm_detect.rs",
+      "items": [
+        "/auth/", "/login/", "/verify/", "/sso/", "/oauth2/", "/authorize",
+        "/signin/", "/credential/", "/mfa/", "/2fa/", "/challenge/", "/identity/"
+      ]
+    },
+    "captcha_indicators": {
+      "description": "Turnstile/CAPTCHA indicators in URL or HTML body (common in AitM phishing kits)",
+      "category": "aitm_detect",
+      "source_file": "modules/aitm_detect.rs",
+      "items": [
+        "turnstile", "cf-turnstile", "challenges.cloudflare.com", "hcaptcha.com",
+        "captcha-delivery", "/cdn-cgi/challenge-platform", "managed-challenge"
+      ]
+    },
+    "aitm_brand_impersonation_targets": {
+      "description": "Brand impersonation targets for AitM detection. Each entry maps a brand keyword to its legitimate domain suffixes.",
+      "category": "aitm_detect",
+      "source_file": "modules/aitm_detect.rs",
+      "items": [
+        {"brand": "microsoft", "legitimate_domains": ["microsoft.com", "microsoftonline.com", "office.com", "office365.com", "live.com", "outlook.com", "azure.com", "windows.net"]},
+        {"brand": "google", "legitimate_domains": ["google.com", "googleapis.com", "gstatic.com", "gmail.com"]},
+        {"brand": "apple", "legitimate_domains": ["apple.com", "icloud.com", "appleid.apple.com"]},
+        {"brand": "outlook", "legitimate_domains": ["outlook.com", "outlook.live.com", "office.com", "office365.com", "microsoft.com", "microsoftonline.com"]},
+        {"brand": "office365", "legitimate_domains": ["office365.com", "office.com", "microsoft.com", "microsoftonline.com"]},
+        {"brand": "onedrive", "legitimate_domains": ["onedrive.com", "onedrive.live.com", "sharepoint.com", "microsoft.com"]},
+        {"brand": "sharepoint", "legitimate_domains": ["sharepoint.com", "microsoft.com", "microsoftonline.com"]},
+        {"brand": "paypal", "legitimate_domains": ["paypal.com", "paypalobjects.com"]},
+        {"brand": "amazon", "legitimate_domains": ["amazon.com", "amazon.co.jp", "amazonaws.com"]},
+        {"brand": "netflix", "legitimate_domains": ["netflix.com"]},
+        {"brand": "linkedin", "legitimate_domains": ["linkedin.com"]},
+        {"brand": "dropbox", "legitimate_domains": ["dropbox.com", "dropboxapi.com"]},
+        {"brand": "docusign", "legitimate_domains": ["docusign.com", "docusign.net"]},
+        {"brand": "adobe", "legitimate_domains": ["adobe.com", "adobelogin.com"]},
+        {"brand": "okta", "legitimate_domains": ["okta.com", "oktapreview.com"]}
+      ]
+    },
+    "protected_domains": {
+      "description": "Protected internal corporate domains. Spoofing these triggers higher risk scores. Used in content_scan, semantic_scan, and header_scan.",
+      "category": "shared",
+      "source_file": "modules/content_scan/mod.rs, modules/semantic_scan.rs, modules/header_scan/parsed.rs",
+      "items": ["corp-internal.com"]
+    },
+    "known_financial_sender_domains": {
+      "description": "Known legitimate sender domains that frequently send routine English transactional mail to Chinese recipients. Emails from these skip the 'foreign-to-CN-corp' language mismatch check.",
+      "category": "semantic_scan",
+      "source_file": "modules/semantic_scan.rs",
+      "items": [
+        "163.com", "126.com", "yeah.net", "qq.com", "foxmail.com",
+        "sina.com", "sina.cn", "sohu.com", "aliyun.com",
+        "139.com", "189.cn", "wo.cn", "21cn.com", "tom.com",
+        "swift.com"
+      ]
+    },
+    "sextortion_threat_signals": {
+      "description": "Sextortion threat language phrases (English). Used with payment_signals for sextortion detection.",
+      "category": "semantic_scan",
+      "source_file": "modules/semantic_scan.rs",
+      "items": [
+        "recorded you", "your camera", "masturbat", "embarrassing",
+        "i have your password", "i know your password", "infected by",
+        "private malware", "hacked your", "compromised your",
+        "share the video", "publish your", "expose you", "send to all"
+      ]
+    },
+    "sextortion_payment_signals": {
+      "description": "Cryptocurrency payment demand phrases (English). Co-occurrence with threat_signals indicates sextortion.",
+      "category": "semantic_scan",
+      "source_file": "modules/semantic_scan.rs",
+      "items": [
+        "bitcoin", "btc", "ethereum", "eth", "cryptocurrency",
+        "wallet address", "pay exactly", "send payment",
+        "complete the payment", "days to pay"
+      ]
+    },
+    "suspicious_path_keywords": {
+      "description": "URL path keywords indicating phishing and credential harvesting (mixed EN/ZH)",
+      "category": "link_content",
+      "source_file": "modules/link_content.rs",
+      "items": [
+        "login", "signin", "sign-in", "logon", "log-on",
+        "verify", "verification", "confirm", "validate",
+        "account", "secure", "security", "update", "password", "passwd",
+        "credential", "banking", "payment", "billing", "checkout",
+        "recover", "restore", "unlock", "reactivate",
+        "webmail", "outlook", "office365", "onedrive",
+        "申报", "核对", "办理", "领取", "查看"
+      ]
+    },
+    "suspicious_query_params": {
+      "description": "Query parameter names commonly used in phishing credential harvesting URLs",
+      "category": "link_content",
+      "source_file": "modules/link_content.rs",
+      "items": [
+        "token", "session", "auth", "redirect", "return_url", "returnurl",
+        "callback", "next", "email", "user", "username", "ssn", "password", "otp"
+      ]
+    },
+    "common_url_words": {
+      "description": "Common legitimate URL words dictionary used for typosquatting detection (Levenshtein distance)",
+      "category": "link_content",
+      "source_file": "modules/link_content.rs",
+      "items": [
+        "invoice", "download", "upload", "account", "verify", "confirm",
+        "payment", "receipt", "document", "certificate", "transfer", "balance",
+        "statement", "profile", "settings", "service", "banking", "finance",
+        "security", "password", "login", "register", "activate", "update",
+        "manage", "notification", "message", "support", "customer", "portal",
+        "index", "detail", "query", "result", "report"
+      ]
+    },
+    "auth_barrier_terms": {
+      "description": "Authentication barrier / CAPTCHA terms in URLs (may indicate AitM phishing pages)",
+      "category": "link_content",
+      "source_file": "modules/link_content.rs",
+      "items": [
+        "captcha", "turnstile", "cloudflare", "verify-human",
+        "verify you are human", "prove you are human", "security-check",
+        "security check", "human verification", "checking your browser"
+      ]
+    },
+    "oauth_flow_terms": {
+      "description": "OAuth flow terms in URLs indicating authentication redirect flows",
+      "category": "link_content",
+      "source_file": "modules/link_content.rs",
+      "items": [
+        "oauth2", "/authorize", "client_id=", "redirect_uri=",
+        "response_type=", "prompt=consent", "scope=", "offline_access"
+      ]
+    },
+    "official_login_suffixes": {
+      "description": "Official login page domain suffixes. URLs matching these are less suspicious for auth-related paths.",
+      "category": "link_content",
+      "source_file": "modules/link_content.rs",
+      "items": [
+        "microsoft.com", "microsoftonline.com", "office.com", "office365.com",
+        "live.com", "okta.com", "google.com"
+      ]
+    },
+    "account_security_threat_phrases_body": {
+      "description": "Account security threat phrases detected in email body (ZH + JP + EN). Co-occurrence with action phrases triggers account_security_phishing.",
+      "category": "content_scan_detectors",
+      "source_file": "modules/content_scan/detectors.rs",
+      "items": [
+        "异常登录", "外地登录", "异地登录", "账号被盗", "账户冻结", "帐户冻结",
+        "账号封禁", "暂时封禁", "异常活动", "账户关闭", "帐户关闭",
+        "账户将于", "帐户将于", "非活动状态", "邮箱权限", "封禁危险", "封号",
+        "お荷物", "配達通知", "不在通知", "再配達", "受取人",
+        "アカウント確認", "利用停止", "利用制限", "不正アクセス",
+        "カード利用停止", "本人認証", "セキュリティ確認", "パスワード変更", "ログイン確認",
+        "unusual activity", "suspicious login", "account suspended",
+        "unauthorized access", "security alert", "account will be closed", "account closure"
+      ]
+    },
+    "account_security_action_phrases_body": {
+      "description": "Action/urgency phrases in email body that co-occur with threat phrases (ZH + JP + EN)",
+      "category": "content_scan_detectors",
+      "source_file": "modules/content_scan/detectors.rs",
+      "items": [
+        "立即采取行动", "立即处理", "立即验证", "马上处理", "限时处理",
+        "否则将", "去处理", "点击处理", "立即认证", "安全认证",
+        "完成认证", "立即确认", "请登录", "保持开通", "保持活动",
+        "将被关闭", "将被停用", "将被冻结", "将无法使用",
+        "一旦你的", "无法访问",
+        "確認はこちら", "ご確認ください", "ご本人確認", "お手続き",
+        "お届け情報", "受取情報", "下記をご覧", "至急ご対応",
+        "アクションが必要", "手続きを完了",
+        "take action", "verify immediately", "confirm your", "sign in",
+        "log in to", "keep your account", "will be closed",
+        "will be suspended", "will be deactivated"
+      ]
+    },
+    "subject_threat_keywords": {
+      "description": "Account security threat keywords detected in email subject line (ZH + JP + EN). Subject-only fallback when body is unavailable.",
+      "category": "content_scan_detectors",
+      "source_file": "modules/content_scan/detectors.rs",
+      "items": [
+        "异常登录", "账户冻结", "帐户冻结", "账号封禁", "封禁危险",
+        "账户关闭", "帐户关闭", "账号被盗", "安全警告", "安全风险",
+        "邮箱异常", "异常活动", "立即验证", "账户警告", "账号停用",
+        "面临封禁", "面临封号", "异常登录活动", "安全提醒",
+        "更新密码", "密码过期", "密码到期", "账号到期", "账户到期",
+        "异常访问", "登录异常", "登录警告", "可疑登录",
+        "アカウント確認", "利用制限", "認証手続き", "不正アクセス",
+        "カード利用停止", "使用確認", "アクションが必要",
+        "支払い情報異常", "お支払い情報", "お支払い方法", "支払い方法", "iCloud+",
+        "お荷物に関する", "配達通知", "不在通知", "再配達", "お届け",
+        "パスワード変更", "ログイン確認", "セキュリティ確認", "本人認証", "利用停止",
+        "unusual activity", "suspicious login", "account suspended", "security alert",
+        "verify your", "password expired", "account will be", "unauthorized access"
+      ]
+    },
+    "subsidy_keywords_body": {
+      "description": "Government subsidy/tax fraud keywords in email body (Chinese)",
+      "category": "content_scan_detectors",
+      "source_file": "modules/content_scan/detectors.rs",
+      "items": [
+        "补贴", "补助", "津贴", "退税", "补偿金",
+        "社保", "医保", "生育", "公积金", "个税",
+        "劳动保障", "入职", "在职", "人员", "综合补贴",
+        "申报领取", "申请领取", "办理领取", "申请办理", "官方办理",
+        "官方大厅", "程序地址", "办理通知"
+      ]
+    },
+    "subsidy_urgency_keywords_body": {
+      "description": "Urgency keywords co-occurring with subsidy fraud in email body (Chinese)",
+      "category": "content_scan_detectors",
+      "source_file": "modules/content_scan/detectors.rs",
+      "items": [
+        "逾期不予受理", "不予受理", "尽快办理", "限期", "请尽快", "过期作废", "逾期"
+      ]
+    },
+    "subsidy_keywords_subject": {
+      "description": "Government subsidy/tax fraud keywords in email subject line (Chinese)",
+      "category": "content_scan_detectors",
+      "source_file": "modules/content_scan/detectors.rs",
+      "items": [
+        "补贴", "补助", "津贴", "退税", "补偿金",
+        "个税", "社保", "公积金", "补助津贴", "补助金",
+        "入职", "在职", "人员", "综合补贴", "申请",
+        "办理", "通知", "申报领取", "办理领取"
+      ]
+    },
+    "invoice_spam_keywords": {
+      "description": "Invoice-spam solicitation keywords used in fake invoice offers",
+      "category": "content_scan_detectors",
+      "source_file": "modules/content_scan/detectors.rs",
+      "items": [
+        "发票", "税票", "增值税", "普票", "专票", "电子票",
+        "开票", "代开", "票据"
+      ]
+    },
+    "invoice_spam_contact_keywords": {
+      "description": "Off-platform contact markers commonly used in fake invoice spam",
+      "category": "content_scan_detectors",
+      "source_file": "modules/content_scan/detectors.rs",
+      "items": [
+        "加q", "扣扣", "qq", "微信", "薇",
+        "vx", "陈姐", "经理"
+      ]
+    },
+    "en_department_signatures": {
+      "description": "English department/title signatures used in BEC impersonation detection",
+      "category": "content_scan",
+      "source_file": "modules/content_scan/mod.rs",
+      "items": [
+        "financial department", "finance department", "hr department", "human resources",
+        "admin department", "it department", "legal department", "compliance department",
+        "marketing department", "general manager", "chief executive", "chief financial"
+      ]
+    },
+    "api_key_context_keywords": {
+      "description": "Context keywords surrounding potential API key matches to reduce false positives",
+      "category": "content_scan",
+      "source_file": "modules/content_scan/mod.rs",
+      "items": [
+        "api key", "apikey", "access key", "secret", "token",
+        "credential", "auth", "authorization", "client secret",
+        "client_id", "client id", "appkey", "appsecret"
+      ]
+    },
+    "public_mail_domains": {
+      "description": "Well-known public email service domains (117 entries). Used to: 1) exclude from internal domain auto-detection, 2) skip first-contact checks in identity_anomaly.",
+      "category": "pipeline",
+      "source_file": "pipeline/internal_domains.rs",
+      "items": [
+        "qq.com", "vip.qq.com", "foxmail.com",
+        "163.com", "vip.163.com", "126.com", "yeah.net", "188.com",
+        "sina.com", "sina.cn", "vip.sina.com", "sohu.com", "sohu.net", "tom.com",
+        "139.com", "189.cn", "wo.cn", "10086.cn",
+        "aliyun.com", "alimail.com",
+        "21cn.com", "263.net", "263.com", "caixin.com", "china.com", "chinaren.com",
+        "coremail.cn", "eyou.com", "tianya.cn",
+        "gmail.com", "googlemail.com",
+        "outlook.com", "hotmail.com", "live.com", "live.cn", "msn.com", "windowslive.com",
+        "yahoo.com", "yahoo.co.jp", "yahoo.co.uk", "yahoo.com.cn", "ymail.com", "rocketmail.com",
+        "icloud.com", "me.com", "mac.com",
+        "aol.com",
+        "mail.com", "email.com",
+        "zoho.com", "zohomail.com",
+        "fastmail.com", "fastmail.fm",
+        "proton.me", "protonmail.com", "protonmail.ch", "pm.me",
+        "tutanota.com", "tuta.io", "tutamail.com",
+        "mailfence.com", "disroot.org", "posteo.de", "posteo.net",
+        "runbox.com", "mailbox.org", "kolabnow.com", "startmail.com",
+        "ctemplar.com", "hushmail.com", "countermail.com",
+        "gmx.com", "gmx.net", "gmx.de", "web.de", "t-online.de", "arcor.de", "freenet.de",
+        "mail.ru", "inbox.ru", "list.ru", "bk.ru",
+        "yandex.com", "yandex.ru", "ya.ru", "rambler.ru",
+        "naver.com", "daum.net", "hanmail.net", "nate.com",
+        "rediffmail.com",
+        "cox.net", "sbcglobal.net", "att.net", "comcast.net", "verizon.net",
+        "charter.net", "earthlink.net", "bellsouth.net", "optonline.net",
+        "frontier.com", "aim.com", "inbox.com", "lycos.com", "excite.com",
+        "btinternet.com", "sky.com", "virginmedia.com", "talktalk.net",
+        "orange.fr", "free.fr", "sfr.fr", "laposte.net", "wanadoo.fr",
+        "libero.it", "virgilio.it", "tin.it", "alice.it", "tiscali.it",
+        "terra.com.br", "uol.com.br", "bol.com.br", "globo.com", "ig.com.br",
+        "mail.goo.ne.jp", "excite.co.jp", "nifty.com", "biglobe.ne.jp",
+        "so-net.ne.jp", "plala.or.jp", "ocn.ne.jp", "infoseek.jp",
+        "guerrillamail.com", "mailinator.com", "tempmail.com",
+        "sharklasers.com", "guerrillamailblock.com",
+        "mailoo.org"
+      ]
+    },
+    "high_risk_empty_subject_extensions": {
+      "description": "File extensions that are high-risk when attached to emails with empty subjects",
+      "category": "anomaly_detect",
+      "source_file": "modules/anomaly_detect.rs",
+      "items": [
+        "exe", "scr", "js", "vbs", "bat", "cmd", "ps1", "hta", "msi", "dll", "com", "pif",
+        "wsf", "wsh", "zip", "rar", "7z", "iso", "img", "html", "htm", "eml", "lnk", "url"
+      ]
+    },
+    "common_business_attachment_extensions": {
+      "description": "Common business document attachment extensions (considered safe/normal)",
+      "category": "anomaly_detect",
+      "source_file": "modules/anomaly_detect.rs",
+      "items": [
+        "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", "jpg", "jpeg", "png"
+      ]
+    },
+    "suspicious_mailers": {
+      "description": "Suspicious X-Mailer header values indicating scripted/bulk email sending tools",
+      "category": "header_scan",
+      "source_file": "modules/header_scan/parsed.rs",
+      "items": [
+        "phpmailer", "swiftmailer", "mass mailer", "bulk mailer", "sendinblue",
+        "mailchimp", "python", "ruby", "perl", "wget", "curl"
+      ]
+    },
+    "dangerous_extensions": {
+      "description": "Dangerous attachment file extensions that are inherently risky",
+      "category": "attach_scan",
+      "source_file": "modules/attach_scan.rs",
+      "items": [
+        "exe", "scr", "js", "vbs", "bat", "cmd", "ps1", "iso", "img", "hta", "msi", "dll",
+        "com", "pif", "wsf", "wsh"
+      ]
+    },
+    "text_plain_compatible_extensions": {
+      "description": "File extensions where Content-Type text/plain is expected and should not trigger MIME mismatch",
+      "category": "attach_scan",
+      "source_file": "modules/attach_scan.rs",
+      "items": [
+        "csv", "tsv", "xml", "json", "yaml", "yml", "toml", "ini", "cfg", "log", "md"
+      ]
+    },
+    "iban_country_codes": {
+      "description": "Valid IBAN country code prefixes (ISO 13616, SWIFT IBAN Registry 2024). Used to filter false positives from broad IBAN regex.",
+      "category": "transaction_correlation",
+      "source_file": "modules/transaction_correlation.rs",
+      "items": [
+        "AD", "AE", "AL", "AT", "AZ", "BA", "BE", "BG", "BH", "BR", "BY", "CH", "CR", "CY", "CZ", "DE",
+        "DK", "DO", "EE", "EG", "ES", "FI", "FO", "FR", "GB", "GE", "GI", "GL", "GR", "GT", "HR", "HU",
+        "IE", "IL", "IQ", "IS", "IT", "JO", "KW", "KZ", "LB", "LC", "LI", "LT", "LU", "LV", "LY", "MC",
+        "MD", "ME", "MK", "MR", "MT", "MU", "NL", "NO", "PK", "PL", "PS", "PT", "QA", "RO", "RS", "SA",
+        "SC", "SE", "SI", "SK", "SM", "ST", "SV", "TL", "TN", "TR", "UA", "VA", "VG", "XK"
+      ]
+    },
+    "transaction_urgency_keywords": {
+      "description": "Urgency keywords that elevate risk when combined with financial entities in transaction correlation (mixed EN/ZH)",
+      "category": "transaction_correlation",
+      "source_file": "modules/transaction_correlation.rs",
+      "items": [
+        "urgent", "immediately", "asap", "today", "deadline", "overdue",
+        "final notice", "time sensitive", "act now",
+        "紧急", "立即", "马上", "今天", "截止", "逾期"
+      ]
+    },
+    "payment_change_keywords": {
+      "description": "Payment change keywords indicating BEC (Business Email Compromise) wire transfer fraud (mixed EN/ZH)",
+      "category": "transaction_correlation",
+      "source_file": "modules/transaction_correlation.rs",
+      "items": [
+        "new account", "updated account", "change of bank", "revised payment",
+        "new banking", "updated wire", "account has changed", "new beneficiary",
+        "更换账户", "新账户", "变更银行", "修改收款"
+      ]
+    },
+    "html_patterns": {
+      "description": "Dangerous HTML tag/attribute patterns with severity weights and categories. Structured data (not plain string list).",
+      "category": "html_scan",
+      "source_file": "modules/html_scan.rs",
+      "items": [
+        {"pattern": "<iframe", "severity": 0.25, "label": "Embedded frame <iframe>", "category": "xss"},
+        {"pattern": "<object", "severity": 0.20, "label": "Embedded object <object>", "category": "xss"},
+        {"pattern": "<embed", "severity": 0.20, "label": "Embedded content <embed>", "category": "xss"},
+        {"pattern": "onerror=", "severity": 0.25, "label": "Event handler onerror", "category": "xss"},
+        {"pattern": "onload=", "severity": 0.20, "label": "Event handler onload", "category": "xss"},
+        {"pattern": "javascript:", "severity": 0.30, "label": "javascript: protocol link", "category": "xss"},
+        {"pattern": "data:text/html", "severity": 0.25, "label": "data:text/html data URI", "category": "xss"},
+        {"pattern": "expression(", "severity": 0.25, "label": "CSS expression() function", "category": "xss"},
+        {"pattern": "<meta http-equiv=\"refresh\"", "severity": 0.20, "label": "Meta auto-refresh/redirect", "category": "redirect"}
+      ]
+    },
+    "dangerous_script_ops": {
+      "description": "Dangerous JavaScript operations within <script> tags that indicate malicious content",
+      "category": "html_scan",
+      "source_file": "modules/html_scan.rs",
+      "items": [
+        "eval(", "function(", "settimeout(", "setinterval(",
+        "document.location", "window.location", "location.href", "location.replace(",
+        "document.cookie", "document.write(", "xmlhttprequest", "fetch(",
+        "atob(", "string.fromcharcode(", ".submit()", ".innerhtml",
+        "new blob(", "createelement("
+      ]
+    },
+    "dangerous_onclick_ops": {
+      "description": "Dangerous operations within onclick handlers that indicate malicious HTML",
+      "category": "html_scan",
+      "source_file": "modules/html_scan.rs",
+      "items": [
+        "window.location", "document.location", "location.href", "location=",
+        "javascript:", "eval(", "fetch(", "xmlhttprequest", "atob("
+      ]
+    },
+    "css_hidden_content_patterns": {
+      "description": "CSS patterns used to hide malicious content from users while evading analysis",
+      "category": "html_scan",
+      "source_file": "modules/html_scan.rs",
+      "items": [
+        "display:none", "display: none",
+        "visibility:hidden", "visibility: hidden",
+        "font-size:0", "font-size: 0",
+        "opacity:0", "opacity: 0",
+        "height:0", "height: 0",
+        "max-height:0", "max-height: 0",
+        "text-indent:-9999", "text-indent: -9999",
+        "position:absolute;left:-9999", "position: absolute; left: -9999"
+      ]
+    },
+    "static_asset_extensions": {
+      "description": "File extensions for static web assets (images, fonts, CSS, JS). Used to identify CDN/object-storage static asset URLs.",
+      "category": "common",
+      "source_file": "modules/common.rs",
+      "items": [
+        "png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "avif",
+        "css", "js", "mjs", "map", "woff", "woff2", "ttf", "eot"
+      ]
+    },
+    "redirect_params": {
+      "description": "URL query parameter prefixes that indicate embedded redirect target URLs (used to extract wrapped URLs from tracking/gateway links)",
+      "category": "common",
+      "source_file": "modules/common.rs",
+      "items": [
+        "clickenc=", "redirect=", "url=", "goto=", "target=",
+        "dest=", "destination=", "redir=", "link=", "to=",
+        "bounce=", "forward=", "next=", "return_url="
+      ]
+    },
+    "phishing_domain_keywords": {
+      "description": "Keywords in domain names that indicate phishing (e.g., login-microsoft.com)",
+      "category": "external_fetcher",
+      "source_file": "external/fetcher.rs",
+      "items": [
+        "login", "signin", "sign-in", "verify", "secure", "account", "update",
+        "confirm", "banking", "paypal", "microsoft", "apple", "google", "amazon",
+        "netflix", "facebook", "instagram", "twitter", "linkedin",
+        "support", "helpdesk", "service", "security", "auth"
+      ]
+    },
+    "fetcher_login_input_names": {
+      "description": "Form input name hints that indicate a login form (used in HTML form analysis)",
+      "category": "external_fetcher",
+      "source_file": "external/fetcher.rs",
+      "items": [
+        "user", "username", "login", "email", "account", "uid", "passwd", "password", "pass", "pwd"
+      ]
+    },
+    "common_service_subdomains": {
+      "description": "Well-known service subdomain prefixes that should not trigger DGA detection (e.g. fonts.googleapis.com, static.example.com)",
+      "items": [
+        "fonts", "static", "cdn", "track", "sctrack", "api", "mail", "smtp",
+        "docs", "maps", "cloud", "storage", "www", "blog", "status", "assets",
+        "img", "media", "auth", "login", "sso", "ns1", "ns2", "mx", "pop",
+        "imap", "stats", "click", "links", "proxy", "relay", "edge", "callback",
+        "content", "video", "audio", "files", "images", "styles", "scripts"
+      ]
+    }
+  }
+}

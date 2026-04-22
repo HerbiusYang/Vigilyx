@@ -190,6 +190,57 @@ mod tests {
     }
 
     #[test]
+    fn test_batcloak_style_batch_loader_detected() {
+        let engine = YaraEngine::new().unwrap();
+        let sample = br#"@echo off
+setlocal EnableDelayedExpansion
+for /f %%i in ('whoami') do set user=%%i
+call set stage=payload
+powershell.exe -enc SQBFAFgA
+certutil -decode a.txt b.bin
+copy b.bin %TEMP%\dropper.exe
+timeout /t 3
+Set-MpPreference -DisableRealtimeMonitoring $true
+sc stop WinDefend
+start /b %TEMP%\dropper.exe
+echo ^^done
+"#;
+        let matches = engine.scan(sample);
+        assert!(
+            matches
+                .iter()
+                .any(|m| m.rule_name == "Evasion_BatCloak_Obfuscated_Batch"),
+            "Should detect BatCloak-style obfuscated batch loader, got: {:?}",
+            matches.iter().map(|m| &m.rule_name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_icedid_rule_ignores_pdf_lure_content() {
+        let engine = YaraEngine::new().unwrap();
+        let benign_pdf = b"%PDF-1.7\nIcedID research note\nJFIF\n\x1F\x8B\x08\nMZ\n";
+        let matches = engine.scan(benign_pdf);
+        assert!(
+            !matches.iter().any(|m| m.rule_name == "Mal_IcedID_BokBot"),
+            "PDF lure content should not match IcedID rule: {:?}",
+            matches.iter().map(|m| &m.rule_name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_icedid_rule_still_matches_binary_style_payload() {
+        let engine = YaraEngine::new().unwrap();
+        let payload =
+            b"MZ\x90\x00PE\x00\x00IcedID InternetOpenA InternetConnectA NtCreateSection HttpSendRequestW";
+        let matches = engine.scan(payload);
+        assert!(
+            matches.iter().any(|m| m.rule_name == "Mal_IcedID_BokBot"),
+            "Binary-style IcedID indicators should still match: {:?}",
+            matches.iter().map(|m| &m.rule_name).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn test_elf_header_detected() {
         let engine = YaraEngine::new().unwrap();
         let elf_data = vec![0x7F, 0x45, 0x4C, 0x46, 0x02, 0x01, 0x01, 0x00];

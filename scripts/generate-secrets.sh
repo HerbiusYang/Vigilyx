@@ -93,12 +93,14 @@ REDIS_PASSWORD=$(gen 24)
 # ── API Authentication ──
 API_JWT_SECRET=$(gen 32)
 API_PASSWORD=$(gen 16)
+API_SECURE_COOKIE=true
 
 # ── Internal service auth ──
 INTERNAL_API_TOKEN=$(gen 24)
 AI_INTERNAL_TOKEN=$(gen 24)
 
 # ── Packet capture ──
+SERVER_TIMEZONE=Asia/Shanghai
 SNIFFER_INTERFACE=${DETECTED_IFACE}
 
 # ── Logging (never use debug in production) ──

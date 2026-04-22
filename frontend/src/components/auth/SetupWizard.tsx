@@ -1,6 +1,10 @@
 import { useState, useEffect, useRef, FormEvent } from 'react'
+import { useTranslation } from 'react-i18next'
 import { apiFetch } from '../../utils/api'
 import { persistSetupStatus } from '../../utils/setupStatus'
+import { formatBytes } from '../../utils/format'
+
+import i18n from '../../i18n'
 
 interface NetInterface {
   name: string
@@ -10,28 +14,22 @@ interface NetInterface {
   status: string
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1073741824) return `${(bytes / 1048576).toFixed(1)} MB`
-  return `${(bytes / 1073741824).toFixed(1)} GB`
+function getPlaintextSmtpLockMessage(): string {
+  return i18n.t('setup.plaintextSmtpLock')
 }
-
-const PLAINTEXT_SMTP_LOCK_MESSAGE =
-  '当前选择了无加密 SMTP。若确需使用，请先开启“允许明文 SMTP（管理员开关）”；该设置会持久化保存。'
 
 function normalizeSmtpUiError(message: string): string {
   if (
     message.includes('SMTP plaintext mode blocked') ||
     message.includes('allow_plaintext_smtp')
   ) {
-    return PLAINTEXT_SMTP_LOCK_MESSAGE
+    return getPlaintextSmtpLockMessage()
   }
   if (message.includes('No compatible authentication mechanism')) {
-    return '当前 SMTP 服务器未提供可用的 AUTH 认证能力。若该服务器允许内网免认证发送，请将用户名和密码留空后重试。'
+    return i18n.t('setup.noAuthMechanism')
   }
   if (message.includes('must either both be filled or both be left empty')) {
-    return 'SMTP 用户名和密码要么同时填写，要么同时留空。'
+    return i18n.t('setup.smtpCredentialsBothOrNone')
   }
   return message
 }
@@ -58,54 +56,13 @@ interface SetupWizardProps {
   onComplete: () => void
 }
 
-// Step definitions (the capture step title/subtitle changes dynamically by mode)
-const STEPS = [
-  { id: 'welcome', title: '欢迎使用 Vigilyx', subtitle: '初始化配置向导' },
-  { id: 'deploy_mode', title: '部署模式', subtitle: '选择邮件安全检测方式' },
-  { id: 'network', title: '网络配置', subtitle: '配置网络监听参数' },
-  { id: 'domains', title: '内部域名', subtitle: '配置组织内部的邮件域名' },
-  { id: 'sniffer', title: '数据安全监控', subtitle: '配置 Webmail 服务器和 HTTP 端口' },
-  { id: 'alerts', title: '邮件告警', subtitle: '配置安全告警的邮件通知' },
-  { id: 'ai', title: 'AI 分析服务', subtitle: '配置智能威胁分析' },
-]
-
-const PLATFORM_FEATURES = [
-  {
-    icon: 'shield',
-    accent: '#22d3ee',
-    title: '多引擎融合检测',
-    desc: '15+ 模块并行 · DS-Murphy 证据融合',
-  },
-  {
-    icon: 'zap',
-    accent: '#f59e0b',
-    title: '双模式部署',
-    desc: '旁路镜像 / MTA 网关按需切换',
-  },
-  {
-    icon: 'brain',
-    accent: '#a855f7',
-    title: 'AI 语义分析',
-    desc: 'mDeBERTa 零样本钓鱼识别',
-  },
-  {
-    icon: 'globe',
-    accent: '#3b82f6',
-    title: '威胁情报联动',
-    desc: 'OTX · VirusTotal · 本地 IOC',
-  },
-  {
-    icon: 'lock',
-    accent: '#22c55e',
-    title: '数据安全审计',
-    desc: 'DLP 敏感数据外泄检测',
-  },
-  {
-    icon: 'activity',
-    accent: '#f43f5e',
-    title: '自动化响应',
-    desc: 'SOAR 告警 · Webhook · 自动隔离',
-  },
+const FEATURE_KEYS = [
+  { icon: 'shield', accent: '#22d3ee', titleKey: 'setup.featureMultiEngine', descKey: 'setup.featureMultiEngineDesc' },
+  { icon: 'zap', accent: '#f59e0b', titleKey: 'setup.featureDualMode', descKey: 'setup.featureDualModeDesc' },
+  { icon: 'brain', accent: '#a855f7', titleKey: 'setup.featureAi', descKey: 'setup.featureAiDesc' },
+  { icon: 'globe', accent: '#3b82f6', titleKey: 'setup.featureIntel', descKey: 'setup.featureIntelDesc' },
+  { icon: 'lock', accent: '#22c55e', titleKey: 'setup.featureDlp', descKey: 'setup.featureDlpDesc' },
+  { icon: 'activity', accent: '#f43f5e', titleKey: 'setup.featureSoar', descKey: 'setup.featureSoarDesc' },
 ]
 
 const FEATURE_ICONS: Record<string, JSX.Element> = {
@@ -118,10 +75,22 @@ const FEATURE_ICONS: Record<string, JSX.Element> = {
 }
 
 export default function SetupWizard({ onComplete }: SetupWizardProps) {
+  const { t } = useTranslation()
   const [step, setStep] = useState(0)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const glowVars = useWizardGlows()
+
+  // Build STEPS with translated titles/subtitles
+  const STEPS = [
+    { id: 'welcome' as const, title: t('setup.welcomeTitle'), subtitle: t('setup.welcomeSubtitle') },
+    { id: 'deploy_mode' as const, title: t('setup.deployModeTitle'), subtitle: t('setup.deployModeSubtitle') },
+    { id: 'network' as const, title: t('setup.networkTitle'), subtitle: t('setup.networkSubtitle') },
+    { id: 'domains' as const, title: t('setup.domainsTitle'), subtitle: t('setup.domainsSubtitle') },
+    { id: 'sniffer' as const, title: t('setup.snifferTitle'), subtitle: t('setup.snifferSubtitle') },
+    { id: 'alerts' as const, title: t('setup.alertsTitle'), subtitle: t('setup.alertsSubtitle') },
+    { id: 'ai' as const, title: t('setup.aiTitle'), subtitle: t('setup.aiSubtitle') },
+  ]
 
   // ── Step: Deploy Mode ──
   const [deployMode, setDeployMode] = useState<'mirror' | 'mta'>('mirror')
@@ -184,8 +153,8 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
   const currentStep = rawStep.id === 'network'
     ? {
         ...rawStep,
-        title: deployMode === 'mta' ? 'MTA 网络配置' : '网络抓包',
-        subtitle: deployMode === 'mta' ? '配置监听地址、下游转发和本地域名' : '配置流量捕获的网卡和协议端口',
+        title: deployMode === 'mta' ? t('setup.networkMtaTitle') : t('setup.networkSnifferTitle'),
+        subtitle: deployMode === 'mta' ? t('setup.networkMtaSubtitle') : t('setup.networkSnifferSubtitle'),
       }
     : rawStep
 
@@ -196,12 +165,12 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
     try {
       const saved = await persistSetupStatus(true)
       if (!saved) {
-        setError('引导完成状态保存失败')
+        setError(t('setup.saveSetupFailed'))
         return
       }
       onComplete()
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : '引导完成状态保存失败'
+      const msg = e instanceof Error ? e.message : t('setup.saveSetupFailed')
       setError(msg)
     } finally {
       setSaving(false)
@@ -225,7 +194,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
           body: JSON.stringify(body),
         })
         const data = await res.json()
-        if (!data.success) throw new Error(data.error || '保存失败')
+        if (!data.success) throw new Error(data.error || t('setup.saveFailed'))
       } else if (currentStep.id === 'network') {
         // NIC/protocol port settings are currently controlled by container env vars; the frontend only stores them in localStorage for display/reference
         localStorage.setItem('vigilyx-sniffer-iface', snifferIface)
@@ -245,7 +214,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
               body: JSON.stringify({ mta_local_domains: domainList.join(',') }),
             })
             const data = await res.json()
-            if (!data.success) throw new Error(data.error || '保存域名失败')
+            if (!data.success) throw new Error(data.error || t('setup.saveDomainsFailed'))
           }
         }
       } else if (currentStep.id === 'domains') {
@@ -261,7 +230,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
             body: JSON.stringify({ mta_local_domains: domainList.join(',') }),
           })
           const data = await res.json()
-          if (!data.success) throw new Error(data.error || '保存域名失败')
+          if (!data.success) throw new Error(data.error || t('setup.saveDomainsFailed'))
         }
       } else if (currentStep.id === 'sniffer') {
         const servers = webmailServers
@@ -280,7 +249,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
       } else if (currentStep.id === 'alerts') {
         if (alertEnabled) {
           if (smtpTls === 'none' && !allowPlaintextSmtp) {
-            throw new Error(PLAINTEXT_SMTP_LOCK_MESSAGE)
+            throw new Error(getPlaintextSmtpLockMessage())
           }
           await apiFetch('/api/security/email-alert', {
             method: 'PUT',
@@ -318,7 +287,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
         })
       }
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : '保存失败'
+      const msg = e instanceof Error ? e.message : t('setup.saveFailed')
       setError(normalizeSmtpUiError(msg))
       setSaving(false)
       return false
@@ -384,7 +353,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
         {/* Header */}
         <div className="setup-header">
           <div className="setup-step-meta">
-            <span className="setup-step-chip">安全引导</span>
+            <span className="setup-step-chip">{t('setup.securityGuide')}</span>
             <span className="setup-step-count">
               {String(step + 1).padStart(2, '0')} / {String(STEPS.length).padStart(2, '0')}
             </span>
@@ -394,7 +363,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
             {step === 0 && (
               <button type="button" className="setup-btn setup-btn--primary" disabled={saving} onClick={() => handleNext()}>
                 {saving && <span className="grok-spinner" />}
-                开始配置
+                {t('setup.startConfig')}
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginLeft: 4 }}><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
               </button>
             )}
@@ -411,26 +380,26 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
               <div className="setup-hero-copy">
                 <span className="setup-eyebrow">Email Threat Intelligence Platform</span>
                 <p className="setup-welcome-text">
-                  Vigilyx 是开源邮件安全分析平台，通过多引擎融合检测、AI 语义分析和威胁情报联动，实现从流量捕获到威胁处置的全链路闭环。
+                  {t('setup.welcomeText')}
                 </p>
               </div>
 
               <div className="setup-feature-grid">
-                {PLATFORM_FEATURES.map(f => (
-                  <div key={f.title} className="setup-feature-card">
+                {FEATURE_KEYS.map(f => (
+                  <div key={f.titleKey} className="setup-feature-card">
                     <div className="setup-feature-icon" style={{ color: f.accent, borderColor: f.accent + '33', background: f.accent + '14' }}>
                       {FEATURE_ICONS[f.icon]}
                     </div>
                     <div className="setup-feature-copy">
-                      <strong className="setup-feature-title">{f.title}</strong>
-                      <span className="setup-feature-desc">{f.desc}</span>
+                      <strong className="setup-feature-title">{t(f.titleKey)}</strong>
+                      <span className="setup-feature-desc">{t(f.descKey)}</span>
                     </div>
                   </div>
                 ))}
               </div>
 
               <p className="setup-welcome-hint">
-                接下来的配置向导将帮助您完成部署模式、网络参数、域名和告警设置。每一步都可跳过，稍后在「系统设置」中随时调整。
+                {t('setup.welcomeHint')}
               </p>
             </div>
           )}
@@ -438,7 +407,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
           {currentStep.id === 'deploy_mode' && (
             <div className="setup-fields">
               <p className="setup-section-lead">
-                Vigilyx 支持两种部署模式，选择后可在「系统设置 → 部署模式」中随时切换。
+                {t('setup.deployModeLead')}
               </p>
 
               <div className="setup-mode-grid">
@@ -452,18 +421,18 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                     <span className="setup-mode-radio" aria-hidden="true" />
                     <div>
                       <div className="setup-mode-title-row">
-                        <span className="setup-mode-title">旁路镜像监听</span>
-                        <span className="setup-mode-badge">零侵入</span>
+                        <span className="setup-mode-title">{t('setup.mirrorTitle')}</span>
+                        <span className="setup-mode-badge">{t('setup.mirrorBadge')}</span>
                       </div>
                       <p className="setup-mode-copy">
-                        通过交换机镜像或旁路流量复制被动捕获邮件协议，不改变现有投递路径，适合评估与只读监控。
+                        {t('setup.mirrorDesc')}
                       </p>
                     </div>
                   </div>
                   <div className="setup-mode-chip-row">
-                    <span className="setup-chip">只读观测</span>
-                    <span className="setup-chip">上线阻力低</span>
-                    <span className="setup-chip">适合初期评估</span>
+                    <span className="setup-chip">{t('setup.mirrorChip1')}</span>
+                    <span className="setup-chip">{t('setup.mirrorChip2')}</span>
+                    <span className="setup-chip">{t('setup.mirrorChip3')}</span>
                   </div>
                 </button>
 
@@ -477,18 +446,18 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                     <span className="setup-mode-radio" aria-hidden="true" />
                     <div>
                       <div className="setup-mode-title-row">
-                        <span className="setup-mode-title">MTA 邮件网关</span>
-                        <span className="setup-mode-badge setup-mode-badge--mta">可拦截</span>
+                        <span className="setup-mode-title">{t('setup.mtaTitle')}</span>
+                        <span className="setup-mode-badge setup-mode-badge--mta">{t('setup.mtaBadge')}</span>
                       </div>
                       <p className="setup-mode-copy">
-                        作为 SMTP 中继串联部署，实时检测并处理入站与出站邮件，支持隔离、阻断与下游安全转发。
+                        {t('setup.mtaDesc')}
                       </p>
                     </div>
                   </div>
                   <div className="setup-mode-chip-row">
-                    <span className="setup-chip setup-chip--warn">Inline 决策</span>
-                    <span className="setup-chip setup-chip--warn">隔离区</span>
-                    <span className="setup-chip setup-chip--warn">DLP 出站扫描</span>
+                    <span className="setup-chip setup-chip--warn">{t('setup.mtaChip1')}</span>
+                    <span className="setup-chip setup-chip--warn">{t('setup.mtaChip2')}</span>
+                    <span className="setup-chip setup-chip--warn">{t('setup.mtaChip3')}</span>
                   </div>
                 </button>
               </div>
@@ -500,95 +469,95 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
               <div className="setup-flow-shell">
                 <div className="setup-flow-header">
                   <div>
-                    <div className="setup-flow-kicker">拓扑演示</div>
-                    <div className="setup-flow-title">MTA inline 邮件路径</div>
+                    <div className="setup-flow-kicker">{t('setup.flowTopologyDemo')}</div>
+                    <div className="setup-flow-title">{t('setup.flowMtaInlinePath')}</div>
                   </div>
                   <div className="setup-flow-budget">
-                    <span>Inline 预算</span>
+                    <span>{t('setup.flowInlineBudget')}</span>
                     <strong>8s</strong>
                   </div>
                 </div>
 
                 <div className="setup-flow-legend">
-                  <span className="setup-flow-legend-item">实时检测</span>
-                  <span className="setup-flow-legend-item">下游转发</span>
-                  <span className="setup-flow-legend-item">隔离与工单</span>
-                  <span className="setup-flow-legend-item">DLP 出站审计</span>
+                  <span className="setup-flow-legend-item">{t('setup.flowLegendRealtime')}</span>
+                  <span className="setup-flow-legend-item">{t('setup.flowLegendForward')}</span>
+                  <span className="setup-flow-legend-item">{t('setup.flowLegendQuarantine')}</span>
+                  <span className="setup-flow-legend-item">{t('setup.flowLegendDlp')}</span>
                 </div>
 
                 <div className="setup-flow-grid">
                   <div className="setup-flow-row">
                     <div className="setup-flow-label">
-                      <span className="setup-flow-tag setup-flow-tag--inbound">入站</span>
+                      <span className="setup-flow-tag setup-flow-tag--inbound">{t('setup.flowInbound')}</span>
                     </div>
                     <div className="setup-flow-node">
-                      <strong>外部发件人</strong>
-                      <span>Internet / 上游 MX</span>
+                      <strong>{t('setup.flowExternalSender')}</strong>
+                      <span>{t('setup.flowExternalSenderDesc')}</span>
                     </div>
                     <div className="setup-flow-arrow" aria-hidden="true" />
                     <div className="setup-flow-node setup-flow-node--gateway">
                       <strong>Vigilyx MTA</strong>
-                      <span>TLS / 会话接入</span>
+                      <span>{t('setup.flowTlsSession')}</span>
                     </div>
                     <div className="setup-flow-arrow" aria-hidden="true" />
                     <div className="setup-flow-node setup-flow-node--inspection">
-                      <strong>Inline 检测</strong>
-                      <span>内容 / 链接 / 情报 / 策略</span>
+                      <strong>{t('setup.flowInlineInspection')}</strong>
+                      <span>{t('setup.flowInlineInspectionDesc')}</span>
                     </div>
                     <div className="setup-flow-arrow" aria-hidden="true" />
                     <div className="setup-flow-node setup-flow-node--delivery">
-                      <strong>下游 MTA</strong>
-                      <span>安全转发至企业邮箱</span>
+                      <strong>{t('setup.flowDownstreamMta')}</strong>
+                      <span>{t('setup.flowDownstreamMtaDesc')}</span>
                     </div>
                   </div>
 
                   <div className="setup-flow-row">
                     <div className="setup-flow-label">
-                      <span className="setup-flow-tag setup-flow-tag--risk">命中阈值</span>
+                      <span className="setup-flow-tag setup-flow-tag--risk">{t('setup.flowThresholdHit')}</span>
                     </div>
                     <div className="setup-flow-node">
-                      <strong>邮件会话</strong>
-                      <span>进入 SMTP 入口</span>
+                      <strong>{t('setup.flowEmailSession')}</strong>
+                      <span>{t('setup.flowEmailSessionDesc')}</span>
                     </div>
                     <div className="setup-flow-arrow" aria-hidden="true" />
                     <div className="setup-flow-node setup-flow-node--gateway">
-                      <strong>策略判定</strong>
+                      <strong>{t('setup.flowPolicyVerdict')}</strong>
                       <span>Inline verdict</span>
                     </div>
                     <div className="setup-flow-arrow" aria-hidden="true" />
                     <div className="setup-flow-node setup-flow-node--quarantine">
-                      <strong>隔离区</strong>
-                      <span>保留原始证据链</span>
+                      <strong>{t('setup.flowQuarantine')}</strong>
+                      <span>{t('setup.flowQuarantineDesc')}</span>
                     </div>
                     <div className="setup-flow-arrow" aria-hidden="true" />
                     <div className="setup-flow-node setup-flow-node--quarantine">
-                      <strong>审核 / 工单</strong>
-                      <span>分析师复核与释放</span>
+                      <strong>{t('setup.flowReview')}</strong>
+                      <span>{t('setup.flowReviewDesc')}</span>
                     </div>
                   </div>
 
                   <div className="setup-flow-row">
                     <div className="setup-flow-label">
-                      <span className="setup-flow-tag setup-flow-tag--outbound">出站</span>
+                      <span className="setup-flow-tag setup-flow-tag--outbound">{t('setup.flowOutbound')}</span>
                     </div>
                     <div className="setup-flow-node">
-                      <strong>内部用户</strong>
-                      <span>邮件客户端 / OA</span>
+                      <strong>{t('setup.flowInternalUser')}</strong>
+                      <span>{t('setup.flowInternalUserDesc')}</span>
                     </div>
                     <div className="setup-flow-arrow" aria-hidden="true" />
                     <div className="setup-flow-node setup-flow-node--gateway">
                       <strong>Vigilyx MTA</strong>
-                      <span>发信链路接管</span>
+                      <span>{t('setup.flowSendChain')}</span>
                     </div>
                     <div className="setup-flow-arrow" aria-hidden="true" />
                     <div className="setup-flow-node setup-flow-node--inspection">
-                      <strong>DLP / 审计</strong>
-                      <span>正文、附件、策略</span>
+                      <strong>{t('setup.flowDlpAudit')}</strong>
+                      <span>{t('setup.flowDlpAuditDesc')}</span>
                     </div>
                     <div className="setup-flow-arrow" aria-hidden="true" />
                     <div className="setup-flow-node">
-                      <strong>外部收件人</strong>
-                      <span>通过后再放行</span>
+                      <strong>{t('setup.flowExternalRecipient')}</strong>
+                      <span>{t('setup.flowExternalRecipientDesc')}</span>
                     </div>
                   </div>
                 </div>
@@ -596,34 +565,34 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                 <div className="setup-flow-footer">
                   <div className="setup-flow-metric">
                     <strong>20+</strong>
-                    <span>安全模块参与判定</span>
+                    <span>{t('setup.flowMetricModules')}</span>
                   </div>
                   <div className="setup-flow-metric">
                     <strong>Inbound / Outbound</strong>
-                    <span>同一套网关统一处理双向邮件</span>
+                    <span>{t('setup.flowMetricBidirectional')}</span>
                   </div>
                   <div className="setup-flow-metric">
                     <strong>Quarantine Ready</strong>
-                    <span>命中阈值即可转入隔离与分析流程</span>
+                    <span>{t('setup.flowMetricQuarantine')}</span>
                   </div>
                 </div>
               </div>
 
               <p className="setup-step-note">
-                先把监听地址、下游 MTA 和本地域名对齐到真实网络拓扑，后续策略与审计数据才会更贴近生产环境。
+                {t('setup.networkMtaNote')}
               </p>
 
               {/* Listen address */}
               <label className="setup-label">
-                监听地址
-                <span className="setup-hint">MTA 接收邮件的网卡绑定（0.0.0.0 = 所有网卡接收）</span>
+                {t('setup.listenAddress')}
+                <span className="setup-hint">{t('setup.listenAddressHint')}</span>
               </label>
               <div className="setup-row">
                 <select className="grok-input" defaultValue="0.0.0.0" style={{ flex: 1 }}>
-                  <option value="0.0.0.0">0.0.0.0 — 所有网卡</option>
-                  <option value="127.0.0.1">127.0.0.1 — 仅本机</option>
+                  <option value="0.0.0.0">{t('setup.allInterfaces')}</option>
+                  <option value="127.0.0.1">{t('setup.localhostOnly')}</option>
                   {interfaces.map(iface => (
-                    <option key={iface.name} value={iface.name}>{iface.name} — {formatBytes(iface.total_bytes)} 流量</option>
+                    <option key={iface.name} value={iface.name}>{iface.name} — {formatBytes(iface.total_bytes)} {t('setup.traffic')}</option>
                   ))}
                 </select>
                 <div className="setup-inline-port">:25 / :465</div>
@@ -631,8 +600,8 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
 
               {/* Downstream relay */}
               <label className="setup-label">
-                下游 MTA
-                <span className="setup-hint">入站邮件检测通过后转发到的内部邮件服务器地址</span>
+                {t('setup.downstreamMta')}
+                <span className="setup-hint">{t('setup.downstreamMtaHint')}</span>
               </label>
               <div className="setup-row">
                 <input className="grok-input" style={{ flex: 1 }}
@@ -648,14 +617,14 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
 
           {currentStep.id === 'network' && deployMode !== 'mta' && (
             <div className="setup-fields">
-              <p className="setup-tip" style={{ marginBottom: 12, opacity: 0.7 }}>以下配置仅作为部署参考记录，实际抓包参数由容器环境变量控制（SNIFFER_INTERFACE、SMTP_PORTS 等）。</p>
+              <p className="setup-tip" style={{ marginBottom: 12, opacity: 0.7 }}>{t('setup.networkEnvNote')}</p>
               <label className="setup-label">
-                监听网卡
-                <span className="setup-hint">选择流量最大的网卡用于邮件协议抓包（已按流量降序排列）</span>
+                {t('setup.snifferInterface')}
+                <span className="setup-hint">{t('setup.snifferInterfaceHint')}</span>
               </label>
               {ifaceLoading ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 0', color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>
-                  <span className="grok-spinner" /> 正在检测服务器网卡...
+                  <span className="grok-spinner" /> {t('setup.detectingInterfaces')}
                 </div>
               ) : interfaces.length > 0 ? (
                 <div className="setup-iface-list">
@@ -669,7 +638,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                       <div className="setup-iface-name">
                         {iface.name}
                         {iface.status === 'up' && <span className="setup-iface-up">UP</span>}
-                        {interfaces[0]?.name === iface.name && <span className="setup-iface-rec">推荐</span>}
+                        {interfaces[0]?.name === iface.name && <span className="setup-iface-rec">{t('setup.recommended')}</span>}
                       </div>
                       <div className="setup-iface-stats">
                         <span>RX {formatBytes(iface.rx_bytes)}</span>
@@ -688,27 +657,27 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                 />
               )}
               {!ifaceLoading && interfaces.length === 0 && (
-                <p className="setup-tip">未检测到网络接口，请手动输入网卡名称。</p>
+                <p className="setup-tip">{t('setup.noInterfacesDetected')}</p>
               )}
               <div className="setup-row" style={{ marginTop: 16 }}>
                 <div className="setup-field">
                   <label className="setup-label">
-                    SMTP 端口
-                    <span className="setup-hint">邮件发送</span>
+                    {t('setup.smtpPorts')}
+                    <span className="setup-hint">{t('setup.smtpPortsHint')}</span>
                   </label>
                   <input type="text" className="grok-input" placeholder="25,465,587" value={smtpPorts} onChange={e => setSmtpPorts(e.target.value)} />
                 </div>
                 <div className="setup-field">
                   <label className="setup-label">
-                    POP3 端口
-                    <span className="setup-hint">邮件收取</span>
+                    {t('setup.pop3Ports')}
+                    <span className="setup-hint">{t('setup.pop3PortsHint')}</span>
                   </label>
                   <input type="text" className="grok-input" placeholder="110,995" value={pop3Ports} onChange={e => setPop3Ports(e.target.value)} />
                 </div>
                 <div className="setup-field">
                   <label className="setup-label">
-                    IMAP 端口
-                    <span className="setup-hint">邮件访问</span>
+                    {t('setup.imapPorts')}
+                    <span className="setup-hint">{t('setup.imapPortsHint')}</span>
                   </label>
                   <input type="text" className="grok-input" placeholder="143,993" value={imapPorts} onChange={e => setImapPorts(e.target.value)} />
                 </div>
@@ -719,8 +688,8 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
           {currentStep.id === 'domains' && (
             <div className="setup-fields">
               <label className="setup-label">
-                组织内部邮件域名
-                <span className="setup-hint">输入您组织使用的邮件域名，每行一个或逗号分隔</span>
+                {t('setup.internalDomains')}
+                <span className="setup-hint">{t('setup.internalDomainsHint')}</span>
               </label>
               <textarea
                 className="grok-input setup-textarea"
@@ -730,7 +699,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                 rows={4}
               />
               <p className="setup-tip">
-                引擎会自动学习内部域名，但手动配置可加速初始检测准确度。
+                {t('setup.internalDomainsTip')}
               </p>
             </div>
           )}
@@ -738,8 +707,8 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
           {currentStep.id === 'sniffer' && (
             <div className="setup-fields">
               <label className="setup-label">
-                Webmail 服务器 IP
-                <span className="setup-hint">需要监控 HTTP 流量的 Webmail 服务器地址，逗号分隔</span>
+                {t('setup.webmailServers')}
+                <span className="setup-hint">{t('setup.webmailServersHint')}</span>
               </label>
               <input
                 type="text"
@@ -749,8 +718,8 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                 onChange={e => setWebmailServers(e.target.value)}
               />
               <label className="setup-label" style={{ marginTop: 16 }}>
-                HTTP 监听端口
-                <span className="setup-hint">用于 HTTP 流量捕获的端口号，逗号分隔</span>
+                {t('setup.httpPorts')}
+                <span className="setup-hint">{t('setup.httpPortsHint')}</span>
               </label>
               <input
                 type="text"
@@ -760,7 +729,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                 onChange={e => setHttpPorts(e.target.value)}
               />
               <p className="setup-tip">
-                如果不需要数据安全（HTTP 会话检测）功能，可跳过此步。
+                {t('setup.snifferSkipTip')}
               </p>
             </div>
           )}
@@ -768,7 +737,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
           {currentStep.id === 'alerts' && (
             <div className="setup-fields">
               <label className="setup-toggle-row">
-                <span>启用邮件告警通知</span>
+                <span>{t('setup.enableEmailAlerts')}</span>
                 <button
                   type="button"
                   className={`setup-toggle ${alertEnabled ? 'on' : ''}`}
@@ -781,16 +750,16 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                 <>
                   <div className="setup-row">
                     <div className="setup-field">
-                      <label className="setup-label">SMTP 服务器</label>
+                      <label className="setup-label">{t('setup.smtpServer')}</label>
                       <input type="text" className="grok-input" placeholder="smtp.example.com" value={smtpHost} onChange={e => setSmtpHost(e.target.value)} />
                     </div>
                     <div className="setup-field setup-field--sm">
-                      <label className="setup-label">端口</label>
+                      <label className="setup-label">{t('setup.port')}</label>
                       <input type="text" className="grok-input" placeholder="465" value={smtpPort} onChange={e => setSmtpPort(e.target.value)} />
                     </div>
                     <div className="setup-field setup-field--sm">
-                      <label className="setup-label">加密</label>
-                      <div className="setup-segmented" role="group" aria-label="SMTP 加密方式">
+                      <label className="setup-label">{t('setup.encryption')}</label>
+                      <div className="setup-segmented" role="group" aria-label={t('setup.smtpEncryption')}>
                         <button
                           type="button"
                           className={`setup-seg-btn ${smtpTls === 'tls' ? 'active' : ''}`}
@@ -809,15 +778,15 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                           type="button"
                           className={`setup-seg-btn setup-seg-btn--blocked ${smtpTls === 'none' ? 'active' : ''}`}
                           onClick={() => setSmtpTls('none')}
-                          title="启用前请先打开下方管理员开关"
+                          title={t('setup.noEncryptionHint')}
                         >
-                          无加密
+                          {t('setup.noEncryption')}
                         </button>
                       </div>
                     </div>
                   </div>
                   <p className="setup-security-note">
-                    无加密 SMTP 属于高风险选项。只有在你明确开启下方管理员开关后，系统才会允许保存并测试明文 SMTP。
+                    {t('setup.noEncryptionWarning')}
                   </p>
                   <label className="setup-label" style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 12 }}>
                     <input
@@ -825,32 +794,32 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                       checked={allowPlaintextSmtp}
                       onChange={e => setAllowPlaintextSmtp(e.target.checked)}
                     />
-                    <span>允许明文 SMTP（管理员开关）</span>
+                    <span>{t('setup.allowPlaintextSmtp')}</span>
                   </label>
                   <div className="setup-row">
                     <div className="setup-field">
-                      <label className="setup-label">用户名</label>
+                      <label className="setup-label">{t('setup.smtpUsername')}</label>
                       <input type="text" className="grok-input" placeholder="alert@example.com" value={smtpUser} onChange={e => setSmtpUser(e.target.value)} />
                     </div>
                     <div className="setup-field">
-                      <label className="setup-label">密码</label>
-                      <input type="password" className="grok-input" placeholder="SMTP 密码" value={smtpPass} onChange={e => setSmtpPass(e.target.value)} />
+                      <label className="setup-label">{t('setup.smtpPassword')}</label>
+                      <input type="password" className="grok-input" placeholder={t('setup.smtpPasswordPlaceholder')} value={smtpPass} onChange={e => setSmtpPass(e.target.value)} />
                     </div>
                   </div>
                   <p className="setup-security-note">
-                    如果 SMTP 服务器走内网免认证，请将用户名和密码同时留空。
+                    {t('setup.smtpNoAuthNote')}
                   </p>
                   <div className="setup-row">
                     <div className="setup-field">
-                      <label className="setup-label">发件地址</label>
+                      <label className="setup-label">{t('setup.fromAddress')}</label>
                       <input type="email" className="grok-input" placeholder="vigilyx-alert@example.com" value={alertFrom} onChange={e => setAlertFrom(e.target.value)} />
                     </div>
                     <div className="setup-field">
-                      <label className="setup-label">通知收件人</label>
+                      <label className="setup-label">{t('setup.alertRecipient')}</label>
                       <input type="email" className="grok-input" placeholder="admin@example.com" value={alertTo} onChange={e => setAlertTo(e.target.value)} />
                     </div>
                   </div>
-                  <label className="setup-label">最低告警等级</label>
+                  <label className="setup-label">{t('setup.minAlertLevel')}</label>
                   <div className="setup-level-pills">
                     {(['low', 'medium', 'high', 'critical'] as const).map(lv => (
                       <button
@@ -859,7 +828,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                         className={`setup-pill ${alertLevel === lv ? 'active' : ''} setup-pill--${lv}`}
                         onClick={() => setAlertLevel(lv)}
                       >
-                        {{ low: '低危', medium: '中危', high: '高危', critical: '严重' }[lv]}
+                        {{ low: t('setup.levelLow'), medium: t('setup.levelMedium'), high: t('setup.levelHigh'), critical: t('setup.levelCritical') }[lv]}
                       </button>
                     ))}
                   </div>
@@ -871,7 +840,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
           {currentStep.id === 'ai' && (
             <div className="setup-fields">
               <label className="setup-toggle-row">
-                <span>启用 AI 威胁分析</span>
+                <span>{t('setup.enableAi')}</span>
                 <button
                   type="button"
                   className={`setup-toggle ${aiEnabled ? 'on' : ''}`}
@@ -883,8 +852,8 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
               {aiEnabled && (
                 <>
                   <label className="setup-label" style={{ marginTop: 12 }}>
-                    AI 服务地址
-                    <span className="setup-hint">Docker 部署默认 http://vigilyx-ai:8900</span>
+                    {t('setup.aiServiceUrl')}
+                    <span className="setup-hint">{t('setup.aiServiceUrlHint')}</span>
                   </label>
                   <input
                     type="text"
@@ -894,13 +863,13 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                     onChange={e => setAiUrl(e.target.value)}
                   />
                   <p className="setup-tip">
-                    AI 服务基于 mDeBERTa 零样本模型，首次启动需要下载模型（约 550MB）。
+                    {t('setup.aiModelNote')}
                   </p>
                 </>
               )}
               {!aiEnabled && (
                 <p className="setup-tip">
-                  AI 服务为可选组件，关闭后引擎仍可使用规则 + 情报进行检测。
+                  {t('setup.aiDisabledTip')}
                 </p>
               )}
             </div>
@@ -911,15 +880,15 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
             <div className="setup-footer">
               <button type="button" className="setup-btn setup-btn--ghost" onClick={handleBack} disabled={saving}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 12H5m7 7-7-7 7-7"/></svg>
-                上一步
+                {t('setup.prevStep')}
               </button>
               <div className="setup-footer-right">
                 <button type="button" className="setup-btn setup-btn--ghost" onClick={handleSkip} disabled={saving}>
-                  跳过
+                  {t('setup.skip')}
                 </button>
                 <button type="submit" className="setup-btn setup-btn--primary" disabled={saving}>
                   {saving && <span className="grok-spinner" />}
-                  {step === STEPS.length - 1 ? '完成' : '下一步'}
+                  {step === STEPS.length - 1 ? t('setup.finish') : t('setup.nextStep')}
                   {!saving && step < STEPS.length - 1 && (
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginLeft: 6 }}><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
                   )}

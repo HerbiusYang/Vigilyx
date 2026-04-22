@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { ApiResponse } from '../../types'
 import { apiFetch } from '../../utils/api'
+import { formatTime } from '../../utils/format'
 
 interface WhitelistEntry {
   id: string
@@ -11,17 +13,8 @@ interface WhitelistEntry {
   created_by: string
 }
 
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso)
-    const pad = (n: number) => String(n).padStart(2, '0')
-    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-  } catch {
-    return iso
-  }
-}
-
 export default function WhitelistTab() {
+  const { t } = useTranslation()
   const [wlEntries, setWlEntries] = useState<WhitelistEntry[]>([])
   const [wlSaving, setWlSaving] = useState(false)
   const [wlNewType, setWlNewType] = useState<'domain' | 'ip'>('domain')
@@ -74,7 +67,7 @@ export default function WhitelistTab() {
       const res = await apiFetch(`/api/security/whitelist/${id}`, { method: 'DELETE' })
       const data = await res.json()
       if (!data.success) {
-        alert(data.error || '删除失败')
+        alert(data.error || t('emailSecurity.deleteFailed'))
         return
       }
       await fetchWhitelist()
@@ -89,29 +82,29 @@ export default function WhitelistTab() {
     <div className="sec-whitelist">
       <div className="sec-section">
         <div className="sec-section-header">
-          <h2 className="sec-section-title">整封白名单管理</h2>
-          <span className="sec-section-badge">{wlEntries.length} 条</span>
+          <h2 className="sec-section-title">{t('emailSecurity.whitelistManageTitle')}</h2>
+          <span className="sec-section-badge">{t('emailSecurity.entryCount', { count: wlEntries.length })}</span>
         </div>
         <p style={{ color: 'var(--text-tertiary)', fontSize: '13px', margin: '0 0 16px' }}>
-          同时命中域名 + IP 白名单的邮件将跳过安全检测。建议成对添加发件域名和发件 IP。
+          {t('emailSecurity.whitelistManageDesc')}
         </p>
 
         {/* Add form */}
         <div className="sec-wl-add" style={{ display: 'flex', gap: '8px', marginBottom: '16px', alignItems: 'flex-end' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <label style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>类型</label>
+            <label style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>{t('emailSecurity.type')}</label>
             <select
               className="sec-form-input"
               value={wlNewType}
               onChange={e => setWlNewType(e.target.value as 'domain' | 'ip')}
               style={{ width: '100px' }}
             >
-              <option value="domain">域名</option>
+              <option value="domain">{t('emailSecurity.typeDomain')}</option>
               <option value="ip">IP</option>
             </select>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
-            <label style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>值</label>
+            <label style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>{t('emailSecurity.value')}</label>
             <input
               className="sec-form-input"
               placeholder={wlNewType === 'domain' ? 'example.com' : '192.168.1.1'}
@@ -121,10 +114,10 @@ export default function WhitelistTab() {
             />
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
-            <label style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>备注</label>
+            <label style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>{t('emailSecurity.note')}</label>
             <input
               className="sec-form-input"
-              placeholder="可选备注"
+              placeholder={t('emailSecurity.optionalNote')}
               value={wlNewDesc}
               onChange={e => setWlNewDesc(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && addWhitelistEntry()}
@@ -136,22 +129,22 @@ export default function WhitelistTab() {
             disabled={wlSaving || !wlNewValue.trim()}
             style={{ whiteSpace: 'nowrap' }}
           >
-            {wlSaving ? '保存中...' : '添加'}
+            {wlSaving ? t('emailSecurity.saving') : t('emailSecurity.add')}
           </button>
         </div>
 
         {/* Whitelist list */}
         {wlEntries.length === 0 ? (
-          <div className="sec-empty">暂无白名单条目</div>
+          <div className="sec-empty">{t('emailSecurity.noWhitelistEntries')}</div>
         ) : (
           <table className="sec-table">
             <thead>
               <tr>
-                <th style={{ width: '80px' }}>类型</th>
-                <th>值</th>
-                <th>备注</th>
-                <th style={{ width: '140px' }}>添加时间</th>
-                <th style={{ width: '60px' }}>操作</th>
+                <th style={{ width: '80px' }}>{t('emailSecurity.type')}</th>
+                <th>{t('emailSecurity.value')}</th>
+                <th>{t('emailSecurity.note')}</th>
+                <th style={{ width: '140px' }}>{t('emailSecurity.addedTime')}</th>
+                <th style={{ width: '60px' }}>{t('emailSecurity.action')}</th>
               </tr>
             </thead>
             <tbody>
@@ -167,7 +160,7 @@ export default function WhitelistTab() {
                           ? 'var(--accent-blue)' : 'var(--accent-purple)',
                       }}
                     >
-                      {entry.entry_type === 'domain' ? '域名' : 'IP'}
+                      {entry.entry_type === 'domain' ? t('emailSecurity.typeDomain') : 'IP'}
                     </span>
                   </td>
                   <td style={{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}>{entry.value}</td>
@@ -176,7 +169,7 @@ export default function WhitelistTab() {
                   <td>
                     <button
                       className="sec-btn-icon sec-btn-icon--danger"
-                      title="删除"
+                      title={t('emailSecurity.delete')}
                       onClick={() => deleteWhitelistEntry(entry.id)}
                       disabled={wlSaving}
                     >

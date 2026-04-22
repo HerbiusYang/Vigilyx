@@ -29,6 +29,7 @@ tokio.workspace = true
 tokio-rustls = "0.26"
 rustls = "0.23"
 rustls-pemfile = "2"
+rustls-webpki.workspace = true  # RUSTSEC-2026-0049: pin minimum safe version
 
 # DB (load UI settings from the database)
 sqlx.workspace = true

@@ -1,5 +1,41 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { formatBytes, formatDate, formatDateFull, getRelativeTime, isEncryptedPort, getFileIcon } from '../format'
+
+vi.mock('../i18n', () => ({
+  default: {
+    language: 'zh',
+    t: (key: string, params?: { count?: number }) => {
+      switch (key) {
+        case 'format.justNow':
+          return '刚刚'
+        case 'format.minutesAgo':
+          return `${params?.count ?? 0} 分钟前`
+        case 'format.hoursAgo':
+          return `${params?.count ?? 0} 小时前`
+        case 'format.daysAgo':
+          return `${params?.count ?? 0} 天前`
+        default:
+          return key
+      }
+    },
+  },
+}))
+
+import {
+  formatBytes,
+  formatDate,
+  formatDateFull,
+  formatHourLabel,
+  formatTime,
+  getRelativeTime,
+  isEncryptedPort,
+  getFileIcon,
+  resetServerClockForTests,
+  syncServerClock,
+} from '../format'
+
+beforeEach(() => {
+  resetServerClockForTests()
+})
 
 describe('formatBytes', () => {
   it('returns "0 B" for 0', () => {
@@ -164,5 +200,30 @@ describe('getRelativeTime', () => {
   it('returns days for >= 24 hours', () => {
     expect(getRelativeTime('2026-03-19T12:00:00Z')).toBe('1 天前')
     expect(getRelativeTime('2026-03-17T12:00:00Z')).toBe('3 天前')
+  })
+})
+
+describe('server clock sync', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-03-20T12:00:00Z'))
+    syncServerClock({
+      server_time: '2026-03-20T20:00:00+08:00',
+      server_timezone: 'Asia/Shanghai',
+      server_utc_offset_minutes: 480,
+    })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('formats fixed timestamps in server timezone', () => {
+    expect(formatTime('2026-03-20T10:30:45Z')).toBe('03-20 18:30')
+    expect(formatHourLabel('2026-03-20T10:00:00Z')).toBe('18:00')
+  })
+
+  it('computes relative time from server clock instead of browser locale rendering', () => {
+    expect(getRelativeTime('2026-03-20T11:55:00Z')).toBe('5 分钟前')
   })
 })

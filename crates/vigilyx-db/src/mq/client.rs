@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
-use vigilyx_core::{EmailSession, TrafficStats};
+use vigilyx_core::TrafficStats;
 
 /// Message Queue Configuration
 ///
@@ -238,18 +238,41 @@ impl MqClient {
         )
     }
 
+   /// Publish a **control-plane command** to a Pub/Sub channel.
+    ///
+    /// The on-wire payload becomes `<token>:<json>` (split on the **first**
+    /// colon). Receivers must call [`verify_cmd_payload`] to validate and strip
+    /// the prefix.
+    pub async fn publish_cmd<T: Serialize>(&self, topic: &str, message: &T) -> MqResult<()> {
+        let json = serde_json::to_string(message)?;
+        let token = std::env::var("INTERNAL_API_TOKEN").unwrap_or_default();
+        if token.is_empty() {
+            return Err(MqError::Publish(
+                "INTERNAL_API_TOKEN is not configured; refusing to publish unauthenticated control command"
+                    .to_string(),
+            ));
+        }
+        let payload = format!("{token}:{json}");
+        self.publish_raw(topic, &payload).await
+    }
+
    /// Publish message to Pub/Sub channel (with retry)
     pub async fn publish<T: Serialize>(&self, topic: &str, message: &T) -> MqResult<()> {
         let json = serde_json::to_string(message)?;
+        self.publish_raw(topic, &json).await
+    }
+
+   /// Low-level publish of an already-formatted payload string (with retry).
+    async fn publish_raw(&self, topic: &str, payload: &str) -> MqResult<()> {
         let mut retries = 0;
 
         loop {
             let mut conn = self.get_conn().await?;
 
-            match conn.publish::<_, _, ()>(topic, &json).await {
+            match conn.publish::<_, _, ()>(topic, payload).await {
                 Ok(_) => {
                     self.sent_count.fetch_add(1, Ordering::Relaxed);
-                    debug!("Published to {}: {} bytes", topic, json.len());
+                    debug!("Published to {}: {} bytes", topic, payload.len());
                     return Ok(());
                 }
                 Err(e) => {
@@ -392,20 +415,6 @@ impl MqClient {
     }
 
    // ==================== Convenience methods ====================
-   // Comment retained in English.
-   // Architecture simplification: use only Pub/Sub for real-time notifications
-   // Persistence handled by API layer writing to PostgreSQL
-   // Comment retained in English.
-
-   /// Publish new session (notification only, do not persist to Redis)
-    pub async fn publish_session(&self, session: &EmailSession) -> MqResult<()> {
-        self.publish(topics::SESSION_NEW, session).await
-    }
-
-   /// Publish session update
-    pub async fn publish_session_update(&self, session: &EmailSession) -> MqResult<()> {
-        self.publish(topics::SESSION_UPDATE, session).await
-    }
 
    /// Publish stats update
     pub async fn publish_stats(&self, stats: &TrafficStats) -> MqResult<()> {
@@ -413,49 +422,6 @@ impl MqClient {
     }
 
    // ==================== Batch publish methods (performance optimization) ====================
-
-   /// Batch publish sessions (using Redis Pipeline, process large batches in chunks)
-    pub async fn publish_sessions_batch(&self, sessions: &[EmailSession]) -> MqResult<usize> {
-        if sessions.is_empty() {
-            return Ok(0);
-        }
-
-        let mut total_sent = 0;
-        let batch_size = self.config.batch_size;
-
-       // Process in chunks to avoid single Pipeline being too large
-        for chunk in sessions.chunks(batch_size) {
-            let sent = self.publish_sessions_chunk(chunk).await?;
-            total_sent += sent;
-        }
-
-        debug!("Batch published {} sessions", total_sent);
-        Ok(total_sent)
-    }
-
-   /// Publish a batch of sessions (internal method)
-    async fn publish_sessions_chunk(&self, sessions: &[EmailSession]) -> MqResult<usize> {
-        let mut conn = self.get_conn().await?;
-        let mut pipe = redis::pipe();
-
-        for session in sessions {
-            let json = serde_json::to_string(session)?;
-            pipe.publish(topics::SESSION_NEW, &json).ignore();
-        }
-
-        match pipe.query_async::<()>(&mut conn).await {
-            Ok(_) => {
-                self.sent_count
-                    .fetch_add(sessions.len() as u64, Ordering::Relaxed);
-                Ok(sessions.len())
-            }
-            Err(e) => {
-                self.error_count
-                    .fetch_add(sessions.len() as u64, Ordering::Relaxed);
-                Err(MqError::Redis(e))
-            }
-        }
-    }
 
    /// Batch publish statistics (high-frequency update optimization)
     pub async fn publish_stats_throttled(
@@ -556,5 +522,74 @@ impl MqClient {
         }
 
         Ok(pubsub)
+    }
+}
+
+// ── Control-plane message authentication ──────────────────────────────
+
+/// Verify and strip the shared-token prefix from a control-plane Pub/Sub
+/// payload.
+///
+/// Wire format: `<token>:<payload>` (split on the **first** colon only).
+///
+/// `expected_token` should be read once at startup from `INTERNAL_API_TOKEN`.
+///
+/// # Return value
+/// * `Some(payload)` — token matched; payload is the original JSON string after
+///   the colon.
+/// * `None` — token missing, not configured, or mismatched; caller should log a
+///   warning and skip the message.
+pub fn verify_cmd_payload<'a>(raw: &'a str, expected_token: &str) -> Option<&'a str> {
+    if expected_token.is_empty() {
+        return None;
+    }
+
+    if let Some((token, payload)) = raw.split_once(':') {
+        if token == expected_token {
+            return Some(payload);
+        }
+        // Token present but does not match
+        None
+    } else {
+        // No colon in message — legacy format, reject when token is configured
+        None
+    }
+}
+
+#[cfg(test)]
+mod cmd_auth_tests {
+    use super::verify_cmd_payload;
+
+    #[test]
+    fn test_valid_token() {
+        let raw = r#"my-secret:{"target":"ioc"}"#;
+        let result = verify_cmd_payload(raw, "my-secret");
+        assert_eq!(result, Some(r#"{"target":"ioc"}"#));
+    }
+
+    #[test]
+    fn test_invalid_token() {
+        let raw = r#"wrong-token:{"target":"ioc"}"#;
+        assert_eq!(verify_cmd_payload(raw, "my-secret"), None);
+    }
+
+    #[test]
+    fn test_no_token_configured_rejects_all() {
+        assert_eq!(verify_cmd_payload(r#""whitelist""#, ""), None);
+        assert_eq!(verify_cmd_payload(r#"tok:{"x":1}"#, ""), None);
+    }
+
+    #[test]
+    fn test_legacy_format_rejected_when_token_configured() {
+        // No colon in message → rejected
+        assert_eq!(verify_cmd_payload(r#""whitelist""#, "my-secret"), None);
+    }
+
+    #[test]
+    fn test_payload_with_colons() {
+        // Payload itself contains colons (e.g. JSON with timestamps)
+        let raw = r#"my-secret:{"time":"2026-03-20T12:00:00Z"}"#;
+        let result = verify_cmd_payload(raw, "my-secret");
+        assert_eq!(result, Some(r#"{"time":"2026-03-20T12:00:00Z"}"#));
     }
 }

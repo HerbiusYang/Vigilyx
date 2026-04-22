@@ -3,7 +3,6 @@
 //! Provides message communication capabilities between components, supporting:
 //! - Redis Streams with consumer groups for data plane (at-least-once delivery)
 //! - Redis Pub/Sub for control plane signals (fire-and-forget, acceptable for commands)
-//! - Unix Domain Socket (legacy fallback, being removed)
 //! - Local in-memory channel (single-process mode)
 //!
 //!   Architecture:
@@ -17,31 +16,19 @@ mod error;
 pub mod reload_protocol;
 mod stream;
 
-#[cfg(unix)]
-mod uds;
-
 pub use channels::*;
-pub use client::{MqClient, MqConfig};
+pub use client::{MqClient, MqConfig, verify_cmd_payload};
 pub use error::{MqError, MqResult};
 pub use stream::{PendingSummary, StreamClient};
 
-#[cfg(unix)]
-pub use uds::{UdsClient, UdsMessage, UdsServer};
-
-/// Message queue topic names
+/// Message queue topic names (Pub/Sub channels)
 pub mod topics {
-   /// New session notification
-    pub const SESSION_NEW: &str = "vigilyx:session:new";
-   /// Session update notification
-    pub const SESSION_UPDATE: &str = "vigilyx:session:update";
-   /// Statistics update notification
+   /// Statistics update notification (Pub/Sub: Sniffer → API)
     pub const STATS_UPDATE: &str = "vigilyx:stats:update";
    /// AI analysis request
     pub const AI_ANALYZE_REQUEST: &str = "vigilyx:ai:request";
    /// AI analysis result
     pub const AI_ANALYZE_RESULT: &str = "vigilyx:ai:result";
-   /// HTTP session (Sniffer -> Engine)
-    pub const HTTP_SESSION_NEW: &str = "vigilyx:http_session:new";
 
    // Engine API Communication
    /// Security engine verdict result (Engine -> API)

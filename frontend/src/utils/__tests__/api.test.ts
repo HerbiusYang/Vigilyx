@@ -67,7 +67,7 @@ describe('apiFetch', () => {
 
     // Only one logout event should be dispatched
     const logoutCalls = (window.dispatchEvent as ReturnType<typeof vi.fn>).mock.calls
-      .filter(([e]: [Event]) => e.type === 'auth:logout')
+      .filter(call => (call[0] as Event).type === 'auth:logout')
     expect(logoutCalls).toHaveLength(1)
   })
 
@@ -83,7 +83,7 @@ describe('apiFetch', () => {
     await expect(apiFetch('/api/test')).rejects.toThrow()
 
     const logoutCalls = (window.dispatchEvent as ReturnType<typeof vi.fn>).mock.calls
-      .filter(([e]: [Event]) => e.type === 'auth:logout')
+      .filter(call => (call[0] as Event).type === 'auth:logout')
     expect(logoutCalls).toHaveLength(2)
   })
 

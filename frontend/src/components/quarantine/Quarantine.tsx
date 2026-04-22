@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { apiFetch } from '../../utils/api'
+import { formatTimeFull, formatSize } from '../../utils/format'
 
 interface QuarantineEntry {
   id: string
@@ -21,6 +23,7 @@ interface QuarantineEntry {
 
 interface QuarantineStats {
   quarantined: number
+  releasing: number
   released: number
   total: number
 }
@@ -33,23 +36,9 @@ const THREAT_COLORS: Record<string, string> = {
   critical: 'var(--accent-red, #ef4444)',
 }
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
-
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso)
-    return d.toLocaleString('zh-CN', { hour12: false })
-  } catch {
-    return iso
-  }
-}
-
 export default function Quarantine() {
   const navigate = useNavigate()
+  const { t } = useTranslation()
   const [deployMode, setDeployMode] = useState<string>(
     () => localStorage.getItem('vigilyx-deploy-mode') || 'mirror'
   )
@@ -59,6 +48,7 @@ export default function Quarantine() {
   const [statusFilter, setStatusFilter] = useState<string>('quarantined')
   const [page, setPage] = useState(0)
   const limit = 30
+  const pendingCount = (stats?.quarantined ?? 0) + (stats?.releasing ?? 0)
 
   // Load the deployment mode from the API
   useEffect(() => {
@@ -77,7 +67,7 @@ export default function Quarantine() {
     return (
       <div style={{ padding: '24px', maxWidth: 1400, margin: '0 auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>邮件隔离区</h2>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>{t('quarantine.title')}</h2>
         </div>
         <div style={{
           textAlign: 'center', padding: '80px 40px',
@@ -88,12 +78,10 @@ export default function Quarantine() {
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
           </div>
           <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, color: 'var(--text-primary)' }}>
-            当前为旁路镜像模式
+            {t('quarantine.mirrorModeTitle')}
           </div>
           <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 24, maxWidth: 460, margin: '0 auto 24px' }}>
-            旁路镜像模式下，系统通过网络抓包被动监控邮件流量，无法拦截或隔离邮件。
-            切换到 <strong>MTA 代理模式</strong> 后，系统将作为 SMTP 中继部署，
-            可在投递前实时检测并拦截恶意邮件，支持隔离区管理。
+            {t('quarantine.mirrorModeDesc')}
           </div>
           <button
             onClick={() => {
@@ -106,7 +94,7 @@ export default function Quarantine() {
               background: 'var(--accent-primary)', color: '#fff',
             }}
           >
-            前往设置切换到 MTA 模式
+            {t('quarantine.goToSettings')}
           </button>
         </div>
       </div>
@@ -141,7 +129,7 @@ export default function Quarantine() {
   useEffect(() => { fetchData() }, [fetchData])
 
   const handleRelease = async (id: string) => {
-    if (!confirm('确认释放此邮件？释放后将转发到收件人。')) return
+    if (!confirm(t('quarantine.confirmRelease'))) return
     try {
       const res = await apiFetch(`/api/security/quarantine/${id}/release`, {
         method: 'POST',
@@ -155,7 +143,7 @@ export default function Quarantine() {
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm('确认永久删除此隔离邮件？此操作不可恢复。')) return
+    if (!confirm(t('quarantine.confirmDelete'))) return
     try {
       const res = await apiFetch(`/api/security/quarantine/${id}`, { method: 'DELETE' })
       if (res.ok) fetchData()
@@ -168,9 +156,9 @@ export default function Quarantine() {
     <div style={{ padding: '24px', maxWidth: 1400, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
         <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>
-          邮件隔离区
+          {t('quarantine.title')}
           <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--text-secondary)', marginLeft: 8 }}>
-            MTA 代理模式
+            {t('quarantine.mtaMode')}
           </span>
         </h2>
         <button
@@ -180,7 +168,7 @@ export default function Quarantine() {
             background: 'var(--bg-secondary)', cursor: 'pointer', fontSize: 13,
           }}
         >
-          刷新
+          {t('quarantine.refresh')}
         </button>
       </div>
 
@@ -188,9 +176,10 @@ export default function Quarantine() {
       {stats && (
         <div style={{ display: 'flex', gap: 16, marginBottom: 20 }}>
           {[
-            { label: '待审核', value: stats.quarantined, color: 'var(--accent-yellow)' },
-            { label: '已释放', value: stats.released, color: 'var(--accent-emerald)' },
-            { label: '总计', value: stats.total, color: 'var(--text-secondary)' },
+            { label: t('quarantine.pending'), value: pendingCount, color: 'var(--accent-yellow)' },
+            { label: t('quarantine.releasing'), value: stats.releasing ?? 0, color: 'var(--accent-orange, #f97316)' },
+            { label: t('quarantine.released'), value: stats.released, color: 'var(--accent-emerald)' },
+            { label: t('quarantine.total'), value: stats.total, color: 'var(--text-secondary)' },
           ].map(s => (
             <div key={s.label} style={{
               flex: 1, padding: '14px 18px', borderRadius: 10,
@@ -205,7 +194,7 @@ export default function Quarantine() {
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        {['quarantined', 'released', ''].map(s => (
+        {['quarantined', 'releasing', 'released', ''].map(s => (
           <button
             key={s || 'all'}
             onClick={() => { setStatusFilter(s); setPage(0) }}
@@ -216,38 +205,44 @@ export default function Quarantine() {
               color: statusFilter === s ? '#fff' : 'var(--text-primary)',
             }}
           >
-            {s === 'quarantined' ? '待审核' : s === 'released' ? '已释放' : '全部'}
+            {s === 'quarantined'
+              ? t('quarantine.pending')
+              : s === 'releasing'
+                ? t('quarantine.releasing')
+                : s === 'released'
+                  ? t('quarantine.released')
+                  : t('quarantine.all')}
           </button>
         ))}
       </div>
 
       {/* List */}
       {loading ? (
-        <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>加载中...</div>
+        <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>{t('quarantine.loading')}</div>
       ) : entries.length === 0 ? (
         <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>
-          暂无隔离邮件
+          {t('quarantine.empty')}
         </div>
       ) : (
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left' }}>
-                <th style={{ padding: '8px 12px', fontWeight: 500 }}>时间</th>
-                <th style={{ padding: '8px 12px', fontWeight: 500 }}>发件人</th>
-                <th style={{ padding: '8px 12px', fontWeight: 500 }}>收件人</th>
-                <th style={{ padding: '8px 12px', fontWeight: 500 }}>主题</th>
-                <th style={{ padding: '8px 12px', fontWeight: 500 }}>威胁</th>
-                <th style={{ padding: '8px 12px', fontWeight: 500 }}>大小</th>
-                <th style={{ padding: '8px 12px', fontWeight: 500 }}>状态</th>
-                <th style={{ padding: '8px 12px', fontWeight: 500 }}>操作</th>
+                <th style={{ padding: '8px 12px', fontWeight: 500 }}>{t('quarantine.colTime')}</th>
+                <th style={{ padding: '8px 12px', fontWeight: 500 }}>{t('quarantine.colFrom')}</th>
+                <th style={{ padding: '8px 12px', fontWeight: 500 }}>{t('quarantine.colTo')}</th>
+                <th style={{ padding: '8px 12px', fontWeight: 500 }}>{t('quarantine.colSubject')}</th>
+                <th style={{ padding: '8px 12px', fontWeight: 500 }}>{t('quarantine.colThreat')}</th>
+                <th style={{ padding: '8px 12px', fontWeight: 500 }}>{t('quarantine.colSize')}</th>
+                <th style={{ padding: '8px 12px', fontWeight: 500 }}>{t('quarantine.colStatus')}</th>
+                <th style={{ padding: '8px 12px', fontWeight: 500 }}>{t('quarantine.colActions')}</th>
               </tr>
             </thead>
             <tbody>
               {entries.map(entry => (
                 <tr key={entry.id} style={{ borderBottom: '1px solid var(--border-light, var(--border))' }}>
                   <td style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}>
-                    {formatTime(entry.created_at)}
+                    {formatTimeFull(entry.created_at)}
                   </td>
                   <td style={{ padding: '8px 12px', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {entry.mail_from || '<>'}
@@ -271,12 +266,26 @@ export default function Quarantine() {
                     {formatSize(entry.raw_eml_size)}
                   </td>
                   <td style={{ padding: '8px 12px' }}>
-                    <span style={{
-                      fontSize: 11, fontWeight: 500,
-                      color: entry.status === 'quarantined' ? 'var(--accent-yellow)' : 'var(--accent-emerald)',
-                    }}>
-                      {entry.status === 'quarantined' ? '隔离中' : '已释放'}
-                    </span>
+                    {(() => {
+                      const statusColor =
+                        entry.status === 'released'
+                          ? 'var(--accent-emerald)'
+                          : entry.status === 'releasing'
+                            ? 'var(--accent-orange, #f97316)'
+                            : 'var(--accent-yellow)'
+                      const statusLabel =
+                        entry.status === 'released'
+                          ? t('quarantine.statusReleased')
+                          : entry.status === 'releasing'
+                            ? t('quarantine.statusReleasing')
+                            : t('quarantine.statusQuarantined')
+
+                      return (
+                        <span style={{ fontSize: 11, fontWeight: 500, color: statusColor }}>
+                          {statusLabel}
+                        </span>
+                      )
+                    })()}
                     {entry.released_by && (
                       <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginLeft: 4 }}>
                         ({entry.released_by})
@@ -294,7 +303,7 @@ export default function Quarantine() {
                             color: 'var(--accent-emerald)', marginRight: 6,
                           }}
                         >
-                          释放
+                          {t('quarantine.release')}
                         </button>
                         <button
                           onClick={() => handleDelete(entry.id)}
@@ -304,7 +313,7 @@ export default function Quarantine() {
                             color: 'var(--accent-red, #ef4444)',
                           }}
                         >
-                          删除
+                          {t('quarantine.delete')}
                         </button>
                       </>
                     )}
@@ -324,16 +333,16 @@ export default function Quarantine() {
             onClick={() => setPage(p => Math.max(0, p - 1))}
             style={{ padding: '4px 12px', borderRadius: 4, border: '1px solid var(--border)', cursor: 'pointer' }}
           >
-            上一页
+            {t('quarantine.prevPage')}
           </button>
           <span style={{ padding: '4px 8px', fontSize: 13, color: 'var(--text-secondary)' }}>
-            第 {page + 1} 页
+            {t('quarantine.pageNum', { page: page + 1 })}
           </span>
           <button
             onClick={() => setPage(p => p + 1)}
             style={{ padding: '4px 12px', borderRadius: 4, border: '1px solid var(--border)', cursor: 'pointer' }}
           >
-            下一页
+            {t('quarantine.nextPage')}
           </button>
         </div>
       )}
@@ -341,7 +350,7 @@ export default function Quarantine() {
       {/* Quarantine reason */}
       {entries.length > 0 && entries.some(e => e.reason) && (
         <div style={{ marginTop: 20, fontSize: 12, color: 'var(--text-secondary)' }}>
-          <strong>隔离原因示例:</strong> {entries.find(e => e.reason)?.reason}
+          <strong>{t('quarantine.reasonExample')}</strong> {entries.find(e => e.reason)?.reason}
         </div>
       )}
     </div>

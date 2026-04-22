@@ -25,7 +25,7 @@ impl SecurityContext {
     pub fn new(session: Arc<EmailSession>) -> Self {
         Self {
             session,
-            results: Arc::new(DashMap::new()),
+            results: Arc::new(DashMap::with_capacity_and_shard_amount(16, 4)),
             started_at: Utc::now(),
             internal_domains: Arc::new(HashSet::new()),
         }
@@ -38,7 +38,7 @@ impl SecurityContext {
     ) -> Self {
         Self {
             session,
-            results: Arc::new(DashMap::new()),
+            results: Arc::new(DashMap::with_capacity_and_shard_amount(16, 4)),
             started_at: Utc::now(),
             internal_domains: domains,
         }

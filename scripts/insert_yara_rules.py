@@ -2,54 +2,72 @@
 """Bulk insert YARA rules into PostgreSQL."""
 import json
 import uuid
-import subprocess
+import sys
 import os
 from datetime import datetime, timezone
+
+import psycopg2
 
 RULES_FILE = "/tmp/yara_rules_batch.json"
 PG_HOST = "localhost"
 PG_PORT = "5433"
 PG_USER = "vigilyx"
 PG_DB = "vigilyx"
-PG_PASS = os.environ.get("PGPASSWORD", "changeme")
+PG_PASS = os.environ.get("PGPASSWORD")
 
 def main():
+    if not PG_PASS:
+        print("Error: PGPASSWORD environment variable is not set.")
+        sys.exit(1)
+
     with open(RULES_FILE) as f:
         rules = json.load(f)
 
-    env = {**os.environ, "PGPASSWORD": PG_PASS}
+    conn = psycopg2.connect(
+        host=PG_HOST,
+        port=PG_PORT,
+        user=PG_USER,
+        dbname=PG_DB,
+        password=PG_PASS,
+    )
+    conn.autocommit = True
+    cur = conn.cursor()
+
     success = 0
     failed = 0
+
+    sql = (
+        "INSERT INTO security_yara_rules "
+        "(id, rule_name, category, severity, source, rule_source, description, enabled, hit_count, created_at, updated_at) "
+        "VALUES (%s, %s, %s, %s, 'custom', %s, %s, TRUE, 0, %s, %s) "
+        "ON CONFLICT (rule_name) DO UPDATE SET "
+        "rule_source = EXCLUDED.rule_source, category = EXCLUDED.category, "
+        "severity = EXCLUDED.severity, description = EXCLUDED.description, "
+        "updated_at = EXCLUDED.updated_at;"
+    )
 
     for rule in rules:
         rid = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
-        name = rule["rule_name"].replace("'", "''")
-        cat = rule["category"]
-        sev = rule["severity"]
-        desc = rule["description"].replace("'", "''")
-        src = rule["rule_source"].replace("'", "''")
-
-        sql = (
-            f"INSERT INTO security_yara_rules "
-            f"(id, rule_name, category, severity, source, rule_source, description, enabled, hit_count, created_at, updated_at) "
-            f"VALUES ('{rid}', '{name}', '{cat}', '{sev}', 'custom', '{src}', '{desc}', TRUE, 0, '{now}', '{now}') "
-            f"ON CONFLICT (rule_name) DO UPDATE SET "
-            f"rule_source = EXCLUDED.rule_source, category = EXCLUDED.category, "
-            f"severity = EXCLUDED.severity, description = EXCLUDED.description, "
-            f"updated_at = EXCLUDED.updated_at;"
+        params = (
+            rid,
+            rule["rule_name"],
+            rule["category"],
+            rule["severity"],
+            rule["rule_source"],
+            rule["description"],
+            now,
+            now,
         )
-
-        result = subprocess.run(
-            ["psql", "-h", PG_HOST, "-p", PG_PORT, "-U", PG_USER, "-d", PG_DB, "-c", sql],
-            capture_output=True, text=True, env=env
-        )
-        if result.returncode == 0:
+        try:
+            cur.execute(sql, params)
             success += 1
-        else:
-            print(f"FAILED {rule['rule_name']}: {result.stderr[:200]}")
+        except Exception as e:
+            print(f"FAILED {rule['rule_name']}: {str(e)[:200]}")
             failed += 1
 
+    cur.close()
+    conn.close()
     print(f"Done: {success} success, {failed} failed, total {len(rules)}")
 
 if __name__ == "__main__":

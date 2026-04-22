@@ -5,7 +5,7 @@
 //! - TCP mode with persistent connection, auto-reconnect on failure (max 30s backoff)
 //! - Supports both RFC 5424 and RFC 3164 message formats
 
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::Utc;
@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 use vigilyx_core::{
     DEFAULT_BLOCKED_HOSTNAMES, DataSecurityIncident, DataSecuritySeverity,
-    extract_host_from_network_target, validate_network_target,
+    extract_host_from_network_target, resolve_network_host,
 };
 
 /// Syslog Configuration
@@ -164,8 +164,7 @@ pub struct SyslogForwarder {
 impl SyslogForwarder {
    /// Start Syslog handler
     pub fn start(config: SyslogForwardConfig) -> Result<Self, String> {
-        validate_network_target(&config.server_address, DEFAULT_BLOCKED_HOSTNAMES)
-            .map_err(|reason| format!("Syslog target blocked (SSRF prevention): {reason}"))?;
+        resolve_syslog_target(&config)?;
 
         let (tx, rx) = mpsc::channel::<DataSecurityIncident>(1_000);
         let dropped = std::sync::Arc::new(AtomicU64::new(0));
@@ -375,15 +374,12 @@ pub async fn send_test_message(config: &SyslogForwardConfig) -> Result<String, S
 }
 
 fn resolve_syslog_target(config: &SyslogForwardConfig) -> Result<SocketAddr, String> {
-    validate_network_target(&config.server_address, DEFAULT_BLOCKED_HOSTNAMES)
-        .map_err(|reason| format!("Syslog target blocked (SSRF prevention): {reason}"))?;
-
     let host = extract_host_from_network_target(&config.server_address)
         .ok_or_else(|| "Syslog target has no host".to_string())?;
 
-    (host.as_str(), config.port)
-        .to_socket_addrs()
-        .map_err(|e| format!("Resolve syslog target failed: {e}"))?
+    resolve_network_host(&host, config.port, DEFAULT_BLOCKED_HOSTNAMES)
+        .map_err(|reason| format!("Syslog target blocked (SSRF prevention): {reason}"))?
+        .into_iter()
         .next()
         .ok_or_else(|| "Syslog target resolved to no addresses".to_string())
 }
@@ -514,5 +510,31 @@ mod tests {
         let msg = format_rfc5424(&incident, 4);
        // summary MessageMedium Break/Judge 256 characters
         assert!(!msg.contains(&"A".repeat(300)));
+    }
+
+    #[test]
+    fn test_resolve_syslog_target_uses_configured_port() {
+        let config = SyslogForwardConfig {
+            enabled: true,
+            server_address: "8.8.8.8".into(),
+            port: 1514,
+            ..Default::default()
+        };
+
+        let addr = resolve_syslog_target(&config).expect("public IP target should resolve");
+        assert_eq!(addr, "8.8.8.8:1514".parse().expect("valid socket addr"));
+    }
+
+    #[test]
+    fn test_resolve_syslog_target_rejects_localhost_with_trailing_dot() {
+        let config = SyslogForwardConfig {
+            enabled: true,
+            server_address: "localhost.".into(),
+            port: 514,
+            ..Default::default()
+        };
+
+        let err = resolve_syslog_target(&config).expect_err("localhost must be rejected");
+        assert!(err.contains("Syslog target blocked"));
     }
 }

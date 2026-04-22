@@ -7,7 +7,7 @@
 # Why are there two processes?
 #   vigilyx-api    = HTTP/WS server (handles frontend requests and serves static pages)
 #   vigilyx-engine = security analysis engine (receives mail from Redis Streams -> runs the pipeline -> writes back results)
-#   They share PostgreSQL and Redis, co-located for UDS fallback during migration.
+#   They share PostgreSQL and Redis; communication is via Redis Streams (data) and Pub/Sub (control).
 #
 # Logging:
 #   Both processes write to stdout/stderr (Docker-native logging).
@@ -20,9 +20,6 @@ set -e
 
 # Ensure the data directory exists
 mkdir -p /app/data
-
-# Remove any leftover UDS socket from the previous run
-rm -f /app/data/vigilyx.sock
 
 # Signal forwarding: gracefully shut down both processes on SIGTERM/SIGINT
 # The trap must be registered before starting child processes to eliminate the signal race window
@@ -43,7 +40,7 @@ echo "[entrypoint] Starting Vigilyx API server..."
 ./vigilyx-api 2>&1 &
 API_PID=$!
 
-# Wait for the API to become ready (Engine startup needs the API UDS server or Redis)
+# Wait for the API to become ready (Engine startup needs Redis, which API also checks)
 echo "[entrypoint] Waiting for API to be ready..."
 WAIT=0
 while [ $WAIT -lt 15 ]; do
@@ -60,8 +57,9 @@ if [ $WAIT -ge 15 ]; then
 fi
 
 # Skip the standalone engine in MTA mode because the MTA container embeds its own engine and dual engines would race
-# Controlled by the STANDALONE_ENGINE=false environment variable
+# Controlled by the STANDALONE_ENGINE environment variable (default: true = run both API + Engine)
 STANDALONE_ENGINE="${STANDALONE_ENGINE:-true}"
+echo "[entrypoint] STANDALONE_ENGINE=$STANDALONE_ENGINE"
 
 if [ "$STANDALONE_ENGINE" = "false" ]; then
     echo "[entrypoint] STANDALONE_ENGINE=false, skipping standalone engine (MTA mode)"

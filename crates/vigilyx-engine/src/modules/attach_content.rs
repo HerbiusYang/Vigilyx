@@ -63,6 +63,74 @@ static RE_CREDIT_CARD: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b").unwrap());
 static RE_CHINESE_ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b\d{17}[\dXx]\b").unwrap());
 
+// URL extraction inside extracted attachment text. PDF / DOCX phishing
+// commonly hides the malicious link inside an annotation or hyperlink target;
+// once we extract document text we still need to surface those URLs so that
+// downstream pipeline scoring can correlate them with intel / link_content.
+//
+// We deliberately use a permissive but bounded pattern so that we tolerate
+// the noisy whitespace / line wraps produced by document text extractors.
+static RE_ATTACH_URL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)\bhttps?://[^\s<>\)\]\}"']{4,512}"#).unwrap());
+
+// Suspicious URL features evaluated independently of the link_scan / link_content
+// modules so that PDF / DOCX-only campaigns (no links in the email body) still
+// surface a useful signal.
+static RE_URL_AT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\bhttps?://[^/\s]*@").unwrap());
+static RE_URL_IP_HOST: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\bhttps?://(?:\d{1,3}\.){3}\d{1,3}").unwrap());
+
+// TLDs that are abused at far higher rates than legitimate corporate use,
+// based on Spamhaus / SURBL "most abused TLDs" reports. Hits inside an
+// attachment URL are weighted lightly — the goal is correlation, not
+// outright blocking.
+const SUSPICIOUS_TLDS: &[&str] = &[
+    ".zip", ".mov", ".tk", ".top", ".xyz", ".click", ".country", ".gq",
+    ".ml", ".cf", ".ga", ".work", ".loan", ".cam", ".rest", ".bar",
+    ".monster", ".buzz", ".live", ".surf", ".icu", ".cyou", ".lol",
+];
+
+/// Heuristics for individual URLs found inside attachment text. Returns a
+/// list of `(reason, weight)` tuples so the caller can both score and
+/// surface evidence.
+fn classify_attachment_url(url: &str) -> Vec<(&'static str, f64)> {
+    let mut hits: Vec<(&'static str, f64)> = Vec::new();
+    let url_lower = url.to_ascii_lowercase();
+
+    if RE_URL_AT.is_match(url) {
+        hits.push(("contains @ in authority (credential or display spoofing)", 0.30));
+    }
+    if RE_URL_IP_HOST.is_match(url) {
+        hits.push(("uses raw IP address as host", 0.25));
+    }
+    if url.len() > 200 {
+        hits.push(("excessively long URL (>200 chars)", 0.10));
+    }
+    // Extract host for TLD / scheme checks
+    if let Some(rest) = url_lower.strip_prefix("http://") {
+        hits.push(("plaintext http:// inside document", 0.10));
+        let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+        if SUSPICIOUS_TLDS.iter().any(|tld| host.ends_with(tld)) {
+            hits.push(("suspicious TLD", 0.15));
+        }
+    } else if let Some(rest) = url_lower.strip_prefix("https://") {
+        let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+        if SUSPICIOUS_TLDS.iter().any(|tld| host.ends_with(tld)) {
+            hits.push(("suspicious TLD", 0.15));
+        }
+    }
+    // Embedded credential phishing markers
+    if url_lower.contains("login") || url_lower.contains("verify") || url_lower.contains("account") {
+        hits.push(("auth-themed path segment", 0.10));
+    }
+    // OAuth / device-code phishing artifacts
+    if url_lower.contains("device/code") || url_lower.contains("device-login") {
+        hits.push(("OAuth device-code endpoint", 0.30));
+    }
+    hits
+}
+
 fn is_text_mime_candidate(content_type: &str) -> bool {
     let ct = content_type.to_lowercase();
     ct.starts_with("text/")
@@ -232,6 +300,44 @@ impl SecurityModule for AttachContentModule {
                 &mut evidence,
                 &mut categories,
             );
+
+            // Extract embedded URLs from the document text and run our
+            // structural heuristics on each one. PDF / DOCX phishing routinely
+            // hides the malicious link as a text annotation that the body of
+            // the email never references — without this pass those campaigns
+            // produce zero link-layer signal.
+            let mut url_score_for_attachment = 0.0f64;
+            let mut url_count = 0usize;
+            for m in RE_ATTACH_URL.find_iter(&text).take(20) {
+                let url = m.as_str();
+                url_count += 1;
+                let hits = classify_attachment_url(url);
+                if hits.is_empty() {
+                    continue;
+                }
+                let local: f64 = hits.iter().map(|(_, w)| *w).sum::<f64>().min(0.45);
+                url_score_for_attachment += local;
+                let reasons: Vec<&'static str> = hits.iter().map(|(r, _)| *r).collect();
+                evidence.push(Evidence {
+                    description: format!(
+                        "Suspicious URL inside `{}`: {}",
+                        attachment.filename,
+                        reasons.join("; ")
+                    ),
+                    location: Some(format!("attachment:{}", attachment.filename)),
+                    snippet: Some(url.chars().take(160).collect::<String>()),
+                });
+                categories.push("attachment_phishing_url".to_string());
+            }
+            // Cap the per-attachment URL contribution so a single document
+            // packed with junk links cannot single-handedly trip a verdict.
+            total_score += url_score_for_attachment.min(0.55);
+            if url_count >= 5 {
+                // High link density inside a document is itself a weak
+                // structural signal (template campaigns).
+                total_score += 0.05;
+                categories.push("attachment_link_density".to_string());
+            }
         }
 
         if scanned_count == 0 {

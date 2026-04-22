@@ -1,10 +1,13 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { apiFetch } from '../../utils/api'
+import { formatDateOnly, getServerDateStamp, isPastServerNow } from '../../utils/format'
 import type { ApiResponse, IocEntry } from '../../types'
 
 const PAGE_SIZE = 30
 
 export default function IocTab() {
+  const { t } = useTranslation()
   const [iocList, setIocList] = useState<IocEntry[]>([])
   const [iocTotal, setIocTotal] = useState(0)
   const [iocSearch, setIocSearch] = useState('')
@@ -13,6 +16,21 @@ export default function IocTab() {
   const [addingIoc, setAddingIoc] = useState(false)
   const [iocForm, setIocForm] = useState({ indicator: '', ioc_type: 'ip', verdict: 'suspicious', confidence: 0.8, attack_type: 'unknown', description: '' })
   const [iocPage, setIocPage] = useState(0)
+  const [showExportMenu, setShowExportMenu] = useState(false)
+  const exportMenuRef = useRef<HTMLDivElement>(null)
+
+  // Close export dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setShowExportMenu(false)
+      }
+    }
+    if (showExportMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showExportMenu])
 
   const fetchIoc = useCallback(async () => {
     try {
@@ -71,7 +89,7 @@ export default function IocTab() {
       const res = await apiFetch(`/api/security/ioc/${id}`, { method: 'DELETE' })
       const data = await res.json()
       if (!data.success) {
-        alert(data.error || '删除失败')
+        alert(data.error || t('emailSecurity.deleteFailed'))
         return
       }
       fetchIoc()
@@ -97,12 +115,19 @@ export default function IocTab() {
   const exportIoc = (verdictFilter?: string) => {
     const params = verdictFilter ? `?verdict=${verdictFilter}` : ''
     const url = `/api/security/ioc/export${params}`
+    const verdictSlug = verdictFilter
+      ? verdictFilter
+          .split(',')
+          .map(part => part.trim())
+          .filter(Boolean)
+          .join('-')
+      : 'all'
     fetch(url, { credentials: 'same-origin' })
       .then(res => res.blob())
       .then(blob => {
         const a = document.createElement('a')
         a.href = URL.createObjectURL(blob)
-        a.download = `vigilyx-ioc-${verdictFilter || 'all'}-${new Date().toISOString().slice(0, 10)}.csv`
+        a.download = `vigilyx-ioc-${verdictSlug}-${getServerDateStamp()}.csv`
         a.click()
         URL.revokeObjectURL(a.href)
       })
@@ -119,14 +144,14 @@ export default function IocTab() {
       })
       const data: ApiResponse<{ imported: number; skipped: number }> = await res.json()
       if (data.success && data.data) {
-        alert(`导入完成: ${data.data.imported} 条成功, ${data.data.skipped} 条跳过`)
+        alert(t('emailSecurity.importComplete', { imported: data.data.imported, skipped: data.data.skipped }))
         fetchIoc()
       } else {
-        alert(`导入失败: ${data.error || '未知错误'}`)
+        alert(t('emailSecurity.importFailed', { error: data.error || t('emailSecurity.unknownError') }))
       }
     } catch (e) {
       console.error('Import failed:', e)
-      alert('导入失败')
+      alert(t('emailSecurity.importFailedGeneric'))
     }
   }
 
@@ -137,7 +162,7 @@ export default function IocTab() {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input
             type="text"
-            placeholder="搜索 IOC 指标..."
+            placeholder={t('emailSecurity.searchIocPlaceholder')}
             value={iocSearch}
             onChange={e => { setIocSearch(e.target.value); setIocPage(0) }}
           />
@@ -147,30 +172,50 @@ export default function IocTab() {
           value={iocTypeFilter}
           onChange={e => { setIocTypeFilter(e.target.value); setIocPage(0) }}
         >
-          <option value="">全部类型</option>
-          <option value="ip">IP 地址</option>
-          <option value="domain">域名</option>
-          <option value="url">URL</option>
-          <option value="hash">文件哈希</option>
-          <option value="email">邮箱地址</option>
-          <option value="subject">邮件主题</option>
+          <option value="">{t('emailSecurity.allTypes')}</option>
+          <option value="ip">{t('emailSecurity.iocTypeIp')}</option>
+          <option value="domain">{t('emailSecurity.iocTypeDomain')}</option>
+          <option value="url">{t('emailSecurity.iocTypeUrl')}</option>
+          <option value="hash">{t('emailSecurity.iocTypeHash')}</option>
+          <option value="email">{t('emailSecurity.iocTypeEmail')}</option>
+          <option value="subject">{t('emailSecurity.iocTypeSubject')}</option>
         </select>
         <div className="sec-ioc-actions">
-          <span className="sec-ioc-total">共 {iocTotal} 条</span>
-          <button className="sec-btn sec-btn--sm sec-btn--ghost" onClick={() => exportIoc('malicious,suspicious')} title="导出恶意+可疑 IOC 为 CSV">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            导出
-          </button>
-          <label className="sec-btn sec-btn--sm sec-btn--ghost sec-btn-upload" title="从 CSV 导入 IOC">
+          <span className="sec-ioc-total">{t('emailSecurity.totalItems', { count: iocTotal })}</span>
+          <div className="sec-export-dropdown" ref={exportMenuRef}>
+            <button className="sec-btn sec-btn--sm sec-btn--ghost" onClick={() => setShowExportMenu(!showExportMenu)} title={t('emailSecurity.exportIocTitle')}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              {t('emailSecurity.export')}
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            {showExportMenu && (
+              <div className="sec-export-menu">
+                <button className="sec-export-menu-item" onClick={() => { exportIoc('malicious,suspicious'); setShowExportMenu(false) }}>
+                  <span className="sec-export-dot sec-export-dot--danger" />
+                  {t('emailSecurity.exportMalicious')}
+                </button>
+                <button className="sec-export-menu-item" onClick={() => { exportIoc('clean'); setShowExportMenu(false) }}>
+                  <span className="sec-export-dot sec-export-dot--safe" />
+                  {t('emailSecurity.exportSafe')}
+                </button>
+                <div className="sec-export-menu-divider" />
+                <button className="sec-export-menu-item" onClick={() => { exportIoc(); setShowExportMenu(false) }}>
+                  <span className="sec-export-dot sec-export-dot--all" />
+                  {t('emailSecurity.exportAll')}
+                </button>
+              </div>
+            )}
+          </div>
+          <label className="sec-btn sec-btn--sm sec-btn--ghost sec-btn-upload" title={t('emailSecurity.importIocTitle')}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            导入
+            {t('emailSecurity.import')}
             <input type="file" accept=".csv" style={{ display: 'none' }} onChange={e => {
               const file = e.target.files?.[0]
               if (file) { importIocFile(file); e.target.value = '' }
             }} />
           </label>
           <button className="sec-btn sec-btn--primary sec-btn--sm" onClick={() => setShowAddIoc(!showAddIoc)}>
-            {showAddIoc ? '取消' : '+ 添加'}
+            {showAddIoc ? t('emailSecurity.cancel') : t('emailSecurity.addIoc')}
           </button>
         </div>
       </div>
@@ -179,49 +224,49 @@ export default function IocTab() {
         <div className="sec-ioc-add-form">
           <div className="sec-form-row">
             <div className="sec-form-group" style={{ flex: 2 }}>
-              <label className="sec-form-label">指标值</label>
+              <label className="sec-form-label">{t('emailSecurity.indicatorValue')}</label>
               <input
                 type="text"
                 className="sec-form-input"
                 value={iocForm.indicator}
                 onChange={e => setIocForm({ ...iocForm, indicator: e.target.value })}
-                placeholder="如 192.168.1.1、evil.com、hash..."
+                placeholder={t('emailSecurity.indicatorPlaceholder')}
               />
             </div>
             <div className="sec-form-group">
-              <label className="sec-form-label">类型</label>
+              <label className="sec-form-label">{t('emailSecurity.type')}</label>
               <select className="sec-form-select" value={iocForm.ioc_type} onChange={e => setIocForm({ ...iocForm, ioc_type: e.target.value })}>
-                <option value="ip">IP 地址</option>
-                <option value="domain">域名</option>
-                <option value="url">URL</option>
-                <option value="hash">文件哈希</option>
-                <option value="email">邮箱地址</option>
-                <option value="subject">邮件主题</option>
+                <option value="ip">{t('emailSecurity.iocTypeIp')}</option>
+                <option value="domain">{t('emailSecurity.iocTypeDomain')}</option>
+                <option value="url">{t('emailSecurity.iocTypeUrl')}</option>
+                <option value="hash">{t('emailSecurity.iocTypeHash')}</option>
+                <option value="email">{t('emailSecurity.iocTypeEmail')}</option>
+                <option value="subject">{t('emailSecurity.iocTypeSubject')}</option>
               </select>
             </div>
             <div className="sec-form-group">
-              <label className="sec-form-label">判定</label>
+              <label className="sec-form-label">{t('emailSecurity.verdict')}</label>
               <select className="sec-form-select" value={iocForm.verdict} onChange={e => setIocForm({ ...iocForm, verdict: e.target.value })}>
-                <option value="malicious">恶意</option>
-                <option value="suspicious">可疑</option>
-                <option value="safe">安全</option>
+                <option value="malicious">{t('emailSecurity.verdictMalicious')}</option>
+                <option value="suspicious">{t('emailSecurity.verdictSuspicious')}</option>
+                <option value="safe">{t('emailSecurity.verdictSafe')}</option>
               </select>
             </div>
           </div>
           <div className="sec-form-row">
             <div className="sec-form-group">
-              <label className="sec-form-label">攻击类型</label>
+              <label className="sec-form-label">{t('emailSecurity.attackType')}</label>
               <select className="sec-form-select" value={iocForm.attack_type} onChange={e => setIocForm({ ...iocForm, attack_type: e.target.value })}>
-                <option value="phishing">钓鱼</option>
-                <option value="spoofing">伪造</option>
-                <option value="malware">恶意软件</option>
-                <option value="bec">BEC 诈骗</option>
-                <option value="spam">垃圾邮件</option>
-                <option value="unknown">未知</option>
+                <option value="phishing">{t('emailSecurity.attackPhishing')}</option>
+                <option value="spoofing">{t('emailSecurity.attackSpoofing')}</option>
+                <option value="malware">{t('emailSecurity.attackMalware')}</option>
+                <option value="bec">{t('emailSecurity.attackBec')}</option>
+                <option value="spam">{t('emailSecurity.attackSpam')}</option>
+                <option value="unknown">{t('emailSecurity.attackUnknown')}</option>
               </select>
             </div>
             <div className="sec-form-group">
-              <label className="sec-form-label">置信度</label>
+              <label className="sec-form-label">{t('emailSecurity.confidence')}</label>
               <input
                 type="number"
                 className="sec-form-input"
@@ -231,18 +276,18 @@ export default function IocTab() {
               />
             </div>
             <div className="sec-form-group" style={{ flex: 2 }}>
-              <label className="sec-form-label">描述 (可选)</label>
+              <label className="sec-form-label">{t('emailSecurity.descriptionOptional')}</label>
               <input
                 type="text"
                 className="sec-form-input"
                 value={iocForm.description}
                 onChange={e => setIocForm({ ...iocForm, description: e.target.value })}
-                placeholder="备注说明"
+                placeholder={t('emailSecurity.notePlaceholder')}
               />
             </div>
             <div className="sec-form-group" style={{ alignSelf: 'flex-end' }}>
               <button className="sec-btn sec-btn--primary" onClick={handleAddIoc} disabled={addingIoc || !iocForm.indicator.trim()}>
-                {addingIoc ? '添加中...' : '确认添加'}
+                {addingIoc ? t('emailSecurity.adding') : t('emailSecurity.confirmAdd')}
               </button>
             </div>
           </div>
@@ -252,29 +297,29 @@ export default function IocTab() {
       {iocList.length === 0 ? (
         <div className="sec-empty">
           <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.3"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
-          <p>暂无 IOC 数据</p>
+          <p>{t('emailSecurity.noIocData')}</p>
         </div>
       ) : (
         <div className="sec-table-wrap">
           <table className="sec-table">
             <thead>
               <tr>
-                <th>指标值</th>
-                <th>类型</th>
-                <th>来源</th>
-                <th>判定</th>
-                <th className="sec-th-r">置信度</th>
-                <th className="sec-th-r">命中</th>
-                <th>过期时间</th>
-                <th className="sec-th-r">操作</th>
+                <th>{t('emailSecurity.indicatorValue')}</th>
+                <th>{t('emailSecurity.type')}</th>
+                <th>{t('emailSecurity.source')}</th>
+                <th>{t('emailSecurity.verdict')}</th>
+                <th className="sec-th-r">{t('emailSecurity.confidence')}</th>
+                <th className="sec-th-r">{t('emailSecurity.hits')}</th>
+                <th>{t('emailSecurity.expiresAt')}</th>
+                <th className="sec-th-r">{t('emailSecurity.actions')}</th>
               </tr>
             </thead>
             <tbody>
               {iocList.map(ioc => {
-                const isExpired = ioc.expires_at && new Date(ioc.expires_at) < new Date()
-                const expiresLabel = !ioc.expires_at ? '永不过期'
-                  : isExpired ? '已过期'
-                  : new Date(ioc.expires_at).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit', year: 'numeric' })
+                const isExpired = !!ioc.expires_at && isPastServerNow(ioc.expires_at)
+                const expiresLabel = !ioc.expires_at ? t('emailSecurity.neverExpires')
+                  : isExpired ? t('emailSecurity.expired')
+                  : formatDateOnly(ioc.expires_at)
                 return (
                   <tr key={ioc.id} style={isExpired ? { opacity: 0.5 } : undefined}>
                     <td className="sec-ioc-indicator" title={ioc.indicator}>
@@ -283,18 +328,18 @@ export default function IocTab() {
                     <td><span className="sec-badge sec-badge--type">{ioc.ioc_type}</span></td>
                     <td>
                       {ioc.source === 'system' ? (
-                        <span className="sec-badge sec-badge--system">系统内置</span>
+                        <span className="sec-badge sec-badge--system">{t('emailSecurity.sourceSystem')}</span>
                       ) : ioc.source === 'admin_clean' ? (
-                        <span className="sec-badge sec-badge--admin">管理员</span>
+                        <span className="sec-badge sec-badge--admin">{t('emailSecurity.sourceAdmin')}</span>
                       ) : ioc.source === 'admin' ? (
-                        <span className="sec-badge sec-badge--admin">管理员</span>
+                        <span className="sec-badge sec-badge--admin">{t('emailSecurity.sourceAdmin')}</span>
                       ) : (
                         <span className="sec-badge sec-badge--auto">{ioc.source}</span>
                       )}
                     </td>
                     <td>
                       <span className={`sec-verdict-tag sec-verdict--${ioc.verdict}`}>
-                        {ioc.verdict === 'malicious' ? '恶意' : ioc.verdict === 'suspicious' ? '可疑' : '安全'}
+                        {ioc.verdict === 'malicious' ? t('emailSecurity.verdictMalicious') : ioc.verdict === 'suspicious' ? t('emailSecurity.verdictSuspicious') : t('emailSecurity.verdictSafe')}
                       </span>
                     </td>
                     <td className="sec-td-r sec-mono">{(ioc.confidence * 100).toFixed(0)}%</td>
@@ -304,9 +349,9 @@ export default function IocTab() {
                     </td>
                     <td className="sec-td-r" style={{ whiteSpace: 'nowrap' }}>
                       {ioc.source !== 'system' && ioc.expires_at && (
-                        <button className="sec-btn-extend" onClick={() => handleExtendIoc(ioc.id, 30)} title="延期 30 天">+30d</button>
+                        <button className="sec-btn-extend" onClick={() => handleExtendIoc(ioc.id, 30)} title={t('emailSecurity.extend30d')}>+30d</button>
                       )}
-                      <button className="sec-btn-del" onClick={() => handleDeleteIoc(ioc.id)}>删除</button>
+                      <button className="sec-btn-del" onClick={() => handleDeleteIoc(ioc.id)}>{t('emailSecurity.delete')}</button>
                     </td>
                   </tr>
                 )
@@ -322,17 +367,17 @@ export default function IocTab() {
             disabled={iocPage === 0}
             onClick={() => setIocPage(p => p - 1)}
           >
-            上一页
+            {t('emailSecurity.prevPage')}
           </button>
           <span className="sec-page-info">
-            第 {iocPage + 1} / {Math.ceil(iocTotal / PAGE_SIZE)} 页
+            {t('emailSecurity.pageInfo', { current: iocPage + 1, total: Math.ceil(iocTotal / PAGE_SIZE) })}
           </span>
           <button
             className="sec-page-btn"
             disabled={(iocPage + 1) * PAGE_SIZE >= iocTotal}
             onClick={() => setIocPage(p => p + 1)}
           >
-            下一页
+            {t('emailSecurity.nextPage')}
           </button>
         </div>
       )}

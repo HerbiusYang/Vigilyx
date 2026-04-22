@@ -49,6 +49,46 @@ struct QuarantineListRow {
     raw_eml_size: i64,
 }
 
+#[derive(sqlx::FromRow)]
+struct QuarantineRawRow {
+    id: String,
+    session_id: String,
+    verdict_id: Option<String>,
+    mail_from: Option<String>,
+    rcpt_to: String,
+    subject: Option<String>,
+    threat_level: String,
+    reason: Option<String>,
+    status: String,
+    created_at: String,
+    released_at: Option<String>,
+    released_by: Option<String>,
+    ttl_days: i32,
+    raw_eml: Vec<u8>,
+}
+
+fn raw_row_to_entry(row: QuarantineRawRow) -> (Vec<u8>, QuarantineEntry) {
+    let eml_size = row.raw_eml.len() as i64;
+    let entry = QuarantineEntry {
+        id: row.id,
+        session_id: row.session_id,
+        verdict_id: row.verdict_id,
+        mail_from: row.mail_from,
+        rcpt_to: serde_json::from_str(&row.rcpt_to).unwrap_or_default(),
+        subject: row.subject,
+        threat_level: row.threat_level,
+        reason: row.reason,
+        status: row.status,
+        created_at: row.created_at,
+        released_at: row.released_at,
+        released_by: row.released_by,
+        ttl_days: row.ttl_days,
+        raw_eml_size: eml_size,
+    };
+
+    (row.raw_eml, entry)
+}
+
 
 pub struct QuarantineStoreRequest<'a> {
     pub session_id: &'a Uuid,
@@ -135,25 +175,7 @@ impl VigilDb {
 
    /// EML ()
     pub async fn quarantine_get_raw_eml(&self, id: &str) -> Result<Option<(Vec<u8>, QuarantineEntry)>> {
-        #[derive(sqlx::FromRow)]
-        struct RawRow {
-            id: String,
-            session_id: String,
-            verdict_id: Option<String>,
-            mail_from: Option<String>,
-            rcpt_to: String,
-            subject: Option<String>,
-            threat_level: String,
-            reason: Option<String>,
-            status: String,
-            created_at: String,
-            released_at: Option<String>,
-            released_by: Option<String>,
-            ttl_days: i32,
-            raw_eml: Vec<u8>,
-        }
-
-        let row: Option<RawRow> = sqlx::query_as(
+        let row: Option<QuarantineRawRow> = sqlx::query_as(
             "SELECT id, session_id, verdict_id, mail_from, rcpt_to, subject,
                     threat_level, reason, status, created_at, released_at,
                     released_by, ttl_days, raw_eml
@@ -163,37 +185,61 @@ impl VigilDb {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(|r| {
-            let eml_size = r.raw_eml.len() as i64;
-            let entry = QuarantineEntry {
-                id: r.id,
-                session_id: r.session_id,
-                verdict_id: r.verdict_id,
-                mail_from: r.mail_from,
-                rcpt_to: serde_json::from_str(&r.rcpt_to).unwrap_or_default(),
-                subject: r.subject,
-                threat_level: r.threat_level,
-                reason: r.reason,
-                status: r.status,
-                created_at: r.created_at,
-                released_at: r.released_at,
-                released_by: r.released_by,
-                ttl_days: r.ttl_days,
-                raw_eml_size: eml_size,
-            };
-            (r.raw_eml, entry)
-        }))
+        Ok(row.map(raw_row_to_entry))
     }
 
-   /// (released)
-    pub async fn quarantine_release(&self, id: &str, released_by: &str) -> Result<bool> {
+   /// Atomically claim a quarantined message for release before any downstream delivery.
+    pub async fn quarantine_claim_release(
+        &self,
+        id: &str,
+    ) -> Result<Option<(Vec<u8>, QuarantineEntry)>> {
+        let row: Option<QuarantineRawRow> = sqlx::query_as(
+            "UPDATE quarantine
+             SET status = 'releasing'
+             WHERE id = $1 AND status = 'quarantined'
+             RETURNING id, session_id, verdict_id, mail_from, rcpt_to, subject,
+                       threat_level, reason, status, created_at, released_at,
+                       released_by, ttl_days, raw_eml",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(raw_row_to_entry))
+    }
+
+   /// Current status lookup used to explain release conflicts cleanly.
+    pub async fn quarantine_status(&self, id: &str) -> Result<Option<String>> {
+        let row = sqlx::query_scalar::<_, String>("SELECT status FROM quarantine WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row)
+    }
+
+   /// Finalize a previously claimed release after the downstream relay accepted the message.
+    pub async fn quarantine_finalize_release(&self, id: &str, released_by: &str) -> Result<bool> {
         let now = Utc::now().to_rfc3339();
         let result = sqlx::query(
             "UPDATE quarantine SET status = 'released', released_at = $1, released_by = $2
-             WHERE id = $3 AND status = 'quarantined'",
+             WHERE id = $3 AND status = 'releasing'",
         )
         .bind(&now)
         .bind(released_by)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+   /// Return a claimed release back to the queue when downstream delivery failed.
+    pub async fn quarantine_release_reset(&self, id: &str) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE quarantine
+             SET status = 'quarantined', released_at = NULL, released_by = NULL
+             WHERE id = $1 AND status = 'releasing'",
+        )
         .bind(id)
         .execute(&self.pool)
         .await?;

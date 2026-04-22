@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { SecurityVerdict, ModuleResult } from '../../types'
 
 // ════════════════════════════════════════════════════════════════
@@ -34,10 +35,15 @@ const ENGINE_COLORS: Record<string, string> = {
   transaction_correlation: '#ec4899',
 }
 
-const ENGINE_SHORT: Record<string, string> = {
-  sender_reputation: '信誉', content_analysis: '内容', behavior_baseline: '行为',
-  url_analysis: '链接', protocol_compliance: '合规', semantic_intent: '语义',
-  identity_anomaly: '身份', transaction_correlation: '交易',
+const ENGINE_SHORT_KEYS: Record<string, string> = {
+  sender_reputation: 'emailSecurity.engineShortReputation',
+  content_analysis: 'emailSecurity.engineShortContent',
+  behavior_baseline: 'emailSecurity.engineShortBehavior',
+  url_analysis: 'emailSecurity.engineShortUrl',
+  protocol_compliance: 'emailSecurity.engineShortCompliance',
+  semantic_intent: 'emailSecurity.engineShortSemantic',
+  identity_anomaly: 'emailSecurity.engineShortIdentity',
+  transaction_correlation: 'emailSecurity.engineShortTransaction',
 }
 
 const ENGINE_LETTER: Record<string, string> = {
@@ -46,28 +52,54 @@ const ENGINE_LETTER: Record<string, string> = {
   identity_anomaly: 'G', transaction_correlation: 'H',
 }
 
-const ENGINE_CN: Record<string, string> = {
-  sender_reputation: '发件人信誉', content_analysis: '内容分析', behavior_baseline: '行为基线',
-  url_analysis: 'URL分析', protocol_compliance: '协议合规', semantic_intent: '语义意图',
-  identity_anomaly: '身份异常', transaction_correlation: '交易关联',
+const ENGINE_CN_KEYS: Record<string, string> = {
+  sender_reputation: 'emailSecurity.engineReputation',
+  content_analysis: 'emailSecurity.engineContent',
+  behavior_baseline: 'emailSecurity.engineBehavior',
+  url_analysis: 'emailSecurity.engineUrl',
+  protocol_compliance: 'emailSecurity.engineCompliance',
+  semantic_intent: 'emailSecurity.engineSemantic',
+  identity_anomaly: 'emailSecurity.engineIdentity',
+  transaction_correlation: 'emailSecurity.engineTransaction',
 }
 
-const THREAT_CN: Record<string, string> = {
-  safe: '安全', low: '低危', medium: '中危', high: '高危', critical: '危急',
+const THREAT_CN_KEYS: Record<string, string> = {
+  safe: 'emailSecurity.threatSafe',
+  low: 'emailSecurity.threatLow',
+  medium: 'emailSecurity.threatMedium',
+  high: 'emailSecurity.threatHigh',
+  critical: 'emailSecurity.threatCritical',
 }
 
-const MODULE_CN: Record<string, string> = {
-  content_scan: '内容检测', html_scan: 'HTML检测', html_pixel_art: '像素艺术检测',
-  attach_scan: '附件类型检测', attach_content: '附件内容检测', attach_hash: '附件哈希信誉',
-  mime_scan: 'MIME结构检测', header_scan: '邮件头检测', link_scan: 'URL模式检测',
-  link_reputation: 'URL信誉查询', link_content: 'URL内容检测', anomaly_detect: '异常行为检测',
-  semantic_scan: '语义检测', domain_verify: '域名验证', identity_anomaly: '身份行为异常',
-  transaction_correlation: '交易语义关联', av_eml_scan: '邮件病毒扫描', av_attach_scan: '附件病毒扫描', yara_scan: 'YARA规则扫描',
-  verdict: '综合判定',
+const MODULE_CN_KEYS: Record<string, string> = {
+  content_scan: 'emailSecurity.moduleContentScan',
+  html_scan: 'emailSecurity.moduleHtmlScan',
+  html_pixel_art: 'emailSecurity.modulePixelArt',
+  attach_scan: 'emailSecurity.moduleAttachScan',
+  attach_content: 'emailSecurity.moduleAttachContent',
+  attach_hash: 'emailSecurity.moduleAttachHash',
+  mime_scan: 'emailSecurity.moduleMimeScan',
+  header_scan: 'emailSecurity.moduleHeaderScan',
+  link_scan: 'emailSecurity.moduleLinkScan',
+  link_reputation: 'emailSecurity.moduleLinkReputation',
+  link_content: 'emailSecurity.moduleLinkContent',
+  anomaly_detect: 'emailSecurity.moduleAnomalyDetect',
+  semantic_scan: 'emailSecurity.moduleSemanticScan',
+  domain_verify: 'emailSecurity.moduleDomainVerify',
+  identity_anomaly: 'emailSecurity.moduleIdentityAnomaly',
+  transaction_correlation: 'emailSecurity.moduleTransactionCorrelation',
+  av_eml_scan: 'emailSecurity.moduleAvEmlScan',
+  av_attach_scan: 'emailSecurity.moduleAvAttachScan',
+  yara_scan: 'emailSecurity.moduleYaraScan',
+  verdict: 'emailSecurity.moduleVerdict',
 }
 
-const PILLAR_CN: Record<string, string> = {
-  content: '正文', attachment: '附件', package: '封装', link: '链接', semantic: '语义',
+const PILLAR_CN_KEYS: Record<string, string> = {
+  content: 'emailSecurity.pillarContent',
+  attachment: 'emailSecurity.pillarAttachment',
+  package: 'emailSecurity.pillarPackage',
+  link: 'emailSecurity.pillarLink',
+  semantic: 'emailSecurity.pillarSemantic',
 }
 
 const ENGINE_ORDER = [
@@ -129,11 +161,12 @@ function readNumber(value: unknown): number | null {
 
 function getSemanticAiState(mr: ModuleResult): {
   status: SemanticAiStatus
-  label: string
+  labelKey: string
   color: string
   background: string
   border: string
-  message: string | null
+  messageKey: string | null
+  messageParams: Record<string, unknown>
   retryAfterSecs: number | null
   timeoutSecs: number | null
 } | null {
@@ -161,80 +194,86 @@ function getSemanticAiState(mr: ModuleResult): {
 
   if (!status) return null
 
-  const localizedMessage = (() => {
+  const messageInfo = ((): { key: string; params: Record<string, unknown> } => {
     switch (status) {
       case 'ok':
-        return 'AI/NLP 已完成分析，并已与规则引擎结果合并。'
+        return { key: 'emailSecurity.aiMessageOk', params: {} }
       case 'disabled':
-        return '当前部署未配置 AI/NLP 服务，本次仅执行规则检测。'
+        return { key: 'emailSecurity.aiMessageDisabled', params: {} }
       case 'cooldown':
         return retryAfterSecs != null
-          ? `AI/NLP 服务暂时不可用，本次已回退为规则检测，预计约 ${retryAfterSecs} 秒后可重试。`
-          : 'AI/NLP 服务暂时不可用，本次已回退为规则检测。'
+          ? { key: 'emailSecurity.aiMessageCooldownWithRetry', params: { seconds: retryAfterSecs } }
+          : { key: 'emailSecurity.aiMessageCooldown', params: {} }
       case 'timeout':
         return timeoutSecs != null
-          ? `AI/NLP 请求在 ${timeoutSecs} 秒后超时，本次已回退为规则检测。`
-          : 'AI/NLP 请求超时，本次已回退为规则检测。'
+          ? { key: 'emailSecurity.aiMessageTimeoutWithSecs', params: { seconds: timeoutSecs } }
+          : { key: 'emailSecurity.aiMessageTimeout', params: {} }
       case 'error':
-        return 'AI/NLP 请求失败，本次已回退为规则检测。'
+        return { key: 'emailSecurity.aiMessageError', params: {} }
     }
   })()
 
-  const message = localizedMessage
+  const messageKey = messageInfo.key
+  const messageParams = messageInfo.params
 
   switch (status) {
     case 'ok':
       return {
         status,
-        label: 'AI已启用',
+        labelKey: 'emailSecurity.aiLabelEnabled',
         color: '#16a34a',
         background: 'rgba(22,163,74,0.12)',
         border: 'rgba(22,163,74,0.28)',
-        message,
+        messageKey,
+        messageParams,
         retryAfterSecs,
         timeoutSecs,
       }
     case 'disabled':
       return {
         status,
-        label: 'AI未配置',
+        labelKey: 'emailSecurity.aiLabelNotConfigured',
         color: '#9ca3af',
         background: 'rgba(156,163,175,0.12)',
         border: 'rgba(156,163,175,0.24)',
-        message,
+        messageKey,
+        messageParams,
         retryAfterSecs,
         timeoutSecs,
       }
     case 'cooldown':
       return {
         status,
-        label: 'AI冷却中',
+        labelKey: 'emailSecurity.aiLabelCooldown',
         color: '#f59e0b',
         background: 'rgba(245,158,11,0.12)',
         border: 'rgba(245,158,11,0.28)',
-        message,
+        messageKey,
+        messageParams,
         retryAfterSecs,
         timeoutSecs,
       }
     case 'timeout':
       return {
         status,
-        label: 'AI超时',
+        labelKey: 'emailSecurity.aiLabelTimeout',
         color: '#ea580c',
         background: 'rgba(234,88,12,0.12)',
         border: 'rgba(234,88,12,0.28)',
-        message,
+        messageKey,
+        messageParams,
         retryAfterSecs,
         timeoutSecs,
       }
     case 'error':
       return {
         status,
-        label: 'AI异常',
+        labelKey: 'emailSecurity.aiLabelError',
         color: '#dc2626',
         background: 'rgba(220,38,38,0.12)',
         border: 'rgba(220,38,38,0.28)',
-        message,
+        messageKey,
+        messageParams,
         retryAfterSecs,
         timeoutSecs,
       }
@@ -406,6 +445,7 @@ export default function SecurityAnalysisView({
   setFeedbackComment,
   submitFeedback,
 }: SecurityAnalysisViewProps) {
+  const { t } = useTranslation()
   const [selectedEngine, setSelectedEngine] = useState<string | null>(null)
 
   // Build engine BPA lookup from fusion_details
@@ -433,7 +473,7 @@ export default function SecurityAnalysisView({
   if (!verdict) {
     return (
       <div style={{ ...S.card, textAlign: 'center', padding: 40, color: 'rgba(255,255,255,0.3)' }}>
-        此邮件尚未进行安全分析
+        {t('emailSecurity.noAnalysisYet')}
       </div>
     )
   }
@@ -449,10 +489,10 @@ export default function SecurityAnalysisView({
         gap: 0,
         overflowX: 'auto',
       }}>
-        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', marginRight: 10, flexShrink: 0 }}>检测流程</span>
+        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', marginRight: 10, flexShrink: 0 }}>{t('emailSecurity.detectionFlow')}</span>
 
         {/* Input */}
-        <div title="邮件输入" style={{
+        <div title={t('emailSecurity.emailInput')} style={{
           width: 28, height: 28, borderRadius: 7, flexShrink: 0,
           background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -473,7 +513,7 @@ export default function SecurityAnalysisView({
           return (
             <div key={eid} style={{ display: 'flex', alignItems: 'center' }}>
               <div
-                title={`${ENGINE_CN[eid] ?? eid} (${ENGINE_SHORT[eid]})`}
+                title={`${ENGINE_CN_KEYS[eid] ? t(ENGINE_CN_KEYS[eid]) : eid} (${ENGINE_SHORT_KEYS[eid] ? t(ENGINE_SHORT_KEYS[eid]) : eid})`}
                 style={{ position: 'relative', cursor: 'pointer', flexShrink: 0 }}
                 onClick={() => setSelectedEngine(prev => prev === eid ? null : eid)}
               >
@@ -509,7 +549,7 @@ export default function SecurityAnalysisView({
         <div style={{ width: 16, height: 1, background: 'rgba(255,255,255,0.06)', flexShrink: 0 }} />
 
         {/* Fusion */}
-        <div title="D-S 证据融合" style={{
+        <div title={t('emailSecurity.dsFusion')} style={{
           width: 28, height: 28, borderRadius: 7, flexShrink: 0,
           background: 'linear-gradient(135deg, rgba(0,240,255,0.08), rgba(168,85,247,0.08))',
           border: '1px solid rgba(0,240,255,0.15)',
@@ -532,14 +572,14 @@ export default function SecurityAnalysisView({
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
           </svg>
           <span style={{ fontSize: 11, fontWeight: 600, color: threatColor(verdict.threat_level) }}>
-            {THREAT_CN[verdict.threat_level] ?? verdict.threat_level}
+            {THREAT_CN_KEYS[verdict.threat_level] ? t(THREAT_CN_KEYS[verdict.threat_level]) : verdict.threat_level}
           </span>
         </div>
       </div>
 
       {/* -- Section 2: detection-module results -- */}
       <div style={S.card}>
-        <div style={S.cardTitle}>检测模块</div>
+        <div style={S.cardTitle}>{t('emailSecurity.detectionModules')}</div>
         {selectedEngine ? (
           <EngineDetail
             engineId={selectedEngine}
@@ -588,6 +628,7 @@ export function RadarChart({ pillarPcts, riskPct, threatLevel, size: sizeProp }:
   threatLevel: string
   size?: number
 }) {
+  const { t } = useTranslation()
   const size = sizeProp ?? 260
   const cx = size / 2
   const cy = size / 2
@@ -656,7 +697,7 @@ export function RadarChart({ pillarPcts, riskPct, threatLevel, size: sizeProp }:
               textAnchor="middle" dominantBaseline="central"
               fill="rgba(255,255,255,0.55)" fontSize={12} fontWeight={500}
             >
-              {PILLAR_CN[pillar] ?? pillar}
+              {PILLAR_CN_KEYS[pillar] ? t(PILLAR_CN_KEYS[pillar]) : pillar}
             </text>
             {/* Score */}
             <text
@@ -704,7 +745,7 @@ export function RadarChart({ pillarPcts, riskPct, threatLevel, size: sizeProp }:
         textAnchor="middle" dominantBaseline="central"
         fill="rgba(255,255,255,0.4)" fontSize={11} fontWeight={500}
       >
-        综合风险
+        {t('emailSecurity.overallRisk')}
       </text>
     </svg>
   )
@@ -723,6 +764,7 @@ function EngineDetail({ engineId, bpa, modules, expandedModules, toggleModuleExp
   weight: number | undefined
   onClose: () => void
 }) {
+  const { t } = useTranslation()
   const color = ENGINE_COLORS[engineId] ?? '#6b7280'
   const score = engineScore(bpa)
   const safeBpa = bpa ?? { b: 0, d: 0, u: 1 }
@@ -746,7 +788,7 @@ function EngineDetail({ engineId, bpa, modules, expandedModules, toggleModuleExp
           </span>
           <div>
             <div style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255,255,255,0.85)' }}>
-              {ENGINE_CN[engineId] ?? engineId}
+              {ENGINE_CN_KEYS[engineId] ? t(ENGINE_CN_KEYS[engineId]) : engineId}
             </div>
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', fontFamily: MONO }}>
               score={score} {weight != null && `w=${weight.toFixed(2)}`}
@@ -766,7 +808,7 @@ function EngineDetail({ engineId, bpa, modules, expandedModules, toggleModuleExp
 
       {/* BPA bar */}
       <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 4 }}>BPA 分布</div>
+        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 4 }}>{t('emailSecurity.bpaDistribution')}</div>
         <div style={S.bpaBar}>
           <div style={S.bpaSeg('#dc2626', safeBpa.b * 100)} />
           <div style={S.bpaSeg('#16a34a', safeBpa.d * 100)} />
@@ -784,7 +826,7 @@ function EngineDetail({ engineId, bpa, modules, expandedModules, toggleModuleExp
 
       {/* Sub-modules */}
       <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 6 }}>
-        子模块 ({modules.length})
+        {t('emailSecurity.subModulesCount', { count: modules.length })}
       </div>
       {modules.map(mr => {
         const isSafe = mr.threat_level === 'safe'
@@ -806,7 +848,7 @@ function EngineDetail({ engineId, bpa, modules, expandedModules, toggleModuleExp
                   background: threatColor(mr.threat_level),
                 }} />
                 <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {MODULE_CN[mr.module_id] ?? mr.module_name}
+                  {MODULE_CN_KEYS[mr.module_id] ? t(MODULE_CN_KEYS[mr.module_id]) : mr.module_name}
                 </span>
                 {semanticAiState && (
                   <span style={{
@@ -818,13 +860,13 @@ function EngineDetail({ engineId, bpa, modules, expandedModules, toggleModuleExp
                     borderRadius: 999,
                     flexShrink: 0,
                   }}>
-                    {semanticAiState.label}
+                    {t(semanticAiState.labelKey)}
                   </span>
                 )}
               </div>
               <div style={S.moduleRowRight}>
                 <span style={{ fontSize: 10, color: threatColor(mr.threat_level), fontWeight: 500 }}>
-                  {THREAT_CN[mr.threat_level] ?? mr.threat_level}
+                  {THREAT_CN_KEYS[mr.threat_level] ? t(THREAT_CN_KEYS[mr.threat_level]) : mr.threat_level}
                 </span>
                 <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', fontFamily: MONO }}>
                   {mr.duration_ms}ms
@@ -855,14 +897,16 @@ function ModuleList({ moduleResults, expandedModules, toggleModuleExpand }: {
   expandedModules: Set<string> | null
   toggleModuleExpand: (id: string) => void
 }) {
+  const { t } = useTranslation()
+
   if (moduleResults.length === 0) {
-    return <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, padding: 12 }}>暂无模块结果</div>
+    return <div style={{ color: 'rgba(255,255,255,0.3)', fontSize: 13, padding: 12 }}>{t('emailSecurity.noModuleResults')}</div>
   }
 
   return (
     <div>
       <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginBottom: 8 }}>
-        检测模块 ({moduleResults.length})
+        {t('emailSecurity.detectionModulesCount', { count: moduleResults.length })}
       </div>
       {moduleResults.map(mr => {
         const isSafe = mr.threat_level === 'safe'
@@ -885,7 +929,7 @@ function ModuleList({ moduleResults, expandedModules, toggleModuleExpand }: {
                   boxShadow: !isSafe ? `0 0 6px ${threatColor(mr.threat_level)}60` : 'none',
                 }} />
                 <span style={{ fontSize: 13, fontWeight: 500, color: isSafe ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.85)' }}>
-                  {MODULE_CN[mr.module_id] ?? mr.module_name}
+                  {MODULE_CN_KEYS[mr.module_id] ? t(MODULE_CN_KEYS[mr.module_id]) : mr.module_name}
                 </span>
                 {semanticAiState && (
                   <span style={{
@@ -897,7 +941,7 @@ function ModuleList({ moduleResults, expandedModules, toggleModuleExpand }: {
                     borderRadius: 999,
                     flexShrink: 0,
                   }}>
-                    {semanticAiState.label}
+                    {t(semanticAiState.labelKey)}
                   </span>
                 )}
                 <span style={{
@@ -905,7 +949,7 @@ function ModuleList({ moduleResults, expandedModules, toggleModuleExpand }: {
                   background: 'rgba(255,255,255,0.04)', padding: '2px 6px', borderRadius: 4,
                   flexShrink: 0,
                 }}>
-                  {PILLAR_CN[mr.pillar] ?? mr.pillar}
+                  {PILLAR_CN_KEYS[mr.pillar] ? t(PILLAR_CN_KEYS[mr.pillar]) : mr.pillar}
                 </span>
               </div>
               <div style={S.moduleRowRight}>
@@ -914,7 +958,7 @@ function ModuleList({ moduleResults, expandedModules, toggleModuleExpand }: {
                   padding: '1px 6px', borderRadius: 4,
                   background: !isSafe ? `${threatColor(mr.threat_level)}15` : 'transparent',
                 }}>
-                  {THREAT_CN[mr.threat_level] ?? mr.threat_level}
+                  {THREAT_CN_KEYS[mr.threat_level] ? t(THREAT_CN_KEYS[mr.threat_level]) : mr.threat_level}
                 </span>
                 <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', fontFamily: MONO }}>
                   {mr.duration_ms > 999 ? `${(mr.duration_ms / 1000).toFixed(1)}s` : `${mr.duration_ms}ms`}
@@ -941,6 +985,7 @@ function ModuleList({ moduleResults, expandedModules, toggleModuleExpand }: {
 // ════════════════════════════════════════════════════════════════
 
 function ModuleExpandedContent({ mr }: { mr: ModuleResult }) {
+  const { t } = useTranslation()
   const semanticAiState = getSemanticAiState(mr)
 
   return (
@@ -981,7 +1026,7 @@ function ModuleExpandedContent({ mr }: { mr: ModuleResult }) {
             gap: 8,
             flexWrap: 'wrap',
           }}>
-            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>AI/NLP 状态</span>
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>{t('emailSecurity.aiNlpStatus')}</span>
             <span style={{
               fontSize: 10,
               color: semanticAiState.color,
@@ -990,7 +1035,7 @@ function ModuleExpandedContent({ mr }: { mr: ModuleResult }) {
               padding: '1px 6px',
               borderRadius: 999,
             }}>
-              {semanticAiState.label}
+              {t(semanticAiState.labelKey)}
             </span>
             {semanticAiState.retryAfterSecs != null && (
               <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontFamily: MONO }}>
@@ -1003,9 +1048,9 @@ function ModuleExpandedContent({ mr }: { mr: ModuleResult }) {
               </span>
             )}
           </div>
-          {semanticAiState.message && (
+          {semanticAiState.messageKey && (
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.65)', marginTop: 6, lineHeight: 1.5 }}>
-              {semanticAiState.message}
+              {t(semanticAiState.messageKey, semanticAiState.messageParams)}
             </div>
           )}
         </div>
@@ -1043,6 +1088,7 @@ function ModuleExpandedContent({ mr }: { mr: ModuleResult }) {
 // ════════════════════════════════════════════════════════════════
 
 function FusionPanel({ fusion }: { fusion: NonNullable<SecurityVerdict['fusion_details']> }) {
+  const { t } = useTranslation()
   const bpa = fusion.fused_bpa
   const kConflict = fusion.k_conflict ?? 0
   const riskSingle = fusion.risk_single ?? 0
@@ -1063,15 +1109,15 @@ function FusionPanel({ fusion }: { fusion: NonNullable<SecurityVerdict['fusion_d
   }
 
   function kLabel(k: number): string {
-    if (k < 0.1) return '低冲突'
-    if (k <= 0.3) return '中冲突'
-    return '高冲突'
+    if (k < 0.1) return t('emailSecurity.conflictLow')
+    if (k <= 0.3) return t('emailSecurity.conflictMedium')
+    return t('emailSecurity.conflictHigh')
   }
 
   return (
     <div style={S.card}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-        <span style={S.cardTitle}>D-S 证据融合</span>
+        <span style={S.cardTitle}>{t('emailSecurity.dsFusion')}</span>
         {fusion.fusion_method && (
           <span style={{
             fontSize: 10, color: 'rgba(255,255,255,0.3)',
@@ -1098,15 +1144,15 @@ function FusionPanel({ fusion }: { fusion: NonNullable<SecurityVerdict['fusion_d
         }}>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ width: 8, height: 8, borderRadius: 2, background: '#dc2626', flexShrink: 0 }} />
-            Bel (恶意) <span style={{ fontFamily: MONO }}>{(bpa.b * 100).toFixed(1)}%</span>
+            Bel ({t('emailSecurity.bpaMalicious')}) <span style={{ fontFamily: MONO }}>{(bpa.b * 100).toFixed(1)}%</span>
           </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ width: 8, height: 8, borderRadius: 2, background: '#16a34a', flexShrink: 0 }} />
-            Dis (正常) <span style={{ fontFamily: MONO }}>{(bpa.d * 100).toFixed(1)}%</span>
+            Dis ({t('emailSecurity.bpaNormal')}) <span style={{ fontFamily: MONO }}>{(bpa.d * 100).toFixed(1)}%</span>
           </span>
           <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <span style={{ width: 8, height: 8, borderRadius: 2, background: '#6b7280', flexShrink: 0 }} />
-            Unc (不确定) <span style={{ fontFamily: MONO }}>{(bpa.u * 100).toFixed(1)}%</span>
+            Unc ({t('emailSecurity.bpaUncertain')}) <span style={{ fontFamily: MONO }}>{(bpa.u * 100).toFixed(1)}%</span>
           </span>
           {eps > 0.001 && (
             <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -1123,16 +1169,16 @@ function FusionPanel({ fusion }: { fusion: NonNullable<SecurityVerdict['fusion_d
         fontSize: 12, color: 'rgba(255,255,255,0.45)', alignItems: 'baseline',
       }}>
         <span>
-          冲突 K <span style={{ fontFamily: MONO, fontWeight: 600, color: kColor(kConflict), fontSize: 13 }}>{kConflict.toFixed(3)}</span>
+          {t('emailSecurity.conflictK')} <span style={{ fontFamily: MONO, fontWeight: 600, color: kColor(kConflict), fontSize: 13 }}>{kConflict.toFixed(3)}</span>
           <span style={{ fontSize: 10, marginLeft: 4, color: kColor(kConflict) }}>{kLabel(kConflict)}</span>
         </span>
         <span style={{ color: 'rgba(255,255,255,0.1)' }}>|</span>
         <span>
-          风险 R <span style={{ fontFamily: MONO, fontWeight: 600, color: riskSingle >= eta ? '#f87171' : '#4ade80', fontSize: 13 }}>{riskSingle.toFixed(3)}</span>
+          {t('emailSecurity.riskR')} <span style={{ fontFamily: MONO, fontWeight: 600, color: riskSingle >= eta ? '#f87171' : '#4ade80', fontSize: 13 }}>{riskSingle.toFixed(3)}</span>
         </span>
         <span style={{ color: 'rgba(255,255,255,0.1)' }}>|</span>
         <span>
-          阈值 η <span style={{ fontFamily: MONO, fontWeight: 600, color: 'rgba(255,255,255,0.55)', fontSize: 13 }}>{eta.toFixed(3)}</span>
+          {t('emailSecurity.thresholdEta')} <span style={{ fontFamily: MONO, fontWeight: 600, color: 'rgba(255,255,255,0.55)', fontSize: 13 }}>{eta.toFixed(3)}</span>
         </span>
       </div>
 
@@ -1144,11 +1190,11 @@ function FusionPanel({ fusion }: { fusion: NonNullable<SecurityVerdict['fusion_d
         }}>
           <span style={{ fontSize: 14, flexShrink: 0 }}>&#9889;</span>
           <div style={{ color: 'rgba(255,255,255,0.6)' }}>
-            <strong style={{ color: '#dc2626' }}>单信号断路器激活</strong>
-            : 模块 <strong>{MODULE_CN[fusion.circuit_breaker.trigger_module_id] ?? fusion.circuit_breaker.trigger_module_id}</strong>
-            {' '}信念值 <span style={{ fontFamily: MONO }}>{fusion.circuit_breaker.trigger_belief.toFixed(2)}</span>
-            {' '}被融合压制 (原始风险 <span style={{ fontFamily: MONO }}>{fusion.circuit_breaker.original_risk.toFixed(4)}</span>)
-            ，已提升至地板 <span style={{ fontFamily: MONO, color: '#dc2626' }}>{fusion.circuit_breaker.floor_value.toFixed(2)}</span>
+            <strong style={{ color: '#dc2626' }}>{t('emailSecurity.circuitBreakerActivated')}</strong>
+            : {t('emailSecurity.circuitBreakerModule')} <strong>{MODULE_CN_KEYS[fusion.circuit_breaker.trigger_module_id] ? t(MODULE_CN_KEYS[fusion.circuit_breaker.trigger_module_id]) : fusion.circuit_breaker.trigger_module_id}</strong>
+            {' '}{t('emailSecurity.circuitBreakerBelief')} <span style={{ fontFamily: MONO }}>{fusion.circuit_breaker.trigger_belief.toFixed(2)}</span>
+            {' '}{t('emailSecurity.circuitBreakerSuppressed')} (<span style={{ fontFamily: MONO }}>{fusion.circuit_breaker.original_risk.toFixed(4)}</span>)
+            {t('emailSecurity.circuitBreakerRaisedTo')} <span style={{ fontFamily: MONO, color: '#dc2626' }}>{fusion.circuit_breaker.floor_value.toFixed(2)}</span>
           </div>
         </div>
       )}
@@ -1160,17 +1206,17 @@ function FusionPanel({ fusion }: { fusion: NonNullable<SecurityVerdict['fusion_d
         }}>
           <span style={{ fontSize: 14, flexShrink: 0 }}>&#9888;</span>
           <div style={{ color: 'rgba(255,255,255,0.6)' }}>
-            <strong style={{ color: '#ca8a04' }}>收敛断路器激活</strong>
-            : {fusion.convergence_breaker.modules_flagged} 个模块独立标记威胁但被 D-S 融合压制
-            (原始风险 <span style={{ fontFamily: MONO }}>{fusion.convergence_breaker.original_risk.toFixed(4)}</span>)
-            ，已提升至 <span style={{ fontFamily: MONO, color: '#ca8a04' }}>{fusion.convergence_breaker.floor_value.toFixed(2)}</span>
+            <strong style={{ color: '#ca8a04' }}>{t('emailSecurity.convergenceBreakerActivated')}</strong>
+            : {t('emailSecurity.convergenceBreakerDesc', { count: fusion.convergence_breaker.modules_flagged })}
+            (<span style={{ fontFamily: MONO }}>{fusion.convergence_breaker.original_risk.toFixed(4)}</span>)
+            {t('emailSecurity.convergenceBreakerRaisedTo')} <span style={{ fontFamily: MONO, color: '#ca8a04' }}>{fusion.convergence_breaker.floor_value.toFixed(2)}</span>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
               {fusion.convergence_breaker.flagged_modules.map(mid => (
                 <span key={mid} style={{
                   fontSize: 10, padding: '1px 6px', borderRadius: 4,
                   background: 'rgba(234,179,8,0.12)', color: '#ca8a04',
                 }}>
-                  {MODULE_CN[mid] ?? mid}
+                  {MODULE_CN_KEYS[mid] ? t(MODULE_CN_KEYS[mid]) : mid}
                 </span>
               ))}
             </div>
@@ -1182,7 +1228,7 @@ function FusionPanel({ fusion }: { fusion: NonNullable<SecurityVerdict['fusion_d
       {sortedEngines.length > 0 && (
         <div style={{ marginTop: 16 }}>
           <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginBottom: 8 }}>
-            各引擎 BPA 对比
+            {t('emailSecurity.engineBpaComparison')}
           </div>
           {sortedEngines.map(eng => {
             const eBpa = eng.bpa ?? { b: 0, d: 0, u: 1 }
@@ -1248,29 +1294,31 @@ function FeedbackSection({
   setFeedbackComment: (c: string) => void
   submitFeedback: () => void
 }) {
-  const FEEDBACK_MAP: Record<string, string> = {
-    legitimate: '正常邮件',
-    phishing: '钓鱼邮件',
-    spoofing: '仿冒邮件',
-    social_engineering: '社会工程学',
-    other_threat: '其他威胁',
+  const { t } = useTranslation()
+
+  const FEEDBACK_MAP_KEYS: Record<string, string> = {
+    legitimate: 'emailSecurity.feedbackLegitimate',
+    phishing: 'emailSecurity.feedbackPhishing',
+    spoofing: 'emailSecurity.feedbackSpoofing',
+    social_engineering: 'emailSecurity.feedbackSocialEngineering',
+    other_threat: 'emailSecurity.feedbackOtherThreat',
   }
 
   return (
     <div style={{ ...S.card, paddingTop: 14, paddingBottom: 14 }}>
       {feedbackDone ? (
         <div style={{ textAlign: 'center', color: '#16a34a', fontSize: 13 }}>
-          反馈已提交，将用于模型优化
+          {t('emailSecurity.feedbackSubmitted')}
         </div>
       ) : feedbackType ? (
         <div>
           <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginBottom: 8 }}>
-            标记为: <strong style={{ color: 'rgba(255,255,255,0.7)' }}>{FEEDBACK_MAP[feedbackType] ?? feedbackType}</strong> -- 添加备注 (可选):
+            {t('emailSecurity.feedbackMarkedAs')}: <strong style={{ color: 'rgba(255,255,255,0.7)' }}>{FEEDBACK_MAP_KEYS[feedbackType] ? t(FEEDBACK_MAP_KEYS[feedbackType]) : feedbackType}</strong> -- {t('emailSecurity.feedbackAddNote')}:
           </div>
           <textarea
             value={feedbackComment}
             onChange={(e) => setFeedbackComment(e.target.value)}
-            placeholder="请描述判断依据 (可选)..."
+            placeholder={t('emailSecurity.feedbackPlaceholder')}
             rows={2}
             style={{
               width: '100%', background: 'rgba(255,255,255,0.03)',
@@ -1288,23 +1336,23 @@ function FeedbackSection({
               disabled={feedbackSubmitting}
               onClick={submitFeedback}
             >
-              {feedbackSubmitting ? '提交中...' : '提交反馈'}
+              {feedbackSubmitting ? t('emailSecurity.feedbackSubmitting') : t('emailSecurity.feedbackSubmit')}
             </button>
             <button
               style={S.feedbackBtn}
               onClick={() => { setFeedbackType(null); setFeedbackComment('') }}
             >
-              取消
+              {t('emailSecurity.feedbackCancel')}
             </button>
           </div>
         </div>
       ) : (
         <div>
           <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginBottom: 10 }}>
-            这封邮件实际是什么?
+            {t('emailSecurity.feedbackQuestion')}
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {Object.entries(FEEDBACK_MAP).map(([key, label]) => (
+            {Object.entries(FEEDBACK_MAP_KEYS).map(([key, labelKey]) => (
               <button
                 key={key}
                 style={{
@@ -1314,7 +1362,7 @@ function FeedbackSection({
                 }}
                 onClick={() => setFeedbackType(key)}
               >
-                {label}
+                {t(labelKey)}
               </button>
             ))}
           </div>

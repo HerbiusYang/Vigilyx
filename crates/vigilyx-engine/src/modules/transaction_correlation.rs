@@ -23,6 +23,7 @@ use crate::bpa::Bpa;
 use crate::context::SecurityContext;
 use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
+use crate::module_data::module_data;
 use crate::modules::common::looks_like_raw_mime_container_text;
 
 /// Patterns for financial entity extraction
@@ -51,62 +52,39 @@ static RE_BTC_ADDR: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b(?:1[1-9A-HJ-NP-Za-km-z]{25,34}|3[1-9A-HJ-NP-Za-km-z]{25,34}|bc1[a-zA-HJ-NP-Z0-9]{25,62})\b").unwrap()
 });
 /// ETH Address: 0x Header 40 bit 6Base/Radix
+/// Note: ETH and ERC-20 / BEP-20 (BSC) / Polygon all share this format. We treat
+/// any 0x...40hex hit as a generic EVM wallet — context keywords disambiguate
+/// (USDT/USDC/BNB/MATIC/etc).
 static RE_ETH_ADDR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b0x[0-9a-fA-F]{40}\b").unwrap());
-
-/// Valid IBAN country codes (ISO 13616). Used to filter false positives from
-/// the broad IBAN regex. source: SWIFT IBAN Registry (2024 edition).
-const IBAN_COUNTRY_CODES: &[&str] = &[
-    "AD", "AE", "AL", "AT", "AZ", "BA", "BE", "BG", "BH", "BR", "BY", "CH", "CR", "CY", "CZ", "DE",
-    "DK", "DO", "EE", "EG", "ES", "FI", "FO", "FR", "GB", "GE", "GI", "GL", "GR", "GT", "HR", "HU",
-    "IE", "IL", "IQ", "IS", "IT", "JO", "KW", "KZ", "LB", "LC", "LI", "LT", "LU", "LV", "LY", "MC",
-    "MD", "ME", "MK", "MR", "MT", "MU", "NL", "NO", "PK", "PL", "PS", "PT", "QA", "RO", "RS", "SA",
-    "SC", "SE", "SI", "SK", "SM", "ST", "SV", "TL", "TN", "TR", "UA", "VA", "VG", "XK",
-];
+/// TRON / TRC-20 address: T prefix, exactly 33 base58 chars after T = 34 total
+/// Used by the most common USDT (TRC20) sextortion / pig-butchering scams.
+static RE_TRON_ADDR: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\bT[1-9A-HJ-NP-Za-km-z]{33}\b").unwrap()
+});
+/// Solana address: base58, 32–44 chars, no 0/O/I/l. We anchor on a length
+/// range that excludes BTC overlaps and require a crypto context to score.
+static RE_SOL_ADDR: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b[1-9A-HJ-NP-Za-km-z]{43,44}\b").unwrap()
+});
+/// Monero (XMR): 4 prefix + 94 base58 chars (or 8 prefix for integrated). XMR
+/// is the de-facto ransomware payout currency in 2024–2026.
+static RE_XMR_ADDR: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}\b").unwrap()
+});
+/// Litecoin: L/M prefix base58 (legacy), or ltc1 bech32.
+static RE_LTC_ADDR: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b(?:[LM][1-9A-HJ-NP-Za-km-z]{25,34}|ltc1[a-z0-9]{25,62})\b").unwrap()
+});
 
 /// Check if a regex match has a valid IBAN country code prefix.
 fn is_valid_iban_country(matched: &str) -> bool {
     if matched.len() < 2 {
         return false;
     }
-    let prefix = &matched[..2].to_uppercase();
-    IBAN_COUNTRY_CODES.contains(&prefix.as_str())
+    let prefix = matched[..2].to_uppercase();
+    module_data().contains("iban_country_codes", &prefix)
 }
-
-/// Urgency keywords that elevate risk when combined with financial entities
-const URGENCY_KEYWORDS: &[&str] = &[
-    "urgent",
-    "immediately",
-    "asap",
-    "today",
-    "deadline",
-    "overdue",
-    "final notice",
-    "time sensitive",
-    "act now",
-    "紧急",
-    "立即",
-    "马上",
-    "今天",
-    "截止",
-    "逾期",
-];
-
-/// Payment change keywords (BEC indicator)
-const PAYMENT_CHANGE_KEYWORDS: &[&str] = &[
-    "new account",
-    "updated account",
-    "change of bank",
-    "revised payment",
-    "new banking",
-    "updated wire",
-    "account has changed",
-    "new beneficiary",
-    "更换账户",
-    "新账户",
-    "变更银行",
-    "修改收款",
-];
 
 /// Signal weights
 const W_FINANCIAL_ENTITY: f64 = 0.15;
@@ -115,6 +93,59 @@ const W_AMOUNT_PRESENT: f64 = 0.10;
 const W_URGENCY_COMBO: f64 = 0.25;
 const W_PAYMENT_CHANGE: f64 = 0.35;
 const W_MULTI_FINANCIAL: f64 = 0.15;
+const CRYPTO_CONTEXT_KEYWORDS: &[&str] = &[
+    "bitcoin",
+    "btc",
+    "wallet",
+    "crypto",
+    "cryptocurrency",
+    "ethereum",
+    "blockchain",
+    "usdt",
+    "usdc",
+    "tether",
+    "trc20",
+    "trc-20",
+    "erc20",
+    "erc-20",
+    "bep20",
+    "bep-20",
+    "tron",
+    "binance",
+    "bnb",
+    "polygon",
+    "matic",
+    "solana",
+    "phantom",
+    "metamask",
+    "trustwallet",
+    "trust wallet",
+    "monero",
+    "xmr",
+    "litecoin",
+    "ltc",
+    "nft",
+    "opensea",
+    "rarible",
+    "airdrop",
+    "seed phrase",
+    "mnemonic",
+    "private key",
+    "比特币",
+    "以太坊",
+    "钱包",
+    "加密货币",
+    "数字货币",
+    "虚拟货币",
+    "区块链",
+    "泰达币",
+    "波场",
+    "门罗币",
+    "莱特币",
+    "助记词",
+    "私钥",
+    "空投",
+];
 
 pub struct TransactionCorrelationModule {
     meta: ModuleMetadata,
@@ -191,8 +222,8 @@ impl TransactionCorrelationModule {
    /// Check for payment change indicators (BEC attack signature)
     fn check_payment_change(text: &str) -> Option<(f64, Evidence)> {
         let text_lower = text.to_ascii_lowercase();
-        for kw in PAYMENT_CHANGE_KEYWORDS {
-            if text_lower.contains(kw) {
+        for kw in module_data().get_list("payment_change_keywords") {
+            if text_lower.contains(kw.as_str()) {
                 return Some((
                     W_PAYMENT_CHANGE,
                     Evidence {
@@ -213,8 +244,8 @@ impl TransactionCorrelationModule {
         }
 
         let text_lower = text.to_ascii_lowercase();
-        for kw in URGENCY_KEYWORDS {
-            if text_lower.contains(kw) {
+        for kw in module_data().get_list("transaction_urgency_keywords") {
+            if text_lower.contains(kw.as_str()) {
                 return Some((
                     W_URGENCY_COMBO,
                     Evidence {
@@ -241,6 +272,13 @@ impl TransactionCorrelationModule {
         let start = text.floor_char_boundary(start);
         let end = text.ceil_char_boundary(end);
         Some(format!("...{}...", &text[start..end]))
+    }
+
+    fn has_crypto_context(text: &str) -> bool {
+        let lower = text.to_lowercase();
+        CRYPTO_CONTEXT_KEYWORDS
+            .iter()
+            .any(|keyword| lower.contains(keyword))
     }
 }
 
@@ -283,6 +321,7 @@ impl SecurityModule for TransactionCorrelationModule {
         let mut has_payment_change = false;
         let mut has_wire_instruction = false;
         let mut has_amount_reference = false;
+        let has_crypto_context = Self::has_crypto_context(&text);
 
        // 1. IBAN detection (with country code validation to reduce false positives)
         let iban_matches: Vec<_> = RE_IBAN
@@ -376,7 +415,7 @@ impl SecurityModule for TransactionCorrelationModule {
 
        // 6b. Cryptocurrency wallet addresses (sextortion/ransomware)
         let btc_matches: Vec<_> = RE_BTC_ADDR.find_iter(&text).collect();
-        if !btc_matches.is_empty() {
+        if !btc_matches.is_empty() && has_crypto_context {
             actionable_signal_count += btc_matches.len() as u32;
             total_score += 0.40; // BTC wallet address in email is highly suspicious
             categories.push("crypto_wallet".to_string());
@@ -390,7 +429,7 @@ impl SecurityModule for TransactionCorrelationModule {
             });
         }
         let eth_matches: Vec<_> = RE_ETH_ADDR.find_iter(&text).collect();
-        if !eth_matches.is_empty() {
+        if !eth_matches.is_empty() && has_crypto_context {
             actionable_signal_count += eth_matches.len() as u32;
             total_score += 0.35;
             categories.push("crypto_wallet".to_string());
@@ -401,6 +440,68 @@ impl SecurityModule for TransactionCorrelationModule {
                 ),
                 location: Some("body".to_string()),
                 snippet: Some(eth_matches[0].as_str().to_string()),
+            });
+        }
+        // TRON / TRC20 — by far the most common chain for USDT pig-butchering
+        // and sextortion scams in CN/SEA targeted campaigns.
+        let tron_matches: Vec<_> = RE_TRON_ADDR.find_iter(&text).collect();
+        if !tron_matches.is_empty() && has_crypto_context {
+            actionable_signal_count += tron_matches.len() as u32;
+            total_score += 0.40;
+            categories.push("crypto_wallet".to_string());
+            evidence.push(Evidence {
+                description: format!(
+                    "Detected {} TRON/TRC20 wallet address(es) (USDT pig-butchering / sextortion indicator)",
+                    tron_matches.len()
+                ),
+                location: Some("body".to_string()),
+                snippet: Some(tron_matches[0].as_str().to_string()),
+            });
+        }
+        // Solana — increasingly popular in NFT-themed scams.
+        let sol_matches: Vec<_> = RE_SOL_ADDR.find_iter(&text).collect();
+        if !sol_matches.is_empty() && has_crypto_context {
+            actionable_signal_count += sol_matches.len() as u32;
+            total_score += 0.30;
+            categories.push("crypto_wallet".to_string());
+            evidence.push(Evidence {
+                description: format!(
+                    "Detected {} Solana wallet address(es) (NFT/crypto scam indicator)",
+                    sol_matches.len()
+                ),
+                location: Some("body".to_string()),
+                snippet: Some(sol_matches[0].as_str().to_string()),
+            });
+        }
+        // Monero — privacy-coin demand is a textbook ransomware/extortion fingerprint.
+        let xmr_matches: Vec<_> = RE_XMR_ADDR.find_iter(&text).collect();
+        if !xmr_matches.is_empty() && has_crypto_context {
+            actionable_signal_count += xmr_matches.len() as u32;
+            total_score += 0.45;
+            categories.push("crypto_wallet".to_string());
+            categories.push("ransomware_indicator".to_string());
+            evidence.push(Evidence {
+                description: format!(
+                    "Detected {} Monero (XMR) address(es) — strong ransomware/extortion signal",
+                    xmr_matches.len()
+                ),
+                location: Some("body".to_string()),
+                snippet: Some(xmr_matches[0].as_str().to_string()),
+            });
+        }
+        // Litecoin — common fallback in extortion templates when victims push back on BTC fees.
+        let ltc_matches: Vec<_> = RE_LTC_ADDR.find_iter(&text).collect();
+        if !ltc_matches.is_empty() && has_crypto_context {
+            actionable_signal_count += ltc_matches.len() as u32;
+            total_score += 0.30;
+            categories.push("crypto_wallet".to_string());
+            evidence.push(Evidence {
+                description: format!(
+                    "Detected {} Litecoin wallet address(es) (extortion/scam indicator)",
+                    ltc_matches.len()
+                ),
+                location: Some("body".to_string()),
+                snippet: Some(ltc_matches[0].as_str().to_string()),
             });
         }
 
@@ -438,6 +539,23 @@ impl SecurityModule for TransactionCorrelationModule {
                     reference_entity_count,
                     has_amount_reference
                 ),
+                location: Some("body".to_string()),
+                snippet: None,
+            });
+        }
+
+        let routine_settlement_context = !has_payment_change
+            && !has_crypto_context
+            && has_wire_instruction
+            && has_amount_reference
+            && reference_entity_count > 0
+            && actionable_signal_count <= 3;
+        if routine_settlement_context {
+            total_score = total_score.min(0.14);
+            evidence.push(Evidence {
+                description:
+                    "Routine invoice / settlement reminder pattern detected without payment-change language; down-weighting transaction risk"
+                        .to_string(),
                 location: Some("body".to_string()),
                 snippet: None,
             });
@@ -499,6 +617,7 @@ impl SecurityModule for TransactionCorrelationModule {
                 "has_wire_instruction": has_wire_instruction,
                 "has_payment_change": has_payment_change,
                 "has_amount_reference": has_amount_reference,
+                "has_crypto_context": has_crypto_context,
             }),
             duration_ms,
             analyzed_at: Utc::now(),
@@ -628,6 +747,61 @@ mod tests {
         assert!(result
             .categories
             .contains(&"multi_financial_entities".to_string()));
+        assert_ne!(result.threat_level, ThreatLevel::Safe);
+    }
+
+    #[tokio::test]
+    async fn routine_invoice_reminder_without_payment_change_is_downgraded() {
+        let module = TransactionCorrelationModule::new();
+        let ctx = make_ctx(
+            Some(
+                "Dear customer, invoice INV-2026-7781 remains open. Amount Open: USD 50,084.70. \
+                 Beneficiary: SWIFT SC. Bank Name: JPMorgan Chase Bank. \
+                 S.W.I.F.T. BIC code: CHASUS33. ABA Routing Code: 021000021. \
+                 Please proceed to pay the overdue amount without further delay within Swift's payment terms.",
+            ),
+            Some("Swift Invoice Reminder"),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(
+            result.threat_level,
+            ThreatLevel::Safe,
+            "routine settlement reminders without payment-change language should not be flagged on transaction semantics alone: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn wallet_like_token_without_crypto_context_does_not_trigger_crypto_wallet() {
+        let module = TransactionCorrelationModule::new();
+        let ctx = make_ctx(
+            Some(
+                "Please review invoice INV-2026-1007. Receipt REF-7781 is attached. Token: 1BoatSLRHtKNngkdXEeobR76b53LETtpyT",
+            ),
+            Some("Invoice notice"),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert!(!result.categories.contains(&"crypto_wallet".to_string()));
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+    }
+
+    #[tokio::test]
+    async fn crypto_wallet_with_context_still_triggers_detection() {
+        let module = TransactionCorrelationModule::new();
+        let ctx = make_ctx(
+            Some(
+                "Send the Bitcoin payment to wallet 1BoatSLRHtKNngkdXEeobR76b53LETtpyT immediately to restore access.",
+            ),
+            Some("Urgent bitcoin payment"),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert!(result.categories.contains(&"crypto_wallet".to_string()));
         assert_ne!(result.threat_level, ThreatLevel::Safe);
     }
 }

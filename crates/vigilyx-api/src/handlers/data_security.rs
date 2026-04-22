@@ -1,11 +1,10 @@
-//! Data security API Process
-
-
-//! - GET /api/data-security/stats - Data securityStatistics
-//! - GET /api/data-security/incidents - table (Pagination+)
-//! - GET /api/data-security/incidents/{id} -
-//! - GET /api/data-security/http-sessions/{id} - HTTP Session
-//! - POST /api/data-security/import/http-sessions - HTTP Session (For)
+//! Data security API handlers.
+//!
+//! - GET /api/data-security/stats — Data security statistics
+//! - GET /api/data-security/incidents — Incident list (paginated + filtered)
+//! - GET /api/data-security/incidents/{id} — Incident detail
+//! - GET /api/data-security/http-sessions/{id} — HTTP session detail
+//! - POST /api/data-security/import/http-sessions — Import HTTP sessions (internal)
 
 use axum::{
     Json,
@@ -25,25 +24,25 @@ use super::{ApiResponse, PaginatedResponse};
 use crate::AppState;
 
 
-// Queryparameter
+// Query parameters
 
 
-/// Data security Queryparameter
+/// Data security incident query parameters
 #[derive(Debug, Deserialize)]
 pub struct IncidentQueryParams {
     #[serde(default = "default_page")]
     pub page: u32,
     #[serde(default = "default_limit")]
     pub limit: u32,
-   /// IncidentType: draft_box_abuse | file_transit_abuse | self_sending
+   /// Incident type: draft_box_abuse | file_transit_abuse | self_sending
     pub incident_type: Option<String>,
-   /// : info | low | medium | high | critical
+   /// Severity: info | low | medium | high | critical
     pub severity: Option<String>,
-   /// According toclient IP
+   /// Filter by client IP
     pub client_ip: Option<String>,
-   /// According touser
+   /// Filter by user
     pub user: Option<String>,
-   /// According to (summary)
+   /// Filter by keyword (summary)
     pub keyword: Option<String>,
 }
 
@@ -59,7 +58,7 @@ fn default_limit() -> u32 {
 // Statistics API
 
 
-/// GetData securityStatistics
+/// Get data security statistics
 pub async fn get_data_security_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match state.db.get_data_security_stats().await {
         Ok(stats) => ApiResponse::ok(stats),
@@ -68,10 +67,10 @@ pub async fn get_data_security_stats(State(state): State<Arc<AppState>>) -> impl
 }
 
 
-// API
+// Incident API
 
 
-/// Verify Typeparameter
+/// Validate incident type parameter
 fn validate_incident_type(t: &str) -> bool {
     matches!(
         t,
@@ -83,18 +82,18 @@ fn validate_incident_type(t: &str) -> bool {
     )
 }
 
-/// Verify parameter
+/// Validate severity parameter
 fn validate_severity(s: &str) -> bool {
     matches!(s, "info" | "low" | "medium" | "high" | "critical")
 }
 
-/// GetData security table (Pagination+)
+/// List data security incidents (paginated + filtered)
 pub async fn list_data_security_incidents(
     State(state): State<Arc<AppState>>,
     Query(mut params): Query<IncidentQueryParams>,
 ) -> axum::response::Response {
     params.limit = params.limit.clamp(1, 1000);
-   // parameterVerify
+   // Validate parameters
     if let Some(ref t) = params.incident_type
         && !validate_incident_type(t)
     {
@@ -152,7 +151,7 @@ pub async fn list_data_security_incidents(
     }
 }
 
-/// Get Data security
+/// Get data security incident detail
 pub async fn get_data_security_incident(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -184,24 +183,24 @@ pub async fn get_data_security_incident(
 // HTTP Session API
 
 
-/// HTTP Session tableQueryparameter
+/// HTTP session list query parameters
 #[derive(Debug, Deserialize)]
 pub struct HttpSessionQueryParams {
     #[serde(default = "default_page")]
     pub page: u32,
     #[serde(default = "default_limit")]
     pub limit: u32,
-   /// client IP ()
+   /// Client IP (filter)
     pub client_ip: Option<String>,
-   /// user ()
+   /// User (filter)
     pub user: Option<String>,
-   /// HTTP: GET | POST | PUT | DELETE
+   /// HTTP method: GET | POST | PUT | DELETE
     pub method: Option<String>,
-   /// URL ()
+   /// URL keyword (filter)
     pub keyword: Option<String>,
 }
 
-/// Get HTTP Session table (Pagination+)
+/// List HTTP sessions (paginated + filtered)
 pub async fn list_http_sessions(
     State(state): State<Arc<AppState>>,
     Query(mut params): Query<HttpSessionQueryParams>,
@@ -209,7 +208,7 @@ pub async fn list_http_sessions(
     params.limit = params.limit.clamp(1, 1000);
     let offset = (params.page.saturating_sub(1)) * params.limit;
 
-   // items
+   // Build filters
     let filters = vigilyx_db::HttpSessionFilters {
         client_ip: params.client_ip.filter(|s| !s.is_empty()),
         user: params.user.filter(|s| !s.is_empty()),
@@ -242,7 +241,7 @@ pub async fn list_http_sessions(
     }
 }
 
-/// Get HTTP Session
+/// Get HTTP session detail
 pub async fn get_http_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -278,13 +277,13 @@ pub async fn get_http_session(
 }
 
 
-// HTTP Session (For /externalsystem)
+// HTTP session import (internal / sniffer)
 
 
-/// Import HTTP Session ()
-
-/// external Parse HTTP Session system.
-/// System DataSecurityEngine analyze.
+/// Import HTTP sessions (internal).
+///
+/// Accepts sessions from the sniffer or external parsers.
+/// Triggers data security engine analysis.
 pub async fn import_http_sessions(
     State(state): State<Arc<AppState>>,
     Json(mut sessions): Json<Vec<HttpSession>>,
@@ -299,30 +298,12 @@ pub async fn import_http_sessions(
     let mut success_count = 0u64;
 
     for session in &sessions {
-       // HTTP Session
+       // Save HTTP session
         if let Err(e) = state.db.insert_http_session(session).await {
-            tracing::warn!(session_id = %session.id, "save HTTP Sessionfailed: {}", e);
+            tracing::warn!(session_id = %session.id, "保存 HTTP Session 失败: {}", e);
             continue;
         }
         success_count += 1;
-    }
-
-   // UDS: Redis UDS HTTP Session Engine
-    #[cfg(unix)]
-    if let Some(ref uds_tx) = state.messaging.uds_tx
-        && let Ok(payload) = serde_json::to_value(&sessions)
-    {
-        let msg = vigilyx_db::mq::UdsMessage {
-            topic: vigilyx_db::mq::topics::HTTP_SESSION_NEW.to_string(),
-            payload,
-        };
-        if let Err(e) = uds_tx.try_send(msg) {
-            tracing::warn!(
-                batch_size = total,
-                "UDS 推送 HTTP Session到 Engine failed (channel满或已shutdown): {}",
-                e
-            );
-        }
     }
 
     ApiResponse::ok(serde_json::json!({
@@ -331,9 +312,9 @@ pub async fn import_http_sessions(
     }))
 }
 
-/// GetData securityEngine status
-
-/// UDS/Redis, File
+/// Get data security engine status.
+///
+/// Reads engine heartbeat from Redis/file and extracts DS counters.
 pub async fn get_data_security_engine_status(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
@@ -367,31 +348,31 @@ pub async fn get_data_security_engine_status(
 }
 
 
-// HTTP Session body File
+// HTTP session body download
 
 
-/// HTTP Session body File
-
-/// body (>256KB) sniffer data/tmp/http/{session_id}.bin,
-/// Securityanalyze File 2.
+/// Download HTTP session body file.
+///
+/// Large bodies (>256KB) are stored by sniffer at data/tmp/http/{session_id}.bin.
+/// Security analysis temp files are cleaned up after 2 hours.
 pub async fn download_http_session_body(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-   // Verify UUID
+   // Validate UUID
     let uuid = match Uuid::parse_str(&id) {
         Ok(u) => u,
         Err(_) => return (axum::http::StatusCode::BAD_REQUEST, "Invalid UUID").into_response(),
     };
 
-   // QuerySession,get body_temp_file Road File
+   // Query session to get body_temp_file path
     let session = match state.db.get_http_session(uuid).await {
         Ok(Some(s)) => s,
         Ok(None) => {
             return (axum::http::StatusCode::NOT_FOUND, "Session not found").into_response();
         }
         Err(e) => {
-            tracing::error!(session_id = %uuid, "Query HTTP Sessionfailed: {}", e);
+            tracing::error!(session_id = %uuid, "查询 HTTP Session 失败: {}", e);
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "Internal error",
@@ -400,12 +381,12 @@ pub async fn download_http_session_body(
         }
     };
 
-   // FileRoad: body_temp_file, Road
+   // File path: prefer body_temp_file, fallback to convention
     let file_path = session
         .body_temp_file
         .unwrap_or_else(|| format!("data/tmp/http/{}.bin", uuid));
 
-   // Security: Road data/tmp/http/, Road
+   // Security: ensure path stays within data/tmp/http/ (path traversal guard)
     let canonical = match std::path::Path::new(&file_path).canonicalize() {
         Ok(p) => p,
         Err(_) => {
@@ -426,12 +407,12 @@ pub async fn download_http_session_body(
         tracing::warn!(
             session_id = %uuid,
             path = %file_path,
-            "Road径遍历Attack: File不在允许directory下"
+            "路径遍历攻击: 文件不在允许目录下"
         );
         return (axum::http::StatusCode::FORBIDDEN, "Access denied").into_response();
     }
 
-   // File
+   // Read file
     let raw_data = match tokio::fs::read(&canonical).await {
         Ok(d) => d,
         Err(_) => {

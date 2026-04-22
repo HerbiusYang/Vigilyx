@@ -7,6 +7,7 @@
 /// 2. /: `` -> `138`, `` -> `ABC`
 /// 3. characters: ` \u{00AD}Code/Digit` -> `Password`
 /// 4. HTML: `&#49;&#51;&#56;` -> `138`, `&#x31;` -> `1`
+/// 5. homoglyphs: Cyrillic/Greek → Latin, ⁰¹²³ → 0123 (CWE-176)
 
 /// Performance: O(n) (Decode + charactersNormalize).
 pub(super) fn normalize_for_dlp(text: &str) -> String {
@@ -41,6 +42,66 @@ pub(super) fn normalize_for_dlp(text: &str) -> String {
            // Number/waitNumber ->
             '\u{FF1A}' => result.push(':'),
             '\u{FF1D}' => result.push('='),
+
+            // --- Homoglyph normalization (CWE-176 defense) ---
+            // Cyrillic -> Latin (most common homoglyphs)
+            'а' => result.push('a'), // U+0430
+            'е' => result.push('e'), // U+0435
+            'о' => result.push('o'), // U+043E
+            'р' => result.push('p'), // U+0440
+            'с' => result.push('c'), // U+0441
+            'у' => result.push('y'), // U+0443
+            'х' => result.push('x'), // U+0445
+            'А' => result.push('A'), // U+0410
+            'В' => result.push('B'), // U+0412
+            'Е' => result.push('E'), // U+0415
+            'К' => result.push('K'), // U+041A
+            'М' => result.push('M'), // U+041C
+            'Н' => result.push('H'), // U+041D
+            'О' => result.push('O'), // U+041E
+            'Р' => result.push('P'), // U+0420
+            'С' => result.push('C'), // U+0421
+            'Т' => result.push('T'), // U+0422
+            'Х' => result.push('X'), // U+0425
+
+            // Greek -> Latin
+            'Α' => result.push('A'), // U+0391
+            'Β' => result.push('B'), // U+0392
+            'Ε' => result.push('E'), // U+0395
+            'Ζ' => result.push('Z'), // U+0396
+            'Η' => result.push('H'), // U+0397
+            'Ι' => result.push('I'), // U+0399
+            'Κ' => result.push('K'), // U+039A
+            'Μ' => result.push('M'), // U+039C
+            'Ν' => result.push('N'), // U+039D
+            'Ο' => result.push('O'), // U+039F
+            'Ρ' => result.push('P'), // U+03A1
+            'Τ' => result.push('T'), // U+03A4
+            'Υ' => result.push('Y'), // U+03A5
+            'Χ' => result.push('X'), // U+03A7
+            'ο' => result.push('o'), // U+03BF Greek small omicron
+
+            // Superscript/subscript digits -> ASCII
+            '⁰' => result.push('0'), // U+2070
+            '¹' => result.push('1'), // U+00B9
+            '²' => result.push('2'), // U+00B2
+            '³' => result.push('3'), // U+00B3
+            '⁴' => result.push('4'), // U+2074
+            '⁵' => result.push('5'), // U+2075
+            '⁶' => result.push('6'), // U+2076
+            '⁷' => result.push('7'), // U+2077
+            '⁸' => result.push('8'), // U+2078
+            '⁹' => result.push('9'), // U+2079
+            '₀' => result.push('0'), // U+2080
+            '₁' => result.push('1'), // U+2081
+            '₂' => result.push('2'), // U+2082
+            '₃' => result.push('3'), // U+2083
+            '₄' => result.push('4'), // U+2084
+            '₅' => result.push('5'), // U+2085
+            '₆' => result.push('6'), // U+2086
+            '₇' => result.push('7'), // U+2087
+            '₈' => result.push('8'), // U+2088
+            '₉' => result.push('9'), // U+2089
 
             _ => result.push(ch),
         }

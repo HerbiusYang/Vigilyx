@@ -4,10 +4,11 @@
 //! side effects: storing results, recording IOCs, evaluating disposition rules,
 //! running temporal analysis, and generating alerts.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use tokio::sync::{Semaphore, broadcast};
+use tokio::sync::{RwLock, Semaphore, broadcast};
 use tracing::{debug, error};
 use vigilyx_core::models::{EmailSession, SecurityVerdictSummary, WsMessage};
 use vigilyx_db::VigilDb;
@@ -34,6 +35,7 @@ pub(crate) struct PostVerdictContext {
     pub verdict_count: Arc<AtomicU64>,
     pub temporal_semaphore: Arc<Semaphore>,
     pub temporal_flush_interval: u64,
+    pub internal_domains: Arc<RwLock<HashSet<String>>>,
 }
 
 /// Run all post-verdict processing for a single email session.
@@ -73,9 +75,32 @@ pub(crate) async fn run_post_verdict(
     ctx.ioc
         .auto_record_from_verdict(session, verdict_result)
         .await;
-    ctx.ioc
-        .auto_record_internal_spoofing(session, verdict_result)
-        .await;
+    {
+        let domains = ctx.internal_domains.read().await;
+        ctx.ioc
+            .auto_record_internal_spoofing(session, verdict_result, &domains)
+            .await;
+    }
+
+    // Auto-record domain impersonation IOC (self-learning loop):
+    // When header_scan detects a domain impersonation hit, record the
+    // spoofing domain as a malicious IOC so future emails from the same
+    // domain get an automatic score boost in Step 5c of header_scan.
+    if let Some(hs_result) = results.get("header_scan")
+        && let Some(imp_hit) = hs_result.details.get("impersonation_hit")
+        && let (Some(sender), Some(target), Some(sim_type), Some(score)) = (
+            imp_hit.get("sender_domain").and_then(|v| v.as_str()),
+            imp_hit.get("target_domain").and_then(|v| v.as_str()),
+            imp_hit.get("similarity_type").and_then(|v| v.as_str()),
+            imp_hit.get("score").and_then(|v| v.as_f64()),
+        )
+    {
+        ctx.ioc
+            .auto_record_impersonation_domain(
+                session, sender, target, sim_type, score,
+            )
+            .await;
+    }
 
     if let Some(sem_result) = results.get("semantic_scan")
         && sem_result.threat_level >= crate::module::ThreatLevel::Medium

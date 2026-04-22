@@ -1,42 +1,35 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../../utils/api'
+import { formatTime } from '../../utils/format'
 import type { ApiResponse, VerdictWithMeta } from '../../types'
 
-const THREAT_LEVELS = [
-  { key: 'safe', label: '安全', color: '#22c55e' },
-  { key: 'low', label: '低危', color: '#3b82f6' },
-  { key: 'medium', label: '中危', color: '#eab308' },
-  { key: 'high', label: '高危', color: '#f97316' },
-  { key: 'critical', label: '严重', color: '#ef4444' },
-]
-
-const THREAT_CN: Record<string, string> = {
-  safe: '安全', low: '低危', medium: '中危', high: '高危', critical: '严重',
+const THREAT_LEVEL_COLORS: Record<string, string> = {
+  safe: '#22c55e',
+  low: '#3b82f6',
+  medium: '#eab308',
+  high: '#f97316',
+  critical: '#ef4444',
 }
 
 function threatColor(level: string): string {
-  return THREAT_LEVELS.find(l => l.key === level)?.color ?? 'var(--text-secondary)'
-}
-
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso)
-    const pad = (n: number) => String(n).padStart(2, '0')
-    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
-  } catch {
-    return iso
-  }
+  return THREAT_LEVEL_COLORS[level] ?? 'var(--text-secondary)'
 }
 
 const PAGE_SIZE = 30
 
 export default function RiskVerdictTab() {
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const [verdicts, setVerdicts] = useState<VerdictWithMeta[]>([])
   const [verdictTotal, setVerdictTotal] = useState(0)
   const [verdictFilter, setVerdictFilter] = useState('')
   const [verdictPage, setVerdictPage] = useState(0)
+
+  const THREAT_CN: Record<string, string> = {
+    safe: t('emailSecurity.threatSafe'), low: t('emailSecurity.threatLow'), medium: t('emailSecurity.threatMedium'), high: t('emailSecurity.threatHigh'), critical: t('emailSecurity.threatCritical'),
+  }
 
   const fetchVerdicts = useCallback(async () => {
     try {
@@ -71,17 +64,17 @@ export default function RiskVerdictTab() {
               onClick={() => { setVerdictFilter(level); setVerdictPage(0) }}
               style={level && verdictFilter === level ? { borderColor: threatColor(level), color: threatColor(level) } : undefined}
             >
-              {level ? THREAT_CN[level] : '全部'}
+              {level ? THREAT_CN[level] : t('emailSecurity.filterAll')}
             </button>
           ))}
         </div>
-        <span className="sec-risk-total">共 {verdictTotal} 条</span>
+        <span className="sec-risk-total">{t('emailSecurity.totalCount', { count: verdictTotal })}</span>
       </div>
 
       {verdicts.length === 0 ? (
         <div className="sec-empty">
           <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.3"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-          <p>暂无风险邮件</p>
+          <p>{t('emailSecurity.noRiskEmails')}</p>
         </div>
       ) : (
         <>
@@ -89,11 +82,11 @@ export default function RiskVerdictTab() {
             <table className="sec-table sec-table--hover">
               <thead>
                 <tr>
-                  <th style={{ width: 70 }}>威胁</th>
-                  <th>发件人</th>
-                  <th>主题</th>
-                  <th style={{ width: 90 }}>置信度</th>
-                  <th style={{ width: 160 }}>时间</th>
+                  <th style={{ width: 70 }}>{t('emailSecurity.colThreat')}</th>
+                  <th>{t('emailSecurity.colSender')}</th>
+                  <th>{t('emailSecurity.colSubject')}</th>
+                  <th style={{ width: 90 }}>{t('emailSecurity.colConfidence')}</th>
+                  <th style={{ width: 160 }}>{t('emailSecurity.colTime')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -109,7 +102,7 @@ export default function RiskVerdictTab() {
                       </span>
                     </td>
                     <td className="sec-risk-from">{v.mail_from || '-'}</td>
-                    <td className="sec-risk-subject">{v.subject || '(无主题)'}</td>
+                    <td className="sec-risk-subject">{v.subject || t('emailSecurity.noSubject')}</td>
                     <td className="sec-td-r sec-mono">{(v.confidence * 100).toFixed(0)}%</td>
                     <td className="sec-risk-time">{formatTime(v.created_at)}</td>
                   </tr>
@@ -124,17 +117,17 @@ export default function RiskVerdictTab() {
                 disabled={verdictPage === 0}
                 onClick={() => setVerdictPage(p => p - 1)}
               >
-                上一页
+                {t('emailSecurity.prevPage')}
               </button>
               <span className="sec-page-info">
-                第 {verdictPage + 1} / {Math.ceil(verdictTotal / PAGE_SIZE)} 页
+                {t('emailSecurity.pageInfo', { current: verdictPage + 1, total: Math.ceil(verdictTotal / PAGE_SIZE) })}
               </span>
               <button
                 className="sec-page-btn"
                 disabled={(verdictPage + 1) * PAGE_SIZE >= verdictTotal}
                 onClick={() => setVerdictPage(p => p + 1)}
               >
-                下一页
+                {t('emailSecurity.nextPage')}
               </button>
             </div>
           )}

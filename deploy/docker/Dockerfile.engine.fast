@@ -31,9 +31,10 @@ ENV RUST_LOG=info,vigilyx_engine=info \
     LOG_FORMAT=json
 
 # Engine has no HTTP port — it communicates via Redis Streams and PostgreSQL.
-# Health is checked via the Redis heartbeat TTL key (vigilyx:engine:heartbeat).
+# Health is checked via the local heartbeat file (written every 5s by the engine process).
+# The engine also writes a Redis TTL key (vigilyx:engine:heartbeat) for the API readiness probe.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
-    CMD test "$(curl -sf redis://${REDIS_URL:-redis://redis:6379} 2>/dev/null)" != "" || exit 1
+    CMD [ -f /app/data/engine-status.json ] && [ $(( $(date +%s) - $(stat -c %Y /app/data/engine-status.json) )) -lt 30 ] || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["./vigilyx-engine"]

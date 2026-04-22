@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import type { EmailSession, Protocol, SessionStatus, ApiResponse, PaginatedResponse } from '../../types'
 import { decodeMimeWord } from '../../utils/mime'
-import { formatBytes, formatDate, getRelativeTime, isEncryptedPort } from '../../utils/format'
+import { formatBytes, formatDate, getRelativeTime, getServerNowMs, isEncryptedPort } from '../../utils/format'
 import { apiFetch } from '../../utils/api'
+import { EVENTS } from '../../utils/events'
 
 // ========================================
 // Types
@@ -107,16 +109,18 @@ const SkeletonRow = () => (
 // ========================================
 
 const DirectionBadge = ({ clientIp, serverIp }: { clientIp: string; serverIp: string }) => {
+  const { t } = useTranslation()
   const dir = detectDirection(clientIp, serverIp)
   if (!dir) return <span className="direction-badge none">-</span>
   return (
     <span className={`direction-badge ${dir}`}>
-      {dir === 'inbound' ? '入站' : '出站'}
+      {dir === 'inbound' ? t('emailSecurity.inbound') : t('emailSecurity.outbound')}
     </span>
   )
 }
 
 const EmailCard = React.memo(({ session, detailHref }: { session: EmailSession; detailHref: string }) => {
+  const { t } = useTranslation()
   const isEncrypted = session.content?.is_encrypted || isEncryptedPort(session.server_port)
   const hasContent = session.content?.body_text || session.content?.body_html
   const attachmentCount = session.content?.attachments?.length || 0
@@ -132,20 +136,20 @@ const EmailCard = React.memo(({ session, detailHref }: { session: EmailSession; 
             {session.protocol}
           </span>
           {isEncrypted && (
-            <span className="encrypted-badge" title="加密传输">
+            <span className="encrypted-badge" title={t('emailSecurity.encryptedTransmission')}>
               TLS
             </span>
           )}
           <span className={`status-badge ${session.status}`}>
-            {session.status === 'active' && '活跃'}
-            {session.status === 'completed' && '完成'}
-            {session.status === 'timeout' && '超时'}
-            {session.status === 'error' && '错误'}
+            {session.status === 'active' && t('emailSecurity.statusActive')}
+            {session.status === 'completed' && t('emailSecurity.statusCompleted')}
+            {session.status === 'timeout' && t('emailSecurity.statusTimeout')}
+            {session.status === 'error' && t('emailSecurity.statusError')}
           </span>
           <DirectionBadge clientIp={session.client_ip} serverIp={session.server_ip} />
           {session.auth_info && (
             <span className={`auth-badge ${session.auth_info.auth_success === true ? 'success' : session.auth_info.auth_success === false ? 'failed' : ''}`}
-              title={`${session.auth_info.auth_method} 认证${session.auth_info.username ? ': ' + session.auth_info.username : ''}`}>
+              title={`${session.auth_info.auth_method} ${t('emailSecurity.auth')}${session.auth_info.username ? ': ' + session.auth_info.username : ''}`}>
               {session.auth_info.auth_method}
             </span>
           )}
@@ -156,27 +160,27 @@ const EmailCard = React.memo(({ session, detailHref }: { session: EmailSession; 
       </div>
 
       <div className="email-card-subject">
-        {decodedSubject || (isEncrypted ? '(已加密)' : '(无主题)')}
+        {decodedSubject || (isEncrypted ? t('emailSecurity.encrypted') : t('emailSecurity.noSubject'))}
       </div>
 
       <div className="email-card-participants">
         <div className="participant from">
-          <span className="label">发件人</span>
-          <span className="value">{session.mail_from || '未知'}</span>
+          <span className="label">{t('emailSecurity.sender')}</span>
+          <span className="value">{session.mail_from || t('emailSecurity.unknown')}</span>
         </div>
         <div className="participant to">
-          <span className="label">收件人</span>
+          <span className="label">{t('emailSecurity.recipient')}</span>
           <span className="value">
             {session.rcpt_to.length > 0
               ? session.rcpt_to.length > 2
-                ? `${session.rcpt_to[0]} +${session.rcpt_to.length - 1} 人`
+                ? t('emailSecurity.recipientOverflow', { first: session.rcpt_to[0], count: session.rcpt_to.length - 1 })
                 : session.rcpt_to.join(', ')
-              : '未知'}
+              : t('emailSecurity.unknown')}
           </span>
         </div>
         {session.auth_info?.username && (
           <div className="participant auth">
-            <span className="label">登录账号</span>
+            <span className="label">{t('emailSecurity.loginAccount')}</span>
             <span className="value auth-value">{session.auth_info.username}</span>
           </div>
         )}
@@ -192,21 +196,21 @@ const EmailCard = React.memo(({ session, detailHref }: { session: EmailSession; 
 
       <div className="email-card-footer">
         <div className="email-card-stats">
-          <span className="stat" title="数据包">
-            {session.packet_count} 包
+          <span className="stat" title={t('emailSecurity.packets')}>
+            {t('emailSecurity.packetCount', { count: session.packet_count })}
           </span>
-          <span className="stat" title="大小">
+          <span className="stat" title={t('emailSecurity.size')}>
             {formatBytes(session.total_bytes)}
           </span>
           {attachmentCount > 0 && (
-            <span className="stat attachment" title="附件">
-              {attachmentCount} 附件
+            <span className="stat attachment" title={t('emailSecurity.attachments')}>
+              {t('emailSecurity.attachmentCount', { count: attachmentCount })}
             </span>
           )}
           {linkCount > 0 && (
-            <span className={`stat link ${suspiciousLinkCount > 0 ? 'suspicious' : ''}`} title="链接">
-              {linkCount} 链接
-              {suspiciousLinkCount > 0 && ` (${suspiciousLinkCount} 可疑)`}
+            <span className={`stat link ${suspiciousLinkCount > 0 ? 'suspicious' : ''}`} title={t('emailSecurity.links')}>
+              {t('emailSecurity.linkCount', { count: linkCount })}
+              {suspiciousLinkCount > 0 && ` (${t('emailSecurity.suspiciousCount', { count: suspiciousLinkCount })})`}
             </span>
           )}
         </div>
@@ -220,11 +224,11 @@ const EmailCard = React.memo(({ session, detailHref }: { session: EmailSession; 
         <div className="cell-actions">
           {!isEncrypted ? (
             <Link to={detailHref} className="email-card-action">
-              查看详情
+              {t('emailSecurity.viewDetails')}
             </Link>
           ) : (
-            <span className="email-card-action disabled" title="无法查看加密流量">
-              已加密
+            <span className="email-card-action disabled" title={t('emailSecurity.cannotViewEncrypted')}>
+              {t('emailSecurity.encryptedShort')}
             </span>
           )}
           <RescanButton sessionId={session.id} disabled={isEncrypted} />
@@ -239,6 +243,7 @@ const EmailCard = React.memo(({ session, detailHref }: { session: EmailSession; 
 // ========================================
 
 const RescanButton = ({ sessionId, disabled }: { sessionId: string; disabled?: boolean }) => {
+  const { t } = useTranslation()
   const [state, setState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
 
   const handleRescan = async (e: React.MouseEvent) => {
@@ -264,17 +269,18 @@ const RescanButton = ({ sessionId, disabled }: { sessionId: string; disabled?: b
       className={`table-action rescan-btn rescan-btn--${state}`}
       onClick={handleRescan}
       disabled={state === 'loading'}
-      title="重新安全分析"
+      title={t('emailSecurity.rescanTitle')}
     >
-      {state === 'idle' && '分析'}
+      {state === 'idle' && t('emailSecurity.rescanIdle')}
       {state === 'loading' && '...'}
-      {state === 'done' && '已提交'}
-      {state === 'error' && '失败'}
+      {state === 'done' && t('emailSecurity.rescanDone')}
+      {state === 'error' && t('emailSecurity.rescanError')}
     </button>
   )
 }
 
 const EmailRow = React.memo(({ session, detailHref }: { session: EmailSession; detailHref: string }) => {
+  const { t } = useTranslation()
   const isEncrypted = session.content?.is_encrypted || isEncryptedPort(session.server_port)
   const attachmentCount = session.content?.attachments?.length || 0
   const decodedSubject = decodeMimeWord(session.subject)
@@ -309,35 +315,35 @@ const EmailRow = React.memo(({ session, detailHref }: { session: EmailSession; d
       </td>
       <td>
         <span className={`status-badge ${session.status}`}>
-          {session.status === 'active' && '活跃'}
-          {session.status === 'completed' && '完成'}
-          {session.status === 'timeout' && '超时'}
-          {session.status === 'error' && '错误'}
+          {session.status === 'active' && t('emailSecurity.statusActive')}
+          {session.status === 'completed' && t('emailSecurity.statusCompleted')}
+          {session.status === 'timeout' && t('emailSecurity.statusTimeout')}
+          {session.status === 'error' && t('emailSecurity.statusError')}
         </span>
       </td>
       <td>
         {session.threat_level ? (
           <span className={`threat-badge threat-badge--${session.threat_level}`}>
-            {session.threat_level === 'safe' && '安全'}
-            {session.threat_level === 'low' && '低风险'}
-            {session.threat_level === 'medium' && '中风险'}
-            {session.threat_level === 'high' && '高风险'}
-            {session.threat_level === 'critical' && '危险'}
+            {session.threat_level === 'safe' && t('emailSecurity.threatSafe')}
+            {session.threat_level === 'low' && t('emailSecurity.threatLow')}
+            {session.threat_level === 'medium' && t('emailSecurity.threatMedium')}
+            {session.threat_level === 'high' && t('emailSecurity.threatHigh')}
+            {session.threat_level === 'critical' && t('emailSecurity.threatCritical')}
           </span>
         ) : (
           <span className="threat-badge threat-badge--none">-</span>
         )}
       </td>
       <td className="subject-cell" title={decodedSubject || undefined}>
-        {decodedSubject || (isEncrypted ? '(已加密)' : '(无主题)')}
+        {decodedSubject || (isEncrypted ? t('emailSecurity.encrypted') : t('emailSecurity.noSubject'))}
       </td>
-      <td className="col-sender" title={session.mail_from || undefined}>{session.mail_from || '未知'}</td>
+      <td className="col-sender" title={session.mail_from || undefined}>{session.mail_from || t('emailSecurity.unknown')}</td>
       <td className="col-recipient" title={session.rcpt_to.join(', ') || undefined}>
         {session.rcpt_to.length > 0
           ? session.rcpt_to.length > 1
             ? `${session.rcpt_to[0]} +${session.rcpt_to.length - 1}`
             : session.rcpt_to[0]
-          : '未知'}
+          : t('emailSecurity.unknown')}
       </td>
       <td className="num-cell">{formatBytes(session.total_bytes)}</td>
       <td className="num-cell">
@@ -350,10 +356,10 @@ const EmailRow = React.memo(({ session, detailHref }: { session: EmailSession; d
         <div className="cell-actions">
           {!isEncrypted ? (
             <Link to={detailHref} className="table-action">
-              详情
+              {t('emailSecurity.details')}
             </Link>
           ) : (
-            <span className="table-action disabled">已加密</span>
+            <span className="table-action disabled">{t('emailSecurity.encryptedShort')}</span>
           )}
           <RescanButton sessionId={session.id} disabled={isEncrypted} />
         </div>
@@ -370,6 +376,7 @@ const EmailRow = React.memo(({ session, detailHref }: { session: EmailSession; d
 const Quarantine = React.lazy(() => import('../quarantine/Quarantine'))
 
 export default function TrafficList() {
+  const { t } = useTranslation()
   const location = useLocation()
   const navigate = useNavigate()
   const initialParamsRef = useRef(new URLSearchParams(location.search))
@@ -412,10 +419,10 @@ export default function TrafficList() {
     const onStorage = () => setEnabledProtocols(getEnabledProtocols())
     window.addEventListener('storage', onStorage)
     // Also listen for custom events for Settings changes within the same tab
-    window.addEventListener('vigilyx:display-settings-changed', onStorage)
+    window.addEventListener(EVENTS.DISPLAY_SETTINGS_CHANGED, onStorage)
     return () => {
       window.removeEventListener('storage', onStorage)
-      window.removeEventListener('vigilyx:display-settings-changed', onStorage)
+      window.removeEventListener(EVENTS.DISPLAY_SETTINGS_CHANGED, onStorage)
     }
   }, [])
 
@@ -495,7 +502,7 @@ export default function TrafficList() {
         '6h': 6 * 60 * 60_000,
         '24h': 24 * 60 * 60_000,
       }
-      const since = new Date(Date.now() - ms[timeFilter]).toISOString()
+      const since = new Date(getServerNowMs() - ms[timeFilter]).toISOString()
       params.set('since', since)
     }
     // Traffic-direction filtering: read the inbound/outbound rules configured in Settings
@@ -633,9 +640,9 @@ export default function TrafficList() {
         }, 1500)
       }
     }
-    window.addEventListener('vigilyx:dashboard-refresh', onRefresh)
+    window.addEventListener(EVENTS.DASHBOARD_REFRESH, onRefresh)
     return () => {
-      window.removeEventListener('vigilyx:dashboard-refresh', onRefresh)
+      window.removeEventListener(EVENTS.DASHBOARD_REFRESH, onRefresh)
       if (wsRefreshTimerRef.current) {
         clearTimeout(wsRefreshTimerRef.current)
         wsRefreshTimerRef.current = 0
@@ -659,8 +666,8 @@ export default function TrafficList() {
   // Perform a full refresh after WebSocket reconnection to compensate for messages lost while disconnected
   useEffect(() => {
     const handler = () => fetchPage(pageRef.current)
-    window.addEventListener('vigilyx:ws-reconnected', handler)
-    return () => window.removeEventListener('vigilyx:ws-reconnected', handler)
+    window.addEventListener(EVENTS.WS_RECONNECTED, handler)
+    return () => window.removeEventListener(EVENTS.WS_RECONNECTED, handler)
   }, [fetchPage])
 
   // Cleanup on unmount
@@ -725,7 +732,7 @@ export default function TrafficList() {
             marginBottom: -1,
           }}
         >
-          邮件列表
+          {t('emailSecurity.emailList')}
         </button>
         <button
           onClick={() => setActiveTab('quarantine')}
@@ -737,26 +744,26 @@ export default function TrafficList() {
             marginBottom: -1,
           }}
         >
-          隔离区
+          {t('emailSecurity.quarantine')}
         </button>
       </div>
 
       {activeTab === 'quarantine' ? (
-        <React.Suspense fallback={<div style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>加载中...</div>}>
+        <React.Suspense fallback={<div style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>{t('emailSecurity.loading')}</div>}>
           <Quarantine />
         </React.Suspense>
       ) : (
       <>
       <div className="traffic-list-header">
         <div className="header-left">
-          <h1>邮件流量</h1>
+          <h1>{t('emailSecurity.emailTraffic')}</h1>
           <div className="email-stats">
             <span className="email-count">
-              共 {total} 条{fetching && ' · 刷新中...'}
+              {t('emailSecurity.totalCount', { count: total })}{fetching && ` · ${t('emailSecurity.refreshing')}`}
             </span>
             {contentFilter === 'ALL' && restoredCount > 0 && (
               <span className="email-hint">
-                {restoredCount} 已还原
+                {t('emailSecurity.restoredCount', { count: restoredCount })}
               </span>
             )}
           </div>
@@ -768,10 +775,10 @@ export default function TrafficList() {
               value={autoRefreshInterval}
               onChange={e => setAutoRefreshInterval(Number(e.target.value))}
             >
-              <option value={0}>手动刷新</option>
-              <option value={1000}>1s 自动</option>
-              <option value={3000}>3s 自动</option>
-              <option value={5000}>5s 自动</option>
+              <option value={0}>{t('emailSecurity.manualRefresh')}</option>
+              <option value={1000}>{t('emailSecurity.autoRefresh1s')}</option>
+              <option value={3000}>{t('emailSecurity.autoRefresh3s')}</option>
+              <option value={5000}>{t('emailSecurity.autoRefresh5s')}</option>
             </select>
             {autoRefreshInterval > 0 && <span className="refresh-indicator" />}
           </div>
@@ -779,14 +786,14 @@ export default function TrafficList() {
             <button
               className={`toggle-btn ${viewMode === 'card' ? 'active' : ''}`}
               onClick={() => setViewMode('card')}
-              title="卡片视图"
+              title={t('emailSecurity.cardView')}
             >
               ▦
             </button>
             <button
               className={`toggle-btn ${viewMode === 'table' ? 'active' : ''}`}
               onClick={() => setViewMode('table')}
-              title="表格视图"
+              title={t('emailSecurity.tableView')}
             >
               ≡
             </button>
@@ -798,19 +805,19 @@ export default function TrafficList() {
                 value={directionFilter}
                 onChange={(e) => changeDirection(e.target.value as DirectionFilter)}
               >
-                <option value="ALL">全部方向</option>
-                <option value="inbound">入站</option>
-                <option value="outbound">出站</option>
+                <option value="ALL">{t('emailSecurity.allDirections')}</option>
+                <option value="inbound">{t('emailSecurity.inbound')}</option>
+                <option value="outbound">{t('emailSecurity.outbound')}</option>
               </select>
               <select
                 className="filter-select"
                 value={authFilter}
                 onChange={(e) => changeAuth(e.target.value as AuthFilter)}
               >
-                <option value="ALL">全部认证</option>
-                <option value="WITH_AUTH">含认证</option>
-                <option value="AUTH_SUCCESS">认证成功</option>
-                <option value="AUTH_FAILED">认证失败</option>
+                <option value="ALL">{t('emailSecurity.allAuth')}</option>
+                <option value="WITH_AUTH">{t('emailSecurity.withAuth')}</option>
+                <option value="AUTH_SUCCESS">{t('emailSecurity.authSuccess')}</option>
+                <option value="AUTH_FAILED">{t('emailSecurity.authFailed')}</option>
               </select>
             </div>
             <div className="filter-divider" />
@@ -820,26 +827,26 @@ export default function TrafficList() {
                 value={contentFilter}
                 onChange={(e) => changeContent(e.target.value as ContentFilter)}
               >
-                <option value="ALL">全部流量</option>
-                <option value="WITH_CONTENT">已还原邮件</option>
+                <option value="ALL">{t('emailSecurity.allTraffic')}</option>
+                <option value="WITH_CONTENT">{t('emailSecurity.restoredEmails')}</option>
               </select>
               <select
                 className="filter-select"
                 value={timeFilter}
                 onChange={(e) => changeTime(e.target.value as TimeFilter)}
               >
-                <option value="ALL">全部时间</option>
-                <option value="30m">最近 30 分钟</option>
-                <option value="1h">最近 1 小时</option>
-                <option value="6h">最近 6 小时</option>
-                <option value="24h">最近 24 小时</option>
+                <option value="ALL">{t('emailSecurity.allTime')}</option>
+                <option value="30m">{t('emailSecurity.last30m')}</option>
+                <option value="1h">{t('emailSecurity.last1h')}</option>
+                <option value="6h">{t('emailSecurity.last6h')}</option>
+                <option value="24h">{t('emailSecurity.last24h')}</option>
               </select>
               <select
                 className="filter-select"
                 value={protocolFilter}
                 onChange={(e) => changeProtocol(e.target.value as Protocol | 'ALL')}
               >
-                <option value="ALL">全部协议</option>
+                <option value="ALL">{t('emailSecurity.allProtocols')}</option>
                 {enabledProtocols.includes('SMTP') && <option value="SMTP">SMTP</option>}
                 {enabledProtocols.includes('POP3') && <option value="POP3">POP3</option>}
                 {enabledProtocols.includes('IMAP') && <option value="IMAP">IMAP</option>}
@@ -849,11 +856,11 @@ export default function TrafficList() {
                 value={statusFilter}
                 onChange={(e) => changeStatus(e.target.value as SessionStatus | 'ALL')}
               >
-                <option value="ALL">全部状态</option>
-                <option value="active">活跃</option>
-                <option value="completed">已完成</option>
-                <option value="timeout">超时</option>
-                <option value="error">错误</option>
+                <option value="ALL">{t('emailSecurity.allStatuses')}</option>
+                <option value="active">{t('emailSecurity.statusActive')}</option>
+                <option value="completed">{t('emailSecurity.statusDone')}</option>
+                <option value="timeout">{t('emailSecurity.statusTimeout')}</option>
+                <option value="error">{t('emailSecurity.statusError')}</option>
               </select>
             </div>
           </div>
@@ -871,17 +878,17 @@ export default function TrafficList() {
             <table>
               <thead>
                 <tr>
-                  <th className="col-protocol">协议</th>
-                  <th className="col-direction">方向</th>
-                  <th className="col-status">状态</th>
-                  <th className="col-security">安全</th>
-                  <th>主题</th>
-                  <th className="col-sender">发件人</th>
-                  <th className="col-recipient">收件人</th>
-                  <th className="col-size num-cell">大小</th>
-                  <th className="col-attach num-cell">附件</th>
-                  <th className="col-time">时间</th>
-                  <th className="col-actions">操作</th>
+                  <th className="col-protocol">{t('emailSecurity.colProtocol')}</th>
+                  <th className="col-direction">{t('emailSecurity.colDirection')}</th>
+                  <th className="col-status">{t('emailSecurity.colStatus')}</th>
+                  <th className="col-security">{t('emailSecurity.colSecurity')}</th>
+                  <th>{t('emailSecurity.colSubject')}</th>
+                  <th className="col-sender">{t('emailSecurity.sender')}</th>
+                  <th className="col-recipient">{t('emailSecurity.recipient')}</th>
+                  <th className="col-size num-cell">{t('emailSecurity.colSize')}</th>
+                  <th className="col-attach num-cell">{t('emailSecurity.colAttachments')}</th>
+                  <th className="col-time">{t('emailSecurity.colTime')}</th>
+                  <th className="col-actions">{t('emailSecurity.colActions')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -899,22 +906,22 @@ export default function TrafficList() {
           </div>
           {contentFilter === 'WITH_CONTENT' ? (
             <>
-              <h3>暂无已还原邮件</h3>
+              <h3>{t('emailSecurity.noRestoredEmails')}</h3>
               <p>
-                仅未加密的 SMTP 邮件可在传输后还原。
-                {timeFilter !== 'ALL' && ' 尝试扩大时间范围。'}
+                {t('emailSecurity.noRestoredEmailsHint')}
+                {timeFilter !== 'ALL' && ` ${t('emailSecurity.tryExpandTimeRange')}`}
               </p>
               <button
                 className="view-all-btn"
                 onClick={() => changeContent('ALL')}
               >
-                查看全部流量
+                {t('emailSecurity.viewAllTraffic')}
               </button>
             </>
           ) : (
             <>
-              <h3>暂无邮件</h3>
-              <p>等待邮件流量，或调整筛选条件</p>
+              <h3>{t('emailSecurity.noEmails')}</h3>
+              <p>{t('emailSecurity.noEmailsHint')}</p>
             </>
           )}
         </div>
@@ -929,17 +936,17 @@ export default function TrafficList() {
           <table>
             <thead>
               <tr>
-                <th className="col-protocol">协议</th>
-                <th className="col-direction">方向</th>
-                <th className="col-status">状态</th>
-                <th className="col-security">安全</th>
-                <th>主题</th>
-                <th>发件人</th>
-                <th>收件人</th>
-                <th className="col-size num-cell">大小</th>
-                <th className="col-attach num-cell">附件</th>
-                <th className="col-time">时间</th>
-                <th className="col-actions">操作</th>
+                <th className="col-protocol">{t('emailSecurity.colProtocol')}</th>
+                <th className="col-direction">{t('emailSecurity.colDirection')}</th>
+                <th className="col-status">{t('emailSecurity.colStatus')}</th>
+                <th className="col-security">{t('emailSecurity.colSecurity')}</th>
+                <th>{t('emailSecurity.colSubject')}</th>
+                <th>{t('emailSecurity.sender')}</th>
+                <th>{t('emailSecurity.recipient')}</th>
+                <th className="col-size num-cell">{t('emailSecurity.colSize')}</th>
+                <th className="col-attach num-cell">{t('emailSecurity.colAttachments')}</th>
+                <th className="col-time">{t('emailSecurity.colTime')}</th>
+                <th className="col-actions">{t('emailSecurity.colActions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -956,23 +963,23 @@ export default function TrafficList() {
         <div className="pagination-controls">
           <div className="pagination-info">
             <span className="pagination-text">
-              第 <b>{page}</b> / {totalPages} 页，共 {total} 条
+              {t('emailSecurity.paginationInfo', { page, totalPages, total })}
             </span>
             <select
               className="pagination-size-select"
               value={pageSize}
               onChange={e => { setPageSize(Number(e.target.value)); setPage(1) }}
             >
-              <option value={10}>10 条/页</option>
-              <option value={20}>20 条/页</option>
-              <option value={50}>50 条/页</option>
+              <option value={10}>{t('emailSecurity.perPage', { count: 10 })}</option>
+              <option value={20}>{t('emailSecurity.perPage', { count: 20 })}</option>
+              <option value={50}>{t('emailSecurity.perPage', { count: 50 })}</option>
             </select>
           </div>
 
           {totalPages > 1 && (
             <div className="pagination-buttons">
-              <button className="pagination-btn" disabled={page <= 1} onClick={() => fetchPage(1)} title="首页">&laquo;</button>
-              <button className="pagination-btn" disabled={page <= 1} onClick={() => fetchPage(page - 1)} title="上一页">&lsaquo;</button>
+              <button className="pagination-btn" disabled={page <= 1} onClick={() => fetchPage(1)} title={t('emailSecurity.firstPage')}>&laquo;</button>
+              <button className="pagination-btn" disabled={page <= 1} onClick={() => fetchPage(page - 1)} title={t('emailSecurity.prevPage')}>&lsaquo;</button>
 
               {(() => {
                 const items: (number | '...')[] = []
@@ -1002,14 +1009,14 @@ export default function TrafficList() {
                 )
               })()}
 
-              <button className="pagination-btn" disabled={page >= totalPages} onClick={() => fetchPage(page + 1)} title="下一页">&rsaquo;</button>
-              <button className="pagination-btn" disabled={page >= totalPages} onClick={() => fetchPage(totalPages)} title="末页">&raquo;</button>
+              <button className="pagination-btn" disabled={page >= totalPages} onClick={() => fetchPage(page + 1)} title={t('emailSecurity.nextPage')}>&rsaquo;</button>
+              <button className="pagination-btn" disabled={page >= totalPages} onClick={() => fetchPage(totalPages)} title={t('emailSecurity.lastPage')}>&raquo;</button>
             </div>
           )}
 
           {totalPages > 5 && (
             <div className="pagination-jump">
-              <span className="pagination-jump-label">跳转</span>
+              <span className="pagination-jump-label">{t('emailSecurity.jumpTo')}</span>
               <input
                 type="text"
                 className="pagination-jump-input"
@@ -1023,7 +1030,7 @@ export default function TrafficList() {
                 }}
                 placeholder={`1-${totalPages}`}
               />
-              <span className="pagination-jump-label">页</span>
+              <span className="pagination-jump-label">{t('emailSecurity.pageUnit')}</span>
             </div>
           )}
         </div>

@@ -34,7 +34,7 @@ pub struct EmailAlertConfig {
    /// Minimum alert level: "medium" | "high" | "critical"
     #[serde(default = "default_min_alert_level")]
     pub min_threat_level: String,
-   /// Notify original recipient
+   /// Notify original internal recipients only
     #[serde(default)]
     pub notify_recipient: bool,
    /// Notify admin

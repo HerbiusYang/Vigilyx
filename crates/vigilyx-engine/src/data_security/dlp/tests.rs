@@ -7,21 +7,21 @@ use super::*;
 #[test]
 fn test_scan_text_with_credit_card() {
    // Luhn-valid test card number
-    let text = "请将款项汇入 4532015112830366 这Account";
+    let text = "请将款项汇入 4111111111111111 这Account";
     let result = scan_text(text);
     assert!(result.matches.contains(&"credit_card".to_string()));
 }
 
 #[test]
 fn test_scan_text_with_id_number() {
-    let text = "ID cardNumberCode/Digit是 110101199001011237";
+    let text = "ID cardNumberCode/Digit是 000000200001010005";
     let result = scan_text(text);
     assert!(result.matches.contains(&"id_number".to_string()));
 }
 
 #[test]
 fn test_scan_text_with_phones() {
-    let text = "联系人: 13812345678, 15987654321, 18611112222";
+    let text = "联系人: 13800138000, 13900139000, 14700147000";
     let result = scan_text(text);
     assert!(result.matches.contains(&"phone_number".to_string()));
 }
@@ -35,7 +35,7 @@ fn test_scan_text_clean_content() {
 
 #[test]
 fn test_credit_card_luhn_valid() {
-    assert!(luhn_check("4532015112830366"));
+    assert!(luhn_check("4111111111111111"));
 }
 
 #[test]
@@ -105,7 +105,7 @@ fn test_api_key_no_longer_detected() {
 
 #[test]
 fn test_scan_text_with_email() {
-    let text = "客户Name单: zhangsan@example.com, lisi@corp.com, wangwu@bank.cn";
+    let text = "客户Name单: zhangsan@example.com, lisi@example.net, wangwu@example.org";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"email_address".to_string()),
@@ -115,7 +115,7 @@ fn test_scan_text_with_email() {
 
 #[test]
 fn test_email_excludes_system_addresses() {
-    let text = "Autoemail noreply@company.com And system@internal.com And postmaster@corp.com";
+    let text = "Autoemail noreply@example.com And system@example.net And postmaster@example.org";
     let emails = find_emails(text);
     assert!(
         emails.is_empty(),
@@ -126,9 +126,9 @@ fn test_email_excludes_system_addresses() {
 
 #[test]
 fn test_email_masking() {
-    let emails = find_emails("user@domain.com");
+    let emails = find_emails("user@example.test");
     assert_eq!(emails.len(), 1);
-    assert_eq!(emails[0], "u***@domain.com");
+    assert_eq!(emails[0], "u***@example.test");
 }
 
    // NumberTest
@@ -163,7 +163,7 @@ fn test_passport_lowercase_match() {
 
 #[test]
 fn test_scan_text_with_social_credit_code() {
-    let text = "公司信用代Code/Digit 911100007109310938";
+    let text = "公司信用代Code/Digit A0000000000000000M";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"social_credit_code".to_string()),
@@ -173,9 +173,9 @@ fn test_scan_text_with_social_credit_code() {
 
 #[test]
 fn test_social_credit_code_masking() {
-    let codes = find_social_credit_codes("911100007109310938");
+    let codes = find_social_credit_codes("A0000000000000000M");
     assert_eq!(codes.len(), 1);
-    assert_eq!(codes[0], "9111****0938");
+    assert_eq!(codes[0], "A000****000M");
 }
 
 #[test]
@@ -280,7 +280,7 @@ fn test_cvv_no_false_positive_without_context() {
 #[test]
 fn test_scan_text_truncates_oversized_body() {
     let padding = "A".repeat(DLP_MAX_SCAN_LEN + 100);
-    let text = format!("{} 4532015112830366", padding);
+    let text = format!("{} 4111111111111111", padding);
     let result = scan_text(&text);
     assert!(
         !result.matches.contains(&"credit_card".to_string()),
@@ -291,7 +291,7 @@ fn test_scan_text_truncates_oversized_body() {
 #[test]
 fn test_scan_text_detects_within_limit() {
     let padding = "B".repeat(1000);
-    let text = format!("{} 4532015112830366", padding);
+    let text = format!("{} 4111111111111111", padding);
     let result = scan_text(&text);
     assert!(
         result.matches.contains(&"credit_card".to_string()),
@@ -310,7 +310,7 @@ fn test_scan_text_truncation_preserves_utf8_boundary() {
 
 #[test]
 fn test_credit_card_and_bank_card_no_duplicate() {
-    let text = "Card number 4532015112830366";
+    let text = "Card number 4111111111111111";
     let result = scan_text(text);
     assert!(result.matches.contains(&"credit_card".to_string()));
     assert!(
@@ -541,7 +541,7 @@ fn test_regex_set_clean_text_fast_path() {
 
 #[test]
 fn test_regex_set_only_runs_matched_patterns() {
-    let text = "Card number 4532015112830366";
+    let text = "Card number 4111111111111111";
     let result = scan_text(text);
     assert!(result.matches.contains(&"credit_card".to_string()));
     assert_eq!(result.matches.len(), 1, "Only credit_card should match");
@@ -938,7 +938,7 @@ fn test_business_license_no_false_positive() {
 
 #[test]
 fn test_combined_c4_c3_data() {
-    let text = "客户Info: ID card 110101199001011237, Password: secret123, Monthly salary: 25000Yuan, Spouse: 李芳";
+    let text = "客户Info: ID card 000000200001010005, Password: secret123, Monthly salary: 25000Yuan, Spouse: 李芳";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -998,7 +998,7 @@ fn test_credit_card_luhn_invalid_rejects() {
 
 #[test]
 fn test_credit_card_with_spaces() {
-    let text = "Card number 4532 0151 1283 0366";
+    let text = "Card number 4111 1111 1111 1111";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"credit_card".to_string()),
@@ -1008,7 +1008,7 @@ fn test_credit_card_with_spaces() {
 
 #[test]
 fn test_credit_card_with_dashes() {
-    let text = "Card number 4532-0151-1283-0366";
+    let text = "Card number 4111-1111-1111-1111";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"credit_card".to_string()),
@@ -1018,17 +1018,17 @@ fn test_credit_card_with_dashes() {
 
 #[test]
 fn test_credit_card_masking_format() {
-    let (cards, _raw) = find_credit_cards("4532015112830366");
+    let (cards, _raw) = find_credit_cards("4111111111111111");
     assert_eq!(cards.len(), 1);
     assert_eq!(
-        cards[0], "4532****0366",
+        cards[0], "4111****1111",
         "Card masking should show first 4 + **** + last 4"
     );
 }
 
 #[test]
 fn test_id_number_with_x_suffix() {
-    let text = "ID card 11010119900101004X";
+    let text = "ID card 000000199001010042";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -1038,7 +1038,7 @@ fn test_id_number_with_x_suffix() {
 
 #[test]
 fn test_id_number_lowercase_x() {
-    let text = "证件Number 11010119900101004x";
+    let text = "证件Number 000000199001010042";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -1048,7 +1048,7 @@ fn test_id_number_lowercase_x() {
 
 #[test]
 fn test_id_number_17_digit_rejected() {
-    let text = "Serial number 1101011990010112";
+    let text = "Serial number 00000020000101000";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"id_number".to_string()),
@@ -1058,17 +1058,17 @@ fn test_id_number_17_digit_rejected() {
 
 #[test]
 fn test_id_number_masking_format() {
-    let ids = find_chinese_ids("110101199001011237");
+    let ids = find_chinese_ids("000000200001010005");
     assert_eq!(ids.len(), 1);
     assert_eq!(
-        ids[0], "110101****1237",
+        ids[0], "000000****0005",
         "ID masking should show first 6 + **** + last 4"
     );
 }
 
 #[test]
 fn test_phone_two_numbers_no_alert() {
-    let text = "联系电话: 13812345678, 15987654321";
+    let text = "联系电话: 13800138000, 13900139000";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"phone_number".to_string()),
@@ -1078,7 +1078,7 @@ fn test_phone_two_numbers_no_alert() {
 
 #[test]
 fn test_phone_exact_three_trigger() {
-    let text = "Name单: 13812345678, 15987654321, 18611112222";
+    let text = "Name单: 13800138000, 13900139000, 14700147000";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"phone_number".to_string()),
@@ -1098,7 +1098,7 @@ fn test_phone_invalid_prefix_12x() {
 
 #[test]
 fn test_phone_duplicate_numbers_deduped() {
-    let text = "紧急联系 13812345678 或 13812345678 或 13812345678";
+    let text = "紧急联系 13800138000 或 13800138000 或 13800138000";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"phone_number".to_string()),
@@ -1108,7 +1108,7 @@ fn test_phone_duplicate_numbers_deduped() {
 
 #[test]
 fn test_phone_three_unique_numbers_trigger() {
-    let text = "紧急联系 13812345678 或 15987654321 或 18611112222";
+    let text = "紧急联系 13800138000 或 13900139000 或 14700147000";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"phone_number".to_string()),
@@ -1118,17 +1118,17 @@ fn test_phone_three_unique_numbers_trigger() {
 
 #[test]
 fn test_phone_masking_format() {
-    let phones = find_chinese_phones("13812345678");
+    let phones = find_chinese_phones("13800138000");
     assert_eq!(phones.len(), 1);
     assert_eq!(
-        phones[0], "138****5678",
+        phones[0], "138****8000",
         "Phone masking should show first 3 + **** + last 4"
     );
 }
 
 #[test]
 fn test_email_two_addresses_no_alert() {
-    let text = "Sendgiving alice@example.com And bob@corp.com";
+    let text = "Sendgiving alice@example.com And bob@example.net";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"email_address".to_string()),
@@ -1138,7 +1138,8 @@ fn test_email_two_addresses_no_alert() {
 
 #[test]
 fn test_email_mixed_system_and_real() {
-    let text = "noreply@company.com, admin@internal.com, user1@bank.com, user2@corp.com";
+    let text =
+        "noreply@example.com, admin@example.net, user1@example.org, user2@example.test";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"email_address".to_string()),
@@ -1148,7 +1149,8 @@ fn test_email_mixed_system_and_real() {
 
 #[test]
 fn test_email_complex_addresses() {
-    let text = "recipient: first.last+tag@sub.domain.co.uk, user_name@example.com, test-addr@company.cn";
+    let text =
+        "recipient: first.last+tag@sub.example.test, user_name@example.com, test-addr@example.org";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"email_address".to_string()),
@@ -1168,7 +1170,7 @@ fn test_bank_card_17_digit_luhn_valid() {
 
 #[test]
 fn test_multiple_credit_cards_dedup() {
-    let text = "主卡 4532015112830366，副卡 4532015112830366";
+    let text = "主卡 4111111111111111，副卡 4111111111111111";
     let result = scan_text(text);
     assert!(result.matches.contains(&"credit_card".to_string()));
     assert!(
@@ -2022,7 +2024,7 @@ fn test_credential_real_password_still_detected() {
 
 #[test]
 fn test_items_by_jrt_level_distribution() {
-    let text = "Password：abc123, ID card 110101199001011237, Monthly salary: 25000Yuan, Employee ID: E001";
+    let text = "Password：abc123, ID card 000000200001010005, Monthly salary: 25000Yuan, Employee ID: E001";
     let result = scan_text(text);
     let levels = result.items_by_jrt_level();
     assert!(levels.get(&4).unwrap_or(&0) >= &1, "Should have C4 items");
@@ -2031,7 +2033,7 @@ fn test_items_by_jrt_level_distribution() {
 
 #[test]
 fn test_count_items_at_level_accumulation() {
-    let text = "ID card 110101199001011237, Monthly salary: 25000Yuan, Spouse: Li Si";
+    let text = "ID card 000000200001010005, Monthly salary: 25000Yuan, Spouse: Li Si";
     let result = scan_text(text);
     let c3_plus = result.count_items_at_level(3);
     assert!(
@@ -2072,7 +2074,7 @@ fn test_realistic_hr_email() {
 #[test]
 fn test_realistic_loan_approval() {
     let text = "贷款审批Result 通知：\n\
-        客户ID card: 310101198805151238\n\
+        客户ID card: 000000198805150003\n\
         授信额度: 500000Yuan\n\
         贷款总额: 300000Yuan\n\
          款Amount: 5,500Yuan/月";
@@ -2115,11 +2117,11 @@ fn test_realistic_insurance_claim() {
 fn test_realistic_customer_kyc() {
     let text = "KYC 尽调报告：\n\
         客户: Zhang San\n\
-        ID cardNumber: 440305199201011234\n\
-        Mobile phone: 13912345678, 15888887777, 18666665555\n\
+        ID cardNumber: 000000199201010004\n\
+        Mobile phone: 13600136000, 15100151000, 15200152000\n\
         Address: 广东省深圳City南山District科技南Road88Number\n\
         Spouse: Li Si\n\
-        公司统1社会信用代Code/Digit: 91440300MA5F3L2K9R";
+        公司统1社会信用代Code/Digit: A00000MA000000000B";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -2201,7 +2203,7 @@ fn test_very_long_number_no_crash() {
 
 #[test]
 fn test_mixed_cjk_and_latin_sensitive_data() {
-    let text = "Client ID: 110101199001011237, password: Test@123, contact: 13812345678, 15987654321, 18611112222";
+    let text = "Client ID: 000000200001010005, password: Test@123, contact: 13800138000, 13900139000, 14700147000";
     let result = scan_text(text);
     assert!(result.matches.contains(&"id_number".to_string()));
     assert!(result.matches.contains(&"credential_leak".to_string()));
@@ -2260,9 +2262,9 @@ fn test_address_multiple_addresses() {
 fn test_combined_all_jrt_levels() {
     let text = "客户Info汇总：\n\
         Password：abc123\n\
-        ID card: 110101199001011237\n\
+        ID card: 000000200001010005\n\
         Employee ID: E001\n\
-        公司信用代Code/Digit 911100007109310938";
+        公司信用代Code/Digit A0000000000000000M";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"credential_leak".to_string()),
@@ -2302,7 +2304,7 @@ fn test_combined_multiple_c4_patterns() {
 
 #[test]
 fn test_detail_item_count_matches_expected() {
-    let text = "联系人: 13812345678, 15987654321, 18611112222, 17700001111";
+    let text = "联系人: 13800138000, 13900139000, 14700147000, 15000150000";
     let result = scan_text(text);
     assert!(result.matches.contains(&"phone_number".to_string()));
     let detail = result.details.iter().find(|(k, _)| k == "phone_number");
@@ -2318,7 +2320,7 @@ fn test_detail_item_count_matches_expected() {
 
 #[test]
 fn test_masking_all_values_masked() {
-    let text = "ID card 110101199001011237 Password：secret123";
+    let text = "ID card 000000200001010005 Password：secret123";
     let result = scan_text(text);
     for (_pattern, values) in &result.details {
         for val in values {
@@ -2328,7 +2330,7 @@ fn test_masking_all_values_masked() {
                 val
             );
             assert!(
-                !val.contains("110101199001011237"),
+                !val.contains("000000200001010005"),
                 "Should not contain unmasked ID"
             );
             assert!(
@@ -2341,10 +2343,10 @@ fn test_masking_all_values_masked() {
 
 #[test]
 fn test_masking_id_preserves_region_code() {
-    let ids = find_chinese_ids("440305199201011234");
-    assert_eq!(ids[0], "440305****1234");
+    let ids = find_chinese_ids("000000199201010004");
+    assert_eq!(ids[0], "000000****0004");
     assert!(
-        ids[0].starts_with("440305"),
+        ids[0].starts_with("000000"),
         "Masking should preserve region code"
     );
 }
@@ -2370,8 +2372,8 @@ fn test_masking_passport_format() {
 
 #[test]
 fn test_masking_social_credit_code_format() {
-    let codes = find_social_credit_codes("911100007109310938");
-    assert_eq!(codes[0], "9111****0938");
+    let codes = find_social_credit_codes("A0000000000000000M");
+    assert_eq!(codes[0], "A000****000M");
 }
 
 #[test]
@@ -2631,7 +2633,7 @@ fn test_no_fp_english_business_email() {
 
 #[test]
 fn test_phone_dedup_five_same_no_trigger() {
-    let text = "13812345678 13812345678 13812345678 13812345678 13812345678";
+    let text = "13800138000 13800138000 13800138000 13800138000 13800138000";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"phone_number".to_string()),
@@ -2641,7 +2643,7 @@ fn test_phone_dedup_five_same_no_trigger() {
 
 #[test]
 fn test_phone_dedup_two_unique_two_dup_no_trigger() {
-    let text = "13812345678 15987654321 13812345678 15987654321";
+    let text = "13800138000 13900139000 13800138000 13900139000";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"phone_number".to_string()),
@@ -2651,7 +2653,7 @@ fn test_phone_dedup_two_unique_two_dup_no_trigger() {
 
 #[test]
 fn test_phone_dedup_three_unique_with_dups_trigger() {
-    let text = "13812345678 15987654321 18611112222 13812345678";
+    let text = "13800138000 13900139000 14700147000 13800138000";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"phone_number".to_string()),
@@ -2667,7 +2669,7 @@ fn test_phone_dedup_three_unique_with_dups_trigger() {
 
 #[test]
 fn test_email_dedup_same_address_case_insensitive() {
-    let text = "User@Corp.COM user@corp.com USER@CORP.COM other1@test.com other2@test.com";
+    let text = "User@Ops.EXAMPLE.COM user@ops.example.com USER@OPS.EXAMPLE.COM other1@example.net other2@example.org";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"email_address".to_string()),
@@ -2677,7 +2679,7 @@ fn test_email_dedup_same_address_case_insensitive() {
 
 #[test]
 fn test_email_dedup_all_same_no_trigger() {
-    let text = "user@corp.com user@corp.com user@corp.com user@corp.com user@corp.com";
+    let text = "user@ops.example.com user@ops.example.com user@ops.example.com user@ops.example.com user@ops.example.com";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"email_address".to_string()),
@@ -2774,7 +2776,7 @@ fn test_dlp_result_is_empty_on_clean() {
 
 #[test]
 fn test_dlp_result_details_structure() {
-    let text = "ID card 110101199001011237, Password：secret123";
+    let text = "ID card 000000200001010005, Password：secret123";
     let result = scan_text(text);
     assert!(
         result.details.len() >= 2,
@@ -2788,7 +2790,7 @@ fn test_dlp_result_details_structure() {
 
 #[test]
 fn test_matches_and_details_consistent() {
-    let text = "Password：abc123 ID card 110101199001011237";
+    let text = "Password：abc123 ID card 000000200001010005";
     let result = scan_text(text);
     let detail_keys: Vec<&str> = result.details.iter().map(|(k, _)| k.as_str()).collect();
     for m in &result.matches {
@@ -2908,9 +2910,9 @@ fn test_realistic_payroll_batch() {
 #[test]
 fn test_realistic_customer_data_export() {
     let text = "客户dataExport（共3Item）：\n\
-        1. Name: Zhang San, ID card: 110101199001011237, Mobile phone: 13812345678\n\
-        2. Name: Li Si, ID card: 440305199201011234, Mobile phone: 15987654321\n\
-        3. Name: 王5, ID card: 310101198805151238, Mobile phone: 18611112222";
+        1. Name: Zhang San, ID card: 000000200001010005, Mobile phone: 13800138000\n\
+        2. Name: Li Si, ID card: 000000199201010004, Mobile phone: 13900139000\n\
+        3. Name: 王5, ID card: 000000198805150003, Mobile phone: 14700147000";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -2956,7 +2958,7 @@ fn test_realistic_wire_transfer() {
 #[test]
 fn test_realistic_compliance_report() {
     let text = "反洗钱Suspicious交易报告：\n\
-        客户张某（ID card: 320102198501011234）\n\
+        客户张某（ID card: 000000198501010001）\n\
         近30Sunday转入Amount: 3,500,000 USD，转出Amount: 2,800,000 USD\n\
         涉及Account number：62220212345678\n\
         风控标签: 失信被Executeline人、line政处罚在查";
@@ -3090,7 +3092,7 @@ fn test_no_fp_financial_regulation_text() {
 
 #[test]
 fn test_phone_not_matched_inside_id_number() {
-    let text = "ID cardNumberCode/Digit是 110101199001011237";
+    let text = "ID cardNumberCode/Digit是 000000200001010005";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -3104,7 +3106,7 @@ fn test_phone_not_matched_inside_id_number() {
 
 #[test]
 fn test_phone_not_matched_inside_bank_card() {
-    let text = "Card number 4532015112830366";
+    let text = "Card number 4111111111111111";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"phone_number".to_string()),
@@ -3114,14 +3116,14 @@ fn test_phone_not_matched_inside_bank_card() {
 
 #[test]
 fn test_phone_standalone_still_works() {
-    let text = "联系电话 13812345678 或发email联系";
+    let text = "联系电话 13800138000 或发email联系";
     let phones = find_chinese_phones(text);
     assert_eq!(phones.len(), 1, "Standalone phone should be detected");
 }
 
 #[test]
 fn test_phone_after_chinese_char_works() {
-    let text = "电话13812345678请联系 电话15987654321请联系 电话18611112222请联系";
+    let text = "电话13800138000请联系 电话13900139000请联系 电话14700147000请联系";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"phone_number".to_string()),
@@ -3131,7 +3133,7 @@ fn test_phone_after_chinese_char_works() {
 
 #[test]
 fn test_phone_in_comma_separated_list() {
-    let text = "13812345678,15987654321,18611112222";
+    let text = "13800138000,13900139000,14700147000";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"phone_number".to_string()),
@@ -3141,8 +3143,8 @@ fn test_phone_in_comma_separated_list() {
 
 #[test]
 fn test_phone_mixed_with_ids_correct_count() {
-    let text = "ID card: 110101199001011237, 440305199201011234, 310101198805151238\n\
-        Mobile phone: 13812345678, 15987654321, 18611112222";
+    let text = "ID card: 000000200001010005, 000000199201010004, 000000198805150003\n\
+        Mobile phone: 13800138000, 13900139000, 14700147000";
     let result = scan_text(text);
     assert!(result.matches.contains(&"id_number".to_string()));
     assert!(result.matches.contains(&"phone_number".to_string()));
@@ -3159,20 +3161,20 @@ fn test_phone_mixed_with_ids_correct_count() {
 
 #[test]
 fn test_id_check_digit_valid() {
-    assert!(chinese_id_check("110101199001011237"));
-    assert!(chinese_id_check("440305199201011234"));
-    assert!(chinese_id_check("320102198501011234"));
+    assert!(chinese_id_check("000000200001010005"));
+    assert!(chinese_id_check("000000199201010004"));
+    assert!(chinese_id_check("000000198501010001"));
 }
 
 #[test]
 fn test_id_check_digit_x() {
-    assert!(chinese_id_check("11010519491231002X"));
+    assert!(chinese_id_check("000000194912310027"));
 }
 
 #[test]
 fn test_id_check_digit_invalid() {
-    assert!(!chinese_id_check("110101199001011230"));
-    assert!(!chinese_id_check("110101199001011231"));
+    assert!(!chinese_id_check("000000200001010000"));
+    assert!(!chinese_id_check("000000200001010001"));
 }
 
 #[test]
@@ -3187,12 +3189,12 @@ fn test_id_random_18_digit_rejected() {
 
 #[test]
 fn test_id_check_digit_lowercase_x() {
-    assert!(chinese_id_check("11010519491231002x"));
+    assert!(chinese_id_check("000000194912310027"));
 }
 
 #[test]
 fn test_id_valid_ids_detected() {
-    let text = "客户ID cardNumber: 110101199001011237";
+    let text = "客户ID cardNumber: 000000200001010005";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -3202,7 +3204,7 @@ fn test_id_valid_ids_detected() {
 
 #[test]
 fn test_id_invalid_check_digit_not_detected() {
-    let text = "Serial number 110101199001011230";
+    let text = "Serial number 000000200001010000";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"id_number".to_string()),
@@ -3214,17 +3216,17 @@ fn test_id_invalid_check_digit_not_detected() {
 
 #[test]
 fn test_social_credit_check_valid() {
-    assert!(social_credit_check("911100007109310938"));
+    assert!(social_credit_check("A0000000000000000M"));
 }
 
 #[test]
 fn test_social_credit_check_invalid() {
-    assert!(!social_credit_check("91110000710931093A"));
+    assert!(!social_credit_check("A0000000000000000A"));
 }
 
 #[test]
 fn test_social_credit_valid_detected() {
-    let text = "公司信用代Code/Digit 911100007109310938";
+    let text = "公司信用代Code/Digit A0000000000000000M";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"social_credit_code".to_string()),
@@ -3234,7 +3236,7 @@ fn test_social_credit_valid_detected() {
 
 #[test]
 fn test_social_credit_invalid_check_rejected() {
-    let text = "Serial number 91110000710931093A";
+    let text = "Serial number A0000000000000000A";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"social_credit_code".to_string()),
@@ -3254,7 +3256,7 @@ fn test_social_credit_random_18_char_rejected() {
 
 #[test]
 fn test_social_credit_ma_prefix_valid() {
-    let text = "社会信用代Code/Digit 91440300MA5F3L2K9R";
+    let text = "社会信用代Code/Digit A00000MA000000000B";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"social_credit_code".to_string()),
@@ -3266,7 +3268,7 @@ fn test_social_credit_ma_prefix_valid() {
 
 #[test]
 fn test_e2e_no_cross_contamination() {
-    let text = "only有1ID card 110101199001011237";
+    let text = "only有1ID card 000000200001010005";
     let result = scan_text(text);
     assert_eq!(
         result.matches.len(),
@@ -3281,7 +3283,7 @@ fn test_e2e_all_c4_patterns_independent() {
     let c4_texts = [
         ("Password：secret123", "credential_leak"),
         ("CVV: 789", "cvv_code"),
-        ("Card number 4532015112830366", "credit_card"),
+        ("Card number 4111111111111111", "credit_card"),
     ];
     for (text, expected) in c4_texts {
         let result = scan_text(text);
@@ -3359,7 +3361,7 @@ fn test_coremail_typical_body_no_fp() {
 #[test]
 fn test_coremail_signature_no_fp() {
     let text =
-        "此致\n\nZhang San\nRiskManagement部\n电话: 13812345678\nemail: zhangsan@corp.com";
+        "此致\n\nZhang San\nRiskManagement部\n电话: 13800138000\nemail: zhangsan@example.com";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"phone_number".to_string()),
@@ -3376,8 +3378,8 @@ fn test_coremail_forwarded_customer_data() {
     let text = "-------- 转发Message --------\n\
         客户Infoif下：\n\
         Name：Zhang San\n\
-        ID card：110101199001011237\n\
-        Mobile phone：13812345678, 15987654321, 18611112222\n\
+        ID card：000000200001010005\n\
+        Mobile phone：13800138000, 13900139000, 14700147000\n\
         Address：北BeijingCity朝阳District建国Road88Number\n\
         Monthly salary：25000Yuan";
     let result = scan_text(text);
@@ -3442,13 +3444,13 @@ fn test_bank_account_acct_abbreviation() {
 fn test_scan_many_patterns_no_panic() {
     let text = "Password：abc123\n\
         CVV: 789\n\
-        ID card 110101199001011237\n\
-        4532015112830366\n\
-        Mobile phone 13812345678 15987654321 18611112222\n\
+        ID card 000000200001010005\n\
+        4111111111111111\n\
+        Mobile phone 13800138000 13900139000 14700147000\n\
         Address 北BeijingCity朝阳District建国Road88Number\n\
-        email a@t.com b@t.com c@t.com\n\
+        email a@example.test b@example.test c@example.test\n\
         护照 E12345678\n\
-        信用代Code/Digit 911100007109310938\n\
+        信用代Code/Digit A0000000000000000M\n\
         SWIFT BKCHCNBJ\n\
         纳税 110108MA12345N9\n\
         IBAN DE89370400440532013000\n\
@@ -3482,7 +3484,7 @@ fn test_scan_many_patterns_no_panic() {
 
 #[test]
 fn test_credit_card_visa_prefix() {
-    let text = "Card number 4532015112830366";
+    let text = "Card number 4111111111111111";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"credit_card".to_string()),
@@ -3531,7 +3533,7 @@ fn test_credit_card_bin_1xxx_rejected() {
 
 #[test]
 fn test_credit_card_bin_validation_unit() {
-    assert!(is_valid_card_bin("4532015112830366"), "Visa (4)");
+    assert!(is_valid_card_bin("4111111111111111"), "Visa (4)");
     assert!(is_valid_card_bin("5100000000000008"), "Mastercard (51)");
     assert!(is_valid_card_bin("6200000000000005"), "UnionPay (62)");
     assert!(is_valid_card_bin("3400000000000000"), "Amex (34)");
@@ -3619,9 +3621,9 @@ fn test_bank_account_payment_transfer_keyword() {
 #[test]
 fn test_attack_scenario_data_exfiltration_draft() {
     let text = "Batch客户data (请速查收):\n\
-        Zhang San 110101199001011237 Card number 4532015112830366 Monthly salary:35000Yuan\n\
-        Li Si 440305199201011234 Card number 5100000000000008 Monthly salary:28000Yuan\n\
-        王5 320102198501011234 Card number 6200000000000005 Monthly salary:42000Yuan";
+        Zhang San 000000200001010005 Card number 4111111111111111 Monthly salary:35000Yuan\n\
+        Li Si 000000199201010004 Card number 5100000000000008 Monthly salary:28000Yuan\n\
+        王5 000000198501010001 Card number 6200000000000005 Monthly salary:42000Yuan";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -3741,10 +3743,10 @@ fn test_normalize_strips_soft_hyphen() {
 #[test]
 fn test_normalize_fullwidth_digits() {
     let result = normalize_for_dlp(
-        "\u{FF11}\u{FF13}\u{FF18}\u{FF11}\u{FF12}\u{FF13}\u{FF14}\u{FF15}\u{FF16}\u{FF17}\u{FF18}",
+        "\u{FF11}\u{FF13}\u{FF18}\u{FF10}\u{FF10}\u{FF11}\u{FF13}\u{FF18}\u{FF10}\u{FF10}\u{FF10}",
     );
     assert_eq!(
-        result, "13812345678",
+        result, "13800138000",
         "Fullwidth digits should be converted"
     );
 }
@@ -3786,7 +3788,7 @@ fn test_normalize_empty_string() {
 
 #[test]
 fn test_evasion_zero_width_in_phone() {
-    let text = "联系 1\u{200B}3\u{200B}8\u{200B}1\u{200B}2\u{200B}3\u{200B}4\u{200B}5\u{200B}6\u{200B}7\u{200B}8 And 1\u{200B}5\u{200B}9\u{200B}8\u{200B}7\u{200B}6\u{200B}5\u{200B}4\u{200B}3\u{200B}2\u{200B}1 And 1\u{200B}8\u{200B}6\u{200B}1\u{200B}1\u{200B}1\u{200B}1\u{200B}2\u{200B}2\u{200B}2\u{200B}2";
+    let text = "联系 1\u{200B}3\u{200B}8\u{200B}0\u{200B}0\u{200B}1\u{200B}3\u{200B}8\u{200B}0\u{200B}0\u{200B}0 And 1\u{200B}3\u{200B}9\u{200B}0\u{200B}0\u{200B}1\u{200B}3\u{200B}9\u{200B}0\u{200B}0\u{200B}0 And 1\u{200B}4\u{200B}7\u{200B}0\u{200B}0\u{200B}1\u{200B}4\u{200B}7\u{200B}0\u{200B}0\u{200B}0";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"phone_number".to_string()),
@@ -3796,7 +3798,7 @@ fn test_evasion_zero_width_in_phone() {
 
 #[test]
 fn test_evasion_zero_width_in_id_number() {
-    let text = "ID card 1\u{200B}1\u{200B}0\u{200B}1\u{200B}0\u{200B}1\u{200B}1\u{200B}9\u{200B}9\u{200B}0\u{200B}0\u{200B}1\u{200B}0\u{200B}1\u{200B}1\u{200B}2\u{200B}3\u{200B}7";
+    let text = "ID card 0\u{200B}0\u{200B}0\u{200B}0\u{200B}0\u{200B}0\u{200B}2\u{200B}0\u{200B}0\u{200B}0\u{200B}0\u{200B}1\u{200B}0\u{200B}1\u{200B}0\u{200B}0\u{200B}0\u{200B}5";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -3806,7 +3808,7 @@ fn test_evasion_zero_width_in_id_number() {
 
 #[test]
 fn test_evasion_zero_width_in_credit_card() {
-    let text = "Card number 4\u{200B}5\u{200B}3\u{200B}2\u{200B}0\u{200B}1\u{200B}5\u{200B}1\u{200B}1\u{200B}2\u{200B}8\u{200B}3\u{200B}0\u{200B}3\u{200B}6\u{200B}6";
+    let text = "Card number 4\u{200B}1\u{200B}1\u{200B}1\u{200B}1\u{200B}1\u{200B}1\u{200B}1\u{200B}1\u{200B}1\u{200B}1\u{200B}1\u{200B}1\u{200B}1\u{200B}1\u{200B}1";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"credit_card".to_string()),
@@ -3828,7 +3830,7 @@ fn test_evasion_zero_width_in_credential() {
 
 #[test]
 fn test_evasion_fullwidth_phone() {
-    let text = "联系 \u{FF11}\u{FF13}\u{FF18}\u{FF11}\u{FF12}\u{FF13}\u{FF14}\u{FF15}\u{FF16}\u{FF17}\u{FF18} And \u{FF11}\u{FF15}\u{FF19}\u{FF18}\u{FF17}\u{FF16}\u{FF15}\u{FF14}\u{FF13}\u{FF12}\u{FF11} And \u{FF11}\u{FF18}\u{FF16}\u{FF11}\u{FF11}\u{FF11}\u{FF11}\u{FF12}\u{FF12}\u{FF12}\u{FF12}";
+    let text = "联系 \u{FF11}\u{FF13}\u{FF18}\u{FF10}\u{FF10}\u{FF11}\u{FF13}\u{FF18}\u{FF10}\u{FF10}\u{FF10} And \u{FF11}\u{FF13}\u{FF19}\u{FF10}\u{FF10}\u{FF11}\u{FF13}\u{FF19}\u{FF10}\u{FF10}\u{FF10} And \u{FF11}\u{FF14}\u{FF17}\u{FF10}\u{FF10}\u{FF11}\u{FF14}\u{FF17}\u{FF10}\u{FF10}\u{FF10}";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"phone_number".to_string()),
@@ -3838,7 +3840,7 @@ fn test_evasion_fullwidth_phone() {
 
 #[test]
 fn test_evasion_fullwidth_id_number() {
-    let text = "证件 \u{FF11}\u{FF11}\u{FF10}\u{FF11}\u{FF10}\u{FF11}\u{FF11}\u{FF19}\u{FF19}\u{FF10}\u{FF10}\u{FF11}\u{FF10}\u{FF11}\u{FF11}\u{FF12}\u{FF13}\u{FF17}";
+    let text = "证件 \u{FF10}\u{FF10}\u{FF10}\u{FF10}\u{FF10}\u{FF10}\u{FF12}\u{FF10}\u{FF10}\u{FF10}\u{FF10}\u{FF11}\u{FF10}\u{FF11}\u{FF10}\u{FF10}\u{FF10}\u{FF15}";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -3848,7 +3850,7 @@ fn test_evasion_fullwidth_id_number() {
 
 #[test]
 fn test_evasion_fullwidth_credit_card() {
-    let text = "Card number \u{FF14}\u{FF15}\u{FF13}\u{FF12}\u{FF10}\u{FF11}\u{FF15}\u{FF11}\u{FF11}\u{FF12}\u{FF18}\u{FF13}\u{FF10}\u{FF13}\u{FF16}\u{FF16}";
+    let text = "Card number \u{FF14}\u{FF11}\u{FF11}\u{FF11}\u{FF11}\u{FF11}\u{FF11}\u{FF11}\u{FF11}\u{FF11}\u{FF11}\u{FF11}\u{FF11}\u{FF11}\u{FF11}\u{FF11}";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"credit_card".to_string()),
@@ -3868,7 +3870,7 @@ fn test_evasion_fullwidth_credential() {
 
 #[test]
 fn test_evasion_mixed_width_digits() {
-    let text = "ID card 1\u{FF11}0101\u{FF11}\u{FF19}900101\u{FF11}237";
+    let text = "ID card 0\u{FF10}000020000\u{FF11}010005";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -3967,8 +3969,8 @@ fn test_decode_html_hex_entity() {
 #[test]
 fn test_decode_html_mixed_entity_and_text() {
     assert_eq!(
-        normalize_for_dlp("phone: &#49;38&#49;2345678"),
-        "phone: 13812345678"
+        normalize_for_dlp("phone: &#49;38&#48;&#48;138000"),
+        "phone: 13800138000"
     );
 }
 

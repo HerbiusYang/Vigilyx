@@ -125,6 +125,14 @@ pub async fn update_whitelist(
             publish_engine_reload(&state, "whitelist").await;
             match state.managers.whitelist_manager.list().await {
                 Ok(saved) => {
+                    crate::handlers::spawn_audit_log(
+                        state.engine_db.clone(),
+                        user.username.clone(),
+                        "update_whitelist",
+                        Some("security"),
+                        Some("whitelist".to_string()),
+                        Some(format!("entries={}", saved.len())),
+                    );
                     ApiResponse::ok(serde_json::to_value(saved).unwrap_or_default()).into_response()
                 }
                 Err(e) => ApiResponse::<serde_json::Value>::internal_err(&e, "Operation failed")
@@ -193,6 +201,14 @@ pub async fn add_whitelist_entry(
     {
         Ok(entry) => {
             publish_engine_reload(&state, "whitelist").await;
+            crate::handlers::spawn_audit_log(
+                state.engine_db.clone(),
+                user.username,
+                "add_whitelist_entry",
+                Some("security"),
+                Some(entry.id.to_string()),
+                None,
+            );
             ApiResponse::ok(serde_json::to_value(entry).unwrap_or_default()).into_response()
         }
         Err(e) => {
@@ -204,6 +220,7 @@ pub async fn add_whitelist_entry(
 /// delete
 pub async fn delete_whitelist_entry(
     State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
     Path(id): Path<String>,
 ) -> Response {
     let whitelist_id = match Uuid::parse_str(&id) {
@@ -216,6 +233,14 @@ pub async fn delete_whitelist_entry(
     match state.managers.whitelist_manager.remove(whitelist_id).await {
         Ok(true) => {
             publish_engine_reload(&state, "whitelist").await;
+            crate::handlers::spawn_audit_log(
+                state.engine_db.clone(),
+                user.username,
+                "delete_whitelist_entry",
+                Some("security"),
+                Some(id),
+                None,
+            );
             ApiResponse::ok(serde_json::json!({ "deleted": true })).into_response()
         }
         Ok(false) => {

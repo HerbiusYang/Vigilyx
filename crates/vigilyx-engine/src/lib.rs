@@ -15,6 +15,7 @@ pub mod feedback;
 pub mod intel;
 pub mod ioc;
 pub mod module;
+pub mod module_data;
 pub mod syslog;
 pub mod threat_scene;
 pub mod whitelist;

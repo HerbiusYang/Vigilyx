@@ -22,6 +22,19 @@ use vigilyx_core::security::VerdictDisposition;
 use vigilyx_db::VigilDb;
 use vigilyx_engine::pipeline::engine::SecurityEngine;
 
+enum ConnectionOutcome {
+    Closed,
+    StartTls,
+}
+
+struct SmtpRuntime<'a> {
+    config: &'a MtaConfig,
+    engine: &'a SecurityEngine,
+    relay: &'a DownstreamRelay,
+    outbound_relay: &'a DownstreamRelay,
+    db: &'a VigilDb,
+}
+
 /// SEC: Maximum concurrent connections from a single IP address (CWE-400).
 /// Prevents a single source from exhausting all connection slots.
 const MAX_CONN_PER_IP: usize = 10;
@@ -204,12 +217,17 @@ pub async fn run_smtps_listener(
             match acceptor.accept(stream).await {
                 Ok(tls_stream) => {
                     let mut tls_stream = tokio::io::BufStream::new(tls_stream);
+                    let runtime = SmtpRuntime {
+                        config: cfg.as_ref(),
+                        engine: eng.as_ref(),
+                        relay: rl.as_ref(),
+                        outbound_relay: orl.as_ref(),
+                        db: d.as_ref(),
+                    };
                     let mut conn = SmtpConnection::new(
                         client_ip, client_port, server_ip, server_port, cfg.clone(), true,
                     );
-
-                    let results = conn.handle(&mut tls_stream, false).await;
-                    process_results(results, &mut tls_stream, &cfg, &eng, &rl, &orl, &d).await;
+                    let _ = drive_connection(&mut tls_stream, &mut conn, false, &runtime).await;
                 }
                 Err(e) => {
                     warn!(client_ip = %client_ip, "TLS handshake failed: {e}");
@@ -240,24 +258,21 @@ async fn handle_smtp_connection(
         .map(|a| a.ip().to_string()).unwrap_or_else(|_| "0.0.0.0".into());
     let server_port = stream.get_ref().local_addr()
         .map(|a| a.port()).unwrap_or(25);
+    let runtime = SmtpRuntime {
+        config: config.as_ref(),
+        engine: engine.as_ref(),
+        relay: relay.as_ref(),
+        outbound_relay: outbound_relay.as_ref(),
+        db: db.as_ref(),
+    };
 
     let mut conn = SmtpConnection::new(
         client_ip.clone(), client_port, server_ip.clone(), server_port, config.clone(), false,
     );
 
-    // Phase 1: plain text SMTP (may include STARTTLS)
-    let results = conn.handle(&mut stream, false).await;
-
-    // Check if STARTTLS was requested
-    let needs_tls = results.iter().any(|r| matches!(r, HandleResult::StartTls));
-
-    if needs_tls {
-        // Process any emails received before STARTTLS first
-        process_results(
-            results.into_iter().filter(|r| !matches!(r, HandleResult::StartTls)).collect(),
-            &mut stream, &config, &engine, &relay, &outbound_relay, &db,
-        ).await;
-
+    match drive_connection(&mut stream, &mut conn, false, &runtime).await {
+        ConnectionOutcome::Closed => {}
+        ConnectionOutcome::StartTls => {
         if let Some(acceptor) = tls_acceptor {
             let inner = stream.into_inner();
             match acceptor.accept(inner).await {
@@ -267,30 +282,63 @@ async fn handle_smtp_connection(
                     let mut tls_conn = SmtpConnection::new(
                         client_ip, client_port, server_ip, server_port, config.clone(), true,
                     );
-                    let tls_results = tls_conn.handle(&mut tls_stream, true).await;
-                    process_results(tls_results, &mut tls_stream, &config, &engine, &relay, &outbound_relay, &db).await;
+                    let _ = drive_connection(&mut tls_stream, &mut tls_conn, true, &runtime).await;
                 }
                 Err(e) => {
                     warn!(client_ip = %client_ip, "STARTTLS handshake failed: {e}");
                 }
             }
+        } else {
+            warn!(client_ip = %client_ip, "STARTTLS requested but no TLS acceptor is configured");
         }
-    } else {
-        process_results(results, &mut stream, &config, &engine, &relay, &outbound_relay, &db).await;
+        }
     }
 
     Ok(())
+}
+
+async fn drive_connection<S>(
+    stream: &mut tokio::io::BufStream<S>,
+    conn: &mut SmtpConnection,
+    skip_banner: bool,
+    runtime: &SmtpRuntime<'_>,
+) -> ConnectionOutcome
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let mut skip_banner = skip_banner;
+    loop {
+        let results = conn.handle(stream, skip_banner).await;
+        skip_banner = true;
+
+        if results.is_empty() {
+            return ConnectionOutcome::Closed;
+        }
+
+        let needs_starttls = results
+            .iter()
+            .any(|result| matches!(result, HandleResult::StartTls));
+        let should_close = results
+            .iter()
+            .any(|result| matches!(result, HandleResult::Closed | HandleResult::Error(_)));
+
+        process_results(results, stream, runtime).await;
+
+        if needs_starttls {
+            return ConnectionOutcome::StartTls;
+        }
+
+        if should_close {
+            return ConnectionOutcome::Closed;
+        }
+    }
 }
 
 /// : inline SMTP
 async fn process_results<S>(
     results: Vec<HandleResult>,
     stream: &mut S,
-    config: &MtaConfig,
-    engine: &SecurityEngine,
-    relay: &DownstreamRelay,
-    outbound_relay: &DownstreamRelay,
-    db: &VigilDb,
+    runtime: &SmtpRuntime<'_>,
 ) where
     S: tokio::io::AsyncWrite + Unpin,
 {
@@ -320,7 +368,7 @@ async fn process_results<S>(
                 let direction = detect_direction(
                     mail_from.as_deref(),
                     &rcpt_to,
-                    &config.local_domains,
+                    &runtime.config.local_domains,
                     trusted_submitter,
                 );
 
@@ -339,7 +387,11 @@ async fn process_results<S>(
 
                 
                 if direction == MailDirection::Internal {
-                    match relay.relay(mail_from.as_deref(), &rcpt_to, &raw_eml).await {
+                    match runtime
+                        .relay
+                        .relay(mail_from.as_deref(), &rcpt_to, &raw_eml)
+                        .await
+                    {
                         RelayResult::Accepted => {
                             reply!(stream, b"250 2.0.0 OK\r\n");
                         }
@@ -360,10 +412,10 @@ async fn process_results<S>(
                 }
 
                // (->): DLP
-                if direction == MailDirection::Outbound && config.dlp.enabled {
+                if direction == MailDirection::Outbound && runtime.config.dlp.enabled {
                     let dlp_result = run_dlp_scan(&session);
                     if !dlp_result.is_empty()
-                        && dlp_result.count_items_at_level(config.dlp.min_level) > 0
+                        && dlp_result.count_items_at_level(runtime.config.dlp.min_level) > 0
                     {
                         let reason = format_dlp_reason(&dlp_result);
                         info!(
@@ -372,16 +424,14 @@ async fn process_results<S>(
                             "DLP hit on outbound email: {reason}"
                         );
 
-                        match config.dlp.action {
+                        match runtime.config.dlp.action {
                             DlpAction::Block => {
-                                let _ = stream.write_all(
-                                    b"550 5.7.1 Message blocked: sensitive data detected\r\n",
-                                ).await;
+                                reply!(stream, b"550 5.7.1 Message blocked: sensitive data detected\r\n");
                                 continue;
                             }
                             DlpAction::Quarantine => {
                                 let stored = store_quarantine(
-                                    db, &session_id, mail_from.as_deref(), &rcpt_to,
+                                    runtime.db, &session_id, mail_from.as_deref(), &rcpt_to,
                                     subject.as_deref(), &raw_eml, "high", &reason,
                                 ).await;
                                 if stored {
@@ -403,7 +453,11 @@ async fn process_results<S>(
                         }
                     }
                    // DLP AllowAndAlert ->
-                    match outbound_relay.relay(mail_from.as_deref(), &rcpt_to, &raw_eml).await {
+                    match runtime
+                        .outbound_relay
+                        .relay(mail_from.as_deref(), &rcpt_to, &raw_eml)
+                        .await
+                    {
                         RelayResult::Accepted => {
                             reply!(stream, b"250 2.0.0 OK\r\n");
                         }
@@ -424,13 +478,15 @@ async fn process_results<S>(
                 }
 
                // (->) DLP:
-                let timeout = std::time::Duration::from_secs(config.inline_timeout_secs as u64);
-                let response = engine
+                let timeout =
+                    std::time::Duration::from_secs(runtime.config.inline_timeout_secs as u64);
+                let response = runtime
+                    .engine
                     .submit_inline(
                         session,
                         timeout,
-                        config.quarantine_threshold,
-                        config.reject_threshold,
+                        runtime.config.quarantine_threshold,
+                        runtime.config.reject_threshold,
                     )
                     .await;
 
@@ -445,7 +501,8 @@ async fn process_results<S>(
                 
                 match &response.disposition {
                     VerdictDisposition::Accept => {
-                        match relay
+                        match runtime
+                            .relay
                             .relay(mail_from.as_deref(), &rcpt_to, &raw_eml)
                             .await
                         {
@@ -467,7 +524,7 @@ async fn process_results<S>(
                         }
                     }
                     VerdictDisposition::Tempfail => {
-                        if !config.fail_open {
+                        if !runtime.config.fail_open {
                             warn!(
                                 session_id = %session_id,
                                 "Inline verdict unavailable and MTA_FAIL_OPEN=false, deferring delivery"
@@ -480,7 +537,8 @@ async fn process_results<S>(
                             session_id = %session_id,
                             "Inline verdict unavailable and MTA_FAIL_OPEN=true, relaying downstream"
                         );
-                        match relay
+                        match runtime
+                            .relay
                             .relay(mail_from.as_deref(), &rcpt_to, &raw_eml)
                             .await
                         {
@@ -505,7 +563,7 @@ async fn process_results<S>(
                     VerdictDisposition::Quarantine => {
                        // Quarantine -> 250,
                         let stored = store_quarantine(
-                            db,
+                            runtime.db,
                             &session_id,
                             mail_from.as_deref(),
                             &rcpt_to,
@@ -532,7 +590,10 @@ async fn process_results<S>(
                     }
                 }
             }
-            HandleResult::Closed | HandleResult::Error(_) => {}
+            HandleResult::Closed => {}
+            HandleResult::Error(error) => {
+                warn!("SMTP connection handler reported error: {error}");
+            }
             HandleResult::StartTls => {}
         }
     }
