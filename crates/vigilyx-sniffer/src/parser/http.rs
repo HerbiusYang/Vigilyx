@@ -22,9 +22,9 @@ pub struct ParsedHttpRequest {
     pub content_length: Option<usize>,
     #[allow(dead_code)] // TestMediumVerify,ProtocolParser Command Use Segment
     pub cookie: Option<String>,
-   /// Request (Break/Judge MAX_BODY_CAPTURE)
+    /// Request (Break/Judge MAX_BODY_CAPTURE)
     #[allow(dead_code)]
-   // TestMediumVerify,Streamreassemblemode body FromStreamMedium Connect
+    // TestMediumVerify,Streamreassemblemode body FromStreamMedium Connect
     pub body: Option<Vec<u8>>,
     #[allow(dead_code)] // Parse,TestMediumVerify, body split Use
     pub header_size: usize,
@@ -147,7 +147,7 @@ pub fn extract_multipart_file_info(content_type: &str, body: &[u8]) -> Option<(S
 
     let boundary_marker = format!("--{}", boundary);
 
-   // Byte filename,Avoid body UTF-8 Verify
+    // Byte filename,Avoid body UTF-8 Verify
     let body_str = String::from_utf8_lossy(body);
 
     for part in body_str.split(&boundary_marker) {
@@ -176,12 +176,12 @@ pub fn extract_email_fields(body: &[u8]) -> (Option<String>, Vec<String>) {
         Err(_) => return (None, vec![]),
     };
 
-   // JSON Parse
+    // JSON Parse
     if body_str.trim_start().starts_with('{') {
         return extract_email_fields_json(body_str);
     }
 
-   // URL-encoded form
+    // URL-encoded form
     extract_email_fields_form(body_str)
 }
 
@@ -244,7 +244,7 @@ fn extract_email_fields_json(body_str: &str) -> (Option<String>, Vec<String>) {
         Err(_) => return (None, vec![]),
     };
 
-   // Coremail email Segment "attrs" Object; System
+    // Coremail email Segment "attrs" Object; System
     let lookup = value.get("attrs").unwrap_or(&value);
 
     let from = lookup
@@ -444,7 +444,7 @@ mod tests {
 
     #[test]
     fn test_extract_email_fields_coremail_json() {
-       // Coremail uses account/toAddrs in some API formats
+        // Coremail uses account/toAddrs in some API formats
         let body = br#"{"account":"alice@corp.com","toAddrs":"bob@corp.com","subject":"test"}"#;
         let (from, to) = extract_email_fields(body);
         assert_eq!(from.as_deref(), Some("alice@corp.com"));
@@ -454,7 +454,7 @@ mod tests {
 
     #[test]
     fn test_extract_email_fields_coremail_form() {
-       // Coremail URL-encoded form with account/toaddrs
+        // Coremail URL-encoded form with account/toaddrs
         let body = b"account=alice%40corp.com&toaddrs=bob%40corp.com&subject=test";
         let (from, to) = extract_email_fields(body);
         assert_eq!(from.as_deref(), Some("alice@corp.com"));
@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn test_extract_email_fields_coremail_nested_attrs() {
-       // Coremail: email Segment attrs Object,AddressContains Name
+        // Coremail: email Segment attrs Object,AddressContains Name
         let body = r#"{"attrs":{"account":"\"Zhang San\" <zhangsan@corp.com>","to":["\"Zhang San\" <zhangsan@corp.com>"],"subject":"test"},"action":"deliver"}"#;
         let (from, to) = extract_email_fields(body.as_bytes());
         assert_eq!(from.as_deref(), Some("zhangsan@corp.com"));
@@ -473,7 +473,7 @@ mod tests {
 
     #[test]
     fn test_extract_email_fields_coremail_empty_to() {
-       // SaveScenario: to possibly Array
+        // SaveScenario: to possibly Array
         let body =
             br#"{"attrs":{"account":"user@corp.com","to":[],"subject":"draft"},"action":"save"}"#;
         let (from, to) = extract_email_fields(body);
@@ -483,7 +483,7 @@ mod tests {
 
     #[test]
     fn test_extract_email_fields_coremail_multiple_recipients() {
-       // recipientScenario
+        // recipientScenario
         let body = br#"{"attrs":{"account":"sender@corp.com","to":["\"Alice\" <alice@corp.com>","bob@corp.com","<carol@corp.com>"]}}"#;
         let (from, to) = extract_email_fields(body);
         assert_eq!(from.as_deref(), Some("sender@corp.com"));
@@ -495,18 +495,18 @@ mod tests {
 
     #[test]
     fn test_extract_bare_email_display_name_formats() {
-       // "\"Display Name\" <email>"
+        // "\"Display Name\" <email>"
         assert_eq!(
             extract_bare_email("\"Zhang San\" <zhangsan@corp.com>"),
             "zhangsan@corp.com"
         );
-       // Number
+        // Number
         assert_eq!(extract_bare_email("<user@domain.com>"), "user@domain.com");
-       // email
+        // email
         assert_eq!(extract_bare_email("user@domain.com"), "user@domain.com");
-       // with
+        // with
         assert_eq!(extract_bare_email("  user@domain.com  "), "user@domain.com");
-       // Name
+        // Name
         assert_eq!(
             extract_bare_email("\"John Doe\" <john@example.com>"),
             "john@example.com"

@@ -12,9 +12,7 @@ use uuid::Uuid;
 
 use crate::magic_bytes::DetectedFileType;
 
-
 // Fast UUID generation (about 10x faster than `Uuid::new_v4()`)
-
 
 /// Global counter used to guarantee uniqueness
 static UUID_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -25,7 +23,7 @@ static UUID_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// Security: not suitable for security-sensitive use; intended for internal identifiers
 #[inline]
 pub fn fast_uuid() -> Uuid {
-   // Use a fast thread-local random generator
+    // Use a fast thread-local random generator
     thread_local! {
         static RNG_STATE: std::cell::Cell<u64> = {
            // Seed with the current time and a stack address
@@ -39,10 +37,10 @@ pub fn fast_uuid() -> Uuid {
         };
     }
 
-   // WyRand random number generator
+    // WyRand random number generator
     #[inline(always)]
     fn wyrand(state: &mut u64) -> u64 {
-       *state = state.wrapping_add(0xa0761d6478bd642f);
+        *state = state.wrapping_add(0xa0761d6478bd642f);
         let t = (*state as u128) * ((*state ^ 0xe7037ed1a0b428db) as u128);
         (t >> 64) as u64 ^ t as u64
     }
@@ -55,17 +53,16 @@ pub fn fast_uuid() -> Uuid {
         (r1, r2)
     });
 
-    
     let counter = UUID_COUNTER.fetch_add(1, Ordering::Relaxed);
     let rand2 = rand2 ^ counter;
 
-   // UUID v4 format
+    // UUID v4 format
     let mut bytes = [0u8; 16];
     bytes[0..8].copy_from_slice(&rand1.to_le_bytes());
     bytes[8..16].copy_from_slice(&rand2.to_le_bytes());
 
-   // Set version (4) and variant (RFC 4122)
-    bytes[6] = (bytes[6] & 0x0f) | 0x40; 
+    // Set version (4) and variant (RFC 4122)
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
     bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC4122
 
     Uuid::from_bytes(bytes)
@@ -83,7 +80,7 @@ pub enum Protocol {
 }
 
 impl Protocol {
-   /// Determine the protocol from a port number
+    /// Determine the protocol from a port number
     pub fn from_port(port: u16) -> Self {
         match port {
             25 | 465 | 587 | 2525 | 2526 => Protocol::Smtp,
@@ -94,7 +91,7 @@ impl Protocol {
         }
     }
 
-   /// Check whether a port is encrypted
+    /// Check whether a port is encrypted
     pub fn is_encrypted_port(port: u16) -> bool {
         matches!(port, 465 | 995 | 993)
     }
@@ -116,9 +113,9 @@ impl std::fmt::Display for Protocol {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Direction {
-   /// Inbound traffic
+    /// Inbound traffic
     Inbound,
-   /// Outbound traffic
+    /// Outbound traffic
     Outbound,
 }
 
@@ -130,12 +127,12 @@ pub enum Direction {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionSource {
-   /// Passive mirror mode (Sniffer/libpcap capture)
+    /// Passive mirror mode (Sniffer/libpcap capture)
     #[default]
     Sniffer,
-   /// MTA proxy mode (received by the SMTP proxy)
+    /// MTA proxy mode (received by the SMTP proxy)
     MtaProxy,
-   /// Imported manually through the API
+    /// Imported manually through the API
     Import,
 }
 
@@ -143,12 +140,12 @@ pub enum SessionSource {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MailDirection {
-   /// External to internal (threat detection)
+    /// External to internal (threat detection)
     #[default]
     Inbound,
-   /// Internal to external (DLP / exfiltration detection)
+    /// Internal to external (DLP / exfiltration detection)
     Outbound,
-   /// Internal to internal (forward directly)
+    /// Internal to internal (forward directly)
     Internal,
 }
 
@@ -175,15 +172,15 @@ impl std::fmt::Display for SessionSource {
 /// SMTP authentication information reconstructed from the AUTH exchange
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct SmtpAuthInfo {
-   /// Authentication method (PLAIN, LOGIN, CRAM-MD5, etc.)
+    /// Authentication method (PLAIN, LOGIN, CRAM-MD5, etc.)
     pub auth_method: String,
-   /// Decoded username
+    /// Decoded username
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
-   /// Decoded password; skipped during serialization to avoid leakage
+    /// Decoded password; skipped during serialization to avoid leakage
     #[serde(default, skip_serializing_if = "Option::is_none", skip_serializing)]
     pub password: Option<String>,
-   /// Whether authentication succeeded
+    /// Whether authentication succeeded
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_success: Option<bool>,
 }
@@ -202,61 +199,56 @@ impl fmt::Debug for SmtpAuthInfo {
 /// Email session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmailSession {
-   /// Session ID.
+    /// Session ID.
     pub id: Uuid,
-   /// Protocol type.
+    /// Protocol type.
     pub protocol: Protocol,
-   /// Client IP.
+    /// Client IP.
     pub client_ip: String,
-   /// Client port.
+    /// Client port.
     pub client_port: u16,
-   /// Server IP.
+    /// Server IP.
     pub server_ip: String,
-   /// Server port.
+    /// Server port.
     pub server_port: u16,
-   /// Session start time.
+    /// Session start time.
     pub started_at: DateTime<Utc>,
-   /// Session end time.
+    /// Session end time.
     pub ended_at: Option<DateTime<Utc>>,
-   /// Session status.
+    /// Session status.
     pub status: SessionStatus,
-   /// Packet count.
+    /// Packet count.
     pub packet_count: u32,
-    
+
     pub total_bytes: usize,
 
-    
-   // Message metadata.
-    
-   /// Sender address (SMTP MAIL FROM).
+    // Message metadata.
+    /// Sender address (SMTP MAIL FROM).
     pub mail_from: Option<String>,
-   /// Recipient list (SMTP RCPT TO).
+    /// Recipient list (SMTP RCPT TO).
     pub rcpt_to: Vec<String>,
-   /// Parsed message subject.
+    /// Parsed message subject.
     pub subject: Option<String>,
 
-    
-   // Extended metadata.
-    
-    
+    // Extended metadata.
     #[serde(default)]
     pub content: EmailContent,
-   /// Number of messages captured in this session.
+    /// Number of messages captured in this session.
     #[serde(default)]
     pub email_count: u32,
-   /// Error reason for timeout or failure states.
+    /// Error reason for timeout or failure states.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_reason: Option<String>,
-   /// Parsed `Message-ID`, used for session correlation.
+    /// Parsed `Message-ID`, used for session correlation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_id: Option<String>,
-   /// SMTP authentication information extracted from the AUTH exchange.
+    /// SMTP authentication information extracted from the AUTH exchange.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_info: Option<SmtpAuthInfo>,
-   /// Threat level loaded from `security_verdicts` for list queries.
+    /// Threat level loaded from `security_verdicts` for list queries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub threat_level: Option<String>,
-   /// Session source (`sniffer`, `mta_proxy`, or `import`).
+    /// Session source (`sniffer`, `mta_proxy`, or `import`).
     #[serde(default)]
     pub source: SessionSource,
 }
@@ -307,7 +299,7 @@ impl EmailSession {
         }
     }
 
-   /// Build a stable key for a session.
+    /// Build a stable key for a session.
     pub fn session_key(
         client_ip: &str,
         client_port: u16,
@@ -320,17 +312,19 @@ impl EmailSession {
         )
     }
 
-    
     pub fn is_email_complete(&self) -> bool {
         self.content.is_complete
     }
 
-   /// Return whether the session has reached a terminal state that can be analyzed.
+    /// Return whether the session has reached a terminal state that can be analyzed.
     pub fn is_terminal_for_analysis(&self) -> bool {
-        matches!(self.status, SessionStatus::Completed | SessionStatus::Timeout)
+        matches!(
+            self.status,
+            SessionStatus::Completed | SessionStatus::Timeout
+        )
     }
 
-   /// Return whether the session contains enough content for downstream analysis.
+    /// Return whether the session contains enough content for downstream analysis.
     pub fn has_analyzable_content(&self) -> bool {
         self.mail_from.as_ref().is_some_and(|s| !s.is_empty())
             || !self.content.headers.is_empty()
@@ -339,12 +333,12 @@ impl EmailSession {
             || !self.content.attachments.is_empty()
     }
 
-   /// Return the number of attachments.
+    /// Return the number of attachments.
     pub fn attachment_count(&self) -> usize {
         self.content.attachments.len()
     }
 
-   /// Return the number of suspicious links.
+    /// Return the number of suspicious links.
     pub fn suspicious_link_count(&self) -> usize {
         self.content.links.iter().filter(|l| l.suspicious).count()
     }
@@ -365,17 +359,17 @@ impl EmailSession {
         let estimated_size = self.content.raw_size.max(4096);
         let mut eml = Vec::with_capacity(estimated_size);
 
-       // 1. Write headers
+        // 1. Write headers
         for (name, value) in &self.content.headers {
             eml.extend_from_slice(name.as_bytes());
             eml.extend_from_slice(b": ");
             eml.extend_from_slice(value.as_bytes());
             eml.extend_from_slice(b"\r\n");
         }
-       // Blank line separating headers from body
+        // Blank line separating headers from body
         eml.extend_from_slice(b"\r\n");
 
-       // 2. Write body
+        // 2. Write body
         if let Some(ref text) = self.content.body_text {
             eml.extend_from_slice(text.as_bytes());
             eml.extend_from_slice(b"\r\n");
@@ -385,7 +379,7 @@ impl EmailSession {
             eml.extend_from_slice(b"\r\n");
         }
 
-       // 3. Append raw attachment bytes (decoded from base64)
+        // 3. Append raw attachment bytes (decoded from base64)
         for att in &self.content.attachments {
             if let Some(ref b64) = att.content_base64
                 && let Some(decoded) = decode_base64_bytes(b64)
@@ -457,80 +451,77 @@ pub enum SessionStatus {
     Active,
     /// Session ended normally.
     Completed,
-   /// Session timed out before a clean shutdown.
+    /// Session timed out before a clean shutdown.
     Timeout,
-   /// Session ended because of an error.
+    /// Session ended because of an error.
     Error,
 }
 
 // Email content models.
 
-
 /// Attachment metadata extracted from a message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmailAttachment {
-   /// Original file name.
+    /// Original file name.
     pub filename: String,
-   /// MIME type such as `application/pdf`.
+    /// MIME type such as `application/pdf`.
     pub content_type: String,
-   /// Attachment size in bytes.
+    /// Attachment size in bytes.
     pub size: usize,
-   /// SHA-256 hash of the attachment payload.
+    /// SHA-256 hash of the attachment payload.
     pub hash: String,
-   /// Optional base64 payload when attachment content is retained.
+    /// Optional base64 payload when attachment content is retained.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_base64: Option<String>,
 }
 
-
 /// Hyperlink extracted from message content.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmailLink {
-   /// Absolute URL.
+    /// Absolute URL.
     pub url: String,
-   /// Optional anchor text associated with the link.
+    /// Optional anchor text associated with the link.
     pub text: Option<String>,
-   /// Whether lightweight heuristics marked the link as suspicious.
+    /// Whether lightweight heuristics marked the link as suspicious.
     pub suspicious: bool,
 }
 
 /// One SMTP dialog entry recorded during message processing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmtpDialogEntry {
-   /// Direction of the SMTP exchange.
+    /// Direction of the SMTP exchange.
     pub direction: Direction,
-   /// Command or response text.
+    /// Command or response text.
     pub command: String,
-   /// Raw line length in bytes.
+    /// Raw line length in bytes.
     pub size: usize,
-   /// Timestamp of the dialog entry.
+    /// Timestamp of the dialog entry.
     pub timestamp: DateTime<Utc>,
 }
 
 /// Maximum number of SMTP dialog entries retained per session.
 pub const MAX_SMTP_DIALOG_ENTRIES: usize = 200;
 
-
 /// Parsed content extracted from an email session.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EmailContent {
     /// Message headers as `(name, value)` pairs.
     pub headers: Vec<(String, String)>,
-   /// Plain-text body, if available.
+    /// Plain-text body, if available.
     pub body_text: Option<String>,
-   /// HTML body, if available.
+    /// HTML body, if available.
     pub body_html: Option<String>,
-   /// Parsed attachments.
+    /// Parsed attachments.
     pub attachments: Vec<EmailAttachment>,
     /// Links extracted from the body.
     pub links: Vec<EmailLink>,
     /// Approximate raw message size in bytes.
     pub raw_size: usize,
-   /// Whether the parser considers the message body complete.
+    /// Whether the parser considers the message body complete.
     pub is_complete: bool,
-   /// Whether the originating protocol session was encrypted.
+    /// Whether the originating protocol session was encrypted.
     pub is_encrypted: bool,
-   /// SMTP command/response transcript retained for analysis.
+    /// SMTP command/response transcript retained for analysis.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub smtp_dialog: Vec<SmtpDialogEntry>,
 }
@@ -540,12 +531,11 @@ impl EmailContent {
         Self::default()
     }
 
-    
     pub fn add_header(&mut self, name: String, value: String) {
         self.headers.push((name, value));
     }
 
-   /// Look up a header value by case-insensitive header name.
+    /// Look up a header value by case-insensitive header name.
     pub fn get_header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
@@ -622,7 +612,7 @@ impl EmailContent {
         });
     }
 
-   /// Extract HTTP and HTTPS links from the HTML body.
+    /// Extract HTTP and HTTPS links from the HTML body.
     pub fn extract_links_from_html(&mut self) {
         if let Some(html) = self.body_html.clone() {
             let html_lower = html.to_lowercase();
@@ -649,8 +639,8 @@ impl EmailContent {
                 }
             }
 
-           // Match remaining attribute-based links (including images and any hrefs we
-           // didn't capture via anchor parsing above).
+            // Match remaining attribute-based links (including images and any hrefs we
+            // didn't capture via anchor parsing above).
             let attr_prefixes: &[&str] = &["href=\"", "href='", "src=\"", "src='"];
 
             for prefix in attr_prefixes {
@@ -673,7 +663,7 @@ impl EmailContent {
                         break;
                     }
 
-                   // Stop at the closing quote and treat the enclosed text as the URL.
+                    // Stop at the closing quote and treat the enclosed text as the URL.
                     if let Some(quote_end) = html[url_start..].find(quote_char as char) {
                         let url = &html[url_start..url_start + quote_end];
                         self.push_or_update_link(url, None);
@@ -686,9 +676,9 @@ impl EmailContent {
         }
     }
 
-   /// Apply lightweight heuristics to flag obviously suspicious URLs.
+    /// Apply lightweight heuristics to flag obviously suspicious URLs.
     pub fn is_suspicious_url(url: &str) -> bool {
-       // Flag URLs that use a literal IPv4 address instead of a hostname.
+        // Flag URLs that use a literal IPv4 address instead of a hostname.
         let after_protocol = if let Some(rest) = url.strip_prefix("http://") {
             Some(rest)
         } else {
@@ -702,7 +692,7 @@ impl EmailContent {
             }
         }
 
-       // Flag login-like paths on domains that are not in a short allowlist.
+        // Flag login-like paths on domains that are not in a short allowlist.
         let suspicious_patterns = [
             "login",
             "signin",
@@ -719,7 +709,7 @@ impl EmailContent {
         let url_lower = url.to_lowercase();
         for pattern in suspicious_patterns {
             if url_lower.contains(pattern) {
-               // Skip common major domains that frequently appear in legitimate mail.
+                // Skip common major domains that frequently appear in legitimate mail.
                 let known_domains = ["google.com", "microsoft.com", "apple.com", "amazon.com"];
                 let is_known = known_domains.iter().any(|d| url_lower.contains(d));
                 if !is_known {
@@ -735,14 +725,14 @@ impl EmailContent {
 /// State machine for SMTP session parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SmtpState {
-   /// Connection established, no SMTP greeting observed yet.
+    /// Connection established, no SMTP greeting observed yet.
     #[default]
     Connected,
-   /// `EHLO` or `HELO` was seen.
+    /// `EHLO` or `HELO` was seen.
     Greeted,
-   /// Authentication succeeded.
+    /// Authentication succeeded.
     Authenticated,
-   /// `MAIL FROM` was accepted.
+    /// `MAIL FROM` was accepted.
     MailFrom,
     /// At least one `RCPT TO` was accepted.
     RcptTo,
@@ -752,28 +742,28 @@ pub enum SmtpState {
     BdatData,
     /// End of message data was observed.
     DataDone,
-   /// `QUIT` was observed.
+    /// `QUIT` was observed.
     Quit,
 }
 
 /// Aggregate traffic statistics shown in the UI and WebSocket updates.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TrafficStats {
-   /// Total sessions seen since startup.
+    /// Total sessions seen since startup.
     pub total_sessions: u64,
-   /// Sessions that are currently active.
+    /// Sessions that are currently active.
     pub active_sessions: u64,
-   /// Total packets processed.
+    /// Total packets processed.
     pub total_packets: u64,
     /// Total bytes processed.
     pub total_bytes: u64,
-   /// SMTP session count.
+    /// SMTP session count.
     pub smtp_sessions: u64,
-   /// POP3 session count.
+    /// POP3 session count.
     pub pop3_sessions: u64,
-   /// IMAP session count.
+    /// IMAP session count.
     pub imap_sessions: u64,
-   /// Packet throughput.
+    /// Packet throughput.
     pub packets_per_second: f64,
     /// Byte throughput.
     pub bytes_per_second: f64,
@@ -796,47 +786,45 @@ pub struct SecurityVerdictSummary {
 /// Login activity bucket for a single hour.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HourlyLoginEntry {
-   /// Hour bucket in ISO 8601 form such as `2026-03-02T14:00:00Z`.
+    /// Hour bucket in ISO 8601 form such as `2026-03-02T14:00:00Z`.
     pub hour: String,
-   /// SMTP authentication attempts.
+    /// SMTP authentication attempts.
     pub smtp: u64,
-   /// POP3 login attempts.
+    /// POP3 login attempts.
     pub pop3: u64,
-   /// IMAP login attempts.
+    /// IMAP login attempts.
     pub imap: u64,
-   /// HTTP login attempts.
+    /// HTTP login attempts.
     pub http: u64,
-   /// Total login attempts across all protocols.
+    /// Total login attempts across all protocols.
     pub total: u64,
 }
 
 /// Aggregate external-login statistics for the last 24 hours.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExternalLoginStats {
-   /// Hourly buckets in chronological order.
+    /// Hourly buckets in chronological order.
     pub hourly: Vec<HourlyLoginEntry>,
-   /// Total logins in the last 24 hours.
+    /// Total logins in the last 24 hours.
     pub total_24h: u64,
-   /// SMTP logins in the last 24 hours.
+    /// SMTP logins in the last 24 hours.
     pub smtp_24h: u64,
-   /// POP3 logins in the last 24 hours.
+    /// POP3 logins in the last 24 hours.
     pub pop3_24h: u64,
-   /// IMAP logins in the last 24 hours.
+    /// IMAP logins in the last 24 hours.
     pub imap_24h: u64,
-   /// HTTP logins in the last 24 hours.
+    /// HTTP logins in the last 24 hours.
     pub http_24h: u64,
-   /// Successful authentications in the last 24 hours.
+    /// Successful authentications in the last 24 hours.
     pub success_24h: u64,
-   /// Failed authentications in the last 24 hours.
+    /// Failed authentications in the last 24 hours.
     pub failed_24h: u64,
-   /// Unique source IPs seen in the last 24 hours.
+    /// Unique source IPs seen in the last 24 hours.
     #[serde(default)]
     pub unique_ips_24h: u64,
 }
 
-
 // Data security model types for HTTP analysis.
-
 
 /// HTTP request method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -871,15 +859,15 @@ impl std::fmt::Display for HttpMethod {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DataSecurityIncidentType {
-   /// Draft abuse risk
+    /// Draft abuse risk
     DraftBoxAbuse,
-   /// File transit risk
+    /// File transit risk
     FileTransitAbuse,
-   /// Self-send
+    /// Self-send
     SelfSending,
-   /// Traffic anomaly (too many sensitive operations from one user/IP in a short time)
+    /// Traffic anomaly (too many sensitive operations from one user/IP in a short time)
     VolumeAnomaly,
-   /// JR/T 0197-2020 compliance threshold alert (sensitive data volume reached the regulatory threshold)
+    /// JR/T 0197-2020 compliance threshold alert (sensitive data volume reached the regulatory threshold)
     JrtComplianceViolation,
 }
 
@@ -923,74 +911,74 @@ impl std::fmt::Display for DataSecuritySeverity {
 /// A single HTTP request/response pair used for data security analysis.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpSession {
-   /// Unique identifier.
+    /// Unique identifier.
     pub id: Uuid,
-   /// Client IP address.
+    /// Client IP address.
     pub client_ip: String,
-   /// Client TCP port.
+    /// Client TCP port.
     pub client_port: u16,
-   /// Server IP address.
+    /// Server IP address.
     pub server_ip: String,
-   /// Server TCP port.
+    /// Server TCP port.
     pub server_port: u16,
-   /// HTTP method.
+    /// HTTP method.
     pub method: HttpMethod,
-   /// Request URI, including path and query string.
+    /// Request URI, including path and query string.
     pub uri: String,
-   /// `Host` header value.
+    /// `Host` header value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
-   /// `Content-Type` header value.
+    /// `Content-Type` header value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_type: Option<String>,
-   /// Request body size in bytes.
+    /// Request body size in bytes.
     #[serde(default)]
     pub request_body_size: usize,
-   /// Truncated request body retained for analysis.
+    /// Truncated request body retained for analysis.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_body: Option<String>,
-   /// HTTP response status code, if known.
+    /// HTTP response status code, if known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_status: Option<u16>,
-   /// Uploaded file name extracted from multipart form data.
+    /// Uploaded file name extracted from multipart form data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uploaded_filename: Option<String>,
-   /// Uploaded file size in bytes.
+    /// Uploaded file size in bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uploaded_file_size: Option<usize>,
-   /// User identifier extracted from cookies or form fields.
+    /// User identifier extracted from cookies or form fields.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detected_user: Option<String>,
-   /// Recipients inferred in self-send scenarios.
+    /// Recipients inferred in self-send scenarios.
     #[serde(default)]
     pub detected_recipients: Vec<String>,
-   /// Sender inferred in self-send scenarios.
+    /// Sender inferred in self-send scenarios.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detected_sender: Option<String>,
-   /// File type inferred from magic-byte inspection.
+    /// File type inferred from magic-byte inspection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detected_file_type: Option<DetectedFileType>,
-   /// Whether the request body is binary; binary bodies skip text-oriented DLP scanning.
+    /// Whether the request body is binary; binary bodies skip text-oriented DLP scanning.
     #[serde(default)]
     pub body_is_binary: bool,
-   /// Description of a mismatch between the file extension and detected file type.
+    /// Description of a mismatch between the file extension and detected file type.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_type_mismatch: Option<String>,
-   /// Temporary file path for large bodies written to disk.
+    /// Temporary file path for large bodies written to disk.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body_temp_file: Option<String>,
-   /// Whether TCP reassembly contained gaps, indicating potentially incomplete content.
+    /// Whether TCP reassembly contained gaps, indicating potentially incomplete content.
     #[serde(default)]
     pub has_gaps: bool,
-   /// Capture timestamp.
+    /// Capture timestamp.
     pub timestamp: DateTime<Utc>,
-   /// Associated network session ID, when correlated.
+    /// Associated network session ID, when correlated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_session_id: Option<Uuid>,
 }
 
 impl HttpSession {
-   /// Create a new HTTP session record with default optional fields.
+    /// Create a new HTTP session record with default optional fields.
     pub fn new(
         client_ip: String,
         client_port: u16,
@@ -1031,69 +1019,69 @@ impl HttpSession {
 /// A data security incident derived from an HTTP session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataSecurityIncident {
-   /// Unique identifier.
+    /// Unique identifier.
     pub id: Uuid,
-   /// Associated HTTP session ID.
+    /// Associated HTTP session ID.
     pub http_session_id: Uuid,
-   /// Incident type.
+    /// Incident type.
     pub incident_type: DataSecurityIncidentType,
-   /// Severity level.
+    /// Severity level.
     pub severity: DataSecuritySeverity,
-   /// Confidence score in the range `0.0..=1.0`.
+    /// Confidence score in the range `0.0..=1.0`.
     pub confidence: f64,
-   /// Human-readable summary.
+    /// Human-readable summary.
     pub summary: String,
-   /// Evidence attached to the incident.
+    /// Evidence attached to the incident.
     pub evidence: Vec<crate::security::Evidence>,
-   /// Optional structured detail payload.
+    /// Optional structured detail payload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<serde_json::Value>,
-   /// DLP match categories contributing to the finding.
+    /// DLP match categories contributing to the finding.
     #[serde(default)]
     pub dlp_matches: Vec<String>,
-   /// Source client IP.
+    /// Source client IP.
     pub client_ip: String,
-   /// Detected user identifier, if available.
+    /// Detected user identifier, if available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detected_user: Option<String>,
-   /// Request URI.
+    /// Request URI.
     #[serde(default)]
     pub request_url: String,
-   /// Target host.
+    /// Target host.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
-   /// HTTP method as a string.
+    /// HTTP method as a string.
     #[serde(default)]
     pub method: String,
-   /// Creation timestamp.
+    /// Creation timestamp.
     pub created_at: DateTime<Utc>,
 }
 
 /// Aggregate data security statistics used by dashboards and APIs.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DataSecurityStats {
-   /// Total incident count.
+    /// Total incident count.
     pub total_incidents: u64,
-   /// Draft-box abuse incident count.
+    /// Draft-box abuse incident count.
     pub draft_abuse_count: u64,
-   /// File-transit incident count.
+    /// File-transit incident count.
     pub file_transit_count: u64,
-   /// Self-send incident count.
+    /// Self-send incident count.
     pub self_send_count: u64,
-   /// Volume anomaly incident count.
+    /// Volume anomaly incident count.
     pub volume_anomaly_count: u64,
-   /// JR/T 0197-2020 compliance incident count.
+    /// JR/T 0197-2020 compliance incident count.
     #[serde(default)]
     pub jrt_compliance_count: u64,
-   /// High-severity incidents observed in the last 24 hours.
+    /// High-severity incidents observed in the last 24 hours.
     pub high_severity_24h: u64,
-   /// Incident counts grouped by severity label.
+    /// Incident counts grouped by severity label.
     #[serde(default)]
     pub incidents_by_severity: std::collections::HashMap<String, u64>,
-   /// Hourly HTTP session counts for the last 24 hours, oldest to newest.
+    /// Hourly HTTP session counts for the last 24 hours, oldest to newest.
     #[serde(default)]
     pub hourly_sessions: Vec<HourlyBucket>,
-   /// Hourly incident counts for the last 24 hours.
+    /// Hourly incident counts for the last 24 hours.
     #[serde(default)]
     pub hourly_incidents: Vec<HourlyBucket>,
 }
@@ -1101,9 +1089,9 @@ pub struct DataSecurityStats {
 /// Per-hour statistics bucket
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HourlyBucket {
-   /// Hour label such as `14:00`.
+    /// Hour label such as `14:00`.
     pub hour: String,
-   /// Count for that hour.
+    /// Count for that hour.
     pub count: u64,
 }
 
@@ -1111,23 +1099,23 @@ pub struct HourlyBucket {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum WsMessage {
-   /// Newly created session.
+    /// Newly created session.
     NewSession(WsSessionSignal),
-   /// Session state update.
+    /// Session state update.
     SessionUpdate(WsSessionSignal),
-   /// Traffic statistics update.
+    /// Traffic statistics update.
     StatsUpdate(TrafficStats),
-   /// Completed security verdict.
+    /// Completed security verdict.
     SecurityVerdict(SecurityVerdictSummary),
-   /// Data security incident alert.
+    /// Data security incident alert.
     DataSecurityAlert(DataSecurityIncident),
-   /// Generic alert message, typically for P0-P3 notifications.
+    /// Generic alert message, typically for P0-P3 notifications.
     Alert(String),
-   /// Internal control message used to tear down authenticated WebSocket sessions.
+    /// Internal control message used to tear down authenticated WebSocket sessions.
     SessionInvalidated,
-   /// Heartbeat ping.
+    /// Heartbeat ping.
     Ping,
-   /// Heartbeat response.
+    /// Heartbeat response.
     Pong,
 }
 

@@ -11,7 +11,7 @@ use crate::AppState;
 pub async fn get_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match state.db.get_stats().await {
         Ok(mut stats) => {
-           // Merge sniffer-pushed real-time rates (DB stores cumulative values only, not rates)
+            // Merge sniffer-pushed real-time rates (DB stores cumulative values only, not rates)
             stats.packets_per_second = f64::from_bits(
                 state
                     .monitoring
@@ -34,14 +34,14 @@ pub async fn get_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse 
 
 /// Uses background cache: raw query ~29s, cached <1ms
 pub async fn get_external_login_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-   // Prefer reading from cache
+    // Prefer reading from cache
     {
         let cache = state.cache.login_stats.read().await;
         if let Some((_, data)) = &*cache {
             return ApiResponse::ok(data.clone());
         }
     }
-   // Cache not ready (service just started, background task hasn't completed first refresh yet)
+    // Cache not ready (service just started, background task hasn't completed first refresh yet)
     match state.db.get_external_login_stats().await {
         Ok(stats) => ApiResponse::ok(stats),
         Err(e) => ApiResponse::<ExternalLoginStats>::internal_err(&e, "Operation failed"),

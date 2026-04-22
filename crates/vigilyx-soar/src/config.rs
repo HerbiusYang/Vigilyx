@@ -4,40 +4,40 @@ use serde::{Deserialize, Serialize};
 /// Email alert configuration (stored in config table, key = 'email_alert_config')
 #[derive(Clone, Serialize, Deserialize)]
 pub struct EmailAlertConfig {
-   /// Whether to enable email alerts
+    /// Whether to enable email alerts
     #[serde(default)]
     pub enabled: bool,
-   /// SMTP server address
+    /// SMTP server address
     #[serde(default)]
     pub smtp_host: String,
-   /// SMTP port (25/465/587)
+    /// SMTP port (25/465/587)
     #[serde(default = "default_smtp_port")]
     pub smtp_port: u16,
-   /// SMTP login username
+    /// SMTP login username
     #[serde(default)]
     pub smtp_username: String,
-   /// SMTP login password
+    /// SMTP login password
     #[serde(default)]
     pub smtp_password: String,
-   /// Encryption method: "none" | "starttls" | "tls"
+    /// Encryption method: "none" | "starttls" | "tls"
     #[serde(default = "default_smtp_tls")]
     pub smtp_tls: String,
-   /// Explicit admin opt-in for plaintext SMTP
+    /// Explicit admin opt-in for plaintext SMTP
     #[serde(default)]
     pub allow_plaintext_smtp: bool,
-   /// Sender address
+    /// Sender address
     #[serde(default)]
     pub from_address: String,
-   /// Admin email address
+    /// Admin email address
     #[serde(default)]
     pub admin_email: String,
-   /// Minimum alert level: "medium" | "high" | "critical"
+    /// Minimum alert level: "medium" | "high" | "critical"
     #[serde(default = "default_min_alert_level")]
     pub min_threat_level: String,
-   /// Notify original internal recipients only
+    /// Notify original internal recipients only
     #[serde(default)]
     pub notify_recipient: bool,
-   /// Notify admin
+    /// Notify admin
     #[serde(default = "default_true_val")]
     pub notify_admin: bool,
 }
@@ -102,16 +102,16 @@ impl Default for EmailAlertConfig {
 /// WeChat alert configuration (stored in config table, key = 'wechat_alert_config')
 #[derive(Clone, Serialize, Deserialize)]
 pub struct WechatAlertConfig {
-   /// Whether to enable WeChat alerts
+    /// Whether to enable WeChat alerts
     #[serde(default)]
     pub enabled: bool,
-   /// Enterprise WeChat bot webhook URL
+    /// Enterprise WeChat bot webhook URL
     #[serde(default)]
     pub webhook_url: String,
-   /// Minimum alert level: "medium" | "high" | "critical"
+    /// Minimum alert level: "medium" | "high" | "critical"
     #[serde(default = "default_min_alert_level")]
     pub min_threat_level: String,
-   /// Mentioned mobile numbers for text alerts
+    /// Mentioned mobile numbers for text alerts
     #[serde(default)]
     pub mentioned_mobile_list: Vec<String>,
 }

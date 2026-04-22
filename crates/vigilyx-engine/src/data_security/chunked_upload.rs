@@ -6,7 +6,6 @@
 //! POST /coremail/XT/jsp/upload.jsp?sid=...&func=directdata&composeId=c%3Anf%3A9&attachmentId=1&offset=2097152
 //! POST /coremail/XT/jsp/upload.jsp?sid=...&func=directdata&composeId=c%3Anf%3A9&attachmentId=1&offset=4194304
 
-
 //! Request with1 chunk,`offset` Parameter chunk FileMediumof bit.
 //! Module Same1Fileof chunk According to offset Domain squatingConnect completeFile.
 
@@ -51,23 +50,23 @@ struct ChunkKey {
 
 /// FileofWaitreassembleStatus
 struct PendingUpload {
-   /// Chunked: BTreeMap<offset, body_data> - According to offset,Process
+    /// Chunked: BTreeMap<offset, body_data> - According to offset,Process
     chunks: BTreeMap<u64, Vec<u8>>,
     total_size: u64,
     chunk_count: u32,
     last_chunk_at: Instant,
     created_at: Instant,
-   /// keepAfter1ChunkedofYuandata (Used forconstructCompositionof HttpSession)
+    /// keepAfter1ChunkedofYuandata (Used forconstructCompositionof HttpSession)
     first_session: HttpSession,
 }
 
 /// completeofFilereassembleResult
 pub struct CompletedUpload {
-   /// According to offset Domain squatingConnectofcompleteFile
+    /// According to offset Domain squatingConnectofcompleteFile
     pub reassembled_data: Vec<u8>,
     pub total_size: u64,
     pub chunk_count: u32,
-   /// After1ChunkedofYuandata
+    /// After1ChunkedofYuandata
     pub base_session: HttpSession,
 }
 
@@ -83,16 +82,16 @@ impl ChunkedUploadTracker {
         }
     }
 
-   /// Check URL whether Coremail ChunkedUpload
+    /// Check URL whether Coremail ChunkedUpload
     pub fn is_chunk_upload_url(uri: &str) -> bool {
         let uri_lower = uri.to_lowercase();
         uri_lower.contains("func=directdata")
             && UPLOAD_JSP_PATTERNS.iter().any(|p| uri_lower.contains(p))
     }
 
-   /// From URL MediumExtractChunkedParameter
+    /// From URL MediumExtractChunkedParameter
     pub fn parse_chunk_params(uri: &str) -> Option<ChunkParams> {
-       // From query string MediumExtractParameter
+        // From query string MediumExtractParameter
         let query = uri.split('?').nth(1)?;
 
         let mut compose_id = None;
@@ -119,20 +118,20 @@ impl ChunkedUploadTracker {
         })
     }
 
-   /// Receive1Chunked (SynchronousreadGet body)
-    
-   /// if body_temp_file value,FromFilereadGet body; request_body.
-   /// Note: MethodUse I/O, async ContextMedium.
-   /// async ContextMedium Use `ingest_with_data()` Asynchronous read.
+    /// Receive1Chunked (SynchronousreadGet body)
+
+    /// if body_temp_file value,FromFilereadGet body; request_body.
+    /// Note: MethodUse I/O, async ContextMedium.
+    /// async ContextMedium Use `ingest_with_data()` Asynchronous read.
     pub fn ingest(&mut self, session: &HttpSession, params: &ChunkParams) {
         let body_data = self.read_body(session);
         self.ingest_with_data(session, params, body_data);
     }
 
-   /// Receive1Chunked (Use readof body data)
-    
-   /// Used for async Context: AsynchronousreadGet body data, Method.
-   /// Avoid tokio RuntimeMediumExecuteline File I/O.
+    /// Receive1Chunked (Use readof body data)
+
+    /// Used for async Context: AsynchronousreadGet body data, Method.
+    /// Avoid tokio RuntimeMediumExecuteline File I/O.
     pub fn ingest_with_data(
         &mut self,
         session: &HttpSession,
@@ -145,7 +144,7 @@ impl ChunkedUploadTracker {
             attachment_id: params.attachment_id.clone(),
         };
 
-       // Capacitylimit
+        // Capacitylimit
         if !self.pending.contains_key(&key) && self.pending.len() >= MAX_PENDING_UPLOADS {
             warn!(
                 "ChunkedtracingDevice/Handleralreadyfull ({}/{}), dropNewUpload",
@@ -170,7 +169,7 @@ impl ChunkedUploadTracker {
             first_session: session.clone(),
         });
 
-       // sizelimit
+        // sizelimit
         if entry.total_size + body_data.len() as u64 > MAX_REASSEMBLED_SIZE as u64 {
             warn!(
                 "Chunked upload exceeds {} MB limit, dropping subsequent chunks",
@@ -194,7 +193,7 @@ impl ChunkedUploadTracker {
         );
     }
 
-   /// when checking,Returnalreadycomplete/TimeoutofFile
+    /// when checking,Returnalreadycomplete/TimeoutofFile
     pub fn tick(&mut self) -> Vec<CompletedUpload> {
         let now = Instant::now();
         let mut completed = Vec::new();
@@ -215,7 +214,7 @@ impl ChunkedUploadTracker {
                     continue;
                 }
 
-               // According to offset Domain squatingConnect
+                // According to offset Domain squatingConnect
                 let mut data = Vec::with_capacity(upload.total_size as usize);
                 for chunk in upload.chunks.values() {
                     data.extend_from_slice(chunk);
@@ -241,9 +240,9 @@ impl ChunkedUploadTracker {
         completed
     }
 
-   /// Read body data from HttpSession — SEC: path validation (CWE-22)
+    /// Read body data from HttpSession — SEC: path validation (CWE-22)
     fn read_body(&self, session: &HttpSession) -> Vec<u8> {
-       // priorityFromtempFilereadGet
+        // priorityFromtempFilereadGet
         if let Some(ref path) = session.body_temp_file
             && let Some(validated) = super::validate_temp_path(path)
         {
@@ -255,7 +254,7 @@ impl ChunkedUploadTracker {
             }
         }
 
-       // downgradelevel: FromMemoryMediumof request_body readGet
+        // downgradelevel: FromMemoryMediumof request_body readGet
         if let Some(ref body) = session.request_body {
             return body.as_bytes().to_vec();
         }
@@ -368,7 +367,7 @@ mod tests {
 
         tracker.ingest(&session, &params);
 
-       // immediately (Timeout)
+        // immediately (Timeout)
         let completed = tracker.tick();
         assert!(completed.is_empty());
     }
@@ -377,7 +376,7 @@ mod tests {
     fn test_ingest_multiple_chunks_reassemble_order() {
         let mut tracker = ChunkedUploadTracker::new();
 
-       // Send chunk: offset=100, offset=0
+        // Send chunk: offset=100, offset=0
         let uri1 = "/upload.jsp?func=directdata&composeId=test&attachmentId=1&offset=5";
         let s1 = make_session(uri1, Some("BBBBB"));
         let p1 = ChunkedUploadTracker::parse_chunk_params(uri1).unwrap();
@@ -388,7 +387,7 @@ mod tests {
         let p0 = ChunkedUploadTracker::parse_chunk_params(uri0).unwrap();
         tracker.ingest(&s0, &p0);
 
-       // SetTimeout
+        // SetTimeout
         for (_, upload) in tracker.pending.iter_mut() {
             upload.last_chunk_at = Instant::now() - CHUNK_TIMEOUT - Duration::from_secs(1);
         }
@@ -396,7 +395,7 @@ mod tests {
         let completed = tracker.tick();
         assert_eq!(completed.len(), 1);
         assert_eq!(completed[0].chunk_count, 2);
-       // BTreeMap According to offset: offset=0 -> "AAAAA", offset=5 -> "BBBBB"
+        // BTreeMap According to offset: offset=0 -> "AAAAA", offset=5 -> "BBBBB"
         assert_eq!(
             String::from_utf8_lossy(&completed[0].reassembled_data),
             "AAAAABBBBB"
@@ -426,7 +425,7 @@ mod tests {
     fn test_capacity_limit_rejects_excess() {
         let mut tracker = ChunkedUploadTracker::new();
 
-       // fulltracinghandler
+        // fulltracinghandler
         for i in 0..MAX_PENDING_UPLOADS {
             let uri = format!(
                 "/upload.jsp?func=directdata&composeId=compose{}&attachmentId=1&offset=0",
@@ -439,13 +438,13 @@ mod tests {
 
         assert_eq!(tracker.pending.len(), MAX_PENDING_UPLOADS);
 
-       // Add1 Rejected
+        // Add1 Rejected
         let uri = "/upload.jsp?func=directdata&composeId=overflow&attachmentId=1&offset=0";
         let session = make_session(uri, Some("data"));
         let params = ChunkedUploadTracker::parse_chunk_params(uri).unwrap();
         tracker.ingest(&session, &params);
 
-       // MAX_PENDING_UPLOADS
+        // MAX_PENDING_UPLOADS
         assert_eq!(tracker.pending.len(), MAX_PENDING_UPLOADS);
     }
 
@@ -463,7 +462,7 @@ mod tests {
         let session = make_session(uri, None); // Memory body
         let params = ChunkedUploadTracker::parse_chunk_params(uri).unwrap();
 
-       // Asynchronous readofdata
+        // Asynchronous readofdata
         let pre_read_data = b"pre-read chunk data".to_vec();
         tracker.ingest_with_data(&session, &params, pre_read_data);
 
@@ -477,7 +476,7 @@ mod tests {
         let session = make_session(uri, None);
         let params = ChunkedUploadTracker::parse_chunk_params(uri).unwrap();
 
-       // data hops
+        // data hops
         tracker.ingest_with_data(&session, &params, Vec::new());
         assert_eq!(tracker.pending.len(), 0);
     }

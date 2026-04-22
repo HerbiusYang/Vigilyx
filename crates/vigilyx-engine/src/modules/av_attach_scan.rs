@@ -32,7 +32,8 @@ impl AvAttachScanModule {
             meta: ModuleMetadata {
                 id: "av_attach_scan".to_string(),
                 name: "Attachment Virus Scan".to_string(),
-                description: "Scans each email attachment for virus signatures using ClamAV".to_string(),
+                description: "Scans each email attachment for virus signatures using ClamAV"
+                    .to_string(),
                 pillar: Pillar::Attachment,
                 depends_on: vec![],
                 timeout_ms: 30_000,
@@ -120,7 +121,7 @@ impl SecurityModule for AvAttachScanModule {
         let mut skipped_count: u32 = 0;
         let mut clamav_error = false;
 
-       // Collect decodable attachments for concurrent scanning
+        // Collect decodable attachments for concurrent scanning
         let mut scan_tasks = tokio::task::JoinSet::new();
 
         for att in attachments {
@@ -139,7 +140,7 @@ impl SecurityModule for AvAttachScanModule {
                         }
                     });
                 } else {
-                   // Base64 decode failed
+                    // Base64 decode failed
                     skipped_count += 1;
                     evidence.push(Evidence {
                         description: format!(
@@ -151,7 +152,7 @@ impl SecurityModule for AvAttachScanModule {
                     });
                 }
             } else {
-               // No content_base64 (>10MB)
+                // No content_base64 (>10MB)
                 skipped_count += 1;
                 evidence.push(Evidence {
                     description: format!(
@@ -165,7 +166,7 @@ impl SecurityModule for AvAttachScanModule {
             }
         }
 
-       // Await all scan results
+        // Await all scan results
         while let Some(join_result) = scan_tasks.join_next().await {
             match join_result {
                 Ok(outcome) => match outcome.result {
@@ -212,10 +213,10 @@ impl SecurityModule for AvAttachScanModule {
 
         let duration_ms = start.elapsed().as_millis() as u64;
 
-       // If ClamAV was completely unavailable (all scans failed, none succeeded)
-       // F01 fix: Return scan_incomplete with non-zero suspicion instead of
-       // not_applicable (vacuous BPA), so the verdict pipeline knows the scan
-       // was NOT completed — not that the attachments are safe.
+        // If ClamAV was completely unavailable (all scans failed, none succeeded)
+        // F01 fix: Return scan_incomplete with non-zero suspicion instead of
+        // not_applicable (vacuous BPA), so the verdict pipeline knows the scan
+        // was NOT completed — not that the attachments are safe.
         if clamav_error && scanned_count == 0 && infected_files.is_empty() {
             warn!(
                 module = "av_attach_scan",
@@ -248,9 +249,9 @@ impl SecurityModule for AvAttachScanModule {
             });
         }
 
-       // All attachments were skipped (no content_base64, all>10MB)
-       // F03 fix: Return scan_skipped with non-zero suspicion instead of Safe.
-       // Large attachments that bypass AV scanning represent unknown risk.
+        // All attachments were skipped (no content_base64, all>10MB)
+        // F03 fix: Return scan_skipped with non-zero suspicion instead of Safe.
+        // Large attachments that bypass AV scanning represent unknown risk.
         if scanned_count == 0 && infected_files.is_empty() && skipped_count > 0 {
             info!(
                 module = "av_attach_scan",
@@ -284,7 +285,7 @@ impl SecurityModule for AvAttachScanModule {
             });
         }
 
-       // If any attachment is infected -> Critical
+        // If any attachment is infected -> Critical
         if !infected_files.is_empty() {
             categories.sort();
             categories.dedup();
@@ -315,7 +316,7 @@ impl SecurityModule for AvAttachScanModule {
             });
         }
 
-       // All scanned attachments are clean
+        // All scanned attachments are clean
         Ok(ModuleResult::safe_analyzed(
             &self.meta.id,
             &self.meta.name,
@@ -370,7 +371,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_attachments_returns_not_applicable() {
-       // Use a client that will never be called (no attachments)
+        // Use a client that will never be called (no attachments)
         let client = Arc::new(ClamAvClient::new("localhost".to_string(), 3310));
         let module = AvAttachScanModule::new(client);
         let ctx = crate::context::SecurityContext::new(make_session_with_attachments(vec![]));
@@ -389,15 +390,19 @@ mod tests {
             hash: "abc".to_string(),
             content_base64: None,
         };
-       // Client won't connect (no scannable attachments) -> will be not_applicable
+        // Client won't connect (no scannable attachments) -> will be not_applicable
         let client = Arc::new(ClamAvClient::new("nonexistent-host".to_string(), 3310));
         let module = AvAttachScanModule::new(client);
         let ctx = crate::context::SecurityContext::new(make_session_with_attachments(vec![att]));
 
         let result = module.analyze(&ctx).await.unwrap();
-       // All attachments were skipped due to size -> scan_skipped (not Safe)
+        // All attachments were skipped due to size -> scan_skipped (not Safe)
         assert_eq!(result.threat_level, ThreatLevel::Low);
-        assert!(result.categories.contains(&"scan_skipped_size_limit".to_string()));
+        assert!(
+            result
+                .categories
+                .contains(&"scan_skipped_size_limit".to_string())
+        );
         assert!(
             result
                 .evidence

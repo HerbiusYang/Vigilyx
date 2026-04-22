@@ -8,13 +8,11 @@ use vigilyx_core::{DEFAULT_INTERNAL_SERVICE_HOSTS, validate_internal_service_url
 
 use super::{IntelLayer, IntelResult, classify_otx_pulses};
 
-
 // OTX AlienVault Query (, API Key)
 
-
 impl IntelLayer {
-   /// OTX DomainQuery
-   /// GET https://otx.alienvault.com/api/v1/indicators/domain/{domain}/general
+    /// OTX DomainQuery
+    /// GET https://otx.alienvault.com/api/v1/indicators/domain/{domain}/general
     pub(super) async fn query_otx_domain(&self, domain: &str) -> Option<IntelResult> {
         {
             let mut rl = self.rate_limiter.lock().await;
@@ -39,8 +37,8 @@ impl IntelLayer {
         self.parse_otx_response(domain, "domain", &body).await
     }
 
-   /// OTX IP Query
-   /// GET https://otx.alienvault.com/api/v1/indicators/IPv4/{ip}/general
+    /// OTX IP Query
+    /// GET https://otx.alienvault.com/api/v1/indicators/IPv4/{ip}/general
     pub(super) async fn query_otx_ip(&self, ip: &str) -> Option<IntelResult> {
         {
             let mut rl = self.rate_limiter.lock().await;
@@ -65,7 +63,7 @@ impl IntelLayer {
         self.parse_otx_response(ip, "ip", &body).await
     }
 
-   /// Parse OTX API Response
+    /// Parse OTX API Response
     async fn parse_otx_response(
         &self,
         indicator: &str,
@@ -77,9 +75,9 @@ impl IntelLayer {
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
 
-       // pulse_count: of
-       // Note: HighStream LegitimateDomain (if adnxs.com, doubleclick.net) possiblydue to found
-       // Analyze Medium High, tableDomain Malicious.ThresholdSet.
+        // pulse_count: of
+        // Note: HighStream LegitimateDomain (if adnxs.com, doubleclick.net) possiblydue to found
+        // Analyze Medium High, tableDomain Malicious.ThresholdSet.
         let (verdict, confidence) = classify_otx_pulses(pulse_count);
 
         let details = format!("OTX: {} threat pulse associations", pulse_count);
@@ -94,17 +92,15 @@ impl IntelLayer {
             details: Some(details),
         };
 
-       // independentcache OTX Result
+        // independentcache OTX Result
         self.cache_external_result(&result).await;
 
         Some(result)
     }
 
-    
-   // VT Scrape Query (Python Playwright Service)
-    
+    // VT Scrape Query (Python Playwright Service)
 
-   /// Python Playwright Service Get VirusTotal data
+    /// Python Playwright Service Get VirusTotal data
     pub(super) async fn query_vt_scrape(
         &self,
         indicator: &str,
@@ -122,9 +118,7 @@ impl IntelLayer {
         }
 
         let base_url = self.config.vt_scrape_base_url();
-        if let Err(err) =
-            validate_internal_service_url(&base_url, DEFAULT_INTERNAL_SERVICE_HOSTS)
-        {
+        if let Err(err) = validate_internal_service_url(&base_url, DEFAULT_INTERNAL_SERVICE_HOSTS) {
             warn!(
                 url = %base_url,
                 error = %err,
@@ -134,7 +128,7 @@ impl IntelLayer {
         }
         let url = format!("{}/api/vt-scrape", base_url);
 
-       // BuildRequest
+        // BuildRequest
         let request_body = serde_json::json!({
             "indicator": indicator,
             "indicator_type": ioc_type,
@@ -155,7 +149,7 @@ impl IntelLayer {
 
         let body: serde_json::Value = response.json().await.ok()?;
 
-       // Parse Python ServiceReturnofStandardResponse
+        // Parse Python ServiceReturnofStandardResponse
         let success = body.get("success")?.as_bool().unwrap_or(false);
         if !success {
             let error = body
@@ -194,19 +188,18 @@ impl IntelLayer {
             )),
         };
 
-       // independentcache VT Scrape Result
+        // independentcache VT Scrape Result
         self.cache_external_result(&result).await;
 
         Some(result)
     }
 
+    // VirusTotal Official API v3
 
-   // VirusTotal Official API v3
-
-   /// VirusTotal Official API v3 Query
-   /// Supports: domain, ip, hash, url
-   /// Free tier: 4 requests/min, 500/day
-   /// Degrades gracefully on 429 (marks quota exhausted)
+    /// VirusTotal Official API v3 Query
+    /// Supports: domain, ip, hash, url
+    /// Free tier: 4 requests/min, 500/day
+    /// Degrades gracefully on 429 (marks quota exhausted)
     pub(super) async fn query_virustotal_api(
         &self,
         indicator: &str,
@@ -215,7 +208,10 @@ impl IntelLayer {
         {
             let mut rl = self.rate_limiter.lock().await;
             if !rl.vt_api.try_acquire() {
-                warn!("VT API rate limit / quota exhausted: {} ({})", indicator, ioc_type);
+                warn!(
+                    "VT API rate limit / quota exhausted: {} ({})",
+                    indicator, ioc_type
+                );
                 return None;
             }
         }
@@ -224,12 +220,15 @@ impl IntelLayer {
 
         let url = match ioc_type {
             "domain" => format!("https://www.virustotal.com/api/v3/domains/{}", indicator),
-            "ip" => format!("https://www.virustotal.com/api/v3/ip_addresses/{}", indicator),
+            "ip" => format!(
+                "https://www.virustotal.com/api/v3/ip_addresses/{}",
+                indicator
+            ),
             "hash" => format!("https://www.virustotal.com/api/v3/files/{}", indicator),
             "url" => {
                 use base64::Engine;
-                let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
-                    .encode(indicator.as_bytes());
+                let encoded =
+                    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(indicator.as_bytes());
                 format!("https://www.virustotal.com/api/v3/urls/{}", encoded)
             }
             _ => return None,
@@ -265,11 +264,20 @@ impl IntelLayer {
         let stats = body.pointer("/data/attributes/last_analysis_stats")?;
 
         let malicious = stats.get("malicious").and_then(|v| v.as_u64()).unwrap_or(0);
-        let suspicious = stats.get("suspicious").and_then(|v| v.as_u64()).unwrap_or(0);
-        let total: u64 = ["malicious", "suspicious", "undetected", "harmless", "timeout"]
-            .iter()
-            .filter_map(|k| stats.get(*k).and_then(|v| v.as_u64()))
-            .sum();
+        let suspicious = stats
+            .get("suspicious")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let total: u64 = [
+            "malicious",
+            "suspicious",
+            "undetected",
+            "harmless",
+            "timeout",
+        ]
+        .iter()
+        .filter_map(|k| stats.get(*k).and_then(|v| v.as_u64()))
+        .sum();
 
         if total == 0 {
             return None;
@@ -292,19 +300,14 @@ impl IntelLayer {
             verdict: verdict.to_string(),
             confidence,
             source: "virustotal".to_string(),
-            details: Some(format!(
-                "VT API: malicious={}/{} engines",
-                malicious, total
-            )),
+            details: Some(format!("VT API: malicious={}/{} engines", malicious, total)),
         };
 
         self.cache_external_result(&result).await;
         Some(result)
     }
 
-
-   // AbuseIPDB Query (Need/Require API Key)
-
+    // AbuseIPDB Query (Need/Require API Key)
 
     pub(super) async fn query_abuseipdb(&self, ip: &str) -> Option<IntelResult> {
         {
@@ -357,7 +360,7 @@ impl IntelLayer {
             details: Some(format!("AbuseIPDB: abuse_score={}", abuse_score)),
         };
 
-       // independentcache
+        // independentcache
         self.cache_external_result(&result).await;
 
         Some(result)

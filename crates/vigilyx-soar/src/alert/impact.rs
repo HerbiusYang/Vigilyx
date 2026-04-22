@@ -8,9 +8,9 @@
 /// For prototype: default weight = 1.0, can be overridden per-recipient.
 #[derive(Debug, Clone)]
 pub struct ImpactConfig {
-   /// Default impact weight for unknown recipients.
+    /// Default impact weight for unknown recipients.
     pub default_weight: f64,
-   /// Override weights by recipient email pattern.
+    /// Override weights by recipient email pattern.
     pub overrides: Vec<(String, f64)>,
 }
 
@@ -19,7 +19,7 @@ impl Default for ImpactConfig {
         Self {
             default_weight: 1.0,
             overrides: vec![
-               // Example high-value targets
+                // Example high-value targets
                 ("ceo@".to_string(), 5.0),
                 ("cfo@".to_string(), 4.5),
                 ("finance@".to_string(), 4.5),
@@ -31,7 +31,7 @@ impl Default for ImpactConfig {
 }
 
 impl ImpactConfig {
-   /// Look up impact weight for a recipient.
+    /// Look up impact weight for a recipient.
     #[inline]
     pub fn weight_for(&self, recipient: &str) -> f64 {
         let lower = recipient.to_ascii_lowercase();

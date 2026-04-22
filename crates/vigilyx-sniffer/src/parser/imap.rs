@@ -8,7 +8,7 @@ impl ImapParser {
         Self
     }
 
-   /// Parse IMAP data
+    /// Parse IMAP data
     pub fn parse(&self, data: &[u8]) -> Option<String> {
         let text = String::from_utf8_lossy(data);
         let text = text.trim();
@@ -17,12 +17,12 @@ impl ImapParser {
             return None;
         }
 
-       // IMAP Response * Header (Mark) + Status
+        // IMAP Response * Header (Mark) + Status
         if text.starts_with('*') {
             return Some(self.parse_untagged_response(text));
         }
 
-       // Checkwhether MarkResponse (A001 OK, A001 NO, A001 BAD)
+        // Checkwhether MarkResponse (A001 OK, A001 NO, A001 BAD)
         let parts: Vec<&str> = text.split_whitespace().collect();
         if parts.len() >= 2 {
             let status = parts[1].to_uppercase();
@@ -31,11 +31,11 @@ impl ImapParser {
             }
         }
 
-       // ParseCommand
+        // ParseCommand
         self.parse_command(text)
     }
 
-   /// Parse IMAP Command
+    /// Parse IMAP Command
     fn parse_command(&self, text: &str) -> Option<String> {
         let parts: Vec<&str> = text.split_whitespace().collect();
         if parts.len() < 2 {
@@ -118,11 +118,11 @@ impl ImapParser {
         Some(parsed)
     }
 
-   /// Parse MarkResponse
+    /// Parse MarkResponse
     fn parse_untagged_response(&self, text: &str) -> String {
         let content = text.strip_prefix('*').unwrap_or(text).trim();
 
-       // Check ResponseType
+        // Check ResponseType
         let parts: Vec<&str> = content.split_whitespace().collect();
         if parts.is_empty() {
             return "* (空Response)".to_string();
@@ -155,7 +155,7 @@ impl ImapParser {
             "SEARCH" => format!("* SEARCH {}", parts[1..].join(" ")),
             "FLAGS" => format!("* FLAGS {}", parts[1..].join(" ")),
             _ => {
-               // Checkwhether (EXISTS, RECENT, EXPUNGE, FETCH)
+                // Checkwhether (EXISTS, RECENT, EXPUNGE, FETCH)
                 if let Ok(num) = first.parse::<u32>() {
                     if parts.len() > 1 {
                         let second = parts[1].to_uppercase();
@@ -184,7 +184,7 @@ impl ImapParser {
         }
     }
 
-   /// ParseMarkResponse
+    /// ParseMarkResponse
     fn parse_tagged_response(&self, text: &str) -> String {
         let parts: Vec<&str> = text.split_whitespace().collect();
         if parts.len() < 2 {

@@ -25,24 +25,22 @@ const MAX_EMAIL_PUBLISH_QUEUE: u64 = 50_000;
 /// dataPublishhandler - MQ HTTP mode
 #[derive(Clone)]
 pub struct DataPublisher {
-   /// PublishMode
+    /// PublishMode
     mode: PublishMode,
-   /// Tokio Runtimehandle (Used for Tokio ThreadFound in)
+    /// Tokio Runtimehandle (Used for Tokio ThreadFound in)
     runtime_handle: Option<tokio::runtime::Handle>,
-   /// emailSessionWaitPublishcount ()
+    /// emailSessionWaitPublishcount ()
     email_pending: Arc<AtomicU64>,
-   /// due toQueuefull dropofemailSessioncount (Monitor)
+    /// due toQueuefull dropofemailSessioncount (Monitor)
     email_dropped: Arc<AtomicU64>,
-   /// XADD failures after all retries exhausted (sessions permanently lost)
+    /// XADD failures after all retries exhausted (sessions permanently lost)
     xadd_failures: Arc<AtomicU64>,
 }
 
 #[derive(Clone)]
 pub enum PublishMode {
     /// Redis Streams (primary, at-least-once delivery)
-    Mq {
-        stream: Arc<StreamClient>,
-    },
+    Mq { stream: Arc<StreamClient> },
     /// HTTP API (legacy fallback when Redis unavailable)
     Http {
         client: Arc<reqwest::Client>,
@@ -54,9 +52,9 @@ pub enum PublishMode {
 }
 
 impl DataPublisher {
-   /// CreateNewofPublishhandler
+    /// CreateNewofPublishhandler
     pub fn new(mode: PublishMode) -> Self {
-       // GetWhenfirstRuntimehandle
+        // GetWhenfirstRuntimehandle
         let runtime_handle = tokio::runtime::Handle::try_current().ok();
         Self {
             mode,
@@ -67,13 +65,13 @@ impl DataPublisher {
         }
     }
 
-   /// SetRuntimehandle (Used for Tokio ContextMediuminitialize givingWorker thread)
+    /// SetRuntimehandle (Used for Tokio ContextMediuminitialize givingWorker thread)
     pub fn with_runtime_handle(mut self, handle: tokio::runtime::Handle) -> Self {
         self.runtime_handle = Some(handle);
         self
     }
 
-   /// Getdue toQueuefull dropofemailSessiontotal (Monitor, giving Prometheus)
+    /// Getdue toQueuefull dropofemailSessiontotal (Monitor, giving Prometheus)
     #[allow(dead_code)]
     pub fn email_sessions_dropped(&self) -> u64 {
         self.email_dropped.load(Ordering::Relaxed)
@@ -91,8 +89,8 @@ impl DataPublisher {
         self.xadd_failures.load(Ordering::Relaxed)
     }
 
-   /// BatchPublishSession
-   /// Note: Methodpossibly Tokio ThreadMedium,UsestoreofRuntimehandle
+    /// BatchPublishSession
+    /// Note: Methodpossibly Tokio ThreadMedium,UsestoreofRuntimehandle
     pub fn publish(&self, sessions: Vec<EmailSession>) {
         if sessions.is_empty() {
             return;
@@ -100,7 +98,7 @@ impl DataPublisher {
 
         let session_count = sessions.len() as u64;
 
-       // Check: preventconsumer (Engine) slower thanproducer tokio Queueinfinite growth
+        // Check: preventconsumer (Engine) slower thanproducer tokio Queueinfinite growth
         let pending = self.email_pending.load(Ordering::Relaxed);
         if pending >= MAX_EMAIL_PUBLISH_QUEUE {
             self.email_dropped
@@ -115,7 +113,7 @@ impl DataPublisher {
             return;
         }
 
-       // UsestoreofRuntimehandle, GetWhenfirstof
+        // UsestoreofRuntimehandle, GetWhenfirstof
         let handle = match &self.runtime_handle {
             Some(h) => h.clone(),
             None => match tokio::runtime::Handle::try_current() {
@@ -127,7 +125,7 @@ impl DataPublisher {
             },
         };
 
-       // AddWaitPublishcount
+        // AddWaitPublishcount
         self.email_pending
             .fetch_add(session_count, Ordering::Relaxed);
         let pending_counter = self.email_pending.clone();
@@ -161,13 +159,16 @@ impl DataPublisher {
                                     count = sessions.len(),
                                     attempt,
                                     max_retries = XADD_MAX_RETRIES,
-                                    "Stream XADD email sessions failed: {}", e
+                                    "Stream XADD email sessions failed: {}",
+                                    e
                                 );
                                 last_err = Some(e);
                                 if attempt < XADD_MAX_RETRIES {
                                     let backoff_ms = XADD_BASE_BACKOFF_MS * (1 << (attempt - 1));
-                                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms))
-                                        .await;
+                                    tokio::time::sleep(std::time::Duration::from_millis(
+                                        backoff_ms,
+                                    ))
+                                    .await;
                                 }
                             }
                         }
@@ -199,7 +200,7 @@ impl DataPublisher {
                     if let Err(e) = client.post(&url).json(&sessions).send().await {
                         debug!("HTTP PublishSessionFailed: {}", e);
                     }
-                   // Publishcomplete, WaitPublishcount
+                    // Publishcomplete, WaitPublishcount
                     let _ =
                         pending_counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
                             Some(v.saturating_sub(session_count))
@@ -207,7 +208,7 @@ impl DataPublisher {
                 });
             }
             PublishMode::None => {
-               // Publish, Process - immediatelyFreeWaitPublishcount
+                // Publish, Process - immediatelyFreeWaitPublishcount
                 let _ =
                     self.email_pending
                         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
@@ -217,7 +218,7 @@ impl DataPublisher {
         }
     }
 
-   /// Publish HTTP Session data security engine (HTTP mode)
+    /// Publish HTTP Session data security engine (HTTP mode)
     pub fn publish_http_sessions(&self, sessions: Vec<HttpSession>) {
         if sessions.is_empty() {
             return;
@@ -246,8 +247,8 @@ impl DataPublisher {
                 let api_url = api_url.clone();
                 handle.spawn(async move {
                     let url = format!("{}/api/data-security/import/http-sessions", api_url);
-                   // SEC: Chunk into batches of 50 to avoid hitting API body size limit (CWE-400)
-                   // Without chunking, a large batch triggers 413 and entire payload is lost.
+                    // SEC: Chunk into batches of 50 to avoid hitting API body size limit (CWE-400)
+                    // Without chunking, a large batch triggers 413 and entire payload is lost.
                     const CHUNK_SIZE: usize = 50;
                     for chunk in sessions.chunks(CHUNK_SIZE) {
                         let mut attempts = 0u32;
@@ -312,13 +313,16 @@ impl DataPublisher {
                                     count = session_count,
                                     attempt,
                                     max_retries = XADD_MAX_RETRIES,
-                                    "Stream XADD HTTP sessions failed: {}", e
+                                    "Stream XADD HTTP sessions failed: {}",
+                                    e
                                 );
                                 last_err = Some(e);
                                 if attempt < XADD_MAX_RETRIES {
                                     let backoff_ms = XADD_BASE_BACKOFF_MS * (1 << (attempt - 1));
-                                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms))
-                                        .await;
+                                    tokio::time::sleep(std::time::Duration::from_millis(
+                                        backoff_ms,
+                                    ))
+                                    .await;
                                 }
                             }
                         }

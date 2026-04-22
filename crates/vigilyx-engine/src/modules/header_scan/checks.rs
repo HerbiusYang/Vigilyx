@@ -6,9 +6,7 @@ use std::collections::HashSet;
 use crate::context::SecurityContext;
 use crate::module::Evidence;
 
-use super::parsed::{
-    extract_domain, ParsedHeaders, PROTECTED_DOMAINS,
-};
+use super::parsed::{PROTECTED_DOMAINS, ParsedHeaders, extract_domain};
 use crate::module_data::module_data;
 
 // ---------------------------------------------------------------------------
@@ -27,7 +25,7 @@ pub(super) fn check_domain_mismatch(
         if let (Some(fd), Some(rd)) = (from_domain, reply_domain)
             && fd != rd
         {
-           // Domain mismatch detected
+            // Domain mismatch detected
             *total_score += 0.25;
             categories.push("domain_mismatch".to_string());
             evidence.push(Evidence {
@@ -39,8 +37,8 @@ pub(super) fn check_domain_mismatch(
                 snippet: Some(format!("From: {} | Reply-To: {}", from, reply_to)),
             });
 
-           // Check if From uses a brand domain but Reply-To points to a free email provider
-           // (e.g. From=id.apple.com, Reply-To=xxx@139.com) — classic brand spoofing pattern
+            // Check if From uses a brand domain but Reply-To points to a free email provider
+            // (e.g. From=id.apple.com, Reply-To=xxx@139.com) — classic brand spoofing pattern
             let known_brand_domains: &[&str] = &[
                 "apple.com",
                 "id.apple.com",
@@ -106,14 +104,14 @@ pub(super) fn check_envelope_spoofing(
     categories: &mut Vec<String>,
     evidence: &mut Vec<Evidence>,
 ) {
-   // This catches spoofing where the display From differs from the SMTP envelope sender
+    // This catches spoofing where the display From differs from the SMTP envelope sender
     if let Some(ref from) = parsed.from_value {
         let from_domain = extract_domain(from);
         let envelope_domain = ctx.session.mail_from.as_deref().and_then(extract_domain);
         if let (Some(fd), Some(ed)) = (&from_domain, &envelope_domain)
             && fd != ed
         {
-           // Base score for any envelope mismatch
+            // Base score for any envelope mismatch
             *total_score += 0.30;
             categories.push("envelope_spoofing".to_string());
             evidence.push(Evidence {
@@ -125,7 +123,7 @@ pub(super) fn check_envelope_spoofing(
                 snippet: Some(format!("From: {} | MAIL FROM domain: {}", from, ed)),
             });
 
-           // Extra penalty if From claims an internal/protected domain
+            // Extra penalty if From claims an internal/protected domain
             if ctx.is_internal_domain(fd) || PROTECTED_DOMAINS.iter().any(|&pd| fd == pd) {
                 *total_score += 0.20;
                 categories.push("protected_domain_spoof".to_string());
@@ -152,9 +150,9 @@ pub(super) fn check_auth_results(
     categories: &mut Vec<String>,
     evidence: &mut Vec<Evidence>,
 ) {
-   // Parse Authentication-Results / ARC-Authentication-Results headers (Exchange, Postfix, etc.)
-   // spf=fail/none or dmarc=fail/none are strong spoofing signals.
-   // Detects "legitimate-looking phishing" even when IPs appear clean, if SPF/DMARC fail.
+    // Parse Authentication-Results / ARC-Authentication-Results headers (Exchange, Postfix, etc.)
+    // spf=fail/none or dmarc=fail/none are strong spoofing signals.
+    // Detects "legitimate-looking phishing" even when IPs appear clean, if SPF/DMARC fail.
     let mut spf_fail = false;
     let mut dmarc_fail = false;
 
@@ -168,7 +166,7 @@ pub(super) fn check_auth_results(
     }
 
     if spf_fail && dmarc_fail {
-       // Both authentication mechanisms failed: strong spoofing signal
+        // Both authentication mechanisms failed: strong spoofing signal
         *total_score += 0.35;
         categories.push("auth_spf_dmarc_fail".to_string());
         evidence.push(Evidence {
@@ -181,9 +179,8 @@ pub(super) fn check_auth_results(
         *total_score += 0.20;
         categories.push("auth_spf_fail".to_string());
         evidence.push(Evidence {
-            description:
-                "SPF failed (fail/softfail/none) — sending IP not authorized by domain"
-                    .to_string(),
+            description: "SPF failed (fail/softfail/none) — sending IP not authorized by domain"
+                .to_string(),
             location: Some("headers:Authentication-Results".to_string()),
             snippet: None,
         });
@@ -197,7 +194,7 @@ pub(super) fn check_auth_results(
         });
     }
 
-   // Missing Authentication-Results on external email -> suspicious
+    // Missing Authentication-Results on external email -> suspicious
     if !parsed.auth_results_found
         && parsed.has_headers
         && !parsed.is_internal
@@ -207,7 +204,9 @@ pub(super) fn check_auth_results(
         *total_score += 0.10;
         categories.push("no_auth_results".to_string());
         evidence.push(Evidence {
-            description: "Missing Authentication-Results header — cannot verify sender authentication status".to_string(),
+            description:
+                "Missing Authentication-Results header — cannot verify sender authentication status"
+                    .to_string(),
             location: Some("headers".to_string()),
             snippet: None,
         });
@@ -225,13 +224,13 @@ pub(super) fn check_date_anomaly(
     evidence: &mut Vec<Evidence>,
 ) {
     if let Some(ref date_str) = parsed.date_value {
-       // Try to parse RFC 2822 date
+        // Try to parse RFC 2822 date
         if let Ok(parsed_dt) = chrono::DateTime::parse_from_rfc2822(date_str) {
             let now = chrono::Utc::now();
             let diff = now.signed_duration_since(parsed_dt.with_timezone(&chrono::Utc));
 
             if diff.num_seconds() < -3600 {
-               // Date is>1 hour in the future (tolerates clock skew up to 1h)
+                // Date is>1 hour in the future (tolerates clock skew up to 1h)
                 *total_score += 0.20;
                 categories.push("future_date".to_string());
                 evidence.push(Evidence {
@@ -244,7 +243,7 @@ pub(super) fn check_date_anomaly(
                     snippet: Some(date_str.clone()),
                 });
             } else if diff.num_days() > 7 {
-               // Date is more than 7 days old
+                // Date is more than 7 days old
                 *total_score += 0.15;
                 categories.push("stale_date".to_string());
                 evidence.push(Evidence {
@@ -259,7 +258,7 @@ pub(super) fn check_date_anomaly(
             }
         }
     } else if parsed.is_complete && parsed.has_headers {
-       // Only flag missing Date when we have a complete email with headers
+        // Only flag missing Date when we have a complete email with headers
         *total_score += 0.10;
         categories.push("missing_date".to_string());
         evidence.push(Evidence {
@@ -269,7 +268,7 @@ pub(super) fn check_date_anomaly(
         });
     }
 
-   // --- 3. Missing Message-ID (only flag for complete emails with headers) ---
+    // --- 3. Missing Message-ID (only flag for complete emails with headers) ---
     if !parsed.message_id_found && parsed.is_complete && parsed.has_headers {
         *total_score += 0.10;
         categories.push("missing_message_id".to_string());
@@ -390,9 +389,9 @@ fn split_domain_parts(domain: &str) -> (String, String) {
 
     // Known multi-part TLDs (kept in sync with threat_scene.rs)
     static MULTI_TLDS: &[&str] = &[
-        "co.uk", "org.uk", "ac.uk", "com.cn", "org.cn", "net.cn", "gov.cn",
-        "com.hk", "org.hk", "com.au", "org.au", "com.br", "co.jp", "or.jp",
-        "co.kr", "or.kr", "com.tw", "org.tw", "co.nz", "com.sg", "edu.cn",
+        "co.uk", "org.uk", "ac.uk", "com.cn", "org.cn", "net.cn", "gov.cn", "com.hk", "org.hk",
+        "com.au", "org.au", "com.br", "co.jp", "or.jp", "co.kr", "or.kr", "com.tw", "org.tw",
+        "co.nz", "com.sg", "edu.cn",
     ];
 
     if parts.len() >= 3 {

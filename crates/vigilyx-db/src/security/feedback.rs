@@ -7,7 +7,7 @@ use vigilyx_core::security::{FeedbackEntry, FeedbackStat};
 use crate::VigilDb;
 
 impl VigilDb {
-   /// Submit false positive feedback
+    /// Submit false positive feedback
     pub async fn insert_feedback(&self, fb: &FeedbackEntry) -> Result<()> {
         sqlx::query(
             r#"
@@ -31,7 +31,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Get feedback statistics (false positives per module)
+    /// Get feedback statistics (false positives per module)
     pub async fn get_feedback_stats(&self) -> Result<Vec<FeedbackStat>> {
         let rows: Vec<(Option<String>, i64, i64)> = sqlx::query_as(
             r#"
@@ -54,7 +54,7 @@ impl VigilDb {
             .collect())
     }
 
-   /// Get false positive count for same sender/domain
+    /// Get false positive count for same sender/domain
     pub async fn count_false_positives_for_session_sender(
         &self,
         mail_from_domain: &str,

@@ -27,7 +27,7 @@ type TrainingSampleRow = (
 );
 
 impl VigilDb {
-   /// Insert a training sample
+    /// Insert a training sample
     pub async fn insert_training_sample(&self, sample: &TrainingSample) -> Result<()> {
         let rcpt_to_json = serde_json::to_string(&sample.rcpt_to)?;
         sqlx::query(
@@ -57,7 +57,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Query training samples (pagination, by creation time descending)
+    /// Query training samples (pagination, by creation time descending)
     pub async fn list_training_samples(
         &self,
         limit: u32,
@@ -81,7 +81,7 @@ impl VigilDb {
         rows.into_iter().map(row_to_training_sample).collect()
     }
 
-   /// Get all training samples (batch read during training)
+    /// Get all training samples (batch read during training)
     pub async fn get_all_training_samples(&self) -> Result<Vec<TrainingSample>> {
         let rows: Vec<TrainingSampleRow> = sqlx::query_as(
             r#"
@@ -98,7 +98,7 @@ impl VigilDb {
         rows.into_iter().map(row_to_training_sample).collect()
     }
 
-   /// Delete training sample
+    /// Delete training sample
     pub async fn delete_training_sample(&self, id: &str) -> Result<bool> {
         let result = sqlx::query("DELETE FROM training_samples WHERE id = $1")
             .bind(id)
@@ -107,7 +107,7 @@ impl VigilDb {
         Ok(result.rows_affected() > 0)
     }
 
-   /// Statistics: count samples by classification
+    /// Statistics: count samples by classification
     pub async fn get_training_sample_counts(&self) -> Result<HashMap<String, u64>> {
         let rows: Vec<(String, i64)> = sqlx::query_as(
             r#"
@@ -126,7 +126,7 @@ impl VigilDb {
         Ok(counts)
     }
 
-   /// Total sample count
+    /// Total sample count
     pub async fn count_training_samples(&self) -> Result<u64> {
         let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM training_samples")
             .fetch_one(&self.pool)
@@ -134,7 +134,7 @@ impl VigilDb {
         Ok(count as u64)
     }
 
-   /// Modify training sample label (only label + label_name can be modified)
+    /// Modify training sample label (only label + label_name can be modified)
     pub async fn update_training_sample_label(
         &self,
         id: &str,
@@ -151,7 +151,7 @@ impl VigilDb {
         Ok(result.rows_affected() > 0)
     }
 
-   /// Check if training sample exists by session_id (deduplication)
+    /// Check if training sample exists by session_id (deduplication)
     pub async fn training_sample_exists(&self, session_id: &str) -> Result<bool> {
         let (count,): (i64,) =
             sqlx::query_as("SELECT COUNT(*) FROM training_samples WHERE session_id = $1")

@@ -22,9 +22,7 @@ struct SessionIdRow {
     id: String,
 }
 
-
 // Batch rescan
-
 
 /// Trigger batch rescan
 pub async fn trigger_rescan(
@@ -119,7 +117,7 @@ pub async fn rescan_session(
         }
     };
 
-   // Load session from database
+    // Load session from database
     let session = match state.db.get_session(session_id).await {
         Ok(Some(s)) => s,
         Ok(None) => {
@@ -133,19 +131,15 @@ pub async fn rescan_session(
     };
 
     match submit_rescan_session(&state, &session).await {
-        Ok(path) => {
-            ApiResponse::ok(serde_json::json!({
-                "status": "accepted",
-                "session_id": session_id.to_string(),
-                "message": format!("Session submitted for re-analysis via {path}")
-            }))
-            .into_response()
-        }
-        Err(e) => ApiResponse::<serde_json::Value>::server_error(
-            &e,
-            "无法连接分析引擎",
-        )
+        Ok(path) => ApiResponse::ok(serde_json::json!({
+            "status": "accepted",
+            "session_id": session_id.to_string(),
+            "message": format!("Session submitted for re-analysis via {path}")
+        }))
         .into_response(),
+        Err(e) => {
+            ApiResponse::<serde_json::Value>::server_error(&e, "无法连接分析引擎").into_response()
+        }
     }
 }
 
@@ -227,16 +221,8 @@ async fn run_rescan_task(
 }
 
 fn validate_rescan_request(req: &vigilyx_engine::rescan::RescanRequest) -> Result<(), String> {
-    let since = req
-        .since
-        .as_deref()
-        .map(parse_rfc3339)
-        .transpose()?;
-    let until = req
-        .until
-        .as_deref()
-        .map(parse_rfc3339)
-        .transpose()?;
+    let since = req.since.as_deref().map(parse_rfc3339).transpose()?;
+    let until = req.until.as_deref().map(parse_rfc3339).transpose()?;
 
     if let (Some(since), Some(until)) = (since, until)
         && since > until
@@ -263,7 +249,10 @@ fn rescan_channel_available(state: &AppState) -> bool {
     state.messaging.mq.is_some()
 }
 
-async fn submit_rescan_session(state: &AppState, session: &EmailSession) -> Result<&'static str, String> {
+async fn submit_rescan_session(
+    state: &AppState,
+    session: &EmailSession,
+) -> Result<&'static str, String> {
     if let Some(ref mq) = state.messaging.mq {
         match mq.publish_cmd(topics::ENGINE_CMD_RESCAN, session).await {
             Ok(()) => return Ok("Redis"),

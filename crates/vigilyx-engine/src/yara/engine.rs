@@ -13,13 +13,13 @@ use super::rules::ALL_RULE_SOURCES;
 /// A single YARA match result.
 #[derive(Debug, Clone)]
 pub struct YaraMatch {
-   /// YARA rule name (e.g. "VBA_Macro_AutoExec").
+    /// YARA rule name (e.g. "VBA_Macro_AutoExec").
     pub rule_name: String,
-   /// Rule meta.category value.
+    /// Rule meta.category value.
     pub category: String,
-   /// Rule meta.severity value.
+    /// Rule meta.severity value.
     pub severity: String,
-   /// Rule meta.description value.
+    /// Rule meta.description value.
     pub description: String,
 }
 
@@ -40,8 +40,8 @@ fn extract_meta_str(meta: &[(&str, yara_x::MetaValue<'_>)], key: &str) -> Option
 }
 
 impl YaraEngine {
-   /// Compile built-in rules and return an engine instance.
-   /// Rule sources that fail to compile are skipped with a warning; the engine still starts.
+    /// Compile built-in rules and return an engine instance.
+    /// Rule sources that fail to compile are skipped with a warning; the engine still starts.
     pub fn new() -> Result<Self, String> {
         let mut compiler = yara_x::Compiler::new();
         let mut failed_sources = 0u32;
@@ -49,7 +49,10 @@ impl YaraEngine {
         for (category, source) in ALL_RULE_SOURCES {
             match compiler.add_source(*source) {
                 Ok(_) => {
-                    info!(category = *category, "YARA rule source compiled successfully");
+                    info!(
+                        category = *category,
+                        "YARA rule source compiled successfully"
+                    );
                 }
                 Err(e) => {
                     failed_sources += 1;
@@ -81,7 +84,7 @@ impl YaraEngine {
         })
     }
 
-   /// Scan byte stream and return matching rules.
+    /// Scan byte stream and return matching rules.
     pub fn scan(&self, data: &[u8]) -> Vec<YaraMatch> {
         let mut scanner = yara_x::Scanner::new(&self.rules);
         scanner.set_timeout(Duration::from_secs(10));
@@ -113,12 +116,12 @@ impl YaraEngine {
             .collect()
     }
 
-   /// Compile from built-in + custom rule sources (merged from DB).
+    /// Compile from built-in + custom rule sources (merged from DB).
     pub fn new_with_custom(custom_sources: &[String]) -> Result<Self, String> {
         let mut compiler = yara_x::Compiler::new();
         let mut failed = 0u32;
 
-       // Rule
+        // Rule
         for (category, source) in ALL_RULE_SOURCES {
             if let Err(e) = compiler.add_source(*source) {
                 failed += 1;
@@ -126,7 +129,7 @@ impl YaraEngine {
             }
         }
 
-       // Rule
+        // Rule
         for src in custom_sources {
             if let Err(e) = compiler.add_source(src.as_str()) {
                 failed += 1;
@@ -150,7 +153,7 @@ impl YaraEngine {
         })
     }
 
-   /// Total number of compiled rules.
+    /// Total number of compiled rules.
     pub fn rule_count(&self) -> usize {
         self.rule_count
     }
@@ -266,7 +269,7 @@ echo ^^done
 
     #[test]
     fn test_yarax_module_compatibility() {
-       // Verify yara-x 1.14 Module
+        // Verify yara-x 1.14 Module
         let module_tests = vec![
             (
                 "pe.imports",

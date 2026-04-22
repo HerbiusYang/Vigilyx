@@ -5,7 +5,6 @@
 //! 2. MAIL FROM -> RCPT TO -> DATA
 //! 3. DATA -> MIME -> EmailSession -> inline
 
-
 use std::io::{self, ErrorKind};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -38,27 +37,27 @@ const MAX_BDAT_CHUNK_SIZE: usize = 64 * 1024 * 1024;
 
 /// SMTP
 pub struct SmtpConnection {
-   /// IP
+    /// IP
     client_ip: String,
 
     client_port: u16,
     server_ip: String,
     server_port: u16,
-   /// SMTP
+    /// SMTP
     state: SmtpState,
-   /// MAIL FROM
+    /// MAIL FROM
     mail_from: Option<String>,
-   /// RCPT TO
+    /// RCPT TO
     rcpt_to: Vec<String>,
-   /// DATA / BDAT accumulated message buffer
+    /// DATA / BDAT accumulated message buffer
     data_buffer: Vec<u8>,
-    
+
     config: Arc<MtaConfig>,
-   /// TLS
+    /// TLS
     tls_active: bool,
-   /// SEC: connection start time for session lifetime enforcement
+    /// SEC: connection start time for session lifetime enforcement
     session_started: Instant,
-   /// SEC: DATA/BDAT phase start time for transaction timeout enforcement
+    /// SEC: DATA/BDAT phase start time for transaction timeout enforcement
     data_phase_started: Option<Instant>,
     /// RFC 3030 BDAT state: tracks remaining bytes in the current chunk.
     bdat_remaining: usize,
@@ -69,15 +68,15 @@ pub struct SmtpConnection {
 /// SMTP
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SmtpState {
-   /// EHLO/HELO
+    /// EHLO/HELO
     Connected,
-   /// EHLO, MAIL FROM (STARTTLS)
+    /// EHLO, MAIL FROM (STARTTLS)
     Ready,
-   /// MAIL FROM, RCPT TO
+    /// MAIL FROM, RCPT TO
     MailFrom,
-   /// RCPT TO, DATA RCPT TO
+    /// RCPT TO, DATA RCPT TO
     RcptTo,
-   /// DATA
+    /// DATA
     Data,
     /// RFC 3030: BDAT chunk data collection (byte-counted, no terminator).
     BdatData,
@@ -85,13 +84,13 @@ enum SmtpState {
 
 /// SMTP
 pub enum HandleResult {
-   /// : EmailSession,
+    /// : EmailSession,
     Email(Box<EmailSession>, Vec<u8>),
-   /// QUIT
+    /// QUIT
     Closed,
-    
+
     Error(String),
-   /// TLS
+    /// TLS
     StartTls,
 }
 
@@ -102,7 +101,14 @@ enum DataLineResult {
 }
 
 impl SmtpConnection {
-    pub fn new(client_ip: String, client_port: u16, server_ip: String, server_port: u16, config: Arc<MtaConfig>, tls_active: bool) -> Self {
+    pub fn new(
+        client_ip: String,
+        client_port: u16,
+        server_ip: String,
+        server_port: u16,
+        config: Arc<MtaConfig>,
+        tls_active: bool,
+    ) -> Self {
         Self {
             client_ip,
             client_port,
@@ -144,8 +150,12 @@ impl SmtpConnection {
             return DataLineResult::Complete(raw_email);
         }
 
-       // RFC 5321 dot-stuffing: ".." on the wire means a single leading dot in message data.
-        let payload = if line.starts_with(b"..") { &line[1..] } else { line };
+        // RFC 5321 dot-stuffing: ".." on the wire means a single leading dot in message data.
+        let payload = if line.starts_with(b"..") {
+            &line[1..]
+        } else {
+            line
+        };
         if self.data_buffer.len() + payload.len() > self.config.max_message_size {
             return DataLineResult::TooLarge;
         }
@@ -182,15 +192,10 @@ impl SmtpConnection {
         HandleResult::Email(Box::new(session), raw_email)
     }
 
-   /// SMTP (-> ->)
-    
-    
-   /// generic AsyncBufRead+AsyncWrite plain TCP TLS.
-    pub async fn handle<S>(
-        &mut self,
-        stream: &mut S,
-        skip_banner: bool,
-    ) -> Vec<HandleResult>
+    /// SMTP (-> ->)
+
+    /// generic AsyncBufRead+AsyncWrite plain TCP TLS.
+    pub async fn handle<S>(&mut self, stream: &mut S, skip_banner: bool) -> Vec<HandleResult>
     where
         S: AsyncBufRead + tokio::io::AsyncWrite + Unpin,
     {
@@ -213,7 +218,9 @@ impl SmtpConnection {
             // SEC: enforce total session lifetime to prevent NOOP-keepalive attacks (CWE-400)
             if self.session_started.elapsed() > Duration::from_secs(MAX_SESSION_SECS) {
                 warn!(client_ip = %self.client_ip, elapsed_secs = MAX_SESSION_SECS, "Session lifetime exceeded");
-                let _ = stream.write_all(b"421 4.4.2 Session lifetime exceeded\r\n").await;
+                let _ = stream
+                    .write_all(b"421 4.4.2 Session lifetime exceeded\r\n")
+                    .await;
                 let _ = stream.flush().await;
                 break;
             }
@@ -223,7 +230,9 @@ impl SmtpConnection {
                 && data_start.elapsed() > Duration::from_secs(MAX_DATA_TRANSACTION_SECS)
             {
                 warn!(client_ip = %self.client_ip, elapsed_secs = MAX_DATA_TRANSACTION_SECS, "DATA/BDAT transaction timeout");
-                let _ = stream.write_all(b"451 4.4.2 DATA transaction timeout\r\n").await;
+                let _ = stream
+                    .write_all(b"451 4.4.2 DATA transaction timeout\r\n")
+                    .await;
                 let _ = stream.flush().await;
                 self.reset_transaction();
                 break;
@@ -299,11 +308,8 @@ impl SmtpConnection {
             } else {
                 Duration::from_secs(60)
             };
-            let read_result = tokio::time::timeout(
-                idle_timeout,
-                read_smtp_line(stream, line_limit),
-            )
-            .await;
+            let read_result =
+                tokio::time::timeout(idle_timeout, read_smtp_line(stream, line_limit)).await;
 
             let line_buf = match read_result {
                 Ok(Ok(None)) => {
@@ -342,7 +348,7 @@ impl SmtpConnection {
                 }
             };
 
-           // DATA,
+            // DATA,
             if self.state == SmtpState::Data {
                 match self.append_data_line(&line_buf) {
                     DataLineResult::Continue => {}
@@ -366,7 +372,9 @@ impl SmtpConnection {
             let cmd = match std::str::from_utf8(cmd) {
                 Ok(cmd) => cmd,
                 Err(_) => {
-                    let _ = stream.write_all(b"500 5.5.2 Invalid command encoding\r\n").await;
+                    let _ = stream
+                        .write_all(b"500 5.5.2 Invalid command encoding\r\n")
+                        .await;
                     let _ = stream.flush().await;
                     continue;
                 }
@@ -374,7 +382,7 @@ impl SmtpConnection {
 
             // SEC: full command at debug only to avoid leaking envelope addresses in production logs (CWE-532)
             tracing::debug!(client_ip = %self.client_ip, state = ?self.state, cmd = %cmd.trim(), "SMTP cmd");
-           // SMTP
+            // SMTP
             let upper = cmd.to_ascii_uppercase();
             let response = self.process_command(&upper, cmd);
 
@@ -423,7 +431,7 @@ impl SmtpConnection {
         results
     }
 
-   /// SMTP,
+    /// SMTP,
     fn process_command(&mut self, upper: &str, original: &str) -> CmdResponse {
         if upper.starts_with("QUIT") {
             return CmdResponse::Quit;
@@ -470,7 +478,7 @@ impl SmtpConnection {
                 }
 
                 if upper.starts_with("EHLO") || upper.starts_with("HELO") {
-                   // EHLO (TLS)
+                    // EHLO (TLS)
                     self.reset_transaction();
                     let mut lines = vec![
                         format!("250-{} Hello", self.config.hostname),
@@ -493,10 +501,16 @@ impl SmtpConnection {
                     let addr = match extract_envelope_address(original, true) {
                         Ok(addr) => addr,
                         Err(_) => {
-                            return CmdResponse::Reply(501, "5.1.7 Bad sender address syntax".into());
+                            return CmdResponse::Reply(
+                                501,
+                                "5.1.7 Bad sender address syntax".into(),
+                            );
                         }
                     };
-                    let from_domain = addr.as_deref().and_then(|a| a.rsplit('@').next()).unwrap_or("<>");
+                    let from_domain = addr
+                        .as_deref()
+                        .and_then(|a| a.rsplit('@').next())
+                        .unwrap_or("<>");
                     tracing::info!(from_domain = %from_domain, "MAIL FROM accepted");
                     self.mail_from = addr;
                     self.state = SmtpState::MailFrom;
@@ -513,7 +527,10 @@ impl SmtpConnection {
                     let addr = match extract_envelope_address(original, false) {
                         Ok(Some(addr)) => addr,
                         Ok(None) | Err(_) => {
-                            return CmdResponse::Reply(501, "5.1.3 Bad recipient address syntax".into());
+                            return CmdResponse::Reply(
+                                501,
+                                "5.1.3 Bad recipient address syntax".into(),
+                            );
                         }
                     };
                     if !self.is_local_recipient(&addr) {
@@ -533,7 +550,10 @@ impl SmtpConnection {
                     self.state = SmtpState::Data;
                     self.data_phase_started = Some(Instant::now());
                     self.data_buffer.clear();
-                    return CmdResponse::Reply(354, "Start mail input; end with <CRLF>.<CRLF>".into());
+                    return CmdResponse::Reply(
+                        354,
+                        "Start mail input; end with <CRLF>.<CRLF>".into(),
+                    );
                 }
 
                 // RFC 3030: BDAT <size> [LAST]
@@ -544,7 +564,10 @@ impl SmtpConnection {
                     match parse_bdat_args(upper) {
                         Ok((size, is_last)) => {
                             if size > MAX_BDAT_CHUNK_SIZE {
-                                return CmdResponse::Reply(552, "5.3.4 BDAT chunk too large".into());
+                                return CmdResponse::Reply(
+                                    552,
+                                    "5.3.4 BDAT chunk too large".into(),
+                                );
                             }
                             if self.data_buffer.len() + size > self.config.max_message_size {
                                 return CmdResponse::Reply(552, "5.3.4 Message too large".into());
@@ -568,7 +591,7 @@ impl SmtpConnection {
                 CmdResponse::Reply(502, "5.5.1 Command not recognized".into())
             }
             SmtpState::Data => {
-               // (DATA handle)
+                // (DATA handle)
                 CmdResponse::Reply(503, "5.5.1 Unexpected command during DATA".into())
             }
             SmtpState::BdatData => {
@@ -578,7 +601,7 @@ impl SmtpConnection {
         }
     }
 
-   /// EmailSession
+    /// EmailSession
     fn build_email_session(&self, raw_email: &[u8]) -> EmailSession {
         let mut session = EmailSession::new(
             Protocol::Smtp,
@@ -596,7 +619,7 @@ impl SmtpConnection {
         session.total_bytes = raw_email.len();
         session.email_count = 1;
 
-       // MIME
+        // MIME
         let parser = MimeParser::new();
         session.content = match parser.parse(raw_email) {
             Ok(content) => content,
@@ -607,7 +630,7 @@ impl SmtpConnection {
         };
         session.content.is_complete = true;
 
-       // headers subject message_id
+        // headers subject message_id
         for (key, value) in &session.content.headers {
             match key.to_ascii_lowercase().as_str() {
                 "subject" if session.subject.is_none() => {
@@ -744,10 +767,7 @@ fn parse_bdat_args(upper: &str) -> Result<(usize, bool), &'static str> {
         (args, false)
     };
 
-    let size: usize = size_str
-        .trim()
-        .parse()
-        .map_err(|_| "invalid chunk size")?;
+    let size: usize = size_str.trim().parse().map_err(|_| "invalid chunk size")?;
 
     if size == 0 && !is_last {
         return Err("chunk size must be positive");
@@ -816,10 +836,7 @@ mod tests {
 
     #[test]
     fn test_extract_address_empty_mail_from() {
-        assert_eq!(
-            extract_envelope_address("MAIL FROM:<>", true),
-            Ok(None)
-        );
+        assert_eq!(extract_envelope_address("MAIL FROM:<>", true), Ok(None));
     }
 
     #[test]
@@ -854,7 +871,7 @@ mod tests {
         );
     }
 
-   /// MtaConfig
+    /// MtaConfig
     fn test_config() -> Arc<MtaConfig> {
         Arc::new(MtaConfig {
             listen_smtp: "127.0.0.1:2525".parse().unwrap(),
@@ -883,7 +900,7 @@ mod tests {
         })
     }
 
-   /// : process_command (I/O,)
+    /// : process_command (I/O,)
     fn cmd(conn: &mut SmtpConnection, cmd: &str) -> String {
         let upper = cmd.to_ascii_uppercase();
         match conn.process_command(&upper, cmd) {
@@ -915,7 +932,14 @@ mod tests {
     #[test]
     fn test_smtp_ehlo_returns_capabilities() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         let resp = cmd(&mut conn, "EHLO client.test");
         assert!(resp.contains("250"), "Should get 250: {resp}");
         assert!(resp.contains("PIPELINING"));
@@ -926,7 +950,14 @@ mod tests {
     #[test]
     fn test_smtp_mail_from_before_ehlo_fails() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         let resp = cmd(&mut conn, "MAIL FROM:<test@example.com>");
         assert!(resp.contains("503"), "Should fail: {resp}");
     }
@@ -934,7 +965,14 @@ mod tests {
     #[test]
     fn test_smtp_full_command_sequence() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
 
         let r = cmd(&mut conn, "EHLO client.test");
         assert!(r.contains("250"));
@@ -958,7 +996,14 @@ mod tests {
     #[test]
     fn test_smtp_rcpt_to_before_mail_from_fails() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         cmd(&mut conn, "EHLO client.test");
         let r = cmd(&mut conn, "RCPT TO:<rcpt@test.com>");
         assert!(r.contains("503"), "Should fail: {r}");
@@ -967,7 +1012,14 @@ mod tests {
     #[test]
     fn test_smtp_data_before_rcpt_to_fails() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         cmd(&mut conn, "EHLO client.test");
         cmd(&mut conn, "MAIL FROM:<sender@test.com>");
         let r = cmd(&mut conn, "DATA");
@@ -977,7 +1029,14 @@ mod tests {
     #[test]
     fn test_smtp_rset_resets_state() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         cmd(&mut conn, "EHLO client.test");
         cmd(&mut conn, "MAIL FROM:<sender@test.com>");
         assert_eq!(conn.state, SmtpState::MailFrom);
@@ -988,7 +1047,7 @@ mod tests {
         assert!(conn.mail_from.is_none());
         assert!(conn.rcpt_to.is_empty());
 
-       // After RSET, RCPT should fail (no MAIL FROM)
+        // After RSET, RCPT should fail (no MAIL FROM)
         let r = cmd(&mut conn, "RCPT TO:<rcpt@test.com>");
         assert!(r.contains("503"));
     }
@@ -996,7 +1055,14 @@ mod tests {
     #[test]
     fn test_smtp_noop() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         cmd(&mut conn, "EHLO client.test");
         let r = cmd(&mut conn, "NOOP");
         assert!(r.contains("250"));
@@ -1005,7 +1071,14 @@ mod tests {
     #[test]
     fn test_smtp_quit() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         let r = cmd(&mut conn, "QUIT");
         assert_eq!(r, "QUIT");
     }
@@ -1013,7 +1086,14 @@ mod tests {
     #[test]
     fn test_smtp_multiple_rcpt_to() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         cmd(&mut conn, "EHLO test");
         cmd(&mut conn, "MAIL FROM:<sender@test.com>");
         cmd(&mut conn, "RCPT TO:<a@test.com>");
@@ -1025,7 +1105,14 @@ mod tests {
     #[test]
     fn test_smtp_too_many_recipients() {
         let config = test_config(); // max_recipients = 10
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         cmd(&mut conn, "EHLO test");
         cmd(&mut conn, "MAIL FROM:<sender@test.com>");
         for i in 0..10 {
@@ -1038,7 +1125,14 @@ mod tests {
     #[test]
     fn test_smtp_starttls_without_tls_config() {
         let config = test_config(); // tls = None
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         cmd(&mut conn, "EHLO test");
         let r = cmd(&mut conn, "STARTTLS");
         assert!(r.contains("502"), "No TLS config should return 502: {r}");
@@ -1047,7 +1141,14 @@ mod tests {
     #[test]
     fn test_smtp_rejects_non_local_recipient_domain() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         cmd(&mut conn, "EHLO test");
         cmd(&mut conn, "MAIL FROM:<sender@test.com>");
         let r = cmd(&mut conn, "RCPT TO:<user@external.net>");
@@ -1057,7 +1158,14 @@ mod tests {
     #[test]
     fn test_smtp_accepts_empty_bounce_sender() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         cmd(&mut conn, "EHLO test");
         let r = cmd(&mut conn, "MAIL FROM:<>");
         assert!(r.contains("250"), "Bounce sender should be allowed: {r}");
@@ -1067,17 +1175,34 @@ mod tests {
     #[test]
     fn test_smtp_local_domain_match_is_case_insensitive() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         cmd(&mut conn, "EHLO test");
         cmd(&mut conn, "MAIL FROM:<sender@test.com>");
         let r = cmd(&mut conn, "RCPT TO:<user@Corp.Com>");
-        assert!(r.contains("250"), "Local domains should match case-insensitively: {r}");
+        assert!(
+            r.contains("250"),
+            "Local domains should match case-insensitively: {r}"
+        );
     }
 
     #[test]
     fn test_data_line_unstuffs_leading_dot() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         conn.state = SmtpState::Data;
 
         assert!(matches!(
@@ -1091,7 +1216,14 @@ mod tests {
     fn test_session_started_is_set_on_construction() {
         let config = test_config();
         let before = Instant::now();
-        let conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         assert!(conn.session_started >= before);
         assert!(conn.session_started.elapsed() < Duration::from_secs(1));
     }
@@ -1099,7 +1231,14 @@ mod tests {
     #[test]
     fn test_data_phase_started_set_on_data_command() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         cmd(&mut conn, "EHLO test");
         cmd(&mut conn, "MAIL FROM:<sender@test.com>");
         cmd(&mut conn, "RCPT TO:<rcpt@test.com>");
@@ -1111,7 +1250,14 @@ mod tests {
     #[test]
     fn test_data_phase_started_cleared_on_reset() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         cmd(&mut conn, "EHLO test");
         cmd(&mut conn, "MAIL FROM:<sender@test.com>");
         cmd(&mut conn, "RCPT TO:<rcpt@test.com>");
@@ -1124,11 +1270,13 @@ mod tests {
     #[tokio::test]
     async fn test_build_email_session_from_raw() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("10.0.0.1".into(), 4321, "0.0.0.0".into(), 25, config, false);
+        let mut conn =
+            SmtpConnection::new("10.0.0.1".into(), 4321, "0.0.0.0".into(), 25, config, false);
         conn.mail_from = Some("test@example.com".into());
         conn.rcpt_to = vec!["admin@corp.com".into()];
 
-        let raw = b"From: test@example.com\r\nTo: admin@corp.com\r\nSubject: Hello\r\n\r\nBody text";
+        let raw =
+            b"From: test@example.com\r\nTo: admin@corp.com\r\nSubject: Hello\r\n\r\nBody text";
         let session = conn.build_email_session(raw);
 
         assert_eq!(session.client_ip, "10.0.0.1");
@@ -1148,7 +1296,14 @@ mod tests {
     #[test]
     fn test_p01_bare_lf_data_terminator_rejected() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         conn.state = SmtpState::Data;
 
         // ".\n" (bare LF) must NOT complete the DATA phase
@@ -1164,7 +1319,14 @@ mod tests {
     #[test]
     fn test_p01_crlf_data_terminator_accepted() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         conn.state = SmtpState::Data;
 
         // Feed some data first
@@ -1207,7 +1369,14 @@ mod tests {
     #[test]
     fn test_smuggling_bare_cr_dot_not_terminator() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         conn.state = SmtpState::Data;
 
         // ".\r" followed by something — must NOT complete DATA
@@ -1223,7 +1392,10 @@ mod tests {
         use tokio::io::AsyncWriteExt;
 
         let (mut client_stream, server_stream) = tokio::io::duplex(1024);
-        client_stream.write_all(b"EHLO client.test\n").await.unwrap();
+        client_stream
+            .write_all(b"EHLO client.test\n")
+            .await
+            .unwrap();
         client_stream.shutdown().await.unwrap();
 
         let mut server_stream = tokio::io::BufStream::new(server_stream);
@@ -1237,7 +1409,10 @@ mod tests {
         );
 
         let results = conn.handle(&mut server_stream, false).await;
-        assert!(results.is_empty(), "Malformed LF-only command should not yield SMTP events");
+        assert!(
+            results.is_empty(),
+            "Malformed LF-only command should not yield SMTP events"
+        );
 
         let replies = read_available(&mut client_stream).await;
         assert!(replies.contains("500 5.5.2 Line terminator must be CRLF\r\n"));
@@ -1248,9 +1423,19 @@ mod tests {
     #[test]
     fn test_ehlo_advertises_chunking() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         let resp = cmd(&mut conn, "EHLO client.test");
-        assert!(resp.contains("CHUNKING"), "EHLO should advertise CHUNKING: {resp}");
+        assert!(
+            resp.contains("CHUNKING"),
+            "EHLO should advertise CHUNKING: {resp}"
+        );
     }
 
     #[test]
@@ -1295,7 +1480,14 @@ mod tests {
     #[test]
     fn test_bdat_before_rcpt_to_fails() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         cmd(&mut conn, "EHLO test");
         cmd(&mut conn, "MAIL FROM:<sender@test.com>");
         let r = cmd(&mut conn, "BDAT 100");
@@ -1305,18 +1497,35 @@ mod tests {
     #[test]
     fn test_bdat_chunk_too_large() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         cmd(&mut conn, "EHLO test");
         cmd(&mut conn, "MAIL FROM:<sender@test.com>");
         cmd(&mut conn, "RCPT TO:<rcpt@test.com>");
         let r = cmd(&mut conn, &format!("BDAT {}", MAX_BDAT_CHUNK_SIZE + 1));
-        assert!(r.contains("552"), "Oversized BDAT chunk should be rejected: {r}");
+        assert!(
+            r.contains("552"),
+            "Oversized BDAT chunk should be rejected: {r}"
+        );
     }
 
     #[test]
     fn test_bdat_transitions_to_bdat_data_state() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         cmd(&mut conn, "EHLO test");
         cmd(&mut conn, "MAIL FROM:<sender@test.com>");
         cmd(&mut conn, "RCPT TO:<rcpt@test.com>");
@@ -1329,7 +1538,14 @@ mod tests {
     #[test]
     fn test_bdat_last_transitions_correctly() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         cmd(&mut conn, "EHLO test");
         cmd(&mut conn, "MAIL FROM:<sender@test.com>");
         cmd(&mut conn, "RCPT TO:<rcpt@test.com>");
@@ -1342,7 +1558,14 @@ mod tests {
     #[test]
     fn test_bdat_sets_data_phase_started() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         cmd(&mut conn, "EHLO test");
         cmd(&mut conn, "MAIL FROM:<sender@test.com>");
         cmd(&mut conn, "RCPT TO:<rcpt@test.com>");
@@ -1354,7 +1577,14 @@ mod tests {
     #[test]
     fn test_bdat_reset_clears_state() {
         let config = test_config();
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         cmd(&mut conn, "EHLO test");
         cmd(&mut conn, "MAIL FROM:<sender@test.com>");
         cmd(&mut conn, "RCPT TO:<rcpt@test.com>");
@@ -1370,13 +1600,23 @@ mod tests {
     #[test]
     fn test_bdat_message_too_large() {
         let config = test_config(); // max_message_size = 1MB
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         cmd(&mut conn, "EHLO test");
         cmd(&mut conn, "MAIL FROM:<sender@test.com>");
         cmd(&mut conn, "RCPT TO:<rcpt@test.com>");
         // Try a chunk larger than max_message_size (1MB)
         let r = cmd(&mut conn, &format!("BDAT {}", 1024 * 1024 + 1));
-        assert!(r.contains("552"), "BDAT exceeding max_message_size should be rejected: {r}");
+        assert!(
+            r.contains("552"),
+            "BDAT exceeding max_message_size should be rejected: {r}"
+        );
     }
 
     #[tokio::test]
@@ -1407,11 +1647,15 @@ mod tests {
 
         let results = conn.handle(&mut server_stream, false).await;
         assert!(
-            results.iter().any(|result| matches!(result, HandleResult::Email(_, _))),
+            results
+                .iter()
+                .any(|result| matches!(result, HandleResult::Email(_, _))),
             "DATA completion should yield one email transaction"
         );
         assert!(
-            !results.iter().any(|result| matches!(result, HandleResult::Closed)),
+            !results
+                .iter()
+                .any(|result| matches!(result, HandleResult::Closed)),
             "handle() must stop at the message boundary before consuming QUIT"
         );
 
@@ -1424,7 +1668,9 @@ mod tests {
 
         let quit_results = conn.handle(&mut server_stream, true).await;
         assert!(
-            quit_results.iter().any(|result| matches!(result, HandleResult::Closed)),
+            quit_results
+                .iter()
+                .any(|result| matches!(result, HandleResult::Closed)),
             "QUIT should be processed on the next handle() call"
         );
     }
@@ -1456,23 +1702,39 @@ mod tests {
         client_stream.shutdown().await.unwrap();
 
         let mut server_stream = tokio::io::BufStream::new(server_stream);
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         let results = conn.handle(&mut server_stream, false).await;
 
-        let result_tags: Vec<&str> = results.iter().map(|r| match r {
-            HandleResult::Email(_, _) => "Email",
-            HandleResult::Closed => "Closed",
-            HandleResult::Error(_) => "Error",
-            HandleResult::StartTls => "StartTls",
-        }).collect();
+        let result_tags: Vec<&str> = results
+            .iter()
+            .map(|r| match r {
+                HandleResult::Email(_, _) => "Email",
+                HandleResult::Closed => "Closed",
+                HandleResult::Error(_) => "Error",
+                HandleResult::StartTls => "StartTls",
+            })
+            .collect();
         let has_email = result_tags.contains(&"Email");
-        assert!(has_email, "Should produce an Email result from BDAT session, got: {result_tags:?}");
+        assert!(
+            has_email,
+            "Should produce an Email result from BDAT session, got: {result_tags:?}"
+        );
         assert!(
             !result_tags.contains(&"Closed"),
             "handle() must stop at the BDAT message boundary before consuming QUIT"
         );
 
-        if let Some(HandleResult::Email(session, raw)) = results.into_iter().find(|r| matches!(r, HandleResult::Email(_, _))) {
+        if let Some(HandleResult::Email(session, raw)) = results
+            .into_iter()
+            .find(|r| matches!(r, HandleResult::Email(_, _)))
+        {
             assert_eq!(session.mail_from, Some("sender@test.com".into()));
             assert_eq!(session.rcpt_to, vec!["rcpt@test.com".to_string()]);
             assert_eq!(session.subject, Some("BDAT Test".into()));
@@ -1486,7 +1748,11 @@ mod tests {
         );
 
         let quit_results = conn.handle(&mut server_stream, true).await;
-        assert!(quit_results.iter().any(|result| matches!(result, HandleResult::Closed)));
+        assert!(
+            quit_results
+                .iter()
+                .any(|result| matches!(result, HandleResult::Closed))
+        );
     }
 
     /// Integration test: multi-chunk BDAT session (same sequential approach).
@@ -1516,23 +1782,39 @@ mod tests {
         client_stream.shutdown().await.unwrap();
 
         let mut server_stream = tokio::io::BufStream::new(server_stream);
-        let mut conn = SmtpConnection::new("127.0.0.1".into(), 9999, "0.0.0.0".into(), 25, config, false);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
         let results = conn.handle(&mut server_stream, false).await;
 
-        let result_tags: Vec<&str> = results.iter().map(|r| match r {
-            HandleResult::Email(_, _) => "Email",
-            HandleResult::Closed => "Closed",
-            HandleResult::Error(_) => "Error",
-            HandleResult::StartTls => "StartTls",
-        }).collect();
+        let result_tags: Vec<&str> = results
+            .iter()
+            .map(|r| match r {
+                HandleResult::Email(_, _) => "Email",
+                HandleResult::Closed => "Closed",
+                HandleResult::Error(_) => "Error",
+                HandleResult::StartTls => "StartTls",
+            })
+            .collect();
         let has_email = result_tags.contains(&"Email");
-        assert!(has_email, "Should produce an Email result from multi-chunk BDAT, got: {result_tags:?}");
+        assert!(
+            has_email,
+            "Should produce an Email result from multi-chunk BDAT, got: {result_tags:?}"
+        );
         assert!(
             !result_tags.contains(&"Closed"),
             "handle() must stop once the multi-chunk message is assembled"
         );
 
-        if let Some(HandleResult::Email(session, raw)) = results.into_iter().find(|r| matches!(r, HandleResult::Email(_, _))) {
+        if let Some(HandleResult::Email(session, raw)) = results
+            .into_iter()
+            .find(|r| matches!(r, HandleResult::Email(_, _)))
+        {
             assert_eq!(raw.len(), chunk1_len + chunk2_len);
             assert_eq!(session.subject, Some("Multi-Chunk".into()));
         }
@@ -1545,6 +1827,10 @@ mod tests {
         );
 
         let quit_results = conn.handle(&mut server_stream, true).await;
-        assert!(quit_results.iter().any(|result| matches!(result, HandleResult::Closed)));
+        assert!(
+            quit_results
+                .iter()
+                .any(|result| matches!(result, HandleResult::Closed))
+        );
     }
 }

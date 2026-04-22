@@ -30,7 +30,7 @@ pub struct VerdictWithMeta {
 }
 
 impl VigilDb {
-   /// Security (DELETE + INSERT 1)
+    /// Security (DELETE + INSERT 1)
     pub async fn insert_verdict(&self, verdict: &SecurityVerdict) -> Result<()> {
         let categories_json = serde_json::to_string(&verdict.categories)?;
         let pillar_scores_json = serde_json::to_string(&verdict.pillar_scores)?;
@@ -42,7 +42,7 @@ impl VigilDb {
 
         let mut tx = self.pool.begin().await?;
 
-       // session verdict,
+        // session verdict,
         sqlx::query("DELETE FROM security_verdicts WHERE session_id = $1")
             .bind(verdict.session_id.to_string())
             .execute(&mut *tx)
@@ -88,10 +88,10 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Module (INSERT)
-   ///
-   /// VALUES INSERT, N DB ceil(N/CHUNK).
-   /// 17 x 500 = 8500,Security.
+    /// Module (INSERT)
+    ///
+    /// VALUES INSERT, N DB ceil(N/CHUNK).
+    /// 17 x 500 = 8500,Security.
     pub async fn insert_module_results(
         &self,
         verdict_id: Uuid,
@@ -100,7 +100,7 @@ impl VigilDb {
     ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
 
-       // session Module,
+        // session Module,
         sqlx::query("DELETE FROM security_module_results WHERE session_id = $1")
             .bind(session_id.to_string())
             .execute(&mut *tx)
@@ -114,7 +114,7 @@ impl VigilDb {
         const COLS_PER_ROW: usize = 17;
         const BATCH_CHUNK_SIZE: usize = 500;
 
-       // Process: JSON
+        // Process: JSON
         struct PreparedModuleResult {
             verdict_id: String,
             session_id: String,
@@ -219,7 +219,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// session Security
+    /// session Security
     pub async fn get_verdict_by_session(
         &self,
         session_id: Uuid,
@@ -245,11 +245,11 @@ impl VigilDb {
         }
     }
 
-   /// session Module (New1)
-   ///
-   /// CTE WHERE Query, PostgreSQL planner Index:
-   /// - CTE `latest_verdict` Index New verdict id
-   /// - Query id module_results(Query)
+    /// session Module (New1)
+    ///
+    /// CTE WHERE Query, PostgreSQL planner Index:
+    /// - CTE `latest_verdict` Index New verdict id
+    /// - Query id module_results(Query)
     pub async fn get_module_results_by_session(
         &self,
         session_id: Uuid,
@@ -280,14 +280,14 @@ impl VigilDb {
         rows.into_iter().map(|r| r.into_module_result()).collect()
     }
 
-   /// Security (metadata, Used for)
+    /// Security (metadata, Used for)
     pub async fn list_recent_verdicts(
         &self,
         threat_level: Option<&str>,
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<VerdictWithMeta>, u64)> {
-       // (mail_from IS NOT NULL)
+        // (mail_from IS NOT NULL)
         let mut sql = String::from(
             r#"SELECT v.id, v.session_id, v.threat_level, v.confidence,
                       v.categories, v.summary, v.modules_run, v.modules_flagged,
@@ -300,7 +300,7 @@ impl VigilDb {
         );
         let mut binds: Vec<String> = Vec::new();
 
-       // Level: "medium,high,critical"
+        // Level: "medium,high,critical"
         let threat_filter_clause: String;
         if let Some(level) = threat_level {
             let levels: Vec<&str> = level
@@ -324,12 +324,12 @@ impl VigilDb {
                     format!(" AND v.threat_level IN ({})", placeholders.join(","));
             }
         } else {
-           // Level: DefaultExclude safe (Security)
+            // Level: DefaultExclude safe (Security)
             threat_filter_clause = " AND v.threat_level != 'safe'".to_string();
         }
         sql.push_str(&threat_filter_clause);
 
-       // Get total count (same filter: only real emails)
+        // Get total count (same filter: only real emails)
         let count_sql = format!(
             r#"SELECT COUNT(*) FROM security_verdicts v
                INNER JOIN sessions s ON v.session_id = s.id
@@ -364,12 +364,12 @@ impl VigilDb {
         Ok((items, total.0 as u64))
     }
 
-   /// SecurityStatistics
-   ///
-   /// Statistics Session (/ mail_from)
-   /// Exclude: 554, QUIT-only Session, Connection
+    /// SecurityStatistics
+    ///
+    /// Statistics Session (/ mail_from)
+    /// Exclude: 554, QUIT-only Session, Connection
     pub async fn get_security_stats(&self) -> Result<vigilyx_core::security::SecurityStats> {
-       // Query: Merge, According to Level, 24h, IOC (4 -> 1 DB)
+        // Query: Merge, According to Level, 24h, IOC (4 -> 1 DB)
         let row: (i64, i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
             r#"
             SELECT
@@ -416,9 +416,7 @@ impl VigilDb {
     }
 }
 
-
 // Database row type (sqlx)
-
 
 #[derive(Debug, sqlx::FromRow)]
 struct VerdictRow {
@@ -557,10 +555,6 @@ impl VerdictMetaRow {
         }
     }
 }
-
-
-
-
 
 pub(crate) fn parse_threat_level(s: &str) -> ThreatLevel {
     match s {

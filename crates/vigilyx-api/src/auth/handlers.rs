@@ -32,9 +32,7 @@ pub fn build_token_cookie(token: &str, max_age_secs: u64, secure: bool) -> Strin
 /// Build a Set-Cookie header value that clears the cookie.
 pub fn build_clear_cookie(secure: bool) -> String {
     let secure_flag = if secure { "; Secure" } else { "" };
-    format!(
-        "{COOKIE_NAME}=; HttpOnly; SameSite=Strict; Path=/api; Max-Age=0{secure_flag}"
-    )
+    format!("{COOKIE_NAME}=; HttpOnly; SameSite=Strict; Path=/api; Max-Age=0{secure_flag}")
 }
 
 /// GET /api/auth/me - return the current session user info (cookie validation is handled by middleware).
@@ -109,7 +107,7 @@ pub struct LoginResponse {
     pub token: Option<String>,
     pub expires_in: Option<u64>,
     pub error: Option<String>,
-   /// First default passwordlogin true, Password
+    /// First default passwordlogin true, Password
     #[serde(skip_serializing_if = "Option::is_none")]
     pub must_change_password: Option<bool>,
 }
@@ -285,9 +283,9 @@ pub async fn handle_login(
         return login_fail(message);
     }
 
-   // ── Per-IP Rate limiting: pre-check ──
-   // Peek without recording a failure. If already at/over the limit,
-   // reject immediately to avoid expensive password verification.
+    // ── Per-IP Rate limiting: pre-check ──
+    // Peek without recording a failure. If already at/over the limit,
+    // reject immediately to avoid expensive password verification.
     {
         if let Some((count, _)) = rate_limiter.peek(&client_ip)
             && count >= rate_limiter.max_failures
@@ -310,7 +308,7 @@ pub async fn handle_login(
         verify_password_dummy(&request.password).map(|_| false)
     };
 
-   // verifyuser ; user, dummy hash,
+    // verifyuser ; user, dummy hash,
     if !username_matches {
         if let Err(error) = &password_result {
             warn!(
@@ -331,13 +329,13 @@ pub async fn handle_login(
         return login_fail("用户名或密码错误");
     }
 
-   // verifyPassword
+    // verifyPassword
     match password_result {
         Ok(true) => {
-           // success: IP failed
+            // success: IP failed
             rate_limiter.reset(client_ip);
 
-           // Token
+            // Token
             match generate_token(config, &config.username, "admin") {
                 Ok(token) => {
                     let changed = *config.password_changed.read().await;
@@ -448,7 +446,10 @@ pub async fn handle_change_password(
             *config.password_hash.write().await = new_hash;
             *config.password_changed.write().await = true;
             config.token_version.store(new_tv, Ordering::Relaxed);
-            info!("Admin password changed and persisted, token version -> {}", new_tv);
+            info!(
+                "Admin password changed and persisted, token version -> {}",
+                new_tv
+            );
 
             ChangePasswordResponse {
                 success: true,

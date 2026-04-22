@@ -12,9 +12,7 @@ use super::ApiResponse;
 use crate::AppState;
 use crate::auth::AuthenticatedUser;
 
-
 // Handlers
-
 
 /// Get syslog configuration
 pub async fn get_syslog_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -34,7 +32,7 @@ pub async fn update_syslog_config(
     user: AuthenticatedUser,
     Json(config): Json<serde_json::Value>,
 ) -> axum::response::Response {
-   // Validate protocol
+    // Validate protocol
     if let Some(proto) = config.get("protocol").and_then(|v| v.as_str())
         && proto != "tcp"
         && proto != "udp"
@@ -42,21 +40,21 @@ pub async fn update_syslog_config(
         return ApiResponse::<serde_json::Value>::bad_request("Protocol must be tcp or udp")
             .into_response();
     }
-   // Validate port
+    // Validate port
     if let Some(port) = config.get("port").and_then(|v| v.as_u64())
         && (port == 0 || port > 65535)
     {
         return ApiResponse::<serde_json::Value>::bad_request("Port must be between 1 and 65535")
             .into_response();
     }
-   // Validate facility
+    // Validate facility
     if let Some(facility) = config.get("facility").and_then(|v| v.as_u64())
         && facility > 23
     {
         return ApiResponse::<serde_json::Value>::bad_request("Facility must be between 0 and 23")
             .into_response();
     }
-   // Validate format
+    // Validate format
     if let Some(fmt) = config.get("format").and_then(|v| v.as_str())
         && fmt != "rfc5424"
         && fmt != "rfc3164"
@@ -64,7 +62,7 @@ pub async fn update_syslog_config(
         return ApiResponse::<serde_json::Value>::bad_request("Format must be rfc5424 or rfc3164")
             .into_response();
     }
-   // Validate min_severity
+    // Validate min_severity
     if let Some(sev) = config.get("min_severity").and_then(|v| v.as_str())
         && !["info", "low", "medium", "high", "critical"].contains(&sev)
     {
@@ -73,7 +71,7 @@ pub async fn update_syslog_config(
         )
         .into_response();
     }
-   // When enabled=true, server_address is required
+    // When enabled=true, server_address is required
     let enabled = config
         .get("enabled")
         .and_then(|v| v.as_bool())
@@ -89,7 +87,7 @@ pub async fn update_syslog_config(
         .into_response();
     }
 
-   // SEC: Validate SSRF on save, matching test endpoint behavior (CWE-918)
+    // SEC: Validate SSRF on save, matching test endpoint behavior (CWE-918)
     if !addr.is_empty() && is_blocked_address(addr) {
         return ApiResponse::<serde_json::Value>::bad_request("Disallowed syslog server address")
             .into_response();
@@ -98,8 +96,11 @@ pub async fn update_syslog_config(
     let json_str = match serde_json::to_string(&config) {
         Ok(s) => s,
         Err(e) => {
-            return ApiResponse::<serde_json::Value>::bad_request(format!("Serialization failed: {}", e))
-                .into_response();
+            return ApiResponse::<serde_json::Value>::bad_request(format!(
+                "Serialization failed: {}",
+                e
+            ))
+            .into_response();
         }
     };
     match state.engine_db.set_syslog_config(&json_str).await {
@@ -147,9 +148,10 @@ pub async fn test_syslog_connection(
             }
         };
 
-   // SSRF protection: block connections to metadata/internal addresses
+    // SSRF protection: block connections to metadata/internal addresses
     if is_blocked_address(&syslog_config.server_address) {
-        return ApiResponse::<String>::bad_request("Connection to this address is not allowed").into_response();
+        return ApiResponse::<String>::bad_request("Connection to this address is not allowed")
+            .into_response();
     }
 
     match vigilyx_engine::syslog::send_test_message(&syslog_config).await {
@@ -157,10 +159,6 @@ pub async fn test_syslog_connection(
         Err(msg) => ApiResponse::<String>::err(msg).into_response(),
     }
 }
-
-
-
-
 
 /// SEC-M03: SSRF protection - parsed IP check + dangerous hostname blocklist (CWE-918)
 
@@ -170,21 +168,20 @@ pub async fn test_syslog_connection(
 pub(super) fn is_blocked_address(addr: &str) -> bool {
     let addr_lower = addr.to_lowercase();
     let addr_trimmed = addr_lower.trim();
-   // Block dangerous protocol schemes
+    // Block dangerous protocol schemes
     if addr_trimmed.starts_with("file:") || addr_trimmed.starts_with("gopher:") {
         return true;
     }
 
-    
     let host = if addr_trimmed.starts_with('[') {
-       // IPv6 [::1]:port format
+        // IPv6 [::1]:port format
         addr_trimmed
             .split(']')
             .next()
             .unwrap_or(addr_trimmed)
             .trim_start_matches('[')
     } else if addr_trimmed.contains("://") {
-       // URL format: scheme://host:port/path
+        // URL format: scheme://host:port/path
         addr_trimmed
             .split("://")
             .nth(1)
@@ -196,7 +193,7 @@ pub(super) fn is_blocked_address(addr: &str) -> bool {
             })
             .unwrap_or(addr_trimmed)
     } else {
-       // host:port or bare host
+        // host:port or bare host
         addr_trimmed
             .rsplit_once(':')
             .map_or(addr_trimmed, |(h, port)| {
@@ -208,7 +205,7 @@ pub(super) fn is_blocked_address(addr: &str) -> bool {
             })
     };
 
-   // Parse as IP address
+    // Parse as IP address
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         return is_blocked_ip(ip);
     }
@@ -217,7 +214,7 @@ pub(super) fn is_blocked_address(addr: &str) -> bool {
         return true;
     }
 
-   // String fallback (169.254.* / fe80:* prefix)
+    // String fallback (169.254.* / fe80:* prefix)
     if addr_trimmed.starts_with("169.254.") || addr_trimmed.starts_with("fe80:") {
         return true;
     }

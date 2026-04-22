@@ -20,14 +20,14 @@ const SEND_URI_PATTERNS: &[&str] = &[
     "/compose/send",
     "/sendmail",
     "/send_mail",
-   // Coremail send email (API)
+    // Coremail send email (API)
     "func=mbox:compose&action=deliver",
     "func=mbox:deliver",
     "action=deliver",
     "/coremail/xt5/proxy/compose",
-   // Exchange OWA
+    // Exchange OWA
     "/owa/service.svc",
-   // General API
+    // General API
     "/api/mail/send",
     "/api/compose/send",
     "/mail/send",
@@ -52,14 +52,14 @@ impl SelfSendDetector {
             .any(|pattern| uri_lower.contains(pattern))
     }
 
-   /// Normalize email address (handle display name, angle brackets, lowercase, trim).
-   ///
-   /// - `"\"Zhang San\" <zhangsan@corp.com>"` -> `zhangsan@corp.com`
-   /// - `<user@domain.com>` -> `user@domain.com`
-   /// - `user@domain.com` -> `user@domain.com`
+    /// Normalize email address (handle display name, angle brackets, lowercase, trim).
+    ///
+    /// - `"\"Zhang San\" <zhangsan@corp.com>"` -> `zhangsan@corp.com`
+    /// - `<user@domain.com>` -> `user@domain.com`
+    /// - `user@domain.com` -> `user@domain.com`
     fn normalize_email(addr: &str) -> String {
         let trimmed = addr.trim();
-       // Process "\"Display Name\" <email@domain.com>"
+        // Process "\"Display Name\" <email@domain.com>"
         if let Some(start) = trimmed.rfind('<')
             && let Some(end) = trimmed.rfind('>')
             && start < end
@@ -73,7 +73,7 @@ impl SelfSendDetector {
             .to_lowercase()
     }
 
-   /// Check whether this is a self-sending scenario.
+    /// Check whether this is a self-sending scenario.
     fn is_self_sending(sender: &str, recipients: &[String]) -> bool {
         let sender_norm = Self::normalize_email(sender);
         if sender_norm.is_empty() {
@@ -95,12 +95,12 @@ impl DataSecurityDetector for SelfSendDetector {
     }
 
     fn analyze(&self, session: &HttpSession) -> DetectorResult {
-       // Only check POST requests
+        // Only check POST requests
         if session.method != HttpMethod::Post {
             return None;
         }
 
-       // URI match: direct send URL or Coremail compose.jsp + action=deliver
+        // URI match: direct send URL or Coremail compose.jsp + action=deliver
         let is_send = if Self::is_send_uri(&session.uri) {
             true
         } else if coremail::is_coremail_compose_uri(&session.uri) {
@@ -117,13 +117,13 @@ impl DataSecurityDetector for SelfSendDetector {
             return None;
         }
 
-       // Extract sender and recipient info
+        // Extract sender and recipient info
         let sender = session.detected_sender.as_deref()?;
         if sender.is_empty() || session.detected_recipients.is_empty() {
             return None;
         }
 
-       // Check if this is a self-send
+        // Check if this is a self-send
         if !Self::is_self_sending(sender, &session.detected_recipients) {
             return None;
         }
@@ -144,14 +144,14 @@ impl DataSecurityDetector for SelfSendDetector {
             )),
         });
 
-       // DLP scan email content - self-sending with sensitive data triggers alert
+        // DLP scan email content - self-sending with sensitive data triggers alert
         let mut dlp_matches = Vec::new();
         let mut dlp_for_jrt = None;
 
         if let Some(ref body) = session.request_body
             && !body.is_empty()
         {
-           // Coremail: extract attrs.content to avoid raw JSON metadata
+            // Coremail: extract attrs.content to avoid raw JSON metadata
             let dlp_text = dlp::extract_dlp_text(body, &session.uri);
             let dlp_result = dlp::scan_text(&dlp_text);
             if !dlp_result.is_empty() {
@@ -173,12 +173,12 @@ impl DataSecurityDetector for SelfSendDetector {
             }
         }
 
-       // Self-sending without sensitive data is normal behavior (e.g. notes, reminders) — no alert
+        // Self-sending without sensitive data is normal behavior (e.g. notes, reminders) — no alert
         if dlp_matches.is_empty() {
             return None;
         }
 
-       // Determine severity by highest JR/T classification level (JR/T 0197-2020)
+        // Determine severity by highest JR/T classification level (JR/T 0197-2020)
         let severity = super::jrt::severity_from_max_jrt_level(&dlp_matches);
 
         let summary = format!(
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_self_send_no_sensitive_data_no_alert() {
-       // self-sendButnot Sensitivedata -> Normalline, Alert
+        // self-sendButnot Sensitivedata -> Normalline, Alert
         let detector = SelfSendDetector::new();
         let session = make_session(
             "/compose/send",
@@ -254,13 +254,13 @@ mod tests {
 
     #[test]
     fn test_self_send_with_sensitive_data_alerts() {
-       // self-send + Sensitivedata -> Alert
+        // self-send + Sensitivedata -> Alert
         let detector = SelfSendDetector::new();
         let session = make_session(
             "/compose/send",
             Some("alice@example.com"),
             vec!["bob@example.com", "alice@example.com"],
-           // 4532015112830366 is Luhn-valid
+            // 4532015112830366 is Luhn-valid
             Some("客户信用Card number: 4532015112830366"),
         );
         let result = detector.analyze(&session);
@@ -341,7 +341,7 @@ mod tests {
             "/compose/send",
             Some("alice@example.com"),
             vec!["alice@example.com"],
-           // 4532015112830366 is Luhn-valid
+            // 4532015112830366 is Luhn-valid
             Some("信用Card number: 4532015112830366, ID card: 110101199001011237"),
         );
         let result = detector.analyze(&session);
@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn test_self_send_coremail_compose_jsp_deliver_with_sensitive() {
         let detector = SelfSendDetector::new();
-       // Coremail compose.jsp + action=deliver + self-send + Sensitivedata (ID cardNumber)
+        // Coremail compose.jsp + action=deliver + self-send + Sensitivedata (ID cardNumber)
         let body = r#"{"attrs":{"account":"user@corp.com","to":["user@corp.com"],"content":"客户ID card 110101199001011237"},"action":"deliver"}"#;
         let session = make_session(
             "/coremail/common/mbox/compose.jsp?sid=abc123",
@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn test_self_send_coremail_compose_jsp_deliver_no_sensitive() {
         let detector = SelfSendDetector::new();
-       // Coremail compose.jsp + action=deliver + self-send But Sensitivedata -> Alert
+        // Coremail compose.jsp + action=deliver + self-send But Sensitivedata -> Alert
         let body =
             r#"{"attrs":{"account":"user@corp.com","to":["user@corp.com"]},"action":"deliver"}"#;
         let session = make_session(
@@ -405,7 +405,7 @@ mod tests {
     #[test]
     fn test_self_send_coremail_compose_jsp_save_not_send() {
         let detector = SelfSendDetector::new();
-       // action=save Send, self-senddetect
+        // action=save Send, self-senddetect
         let body =
             r#"{"attrs":{"account":"user@corp.com","to":["user@corp.com"]},"action":"save"}"#;
         let session = make_session(
@@ -424,7 +424,7 @@ mod tests {
     #[test]
     fn test_self_send_coremail_display_name_addresses() {
         let detector = SelfSendDetector::new();
-       // with NameofAddress + Sensitivedata
+        // with NameofAddress + Sensitivedata
         let session = make_session(
             "/compose/send",
             Some("\"Zhang San\" <zhangsan@corp.com>"),
@@ -440,7 +440,7 @@ mod tests {
 
     #[test]
     fn test_normalize_email_display_name_format() {
-       // ofNormalize
+        // ofNormalize
         assert_eq!(
             SelfSendDetector::normalize_email("\"Zhang San\" <zhangsan@corp.com>"),
             "zhangsan@corp.com"
@@ -459,13 +459,11 @@ mod tests {
         );
     }
 
-    
-   // Test: Item
-    
+    // Test: Item
 
     #[test]
     fn test_self_send_case_insensitive_with_sensitive_data() {
-       // sizewrite SameButSame1email + Sensitivedata
+        // sizewrite SameButSame1email + Sensitivedata
         let detector = SelfSendDetector::new();
         let session = make_session(
             "/compose/send",
@@ -482,7 +480,7 @@ mod tests {
 
     #[test]
     fn test_self_send_multiple_recipients_one_is_self() {
-       // recipientMedium 1
+        // recipientMedium 1
         let detector = SelfSendDetector::new();
         let session = make_session(
             "/compose/send",
@@ -546,19 +544,19 @@ mod tests {
 
     #[test]
     fn test_normalize_email_edge_cases() {
-       // Number
+        // Number
         assert_eq!(
             SelfSendDetector::normalize_email("<user@test.com>"),
             "user@test.com"
         );
-        
+
         assert_eq!(
             SelfSendDetector::normalize_email("  <  user@test.com  >  "),
             "user@test.com"
         );
-       // String
+        // String
         assert_eq!(SelfSendDetector::normalize_email(""), "");
-       // @ Number
+        // @ Number
         assert_eq!(SelfSendDetector::normalize_email("@"), "@");
     }
 
@@ -614,8 +612,8 @@ mod tests {
 
     #[test]
     fn test_coremail_json_id_no_false_positive_phone() {
-       // found: Coremail compose JSON of id SegmentContainsClassMobile phoneNumber "1774418005615"
-       // CSS class NameContains "1774418008257", misclassified 3 Mobile phoneNumber
+        // found: Coremail compose JSON of id SegmentContainsClassMobile phoneNumber "1774418005615"
+        // CSS class NameContains "1774418008257", misclassified 3 Mobile phoneNumber
         let detector = SelfSendDetector::new();
         let coremail_body = r#"{"id":"1774418005615","attrs":{"account":"\"Testuser\" <support@example.com>","to":["\"Testuser\" <support@example.com>"],"subject":"","isHtml":true,"content":"<style>p {margin:0}.default-font-1774418008257 {font-size: 14px}</style><div class=\"default-font-1774418008257\"><span>38D3670BE3FE3409EAB10543FED9430DA27B7F02BB31FD0AFAEC29C218DD905E</span></div>"},"action":"deliver"}"#;
         let mut session = make_session(

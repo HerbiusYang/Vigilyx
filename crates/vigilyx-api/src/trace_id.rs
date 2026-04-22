@@ -2,7 +2,6 @@
 
 //! HTTP request 1 1 trace ID, request log.
 
-
 //! 1. client For `X-Request-Id` request
 //! 2., UUID v4
 //! 3. Create tracing span, log Contains `trace_id` field
@@ -30,7 +29,7 @@ pub async fn trace_id_middleware(
     req: Request<axum::body::Body>,
     next: Next,
 ) -> Response<axum::body::Body> {
-   // Step 1: Extractclient trace ID New
+    // Step 1: Extractclient trace ID New
     let trace_id = req
         .headers()
         .get(REQUEST_ID_HEADER)
@@ -39,7 +38,7 @@ pub async fn trace_id_middleware(
         .map(String::from)
         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
-   // Step 2: CreateContains trace_id tracing span
+    // Step 2: CreateContains trace_id tracing span
     let span = tracing::info_span!(
         "request",
         trace_id = %trace_id,
@@ -47,10 +46,10 @@ pub async fn trace_id_middleware(
         uri = %req.uri().path(),
     );
 
-   // Step 3: span handler (async Security)
+    // Step 3: span handler (async Security)
     let mut response = next.run(req).instrument(span).await;
 
-   // Step 4: response (/ log)
+    // Step 4: response (/ log)
     if let Ok(val) = HeaderValue::from_str(&trace_id) {
         response.headers_mut().insert(REQUEST_ID_HEADER, val);
     }
@@ -64,13 +63,13 @@ mod tests {
 
     #[test]
     fn test_request_id_header_name_is_lowercase() {
-       // header name HTTP/2 ()
+        // header name HTTP/2 ()
         assert_eq!(REQUEST_ID_HEADER, REQUEST_ID_HEADER.to_ascii_lowercase());
     }
 
     #[test]
     fn test_uuid_v4_format() {
-       // verify trace_id UUID v4 format
+        // verify trace_id UUID v4 format
         let id = Uuid::new_v4().to_string();
         assert_eq!(id.len(), 36); // xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
         assert!(Uuid::parse_str(&id).is_ok());

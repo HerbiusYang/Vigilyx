@@ -59,19 +59,16 @@ static RE_ETH_ADDR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b0x[0-9a-fA-F]{40}\b").unwrap());
 /// TRON / TRC-20 address: T prefix, exactly 33 base58 chars after T = 34 total
 /// Used by the most common USDT (TRC20) sextortion / pig-butchering scams.
-static RE_TRON_ADDR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\bT[1-9A-HJ-NP-Za-km-z]{33}\b").unwrap()
-});
+static RE_TRON_ADDR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\bT[1-9A-HJ-NP-Za-km-z]{33}\b").unwrap());
 /// Solana address: base58, 32–44 chars, no 0/O/I/l. We anchor on a length
 /// range that excludes BTC overlaps and require a crypto context to score.
-static RE_SOL_ADDR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b[1-9A-HJ-NP-Za-km-z]{43,44}\b").unwrap()
-});
+static RE_SOL_ADDR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b[1-9A-HJ-NP-Za-km-z]{43,44}\b").unwrap());
 /// Monero (XMR): 4 prefix + 94 base58 chars (or 8 prefix for integrated). XMR
 /// is the de-facto ransomware payout currency in 2024–2026.
-static RE_XMR_ADDR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}\b").unwrap()
-});
+static RE_XMR_ADDR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b4[0-9AB][1-9A-HJ-NP-Za-km-z]{93}\b").unwrap());
 /// Litecoin: L/M prefix base58 (legacy), or ltc1 bech32.
 static RE_LTC_ADDR: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b(?:[LM][1-9A-HJ-NP-Za-km-z]{25,34}|ltc1[a-z0-9]{25,62})\b").unwrap()
@@ -177,7 +174,7 @@ impl TransactionCorrelationModule {
         }
     }
 
-   /// Extract all text content from the email for analysis
+    /// Extract all text content from the email for analysis
     #[inline]
     fn get_text_content(ctx: &SecurityContext) -> String {
         let mut text = String::with_capacity(4096);
@@ -194,17 +191,17 @@ impl TransactionCorrelationModule {
             text.push('\n');
         }
 
-       // Also check HTML body stripped of tags (rough extraction)
+        // Also check HTML body stripped of tags (rough extraction)
         if let Some(ref html) = ctx.session.content.body_html {
-           // Very rough tag stripping - sufficient for regex matching
+            // Very rough tag stripping - sufficient for regex matching
             let stripped: String = html
                 .chars()
                 .scan(false, |in_tag, c| {
                     if c == '<' {
-                       *in_tag = true;
+                        *in_tag = true;
                         Some(' ')
                     } else if c == '>' {
-                       *in_tag = false;
+                        *in_tag = false;
                         Some(' ')
                     } else if *in_tag {
                         Some(' ')
@@ -219,7 +216,7 @@ impl TransactionCorrelationModule {
         text
     }
 
-   /// Check for payment change indicators (BEC attack signature)
+    /// Check for payment change indicators (BEC attack signature)
     fn check_payment_change(text: &str) -> Option<(f64, Evidence)> {
         let text_lower = text.to_ascii_lowercase();
         for kw in module_data().get_list("payment_change_keywords") {
@@ -227,7 +224,10 @@ impl TransactionCorrelationModule {
                 return Some((
                     W_PAYMENT_CHANGE,
                     Evidence {
-                        description: format!("Detected payment change instruction keyword: \"{}\"", kw),
+                        description: format!(
+                            "Detected payment change instruction keyword: \"{}\"",
+                            kw
+                        ),
                         location: Some("body".to_string()),
                         snippet: Self::find_context(text, kw),
                     },
@@ -237,7 +237,7 @@ impl TransactionCorrelationModule {
         None
     }
 
-   /// Check for urgency combined with financial entities
+    /// Check for urgency combined with financial entities
     fn check_urgency_combo(text: &str, has_financial: bool) -> Option<(f64, Evidence)> {
         if !has_financial {
             return None;
@@ -262,13 +262,13 @@ impl TransactionCorrelationModule {
         None
     }
 
-   /// Find a short context window around a keyword match
+    /// Find a short context window around a keyword match
     fn find_context(text: &str, keyword: &str) -> Option<String> {
         let lower = text.to_ascii_lowercase();
         let pos = lower.find(&keyword.to_ascii_lowercase())?;
         let start = pos.saturating_sub(40);
         let end = (pos + keyword.len() + 40).min(text.len());
-       // Find valid UTF-8 boundaries
+        // Find valid UTF-8 boundaries
         let start = text.floor_char_boundary(start);
         let end = text.ceil_char_boundary(end);
         Some(format!("...{}...", &text[start..end]))
@@ -292,7 +292,7 @@ impl SecurityModule for TransactionCorrelationModule {
         let start = Instant::now();
         let text = Self::get_text_content(ctx);
 
-       // Quick exit: no text content -> vacuous BPA
+        // Quick exit: no text content -> vacuous BPA
         if text.trim().is_empty() {
             let duration_ms = start.elapsed().as_millis() as u64;
             return Ok(ModuleResult {
@@ -323,7 +323,7 @@ impl SecurityModule for TransactionCorrelationModule {
         let mut has_amount_reference = false;
         let has_crypto_context = Self::has_crypto_context(&text);
 
-       // 1. IBAN detection (with country code validation to reduce false positives)
+        // 1. IBAN detection (with country code validation to reduce false positives)
         let iban_matches: Vec<_> = RE_IBAN
             .find_iter(&text)
             .filter(|m| is_valid_iban_country(m.as_str()))
@@ -340,7 +340,7 @@ impl SecurityModule for TransactionCorrelationModule {
             });
         }
 
-       // 2. SWIFT/BIC code
+        // 2. SWIFT/BIC code
         if RE_SWIFT.is_match(&text) {
             financial_entity_count += 1;
             actionable_signal_count += 1;
@@ -353,7 +353,7 @@ impl SecurityModule for TransactionCorrelationModule {
             });
         }
 
-       // 3. Bank account numbers
+        // 3. Bank account numbers
         let acct_matches: Vec<_> = RE_BANK_ACCOUNT.find_iter(&text).collect();
         if !acct_matches.is_empty() {
             financial_entity_count += acct_matches.len() as u32;
@@ -370,19 +370,22 @@ impl SecurityModule for TransactionCorrelationModule {
             });
         }
 
-       // 4. Monetary amounts
+        // 4. Monetary amounts
         let amount_matches: Vec<_> = RE_AMOUNT.find_iter(&text).collect();
         if !amount_matches.is_empty() {
             has_amount_reference = true;
             total_score += W_AMOUNT_PRESENT;
             evidence.push(Evidence {
-                description: format!("Detected {} monetary amount reference(s)", amount_matches.len()),
+                description: format!(
+                    "Detected {} monetary amount reference(s)",
+                    amount_matches.len()
+                ),
                 location: Some("body".to_string()),
                 snippet: Some(amount_matches[0].as_str().to_string()),
             });
         }
 
-       // 5. Invoice / PO references
+        // 5. Invoice / PO references
         let invoice_matches: Vec<_> = RE_INVOICE.find_iter(&text).collect();
         if !invoice_matches.is_empty() {
             financial_entity_count += invoice_matches.len() as u32;
@@ -398,7 +401,7 @@ impl SecurityModule for TransactionCorrelationModule {
             });
         }
 
-       // 6. Wire transfer instructions
+        // 6. Wire transfer instructions
         if RE_WIRE_INSTRUCTION.is_match(&text) {
             has_wire_instruction = true;
             actionable_signal_count += 1;
@@ -413,7 +416,7 @@ impl SecurityModule for TransactionCorrelationModule {
             });
         }
 
-       // 6b. Cryptocurrency wallet addresses (sextortion/ransomware)
+        // 6b. Cryptocurrency wallet addresses (sextortion/ransomware)
         let btc_matches: Vec<_> = RE_BTC_ADDR.find_iter(&text).collect();
         if !btc_matches.is_empty() && has_crypto_context {
             actionable_signal_count += btc_matches.len() as u32;
@@ -505,7 +508,7 @@ impl SecurityModule for TransactionCorrelationModule {
             });
         }
 
-       // 7. Payment change (BEC signature)
+        // 7. Payment change (BEC signature)
         if let Some((score, ev)) = Self::check_payment_change(&text) {
             has_payment_change = true;
             actionable_signal_count += 1;
@@ -516,15 +519,14 @@ impl SecurityModule for TransactionCorrelationModule {
 
         let has_actionable_payment_signal = actionable_signal_count > 0;
 
-       // 8. Urgency + financial entity combo
-        if let Some((score, ev)) = Self::check_urgency_combo(&text, has_actionable_payment_signal)
-        {
+        // 8. Urgency + financial entity combo
+        if let Some((score, ev)) = Self::check_urgency_combo(&text, has_actionable_payment_signal) {
             total_score += score;
             categories.push("urgency_financial_combo".to_string());
             evidence.push(ev);
         }
 
-       // 9. Multiple financial entities bonus
+        // 9. Multiple financial entities bonus
         let corroborating_reference_count =
             u32::from(reference_entity_count > 0) + u32::from(has_amount_reference);
         if actionable_signal_count >= 2
@@ -564,7 +566,7 @@ impl SecurityModule for TransactionCorrelationModule {
         total_score = total_score.min(1.0);
         let duration_ms = start.elapsed().as_millis() as u64;
 
-       // If no financial signals found -> vacuous BPA (don't participate in fusion)
+        // If no financial signals found -> vacuous BPA (don't participate in fusion)
         if evidence.is_empty() {
             return Ok(ModuleResult {
                 module_id: self.meta.id.clone(),
@@ -592,7 +594,7 @@ impl SecurityModule for TransactionCorrelationModule {
         categories.sort_unstable();
         categories.dedup();
 
-       // Confidence: moderate-high (0.75) for regex-based extraction
+        // Confidence: moderate-high (0.75) for regex-based extraction
         let confidence = 0.75;
         let bpa = Bpa::from_score_confidence(total_score, confidence);
 
@@ -660,18 +662,18 @@ mod tests {
 
     #[test]
     fn test_invalid_iban_country_codes() {
-       // "XX" is not a valid IBAN country
+        // "XX" is not a valid IBAN country
         assert!(!is_valid_iban_country("XX12345678901234"));
-       // "US" does not use IBAN
+        // "US" does not use IBAN
         assert!(!is_valid_iban_country("US12345678901234"));
-       // Too short
+        // Too short
         assert!(!is_valid_iban_country("D"));
         assert!(!is_valid_iban_country(""));
     }
 
     #[test]
     fn test_iban_regex_with_country_validation() {
-       // Real IBAN: should match regex AND pass country validation
+        // Real IBAN: should match regex AND pass country validation
         let text = "Please pay to DE89370400440532013000";
         let matches: Vec<_> = RE_IBAN
             .find_iter(text)
@@ -679,7 +681,7 @@ mod tests {
             .collect();
         assert_eq!(matches.len(), 1);
 
-       // Fake IBAN-like string with invalid country code: should be filtered out
+        // Fake IBAN-like string with invalid country code: should be filtered out
         let text_fake = "Reference: XX99ABCD12345678";
         let matches_fake: Vec<_> = RE_IBAN
             .find_iter(text_fake)
@@ -720,12 +722,16 @@ mod tests {
 
         let result = module.analyze(&ctx).await.unwrap();
 
-        assert!(!result
-            .categories
-            .contains(&"urgency_financial_combo".to_string()));
-        assert!(!result
-            .categories
-            .contains(&"multi_financial_entities".to_string()));
+        assert!(
+            !result
+                .categories
+                .contains(&"urgency_financial_combo".to_string())
+        );
+        assert!(
+            !result
+                .categories
+                .contains(&"multi_financial_entities".to_string())
+        );
         assert_eq!(result.threat_level, ThreatLevel::Safe);
     }
 
@@ -741,12 +747,16 @@ mod tests {
 
         let result = module.analyze(&ctx).await.unwrap();
 
-        assert!(result
-            .categories
-            .contains(&"urgency_financial_combo".to_string()));
-        assert!(result
-            .categories
-            .contains(&"multi_financial_entities".to_string()));
+        assert!(
+            result
+                .categories
+                .contains(&"urgency_financial_combo".to_string())
+        );
+        assert!(
+            result
+                .categories
+                .contains(&"multi_financial_entities".to_string())
+        );
         assert_ne!(result.threat_level, ThreatLevel::Safe);
     }
 

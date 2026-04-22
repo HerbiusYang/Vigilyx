@@ -5,8 +5,8 @@
 
 use std::time::Duration;
 
-use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::address::Envelope;
+use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::{Address, AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
 use tracing::{error, info, warn};
 #[allow(unused_imports)]
@@ -64,13 +64,12 @@ fn resolve_relay_target(config: &DownstreamConfig) -> anyhow::Result<PinnedRelay
 }
 
 pub enum RelayResult {
-    
     Accepted,
-   /// (4xx)
+    /// (4xx)
     TempFail(String),
-   /// (5xx)
+    /// (5xx)
     PermFail(String),
-    
+
     ConnError(String),
 }
 
@@ -90,7 +89,9 @@ impl DownstreamRelay {
                     "SEC: 明文 SMTP 下游转发已禁用。如确需明文传输，请设置 VIGILYX_ALLOW_PLAINTEXT_SMTP=true"
                 );
             }
-            warn!("Plaintext downstream SMTP enabled via VIGILYX_ALLOW_PLAINTEXT_SMTP — all relayed mail is unencrypted!");
+            warn!(
+                "Plaintext downstream SMTP enabled via VIGILYX_ALLOW_PLAINTEXT_SMTP — all relayed mail is unencrypted!"
+            );
         }
 
         let addr = target.connect_addr.to_string();
@@ -121,11 +122,11 @@ impl DownstreamRelay {
         })
     }
 
-   /// MTA
-    
-   /// `mail_from`: SMTP MAIL FROM (None = bounce "<>")
-   /// `rcpt_to`: SMTP RCPT TO
-   /// `raw_eml`: (,)
+    /// MTA
+
+    /// `mail_from`: SMTP MAIL FROM (None = bounce "<>")
+    /// `rcpt_to`: SMTP RCPT TO
+    /// `raw_eml`: (,)
     pub async fn relay(
         &self,
         mail_from: Option<&str>,
@@ -139,7 +140,6 @@ impl DownstreamRelay {
             }
         };
 
-        
         match self.transport.send_raw(&envelope, raw_eml).await {
             Ok(response) => {
                 if response.is_positive() {
@@ -151,11 +151,10 @@ impl DownstreamRelay {
                     RelayResult::Accepted
                 } else {
                     let code = response.code();
-                    let msg = response
-                        .message()
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    if code.severity == lettre::transport::smtp::response::Severity::TransientNegativeCompletion {
+                    let msg = response.message().collect::<Vec<_>>().join(" ");
+                    if code.severity
+                        == lettre::transport::smtp::response::Severity::TransientNegativeCompletion
+                    {
                         warn!(code = %code, msg = %msg, "Downstream temp failure");
                         RelayResult::TempFail(format!("{code} {msg}"))
                     } else {
@@ -240,9 +239,7 @@ mod tests {
 
     #[test]
     fn test_validate_rejects_empty_host() {
-        assert!(
-            validate_mail_relay_host("", DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES).is_err()
-        );
+        assert!(validate_mail_relay_host("", DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES).is_err());
     }
 
     #[test]
@@ -254,9 +251,7 @@ mod tests {
 
     #[test]
     fn test_validate_rejects_redis() {
-        assert!(
-            validate_mail_relay_host("redis", DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES).is_err()
-        );
+        assert!(validate_mail_relay_host("redis", DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES).is_err());
     }
 
     #[test]
@@ -281,8 +276,7 @@ mod tests {
     #[test]
     fn test_validate_allows_private_ipv4_relay() {
         assert!(
-            validate_mail_relay_host("10.1.246.33", DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES)
-                .is_ok()
+            validate_mail_relay_host("10.1.246.33", DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES).is_ok()
         );
     }
 

@@ -32,8 +32,7 @@ static MODULE_DATA: OnceLock<Arc<RwLock<ModuleDataRegistry>>> = OnceLock::new();
 
 /// Initialize (or replace) the global module data registry.
 pub fn set_module_data(registry: ModuleDataRegistry) {
-    let shared = MODULE_DATA
-        .get_or_init(|| Arc::new(RwLock::new(ModuleDataRegistry::default())));
+    let shared = MODULE_DATA.get_or_init(|| Arc::new(RwLock::new(ModuleDataRegistry::default())));
     *shared.write().expect("module data lock poisoned") = registry;
 }
 
@@ -102,10 +101,7 @@ impl ModuleDataRegistry {
 
             // Determine if items is a simple string array or structured data
             if let Some(arr) = items.as_array() {
-                let is_simple_strings = arr
-                    .first()
-                    .map(|v| v.is_string())
-                    .unwrap_or(true); // empty arrays are fine
+                let is_simple_strings = arr.first().map(|v| v.is_string()).unwrap_or(true); // empty arrays are fine
 
                 if is_simple_strings {
                     // Simple string list → build both Vec and HashSet
@@ -113,10 +109,7 @@ impl ModuleDataRegistry {
                         .iter()
                         .filter_map(|v| v.as_str().map(|s| s.to_string()))
                         .collect();
-                    let mut set: HashSet<String> = list
-                        .iter()
-                        .map(|s| s.to_lowercase())
-                        .collect();
+                    let mut set: HashSet<String> = list.iter().map(|s| s.to_lowercase()).collect();
 
                     // Apply user overrides (add/remove)
                     if let Some(ovr) = overrides.overrides.get(key) {
@@ -240,15 +233,24 @@ fn merge_seed_json(compiled_seed_json: &str, db_seed_json: &str) -> String {
         return compiled_seed_json.to_string();
     };
 
-    let Some(compiled_lists) = compiled_seed.get("lists").and_then(|value| value.as_object()) else {
+    let Some(compiled_lists) = compiled_seed
+        .get("lists")
+        .and_then(|value| value.as_object())
+    else {
         return db_seed_json.to_string();
     };
-    let Some(merged_lists) = merged_seed.get_mut("lists").and_then(|value| value.as_object_mut()) else {
+    let Some(merged_lists) = merged_seed
+        .get_mut("lists")
+        .and_then(|value| value.as_object_mut())
+    else {
         return compiled_seed_json.to_string();
     };
 
     for (list_name, compiled_entry) in compiled_lists {
-        let Some(compiled_items) = compiled_entry.get("items").and_then(|value| value.as_array()) else {
+        let Some(compiled_items) = compiled_entry
+            .get("items")
+            .and_then(|value| value.as_array())
+        else {
             merged_lists
                 .entry(list_name.clone())
                 .or_insert_with(|| compiled_entry.clone());
@@ -260,7 +262,10 @@ fn merge_seed_json(compiled_seed_json: &str, db_seed_json: &str) -> String {
             continue;
         };
 
-        let Some(merged_items) = merged_entry.get_mut("items").and_then(|value| value.as_array_mut()) else {
+        let Some(merged_items) = merged_entry
+            .get_mut("items")
+            .and_then(|value| value.as_array_mut())
+        else {
             continue;
         };
 

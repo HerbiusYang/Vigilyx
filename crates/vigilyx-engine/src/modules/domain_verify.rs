@@ -33,7 +33,9 @@ impl DomainVerifyModule {
             meta: ModuleMetadata {
                 id: "domain_verify".to_string(),
                 name: "Domain Verification".to_string(),
-                description: "Checks sender IP/domain/DKIM consistency and provides alignment signal".to_string(),
+                description:
+                    "Checks sender IP/domain/DKIM consistency and provides alignment signal"
+                        .to_string(),
                 pillar: Pillar::Package,
                 depends_on: vec![],
                 timeout_ms: 3000,
@@ -61,32 +63,38 @@ fn is_subdomain_of(hostname: &str, domain: &str) -> bool {
 /// "<user@domain.com>" -> None
 fn extract_display_name(from_value: &str) -> Option<String> {
     let trimmed = from_value.trim();
-   // Find the angle bracket for the email address
+    // Find the angle bracket for the email address
     if let Some(idx) = trimmed.rfind('<') {
         let before_angle = trimmed[..idx].trim();
         if before_angle.is_empty() {
             return None;
         }
-       // RFC 2047: =?charset?encoding?text?=
+        // RFC 2047: =?charset?encoding?text?=
         let mut decoded = before_angle.to_string();
-        
+
         if decoded.starts_with('"') && decoded.ends_with('"') && decoded.len() >= 2 {
             decoded = decoded[1..decoded.len() - 1].to_string();
         }
-       // Decode RFC 2047 =?utf-8?B?...?= encoded words
+        // Decode RFC 2047 =?utf-8?B?...?= encoded words
         if decoded.contains("=?") && decoded.contains("?=") {
             let mut result = String::new();
             let mut remaining = decoded.as_str();
             while let Some(start) = remaining.find("=?") {
                 result.push_str(&remaining[..start]);
                 remaining = &remaining[start + 2..];
-               // charset?encoding?text?=
+                // charset?encoding?text?=
                 let parts: Vec<&str> = remaining.splitn(4, '?').collect();
-                if parts.len() >= 3 && parts[2].ends_with("?=") || (parts.len() >= 4 && parts[3].starts_with("=")) {
+                if parts.len() >= 3 && parts[2].ends_with("?=")
+                    || (parts.len() >= 4 && parts[3].starts_with("="))
+                {
                     let encoding = parts[1].to_uppercase();
                     let text = if parts.len() >= 4 {
-                        remaining = if parts[3].starts_with("=") { &parts[3][1..] } else { parts[3] };
-                        
+                        remaining = if parts[3].starts_with("=") {
+                            &parts[3][1..]
+                        } else {
+                            parts[3]
+                        };
+
                         if let Some(end_idx) = remaining.find("?=") {
                             let t = &parts[2];
                             remaining = &remaining[end_idx.saturating_sub(parts[2].len())..];
@@ -107,7 +115,7 @@ fn extract_display_name(from_value: &str) -> Option<String> {
                             result.push_str(&s);
                         }
                     } else if encoding == "Q" {
-                       // Q-encoding: _ = space, =XX = hex byte
+                        // Q-encoding: _ = space, =XX = hex byte
                         let q_decoded: String = text
                             .replace('_', " ")
                             .split('=')
@@ -132,7 +140,7 @@ fn extract_display_name(from_value: &str) -> Option<String> {
                             .collect();
                         result.push_str(&q_decoded);
                     }
-                    
+
                     if let Some(end_pos) = remaining.find("?=") {
                         remaining = &remaining[end_pos + 2..];
                     } else {
@@ -179,7 +187,7 @@ impl SecurityModule for DomainVerifyModule {
         let mut evidence = Vec::new();
         let mut verified = false;
 
-       // Extract sender domain
+        // Extract sender domain
         let sender_domain = ctx
             .session
             .mail_from
@@ -211,8 +219,8 @@ impl SecurityModule for DomainVerifyModule {
             }
         };
 
-       // Check 1: Received hostname vs sender domain
-       // Look for the outermost Received header containing a matching hostname
+        // Check 1: Received hostname vs sender domain
+        // Look for the outermost Received header containing a matching hostname
         for (name, value) in headers {
             if !name.eq_ignore_ascii_case("received") {
                 continue;
@@ -237,7 +245,7 @@ impl SecurityModule for DomainVerifyModule {
             }
         }
 
-       // Check 2: DKIM d= domain vs sender domain
+        // Check 2: DKIM d= domain vs sender domain
         for (name, value) in headers {
             if !name.eq_ignore_ascii_case("dkim-signature") {
                 continue;
@@ -267,9 +275,9 @@ impl SecurityModule for DomainVerifyModule {
             verified = true;
         }
 
-       // Envelope forgery detection: From header domain vs MAIL FROM domain
-       // If the From header domain differs from the MAIL FROM domain,
-       // the attacker may be spoofing the From header while using their own envelope domain
+        // Envelope forgery detection: From header domain vs MAIL FROM domain
+        // If the From header domain differs from the MAIL FROM domain,
+        // the attacker may be spoofing the From header while using their own envelope domain
         let from_header_domain = headers
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case("from"))
@@ -297,25 +305,30 @@ impl SecurityModule for DomainVerifyModule {
             verified = false;
         }
 
-
-       // Display name brand impersonation check:
-       // e.g. From: "Microsoft" <attacker@evil.cn> - domain does not match brand.
-       // Even if DKIM passes, the display name is misleading.
-        if let Some((_, from_value)) = headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case("from"))
+        // Display name brand impersonation check:
+        // e.g. From: "Microsoft" <attacker@evil.cn> - domain does not match brand.
+        // Even if DKIM passes, the display name is misleading.
+        if let Some((_, from_value)) = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("from"))
         {
             let display_name = extract_display_name(from_value);
             if let Some(ref name) = display_name {
                 let name_lower = name.to_lowercase();
-                
+
                 let brand_domain_map: &[(&[&str], &[&str])] = &[
-                    
-                    (&["日本郵便", "日本郵政", "japan post"], &[".jp", "japanpost"]),
+                    (
+                        &["日本郵便", "日本郵政", "japan post"],
+                        &[".jp", "japanpost"],
+                    ),
                     (&["佐川急便", "sagawa"], &[".jp", "sagawa"]),
-                    (&["ヤマト運輸", "yamato"], &[".jp", "yamato", "kuronekoyamato"]),
+                    (
+                        &["ヤマト運輸", "yamato"],
+                        &[".jp", "yamato", "kuronekoyamato"],
+                    ),
                     (&["amazon", "アマゾン"], &["amazon."]),
-                    (&["microsoft", "マイクロソフト"], &["microsoft.", "outlook.", "live."]),
+                    (
+                        &["microsoft", "マイクロソフト"],
+                        &["microsoft.", "outlook.", "live."],
+                    ),
                     (&["apple", "アップル"], &["apple.", "icloud."]),
                     (&["google", "グーグル"], &["google.", "gmail."]),
                     (&["paypal", "ペイパル"], &["paypal."]),
@@ -329,11 +342,9 @@ impl SecurityModule for DomainVerifyModule {
                         .iter()
                         .any(|bk| name_lower.contains(&bk.to_lowercase()));
                     if name_matches_brand {
-                        let domain_is_legit = legit_suffixes
-                            .iter()
-                            .any(|ls| sender_domain.contains(ls));
+                        let domain_is_legit =
+                            legit_suffixes.iter().any(|ls| sender_domain.contains(ls));
                         if !domain_is_legit {
-                            
                             alignment_score = (alignment_score - 0.50).max(0.0);
                             evidence.push(Evidence {
                                 description: format!(
@@ -368,7 +379,10 @@ impl SecurityModule for DomainVerifyModule {
                 alignment_score, sender_domain
             )
         } else {
-            format!("Sender alignment not established, sender domain: {}", sender_domain)
+            format!(
+                "Sender alignment not established, sender domain: {}",
+                sender_domain
+            )
         };
 
         Ok(ModuleResult {
@@ -441,10 +455,7 @@ mod tests {
                     "DKIM-Signature".to_string(),
                     "v=1; a=rsa-sha256; d=change-meme.com; s=mail;".to_string(),
                 ),
-                (
-                    "From".to_string(),
-                    "alerts@change-meme.com".to_string(),
-                ),
+                ("From".to_string(), "alerts@change-meme.com".to_string()),
             ],
             vec![EmailLink {
                 url: "https://login.change-meme.com/reset?token=abc123".to_string(),

@@ -1,5 +1,3 @@
-
-
 //! Features:
 //! - New IOC Import email New
 //! - timestampRange
@@ -10,11 +8,11 @@ use serde::{Deserialize, Serialize};
 /// Request
 #[derive(Debug, Clone, Deserialize)]
 pub struct RescanRequest {
-   /// Starttimestamp (,)
+    /// Starttimestamp (,)
     pub since: Option<String>,
-   /// Endtimestamp ()
+    /// Endtimestamp ()
     pub until: Option<String>,
-   /// session ()
+    /// session ()
     pub session_ids: Option<Vec<String>>,
 }
 

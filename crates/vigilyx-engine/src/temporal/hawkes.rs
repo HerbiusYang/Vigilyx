@@ -31,35 +31,35 @@ const DEFAULT_MAX_EVENTS: usize = 100; // Max history length
 /// Result of Hawkes process observation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HawkesResult {
-   /// Current conditional intensity (t).
+    /// Current conditional intensity (t).
     pub intensity: f64,
-   /// Intensity ratio (t)/ - how many times above baseline.
+    /// Intensity ratio (t)/ - how many times above baseline.
     pub intensity_ratio: f64,
-   /// Whether a burst was detected (ratio> 3.0).
+    /// Whether a burst was detected (ratio> 3.0).
     pub burst_detected: bool,
 }
 
 /// Per-pair Hawkes process state.
 #[derive(Debug, Clone)]
 pub struct HawkesState {
-   /// Historical events: (timestamp_hours, risk_score).
+    /// Historical events: (timestamp_hours, risk_score).
     events: VecDeque<(f64, f64)>,
-   /// Adaptive baseline intensity (EWMA over long window).
+    /// Adaptive baseline intensity (EWMA over long window).
     mu: f64,
-   /// Self-excitation coefficient.
+    /// Self-excitation coefficient.
     alpha: f64,
-   /// Decay rate (per hour).
+    /// Decay rate (per hour).
     beta: f64,
-   /// EWMA smoothing factor for.
+    /// EWMA smoothing factor for.
     mu_ewma_alpha: f64,
-   /// Maximum event history length.
+    /// Maximum event history length.
     max_events: usize,
-   /// Event counter (for warmup).
+    /// Event counter (for warmup).
     total_events: u64,
 }
 
 impl HawkesState {
-   /// Create a new Hawkes process state with default parameters.
+    /// Create a new Hawkes process state with default parameters.
     pub fn new() -> Self {
         Self {
             events: VecDeque::with_capacity(DEFAULT_MAX_EVENTS),
@@ -72,21 +72,21 @@ impl HawkesState {
         }
     }
 
-   /// Observe a new event and return the current intensity assessment.
-    
-   /// # Arguments
-   /// - `now_hours`: current time in hours (monotonic, can be relative)
-   /// - `risk_score`: risk score of the current email [0, 1]
-    
-   /// # Returns
-   /// `HawkesResult` with intensity, ratio, and burst detection.
+    /// Observe a new event and return the current intensity assessment.
+
+    /// # Arguments
+    /// - `now_hours`: current time in hours (monotonic, can be relative)
+    /// - `risk_score`: risk score of the current email [0, 1]
+
+    /// # Returns
+    /// `HawkesResult` with intensity, ratio, and burst detection.
     pub fn observe(&mut self, now_hours: f64, risk_score: f64) -> HawkesResult {
         let risk = risk_score.clamp(0.0, 1.0);
 
-       // Compute conditional intensity (t)
-       // Sum of excitation contributions from past events
-       // Events are always recorded with monotonically increasing timestamps,
-       // so dt = now_hours - t_j is always>= 0. No need for dt <0 guard.
+        // Compute conditional intensity (t)
+        // Sum of excitation contributions from past events
+        // Events are always recorded with monotonically increasing timestamps,
+        // so dt = now_hours - t_j is always>= 0. No need for dt <0 guard.
         let excitation: f64 = self
             .events
             .iter()
@@ -98,32 +98,32 @@ impl HawkesState {
 
         let intensity = self.mu + excitation;
 
-       // Update baseline via EWMA
-       // Compute instantaneous rate: 1 event at this time
-       // We adapt slowly to track the sender's "normal" email frequency
+        // Update baseline via EWMA
+        // Compute instantaneous rate: 1 event at this time
+        // We adapt slowly to track the sender's "normal" email frequency
         if self.total_events > 3 {
-           // Only adapt after warmup period
+            // Only adapt after warmup period
             if let Some(&(t_prev, _)) = self.events.back() {
                 let dt = (now_hours - t_prev).max(0.001);
                 let instantaneous_rate = 1.0 / dt; // events per hour
-               // Clamp to prevent from exploding
+                // Clamp to prevent from exploding
                 let clamped_rate = instantaneous_rate.min(100.0);
                 self.mu = self.mu * (1.0 - self.mu_ewma_alpha) + clamped_rate * self.mu_ewma_alpha;
-               // floor to prevent division by near-zero
+                // floor to prevent division by near-zero
                 self.mu = self.mu.max(0.01);
             }
         }
 
-       // Record event
+        // Record event
         self.events.push_back((now_hours, risk));
         self.total_events += 1;
 
-       // Trim old events
+        // Trim old events
         while self.events.len() > self.max_events {
             self.events.pop_front();
         }
 
-       // Also trim events that have decayed below threshold (> 5 half-lives)
+        // Also trim events that have decayed below threshold (> 5 half-lives)
         let cutoff = now_hours - 5.0 * (1.0 / self.beta) * std::f64::consts::LN_2;
         while self
             .events
@@ -134,7 +134,7 @@ impl HawkesState {
             self.events.pop_front();
         }
 
-       // Compute ratio and burst detection
+        // Compute ratio and burst detection
         let intensity_ratio = intensity / self.mu.max(0.01);
         let burst_detected = intensity_ratio > 3.0;
 
@@ -185,7 +185,7 @@ mod tests {
         let mut state = HawkesState::new();
         let r = state.observe(0.0, 0.5);
 
-       // First event: intensity = (no prior events to excite)
+        // First event: intensity = (no prior events to excite)
         assert!(
             (r.intensity - DEFAULT_MU_INIT).abs() < 0.1,
             "First event intensity should be ~μ: got {}",
@@ -198,14 +198,14 @@ mod tests {
     fn test_hawkes_self_excitation() {
         let mut state = HawkesState::new();
 
-       // Send several high-risk emails in quick succession
+        // Send several high-risk emails in quick succession
         let t0 = 0.0;
         state.observe(t0, 0.9); // t=0
         state.observe(t0 + 0.1, 0.9); // t=6min
         state.observe(t0 + 0.2, 0.9); // t=12min
         let r = state.observe(t0 + 0.3, 0.9); // t=18min
 
-       // Self-excitation should raise intensity above baseline
+        // Self-excitation should raise intensity above baseline
         assert!(
             r.intensity > DEFAULT_MU_INIT * 2.0,
             "Self-excitation should raise intensity: {}",
@@ -217,12 +217,12 @@ mod tests {
     fn test_hawkes_decay() {
         let mut state = HawkesState::new();
 
-       // One high-risk event, then wait a long time
+        // One high-risk event, then wait a long time
         state.observe(0.0, 1.0);
         let r_soon = state.observe(0.1, 0.0); // 6min later (low risk)
         let r_later = state.observe(3.0, 0.0); // 3 hours later
 
-       // Excitation from initial event should have decayed significantly
+        // Excitation from initial event should have decayed significantly
         assert!(
             r_later.intensity < r_soon.intensity,
             "Intensity should decay: soon={}, later={}",
@@ -235,13 +235,13 @@ mod tests {
     fn test_hawkes_burst_detection() {
         let mut state = HawkesState::new();
 
-       // Phase 1: Establish normal baseline with sparse low-risk emails
+        // Phase 1: Establish normal baseline with sparse low-risk emails
         for i in 0..6 {
             let t = i as f64 * 2.0; // Every 2 hours - normal pace
             state.observe(t, 0.1);
         }
 
-       // Phase 2: Sudden burst of high-risk emails
+        // Phase 2: Sudden burst of high-risk emails
         let burst_start = 12.0;
         for i in 0..10 {
             let t = burst_start + i as f64 * 0.03; // Every ~2 minutes
@@ -249,7 +249,7 @@ mod tests {
         }
 
         let r = state.observe(burst_start + 0.35, 0.95);
-       // After establishing low baseline then bursting, ratio should be high
+        // After establishing low baseline then bursting, ratio should be high
         assert!(
             r.burst_detected,
             "Rapid burst after baseline should be detected, ratio={}",
@@ -266,14 +266,14 @@ mod tests {
     fn test_hawkes_low_risk_no_burst() {
         let mut state = HawkesState::new();
 
-       // Many low-risk emails -> mark kernel dampens excitation
+        // Many low-risk emails -> mark kernel dampens excitation
         for i in 0..10 {
             let t = i as f64 * 0.1;
             state.observe(t, 0.05);
         }
 
         let r = state.observe(1.1, 0.05);
-       // Low-risk emails shouldn't trigger burst (mark kernel = 0.05^1.5 0.01)
+        // Low-risk emails shouldn't trigger burst (mark kernel = 0.05^1.5 0.01)
         assert!(
             !r.burst_detected,
             "Low-risk emails should not burst, ratio={}",
@@ -285,14 +285,14 @@ mod tests {
     fn test_mark_kernel() {
         assert!((mark_kernel(0.0) - 0.0).abs() < 1e-10);
         assert!((mark_kernel(1.0) - 1.0).abs() < 1e-10);
-       // 0.5^1.5 = 0.5 * sqrt(0.5) 0.3536
+        // 0.5^1.5 = 0.5 * sqrt(0.5) 0.3536
         assert!((mark_kernel(0.5) - 0.3536).abs() < 0.001);
     }
 
     #[test]
     fn test_decay_kernel() {
         assert!((decay_kernel(0.0, 2.0) - 1.0).abs() < 1e-10);
-       // exp(-2*1) 0.1353
+        // exp(-2*1) 0.1353
         assert!((decay_kernel(1.0, 2.0) - (-2.0_f64).exp()).abs() < 1e-6);
     }
 
@@ -301,7 +301,7 @@ mod tests {
         let mut state = HawkesState::new();
         state.max_events = 5;
 
-       // Add more events than max_events
+        // Add more events than max_events
         for i in 0..10 {
             state.observe(i as f64, 0.5);
         }

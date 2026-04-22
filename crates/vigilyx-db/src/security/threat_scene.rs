@@ -5,9 +5,8 @@ use chrono::{Duration, Utc};
 use uuid::Uuid;
 
 use vigilyx_core::security::{
-    BounceHarvestConfig, BulkMailingConfig, InternalDomainImpersonationConfig,
-    SceneTypeStats, ThreatScene, ThreatSceneRule,
-    ThreatSceneStats, ThreatSceneStatus, ThreatSceneType,
+    BounceHarvestConfig, BulkMailingConfig, InternalDomainImpersonationConfig, SceneTypeStats,
+    ThreatScene, ThreatSceneRule, ThreatSceneStats, ThreatSceneStatus, ThreatSceneType,
 };
 
 use crate::VigilDb;
@@ -364,7 +363,16 @@ impl VigilDb {
 
         // Fetch candidate sessions (sender_domain NOT internal, after cutoff)
         // then aggregate in Rust (avoiding complex CTE with jsonb_array_elements)
-        let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>, String, Option<String>)>(
+        let rows = sqlx::query_as::<
+            _,
+            (
+                String,
+                Option<String>,
+                Option<String>,
+                String,
+                Option<String>,
+            ),
+        >(
             "SELECT sender_domain, mail_from, rcpt_to, started_at, subject
              FROM sessions
              WHERE started_at > $1
@@ -695,7 +703,18 @@ impl VigilDb {
 
         let rows = match scene.scene_type {
             ThreatSceneType::BulkMailing => {
-                sqlx::query_as::<_, (String, Option<String>, Option<String>, Option<String>, String, Option<String>, Option<String>)>(
+                sqlx::query_as::<
+                    _,
+                    (
+                        String,
+                        Option<String>,
+                        Option<String>,
+                        Option<String>,
+                        String,
+                        Option<String>,
+                        Option<String>,
+                    ),
+                >(
                     "SELECT s.id, s.mail_from, s.rcpt_to, s.subject, s.started_at, s.client_ip,
                             v.threat_level
                      FROM sessions s
@@ -714,7 +733,18 @@ impl VigilDb {
                 .await?
             }
             ThreatSceneType::BounceHarvest => {
-                sqlx::query_as::<_, (String, Option<String>, Option<String>, Option<String>, String, Option<String>, Option<String>)>(
+                sqlx::query_as::<
+                    _,
+                    (
+                        String,
+                        Option<String>,
+                        Option<String>,
+                        Option<String>,
+                        String,
+                        Option<String>,
+                        Option<String>,
+                    ),
+                >(
                     "SELECT s.id, s.mail_from, s.rcpt_to, s.subject, s.started_at, s.client_ip,
                             v.threat_level
                      FROM sessions s
@@ -736,7 +766,18 @@ impl VigilDb {
                 .await?
             }
             ThreatSceneType::InternalDomainImpersonation => {
-                sqlx::query_as::<_, (String, Option<String>, Option<String>, Option<String>, String, Option<String>, Option<String>)>(
+                sqlx::query_as::<
+                    _,
+                    (
+                        String,
+                        Option<String>,
+                        Option<String>,
+                        Option<String>,
+                        String,
+                        Option<String>,
+                        Option<String>,
+                    ),
+                >(
                     "SELECT s.id, s.mail_from, s.rcpt_to, s.subject, s.started_at, s.client_ip,
                             v.threat_level
                      FROM sessions s

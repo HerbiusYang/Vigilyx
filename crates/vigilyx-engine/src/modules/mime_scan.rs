@@ -56,7 +56,7 @@ impl SecurityModule for MimeScanModule {
         let mut categories = Vec::new();
         let mut total_score: f64 = 0.0;
 
-       // Collect all header values into one block for multipart analysis
+        // Collect all header values into one block for multipart analysis
         let mut content_type_header: Option<String> = None;
         let mut content_transfer_encoding: Option<String> = None;
         let mut content_transfer_encoding_values: Vec<String> = Vec::new();
@@ -85,18 +85,18 @@ impl SecurityModule for MimeScanModule {
         for (name, value) in headers {
             let name_lower = name.to_lowercase();
 
-           // Count boundary= occurrences across all headers (multipart nesting indicator)
+            // Count boundary= occurrences across all headers (multipart nesting indicator)
             let value_lower = value.to_lowercase();
             let bc = value_lower.matches("boundary=").count();
             boundary_count += bc;
 
-           // Extract boundary values for conflict detection
+            // Extract boundary values for conflict detection
             if bc > 0 {
                 let mut search = value_lower.as_str();
                 while let Some(idx) = search.find("boundary=") {
                     let after = &search[idx + 9..];
                     let boundary_val = if let Some(stripped) = after.strip_prefix('"') {
-                       // Quoted boundary
+                        // Quoted boundary
                         stripped.split('"').next().unwrap_or("").to_string()
                     } else {
                         after
@@ -154,7 +154,7 @@ impl SecurityModule for MimeScanModule {
             }
         }
 
-       // --- 1. Deep MIME nesting (boundary count> 3 is suspicious) ---
+        // --- 1. Deep MIME nesting (boundary count> 3 is suspicious) ---
         if boundary_count > 3 {
             let severity = ((boundary_count as f64 - 3.0) * 0.10).min(0.4);
             total_score += severity;
@@ -169,7 +169,7 @@ impl SecurityModule for MimeScanModule {
             });
         }
 
-       // --- 2. Empty Content-Type ---
+        // --- 2. Empty Content-Type ---
         if let Some(ref ct) = content_type_header {
             if ct.trim().is_empty() {
                 total_score += 0.15;
@@ -181,7 +181,7 @@ impl SecurityModule for MimeScanModule {
                 });
             }
         } else {
-           // Missing Content-Type entirely
+            // Missing Content-Type entirely
             total_score += 0.05;
             categories.push("missing_content_type".to_string());
             evidence.push(Evidence {
@@ -191,7 +191,7 @@ impl SecurityModule for MimeScanModule {
             });
         }
 
-       // --- 3. Content-Transfer-Encoding anomalies ---
+        // --- 3. Content-Transfer-Encoding anomalies ---
         if let Some(ref cte) = content_transfer_encoding {
             let cte_lower = cte.to_lowercase().trim().to_string();
             let valid_encodings = ["7bit", "8bit", "binary", "quoted-printable", "base64"];
@@ -206,7 +206,7 @@ impl SecurityModule for MimeScanModule {
             }
         }
 
-       // --- 4. Duplicate / conflicting MIME boundaries ---
+        // --- 4. Duplicate / conflicting MIME boundaries ---
         {
             let unique_count = {
                 let mut sorted = boundaries.clone();
@@ -294,7 +294,11 @@ impl SecurityModule for MimeScanModule {
         // that somehow reached us is a structural anomaly that commonly
         // accompanies header-injection or malformed-message exploitation.
         if from_count == 0 || from_empty {
-            let missing_from_weight = if ctx.session.mail_from.is_some() { 0.08 } else { 0.25 };
+            let missing_from_weight = if ctx.session.mail_from.is_some() {
+                0.08
+            } else {
+                0.25
+            };
             total_score += missing_from_weight;
             categories.push("missing_from".to_string());
             evidence.push(Evidence {
@@ -313,7 +317,8 @@ impl SecurityModule for MimeScanModule {
             total_score += 0.05;
             categories.push("missing_to".to_string());
             evidence.push(Evidence {
-                description: "To: header is missing or empty (uncommon in legitimate mail)".to_string(),
+                description: "To: header is missing or empty (uncommon in legitimate mail)"
+                    .to_string(),
                 location: Some("headers:To".to_string()),
                 snippet: None,
             });
@@ -465,9 +470,7 @@ mod tests {
             2
         );
         assert_eq!(
-            count_email_addresses_in_header(
-                "Alice <a@x.com>, \"Mr Bob\" <b@y.org>, charlie@z.net"
-            ),
+            count_email_addresses_in_header("Alice <a@x.com>, \"Mr Bob\" <b@y.org>, charlie@z.net"),
             3
         );
     }
@@ -545,15 +548,24 @@ mod tests {
         session.rcpt_to.push("recipient@example.com".to_string());
         let content = EmailContent {
             headers: vec![
-                ("From".to_string(), "\"Monologue*\" <1790341540@qq.com>".to_string()),
+                (
+                    "From".to_string(),
+                    "\"Monologue*\" <1790341540@qq.com>".to_string(),
+                ),
                 ("To".to_string(), "<recipient@example.com>".to_string()),
-                ("Subject".to_string(), "扫描全能王 2026-4-20 16.55".to_string()),
+                (
+                    "Subject".to_string(),
+                    "扫描全能王 2026-4-20 16.55".to_string(),
+                ),
                 (
                     "Content-Type".to_string(),
                     "multipart/mixed; boundary=\"----=_NextPart_123\"".to_string(),
                 ),
                 ("Content-Transfer-Encoding".to_string(), "8Bit".to_string()),
-                ("Content-Transfer-Encoding".to_string(), "base64".to_string()),
+                (
+                    "Content-Transfer-Encoding".to_string(),
+                    "base64".to_string(),
+                ),
             ],
             is_complete: false,
             ..Default::default()
@@ -589,7 +601,10 @@ mod tests {
                 ("From".to_string(), "sender@example.com".to_string()),
                 ("To".to_string(), "recipient@example.com".to_string()),
                 ("Content-Type".to_string(), "text/plain".to_string()),
-                ("Content-Transfer-Encoding".to_string(), "base64".to_string()),
+                (
+                    "Content-Transfer-Encoding".to_string(),
+                    "base64".to_string(),
+                ),
                 ("Content-Transfer-Encoding".to_string(), "8bit".to_string()),
             ],
             is_complete: true,

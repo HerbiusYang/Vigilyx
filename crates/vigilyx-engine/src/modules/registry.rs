@@ -9,7 +9,7 @@ use vigilyx_db::VigilDb;
 use crate::config::AiServiceConfig;
 use crate::db_service::DbQueryService;
 use crate::external::clamav::ClamAvClient;
-use crate::intel::{reload_safe_domains_into, IntelLayer, IntelSourceConfig};
+use crate::intel::{IntelLayer, IntelSourceConfig, reload_safe_domains_into};
 use crate::ioc::IocManager;
 use crate::module::SecurityModule;
 use crate::remote::RemoteModuleProxy;
@@ -17,8 +17,8 @@ use crate::remote::RemoteModuleProxy;
 use super::aitm_detect::AitmDetectModule;
 use super::anomaly_detect::AnomalyDetectModule;
 use super::attach_content::AttachContentModule;
-use super::attach_qr_scan::AttachmentQrScanModule;
 use super::attach_hash::AttachHashModule;
+use super::attach_qr_scan::AttachmentQrScanModule;
 use super::attach_scan::AttachScanModule;
 use super::av_attach_scan::AvAttachScanModule;
 use super::av_eml_scan::AvEmlScanModule;
@@ -68,7 +68,10 @@ fn builtin_whitelist_seed() -> &'static BuiltinWhitelistSeed {
         let seed: serde_json::Value = match serde_json::from_str(seed_json) {
             Ok(seed) => seed,
             Err(error) => {
-                warn!("Failed to parse system whitelist seed for runtime merge: {}", error);
+                warn!(
+                    "Failed to parse system whitelist seed for runtime merge: {}",
+                    error
+                );
                 return BuiltinWhitelistSeed::default();
             }
         };
@@ -274,21 +277,21 @@ pub async fn build_module_registry(
 /// MTA inline (SMTP).
 /// (Tier 2).
 pub const INLINE_TIER1_MODULES: &[&str] = &[
-    "content_scan",       // keyword / pattern scan (~200ms)
-    "header_scan",        // SPF/DKIM/header analysis (~100ms)
-    "html_scan",          // HTML structure scan (~200ms)
-    "mime_scan",          // MIME structure scan (~100ms)
-    "link_scan",          // URL analysis (~300ms)
-    "attach_scan",        // attachment metadata (~200ms)
-    "attach_hash",        // attachment hash IOC lookup (~200ms)
-    "domain_verify",      // DNS verification (~500ms)
-    "anomaly_detect",     // anomaly detection (~200ms)
-    "identity_anomaly",   // identity anomaly (~200ms)
-    "yara_scan",          // YARA rule scan (~500ms)
-    "av_eml_scan",        // ClamAV EML scan (~1000ms)
-    "av_attach_scan",     // ClamAV attachment scan (~1000ms)
-    "html_pixel_art",     // pixel art detection (~100ms)
-    "attach_content",     // attachment content scan (~500ms)
+    "content_scan",     // keyword / pattern scan (~200ms)
+    "header_scan",      // SPF/DKIM/header analysis (~100ms)
+    "html_scan",        // HTML structure scan (~200ms)
+    "mime_scan",        // MIME structure scan (~100ms)
+    "link_scan",        // URL analysis (~300ms)
+    "attach_scan",      // attachment metadata (~200ms)
+    "attach_hash",      // attachment hash IOC lookup (~200ms)
+    "domain_verify",    // DNS verification (~500ms)
+    "anomaly_detect",   // anomaly detection (~200ms)
+    "identity_anomaly", // identity anomaly (~200ms)
+    "yara_scan",        // YARA rule scan (~500ms)
+    "av_eml_scan",      // ClamAV EML scan (~1000ms)
+    "av_attach_scan",   // ClamAV attachment scan (~1000ms)
+    "html_pixel_art",   // pixel art detection (~100ms)
+    "attach_content",   // attachment content scan (~500ms)
 ];
 
 // Tier 2 (async only): semantic_scan, link_content, link_reputation,
@@ -301,10 +304,7 @@ pub fn is_inline_tier1(module_id: &str) -> bool {
 
 /// Reload IOC-derived runtime caches without rebuilding the whole module registry.
 /// `safe_domains` is the handle returned by `build_module_registry` — pass `None` if intel is disabled.
-pub async fn reload_runtime_ioc_caches(
-    db: &VigilDb,
-    safe_domains: Option<&SafeDomainsHandle>,
-) {
+pub async fn reload_runtime_ioc_caches(db: &VigilDb, safe_domains: Option<&SafeDomainsHandle>) {
     let url_trusted_domains = load_trusted_url_domains(db).await;
     super::link_scan::set_trusted_url_domains(Arc::new(url_trusted_domains));
     let well_known_safe_domains = load_well_known_safe_domains(db).await;
@@ -360,10 +360,7 @@ async fn build_ai_remote(db: &VigilDb) -> Option<RemoteModuleProxy> {
         Ok(Some(json)) => match serde_json::from_str(&json) {
             Ok(c) => c,
             Err(e) => {
-                warn!(
-                    "AI service config parse failed: {}, using defaults",
-                    e
-                );
+                warn!("AI service config parse failed: {}, using defaults", e);
                 AiServiceConfig::default()
             }
         },
@@ -372,12 +369,14 @@ async fn build_ai_remote(db: &VigilDb) -> Option<RemoteModuleProxy> {
 
     // Check whether AI is enabled (frontend/wizard ai_enabled toggle + AI_ENABLED env var)
     if !ai_config.enabled {
-        info!("AI analysis service disabled (enabled=false), semantic detection will use rule-only mode");
+        info!(
+            "AI analysis service disabled (enabled=false), semantic detection will use rule-only mode"
+        );
         return None;
     }
 
-   // SEC: Validate URL allowlist at runtime, not just save-time (CWE-918)
-   // Protects against DB poisoning / dirty backup restore leaking email content + token
+    // SEC: Validate URL allowlist at runtime, not just save-time (CWE-918)
+    // Protects against DB poisoning / dirty backup restore leaking email content + token
     if let Err(err) =
         validate_internal_service_url(&ai_config.service_url, DEFAULT_INTERNAL_SERVICE_HOSTS)
     {
@@ -435,7 +434,7 @@ async fn build_intel_layer(db: &VigilDb) -> Option<(IntelLayer, SafeDomainsHandl
         _ => IntelSourceConfig::default(),
     };
 
-   // SEC: Decrypt API keys from encrypted DB storage (CWE-312)
+    // SEC: Decrypt API keys from encrypted DB storage (CWE-312)
     if let Some(ref key) = config.abuseipdb_api_key
         && let Some(decrypted) = decrypt_enc_value(key)
     {
@@ -465,7 +464,8 @@ async fn build_intel_layer(db: &VigilDb) -> Option<(IntelLayer, SafeDomainsHandl
 
     if config.vt_scrape_enabled {
         let vt_base_url = config.vt_scrape_base_url();
-        if let Err(err) = validate_internal_service_url(&vt_base_url, DEFAULT_INTERNAL_SERVICE_HOSTS)
+        if let Err(err) =
+            validate_internal_service_url(&vt_base_url, DEFAULT_INTERNAL_SERVICE_HOSTS)
         {
             warn!(
                 url = %vt_base_url,
@@ -486,7 +486,7 @@ async fn build_intel_layer(db: &VigilDb) -> Option<(IntelLayer, SafeDomainsHandl
         return None;
     }
 
-   // Load safe domain cache from DB (verdict='clean')
+    // Load safe domain cache from DB (verdict='clean')
     let safe_domains: HashSet<String> = match db.load_clean_domains().await {
         Ok(domains) => domains.into_iter().collect(),
         Err(e) => {
@@ -495,8 +495,7 @@ async fn build_intel_layer(db: &VigilDb) -> Option<(IntelLayer, SafeDomainsHandl
         }
     };
 
-    let safe_domains_handle: SafeDomainsHandle =
-        Arc::new(std::sync::RwLock::new(safe_domains));
+    let safe_domains_handle: SafeDomainsHandle = Arc::new(std::sync::RwLock::new(safe_domains));
     let ioc_manager = IocManager::new(db.clone());
     let layer = IntelLayer::new(ioc_manager, config, Arc::clone(&safe_domains_handle));
     info!(
@@ -715,7 +714,10 @@ async fn build_sandbox_client() -> Option<Arc<crate::external::sandbox::SandboxC
             Some(Arc::new(client))
         }
         Ok(Err(e)) => {
-            info!("CAPEv2 sandbox service unavailable: {}, sandbox module disabled", e);
+            info!(
+                "CAPEv2 sandbox service unavailable: {}, sandbox module disabled",
+                e
+            );
             None
         }
         Err(_) => {

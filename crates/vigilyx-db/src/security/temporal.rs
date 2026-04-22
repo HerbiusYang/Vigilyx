@@ -8,7 +8,7 @@ use vigilyx_core::security::{CusumState, DualEwmaState, EntityRiskState};
 use crate::VigilDb;
 
 impl VigilDb {
-   /// CUSUM
+    /// CUSUM
     pub async fn save_cusum_states(&self, states: &[CusumState]) -> Result<()> {
         if states.is_empty() {
             return Ok(());
@@ -49,7 +49,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Load CUSUM
+    /// Load CUSUM
     pub async fn load_cusum_states(&self) -> Result<Vec<CusumState>> {
         let rows: Vec<CusumRow> = sqlx::query_as(
             "SELECT entity_key, s_pos, s_neg, mu_0, sample_count, alarm_active, running_sum, running_sq_sum FROM security_temporal_cusum",
@@ -59,7 +59,7 @@ impl VigilDb {
         Ok(rows.into_iter().map(|r| r.into_state()).collect())
     }
 
-   /// EWMA
+    /// EWMA
     pub async fn save_ewma_states(&self, states: &[DualEwmaState]) -> Result<()> {
         if states.is_empty() {
             return Ok(());
@@ -94,7 +94,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Load EWMA
+    /// Load EWMA
     pub async fn load_ewma_states(&self) -> Result<Vec<DualEwmaState>> {
         let rows: Vec<EwmaRow> = sqlx::query_as(
             "SELECT entity_key, fast_value, slow_value, initialized, observation_count FROM security_temporal_ewma",
@@ -104,7 +104,6 @@ impl VigilDb {
         Ok(rows.into_iter().map(|r| r.into_state()).collect())
     }
 
-    
     pub async fn save_entity_risk_states(&self, states: &[EntityRiskState]) -> Result<()> {
         if states.is_empty() {
             return Ok(());
@@ -136,7 +135,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Load
+    /// Load
     pub async fn load_entity_risk_states(&self) -> Result<Vec<EntityRiskState>> {
         let rows: Vec<EntityRiskRow> = sqlx::query_as(
             "SELECT entity_key, risk_value, alpha, email_count FROM security_entity_risk",
@@ -146,7 +145,6 @@ impl VigilDb {
         Ok(rows.into_iter().map(|r| r.into_state()).collect())
     }
 
-    
     pub async fn flush_temporal_states(
         &self,
         cusum: &[CusumState],
@@ -160,9 +158,7 @@ impl VigilDb {
     }
 }
 
-
 // Database row type
-
 
 #[derive(Debug, sqlx::FromRow)]
 struct CusumRow {

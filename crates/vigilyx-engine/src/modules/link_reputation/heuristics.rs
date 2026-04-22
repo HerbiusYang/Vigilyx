@@ -72,8 +72,8 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
             .strip_prefix("www")
             .unwrap_or_default()
             .trim_matches('-');
-        let is_numbered_www = !www_suffix.is_empty()
-            && www_suffix.chars().all(|c| c.is_ascii_digit());
+        let is_numbered_www =
+            !www_suffix.is_empty() && www_suffix.chars().all(|c| c.is_ascii_digit());
         if subdomain.starts_with("www")
             && subdomain.len() > 3
             && subdomain != "www"

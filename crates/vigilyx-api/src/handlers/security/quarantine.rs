@@ -26,7 +26,7 @@ pub struct QuarantineListQuery {
 
 #[derive(Debug, Deserialize)]
 pub struct ReleaseRequest {
-   /// Ignored - operator is extracted from JWT. Kept for backward API compatibility.
+    /// Ignored - operator is extracted from JWT. Kept for backward API compatibility.
     #[serde(default)]
     pub _released_by: Option<String>,
 }
@@ -42,8 +42,8 @@ fn release_requires_outbound_relay(entry: &QuarantineEntry) -> bool {
 }
 
 async fn load_release_relays() -> Result<(DownstreamRelay, Option<DownstreamRelay>), String> {
-    let mut config = MtaConfig::from_env()
-        .map_err(|e| format!("Failed to load MTA release config: {e}"))?;
+    let mut config =
+        MtaConfig::from_env().map_err(|e| format!("Failed to load MTA release config: {e}"))?;
     let db_url = config.database_url.clone();
     if !db_url.is_empty()
         && let Err(error) = config.override_from_db(&db_url).await
@@ -112,22 +112,19 @@ async fn rollback_failed_release(state: &AppState, id: &str) -> Result<(), Respo
     match state.db.quarantine_release_reset(id).await {
         Ok(true) => Ok(()),
         Ok(false) => {
-            let rollback_error = format!("Release rollback lost ownership for quarantine entry {id}");
-            Err(
-                ApiResponse::<serde_json::Value>::server_error(
-                    &rollback_error,
-                    "Failed to restore quarantine state after release relay failure",
-                )
-                .into_response(),
-            )
-        }
-        Err(e) => Err(
-            ApiResponse::<serde_json::Value>::server_error(
-                &e,
+            let rollback_error =
+                format!("Release rollback lost ownership for quarantine entry {id}");
+            Err(ApiResponse::<serde_json::Value>::server_error(
+                &rollback_error,
                 "Failed to restore quarantine state after release relay failure",
             )
-            .into_response(),
-        ),
+            .into_response())
+        }
+        Err(e) => Err(ApiResponse::<serde_json::Value>::server_error(
+            &e,
+            "Failed to restore quarantine state after release relay failure",
+        )
+        .into_response()),
     }
 }
 
@@ -189,7 +186,7 @@ pub async fn release_quarantine(
     Path(id): Path<String>,
     Json(_body): Json<ReleaseRequest>,
 ) -> impl IntoResponse {
-   // SEC: Use authenticated username from JWT, never trust client-supplied released_by
+    // SEC: Use authenticated username from JWT, never trust client-supplied released_by
     let released_by = user.username.clone();
 
     let (raw_eml, entry) = match state.db.quarantine_claim_release(&id).await {
@@ -202,7 +199,7 @@ pub async fn release_quarantine(
                         &e,
                         "Failed to load quarantine release status",
                     )
-                    .into_response()
+                    .into_response();
                 }
             };
             return release_conflict_response(status.as_deref());
@@ -212,7 +209,7 @@ pub async fn release_quarantine(
                 &e,
                 "Failed to claim quarantine entry for release",
             )
-                .into_response()
+            .into_response();
         }
     };
 
@@ -311,13 +308,9 @@ pub async fn delete_quarantine(
             )
                 .into_response()
         }
-        Ok(false) => {
-            ApiResponse::<serde_json::Value>::not_found("Quarantine entry not found")
-                .into_response()
-        }
-        Err(e) => {
-            ApiResponse::<serde_json::Value>::server_error(&e, "Failed to delete quarantine")
-                .into_response()
-        }
+        Ok(false) => ApiResponse::<serde_json::Value>::not_found("Quarantine entry not found")
+            .into_response(),
+        Err(e) => ApiResponse::<serde_json::Value>::server_error(&e, "Failed to delete quarantine")
+            .into_response(),
     }
 }

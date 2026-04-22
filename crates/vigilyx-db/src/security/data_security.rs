@@ -15,20 +15,20 @@ use crate::VigilDb;
 /// HTTP Session items
 #[derive(Debug, Default)]
 pub struct HttpSessionFilters {
-   /// IP
+    /// IP
     pub client_ip: Option<String>,
-    
+
     pub user: Option<String>,
-   /// HTTP
+    /// HTTP
     pub method: Option<String>,
-   /// URL/URI
+    /// URL/URI
     pub keyword: Option<String>,
 }
 
 impl VigilDb {
-   /// Data security
+    /// Data security
     pub async fn init_data_security_tables(&self) -> Result<()> {
-       // HTTP Session
+        // HTTP Session
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS data_security_http_sessions (
@@ -61,7 +61,7 @@ impl VigilDb {
         .execute(&self.pool)
         .await?;
 
-       // has_gaps ()
+        // has_gaps ()
         sqlx::query(
             "ALTER TABLE data_security_http_sessions ADD COLUMN IF NOT EXISTS has_gaps BOOLEAN NOT NULL DEFAULT FALSE",
         )
@@ -69,7 +69,7 @@ impl VigilDb {
         .await
         .ok();
 
-       // Data security
+        // Data security
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS data_security_incidents (
@@ -94,14 +94,14 @@ impl VigilDb {
         .execute(&self.pool)
         .await?;
 
-       // Index
+        // Index
         let indexes = [
             "CREATE INDEX IF NOT EXISTS idx_ds_incidents_type ON data_security_incidents(incident_type)",
             "CREATE INDEX IF NOT EXISTS idx_ds_incidents_severity ON data_security_incidents(severity)",
             "CREATE INDEX IF NOT EXISTS idx_ds_incidents_created ON data_security_incidents(created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_ds_incidents_user ON data_security_incidents(detected_user)",
             "CREATE INDEX IF NOT EXISTS idx_ds_incidents_http_session ON data_security_incidents(http_session_id)",
-           // Index: type+severity + Query
+            // Index: type+severity + Query
             "CREATE INDEX IF NOT EXISTS idx_ds_incidents_type_sev_created ON data_security_incidents(incident_type, severity, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_ds_http_sessions_ts ON data_security_http_sessions(timestamp DESC)",
             "CREATE INDEX IF NOT EXISTS idx_ds_http_sessions_user ON data_security_http_sessions(detected_user)",
@@ -114,17 +114,15 @@ impl VigilDb {
         Ok(())
     }
 
-    
-   // HTTP Session CRUD
-    
+    // HTTP Session CRUD
 
-   /// HTTP Session
+    /// HTTP Session
     pub async fn insert_http_session(&self, session: &HttpSession) -> Result<()> {
         let recipients = serde_json::to_string(&session.detected_recipients)?;
         let file_type_str = session
             .detected_file_type
             .map(|ft| ft.display_name().to_string());
-       // PostgreSQL TEXT columns cannot contain NULL bytes (0x00); strip them from request_body
+        // PostgreSQL TEXT columns cannot contain NULL bytes (0x00); strip them from request_body
         let sanitized_body = session.request_body.as_deref().map(|s| s.replace('\0', ""));
         sqlx::query(
             r#"
@@ -169,7 +167,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Query HTTP Session
+    /// Query HTTP Session
     pub async fn get_http_session(&self, id: Uuid) -> Result<Option<HttpSession>> {
         let row: Option<HttpSessionRow> =
             sqlx::query_as("SELECT * FROM data_security_http_sessions WHERE id = $1")
@@ -179,9 +177,9 @@ impl VigilDb {
         Ok(row.map(|r| r.into()))
     }
 
-   /// PaginationQuery HTTP Session
-   ///
-   /// QueryExclude request_body Transmission,body get_http_session() items.
+    /// PaginationQuery HTTP Session
+    ///
+    /// QueryExclude request_body Transmission,body get_http_session() items.
     pub async fn list_http_sessions(
         &self,
         limit: u32,
@@ -210,17 +208,17 @@ impl VigilDb {
         Ok((sessions, count_row.0 as u64))
     }
 
-   /// PaginationQuery HTTP Session
-   ///
-   /// According to IP,, HTTP URL.
-   /// QueryExclude request_body Transmission.
+    /// PaginationQuery HTTP Session
+    ///
+    /// According to IP,, HTTP URL.
+    /// QueryExclude request_body Transmission.
     pub async fn list_http_sessions_filtered(
         &self,
         filters: &HttpSessionFilters,
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<HttpSession>, u64)> {
-       // Build WHERE, param_idx $N
+        // Build WHERE, param_idx $N
         let mut conditions: Vec<String> = Vec::new();
         let mut bind_values: Vec<String> = Vec::new();
         let mut param_idx: usize = 0;
@@ -257,7 +255,7 @@ impl VigilDb {
             format!("WHERE {}", conditions.join(" AND "))
         };
 
-       // COUNT Query
+        // COUNT Query
         let count_sql = format!(
             "SELECT COUNT(*) FROM data_security_http_sessions {}",
             where_sql
@@ -268,7 +266,7 @@ impl VigilDb {
         }
         let count_row = count_query.fetch_one(&self.pool).await?;
 
-       // DataQuery (bind Index WHERE)
+        // DataQuery (bind Index WHERE)
         param_idx += 1;
         let limit_idx = param_idx;
         param_idx += 1;
@@ -295,10 +293,10 @@ impl VigilDb {
         Ok((sessions, count_row.0 as u64))
     }
 
-   /// client_ip 2
-   ///
-   /// :When file upload From Cookie/body Extract,
-   /// 1 IP HTTP Session(Such as compose.jsp).
+    /// client_ip 2
+    ///
+    /// :When file upload From Cookie/body Extract,
+    /// 1 IP HTTP Session(Such as compose.jsp).
     pub async fn lookup_user_by_client_ip(&self, client_ip: &str) -> Result<Option<String>> {
         let row: Option<(String,)> = sqlx::query_as(
             r#"SELECT detected_user FROM data_security_http_sessions
@@ -316,11 +314,9 @@ impl VigilDb {
         Ok(row.map(|r| r.0))
     }
 
-    
-   // Data security CRUD
-    
+    // Data security CRUD
 
-   /// Data security
+    /// Data security
     pub async fn insert_data_security_incident(
         &self,
         incident: &DataSecurityIncident,
@@ -363,7 +359,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Type (DB Level)
+    /// Type (DB Level)
     pub async fn has_recent_incident(
         &self,
         user: &str,
@@ -385,7 +381,7 @@ impl VigilDb {
         Ok(row.is_some())
     }
 
-   /// QueryData security
+    /// QueryData security
     #[allow(clippy::too_many_arguments)]
     pub async fn list_data_security_incidents(
         &self,
@@ -397,7 +393,7 @@ impl VigilDb {
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<DataSecurityIncident>, u64)> {
-       // Build WHERE, param_idx $N
+        // Build WHERE, param_idx $N
         let mut where_clauses = Vec::new();
         let mut param_idx: usize = 0;
 
@@ -442,7 +438,7 @@ impl VigilDb {
             where_sql, limit_idx, offset_idx
         );
 
-       // :Build LIKE Mode
+        // :Build LIKE Mode
         let client_ip_pattern = client_ip.map(|v| format!("%{}%", v));
         let user_pattern = user.map(|v| format!("%{}%", v));
         let keyword_pattern = keyword.map(|v| format!("%{}%", v));
@@ -489,7 +485,7 @@ impl VigilDb {
         Ok((incidents, count_row.0 as u64))
     }
 
-   /// Query Data security
+    /// Query Data security
     pub async fn get_data_security_incident(
         &self,
         id: Uuid,
@@ -502,13 +498,13 @@ impl VigilDb {
         Ok(row.map(|r| r.into()))
     }
 
-   /// Data securityStatistics
-   ///
-   /// items SQL Query COUNT Query, Data.
+    /// Data securityStatistics
+    ///
+    /// items SQL Query COUNT Query, Data.
     pub async fn get_data_security_stats(&self) -> Result<DataSecurityStats> {
         let cutoff = (Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
 
-       // items Query:According toType + 24h
+        // items Query:According toType + 24h
         let row: (i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
             r#"
             SELECT
@@ -526,7 +522,7 @@ impl VigilDb {
         .fetch_one(&self.pool)
         .await?;
 
-       // According to (2itemsQuery, Merge SUM key)
+        // According to (2itemsQuery, Merge SUM key)
         let severity_rows: Vec<(String, i64)> = sqlx::query_as(
             "SELECT severity, COUNT(*) FROM data_security_incidents GROUP BY severity",
         )
@@ -538,8 +534,8 @@ impl VigilDb {
             .map(|(k, v)| (k, v as u64))
             .collect();
 
-       // 24h HTTP Session (According toSunday +, Asia/Shanghai District)
-       // hour: "MM-DD HH:00" Used for, According to
+        // 24h HTTP Session (According toSunday +, Asia/Shanghai District)
+        // hour: "MM-DD HH:00" Used for, According to
         let hourly_rows: Vec<(String, i64)> = sqlx::query_as(
             r#"
             SELECT TO_CHAR((timestamp::timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Shanghai', 'MM-DD HH24:00') as hour, COUNT(*) as cnt
@@ -561,7 +557,7 @@ impl VigilDb {
             })
             .collect();
 
-       // 24h Security (According toSunday +, Asia/Shanghai District)
+        // 24h Security (According toSunday +, Asia/Shanghai District)
         let hourly_incident_rows: Vec<(String, i64)> = sqlx::query_as(
             r#"
             SELECT TO_CHAR((created_at::timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Shanghai', 'MM-DD HH24:00') as hour, COUNT(*) as cnt
@@ -598,9 +594,7 @@ impl VigilDb {
     }
 }
 
-
 // Type
-
 
 /// (request_body,Used for itemsQuery)
 #[derive(sqlx::FromRow)]

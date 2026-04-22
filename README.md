@@ -14,6 +14,10 @@
 
 Two deployment modes: **Mirror** (passive network capture) and **MTA Proxy** (inline SMTP relay with block/quarantine). Vigilyx ships a default 20-entry mail-analysis pipeline, clustered Dempster-Shafer based evidence fusion, DLP, automated response, and a React dashboard in one Docker Compose deployment.
 
+### Community
+
+- Linux.do: https://linux.do/
+
 ### Architecture
 
 ```text

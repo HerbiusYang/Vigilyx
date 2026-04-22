@@ -43,7 +43,10 @@ impl AnomalyDetectModule {
 }
 
 fn decoded_attachment_filename(filename: &str) -> String {
-    decode_rfc2047(filename).trim().trim_matches('"').to_string()
+    decode_rfc2047(filename)
+        .trim()
+        .trim_matches('"')
+        .to_string()
 }
 
 fn attachment_extension(att: &EmailAttachment) -> Option<String> {
@@ -56,12 +59,10 @@ fn attachment_extension(att: &EmailAttachment) -> Option<String> {
 fn is_high_risk_empty_subject_attachment(att: &EmailAttachment) -> bool {
     let ext = attachment_extension(att);
     let content_type = att.content_type.to_ascii_lowercase();
-    ext.as_deref()
-        .is_some_and(|ext| {
-            !matches!(ext, "zip" | "rar" | "7z")
-                && module_data().contains("high_risk_empty_subject_extensions", ext)
-        })
-        || content_type.contains("html")
+    ext.as_deref().is_some_and(|ext| {
+        !matches!(ext, "zip" | "rar" | "7z")
+            && module_data().contains("high_risk_empty_subject_extensions", ext)
+    }) || content_type.contains("html")
         || content_type.contains("javascript")
 }
 
@@ -74,7 +75,8 @@ fn is_common_business_attachment(att: &EmailAttachment) -> bool {
 fn is_archive_attachment(att: &EmailAttachment) -> bool {
     let ext = attachment_extension(att);
     let content_type = att.content_type.to_ascii_lowercase();
-    ext.as_deref().is_some_and(|ext| matches!(ext, "zip" | "rar" | "7z"))
+    ext.as_deref()
+        .is_some_and(|ext| matches!(ext, "zip" | "rar" | "7z"))
         || content_type.contains("zip")
         || content_type.contains("rar")
         || content_type.contains("7z")
@@ -96,9 +98,9 @@ fn looks_like_filename_subject(subject: &str) -> bool {
     !stem.is_empty()
         && (2..=5).contains(&ext.len())
         && ext.chars().all(|c| c.is_ascii_alphanumeric())
-        && trimmed.chars().all(|c| {
-            c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ' ' | '(' | ')')
-        })
+        && trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ' ' | '(' | ')'))
 }
 
 /// Extract the sender-asserted send time from the `Date:` header and return
@@ -110,9 +112,7 @@ fn looks_like_filename_subject(subject: &str) -> bool {
 /// Returns `None` when the header is missing or unparseable; callers must
 /// not fall back to capture time, since arrival time at the recipient is
 /// timezone-shifted and would create false positives.
-fn extract_declared_send_time(
-    headers: &[(String, String)],
-) -> Option<DateTime<FixedOffset>> {
+fn extract_declared_send_time(headers: &[(String, String)]) -> Option<DateTime<FixedOffset>> {
     for (name, value) in headers {
         if name.eq_ignore_ascii_case("date") {
             let cleaned = value.trim();
@@ -152,7 +152,7 @@ impl SecurityModule for AnomalyDetectModule {
         let subject = ctx.session.subject.as_deref().unwrap_or("");
         let has_attachments = !ctx.session.content.attachments.is_empty();
 
-       // --- 1. Mass mailing: recipient count> 10 ---
+        // --- 1. Mass mailing: recipient count> 10 ---
         if recipient_count > 10 {
             total_score += 0.25;
             categories.push("mass_mailing".to_string());
@@ -175,7 +175,7 @@ impl SecurityModule for AnomalyDetectModule {
             });
         }
 
-       // --- 2. Empty subject with attachments ---
+        // --- 2. Empty subject with attachments ---
         if subject.trim().is_empty() && has_attachments {
             let filenames: Vec<String> = ctx
                 .session
@@ -208,9 +208,9 @@ impl SecurityModule for AnomalyDetectModule {
                 .count();
             let sender_is_public_mail = is_public_mail_sender(ctx.session.mail_from.as_deref());
 
-           // Empty-subject attachments are common for business and mobile-sharing workflows.
-           // A single archive from a public mailbox is usually just file sharing, not a
-           // standalone anomaly strong enough to create a verdict.
+            // Empty-subject attachments are common for business and mobile-sharing workflows.
+            // A single archive from a public mailbox is usually just file sharing, not a
+            // standalone anomaly strong enough to create a verdict.
             let empty_subject_score = if high_risk_count > 0 {
                 0.20
             } else if attachment_count > 1 {
@@ -241,8 +241,8 @@ impl SecurityModule for AnomalyDetectModule {
             });
         }
 
-       // --- 3. Subject all caps (only consider ASCII Latin letters) ---
-       // Skip encoded/timestamp/serial-number subjects: require >=40% letter ratio to avoid flagging IDs
+        // --- 3. Subject all caps (only consider ASCII Latin letters) ---
+        // Skip encoded/timestamp/serial-number subjects: require >=40% letter ratio to avoid flagging IDs
         {
             let latin_chars: String = subject
                 .chars()
@@ -259,8 +259,7 @@ impl SecurityModule for AnomalyDetectModule {
             // CJK+Latin mixed subjects (e.g. "GOAIDC资产管理通知") use uppercase
             // abbreviations that are perfectly normal, not phishing.
             let has_cjk = subject.chars().any(|c| {
-                ('\u{4E00}'..='\u{9FFF}').contains(&c)
-                    || ('\u{3400}'..='\u{4DBF}').contains(&c)
+                ('\u{4E00}'..='\u{9FFF}').contains(&c) || ('\u{3400}'..='\u{4DBF}').contains(&c)
             });
             if latin_chars.len() >= 5
                 && latin_chars == latin_chars.to_uppercase()
@@ -278,9 +277,9 @@ impl SecurityModule for AnomalyDetectModule {
             }
         }
 
-       // --- 3.5 Multilingual gibberish subject ---
-       // Detect 3+ Unicode scripts mixed (e.g. Latin + CJK + Thai) indicating gibberish
-       // Example: "Sq45HQSOHAR Add 3 45HQ"
+        // --- 3.5 Multilingual gibberish subject ---
+        // Detect 3+ Unicode scripts mixed (e.g. Latin + CJK + Thai) indicating gibberish
+        // Example: "Sq45HQSOHAR Add 3 45HQ"
         if !subject.is_empty() {
             let mut has_latin = false;
             let mut has_cjk = false;
@@ -300,7 +299,7 @@ impl SecurityModule for AnomalyDetectModule {
                     || ('\u{AC00}'..='\u{D7AF}').contains(&ch)        // Korean
                     || ('\u{3040}'..='\u{309F}').contains(&ch)        // Hiragana
                     || ('\u{30A0}'..='\u{30FF}').contains(&ch)
-               // Katakana
+                // Katakana
                 {
                     has_other_script = true;
                 }
@@ -320,7 +319,7 @@ impl SecurityModule for AnomalyDetectModule {
             }
         }
 
-       // --- 4. Unusual recipient patterns (all BCC-like: empty rcpt_to is suspicious) ---
+        // --- 4. Unusual recipient patterns (all BCC-like: empty rcpt_to is suspicious) ---
         if recipient_count == 0 {
             total_score += 0.10;
             categories.push("no_recipients".to_string());
@@ -331,7 +330,7 @@ impl SecurityModule for AnomalyDetectModule {
             });
         }
 
-       // --- 5. Very large recipient count (potential spam cannon) ---
+        // --- 5. Very large recipient count (potential spam cannon) ---
         if recipient_count > 50 {
             total_score += 0.20; // Additional penalty on top of mass_mailing
             categories.push("spam_cannon".to_string());
@@ -362,17 +361,37 @@ impl SecurityModule for AnomalyDetectModule {
 
             // Risk amplifiers — any of these turns "unusual hour" into a real signal.
             let urgency_terms = [
-                "urgent", "immediately", "asap", "verify", "verification",
-                "confirm", "suspended", "locked", "expire", "expired",
-                "紧急", "立即", "尽快", "验证", "确认", "冻结", "停用", "限时",
+                "urgent",
+                "immediately",
+                "asap",
+                "verify",
+                "verification",
+                "confirm",
+                "suspended",
+                "locked",
+                "expire",
+                "expired",
+                "紧急",
+                "立即",
+                "尽快",
+                "验证",
+                "确认",
+                "冻结",
+                "停用",
+                "限时",
             ];
             let subject_lower = subject.to_lowercase();
             let has_urgency = urgency_terms.iter().any(|t| subject_lower.contains(t));
             let has_executable_attach = ctx.session.content.attachments.iter().any(|a| {
                 let n = decoded_attachment_filename(&a.filename).to_ascii_lowercase();
-                n.ends_with(".exe") || n.ends_with(".scr") || n.ends_with(".js")
-                    || n.ends_with(".vbs") || n.ends_with(".lnk") || n.ends_with(".iso")
-                    || n.ends_with(".html") || n.ends_with(".htm")
+                n.ends_with(".exe")
+                    || n.ends_with(".scr")
+                    || n.ends_with(".js")
+                    || n.ends_with(".vbs")
+                    || n.ends_with(".lnk")
+                    || n.ends_with(".iso")
+                    || n.ends_with(".html")
+                    || n.ends_with(".htm")
             });
 
             if is_dead_of_night && (has_urgency || has_executable_attach || has_attachments) {
@@ -473,9 +492,7 @@ mod tests {
         );
         session.subject = Some(String::new());
         session.mail_from = Some(sender.to_string());
-        session
-            .rcpt_to
-            .push("recipient@example.com".to_string());
+        session.rcpt_to.push("recipient@example.com".to_string());
         session.content = EmailContent {
             attachments,
             ..Default::default()

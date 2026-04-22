@@ -69,7 +69,7 @@ pub struct VerdictConfig {
     /// (Used for, Name: content/attachment/link/package/semantic)
     #[serde(default)]
     pub pillar_weights: HashMap<String, f64>,
-    /// Risk [0,1].Risk = b + u.
+    /// Risk in the range `\[0, 1\]`. Risk = `b + u`.
     /// 0.7 = " of 70% When Process" (priority)
     #[serde(default = "default_eta")]
     pub eta: f64,
@@ -653,9 +653,10 @@ mod tests {
             ..VerdictConfig::default()
         };
         let err = config.validate().unwrap_err();
-        assert!(err
-            .iter()
-            .any(|e| e.contains("convergence_belief_threshold")));
+        assert!(
+            err.iter()
+                .any(|e| e.contains("convergence_belief_threshold"))
+        );
     }
 
     #[test]
@@ -665,9 +666,10 @@ mod tests {
             ..VerdictConfig::default()
         };
         let err = config.validate().unwrap_err();
-        assert!(err
-            .iter()
-            .any(|e| e.contains("convergence_belief_threshold")));
+        assert!(
+            err.iter()
+                .any(|e| e.contains("convergence_belief_threshold"))
+        );
     }
 
     #[test]

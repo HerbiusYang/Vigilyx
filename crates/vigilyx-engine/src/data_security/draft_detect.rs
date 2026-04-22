@@ -22,14 +22,14 @@ const DRAFT_URI_PATTERNS: &[&str] = &[
     "/save_draft",
     "/compose/save",
     "/compose/draft",
-   // Coremail draft save (API)
+    // Coremail draft save (API)
     "func=mbox:compose&action=savedraft",
     "func=mbox:savedraft",
     "action=savedraft",
     "/coremail/xt5/proxy/compose",
-   // Exchange OWA
+    // Exchange OWA
     "/owa/service.svc",
-   // General API
+    // General API
     "/api/draft",
     "/api/compose/save",
     "/mail/draft/save",
@@ -47,7 +47,7 @@ impl DraftBoxDetector {
         Self
     }
 
-   /// Check whether URI matches a draft save pattern.
+    /// Check whether URI matches a draft save pattern.
     fn is_draft_uri(uri: &str) -> bool {
         let uri_lower = uri.to_lowercase();
         DRAFT_URI_PATTERNS
@@ -66,16 +66,16 @@ impl DataSecurityDetector for DraftBoxDetector {
     }
 
     fn analyze(&self, session: &HttpSession) -> DetectorResult {
-       // Only check POST/PUT requests
+        // Only check POST/PUT requests
         if !matches!(session.method, HttpMethod::Post | HttpMethod::Put) {
             return None;
         }
 
-       // URI match: direct draft URL or Coremail compose.jsp + action=save
+        // URI match: direct draft URL or Coremail compose.jsp + action=save
         let is_draft = if Self::is_draft_uri(&session.uri) {
             true
         } else if coremail::is_coremail_compose_uri(&session.uri) {
-           // Coremail URL reuse: check body action field to distinguish save vs send
+            // Coremail URL reuse: check body action field to distinguish save vs send
             session
                 .request_body
                 .as_deref()
@@ -89,20 +89,20 @@ impl DataSecurityDetector for DraftBoxDetector {
             return None;
         }
 
-       // Get request body
+        // Get request body
         let body = session.request_body.as_deref()?;
         if body.is_empty() {
             return None;
         }
 
-       // DLP scan on request body (Coremail: extract attrs.content to avoid raw JSON metadata)
+        // DLP scan on request body (Coremail: extract attrs.content to avoid raw JSON metadata)
         let dlp_text = dlp::extract_dlp_text(body, &session.uri);
         let mut dlp_result = dlp::scan_text(&dlp_text);
         if dlp_result.is_empty() {
             return None;
         }
 
-       // FP-3: email body contains recipient addresses; filter out email_address false positives
+        // FP-3: email body contains recipient addresses; filter out email_address false positives
         dlp_result.matches.retain(|m| m != "email_address");
         dlp_result
             .details
@@ -112,13 +112,10 @@ impl DataSecurityDetector for DraftBoxDetector {
         }
         let dlp_for_jrt = dlp_result.clone();
 
-       // Build evidence
+        // Build evidence
         let mut evidence = Vec::new();
         evidence.push(Evidence {
-            description: format!(
-                "Draft save contains sensitive data (URI: {})",
-                session.uri
-            ),
+            description: format!("Draft save contains sensitive data (URI: {})", session.uri),
             location: Some("HTTP request body".to_string()),
             snippet: None,
         });
@@ -137,7 +134,7 @@ impl DataSecurityDetector for DraftBoxDetector {
             });
         }
 
-       // Determine severity by highest JR/T classification level (JR/T 0197-2020)
+        // Determine severity by highest JR/T classification level (JR/T 0197-2020)
         let severity = super::jrt::severity_from_max_jrt_level(&dlp_result.matches);
         let user = dlp::extract_user(session);
 
@@ -197,7 +194,7 @@ mod tests {
     #[test]
     fn test_draft_detect_save_draft_with_credit_card() {
         let detector = DraftBoxDetector::new();
-       // 4532015112830366 is Luhn-valid
+        // 4532015112830366 is Luhn-valid
         let session = make_session(
             "/coremail/main/compose/save",
             HttpMethod::Post,
@@ -267,7 +264,7 @@ mod tests {
     #[test]
     fn test_draft_detect_coremail_compose_jsp_save() {
         let detector = DraftBoxDetector::new();
-       // Coremail compose.jsp + action=save + DLP Medium
+        // Coremail compose.jsp + action=save + DLP Medium
         let body = r#"{"attrs":{"account":"user@corp.com","to":[],"subject":"draft","content":"信用卡: 4532015112830366"},"action":"save"}"#;
         let session = make_session(
             "/coremail/common/mbox/compose.jsp?sid=abc123",
@@ -305,7 +302,7 @@ mod tests {
     #[test]
     fn test_draft_detect_coremail_compose_jsp_deliver_not_draft() {
         let detector = DraftBoxDetector::new();
-       // action=deliver Sendemail,
+        // action=deliver Sendemail,
         let body = r#"{"attrs":{"account":"user@corp.com","to":["other@corp.com"],"content":"信用卡: 4532015112830366"},"action":"deliver"}"#;
         let session = make_session(
             "/coremail/common/mbox/compose.jsp?sid=abc",
@@ -322,7 +319,7 @@ mod tests {
     #[test]
     fn test_draft_detect_coremail_normal_content_no_alert() {
         let detector = DraftBoxDetector::new();
-       // action=save But SensitiveContent
+        // action=save But SensitiveContent
         let body = r#"{"attrs":{"account":"user@corp.com","to":[],"subject":"meeting","content":"明Day开会"},"action":"save"}"#;
         let session = make_session(
             "/coremail/common/mbox/compose.jsp?sid=abc",
@@ -336,13 +333,11 @@ mod tests {
         );
     }
 
-    
-   // Test: Item
-    
+    // Test: Item
 
     #[test]
     fn test_draft_detect_email_only_filtered() {
-       // FP-3: Mediumonly emailAddress Risk
+        // FP-3: Mediumonly emailAddress Risk
         let detector = DraftBoxDetector::new();
         let body = r#"{"attrs":{"to":["a@corp.com"],"subject":"test","content":"recipient: a@test.com, b@test.com, c@test.com"},"action":"save"}"#;
         let session = make_session(
@@ -359,7 +354,7 @@ mod tests {
 
     #[test]
     fn test_draft_detect_email_plus_other_still_alerts() {
-       // email + ID card -> email But id_number
+        // email + ID card -> email But id_number
         let detector = DraftBoxDetector::new();
         let body = r#"{"attrs":{"subject":"info","content":"联系人 a@t.com, b@t.com, c@t.com ID card 110101199001011237"},"action":"save"}"#;
         let session = make_session(
@@ -402,7 +397,7 @@ mod tests {
     #[test]
     fn test_draft_detect_coremail_malformed_json() {
         let detector = DraftBoxDetector::new();
-       // Coremail URI But body Valid JSON -> extract_body_action Return None ->
+        // Coremail URI But body Valid JSON -> extract_body_action Return None ->
         let session = make_session(
             "/coremail/common/mbox/compose.jsp?sid=abc",
             HttpMethod::Post,
@@ -418,7 +413,7 @@ mod tests {
     #[test]
     fn test_draft_detect_severity_c4_high() {
         let detector = DraftBoxDetector::new();
-       // C4 leveldata (credential_leak) -> severity should be High
+        // C4 leveldata (credential_leak) -> severity should be High
         let body = r#"{"attrs":{"subject":"info","content":"Password：admin123"},"action":"save"}"#;
         let session = make_session(
             "/coremail/common/mbox/compose.jsp?sid=abc",

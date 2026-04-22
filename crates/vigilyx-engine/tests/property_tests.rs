@@ -10,17 +10,15 @@ use proptest::prelude::*;
 use vigilyx_core::security::{Bpa, ThreatLevel, dempster_combine, dempster_combine_n};
 use vigilyx_engine::data_security::dlp::finders::{iban_mod97_check, luhn_check};
 
-
 // Strategy: arbitrary valid BPA
-
 
 /// Generate an arbitrary closed-world BPA by sampling three non-negative
 /// floats and normalizing them to sum to 1.0.
 fn arb_bpa() -> impl Strategy<Value = Bpa> {
-   // Use small positive ranges to avoid extreme denormalized floats
+    // Use small positive ranges to avoid extreme denormalized floats
     (0.001f64..100.0, 0.001f64..100.0, 0.001f64..100.0).prop_map(|(a, b, c)| {
         let sum = a + b + c;
-       // sum is guaranteed> 0 because all components> 0.001
+        // sum is guaranteed> 0 because all components> 0.001
         Bpa::new(a / sum, b / sum, c / sum)
     })
 }
@@ -36,9 +34,7 @@ fn arb_bpa_with_zeros() -> impl Strategy<Value = Bpa> {
     })
 }
 
-
 // BPA invariants
-
 
 proptest! {
    /// Invariant: For any valid BPA, b + d + u + epsilon = 1.0 (within f64 tolerance).
@@ -226,9 +222,7 @@ proptest! {
     }
 }
 
-
 // ThreatLevel ordering
-
 
 proptest! {
    /// Invariant: ThreatLevel::from_score is monotonically non-decreasing.
@@ -258,21 +252,19 @@ proptest! {
     }
 }
 
-
 // Luhn algorithm
-
 
 /// Compute the Luhn check digit for a given sequence of digits (without check digit).
 /// Returns the single digit that, when appended, makes the full number pass Luhn.
 fn compute_luhn_check_digit(payload: &str) -> Option<char> {
-   // Standard Luhn: double every second digit from the right of the *full* number.
-   // For the payload (without check digit), we double starting from the rightmost digit.
+    // Standard Luhn: double every second digit from the right of the *full* number.
+    // For the payload (without check digit), we double starting from the rightmost digit.
     let mut sum = 0u32;
     for (i, ch) in payload.chars().rev().enumerate() {
         let d = ch.to_digit(10)?;
         let val = if i % 2 == 0 {
-           // These positions will be "odd from right" in the full number
-           // (since check digit will be appended), so they get doubled.
+            // These positions will be "odd from right" in the full number
+            // (since check digit will be appended), so they get doubled.
             let v = d * 2;
             if v > 9 { v - 9 } else { v }
         } else {
@@ -346,16 +338,14 @@ proptest! {
     }
 }
 
-
 // IBAN mod-97
-
 
 /// Compute the check digits for an IBAN given country code and BBAN.
 /// Returns the two-character check digit string.
 fn compute_iban_check_digits(country: &str, bban: &str) -> Option<String> {
-   // Rearrange: BBAN + country + "00"
+    // Rearrange: BBAN + country + "00"
     let rearranged = format!("{}{}00", bban, country);
-   // Convert to numeric string
+    // Convert to numeric string
     let mut numeric = String::with_capacity(rearranged.len() * 2);
     for ch in rearranged.chars() {
         if ch.is_ascii_digit() {
@@ -367,7 +357,7 @@ fn compute_iban_check_digits(country: &str, bban: &str) -> Option<String> {
             return None;
         }
     }
-   // Compute mod 97
+    // Compute mod 97
     let mut remainder: u32 = 0;
     for ch in numeric.chars() {
         remainder = (remainder * 10 + (ch as u32 - '0' as u32)) % 97;
@@ -413,35 +403,33 @@ proptest! {
     }
 }
 
-
 // Known-value sanity checks (not property-based, but included for completeness)
-
 
 #[test]
 fn test_luhn_known_valid_cards() {
-   // Visa test number
+    // Visa test number
     assert!(luhn_check("4111111111111111"));
-   // Mastercard test number
+    // Mastercard test number
     assert!(luhn_check("5425233430109903"));
-   // AMEX test number
+    // AMEX test number
     assert!(luhn_check("374245455400126"));
 }
 
 #[test]
 fn test_iban_known_valid() {
-   // GB standard test IBAN
+    // GB standard test IBAN
     assert!(iban_mod97_check("GB29NWBK60161331926819"));
-   // DE standard test IBAN
+    // DE standard test IBAN
     assert!(iban_mod97_check("DE89370400440532013000"));
-   // FR standard test IBAN
+    // FR standard test IBAN
     assert!(iban_mod97_check("FR7630006000011234567890189"));
 }
 
 #[test]
 fn test_iban_known_invalid() {
-   // Wrong check digits
+    // Wrong check digits
     assert!(!iban_mod97_check("GB00NWBK60161331926819"));
-   // Tampered BBAN
+    // Tampered BBAN
     assert!(!iban_mod97_check("GB29NWBK60161331926810"));
 }
 

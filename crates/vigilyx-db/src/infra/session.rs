@@ -3,12 +3,13 @@
 use anyhow::Result;
 use sqlx::FromRow;
 use uuid::Uuid;
-use vigilyx_core::{EmailAttachment, EmailContent, EmailSession, Protocol, SessionSource, SessionStatus};
+use vigilyx_core::{
+    EmailAttachment, EmailContent, EmailSession, Protocol, SessionSource, SessionStatus,
+};
 
 use crate::VigilDb;
 
-const SESSION_WITH_CONTENT_PREDICATE_TEMPLATE: &str =
-    "(({prefix}content->>'is_encrypted') IS DISTINCT FROM 'true' \
+const SESSION_WITH_CONTENT_PREDICATE_TEMPLATE: &str = "(({prefix}content->>'is_encrypted') IS DISTINCT FROM 'true' \
       AND (({prefix}content->>'body_text') IS NOT NULL \
        OR ({prefix}content->>'body_html') IS NOT NULL \
        OR COALESCE(jsonb_array_length({prefix}content->'attachments'), 0) > 0 \
@@ -59,7 +60,7 @@ struct SessionListRow {
     mail_from: Option<String>,
     rcpt_to: String,
     subject: Option<String>,
-   // Lightweight alternative to content: only contains data needed for list rendering
+    // Lightweight alternative to content: only contains data needed for list rendering
     content_summary: Option<String>,
     email_count: Option<i32>,
     error_reason: Option<String>,
@@ -69,7 +70,7 @@ struct SessionListRow {
 }
 
 impl VigilDb {
-   /// Insert or update session (atomic UPSERT)
+    /// Insert or update session (atomic UPSERT)
     pub async fn insert_session(&self, session: &EmailSession) -> Result<bool> {
         let id_str = session.id.to_string();
 
@@ -80,7 +81,7 @@ impl VigilDb {
         let is_new = existing.is_none();
 
         let rcpt_to = serde_json::to_string(&session.rcpt_to)?;
-       // PostgreSQL JSONB \u0000 Unicode
+        // PostgreSQL JSONB \u0000 Unicode
         let content = {
             let raw = serde_json::to_string(&session.content)?;
             let sanitized = raw.replace("\\u0000", "");
@@ -94,14 +95,14 @@ impl VigilDb {
                 .map(|s| s.trim().to_string())
         });
 
-       // Security: Password, skip_serializing (defense-in-depth)
+        // Security: Password, skip_serializing (defense-in-depth)
         let auth_info = session.auth_info.as_ref().and_then(|a| {
             let mut safe = a.clone();
             safe.password = None;
             serde_json::to_value(&safe).ok()
         });
 
-       // Extract domain from mail_from(Used forfirst communication detection index query)
+        // Extract domain from mail_from(Used forfirst communication detection index query)
         let sender_domain = session
             .mail_from
             .as_deref()
@@ -165,10 +166,10 @@ impl VigilDb {
         Ok(is_new)
     }
 
-   /// Batch insert sessions (transaction + multi-row UPSERT)
-   ///
-   /// Use dynamic multi-row VALUES instead of row-by-row INSERT, reduce N DB round-trips to ceil(N/CHUNK).
-   /// PostgreSQL parameter limit ~65535, 19 cols x 500 rows = 9500 params, within safe range.
+    /// Batch insert sessions (transaction + multi-row UPSERT)
+    ///
+    /// Use dynamic multi-row VALUES instead of row-by-row INSERT, reduce N DB round-trips to ceil(N/CHUNK).
+    /// PostgreSQL parameter limit ~65535, 19 cols x 500 rows = 9500 params, within safe range.
     pub async fn insert_sessions_batch(
         &self,
         sessions: &[EmailSession],
@@ -191,7 +192,7 @@ impl VigilDb {
         let existing_ids: std::collections::HashSet<String> =
             existing_rows.into_iter().map(|(id,)| id).collect();
 
-       // Preprocessing: serialize all params (avoid serde errors in SQL build loop)
+        // Preprocessing: serialize all params (avoid serde errors in SQL build loop)
         const COLS_PER_ROW: usize = 20;
         const BATCH_CHUNK_SIZE: usize = 500; // 500 x 20 = 10000 params, well under 65535
 
@@ -221,7 +222,7 @@ impl VigilDb {
         let mut prepared: Vec<PreparedSession> = Vec::with_capacity(sessions.len());
         for session in sessions {
             let rcpt_to = serde_json::to_string(&session.rcpt_to)?;
-           // PostgreSQL JSONB \u0000 Unicode
+            // PostgreSQL JSONB \u0000 Unicode
             let content = {
                 let raw = serde_json::to_string(&session.content)?;
                 let sanitized = raw.replace("\\u0000", "");
@@ -233,7 +234,7 @@ impl VigilDb {
                     .get_header("Message-ID")
                     .map(|s| s.trim().to_string())
             });
-           // Security: Password, skip_serializing (defense-in-depth)
+            // Security: Password, skip_serializing (defense-in-depth)
             let auth_info = session.auth_info.as_ref().and_then(|a| {
                 let mut safe = a.clone();
                 safe.password = None;
@@ -300,7 +301,7 @@ impl VigilDb {
                         sql.push_str(", ");
                     }
                     sql.push('$');
-                   // itoa would be faster but format! is fine for build-time SQL
+                    // itoa would be faster but format! is fine for build-time SQL
                     sql.push_str(&(param_idx + col as u32).to_string());
                 }
                 sql.push(')');
@@ -360,8 +361,8 @@ impl VigilDb {
 
         let count = prepared.len();
 
-       // Commit write transaction first (release write lock), then read back merged version
-       // This way read query wont be blocked by write lock for 3+ seconds
+        // Commit write transaction first (release write lock), then read back merged version
+        // This way read query wont be blocked by write lock for 3+ seconds
         tx.commit().await?;
 
         let merged_placeholders = (1..=ids.len())
@@ -388,7 +389,7 @@ impl VigilDb {
         Ok((count, is_new_vec, merged))
     }
 
-   /// Get session list
+    /// Get session list
     #[allow(clippy::too_many_arguments)]
     pub async fn list_sessions(
         &self,
@@ -407,8 +408,8 @@ impl VigilDb {
     ) -> Result<(Vec<EmailSession>, u64)> {
         let mut conditions = Vec::new();
         let mut params: Vec<String> = Vec::new();
-       // PostgreSQL uses $1, $2,... numbered placeholders
-       // We track the next placeholder number with a counter
+        // PostgreSQL uses $1, $2,... numbered placeholders
+        // We track the next placeholder number with a counter
         let mut param_idx: usize = 1;
 
         if let Some(p) = protocol {
@@ -579,7 +580,7 @@ impl VigilDb {
             format!(" WHERE {}", conditions.join(" AND "))
         };
 
-       // 1. Count query (can skip: dashboard etc. dont need total count, save ~4.5s)
+        // 1. Count query (can skip: dashboard etc. dont need total count, save ~4.5s)
         let total = if skip_count {
             0
         } else {
@@ -591,12 +592,12 @@ impl VigilDb {
             cq.fetch_one(&self.pool).await.unwrap_or(0) as u64
         };
 
-       // 2. PaginationDataQuery (: Load content, JSONB Extract metadata)
-       // LEFT JOIN security_verdicts (threat_level)
+        // 2. PaginationDataQuery (: Load content, JSONB Extract metadata)
+        // LEFT JOIN security_verdicts (threat_level)
         let limit_ph = format!("${}", param_idx);
         param_idx += 1;
         let offset_ph = format!("${}", param_idx);
-       // not needed after last use
+        // not needed after last use
 
         let data_query = format!(
             "SELECT s.id, s.protocol, s.client_ip, s.client_port, s.server_ip, s.server_port, \
@@ -635,8 +636,8 @@ impl VigilDb {
         Ok((sessions, total))
     }
 
-   /// Query Security Session(Used for)
-   /// session_id, According to, limit items
+    /// Query Security Session(Used for)
+    /// session_id, According to, limit items
     pub async fn query_unanalyzed_sessions(
         &self,
         since: &str,
@@ -665,8 +666,8 @@ impl VigilDb {
             .collect())
     }
 
-   /// QuerySenderDomain (Used forFirst communication)
-   /// sender_domain + EXISTS Road, LIKE '%@domain'
+    /// QuerySenderDomain (Used forFirst communication)
+    /// sender_domain + EXISTS Road, LIKE '%@domain'
     pub async fn count_sender_domain_history(
         &self,
         sender_domain: &str,
@@ -688,10 +689,7 @@ impl VigilDb {
 
     /// Count distinct senders (mail_from addresses) for a given domain.
     /// Used for sender diversity heuristic in identity_anomaly module.
-    pub async fn count_distinct_senders_for_domain(
-        &self,
-        sender_domain: &str,
-    ) -> Result<i64> {
+    pub async fn count_distinct_senders_for_domain(&self, sender_domain: &str) -> Result<i64> {
         let row: (i64,) = sqlx::query_as(
             "SELECT COUNT(DISTINCT mail_from)::BIGINT \
              FROM sessions \
@@ -721,7 +719,7 @@ impl VigilDb {
         }
     }
 
-   /// Batch Session
+    /// Batch Session
     pub async fn get_sessions_batch(&self, ids: &[Uuid]) -> Result<Vec<EmailSession>> {
         if ids.is_empty() {
             return Ok(vec![]);
@@ -754,7 +752,7 @@ impl VigilDb {
         Ok(sessions)
     }
 
-   /// According to message_id Session
+    /// According to message_id Session
     pub async fn find_related_sessions(
         &self,
         message_id: &str,
@@ -779,7 +777,7 @@ impl VigilDb {
         Ok(sessions)
     }
 
-   /// Find downstream delivery hops for the same mail envelope.
+    /// Find downstream delivery hops for the same mail envelope.
     pub async fn find_downstream_sessions_by_envelope(
         &self,
         session: &EmailSession,
@@ -882,7 +880,7 @@ fn row_to_session(row: SessionRow) -> Result<EmailSession> {
 
 /// EmailSession (, content Summary)
 fn list_row_to_session(row: SessionListRow) -> Result<EmailSession> {
-   // content_summary SQL JSON: {"is_encrypted":0,"attachment_count":2,"is_complete":1,"has_body":1}
+    // content_summary SQL JSON: {"is_encrypted":0,"attachment_count":2,"is_complete":1,"has_body":1}
     let content: EmailContent = match &row.content_summary {
         Some(c) => {
             let summary: serde_json::Value = serde_json::from_str(c).unwrap_or_default();
@@ -900,7 +898,7 @@ fn list_row_to_session(row: SessionListRow) -> Result<EmailSession> {
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0)
                 != 0;
-           // attachment,.length
+            // attachment,.length
             let placeholder_attachments: Vec<EmailAttachment> = (0..attachment_count)
                 .map(|_| EmailAttachment {
                     filename: String::new(),

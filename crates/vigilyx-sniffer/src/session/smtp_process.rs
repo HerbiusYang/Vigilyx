@@ -281,9 +281,11 @@ impl ShardedSessionManager {
                     Some(format!("AUTH {}", if *ok { "Success" } else { "failed" }))
                 }
                 SmtpCommand::Other(_) => None,
-                SmtpCommand::Bdat { size, is_last } => {
-                    Some(format!("BDAT {}{}", size, if *is_last { " LAST" } else { "" }))
-                }
+                SmtpCommand::Bdat { size, is_last } => Some(format!(
+                    "BDAT {}{}",
+                    size,
+                    if *is_last { " LAST" } else { "" }
+                )),
             };
 
             if let Some(text) = dialog_text
@@ -345,7 +347,9 @@ impl ShardedSessionManager {
                 } => {
                     info!(
                         "🔑 Session {} SMTP AUTH credentials: method={} username={}",
-                        session_data.session.id, method, mask_username(&username)
+                        session_data.session.id,
+                        method,
+                        mask_username(&username)
                     );
                     // Password intentionally not captured (CWE-316: cleartext storage
                     // in memory). The password is never written to DB, so there is no

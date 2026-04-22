@@ -41,19 +41,24 @@ impl WsTicketStore {
         }
     }
 
-   /// 1 (30), user.
-    
-   /// Returns `None` if capacity is exhausted (DoS protection).
-    pub fn issue(&self, username: &str, client_ip: IpAddr, user_agent: Option<&str>) -> Option<String> {
+    /// 1 (30), user.
+
+    /// Returns `None` if capacity is exhausted (DoS protection).
+    pub fn issue(
+        &self,
+        username: &str,
+        client_ip: IpAddr,
+        user_agent: Option<&str>,
+    ) -> Option<String> {
         let ticket = uuid::Uuid::new_v4().to_string();
         let mut tickets = self.tickets.lock().unwrap_or_else(|poisoned| {
             tracing::warn!("WsTicketStore lock was poisoned, recovering");
             poisoned.into_inner()
         });
-        
+
         let now = Instant::now();
         tickets.retain(|_, record| now.duration_since(record.issued_at) < TICKET_TTL);
-       // SEC-M12: DoS
+        // SEC-M12: DoS
         if tickets.len() >= MAX_TICKETS {
             tracing::warn!("WsTicketStore 容量已满 ({MAX_TICKETS})，拒绝签发New票据");
             return None;
@@ -70,9 +75,9 @@ impl WsTicketStore {
         Some(ticket)
     }
 
-   /// Verify (1: verify delete).
-    
-   /// ,, DoS.
+    /// Verify (1: verify delete).
+
+    /// ,, DoS.
     pub fn consume(&self, ticket: &str, client_ip: IpAddr, user_agent: Option<&str>) -> bool {
         let mut tickets = self.tickets.lock().unwrap_or_else(|poisoned| {
             tracing::warn!("WsTicketStore lock was poisoned, recovering");

@@ -1,33 +1,31 @@
 //! MTA DLP ()
 
-
 //! vigilyx-engine DLP (24+).
 
 use serde::{Deserialize, Serialize};
 use vigilyx_core::models::{EmailSession, MailDirection};
-use vigilyx_engine::data_security::dlp::{scan_text, DlpScanResult};
+use vigilyx_engine::data_security::dlp::{DlpScanResult, scan_text};
 
 /// DLP
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DlpAction {
-    
     Block,
-    
+
     #[default]
     Quarantine,
-    
+
     AllowAndAlert,
 }
 
 /// DLP
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DlpConfig {
-   /// DLP
+    /// DLP
     pub enabled: bool,
-    
+
     pub action: DlpAction,
-   /// JR/T (1-5, 3 = C3)
+    /// JR/T (1-5, 3 = C3)
     pub min_level: u8,
 }
 
@@ -64,7 +62,6 @@ impl DlpConfig {
         }
     }
 }
-
 
 /// Mail direction classification.
 ///
@@ -219,7 +216,7 @@ mod tests {
 
     #[test]
     fn test_detect_direction_mixed_recipients_trusted() {
-       // Trusted + local sender + mixed recipients (including external) = outbound
+        // Trusted + local sender + mixed recipients (including external) = outbound
         let d = detect_direction(
             Some("user@corp.com"),
             &["bob@corp.com".into(), "ext@gmail.com".into()],
@@ -231,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_detect_direction_no_sender() {
-       // bounce (<>) -> Inbound
+        // bounce (<>) -> Inbound
         let d = detect_direction(None, &["user@corp.com".into()], &["corp.com".into()], false);
         assert_eq!(d, MailDirection::Inbound);
     }
@@ -251,23 +248,24 @@ mod tests {
     fn test_dlp_scan_detects_credit_card() {
         let mut session = EmailSession::new(
             vigilyx_core::Protocol::Smtp,
-            "10.0.0.1".into(), 25000, "10.0.0.2".into(), 25,
+            "10.0.0.1".into(),
+            25000,
+            "10.0.0.2".into(),
+            25,
         );
-        session.content.body_text = Some(
-            "请将款项转到以下卡号：4532015112830366，谢谢。".into(),
-        );
+        session.content.body_text = Some("请将款项转到以下卡号：4532015112830366，谢谢。".into());
         let result = run_dlp_scan(&session);
-        assert!(
-            !result.is_empty(),
-            "Should detect credit card number"
-        );
+        assert!(!result.is_empty(), "Should detect credit card number");
     }
 
     #[test]
     fn test_dlp_scan_clean_email() {
         let mut session = EmailSession::new(
             vigilyx_core::Protocol::Smtp,
-            "10.0.0.1".into(), 25000, "10.0.0.2".into(), 25,
+            "10.0.0.1".into(),
+            25000,
+            "10.0.0.2".into(),
+            25,
         );
         session.content.body_text = Some("会议安排在明天下午三点。".into());
         let result = run_dlp_scan(&session);
@@ -278,7 +276,10 @@ mod tests {
     fn test_dlp_scan_empty_email() {
         let session = EmailSession::new(
             vigilyx_core::Protocol::Smtp,
-            "10.0.0.1".into(), 25000, "10.0.0.2".into(), 25,
+            "10.0.0.1".into(),
+            25000,
+            "10.0.0.2".into(),
+            25,
         );
         let result = run_dlp_scan(&session);
         assert!(result.is_empty());
@@ -290,7 +291,10 @@ mod tests {
             matches: vec!["credit_card".into(), "phone_number".into()],
             details: vec![
                 ("credit_card".into(), vec!["4532***".into()]),
-                ("phone_number".into(), vec!["138***".into(), "139***".into()]),
+                (
+                    "phone_number".into(),
+                    vec!["138***".into(), "139***".into()],
+                ),
             ],
         };
         let reason = format_dlp_reason(&result);

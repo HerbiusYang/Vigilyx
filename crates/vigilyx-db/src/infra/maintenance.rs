@@ -15,13 +15,11 @@ static DISK_THRESHOLD: AtomicU8 = AtomicU8::new(90);
 static AUTO_ROTATE_ENABLED: AtomicBool = AtomicBool::new(true);
 
 impl VigilDb {
-    
-    
-   /// :sessions, verdicts, IOC, whitelist, feedback, temporal state,
-   /// quarantine, training samples, config (/pipeline/ /AI),
-   /// audit logs, login history..
+    /// :sessions, verdicts, IOC, whitelist, feedback, temporal state,
+    /// quarantine, training samples, config (/pipeline/ /AI),
+    /// audit logs, login history..
     pub async fn factory_reset(&self) -> Result<()> {
-       // 1. DROP
+        // 1. DROP
         let drop_tables = [
             "DROP TABLE IF EXISTS security_module_results",
             "DROP TABLE IF EXISTS security_verdicts",
@@ -60,14 +58,15 @@ impl VigilDb {
             sqlx::query(sql).execute(&self.pool).await?;
         }
 
-       // 2. config (, pipeline,)
-        sqlx::query("DELETE FROM config").execute(&self.pool).await?;
+        // 2. config (, pipeline,)
+        sqlx::query("DELETE FROM config")
+            .execute(&self.pool)
+            .await?;
 
-        
         self.init().await?;
         self.init_security_tables().await?;
 
-       // 4. VACUUM
+        // 4. VACUUM
         sqlx::query("VACUUM").execute(&self.pool).await?;
         sqlx::query("ANALYZE").execute(&self.pool).await?;
         // SEC-M02: avoid blocking the async runtime with std::fs operations
@@ -76,8 +75,8 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Full cleanup with table recreation and VACUUM/ANALYZE.
-   /// Removes all captured sessions and derived security data.
+    /// Full cleanup with table recreation and VACUUM/ANALYZE.
+    /// Removes all captured sessions and derived security data.
     pub async fn clear_safe(&self) -> Result<()> {
         let drop_tables = [
             "DROP TABLE IF EXISTS security_module_results",
@@ -96,7 +95,7 @@ impl VigilDb {
             "DROP TABLE IF EXISTS security_threat_scenes",
             "DROP TABLE IF EXISTS training_samples",
             "DROP TABLE IF EXISTS sessions",
-           // Data security engine tables
+            // Data security engine tables
             "DROP TABLE IF EXISTS data_security_incidents",
             "DROP TABLE IF EXISTS data_security_http_sessions",
             "DROP TABLE IF EXISTS stats_cache",
@@ -115,8 +114,8 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Full cleanup with table recreation but without VACUUM.
-   /// Faster than `clear_safe`, but disk space may be reclaimed later.
+    /// Full cleanup with table recreation but without VACUUM.
+    /// Faster than `clear_safe`, but disk space may be reclaimed later.
     pub async fn clear_quick(&self) -> Result<()> {
         let drop_tables = [
             "DROP TABLE IF EXISTS security_module_results",
@@ -135,7 +134,7 @@ impl VigilDb {
             "DROP TABLE IF EXISTS security_threat_scenes",
             "DROP TABLE IF EXISTS training_samples",
             "DROP TABLE IF EXISTS sessions",
-           // Data security engine tables
+            // Data security engine tables
             "DROP TABLE IF EXISTS data_security_incidents",
             "DROP TABLE IF EXISTS data_security_http_sessions",
             "DROP TABLE IF EXISTS stats_cache",
@@ -151,21 +150,21 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Compatibility path for older clients.
-   /// The previous implementation depended on legacy tables and could fail with
-   /// a 500 when those tables were absent, so it now falls back to `clear_quick`.
+    /// Compatibility path for older clients.
+    /// The previous implementation depended on legacy tables and could fail with
+    /// a 500 when those tables were absent, so it now falls back to `clear_quick`.
     pub async fn clear_high_performance(&self) -> Result<()> {
         self.clear_quick().await
     }
 
-   /// ClearData (, clear_safe)
+    /// ClearData (, clear_safe)
     pub async fn clear_all(&self) -> Result<()> {
         self.clear_safe().await
     }
 
-   /// GetStatistics
+    /// GetStatistics
     pub async fn get_stats(&self) -> Result<TrafficStats> {
-       // From stats_cache (O(1) COUNT(*))
+        // From stats_cache (O(1) COUNT(*))
         let stats: Option<(i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(
             "SELECT total_sessions::BIGINT, active_sessions::BIGINT, total_bytes::BIGINT, total_packets::BIGINT, \
                     smtp_sessions::BIGINT, pop3_sessions::BIGINT, imap_sessions::BIGINT \
@@ -186,7 +185,7 @@ impl VigilDb {
                 packets_per_second: 0.0,
                 bytes_per_second: 0.0,
             }),
-           // stats_cache (First/)
+            // stats_cache (First/)
             None => {
                 let s: (i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
                     r#"SELECT
@@ -215,16 +214,16 @@ impl VigilDb {
         }
     }
 
-   /// Get Statistics (24, According to)
-   ///
-   /// Statistics:
-   /// - SMTP: auth_info Session ()
-   /// - POP3/IMAP: Session ()
-   /// - HTTP:, When Data
+    /// Get Statistics (24, According to)
+    ///
+    /// Statistics:
+    /// - SMTP: auth_info Session ()
+    /// - POP3/IMAP: Session ()
+    /// - HTTP:, When Data
     pub async fn get_external_login_stats(&self) -> Result<ExternalLoginStats> {
         let since = (chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
 
-       // x
+        // x
         let rows: Vec<(String, String, i64)> = sqlx::query_as(
             r#"
             SELECT
@@ -247,7 +246,7 @@ impl VigilDb {
         .fetch_all(&self.pool)
         .await?;
 
-       // Merge: IP + SMTP / (2 -> 1 DB)
+        // Merge: IP + SMTP / (2 -> 1 DB)
         let agg: (i64, i64, i64) = sqlx::query_as(
             r#"
             SELECT
@@ -270,7 +269,7 @@ impl VigilDb {
         let unique_ips = agg.0;
         let auth_stats = (agg.1, agg.2);
 
-       // Build items
+        // Build items
         let mut hourly_map: std::collections::BTreeMap<String, HourlyLoginEntry> =
             std::collections::BTreeMap::new();
 
@@ -313,16 +312,16 @@ impl VigilDb {
         })
     }
 
-   /// Delete Data(sessions + verdicts/module_results/data_security)
-   ///
-   /// (sessions_deleted, security_rows_deleted).
-   /// Delete: (FK But) ->.
+    /// Delete Data(sessions + verdicts/module_results/data_security)
+    ///
+    /// (sessions_deleted, security_rows_deleted).
+    /// Delete: (FK But) ->.
     pub async fn cleanup_old_data(&self, days: i64) -> Result<(u64, u64)> {
         let cutoff = chrono::Utc::now() - chrono::Duration::days(days);
         let cutoff_str = cutoff.to_rfc3339();
         let mut security_deleted: u64 = 0;
 
-       // 1. module_results(verdict_id verdicts)
+        // 1. module_results(verdict_id verdicts)
         let mr = sqlx::query(
             "DELETE FROM security_module_results WHERE verdict_id IN \
              (SELECT id FROM security_verdicts WHERE created_at < $1)",
@@ -333,7 +332,7 @@ impl VigilDb {
         .rows_affected();
         security_deleted += mr;
 
-       // 2. verdicts
+        // 2. verdicts
         let vd = sqlx::query("DELETE FROM security_verdicts WHERE created_at < $1")
             .bind(&cutoff_str)
             .execute(&self.pool)
@@ -341,7 +340,7 @@ impl VigilDb {
             .rows_affected();
         security_deleted += vd;
 
-       // 3. data_security_incidents
+        // 3. data_security_incidents
         let dsi = sqlx::query("DELETE FROM data_security_incidents WHERE created_at < $1")
             .bind(&cutoff_str)
             .execute(&self.pool)
@@ -349,8 +348,8 @@ impl VigilDb {
             .rows_affected();
         security_deleted += dsi;
 
-       // 4. Delete old data_security_http_sessions + associated temp body files (CWE-459)
-       // First collect IDs of sessions to be deleted, then clean up their temp files
+        // 4. Delete old data_security_http_sessions + associated temp body files (CWE-459)
+        // First collect IDs of sessions to be deleted, then clean up their temp files
         let doomed_ids: Vec<String> = sqlx::query_scalar(
             "SELECT id::text FROM data_security_http_sessions WHERE timestamp < $1",
         )
@@ -366,7 +365,7 @@ impl VigilDb {
             .rows_affected();
         security_deleted += dsh;
 
-       // SEC-M02: Clean up orphaned HTTP body temp files (spawn_blocking to avoid blocking async runtime)
+        // SEC-M02: Clean up orphaned HTTP body temp files (spawn_blocking to avoid blocking async runtime)
         if !doomed_ids.is_empty() {
             let ids = doomed_ids.clone();
             let _ = tokio::task::spawn_blocking(move || {
@@ -384,10 +383,11 @@ impl VigilDb {
                 if files_cleaned > 0 {
                     tracing::info!(files_cleaned, "Cleaned up HTTP body temp files");
                 }
-            }).await;
+            })
+            .await;
         }
 
-       // 5. security_feedback
+        // 5. security_feedback
         let fb = sqlx::query("DELETE FROM security_feedback WHERE created_at < $1")
             .bind(&cutoff_str)
             .execute(&self.pool)
@@ -395,7 +395,7 @@ impl VigilDb {
             .rows_affected();
         security_deleted += fb;
 
-       // 6. sessions()
+        // 6. sessions()
         let sessions_deleted = sqlx::query("DELETE FROM sessions WHERE started_at < $1")
             .bind(&cutoff_str)
             .execute(&self.pool)
@@ -416,9 +416,9 @@ impl VigilDb {
         Ok((sessions_deleted, security_deleted))
     }
 
-   /// (sender_baselines, temporal_cusum/ewma, entity_risk)
-   ///
-   /// New,.
+    /// (sender_baselines, temporal_cusum/ewma, entity_risk)
+    ///
+    /// New,.
     pub async fn cleanup_stale_temporal(&self, stale_days: i64) -> Result<u64> {
         let cutoff = chrono::Utc::now() - chrono::Duration::days(stale_days);
         let cutoff_str = cutoff.to_rfc3339();
@@ -466,7 +466,7 @@ impl VigilDb {
         Ok(total)
     }
 
-   /// Performance notesData
+    /// Performance notesData
     pub async fn optimize(&self) -> Result<()> {
         tracing::info!("开始OptimizeData库...");
         sqlx::query("ANALYZE").execute(&self.pool).await?;
@@ -475,10 +475,10 @@ impl VigilDb {
         Ok(())
     }
 
-   /// GetData
-   ///
-   /// (total_size, free_size).PostgreSQL freelist,
-   /// free_size 0(VACUUM).
+    /// GetData
+    ///
+    /// (total_size, free_size).PostgreSQL freelist,
+    /// free_size 0(VACUUM).
     pub async fn get_db_size(&self) -> Result<(u64, u64)> {
         let (total_size,): (i64,) = sqlx::query_as("SELECT pg_database_size(current_database())")
             .fetch_one(&self.pool)
@@ -487,13 +487,13 @@ impl VigilDb {
         Ok((total_size as u64, 0))
     }
 
-   /// Get
-   ///
-   /// PostgreSQL Mode Data.
-   /// Such as PostgreSQL Data, District.
+    /// Get
+    ///
+    /// PostgreSQL Mode Data.
+    /// Such as PostgreSQL Data, District.
     pub fn get_disk_usage_percent(_db_url: &str) -> u8 {
-       // PostgreSQL Mode: Data
-       // PGDATA, DefaultRoad
+        // PostgreSQL Mode: Data
+        // PGDATA, DefaultRoad
         let pg_data_dir =
             std::env::var("PGDATA").unwrap_or_else(|_| "/var/lib/postgresql/data".to_string());
         let dir = std::path::Path::new(&pg_data_dir);
@@ -501,15 +501,15 @@ impl VigilDb {
         #[cfg(unix)]
         {
             use std::ffi::CString;
-           // PostgreSQL Data,Such as
+            // PostgreSQL Data,Such as
             let check_dir = if dir.exists() {
                 dir
             } else {
                 std::path::Path::new("/")
             };
             if let Ok(c_path) = CString::new(check_dir.to_string_lossy().as_bytes()) {
-               // SAFETY: c_path is a valid CString (null-terminated), stat is zero-initialized
-               // which is valid for statvfs, and both outlive the libc::statvfs call.
+                // SAFETY: c_path is a valid CString (null-terminated), stat is zero-initialized
+                // which is valid for statvfs, and both outlive the libc::statvfs call.
                 unsafe {
                     let mut stat: libc::statvfs = std::mem::zeroed();
                     if libc::statvfs(c_path.as_ptr(), &mut stat) == 0 {
@@ -553,27 +553,25 @@ impl VigilDb {
         best_match.map_or(0, |(_, usage)| usage)
     }
 
-   /// Get Threshold
+    /// Get Threshold
     pub fn get_rotate_threshold() -> u8 {
         DISK_THRESHOLD.load(Ordering::Relaxed)
     }
 
-   /// Threshold
+    /// Threshold
     pub fn set_rotate_threshold(percent: u8) {
         DISK_THRESHOLD.store(percent.clamp(50, 99), Ordering::Relaxed);
     }
 
-   /// Get
+    /// Get
     pub fn is_auto_rotate_enabled() -> bool {
         AUTO_ROTATE_ENABLED.load(Ordering::Relaxed)
     }
 
-    
     pub fn set_auto_rotate_enabled(enabled: bool) {
         AUTO_ROTATE_ENABLED.store(enabled, Ordering::Relaxed);
     }
 
-    
     pub async fn check_and_rotate_if_needed(&self, db_url: &str) -> Result<(bool, u64, u64)> {
         if !Self::is_auto_rotate_enabled() {
             return Ok((false, 0, 0));
@@ -652,7 +650,11 @@ fn cleanup_all_http_temp_files() {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) => {
-            tracing::warn!(dir = HTTP_TEMP_DIR, "Failed to read HTTP temp directory: {}", e);
+            tracing::warn!(
+                dir = HTTP_TEMP_DIR,
+                "Failed to read HTTP temp directory: {}",
+                e
+            );
             return;
         }
     };

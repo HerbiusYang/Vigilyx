@@ -48,7 +48,8 @@ impl VerdictModule {
             meta: ModuleMetadata {
                 id: "verdict".to_string(),
                 name: "Composite verdict".to_string(),
-                description: "Collect all module results and generate composite verdict".to_string(),
+                description: "Collect all module results and generate composite verdict"
+                    .to_string(),
                 pillar: Pillar::Package,
                 depends_on: ALL_PREREQUISITE_IDS.iter().map(|s| s.to_string()).collect(),
                 timeout_ms: 1000,
@@ -70,7 +71,7 @@ impl SecurityModule for VerdictModule {
     async fn analyze(&self, ctx: &SecurityContext) -> Result<ModuleResult, EngineError> {
         let start = Instant::now();
 
-       // Read all prior results from context
+        // Read all prior results from context
         let all_results = ctx.module_results().await;
 
         let mut evidence = Vec::new();
@@ -94,7 +95,7 @@ impl SecurityModule for VerdictModule {
                 for cat in &result.categories {
                     categories.push(cat.clone());
                 }
-               // Summarize each flagged module as evidence
+                // Summarize each flagged module as evidence
                 evidence.push(Evidence {
                     description: format!(
                         "[{}] {} — threat level: {}, confidence: {:.0}%",
@@ -123,7 +124,7 @@ impl SecurityModule for VerdictModule {
 
         let duration_ms = start.elapsed().as_millis() as u64;
 
-       // Build summary text
+        // Build summary text
         let summary = if max_threat == ThreatLevel::Safe {
             format!(
                 "Composite verdict: Safe — {} modules found no threats",
@@ -139,12 +140,12 @@ impl SecurityModule for VerdictModule {
             )
         };
 
-       // Verdict module itself reports the aggregated threat level with high confidence
-       // (the actual weighted aggregation is done by verdict.rs in the orchestrator)
+        // Verdict module itself reports the aggregated threat level with high confidence
+        // (the actual weighted aggregation is done by verdict.rs in the orchestrator)
         let confidence = if flagged_modules.is_empty() {
             1.0
         } else {
-           // Confidence is higher when more modules agree
+            // Confidence is higher when more modules agree
             let agreement_ratio = flagged_modules.len() as f64 / total_modules.max(1) as f64;
             (0.60 + agreement_ratio * 0.40).min(1.0)
         };

@@ -20,19 +20,15 @@ use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
 use crate::module_data::module_data;
 
-
-
-
 // KeywordsoverrideType (For API Andfirst Use)
-
 
 /// KeywordsClassificationofoverrideConfiguration
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct KeywordCategoryOverride {
-   /// userAdd newofKeywords
+    /// userAdd newofKeywords
     #[serde(default)]
     pub added: Vec<String>,
-   /// FromSystem Medium ofKeywords
+    /// FromSystem Medium ofKeywords
     #[serde(default)]
     pub removed: Vec<String>,
 }
@@ -103,13 +99,13 @@ static RE_PARAGRAPH_BREAK: LazyLock<Regex> =
 
 pub struct ContentScanModule {
     meta: ModuleMetadata,
-   /// ofPhishingKeywordsList (builtin - removed + added)
+    /// ofPhishingKeywordsList (builtin - removed + added)
     phishing_keywords: Vec<String>,
-   /// of PhishingKeywordsList
+    /// of PhishingKeywordsList
     weak_phishing_keywords: Vec<String>,
-   /// of BEC short List
+    /// of BEC short List
     bec_phrases: Vec<String>,
-   /// ofInternal short List
+    /// ofInternal short List
     internal_authority_phrases: Vec<String>,
     gateway_banner_patterns: Vec<String>,
     notice_banner_patterns: Vec<String>,
@@ -154,7 +150,7 @@ impl ContentScanModule {
         }
     }
 
-   /// ReturnWhenfirst ofKeywordsList (For API Return)
+    /// ReturnWhenfirst ofKeywordsList (For API Return)
     pub fn effective_keywords(&self) -> serde_json::Value {
         serde_json::json!({
             "phishing_keywords": self.phishing_keywords,
@@ -247,9 +243,7 @@ pub fn normalize_system_keyword_seed(system_seed: &KeywordOverrides) -> KeywordO
         gateway_banner_patterns: normalize_system_category_seed(
             &system_seed.gateway_banner_patterns,
         ),
-        notice_banner_patterns: normalize_system_category_seed(
-            &system_seed.notice_banner_patterns,
-        ),
+        notice_banner_patterns: normalize_system_category_seed(&system_seed.notice_banner_patterns),
         dsn_patterns: normalize_system_category_seed(&system_seed.dsn_patterns),
         auto_reply_patterns: normalize_system_category_seed(&system_seed.auto_reply_patterns),
     }
@@ -392,7 +386,7 @@ pub fn get_builtin_keyword_lists(system_seed: &KeywordOverrides) -> serde_json::
 /// Return detectRule (For API first)
 pub fn get_builtin_rules(system_seed: &KeywordOverrides) -> serde_json::Value {
     let builtin = build_system_keyword_lists(system_seed);
-   // Merge KeywordsUsed forfirst
+    // Merge KeywordsUsed forfirst
     let mut all_phishing = builtin.phishing_keywords.clone();
     all_phishing.extend(builtin.weak_phishing_keywords.clone());
     all_phishing.sort();
@@ -494,11 +488,14 @@ fn find_api_keys(text: &str) -> Vec<String> {
         .find_iter(text)
         .filter_map(|m| {
             let s = m.as_str();
-           // 6Base/Radix (0-9, a-f) FileHash, API key
+            // 6Base/Radix (0-9, a-f) FileHash, API key
             let is_pure_hex = s
                 .chars()
                 .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c.to_ascii_lowercase()));
-            if is_pure_hex || !looks_like_api_key_shape(s) || !has_api_key_context(text, m.start(), m.end()) {
+            if is_pure_hex
+                || !looks_like_api_key_shape(s)
+                || !has_api_key_context(text, m.start(), m.end())
+            {
                 None
             } else {
                 Some(s.to_string())
@@ -547,10 +544,10 @@ pub(super) fn scan_text(
     categories: &mut Vec<String>,
 ) -> f64 {
     let mut score: f64 = 0.0;
-   // NFKC: ->, -> Standard, prevent Unicode
+    // NFKC: ->, -> Standard, prevent Unicode
     let text_lower = normalize_text(&text.to_lowercase());
 
-   // --- PhishingKeywords (0.08/, 0.5) ---
+    // --- PhishingKeywords (0.08/, 0.5) ---
     let phishing_hits: Vec<String> = if text_lower.len() >= KEYWORD_PAR_THRESHOLD {
         phishing_kw
             .par_iter()
@@ -579,8 +576,8 @@ pub(super) fn scan_text(
         });
     }
 
-   // --- PhishingKeywords (0.03/,>=3, 0.15) ---
-   // NormalBusinessemailMedium found, stored
+    // --- PhishingKeywords (0.03/,>=3, 0.15) ---
+    // NormalBusinessemailMedium found, stored
     let mut weak_hits = Vec::new();
     for kw in weak_phishing_kw {
         if text_lower.contains(kw.as_str()) {
@@ -601,11 +598,11 @@ pub(super) fn scan_text(
         });
     }
 
-   // --- BEC impersonation ---
-   // Single-token urgency words from the keyword manager (e.g. "immediately",
-   // "asap") are too weak on their own. Treat them as weak BEC hints and only
-   // score when multiple weak hits co-occur, while keeping multi-token phrases
-   // as strong BEC evidence.
+    // --- BEC impersonation ---
+    // Single-token urgency words from the keyword manager (e.g. "immediately",
+    // "asap") are too weak on their own. Treat them as weak BEC hints and only
+    // score when multiple weak hits co-occur, while keeping multi-token phrases
+    // as strong BEC evidence.
     let bec_hits: Vec<String> = if text_lower.len() >= KEYWORD_PAR_THRESHOLD {
         bec_ph
             .par_iter()
@@ -649,7 +646,7 @@ pub(super) fn scan_text(
         });
     }
 
-   // --- DLP: Credit cards ---
+    // --- DLP: Credit cards ---
     let cc_matches = contains_credit_card(text);
     if !cc_matches.is_empty() {
         score += 0.3;
@@ -664,7 +661,7 @@ pub(super) fn scan_text(
                 cc_matches
                     .iter()
                     .map(|c| {
-                       // mask middle digits
+                        // mask middle digits
                         let mut masked = c.clone();
                         if masked.len() >= 12 {
                             let len = masked.len();
@@ -678,7 +675,7 @@ pub(super) fn scan_text(
         });
     }
 
-   // --- DLP: Chinese ID ---
+    // --- DLP: Chinese ID ---
     let id_matches = find_chinese_ids(text);
     if !id_matches.is_empty() {
         score += 0.25;
@@ -702,7 +699,7 @@ pub(super) fn scan_text(
         });
     }
 
-   // --- DLP: API keys ---
+    // --- DLP: API keys ---
     let api_keys = find_api_keys(text);
     if !api_keys.is_empty() {
         score += 0.2;
@@ -833,16 +830,17 @@ pub(crate) fn sanitize_body_for_keyword_scan(
 
     let (without_notice, removed_notice) = strip_leading_notice_sections(text, &notice_patterns);
     let trimmed = without_notice.trim_start();
-    if removed_notice
-        && separator_lead_len(trimmed.lines().next().unwrap_or_default()) >= 4
-    {
+    if removed_notice && separator_lead_len(trimmed.lines().next().unwrap_or_default()) >= 4 {
         return String::new();
     }
 
     strip_trailing_footer_after_separator(without_notice)
 }
 
-pub(super) fn collect_gateway_prior_hits(prefix_text: &str, gateway_banner_patterns: &[String]) -> Vec<String> {
+pub(super) fn collect_gateway_prior_hits(
+    prefix_text: &str,
+    gateway_banner_patterns: &[String],
+) -> Vec<String> {
     let prefix_lower = normalize_text(&prefix_text.to_lowercase());
     gateway_banner_patterns
         .iter()

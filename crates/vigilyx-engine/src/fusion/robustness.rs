@@ -15,15 +15,15 @@ const MAX_WEIGHT_FRACTION: f64 = 0.40;
 /// Result of robustness checking/enforcement.
 #[derive(Debug, Clone)]
 pub struct RobustnessResult {
-   /// Whether diversity constraint was already satisfied.
+    /// Whether diversity constraint was already satisfied.
     pub diversity_ok: bool,
-   /// Maximum single-engine weight fraction (before enforcement).
+    /// Maximum single-engine weight fraction (before enforcement).
     pub max_weight_fraction: f64,
-   /// Worst-case degradation: max drop in risk score when removing one engine.
+    /// Worst-case degradation: max drop in risk score when removing one engine.
     pub worst_case_degradation: f64,
-   /// Index of engine whose removal causes worst degradation.
+    /// Index of engine whose removal causes worst degradation.
     pub most_critical_engine: usize,
-   /// Number of engines that were weight-capped.
+    /// Number of engines that were weight-capped.
     pub engines_capped: usize,
 }
 
@@ -46,7 +46,7 @@ pub fn enforce_weight_diversity(weights: &mut [f64]) -> usize {
     }
 
     let mut capped = 0;
-   // Iterate up to N times (convergence guaranteed since we only reduce weights)
+    // Iterate up to N times (convergence guaranteed since we only reduce weights)
     for _ in 0..n {
         let total: f64 = weights.iter().sum();
         if total < 1e-15 {
@@ -71,23 +71,23 @@ pub fn enforce_weight_diversity(weights: &mut [f64]) -> usize {
             break;
         }
 
-       // Cap overweight engines, redistribute excess proportionally
+        // Cap overweight engines, redistribute excess proportionally
         for w in weights.iter_mut() {
             if *w > cap + 1e-12 {
-               *w = cap;
+                *w = cap;
                 capped += 1;
             } else if uncapped_total > 1e-15 {
-               // Proportional redistribution
-               *w += excess * (*w / uncapped_total);
+                // Proportional redistribution
+                *w += excess * (*w / uncapped_total);
             }
         }
     }
 
-   // Re-normalize to sum = 1.0
+    // Re-normalize to sum = 1.0
     let total: f64 = weights.iter().sum();
     if total > 1e-15 {
         for w in weights.iter_mut() {
-           *w /= total;
+            *w /= total;
         }
     }
 
@@ -110,7 +110,7 @@ pub fn worst_case_degradation(engine_bpas: &[Bpa], weights: &[f64], eta: f64) ->
         return (1.0, 0); // Single engine: removing it loses everything
     }
 
-   // Full-ensemble risk
+    // Full-ensemble risk
     let full_bpa = weighted_average_bpa(engine_bpas, weights);
     let full_risk = full_bpa.risk_score(eta);
 
@@ -127,7 +127,7 @@ pub fn worst_case_degradation(engine_bpas: &[Bpa], weights: &[f64], eta: f64) ->
         let total: f64 = sub_weights.iter().sum();
         if total > 1e-15 {
             for w in sub_weights.iter_mut() {
-               *w /= total;
+                *w /= total;
             }
         }
 
@@ -136,8 +136,8 @@ pub fn worst_case_degradation(engine_bpas: &[Bpa], weights: &[f64], eta: f64) ->
         ((full_risk - sub_risk).abs(), skip)
     };
 
-   // Sequential LOO: N <= 8, each iteration is weighted_average + risk_score (~50ns).
-   // Rayon dispatch overhead exceeds total 8x50ns = 400ns computation.
+    // Sequential LOO: N <= 8, each iteration is weighted_average + risk_score (~50ns).
+    // Rayon dispatch overhead exceeds total 8x50ns = 400ns computation.
     let (worst_drop, worst_idx) = (0..n)
         .map(compute_drop)
         .fold((0.0_f64, 0), |a, b| if b.0 > a.0 { b } else { a });
@@ -179,16 +179,16 @@ pub fn check_and_enforce(engine_bpas: &[Bpa], weights: &mut [f64], eta: f64) -> 
         };
     }
 
-   // Check pre-enforcement state
+    // Check pre-enforcement state
     let total: f64 = weights.iter().sum();
     let max_w = weights.iter().cloned().fold(0.0_f64, f64::max);
     let max_fraction = if total > 1e-15 { max_w / total } else { 0.0 };
     let diversity_ok = max_fraction <= MAX_WEIGHT_FRACTION + 1e-12;
 
-   // Enforce
+    // Enforce
     let engines_capped = enforce_weight_diversity(weights);
 
-   // Degradation analysis (on post-enforcement weights)
+    // Degradation analysis (on post-enforcement weights)
     let (worst_deg, most_critical) = worst_case_degradation(engine_bpas, weights, eta);
 
     RobustnessResult {
@@ -200,9 +200,7 @@ pub fn check_and_enforce(engine_bpas: &[Bpa], weights: &mut [f64], eta: f64) -> 
     }
 }
 
-
 // Tests
-
 
 #[cfg(test)]
 mod tests {
@@ -210,7 +208,7 @@ mod tests {
 
     #[test]
     fn test_enforce_diversity_no_cap_needed() {
-       // Three equal weights - no capping needed
+        // Three equal weights - no capping needed
         let mut weights = vec![0.33, 0.33, 0.34];
         let capped = enforce_weight_diversity(&mut weights);
         assert_eq!(capped, 0);
@@ -220,12 +218,12 @@ mod tests {
 
     #[test]
     fn test_enforce_diversity_caps_dominant() {
-       // One engine dominates at 70%
+        // One engine dominates at 70%
         let mut weights = vec![0.70, 0.15, 0.15];
         let capped = enforce_weight_diversity(&mut weights);
         assert!(capped > 0);
 
-       // After enforcement, max weight should be <= 40%
+        // After enforcement, max weight should be <= 40%
         let total: f64 = weights.iter().sum();
         let max_frac = weights.iter().cloned().fold(0.0_f64, f64::max) / total;
         assert!(
@@ -265,7 +263,7 @@ mod tests {
         ];
         let weights = vec![0.5, 0.5];
         let (deg, idx) = worst_case_degradation(&bpas, &weights, 0.7);
-       // Removing the threat engine should cause the biggest drop
+        // Removing the threat engine should cause the biggest drop
         assert_eq!(idx, 0);
         assert!(deg > 0.2);
     }
@@ -282,7 +280,7 @@ mod tests {
 
         assert!(!result.diversity_ok, "60% should violate 40% cap");
         assert!(result.engines_capped > 0);
-       // After enforcement, check fraction
+        // After enforcement, check fraction
         let max_w = weights.iter().cloned().fold(0.0_f64, f64::max);
         assert!(max_w <= MAX_WEIGHT_FRACTION + 0.01);
     }

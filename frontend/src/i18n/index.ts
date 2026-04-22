@@ -5,7 +5,28 @@ import en from './locales/en.json'
 
 const STORAGE_KEY = 'vigilyx-lang'
 
-const savedLang = localStorage.getItem(STORAGE_KEY) || 'zh'
+type SupportedLang = 'zh' | 'en'
+
+function getStorage() {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  const storage = window.localStorage
+  if (!storage || typeof storage.getItem !== 'function' || typeof storage.setItem !== 'function') {
+    return null
+  }
+
+  return storage
+}
+
+function getSavedLang(): SupportedLang {
+  const storage = getStorage()
+  const savedLang = storage?.getItem(STORAGE_KEY)
+  return savedLang === 'en' ? 'en' : 'zh'
+}
+
+const savedLang = getSavedLang()
 
 i18n
   .use(initReactI18next)
@@ -21,13 +42,17 @@ i18n
     },
   })
 
-// Sync <html lang> on init
-document.documentElement.lang = savedLang
+// Sync <html lang> on init when a DOM exists.
+if (typeof document !== 'undefined') {
+  document.documentElement.lang = savedLang
+}
 
 /** Persist language choice and switch */
-export function changeLanguage(lang: 'zh' | 'en') {
-  localStorage.setItem(STORAGE_KEY, lang)
-  document.documentElement.lang = lang
+export function changeLanguage(lang: SupportedLang) {
+  getStorage()?.setItem(STORAGE_KEY, lang)
+  if (typeof document !== 'undefined') {
+    document.documentElement.lang = lang
+  }
   void i18n.changeLanguage(lang)
 }
 

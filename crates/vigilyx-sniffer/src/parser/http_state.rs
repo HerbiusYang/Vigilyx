@@ -46,11 +46,11 @@ pub struct ParsedCompleteRequest {
     pub content_length: Option<usize>,
     /// Raw `Cookie` header, if present.
     pub cookie: Option<String>,
-   /// Offset of the body within the original stream buffer.
+    /// Offset of the body within the original stream buffer.
     pub body_offset: usize,
-   /// Body length in bytes.
+    /// Body length in bytes.
     pub body_length: usize,
-   /// Total request length including headers and body.
+    /// Total request length including headers and body.
     #[allow(dead_code)] // Used by tests and offset validation.
     pub total_length: usize,
 }
@@ -58,9 +58,9 @@ pub struct ParsedCompleteRequest {
 /// Internal parsing state.
 #[derive(Debug)]
 enum HttpParseState {
-   /// Waiting for a complete request line and headers.
+    /// Waiting for a complete request line and headers.
     WaitingHeaders,
-   /// Headers are parsed; waiting for the remaining body bytes.
+    /// Headers are parsed; waiting for the remaining body bytes.
     WaitingBody {
         method: HttpMethod,
         uri: String,
@@ -88,9 +88,9 @@ enum HttpParseState {
 /// ```
 pub struct HttpRequestStateMachine {
     state: HttpParseState,
-   /// Offset of the first request within the client stream.
+    /// Offset of the first request within the client stream.
     request_start_offset: usize,
-   /// Number of parsed requests, used for logging and diagnostics.
+    /// Number of parsed requests, used for logging and diagnostics.
     request_count: u32,
 }
 
@@ -103,17 +103,17 @@ impl HttpRequestStateMachine {
         }
     }
 
-   /// Return the number of bytes already consumed from the stream buffer.
+    /// Return the number of bytes already consumed from the stream buffer.
     #[allow(dead_code)] // Used by tests and external synchronization logic.
     pub fn consumed_offset(&self) -> usize {
         self.request_start_offset
     }
 
-   /// Parse newly available bytes and return any completed requests.
-   ///
-   /// `stream` is the fully reassembled buffer returned by
-   /// `TcpHalfStream::get_data()`. Returned `body_offset` values always point
-   /// into that same buffer.
+    /// Parse newly available bytes and return any completed requests.
+    ///
+    /// `stream` is the fully reassembled buffer returned by
+    /// `TcpHalfStream::get_data()`. Returned `body_offset` values always point
+    /// into that same buffer.
     pub fn process_stream(&mut self, stream: &[u8]) -> Vec<ParsedCompleteRequest> {
         let mut results = Vec::new();
 
@@ -123,13 +123,13 @@ impl HttpRequestStateMachine {
                     if !self.try_parse_headers(stream, &mut results) {
                         break;
                     }
-                   // A parsed header may immediately yield a full request or move to `WaitingBody`.
+                    // A parsed header may immediately yield a full request or move to `WaitingBody`.
                 }
                 HttpParseState::WaitingBody { .. } => {
                     if !self.try_complete_body(stream, &mut results) {
                         break;
                     }
-                   // Once the body completes we can continue parsing keep-alive requests.
+                    // Once the body completes we can continue parsing keep-alive requests.
                 }
             }
         }
@@ -137,10 +137,10 @@ impl HttpRequestStateMachine {
         results
     }
 
-   /// Try to parse a request while in `WaitingHeaders`.
-   ///
-   /// Returns `true` when the caller should continue looping, and `false` when
-   /// more stream data is required.
+    /// Try to parse a request while in `WaitingHeaders`.
+    ///
+    /// Returns `true` when the caller should continue looping, and `false` when
+    /// more stream data is required.
     fn try_parse_headers(
         &mut self,
         stream: &[u8],
@@ -148,29 +148,29 @@ impl HttpRequestStateMachine {
     ) -> bool {
         let offset = self.request_start_offset;
 
-       // Nothing remains to parse from the current buffer snapshot.
+        // Nothing remains to parse from the current buffer snapshot.
         if offset >= stream.len() {
             return false;
         }
 
         let remaining = &stream[offset..];
 
-       // Cap scanning so pathological headers cannot force unbounded work.
+        // Cap scanning so pathological headers cannot force unbounded work.
         let scan_len = remaining.len().min(MAX_HEADER_SCAN);
         let scan_data = &remaining[..scan_len];
 
-       // Look for the end of the HTTP header block.
+        // Look for the end of the HTTP header block.
         let header_end_pos = match memchr::memmem::find(scan_data, HEADER_END) {
             Some(pos) => pos + HEADER_END.len(),
             None => {
-               // Drop the buffered data if it still does not terminate within the scan limit.
+                // Drop the buffered data if it still does not terminate within the scan limit.
                 if scan_len >= MAX_HEADER_SCAN {
                     debug!(
                         offset,
                         "HTTP State machine: header 超 {} Byte未End，hops该Connection",
                         MAX_HEADER_SCAN
                     );
-                   // Advance to the end of the current buffer snapshot and resynchronize.
+                    // Advance to the end of the current buffer snapshot and resynchronize.
                     self.request_start_offset = stream.len();
                 }
                 return false;
@@ -179,7 +179,7 @@ impl HttpRequestStateMachine {
 
         let header_data = &remaining[..header_end_pos];
 
-       // Use `httparse` for lightweight header parsing without allocations.
+        // Use `httparse` for lightweight header parsing without allocations.
         let mut headers = [httparse::EMPTY_HEADER; 64];
         let mut req = httparse::Request::new(&mut headers);
 
@@ -187,7 +187,7 @@ impl HttpRequestStateMachine {
             Ok(httparse::Status::Complete(size)) => size,
             Ok(httparse::Status::Partial) => return false, // Defensive fallback.
             Err(_) => {
-               // Skip malformed data and continue scanning after the header boundary.
+                // Skip malformed data and continue scanning after the header boundary.
                 trace!(offset, "HTTP State machine: httparse ParseFailed，hops");
                 self.request_start_offset = offset + header_end_pos;
                 return true;
@@ -235,7 +235,7 @@ impl HttpRequestStateMachine {
         let body_start_abs = offset + parsed_size;
         let cl = content_length.unwrap_or(0);
 
-       // Refuse oversized bodies before waiting for more data.
+        // Refuse oversized bodies before waiting for more data.
         if cl > MAX_BODY_SIZE {
             debug!(
                 content_length = cl,
@@ -248,7 +248,7 @@ impl HttpRequestStateMachine {
         }
 
         if cl == 0 {
-           // Requests with no body can be emitted immediately.
+            // Requests with no body can be emitted immediately.
             let total = parsed_size;
             results.push(ParsedCompleteRequest {
                 method,
@@ -268,13 +268,13 @@ impl HttpRequestStateMachine {
                 request_count = self.request_count,
                 "HTTP State machine: Requestcomplete (无 body)"
             );
-           // Stay in `WaitingHeaders` so the next request on a keep-alive stream can parse.
+            // Stay in `WaitingHeaders` so the next request on a keep-alive stream can parse.
             true
         } else {
-           // If the body is already buffered, emit now; otherwise transition to `WaitingBody`.
+            // If the body is already buffered, emit now; otherwise transition to `WaitingBody`.
             let available_body = stream.len().saturating_sub(body_start_abs);
             if available_body >= cl {
-               // The full body is already present in the current buffer snapshot.
+                // The full body is already present in the current buffer snapshot.
                 let total = parsed_size + cl;
                 results.push(ParsedCompleteRequest {
                     method,
@@ -298,7 +298,7 @@ impl HttpRequestStateMachine {
                 );
                 true
             } else {
-               // Headers are complete but the body has not arrived in full yet.
+                // Headers are complete but the body has not arrived in full yet.
                 self.state = HttpParseState::WaitingBody {
                     method,
                     uri,
@@ -313,15 +313,15 @@ impl HttpRequestStateMachine {
         }
     }
 
-   /// Try to finish a request while in `WaitingBody`.
-   ///
-   /// Returns `true` when progress was made and the parse loop may continue.
+    /// Try to finish a request while in `WaitingBody`.
+    ///
+    /// Returns `true` when progress was made and the parse loop may continue.
     fn try_complete_body(
         &mut self,
         stream: &[u8],
         results: &mut Vec<ParsedCompleteRequest>,
     ) -> bool {
-       // Copy the stored header metadata out of the state machine.
+        // Copy the stored header metadata out of the state machine.
         let (method, uri, host, content_type, cl, cookie, header_size) = match &self.state {
             HttpParseState::WaitingBody {
                 method,
@@ -332,13 +332,13 @@ impl HttpRequestStateMachine {
                 cookie,
                 header_size,
             } => (
-               *method,
+                *method,
                 uri.clone(),
                 host.clone(),
                 content_type.clone(),
-               *content_length,
+                *content_length,
                 cookie.clone(),
-               *header_size,
+                *header_size,
             ),
             _ => return false,
         };
@@ -391,7 +391,7 @@ impl Default for HttpRequestStateMachine {
 mod tests {
     use super::*;
 
-   /// Build a synthetic HTTP request byte stream for parser tests.
+    /// Build a synthetic HTTP request byte stream for parser tests.
     fn make_request(
         method: &str,
         uri: &str,
@@ -448,7 +448,7 @@ mod tests {
         assert_eq!(results[0].content_length, Some(body.len()));
         assert_eq!(results[0].body_length, body.len());
 
-       // Verify that body offsets point back into the original stream buffer.
+        // Verify that body offsets point back into the original stream buffer.
         let extracted =
             &stream[results[0].body_offset..results[0].body_offset + results[0].body_length];
         assert_eq!(extracted, body);
@@ -456,7 +456,7 @@ mod tests {
 
     #[test]
     fn test_parse_keep_alive_multiple_requests() {
-       // Two requests share the same TCP stream in a keep-alive scenario.
+        // Two requests share the same TCP stream in a keep-alive scenario.
         let req1 = make_request("GET", "/page1", &[("Host", "mail.corp.com")], None);
         let body2 = b"{\"action\":\"deliver\"}";
         let req2 = make_request(
@@ -487,13 +487,13 @@ mod tests {
 
     #[test]
     fn test_parse_incremental_body_arrival() {
-       // Deliver the body in two chunks to exercise the `WaitingBody` state.
+        // Deliver the body in two chunks to exercise the `WaitingBody` state.
         let body = b"this is the body content here";
         let full = make_request("POST", "/upload", &[("Host", "mail.corp.com")], Some(body));
 
         let mut sm = HttpRequestStateMachine::new();
 
-       // First pass: the request is still missing the last 10 body bytes.
+        // First pass: the request is still missing the last 10 body bytes.
         let partial_len = full.len() - 10;
         let partial = &full[..partial_len];
         let results = sm.process_stream(partial);
@@ -502,7 +502,7 @@ mod tests {
             "Incomplete body should not produce a request"
         );
 
-       // Second pass: the full body is now present.
+        // Second pass: the full body is now present.
         let results = sm.process_stream(&full);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].method, HttpMethod::Post);
@@ -544,7 +544,7 @@ mod tests {
 
     #[test]
     fn test_parse_large_body_within_limit() {
-       // A 256 KB body is large but still accepted by the parser.
+        // A 256 KB body is large but still accepted by the parser.
         let body = vec![b'A'; MAX_BODY_IN_MEMORY];
         let stream = make_request("POST", "/upload", &[("Host", "corp.com")], Some(&body));
 
@@ -557,12 +557,12 @@ mod tests {
 
     #[test]
     fn test_parse_body_exceeding_max_size_skipped() {
-       // Requests above the hard limit are skipped.
+        // Requests above the hard limit are skipped.
         let header = b"POST /upload HTTP/1.1\r\nHost: corp.com\r\nContent-Length: 52428801\r\n\r\n";
         let mut sm = HttpRequestStateMachine::new();
         let results = sm.process_stream(header);
         assert!(results.is_empty());
-       // The parser advances past the rejected request header.
+        // The parser advances past the rejected request header.
         assert!(sm.consumed_offset() > 0);
     }
 
@@ -616,12 +616,12 @@ mod tests {
 
         let mut sm = HttpRequestStateMachine::new();
 
-       // First call sees only the first request.
+        // First call sees only the first request.
         let r = sm.process_stream(&req1);
         assert_eq!(r.len(), 1);
         assert_eq!(sm.consumed_offset(), req1.len());
 
-       // Second call sees only the newly appended request.
+        // Second call sees only the newly appended request.
         let r = sm.process_stream(&stream);
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].uri, "/b");
@@ -630,8 +630,8 @@ mod tests {
 
     #[test]
     fn test_parse_only_header_no_body_post_with_zero_content_length() {
-       // make_request doesn't add Content-Length when body is None,
-       // so manually construct the request with Content-Length: 0
+        // make_request doesn't add Content-Length when body is None,
+        // so manually construct the request with Content-Length: 0
         let stream = b"POST /api/ping HTTP/1.1\r\nHost: corp.com\r\nContent-Length: 0\r\n\r\n";
         let mut sm = HttpRequestStateMachine::new();
         let results = sm.process_stream(stream);
@@ -643,7 +643,7 @@ mod tests {
 
     #[test]
     fn test_parse_coremail_compose_request() {
-       // Typical Coremail compose/send request carrying JSON metadata.
+        // Typical Coremail compose/send request carrying JSON metadata.
         let body = br#"{"attrs":{"account":"user@corp.com","to":["user@corp.com"],"subject":"test"},"action":"deliver"}"#;
         let stream = make_request(
             "POST",
@@ -670,7 +670,7 @@ mod tests {
 
     #[test]
     fn test_parse_coremail_upload_chunk_request() {
-       // Coremail chunk upload request with binary request body.
+        // Coremail chunk upload request with binary request body.
         let chunk_data = vec![0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01, 0x02, 0x03];
         let stream = make_request(
             "POST",

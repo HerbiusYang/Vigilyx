@@ -4,7 +4,7 @@
 //! Supports: file submission, status polling, report retrieval, hash deduplication.
 
 //! API Version: CAPEv2 /apiv2/
-//! Authentication: Token-based (Authorization: Token <key>)
+//! Authentication: token-based (`Authorization: Token <key>`)
 
 use std::fmt;
 use std::net::{IpAddr, ToSocketAddrs};
@@ -27,15 +27,15 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug)]
 pub enum SandboxError {
-   /// ConnectionFailed
+    /// ConnectionFailed
     ConnectionFailed(String),
-   /// HTTP Error
+    /// HTTP Error
     HttpError { status: u16, body: String },
-   /// AnalyzeTimeout
+    /// AnalyzeTimeout
     AnalysisTimeout { task_id: u64, elapsed_secs: u64 },
-   /// ParseFailed
+    /// ParseFailed
     ParseError(String),
-   /// Service
+    /// Service
     Unavailable(String),
 }
 
@@ -67,7 +67,7 @@ impl std::error::Error for SandboxError {}
 #[derive(Debug, Deserialize)]
 pub struct SubmitResponse {
     pub task_id: Option<u64>,
-   /// Version task_ids Array
+    /// Version task_ids Array
     pub task_ids: Option<Vec<u64>>,
 }
 
@@ -81,7 +81,7 @@ impl SubmitResponse {
 #[derive(Debug, Deserialize)]
 pub struct TaskStatus {
     pub task: Option<TaskInfo>,
-   // Version Return
+    // Version Return
     pub id: Option<u64>,
     pub status: Option<String>,
 }
@@ -96,19 +96,19 @@ pub struct TaskInfo {
 /// SandboxAnalyze (, ExtractSecuritydetectNeed/Requireof Segment)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SandboxReport {
-   /// Malicious (0-10)
+    /// Malicious (0-10)
     pub score: f64,
-   /// ofline Sign
+    /// ofline Sign
     pub signatures: Vec<SandboxSignature>,
-   /// ofMalicious
+    /// ofMalicious
     pub malfamily: Option<String>,
-   /// Network IOC(C2 Domain/IP)
+    /// Network IOC(C2 Domain/IP)
     pub network_iocs: Vec<String>,
-   /// CAPE Extractof payload Count
+    /// CAPE Extractof payload Count
     pub payload_count: usize,
-   /// Analyze long()
+    /// Analyze long()
     pub duration_secs: u64,
-   /// TargetFileInfo
+    /// TargetFileInfo
     pub target_sha256: Option<String>,
     pub target_type: Option<String>,
 }
@@ -162,11 +162,11 @@ impl SandboxClient {
         }
     }
 
-   /// FromEnvironmentVariableBuildclient
+    /// FromEnvironmentVariableBuildclient
     pub fn from_env() -> Option<Self> {
         let url = std::env::var("SANDBOX_URL").ok()?;
 
-       // SSRF :
+        // SSRF :
         if let Err(reason) = validate_sandbox_base_url(&url) {
             tracing::error!(url = %url, reason = %reason, "Sandbox URL blocked by SSRF protection");
             return None;
@@ -187,7 +187,7 @@ impl SandboxClient {
         self.api_token.as_ref().map(|t| format!("Token {}", t))
     }
 
-   /// Check
+    /// Check
     pub async fn ping(&self) -> Result<SystemStatus, SandboxError> {
         let url = format!("{}/apiv2/cuckoo/status/", self.base_url);
         let mut req = self.http.get(&url);
@@ -212,7 +212,7 @@ impl SandboxClient {
             .map_err(|e| SandboxError::ParseError(e.to_string()))
     }
 
-   /// According to SHA256 Queryalready Analyze(Hash Deduplicate)
+    /// According to SHA256 Queryalready Analyze(Hash Deduplicate)
     pub async fn search_by_hash(&self, sha256: &str) -> Result<Option<u64>, SandboxError> {
         let url = format!("{}/apiv2/tasks/search/sha256/{}/", self.base_url, sha256);
         let mut req = self.http.get(&url);
@@ -235,13 +235,13 @@ impl SandboxClient {
             });
         }
 
-       // Returnrecent1Time/CountAnalyzeof task_id
+        // Returnrecent1Time/CountAnalyzeof task_id
         let body: serde_json::Value = resp
             .json()
             .await
             .map_err(|e| SandboxError::ParseError(e.to_string()))?;
 
-       // CAPEv2 Return {"data": [{"id": 42,...}]}
+        // CAPEv2 Return {"data": [{"id": 42,...}]}
         let task_id = body
             .get("data")
             .and_then(|d| d.as_array())
@@ -252,7 +252,7 @@ impl SandboxClient {
         Ok(task_id)
     }
 
-   /// File lineDynamicAnalyze
+    /// File lineDynamicAnalyze
     pub async fn submit_file(
         &self,
         filename: &str,
@@ -299,7 +299,7 @@ impl SandboxClient {
             .ok_or_else(|| SandboxError::ParseError("No task_id in response".to_string()))
     }
 
-   /// Status complete
+    /// Status complete
     pub async fn wait_for_completion(&self, task_id: u64) -> Result<(), SandboxError> {
         let start = std::time::Instant::now();
         loop {
@@ -359,7 +359,7 @@ impl SandboxClient {
         }
     }
 
-   /// GetAnalyze ()
+    /// GetAnalyze ()
     pub async fn get_report(&self, task_id: u64) -> Result<SandboxReport, SandboxError> {
         let url = format!("{}/apiv2/tasks/report/{}/", self.base_url, task_id);
         let mut req = self.http.get(&url);
@@ -387,14 +387,14 @@ impl SandboxClient {
         parse_cape_report(&body)
     }
 
-   /// waitWaitcomplete, Return
+    /// waitWaitcomplete, Return
     pub async fn analyze_file(
         &self,
         filename: &str,
         data: Vec<u8>,
         sha256: &str,
     ) -> Result<SandboxReport, SandboxError> {
-       // Hash Deduplicate: alreadyAnalyze ConnectGet
+        // Hash Deduplicate: alreadyAnalyze ConnectGet
         if let Ok(Some(existing_task)) = self.search_by_hash(sha256).await {
             info!(
                 task_id = existing_task,
@@ -403,17 +403,17 @@ impl SandboxClient {
             return self.get_report(existing_task).await;
         }
 
-       // NewFile
+        // NewFile
         let task_id = self.submit_file(filename, data, Some(120)).await?;
         info!(
             task_id,
             sha256, filename, "Sandbox: attachment submitted for dynamic analysis"
         );
 
-       // waitWaitcomplete
+        // waitWaitcomplete
         self.wait_for_completion(task_id).await?;
 
-       // Get
+        // Get
         self.get_report(task_id).await
     }
 }
@@ -505,7 +505,7 @@ fn parse_cape_report(body: &serde_json::Value) -> Result<SandboxReport, SandboxE
 
     let duration_secs = info.get("duration").and_then(|v| v.as_u64()).unwrap_or(0);
 
-   // ExtractSign
+    // ExtractSign
     let signatures: Vec<SandboxSignature> = body
         .get("signatures")
         .and_then(|s| s.as_array())
@@ -526,7 +526,7 @@ fn parse_cape_report(body: &serde_json::Value) -> Result<SandboxReport, SandboxE
         })
         .unwrap_or_default();
 
-   // Malicious
+    // Malicious
     let malfamily = body
         .get("malfamily")
         .and_then(|v| v.as_str())
@@ -537,10 +537,10 @@ fn parse_cape_report(body: &serde_json::Value) -> Result<SandboxReport, SandboxE
                 .map(|s| s.to_string())
         });
 
-   // Network IOC
+    // Network IOC
     let mut network_iocs = Vec::new();
     if let Some(network) = body.get("network") {
-       // DNS QueryDomain
+        // DNS QueryDomain
         if let Some(dns) = network.get("dns").and_then(|d| d.as_array()) {
             for entry in dns {
                 if let Some(domain) = entry.get("request").and_then(|v| v.as_str()) {
@@ -548,7 +548,7 @@ fn parse_cape_report(body: &serde_json::Value) -> Result<SandboxReport, SandboxE
                 }
             }
         }
-       // Connectionof IP
+        // Connectionof IP
         if let Some(hosts) = network.get("hosts").and_then(|h| h.as_array()) {
             for host in hosts {
                 if let Some(ip) = host.as_str() {
@@ -560,7 +560,7 @@ fn parse_cape_report(body: &serde_json::Value) -> Result<SandboxReport, SandboxE
     network_iocs.sort();
     network_iocs.dedup();
 
-   // CAPE payload Count
+    // CAPE payload Count
     let payload_count = body
         .get("CAPE")
         .and_then(|c| c.get("payloads"))
@@ -568,7 +568,7 @@ fn parse_cape_report(body: &serde_json::Value) -> Result<SandboxReport, SandboxE
         .map(|a| a.len())
         .unwrap_or(0);
 
-   // TargetFileInfo
+    // TargetFileInfo
     let target_sha256 = body
         .get("target")
         .and_then(|t| t.get("file"))

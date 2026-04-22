@@ -11,7 +11,7 @@
 use super::client::MqClient;
 use super::error::{MqError, MqResult};
 use redis::aio::MultiplexedConnection;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -60,11 +60,7 @@ impl StreamClient {
     ///
     /// Returns the number of messages successfully added.
     /// Uses `MAXLEN ~` for approximate trimming (efficient).
-    pub async fn xadd_batch<T: Serialize>(
-        &self,
-        stream: &str,
-        messages: &[T],
-    ) -> MqResult<usize> {
+    pub async fn xadd_batch<T: Serialize>(&self, stream: &str, messages: &[T]) -> MqResult<usize> {
         if messages.is_empty() {
             return Ok(0);
         }
@@ -97,11 +93,7 @@ impl StreamClient {
     }
 
     /// Single XADD (convenience wrapper over [`MqClient::xadd`]).
-    pub async fn xadd_one<T: Serialize>(
-        &self,
-        stream: &str,
-        message: &T,
-    ) -> MqResult<String> {
+    pub async fn xadd_one<T: Serialize>(&self, stream: &str, message: &T) -> MqResult<String> {
         self.mq.xadd(stream, message).await
     }
 
@@ -252,7 +244,11 @@ impl StreamClient {
         // Response: [next_start_id, [[id, [field, value, ...]], ...], [deleted_ids...]]
         let messages = parse_xautoclaim_response::<T>(result)?;
         if !messages.is_empty() {
-            info!(stream, count = messages.len(), "XAUTOCLAIM reclaimed messages");
+            info!(
+                stream,
+                count = messages.len(),
+                "XAUTOCLAIM reclaimed messages"
+            );
         }
         Ok(messages)
     }
@@ -337,9 +333,7 @@ impl StreamClient {
 /// Parse XREAD / XREADGROUP response.
 ///
 /// Format: `[[stream_name, [[id, [field, value, ...]], ...]]]`
-fn parse_xread_response<T: DeserializeOwned>(
-    value: redis::Value,
-) -> MqResult<Vec<(String, T)>> {
+fn parse_xread_response<T: DeserializeOwned>(value: redis::Value) -> MqResult<Vec<(String, T)>> {
     let mut messages = Vec::new();
 
     if let redis::Value::Array(streams) = value {
@@ -385,9 +379,7 @@ fn parse_xautoclaim_response<T: DeserializeOwned>(
 /// Parse a single stream entry: `[id, [field, value, field, value, ...]]`.
 ///
 /// Looks for the `"data"` field and deserializes its value as JSON.
-fn parse_stream_entry<T: DeserializeOwned>(
-    entry: &redis::Value,
-) -> Option<(String, T)> {
+fn parse_stream_entry<T: DeserializeOwned>(entry: &redis::Value) -> Option<(String, T)> {
     let redis::Value::Array(entry_data) = entry else {
         return None;
     };
@@ -511,8 +503,7 @@ mod tests {
     #[test]
     fn test_parse_xread_response_nil() {
         // When XREAD times out, it returns Nil
-        let result: MqResult<Vec<(String, String)>> =
-            parse_xread_response(redis::Value::Nil);
+        let result: MqResult<Vec<(String, String)>> = parse_xread_response(redis::Value::Nil);
         assert!(result.is_ok());
         assert!(result.unwrap().is_empty());
     }

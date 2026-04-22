@@ -36,17 +36,17 @@ mod tests {
 
     #[test]
     fn test_from_score_confidence() {
-       // score=0.8, confidence=1.0 -> b=0.8, d=0.2, u=0.0
+        // score=0.8, confidence=1.0 -> b=0.8, d=0.2, u=0.0
         let bpa = Bpa::from_score_confidence(0.8, 1.0);
         assert!((bpa.b - 0.8).abs() < 1e-10);
         assert!((bpa.d - 0.2).abs() < 1e-10);
         assert!((bpa.u).abs() < 1e-10);
 
-       // score=0.5, confidence=0.0 -> vacuous
+        // score=0.5, confidence=0.0 -> vacuous
         let bpa2 = Bpa::from_score_confidence(0.5, 0.0);
         assert!((bpa2.u - 1.0).abs() < 1e-10);
 
-       // score=1.0, confidence=0.6 -> b=0.6, d=0.0, u=0.4
+        // score=1.0, confidence=0.6 -> b=0.6, d=0.0, u=0.4
         let bpa3 = Bpa::from_score_confidence(1.0, 0.6);
         assert!((bpa3.b - 0.6).abs() < 1e-10);
         assert!((bpa3.u - 0.4).abs() < 1e-10);
@@ -60,7 +60,7 @@ mod tests {
             u: 0.5,
             epsilon: 0.0,
         };
-       // risk(0.7) = 0.3 + 0.7*0.5 = 0.65
+        // risk(0.7) = 0.3 + 0.7*0.5 = 0.65
         assert!((bpa.risk_score(0.7) - 0.65).abs() < 1e-10);
     }
 
@@ -72,7 +72,7 @@ mod tests {
             u: 0.4,
             epsilon: 0.0,
         };
-       // BetP = 0.4 + 0.4/2 = 0.6
+        // BetP = 0.4 + 0.4/2 = 0.6
         assert!((bpa.pignistic_threat() - 0.6).abs() < 1e-10);
     }
 
@@ -92,7 +92,7 @@ mod tests {
 
     #[test]
     fn test_dempster_combine_basic() {
-       // Two sources agree on threat
+        // Two sources agree on threat
         let m1 = Bpa {
             b: 0.8,
             d: 0.1,
@@ -106,14 +106,14 @@ mod tests {
             epsilon: 0.0,
         };
         let r = dempster_combine(m1, m2);
-       // Should reinforce threat belief
+        // Should reinforce threat belief
         assert!(r.combined.b > 0.9);
         assert!(r.conflict < 0.3);
     }
 
     #[test]
     fn test_dempster_combine_conflicting() {
-       // One says threat, other says normal
+        // One says threat, other says normal
         let m1 = Bpa {
             b: 0.9,
             d: 0.0,
@@ -127,13 +127,13 @@ mod tests {
             epsilon: 0.0,
         };
         let r = dempster_combine(m1, m2);
-       // High conflict
+        // High conflict
         assert!(r.conflict > 0.7);
     }
 
     #[test]
     fn test_dempster_combine_vacuous() {
-       // Combining with vacuous should not change
+        // Combining with vacuous should not change
         let m1 = Bpa {
             b: 0.6,
             d: 0.3,

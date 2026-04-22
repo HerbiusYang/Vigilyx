@@ -48,8 +48,9 @@ impl HtmlPixelArtModule {
             meta: ModuleMetadata {
                 id: "html_pixel_art".to_string(),
                 name: "HTML Pixel Art Detection".to_string(),
-                description: "Detects HTML table-rendered QR codes and CSS div-based pixel art text"
-                    .to_string(),
+                description:
+                    "Detects HTML table-rendered QR codes and CSS div-based pixel art text"
+                        .to_string(),
                 pillar: Pillar::Content,
                 depends_on: vec![],
                 timeout_ms: 5000,
@@ -98,9 +99,8 @@ impl SecurityModule for HtmlPixelArtModule {
         let mut categories = Vec::new();
         let mut details = serde_json::Map::new();
 
-        
-       // Stage 1:
-        
+        // Stage 1:
+
         let bgcolor_count = html_lower.matches("bgcolor").count();
         let td_count = html_lower.matches("<td").count();
         let float_count =
@@ -135,12 +135,11 @@ impl SecurityModule for HtmlPixelArtModule {
             });
         }
 
-        
-       // Stage 2: DOM parsing + structural analysis
-        
+        // Stage 2: DOM parsing + structural analysis
+
         let document = Html::parse_document(body_html);
 
-       // QR table detect
+        // QR table detect
         if check_qr && let Ok(table_sel) = Selector::parse("table") {
             let mut qr_tables_found = 0u32;
             let mut decoded_urls: Vec<String> = Vec::new();
@@ -176,14 +175,14 @@ impl SecurityModule for HtmlPixelArtModule {
                         )),
                     });
 
-                   // Stage 3: QR Decode
+                    // Stage 3: QR Decode
                     if let Some(ref grid) = analysis.grid
                         && let Some(decoded) = decode_qr_from_grid(grid)
                     {
                         total_score += 0.05;
                         decoded_urls.push(decoded.clone());
 
-                       // Check if decoded URL contains recipient email address
+                        // Check if decoded URL contains recipient email address
                         let url_lower = decoded.to_lowercase();
                         let has_recipient = ctx
                             .session
@@ -227,7 +226,7 @@ impl SecurityModule for HtmlPixelArtModule {
             }
         }
 
-       // CSS detect
+        // CSS detect
         if check_pixel_art {
             let pa = analyze_pixel_art_divs(&document);
             if pa.score > 0.0 {
@@ -286,9 +285,7 @@ impl SecurityModule for HtmlPixelArtModule {
     }
 }
 
-
 // QR table analysis
-
 
 struct QrTableAnalysis {
     rows: usize,
@@ -357,7 +354,7 @@ fn analyze_table_for_qr(table: &scraper::ElementRef) -> QrTableAnalysis {
         score += 0.10;
     }
     if uniform_size && !widths.is_empty() {
-       // Check whether cells are small (<= 8px)
+        // Check whether cells are small (<= 8px)
         let all_small = widths.iter().all(|w| {
             w.trim_end_matches("px")
                 .parse::<f64>()
@@ -399,7 +396,7 @@ fn check_finder_patterns(grid: &[Vec<bool>]) -> bool {
     let has_tr = check_finder_at(grid, 0, cols.saturating_sub(7));
     let has_bl = check_finder_at(grid, rows.saturating_sub(7), 0);
 
-   // At least 2/3 corners must match (allows for partial damage)
+    // At least 2/3 corners must match (allows for partial damage)
     [has_tl, has_tr, has_bl].iter().filter(|&&x| x).count() >= 2
 }
 
@@ -427,13 +424,11 @@ fn check_finder_at(grid: &[Vec<bool>], start_row: usize, start_col: usize) -> bo
             }
         }
     }
-    
+
     match_count as f64 / total as f64 > 0.85
 }
 
-
 // QR Decode (rqrr)
-
 
 fn decode_qr_from_grid(grid: &[Vec<bool>]) -> Option<String> {
     let height = grid.len();
@@ -459,9 +454,7 @@ fn decode_qr_from_grid(grid: &[Vec<bool>]) -> Option<String> {
     None
 }
 
-
 // CSS pixel art analysis
-
 
 struct PixelArtAnalysis {
     positioned_div_count: usize,
@@ -494,7 +487,7 @@ fn analyze_pixel_art_divs(document: &Html) -> PixelArtAnalysis {
                 colors.insert(bg);
             }
 
-           // Check whether element is small
+            // Check whether element is small
             if let Some(w) = extract_px_value(&style, "width:")
                 && w > 8.0
             {
@@ -508,7 +501,7 @@ fn analyze_pixel_art_divs(document: &Html) -> PixelArtAnalysis {
         }
     }
 
-   // Measure text content length
+    // Measure text content length
     let body_text: String = document.root_element().text().collect();
     let text_len = body_text.chars().filter(|c| !c.is_whitespace()).count();
 
@@ -540,9 +533,7 @@ fn analyze_pixel_art_divs(document: &Html) -> PixelArtAnalysis {
     }
 }
 
-
 // Helper functions
-
 
 /// Extract background-color from inline style attribute
 fn extract_bg_from_style(el: &scraper::ElementRef) -> Option<String> {
@@ -552,7 +543,7 @@ fn extract_bg_from_style(el: &scraper::ElementRef) -> Option<String> {
 
 /// Extract background-color value from a CSS string
 fn extract_bg_color_from_css(css: &str) -> Option<String> {
-   // match background-color: #xxx background: #xxx
+    // match background-color: #xxx background: #xxx
     for prefix in &["background-color:", "background:"] {
         if let Some(pos) = css.find(prefix) {
             let rest = &css[pos + prefix.len()..];
@@ -567,7 +558,7 @@ fn extract_bg_color_from_css(css: &str) -> Option<String> {
 fn normalize_color(color: &str) -> String {
     let c = color.trim().to_uppercase();
     if c.len() == 4 && c.starts_with('#') {
-       // #RGB -> #RRGGBB
+        // #RGB -> #RRGGBB
         let chars: Vec<char> = c.chars().collect();
         return format!(
             "#{}{}{}{}{}{}",
@@ -587,7 +578,7 @@ fn is_dark_color(color: &str) -> bool {
         let luminance = 0.299 * r as f64 + 0.587 * g as f64 + 0.114 * b as f64;
         return luminance < 128.0;
     }
-   // Named dark colors
+    // Named dark colors
     matches!(
         color.to_lowercase().trim(),
         "black" | "dark" | "navy" | "darkblue" | "darkgreen"
@@ -602,35 +593,34 @@ fn extract_px_value(css: &str, property: &str) -> Option<f64> {
     val_str.parse::<f64>().ok()
 }
 
-
 // Tests
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-   /// Build an NxN QR table HTML (with finder patterns)
+    /// Build an NxN QR table HTML (with finder patterns)
     fn build_qr_table_html(size: usize) -> String {
         let mut html = String::from("<html><body><table cellpadding=\"0\" cellspacing=\"0\">\n");
         for r in 0..size {
             html.push_str("<tr>");
             for c in 0..size {
-               // Check if in finder pattern region (top-left, top-right, bottom-left)
+                // Check if in finder pattern region (top-left, top-right, bottom-left)
                 let is_finder_region =
                     (r < 7 && (c < 7 || c >= size - 7)) || (r >= size - 7 && c < 7);
 
                 let is_dark = if is_finder_region {
-                   // Simplified finder pattern logic
+                    // Simplified finder pattern logic
                     let lc = if c >= size - 7 { c - (size - 7) } else { c };
                     let lr = r.min(6);
                     let lc = lc.min(6);
-                    
-                    lr == 0 || lr == 6 || lc == 0 || lc == 6
-                    
-                    || ((2..=4).contains(&lr) && (2..=4).contains(&lc))
+
+                    lr == 0
+                        || lr == 6
+                        || lc == 0
+                        || lc == 6
+                        || ((2..=4).contains(&lr) && (2..=4).contains(&lc))
                 } else {
-                    
                     (r + c) % 2 == 0
                 };
 
@@ -755,7 +745,7 @@ mod tests {
 
     #[test]
     fn test_pixel_art_detection() {
-       // Build 150 positioned divs simulating pixel art
+        // Build 150 positioned divs simulating pixel art
         let mut html = String::from("<html><body>");
         for i in 0..150 {
             let color = if i % 2 == 0 { "#000000" } else { "#FFFFFF" };

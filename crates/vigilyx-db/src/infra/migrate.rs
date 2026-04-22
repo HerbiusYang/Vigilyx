@@ -9,14 +9,14 @@ use crate::VigilDb;
 pub struct SchemaMigration {
     pub version: String,
     pub description: String,
-   /// ISO 8601 timestamp string of when the migration was first applied.
+    /// ISO 8601 timestamp string of when the migration was first applied.
     pub executed_at: String,
 }
 
 impl VigilDb {
-   /// Initialize database tables
+    /// Initialize database tables
     pub async fn init(&self) -> Result<()> {
-       // schema_migrations tracking table (must be created first)
+        // schema_migrations tracking table (must be created first)
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -30,7 +30,7 @@ impl VigilDb {
         .execute(&self.pool)
         .await?;
 
-       // Create sessions table
+        // Create sessions table
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS sessions (
@@ -67,7 +67,7 @@ impl VigilDb {
         )
         .await?;
 
-       // Create config table
+        // Create config table
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS config (
@@ -81,7 +81,7 @@ impl VigilDb {
 
         record_migration(&self.pool, "002_config", "key-value config table").await?;
 
-       // Statistics cache table (eliminate COUNT(*) full table scan)
+        // Statistics cache table (eliminate COUNT(*) full table scan)
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS stats_cache (
@@ -100,7 +100,7 @@ impl VigilDb {
         .execute(&self.pool)
         .await?;
 
-       // Initialize cache rows (if not exists)
+        // Initialize cache rows (if not exists)
         sqlx::query(
             r#"
             INSERT INTO stats_cache (id, total_sessions, active_sessions, total_bytes, total_packets,
@@ -119,7 +119,7 @@ impl VigilDb {
         .execute(&self.pool)
         .await?;
 
-       // PL/pgSQL trigger functions
+        // PL/pgSQL trigger functions
         self.create_triggers().await?;
 
         record_migration(
@@ -129,7 +129,7 @@ impl VigilDb {
         )
         .await?;
 
-       // Audit log table
+        // Audit log table
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS audit_logs (
@@ -154,7 +154,7 @@ impl VigilDb {
         )
         .await?;
 
-       // Login history table
+        // Login history table
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS login_history (
@@ -177,7 +177,7 @@ impl VigilDb {
         )
         .await?;
 
-       // CreatePerformance notesIndex
+        // CreatePerformance notesIndex
         let indexes = [
             "CREATE INDEX IF NOT EXISTS idx_sessions_protocol ON sessions(protocol)",
             "CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)",
@@ -213,9 +213,9 @@ impl VigilDb {
         )
         .await?;
 
-       // pg_trgm extension + 3-gram index (accelerate LIKE '%keyword%' search)
-       // NOTE: pg_trgm requires PostgreSQL contrib package (Rocky Linux: postgresql17-contrib)
-       // If extension unavailable, index creation will fail but functionality not affected (just full table scan for search)
+        // pg_trgm extension + 3-gram index (accelerate LIKE '%keyword%' search)
+        // NOTE: pg_trgm requires PostgreSQL contrib package (Rocky Linux: postgresql17-contrib)
+        // If extension unavailable, index creation will fail but functionality not affected (just full table scan for search)
         let trgm_ok = sqlx::query("CREATE EXTENSION IF NOT EXISTS pg_trgm")
             .execute(&self.pool)
             .await;
@@ -246,7 +246,7 @@ impl VigilDb {
         )
         .await?;
 
-       // Large-table performance indexes (best-effort, non-blocking for writes)
+        // Large-table performance indexes (best-effort, non-blocking for writes)
         let concurrent_indexes = [
             format!(
                 "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sessions_with_any_content \
@@ -264,7 +264,10 @@ impl VigilDb {
 
         for idx_sql in concurrent_indexes {
             if let Err(e) = sqlx::query(&idx_sql).execute(&self.pool).await {
-                tracing::warn!("Create concurrent performance index failed (non-fatal): {}", e);
+                tracing::warn!(
+                    "Create concurrent performance index failed (non-fatal): {}",
+                    e
+                );
             }
         }
 
@@ -282,11 +285,17 @@ impl VigilDb {
 
         let typed_config_tables = [
             ("config_security_pipeline", "'{}'"),
-            ("config_sniffer", r#"'{"webmail_servers":[],"http_ports":[80,443,8080]}'"#),
+            (
+                "config_sniffer",
+                r#"'{"webmail_servers":[],"http_ports":[80,443,8080]}'"#,
+            ),
             ("config_ai_service", "'{}'"),
             ("config_email_alert", "'{}'"),
             ("config_syslog", "'{}'"),
-            ("config_time_policy", r#"'{"enabled":true,"work_hour_start":8,"work_hour_end":18,"utc_offset_hours":8,"weekend_is_off_hours":true}'"#),
+            (
+                "config_time_policy",
+                r#"'{"enabled":true,"work_hour_start":8,"work_hour_end":18,"utc_offset_hours":8,"weekend_is_off_hours":true}'"#,
+            ),
             ("config_deployment", r#"'{"mode":"mirror"}'"#),
             ("config_internal_domains", "'[]'"),
         ];
@@ -341,11 +350,7 @@ impl VigilDb {
                 ON CONFLICT (id) DO NOTHING
                 "#,
             );
-            if let Err(e) = sqlx::query(&sql)
-                .bind(config_key)
-                .execute(&self.pool)
-                .await
-            {
+            if let Err(e) = sqlx::query(&sql).bind(config_key).execute(&self.pool).await {
                 tracing::warn!(
                     config_key,
                     target_table,
@@ -369,7 +374,10 @@ impl VigilDb {
         .execute(&self.pool)
         .await
         {
-            tracing::warn!("Seed auth_credentials from KV table failed (non-fatal): {}", e);
+            tracing::warn!(
+                "Seed auth_credentials from KV table failed (non-fatal): {}",
+                e
+            );
         }
 
         record_migration(
@@ -404,9 +412,9 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Create PL/pgSQL trigger functions and triggers
+    /// Create PL/pgSQL trigger functions and triggers
     async fn create_triggers(&self) -> Result<()> {
-       // Trigger function: session INSERT
+        // Trigger function: session INSERT
         sqlx::query(
             r#"
             CREATE OR REPLACE FUNCTION trg_session_insert_fn()
@@ -443,7 +451,7 @@ impl VigilDb {
         .execute(&self.pool)
         .await?;
 
-       // Trigger function: session DELETE
+        // Trigger function: session DELETE
         sqlx::query(
             r#"
             CREATE OR REPLACE FUNCTION trg_session_delete_fn()
@@ -480,7 +488,7 @@ impl VigilDb {
         .execute(&self.pool)
         .await?;
 
-       // Trigger function: session UPDATE
+        // Trigger function: session UPDATE
         sqlx::query(
             r#"
             CREATE OR REPLACE FUNCTION trg_session_update_fn()
@@ -515,7 +523,7 @@ impl VigilDb {
         .execute(&self.pool)
         .await?;
 
-       // Clean up legacy packets table and related trigger functions
+        // Clean up legacy packets table and related trigger functions
         sqlx::query("DROP TABLE IF EXISTS packets CASCADE")
             .execute(&self.pool)
             .await?;
@@ -529,9 +537,9 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Database Migration: add content and email_count columns (if not exists)
-   /// PostgreSQL uses ADD COLUMN IF NOT EXISTS (9.6+)
-   /// Note: When creating new database, CREATE TABLE already includes all columns, this method only used for incremental migration from old schema
+    /// Database Migration: add content and email_count columns (if not exists)
+    /// PostgreSQL uses ADD COLUMN IF NOT EXISTS (9.6+)
+    /// Note: When creating new database, CREATE TABLE already includes all columns, this method only used for incremental migration from old schema
     #[allow(dead_code)]
     async fn migrate_add_content_column(&self) -> Result<()> {
         let columns_to_add = [
@@ -549,10 +557,10 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Database Migration: add sender_domain column and backfill
+    /// Database Migration: add sender_domain column and backfill
     #[allow(dead_code)]
     async fn migrate_add_sender_domain(&self) -> Result<()> {
-       // PostgreSQL: check if column exists
+        // PostgreSQL: check if column exists
         let columns: Vec<(String,)> = sqlx::query_as(
             "SELECT column_name::TEXT FROM information_schema.columns \
              WHERE table_name = 'sessions' AND column_name = 'sender_domain'",
@@ -566,7 +574,7 @@ impl VigilDb {
                 .execute(&self.pool)
                 .await?;
 
-           // Backfill existing data: extract domain after @ from mail_from
+            // Backfill existing data: extract domain after @ from mail_from
             let affected = sqlx::query(
                 "UPDATE sessions SET sender_domain = LOWER(SUBSTRING(mail_from FROM POSITION('@' IN mail_from) + 1)) \
                  WHERE mail_from IS NOT NULL AND POSITION('@' IN mail_from) > 0",
@@ -582,12 +590,12 @@ impl VigilDb {
         Ok(())
     }
 
-   /// List all applied schema migrations, ordered by version.
-   ///
-   /// Returns an empty Vec if the `schema_migrations` table does not yet exist
-   /// (e.g. first run before `init()` is called).
+    /// List all applied schema migrations, ordered by version.
+    ///
+    /// Returns an empty Vec if the `schema_migrations` table does not yet exist
+    /// (e.g. first run before `init()` is called).
     pub async fn list_migrations(&self) -> Result<Vec<SchemaMigration>> {
-       // Guard: table may not exist yet on a brand-new database.
+        // Guard: table may not exist yet on a brand-new database.
         let table_exists: Option<(String,)> = sqlx::query_as(
             "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'schema_migrations'",
         )

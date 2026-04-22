@@ -276,7 +276,7 @@ impl Bpa {
         self.u > 1.0 - 1e-9
     }
 
-    /// Discount this BPA by factor `alpha` [0,1].
+    /// Discount this BPA by factor `alpha` in the range `\[0, 1\]`.
     /// Moves committed mass (b, d) into uncertainty; preserves epsilon.
     #[inline]
     pub fn discount(self, alpha: f64) -> Self {

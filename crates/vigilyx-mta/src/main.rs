@@ -1,11 +1,8 @@
 //! Vigilyx MTA
 
-
-
 //! 2. PostgreSQL
 //! 3. SecurityEngine
 //! 4. SMTP/SMTPS
-
 
 use std::sync::Arc;
 
@@ -15,9 +12,9 @@ use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
 use vigilyx_core::models::WsMessage;
+use vigilyx_db::VigilDb;
 use vigilyx_db::mq::topics;
 use vigilyx_db::mq::{MqClient, MqConfig, verify_cmd_payload};
-use vigilyx_db::VigilDb;
 use vigilyx_engine::config::PipelineConfig;
 use vigilyx_engine::modules::registry::reload_runtime_ioc_caches;
 use vigilyx_engine::pipeline::engine::SecurityEngine;
@@ -28,16 +25,18 @@ use vigilyx_mta::server::listener::{self, PerIpLimiter};
 use vigilyx_mta::server::tls;
 
 #[derive(Parser, Debug)]
-#[command(name = "vigilyx-mta", about = "Vigilyx MTA Proxy — SMTP relay with inline security")]
+#[command(
+    name = "vigilyx-mta",
+    about = "Vigilyx MTA Proxy — SMTP relay with inline security"
+)]
 struct Args {
-   /// DATABASE_URL
+    /// DATABASE_URL
     #[arg(long)]
     database_url: Option<String>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -45,13 +44,15 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
-   // .env
+    // .env
     let _ = dotenvy::dotenv();
     let args = Args::parse();
 
     // MTA config: env vars -> DB overrides (UI settings take priority)
     let mut config = MtaConfig::from_env()?;
-    let db_url = args.database_url.clone()
+    let db_url = args
+        .database_url
+        .clone()
         .or_else(|| std::env::var("DATABASE_URL").ok())
         .unwrap_or_default();
     if !db_url.is_empty()
@@ -66,10 +67,14 @@ async fn main() -> anyhow::Result<()> {
         info!(smtps = %smtps, "SMTPS listen address");
     }
     if config.listen_submission.is_some() {
-        warn!("Submission listener requested, but SMTP AUTH is not implemented; port 587 remains disabled");
+        warn!(
+            "Submission listener requested, but SMTP AUTH is not implemented; port 587 remains disabled"
+        );
     }
     if config.local_domains.is_empty() {
-        warn!("MTA_LOCAL_DOMAINS is empty; all RCPT TO commands will be denied until local domains are configured");
+        warn!(
+            "MTA_LOCAL_DOMAINS is empty; all RCPT TO commands will be denied until local domains are configured"
+        );
     } else {
         info!(local_domains = ?config.local_domains, "Accepted local recipient domains");
     }
@@ -78,7 +83,6 @@ async fn main() -> anyhow::Result<()> {
         "Downstream MTA"
     );
 
-    
     let db_url = args
         .database_url
         .unwrap_or_else(|| config.database_url.clone());
@@ -86,11 +90,8 @@ async fn main() -> anyhow::Result<()> {
     db.init_security_tables().await?;
     info!("Database connected");
 
-   // pipeline (DB config, key='security_pipeline')
-    let pipeline_config = match db
-        .get_config("security_pipeline")
-        .await
-    {
+    // pipeline (DB config, key='security_pipeline')
+    let pipeline_config = match db.get_config("security_pipeline").await {
         Ok(Some(json)) => serde_json::from_str::<PipelineConfig>(&json).unwrap_or_else(|e| {
             error!("Pipeline config parse failed: {e}, using defaults");
             PipelineConfig::default()
@@ -101,20 +102,19 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-   // db (engine take ownership)
+    // db (engine take ownership)
     let quarantine_db = db.clone();
 
-   // SecurityEngine
-   // WebSocket broadcast channel (MTA WebSocket,)
+    // SecurityEngine
+    // WebSocket broadcast channel (MTA WebSocket,)
     let (ws_tx, _ws_rx) = broadcast::channel::<WsMessage>(256);
     let engine = SecurityEngine::start(db, pipeline_config, ws_tx).await?;
     let engine = Arc::new(engine);
     info!("Security engine started (embedded)");
 
-    
     let relay = DownstreamRelay::new(&config.downstream).await?;
     let relay = Arc::new(relay);
-    
+
     let outbound_relay = if let Some(ref outbound_cfg) = config.outbound {
         info!(
             outbound = format!("{}:{}", outbound_cfg.host, outbound_cfg.port),
@@ -127,14 +127,14 @@ async fn main() -> anyhow::Result<()> {
     };
     let db = Arc::new(quarantine_db);
 
-   // TLS acceptor ()
+    // TLS acceptor ()
     let tls_acceptor = config
         .tls
         .as_ref()
         .map(tls::build_tls_acceptor)
         .transpose()?;
 
-   // -- Redis subscription: hot-reload whitelist/IOC caches --
+    // -- Redis subscription: hot-reload whitelist/IOC caches --
     let redis_url = config.redis_url.clone().unwrap_or_default();
     if !redis_url.is_empty() {
         let eng = engine.clone();
@@ -148,14 +148,14 @@ async fn main() -> anyhow::Result<()> {
         warn!("REDIS_URL not configured, config hot-reload disabled for MTA engine");
     }
 
-   // (SMTP + SMTPS,)
+    // (SMTP + SMTPS,)
     let active_connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     // SEC: per-IP connection limiter shared between all listeners (CWE-400)
     let per_ip_limiter = Arc::new(PerIpLimiter::new(10));
 
     let mut tasks = Vec::new();
 
-   // SMTP (+ STARTTLS)
+    // SMTP (+ STARTTLS)
     {
         let cfg = Arc::clone(&config);
         let eng = Arc::clone(&engine);
@@ -172,8 +172,10 @@ async fn main() -> anyhow::Result<()> {
         }));
     }
 
-   // SMTPS (TLS, 465)
-    if config.listen_smtps.is_some() && let Some(ref acceptor) = tls_acceptor {
+    // SMTPS (TLS, 465)
+    if config.listen_smtps.is_some()
+        && let Some(ref acceptor) = tls_acceptor
+    {
         let cfg = Arc::clone(&config);
         let eng = Arc::clone(&engine);
         let rl = Arc::clone(&relay);
@@ -190,7 +192,6 @@ async fn main() -> anyhow::Result<()> {
     }
 
     info!("Vigilyx MTA proxy running");
-
 
     for task in tasks {
         task.await?;
@@ -212,9 +213,7 @@ async fn redis_reload_loop(
     };
     let mq = MqClient::new(mq_config);
     // subscribe() creates its own dedicated connection internally, so no prior connect() is needed
-    let mut pubsub = mq
-        .subscribe(&[topics::ENGINE_CMD_RELOAD])
-        .await?;
+    let mut pubsub = mq.subscribe(&[topics::ENGINE_CMD_RELOAD]).await?;
 
     // SEC-P06: Read shared token once at startup for control-plane message auth
     let cmd_token = std::env::var("INTERNAL_API_TOKEN").unwrap_or_default();
@@ -254,15 +253,13 @@ async fn redis_reload_loop(
                 }
             }
             "ioc" => {
-                reload_runtime_ioc_caches(
-                    db,
-                    engine.safe_domains_handle.as_ref(),
-                )
-                .await;
+                reload_runtime_ioc_caches(db, engine.safe_domains_handle.as_ref()).await;
                 info!("MTA IOC runtime caches reloaded");
             }
             "config" | "keywords" => {
-                warn!("Pipeline config/keywords changed, MTA engine restart required to take effect");
+                warn!(
+                    "Pipeline config/keywords changed, MTA engine restart required to take effect"
+                );
             }
             "ai_config" => {
                 info!("AI config updated (runtime auto-use new config)");

@@ -9,8 +9,8 @@ use regex::Regex;
 
 use super::html_utils::{is_embedded_contact_card_layout, strip_html_tags};
 use super::{
-    collect_gateway_prior_hits, normalize_text, sanitize_body_for_keyword_scan, scan_text,
-    strip_subject_banner_prefixes, RE_CHINESE_PHONE,
+    RE_CHINESE_PHONE, collect_gateway_prior_hits, normalize_text, sanitize_body_for_keyword_scan,
+    scan_text, strip_subject_banner_prefixes,
 };
 use crate::context::SecurityContext;
 use crate::module::Evidence;
@@ -40,10 +40,7 @@ fn is_benign_verification_keyword(keyword: &str) -> bool {
         .any(|candidate| normalized.contains(candidate))
 }
 
-fn looks_like_benign_verification_notice(
-    ctx: &SecurityContext,
-    body_hint: Option<&str>,
-) -> bool {
+fn looks_like_benign_verification_notice(ctx: &SecurityContext, body_hint: Option<&str>) -> bool {
     if !ctx.session.content.attachments.is_empty() {
         return false;
     }
@@ -76,8 +73,7 @@ fn looks_like_benign_verification_notice(
     let has_code_or_expiry = RE_VERIFICATION_CODE.is_match(&combined)
         || ((combined.contains("valid") || combined.contains("expire"))
             && combined.contains("minute"))
-        || ((combined.contains("有效") || combined.contains("失效"))
-            && combined.contains("分钟"));
+        || ((combined.contains("有效") || combined.contains("失效")) && combined.contains("分钟"));
     if !has_code_or_expiry {
         return false;
     }
@@ -89,7 +85,10 @@ fn looks_like_benign_verification_notice(
     })
 }
 
-fn detector_body_fallback_text(ctx: &SecurityContext, body_for_cross: Option<&str>) -> Option<String> {
+fn detector_body_fallback_text(
+    ctx: &SecurityContext,
+    body_for_cross: Option<&str>,
+) -> Option<String> {
     body_for_cross
         .map(str::trim)
         .filter(|body| !body.is_empty())
@@ -367,7 +366,8 @@ pub(super) fn detect_image_only_phishing(
     let is_wps_share_notice = ctx.session.subject.as_deref().is_some_and(|subject| {
         let subject_lower = subject.to_ascii_lowercase();
         let has_wps_brand = subject_lower.contains("wps office");
-        let has_share_phrase = subject.contains("分享给你") || subject_lower.contains("shared with you");
+        let has_share_phrase =
+            subject.contains("分享给你") || subject_lower.contains("shared with you");
         let sender_domain = ctx
             .session
             .mail_from
@@ -654,7 +654,12 @@ pub(super) fn detect_invoice_spam(
     let compact: String = combined.chars().filter(|ch| ch.is_alphanumeric()).collect();
     let contains_obfuscated_keyword = |keyword: &str| {
         combined.contains(keyword)
-            || compact.contains(&keyword.chars().filter(|ch| ch.is_alphanumeric()).collect::<String>())
+            || compact.contains(
+                &keyword
+                    .chars()
+                    .filter(|ch| ch.is_alphanumeric())
+                    .collect::<String>(),
+            )
     };
     let invoice_hits = module_data()
         .get_list("invoice_spam_keywords")

@@ -9,14 +9,14 @@
 
 /// according to DLP modeNameReturn JR/T 0197-2020 Securitylevel (1-4)
 
-/// Mapping According to:Standard A<data levelRule table>
+/// Mapping according to standard A `data level rule` table.
 /// MappingofmodeReturn 0(if executable_upload wait dataClassificationmode)
 pub fn jrt_level(pattern_name: &str) -> u8 {
     match pattern_name {
-       // C4 HighSensitivelevel - Info + +
+        // C4 HighSensitivelevel - Info + +
         "credential_leak" | "cvv_code" | "credit_card" | "biometric_data" | "medical_health" => 4,
 
-       // C3 Sensitivelevel - Info + AccountInfo + + + +
+        // C3 Sensitivelevel - Info + AccountInfo + + + +
         "id_number"
         | "phone_number"
         | "bank_card"
@@ -36,14 +36,14 @@ pub fn jrt_level(pattern_name: &str) -> u8 {
         | "insurance_policy"
         | "family_relation" => 3,
 
-       // C2 Internallevel - BusinessInfo + + + + Execute
+        // C2 Internallevel - BusinessInfo + + + + Execute
         "swift_code" | "tax_id" | "employee_info" | "judicial_record" | "education_info"
         | "business_license" => 2,
 
-       // C1 Publiclevel - PublicInfo
+        // C1 Publiclevel - PublicInfo
         "social_credit_code" => 1,
 
-       // level: dataClass ofdetectmode (ifExecutable file, File)
+        // level: dataClass ofdetectmode (ifExecutable file, File)
         _ => 0,
     }
 }
@@ -163,9 +163,9 @@ mod tests {
 
     #[test]
     fn test_all_30_dlp_patterns_mapped() {
-       // Ensure 30 DLP modeall Mapping(≥1)
+        // Ensure 30 DLP modeall Mapping(≥1)
         let all_patterns = [
-           // 16
+            // 16
             "credit_card",
             "id_number",
             "phone_number",
@@ -182,7 +182,7 @@ mod tests {
             "large_amount",
             "bank_account_context",
             "contract_number",
-           // JR/T 14
+            // JR/T 14
             "biometric_data",
             "medical_health",
             "vehicle_info",

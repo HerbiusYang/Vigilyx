@@ -53,7 +53,11 @@ pub async fn update_ui_preferences(
         }
     };
 
-    match state.engine_db.set_config(UI_PREFERENCES_KEY, &json_str).await {
+    match state
+        .engine_db
+        .set_config(UI_PREFERENCES_KEY, &json_str)
+        .await
+    {
         Ok(()) => {
             let db = state.engine_db.clone();
             let username = user.username.clone();
@@ -75,8 +79,9 @@ pub async fn update_ui_preferences(
 
             ApiResponse::ok(normalized).into_response()
         }
-        Err(e) => ApiResponse::<Value>::internal_err(&e, "save ui preferences failed")
-            .into_response(),
+        Err(e) => {
+            ApiResponse::<Value>::internal_err(&e, "save ui preferences failed").into_response()
+        }
     }
 }
 

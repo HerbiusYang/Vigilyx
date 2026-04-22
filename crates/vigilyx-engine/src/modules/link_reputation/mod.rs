@@ -101,15 +101,9 @@ fn suspicious_domain_intel_score(
 ) -> Option<f64> {
     let same_org_family = sender_reg_domain.is_some_and(|sender| {
         let sender_registered = get_registered_domain(sender);
-        let sender_stem = sender_registered
-            .split('.')
-            .next()
-            .unwrap_or("");
+        let sender_stem = sender_registered.split('.').next().unwrap_or("");
         let domain_registered = get_registered_domain(registered_domain);
-        let domain_stem = domain_registered
-            .split('.')
-            .next()
-            .unwrap_or("");
+        let domain_stem = domain_registered.split('.').next().unwrap_or("");
         !sender_stem.is_empty() && sender_stem == domain_stem
     });
 
@@ -144,7 +138,7 @@ impl LinkReputationModule {
         opts.attempts = 1;
         let resolver = TokioAsyncResolver::tokio(ResolverConfig::default(), opts);
 
-       // AddAddTimeout (Query 15, 3 Concurrent)
+        // AddAddTimeout (Query 15, 3 Concurrent)
         let timeout_ms = if intel.is_some() { 8000 } else { 5000 };
 
         Self {
@@ -169,9 +163,9 @@ impl LinkReputationModule {
         }
     }
 
-   /// QueryDomainof NS Recording,Return nameserver ofRegisterDomainSet(withcache)
+    /// QueryDomainof NS Recording,Return nameserver ofRegisterDomainSet(withcache)
     async fn resolve_ns_base_domains(&self, domain: &str) -> Option<HashSet<String>> {
-       // cache
+        // cache
         {
             let cache = self.ns_cache.read().await;
             if let Some(entry) = cache.get(domain)
@@ -181,7 +175,7 @@ impl LinkReputationModule {
             }
         }
 
-       // DNS NS Query
+        // DNS NS Query
         let ns_response = self.resolver.ns_lookup(domain).await.ok()?;
         let ns_domains: HashSet<String> = ns_response
             .iter()
@@ -196,7 +190,7 @@ impl LinkReputationModule {
             return None;
         }
 
-       // writecache
+        // writecache
         {
             let mut cache = self.ns_cache.write().await;
             cache.insert(
@@ -211,30 +205,30 @@ impl LinkReputationModule {
         Some(ns_domains)
     }
 
-   /// DNS NS JudgeDomainwhether Official
-   /// Return: Some(true) = Same1, Some(false) = Same, None = Judge
+    /// DNS NS JudgeDomainwhether Official
+    /// Return: Some(true) = Same1, Some(false) = Same, None = Judge
     async fn is_same_org_by_ns(&self, domain_reg: &str, brand_anchor: &str) -> Option<bool> {
         let domain_ns = self.resolve_ns_base_domains(domain_reg).await?;
         let brand_ns = self.resolve_ns_base_domains(brand_anchor).await?;
 
-       // NS
+        // NS
         let overlap: HashSet<_> = domain_ns.intersection(&brand_ns).cloned().collect();
         if overlap.is_empty() {
             return Some(false); // NS Same -> Same
         }
 
-       // DNS providers (Shared DNS providers do not prove ownership)
+        // DNS providers (Shared DNS providers do not prove ownership)
         let meaningful: Vec<_> = overlap
             .iter()
             .filter(|d| !module_data().contains("shared_dns_providers", d))
             .collect();
 
         if !meaningful.is_empty() {
-           // Shared NS -> Same1 (if NS all qq.com ofServicehandler)
+            // Shared NS -> Same1 (if NS all qq.com ofServicehandler)
             return Some(true);
         }
 
-       // allUse DNS For -> NS Judge
+        // allUse DNS For -> NS Judge
         None
     }
 }
@@ -259,7 +253,8 @@ impl SecurityModule for LinkReputationModule {
                 threat_level: ThreatLevel::Safe,
                 confidence: 0.0,
                 categories: vec![],
-                summary: "Email body contains no links, skipping URL reputation analysis".to_string(),
+                summary: "Email body contains no links, skipping URL reputation analysis"
+                    .to_string(),
                 evidence: vec![],
                 details: serde_json::json!({
                     "unique_domains": Vec::<String>::new(),
@@ -272,7 +267,7 @@ impl SecurityModule for LinkReputationModule {
             });
         }
 
-       // Collect unique domains (Contains TargetParse)
+        // Collect unique domains (Contains TargetParse)
         let mut unique_domains: HashSet<String> = HashSet::new();
         let mut redirect_target_urls: HashSet<String> = HashSet::new(); // From URL ParameterMediumDecodeof full TargetURL
         let mut redirect_exempt_outer: HashSet<String> = HashSet::new(); // already ServiceofOuter layerDomain (Analyze)
@@ -302,7 +297,7 @@ impl SecurityModule for LinkReputationModule {
                     .or_default()
                     .observe_url(&link.url);
 
-               // Check if this is a tracking/redirect service or mail security gateway.
+                // Check if this is a tracking/redirect service or mail security gateway.
                 // Gateway domains (Trend Micro DDEI, Proofpoint, etc.) rewrite URLs
                 // with redirect params - the outer domain is legitimate and should be
                 // exempt from heuristic analysis and intel queries.
@@ -328,9 +323,9 @@ impl SecurityModule for LinkReputationModule {
                     }
                 }
                 if !target_urls.is_empty() && is_redirect_service {
-                   // already Service (if adnxs.com, doubleclick.net),
-                   // Outer layerDomain Legitimate,hopsHeuristicAnalyzeAnd Query.
-                   // Decode ofTargetDomain NormalAnalyze.
+                    // already Service (if adnxs.com, doubleclick.net),
+                    // Outer layerDomain Legitimate,hopsHeuristicAnalyzeAnd Query.
+                    // Decode ofTargetDomain NormalAnalyze.
                     redirect_exempt_outer.insert(domain);
                 }
             }
@@ -345,8 +340,8 @@ impl SecurityModule for LinkReputationModule {
         let mut heuristic_dga_scores: std::collections::HashMap<String, f64> =
             std::collections::HashMap::new();
 
-       // Recording TargetDomain (Info According to, Add).
-       // TargetDomain ofHeuristicAnalyzeAnd QueryMediumindependent.
+        // Recording TargetDomain (Info According to, Add).
+        // TargetDomain ofHeuristicAnalyzeAnd QueryMediumindependent.
         for target_url in &redirect_target_urls {
             evidence.push(Evidence {
                 description: format!(
@@ -360,9 +355,9 @@ impl SecurityModule for LinkReputationModule {
         }
 
         for domain in &unique_domains {
-           // --- already ServiceOuter layerDomain ---
-           // if adnxs.com, doubleclick.net wait: Outer layerDomain Legitimate,
-           // hopsHeuristicAnalyze/ detect/ Query, RecordingFor.
+            // --- already ServiceOuter layerDomain ---
+            // if adnxs.com, doubleclick.net wait: Outer layerDomain Legitimate,
+            // hopsHeuristicAnalyze/ detect/ Query, RecordingFor.
             if redirect_exempt_outer.contains(domain) {
                 evidence.push(Evidence {
                     description: format!(
@@ -375,7 +370,7 @@ impl SecurityModule for LinkReputationModule {
                 continue;
             }
 
-           // --- Name Check ---
+            // --- Name Check ---
             if self.domain_blacklist.contains(domain) {
                 total_score += 0.80;
                 categories.push("blacklisted_domain".to_string());
@@ -393,7 +388,10 @@ impl SecurityModule for LinkReputationModule {
                 categories.push("blacklisted_parent_domain".to_string());
                 suspicious_domains.push(domain.clone());
                 evidence.push(Evidence {
-                    description: format!("Parent domain {} matched malicious domain blocklist", reg_domain),
+                    description: format!(
+                        "Parent domain {} matched malicious domain blocklist",
+                        reg_domain
+                    ),
                     location: Some("links".to_string()),
                     snippet: Some(format!("{} -> {}", domain, reg_domain)),
                 });
@@ -430,7 +428,7 @@ impl SecurityModule for LinkReputationModule {
                 continue;
             }
 
-           // --- HeuristicAnalyze (Contains detect) ---
+            // --- HeuristicAnalyze (Contains detect) ---
             let (domain_score, findings) = analyze_domain_heuristics(domain);
             if domain_score > 0.0 {
                 total_score += domain_score;
@@ -453,7 +451,7 @@ impl SecurityModule for LinkReputationModule {
                 }
             }
 
-           // --- Brand impersonation detection (DNS NS comparison) ---
+            // --- Brand impersonation detection (DNS NS comparison) ---
             let tld = get_tld(domain);
             let domain_no_tld = domain.strip_suffix(&format!(".{}", tld)).unwrap_or(domain);
 
@@ -514,18 +512,18 @@ impl SecurityModule for LinkReputationModule {
             }
         }
 
-       // --- Query (IntelLayer Query VT/AbuseIPDB) ---
+        // --- Query (IntelLayer Query VT/AbuseIPDB) ---
         if let Some(ref intel) = self.intel {
             let semaphore = Arc::new(tokio::sync::Semaphore::new(3));
             let mut queried_reg_domains: HashSet<String> = HashSet::new();
             let mut join_set = tokio::task::JoinSet::new();
 
             for domain in &unique_domains {
-               // already Medium Name ofDomain
+                // already Medium Name ofDomain
                 if self.domain_blacklist.contains(domain) {
                     continue;
                 }
-               // already ServiceOuter layerDomain (if adnxs.com)
+                // already ServiceOuter layerDomain (if adnxs.com)
                 if redirect_exempt_outer.contains(domain) {
                     continue;
                 }
@@ -542,7 +540,7 @@ impl SecurityModule for LinkReputationModule {
                     continue;
                 }
 
-               // According toRegisterDomainDeduplicate (Same1RegisterDomainonly 1Time/Count)
+                // According toRegisterDomainDeduplicate (Same1RegisterDomainonly 1Time/Count)
                 let reg_domain = get_registered_domain(domain);
                 if should_skip_registered_domain_intel_for_host(domain, &reg_domain) {
                     continue;
@@ -571,14 +569,17 @@ impl SecurityModule for LinkReputationModule {
                     match query_result {
                         Ok(result) => Some((dom, result)),
                         Err(_) => {
-                            tracing::warn!(domain = dom.as_str(), "External intel query timed out (15s)");
+                            tracing::warn!(
+                                domain = dom.as_str(),
+                                "External intel query timed out (15s)"
+                            );
                             None
                         }
                     }
                 });
             }
 
-           // QueryResult
+            // QueryResult
             while let Some(join_result) = join_set.join_next().await {
                 if let Ok(Some((domain, intel_result))) = join_result {
                     if !intel_result.found {
@@ -630,7 +631,10 @@ impl SecurityModule for LinkReputationModule {
                                     format!(
                                         "OTX-only weak intel flagged domain as suspicious: {} ({})",
                                         domain,
-                                        intel_result.details.as_deref().unwrap_or("no additional details")
+                                        intel_result
+                                            .details
+                                            .as_deref()
+                                            .unwrap_or("no additional details")
                                     )
                                 } else {
                                     format!(
@@ -644,15 +648,18 @@ impl SecurityModule for LinkReputationModule {
                                 snippet: Some(domain),
                             });
                         }
-                       // "clean" -> already Security, Add (Autocache IOC Name)
-                       // Recording evidence Forfirst Query
+                        // "clean" -> already Security, Add (Autocache IOC Name)
+                        // Recording evidence Forfirst Query
                         _ => {
                             evidence.push(Evidence {
                                 description: format!(
                                     "Domain {} reputation normal (source: {}, {})",
                                     domain,
                                     intel_result.source,
-                                    intel_result.details.as_deref().unwrap_or("no threat records")
+                                    intel_result
+                                        .details
+                                        .as_deref()
+                                        .unwrap_or("no threat records")
                                 ),
                                 location: Some("intel".to_string()),
                                 snippet: Some(domain.clone()),
@@ -679,8 +686,8 @@ impl SecurityModule for LinkReputationModule {
             }
         }
 
-       // ---: URL levelQuery (VT Scrape complete URL detect) ---
-       // DomainQueryonlydetectDomainReputation;URL Query detect Maliciouspath(if /phishing/login.php)
+        // ---: URL levelQuery (VT Scrape complete URL detect) ---
+        // DomainQueryonlydetectDomainReputation;URL Query detect Maliciouspath(if /phishing/login.php)
         if let Some(ref intel) = self.intel {
             let semaphore = Arc::new(tokio::sync::Semaphore::new(3));
             let mut url_join_set = tokio::task::JoinSet::new();
@@ -740,7 +747,10 @@ impl SecurityModule for LinkReputationModule {
                     {
                         Ok(result) => Some((url_owned, result)),
                         Err(_) => {
-                            tracing::warn!(url = url_owned.as_str(), "URL intel query timed out (15s)");
+                            tracing::warn!(
+                                url = url_owned.as_str(),
+                                "URL intel query timed out (15s)"
+                            );
                             None
                         }
                     }
@@ -789,7 +799,10 @@ impl SecurityModule for LinkReputationModule {
                                     "URL {} reputation normal (source: {}, {})",
                                     url,
                                     intel_result.source,
-                                    intel_result.details.as_deref().unwrap_or("no threat records")
+                                    intel_result
+                                        .details
+                                        .as_deref()
+                                        .unwrap_or("no threat records")
                                 ),
                                 location: Some("intel:url".to_string()),
                                 snippet: Some(url),
@@ -800,7 +813,7 @@ impl SecurityModule for LinkReputationModule {
             }
         }
 
-       // --- Sending domain reputation check ---
+        // --- Sending domain reputation check ---
         for (name, value) in &ctx.session.content.headers {
             if name.to_lowercase() == "received" {
                 let val_lower = value.to_lowercase();
@@ -897,10 +910,10 @@ mod tests {
     use std::sync::Arc;
     use vigilyx_core::models::{EmailContent, EmailLink, EmailSession, Protocol};
 
-   // Re-import heuristic helpers for unit tests
+    // Re-import heuristic helpers for unit tests
     use super::heuristics::{analyze_domain_heuristics, get_registered_domain, get_tld};
 
-   /// BuildTest SecurityContext,packetContains of URL linkConnectList
+    /// BuildTest SecurityContext,packetContains of URL linkConnectList
     fn make_ctx(urls: &[&str]) -> SecurityContext {
         let mut session = EmailSession::new(
             Protocol::Smtp,
@@ -924,9 +937,7 @@ mod tests {
         SecurityContext::new(Arc::new(session))
     }
 
-    
-   // Legitimate URL Test
-    
+    // Legitimate URL Test
 
     #[tokio::test]
     async fn test_legitimate_no_links() {
@@ -977,7 +988,7 @@ mod tests {
         let module = LinkReputationModule::new(None);
         let ctx = make_ctx(&["https://mail.163.com"]);
         let result = module.analyze(&ctx).await.unwrap();
-       // 163.com known_numeric Name Medium, Mark
+        // 163.com known_numeric Name Medium, Mark
         assert_eq!(result.threat_level, ThreatLevel::Safe);
     }
 
@@ -997,9 +1008,7 @@ mod tests {
         );
     }
 
-    
-   // Malicious/Suspicious URL Test
-    
+    // Malicious/Suspicious URL Test
 
     #[tokio::test]
     async fn test_suspicious_tld_tk() {
@@ -1049,7 +1058,7 @@ mod tests {
     #[tokio::test]
     async fn test_www_impersonation() {
         let module = LinkReputationModule::new(None);
-       // wwwkp.privcat.com - www first +
+        // wwwkp.privcat.com - www first +
         let ctx = make_ctx(&["http://wwwkp.privcat.com/login"]);
         let result = module.analyze(&ctx).await.unwrap();
         assert_ne!(result.threat_level, ThreatLevel::Safe);
@@ -1072,7 +1081,7 @@ mod tests {
     #[tokio::test]
     async fn test_random_domain_dga() {
         let module = LinkReputationModule::new(None);
-       // DGA ofrandomDomain
+        // DGA ofrandomDomain
         let ctx = make_ctx(&["http://xvkrnbstq.com/payload"]);
         let result = module.analyze(&ctx).await.unwrap();
         assert_ne!(result.threat_level, ThreatLevel::Safe);
@@ -1204,19 +1213,17 @@ mod tests {
         );
     }
 
-    
-   // Scenario: Signal Add
-    
+    // Scenario: Signal Add
 
     #[tokio::test]
     async fn test_combo_suspicious_tld_plus_random() {
         let module = LinkReputationModule::new(None);
-       // Suspicious TLD + randomDomain = Signal
+        // Suspicious TLD + randomDomain = Signal
         let ctx = make_ctx(&["http://xvkrnbstq.tk/payload"]);
         let result = module.analyze(&ctx).await.unwrap();
         assert_ne!(result.threat_level, ThreatLevel::Safe);
         let score = result.details["score"].as_f64().unwrap();
-       // 0.15 (suspicious_tld) + 0.20 (random_domain) = 0.35
+        // 0.15 (suspicious_tld) + 0.20 (random_domain) = 0.35
         assert!(score >= 0.30, "combo score = {}, expected >= 0.30", score);
     }
 
@@ -1226,14 +1233,12 @@ mod tests {
         let ctx = make_ctx(&["http://wwwsecure.netlify.app/bank-login"]);
         let result = module.analyze(&ctx).await.unwrap();
         assert_ne!(result.threat_level, ThreatLevel::Safe);
-       // www_impersonation (0.25) + free_hosting (0.20)
+        // www_impersonation (0.25) + free_hosting (0.20)
         let score = result.details["score"].as_f64().unwrap();
         assert!(score >= 0.40, "combo score = {}, expected >= 0.40", score);
     }
 
-    
-   // : Legitimate + Malicious URL Same1emailMedium
-    
+    // : Legitimate + Malicious URL Same1emailMedium
 
     #[tokio::test]
     async fn test_mixed_legit_and_malicious() {
@@ -1244,13 +1249,11 @@ mod tests {
         ]);
         let result = module.analyze(&ctx).await.unwrap();
         assert_ne!(result.threat_level, ThreatLevel::Safe);
-       // At least suspicious_tld
+        // At least suspicious_tld
         assert!(result.categories.contains(&"suspicious_tld".to_string()));
     }
 
-    
-   // IntelLayer = None Heuristicmode
-    
+    // IntelLayer = None Heuristicmode
 
     #[tokio::test]
     async fn test_no_intel_pure_heuristic() {
@@ -1259,9 +1262,7 @@ mod tests {
         assert!(!module.meta.is_remote);
     }
 
-    
-   // function YuanTest
-    
+    // function YuanTest
 
     #[test]
     fn test_extract_domain_from_url() {
@@ -1340,7 +1341,7 @@ mod tests {
         );
     }
 
-   /// Domain Test - completeAnalyze
+    /// Domain Test - completeAnalyze
     #[tokio::test]
     async fn test_single_domain_debug() {
         let module = LinkReputationModule::new(None);
@@ -1369,11 +1370,11 @@ mod tests {
         println!("{}", "=".repeat(80));
     }
 
-   /// complete Test: IntelLayer (VT MaliciousResult) + LinkReputationModule
-    
-   /// Scenario: xred.mooo.com already C2 MaliciousDomain (OTX 10 Malicious)
-   /// VT detectResult: EngineMark malicious
-   /// Period: Heuristic (free_hosting 0.20) + (intel_malicious 0.60) = HIGH
+    /// complete Test: IntelLayer (VT MaliciousResult) + LinkReputationModule
+
+    /// Scenario: xred.mooo.com already C2 MaliciousDomain (OTX 10 Malicious)
+    /// VT detectResult: EngineMark malicious
+    /// Period: Heuristic (free_hosting 0.20) + (intel_malicious 0.60) = HIGH
     #[tokio::test]
     #[ignore] // Requires external PostgreSQL: TEST_DATABASE_URL=postgres://...
     async fn test_xred_mooo_com_with_intel() {
@@ -1381,7 +1382,7 @@ mod tests {
         use crate::ioc::IocManager;
         use vigilyx_db::VigilDb;
 
-       // 1. CreateMemorydata + initializetable
+        // 1. CreateMemorydata + initializetable
         let db = VigilDb::new(
             &std::env::var("TEST_DATABASE_URL")
                 .expect("TEST_DATABASE_URL must be set to run integration tests"),
@@ -1390,8 +1391,8 @@ mod tests {
         .unwrap();
         db.init_security_tables().await.unwrap();
 
-       // 2. IOC: VT QueryResult alreadycache
-       // data: OTX xred.mooo.com 10 Malicious
+        // 2. IOC: VT QueryResult alreadycache
+        // data: OTX xred.mooo.com 10 Malicious
         let now = chrono::Utc::now();
         let ioc = vigilyx_core::security::IocEntry {
             id: uuid::Uuid::new_v4(),
@@ -1413,7 +1414,7 @@ mod tests {
         };
         db.upsert_ioc(&ioc).await.unwrap();
 
-       // 3. construct IntelLayer (VT alreadycache, API)
+        // 3. construct IntelLayer (VT alreadycache, API)
         let ioc_manager = IocManager::new(db.clone());
         let config = IntelSourceConfig {
             otx_enabled: false, // IOC cache,
@@ -1426,12 +1427,12 @@ mod tests {
             std::sync::Arc::new(std::sync::RwLock::new(std::collections::HashSet::new())),
         );
 
-       // 4. CreateModule + Analyze
+        // 4. CreateModule + Analyze
         let module = LinkReputationModule::new(Some(intel));
         let ctx = make_ctx(&["http://xred.mooo.com/VNRecycler/VNRecycler.exe"]);
         let result = module.analyze(&ctx).await.unwrap();
 
-       // 5. OutputcompleteResult
+        // 5. OutputcompleteResult
         println!("\n{}", "=".repeat(80));
         println!("  端到端Test: xred.mooo.com (Heuristic + VT 情报)");
         println!("{}", "=".repeat(80));
@@ -1452,7 +1453,7 @@ mod tests {
         );
         println!("{}", "=".repeat(80));
 
-       // 6. Break/Judge: verdict HighRisk
+        // 6. Break/Judge: verdict HighRisk
         assert!(
             result.threat_level == ThreatLevel::High
                 || result.threat_level == ThreatLevel::Critical,
@@ -1464,7 +1465,7 @@ mod tests {
                 .and_then(|s| s.as_f64())
                 .unwrap_or(0.0)
         );
-       // Same packetContainsHeuristicAnd According to
+        // Same packetContainsHeuristicAnd According to
         assert!(
             result.categories.contains(&"free_hosting".to_string()),
             "应触发 free_hosting Heuristic"
@@ -1475,15 +1476,15 @@ mod tests {
         );
     }
 
-   /// URL Test - completeModuleAnalyzeResult
-   /// line: cargo test -p vigilyx-engine -- test_real_url_analysis --nocapture
+    /// URL Test - completeModuleAnalyzeResult
+    /// line: cargo test -p vigilyx-engine -- test_real_url_analysis --nocapture
     #[tokio::test]
     async fn test_real_url_analysis() {
         let module = LinkReputationModule::new(None);
 
-       // TestUse case: (ScenarioName, URL List)
+        // TestUse case: (ScenarioName, URL List)
         let cases: Vec<(&str, Vec<&str>)> = vec![
-           // Legitimate URL
+            // Legitimate URL
             (
                 "Legitimate: Google 搜索",
                 vec!["https://www.google.com/search?q=rust+programming"],
@@ -1508,7 +1509,7 @@ mod tests {
                 "Legitimate: 淘宝",
                 vec!["https://www.taobao.com/markets/tbhome/list"],
             ),
-           // Phishing URL ()
+            // Phishing URL ()
             (
                 "Phishing: 仿冒 PayPal (.tk)",
                 vec!["http://paypal-login-verify.tk/secure/update"],
@@ -1525,7 +1526,7 @@ mod tests {
                 "Phishing: 仿冒 Google (Heroku)",
                 vec!["https://google-drive-share.herokuapp.com/view"],
             ),
-           // Malicious
+            // Malicious
             (
                 "Malicious: DGA RandomDomain",
                 vec!["http://xvkrnbstqp.com/beacon"],
@@ -1544,7 +1545,7 @@ mod tests {
                     "http://secure.login.account.verify.update.this-is-definitely-not-a-legitimate-banking-portal.com/auth",
                 ],
             ),
-           // Attackmode ()
+            // Attackmode ()
             (
                 "Attack: www first缀伪装 + 免费托管",
                 vec!["http://wwwsecure.netlify.app/banking/login"],
@@ -1602,14 +1603,12 @@ mod tests {
         }
     }
 
-    
-   // ServiceOuter layerDomain Test
-    
+    // ServiceOuter layerDomain Test
 
     #[tokio::test]
     async fn test_redirect_service_adnxs_exempt() {
-       // adnxs.com (Microsoft AppNexus) packet of URL
-       // Outer layerDomain adnxs.com,onlyAnalyzeTargetDomain example.com
+        // adnxs.com (Microsoft AppNexus) packet of URL
+        // Outer layerDomain adnxs.com,onlyAnalyzeTargetDomain example.com
         let module = LinkReputationModule::new(None);
         let ctx = make_ctx(&[
             "https://nym1-ib.adnxs.com/click2?clickenc=https%3A%2F%2Fwww.example.com%2Fpage",
@@ -1622,7 +1621,7 @@ mod tests {
             result.threat_level,
             result.details.get("score")
         );
-       // Verify Recording evidence Medium
+        // Verify Recording evidence Medium
         assert!(
             result.evidence.iter().any(|e| e
                 .description
@@ -1633,13 +1632,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_redirect_service_malicious_target_still_detected() {
-       // immediately Outer layer Legitimate Service,MaliciousTargetDomain detect
+        // immediately Outer layer Legitimate Service,MaliciousTargetDomain detect
         let module = LinkReputationModule::new(None);
         let ctx = make_ctx(&[
             "https://nym1-ib.adnxs.com/click?clickenc=https%3A%2F%2Fxvkrnbstq.tk%2Fpayload",
         ]);
         let result = module.analyze(&ctx).await.unwrap();
-       // xvkrnbstq.tk:.tk Suspicious TLD + randomDomain -> Mark
+        // xvkrnbstq.tk:.tk Suspicious TLD + randomDomain -> Mark
         assert!(
             result.threat_level > ThreatLevel::Safe,
             "Malicious target behind redirect service must still be detected, got {:?}",
@@ -1669,20 +1668,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_redirect_exempt_does_not_skip_blacklisted() {
-       // if Outer layerDomain Name Medium,immediately Service
-       // (Whenfirst domain_blacklist, TestVerify)
+        // if Outer layerDomain Name Medium,immediately Service
+        // (Whenfirst domain_blacklist, TestVerify)
         let module = LinkReputationModule::new(None);
-       // sendgrid.net Service
+        // sendgrid.net Service
         let ctx =
             make_ctx(&["https://track.sendgrid.net/redirect?url=https%3A%2F%2Fwww.example.com"]);
         let result = module.analyze(&ctx).await.unwrap();
-       // sendgrid.net Name -> -> Safe
+        // sendgrid.net Name -> -> Safe
         assert_eq!(result.threat_level, ThreatLevel::Safe);
     }
 
     #[tokio::test]
     async fn test_redirect_target_analyzed_not_outer() {
-       // Verify: Outer layerDomain,ButTargetDomain found suspicious_domains Medium
+        // Verify: Outer layerDomain,ButTargetDomain found suspicious_domains Medium
         let module = LinkReputationModule::new(None);
         let ctx =
             make_ctx(&["https://nym1-ib.adnxs.com/click?clickenc=https%3A%2F%2Fmalware.tk%2Fdrop"]);
@@ -1696,13 +1695,13 @@ mod tests {
             .iter()
             .filter_map(|v| v.as_str())
             .collect::<Vec<_>>();
-       // TargetDomain malware.tk SuspiciousListMedium
+        // TargetDomain malware.tk SuspiciousListMedium
         assert!(
             suspicious.iter().any(|d| d.contains("malware.tk")),
             "Redirect target domain should be in suspicious_domains: {:?}",
             suspicious
         );
-       // Outer layerDomain adnxs.com SuspiciousListMedium
+        // Outer layerDomain adnxs.com SuspiciousListMedium
         assert!(
             !suspicious.iter().any(|d| d.contains("adnxs.com")),
             "Outer redirect service domain should NOT be in suspicious_domains: {:?}",

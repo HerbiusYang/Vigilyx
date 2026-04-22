@@ -213,7 +213,11 @@ fn collect_candidate_urls(ctx: &SecurityContext, signals: &LureSignals) -> Vec<S
         .collect()
 }
 
-fn assess_fetched_page(original_url: &str, fetch: &FetchResult, signals: &LureSignals) -> PageAssessment {
+fn assess_fetched_page(
+    original_url: &str,
+    fetch: &FetchResult,
+    signals: &LureSignals,
+) -> PageAssessment {
     let mut assessment = PageAssessment::default();
     if fetch.error.is_some() {
         return assessment;
@@ -227,7 +231,8 @@ fn assess_fetched_page(original_url: &str, fetch: &FetchResult, signals: &LureSi
         .to_lowercase();
     let page_text_lower = fetch.page_text.to_lowercase();
     let combined = format!("{} {} {}", final_url_lower, title_lower, page_text_lower);
-    let has_login_form = fetch.form_analysis.has_login_form || fetch.form_analysis.password_fields > 0;
+    let has_login_form =
+        fetch.form_analysis.has_login_form || fetch.form_analysis.password_fields > 0;
     let has_auth_barrier = contains_any(&combined, AUTH_BARRIER_TERMS);
     let has_device_code = contains_any(&combined, DEVICE_CODE_PAGE_TERMS);
     let has_oauth_flow = contains_any(&combined, OAUTH_URL_TERMS);
@@ -240,14 +245,19 @@ fn assess_fetched_page(original_url: &str, fetch: &FetchResult, signals: &LureSi
 
     if signals.keyword_context && has_device_code {
         assessment.score += 0.45;
-        assessment.categories.push("device_code_landing".to_string());
+        assessment
+            .categories
+            .push("device_code_landing".to_string());
         assessment.evidence.push(Evidence {
             description: format!(
                 "Landing page {} matches device-code phishing flow",
                 fetch.final_url
             ),
             location: Some("landing_page".to_string()),
-            snippet: fetch.page_title.clone().or_else(|| Some(fetch.final_url.clone())),
+            snippet: fetch
+                .page_title
+                .clone()
+                .or_else(|| Some(fetch.final_url.clone())),
         });
     } else if has_device_code && (lands_on_official_login || has_oauth_flow) {
         assessment.score += 0.25;
@@ -264,35 +274,48 @@ fn assess_fetched_page(original_url: &str, fetch: &FetchResult, signals: &LureSi
 
     if has_auth_barrier {
         assessment.score += 0.20;
-        assessment.categories.push("auth_barrier_landing".to_string());
+        assessment
+            .categories
+            .push("auth_barrier_landing".to_string());
         assessment.evidence.push(Evidence {
             description: format!(
                 "Landing page {} shows CAPTCHA / human-verification barrier",
                 fetch.final_url
             ),
             location: Some("landing_page".to_string()),
-            snippet: fetch.page_title.clone().or_else(|| Some(fetch.final_url.clone())),
+            snippet: fetch
+                .page_title
+                .clone()
+                .or_else(|| Some(fetch.final_url.clone())),
         });
     }
 
     if has_auth_barrier && has_login_form {
         assessment.score += 0.20;
-        assessment.categories.push("captcha_gated_login".to_string());
+        assessment
+            .categories
+            .push("captcha_gated_login".to_string());
     }
 
     if signals.keyword_context && has_login_form {
         assessment.score += 0.20;
-        assessment.categories.push("phishing_landing_chain".to_string());
+        assessment
+            .categories
+            .push("phishing_landing_chain".to_string());
     }
 
     if redirected_to_different_domain && has_login_form {
         assessment.score += 0.15;
-        assessment.categories.push("redirected_login_landing".to_string());
+        assessment
+            .categories
+            .push("redirected_login_landing".to_string());
     }
 
     if lands_on_official_login && has_login_form && signals.keyword_context {
         assessment.score += 0.10;
-        assessment.categories.push("official_login_landing".to_string());
+        assessment
+            .categories
+            .push("official_login_landing".to_string());
     }
 
     assessment
@@ -443,7 +466,10 @@ mod tests {
     fn test_device_code_landing_is_scored() {
         let signals = derive_lure_signals_from_text(
             "secure voicemail microsoft 365 device code enter the code immediately",
-            &[normalize_text("secure voicemail"), normalize_text("device code")],
+            &[
+                normalize_text("secure voicemail"),
+                normalize_text("device code"),
+            ],
         );
         let fetch = mock_fetch(
             "https://example.com/message",
@@ -455,17 +481,25 @@ mod tests {
 
         let assessment = assess_fetched_page("https://example.com/message", &fetch, &signals);
 
-        assert!(assessment.score >= 0.40, "device-code landing should score strongly");
-        assert!(assessment
-            .categories
-            .contains(&"device_code_landing".to_string()));
+        assert!(
+            assessment.score >= 0.40,
+            "device-code landing should score strongly"
+        );
+        assert!(
+            assessment
+                .categories
+                .contains(&"device_code_landing".to_string())
+        );
     }
 
     #[test]
     fn test_captcha_gated_login_is_scored() {
         let signals = derive_lure_signals_from_text(
             "review your mailbox login alert",
-            &[normalize_text("mailbox alert"), normalize_text("review now")],
+            &[
+                normalize_text("mailbox alert"),
+                normalize_text("review now"),
+            ],
         );
         let fetch = mock_fetch(
             "https://mail-check.example/login",
@@ -477,13 +511,20 @@ mod tests {
 
         let assessment = assess_fetched_page("https://mail-check.example/login", &fetch, &signals);
 
-        assert!(assessment.score >= 0.30, "captcha-gated login should be suspicious");
-        assert!(assessment
-            .categories
-            .contains(&"auth_barrier_landing".to_string()));
-        assert!(assessment
-            .categories
-            .contains(&"captcha_gated_login".to_string()));
+        assert!(
+            assessment.score >= 0.30,
+            "captcha-gated login should be suspicious"
+        );
+        assert!(
+            assessment
+                .categories
+                .contains(&"auth_barrier_landing".to_string())
+        );
+        assert!(
+            assessment
+                .categories
+                .contains(&"captcha_gated_login".to_string())
+        );
     }
 
     #[test]

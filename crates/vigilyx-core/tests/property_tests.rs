@@ -6,9 +6,7 @@
 use proptest::prelude::*;
 use vigilyx_core::security::{Bpa, ThreatLevel, dempster_combine, dempster_combine_n};
 
-
 // Strategy: arbitrary valid BPA
-
 
 /// Generate an arbitrary closed-world BPA by sampling three positive floats
 /// and normalizing them to sum to 1.0.
@@ -44,9 +42,7 @@ fn arb_bpa_tbm() -> impl Strategy<Value = Bpa> {
         })
 }
 
-
 // BPA construction invariants
-
 
 proptest! {
    /// Invariant: Bpa::new always produces a valid BPA (sum = 1.0, non-negative).
@@ -131,9 +127,7 @@ proptest! {
     }
 }
 
-
 // Dempster combination deeper invariants
-
 
 proptest! {
    /// Invariant: Combining two identical BPAs with high belief should increase belief
@@ -188,9 +182,7 @@ proptest! {
     }
 }
 
-
 // ThreatLevel properties
-
 
 proptest! {
    /// Invariant: ThreatLevel::from_score is monotonically non-decreasing.

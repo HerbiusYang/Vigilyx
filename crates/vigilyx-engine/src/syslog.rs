@@ -162,7 +162,7 @@ pub struct SyslogForwarder {
 }
 
 impl SyslogForwarder {
-   /// Start Syslog handler
+    /// Start Syslog handler
     pub fn start(config: SyslogForwardConfig) -> Result<Self, String> {
         resolve_syslog_target(&config)?;
 
@@ -182,7 +182,7 @@ impl SyslogForwarder {
         Ok(Self { tx, dropped })
     }
 
-   /// (non-blocking,channelfull drop)
+    /// (non-blocking,channelfull drop)
     pub fn try_forward(&self, incident: &DataSecurityIncident) {
         match self.tx.try_send(incident.clone()) {
             Ok(()) => {}
@@ -216,7 +216,7 @@ async fn sender_loop(
     let mut udp_sock: Option<UdpSocket> = None;
     let mut reconnect_delay = std::time::Duration::from_secs(1);
 
-   // initialize UDP socket (0.0.0.0:0)
+    // initialize UDP socket (0.0.0.0:0)
     if !is_tcp {
         match UdpSocket::bind("0.0.0.0:0").await {
             Ok(s) => {
@@ -233,7 +233,7 @@ async fn sender_loop(
     let mut sent_count: u64 = 0;
 
     while let Some(incident) = rx.recv().await {
-       // Critical
+        // Critical
         if incident.severity < min_sev {
             continue;
         }
@@ -246,10 +246,10 @@ async fn sender_loop(
         let msg_bytes = msg.as_bytes();
 
         if is_tcp {
-           // TCP: Send,Failed
+            // TCP: Send,Failed
             let mut sent = false;
             for _ in 0..3 {
-               // EnsureConnectionstored
+                // EnsureConnectionstored
                 if tcp_conn.is_none() {
                     let addr = match resolve_syslog_target(&config) {
                         Ok(addr) => addr,
@@ -300,12 +300,11 @@ async fn sender_loop(
             if !sent {
                 error!(
                     "Syslog TCP: failed to send after 3 attempts to {}:{}",
-                    config.server_address,
-                    config.port
+                    config.server_address, config.port
                 );
             }
         } else {
-           // UDP: StatusSend
+            // UDP: StatusSend
             if let Some(ref sock) = udp_sock {
                 let addr = match resolve_syslog_target(&config) {
                     Ok(addr) => addr,
@@ -413,11 +412,11 @@ mod tests {
 
     #[test]
     fn test_pri_calculation() {
-       // facility=4 (auth), severity=2 (critical) -> 4*8+2 = 34
+        // facility=4 (auth), severity=2 (critical) -> 4*8+2 = 34
         assert_eq!(calc_pri(4, 2), 34);
-       // facility=1 (user), severity=6 (info) -> 1*8+6 = 14
+        // facility=1 (user), severity=6 (info) -> 1*8+6 = 14
         assert_eq!(calc_pri(1, 6), 14);
-       // facility=0, severity=0 -> 0
+        // facility=0, severity=0 -> 0
         assert_eq!(calc_pri(0, 0), 0);
     }
 
@@ -448,7 +447,7 @@ mod tests {
         let incident = make_test_incident(DataSecuritySeverity::High);
         let msg = format_rfc5424(&incident, 4);
 
-        assert!(msg.starts_with("<35>")); 
+        assert!(msg.starts_with("<35>"));
         assert!(msg.contains("vigilyx"));
         assert!(msg.contains("ds-engine"));
         assert!(msg.contains("draft_box_abuse"));
@@ -464,7 +463,7 @@ mod tests {
         let incident = make_test_incident(DataSecuritySeverity::Medium);
         let msg = format_rfc3164(&incident, 4);
 
-        assert!(msg.starts_with("<36>")); 
+        assert!(msg.starts_with("<36>"));
         assert!(msg.contains("vigilyx:"));
         assert!(msg.contains("[medium]"));
         assert!(msg.contains("draft_box_abuse"));
@@ -508,7 +507,7 @@ mod tests {
         let mut incident = make_test_incident(DataSecuritySeverity::High);
         incident.summary = "A".repeat(500);
         let msg = format_rfc5424(&incident, 4);
-       // summary MessageMedium Break/Judge 256 characters
+        // summary MessageMedium Break/Judge 256 characters
         assert!(!msg.contains(&"A".repeat(300)));
     }
 

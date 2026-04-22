@@ -8,12 +8,12 @@ use std::sync::Arc;
 
 use chrono::{Duration, Utc};
 use tokio::sync::RwLock;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use vigilyx_core::security::{
-    BounceHarvestConfig, BulkMailingConfig, InternalDomainImpersonationConfig,
-    IocEntry, ThreatLevel, ThreatScene, ThreatSceneStatus, ThreatSceneType,
+    BounceHarvestConfig, BulkMailingConfig, InternalDomainImpersonationConfig, IocEntry,
+    ThreatLevel, ThreatScene, ThreatSceneStatus, ThreatSceneType,
 };
 use vigilyx_db::VigilDb;
 
@@ -24,16 +24,17 @@ const SCAN_INTERVAL_SECS: u64 = 300;
 const INITIAL_DELAY_SECS: u64 = 120;
 
 /// Spawn the background threat scene detector.
-pub fn spawn_scene_detector(
-    db: VigilDb,
-    internal_domains: Arc<RwLock<HashSet<String>>>,
-) {
+pub fn spawn_scene_detector(db: VigilDb, internal_domains: Arc<RwLock<HashSet<String>>>) {
     tokio::spawn(async move {
         // Wait for engine to stabilize
         tokio::time::sleep(std::time::Duration::from_secs(INITIAL_DELAY_SECS)).await;
-        info!("Threat scene detector started, scan interval {}s", SCAN_INTERVAL_SECS);
+        info!(
+            "Threat scene detector started, scan interval {}s",
+            SCAN_INTERVAL_SECS
+        );
 
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(SCAN_INTERVAL_SECS));
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_secs(SCAN_INTERVAL_SECS));
         loop {
             interval.tick().await;
             let domains = internal_domains.read().await.clone();
@@ -58,7 +59,9 @@ async fn run_detection_cycle(
     let domain_list: Vec<String> = internal_domains.iter().cloned().collect();
 
     // 1. Bulk mailing detection
-    if let Some(rule) = rules.iter().find(|r| r.scene_type == ThreatSceneType::BulkMailing)
+    if let Some(rule) = rules
+        .iter()
+        .find(|r| r.scene_type == ThreatSceneType::BulkMailing)
         && rule.enabled
     {
         let config: BulkMailingConfig =
@@ -67,7 +70,9 @@ async fn run_detection_cycle(
     }
 
     // 2. Bounce harvest detection
-    if let Some(rule) = rules.iter().find(|r| r.scene_type == ThreatSceneType::BounceHarvest)
+    if let Some(rule) = rules
+        .iter()
+        .find(|r| r.scene_type == ThreatSceneType::BounceHarvest)
         && rule.enabled
     {
         let config: BounceHarvestConfig =
@@ -76,7 +81,9 @@ async fn run_detection_cycle(
     }
 
     // 3. Internal domain impersonation detection
-    if let Some(rule) = rules.iter().find(|r| r.scene_type == ThreatSceneType::InternalDomainImpersonation)
+    if let Some(rule) = rules
+        .iter()
+        .find(|r| r.scene_type == ThreatSceneType::InternalDomainImpersonation)
         && rule.enabled
     {
         let config: InternalDomainImpersonationConfig =
@@ -320,9 +327,7 @@ async fn detect_bounce_harvest(
                 updated_at: now,
             };
 
-            if config.auto_block_enabled
-                && hit.bounce_count >= config.auto_block_bounce_threshold
-            {
+            if config.auto_block_enabled && hit.bounce_count >= config.auto_block_bounce_threshold {
                 let ioc_id = auto_block_domain(
                     db,
                     &hit.target_domain,
@@ -390,7 +395,9 @@ async fn detect_internal_impersonation(
     config: &InternalDomainImpersonationConfig,
 ) -> anyhow::Result<()> {
     // Get all external sender domains with aggregated stats
-    let candidates = db.query_external_sender_stats(internal_domains, config).await?;
+    let candidates = db
+        .query_external_sender_stats(internal_domains, config)
+        .await?;
     if candidates.is_empty() {
         return Ok(());
     }
@@ -611,7 +618,13 @@ fn check_domain_similarity<'a>(external: &str, internal: &str) -> Option<(&'a st
         let dist = levenshtein_distance(&ext_base, &int_base);
         let max_len = ext_base.len().max(int_base.len());
         // P1-1: Scale threshold by domain length
-        let max_dist = if max_len <= 6 { 1 } else if max_len <= 12 { 2 } else { 3 };
+        let max_dist = if max_len <= 6 {
+            1
+        } else if max_len <= 12 {
+            2
+        } else {
+            3
+        };
         if dist > 0 && dist <= max_dist && int_base.len() >= 4 {
             // Score degrades with higher edit distance
             let score = match dist {
@@ -627,13 +640,16 @@ fn check_domain_similarity<'a>(external: &str, internal: &str) -> Option<(&'a st
     // P1-3: Require separator-bounded match to avoid "art" matching "restart"
     if ext_base.len() > int_base.len() && int_base.len() >= 4 {
         let is_prefix = ext_base.starts_with(&int_base)
-            && ext_base.as_bytes().get(int_base.len()).is_some_and(|&b| b == b'-' || b == b'.');
+            && ext_base
+                .as_bytes()
+                .get(int_base.len())
+                .is_some_and(|&b| b == b'-' || b == b'.');
         let is_suffix = ext_base.ends_with(&int_base)
             && ext_base.len() > int_base.len()
             && ext_base.as_bytes()[ext_base.len() - int_base.len() - 1] == b'-';
         // Allow unbounded prefix only if external is significantly longer (e.g. "examplemail")
-        let is_long_prefix = ext_base.starts_with(&int_base)
-            && ext_base.len() >= int_base.len() + 3;
+        let is_long_prefix =
+            ext_base.starts_with(&int_base) && ext_base.len() >= int_base.len() + 3;
         if is_prefix || is_suffix || is_long_prefix {
             return Some(("subdomain_prefix", 0.70));
         }
@@ -656,18 +672,13 @@ fn split_domain(domain: &str) -> (String, String) {
     // P1-2: Expanded list covering CN, Asia, Europe, etc.
     static MULTI_TLDS: &[&str] = &[
         // UK
-        "co.uk", "org.uk", "ac.uk",
-        // China
+        "co.uk", "org.uk", "ac.uk", // China
         "com.cn", "org.cn", "net.cn", "gov.cn", "edu.cn", "ac.cn", "mil.cn",
         // Hong Kong / Taiwan
-        "com.hk", "org.hk", "com.tw", "org.tw",
-        // Oceania
-        "com.au", "org.au", "co.nz",
-        // Americas
-        "com.br",
-        // Japan / Korea
-        "co.jp", "or.jp", "co.kr", "or.kr",
-        // Southeast Asia
+        "com.hk", "org.hk", "com.tw", "org.tw", // Oceania
+        "com.au", "org.au", "co.nz",  // Americas
+        "com.br", // Japan / Korea
+        "co.jp", "or.jp", "co.kr", "or.kr", // Southeast Asia
         "com.sg", "co.in", "co.id", "co.th", "com.my", "com.ph",
         // Middle East / Europe
         "co.il", "com.es", "com.fr", "com.it",
@@ -696,9 +707,21 @@ fn collapse_homoglyphs(s: &str) -> String {
         if i + 1 < chars.len() {
             let pair = [chars[i], chars[i + 1]];
             match pair {
-                ['r', 'n'] => { result.push('m'); i += 2; continue; }
-                ['c', 'l'] => { result.push('d'); i += 2; continue; }
-                ['v', 'v'] => { result.push('w'); i += 2; continue; }
+                ['r', 'n'] => {
+                    result.push('m');
+                    i += 2;
+                    continue;
+                }
+                ['c', 'l'] => {
+                    result.push('d');
+                    i += 2;
+                    continue;
+                }
+                ['v', 'v'] => {
+                    result.push('w');
+                    i += 2;
+                    continue;
+                }
                 _ => {}
             }
         }
@@ -744,39 +767,39 @@ fn normalize_homoglyph(s: &str) -> String {
             '8' => 'b',
 
             // ── Cyrillic (existing + new) ──
-            '\u{0430}' => 'a',  // а
-            '\u{0435}' => 'e',  // е
-            '\u{043E}' => 'o',  // о
-            '\u{0441}' => 'c',  // с
-            '\u{0440}' => 'p',  // р
-            '\u{0443}' => 'y',  // у
-            '\u{0445}' => 'x',  // х
-            '\u{0456}' => 'i',  // і
-            '\u{0458}' => 'j',  // ј
-            '\u{0455}' => 's',  // ѕ
-            '\u{0501}' => 'd',  // ԁ
-            '\u{044C}' => 'b',  // ь (soft sign, visually close to b)
+            '\u{0430}' => 'a', // а
+            '\u{0435}' => 'e', // е
+            '\u{043E}' => 'o', // о
+            '\u{0441}' => 'c', // с
+            '\u{0440}' => 'p', // р
+            '\u{0443}' => 'y', // у
+            '\u{0445}' => 'x', // х
+            '\u{0456}' => 'i', // і
+            '\u{0458}' => 'j', // ј
+            '\u{0455}' => 's', // ѕ
+            '\u{0501}' => 'd', // ԁ
+            '\u{044C}' => 'b', // ь (soft sign, visually close to b)
 
             // ── Greek ──
-            '\u{03BF}' => 'o',  // ο (omicron)
-            '\u{03B1}' => 'a',  // α (alpha)
-            '\u{03B5}' => 'e',  // ε (epsilon)
-            '\u{03BD}' => 'v',  // ν (nu)
-            '\u{03C1}' => 'p',  // ρ (rho)
-            '\u{03C4}' => 't',  // τ (tau)
-            '\u{03BA}' => 'k',  // κ (kappa)
-            '\u{03B9}' => 'i',  // ι (iota)
-            '\u{03B7}' => 'n',  // η (eta)
-            '\u{03C9}' => 'w',  // ω (omega)
+            '\u{03BF}' => 'o', // ο (omicron)
+            '\u{03B1}' => 'a', // α (alpha)
+            '\u{03B5}' => 'e', // ε (epsilon)
+            '\u{03BD}' => 'v', // ν (nu)
+            '\u{03C1}' => 'p', // ρ (rho)
+            '\u{03C4}' => 't', // τ (tau)
+            '\u{03BA}' => 'k', // κ (kappa)
+            '\u{03B9}' => 'i', // ι (iota)
+            '\u{03B7}' => 'n', // η (eta)
+            '\u{03C9}' => 'w', // ω (omega)
 
             // ── Latin Extended / IPA ──
-            '\u{0251}' => 'a',  // ɑ (Latin alpha)
-            '\u{0258}' => 'e',  // ɘ (reversed e)
-            '\u{026A}' => 'i',  // ɪ (small capital I)
-            '\u{0261}' => 'g',  // ɡ (script g)
-            '\u{0269}' => 'i',  // ɩ (iota)
-            '\u{028F}' => 'y',  // ʏ (small capital Y)
-            '\u{0266}' => 'h',  // ɦ (hooktop h)
+            '\u{0251}' => 'a', // ɑ (Latin alpha)
+            '\u{0258}' => 'e', // ɘ (reversed e)
+            '\u{026A}' => 'i', // ɪ (small capital I)
+            '\u{0261}' => 'g', // ɡ (script g)
+            '\u{0269}' => 'i', // ɩ (iota)
+            '\u{028F}' => 'y', // ʏ (small capital Y)
+            '\u{0266}' => 'h', // ɦ (hooktop h)
 
             _ => c,
         })
@@ -790,8 +813,12 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
     let m = a_chars.len();
     let n = b_chars.len();
 
-    if m == 0 { return n; }
-    if n == 0 { return m; }
+    if m == 0 {
+        return n;
+    }
+    if n == 0 {
+        return m;
+    }
 
     let mut prev: Vec<usize> = (0..=n).collect();
     let mut curr = vec![0usize; n + 1];
@@ -799,10 +826,12 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
     for i in 1..=m {
         curr[0] = i;
         for j in 1..=n {
-            let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
-            curr[j] = (prev[j] + 1)
-                .min(curr[j - 1] + 1)
-                .min(prev[j - 1] + cost);
+            let cost = if a_chars[i - 1] == b_chars[j - 1] {
+                0
+            } else {
+                1
+            };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
         }
         std::mem::swap(&mut prev, &mut curr);
     }

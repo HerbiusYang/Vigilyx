@@ -150,7 +150,7 @@ impl SecurityModule for AttachScanModule {
             };
             let last_ext = ext_owned.as_str();
 
-           // --- 1. Dangerous extension ---
+            // --- 1. Dangerous extension ---
             if module_data().contains("dangerous_extensions", last_ext) {
                 total_score += 0.35;
                 categories.push("dangerous_extension".to_string());
@@ -162,15 +162,15 @@ impl SecurityModule for AttachScanModule {
                 });
             }
 
-           // --- 2. Double extension ---
+            // --- 2. Double extension ---
             let parts: Vec<&str> = filename_lower.split('.').collect();
             if parts.len() >= 3 {
-               // The second-to-last extension exists and last extension is dangerous
+                // The second-to-last extension exists and last extension is dangerous
                 let second_ext = parts[parts.len() - 2];
                 if module_data().contains("dangerous_extensions", last_ext)
                     || module_data().contains("dangerous_extensions", second_ext)
                 {
-                   // Only add if we haven't already flagged it as dangerous ext above
+                    // Only add if we haven't already flagged it as dangerous ext above
                     if !module_data().contains("dangerous_extensions", last_ext) {
                         total_score += 0.30;
                         categories.push("double_extension".to_string());
@@ -187,7 +187,7 @@ impl SecurityModule for AttachScanModule {
                 }
             }
 
-           // --- 3. MIME / extension mismatch ---
+            // --- 3. MIME / extension mismatch ---
             if let Some(expected_prefix) = expected_mime_for_ext(last_ext) {
                 let content_type_lower = att.content_type.to_lowercase();
                 if !mime_matches_expected_type(last_ext, &content_type_lower, expected_prefix) {
@@ -195,7 +195,7 @@ impl SecurityModule for AttachScanModule {
                     let is_dangerous_ext = module_data().contains("dangerous_extensions", last_ext);
 
                     if is_generic && !is_dangerous_ext {
-                       // Generic octet-stream for non-dangerous files is normal
+                        // Generic octet-stream for non-dangerous files is normal
                     } else {
                         total_score += 0.20;
                         categories.push("mime_mismatch".to_string());
@@ -211,7 +211,7 @@ impl SecurityModule for AttachScanModule {
                 }
             }
 
-           // --- 4. Zero-byte file ---
+            // --- 4. Zero-byte file ---
             if att.size == 0 {
                 total_score += 0.10;
                 categories.push("zero_byte".to_string());
@@ -222,7 +222,7 @@ impl SecurityModule for AttachScanModule {
                 });
             }
 
-           // --- 5. Very large file (>25MB) ---
+            // --- 5. Very large file (>25MB) ---
             if att.size > MAX_FILE_SIZE {
                 total_score += 0.10;
                 categories.push("oversized".to_string());
@@ -237,16 +237,12 @@ impl SecurityModule for AttachScanModule {
                 });
             }
 
-           // --- 6. Magic bytes cross-validation ---
+            // --- 6. Magic bytes cross-validation ---
             if let Some(ref b64) = att.content_base64
                 && let Some(bytes) = decode_base64_bytes(b64)
             {
-                let magic_result = analyze_magic_bytes(
-                    &bytes,
-                    &att.filename,
-                    last_ext,
-                    &att.content_type,
-                );
+                let magic_result =
+                    analyze_magic_bytes(&bytes, &att.filename, last_ext, &att.content_type);
                 total_score += magic_result.score;
                 if !magic_result.categories.is_empty() {
                     categories.extend(magic_result.categories);
@@ -360,13 +356,18 @@ fn analyze_magic_bytes(
 
     // ZIP-based Office formats: .docx/.xlsx/.pptx are ZIP archives (normal)
     if detected == DetectedFileType::ZipArchive
-        && matches!(ext, "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "jar" | "apk" | "epub")
+        && matches!(
+            ext,
+            "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "jar" | "apk" | "epub"
+        )
     {
         return result;
     }
 
     // text/plain variants: CSV, JSON, XML, etc. are all detected as PlainText
-    if detected == DetectedFileType::PlainText && module_data().contains("text_plain_compatible_extensions", ext) {
+    if detected == DetectedFileType::PlainText
+        && module_data().contains("text_plain_compatible_extensions", ext)
+    {
         return result;
     }
 
@@ -410,7 +411,9 @@ fn analyze_magic_bytes(
         result.evidence.push(Evidence {
             description: format!(
                 "Executable disguise: {} claims to be .{} but is actually {} (magic bytes)",
-                filename, ext, detected.display_name()
+                filename,
+                ext,
+                detected.display_name()
             ),
             location: Some(format!("attachment:{}", filename)),
             snippet: None,
@@ -445,7 +448,9 @@ fn analyze_magic_bytes(
         result.evidence.push(Evidence {
             description: format!(
                 "Type mismatch: {} claims to be .{} but is actually {} (magic bytes)",
-                filename, ext, detected.display_name()
+                filename,
+                ext,
+                detected.display_name()
             ),
             location: Some(format!("attachment:{}", filename)),
             snippet: None,
@@ -588,7 +593,11 @@ mod tests {
             result.score
         );
         assert!(result.categories.contains(&"encrypted_archive".to_string()));
-        assert!(result.categories.contains(&"encrypted_attachment".to_string()));
+        assert!(
+            result
+                .categories
+                .contains(&"encrypted_attachment".to_string())
+        );
     }
 
     #[test]
@@ -602,7 +611,11 @@ mod tests {
             result.score
         );
         assert!(result.categories.contains(&"encrypted_pdf".to_string()));
-        assert!(result.categories.contains(&"encrypted_attachment".to_string()));
+        assert!(
+            result
+                .categories
+                .contains(&"encrypted_attachment".to_string())
+        );
     }
 
     // ─── High-risk disguise tests ───
@@ -618,7 +631,11 @@ mod tests {
             SCORE_HIGH_RISK_DISGUISE,
             result.score
         );
-        assert!(result.categories.contains(&"executable_disguise".to_string()));
+        assert!(
+            result
+                .categories
+                .contains(&"executable_disguise".to_string())
+        );
     }
 
     #[test]
@@ -632,7 +649,11 @@ mod tests {
             SCORE_HIGH_RISK_DISGUISE,
             result.score
         );
-        assert!(result.categories.contains(&"executable_disguise".to_string()));
+        assert!(
+            result
+                .categories
+                .contains(&"executable_disguise".to_string())
+        );
     }
 
     #[test]
@@ -640,10 +661,12 @@ mod tests {
         // ELF binary with .png extension → high-risk
         let data = [0x7F, 0x45, 0x4C, 0x46, 0x02, 0x01, 0x01, 0x00];
         let result = run_magic_check("image.png", "image/png", &data);
+        assert!((result.score - SCORE_HIGH_RISK_DISGUISE).abs() < f64::EPSILON,);
         assert!(
-            (result.score - SCORE_HIGH_RISK_DISGUISE).abs() < f64::EPSILON,
+            result
+                .categories
+                .contains(&"executable_disguise".to_string())
         );
-        assert!(result.categories.contains(&"executable_disguise".to_string()));
     }
 
     // ─── Whitelist tests (should NOT flag) ───
@@ -730,7 +753,11 @@ mod tests {
             SCORE_HIGH_RISK_DISGUISE,
             result.score
         );
-        assert!(result.categories.contains(&"executable_disguise".to_string()));
+        assert!(
+            result
+                .categories
+                .contains(&"executable_disguise".to_string())
+        );
     }
 
     #[test]
@@ -738,10 +765,12 @@ mod tests {
         // PHP script disguised as .jpg → high-risk
         let data = b"<?php echo shell_exec($_GET['cmd']); ?> padding for length test data";
         let result = run_magic_check("photo.jpg", "image/jpeg", data);
+        assert!((result.score - SCORE_HIGH_RISK_DISGUISE).abs() < f64::EPSILON,);
         assert!(
-            (result.score - SCORE_HIGH_RISK_DISGUISE).abs() < f64::EPSILON,
+            result
+                .categories
+                .contains(&"executable_disguise".to_string())
         );
-        assert!(result.categories.contains(&"executable_disguise".to_string()));
     }
 
     #[test]
@@ -755,7 +784,11 @@ mod tests {
             SCORE_HIGH_RISK_DISGUISE,
             result.score
         );
-        assert!(result.categories.contains(&"executable_disguise".to_string()));
+        assert!(
+            result
+                .categories
+                .contains(&"executable_disguise".to_string())
+        );
         assert!(
             result.categories.contains(&"html_smuggling".to_string()),
             "Should detect HTML smuggling"
@@ -765,9 +798,13 @@ mod tests {
     #[test]
     fn test_html_as_html_no_flag() {
         // Normal HTML file with .html extension — should NOT flag
-        let data = b"<!DOCTYPE html><html><head><title>Hello</title></head><body>World</body></html>";
+        let data =
+            b"<!DOCTYPE html><html><head><title>Hello</title></head><body>World</body></html>";
         let result = run_magic_check("page.html", "text/html", data);
-        assert_eq!(result.score, 0.0, "HTML with .html extension should not be flagged");
+        assert_eq!(
+            result.score, 0.0,
+            "HTML with .html extension should not be flagged"
+        );
     }
 
     // ─── General mismatch tests ───

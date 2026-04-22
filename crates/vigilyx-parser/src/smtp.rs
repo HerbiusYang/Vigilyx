@@ -14,20 +14,20 @@ impl SmtpParser {
         Self
     }
 
-   /// Parse SMTP data
+    /// Parse SMTP data
     pub fn parse(&self, data: &[u8]) -> Option<String> {
-       // SecurityCheck: limitParsedatasize
+        // SecurityCheck: limitParsedatasize
         let data = if data.len() > MAX_PARSE_SIZE {
             &data[..MAX_PARSE_SIZE]
         } else {
             data
         };
 
-       // Security UTF-8 Convert (InvalidSequence)
+        // Security UTF-8 Convert (InvalidSequence)
         let text = match std::str::from_utf8(data) {
             Ok(s) => s.trim(),
             Err(_) => {
-               // onlyParse ASCII
+                // onlyParse ASCII
                 let ascii_end = data.iter().position(|&b| b > 127).unwrap_or(data.len());
                 std::str::from_utf8(&data[..ascii_end]).ok()?.trim()
             }
@@ -37,18 +37,18 @@ impl SmtpParser {
             return None;
         }
 
-       // Parse Response (Header)
+        // Parse Response (Header)
         if let Some(first_char) = text.chars().next()
             && first_char.is_ascii_digit()
         {
             return self.parse_response(text);
         }
 
-       // Parse Command
+        // Parse Command
         self.parse_command(text)
     }
 
-   /// Parse SMTP Command
+    /// Parse SMTP Command
     fn parse_command(&self, text: &str) -> Option<String> {
         let upper = text.to_uppercase();
         let parts: Vec<&str> = text.splitn(2, ' ').collect();
@@ -73,7 +73,7 @@ impl SmtpParser {
             "AUTH" => format!("AUTH {}", arg),
             "STARTTLS" => "STARTTLS".to_string(),
             _ => {
-               // Checkwhether emailContent
+                // Checkwhether emailContent
                 if text.len() > 50 {
                     format!("[DATA: {} bytes]", text.len())
                 } else {
@@ -85,7 +85,7 @@ impl SmtpParser {
         Some(parsed)
     }
 
-   /// Parse SMTP Response
+    /// Parse SMTP Response
     fn parse_response(&self, text: &str) -> Option<String> {
         let code: u16 = text.chars().take(3).collect::<String>().parse().ok()?;
 
@@ -120,17 +120,17 @@ impl SmtpParser {
         Some(format!("{} {}", code, message))
     }
 
-   /// FromTextMediumExtractemailAddress (withSecurityCheck)
+    /// FromTextMediumExtractemailAddress (withSecurityCheck)
     fn extract_email(&self, text: &str) -> Option<String> {
         let start = text.find('<')?;
         let end = text.find('>')?;
         if start < end {
             let email = &text[start + 1..end];
-           // SecurityCheck: VerifyemailLength
+            // SecurityCheck: VerifyemailLength
             if email.len() > MAX_EMAIL_LENGTH {
                 return None;
             }
-           // SecurityCheck: only Validofemailcharacters
+            // SecurityCheck: only Validofemailcharacters
             if email
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || "@.-_+".contains(c))

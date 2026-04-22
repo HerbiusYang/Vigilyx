@@ -105,7 +105,7 @@ impl WhitelistManager {
         }
     }
 
-   /// From DB Load Name Memorycache
+    /// From DB Load Name Memorycache
     pub async fn load(&self) -> anyhow::Result<()> {
         let entries = self.db.get_whitelist().await?;
         let mut cache = self.cache.write().await;
@@ -131,12 +131,12 @@ impl WhitelistManager {
         Ok(())
     }
 
-   /// Checkwhether Name Medium (Memorycache)
+    /// Checkwhether Name Medium (Memorycache)
     pub async fn is_whitelisted(&self, entry_type: &str, value: &str) -> bool {
         let cache = self.cache.read().await;
         if !cache.loaded {
             drop(cache);
-           // Loadcache, DB Query
+            // Loadcache, DB Query
             return self
                 .db
                 .is_whitelisted(entry_type, value)
@@ -146,37 +146,38 @@ impl WhitelistManager {
         cache.contains(entry_type, value)
     }
 
-   /// CheckSenderDomainwhether
+    /// CheckSenderDomainwhether
     pub async fn is_trusted_domain(&self, domain: &str) -> bool {
         self.is_whitelisted(WL_DOMAIN, &domain.to_lowercase()).await
     }
 
-   /// Check IP whether
+    /// Check IP whether
     pub async fn is_trusted_ip(&self, ip: &str) -> bool {
         self.is_whitelisted(WL_IP, ip).await
     }
 
-   /// CheckSenderemailwhether
+    /// CheckSenderemailwhether
     pub async fn is_trusted_email(&self, email: &str) -> bool {
         self.is_whitelisted(WL_EMAIL, &email.to_lowercase()).await
     }
 
-   /// CheckFileHashwhether
+    /// CheckFileHashwhether
     pub async fn is_trusted_hash(&self, hash: &str) -> bool {
         self.is_whitelisted(WL_HASH, &hash.to_lowercase()).await
     }
 
-   /// Add Name entry
+    /// Add Name entry
     pub async fn add(
         &self,
         entry_type: String,
         value: String,
         description: Option<String>,
     ) -> anyhow::Result<WhitelistEntry> {
-        self.add_with_creator(entry_type, value, description, "admin").await
+        self.add_with_creator(entry_type, value, description, "admin")
+            .await
     }
 
-   /// Add Name entry ()
+    /// Add Name entry ()
     pub async fn add_with_creator(
         &self,
         entry_type: String,
@@ -194,16 +195,16 @@ impl WhitelistManager {
         };
         self.db.add_whitelist_entry(&entry).await?;
 
-       // Updatecache
+        // Updatecache
         let mut cache = self.cache.write().await;
         cache.insert(&entry_type, value);
 
         Ok(entry)
     }
 
-   /// delete Name entry
+    /// delete Name entry
     pub async fn remove(&self, id: Uuid) -> anyhow::Result<bool> {
-       // Connectdelete, cache(Avoid table findentryType)
+        // Connectdelete, cache(Avoid table findentryType)
         let deleted = self.db.delete_whitelist_entry(id).await?;
         if deleted {
             self.load().await?;
@@ -211,17 +212,17 @@ impl WhitelistManager {
         Ok(deleted)
     }
 
-   /// Getcomplete Name (API Return)
+    /// Getcomplete Name (API Return)
     pub async fn list(&self) -> anyhow::Result<Vec<WhitelistEntry>> {
         self.db.get_whitelist().await
     }
 
-   /// BatchSet Name (All,)
+    /// BatchSet Name (All,)
     pub async fn set_all(&self, entries: Vec<WhitelistEntry>) -> anyhow::Result<()> {
-       // Batch (DELETE ALL + INSERT N)
+        // Batch (DELETE ALL + INSERT N)
         self.db.batch_set_whitelist(&entries).await?;
 
-       // cache
+        // cache
         self.load().await?;
 
         Ok(())

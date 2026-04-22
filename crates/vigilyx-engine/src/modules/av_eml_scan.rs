@@ -53,7 +53,7 @@ impl SecurityModule for AvEmlScanModule {
     async fn analyze(&self, ctx: &SecurityContext) -> Result<ModuleResult, EngineError> {
         let start = Instant::now();
 
-       // Reconstruct EML
+        // Reconstruct EML
         let eml_bytes = ctx.session.reconstruct_eml();
         if eml_bytes.is_empty() {
             let duration_ms = start.elapsed().as_millis() as u64;
@@ -68,7 +68,7 @@ impl SecurityModule for AvEmlScanModule {
 
         let eml_size = eml_bytes.len();
 
-       // Scan via ClamAV
+        // Scan via ClamAV
         match self.client.scan_bytes(&eml_bytes).await {
             Ok(ScanResult::Clean) => {
                 let duration_ms = start.elapsed().as_millis() as u64;
@@ -134,7 +134,11 @@ impl SecurityModule for AvEmlScanModule {
                     categories: vec!["scan_incomplete".to_string()],
                     summary: format!(
                         "Antivirus scan could not be completed — ClamAV {} (EML {} bytes)",
-                        if reason == "clamav_timeout" { "timed out" } else { "unavailable" },
+                        if reason == "clamav_timeout" {
+                            "timed out"
+                        } else {
+                            "unavailable"
+                        },
                         eml_size
                     ),
                     evidence: vec![Evidence {
@@ -216,7 +220,7 @@ mod tests {
         let session = make_session(Some("body"), vec![att]);
         let eml = session.reconstruct_eml();
 
-       // Should contain the decoded attachment bytes
+        // Should contain the decoded attachment bytes
         let eml_str = String::from_utf8_lossy(&eml);
         assert!(eml_str.contains("Hello"));
     }
@@ -233,7 +237,7 @@ mod tests {
         let session = make_session(Some("body"), vec![att]);
         let eml = session.reconstruct_eml();
 
-       // Should still produce valid output, just without the attachment binary
+        // Should still produce valid output, just without the attachment binary
         let eml_str = String::from_utf8_lossy(&eml);
         assert!(eml_str.contains("body"));
     }
@@ -250,7 +254,7 @@ mod tests {
         session.content.headers.clear();
         let eml = session.reconstruct_eml();
 
-       // Just the blank line separator
+        // Just the blank line separator
         assert_eq!(eml, b"\r\n");
     }
 }

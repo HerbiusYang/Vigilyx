@@ -15,10 +15,6 @@ use super::publish_engine_reload;
 use crate::AppState;
 use crate::auth::AuthenticatedUser;
 
-
-
-
-
 /// Get
 pub async fn get_whitelist(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match state.managers.whitelist_manager.list().await {
@@ -121,7 +117,7 @@ pub async fn update_whitelist(
 
     match state.managers.whitelist_manager.set_all(entries).await {
         Ok(()) => {
-           // Engine process New
+            // Engine process New
             publish_engine_reload(&state, "whitelist").await;
             match state.managers.whitelist_manager.list().await {
                 Ok(saved) => {
@@ -177,10 +173,8 @@ pub async fn add_whitelist_entry(
                     .into_iter()
                     .find(|entry| entry.entry_type == entry_type && entry.value == value);
                 match existing {
-                    Some(entry) => {
-                        ApiResponse::ok(serde_json::to_value(entry).unwrap_or_default())
-                            .into_response()
-                    }
+                    Some(entry) => ApiResponse::ok(serde_json::to_value(entry).unwrap_or_default())
+                        .into_response(),
                     None => ApiResponse::<serde_json::Value>::ok(serde_json::json!({
                         "entry_type": entry_type,
                         "value": value,

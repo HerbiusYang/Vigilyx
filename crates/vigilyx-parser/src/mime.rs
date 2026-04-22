@@ -50,50 +50,50 @@ const MAX_TOTAL_PARTS: usize = 200;
 /// MIME Classification
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MimePartType {
-   /// Plain text
+    /// Plain text
     TextPlain,
-   /// HTML
+    /// HTML
     TextHtml,
-   /// Attachment
+    /// Attachment
     Attachment,
-   /// multipart handler
+    /// multipart handler
     Multipart,
-    
+
     Other,
 }
 
 /// ContentTransmissionEncode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TransferEncoding {
-   /// 7bit ASCII
+    /// 7bit ASCII
     #[default]
     SevenBit,
-   /// 8bit
+    /// 8bit
     EightBit,
-   /// Base64
+    /// Base64
     Base64,
-   /// Quoted-Printable
+    /// Quoted-Printable
     QuotedPrintable,
-   /// Binary
+    /// Binary
     Binary,
 }
 
 /// MIME
 #[derive(Debug, Clone)]
 pub struct MimePart {
-   /// ContentType (if "text/plain; charset=utf-8")
+    /// ContentType (if "text/plain; charset=utf-8")
     pub content_type: String,
-   /// Parse ofType
+    /// Parse ofType
     pub part_type: MimePartType,
-   /// TransmissionEncode
+    /// TransmissionEncode
     pub encoding: TransferEncoding,
-   /// characters
+    /// characters
     pub charset: Option<String>,
-   /// FileName (Attachment)
+    /// FileName (Attachment)
     pub filename: Option<String>,
-   /// Content
+    /// Content
     pub content: Vec<u8>,
-   /// (multipart)
+    /// (multipart)
     pub parts: Vec<MimePart>,
 }
 
@@ -105,7 +105,7 @@ struct HeaderIndex {
 }
 
 impl HeaderIndex {
-   /// Time/CountTraverse Index, Time/Count find() of O(n*m)
+    /// Time/CountTraverse Index, Time/Count find() of O(n*m)
     fn build(headers: &[(String, String)]) -> Self {
         let mut idx = HeaderIndex {
             content_type: None,
@@ -149,9 +149,9 @@ impl HeaderIndex {
 
 /// MIME Parsehandler
 pub struct MimeParser {
-   /// linedelimited lookuphandler (\r\n\r\n)
+    /// linedelimited lookuphandler (\r\n\r\n)
     header_end_finder: memmem::Finder<'static>,
-   /// linedelimited lookuphandler (\n\n, Used for Unix email)
+    /// linedelimited lookuphandler (\n\n, Used for Unix email)
     header_end_finder_lf: memmem::Finder<'static>,
 }
 
@@ -163,7 +163,7 @@ impl MimeParser {
         }
     }
 
-   /// ParseCompleteemail
+    /// ParseCompleteemail
     pub fn parse(&self, data: &[u8]) -> Result<EmailContent, MimeError> {
         if data.len() > MAX_EMAIL_SIZE {
             return Err(MimeError::TooLarge);
@@ -172,22 +172,22 @@ impl MimeParser {
         let mut content = EmailContent::new();
         content.raw_size = data.len();
 
-       // HeaderAndbody
+        // HeaderAndbody
         let (headers_bytes, body_bytes) = self.split_headers_body(data)?;
 
-       // ParseHeader
+        // ParseHeader
         let headers = self.parse_headers(headers_bytes)?;
         for (name, value) in &headers {
             content.add_header(name.clone(), value.clone());
         }
 
-       // Time/CountIndexlookup Header
+        // Time/CountIndexlookup Header
         let idx = HeaderIndex::build(&headers);
         let content_type = idx.content_type(&headers);
         let encoding = idx.encoding(&headers);
         let missing_top_level_content_type = idx.content_type.is_none();
 
-       // Parsebody (Use ascii_starts_with_ci Avoid to_lowercase Allocate)
+        // Parsebody (Use ascii_starts_with_ci Avoid to_lowercase Allocate)
         if ascii_starts_with_ci(content_type, "multipart/") {
             let mut total_parts = 0usize;
             self.parse_multipart_inner(
@@ -211,10 +211,10 @@ impl MimeParser {
             }
         }
 
-       // ExtractlinkConnect
+        // ExtractlinkConnect
         content.extract_links_from_html();
 
-       // FromPlain textMedium ExtractlinkConnect
+        // FromPlain textMedium ExtractlinkConnect
         if let Some(ref text) = content.body_text {
             self.extract_links_from_text(text, &mut content.links);
         }
@@ -301,7 +301,8 @@ impl MimeParser {
                 break;
             }
 
-            let next_boundary = Self::find_boundary_line_start(trimmed, cursor).unwrap_or(trimmed.len());
+            let next_boundary =
+                Self::find_boundary_line_start(trimmed, cursor).unwrap_or(trimmed.len());
             let part_bytes = &trimmed[cursor..next_boundary];
             cursor = next_boundary;
 
@@ -399,7 +400,9 @@ impl MimeParser {
             if (pos == 0 || bytes[pos - 1] == b'\n')
                 && bytes.get(pos) == Some(&b'-')
                 && bytes.get(pos + 1) == Some(&b'-')
-                && bytes.get(pos + 2).is_some_and(|b| !matches!(b, b'\r' | b'\n'))
+                && bytes
+                    .get(pos + 2)
+                    .is_some_and(|b| !matches!(b, b'\r' | b'\n'))
             {
                 return Some(pos);
             }
@@ -423,23 +426,23 @@ impl MimeParser {
             .unwrap_or(line)
     }
 
-   /// HeaderAndbody (\r\n\r\n And \n\n delimited)
+    /// HeaderAndbody (\r\n\r\n And \n\n delimited)
     fn split_headers_body<'a>(&self, data: &'a [u8]) -> Result<(&'a [u8], &'a [u8]), MimeError> {
-       // priority \r\n\r\n
+        // priority \r\n\r\n
         if let Some(pos) = self.header_end_finder.find(data) {
             if pos > MAX_HEADER_SIZE {
                 return Err(MimeError::HeaderTooLarge);
             }
             return Ok((&data[..pos], &data[pos + 4..]));
         }
-       // : \n\n (Unix, MTA Use \r)
+        // : \n\n (Unix, MTA Use \r)
         if let Some(pos) = self.header_end_finder_lf.find(data) {
             if pos > MAX_HEADER_SIZE {
                 return Err(MimeError::HeaderTooLarge);
             }
             return Ok((&data[..pos], &data[pos + 2..]));
         }
-       // not find linedelimited,possiblyonly Header
+        // not find linedelimited,possiblyonly Header
         if data.len() > MAX_HEADER_SIZE {
             Ok((&data[..MAX_HEADER_SIZE], &[]))
         } else {
@@ -447,7 +450,7 @@ impl MimeParser {
         }
     }
 
-   /// ParseHeader (Performance notes: clone,Use std::mem::take)
+    /// ParseHeader (Performance notes: clone,Use std::mem::take)
     fn parse_headers(&self, data: &[u8]) -> Result<Vec<(String, String)>, MimeError> {
         let text = String::from_utf8_lossy(data);
         let mut headers = Vec::new();
@@ -459,7 +462,7 @@ impl MimeParser {
                 break;
             }
 
-           // line (Header)
+            // line (Header)
             if line.starts_with(' ') || line.starts_with('\t') {
                 if !current_name.is_empty() {
                     current_value.push(' ');
@@ -468,7 +471,7 @@ impl MimeParser {
                 continue;
             }
 
-           // Save firstofHeader (take clone,)
+            // Save firstofHeader (take clone,)
             if !current_name.is_empty() {
                 headers.push((
                     std::mem::take(&mut current_name),
@@ -476,14 +479,14 @@ impl MimeParser {
                 ));
             }
 
-           // ParseNewHeader
+            // ParseNewHeader
             if let Some(colon_pos) = line.find(':') {
                 current_name = line[..colon_pos].trim().to_string();
                 current_value = line[colon_pos + 1..].trim().to_string();
             }
         }
 
-       // Savelast1Header
+        // Savelast1Header
         if !current_name.is_empty() {
             headers.push((current_name, current_value));
         }
@@ -491,7 +494,7 @@ impl MimeParser {
         Ok(headers)
     }
 
-   /// Parse multipart email (with depthlimit + part totallimit)
+    /// Parse multipart email (with depthlimit + part totallimit)
     fn parse_multipart_inner(
         &self,
         content: &mut EmailContent,
@@ -510,22 +513,22 @@ impl MimeParser {
             return Ok(());
         }
 
-       // Extract boundary
+        // Extract boundary
         let boundary = Self::extract_boundary(content_type).ok_or(MimeError::NoBoundary)?;
         let boundary_marker = format!("--{}", boundary);
         let boundary_bytes = boundary_marker.as_bytes();
 
-       // SIMD boundary bit (Iterate collect)
+        // SIMD boundary bit (Iterate collect)
         let finder = memmem::Finder::new(boundary_bytes);
         let positions: Vec<usize> = finder.find_iter(body).collect();
 
         for i in 0..positions.len() {
-           // Check total parts budget before processing each part
+            // Check total parts budget before processing each part
             if *total_parts >= MAX_TOTAL_PARTS {
                 warn!("multipart 总 part 数超限 ({}), hops后续部分", *total_parts);
                 break;
             }
-           *total_parts += 1;
+            *total_parts += 1;
 
             let part_start = positions[i] + boundary_bytes.len();
             let part_end = positions.get(i + 1).copied().unwrap_or(body.len());
@@ -536,12 +539,12 @@ impl MimeParser {
 
             let part_data = &body[part_start..part_end];
 
-           // Checkwhether EndMark (--boundary--)
+            // Checkwhether EndMark (--boundary--)
             if part_data.starts_with(b"--") {
                 continue;
             }
 
-           // hops CRLF
+            // hops CRLF
             let part_data = if part_data.starts_with(b"\r\n") {
                 &part_data[2..]
             } else if part_data.starts_with(b"\n") {
@@ -554,7 +557,7 @@ impl MimeParser {
                 continue;
             }
 
-           // Parse ofHeaderAndContent
+            // Parse ofHeaderAndContent
             if let Ok((part_headers, part_body)) = self.split_headers_body(part_data) {
                 let headers = self.parse_headers(part_headers).unwrap_or_default();
                 let idx = HeaderIndex::build(&headers);
@@ -562,7 +565,7 @@ impl MimeParser {
                 let part_content_type = idx.content_type(&headers);
                 let part_encoding = idx.encoding(&headers);
 
-               // of multipart (depthlimit)
+                // of multipart (depthlimit)
                 if ascii_starts_with_ci(part_content_type, "multipart/") {
                     self.parse_multipart_inner(
                         content,
@@ -574,10 +577,10 @@ impl MimeParser {
                     continue;
                 }
 
-               // DecodeContent
+                // DecodeContent
                 let decoded = self.decode_content(part_body, part_encoding)?;
 
-               // Judge Attachment body
+                // Judge Attachment body
                 let content_disposition = idx.disposition(&headers);
 
                 let is_attachment = ascii_contains_ci(content_disposition, "attachment")
@@ -656,15 +659,14 @@ impl MimeParser {
 
         if ascii_contains_ci(part_content_type, "text/plain") && content.body_text.is_none() {
             content.body_text = Some(decode_charset(&decoded, part_content_type));
-        } else if ascii_contains_ci(part_content_type, "text/html") && content.body_html.is_none()
-        {
+        } else if ascii_contains_ci(part_content_type, "text/html") && content.body_html.is_none() {
             content.body_html = Some(decode_charset(&decoded, part_content_type));
         }
     }
 
-   /// Extract boundary Parameter
+    /// Extract boundary Parameter
     fn extract_boundary(content_type: &str) -> Option<String> {
-       // sizewrite "boundary=" (Avoid to_lowercase Allocate)
+        // sizewrite "boundary=" (Avoid to_lowercase Allocate)
         let bytes = content_type.as_bytes();
         let needle = b"boundary=";
         let pos = bytes.windows(needle.len()).position(|w| {
@@ -682,13 +684,13 @@ impl MimeParser {
         Some(boundary.to_string())
     }
 
-   /// ExtractFileName (Performance notes: 1ofsizewrite)
+    /// ExtractFileName (Performance notes: 1ofsizewrite)
     fn extract_filename(s: &str) -> Option<String> {
         let bytes = s.as_bytes();
 
-       // filename="xxx"
+        // filename="xxx"
         if let Some(pos) = ascii_find_ci(bytes, b"filename=") {
-           // Exclude filename*= (1 Process)
+            // Exclude filename*= (1 Process)
             if pos + 9 < bytes.len() && bytes[pos + 9] != b'*' {
                 let rest = &s[pos + 9..];
                 let filename = if let Some(stripped) = rest.strip_prefix('"') {
@@ -702,7 +704,7 @@ impl MimeParser {
             }
         }
 
-       // filename*=utf-8''xxx
+        // filename*=utf-8''xxx
         if let Some(pos) = ascii_find_ci(bytes, b"filename*=") {
             let rest = &s[pos + 10..];
             if let Some(quote_pos) = rest.find("''") {
@@ -713,7 +715,7 @@ impl MimeParser {
             }
         }
 
-       // name="xxx"
+        // name="xxx"
         if let Some(pos) = ascii_find_ci(bytes, b"name=") {
             let rest = &s[pos + 5..];
             let name = if let Some(stripped) = rest.strip_prefix('"') {
@@ -729,7 +731,7 @@ impl MimeParser {
         None
     }
 
-   /// Extract MIME Type (ContainsParameter)
+    /// Extract MIME Type (ContainsParameter)
     fn extract_mime_type(content_type: &str) -> &str {
         content_type
             .split(';')
@@ -738,7 +740,7 @@ impl MimeParser {
             .trim()
     }
 
-   /// ParseTransmissionEncode (Use eq_ignore_ascii_case Avoid to_lowercase Allocate)
+    /// ParseTransmissionEncode (Use eq_ignore_ascii_case Avoid to_lowercase Allocate)
     fn parse_encoding(s: &str) -> TransferEncoding {
         let trimmed = s.trim();
         if trimmed.eq_ignore_ascii_case("base64") {
@@ -754,7 +756,7 @@ impl MimeParser {
         }
     }
 
-   /// DecodeContent
+    /// DecodeContent
     fn decode_content(
         &self,
         data: &[u8],
@@ -767,7 +769,7 @@ impl MimeParser {
         }
     }
 
-   /// Base64 Decode (Performance notes: hops ConnectDecode, Medium Vec Allocate)
+    /// Base64 Decode (Performance notes: hops ConnectDecode, Medium Vec Allocate)
     fn decode_base64(data: &[u8]) -> Result<Vec<u8>, MimeError> {
         const DECODE_TABLE: [i8; 256] = {
             let mut table = [-1i8; 256];
@@ -781,19 +783,19 @@ impl MimeParser {
             table
         };
 
-       // Outputsize (base64 Encode 4/3 size)
+        // Outputsize (base64 Encode 4/3 size)
         let mut output = Vec::with_capacity(data.len() * 3 / 4);
         let mut buffer = 0u32;
         let mut bits = 0u8;
 
-       // ConnectTraverse data,hops AndInvalidcharacters (Medium Vec Allocate)
+        // ConnectTraverse data,hops AndInvalidcharacters (Medium Vec Allocate)
         for &byte in data {
-           // padding
+            // padding
             if byte == b'=' {
                 break;
             }
 
-           // hops characters (Judge filter + collect)
+            // hops characters (Judge filter + collect)
             if byte.is_ascii_whitespace() {
                 continue;
             }
@@ -816,7 +818,7 @@ impl MimeParser {
         Ok(output)
     }
 
-   /// Base64 Encode (Used for Attachment2Base/Radixdata storeofString)
+    /// Base64 Encode (Used for Attachment2Base/Radixdata storeofString)
     fn encode_base64(data: &[u8]) -> String {
         const ENCODE_TABLE: &[u8; 64] =
             b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -854,16 +856,16 @@ impl MimeParser {
         output
     }
 
-   /// Quoted-Printable Decode (Performance notes: memchr bit '=' ByteBranch)
+    /// Quoted-Printable Decode (Performance notes: memchr bit '=' ByteBranch)
     fn decode_quoted_printable(data: &[u8]) -> Result<Vec<u8>, MimeError> {
         let mut output = Vec::with_capacity(data.len());
         let mut pos = 0;
 
         while pos < data.len() {
-           // Use memchr hops 1 '='(SIMD Add)
+            // Use memchr hops 1 '='(SIMD Add)
             match memchr::memchr(b'=', &data[pos..]) {
                 Some(offset) => {
-                   // Batch '=' firstof Byte (Branch)
+                    // Batch '=' firstof Byte (Branch)
                     output.extend_from_slice(&data[pos..pos + offset]);
                     let eq_pos = pos + offset;
 
@@ -877,7 +879,7 @@ impl MimeParser {
                         pos = eq_pos + 3;
                         continue;
                     }
-                   // line (=\r\n =\n)
+                    // line (=\r\n =\n)
                     if eq_pos + 1 < data.len()
                         && (data[eq_pos + 1] == b'\r' || data[eq_pos + 1] == b'\n')
                     {
@@ -892,12 +894,12 @@ impl MimeParser {
                             };
                         continue;
                     }
-                   // of '=', keep
+                    // of '=', keep
                     output.push(b'=');
                     pos = eq_pos + 1;
                 }
                 None => {
-                   // not '=',Batch remainingdata
+                    // not '=',Batch remainingdata
                     output.extend_from_slice(&data[pos..]);
                     break;
                 }
@@ -907,7 +909,7 @@ impl MimeParser {
         Ok(output)
     }
 
-   /// 6Base/Radixcharacters value (function)
+    /// 6Base/Radixcharacters value (function)
     #[inline(always)]
     fn hex_value(b: u8) -> Option<u8> {
         match b {
@@ -918,7 +920,7 @@ impl MimeParser {
         }
     }
 
-   /// SHA256 Hash
+    /// SHA256 Hash
     fn compute_hash(data: &[u8]) -> String {
         let mut hasher = Sha256::new();
         hasher.update(data);
@@ -926,9 +928,9 @@ impl MimeParser {
         hex::encode(result)
     }
 
-   /// FromPlain textMediumExtractlinkConnect (Performance notes: HashSet Deduplicate O(1) Vec O(n))
+    /// FromPlain textMediumExtractlinkConnect (Performance notes: HashSet Deduplicate O(1) Vec O(n))
     fn extract_links_from_text(&self, text: &str, links: &mut Vec<EmailLink>) {
-       // Use owned String of HashSet Avoid borrow checker
+        // Use owned String of HashSet Avoid borrow checker
         let mut seen: HashSet<String> = HashSet::with_capacity(links.len());
         for link in links.iter() {
             seen.insert(link.url.clone());
@@ -962,7 +964,7 @@ impl MimeParser {
                         url: url_owned,
                         text: None,
                         suspicious,
-                        });
+                    });
                 }
 
                 pos = url_start + prefix.len() + skipped_ws + url_end;
@@ -1014,16 +1016,16 @@ fn ascii_find_ci(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// : "text/plain; charset=GBK" -> Some("GBK")
 /// : "text/html; charset=\"UTF-8\"" -> Some("UTF-8")
 fn extract_charset(content_type: &str) -> Option<&str> {
-   // lookup "charset=" (sizewrite Sensitive)
+    // lookup "charset=" (sizewrite Sensitive)
     let lower = content_type.as_bytes();
     let needle = b"charset=";
     let pos = lower
         .windows(needle.len())
         .position(|w| w.eq_ignore_ascii_case(needle))?;
     let rest = &content_type[pos + needle.len()..];
-   // possiblyof Number
+    // possiblyof Number
     let rest = rest.trim_start_matches('"').trim_start_matches('\'');
-   // Get delimited
+    // Get delimited
     let end = rest
         .find([';', ' ', '"', '\'', '\r', '\n'])
         .unwrap_or(rest.len());
@@ -1038,26 +1040,26 @@ fn extract_charset(content_type: &str) -> Option<&str> {
 /// according to Content-Type Mediumof charset ByteDecode UTF-8 String
 /// GBK, GB2312, GB18030, Big5, ISO-8859-*, Shift_JIS wait Encode
 fn decode_charset(data: &[u8], content_type: &str) -> String {
-   // UTF-8 (, Scenario)
+    // UTF-8 (, Scenario)
     if let Ok(s) = std::str::from_utf8(data) {
         return s.to_owned();
     }
 
-   // Extract charset Parameter
+    // Extract charset Parameter
     if let Some(charset_name) = extract_charset(content_type) {
-       // encoding_rs lookupEncodehandler (Name: gbk/gb2312 -> GBK, big5, shift_jis, iso-8859-1 wait)
+        // encoding_rs lookupEncodehandler (Name: gbk/gb2312 -> GBK, big5, shift_jis, iso-8859-1 wait)
         if let Some(encoding) = Encoding::for_label(charset_name.as_bytes()) {
             let (decoded, _, had_errors) = encoding.decode(data);
             if !had_errors {
                 return decoded.into_owned();
             }
-           // immediately Error UTF-8 lossy
+            // immediately Error UTF-8 lossy
             return decoded.into_owned();
         }
         warn!("Unknowncharacters集: {}, 回退到 UTF-8 lossy", charset_name);
     }
 
-   // charset UnknownEncode: UTF-8 lossy
+    // charset UnknownEncode: UTF-8 lossy
     String::from_utf8_lossy(data).into_owned()
 }
 
@@ -1066,7 +1068,7 @@ fn decode_charset(data: &[u8], content_type: &str) -> String {
 /// encoding: B = Base64, Q = Quoted-Printable
 /// Example: =?utf-8?B?5Yqe5YWs5qW8?= -> " "
 pub fn decode_rfc2047(input: &str) -> String {
-   // path: if packetContains encoded-word Mark, ConnectReturn
+    // path: if packetContains encoded-word Mark, ConnectReturn
     if !input.contains("=?") {
         return input.to_string();
     }
@@ -1076,32 +1078,32 @@ pub fn decode_rfc2047(input: &str) -> String {
     let bytes = input.as_bytes();
 
     while pos < bytes.len() {
-       // lookup =? StartMark
+        // lookup =? StartMark
         if let Some(start) = input[pos..].find("=?") {
             let abs_start = pos + start;
 
-           // Add encoded-word firstofText
+            // Add encoded-word firstofText
             result.push_str(&input[pos..abs_start]);
 
-           // Parse =?charset?encoding?text?=
+            // Parse =?charset?encoding?text?=
             let rest = &input[abs_start + 2..];
 
-           // lookup charset
+            // lookup charset
             if let Some(q1) = rest.find('?') {
                 let charset_name = &rest[..q1];
                 let after_charset = &rest[q1 + 1..];
 
-               // lookup encoding (B or Q)
+                // lookup encoding (B or Q)
                 if after_charset.len() >= 2 && after_charset.as_bytes()[1] == b'?' {
                     let encoding_char = after_charset.as_bytes()[0].to_ascii_uppercase();
                     let after_enc = &after_charset[2..];
 
-                   // lookupEndMark?=
+                    // lookupEndMark?=
                     if let Some(end) = after_enc.find("?=") {
                         let encoded_text = &after_enc[..end];
                         let next_pos = abs_start + 2 + q1 + 1 + 2 + end + 2;
 
-                       // Decode
+                        // Decode
                         let decoded_bytes = match encoding_char {
                             b'B' => MimeParser::decode_base64(encoded_text.as_bytes()).ok(),
                             b'Q' => decode_rfc2047_q(encoded_text),
@@ -1109,7 +1111,7 @@ pub fn decode_rfc2047(input: &str) -> String {
                         };
 
                         if let Some(raw_bytes) = decoded_bytes {
-                           // according to charset Convert UTF-8
+                            // according to charset Convert UTF-8
                             let text = if charset_name.eq_ignore_ascii_case("utf-8")
                                 || charset_name.eq_ignore_ascii_case("utf8")
                             {
@@ -1124,11 +1126,11 @@ pub fn decode_rfc2047(input: &str) -> String {
                             };
                             result.push_str(&text);
                         } else {
-                           // DecodeFailed,keep
+                            // DecodeFailed,keep
                             result.push_str(&input[abs_start..next_pos]);
                         }
 
-                       // hops encoded-word of (RFC 2047 section 6.2)
+                        // hops encoded-word of (RFC 2047 section 6.2)
                         pos = next_pos;
                         let remaining = &input[pos..];
                         let trimmed = remaining.trim_start_matches([' ', '\t']);
@@ -1140,11 +1142,11 @@ pub fn decode_rfc2047(input: &str) -> String {
                 }
             }
 
-           // ParseFailed,keep =?
+            // ParseFailed,keep =?
             result.push_str("=?");
             pos = abs_start + 2;
         } else {
-           // not encoded-word
+            // not encoded-word
             result.push_str(&input[pos..]);
             break;
         }
@@ -1190,17 +1192,17 @@ fn decode_rfc2047_q(input: &str) -> Option<Vec<u8>> {
 /// MIME ParseError
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MimeError {
-   /// email large
+    /// email large
     TooLarge,
-   /// Header large
+    /// Header large
     HeaderTooLarge,
-   /// Invalidof UTF-8
+    /// Invalidof UTF-8
     InvalidUtf8,
-   /// boundary
+    /// boundary
     NoBoundary,
-   /// Base64 DecodeError
+    /// Base64 DecodeError
     Base64DecodeError,
-   /// Quoted-Printable DecodeError
+    /// Quoted-Printable DecodeError
     QuotedPrintableError,
 }
 
@@ -1279,7 +1281,10 @@ PGRpdj48Yj5XZWljaTwvYj48L2Rpdj4=\r\n\
         let content = parser.parse(email).unwrap();
 
         assert_eq!(content.body_text.as_deref(), Some("微子登"));
-        assert_eq!(content.body_html.as_deref(), Some("<div><b>Weici</b></div>"));
+        assert_eq!(
+            content.body_html.as_deref(),
+            Some("<div><b>Weici</b></div>")
+        );
     }
 
     #[test]
@@ -1313,14 +1318,18 @@ Content-Transfer-Encoding: base64\r\n\
 
         let content = parser.parse(email).unwrap();
 
-        assert!(content
-            .body_text
-            .as_deref()
-            .is_some_and(|body| body.contains("该邮件可能存在恶意内容")));
-        assert!(content
-            .body_html
-            .as_deref()
-            .is_some_and(|body| body.contains("检测结果：垃圾邮件")));
+        assert!(
+            content
+                .body_text
+                .as_deref()
+                .is_some_and(|body| body.contains("该邮件可能存在恶意内容"))
+        );
+        assert!(
+            content
+                .body_html
+                .as_deref()
+                .is_some_and(|body| body.contains("检测结果：垃圾邮件"))
+        );
         assert_eq!(content.attachments.len(), 1);
         assert_eq!(content.attachments[0].filename, "warn.jpg");
         assert!(content.attachments[0].content_base64.is_some());
@@ -1328,7 +1337,7 @@ Content-Transfer-Encoding: base64\r\n\
 
     #[test]
     fn test_rfc2047_base64() {
-       // =?utf-8?B?5Yqe5YWs5qW8?= -> " "
+        // =?utf-8?B?5Yqe5YWs5qW8?= -> " "
         let input = "=?utf-8?B?5Yqe5YWs5qW8?=";
         let decoded = decode_rfc2047(input);
         assert_eq!(decoded, "办公楼");
@@ -1336,7 +1345,7 @@ Content-Transfer-Encoding: base64\r\n\
 
     #[test]
     fn test_rfc2047_multiple() {
-       // Multiple encoded words should be joined (whitespace between them collapsed)
+        // Multiple encoded words should be joined (whitespace between them collapsed)
         let input = "=?utf-8?B?5Yqe5YWs5qW4?= =?utf-8?B?MjY=?=";
         let decoded = decode_rfc2047(input);
         assert!(decoded.contains("26"));
@@ -1344,7 +1353,7 @@ Content-Transfer-Encoding: base64\r\n\
 
     #[test]
     fn test_rfc2047_plain() {
-       // Plain text should pass through unchanged
+        // Plain text should pass through unchanged
         let input = "Hello World";
         let decoded = decode_rfc2047(input);
         assert_eq!(decoded, "Hello World");

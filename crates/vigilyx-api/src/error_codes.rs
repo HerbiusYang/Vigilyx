@@ -3,7 +3,6 @@
 
 //! client `error_code` field Processerror, errormessage.
 
-
 //! - `AUTH_xxx`: authentication authorizationerror
 //! - `VAL_xxx`: requestverifyerror (format, parameter, field)
 //! - `RES_xxx`: Source error (,)
@@ -97,7 +96,7 @@ mod tests {
 
     #[test]
     fn test_error_codes_follow_naming_convention() {
-       // AUTH codes start with "AUTH_"
+        // AUTH codes start with "AUTH_"
         assert!(AUTH_INVALID_CREDENTIALS.starts_with("AUTH_"));
         assert!(AUTH_TOKEN_EXPIRED.starts_with("AUTH_"));
         assert!(AUTH_RATE_LIMITED.starts_with("AUTH_"));
@@ -107,16 +106,16 @@ mod tests {
         assert!(AUTH_INTERNAL_SOURCE_DENIED.starts_with("AUTH_"));
         assert!(AUTH_FORBIDDEN.starts_with("AUTH_"));
 
-       // VAL codes start with "VAL_"
+        // VAL codes start with "VAL_"
         assert!(VALIDATION_INVALID_ID.starts_with("VAL_"));
         assert!(VALIDATION_INVALID_PARAMS.starts_with("VAL_"));
         assert!(VALIDATION_MISSING_FIELD.starts_with("VAL_"));
 
-       // RES codes start with "RES_"
+        // RES codes start with "RES_"
         assert!(RESOURCE_NOT_FOUND.starts_with("RES_"));
         assert!(RESOURCE_CONFLICT.starts_with("RES_"));
 
-       // INT codes start with "INT_"
+        // INT codes start with "INT_"
         assert!(INTERNAL_DATABASE_ERROR.starts_with("INT_"));
         assert!(INTERNAL_ENGINE_ERROR.starts_with("INT_"));
         assert!(INTERNAL_SERVICE_UNAVAILABLE.starts_with("INT_"));

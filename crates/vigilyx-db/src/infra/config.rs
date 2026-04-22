@@ -5,7 +5,7 @@ use anyhow::Result;
 use crate::VigilDb;
 
 impl VigilDb {
-   /// Read config value from config table
+    /// Read config value from config table
     pub async fn get_config(&self, key: &str) -> Result<Option<String>> {
         let row: Option<(String,)> = sqlx::query_as("SELECT value FROM config WHERE key = $1")
             .bind(key)
@@ -14,7 +14,7 @@ impl VigilDb {
         Ok(row.map(|(v,)| v))
     }
 
-   /// Set config value in config table
+    /// Set config value in config table
     pub async fn set_config(&self, key: &str, value: &str) -> Result<()> {
         sqlx::query(
             "INSERT INTO config (key, value) VALUES ($1, $2) \
@@ -27,10 +27,10 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Atomically bump the auth token version stored in the config table.
-   ///
-   /// This is used when logout must revoke previously issued JWTs before their
-   /// normal expiry time.
+    /// Atomically bump the auth token version stored in the config table.
+    ///
+    /// This is used when logout must revoke previously issued JWTs before their
+    /// normal expiry time.
     pub async fn bump_auth_token_version(&self) -> Result<u64> {
         let (value,): (String,) = sqlx::query_as(
             r#"

@@ -28,7 +28,7 @@ pub async fn import_sessions(
     State(state): State<Arc<AppState>>,
     Json(sessions): Json<Vec<EmailSession>>,
 ) -> impl IntoResponse {
-   // 0. Throttled auto-rotation check (at most once per 60 seconds)
+    // 0. Throttled auto-rotation check (at most once per 60 seconds)
     {
         let now = chrono::Utc::now().timestamp();
         let last = LAST_ROTATE_CHECK.load(Ordering::Relaxed);
@@ -44,7 +44,7 @@ pub async fn import_sessions(
         }
     }
 
-   // 1. Batch insert sessions (UPSERT + merge)
+    // 1. Batch insert sessions (UPSERT + merge)
     let (success_count, is_new_vec, merged) = match state.db.insert_sessions_batch(&sessions).await
     {
         Ok(result) => result,
@@ -57,7 +57,7 @@ pub async fn import_sessions(
         }
     };
 
-   // 2. Build merged session lookup map
+    // 2. Build merged session lookup map
     let merged_map: std::collections::HashMap<Uuid, &EmailSession> =
         merged.iter().map(|s| (s.id, s)).collect();
 
@@ -77,8 +77,8 @@ pub async fn import_sessions(
             let _ = state.messaging.ws_tx.send(ws_msg);
         }
 
-       // Engine processes sessions via Redis Streams
-       // API does not run SecurityEngine directly
+        // Engine processes sessions via Redis Streams
+        // API does not run SecurityEngine directly
     }
 
     ApiResponse::ok(serde_json::json!({
@@ -92,7 +92,7 @@ pub async fn update_stats(
     State(state): State<Arc<AppState>>,
     Json(stats): Json<TrafficStats>,
 ) -> impl IntoResponse {
-   // Broadcast stats update via WebSocket
+    // Broadcast stats update via WebSocket
     if state.messaging.ws_tx.receiver_count() > 0 {
         let _ = state.messaging.ws_tx.send(WsMessage::StatsUpdate(stats));
     }
@@ -138,7 +138,7 @@ pub async fn clear_database(
         Ok(_) => {
             tracing::info!("Database cleared (mode={}) in {}ms", mode, elapsed_ms);
 
-           // Write audit log for database clear operation
+            // Write audit log for database clear operation
             let db = state.engine_db.clone();
             let mode_clone = mode.clone();
             let username = user.username.clone();
@@ -158,7 +158,7 @@ pub async fn clear_database(
                 }
             });
 
-           // Broadcast zeroed stats to refresh the dashboard
+            // Broadcast zeroed stats to refresh the dashboard
             let zeroed_stats = TrafficStats {
                 total_sessions: 0,
                 active_sessions: 0,
@@ -174,7 +174,7 @@ pub async fn clear_database(
                 .messaging
                 .ws_tx
                 .send(WsMessage::StatsUpdate(zeroed_stats));
-           // Done
+            // Done
 
             ApiResponse::ok(serde_json::json!({
                 "message": "Database cleared",
@@ -189,9 +189,6 @@ pub async fn clear_database(
         }
     }
 }
-
-
-
 
 pub async fn factory_reset(
     State(state): State<Arc<AppState>>,
@@ -210,7 +207,6 @@ pub async fn factory_reset(
         .into_response();
     }
 
-    
     let _ = state
         .engine_db
         .write_audit_log(
@@ -228,7 +224,10 @@ pub async fn factory_reset(
             let new_token_version = match state.auth.config.reset_after_factory_reset().await {
                 Ok(version) => version,
                 Err(e) => {
-                    tracing::error!("Factory reset completed, but auth runtime reset failed: {}", e);
+                    tracing::error!(
+                        "Factory reset completed, but auth runtime reset failed: {}",
+                        e
+                    );
                     return ApiResponse::<serde_json::Value>::server_error(
                         &e,
                         "Factory reset completed but auth reset failed",
@@ -258,7 +257,10 @@ pub async fn factory_reset(
             crate::websocket::invalidate_websocket_sessions(&state);
 
             let elapsed_ms = start.elapsed().as_millis();
-            tracing::warn!("FACTORY RESET completed in {}ms — all data and config cleared", elapsed_ms);
+            tracing::warn!(
+                "FACTORY RESET completed in {}ms — all data and config cleared",
+                elapsed_ms
+            );
 
             let zeroed_stats = TrafficStats {
                 total_sessions: 0,
@@ -271,7 +273,10 @@ pub async fn factory_reset(
                 packets_per_second: 0.0,
                 bytes_per_second: 0.0,
             };
-            let _ = state.messaging.ws_tx.send(WsMessage::StatsUpdate(zeroed_stats));
+            let _ = state
+                .messaging
+                .ws_tx
+                .send(WsMessage::StatsUpdate(zeroed_stats));
 
             let mut headers = axum::http::HeaderMap::new();
             let secure_cookie =
@@ -301,11 +306,11 @@ pub async fn factory_reset(
 /// Precise clear: selectively delete sessions and/or security analysis data
 #[derive(Deserialize)]
 pub struct PreciseClearRequest {
-   /// "sessions" | "verdicts" | "both"
+    /// "sessions" | "verdicts" | "both"
     pub target: String,
-   /// For verdicts: filter by threat level ("high", "medium", "low", "safe", "all")
+    /// For verdicts: filter by threat level ("high", "medium", "low", "safe", "all")
     pub threat_level: Option<String>,
-   /// For sessions: delete data older than N days (0 = delete all)
+    /// For sessions: delete data older than N days (0 = delete all)
     pub older_than_days: Option<u32>,
 }
 
@@ -317,7 +322,10 @@ pub async fn precise_clear(
     let start = std::time::Instant::now();
 
     if let Some(level) = req.threat_level.as_deref()
-        && !matches!(level, "all" | "safe" | "low" | "medium" | "high" | "critical")
+        && !matches!(
+            level,
+            "all" | "safe" | "low" | "medium" | "high" | "critical"
+        )
     {
         return ApiResponse::<serde_json::Value>::bad_request(
             "Unknown threat_level. Options: all, safe, low, medium, high, critical",
@@ -667,7 +675,10 @@ fn cleanup_http_temp_files(ids: &[String]) {
     }
 
     if files_cleaned > 0 {
-        tracing::info!(files_cleaned, "Cleaned HTTP body temp files during precise clear");
+        tracing::info!(
+            files_cleaned,
+            "Cleaned HTTP body temp files during precise clear"
+        );
     }
 }
 

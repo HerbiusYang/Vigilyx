@@ -20,15 +20,15 @@ pub const MAX_ENGINES: usize = 8;
 /// Result of the Murphy D-S fusion pipeline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FusionResult {
-   /// Fused BPA after Murphy correction + self-combination.
+    /// Fused BPA after Murphy correction + self-combination.
     pub fused: Bpa,
-   /// Total conflict factor K [0, 1).
-   /// K> 0.7 -> engines highly contradictory -> possible sophisticated evasion.
+    /// Total conflict factor K [0, 1).
+    /// K> 0.7 -> engines highly contradictory -> possible sophisticated evasion.
     pub k_conflict: f64,
-   /// Number of engines that participated (excluding vacuous).
+    /// Number of engines that participated (excluding vacuous).
     pub engine_count: usize,
-   /// Per-engine Murphy credibility weights (sum = 1.0).
-   /// Indexed same order as input BPAs.
+    /// Per-engine Murphy credibility weights (sum = 1.0).
+    /// Indexed same order as input BPAs.
     pub credibility_weights: Vec<f64>,
 }
 
@@ -42,17 +42,12 @@ pub struct FusionResult {
 /// ```text
 /// D = | 1.0 0.0 0.5 0.0 | (Jaccard similarity matrix)
 
-
-
-
-
 /// has Jaccard similarity 0 with all non-empty sets and 1 with itself,
 /// so the dimension contributes an independent term.
 
 /// Expanded quadratic form (no matrix allocation):
 /// ```text
 /// 2 d = b + d + u + + b u + d u
-
 
 /// When = 0 for both inputs (closed-world), this is identical to the
 /// original 3-element formula.
@@ -62,10 +57,10 @@ fn jousselme_distance(a: Bpa, b: Bpa) -> f64 {
     let dd = a.d - b.d;
     let du = a.u - b.u;
     let de = a.epsilon - b.epsilon;
-   // Expanded D-quadratic form, factor of 0.5 from definition
-   // is orthogonal to all non-empty focal elements -> adds independent
+    // Expanded D-quadratic form, factor of 0.5 from definition
+    // is orthogonal to all non-empty focal elements -> adds independent
     let val = db * db + dd * dd + du * du + de * de + db * du + dd * du;
-   // val can be slightly negative due to floating point; clamp
+    // val can be slightly negative due to floating point; clamp
     (0.5 * val).max(0.0).sqrt()
 }
 
@@ -82,7 +77,6 @@ fn jousselme_distance(a: Bpa, b: Bpa) -> f64 {
 /// d'_i = d_i (1 - _max)
 /// u'_i = 1 - b'_i - d'_i
 
-
 /// This prevents correlated engines from artificially reinforcing each other.
 
 /// # Arguments
@@ -96,7 +90,7 @@ pub fn copula_discount(bpas: &[Bpa], corr: &[&[f64]]) -> Vec<Bpa> {
     let mut out = Vec::with_capacity(n);
 
     for i in 0..n {
-       // Find max correlation with any other engine
+        // Find max correlation with any other engine
         let mut max_rho = 0.0_f64;
         if i < corr.len() {
             let row = corr[i];
@@ -107,7 +101,7 @@ pub fn copula_discount(bpas: &[Bpa], corr: &[&[f64]]) -> Vec<Bpa> {
             }
         }
 
-       // Skip discount if correlation threshold not met
+        // Skip discount if correlation threshold not met
         if max_rho < 0.1 {
             out.push(bpas[i]);
         } else {
@@ -183,12 +177,12 @@ pub fn murphy_fusion(bpas: &[Bpa]) -> FusionResult {
         };
     }
 
-   // Step 1-2: Pairwise similarity -> support
-   // Use stack array for small N (<= MAX_ENGINES)
+    // Step 1-2: Pairwise similarity -> support
+    // Use stack array for small N (<= MAX_ENGINES)
     let mut support = [0.0_f64; MAX_ENGINES];
 
-   // Sequential pairwise: N <= 8 -> max C(8,2)=28 pairs, each ~30ns.
-   // Rayon dispatch overhead (~1-5s) exceeds total computation.
+    // Sequential pairwise: N <= 8 -> max C(8,2)=28 pairs, each ~30ns.
+    // Rayon dispatch overhead (~1-5s) exceeds total computation.
     for i in 0..n {
         for j in (i + 1)..n {
             let sim = 1.0 - jousselme_distance(bpas[i], bpas[j]);
@@ -197,19 +191,19 @@ pub fn murphy_fusion(bpas: &[Bpa]) -> FusionResult {
         }
     }
 
-   // Step 3: Credibility weights
+    // Step 3: Credibility weights
     let total_support: f64 = support[..n].iter().sum();
     let mut cred = Vec::with_capacity(n);
 
-   // More conservative threshold to avoid ill-conditioned weight normalization
+    // More conservative threshold to avoid ill-conditioned weight normalization
     let condition_threshold = 1e-8;
     if total_support > condition_threshold {
         let inv_total = 1.0 / total_support;
-       // Check if any single engine would dominate (weight> 0.99) -
-       // this indicates near-degenerate support and the weights are unreliable.
+        // Check if any single engine would dominate (weight> 0.99) -
+        // this indicates near-degenerate support and the weights are unreliable.
         let has_dominant = support[..n].iter().any(|&w| w * inv_total > 0.99);
         if has_dominant {
-           // Fall back to uniform weights to avoid single-engine dominance
+            // Fall back to uniform weights to avoid single-engine dominance
             let uniform = 1.0 / n as f64;
             cred.resize(n, uniform);
         } else {
@@ -218,12 +212,12 @@ pub fn murphy_fusion(bpas: &[Bpa]) -> FusionResult {
             }
         }
     } else {
-       // All equidistant or near-zero support: uniform weights
+        // All equidistant or near-zero support: uniform weights
         let uniform = 1.0 / n as f64;
         cred.resize(n, uniform);
     }
 
-   // Step 4: Weighted average BPA
+    // Step 4: Weighted average BPA
     let mut avg_b = 0.0_f64;
     let mut avg_d = 0.0_f64;
     let mut avg_u = 0.0_f64;
@@ -236,13 +230,13 @@ pub fn murphy_fusion(bpas: &[Bpa]) -> FusionResult {
 
     let avg = Bpa::new(avg_b, avg_d, avg_u);
 
-   // Step 5: Self-combine N-1 times
+    // Step 5: Self-combine N-1 times
     let mut result = avg;
     let mut total_k = 0.0_f64;
 
     for _ in 0..(n - 1) {
         let r = dempster_combine(result, avg);
-       // Accumulate conflict: K_total = 1 - (1 - K_i)
+        // Accumulate conflict: K_total = 1 - (1 - K_i)
         total_k = 1.0 - (1.0 - total_k) * (1.0 - r.conflict);
         result = r.combined;
     }
@@ -267,7 +261,7 @@ pub fn murphy_fusion(bpas: &[Bpa]) -> FusionResult {
 /// `FusionResult` with fused BPA, conflict factor, and credibility weights.
 #[inline]
 pub fn fuse_engines(engine_bpas: &[Bpa], corr_flat: &[f64]) -> FusionResult {
-   // Filter out vacuous BPAs - stack array avoids heap allocation (N <= MAX_ENGINES = 8)
+    // Filter out vacuous BPAs - stack array avoids heap allocation (N <= MAX_ENGINES = 8)
     let mut active = [Bpa::vacuous(); MAX_ENGINES];
     let mut n_active = 0;
     for &bpa in engine_bpas {
@@ -288,7 +282,7 @@ pub fn fuse_engines(engine_bpas: &[Bpa], corr_flat: &[f64]) -> FusionResult {
 
     let active_slice = &active[..n_active];
 
-   // Apply Copula discount if correlation matrix provided
+    // Apply Copula discount if correlation matrix provided
     let discounted = if !corr_flat.is_empty() && corr_flat.len() >= n_active * n_active {
         copula_discount_flat(active_slice, corr_flat, n_active)
     } else {
@@ -336,7 +330,7 @@ mod tests {
 
     #[test]
     fn test_jousselme_distance_bounds() {
-       // Max distance: certain threat vs certain benign
+        // Max distance: certain threat vs certain benign
         let d = jousselme_distance(Bpa::certain_threat(), Bpa::certain_benign());
         assert!(d > 0.0);
         assert!(d <= 1.0 + 1e-10);
@@ -344,7 +338,7 @@ mod tests {
 
     #[test]
     fn test_jousselme_distance_epsilon_dimension() {
-       // Two BPAs identical in (b,d,u) but different -> distance> 0
+        // Two BPAs identical in (b,d,u) but different -> distance> 0
         let a = Bpa {
             b: 0.4,
             d: 0.2,
@@ -375,7 +369,7 @@ mod tests {
             d_ac
         );
 
-       // Backward compat: when =0 for both, result matches old 3-element formula
+        // Backward compat: when =0 for both, result matches old 3-element formula
         let p = Bpa {
             b: 0.6,
             d: 0.2,
@@ -389,9 +383,9 @@ mod tests {
             epsilon: 0.0,
         };
         let d_pq = jousselme_distance(p, q);
-       // Manual: b=-0.3, d=0.2, u=0.1
-       // val = 0.09 + 0.04 + 0.01 + 0 + (-0.3)(0.1) + (0.2)(0.1) = 0.14 - 0.03 + 0.02 = 0.13
-       // d = sqrt(0.13/2) = sqrt(0.065) 0.2550
+        // Manual: b=-0.3, d=0.2, u=0.1
+        // val = 0.09 + 0.04 + 0.01 + 0 + (-0.3)(0.1) + (0.2)(0.1) = 0.14 - 0.03 + 0.02 = 0.13
+        // d = sqrt(0.13/2) = sqrt(0.065) 0.2550
         assert!(
             (d_pq - 0.065_f64.sqrt()).abs() < 1e-6,
             "Closed-world distance should match 3-element formula: {}",
@@ -420,7 +414,7 @@ mod tests {
 
     #[test]
     fn test_murphy_fusion_agreement() {
-       // Multiple engines agree on threat -> should reinforce belief
+        // Multiple engines agree on threat -> should reinforce belief
         let bpas = vec![
             Bpa {
                 b: 0.7,
@@ -447,8 +441,8 @@ mod tests {
             "Agreement should produce high belief: {:.3}",
             r.fused.b
         );
-       // K accumulates during N-1 self-combinations even for agreeing BPAs,
-       // because the weighted average retains nonzero d (disbelief).
+        // K accumulates during N-1 self-combinations even for agreeing BPAs,
+        // because the weighted average retains nonzero d (disbelief).
         assert!(
             r.k_conflict < 0.5,
             "K should stay moderate for agreeing BPAs: {:.3}",
@@ -458,7 +452,7 @@ mod tests {
 
     #[test]
     fn test_murphy_fusion_disagreement() {
-       // Engines disagree -> Murphy should mitigate
+        // Engines disagree -> Murphy should mitigate
         let bpas = vec![
             Bpa {
                 b: 0.9,
@@ -480,14 +474,14 @@ mod tests {
             },
         ];
         let r = murphy_fusion(&bpas);
-       // The outlier (strong disagreement) should be down-weighted
+        // The outlier (strong disagreement) should be down-weighted
         assert!(r.k_conflict > 0.1);
         assert!(r.fused.is_valid());
     }
 
     #[test]
     fn test_murphy_fusion_with_uncertainty() {
-       // Some engines uncertain -> should not dilute certain evidence
+        // Some engines uncertain -> should not dilute certain evidence
         let bpas = vec![
             Bpa {
                 b: 0.8,
@@ -503,7 +497,7 @@ mod tests {
                 epsilon: 0.0,
             },
         ];
-       // Direct murphy_fusion includes vacuous
+        // Direct murphy_fusion includes vacuous
         let r = murphy_fusion(&bpas);
         assert!(r.fused.is_valid());
     }
@@ -524,14 +518,14 @@ mod tests {
                 epsilon: 0.0,
             },
         ];
-       // High correlation between engine 0 and 1
+        // High correlation between engine 0 and 1
         let corr: &[&[f64]] = &[&[0.0, 0.8], &[0.8, 0.0]];
         let discounted = copula_discount(&bpas, corr);
 
-       // Both should have increased uncertainty
+        // Both should have increased uncertainty
         assert!(discounted[0].u > bpas[0].u);
         assert!(discounted[1].u > bpas[1].u);
-       // Committed mass should decrease
+        // Committed mass should decrease
         assert!(discounted[0].b < bpas[0].b);
     }
 

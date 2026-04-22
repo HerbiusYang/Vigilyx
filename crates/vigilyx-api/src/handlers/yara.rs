@@ -1,6 +1,5 @@
 //! YARA API Process
 
-
 //! - GET /security/yara-rules - YARA
 //! - POST /security/yara-rules - Create YARA
 //! - PUT /security/yara-rules/{id} - New YARA
@@ -22,9 +21,7 @@ use super::ApiResponse;
 use super::security::publish_engine_reload;
 use crate::AppState;
 
-
 // request/responseType
-
 
 #[derive(Debug, Deserialize)]
 pub struct YaraRuleQuery {
@@ -61,9 +58,7 @@ pub struct ValidateRuleRequest {
     pub rule_source: String,
 }
 
-
 // Process
-
 
 /// GET /api/security/yara-rules
 pub async fn list_yara_rules(
@@ -124,7 +119,7 @@ pub async fn update_yara_rule(
     Path(id): Path<String>,
     Json(req): Json<UpdateYaraRuleRequest>,
 ) -> axum::response::Response {
-   // Fetch existing
+    // Fetch existing
     let existing = match state.engine_db.get_yara_rule(&id).await {
         Ok(Some(r)) => r,
         Ok(None) => {
@@ -168,7 +163,7 @@ pub async fn delete_yara_rule(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> axum::response::Response {
-   // Check if builtin
+    // Check if builtin
     if let Ok(Some(rule)) = state.engine_db.get_yara_rule(&id).await
         && rule.source == "builtin"
     {

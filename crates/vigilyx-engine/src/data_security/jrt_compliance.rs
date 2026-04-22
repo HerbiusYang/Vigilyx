@@ -37,21 +37,21 @@ const MAX_TRACKED_KEYS: usize = 10_000;
 
 /// A single DLP record with timestamp and counts.
 struct DlpRecord {
-   /// Record timestamp.
+    /// Record timestamp.
     timestamp: DateTime<Utc>,
-   /// C3+ matches (includes C4).
+    /// C3+ matches (includes C4).
     level3_plus_count: usize,
-   /// C4+ matches only.
+    /// C4+ matches only.
     level4_plus_count: usize,
 }
 
 /// Compliance tracking state for a single key.
 struct ComplianceState {
-   /// DLP records within the sliding window.
+    /// DLP records within the sliding window.
     records: Vec<DlpRecord>,
-   /// Timestamp of last C3+ alert.
+    /// Timestamp of last C3+ alert.
     last_alert_l3: Option<DateTime<Utc>>,
-   /// Timestamp of last C4+ alert.
+    /// Timestamp of last C4+ alert.
     last_alert_l4: Option<DateTime<Utc>>,
 }
 
@@ -64,7 +64,7 @@ impl ComplianceState {
         }
     }
 
-   /// Add a DLP record and clean up expired records.
+    /// Add a DLP record and clean up expired records.
     fn record(&mut self, now: DateTime<Utc>, l3_count: usize, l4_count: usize) {
         let cutoff = now - chrono::Duration::seconds(WINDOW_SECS);
         self.records.retain(|r| r.timestamp > cutoff);
@@ -77,24 +77,24 @@ impl ComplianceState {
         }
     }
 
-   /// Total C3+ cumulative count.
+    /// Total C3+ cumulative count.
     fn total_l3_plus(&self) -> usize {
         self.records.iter().map(|r| r.level3_plus_count).sum()
     }
 
-   /// Total C4+ cumulative count.
+    /// Total C4+ cumulative count.
     fn total_l4_plus(&self) -> usize {
         self.records.iter().map(|r| r.level4_plus_count).sum()
     }
 
-   /// Whether C3+ alert is in cooldown period.
+    /// Whether C3+ alert is in cooldown period.
     fn l3_in_cooldown(&self, now: DateTime<Utc>) -> bool {
         self.last_alert_l3
             .map(|t| (now - t).num_seconds() < ALERT_COOLDOWN_SECS)
             .unwrap_or(false)
     }
 
-   /// Whether C4+ alert is in cooldown period.
+    /// Whether C4+ alert is in cooldown period.
     fn l4_in_cooldown(&self, now: DateTime<Utc>) -> bool {
         self.last_alert_l4
             .map(|t| (now - t).num_seconds() < ALERT_COOLDOWN_SECS)
@@ -104,9 +104,9 @@ impl ComplianceState {
 
 /// JR/T 0197-2020 compliance tracker.
 pub struct JrtComplianceTracker {
-   /// key -> compliance tracking state (key = user email or client_ip).
+    /// key -> compliance tracking state (key = user email or client_ip).
     windows: HashMap<String, ComplianceState>,
-   /// Cleanup counter.
+    /// Cleanup counter.
     cleanup_counter: u64,
 }
 
@@ -131,17 +131,17 @@ impl JrtComplianceTracker {
         }
     }
 
-   /// Record a DLP result and check whether JR/T compliance alerts should fire.
-   ///
-   /// `key`: tracking key (user email or client_ip)
-   /// `dlp_result`: DLP scan result
-   /// `client_ip`: source IP address
-   /// `detected_user`: detected user identity
-   /// `http_session_id`: associated HTTP session ID
-   /// `uri`: request URI
-   /// `host`: request host
-   ///
-   /// Returns 0-2 alerts (C3+ and C4+ are checked independently).
+    /// Record a DLP result and check whether JR/T compliance alerts should fire.
+    ///
+    /// `key`: tracking key (user email or client_ip)
+    /// `dlp_result`: DLP scan result
+    /// `client_ip`: source IP address
+    /// `detected_user`: detected user identity
+    /// `http_session_id`: associated HTTP session ID
+    /// `uri`: request URI
+    /// `host`: request host
+    ///
+    /// Returns 0-2 alerts (C3+ and C4+ are checked independently).
     #[allow(clippy::too_many_arguments)]
     pub fn record_dlp_result(
         &mut self,
@@ -153,18 +153,18 @@ impl JrtComplianceTracker {
         uri: &str,
         host: Option<&str>,
     ) -> Vec<DataSecurityIncident> {
-       // Count items at each classification level from this result
+        // Count items at each classification level from this result
         let l3_count = dlp_result.count_items_at_level(3); // Contains C3 And C4
         let l4_count = dlp_result.count_items_at_level(4); // C4
 
-       // No sensitive data at C3+ level, skip
+        // No sensitive data at C3+ level, skip
         if l3_count == 0 {
             return Vec::new();
         }
 
         let now = Utc::now();
 
-       // Periodically clean up expired keys
+        // Periodically clean up expired keys
         self.cleanup_counter += 1;
         if self.cleanup_counter.is_multiple_of(200) || self.windows.len() > MAX_TRACKED_KEYS {
             self.cleanup(now);
@@ -182,7 +182,7 @@ impl JrtComplianceTracker {
 
         let mut incidents = Vec::new();
 
-       // Check C4+ threshold (higher priority, checked first)
+        // Check C4+ threshold (higher priority, checked first)
         if total_l4 >= LEVEL4_THRESHOLD && !state.l4_in_cooldown(now) {
             state.last_alert_l4 = Some(now);
             let user_label = detected_user.unwrap_or(client_ip);
@@ -227,7 +227,7 @@ impl JrtComplianceTracker {
             });
         }
 
-       // Check C3+ Threshold
+        // Check C3+ Threshold
         if total_l3 >= LEVEL3_THRESHOLD && !state.l3_in_cooldown(now) {
             state.last_alert_l3 = Some(now);
             let user_label = detected_user.unwrap_or(client_ip);
@@ -275,7 +275,7 @@ impl JrtComplianceTracker {
         incidents
     }
 
-   /// Clean up expired tracking state.
+    /// Clean up expired tracking state.
     fn cleanup(&mut self, now: DateTime<Utc>) {
         let cutoff = now - chrono::Duration::seconds(WINDOW_SECS);
         self.windows.retain(|_, state| {
@@ -290,7 +290,7 @@ mod tests {
     use super::*;
     use crate::data_security::dlp::DlpScanResult;
 
-   /// constructpacketContains Count ID Numberof DLP Result
+    /// constructpacketContains Count ID Numberof DLP Result
     fn make_dlp_result_l3(count: usize) -> DlpScanResult {
         let values: Vec<String> = (0..count)
             .map(|i| format!("32010119900101{:04}", i))
@@ -301,7 +301,7 @@ mod tests {
         }
     }
 
-   /// constructpacketContains Count CVV of DLP Result (C4 level)
+    /// constructpacketContains Count CVV of DLP Result (C4 level)
     fn make_dlp_result_l4(count: usize) -> DlpScanResult {
         let values: Vec<String> = (0..count).map(|i| format!("cvv={:03}", i)).collect();
         DlpScanResult {
@@ -313,7 +313,7 @@ mod tests {
     #[test]
     fn test_below_l3_threshold_no_alert() {
         let mut tracker = JrtComplianceTracker::new();
-       // 499 Item C3 data -
+        // 499 Item C3 data -
         let dlp = make_dlp_result_l3(499);
         let incidents = tracker.record_dlp_result(
             "user@test.com",
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn test_at_l3_threshold_alerts() {
         let mut tracker = JrtComplianceTracker::new();
-       // 500 Item C3 data - High Alert
+        // 500 Item C3 data - High Alert
         let dlp = make_dlp_result_l3(500);
         let incidents = tracker.record_dlp_result(
             "user@test.com",
@@ -352,7 +352,7 @@ mod tests {
     #[test]
     fn test_below_l4_threshold_no_alert() {
         let mut tracker = JrtComplianceTracker::new();
-       // 49 Item C4 data -
+        // 49 Item C4 data -
         let dlp = make_dlp_result_l4(49);
         let incidents = tracker.record_dlp_result(
             "user@test.com",
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn test_at_l4_threshold_alerts() {
         let mut tracker = JrtComplianceTracker::new();
-       // 50 Item C4 data - Critical Alert
+        // 50 Item C4 data - Critical Alert
         let dlp = make_dlp_result_l4(50);
         let incidents = tracker.record_dlp_result(
             "user@test.com",
@@ -387,7 +387,7 @@ mod tests {
     #[test]
     fn test_l4_counts_toward_l3() {
         let mut tracker = JrtComplianceTracker::new();
-       // 450 Item C3 + 50 Item C4 = 500 Item C3+ -> C3 And C4 Alert
+        // 450 Item C3 + 50 Item C4 = 500 Item C3+ -> C3 And C4 Alert
         let dlp_l3 = make_dlp_result_l3(450);
         let _ = tracker.record_dlp_result(
             "user@test.com",
@@ -408,14 +408,14 @@ mod tests {
             "/test",
             None,
         );
-       // C4 Alert (50>= 50) + C3 Alert (500>= 500)
+        // C4 Alert (50>= 50) + C3 Alert (500>= 500)
         assert_eq!(incidents.len(), 2);
     }
 
     #[test]
     fn test_accumulation_across_sessions() {
         let mut tracker = JrtComplianceTracker::new();
-       // 5 Time/Count,every 100 Item C3 -> After 5 Time/Count
+        // 5 Time/Count,every 100 Item C3 -> After 5 Time/Count
         for i in 0..5 {
             let dlp = make_dlp_result_l3(100);
             let incidents = tracker.record_dlp_result(
@@ -442,7 +442,7 @@ mod tests {
     #[test]
     fn test_different_users_independent() {
         let mut tracker = JrtComplianceTracker::new();
-       // user A: 499 Item -> Alert
+        // user A: 499 Item -> Alert
         let dlp = make_dlp_result_l3(499);
         let incidents_a = tracker.record_dlp_result(
             "userA@test.com",
@@ -455,7 +455,7 @@ mod tests {
         );
         assert!(incidents_a.is_empty());
 
-       // user B: 500 Item -> Alert(A)
+        // user B: 500 Item -> Alert(A)
         let dlp = make_dlp_result_l3(500);
         let incidents_b = tracker.record_dlp_result(
             "userB@test.com",
@@ -472,7 +472,7 @@ mod tests {
     #[test]
     fn test_cooldown_prevents_duplicate_alert() {
         let mut tracker = JrtComplianceTracker::new();
-       // After1Time/Count 500 Item -> Alert
+        // After1Time/Count 500 Item -> Alert
         let dlp = make_dlp_result_l3(500);
         let incidents = tracker.record_dlp_result(
             "user@test.com",
@@ -485,7 +485,7 @@ mod tests {
         );
         assert_eq!(incidents.len(), 1);
 
-       // Connect Time/Count -> Period Alert
+        // Connect Time/Count -> Period Alert
         let dlp2 = make_dlp_result_l3(100);
         let incidents2 = tracker.record_dlp_result(
             "user@test.com",
@@ -515,11 +515,9 @@ mod tests {
         assert!(incidents.is_empty());
     }
 
-    
-   // Test: Threshold level
-    
+    // Test: Threshold level
 
-   /// constructpacketContains C3+C4 dataof DLP Result
+    /// constructpacketContains C3+C4 dataof DLP Result
     fn make_dlp_result_mixed(l3_count: usize, l4_count: usize) -> DlpScanResult {
         let mut matches = Vec::new();
         let mut details = Vec::new();
@@ -539,7 +537,7 @@ mod tests {
     #[test]
     fn test_l4_threshold_exact_boundary() {
         let mut tracker = JrtComplianceTracker::new();
-       // 49 ItemDo not trigger
+        // 49 ItemDo not trigger
         let dlp = make_dlp_result_l4(49);
         let incidents = tracker.record_dlp_result(
             "user@test.com",
@@ -552,7 +550,7 @@ mod tests {
         );
         assert!(incidents.is_empty(), "49 C4 items should not alert");
 
-       // Add 1 Item = 50,
+        // Add 1 Item = 50,
         let dlp2 = make_dlp_result_l4(1);
         let incidents2 = tracker.record_dlp_result(
             "user@test.com",
@@ -570,7 +568,7 @@ mod tests {
     #[test]
     fn test_l3_threshold_exact_boundary() {
         let mut tracker = JrtComplianceTracker::new();
-       // 499 ItemDo not trigger
+        // 499 ItemDo not trigger
         let dlp = make_dlp_result_l3(499);
         let incidents = tracker.record_dlp_result(
             "user@test.com",
@@ -583,7 +581,7 @@ mod tests {
         );
         assert!(incidents.is_empty(), "499 C3 items should not alert");
 
-       // Add 1 Item = 500,
+        // Add 1 Item = 500,
         let dlp2 = make_dlp_result_l3(1);
         let incidents2 = tracker.record_dlp_result(
             "user@test.com",
@@ -601,7 +599,7 @@ mod tests {
     #[test]
     fn test_mixed_c3_c4_both_thresholds() {
         let mut tracker = JrtComplianceTracker::new();
-       // 1Time/Count 450 C3 + 50 C4 = 500 C3+ total, 50 C4+ total
+        // 1Time/Count 450 C3 + 50 C4 = 500 C3+ total, 50 C4+ total
         let dlp = make_dlp_result_mixed(450, 50);
         let incidents = tracker.record_dlp_result(
             "user@test.com",
@@ -613,7 +611,7 @@ mod tests {
             None,
         );
         assert_eq!(incidents.len(), 2, "Should trigger both C3+ and C4+ alerts");
-       // C4+ Critical Return (Code/Digit: Check C4+)
+        // C4+ Critical Return (Code/Digit: Check C4+)
         assert!(
             incidents
                 .iter()
@@ -629,7 +627,7 @@ mod tests {
     #[test]
     fn test_only_c4_also_triggers_c3_when_total_enough() {
         let mut tracker = JrtComplianceTracker::new();
-       // 500 Item C4 data -> C4 C3+, C3+ = 500
+        // 500 Item C4 data -> C4 C3+, C3+ = 500
         let dlp = make_dlp_result_l4(500);
         let incidents = tracker.record_dlp_result(
             "user@test.com",
@@ -650,7 +648,7 @@ mod tests {
     #[test]
     fn test_only_c4_below_c3_threshold() {
         let mut tracker = JrtComplianceTracker::new();
-       // 50 Item C4 -> C4+, C3+ total = 50 <500 -> only C4+ Alert
+        // 50 Item C4 -> C4+, C3+ total = 50 <500 -> only C4+ Alert
         let dlp = make_dlp_result_l4(50);
         let incidents = tracker.record_dlp_result(
             "user@test.com",
@@ -668,7 +666,7 @@ mod tests {
     #[test]
     fn test_many_small_batches_accumulate() {
         let mut tracker = JrtComplianceTracker::new();
-       // every 10 Item C3,contiguous 50 Time/Count = 500 -> After 50 Time/Count
+        // every 10 Item C3,contiguous 50 Time/Count = 500 -> After 50 Time/Count
         for i in 0..50 {
             let dlp = make_dlp_result_l3(10);
             let incidents = tracker.record_dlp_result(
@@ -695,7 +693,7 @@ mod tests {
     #[test]
     fn test_multiple_users_parallel() {
         let mut tracker = JrtComplianceTracker::new();
-       // 3 user SameCount
+        // 3 user SameCount
         let dlp_a = make_dlp_result_l3(500);
         let dlp_b = make_dlp_result_l3(300);
         let dlp_c = make_dlp_result_l3(500);
@@ -785,7 +783,7 @@ mod tests {
 
     #[test]
     fn test_c2_only_data_no_alert() {
-       // C2 leveldata (employee_info) C3+ C4+
+        // C2 leveldata (employee_info) C3+ C4+
         let dlp = DlpScanResult {
             matches: vec!["employee_info".to_string()],
             details: vec![(

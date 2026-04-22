@@ -28,7 +28,6 @@ use crate::module_data::module_data;
 /// extract_domain_from_email("Alice <alice@CORP.com>"),
 /// Some("corp.com".to_string()),
 
-
 static RE_EMAIL_ADDR: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?i)[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+",
@@ -48,7 +47,7 @@ fn extract_email_address(addr: &str) -> Option<String> {
         return None;
     }
 
-   // Prefer the address inside angle brackets, but fall back to scanning the whole header.
+    // Prefer the address inside angle brackets, but fall back to scanning the whole header.
     if let Some(start) = normalized.rfind('<')
         && let Some(end_rel) = normalized[start..].find('>')
     {
@@ -81,8 +80,7 @@ fn sanitized_http_url_candidate(url: &str) -> Option<&str> {
         .find(|(_, c)| {
             matches!(
                 c,
-                '"'
-                    | '\''
+                '"' | '\''
                     | '<'
                     | '>'
                     | '('
@@ -150,9 +148,7 @@ pub fn host_matches_domain_policy_rule(host: &str, rule: &str) -> bool {
     }
 
     if let Some(suffix) = rule.strip_prefix("*.") {
-        !suffix.is_empty()
-            && host.len() > suffix.len()
-            && host.ends_with(&format!(".{}", suffix))
+        !suffix.is_empty() && host.len() > suffix.len() && host.ends_with(&format!(".{}", suffix))
     } else {
         host == rule
     }
@@ -188,11 +184,11 @@ pub fn domain_matches_policy_set(domain: &str, set: &HashSet<String>) -> bool {
 
 /// # use vigilyx_engine::modules::common::extract_domain_from_url;
 /// assert_eq!(
-/// extract_domain_from_url("https://www.google.com/search?q=rust"),
+/// extract_domain_from_url("<https://www.google.com/search?q=rust>"),
 /// Some("www.google.com".to_string()),
 
 /// assert_eq!(
-/// extract_domain_from_url("http://evil.tk:8080/payload"),
+/// extract_domain_from_url("<http://evil.tk:8080/payload>"),
 /// Some("evil.tk".to_string()),
 
 /// assert_eq!(extract_domain_from_url("ftp://invalid"), None);
@@ -327,8 +323,8 @@ pub fn is_probable_non_clickable_render_asset_url(url: &str) -> bool {
     }
 
     let allowed_params = [
-        "id", "img", "image", "cid", "mid", "rid", "name", "w", "h", "width", "height", "v",
-        "t", "fmt", "format",
+        "id", "img", "image", "cid", "mid", "rid", "name", "w", "h", "width", "height", "v", "t",
+        "fmt", "format",
     ];
     query.split('&').all(|pair| {
         let name = pair
@@ -509,7 +505,8 @@ pub fn looks_like_raw_mime_container_text(text: &str) -> bool {
         .filter(|line| is_base64_payload_line(line.trim()))
         .count();
 
-    (boundary_like && marker_count >= 2 && base64_lines >= 1) || (marker_count >= 3 && base64_lines >= 2)
+    (boundary_like && marker_count >= 2 && base64_lines >= 1)
+        || (marker_count >= 3 && base64_lines >= 2)
 }
 
 fn is_base64_payload_line(line: &str) -> bool {
@@ -534,9 +531,7 @@ fn is_base64_payload_line(line: &str) -> bool {
 mod tests {
     use super::*;
 
-    
-   // extract_domain_from_email
-    
+    // extract_domain_from_email
 
     #[test]
     fn test_extract_domain_from_email_plain_address() {
@@ -598,9 +593,7 @@ mod tests {
         assert_eq!(extract_domain_from_email("\"=?utf-8?B?OTE5NzA4NzQx"), None);
     }
 
-    
-   // extract_domain_from_url
-    
+    // extract_domain_from_url
 
     #[test]
     fn test_extract_domain_from_url_https() {
@@ -654,13 +647,19 @@ mod tests {
 
     #[test]
     fn test_extract_domain_from_url_rejects_userinfo() {
-        assert_eq!(extract_domain_from_url("https://user:pass@evil.example/login"), None);
+        assert_eq!(
+            extract_domain_from_url("https://user:pass@evil.example/login"),
+            None
+        );
     }
 
     #[test]
     fn test_host_matches_domain_policy_rule_exact_only() {
         assert!(host_matches_domain_policy_rule("12306.com", "12306.com"));
-        assert!(!host_matches_domain_policy_rule("login.12306.com", "12306.com"));
+        assert!(!host_matches_domain_policy_rule(
+            "login.12306.com",
+            "12306.com"
+        ));
     }
 
     #[test]
@@ -706,7 +705,10 @@ mod tests {
         let targets = extract_redirect_target_urls(
             "https://gateway.example/track?url=https%3A%2F%2Fevil.example%2Flogin%3Fnext%3D1",
         );
-        assert_eq!(targets, vec!["https://evil.example/login?next=1".to_string()]);
+        assert_eq!(
+            targets,
+            vec!["https://evil.example/login?next=1".to_string()]
+        );
     }
 
     #[test]
@@ -714,7 +716,10 @@ mod tests {
         let targets = extract_redirect_target_urls(
             "https://gateway.example/track?url=https%253A%252F%252Fevil.example%252Flogin%253Fnext%253D1",
         );
-        assert_eq!(targets, vec!["https://evil.example/login?next=1".to_string()]);
+        assert_eq!(
+            targets,
+            vec!["https://evil.example/login?next=1".to_string()]
+        );
     }
 
     #[test]

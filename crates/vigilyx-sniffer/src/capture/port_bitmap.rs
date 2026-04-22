@@ -7,20 +7,20 @@
 /// HashSet Vec::contains 10-50
 #[repr(C, align(64))]
 pub struct PortBitmap {
-   /// bit Array (65536 bit = 8KB)
-   /// Use Box Ensure Allocate,Avoid Overflow
+    /// bit Array (65536 bit = 8KB)
+    /// Use Box Ensure Allocate,Avoid Overflow
     bitmap: Box<[u64; 1024]>,
 }
 
 impl PortBitmap {
-   /// Create bit
+    /// Create bit
     pub fn new() -> Self {
         Self {
             bitmap: Box::new([0u64; 1024]),
         }
     }
 
-   /// FromPortListCreatebit
+    /// FromPortListCreatebit
     pub fn from_ports(ports: &[u16]) -> Self {
         let mut bm = Self::new();
         for &port in ports {
@@ -29,7 +29,7 @@ impl PortBitmap {
         bm
     }
 
-   /// SetPort
+    /// SetPort
     #[inline(always)]
     pub fn set(&mut self, port: u16) {
         let idx = (port / 64) as usize;
@@ -37,18 +37,18 @@ impl PortBitmap {
         self.bitmap[idx] |= 1u64 << bit;
     }
 
-   /// CheckPortwhetherstored - O(1)
-   /// Usebit EnsureBranch
+    /// CheckPortwhetherstored - O(1)
+    /// Usebit EnsureBranch
     #[inline(always)]
     #[allow(dead_code)]
     pub fn contains(&self, port: u16) -> bool {
         let idx = (port / 64) as usize;
         let bit = port % 64;
-       // UseAccording tobit Ensure Branch
+        // UseAccording tobit Ensure Branch
         (self.bitmap[idx] & (1u64 << bit)) != 0
     }
 
-   /// Samewhen checking Port (Performance notes PortScenario)
+    /// Samewhen checking Port (Performance notes PortScenario)
     #[inline(always)]
     pub fn contains_either(&self, port1: u16, port2: u16) -> (bool, bool) {
         let idx1 = (port1 / 64) as usize;

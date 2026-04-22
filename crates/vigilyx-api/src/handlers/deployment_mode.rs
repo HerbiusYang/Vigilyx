@@ -14,8 +14,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use vigilyx_core::{
-    DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES, validate_mail_relay_host_resolved,
-    validate_mta_hostname,
+    DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES, validate_mail_relay_host_resolved, validate_mta_hostname,
 };
 
 use super::ApiResponse;
@@ -259,10 +258,12 @@ async fn resolve_deployment_mode(state: &AppState) -> DeploymentMode {
         .unwrap_or(false);
 
     // Always read MTA config parameters from the DB regardless of the mode source
-    let db_config = normalize_mta_config(match state.engine_db.get_config(DEPLOYMENT_MODE_KEY).await {
-        Ok(Some(raw)) => serde_json::from_str::<serde_json::Value>(&raw).ok(),
-        _ => None,
-    });
+    let db_config = normalize_mta_config(
+        match state.engine_db.get_config(DEPLOYMENT_MODE_KEY).await {
+            Ok(Some(raw)) => serde_json::from_str::<serde_json::Value>(&raw).ok(),
+            _ => None,
+        },
+    );
 
     // 1. VIGILYX_MODE env var - highest priority; locked=true tells the frontend to disallow switching
     if let Ok(env_mode) = std::env::var("VIGILYX_MODE") {

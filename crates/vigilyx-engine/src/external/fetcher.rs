@@ -140,7 +140,10 @@ impl UrlFetcher {
                     page_text: String::new(),
                     page_title: None,
                     form_analysis: FormAnalysis::default(),
-                    error: Some(format!("Too many redirects (max {})", self.config.max_redirects)),
+                    error: Some(format!(
+                        "Too many redirects (max {})",
+                        self.config.max_redirects
+                    )),
                 };
             }
 
@@ -200,7 +203,7 @@ impl UrlFetcher {
             .unwrap_or("")
             .to_string();
 
-       // 3. CheckResponsesize
+        // 3. CheckResponsesize
         let content_length = response.content_length().unwrap_or(0);
         if content_length > self.config.max_response_bytes {
             return FetchResult {
@@ -218,7 +221,7 @@ impl UrlFetcher {
             };
         }
 
-       // 4. readGet body (limitsize)
+        // 4. readGet body (limitsize)
         let body = match response.bytes().await {
             Ok(b) => {
                 if b.len() as u64 > self.config.max_response_bytes {
@@ -249,7 +252,7 @@ impl UrlFetcher {
             }
         };
 
-       // 5. HTML Parse
+        // 5. HTML Parse
         let (page_text, page_title, form_analysis) = if content_type.contains("html") {
             self.analyze_html(&body)
         } else {
@@ -278,9 +281,7 @@ impl UrlFetcher {
             .danger_accept_invalid_certs(false);
 
         if self.config.skip_private_ips {
-            let host = url
-                .host_str()
-                .ok_or_else(|| "No host in URL".to_string())?;
+            let host = url.host_str().ok_or_else(|| "No host in URL".to_string())?;
             if host.parse::<std::net::IpAddr>().is_err() {
                 let port = url
                     .port_or_known_default()
@@ -304,16 +305,16 @@ impl UrlFetcher {
     fn analyze_html(&self, html: &str) -> (String, Option<String>, FormAnalysis) {
         let document = Html::parse_document(html);
 
-       // Extract
+        // Extract
         let title = Selector::parse("title")
             .ok()
             .and_then(|sel| document.select(&sel).next())
             .map(|el| el.text().collect::<String>().trim().to_string());
 
-       // ExtractPlain text (Exclude script/style)
+        // ExtractPlain text (Exclude script/style)
         let text = extract_visible_text(&document);
 
-       // formAnalyze
+        // formAnalyze
         let form_analysis = analyze_forms(&document);
 
         (text, title, form_analysis)
@@ -348,7 +349,7 @@ fn validate_fetch_url(url: &str, skip_private_ips: bool) -> Result<(), String> {
 
 /// Extract HTML Text
 fn extract_visible_text(doc: &Html) -> String {
-   // SAFETY: "body" is a valid CSS selector literal; parse() only fails on malformed input.
+    // SAFETY: "body" is a valid CSS selector literal; parse() only fails on malformed input.
     let body_sel = Selector::parse("body").expect("static CSS selector 'body' is always valid");
     let _script_sel = Selector::parse("script").ok();
     let _style_sel = Selector::parse("style").ok();
@@ -365,7 +366,7 @@ fn extract_visible_text(doc: &Html) -> String {
         }
     }
 
-   // limitTextLength
+    // limitTextLength
     if text.len() > 50_000 {
         text.truncate(50_000);
     }
@@ -379,7 +380,7 @@ fn analyze_forms(doc: &Html) -> FormAnalysis {
         Ok(s) => s,
         Err(_) => return FormAnalysis::default(),
     };
-   // SAFETY: "input" is a valid CSS selector literal; parse() only fails on malformed input.
+    // SAFETY: "input" is a valid CSS selector literal; parse() only fails on malformed input.
     let input_sel = Selector::parse("input").expect("static CSS selector 'input' is always valid");
 
     let mut analysis = FormAnalysis::default();
@@ -406,7 +407,7 @@ fn analyze_forms(doc: &Html) -> FormAnalysis {
                 has_text_or_email = true;
             }
 
-           // name hintsdetectLogin
+            // name hintsdetectLogin
             if login_names.iter().any(|n| input_name.contains(n.as_str())) {
                 has_text_or_email = true;
             }

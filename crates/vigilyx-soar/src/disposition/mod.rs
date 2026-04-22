@@ -6,18 +6,21 @@
 //! - Action execution: Webhook notification, email/wechat alert, log recording
 
 mod email_alert;
-mod wechat_alert;
 mod webhook;
+mod wechat_alert;
 
 use std::collections::HashSet;
 use std::net::IpAddr;
 
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
-use vigilyx_core::{is_sensitive_ip, models::{EmailSession, MailDirection}};
-use vigilyx_core::security::SecurityVerdict;
-use vigilyx_db::VigilDb;
 use uuid::Uuid;
+use vigilyx_core::security::SecurityVerdict;
+use vigilyx_core::{
+    is_sensitive_ip,
+    models::{EmailSession, MailDirection},
+};
+use vigilyx_db::VigilDb;
 
 use email_alert::parse_threat_level;
 
@@ -33,23 +36,21 @@ const SENSITIVE_HEADER_KEYWORDS: &[&str] = &[
     "bearer",
 ];
 
-
 // Types
-
 
 /// Disposition rule item condition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DispositionCondition {
-   /// Minimum threat level
+    /// Minimum threat level
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_threat_level: Option<String>,
-   /// Mail direction filter: inbound / outbound / internal
+    /// Mail direction filter: inbound / outbound / internal
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mail_direction: Option<String>,
-   /// Must contain category (any 1 match)
+    /// Must contain category (any 1 match)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub categories: Vec<String>,
-   /// Must have specified module flag anomaly
+    /// Must have specified module flag anomaly
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub flagged_modules: Vec<String>,
 }
@@ -57,18 +58,18 @@ pub struct DispositionCondition {
 /// Disposition rule action
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DispositionAction {
-   /// Action type: webhook, log, alert, email_alert, wechat_alert
+    /// Action type: webhook, log, alert, email_alert, wechat_alert
     pub action_type: String,
-   /// Webhook URL (when action_type = webhook / wechat_alert and using per-rule webhook)
+    /// Webhook URL (when action_type = webhook / wechat_alert and using per-rule webhook)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub webhook_url: Option<String>,
-   /// Mentioned mobile numbers for WeChat text alerts
+    /// Mentioned mobile numbers for WeChat text alerts
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mentioned_mobile_list: Vec<String>,
-   /// Webhook request headers
+    /// Webhook request headers
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub headers: std::collections::HashMap<String, String>,
-   /// Additional message template
+    /// Additional message template
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_template: Option<String>,
 }
@@ -85,9 +86,7 @@ pub struct DispositionRule {
     pub actions: Vec<DispositionAction>,
 }
 
-
 // Engine
-
 
 /// Disposition engine
 #[derive(Clone)]
@@ -100,7 +99,7 @@ impl DispositionEngine {
     pub fn new(db: VigilDb) -> Self {
         Self {
             db,
-           // SEC: Disable redirect following to prevent SSRF via 302 to internal network (CWE-918)
+            // SEC: Disable redirect following to prevent SSRF via 302 to internal network (CWE-918)
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
                 .redirect(reqwest::redirect::Policy::none())
@@ -109,9 +108,9 @@ impl DispositionEngine {
         }
     }
 
-   /// Evaluate disposition rules and execute matched actions.
+    /// Evaluate disposition rules and execute matched actions.
     pub async fn evaluate(&self, verdict: &SecurityVerdict, session: &EmailSession) {
-       // 1. Disposition rules
+        // 1. Disposition rules
         let rules = match self.db.get_active_disposition_rules().await {
             Ok(r) => r,
             Err(e) => {
@@ -126,7 +125,8 @@ impl DispositionEngine {
             .await;
 
         for rule_row in &rules {
-            let conditions: DispositionCondition = match parse_rule_conditions(&rule_row.conditions) {
+            let conditions: DispositionCondition = match parse_rule_conditions(&rule_row.conditions)
+            {
                 Ok(c) => c,
                 Err(e) => {
                     warn!(rule = rule_row.id, "Invalid rule conditions: {}", e);
@@ -252,7 +252,13 @@ impl DispositionEngine {
         internal_domains: &HashSet<String>,
         inbound_mail_servers: &HashSet<String>,
     ) -> bool {
-        check_conditions_match(cond, verdict, session, internal_domains, inbound_mail_servers)
+        check_conditions_match(
+            cond,
+            verdict,
+            session,
+            internal_domains,
+            inbound_mail_servers,
+        )
     }
 
     async fn execute_action(
@@ -316,9 +322,7 @@ impl DispositionEngine {
     }
 }
 
-
 // Pure condition-matching logic (extracted for testability without DB)
-
 
 fn parse_rule_conditions(raw: &str) -> Result<DispositionCondition, serde_json::Error> {
     serde_json::from_str(raw).or_else(|_| {
@@ -417,7 +421,10 @@ async fn load_inbound_mail_servers(db: &VigilDb) -> HashSet<String> {
         Ok(servers) if !servers.is_empty() => servers,
         Ok(_) => load_inbound_mail_servers_from_env(),
         Err(err) => {
-            warn!("Failed to load inbound targets from ui_preferences: {}", err);
+            warn!(
+                "Failed to load inbound targets from ui_preferences: {}",
+                err
+            );
             load_inbound_mail_servers_from_env()
         }
     }
@@ -533,7 +540,10 @@ pub(super) fn infer_mail_direction(
         };
     }
 
-    let sender_domain = session.mail_from.as_deref().and_then(extract_email_domain)?;
+    let sender_domain = session
+        .mail_from
+        .as_deref()
+        .and_then(extract_email_domain)?;
     let sender_local = internal_domains.contains(&sender_domain);
 
     if !sender_local {
@@ -655,7 +665,7 @@ fn check_conditions_match(
     internal_domains: &HashSet<String>,
     inbound_mail_servers: &HashSet<String>,
 ) -> bool {
-   // Minimum threat level
+    // Minimum threat level
     if let Some(ref min_level) = cond.min_threat_level {
         let required = parse_threat_level(min_level);
         if verdict.threat_level < required {
@@ -663,7 +673,7 @@ fn check_conditions_match(
         }
     }
 
-   // Check category match (any 1 is sufficient)
+    // Check category match (any 1 is sufficient)
     if !cond.categories.is_empty() {
         let has_match = cond
             .categories
@@ -674,9 +684,9 @@ fn check_conditions_match(
         }
     }
 
-   // Check alert module match (any 1 is sufficient)
+    // Check alert module match (any 1 is sufficient)
     if !cond.flagged_modules.is_empty() {
-       // From fusion_details extract actual alert module ID list
+        // From fusion_details extract actual alert module ID list
         let flagged: Vec<&str> = verdict
             .fusion_details
             .as_ref()
@@ -698,7 +708,7 @@ fn check_conditions_match(
         }
     }
 
-   // Mail direction filter
+    // Mail direction filter
     if let Some(ref required_direction) = cond.mail_direction {
         let Some(required_direction) = normalize_mail_direction(required_direction) else {
             return false;
@@ -717,9 +727,7 @@ fn check_conditions_match(
     true
 }
 
-
 // Tests
-
 
 #[cfg(test)]
 mod tests {
@@ -730,7 +738,7 @@ mod tests {
     use vigilyx_core::models::Protocol;
     use vigilyx_core::security::ThreatLevel;
 
-   /// Build a minimal SecurityVerdict for testing.
+    /// Build a minimal SecurityVerdict for testing.
     fn make_verdict(threat_level: ThreatLevel, categories: Vec<String>) -> SecurityVerdict {
         SecurityVerdict {
             id: Uuid::new_v4(),
@@ -778,15 +786,17 @@ mod tests {
         check_conditions_match(
             cond,
             verdict,
-            &make_session(Some("sender@example.net"), vec!["user@example.com"], "10.0.0.20"),
+            &make_session(
+                Some("sender@example.net"),
+                vec!["user@example.com"],
+                "10.0.0.20",
+            ),
             &HashSet::new(),
             &HashSet::new(),
         )
     }
 
-    
-   // check_conditions_match - threat level filtering
-    
+    // check_conditions_match - threat level filtering
 
     #[test]
     fn test_check_conditions_matches_threat_level_at_threshold() {
@@ -838,9 +848,7 @@ mod tests {
         );
     }
 
-    
-   // check_conditions_match - category filtering
-    
+    // check_conditions_match - category filtering
 
     #[test]
     fn test_check_conditions_matches_categories_single() {
@@ -895,9 +903,7 @@ mod tests {
         );
     }
 
-    
-   // check_conditions_match - combined threat level + categories
-    
+    // check_conditions_match - combined threat level + categories
 
     #[test]
     fn test_check_conditions_both_level_and_categories_must_match() {
@@ -1014,7 +1020,11 @@ mod tests {
             flagged_modules: Vec::new(),
         };
         let inbound_servers = HashSet::from([String::from("10.0.0.20")]);
-        let session = make_session(Some("ceo@corp.example"), vec!["ops@corp.example"], "10.0.0.20");
+        let session = make_session(
+            Some("ceo@corp.example"),
+            vec!["ops@corp.example"],
+            "10.0.0.20",
+        );
         assert!(check_conditions_match(
             &cond,
             &verdict,
@@ -1075,8 +1085,7 @@ mod tests {
         session.client_ip = "10.1.246.41".to_string();
         session.content.add_header(
             "Received".to_string(),
-            "from mx.evil.example (mx.evil.example [124.196.27.22]) by relay.internal"
-                .to_string(),
+            "from mx.evil.example (mx.evil.example [124.196.27.22]) by relay.internal".to_string(),
         );
 
         assert_eq!(
@@ -1147,9 +1156,7 @@ mod tests {
         );
     }
 
-    
-   // DispositionCondition / DispositionRule serde round-trip
-    
+    // DispositionCondition / DispositionRule serde round-trip
 
     #[test]
     fn test_disposition_condition_serde_roundtrip() {

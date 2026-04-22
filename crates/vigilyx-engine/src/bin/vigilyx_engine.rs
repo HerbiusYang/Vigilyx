@@ -17,7 +17,9 @@ use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 use vigilyx_core::models::{EmailSession, HttpSession, WsMessage};
 use vigilyx_db::VigilDb;
-use vigilyx_db::mq::{MqClient, MqConfig, StreamClient, consumer_groups, keys, streams, topics, verify_cmd_payload};
+use vigilyx_db::mq::{
+    MqClient, MqConfig, StreamClient, consumer_groups, keys, streams, topics, verify_cmd_payload,
+};
 
 use vigilyx_engine::config::PipelineConfig;
 use vigilyx_engine::data_security::engine::DataSecurityEngine;
@@ -29,11 +31,11 @@ use vigilyx_engine::modules::registry::reload_runtime_ioc_caches;
 #[derive(Parser, Debug)]
 #[command(name = "vigilyx-engine", about = "Vigilyx Security Analysis Engine")]
 struct Args {
-   /// database URL (overrides the DATABASE_URL environment variable)
+    /// database URL (overrides the DATABASE_URL environment variable)
     #[arg(long, env = "DATABASE_URL")]
     database_url: Option<String>,
 
-   /// Redis URL (overrides the REDIS_URL environment variable)
+    /// Redis URL (overrides the REDIS_URL environment variable)
     #[arg(long, env = "REDIS_URL")]
     redis_url: Option<String>,
 }
@@ -45,7 +47,7 @@ struct Args {
 /// with additional process-level fields appended.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct EngineProcessStatus {
-   // EngineStatus already contains running / uptime_seconds, no need to redefine
+    // EngineStatus already contains running / uptime_seconds, no need to redefine
     pub email_engine_active: bool,
     pub data_security_engine_active: bool,
     pub ds_sessions_processed: u64,
@@ -56,7 +58,7 @@ struct EngineProcessStatus {
 
 /// Engine process shared state (engine only, excludes transport layer)
 struct EngineState {
-   /// Retain DB reference for command handling (config reload, etc.)
+    /// Retain DB reference for command handling (config reload, etc.)
     #[allow(dead_code)]
     db: VigilDb,
     security_engine: SecurityEngine,
@@ -65,16 +67,16 @@ struct EngineState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-   // Global panic hook
+    // Global panic hook
     std::panic::set_hook(Box::new(|info| {
         let backtrace = std::backtrace::Backtrace::force_capture();
         eprintln!("[PANIC] {}\n\nBacktrace:\n{}", info, backtrace);
     }));
 
-   // Load.env file (if present)
+    // Load.env file (if present)
     let _ = dotenvy::dotenv();
 
-   // Initialize logging (JSON format in production via LOG_FORMAT=json)
+    // Initialize logging (JSON format in production via LOG_FORMAT=json)
     let env_filter = tracing_subscriber::EnvFilter::from_default_env();
     if std::env::var("LOG_FORMAT").as_deref() == Ok("json") {
         tracing_subscriber::fmt()
@@ -92,22 +94,24 @@ async fn main() -> Result<()> {
 
     info!("Vigilyx Engine 独立进程启动中...");
 
-   // Database initialization
+    // Database initialization
 
-   // SEC-H01: No hardcoded fallback password - DATABASE_URL must be provided via env var or CLI
+    // SEC-H01: No hardcoded fallback password - DATABASE_URL must be provided via env var or CLI
     let database_url = args
         .database_url
         .or_else(|| std::env::var("DATABASE_URL").ok())
-        .expect("DATABASE_URL 环境变量未设置且未通过 --database-url 指定。请在 .env 或环境变量中配置。");
+        .expect(
+            "DATABASE_URL 环境变量未设置且未通过 --database-url 指定。请在 .env 或环境变量中配置。",
+        );
     let db = VigilDb::new(&database_url).await?;
     db.init_security_tables().await?;
-   // Seed built-in system whitelist so curated safe domains override stale external intel pollution.
+    // Seed built-in system whitelist so curated safe domains override stale external intel pollution.
     match db.seed_system_whitelist().await {
         Ok(n) if n > 0 => info!("系统白名单已注入/刷新: {} 条记录", n),
         Ok(_) => info!("系统白名单已是最新状态"),
         Err(e) => warn!("系统白名单注入失败: {}", e),
     }
-   // SEC-H01: Mask password before logging (CWE-532)
+    // SEC-H01: Mask password before logging (CWE-532)
     let masked_url = if let Some(at_pos) = database_url.find('@') {
         if let Some(colon_pos) = database_url[..at_pos].rfind(':') {
             format!(
@@ -123,7 +127,7 @@ async fn main() -> Result<()> {
     };
     info!("数据库连接成功: {}", masked_url);
 
-   // Transport layer: Redis only (Streams data plane + Pub/Sub control plane)
+    // Transport layer: Redis only (Streams data plane + Pub/Sub control plane)
 
     let mq_config = MqConfig::from_env();
     let mq = MqClient::new(mq_config);
@@ -146,26 +150,26 @@ async fn main() -> Result<()> {
 
     let stream = StreamClient::with_auto_consumer(mq.clone(), consumer_groups::ENGINE);
 
-   // Load pipeline configuration
+    // Load pipeline configuration
 
     let pipeline_config = load_pipeline_config(&db).await;
 
-   // Create broadcast channel (engine internal communication)
+    // Create broadcast channel (engine internal communication)
     let (ws_tx, _) = broadcast::channel::<WsMessage>(10_000);
 
-   // Start security engine
+    // Start security engine
 
     let security_engine = SecurityEngine::start(db.clone(), pipeline_config, ws_tx.clone())
         .await
         .map_err(|e| anyhow::anyhow!("SecurityEngine 启动失败: {}", e))?;
     info!("SecurityEngine 启动成功");
 
-   // Start data security engine
+    // Start data security engine
 
     let data_security_engine = DataSecurityEngine::start(db.clone(), ws_tx.clone());
     info!("DataSecurityEngine 启动成功");
 
-   // Shared state
+    // Shared state
 
     let state = Arc::new(EngineState {
         db,
@@ -173,7 +177,7 @@ async fn main() -> Result<()> {
         data_security_engine,
     });
 
-   // IOC expiry cleanup: hourly
+    // IOC expiry cleanup: hourly
 
     {
         let state = Arc::clone(&state);
@@ -188,13 +192,12 @@ async fn main() -> Result<()> {
         });
     }
 
-   // Catch-up scan: every 10 minutes, re-analyze
-   // completed sessions that have no verdict
-    
+    // Catch-up scan: every 10 minutes, re-analyze
+    // completed sessions that have no verdict
+
     {
         let state = Arc::clone(&state);
         tokio::spawn(async move {
-            
             tokio::time::sleep(std::time::Duration::from_secs(120)).await;
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(600));
             loop {
@@ -204,7 +207,7 @@ async fn main() -> Result<()> {
                     Ok(session_ids) if !session_ids.is_empty() => {
                         info!(count = session_ids.len(), "补扫遗漏 Session");
                         for sid in &session_ids {
-                           // Load session from DB
+                            // Load session from DB
                             match state.db.get_session(*sid).await {
                                 Ok(Some(session)) => {
                                     if let Err(e) = state.security_engine.submit(session).await {
@@ -214,7 +217,7 @@ async fn main() -> Result<()> {
                                 Ok(None) => warn!(session_id = %sid, "补扫: Session 不存在"),
                                 Err(e) => warn!(session_id = %sid, "补扫: 读取失败: {}", e),
                             }
-                           // Rate limit: 500ms between submissions
+                            // Rate limit: 500ms between submissions
                             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                         }
                     }
@@ -225,21 +228,21 @@ async fn main() -> Result<()> {
         });
     }
 
-   // Data retention cleanup: runs daily
-   // Cleans sessions/verdicts/incidents older than 90 days + temporal data older than 180 days
-   // Runs ANALYZE to update statistics (no VACUUM to avoid long table locks)
+    // Data retention cleanup: runs daily
+    // Cleans sessions/verdicts/incidents older than 90 days + temporal data older than 180 days
+    // Runs ANALYZE to update statistics (no VACUUM to avoid long table locks)
     {
         let state = Arc::clone(&state);
         tokio::spawn(async move {
-           // First run after 5 minutes (let engine process settle)
+            // First run after 5 minutes (let engine process settle)
             tokio::time::sleep(std::time::Duration::from_secs(300)).await;
-           // Run once every 24 hours
+            // Run once every 24 hours
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(24 * 3600));
             loop {
                 interval.tick().await;
                 info!("开始每日数据保留清理...");
 
-               // Clean business data older than 90 days
+                // Clean business data older than 90 days
                 match state.db.cleanup_old_data(90).await {
                     Ok((sessions, security)) => {
                         if sessions > 0 || security > 0 {
@@ -253,7 +256,7 @@ async fn main() -> Result<()> {
                     Err(e) => warn!("数据保留清理失败 (业务数据): {}", e),
                 }
 
-               // Clean temporal data older than 180 days
+                // Clean temporal data older than 180 days
                 match state.db.cleanup_stale_temporal(180).await {
                     Ok(total) if total > 0 => {
                         info!(deleted = total, "数据保留清理: 时序数据");
@@ -262,7 +265,7 @@ async fn main() -> Result<()> {
                     Err(e) => warn!("数据保留清理失败 (时序数据): {}", e),
                 }
 
-               // Optimize (ANALYZE + lightweight VACUUM)
+                // Optimize (ANALYZE + lightweight VACUUM)
                 if let Err(e) = state.db.optimize().await {
                     warn!("数据库优化失败: {}", e);
                 }
@@ -270,8 +273,8 @@ async fn main() -> Result<()> {
         });
     }
 
-   // Heartbeat file: write data/engine-status.json every 5s
-   // Fallback for API readiness check when Redis status channel is unavailable
+    // Heartbeat file: write data/engine-status.json every 5s
+    // Fallback for API readiness check when Redis status channel is unavailable
     {
         let state = Arc::clone(&state);
         tokio::spawn(async move {
@@ -282,8 +285,8 @@ async fn main() -> Result<()> {
                 interval.tick().await;
                 let heartbeat = build_engine_heartbeat(&state, pid).await;
                 if let Ok(json) = serde_json::to_string(&heartbeat) {
-                   // SEC-M13: Use tokio::fs to avoid blocking the async runtime (CWE-400)
-                   // Atomic write: write to temp file then rename to prevent partial reads
+                    // SEC-M13: Use tokio::fs to avoid blocking the async runtime (CWE-400)
+                    // Atomic write: write to temp file then rename to prevent partial reads
                     let tmp_path = heartbeat_path.with_extension("json.tmp");
                     if tokio::fs::write(&tmp_path, &json).await.is_ok() {
                         let _ = tokio::fs::rename(&tmp_path, &heartbeat_path).await;
@@ -293,16 +296,14 @@ async fn main() -> Result<()> {
         });
     }
 
-   // Start Redis IO loop (Streams data plane + Pub/Sub control plane)
+    // Start Redis IO loop (Streams data plane + Pub/Sub control plane)
 
     run_redis_mode(state, mq, stream, ws_tx).await?;
 
     Ok(())
 }
 
-
 // Redis mode
-
 
 /// Redis mode: Streams for data plane, Pub/Sub for control plane + legacy
 async fn run_redis_mode(
@@ -313,7 +314,7 @@ async fn run_redis_mode(
 ) -> Result<()> {
     let pid = std::process::id();
 
-   // Bridge: broadcast -> Redis
+    // Bridge: broadcast -> Redis
     {
         let mq = mq.clone();
         let mut ws_rx = ws_tx.subscribe();
@@ -347,7 +348,7 @@ async fn run_redis_mode(
         });
     }
 
-   // Stream input loop (PRIMARY — at-least-once delivery via consumer groups)
+    // Stream input loop (PRIMARY — at-least-once delivery via consumer groups)
     {
         let state = Arc::clone(&state);
         let stream = stream.clone();
@@ -362,7 +363,7 @@ async fn run_redis_mode(
         });
     }
 
-   // Redis command loop (control plane: rescan / reload)
+    // Redis command loop (control plane: rescan / reload)
     {
         let state = Arc::clone(&state);
         let mq = mq.clone();
@@ -377,7 +378,7 @@ async fn run_redis_mode(
         });
     }
 
-   // Publish an initial heartbeat so API readiness recovers immediately after restart.
+    // Publish an initial heartbeat so API readiness recovers immediately after restart.
     {
         let heartbeat = build_engine_heartbeat(&state, pid).await;
         if let Err(e) = mq.publish(topics::ENGINE_STATUS, &heartbeat).await {
@@ -385,7 +386,7 @@ async fn run_redis_mode(
         }
     }
 
-   // Status publish: Pub/Sub broadcast + Redis TTL key (heartbeat dead-man switch)
+    // Status publish: Pub/Sub broadcast + Redis TTL key (heartbeat dead-man switch)
     {
         let state = Arc::clone(&state);
         let mq = mq.clone();
@@ -412,9 +413,7 @@ async fn run_redis_mode(
     Ok(())
 }
 
-
 // Shared helpers
-
 
 /// Build engine status JSON.
 ///
@@ -518,7 +517,7 @@ async fn load_pipeline_config(db: &VigilDb) -> PipelineConfig {
             Ok(mut config) => {
                 info!("从数据库加载安全 Pipeline 配置");
 
-               // Auto-merge new modules from defaults
+                // Auto-merge new modules from defaults
                 let default_config = PipelineConfig::default();
                 let existing_ids: std::collections::HashSet<String> =
                     config.modules.iter().map(|m| m.id.clone()).collect();
@@ -546,10 +545,7 @@ async fn load_pipeline_config(db: &VigilDb) -> PipelineConfig {
                 config
             }
             Err(e) => {
-                warn!(
-                    "Pipeline 配置解析失败: {}, 使用默认配置",
-                    e
-                );
+                warn!("Pipeline 配置解析失败: {}, 使用默认配置", e);
                 PipelineConfig::default()
             }
         },
@@ -601,8 +597,7 @@ async fn stream_input_loop(state: &Arc<EngineState>, stream: &StreamClient) -> R
     {
         let mut ack_ids: Vec<String> = Vec::with_capacity(reclaimed.len());
         for (id, session) in reclaimed {
-            if let AckDecision::Immediate =
-                stream_process_email(state, stream, &id, session).await
+            if let AckDecision::Immediate = stream_process_email(state, stream, &id, session).await
             {
                 ack_ids.push(id);
             }
@@ -642,9 +637,8 @@ async fn stream_input_loop(state: &Arc<EngineState>, stream: &StreamClient) -> R
         }
 
         // Read HTTP sessions without BLOCK so the command is truly non-blocking.
-        let http_msgs: Vec<(String, Vec<HttpSession>)> = stream
-            .xreadgroup(streams::HTTP_SESSIONS, 10, None)
-            .await?;
+        let http_msgs: Vec<(String, Vec<HttpSession>)> =
+            stream.xreadgroup(streams::HTTP_SESSIONS, 10, None).await?;
         {
             let mut ack_ids: Vec<String> = Vec::with_capacity(http_msgs.len());
             for (id, sessions) in http_msgs {
@@ -701,18 +695,14 @@ async fn stream_process_email(
                 match state.db.get_session(session_id).await {
                     Ok(Some(db_session)) if db_session.has_analyzable_content() => {
                         submit_to_security_engine(&state, db_session);
-                        let _ = stream_clone
-                            .xack(streams::EMAIL_SESSIONS, &[&msg_id])
-                            .await;
+                        let _ = stream_clone.xack(streams::EMAIL_SESSIONS, &[&msg_id]).await;
                         return;
                     }
                     _ => {}
                 }
             }
             // Give up after retries — ACK to prevent infinite redelivery
-            let _ = stream_clone
-                .xack(streams::EMAIL_SESSIONS, &[&msg_id])
-                .await;
+            let _ = stream_clone.xack(streams::EMAIL_SESSIONS, &[&msg_id]).await;
         });
         return AckDecision::Deferred;
     }

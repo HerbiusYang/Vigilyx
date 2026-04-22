@@ -19,7 +19,7 @@ pub struct DispositionRuleRow {
 }
 
 impl VigilDb {
-   /// Get all enabled disposition rules (sorted by priority level)
+    /// Get all enabled disposition rules (sorted by priority level)
     pub async fn get_active_disposition_rules(&self) -> Result<Vec<DispositionRuleRow>> {
         let rows = sqlx::query_as::<_, DispositionRuleRow>(
             r#"
@@ -35,7 +35,7 @@ impl VigilDb {
         Ok(rows)
     }
 
-   /// Get one disposition rule by id
+    /// Get one disposition rule by id
     pub async fn get_disposition_rule(&self, id: &str) -> Result<Option<DispositionRuleRow>> {
         let row = sqlx::query_as::<_, DispositionRuleRow>(
             r#"
@@ -51,7 +51,7 @@ impl VigilDb {
         Ok(row)
     }
 
-   /// Get all disposition rules
+    /// Get all disposition rules
     pub async fn list_disposition_rules(&self) -> Result<Vec<DispositionRuleRow>> {
         let rows = sqlx::query_as::<_, DispositionRuleRow>(
             r#"
@@ -66,7 +66,7 @@ impl VigilDb {
         Ok(rows)
     }
 
-   /// Insert disposition rule
+    /// Insert disposition rule
     pub async fn insert_disposition_rule(&self, rule: &DispositionRuleRow) -> Result<()> {
         sqlx::query(
             r#"
@@ -90,7 +90,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Update disposition rule
+    /// Update disposition rule
     pub async fn update_disposition_rule(&self, rule: &DispositionRuleRow) -> Result<bool> {
         let result = sqlx::query(
             r#"
@@ -113,7 +113,7 @@ impl VigilDb {
         Ok(result.rows_affected() > 0)
     }
 
-   /// Delete disposition rule
+    /// Delete disposition rule
     pub async fn delete_disposition_rule(&self, id: &str) -> Result<bool> {
         let result = sqlx::query("DELETE FROM security_disposition_rules WHERE id = $1")
             .bind(id)

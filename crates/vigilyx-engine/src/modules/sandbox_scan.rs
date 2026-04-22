@@ -8,7 +8,6 @@
 //! 5. Parse:ExtractMalicious, line Sign, Malicious, Network IOC
 //! 6. Result D-S verdict
 
-
 //! - Sandbox Return `not_applicable`(downgradelevel)
 //! - email Analyze 3 Attachment(AvoidSandbox)
 //! - hops>25MB ofAttachment(Sandbox sourcelimit)
@@ -35,14 +34,13 @@ const MAX_ATTACHMENT_SIZE: usize = 25 * 1024 * 1024;
 
 /// Need/RequireSandboxAnalyzeofHighRiskFileextension
 const SANDBOX_EXTENSIONS: &[&str] = &[
-   // Executeline
+    // Executeline
     "exe", "dll", "scr", "com", "bat", "cmd", "ps1", "vbs", "vbe", "js", "jse", "wsf", "hta", "msi",
     "msp", // Documentation(Contains)
     "doc", "docx", "docm", "xls", "xlsx", "xlsm", "xlsb", "ppt", "pptx", "pptm", "rtf", "odt",
     "ods", // PDF
     "pdf", // Compresspacket
-    "zip", "rar", "7z", "gz", "tar", "iso", "img", 
-    "lnk", "url", "iqy", "slk",
+    "zip", "rar", "7z", "gz", "tar", "iso", "img", "lnk", "url", "iqy", "slk",
 ];
 
 pub struct SandboxScanModule {
@@ -157,7 +155,7 @@ impl SecurityModule for SandboxScanModule {
             ));
         }
 
-       // Need/RequireSandboxAnalyzeofAttachment
+        // Need/RequireSandboxAnalyzeofAttachment
         let candidates: Vec<_> = attachments
             .iter()
             .filter(|att| {
@@ -214,7 +212,7 @@ impl SecurityModule for SandboxScanModule {
                         max_score = report.score;
                     }
 
-                   // According to
+                    // According to
                     all_evidence.push(Evidence {
                         description: format!(
                             "SandboxAnalyze {}: score={:.1}/10, Sign={}, 家族={}, IOC={}",
@@ -240,7 +238,7 @@ impl SecurityModule for SandboxScanModule {
                         },
                     });
 
-                   // Classification
+                    // Classification
                     if threat >= ThreatLevel::Medium {
                         all_categories.push("sandbox_malicious".to_string());
                     }
@@ -308,7 +306,7 @@ impl SecurityModule for SandboxScanModule {
         all_categories.dedup();
 
         let threat_level = score_to_threat_level(max_score);
-       // CAPEv2 score 0-10 -> confidence Mapping
+        // CAPEv2 score 0-10 -> confidence Mapping
         let confidence = if max_score >= 8.0 {
             0.95
         } else if max_score >= 6.0 {

@@ -1,10 +1,7 @@
-
-
 use tracing::{error, info};
 use uuid::Uuid;
 use vigilyx_db::VigilDb;
 use vigilyx_db::security::quarantine::QuarantineStoreRequest;
-
 
 #[allow(clippy::too_many_arguments)]
 pub async fn store_quarantine(

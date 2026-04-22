@@ -4,8 +4,8 @@
 use regex::Regex;
 use std::sync::LazyLock;
 
-use crate::modules::common::extract_domain_from_email;
 use crate::module::Evidence;
+use crate::modules::common::extract_domain_from_email;
 
 static RE_IP_ADDR: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b").unwrap());
@@ -17,11 +17,11 @@ fn is_private_ip(ip: &str) -> bool {
         || ip.starts_with("192.168.")
         || ip.starts_with("0.")
         || ip.starts_with("169.254.")
-   // link-local
+    // link-local
     {
         return true;
     }
-   // 172.16.0.0/12 = 172.16.x.x ~ 172.31.x.x
+    // 172.16.0.0/12 = 172.16.x.x ~ 172.31.x.x
     if ip.starts_with("172.")
         && let Some(second) = ip.split('.').nth(1).and_then(|s| s.parse::<u8>().ok())
         && (16..=31).contains(&second)
@@ -111,11 +111,11 @@ impl ParsedHeaders {
                 "x-mailer" => x_mailer_value = Some(value.clone()),
                 "received" => {
                     received_count += 1;
-                   // Extract IPs from Received headers
+                    // Extract IPs from Received headers
                     for cap in RE_IP_ADDR.captures_iter(value) {
                         if let Some(m) = cap.get(1) {
                             let ip = m.as_str().to_string();
-                           // Skip private/loopback/link-local
+                            // Skip private/loopback/link-local
                             if !is_private_ip(&ip) {
                                 received_ips.push(ip);
                             }
@@ -128,12 +128,12 @@ impl ParsedHeaders {
                     auth_results_found = true;
                     let val_lower = value.to_lowercase();
 
-                   // SPF: fail / softfail / none are all failures
+                    // SPF: fail / softfail / none are all failures
                     let spf_fail = val_lower.contains("spf=fail")
                         || val_lower.contains("spf=softfail")
                         || val_lower.contains("spf=none");
 
-                   // DMARC: fail / none are failures
+                    // DMARC: fail / none are failures
                     let dmarc_fail =
                         val_lower.contains("dmarc=fail") || val_lower.contains("dmarc=none");
 
@@ -145,7 +145,7 @@ impl ParsedHeaders {
                 _ => {}
             }
 
-           // --- Header injection detection ---
+            // --- Header injection detection ---
             if value.contains("\r\n") || value.contains('\r') || value.contains('\n') {
                 injection_score += 0.40;
                 injection_categories.push("header_injection".to_string());
@@ -160,9 +160,8 @@ impl ParsedHeaders {
             }
         }
 
-       // Pre-compute internal sender flags (reused by no_auth_results + no_received)
-        let is_internal =
-            client_ip.starts_with("10.") || client_ip.starts_with("192.168.");
+        // Pre-compute internal sender flags (reused by no_auth_results + no_received)
+        let is_internal = client_ip.starts_with("10.") || client_ip.starts_with("192.168.");
         let sender_is_internal_domain = mail_from
             .and_then(extract_domain)
             .is_some_and(|d| is_internal_domain_fn(&d));

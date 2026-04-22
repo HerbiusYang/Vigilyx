@@ -35,13 +35,13 @@ pub enum EngineId {
 pub const ENGINE_COUNT: usize = 8;
 
 impl EngineId {
-   /// Convert to array index (0-7).
+    /// Convert to array index (0-7).
     #[inline(always)]
     pub const fn as_index(self) -> usize {
         self as usize
     }
 
-   /// All engine IDs in order.
+    /// All engine IDs in order.
     pub const ALL: [EngineId; ENGINE_COUNT] = [
         EngineId::A,
         EngineId::B,
@@ -53,7 +53,7 @@ impl EngineId {
         EngineId::H,
     ];
 
-   /// Human-readable engine name.
+    /// Human-readable engine name.
     pub const fn name_cn(self) -> &'static str {
         match self {
             EngineId::A => "Sender Reputation",
@@ -67,7 +67,7 @@ impl EngineId {
         }
     }
 
-   /// Short engine label (for JSON keys, logs).
+    /// Short engine label (for JSON keys, logs).
     pub const fn label(self) -> &'static str {
         match self {
             EngineId::A => "sender_reputation",
@@ -81,7 +81,7 @@ impl EngineId {
         }
     }
 
-   /// Parse from label string.
+    /// Parse from label string.
     #[inline]
     pub fn from_label(s: &str) -> Option<Self> {
         match s {
@@ -114,32 +114,32 @@ impl std::fmt::Display for EngineId {
 /// Returns `None` for modules that don't map to any engine (e.g., "verdict").
 #[inline]
 pub fn module_to_engine(module_id: &str) -> Option<EngineId> {
-   // Static dispatch via match - zero allocation, branch-predicted
+    // Static dispatch via match - zero allocation, branch-predicted
     match module_id {
-       // Engine A: Sender Reputation
+        // Engine A: Sender Reputation
         "domain_verify" => Some(EngineId::A),
 
-       // Engine B: Content Analysis (9 modules, incl. ClamAV + YARA)
+        // Engine B: Content Analysis (9 modules, incl. ClamAV + YARA)
         "content_scan" | "html_scan" | "html_pixel_art" | "attach_scan" | "attach_content"
         | "attach_hash" | "av_eml_scan" | "av_attach_scan" | "yara_scan" => Some(EngineId::B),
 
-       // Engine C: Behavior Baseline
+        // Engine C: Behavior Baseline
         "anomaly_detect" => Some(EngineId::C),
 
-       // Engine D: URL/Link Analysis (3 modules)
+        // Engine D: URL/Link Analysis (3 modules)
         "link_scan" | "link_reputation" | "link_content" => Some(EngineId::D),
 
-       // Engine E: Protocol Compliance (2 modules)
+        // Engine E: Protocol Compliance (2 modules)
         "header_scan" | "mime_scan" => Some(EngineId::E),
 
-       // Engine F: Semantic Intent
+        // Engine F: Semantic Intent
         "semantic_scan" => Some(EngineId::F),
 
-       // Engine G & H: new engines, direct mapping
+        // Engine G & H: new engines, direct mapping
         "identity_anomaly" => Some(EngineId::G),
         "transaction_correlation" => Some(EngineId::H),
 
-       // DAG sink or unknown
+        // DAG sink or unknown
         _ => None,
     }
 }
@@ -255,9 +255,9 @@ mod tests {
         let active = vec![EngineId::A, EngineId::B, EngineId::E];
         let sub = active_correlation_matrix(&active);
         assert_eq!(sub.len(), 9); // 3x3
-       // A-B correlation
+        // A-B correlation
         assert!((sub[1] - 0.10).abs() < 1e-10);
-       // A-E correlation
+        // A-E correlation
         assert!((sub[2] - 0.15).abs() < 1e-10);
     }
 }

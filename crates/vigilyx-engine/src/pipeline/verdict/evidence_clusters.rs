@@ -534,9 +534,11 @@ fn detect_scenarios(
             context.has_attachment_phishing_signal = true;
             context.tags.push("attachment_phishing_signal".to_string());
         }
-        if attach_result.categories.iter().any(|category| {
-            matches!(category.as_str(), "dlp_credit_card" | "dlp_id_number")
-        }) {
+        if attach_result
+            .categories
+            .iter()
+            .any(|category| matches!(category.as_str(), "dlp_credit_card" | "dlp_id_number"))
+        {
             context.has_attachment_sensitive_data_signal = true;
             context
                 .tags
@@ -544,7 +546,9 @@ fn detect_scenarios(
         }
         if attach_result.threat_level >= vigilyx_core::security::ThreatLevel::High {
             context.has_high_risk_attachment_content = true;
-            context.tags.push("high_risk_attachment_content".to_string());
+            context
+                .tags
+                .push("high_risk_attachment_content".to_string());
         }
     }
 

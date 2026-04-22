@@ -22,11 +22,11 @@ pub enum ByteOrder {
 /// Parse ofdatapacketInfo
 #[allow(dead_code)]
 pub struct Pcapngpacket {
-   /// timestamp Highbit ()
+    /// timestamp Highbit ()
     pub timestamp_high: u32,
-   /// timestamp Lowbit ()
+    /// timestamp Lowbit ()
     pub timestamp_low: u32,
-   /// datapacket data
+    /// datapacket data
     pub data: Vec<u8>,
 }
 
@@ -38,7 +38,7 @@ pub struct PcapngParser {
 }
 
 impl PcapngParser {
-   /// CreateNewofParsehandler (Defaultsmall)
+    /// CreateNewofParsehandler (Defaultsmall)
     pub fn new() -> Self {
         Self {
             byte_order: ByteOrder::LittleEndian,
@@ -47,19 +47,19 @@ impl PcapngParser {
         }
     }
 
-   /// whetheralreadyinitialize (alreadyParse SHB)
+    /// whetheralreadyinitialize (alreadyParse SHB)
     #[allow(dead_code)]
     pub fn is_initialized(&self) -> bool {
         self.initialized
     }
 
-   /// GetlinkType
+    /// GetlinkType
     #[allow(dead_code)]
     pub fn link_type(&self) -> u16 {
         self.link_type
     }
 
-   /// FromByteArrayreadGet u32
+    /// FromByteArrayreadGet u32
     fn read_u32(&self, data: &[u8]) -> u32 {
         match self.byte_order {
             ByteOrder::LittleEndian => u32::from_le_bytes([data[0], data[1], data[2], data[3]]),
@@ -67,7 +67,7 @@ impl PcapngParser {
         }
     }
 
-   /// FromByteArrayreadGet u16
+    /// FromByteArrayreadGet u16
     fn read_u16(&self, data: &[u8]) -> u16 {
         match self.byte_order {
             ByteOrder::LittleEndian => u16::from_le_bytes([data[0], data[1]]),
@@ -75,13 +75,13 @@ impl PcapngParser {
         }
     }
 
-   /// Parse pcapng data,Extract
+    /// Parse pcapng data,Extract
     pub fn parse_blocks(&mut self, data: &[u8]) -> Vec<Pcapngpacket> {
         let mut offset = 0;
         let mut packets = Vec::new();
 
         while offset + 12 <= data.len() {
-           // TypeNeed/Require Process: SHB of magic Used for Byte
+            // TypeNeed/Require Process: SHB of magic Used for Byte
             let raw_type = u32::from_le_bytes([
                 data[offset],
                 data[offset + 1],
@@ -90,7 +90,7 @@ impl PcapngParser {
             ]);
 
             if raw_type == SHB_TYPE {
-               // SHB: Need/Require Parse Byte
+                // SHB: Need/Require Parse Byte
                 if let Some(new_offset) = self.parse_shb(&data[offset..]) {
                     offset += new_offset;
                     continue;
@@ -99,11 +99,11 @@ impl PcapngParser {
                 }
             }
 
-           // Usealready ofByte
+            // Usealready ofByte
             let block_type = self.read_u32(&data[offset..]);
             let block_total_len = self.read_u32(&data[offset + 4..]) as usize;
 
-           // SecurityCheck
+            // SecurityCheck
             if block_total_len < 12 || offset + block_total_len > data.len() {
                 warn!(
                     "pcapng 块LengthInvalid: type=0x{:08x}, len={}, remaining={}",
@@ -126,7 +126,7 @@ impl PcapngParser {
                 }
             }
 
-           // LengthpacketContains 4 Bytealigned
+            // LengthpacketContains 4 Bytealigned
             let aligned_len = (block_total_len + 3) & !3;
             offset += aligned_len;
         }
@@ -134,15 +134,15 @@ impl PcapngParser {
         packets
     }
 
-   /// Parse Section Header Block (SHB) - Byte
-   /// Return of Length
+    /// Parse Section Header Block (SHB) - Byte
+    /// Return of Length
     fn parse_shb(&mut self, data: &[u8]) -> Option<usize> {
-       // SHB smallLength: 4(type) + 4(len) + 4(magic) + 2(major) + 2(minor) + 8(section_len) + 4(trailing_len) = 28
+        // SHB smallLength: 4(type) + 4(len) + 4(magic) + 2(major) + 2(minor) + 8(section_len) + 4(trailing_len) = 28
         if data.len() < 28 {
             return None;
         }
 
-       // Byte magic 8
+        // Byte magic 8
         let magic = u32::from_le_bytes([data[8], data[9], data[10], data[11]]);
 
         self.byte_order = if magic == 0x1A2B3C4D {
@@ -166,9 +166,9 @@ impl PcapngParser {
         Some(aligned)
     }
 
-   /// Parse Interface Description Block (IDB) - GetlinkType
+    /// Parse Interface Description Block (IDB) - GetlinkType
     fn parse_idb(&mut self, data: &[u8]) {
-       // IDB: 4(type) + 4(len) + 2(link_type) + 2(reserved) + 4(snap_len) +...
+        // IDB: 4(type) + 4(len) + 2(link_type) + 2(reserved) + 4(snap_len) +...
         if data.len() < 16 {
             return;
         }
@@ -177,9 +177,9 @@ impl PcapngParser {
         debug!("pcapng IDB: link_type={} (1=Ethernet)", self.link_type);
     }
 
-   /// Parse Enhanced packet Block (EPB) - Extractdatapacket
+    /// Parse Enhanced packet Block (EPB) - Extractdatapacket
     fn parse_epb(&self, data: &[u8]) -> Option<Pcapngpacket> {
-       // EPB: 4(type) + 4(len) + 4(interface_id) + 4(ts_high) + 4(ts_low) + 4(captured_len) + 4(original_len) + packet_data + 4(trailing_len)
+        // EPB: 4(type) + 4(len) + 4(interface_id) + 4(ts_high) + 4(ts_low) + 4(captured_len) + 4(original_len) + packet_data + 4(trailing_len)
         if data.len() < 32 {
             return None;
         }
@@ -188,7 +188,7 @@ impl PcapngParser {
         let ts_low = self.read_u32(&data[16..]);
         let captured_len = self.read_u32(&data[20..]) as usize;
 
-       // dataFrom 28 Start
+        // dataFrom 28 Start
         let packet_start = 28;
         if data.len() < packet_start + captured_len {
             warn!(

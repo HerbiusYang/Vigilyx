@@ -1,6 +1,4 @@
-
 // v5.0 TBM
-
 
 // Step 0: ModuleOutput (b, d, u,) 4Yuan
 // Step 1: According toEngine (A-H),Engine Dempster Composition
@@ -14,7 +12,6 @@
 // -> 0 table Unknown
 // - District (F-G-H) independent Cautious Composition,only downgrade
 // - Novelty SignaldetectNew Attack,K_cross detect
-
 
 use std::collections::HashMap;
 
@@ -48,7 +45,7 @@ pub(super) fn aggregate_tbm_v5(
         return empty_verdict(session_id, now);
     }
 
-   // Single-pass: collect metadata + group BPAs by engine
+    // Single-pass: collect metadata + group BPAs by engine
     let mut engine_bpas: [Vec<Bpa>; ENGINE_COUNT] = Default::default();
     let mut engine_modules: [Vec<String>; ENGINE_COUNT] = Default::default();
     let mut engine_factors: [Vec<String>; ENGINE_COUNT] = Default::default();
@@ -59,10 +56,10 @@ pub(super) fn aggregate_tbm_v5(
     let mut pillar_scores_raw: [Vec<f64>; PILLAR_COUNT] = Default::default();
 
     for r in &module_results {
-       // Use module BPA, applying default_epsilon if module didn't set one
+        // Use module BPA, applying default_epsilon if module didn't set one
         let mut bpa = r.effective_bpa();
         if bpa.epsilon == 0.0 && config.default_epsilon > 0.0 {
-           // Inject default epsilon for TBM: redistribute a small fraction to
+            // Inject default epsilon for TBM: redistribute a small fraction to
             let eps = config.default_epsilon;
             let scale = 1.0 - eps;
             bpa = Bpa {
@@ -74,7 +71,7 @@ pub(super) fn aggregate_tbm_v5(
         }
         let raw_score = r.raw_score();
 
-       // Map to engine
+        // Map to engine
         if let Some(eid) = r
             .engine_id
             .as_deref()
@@ -91,7 +88,7 @@ pub(super) fn aggregate_tbm_v5(
             }
         }
 
-       // Legacy pillar scores
+        // Legacy pillar scores
         let weight = config.weights.get(&r.module_id).copied().unwrap_or(1.0);
         let effective = (raw_score * weight).min(1.0);
         if effective > 0.0 {
@@ -116,7 +113,7 @@ pub(super) fn aggregate_tbm_v5(
     categories.sort_unstable();
     categories.dedup();
 
-   // Step 1: Within-engine Dempster combination
+    // Step 1: Within-engine Dempster combination
     let mut engine_bpa_pairs: Vec<(EngineId, Bpa)> = Vec::with_capacity(ENGINE_COUNT);
     let mut engine_details: Vec<EngineBpaDetail> = Vec::with_capacity(ENGINE_COUNT);
 
@@ -148,7 +145,7 @@ pub(super) fn aggregate_tbm_v5(
         return empty_verdict(session_id, now);
     }
 
-   // Step 2-5: Grouped fusion (tech + blind-spot -> cautious combine)
+    // Step 2-5: Grouped fusion (tech + blind-spot -> cautious combine)
     let corr_flat = config
         .correlation_matrix
         .as_deref()
@@ -156,14 +153,14 @@ pub(super) fn aggregate_tbm_v5(
 
     let gf = grouped_fusion::grouped_fusion(&engine_bpa_pairs, corr_flat, config.eta);
 
-   // Step 6: Risk score from fused BPA
+    // Step 6: Risk score from fused BPA
     let eta = config.eta;
     let risk_single = gf.fused.risk_score(eta);
     let final_level = ThreatLevel::from_score(risk_single);
 
-   // Build credibility weights map (from tech layer)
+    // Build credibility weights map (from tech layer)
     let mut credibility_weights = HashMap::new();
-   // Map tech credibility weights back to engine labels
+    // Map tech credibility weights back to engine labels
     let tech_engine_labels: Vec<String> = engine_bpa_pairs
         .iter()
         .filter(|(eid, _)| {
@@ -180,7 +177,7 @@ pub(super) fn aggregate_tbm_v5(
         }
     }
 
-   // Legacy pillar scores
+    // Legacy pillar scores
     let mut pillar_threat: HashMap<String, f64> = HashMap::new();
     for &pillar in &ALL_PILLARS {
         let scores = &pillar_scores_raw[pillar.as_index()];
@@ -272,5 +269,7 @@ fn build_tbm_summary(
         format!(" ⚠{}", extras.join(","))
     };
 
-    format!("{level_str}{cat_str} — {flagged}/{total} modules flagged, TBM risk={risk:.3}{extras_str}")
+    format!(
+        "{level_str}{cat_str} — {flagged}/{total} modules flagged, TBM risk={risk:.3}{extras_str}"
+    )
 }

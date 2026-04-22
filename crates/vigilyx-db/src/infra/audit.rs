@@ -30,7 +30,7 @@ pub struct LoginHistoryEntry {
 }
 
 impl VigilDb {
-   /// Write audit log
+    /// Write audit log
     pub async fn write_audit_log(
         &self,
         operator: &str,
@@ -55,7 +55,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Query audit log (pagination, by time descending)
+    /// Query audit log (pagination, by time descending)
     pub async fn list_audit_logs(
         &self,
         limit: u32,
@@ -77,7 +77,7 @@ impl VigilDb {
         Ok((entries, total.0))
     }
 
-   /// Record login attempt
+    /// Record login attempt
     pub async fn record_login(
         &self,
         username: &str,
@@ -97,7 +97,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Query login history (pagination, by time descending)
+    /// Query login history (pagination, by time descending)
     pub async fn list_login_history(
         &self,
         limit: u32,
