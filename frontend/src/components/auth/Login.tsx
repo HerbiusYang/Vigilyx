@@ -1,6 +1,7 @@
-import { useState, useRef, FormEvent } from 'react'
+import { useState, useRef, useCallback, FormEvent, KeyboardEvent } from 'react'
+import { useTranslation } from 'react-i18next'
 import type { LoginResponse } from '../../types'
-import { PASSWORD_POLICY_HINT, getPasswordStrength, validatePasswordInput } from '../../utils/passwordPolicy'
+import { getPasswordPolicyHint, getPasswordStrength, validatePasswordInput } from '../../utils/passwordPolicy'
 
 /* -- Random palette: choose one color pair on each refresh, with no animation -- */
 const PALETTES = [
@@ -26,6 +27,7 @@ interface LoginProps {
 }
 
 export default function Login({ onLogin }: LoginProps) {
+  const { t } = useTranslation()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -62,14 +64,22 @@ export default function Login({ onLogin }: LoginProps) {
           onLogin()
         }
       } else {
-        setError(data.error || '登录失败')
+        setError(data.error || t('auth.loginFailed'))
       }
     } catch {
-      setError('网络错误，请稍后重试')
+      setError(t('auth.networkError'))
     } finally {
       setLoading(false)
     }
   }
+
+  const handleKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && !loading && username && password) {
+      e.preventDefault()
+      const form = e.currentTarget.closest('form')
+      form?.requestSubmit()
+    }
+  }, [loading, username, password])
 
   const handleChangePassword = async (e: FormEvent) => {
     e.preventDefault()
@@ -81,11 +91,11 @@ export default function Login({ onLogin }: LoginProps) {
       return
     }
     if (newPassword === password) {
-      setChangeError('新密码不能与默认密码相同')
+      setChangeError(t('auth.newPasswordSameAsOld'))
       return
     }
     if (newPassword !== confirmPassword) {
-      setChangeError('两次输入的密码不一致')
+      setChangeError(t('auth.passwordMismatch'))
       return
     }
 
@@ -114,10 +124,10 @@ export default function Login({ onLogin }: LoginProps) {
           onLogin()
         }
       } else {
-        setChangeError(data.error || '密码修改失败')
+        setChangeError(data.error || t('auth.changePasswordFailed'))
       }
     } catch {
-      setChangeError('网络错误，请稍后重试')
+      setChangeError(t('auth.networkError'))
     } finally {
       setChangeLoading(false)
     }
@@ -127,7 +137,7 @@ export default function Login({ onLogin }: LoginProps) {
   if (mustChange) {
     const passwordError = validatePasswordInput(newPassword)
     const pwStrength = getPasswordStrength(newPassword)
-    const pwStrengthLabel = ['弱', '中', '强']
+    const pwStrengthLabel = [t('auth.pwWeak'), t('auth.pwMedium'), t('auth.pwStrong')]
     const pwStrengthColor = ['#ef4444', '#eab308', '#22c55e']
 
     return (
@@ -141,7 +151,7 @@ export default function Login({ onLogin }: LoginProps) {
           </div>
 
           <p className="grok-subtitle" style={{ color: '#eab308' }}>
-            检测到默认密码，请立即修改
+            {t('auth.defaultPasswordDetected')}
           </p>
 
           <form onSubmit={handleChangePassword} className="grok-form">
@@ -152,13 +162,13 @@ export default function Login({ onLogin }: LoginProps) {
                 type="password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="新密码 (至少 12 位)"
+                placeholder={t('auth.newPasswordPlaceholder')}
                 required
                 disabled={changeLoading}
                 autoComplete="new-password"
                 className="grok-input"
               />
-              <span className="grok-hint" style={{ color: 'rgba(255,255,255,0.72)' }}>{PASSWORD_POLICY_HINT}</span>
+              <span className="grok-hint" style={{ color: 'rgba(255,255,255,0.72)' }}>{getPasswordPolicyHint()}</span>
               {pwStrength >= 0 && (
                 <div className="grok-pw-bar">
                   <div className="grok-pw-fill" style={{
@@ -177,14 +187,14 @@ export default function Login({ onLogin }: LoginProps) {
                 type="password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="确认新密码"
+                placeholder={t('auth.confirmPasswordPlaceholder')}
                 required
                 disabled={changeLoading}
                 autoComplete="new-password"
                 className="grok-input"
               />
               {confirmPassword && newPassword && confirmPassword !== newPassword && (
-                <span className="grok-hint" style={{ color: '#ef4444' }}>密码不一致</span>
+                <span className="grok-hint" style={{ color: '#ef4444' }}>{t('auth.passwordMismatchHint')}</span>
               )}
             </div>
 
@@ -193,7 +203,7 @@ export default function Login({ onLogin }: LoginProps) {
               className="grok-btn"
               disabled={changeLoading || !!passwordError || newPassword !== confirmPassword || newPassword === password}
             >
-              {changeLoading ? <><span className="grok-spinner" />修改中...</> : '修改密码并登录'}
+              {changeLoading ? <><span className="grok-spinner" />{t('auth.changingPassword')}</> : t('auth.changePasswordAndLogin')}
             </button>
           </form>
         </div>
@@ -218,7 +228,7 @@ export default function Login({ onLogin }: LoginProps) {
         </div>
 
         <p className="grok-subtitle">Email Threat Intelligence Platform</p>
-        <p className="grok-subtitle-cn">邮件威胁智能化分析平台</p>
+        <p className="grok-subtitle-cn">{t('auth.subtitleCn')}</p>
 
         <form onSubmit={handleSubmit} className="grok-form">
           {error && <div className="grok-error">{error}</div>}
@@ -228,7 +238,8 @@ export default function Login({ onLogin }: LoginProps) {
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="用户名"
+              onKeyDown={handleKeyDown}
+              placeholder={t('auth.username')}
               required
               disabled={loading}
               autoComplete="username"
@@ -242,7 +253,8 @@ export default function Login({ onLogin }: LoginProps) {
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="密码"
+                onKeyDown={handleKeyDown}
+                placeholder={t('auth.password')}
                 required
                 disabled={loading}
                 autoComplete="current-password"
@@ -267,10 +279,10 @@ export default function Login({ onLogin }: LoginProps) {
 
           <button type="submit" className="grok-btn" disabled={loading}>
             {loading ? (
-              <><span className="grok-spinner" />验证中...</>
+              <><span className="grok-spinner" />{t('auth.verifying')}</>
             ) : (
               <>
-                登 录
+                {t('auth.login')}
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginLeft: 8 }}>
                   <path d="M5 12h14m-7-7 7 7-7 7"/>
                 </svg>

@@ -1,9 +1,12 @@
 //! IOC auto-recording logic
 
-//! Automatically extracts IOCs from high-threat verdicts:
+//! Automatically extracts IOCs from critical-threat verdicts (>= Critical only):
 //! - `auto_record_from_verdict` - General extraction: IP/domain/email/attachment hash/suspicious links
 //! - `auto_record_internal_spoofing` - Internal domain spoofing detection
 //! - `auto_record_nonsensical` - Nonsensical email auto-recording
+//!
+//! IMPORTANT: All auto-record thresholds must be >= Critical (score >= 0.85).
+//! Using High or lower will re-create the IOC amplification loop discovered in 2026-03-18.
 
 use super::IocManager;
 use crate::module::ThreatLevel;
@@ -94,11 +97,6 @@ fn extract_all_external_ips(session: &EmailSession) -> Vec<String> {
     ips
 }
 
-/// Protected internal domain list
-/// When both sender and recipient belong to these domains,
-/// automatically record the sender IP and domain as IOC
-const PROTECTED_INTERNAL_DOMAINS: &[&str] = &["corp-internal.com"];
-
 fn normalize_email_indicator(email: &str) -> Option<String> {
     let trimmed = email.trim();
     if trimmed.is_empty() {
@@ -144,20 +142,22 @@ fn infer_attack_type(categories: &[String]) -> String {
 }
 
 impl IocManager {
-   /// Auto-extract IOCs from security verdict (when threat_level>= High)
+   /// Auto-extract IOCs from security verdict (when threat_level>= Critical)
     
-   /// Threshold note: Must be>= High, cannot use Medium or Low.
+   /// Threshold note: Must be>= Critical, cannot use High/Medium/Low.
    /// Reason: Auto-written IOCs will be queried by intel module and add scores,
    /// if threshold is too low it creates a positive feedback loop causing false positive amplification.
+   /// Raised from High to Critical on 2026-04-15 after discovering that many benign emails
+   /// (Google Fonts URLs, DGA false positives on service subdomains) can reach High score.
    /// Use batch transactions to write all IOCs at once, avoiding N+1 queries
     pub async fn auto_record_from_verdict(
         &self,
         session: &EmailSession,
         verdict: &SecurityVerdict,
     ) {
-       // High/Critical only. Medium/Low must never auto-write IOC or it will
+       // Critical only. High/Medium/Low must never auto-write IOC or it will
        // re-enter the scoring path and amplify false positives.
-        if verdict.threat_level < ThreatLevel::High {
+        if verdict.threat_level < ThreatLevel::Critical {
             return;
         }
 
@@ -268,19 +268,23 @@ impl IocManager {
         }
     }
 
-   /// Internal domain spoofing detection: when both mail_from and rcpt_to are protected internal domains
-   /// and verdict>= Medium, automatically record sender IP and address to IOC (attack_type = spoofing)
+/// Internal domain spoofing detection: when both mail_from and rcpt_to are protected internal domains
+/// and verdict>= Medium, automatically record sender IP and address to IOC (attack_type = spoofing)
     
-   /// Principle: External attackers forge internal domains to send emails to internal employees
-   /// Since the engine is deployed at internal mail gateways, true internal emails come from known internal mail server IPs
+/// Principle: External attackers forge internal domains to send emails to internal employees
+/// Since the engine is deployed at internal mail gateways, true internal emails come from known internal mail server IPs
     
-   /// Gate: Must have threat_level>= High, otherwise Medium false positives would write IOC creating positive feedback loop
+/// Gate: Must have threat_level>= High, otherwise Medium false positives would write IOC creating positive feedback loop
     pub async fn auto_record_internal_spoofing(
         &self,
         session: &EmailSession,
         verdict: &SecurityVerdict,
+        internal_domains: &HashSet<String>,
     ) {
-        if verdict.threat_level < ThreatLevel::High {
+        if verdict.threat_level < ThreatLevel::Critical {
+            return;
+        }
+        if internal_domains.is_empty() {
             return;
         }
         let sender_domain = session
@@ -294,10 +298,7 @@ impl IocManager {
         };
 
        // Check if sender domain is a protected internal domain
-        if !PROTECTED_INTERNAL_DOMAINS
-            .iter()
-            .any(|&d| sender_domain == d)
-        {
+        if !internal_domains.contains(&sender_domain) {
             return;
         }
 
@@ -305,11 +306,7 @@ impl IocManager {
         let has_internal_recipient = session.rcpt_to.iter().any(|rcpt| {
             rcpt.split('@')
                 .nth(1)
-                .map(|d| {
-                    PROTECTED_INTERNAL_DOMAINS
-                        .iter()
-                        .any(|&pd| d.eq_ignore_ascii_case(pd))
-                })
+                .map(|d| internal_domains.contains(&d.to_lowercase()))
                 .unwrap_or(false)
         });
 
@@ -382,8 +379,117 @@ impl IocManager {
         }
     }
 
+   /// Auto-record a domain impersonation IOC when header_scan detects
+   /// a sender domain that visually impersonates an internal domain.
+   ///
+   /// Unlike `auto_record_from_verdict` (requires verdict >= High), impersonation
+   /// detection is itself a strong signal — the domain was specifically crafted
+   /// to look like an internal domain — so we use a lower gate:
+   ///   - Impersonation similarity score >= 0.30 (effectively all hits, since
+   ///     TLD-swap = 0.35 and homoglyph = 0.45)
+   ///   - No verdict-level gate (the detection IS the gate)
+   ///
+   /// IOC is recorded as: source=auto, attack_type=domain_impersonation, verdict=malicious.
+   /// Future emails from the same domain will be boosted by the known-impersonation
+   /// IOC lookup in header_scan (Step 5c).
+    pub async fn auto_record_impersonation_domain(
+        &self,
+        session: &EmailSession,
+        sender_domain: &str,
+        target_domain: &str,
+        similarity_type: &str,
+        similarity_score: f64,
+    ) {
+        // Gate: skip very low-confidence hits (shouldn't happen given current scores,
+        // but future-proofs against accidental threshold changes)
+        if similarity_score < 0.30 {
+            return;
+        }
+
+        // Don't record if already whitelisted
+        if self.is_whitelisted("domain", sender_domain).await {
+            return;
+        }
+
+        let context = format!(
+            "target={} | type={} | score={:.2} | session={} | subject={}",
+            target_domain,
+            similarity_type,
+            similarity_score,
+            session.id,
+            session.subject.as_deref().unwrap_or("(no subject)"),
+        );
+
+        // Confidence based on similarity type:
+        // homoglyph (0.45) → higher confidence, TLD-swap (0.35) → slightly lower
+        let confidence = if similarity_score >= 0.40 { 0.80 } else { 0.70 };
+
+        let mut iocs = Vec::new();
+
+        // Record the impersonating domain
+        iocs.push(IocEntry::auto_from_indicator_full(
+            sender_domain.to_string(),
+            "domain".to_string(),
+            confidence,
+            context.clone(),
+            "domain_impersonation".to_string(),
+            "malicious".to_string(),
+        ));
+
+        // Record sender email address if available
+        if let Some(ref mail_from) = session.mail_from
+            && let Some(normalized) = normalize_email_indicator(mail_from)
+            && !self.is_whitelisted("email", &normalized).await
+        {
+            iocs.push(IocEntry::auto_from_indicator_full(
+                normalized,
+                "email".to_string(),
+                confidence,
+                context.clone(),
+                "domain_impersonation".to_string(),
+                "malicious".to_string(),
+            ));
+        }
+
+        // Record origin IP if external
+        let origin_ip = extract_origin_ip(session).unwrap_or_else(|| session.client_ip.to_string());
+        if !origin_ip.is_empty()
+            && !is_private_ip(&origin_ip)
+            && !self.is_whitelisted("ip", &origin_ip).await
+        {
+            iocs.push(IocEntry::auto_from_indicator_full(
+                origin_ip,
+                "ip".to_string(),
+                confidence * 0.8, // Lower confidence for IP (could be shared hosting)
+                context.clone(),
+                "domain_impersonation".to_string(),
+                "malicious".to_string(),
+            ));
+        }
+
+        if !iocs.is_empty() {
+            let count = iocs.len();
+            if let Err(e) = self.db.batch_upsert_iocs(&iocs).await {
+                warn!(
+                    count,
+                    sender_domain,
+                    target_domain,
+                    "Failed to record impersonation domain IOCs: {}", e
+                );
+            } else {
+                info!(
+                    count,
+                    sender_domain,
+                    target_domain,
+                    similarity_type,
+                    "Auto-recorded domain impersonation IOCs (self-learning)"
+                );
+            }
+        }
+    }
+
    /// Nonsensical email auto-record IOC
-   /// Gate: semantic_scan confidence must be>= 0.70 and threat_level>= High
+   /// Gate: semantic_scan confidence must be>= 0.70 and threat_level>= Critical
    /// Low-confidence nonsensical detection does not auto-write IOC to avoid false positive -> IOC -> amplification loop
     pub async fn auto_record_nonsensical(
         &self,
@@ -392,7 +498,7 @@ impl IocManager {
     ) {
        // Gate: Only high-confidence nonsensical detection writes to IOC
         if sem_result.confidence < 0.70
-            || sem_result.threat_level < crate::module::ThreatLevel::High
+            || sem_result.threat_level < crate::module::ThreatLevel::Critical
         {
             return;
         }

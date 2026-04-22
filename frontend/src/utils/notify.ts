@@ -5,6 +5,8 @@
  * Called by the WebSocket message handler in App.tsx.
  */
 
+import i18n from '../i18n'
+
 // -- Settings loading --
 
 function isSoundEnabled(): boolean {
@@ -125,8 +127,8 @@ function trackSessionRate() {
     lastThresholdAlert = now
     playThreatSound('medium')
     sendDesktopNotification(
-      '流量告警',
-      `当前邮件到达速率 ${rate} 封/分钟，超过阈值 ${threshold}`,
+      i18n.t('notify.trafficAlert'),
+      i18n.t('notify.trafficAlertBody', { rate, threshold }),
       'traffic-alert'
     )
   }
@@ -134,8 +136,8 @@ function trackSessionRate() {
 
 // -- Public API --
 
-const THREAT_CN: Record<string, string> = {
-  safe: '安全', low: '低危', medium: '中危', high: '高危', critical: '危急',
+const THREAT_LEVEL_KEYS: Record<string, string> = {
+  safe: 'notify.threatSafe', low: 'notify.threatLow', medium: 'notify.threatMedium', high: 'notify.threatHigh', critical: 'notify.threatCritical',
 }
 
 /**
@@ -148,16 +150,16 @@ export function notifySecurityVerdict(parsed: Record<string, unknown>) {
   const threatLevel = (data.threat_level as string) || 'safe'
   if (threatLevel === 'safe' || threatLevel === 'low') return
 
-  const subject = (data.subject as string) || '(无主题)'
-  const from = (data.mail_from as string) || '未知发件人'
-  const levelCn = THREAT_CN[threatLevel] || threatLevel
+  const subject = (data.subject as string) || i18n.t('notify.noSubject')
+  const from = (data.mail_from as string) || i18n.t('notify.unknownSender')
+  const levelCn = i18n.t(THREAT_LEVEL_KEYS[threatLevel] || 'notify.threatSafe')
 
   // Alert sound
   playThreatSound(threatLevel as 'medium' | 'high' | 'critical')
 
   // Desktop notification
   sendDesktopNotification(
-    `${levelCn}威胁`,
+    i18n.t('notify.threatTitle', { level: levelCn }),
     `${from}\n${subject}`,
     `verdict-${threatLevel}`
   )
@@ -180,8 +182,8 @@ export function notifyDataSecurityAlert(parsed: Record<string, unknown>) {
 
   playThreatSound('high')
   sendDesktopNotification(
-    '数据安全告警',
-    (data.description as string) || '检测到数据安全事件',
+    i18n.t('notify.dataSecurityAlert'),
+    (data.description as string) || i18n.t('notify.dataSecurityEventDetected'),
     'data-security'
   )
 }

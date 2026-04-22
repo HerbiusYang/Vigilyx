@@ -29,6 +29,12 @@ pub const AUTH_INVALID_TOKEN: &str = "AUTH_005";
 /// Must change default password first (SEC: CWE-620)
 pub const AUTH_PASSWORD_CHANGE_REQUIRED: &str = "AUTH_006";
 
+/// Internal control-plane request came from a non-internal source.
+pub const AUTH_INTERNAL_SOURCE_DENIED: &str = "AUTH_007";
+
+/// Authenticated but forbidden by role/authorization policy.
+pub const AUTH_FORBIDDEN: &str = "AUTH_008";
+
 // requestverify
 
 /// ID format (Such as UUID Parsefailed)
@@ -72,6 +78,8 @@ mod tests {
             AUTH_MISSING_TOKEN,
             AUTH_INVALID_TOKEN,
             AUTH_PASSWORD_CHANGE_REQUIRED,
+            AUTH_INTERNAL_SOURCE_DENIED,
+            AUTH_FORBIDDEN,
             VALIDATION_INVALID_ID,
             VALIDATION_INVALID_PARAMS,
             VALIDATION_MISSING_FIELD,
@@ -96,6 +104,8 @@ mod tests {
         assert!(AUTH_MISSING_TOKEN.starts_with("AUTH_"));
         assert!(AUTH_INVALID_TOKEN.starts_with("AUTH_"));
         assert!(AUTH_PASSWORD_CHANGE_REQUIRED.starts_with("AUTH_"));
+        assert!(AUTH_INTERNAL_SOURCE_DENIED.starts_with("AUTH_"));
+        assert!(AUTH_FORBIDDEN.starts_with("AUTH_"));
 
        // VAL codes start with "VAL_"
         assert!(VALIDATION_INVALID_ID.starts_with("VAL_"));

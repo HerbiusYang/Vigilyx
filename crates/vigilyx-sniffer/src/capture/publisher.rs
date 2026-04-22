@@ -3,14 +3,18 @@
 //! Email sessions and HTTP sessions are published with queue capacity limits
 //! to prevent OOM when the consumer (Engine) is slower than the producer (Sniffer).
 //!
-//! Migration note (P0-3): Redis Streams are the primary durable transport.
-//! Pub/Sub is kept as a shadow write during the migration period.
+//! Redis Streams are the primary durable transport for session data.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 use vigilyx_core::{EmailSession, HttpSession};
-use vigilyx_db::mq::{MqClient, StreamClient, streams};
+use vigilyx_db::mq::{StreamClient, streams};
+
+/// Maximum XADD retry attempts before giving up.
+const XADD_MAX_RETRIES: u32 = 3;
+/// Base backoff duration for XADD retries (doubles each attempt: 100 → 200 → 400 ms).
+const XADD_BASE_BACKOFF_MS: u64 = 100;
 
 /// emailSessionPublishQueue largeCapacity (Prevent OOM)
 ///
@@ -29,13 +33,14 @@ pub struct DataPublisher {
     email_pending: Arc<AtomicU64>,
    /// due toQueuefull dropofemailSessioncount (Monitor)
     email_dropped: Arc<AtomicU64>,
+   /// XADD failures after all retries exhausted (sessions permanently lost)
+    xadd_failures: Arc<AtomicU64>,
 }
 
 #[derive(Clone)]
 pub enum PublishMode {
-    /// Redis Streams (primary) + Pub/Sub (shadow, migration period)
+    /// Redis Streams (primary, at-least-once delivery)
     Mq {
-        mq: Arc<MqClient>,
         stream: Arc<StreamClient>,
     },
     /// HTTP API (legacy fallback when Redis unavailable)
@@ -58,6 +63,7 @@ impl DataPublisher {
             runtime_handle,
             email_pending: Arc::new(AtomicU64::new(0)),
             email_dropped: Arc::new(AtomicU64::new(0)),
+            xadd_failures: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -73,10 +79,16 @@ impl DataPublisher {
         self.email_dropped.load(Ordering::Relaxed)
     }
 
-   /// GetWhenfirstWaitPublishofemailSession (Monitor, giving Prometheus)
+    /// GetWhenfirstWaitPublishofemailSession (Monitor, giving Prometheus)
     #[allow(dead_code)]
     pub fn email_pending_count(&self) -> u64 {
         self.email_pending.load(Ordering::Relaxed)
+    }
+
+    /// Total XADD failures after all retries exhausted (Monitor, giving Prometheus)
+    #[allow(dead_code)]
+    pub fn xadd_failure_count(&self) -> u64 {
+        self.xadd_failures.load(Ordering::Relaxed)
     }
 
    /// BatchPublishSession
@@ -121,26 +133,56 @@ impl DataPublisher {
         let pending_counter = self.email_pending.clone();
 
         match &self.mode {
-            PublishMode::Mq { mq, stream } => {
-                let mq = mq.clone();
+            PublishMode::Mq { stream } => {
                 let stream_client = stream.clone();
+                let xadd_failures = self.xadd_failures.clone();
                 handle.spawn(async move {
                     // Primary: Redis Streams (durable, at-least-once)
-                    if let Err(e) = stream_client
-                        .xadd_batch(streams::EMAIL_SESSIONS, &sessions)
-                        .await
-                    {
-                        warn!(
-                            count = sessions.len(),
-                            "Stream XADD email sessions failed: {}", e
-                        );
+                    // Retry with exponential backoff: 100ms → 200ms → 400ms
+                    let mut last_err = None;
+                    for attempt in 1..=XADD_MAX_RETRIES {
+                        match stream_client
+                            .xadd_batch(streams::EMAIL_SESSIONS, &sessions)
+                            .await
+                        {
+                            Ok(_) => {
+                                if attempt > 1 {
+                                    debug!(
+                                        attempt,
+                                        count = sessions.len(),
+                                        "Stream XADD email sessions succeeded after retry"
+                                    );
+                                }
+                                last_err = None;
+                                break;
+                            }
+                            Err(e) => {
+                                warn!(
+                                    count = sessions.len(),
+                                    attempt,
+                                    max_retries = XADD_MAX_RETRIES,
+                                    "Stream XADD email sessions failed: {}", e
+                                );
+                                last_err = Some(e);
+                                if attempt < XADD_MAX_RETRIES {
+                                    let backoff_ms = XADD_BASE_BACKOFF_MS * (1 << (attempt - 1));
+                                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms))
+                                        .await;
+                                }
+                            }
+                        }
                     }
-                    // Shadow: Pub/Sub (migration period, remove after Engine migrates)
-                    if let Err(e) = mq.publish_sessions_batch(&sessions).await {
-                        // Non-fatal: Stream write is the primary path
-                        debug!(
+                    if let Some(e) = last_err {
+                        let total = xadd_failures.fetch_add(session_count, Ordering::Relaxed)
+                            + session_count;
+                        error!(
                             count = sessions.len(),
-                            "Pub/Sub shadow publish failed (non-fatal): {}", e
+                            total_xadd_failures = total,
+                            "Stream XADD email sessions permanently failed after {} retries, \
+                             {} sessions LOST: {}",
+                            XADD_MAX_RETRIES,
+                            sessions.len(),
+                            e
                         );
                     }
                     let _ =
@@ -242,28 +284,57 @@ impl DataPublisher {
                     }
                 });
             }
-            PublishMode::Mq { mq, stream } => {
-                let mq = mq.clone();
+            PublishMode::Mq { stream } => {
                 let stream_client = stream.clone();
+                let xadd_failures = self.xadd_failures.clone();
                 handle.spawn(async move {
                     // Primary: Redis Streams
-                    if let Err(e) = stream_client
-                        .xadd_batch(streams::HTTP_SESSIONS, &sessions)
-                        .await
-                    {
-                        warn!(
-                            count = session_count,
-                            error = %e,
-                            "Stream XADD HTTP sessions failed: {} sessions lost!",
-                            session_count
-                        );
+                    // Retry with exponential backoff: 100ms → 200ms → 400ms
+                    let mut last_err = None;
+                    for attempt in 1..=XADD_MAX_RETRIES {
+                        match stream_client
+                            .xadd_batch(streams::HTTP_SESSIONS, &sessions)
+                            .await
+                        {
+                            Ok(_) => {
+                                if attempt > 1 {
+                                    debug!(
+                                        attempt,
+                                        count = session_count,
+                                        "Stream XADD HTTP sessions succeeded after retry"
+                                    );
+                                }
+                                last_err = None;
+                                break;
+                            }
+                            Err(e) => {
+                                warn!(
+                                    count = session_count,
+                                    attempt,
+                                    max_retries = XADD_MAX_RETRIES,
+                                    "Stream XADD HTTP sessions failed: {}", e
+                                );
+                                last_err = Some(e);
+                                if attempt < XADD_MAX_RETRIES {
+                                    let backoff_ms = XADD_BASE_BACKOFF_MS * (1 << (attempt - 1));
+                                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms))
+                                        .await;
+                                }
+                            }
+                        }
                     }
-                    // Shadow: Pub/Sub (migration period)
-                    if let Err(e) = mq.publish("vigilyx:http_session:new", &sessions).await {
-                        debug!(
+                    if let Some(e) = last_err {
+                        let total = xadd_failures
+                            .fetch_add(session_count as u64, Ordering::Relaxed)
+                            + session_count as u64;
+                        error!(
                             count = session_count,
-                            error = %e,
-                            "Pub/Sub shadow HTTP session publish failed (non-fatal)"
+                            total_xadd_failures = total,
+                            "Stream XADD HTTP sessions permanently failed after {} retries, \
+                             {} sessions LOST: {}",
+                            XADD_MAX_RETRIES,
+                            session_count,
+                            e
                         );
                     }
                 });

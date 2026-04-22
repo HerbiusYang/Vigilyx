@@ -35,6 +35,7 @@ aes-gcm = "0.10"
 base64 = "0.22"
 scraper = "0.22"
 rqrr = "0.8"
+image.workspace = true
 crc32fast = "1"
 flate2 = "1"
 futures = "0.3"
@@ -46,12 +47,14 @@ rustc-hash.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 dotenvy.workspace = true
 unicode-normalization = "0.1"
+idna = "1"
 yara-x = "1.14"
 zip = "8"
 
 [dev-dependencies]
 tempfile = "3"
 proptest = "1.4"
+rand.workspace = true  # RUSTSEC-2026-0097: pin minimum safe version
 
 [lints]
 workspace = true

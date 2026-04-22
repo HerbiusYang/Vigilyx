@@ -12,12 +12,17 @@
 //! If temporal analysis upgrades the risk level, the verdict is updated
 //! and a WebSocket notification is broadcast.
 
+use std::hash::BuildHasherDefault;
 use std::sync::Arc;
 
-use rustc_hash::FxHashMap;
+use dashmap::DashMap;
+use rustc_hash::FxHasher;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
+
+/// FxHash-backed BuildHasher for DashMap (same pattern as sniffer).
+type FxBuildHasher = BuildHasherDefault<FxHasher>;
 
 use super::comm_graph::{CommGraph, GraphParams};
 use super::cusum::{CusumParams, CusumState, cusum_update};
@@ -97,18 +102,18 @@ pub struct TemporalObservation<'a> {
 /// In-memory temporal state cache for fast lookups.
 /// Backed by PostgreSQL for persistence (loaded on startup, flushed periodically).
 pub struct TemporalAnalyzer {
-    cusum_states: Arc<RwLock<FxHashMap<String, CusumState>>>,
-    ewma_states: Arc<RwLock<FxHashMap<String, DualEwmaState>>>,
-    entity_states: Arc<RwLock<FxHashMap<String, EntityRiskState>>>,
-    hmm_states: Arc<RwLock<FxHashMap<String, AttackPhaseState>>>,
-    hawkes_states: Arc<RwLock<FxHashMap<String, HawkesState>>>,
+    cusum_states: Arc<DashMap<String, CusumState, FxBuildHasher>>,
+    ewma_states: Arc<DashMap<String, DualEwmaState, FxBuildHasher>>,
+    entity_states: Arc<DashMap<String, EntityRiskState, FxBuildHasher>>,
+    hmm_states: Arc<DashMap<String, AttackPhaseState, FxBuildHasher>>,
+    hawkes_states: Arc<DashMap<String, HawkesState, FxBuildHasher>>,
     comm_graph: Arc<RwLock<CommGraph>>,
     cusum_params: CusumParams,
     ewma_params: EwmaParams,
     entity_params: EntityRiskParams,
     graph_params: GraphParams,
    /// Track last email timestamp per sender for HMM interval calculation
-    last_email_ts: Arc<RwLock<FxHashMap<String, std::time::Instant>>>,
+    last_email_ts: Arc<DashMap<String, std::time::Instant, FxBuildHasher>>,
 }
 
 impl Default for TemporalAnalyzer {
@@ -121,17 +126,17 @@ impl TemporalAnalyzer {
    /// Create a new temporal analyzer with default parameters.
     pub fn new() -> Self {
         Self {
-            cusum_states: Arc::new(RwLock::new(FxHashMap::default())),
-            ewma_states: Arc::new(RwLock::new(FxHashMap::default())),
-            entity_states: Arc::new(RwLock::new(FxHashMap::default())),
-            hmm_states: Arc::new(RwLock::new(FxHashMap::default())),
-            hawkes_states: Arc::new(RwLock::new(FxHashMap::default())),
+            cusum_states: Arc::new(DashMap::with_hasher(FxBuildHasher::default())),
+            ewma_states: Arc::new(DashMap::with_hasher(FxBuildHasher::default())),
+            entity_states: Arc::new(DashMap::with_hasher(FxBuildHasher::default())),
+            hmm_states: Arc::new(DashMap::with_hasher(FxBuildHasher::default())),
+            hawkes_states: Arc::new(DashMap::with_hasher(FxBuildHasher::default())),
             comm_graph: Arc::new(RwLock::new(CommGraph::new())),
             cusum_params: CusumParams::default(),
             ewma_params: EwmaParams::default(),
             entity_params: EntityRiskParams::default(),
             graph_params: GraphParams::default(),
-            last_email_ts: Arc::new(RwLock::new(FxHashMap::default())),
+            last_email_ts: Arc::new(DashMap::with_hasher(FxBuildHasher::default())),
         }
     }
 
@@ -155,30 +160,28 @@ impl TemporalAnalyzer {
         sender_key.push_str("sender:");
         sender_key.push_str(&sender_lower);
 
-       // 1-3. CUSUM + EWMA + Entity (independent -> concurrent lock acquisition)
-        let (cusum_result, ewma_result, entity_result) = tokio::join!(
-            async {
-                let mut states = self.cusum_states.write().await;
-                let state = states
-                    .entry(sender_key.clone())
-                    .or_insert_with(|| CusumState::new(sender_key.clone()));
-                cusum_update(state, obs.risk_single, &self.cusum_params)
-            },
-            async {
-                let mut states = self.ewma_states.write().await;
-                let state = states
-                    .entry(sender_key.clone())
-                    .or_insert_with(|| DualEwmaState::new(sender_key.clone()));
-                ewma_update(state, obs.risk_single, &self.ewma_params)
-            },
-            async {
-                let mut states = self.entity_states.write().await;
-                let state = states
-                    .entry(sender_key.clone())
-                    .or_insert_with(|| EntityRiskState::with_defaults(sender_key.clone()));
-                entity_risk_update(state, obs.risk_single, &self.entity_params)
-            }
-        );
+       // 1-3. CUSUM + EWMA + Entity (DashMap per-shard locks, no whole-map lock needed)
+        let cusum_result = {
+            let mut entry = self
+                .cusum_states
+                .entry(sender_key.clone())
+                .or_insert_with(|| CusumState::new(sender_key.clone()));
+            cusum_update(entry.value_mut(), obs.risk_single, &self.cusum_params)
+        };
+        let ewma_result = {
+            let mut entry = self
+                .ewma_states
+                .entry(sender_key.clone())
+                .or_insert_with(|| DualEwmaState::new(sender_key.clone()));
+            ewma_update(entry.value_mut(), obs.risk_single, &self.ewma_params)
+        };
+        let entity_result = {
+            let mut entry = self
+                .entity_states
+                .entry(sender_key.clone())
+                .or_insert_with(|| EntityRiskState::with_defaults(sender_key.clone()));
+            entity_risk_update(entry.value_mut(), obs.risk_single, &self.entity_params)
+        };
 
         if cusum_result.alarm {
             warn!(
@@ -195,19 +198,20 @@ impl TemporalAnalyzer {
             );
         }
 
-       // 4. Timestamp + HMM + Hawkes time (single last_email_ts lock)
+       // 4. Timestamp + HMM + Hawkes time (DashMap per-key lock)
         let now = std::time::Instant::now();
         let (time_interval_hours, now_hours) = {
-            let mut ts_map = self.last_email_ts.write().await;
-            let interval = ts_map
+            let interval = self
+                .last_email_ts
                 .get(&sender_key)
                 .map(|prev| now.duration_since(*prev).as_secs_f64() / 3600.0)
                 .unwrap_or(48.0);
-            let elapsed = ts_map
+            let elapsed = self
+                .last_email_ts
                 .get(&sender_key)
                 .map(|prev| prev.elapsed().as_secs_f64() / 3600.0)
                 .unwrap_or(0.0);
-            ts_map.insert(sender_key.clone(), now);
+            self.last_email_ts.insert(sender_key.clone(), now);
             (interval, elapsed)
         };
        // Lock released - no second acquisition needed for Hawkes
@@ -235,18 +239,19 @@ impl TemporalAnalyzer {
 
             let mut worst_hmm: Option<HmmPhaseResult> = None;
             {
-                let mut hmm_states = self.hmm_states.write().await;
                 for recipient_lower in &recipients_lower {
                     pair_key_buf.clear();
                     pair_key_buf.push_str(&sender_lower);
                     pair_key_buf.push('→');
                     pair_key_buf.push_str(recipient_lower);
 
-                    let state = hmm_states
-                        .entry(pair_key_buf.clone())
-                        .or_insert_with(|| AttackPhaseState::new(pair_key_buf.clone()));
-
-                    let result = state.update(&hmm_obs);
+                    let result = {
+                        let mut entry = self
+                            .hmm_states
+                            .entry(pair_key_buf.clone())
+                            .or_insert_with(|| AttackPhaseState::new(pair_key_buf.clone()));
+                        entry.value_mut().update(&hmm_obs)
+                    };
 
                     let phase = HmmPhaseResult {
                         normal: result.posteriors[0],
@@ -307,18 +312,19 @@ impl TemporalAnalyzer {
         let hawkes_result = if !obs.recipients.is_empty() {
             let mut worst_hawkes: Option<HawkesResult> = None;
             {
-                let mut states = self.hawkes_states.write().await;
                 for (i, recipient_lower) in recipients_lower.iter().enumerate() {
                     pair_key_buf.clear();
                     pair_key_buf.push_str(&sender_lower);
                     pair_key_buf.push('→');
                     pair_key_buf.push_str(recipient_lower);
 
-                    let state = states
-                        .entry(pair_key_buf.clone())
-                        .or_insert_with(HawkesState::new);
-
-                    let result = state.observe(now_hours, obs.risk_single);
+                    let result = {
+                        let mut entry = self
+                            .hawkes_states
+                            .entry(pair_key_buf.clone())
+                            .or_default();
+                        entry.value_mut().observe(now_hours, obs.risk_single)
+                    };
 
                     if result.burst_detected {
                         warn!(
@@ -340,11 +346,14 @@ impl TemporalAnalyzer {
             }
             worst_hawkes
         } else {
-            let mut states = self.hawkes_states.write().await;
-            let state = states
-                .entry(sender_key.clone())
-                .or_insert_with(HawkesState::new);
-            Some(state.observe(now_hours, obs.risk_single))
+            let result = {
+                let mut entry = self
+                    .hawkes_states
+                    .entry(sender_key.clone())
+                    .or_default();
+                entry.value_mut().observe(now_hours, obs.risk_single)
+            };
+            Some(result)
         };
 
        // 7. Composite temporal risk
@@ -418,21 +427,19 @@ impl TemporalAnalyzer {
 
    /// Get the current watchlist (entities above watchlist threshold).
     pub async fn get_watchlist(&self) -> Vec<(String, f64)> {
-        let states = self.entity_states.read().await;
-        states
-            .values()
-            .filter(|s| s.risk_value >= self.entity_params.watchlist_threshold)
-            .map(|s| (s.entity_key.clone(), s.risk_value))
+        self.entity_states
+            .iter()
+            .filter(|entry| entry.value().risk_value >= self.entity_params.watchlist_threshold)
+            .map(|entry| (entry.value().entity_key.clone(), entry.value().risk_value))
             .collect()
     }
 
    /// Get CUSUM alarm list.
     pub async fn get_cusum_alarms(&self) -> Vec<String> {
-        let states = self.cusum_states.read().await;
-        states
-            .values()
-            .filter(|s| s.alarm_active)
-            .map(|s| s.entity_key.clone())
+        self.cusum_states
+            .iter()
+            .filter(|entry| entry.value().alarm_active)
+            .map(|entry| entry.value().entity_key.clone())
             .collect()
     }
 
@@ -440,9 +447,21 @@ impl TemporalAnalyzer {
     pub async fn export_states(
         &self,
     ) -> (Vec<CusumState>, Vec<DualEwmaState>, Vec<EntityRiskState>) {
-        let cusum = self.cusum_states.read().await.values().cloned().collect();
-        let ewma = self.ewma_states.read().await.values().cloned().collect();
-        let entity = self.entity_states.read().await.values().cloned().collect();
+        let cusum = self
+            .cusum_states
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
+        let ewma = self
+            .ewma_states
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
+        let entity = self
+            .entity_states
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
         (cusum, ewma, entity)
     }
 
@@ -453,23 +472,14 @@ impl TemporalAnalyzer {
         ewma: Vec<DualEwmaState>,
         entity: Vec<EntityRiskState>,
     ) {
-        {
-            let mut states = self.cusum_states.write().await;
-            for s in cusum {
-                states.insert(s.entity_key.clone(), s);
-            }
+        for s in cusum {
+            self.cusum_states.insert(s.entity_key.clone(), s);
         }
-        {
-            let mut states = self.ewma_states.write().await;
-            for s in ewma {
-                states.insert(s.entity_key.clone(), s);
-            }
+        for s in ewma {
+            self.ewma_states.insert(s.entity_key.clone(), s);
         }
-        {
-            let mut states = self.entity_states.write().await;
-            for s in entity {
-                states.insert(s.entity_key.clone(), s);
-            }
+        for s in entity {
+            self.entity_states.insert(s.entity_key.clone(), s);
         }
     }
 

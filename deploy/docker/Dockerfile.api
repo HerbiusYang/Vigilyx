@@ -3,11 +3,11 @@
 # ═══════════════════════════════════════════════════
 #
 # Architecture notes:
-#   API (vigilyx-api) and Engine (vigilyx-engine) must run in the same container because:
-#     1. They share the PostgreSQL connection (via the DATABASE_URL environment variable)
-#     2. They share the UDS socket (data/vigilyx.sock) as a fallback channel when Redis is unavailable
-#     3. Engine writes a heartbeat file (data/engine-status.json) that the API reads
+#   API (vigilyx-api) and Engine (vigilyx-engine) run in the same container (default mode).
+#   They communicate via Redis (Streams for data, Pub/Sub for control) and share PostgreSQL.
+#   Engine writes a heartbeat to Redis TTL key + local file for health monitoring.
 #   After the frontend is built into static files, it is served directly by the API via axum ServeDir.
+#   To run the engine separately, use the engine-standalone profile in docker-compose.yml.
 #
 # Build:
 #   docker build -f deploy/docker/Dockerfile.api -t vigilyx:latest .
@@ -20,7 +20,7 @@
 #     vigilyx:latest
 
 # -- Stage 1: cargo-chef - extract the dependency recipe --
-FROM rust:1.94.1-bookworm@sha256:6ae102bdbf528294bc79ad6e1fae682f6f7c2a6e6621506ba959f9685b308a55 AS chef
+FROM rust:1.95.0-bookworm AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /app
 
@@ -81,8 +81,8 @@ COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 COPY deploy/docker/entrypoint.sh ./
 RUN chmod +x entrypoint.sh
 
-# Create the data directory (UDS socket + heartbeat files + logs)
-RUN mkdir -p /app/data /app/logs
+# Create the data directory (heartbeat files + runtime data)
+RUN mkdir -p /app/data
 
 # SEC-C01: run as a non-root user (CWE-250)
 RUN groupadd -r vigilyx && useradd -r -g vigilyx -d /app vigilyx \

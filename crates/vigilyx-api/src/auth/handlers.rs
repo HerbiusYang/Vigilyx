@@ -17,6 +17,9 @@ use super::rate_limit::LoginRateLimiter;
 
 // -- Cookie constants --
 const COOKIE_NAME: &str = "vigilyx_token";
+const MAX_LOGIN_USERNAME_CHARS: usize = 256;
+const MAX_LOGIN_PASSWORD_CHARS: usize = 4096;
+const MAX_LOGIN_AUDIT_USERNAME_CHARS: usize = 128;
 
 /// Build a Set-Cookie header value that sets the token.
 pub fn build_token_cookie(token: &str, max_age_secs: u64, secure: bool) -> String {
@@ -120,6 +123,43 @@ fn login_fail(error: &str) -> LoginResponse {
         error: Some(error.to_string()),
         must_change_password: None,
     }
+}
+
+fn truncate_for_audit(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
+}
+
+pub(crate) fn sanitize_login_username(username: &str) -> String {
+    let normalized = username
+        .chars()
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect::<String>();
+    let collapsed = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
+    truncate_for_audit(&collapsed, MAX_LOGIN_AUDIT_USERNAME_CHARS)
+}
+
+fn validate_login_request(request: &LoginRequest) -> Result<(), &'static str> {
+    let username_len = request.username.chars().count();
+    if request.username.trim().is_empty() {
+        return Err("登录请求无效");
+    }
+    if username_len > MAX_LOGIN_USERNAME_CHARS {
+        return Err("登录请求无效");
+    }
+    if request.username.chars().any(char::is_control) {
+        return Err("登录请求无效");
+    }
+    if request.password.chars().count() > MAX_LOGIN_PASSWORD_CHARS {
+        return Err("登录请求无效");
+    }
+
+    Ok(())
 }
 
 const MIN_PASSWORD_LEN: usize = 12;
@@ -234,6 +274,17 @@ pub async fn handle_login(
     client_ip: IpAddr,
     request: &LoginRequest,
 ) -> LoginResponse {
+    let audit_username = sanitize_login_username(&request.username);
+
+    if let Err(message) = validate_login_request(request) {
+        warn!(
+            ip = %client_ip,
+            username = %audit_username,
+            "Login rejected: malformed request"
+        );
+        return login_fail(message);
+    }
+
    // ── Per-IP Rate limiting: pre-check ──
    // Peek without recording a failure. If already at/over the limit,
    // reject immediately to avoid expensive password verification.
@@ -269,7 +320,11 @@ pub async fn handle_login(
             );
         }
         let blocked = rate_limiter.check_and_record_failure(client_ip);
-        warn!(ip = %client_ip, "Login failed: invalid username - {}", request.username);
+        warn!(
+            ip = %client_ip,
+            username = %audit_username,
+            "Login failed: invalid username"
+        );
         if blocked {
             return login_fail("登录失败次数过多，请稍后再试");
         }
@@ -283,17 +338,22 @@ pub async fn handle_login(
             rate_limiter.reset(client_ip);
 
            // Token
-            match generate_token(config, &request.username, "admin") {
+            match generate_token(config, &config.username, "admin") {
                 Ok(token) => {
                     let changed = *config.password_changed.read().await;
                     if !changed {
                         warn!(
                             ip = %client_ip,
-                            "Security warning: user {} logged in with default password",
-                            request.username
+                            username = %audit_username,
+                            "Security warning: user logged in with default password"
                         );
                     }
-                    info!(ip = %client_ip, "Login success: {} (password_changed: {})", request.username, changed);
+                    info!(
+                        ip = %client_ip,
+                        username = %audit_username,
+                        password_changed = changed,
+                        "Login success"
+                    );
                     LoginResponse {
                         success: true,
                         token: Some(token),
@@ -310,7 +370,11 @@ pub async fn handle_login(
         }
         Ok(false) => {
             let blocked = rate_limiter.check_and_record_failure(client_ip);
-            warn!(ip = %client_ip, "Login failed: wrong password - {}", request.username);
+            warn!(
+                ip = %client_ip,
+                username = %audit_username,
+                "Login failed: wrong password"
+            );
             if blocked {
                 return login_fail("登录失败次数过多，请稍后再试");
             }
@@ -410,7 +474,10 @@ pub async fn handle_change_password(
 
 #[cfg(test)]
 mod tests {
-    use super::{LoginResponse, validate_new_password};
+    use super::{
+        LoginRequest, LoginResponse, sanitize_login_username, validate_login_request,
+        validate_new_password,
+    };
 
     #[test]
     fn test_login_response_does_not_serialize_token() {
@@ -462,5 +529,35 @@ mod tests {
     #[test]
     fn allows_long_multi_word_passphrases() {
         assert!(validate_new_password("admin", "Blue Ocean Patrol 2026").is_ok());
+    }
+
+    #[test]
+    fn sanitize_login_username_removes_controls_and_truncates() {
+        let sanitized = sanitize_login_username(&format!(" admin\tname\r\n{}", "x".repeat(200)));
+        assert!(!sanitized.contains('\n'));
+        assert!(!sanitized.contains('\r'));
+        assert!(!sanitized.contains('\t'));
+        assert!(sanitized.starts_with("admin name"));
+        assert!(sanitized.ends_with("..."));
+    }
+
+    #[test]
+    fn validate_login_request_rejects_control_chars_in_username() {
+        let request = LoginRequest {
+            username: "admin\nroot".to_string(),
+            password: "test".to_string(),
+        };
+
+        assert_eq!(validate_login_request(&request), Err("登录请求无效"));
+    }
+
+    #[test]
+    fn validate_login_request_rejects_oversized_password() {
+        let request = LoginRequest {
+            username: "admin".to_string(),
+            password: "x".repeat(4097),
+        };
+
+        assert_eq!(validate_login_request(&request), Err("登录请求无效"));
     }
 }

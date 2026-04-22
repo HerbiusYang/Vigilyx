@@ -29,6 +29,7 @@ set -euo pipefail
 IFACE="${SNIFFER_INTERFACE:-eth0}"       # Mirror-port interface (can be overridden via env var)
 CAPTURE_DIR="/data/email-capture"       # Local pcap storage directory
 LISTEN_PORT=5000                        # Live-stream listen port
+LISTEN_ADDR="${LISTEN_ADDR:-127.0.0.1}" # Bind address (default: loopback only for security)
 DUMPCAP_BUF_MB=512                      # dumpcap kernel ring buffer (MB)
 FILE_SIZE_KB=1048576                    # Local rotation: 1GB per file
 MAX_FILES=200                           # Keep at most 200 files
@@ -51,18 +52,18 @@ warn()  { echo -e "\033[33m[WARN]\033[0m  $(date '+%F %T') $*"; }
 error() { echo -e "\033[31m[ERROR]\033[0m $(date '+%F %T') $*"; exit 1; }
 
 # ==== Dependency checks ====
-command -v dumpcap &>/dev/null || error "dumpcap 未安装: yum install -y wireshark"
+command -v dumpcap &>/dev/null || error "dumpcap is not installed: yum install -y wireshark"
 
 STREAM_TOOL=""
 if command -v socat &>/dev/null; then
     STREAM_TOOL="socat"
-    info "使用 socat (支持 per-socket keepalive)"
+    info "Using socat (supports per-socket keepalive)"
 elif command -v ncat &>/dev/null; then
     STREAM_TOOL="ncat"
-    info "使用 ncat (建议安装 socat 以获得更精确的 keepalive)"
+    info "Using ncat (installing socat is recommended for more precise keepalive handling)"
 else
-    warn "socat/ncat 均未安装，仅本地落盘模式"
-    warn "推荐: yum install -y socat"
+    warn "Neither socat nor ncat is installed; running in local capture-to-disk mode only"
+    warn "Recommended: yum install -y socat"
 fi
 
 # ==== Create the per-connection capture script ====
@@ -81,13 +82,13 @@ exec /usr/bin/dumpcap \\
     -f "${BPF_FILTER}"
 WRAPPER_EOF
 chmod +x "${STREAM_WRAPPER}"
-info "流式抓包脚本: ${STREAM_WRAPPER}"
+info "Streaming capture wrapper: ${STREAM_WRAPPER}"
 
 # ==== Storage directory ====
 mkdir -p "${CAPTURE_DIR}"
 
 # ==== Kernel network tuning ====
-info "优化内核参数..."
+info "Applying kernel tuning..."
 sysctl -w net.core.rmem_max=268435456       >/dev/null
 sysctl -w net.core.rmem_default=268435456   >/dev/null
 sysctl -w net.core.wmem_max=134217728       >/dev/null
@@ -101,7 +102,7 @@ sysctl -w net.ipv4.tcp_keepalive_intvl=${KEEPINTVL}   >/dev/null
 sysctl -w net.ipv4.tcp_keepalive_probes=${KEEPCNT}    >/dev/null
 
 # ==== NIC tuning ====
-info "优化网卡 ${IFACE}..."
+info "Applying NIC tuning on ${IFACE}..."
 ethtool -G "${IFACE}" rx 4096 2>/dev/null || true
 ethtool -K "${IFACE}" gro off lro off tso off gso off rx-gro-hw off 2>/dev/null || true
 ip link set "${IFACE}" promisc on
@@ -111,12 +112,12 @@ ethtool -C "${IFACE}" rx-usecs 0 rx-frames 0 2>/dev/null || true
 PIDS=()
 
 cleanup() {
-    info "收到退出信号，清理所有子进程..."
+    info "Received shutdown signal; cleaning up child processes..."
     for pid in "${PIDS[@]}"; do
         kill "${pid}" 2>/dev/null || true
     done
     wait 2>/dev/null || true
-    info "已全部清理"
+    info "Cleanup complete"
 }
 trap cleanup SIGTERM SIGINT SIGHUP EXIT
 
@@ -124,7 +125,7 @@ trap cleanup SIGTERM SIGINT SIGHUP EXIT
 # Path 1: local capture-to-disk (fallback, fully independent)
 ###############################################
 start_local_capture() {
-    info "启动本地落盘抓包..."
+    info "Starting local capture-to-disk..."
     /usr/bin/dumpcap \
         -i "${IFACE}" \
         -p \
@@ -137,7 +138,7 @@ start_local_capture() {
         -f "${BPF_FILTER}" \
         &
     PIDS+=($!)
-    info "本地落盘 PID: $!"
+    info "Local capture PID: $!"
 }
 
 ###############################################
@@ -154,11 +155,11 @@ start_local_capture() {
 ###############################################
 start_network_service() {
     if [[ -z "${STREAM_TOOL}" ]]; then
-        warn "无网络工具，跳过实时流服务"
+        warn "No network streaming tool is available; skipping live stream service"
         return
     fi
 
-    info "启动网络服务 (${STREAM_TOOL} fork 模式) 端口 ${LISTEN_PORT}..."
+    info "Starting network service (${STREAM_TOOL} fork mode) on port ${LISTEN_PORT}..."
 
     case "${STREAM_TOOL}" in
     socat)
@@ -170,7 +171,7 @@ start_network_service() {
         #   - nodelay: low latency
         #   - EXEC: run dumpcap independently for each connection
         socat \
-            "TCP-LISTEN:${LISTEN_PORT},reuseaddr,fork,keepalive,keepidle=${KEEPIDLE},keepintvl=${KEEPINTVL},keepcnt=${KEEPCNT},nodelay" \
+            "TCP-LISTEN:${LISTEN_PORT},bind=${LISTEN_ADDR},reuseaddr,fork,keepalive,keepidle=${KEEPIDLE},keepintvl=${KEEPINTVL},keepcnt=${KEEPCNT},nodelay" \
             "EXEC:${STREAM_WRAPPER}" \
             &
         PIDS+=($!)
@@ -185,6 +186,7 @@ start_network_service() {
         ncat --listen \
             --keep-open \
             --nodns \
+            -s "${LISTEN_ADDR}" \
             -p "${LISTEN_PORT}" \
             --exec "${STREAM_WRAPPER}" \
             &
@@ -192,7 +194,7 @@ start_network_service() {
         ;;
     esac
 
-    info "网络服务 PID: ${PIDS[-1]} (fork 模式, 客户端可随时重连)"
+    info "Network service PID: ${PIDS[-1]} (fork mode, clients can reconnect at any time)"
 }
 
 ###############################################
@@ -202,12 +204,12 @@ start_local_capture
 start_network_service
 
 info "============================================"
-info "  邮件抓包服务已启动 (v2 - 无 FIFO 架构)"
-info "  本地落盘: ${CAPTURE_DIR}/"
-info "  实时流:   tcp://0.0.0.0:${LISTEN_PORT}"
-info "  模式:     fork (每连接独立 dumpcap)"
+info "  Email capture service started (v2 - no FIFO architecture)"
+info "  Local capture: ${CAPTURE_DIR}/"
+info "  Live stream:   tcp://${LISTEN_ADDR}:${LISTEN_PORT}"
+info "  Mode:          fork (one dumpcap per connection)"
 info "  Keepalive: idle=${KEEPIDLE}s intvl=${KEEPINTVL}s cnt=${KEEPCNT}"
-info "  客户端重启无需重启本服务"
+info "  Clients can restart without restarting this service"
 info "============================================"
 
 # ==== Monitoring loop ====
@@ -216,12 +218,12 @@ while true; do
 
     # Check the local capture-to-disk process
     if ! kill -0 "${PIDS[0]}" 2>/dev/null; then
-        error "本地落盘 dumpcap 异常退出！"
+        error "Local capture dumpcap exited unexpectedly"
     fi
 
     # Check the listener process
     if [[ ${#PIDS[@]} -ge 2 ]] && ! kill -0 "${PIDS[1]}" 2>/dev/null; then
-        warn "网络监听进程退出，重启..."
+        warn "Network listener exited; restarting..."
         start_network_service
     fi
 
@@ -234,5 +236,5 @@ while true; do
     # Current number of active streaming dumpcap connections
     STREAM_COUNT=$(pgrep -c -f "email-stream-worker" 2>/dev/null || echo "0")
 
-    info "文件: ${FILE_COUNT}/${MAX_FILES} | 空间: ${DISK_USED} | 连接: ${STREAM_COUNT} | rx_dropped: ${RX_DROP} | rx_errors: ${RX_ERRORS}"
+    info "Files: ${FILE_COUNT}/${MAX_FILES} | Disk: ${DISK_USED} | Connections: ${STREAM_COUNT} | rx_dropped: ${RX_DROP} | rx_errors: ${RX_ERRORS}"
 done

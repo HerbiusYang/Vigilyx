@@ -33,71 +33,7 @@ const W_DISPLAY_NAME_MISMATCH: f64 = 0.25;
 const W_REPLY_CHAIN_ANOMALY: f64 = 0.30;
 const W_CLIENT_FINGERPRINT: f64 = 0.15;
 const W_ENVELOPE_MISMATCH: f64 = 0.20;
-
-/// Pinyin syllable table (used to distinguish legitimate Chinese pinyin domains from random strings)
-const PINYIN_SYLLABLES: &[&str] = &[
-    "zhuang", "shuang", "chuang", "xiang", "jiang", "liang", "niang", "qiang", "guang", "huang",
-    "kuang", "zhuai", "shuai", "zhang", "zheng", "zhong", "zhuai", "chang", "cheng", "chong",
-    "chuai", "shang", "sheng", "shuai", "xiao", "xian", "xing", "xiong", "xuan", "zhan", "zhao",
-    "zhen", "zhi", "zhou", "zhua", "zhui", "zhun", "zhuo", "chai", "chan", "chao", "chen", "chi",
-    "chou", "chua", "chui", "chun", "chuo", "shan", "shao", "shen", "shi", "shou", "shua", "shui",
-    "shun", "shuo", "bang", "beng", "bing", "biao", "bian", "cang", "ceng", "cong", "dang", "deng",
-    "ding", "dong", "dian", "diao", "duan", "fang", "feng", "gang", "geng", "gong", "guan", "hang",
-    "heng", "hong", "huan", "jian", "jiao", "jing", "jion", "juan", "kang", "keng", "kong", "kuan",
-    "lang", "leng", "ling", "long", "lian", "liao", "luan", "mang", "meng", "ming", "mian", "miao",
-    "nang", "neng", "ning", "nong", "nian", "niao", "nuan", "pang", "peng", "ping", "pian", "piao",
-    "rang", "reng", "rong", "ruan", "sang", "seng", "song", "suan", "tang", "teng", "ting", "tong",
-    "tian", "tiao", "tuan", "wang", "weng", "yang", "ying", "yong", "yuan", "zang", "zeng", "zong",
-    "zuan", "bai", "ban", "bao", "bei", "ben", "bi", "bo", "bu", "cai", "can", "cao", "ce", "ci",
-    "cu", "cuo", "dai", "dan", "dao", "de", "dei", "di", "diu", "du", "duo", "dui", "dun", "fan",
-    "fei", "fen", "fo", "fu", "gai", "gan", "gao", "ge", "gei", "gu", "gua", "gui", "gun", "guo",
-    "hai", "han", "hao", "he", "hei", "hen", "hu", "hua", "hui", "hun", "huo", "ji", "jia", "jie",
-    "jin", "jiu", "ju", "jue", "jun", "ka", "kai", "kan", "kao", "ke", "ken", "ku", "kua", "kui",
-    "kun", "kuo", "la", "lai", "lan", "lao", "le", "lei", "li", "lia", "lie", "lin", "liu", "lo",
-    "lu", "lv", "luo", "lun", "ma", "mai", "man", "mao", "me", "mei", "men", "mi", "mie", "min",
-    "miu", "mo", "mu", "na", "nai", "nan", "nao", "ne", "nei", "nen", "ni", "nie", "nin", "niu",
-    "nu", "nv", "nuo", "nun", "ou", "pa", "pai", "pan", "pao", "pei", "pen", "pi", "pie", "pin",
-    "po", "pu", "qi", "qia", "qie", "qin", "qiu", "qu", "que", "qun", "ran", "rao", "re", "ren",
-    "ri", "rou", "ru", "rua", "rui", "run", "ruo", "sa", "sai", "san", "sao", "se", "si", "su",
-    "sui", "sun", "suo", "ta", "tai", "tan", "tao", "te", "ti", "tie", "tou", "tu", "tui", "tun",
-    "tuo", "wa", "wai", "wan", "wei", "wen", "wo", "wu", "xi", "xia", "xie", "xin", "xiu", "xu",
-    "xue", "xun", "ya", "yan", "yao", "ye", "yi", "yin", "you", "yu", "yue", "yun", "za", "zai",
-    "zan", "zao", "ze", "zei", "zi", "zu", "zui", "zun", "zuo", "a", "ai", "an", "ang", "ao", "e",
-    "ei", "en", "er", "o",
-];
-
-/// Common short English words (used for username validation: helper, test, admin, notify, bot, mp, ...)
-const COMMON_EN_WORDS: &[&str] = &[
-    "helper", "admin", "test", "notify", "alert", "bot", "system", "service", "noreply", "support",
-    "info", "news", "mail", "smtp", "auto", "mp", "pay", "shop", "store", "cloud", "dev", "api",
-    "app", "web", "net", "push", "hub", "lab", "do", "no", "go", "hi", "my",
-    // Financial / industry high-frequency words (added to reduce false positives on Chinese finance domains)
-    "fund", "trust", "credit", "wealth", "health", "capital", "asset",
-    "invest", "finance", "securities", "insurance", "digital", "fintech",
-    "payment", "trading", "exchange", "clearing", "custody", "advisory",
-    "bank", "soft", "tech", "data", "group", "online", "global",
-];
-
-/// Legitimate vendor or product labels that can look consonant-heavy, but are not DGA domains.
-const BENIGN_BRAND_DOMAIN_LABELS: &[&str] = &[
-    "hundsun",
-    "smartx",
-    "aishu",
-    "alipay",
-    "wechat",
-    "weixin",
-    "foxmail",
-    "qichacha",
-    "cmbchina",
-    "ccabchina",
-    "nbcb",
-    // Chinese financial institution domains (pinyin abbreviations that look consonant-heavy)
-    "baihangcredit",
-    "crctrust",
-    "cjhxfund",
-    "psbc",
-    "unionpay",
-];
+const W_LOCAL_PART_BRAND_SPOOF: f64 = 0.30;
 
 /// Chinese pinyin initials (声母). Used to support pinyin-initial abbreviations like
 /// "sxyhxh" (陕西银行协会 = S-X-Y-H-X-H). Each letter is a valid pinyin initial.
@@ -113,7 +49,7 @@ fn is_pinyin_initial_abbreviation(s: &str) -> bool {
     let len = s.len();
     // Only treat very short labels as possible abbreviations (2-6 chars)
     // Real Chinese org abbreviations rarely exceed 6 initials
-    if len < 2 || len > 6 {
+    if !(2..=6).contains(&len) {
         return false;
     }
     s.bytes()
@@ -131,19 +67,20 @@ pub fn is_pinyin_english_name(name: &str) -> bool {
     let mut can_cover = vec![false; n + 1];
     can_cover[0] = true;
 
+    let md = crate::module_data::module_data();
     for i in 0..n {
         if !can_cover[i] {
             continue;
         }
        // Try pinyin syllables
-        for &py in PINYIN_SYLLABLES {
-            if name[i..].starts_with(py) {
+        for py in md.get_list("pinyin_syllables") {
+            if name[i..].starts_with(py.as_str()) {
                 can_cover[i + py.len()] = true;
             }
         }
        // Try common English words
-        for &ew in COMMON_EN_WORDS {
-            if name[i..].starts_with(ew) {
+        for ew in md.get_list("common_en_words") {
+            if name[i..].starts_with(ew.as_str()) {
                 can_cover[i + ew.len()] = true;
             }
         }
@@ -155,16 +92,33 @@ pub fn is_human_readable_domain_label(name: &str) -> bool {
     let normalized = name.to_ascii_lowercase();
     is_pinyin_english_name(&normalized)
         || is_pinyin_initial_abbreviation(&normalized)
-        || BENIGN_BRAND_DOMAIN_LABELS
-            .iter()
-            .any(|label| normalized == *label)
+        || crate::module_data::module_data().contains("benign_brand_domain_labels", &normalized)
+}
+
+fn sender_domain_has_established_brand_identity(domain: &str) -> bool {
+    let normalized = domain.to_ascii_lowercase();
+    if crate::modules::link_scan::is_well_known_safe_domain(&normalized)
+        || crate::module_data::module_data().contains("known_financial_sender_domains", &normalized)
+    {
+        return true;
+    }
+
+    let labels: Vec<&str> = normalized
+        .split('.')
+        .filter(|label| !label.is_empty())
+        .collect();
+    let brand_label = labels
+        .len()
+        .checked_sub(2)
+        .and_then(|idx| labels.get(idx).copied())
+        .unwrap_or(normalized.as_str());
+
+    brand_label.len() >= 3 && is_human_readable_domain_label(brand_label)
 }
 
 pub struct IdentityAnomalyModule {
     meta: ModuleMetadata,
     db: Option<Arc<dyn DbQueryService>>,
-   /// Known suspicious User-Agent patterns (freemail providers, script-generated)
-    suspicious_agents: Vec<&'static str>,
 }
 
 impl Default for IdentityAnomalyModule {
@@ -190,15 +144,6 @@ impl IdentityAnomalyModule {
                 inline_priority: None, // First-contact detection requires DB query, not CPU-bound
             },
             db,
-            suspicious_agents: vec![
-                "python-requests",
-                "curl/",
-                "wget/",
-                "go-http-client",
-                "php/",
-                "java/",
-                "libwww-perl",
-            ],
         }
     }
 
@@ -246,21 +191,8 @@ impl IdentityAnomalyModule {
             }
 
            // Check if display name mimics a well-known service
-            let impersonation_targets = [
-                "microsoft",
-                "office365",
-                "outlook",
-                "google",
-                "paypal",
-                "apple",
-                "amazon",
-                "dhl",
-                "fedex",
-                "ups",
-                "bank",
-            ];
-            for target in &impersonation_targets {
-                if dn_lower.contains(target) && !email_domain.to_ascii_lowercase().contains(target)
+            for target in crate::module_data::module_data().get_list("display_name_impersonation_targets") {
+                if dn_lower.contains(target.as_str()) && !email_domain.to_ascii_lowercase().contains(target.as_str())
                 {
                     return Some((
                         W_DISPLAY_NAME_MISMATCH * 0.8,
@@ -275,6 +207,100 @@ impl IdentityAnomalyModule {
                     ));
                 }
             }
+        }
+
+        None
+    }
+
+    /// Check if the sender's local part impersonates a known brand.
+    /// Pattern: {brand}{separator}{random}@{non-brand-domain}
+    /// e.g. apple-stoermoxg@fmworld.net, icloud-jpexyv@ml.nitori-net.jp
+    fn check_local_part_brand_spoof(
+        &self,
+        mail_from: &str,
+        sender_domain: &str,
+    ) -> Option<(f64, Vec<String>, Evidence)> {
+        let local_part = mail_from.split('@').next()?.to_ascii_lowercase();
+        let sender_domain_lower = sender_domain.to_ascii_lowercase();
+
+        // Brand → legitimate domain suffixes mapping
+        let brand_checks: &[(&str, &[&str])] = &[
+            ("apple", &["apple.com", "icloud.com"]),
+            ("icloud", &["apple.com", "icloud.com"]),
+            ("microsoft", &["microsoft.com", "outlook.com", "live.com"]),
+            ("outlook", &["microsoft.com", "outlook.com"]),
+            ("google", &["google.com", "gmail.com"]),
+            ("amazon", &["amazon."]),
+            ("paypal", &["paypal.com"]),
+            ("netflix", &["netflix.com"]),
+            ("dhl", &["dhl.com", "dhl.de"]),
+            ("fedex", &["fedex.com"]),
+        ];
+
+        for (brand, legit_domains) in brand_checks {
+            // Check if local part starts with the brand name
+            if !local_part.starts_with(brand) {
+                continue;
+            }
+
+            // The character after the brand name
+            let after_brand = &local_part[brand.len()..];
+            if after_brand.is_empty() {
+                // Exact match like "apple@domain" — could be legitimate alias, skip
+                continue;
+            }
+
+            // Must have a separator (-_.) or random chars
+            let first_after = after_brand.chars().next().unwrap_or(' ');
+            let has_separator = matches!(first_after, '-' | '_' | '.');
+            let suffix_after_brand = if has_separator { &after_brand[1..] } else { after_brand };
+
+            // Skip known legitimate suffixes (applepay, applestore, icloudmail, etc.)
+            let legit_suffixes = [
+                "pay", "store", "music", "news", "tv", "id", "care", "support",
+                "mail", "drive", "maps", "photos", "cloud", "one", "office",
+                "prime", "web", "seller", "ads", "alexa",
+                "express", "ground", "freight", "ship",
+                "noreply", "no-reply", "donotreply",
+            ];
+            let suffix_lower = suffix_after_brand.to_ascii_lowercase();
+            if legit_suffixes.iter().any(|s| suffix_lower == *s) {
+                continue;
+            }
+
+            // Check if domain is NOT a legitimate brand domain
+            let domain_is_legit = legit_domains.iter().any(|ld| {
+                sender_domain_lower == *ld
+                    || sender_domain_lower.ends_with(&format!(".{ld}"))
+                    || (ld.ends_with('.') && sender_domain_lower.contains(ld.trim_end_matches('.')))
+            });
+
+            if domain_is_legit {
+                continue;
+            }
+
+            // Brand in local part + non-brand domain = suspicious
+            let is_strong = has_separator && suffix_after_brand.len() >= 4;
+            let score = if is_strong {
+                W_LOCAL_PART_BRAND_SPOOF
+            } else if suffix_after_brand.len() >= 6 {
+                W_LOCAL_PART_BRAND_SPOOF * 0.8
+            } else {
+                W_LOCAL_PART_BRAND_SPOOF * 0.5
+            };
+
+            return Some((
+                score,
+                vec!["local_part_brand_spoof".to_string()],
+                Evidence {
+                    description: format!(
+                        "Sender local part impersonates brand '{}': {}@{} — domain is not associated with {}",
+                        brand, local_part, sender_domain, brand
+                    ),
+                    location: Some("envelope:MAIL_FROM".to_string()),
+                    snippet: Some(mail_from.to_string()),
+                },
+            ));
         }
 
         None
@@ -370,12 +396,13 @@ impl IdentityAnomalyModule {
    /// Check for suspicious mail client fingerprints
     fn check_client_fingerprint(&self, headers: &[(String, String)]) -> Option<(f64, Evidence)> {
        // Check X-Mailer and User-Agent headers
+        let md = crate::module_data::module_data();
         for (key, value) in headers {
             let k = key.to_ascii_lowercase();
             if k == "x-mailer" || k == "user-agent" {
                 let v_lower = value.to_ascii_lowercase();
-                for agent in &self.suspicious_agents {
-                    if v_lower.contains(agent) {
+                for agent in md.get_list("suspicious_user_agents") {
+                    if v_lower.contains(agent.as_str()) {
                         return Some((
                             W_CLIENT_FINGERPRINT,
                             Evidence {
@@ -472,6 +499,16 @@ impl SecurityModule for IdentityAnomalyModule {
             evidence.push(ev);
         }
 
+       // 1b. Local part brand impersonation (e.g. apple-stoermoxg@fmworld.net)
+        if let Some(mail_from) = ctx.session.mail_from.as_deref()
+            && let Some(sender_domain) = mail_from.split('@').nth(1)
+            && let Some((score, cats, ev)) = self.check_local_part_brand_spoof(mail_from, sender_domain)
+        {
+            total_score += score;
+            categories.extend(cats);
+            evidence.push(ev);
+        }
+
        // 2. Reply chain anomaly
        // Skip internal senders: internal users forwarding/replying is normal behavior
         let sender_is_internal = ctx
@@ -520,7 +557,34 @@ impl SecurityModule for IdentityAnomalyModule {
             let is_internal = ctx.is_internal_domain(&sender_domain_lower)
                 || sender_domain_lower == "corp-internal.com";
 
-            if !is_internal {
+           // Skip well-known public email providers — millions of individual
+           // users share these domains, so domain-level "first contact" is
+           // meaningless noise. Individual sender-level checks (random_sender,
+           // envelope_mismatch, etc.) still apply.
+            let is_public_provider = crate::pipeline::internal_domains::is_public_mail_domain(
+                &sender_domain_lower,
+            );
+
+           // Heuristic fallback: if the domain has many distinct senders in our
+           // history, it's likely a shared/public domain we didn't know about.
+           // Threshold: 10+ unique senders → treat as shared domain.
+            let is_shared_domain = if !is_internal && !is_public_provider {
+                match db.count_distinct_senders_for_domain(&sender_domain_lower).await {
+                    Ok(count) if count >= 10 => {
+                        tracing::debug!(
+                            domain = %sender_domain_lower,
+                            distinct_senders = count,
+                            "Skipping first-contact: domain has high sender diversity"
+                        );
+                        true
+                    }
+                    _ => false,
+                }
+            } else {
+                false
+            };
+
+            if !is_internal && !is_public_provider && !is_shared_domain {
                 let session_id = ctx.session.id.to_string();
                 match db
                     .count_sender_domain_history(&sender_domain_lower, &session_id)
@@ -557,6 +621,9 @@ impl SecurityModule for IdentityAnomalyModule {
                     || sender_domain_lower.ends_with(&format!(".{d}"))
             });
 
+            // Skip well-known safe domains (intel_safe + admin_clean IOC)
+            let is_safe = crate::modules::link_scan::is_well_known_safe_domain(&sender_domain_lower);
+
             let main_part = sender_domain.split('.').next().unwrap_or("");
             
             
@@ -565,7 +632,7 @@ impl SecurityModule for IdentityAnomalyModule {
            // Excludes pinyin+English names (qingcloud = qing+cloud)
            // Excludes pinyin-initial abbreviations (sxyhxh = 陕西银行协会)
            // Excludes known brand domains (hundsun, cmbchina, etc.)
-            if main_part.len() >= 4 && !is_human_readable_domain_label(main_part) && !is_internal {
+            if main_part.len() >= 4 && !is_human_readable_domain_label(main_part) && !is_internal && !is_safe {
                 let mut is_random = false;
                 let mut reason = String::new();
 
@@ -625,10 +692,14 @@ impl SecurityModule for IdentityAnomalyModule {
        // --- Random username detection (e.g., pvzpfvq@hleg.com, ktipfnl@udcoraqhs.com) ---
        // Skips internal domains: Chinese pinyin usernames (yybdyy, wnssh) look random but aren't
        // Skips pinyin+English decomposable usernames (e.g., weixinmphelper, alipaynotify)
+       // Skips public mail providers (qq.com, 163.com, gmail.com...): free-form usernames are normal
         if let Some(ref mail_from) = ctx.session.mail_from
             && let Some(username) = mail_from.split('@').next()
             && let Some(domain) = mail_from.split('@').nth(1)
             && !ctx.is_internal_domain(domain)
+            && !crate::pipeline::internal_domains::is_public_mail_domain(&domain.to_lowercase())
+            && !crate::modules::link_scan::is_well_known_safe_domain(&domain.to_lowercase())
+            && !sender_domain_has_established_brand_identity(domain)
         {
            // Pure alpha username, 5+ chars, 4+ consecutive consonants -> likely randomly generated
             if username.len() >= 5
@@ -795,7 +866,7 @@ mod tests {
         );
         assert!(
             is_human_readable_domain_label("hzbankwealth"),
-            "hzbankwealth should pass: even if not decomposable, consecutive consonants < 5"
+            "hzbankwealth is in BENIGN_BRAND_DOMAIN_LABELS (杭州银行财富管理)"
         );
 
         // Brand list entries
@@ -888,5 +959,63 @@ mod tests {
         let result = module.check_envelope_mismatch(Some("bounce@mailer.other.com"), &headers);
 
         assert!(result.is_some());
+    }
+
+    // ─── P0-3: DGA detection tuning regression tests ───
+
+    #[test]
+    fn test_new_brand_domain_labels_not_flagged_as_dga() {
+        // Labels that exist in BENIGN_BRAND_DOMAIN_LABELS
+        let brand_labels = [
+            "kycregistry", // KYC Registry (SWIFT)
+            "rescdn",      // Resource CDN
+            "bytetos",     // ByteDance TOS CDN
+            "feishu",      // Feishu (Lark)
+            "dingtalk",    // DingTalk
+            "alipay",      // Alipay
+            "venustech",   // Security vendor
+            "sangfor",     // Security vendor
+            "nsfocus",     // Security vendor
+            "swift",       // SWIFT financial network
+        ];
+        for label in &brand_labels {
+            assert!(
+                is_human_readable_domain_label(label),
+                "{} should be recognized as benign brand label",
+                label
+            );
+        }
+    }
+
+    #[test]
+    fn test_new_it_infrastructure_words_recognized() {
+        // IT/infrastructure words that exist in COMMON_EN_WORDS
+        let it_words = [
+            "cloud", "registry", "cdn", "portal", "proxy",
+            "node", "config", "deploy", "monitor", "cache",
+            "edge", "sync", "token", "auth", "verify",
+        ];
+        for word in &it_words {
+            assert!(
+                is_pinyin_english_name(word),
+                "'{}' should be in COMMON_EN_WORDS and recognized",
+                word
+            );
+        }
+    }
+
+    #[test]
+    fn test_compound_it_brand_labels() {
+        // Brand labels that should be recognized directly
+        assert!(is_human_readable_domain_label("kycregistry"), "kycregistry in brand list");
+        assert!(is_human_readable_domain_label("rescdn"), "rescdn in brand list");
+        assert!(is_human_readable_domain_label("bytetos"), "bytetos in brand list");
+    }
+
+    #[test]
+    fn test_established_brand_sender_domains_skip_random_sender_heuristic() {
+        assert!(sender_domain_has_established_brand_identity("cmbchina.com"));
+        assert!(sender_domain_has_established_brand_identity("rep.hundsun.cn"));
+        assert!(!sender_domain_has_established_brand_identity("xvkrnbstq-mail.net"));
     }
 }

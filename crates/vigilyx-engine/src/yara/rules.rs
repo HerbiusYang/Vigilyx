@@ -1,4 +1,4 @@
-//! YARA Rule - 4 Class 28 ItemRule.
+//! YARA Rule - 6 Class 41 ItemRule.
 
 //! Rule const &str Encode,Compile packet 2Base/Radix.
 //! ItemRuleof meta SegmentpacketContains description, category, severity Segment.
@@ -1000,6 +1000,7 @@ rule Mal_IcedID_BokBot {
         author = "Vigilyx YARA Foundry"
         mitre_attack = "T1566.001"
     strings:
+        $pdf = "%PDF" ascii
         $icedid1 = "IcedID" ascii nocase
         $icedid2 = "BokBot" ascii nocase
         $gzip_dll = { 1F 8B 08 }
@@ -1015,9 +1016,17 @@ rule Mal_IcedID_BokBot {
         $hook1 = "HttpSendRequestW" ascii
         $hook2 = "InternetReadFile" ascii
     condition:
-        any of ($icedid*) or
-        ($gzip_dll and ($mz or $pe) and any of ($photo*)) or
-        (2 of ($api*) and any of ($inject*) and any of ($hook*))
+        not ($pdf at 0) and (
+            (
+                any of ($icedid*) and (
+                    ($mz and $pe) or
+                    (any of ($api*) and any of ($inject*)) or
+                    (any of ($hook*) and any of ($inject*))
+                )
+            ) or
+            ($gzip_dll and ($mz or $pe) and any of ($photo*)) or
+            (2 of ($api*) and any of ($inject*) and any of ($hook*))
+        )
 }
 "##;
 
@@ -1052,16 +1061,422 @@ rule Script_WSF_Malicious {
 }
 "#;
 
+/// Evasion technique rules V2 — CHM, VHD/VHDX, MSIX, IQY, URL shortcut (5 rules)
+pub const EVASION_TECHNIQUE_RULES_V2: &str = r#"
+rule Evasion_CHM_Delivery {
+    meta:
+        description = "CHM (Compiled HTML Help) file with embedded script commands used for malware delivery"
+        category = "evasion_technique"
+        severity = "high"
+        author = "Vigilyx YARA Foundry"
+        mitre_attack = "T1218.001"
+    strings:
+        $magic = { 49 54 53 46 03 00 00 00 }
+        $obj   = "<OBJECT" ascii nocase
+        $param = "<PARAM" ascii nocase
+        $exec1 = "ShortcutExec" ascii nocase
+        $cmd1  = "cmd.exe" ascii nocase
+        $cmd2  = "cmd /c" ascii nocase
+        $cmd3  = "cmd /k" ascii nocase
+        $ps    = "powershell" ascii nocase
+        $mshta = "mshta" ascii nocase
+        $cs    = "cscript" ascii nocase
+        $ws    = "wscript" ascii nocase
+    condition:
+        $magic at 0 and
+        $obj and $param and
+        (any of ($exec*) or any of ($cmd*) or $ps or $mshta or $cs or $ws)
+}
+
+rule Evasion_VHD_VHDX_Delivery {
+    meta:
+        description = "VHD/VHDX virtual disk image in email attachment, used to bypass Mark-of-the-Web"
+        category = "evasion_technique"
+        severity = "high"
+        author = "Vigilyx YARA Foundry"
+        mitre_attack = "T1553.005"
+    strings:
+        $vhdx_magic  = { 76 68 64 78 66 69 6C 65 }
+        $vhd_footer  = { 63 6F 6E 65 63 74 69 78 }
+        $vhd_creat1  = "vpc " ascii
+        $vhd_creat2  = "win " ascii
+        $vhd_creat3  = "V2PC" ascii
+    condition:
+        ($vhdx_magic at 0) or
+        ($vhd_footer in (filesize - 512 .. filesize) and any of ($vhd_creat*))
+}
+
+rule Evasion_MSIX_Sideload {
+    meta:
+        description = "MSIX/APPX package abuse for malware sideloading via email"
+        category = "evasion_technique"
+        severity = "high"
+        author = "Vigilyx YARA Foundry"
+        mitre_attack = "T1218"
+    strings:
+        $pk            = { 50 4B 03 04 }
+        $manifest      = "AppxManifest.xml" ascii
+        $blockmap      = "AppxBlockMap.xml" ascii
+        $content_types = "[Content_Types].xml" ascii
+        $signature     = "AppxSignature.p7x" ascii
+        $proto1        = "ms-appinstaller:" ascii nocase
+        $proto2        = "ms-appx:" ascii nocase
+    condition:
+        $pk at 0 and
+        $manifest and $blockmap and $content_types and
+        ($signature or any of ($proto*))
+}
+
+rule Evasion_IQY_File {
+    meta:
+        description = "IQY (Internet Query) file that fetches external data, used for malware delivery"
+        category = "evasion_technique"
+        severity = "high"
+        author = "Vigilyx YARA Foundry"
+        mitre_attack = "T1059"
+    strings:
+        $header    = "WEB" ascii
+        $linebreak = { 0D 0A 31 0D 0A }
+        $url1      = "http://" ascii nocase
+        $url2      = "https://" ascii nocase
+        $url3      = "file://" ascii nocase
+    condition:
+        $header at 0 and
+        $linebreak in (0..16) and
+        any of ($url*) and
+        filesize < 10KB
+}
+
+rule Evasion_URL_Shortcut {
+    meta:
+        description = ".url/.website shortcut file pointing to external or file:// URL"
+        category = "evasion_technique"
+        severity = "medium"
+        author = "Vigilyx YARA Foundry"
+        mitre_attack = "T1204.001"
+    strings:
+        $section   = "[InternetShortcut]" ascii nocase
+        $url_http  = "URL=http://" ascii nocase
+        $url_https = "URL=https://" ascii nocase
+        $url_file  = "URL=file://" ascii nocase
+        $icon      = "IconFile=" ascii nocase
+        $hotkey    = "HotKey=" ascii nocase
+    condition:
+        $section in (0..64) and
+        (any of ($url_http, $url_https, $url_file)) and
+        ($icon or $hotkey or any of ($url_file, $url_http)) and
+        filesize < 10KB
+}
+"#;
+
+/// Malicious document rules V2 — template injection + XLL add-in (2 rules)
+/// NOTE: starts with `import "pe"` for Office_XLL_Addin
+pub const MALICIOUS_DOCUMENT_RULES_V2: &str = r#"
+import "pe"
+
+rule Office_Template_Injection {
+    meta:
+        description = "Office document with remote template injection via external .rels target"
+        category = "malicious_document"
+        severity = "high"
+        author = "Vigilyx YARA Foundry"
+        mitre_attack = "T1221"
+    strings:
+        $pk           = { 50 4B 03 04 }
+        $ext_mode     = "TargetMode=\"External\"" ascii nocase
+        $target_http  = "Target=\"http" ascii nocase
+        $target_https = "Target=\"https" ascii nocase
+        $rel1         = "attachedTemplate" ascii nocase
+        $rel2         = "subDocument" ascii nocase
+        $rel3         = "oleObject" ascii nocase
+        $rel4         = "frame" ascii nocase
+        $rels_marker  = ".rels" ascii
+    condition:
+        $pk at 0 and
+        $rels_marker and
+        $ext_mode and
+        any of ($target_http*) and
+        any of ($rel*)
+}
+
+rule Office_XLL_Addin {
+    meta:
+        description = "Malicious Excel XLL add-in with xlAuto export functions"
+        category = "malicious_document"
+        severity = "critical"
+        author = "Vigilyx YARA Foundry"
+        mitre_attack = "T1137.006"
+    strings:
+        $mz         = "MZ" ascii
+        $pe_sig     = "PE" ascii
+        $xlauto1    = "xlAutoOpen" ascii
+        $xlauto2    = "xlAutoClose" ascii
+        $xlauto3    = "xlAutoRegister" ascii
+        $xlauto4    = "xlAutoAdd" ascii
+        $xlauto5    = "xlAutoRemove" ascii
+    condition:
+        $mz at 0 and $pe_sig and
+        pe.is_dll() and
+        any of ($xlauto*) and
+        filesize < 20MB
+}
+"#;
+
+/// Advanced threat rules V2 — credential phish, ClickFix, calendar phish (3 rules)
+pub const ADVANCED_THREAT_RULES_V2: &str = r#"
+rule Doc_HTML_Credential_Phish {
+    meta:
+        description = "HTML file with login form designed to steal credentials via external POST"
+        category = "advanced_threat"
+        severity = "high"
+        author = "Vigilyx YARA Foundry"
+        mitre_attack = "T1056.003"
+    strings:
+        $html1     = "<html" ascii nocase
+        $html2     = "<!DOCTYPE" ascii nocase
+        $form      = "<form" ascii nocase
+        $password  = "type=\"password\"" ascii nocase
+        $password2 = "type='password'" ascii nocase
+        $action1   = "action=\"http://" ascii nocase
+        $action2   = "action=\"https://" ascii nocase
+        $action3   = "action='http://" ascii nocase
+        $action4   = "action='https://" ascii nocase
+        $method    = "method=\"post\"" ascii nocase
+        $submit    = "type=\"submit\"" ascii nocase
+        $login1    = "login" ascii nocase
+        $login2    = "sign in" ascii nocase
+        $login3    = "log in" ascii nocase
+        $login4    = "password" ascii nocase
+    condition:
+        any of ($html*) and
+        $form and
+        ($password or $password2) and
+        any of ($action*) and
+        ($method or $submit) and
+        2 of ($login*) and
+        filesize < 2MB
+}
+
+rule Doc_ClickFix_Social_Eng {
+    meta:
+        description = "ClickFix/fake CAPTCHA attack tricking users into pasting malicious commands"
+        category = "advanced_threat"
+        severity = "critical"
+        author = "Vigilyx YARA Foundry"
+        mitre_attack = "T1204.001"
+    strings:
+        $verify1   = "verify you are human" ascii nocase
+        $verify2   = "i'm not a robot" ascii nocase
+        $verify3   = "verification required" ascii nocase
+        $verify4   = "confirm you are not a robot" ascii nocase
+        $verify5   = "prove you are human" ascii nocase
+        $clip1     = "navigator.clipboard" ascii
+        $clip2     = "document.execCommand" ascii
+        $clip3     = "clipboardData" ascii
+        $clip4     = "writeText" ascii
+        $clip5     = "setData" ascii
+        $exec1     = "powershell" ascii nocase
+        $exec2     = "cmd /c" ascii nocase
+        $exec3     = "mshta" ascii nocase
+        $exec4     = "wscript" ascii nocase
+        $exec5     = "cscript" ascii nocase
+        $instruct1 = "Win+R" ascii nocase
+        $instruct2 = "Ctrl+V" ascii nocase
+        $instruct3 = "press enter" ascii nocase
+        $instruct4 = "paste" ascii nocase
+    condition:
+        any of ($verify*) and
+        (any of ($clip*) or 2 of ($instruct*)) and
+        any of ($exec*) and
+        filesize < 5MB
+}
+
+rule Doc_Calendar_Phish_ICS {
+    meta:
+        description = "Malicious ICS calendar invite with phishing URLs and urgency lures"
+        category = "advanced_threat"
+        severity = "medium"
+        author = "Vigilyx YARA Foundry"
+        mitre_attack = "T1566.001"
+    strings:
+        $vcal       = "BEGIN:VCALENDAR" ascii
+        $vevent     = "BEGIN:VEVENT" ascii
+        $desc       = "DESCRIPTION:" ascii
+        $url_prop   = "URL:" ascii
+        $url_http1  = "http://" ascii nocase
+        $url_http2  = "https://" ascii nocase
+        $urg1       = "urgent" ascii nocase
+        $urg2       = "immediately" ascii nocase
+        $urg3       = "action required" ascii nocase
+        $urg4       = "verify your" ascii nocase
+        $urg5       = "confirm your" ascii nocase
+        $urg6       = "update your" ascii nocase
+        $urg7       = "suspended" ascii nocase
+        $urg8       = "unauthorized" ascii nocase
+        $urg9       = "expire" ascii nocase
+    condition:
+        $vcal in (0..64) and
+        $vevent and
+        ($desc or $url_prop) and
+        any of ($url_http*) and
+        2 of ($urg*) and
+        filesize < 1MB
+}
+"#;
+
+/// Extended malware family rules V3 — Raccoon v2, Meduza, NetSupport RAT (3 rules)
+/// NOTE: starts with `import "pe"` for Raccoon and Meduza
+pub const EXTENDED_MALWARE_RULES_V3: &str = r#"
+import "pe"
+
+rule Mal_Raccoon_Stealer_v2 {
+    meta:
+        description = "Raccoon Stealer v2 infostealer targeting browser credentials and crypto wallets"
+        category = "malware_family"
+        severity = "critical"
+        author = "Vigilyx YARA Foundry"
+        mitre_attack = "T1555.003"
+    strings:
+        $mz       = "MZ" ascii
+        $pe_sig   = "PE" ascii
+        $rc_id1   = "rsteal" ascii
+        $rc_id2   = "machineId" ascii
+        $rc_id3   = "configId" ascii
+        $rc_c2a   = "/aN7jD0qO6kT5bR5pE4" ascii
+        $rc_c2b   = "Bot ID:" ascii
+        $api1     = "sqlite3_open" ascii
+        $api2     = "sqlite3_prepare_v2" ascii
+        $api3     = "CryptUnprotectData" ascii
+        $api4     = "BCryptDecrypt" ascii
+        $path1    = "\\Google\\Chrome\\User Data\\" ascii
+        $path2    = "\\Mozilla\\Firefox\\Profiles\\" ascii
+        $path3    = "\\Login Data" ascii
+        $path4    = "\\Cookies" ascii
+        $path5    = "\\Web Data" ascii
+        $wallet1  = "\\Electrum\\wallets\\" ascii
+        $wallet2  = "\\Exodus\\exodus.wallet\\" ascii
+        $wallet3  = "\\Ethereum\\keystore\\" ascii
+    condition:
+        $mz at 0 and $pe_sig and
+        2 of ($rc_*) and
+        2 of ($api*) and
+        (2 of ($path*) or any of ($wallet*)) and
+        filesize < 15MB
+}
+
+rule Mal_Meduza_Stealer {
+    meta:
+        description = "Meduza Stealer (2024-2025) infostealer targeting browsers and crypto wallets"
+        category = "malware_family"
+        severity = "critical"
+        author = "Vigilyx YARA Foundry"
+        mitre_attack = "T1555.003"
+    strings:
+        $mz          = "MZ" ascii
+        $pe_sig      = "PE" ascii
+        $id1         = "MeduzaStealer" ascii wide
+        $id2         = "Meduza Stealer" ascii wide
+        $id3         = "meduza_" ascii
+        $id4         = "/meduza/" ascii nocase
+        $browser1    = "\\Google\\Chrome\\User Data\\Default\\Login Data" ascii
+        $browser2    = "\\Microsoft\\Edge\\User Data\\Default\\Login Data" ascii
+        $browser3    = "\\BraveSoftware\\Brave-Browser\\User Data\\" ascii
+        $browser4    = "\\Opera Software\\Opera Stable\\" ascii
+        $wallet1     = "\\MetaMask\\" ascii
+        $wallet2     = "\\Phantom\\" ascii
+        $wallet3     = "\\TronLink\\" ascii
+        $wallet4     = "\\Coinbase Wallet\\" ascii
+        $wallet5     = "\\Solflare\\" ascii
+        $wallet6     = "\\Keplr\\" ascii
+        $grab1       = "\\Telegram Desktop\\tdata\\" ascii
+        $grab2       = "\\Steam\\config\\" ascii
+        $grab3       = "\\Discord\\Local Storage\\" ascii
+    condition:
+        $mz at 0 and $pe_sig and
+        (any of ($id*) or
+         (3 of ($browser*) and 3 of ($wallet*))) and
+        (any of ($grab*) or 2 of ($wallet*)) and
+        filesize < 30MB
+}
+
+rule Mal_NetSupport_RAT {
+    meta:
+        description = "NetSupport Manager RAT weaponized for unauthorized remote access"
+        category = "malware_family"
+        severity = "high"
+        author = "Vigilyx YARA Foundry"
+        mitre_attack = "T1219"
+    strings:
+        $ns_name1   = "NetSupport" ascii wide nocase
+        $ns_name2   = "Net Support" ascii wide nocase
+        $cfg_file   = "client32.ini" ascii nocase
+        $lic_file   = "NSM.LIC" ascii nocase
+        $dll1       = "HTCTL32.DLL" ascii nocase
+        $dll2       = "PCICL32.DLL" ascii nocase
+        $dll3       = "TCCTL32.DLL" ascii nocase
+        $dll4       = "remcmdstub.exe" ascii nocase
+        $dll5       = "PCICHEK.DLL" ascii nocase
+        $cfg1       = "GatewayAddress=" ascii nocase
+        $cfg2       = "SecurityKey=" ascii nocase
+        $cfg3       = "SecurityKey2=" ascii nocase
+        $cfg4       = "GSK=" ascii nocase
+    condition:
+        (any of ($ns_name*) or $cfg_file or $lic_file) and
+        (2 of ($dll*) or 2 of ($cfg*)) and
+        filesize < 50MB
+}
+
+rule Evasion_BatCloak_Obfuscated_Batch {
+    meta:
+        description = "Obfuscated BAT/CMD downloader with Defender tampering and staged payload drop, consistent with BatCloak-style delivery used in Mallox/Remcos campaigns"
+        category = "evasion_technique"
+        severity = "high"
+        author = "Vigilyx YARA Foundry"
+        mitre_attack = "T1027"
+    strings:
+        $bat1   = "@echo off" ascii nocase
+        $bat2   = "setlocal enabledelayedexpansion" ascii nocase
+        $bat3   = "for /f" ascii nocase
+        $bat4   = "call set " ascii nocase
+        $obf1   = "^^" ascii
+        $obf2   = "!var!" ascii nocase
+        $dl1    = "powershell -enc" ascii nocase
+        $dl2    = "powershell.exe -enc" ascii nocase
+        $dl3    = "invoke-webrequest" ascii nocase
+        $dl4    = "certutil -decode" ascii nocase
+        $dl5    = "bitsadmin" ascii nocase
+        $dl6    = "curl.exe" ascii nocase
+        $drop1  = "%temp%" ascii nocase
+        $drop2  = "%appdata%" ascii nocase
+        $drop3  = "start /b" ascii nocase
+        $drop4  = "timeout /t" ascii nocase
+        $def1   = "Set-MpPreference" ascii nocase
+        $def2   = "Add-MpPreference" ascii nocase
+        $def3   = "MpCmdRun.exe" ascii nocase
+        $def4   = "WinDefend" ascii nocase
+    condition:
+        any of ($bat*) and
+        any of ($obf*) and
+        2 of ($dl*) and
+        any of ($drop*) and
+        any of ($def*)
+}
+"#;
+
 /// Rule source list (used for compilation)
 pub const ALL_RULE_SOURCES: &[(&str, &str)] = &[
     ("malicious_document", MALICIOUS_DOCUMENT_RULES),
+    ("malicious_document_v2", MALICIOUS_DOCUMENT_RULES_V2),
     ("executable_disguise", EXECUTABLE_DISGUISE_RULES),
     ("malware_family", MALWARE_FAMILY_RULES),
     ("malware_family_ext", EXTENDED_MALWARE_RULES),
+    ("malware_family_ext_v2", EXTENDED_MALWARE_RULES_V3),
     ("webshell", WEBSHELL_SCRIPT_RULES),
     ("webshell_ext", EXTENDED_WEBSHELL_RULES),
     ("advanced_threat", ADVANCED_THREAT_RULES),
+    ("advanced_threat_v2", ADVANCED_THREAT_RULES_V2),
     ("evasion_technique", EVASION_TECHNIQUE_RULES),
+    ("evasion_technique_v2", EVASION_TECHNIQUE_RULES_V2),
 ];
 
 /// RuleClass Yuandata(Used forfirst)
@@ -1075,7 +1490,7 @@ pub const RULE_CATEGORIES: &[RuleCategoryMeta] = &[
     RuleCategoryMeta {
         id: "malicious_document",
         name: "恶意文档",
-        description: "VBA 宏、OLE 嵌入、PDF JavaScript、RTF 漏洞利用、OneNote 载荷",
+        description: "VBA 宏、OLE 嵌入、PDF JavaScript、RTF 漏洞利用、OneNote 载荷、模板注入、XLL 加载项",
     },
     RuleCategoryMeta {
         id: "executable_disguise",
@@ -1085,7 +1500,7 @@ pub const RULE_CATEGORIES: &[RuleCategoryMeta] = &[
     RuleCategoryMeta {
         id: "malware_family",
         name: "已知恶意软件家族",
-        description: "Emotet、Cobalt Strike、AgentTesla、Lumma、XWorm、DarkGate 等 23 个家族",
+        description: "Emotet、Cobalt Strike、AgentTesla、Lumma、XWorm、DarkGate、Raccoon v2、Meduza、NetSupport RAT 等 26 个家族",
     },
     RuleCategoryMeta {
         id: "webshell",
@@ -1095,11 +1510,11 @@ pub const RULE_CATEGORIES: &[RuleCategoryMeta] = &[
     RuleCategoryMeta {
         id: "advanced_threat",
         name: "高级威胁",
-        description: "SVG 走私、Tycoon2FA AiTM、回拨钓鱼",
+        description: "SVG 走私、Tycoon2FA AiTM、回拨钓鱼、HTML 凭证钓鱼、ClickFix 社工、ICS 日历钓鱼",
     },
     RuleCategoryMeta {
         id: "evasion_technique",
         name: "逃逸技术",
-        description: "LNK 命令执行、ISO/IMG 投递、HTML 走私、RTLO 欺骗、双扩展名、SVG 脚本",
+        description: "LNK 命令执行、ISO/IMG 投递、HTML 走私、RTLO 欺骗、双扩展名、SVG 脚本、CHM 投递、VHD/VHDX 投递、MSIX 侧载、IQY 文件、URL 快捷方式",
     },
 ];

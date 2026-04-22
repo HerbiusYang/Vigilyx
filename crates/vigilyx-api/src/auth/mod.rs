@@ -24,7 +24,11 @@ pub use handlers::{
     ChangePasswordRequest, ChangePasswordResponse, LoginRequest, build_clear_cookie,
     build_token_cookie, handle_change_password, handle_login, handle_logout, handle_me,
 };
-pub use middleware::{AuthenticatedUser, require_auth, require_internal_token};
+pub(crate) use handlers::sanitize_login_username;
+pub use middleware::{
+    AuthenticatedUser, require_admin, require_auth, require_internal_origin,
+    require_internal_token,
+};
 pub use password::hash_password;
 pub use rate_limit::LoginRateLimiter;
 pub use ws_ticket::WsTicketStore;
@@ -215,10 +219,14 @@ pub enum AuthError {
     InvalidToken,
    /// Token is missing.
     MissingToken,
+   /// Authenticated user lacks the required role.
+    Forbidden,
    /// Internal error.
     InternalError(String),
    /// Must change default password before accessing other endpoints (SEC: CWE-620)
     PasswordChangeRequired,
+   /// Internal control-plane route accessed from a non-internal source.
+    InternalSourceDenied,
 }
 
 impl std::fmt::Display for AuthError {
@@ -229,8 +237,10 @@ impl std::fmt::Display for AuthError {
             AuthError::TokenExpired => write!(f, "登录已过期，请重新登录"),
             AuthError::InvalidToken => write!(f, "无效的登录凭证"),
             AuthError::MissingToken => write!(f, "请先登录"),
+            AuthError::Forbidden => write!(f, "没有足够权限执行该操作"),
             AuthError::InternalError(_) => write!(f, "内部错误"),
             AuthError::PasswordChangeRequired => write!(f, "请先修改初始密码"),
+            AuthError::InternalSourceDenied => write!(f, "内部接口仅允许内网来源访问"),
         }
     }
 }
@@ -269,6 +279,11 @@ impl IntoResponse for AuthError {
                 self.to_string(),
                 error_codes::AUTH_MISSING_TOKEN,
             ),
+            AuthError::Forbidden => (
+                axum::http::StatusCode::FORBIDDEN,
+                self.to_string(),
+                error_codes::AUTH_FORBIDDEN,
+            ),
             AuthError::InternalError(msg) => {
                 warn!("Authentication internal error: {}", msg);
                 (
@@ -281,6 +296,11 @@ impl IntoResponse for AuthError {
                 axum::http::StatusCode::FORBIDDEN,
                 self.to_string(),
                 error_codes::AUTH_PASSWORD_CHANGE_REQUIRED,
+            ),
+            AuthError::InternalSourceDenied => (
+                axum::http::StatusCode::FORBIDDEN,
+                self.to_string(),
+                error_codes::AUTH_INTERNAL_SOURCE_DENIED,
             ),
         };
 

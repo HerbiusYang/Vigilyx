@@ -78,8 +78,7 @@ cleanup() {
     pkill -f "uvicorn.*vigilyx" 2>/dev/null || true
     pkill -f "vite.*vigilyx" 2>/dev/null || true
 
-    # Remove lingering UDS socket files and heartbeat files
-    rm -f data/vigilyx.sock
+    # Remove lingering heartbeat files
     rm -f data/engine-status.json
 
     sleep 1

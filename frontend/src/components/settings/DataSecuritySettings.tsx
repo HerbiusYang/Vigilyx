@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { apiFetch } from '../../utils/api'
 
 /**
@@ -18,6 +19,7 @@ function expandIpInput(raw: string): string[] {
 }
 
 export default function DataSecuritySettings() {
+  const { t } = useTranslation()
   const [dsWebmailServers, setDsWebmailServers] = useState<string[]>([])
   const [dsHttpPorts, setDsHttpPorts] = useState<number[]>([80, 443, 8080])
   const [dsNewServer, setDsNewServer] = useState('')
@@ -65,10 +67,10 @@ export default function DataSecuritySettings() {
           setDsSaved(true)
           setTimeout(() => setDsSaved(false), 3000)
         } else {
-          setDsError(data.error || '保存失败')
+          setDsError(data.error || t('settings.dataSecurity.saveFailed'))
         }
       } catch (e: unknown) {
-        setDsError(e instanceof Error ? e.message : '请求失败')
+        setDsError(e instanceof Error ? e.message : t('settings.dataSecurity.requestFailed'))
       } finally { setDsSaving(false) }
     }, 1500)
     return () => { if (dsAutoSaveTimer.current) clearTimeout(dsAutoSaveTimer.current) }
@@ -87,16 +89,16 @@ export default function DataSecuritySettings() {
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>
             </svg>
           </span>
-          数据安全配置
+          {t('settings.dataSecurity.title')}
         </h2>
-        <p className="s-section-subtitle">HTTP 流量捕获与 Webmail 登录检测配置</p>
+        <p className="s-section-subtitle">{t('settings.dataSecurity.subtitle')}</p>
       </div>
 
       {/* Webmail servers */}
       <div className="s-setting-group">
-        <div className="s-setting-group-header">Webmail 服务器</div>
+        <div className="s-setting-group-header">{t('settings.dataSecurity.webmailServers')}</div>
         <p style={{ fontSize: 12, color: 'var(--text-tertiary)', margin: '0 0 12px 0', lineHeight: 1.5 }}>
-          配置需要监控 HTTP 流量的 Webmail 服务器 IP。为空时不捕获 HTTP 流量，数据安全功能将无法使用。
+          {t('settings.dataSecurity.webmailServersDesc')}
         </p>
 
         {dsWebmailServers.length > 0 && (
@@ -117,7 +119,7 @@ export default function DataSecuritySettings() {
                     color: 'var(--text-tertiary)', padding: 0, lineHeight: 1,
                     fontSize: 14, fontWeight: 700,
                   }}
-                  title="移除"
+                  title={t('settings.dataSecurity.remove')}
                 >
                   &times;
                 </button>
@@ -142,7 +144,7 @@ export default function DataSecuritySettings() {
                 }
               }
             }}
-            placeholder="输入 IP 地址，回车添加（支持 192.168.1.10/11 简写）"
+            placeholder={t('settings.dataSecurity.ipPlaceholder')}
           />
           <button
             className="s-btn-sm"
@@ -160,16 +162,16 @@ export default function DataSecuritySettings() {
               }
             }}
           >
-            添加
+            {t('settings.dataSecurity.add')}
           </button>
         </div>
       </div>
 
       {/* HTTP ports */}
       <div className="s-setting-group">
-        <div className="s-setting-group-header">HTTP 监听端口</div>
+        <div className="s-setting-group-header">{t('settings.dataSecurity.httpPorts')}</div>
         <p style={{ fontSize: 12, color: 'var(--text-tertiary)', margin: '0 0 12px 0', lineHeight: 1.5 }}>
-          配置需要捕获的 HTTP 端口。仅对上方配置的 Webmail 服务器 IP 生效。
+          {t('settings.dataSecurity.httpPortsDesc')}
         </p>
 
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
@@ -189,7 +191,7 @@ export default function DataSecuritySettings() {
                   color: 'var(--text-tertiary)', padding: 0, lineHeight: 1,
                   fontSize: 14, fontWeight: 700,
                 }}
-                title="移除"
+                title={t('settings.dataSecurity.remove')}
               >
                 &times;
               </button>
@@ -215,7 +217,7 @@ export default function DataSecuritySettings() {
                 }
               }
             }}
-            placeholder="端口号"
+            placeholder={t('settings.dataSecurity.portPlaceholder')}
           />
           <button
             className="s-btn-sm"
@@ -232,7 +234,7 @@ export default function DataSecuritySettings() {
               }
             }}
           >
-            添加
+            {t('settings.dataSecurity.add')}
           </button>
         </div>
       </div>
@@ -244,7 +246,7 @@ export default function DataSecuritySettings() {
       {dsSaved && (
         <div className="s-deploy-success" style={{ marginTop: 12 }}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-          配置已自动保存
+          {t('settings.dataSecurity.autoSaved')}
         </div>
       )}
 

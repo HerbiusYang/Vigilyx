@@ -30,13 +30,10 @@ use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tracing::{Level, error, info, warn};
 use vigilyx_core::{
-    Config, DataSecurityIncident, EmailSession, HttpSession, SecurityVerdictSummary, TrafficStats,
-    WsMessage,
+    Config, DataSecurityIncident, SecurityVerdictSummary, TrafficStats, WsMessage,
 };
 use vigilyx_db::VigilDb;
 use vigilyx_db::mq::{MqClient, MqConfig, topics};
-#[cfg(unix)]
-use vigilyx_db::mq::{UdsMessage, UdsServer};
 
 use vigilyx_engine::ioc::IocManager;
 use vigilyx_engine::whitelist::WhitelistManager;
@@ -210,33 +207,6 @@ async fn main() -> Result<()> {
     sys.refresh_cpu_usage();
     sys.refresh_memory();
 
-   // UDS fallback: Start UDS server to communicate with Engine when Redis is unavailable
-    #[cfg(unix)]
-    let uds_tx = if !mq_connected {
-        let socket_path = std::path::PathBuf::from("data/vigilyx.sock");
-        match UdsServer::start(&socket_path).await {
-            Ok((tx, rx)) => {
-                info!(
-                    "UDS server started (Redis fallback mode): {}",
-                    socket_path.display()
-                );
-                Some((tx, rx))
-            }
-            Err(e) => {
-                error!("UDS server startup failed: {}", e);
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    #[cfg(unix)]
-    let (uds_sender, uds_receiver) = match uds_tx {
-        Some((tx, rx)) => (Some(tx), Some(rx)),
-        None => (None, None),
-    };
-
    // Create application state
     let state = Arc::new(AppState {
         db,
@@ -246,8 +216,6 @@ async fn main() -> Result<()> {
         messaging: MessagingState {
             ws_tx: ws_tx.clone(),
             mq: if mq_connected { Some(mq) } else { None },
-            #[cfg(unix)]
-            uds_tx: uds_sender,
         },
         managers: ManagerState {
             ioc_manager,
@@ -267,6 +235,7 @@ async fn main() -> Result<()> {
             traffic_stats: RwLock::new(None),
         },
         ws_tickets: auth::WsTicketStore::new(),
+        ws_auth_epoch: std::sync::atomic::AtomicU64::new(0),
        // SEC: add the Secure flag to cookies under HTTPS; omit it in dev HTTP mode
         secure_cookie: std::env::var("API_SECURE_COOKIE")
             .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
@@ -285,8 +254,9 @@ async fn main() -> Result<()> {
             }
             reqwest::Client::builder()
                 .default_headers(headers)
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
-                .unwrap_or_default()
+                .expect("AI internal HTTP client should build")
         },
     });
 
@@ -327,16 +297,6 @@ async fn main() -> Result<()> {
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             }
-        });
-    }
-
-   // UDS fallback: Receive messages from Engine and distribute to WebSocket / engine_status
-    #[cfg(unix)]
-    if let Some(mut uds_rx) = uds_receiver {
-        let state_clone = state.clone();
-        let ws_tx_clone = ws_tx.clone();
-        tokio::spawn(async move {
-            dispatch_uds_messages(&state_clone, &ws_tx_clone, &mut uds_rx).await;
         });
     }
 
@@ -518,9 +478,15 @@ async fn main() -> Result<()> {
 
 /// Subscribe to Redis messages and forward to WebSocket
 
+/// Subscribe to Redis Pub/Sub channels and dispatch to WebSocket.
+///
 /// Subscription sources:
-/// - Sniffer: session/stats data
-/// - Engine: verdict/alert/ds_incident/status analysis results
+/// - Sniffer: real-time traffic stats (Pub/Sub, fire-and-forget)
+/// - Engine: verdict/alert/ds_incident/status (Pub/Sub → WebSocket → Browser)
+///
+/// Note: Session data flows through Redis Streams (Sniffer → Engine),
+/// not through Pub/Sub. The API receives session-related updates only
+/// via Engine verdict/alert notifications after Engine processes them.
 async fn subscribe_redis_messages(
     state: Arc<AppState>,
     ws_tx: broadcast::Sender<WsMessage>,
@@ -531,14 +497,10 @@ async fn subscribe_redis_messages(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("MQ not connected"))?;
 
-   // Subscribe to all relevant topics (Sniffer data + Engine results)
     let mut pubsub = mq
         .subscribe(&[
-           // Sniffer data
-            topics::SESSION_NEW,
-            topics::SESSION_UPDATE,
+           // Sniffer real-time stats
             topics::STATS_UPDATE,
-            topics::HTTP_SESSION_NEW,
            // Engine analysis results
             topics::ENGINE_VERDICT,
             topics::ENGINE_ALERT,
@@ -547,7 +509,7 @@ async fn subscribe_redis_messages(
         ])
         .await?;
 
-    info!("Starting Redis subscription (Sniffer + Engine)...");
+    info!("Starting Redis Pub/Sub subscription (Stats + Engine results)...");
 
    // Process message
     let mut stream = pubsub.on_message();
@@ -564,50 +526,6 @@ async fn subscribe_redis_messages(
        // Parse message based on channel
        // DB writes are spawned asynchronously, not blocking subscription loop
         let ws_msg = match channel.as_str() {
-           // Sniffer Data
-            topics::SESSION_NEW => {
-                match serde_json::from_str::<EmailSession>(&payload) {
-                    Ok(session) => match state.db.insert_session(&session).await {
-                        Ok(is_new) => Some(if is_new {
-                            WsMessage::NewSession(session.ws_signal())
-                        } else {
-                            WsMessage::SessionUpdate(session.ws_signal())
-                        }),
-                        Err(e) => {
-                            error!(session_id = %session.id, "Failed to save session: {}", e);
-                            None
-                        }
-                    },
-                    Err(e) => {
-                       // SEC: Do not log payload content - may contain full email body (CWE-532)
-                        error!(
-                            "SESSION_NEW deserialization failed: {} | payload_len={}",
-                            e,
-                            payload.len()
-                        );
-                        None
-                    }
-                }
-            }
-            topics::SESSION_UPDATE => {
-                match serde_json::from_str::<EmailSession>(&payload) {
-                    Ok(session) => {
-                        if let Err(e) = state.db.insert_session(&session).await {
-                            error!(session_id = %session.id, "Failed to update session: {}", e);
-                        }
-                        Some(WsMessage::SessionUpdate(session.ws_signal()))
-                    }
-                    Err(e) => {
-                       // SEC: Do not log payload content - may contain full email body (CWE-532)
-                        error!(
-                            "SESSION_UPDATE deserialization failed: {} | payload_len={}",
-                            e,
-                            payload.len()
-                        );
-                        None
-                    }
-                }
-            }
             topics::STATS_UPDATE => {
                 if let Ok(stats) = serde_json::from_str::<TrafficStats>(&payload) {
                    // Cache real-time rates pushed by sniffer for GET /api/stats
@@ -623,19 +541,6 @@ async fn subscribe_redis_messages(
                 } else {
                     None
                 }
-            }
-            topics::HTTP_SESSION_NEW => {
-                if let Ok(sessions) = serde_json::from_str::<Vec<HttpSession>>(&payload) {
-                    let db = state.db.clone();
-                    tokio::spawn(async move {
-                        for session in &sessions {
-                            if let Err(e) = db.insert_http_session(session).await {
-                                warn!("Failed to save HTTP session: {}", e);
-                            }
-                        }
-                    });
-                }
-                None
             }
 
            // Engine Analysis Results
@@ -690,67 +595,4 @@ async fn subscribe_redis_messages(
     }
 
     Ok(())
-}
-
-/// UDS fallback: Receive messages from Engine process and distribute
-
-/// Processing logic same as Engine section in `subscribe_redis_messages`.
-#[cfg(unix)]
-async fn dispatch_uds_messages(
-    state: &Arc<AppState>,
-    ws_tx: &broadcast::Sender<WsMessage>,
-    uds_rx: &mut tokio::sync::mpsc::Receiver<UdsMessage>,
-) {
-    info!("UDS message distribution task started (waiting for Engine connection)");
-
-    while let Some(msg) = uds_rx.recv().await {
-        let ws_msg = match msg.topic.as_str() {
-            topics::ENGINE_VERDICT => {
-                if let Ok(v) = serde_json::from_value::<SecurityVerdictSummary>(msg.payload) {
-                   // Prometheus: Record verdict distribution (UDS path)
-                    metrics::EMAILS_PROCESSED_TOTAL.inc();
-                    metrics::VERDICTS_TOTAL
-                        .with_label_values(&[&v.threat_level.to_lowercase()])
-                        .inc();
-                    Some(WsMessage::SecurityVerdict(v))
-                } else {
-                    None
-                }
-            }
-            topics::ENGINE_ALERT => {
-                if let Ok(a) = serde_json::from_value::<String>(msg.payload) {
-                    Some(WsMessage::Alert(a))
-                } else {
-                    None
-                }
-            }
-            topics::ENGINE_DS_INCIDENT => {
-                if let Ok(i) = serde_json::from_value::<DataSecurityIncident>(msg.payload) {
-                    Some(WsMessage::DataSecurityAlert(i))
-                } else {
-                    None
-                }
-            }
-            topics::ENGINE_STATUS => {
-                let snapshot = if msg.payload.get("updated_at").is_some()
-                    && msg.payload.get("status").is_some()
-                {
-                    msg.payload
-                } else {
-                    crate::handlers::security::wrap_engine_status_snapshot(msg.payload)
-                };
-               *state.monitoring.engine_status.write().await = Some(snapshot);
-                None
-            }
-            _ => None,
-        };
-
-        if let Some(ws) = ws_msg
-            && ws_tx.receiver_count() > 0
-        {
-            let _ = ws_tx.send(ws);
-        }
-    }
-
-    warn!("UDS message distribution task ended");
 }

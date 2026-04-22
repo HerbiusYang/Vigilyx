@@ -9,7 +9,11 @@ use chrono::Utc;
 use regex::Regex;
 use std::sync::{LazyLock, OnceLock, RwLock};
 
-use super::common::{extract_domain_from_url, extract_redirect_target_urls, percent_decode};
+use super::common::{
+    domain_matches_policy_set, extract_domain_from_url, extract_redirect_target_urls,
+    host_matches_domain_or_subdomain,
+    percent_decode,
+};
 use crate::context::SecurityContext;
 use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
@@ -56,51 +60,38 @@ static RE_EMAIL_TEXT: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 #[cfg(test)]
-static URL_DOMAIN_SET_TEST_GUARD: LazyLock<std::sync::Mutex<()>> =
-    LazyLock::new(|| std::sync::Mutex::new(()));
+static URL_DOMAIN_SET_TEST_GUARD: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
 
-const URL_SHORTENERS: &[&str] = &[
-    "bit.ly",
-    "t.co",
-    "goo.gl",
-    "tinyurl.com",
-    "is.gd",
-    "ow.ly",
-    "buff.ly",
-    "rebrand.ly",
-    "cutt.ly",
-    "rb.gy",
-    "short.io",
-];
-
-/// already emailSecurity Domain - URL write
-/// `https://gateway/redirect?url=ORIGINAL` Used for SecurityCheck.
-
-/// URL redirect_url / suspicious_params detect,
-/// Extract Mediumpacket of Target URL lineAnalyze.
-const MAIL_SECURITY_GATEWAYS: &[&str] = &[
-    "asiainfo-sec.com",                 // Security DDEI
-    "urldefense.proofpoint.com",        // Proofpoint URL Defense
-    "safelinks.protection.outlook.com", // Microsoft Defender ATP
-    "url.emailprotection.link",         // Mimecast
-    "urlsand.com",                      // Libraesva URLsand
-    "secureweb.cisco.com",              // Cisco Email Security
-    "click.pstmrk.it",                  // Postmark
-];
+// URL_SHORTENERS: moved to module_data JSON (key: "url_shorteners")
+// MAIL_SECURITY_GATEWAYS: moved to module_data JSON (key: "mail_security_gateways")
 
 /// Check if a URL belongs to a mail security gateway URL rewrite.
 fn is_mail_security_gateway(url: &str) -> bool {
-    let url_lower = url.to_lowercase();
-    MAIL_SECURITY_GATEWAYS
-        .iter()
-        .any(|gw| url_lower.contains(gw))
+    let Some(domain) = extract_domain_from_url(url) else {
+        return false;
+    };
+    let md = crate::module_data::module_data();
+    for gw in md.get_list("mail_security_gateways") {
+        if host_matches_domain_or_subdomain(&domain, gw) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Public version for use by other link analysis modules (e.g., link_content).
 pub fn is_mail_security_gateway_pub(url_lower: &str) -> bool {
-    MAIL_SECURITY_GATEWAYS
-        .iter()
-        .any(|gw| url_lower.contains(gw))
+    let Some(domain) = extract_domain_from_url(url_lower) else {
+        return false;
+    };
+    let md = crate::module_data::module_data();
+    for gw in md.get_list("mail_security_gateways") {
+        if host_matches_domain_or_subdomain(&domain, gw) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Extract the wrapped target URL from a mail-security gateway rewrite.
@@ -112,18 +103,7 @@ pub fn unwrap_mail_security_gateway_target(url: &str) -> Option<String> {
 }
 
 fn domain_in_set(set: &HashSet<String>, domain: &str) -> bool {
-    let lower = domain.to_lowercase();
-    if set.contains(&lower) {
-        return true;
-    }
-    let mut parts = lower.as_str();
-    while let Some(pos) = parts.find('.') {
-        parts = &parts[pos + 1..];
-        if set.contains(parts) {
-            return true;
-        }
-    }
-    false
+    domain_matches_policy_set(domain, set)
 }
 
 /// URL DomainSet (From DB Load, For link_content waitModuleShared)
@@ -180,6 +160,23 @@ fn looks_like_urlish_link_text(text: &str) -> bool {
         || RE_DOMAINISH_TEXT.is_match(&normalized)
 }
 
+fn is_machine_tracking_url_text(text: &str) -> bool {
+    let trimmed = text.trim();
+    if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+        return false;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    is_mail_security_gateway(&lower)
+        || !extract_redirect_target_urls(trimmed).is_empty()
+        || lower.contains("/track/")
+        || lower.contains("/click2/")
+        || lower.contains("/clicktime/")
+        || lower.contains("track/unsubscribe")
+        || lower.contains("umid=")
+        || lower.contains("auth=")
+}
+
 fn link_text_matches_embedded_contact_context(text: &str, analysis_url: &str) -> bool {
     let emails: Vec<String> = RE_EMAIL_TEXT
         .find_iter(text)
@@ -193,11 +190,88 @@ fn link_text_matches_embedded_contact_context(text: &str, analysis_url: &str) ->
     emails.iter().all(|email| decoded_url.contains(email))
 }
 
+fn is_known_safe_tokenized_resource_url(url: &str) -> bool {
+    let normalized = percent_decode(url).to_ascii_lowercase();
+
+    normalized.starts_with("https://wx.mail.qq.com/info/get_mailhead_icon?")
+        || normalized.starts_with("http://wx.mail.qq.com/info/get_mailhead_icon?")
+        || normalized.starts_with("https://mail.qq.com/info/get_mailhead_icon?")
+        || normalized.starts_with("http://mail.qq.com/info/get_mailhead_icon?")
+        || ((normalized.starts_with("https://wx.mail.qq.com/home/index")
+            || normalized.starts_with("http://wx.mail.qq.com/home/index")
+            || normalized.starts_with("https://mail.qq.com/home/index")
+            || normalized.starts_with("http://mail.qq.com/home/index"))
+            && normalized.contains("readmail_businesscard_midpage"))
+}
+
+fn tld_label_count_for_domain(domain: &str) -> usize {
+    let lower = domain.to_ascii_lowercase();
+    let md = crate::module_data::module_data();
+    for compound in md.get_list("compound_tlds") {
+        if lower.ends_with(compound.as_str()) {
+            let prefix_len = lower.len() - compound.len();
+            if prefix_len == 0 || lower.as_bytes()[prefix_len - 1] == b'.' {
+                return 2;
+            }
+        }
+    }
+    1
+}
+
+fn registered_domain(domain: &str) -> String {
+    let parts: Vec<&str> = domain.split('.').collect();
+    let tld_count = tld_label_count_for_domain(domain);
+    let min_parts = tld_count + 1;
+    if parts.len() >= min_parts {
+        parts[parts.len() - min_parts..].join(".")
+    } else {
+        domain.to_string()
+    }
+}
+
+fn extract_visible_domain_text(text: &str) -> Option<String> {
+    let trimmed = text
+        .trim()
+        .trim_matches(|c: char| matches!(c, '<' | '>' | '(' | ')' | '[' | ']' | '"' | '\''))
+        .trim_end_matches(['.', ',', ';', ':', '/'])
+        .to_ascii_lowercase();
+    let without_scheme = trimmed
+        .strip_prefix("http://")
+        .or_else(|| trimmed.strip_prefix("https://"))
+        .unwrap_or(&trimmed);
+    let candidate = without_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("")
+        .trim();
+
+    if candidate.is_empty() {
+        return None;
+    }
+
+    let matched = RE_DOMAINISH_TEXT.find(candidate)?;
+    if matched.start() == 0 && matched.end() == candidate.len() {
+        Some(candidate.to_string())
+    } else {
+        None
+    }
+}
+
+fn text_and_url_domains_equivalent(text: &str, url_domain: &str) -> bool {
+    let Some(text_domain) = extract_visible_domain_text(text) else {
+        return false;
+    };
+    text_domain == url_domain || registered_domain(&text_domain) == registered_domain(url_domain)
+}
+
 #[cfg(test)]
-pub(crate) fn lock_url_domain_set_test_guard() -> std::sync::MutexGuard<'static, ()> {
-    URL_DOMAIN_SET_TEST_GUARD
-        .lock()
-        .expect("url domain set test guard poisoned")
+pub(crate) fn lock_url_domain_set_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    URL_DOMAIN_SET_TEST_GUARD.blocking_lock()
+}
+
+#[cfg(test)]
+pub(crate) async fn lock_url_domain_set_test_guard_async() -> tokio::sync::MutexGuard<'static, ()> {
+    URL_DOMAIN_SET_TEST_GUARD.lock().await
 }
 
 #[async_trait]
@@ -255,9 +329,11 @@ impl SecurityModule for LinkScanModule {
             let is_trusted = effective_domain
                 .as_ref()
                 .is_some_and(|d| is_trusted_url_domain(d));
+            let is_known_safe_resource = is_known_safe_tokenized_resource_url(analysis_url);
            // If we successfully unwrapped the target URL, inspect that target normally.
            // Only the outer gateway wrapper should skip redirect-parameter heuristics.
-            let skip_redirect_checks = (!using_gateway_target && is_gateway) || is_trusted;
+            let skip_redirect_checks =
+                (!using_gateway_target && is_gateway) || is_trusted || is_known_safe_resource;
 
            // --- 1. IP-based URL ---
             if RE_IP_URL.is_match(&analysis_url_lower) {
@@ -301,9 +377,15 @@ impl SecurityModule for LinkScanModule {
                 && let Some(url_domain) = extract_domain_from_url(&analysis_url_lower)
             {
                 let text_lower = text.to_lowercase();
+               // Skip mismatch check if the URL domain is a well-known safe domain
+                let skip_mismatch = is_well_known_safe_domain(&url_domain)
+                    || is_trusted_url_domain(&url_domain);
                // If the link text looks like a URL or contains a domain, check for mismatch
-                if looks_like_urlish_link_text(&text_lower)
+                if !skip_mismatch
+                    && looks_like_urlish_link_text(&text_lower)
+                    && !is_machine_tracking_url_text(text)
                     && !link_text_matches_embedded_contact_context(&text_lower, analysis_url)
+                    && !text_and_url_domains_equivalent(text, &url_domain)
                     && !text_lower.contains(&url_domain)
                 {
                     total_score += 0.30;
@@ -321,47 +403,32 @@ impl SecurityModule for LinkScanModule {
             }
 
            // --- 5. URL shortener ---
-            if let Some(domain) = extract_domain_from_url(&analysis_url_lower)
-                && URL_SHORTENERS
-                    .iter()
-                    .any(|&s| domain == s || domain.ends_with(&format!(".{}", s)))
-            {
-                total_score += 0.15;
-                categories.push("url_shortener".to_string());
-                suspicious_urls.push(analysis_url.to_string());
-                evidence.push(Evidence {
-                    description: format!(
-                        "shortlinkConnectService: {} (Domain: {})",
-                        analysis_url, domain
-                    ),
-                    location: Some("links".to_string()),
-                    snippet: Some(analysis_url.to_string()),
+            if let Some(domain) = extract_domain_from_url(&analysis_url_lower) {
+                let md = crate::module_data::module_data();
+                let is_shortener = md.get_list("url_shorteners").iter().any(|s| {
+                    domain == *s || domain.ends_with(&format!(".{}", s))
                 });
+                if is_shortener {
+                    total_score += 0.15;
+                    categories.push("url_shortener".to_string());
+                    suspicious_urls.push(analysis_url.to_string());
+                    evidence.push(Evidence {
+                        description: format!(
+                            "shortlinkConnectService: {} (Domain: {})",
+                            analysis_url, domain
+                        ),
+                        location: Some("links".to_string()),
+                        snippet: Some(analysis_url.to_string()),
+                    });
+                }
             }
 
            // --- 6. Redirect/tracking + suspicious params detection ---
            // Skip for trusted domains and security gateways (their URL params are legitimate)
             if !skip_redirect_checks {
                // 6a. Parameterdetect
-                let redirect_params = [
-                    "clickenc=http",
-                    "redirect=http",
-                    "url=http",
-                    "goto=http",
-                    "target=http",
-                    "dest=http",
-                    "clickenc=https",
-                    "redirect=https",
-                    "url=https",
-                    "goto=https",
-                    "target=https",
-                    "dest=https",
-                    "clickenc=http%3a",
-                    "redirect=http%3a",
-                    "clickenc=https%3a",
-                    "redirect=https%3a",
-                ];
-                for param in redirect_params {
+                let md = crate::module_data::module_data();
+                for param in md.get_list("redirect_params") {
                     if analysis_url_lower.contains(param) {
                         total_score += 0.20;
                         categories.push("redirect_url".to_string());
@@ -531,6 +598,25 @@ mod tests {
     }
 
     #[test]
+    fn test_machine_tracking_text_is_not_treated_as_href_mismatch() {
+        let _guard = lock_url_domain_set_test_guard();
+        set_trusted_url_domains(Arc::new(HashSet::new()));
+        let module = LinkScanModule::new();
+        let ctx = make_ctx(
+            "https://etrack01.com/track/click2/tokenized-path.html",
+            Some("https://ddei3-0-ctp.asiainfo-sec.com:443/wis/clicktime/v1/query?url=http%3a%2f%2fwww.sumscope.com&umid=test&auth=test"),
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            !result.categories.contains(&"href_text_mismatch".to_string()),
+            "machine-generated tracking URL text should not be treated as deceptive label: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
     fn test_descriptive_filename_text_is_not_treated_as_href_mismatch() {
         let _guard = lock_url_domain_set_test_guard();
         set_trusted_url_domains(Arc::new(HashSet::new()));
@@ -569,18 +655,101 @@ mod tests {
     }
 
     #[test]
+    fn test_same_registered_domain_text_and_www_host_are_not_href_mismatch() {
+        let _guard = lock_url_domain_set_test_guard();
+        set_trusted_url_domains(Arc::new(HashSet::new()));
+        set_well_known_safe_domains(Arc::new(HashSet::new()));
+
+        let module = LinkScanModule::new();
+        let ctx = make_ctx("http://www.12306.cn", Some("12306.cn"));
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            !result.categories.contains(&"href_text_mismatch".to_string()),
+            "same registrable domain should not be treated as deceptive label: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
     fn test_safe_and_trusted_domain_sets_are_separate() {
         let _guard = lock_url_domain_set_test_guard();
         let mut trusted = HashSet::new();
-        trusted.insert("mail.qq.com".to_string());
+        trusted.insert("*.mail.qq.com".to_string());
         set_trusted_url_domains(Arc::new(trusted));
 
         let mut safe = HashSet::new();
-        safe.insert("microsoft.com".to_string());
+        safe.insert("*.microsoft.com".to_string());
         set_well_known_safe_domains(Arc::new(safe));
 
         assert!(is_trusted_url_domain("wx.mail.qq.com"));
         assert!(!is_trusted_url_domain("microsoft.com"));
         assert!(is_well_known_safe_domain("login.microsoft.com"));
+    }
+
+    #[test]
+    fn test_safe_mail_resource_url_skips_suspicious_params_without_trusted_cache() {
+        let _guard = lock_url_domain_set_test_guard();
+        set_trusted_url_domains(Arc::new(HashSet::new()));
+        set_well_known_safe_domains(Arc::new(HashSet::new()));
+
+        let module = LinkScanModule::new();
+        let ctx = make_ctx(
+            "https://wx.mail.qq.com/info/get_mailhead_icon?key=MBLLmnJ6KVsQGy6nRRZQne96NS4zwRWy3hACPff49oZr&r=2085971486",
+            None,
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            !result.categories.contains(&"suspicious_params".to_string()),
+            "known QQ webmail resource URLs should not be treated as phishing token links: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_trusted_qixin_export_link_skips_suspicious_params() {
+        let _guard = lock_url_domain_set_test_guard();
+        set_trusted_url_domains(Arc::new(HashSet::from(["b.qixin.com".to_string()])));
+        set_well_known_safe_domains(Arc::new(HashSet::new()));
+
+        let module = LinkScanModule::new();
+        let ctx = make_ctx(
+            "https://b.qixin.com/offline-export?id=116eb8a2-5a01-49df-b6f0-f91ff32eac12&token=aa6d62d9ef98b077a3fd3cc6ddbff7e3",
+            None,
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            !result.categories.contains(&"suspicious_params".to_string()),
+            "trusted qixin export links should not be treated as phishing token URLs: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_exact_trusted_domain_does_not_bleed_into_subdomains() {
+        let _guard = lock_url_domain_set_test_guard();
+        set_trusted_url_domains(Arc::new(HashSet::from(["12306.com".to_string()])));
+        set_well_known_safe_domains(Arc::new(HashSet::new()));
+
+        assert!(is_trusted_url_domain("12306.com"));
+        assert!(!is_trusted_url_domain("pay.12306.com"));
+    }
+
+    #[test]
+    fn test_fake_gateway_host_does_not_unwrap() {
+        assert_eq!(
+            unwrap_mail_security_gateway_target(
+                "https://safelinks.protection.outlook.com.evil.net/?url=https%3A%2F%2Fevil.example%2Flogin"
+            ),
+            None
+        );
+        assert!(!is_mail_security_gateway_pub(
+            "https://safelinks.protection.outlook.com.evil.net/?url=https%3A%2F%2Fevil.example%2Flogin"
+        ));
     }
 }

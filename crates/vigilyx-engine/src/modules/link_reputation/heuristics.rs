@@ -1,9 +1,10 @@
 //! Pure utility functions for domain heuristic analysis.
-
+//!
 //! Contains: domain parsing, URL redirect extraction, and
 //! heuristic scoring for suspicious domain characteristics.
 
-use super::data::{FREE_HOSTING_DOMAINS, RE_RANDOM_DOMAIN, SUSPICIOUS_TLDS};
+use super::data::RE_RANDOM_DOMAIN;
+use crate::module_data::module_data;
 use crate::modules::common::extract_redirect_target_urls;
 
 /// Extract redirect target URLs from tracking/security-gateway links.
@@ -11,11 +12,32 @@ pub(super) fn extract_redirect_target_urls_full(url: &str) -> Vec<String> {
     extract_redirect_target_urls(url)
 }
 
-/// GetRegisterDomain (Domain)
+/// Returns the number of labels in the TLD (2 for compound like `.com.cn`, 1 for simple like `.com`).
+/// Compound TLD list is loaded from `engine_module_data_seed.json` → `compound_tlds`.
+fn tld_label_count(domain: &str) -> usize {
+    let lower = domain.to_ascii_lowercase();
+    for compound in module_data().get_list("compound_tlds") {
+        if lower.ends_with(compound.as_str()) {
+            let prefix_len = lower.len() - compound.len();
+            if prefix_len == 0 || lower.as_bytes()[prefix_len - 1] == b'.' {
+                return 2;
+            }
+        }
+    }
+    1
+}
+
+/// Get registered domain (TLD+1), handling compound TLDs correctly.
+///
+/// - `sub.example.com` → `example.com`
+/// - `notice01.cloud.huawei.com.cn` → `huawei.com.cn`
+/// - `dn.admin.co.jp` → `admin.co.jp`
 pub(super) fn get_registered_domain(domain: &str) -> String {
     let parts: Vec<&str> = domain.split('.').collect();
-    if parts.len() >= 2 {
-        parts[parts.len() - 2..].join(".")
+    let tld_count = tld_label_count(domain);
+    let min_parts = tld_count + 1;
+    if parts.len() >= min_parts {
+        parts[parts.len() - min_parts..].join(".")
     } else {
         domain.to_string()
     }
@@ -34,8 +56,8 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
     let tld = get_tld(domain);
     let parts: Vec<&str> = domain.split('.').collect();
 
-   // 1. Suspicious TLD
-    if SUSPICIOUS_TLDS.contains(&tld) {
+    // 1. Suspicious TLD
+    if module_data().contains("suspicious_tlds", tld) {
         score += 0.15;
         findings.push((
             format!("Suspicious顶levelDomain .{}", tld),
@@ -43,10 +65,20 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
         ));
     }
 
-   // 2. www first (if wwwkp.domain.com, www-secure.domain.com)
+    // 2. www first (if wwwkp.domain.com, www-secure.domain.com)
     if parts.len() >= 2 {
         let subdomain = parts[0];
-        if subdomain.starts_with("www") && subdomain.len() > 3 && subdomain != "www" {
+        let www_suffix = subdomain
+            .strip_prefix("www")
+            .unwrap_or_default()
+            .trim_matches('-');
+        let is_numbered_www = !www_suffix.is_empty()
+            && www_suffix.chars().all(|c| c.is_ascii_digit());
+        if subdomain.starts_with("www")
+            && subdomain.len() > 3
+            && subdomain != "www"
+            && !is_numbered_www
+        {
             score += 0.25;
             findings.push((
                 format!("www first缀伪装: \"{}\" (疑似假冒官网子Domain)", subdomain),
@@ -55,8 +87,8 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
         }
     }
 
-   // 3. / Dynamic DNS
-    for &host in FREE_HOSTING_DOMAINS {
+    // 3. Free hosting / Dynamic DNS
+    for host in module_data().get_list("free_hosting_domains") {
         if domain.ends_with(host) || domain == host {
             score += 0.20;
             findings.push((
@@ -67,7 +99,7 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
         }
     }
 
-   // 4. longDomain (Used for)
+    // 4. longDomain (Used for)
     if domain.len() > 40 {
         score += 0.15;
         findings.push((
@@ -76,7 +108,7 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
         ));
     }
 
-   // 5. Domain level (if a.b.c.d.evil.com)
+    // 5. Domain level (if a.b.c.d.evil.com)
     if parts.len() > 4 {
         score += 0.15;
         findings.push((
@@ -85,13 +117,18 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
         ));
     }
 
-   // 6. random/DGA domain detection
-    let main_part = if parts.len() >= 2 {
-        parts[parts.len() - 2]
+    // 6. random/DGA domain detection
+    // Extract the registrable domain label (the label just above the TLD).
+    // For compound TLDs like .com.cn, this correctly skips the TLD parts.
+    let tld_count = tld_label_count(domain);
+    let main_part = if parts.len() > tld_count {
+        parts[parts.len() - tld_count - 1]
+    } else if !parts.is_empty() {
+        parts[0]
     } else {
         domain
     };
-   // 6a. Consecutive consonant cluster (4+) - classic DGA pattern
+    // 6a. Consecutive consonant cluster (4+) - classic DGA pattern
     if main_part.len() >= 6
         && RE_RANDOM_DOMAIN.is_match(main_part)
         && !crate::modules::identity_anomaly::is_human_readable_domain_label(main_part)
@@ -102,9 +139,9 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
             "random_domain".to_string(),
         ));
     }
-   // 6b. High consonant ratio - catches DGA domains where a single vowel breaks
-   // the consecutive run (e.g., "fdtujh" has 5/6 = 83% consonants but only 3
-   // consecutive). Threshold:>=70% consonants in 5+ char domain.
+    // 6b. High consonant ratio - catches DGA domains where a single vowel breaks
+    // the consecutive run (e.g., "fdtujh" has 5/6 = 83% consonants but only 3
+    // consecutive). Threshold:>=70% consonants in 5+ char domain.
     else if main_part.len() >= 5
         && !crate::modules::identity_anomaly::is_human_readable_domain_label(main_part)
     {
@@ -126,11 +163,10 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
         }
     }
 
-   // 7. Domain (ofif 163.com)
-    let known_numeric = ["163.com", "126.com", "51.com", "360.cn", "58.com"];
+    // 7. Numeric domain (known exceptions like 163.com)
     if main_part.chars().all(|c| c.is_ascii_digit())
         && main_part.len() > 3
-        && !known_numeric.contains(&reg_domain.as_str())
+        && !module_data().contains("known_numeric_domains", &reg_domain)
     {
         score += 0.15;
         findings.push((
@@ -139,7 +175,7 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
         ));
     }
 
-   // 8. DomainMediumpacketContains IP (if 192-168-1-1.evil.com)
+    // 8. DomainMediumpacketContains IP (if 192-168-1-1.evil.com)
     if domain.contains('-') {
         let dash_part = parts[0];
         let octets: Vec<&str> = dash_part.split('-').collect();

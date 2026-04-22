@@ -1,4 +1,5 @@
 import { apiFetch } from './api'
+import { EVENTS } from './events'
 
 export type ThemeMode = 'dark' | 'light'
 export type AccentColor = 'cyan' | 'blue' | 'purple' | 'green' | 'amber' | 'rose'
@@ -223,8 +224,8 @@ export function applyUiPreferencesToClient(prefs: UiPreferences, emit = true) {
   document.documentElement.style.setProperty('--accent-primary', ACCENT_COLORS[prefs.appearance.accent])
 
   if (emit) {
-    window.dispatchEvent(new Event('vigilyx:display-settings-changed'))
-    window.dispatchEvent(new CustomEvent('vigilyx:ui-preferences-changed', { detail: prefs }))
+    window.dispatchEvent(new Event(EVENTS.DISPLAY_SETTINGS_CHANGED))
+    window.dispatchEvent(new CustomEvent(EVENTS.UI_PREFERENCES_CHANGED, { detail: prefs }))
   }
 }
 

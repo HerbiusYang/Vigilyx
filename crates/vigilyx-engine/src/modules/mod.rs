@@ -1,3 +1,4 @@
+pub mod aitm_detect;
 pub mod anomaly_detect;
 pub mod attach_qr_scan;
 pub mod attach_content;

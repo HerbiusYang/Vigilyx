@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, startTransition } from 'react'
 import { Link } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import type { ApiResponse, SecurityStats, ExternalLoginStats, VerdictWithMeta } from '../../types'
 import { useSystemMetrics } from '../../hooks/useSystemMetrics'
 import { useRealtimeTraffic } from '../../hooks/useRealtimeTraffic'
 import { decodeMimeWord } from '../../utils/mime'
-import { formatBytes, formatDate, getRelativeTime } from '../../utils/format'
+import { formatBytes, formatDate, formatHourLabel, getRelativeTime } from '../../utils/format'
 import { apiFetch } from '../../utils/api'
+import { EVENTS } from '../../utils/events'
 
 
 /** Module-level constant helper to avoid recreating it on every render. */
@@ -19,11 +21,11 @@ function formatUptime(secs: number): string {
 }
 
 const THREAT_LEVELS = [
-  { key: 'safe', label: '安全', color: '#22c55e' },
-  { key: 'low', label: '低危', color: '#3b82f6' },
-  { key: 'medium', label: '中危', color: '#eab308' },
-  { key: 'high', label: '高危', color: '#f97316' },
-  { key: 'critical', label: '严重', color: '#ef4444' },
+  { key: 'safe', color: '#22c55e' },
+  { key: 'low', color: '#3b82f6' },
+  { key: 'medium', color: '#eab308' },
+  { key: 'high', color: '#f97316' },
+  { key: 'critical', color: '#ef4444' },
 ]
 
 /** Threat level -> badge color class. */
@@ -58,11 +60,12 @@ const DashboardBanner = React.memo(function DashboardBanner({
   effectivePps: number
   effectiveBps: number
 }) {
+  const { t } = useTranslation()
   return (
     <div className={`db-banner ${connected ? 'online' : ''}`}>
       <div className="db-banner-left">
         <span className="db-pulse-dot" />
-        <span className="db-banner-label">{connected ? '实时监控中' : '连接已断开'}</span>
+        <span className="db-banner-label">{connected ? t('dashboard.monitoring') : t('dashboard.disconnected')}</span>
       </div>
       <div className="db-banner-right">
         <div className="db-throughput">
@@ -162,6 +165,7 @@ const SecurityHeroCard = React.memo(function SecurityHeroCard({
   secMaxCount: number
 }) {
   const { stats, connected } = useRealtimeTraffic()
+  const { t } = useTranslation()
   const activeSessions = stats?.active_sessions ?? 0
 
   return (
@@ -189,17 +193,17 @@ const SecurityHeroCard = React.memo(function SecurityHeroCard({
             <span className="db-sec-ring-pct">{securityScore !== null ? '%' : ''}</span>
           </div>
         </div>
-        <span className="db-sec-ring-label">安全评分</span>
+        <span className="db-sec-ring-label">{t('dashboard.securityScore')}</span>
       </div>
 
       <div className="db-sec-dist-zone">
         <div className="db-sec-dist-header">
           <div className="db-section-left">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-            <h3 className="db-section-title">威胁分布</h3>
+            <h3 className="db-section-title">{t('dashboard.threatDistribution')}</h3>
           </div>
           {totalScanned > 0 && (
-            <span className="db-sec-total-badge">{totalScanned.toLocaleString()} 封</span>
+            <span className="db-sec-total-badge">{totalScanned.toLocaleString()} {t('dashboard.emailUnit')}</span>
           )}
         </div>
         <div className="db-sec-bars">
@@ -208,7 +212,7 @@ const SecurityHeroCard = React.memo(function SecurityHeroCard({
             const pct = secMaxCount > 0 ? (count / secMaxCount) * 100 : 0
             return (
               <div key={lv.key} className="db-sec-row">
-                <span className="db-sec-label" style={{ color: lv.color }}>{lv.label}</span>
+                <span className="db-sec-label" style={{ color: lv.color }}>{t('dashboard.threat.' + lv.key)}</span>
                 <div className="db-sec-track">
                   <div className="db-sec-fill" style={{
                     width: `${Math.max(2, pct)}%`,
@@ -224,10 +228,10 @@ const SecurityHeroCard = React.memo(function SecurityHeroCard({
           {secStats && secStats.high_threats_24h > 0 ? (
             <span className="db-sec-alert-tag">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-              24h 高危: {secStats.high_threats_24h}
+              24h {t('dashboard.highThreatsPrefix')}: {secStats.high_threats_24h}
             </span>
           ) : (
-            <span className="db-sec-ok-tag">24h 无高危威胁</span>
+            <span className="db-sec-ok-tag">{t('dashboard.noHighThreats24h')}</span>
           )}
         </div>
       </div>
@@ -235,20 +239,20 @@ const SecurityHeroCard = React.memo(function SecurityHeroCard({
       <div className="db-sec-kpi-zone">
         <div className="db-sec-kpi-item">
           <span className="db-sec-kpi-num">{totalScanned.toLocaleString()}</span>
-          <span className="db-sec-kpi-label">已分析</span>
+          <span className="db-sec-kpi-label">{t('dashboard.analyzed')}</span>
         </div>
         <div className="db-sec-kpi-item">
           <div className="db-sec-kpi-live">
             <span className="db-sec-kpi-num">{activeSessions}</span>
             {connected && <span className="db-sec-live-dot" />}
           </div>
-          <span className="db-sec-kpi-label">活跃会话</span>
+          <span className="db-sec-kpi-label">{t('dashboard.activeSessions')}</span>
         </div>
         <div className="db-sec-kpi-item">
           <span className="db-sec-kpi-num">{secStats?.ioc_count ?? 0}</span>
-          <span className="db-sec-kpi-label">IOC 命中</span>
+          <span className="db-sec-kpi-label">{t('dashboard.iocHits')}</span>
         </div>
-        <Link to="/security" className="db-link db-sec-link">详情 →</Link>
+        <Link to="/security" className="db-link db-sec-link">{t('dashboard.details')}</Link>
       </div>
     </div>
   )
@@ -261,6 +265,7 @@ const LoginCard = React.memo(function LoginCard({
   loginStats: ExternalLoginStats | null
   loginChartData: LoginChartBar[]
 }) {
+  const { t } = useTranslation()
   return (
     <div className="db-card db-login" style={{ gridArea: 'login' }}>
       <div className="db-section-header">
@@ -268,17 +273,17 @@ const LoginCard = React.memo(function LoginCard({
           <span className="db-section-icon amber">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
           </span>
-          <h3 className="db-section-title">外网登录 (24h)</h3>
+          <h3 className="db-section-title">{t('dashboard.externalLogin24h')}</h3>
         </div>
         <div className="db-login-summary">
           <span className="db-login-num">{loginStats?.total_24h.toLocaleString() ?? '0'}</span>
-          <span className="db-login-unit">次</span>
+          <span className="db-login-unit">{t('dashboard.timesUnit')}</span>
           <span className="db-login-sep">/</span>
           <span className="db-login-users">{loginStats?.unique_ips_24h ?? 0} IP</span>
           {loginStats && loginStats.failed_24h > 0 && (
             <span className="db-fail-badge">
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-              {loginStats.failed_24h} 失败
+              {loginStats.failed_24h} {t('dashboard.failed')}
             </span>
           )}
         </div>
@@ -308,7 +313,7 @@ const LoginCard = React.memo(function LoginCard({
                 : <span className="db-bar-spacer" />}
             </div>
           )) : (
-            <div className="db-chart-empty">暂无登录数据</div>
+            <div className="db-chart-empty">{t('dashboard.noLoginData')}</div>
           )}
         </div>
       </div>
@@ -323,6 +328,7 @@ const RecentThreatsCard = React.memo(function RecentThreatsCard({
   loading: boolean
   recentThreats: VerdictWithMeta[]
 }) {
+  const { t } = useTranslation()
   const [minuteTick, setMinuteTick] = useState(0)
 
   useEffect(() => {
@@ -338,11 +344,11 @@ const RecentThreatsCard = React.memo(function RecentThreatsCard({
     protocolClass: v.protocol ? v.protocol.toLowerCase() : null,
     protocol: v.protocol,
     threatClass: threatBadgeClass(v.threat_level),
-    subject: decodeMimeWord(v.subject) || '(无主题)',
+    subject: decodeMimeWord(v.subject) || t('notify.noSubject'),
     createdAt: v.created_at,
     relativeTime: getRelativeTime(v.created_at),
-    mailFrom: v.mail_from || '未知',
-  })), [recentThreats, minuteTick])
+    mailFrom: v.mail_from || t('dashboard.unknown'),
+  })), [recentThreats, minuteTick, t])
 
   return (
     <div className="db-card db-feed" style={{ gridArea: 'feed' }}>
@@ -351,9 +357,9 @@ const RecentThreatsCard = React.memo(function RecentThreatsCard({
           <span className="db-section-icon">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
           </span>
-          <h3 className="db-section-title">邮件安全事件</h3>
+          <h3 className="db-section-title">{t('dashboard.emailSecurityEvents')}</h3>
         </div>
-        <Link to="/security/risk" className="db-link">查看全部 →</Link>
+        <Link to="/security/risk" className="db-link">{t('dashboard.viewAll')}</Link>
       </div>
       <div className="db-feed-list">
         {loading ? (
@@ -368,7 +374,7 @@ const RecentThreatsCard = React.memo(function RecentThreatsCard({
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ opacity: 0.3 }}>
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
             </svg>
-            <span>暂无中危以上安全事件</span>
+            <span>{t('dashboard.noMediumAboveEvents')}</span>
           </div>
         ) : (
           feedItems.map(item => (
@@ -413,37 +419,38 @@ const TrafficStatsCard = React.memo(function TrafficStatsCard({
   activeSessions: number
   connected: boolean
 }) {
+  const { t } = useTranslation()
   return (
     <div className="db-card db-stats" style={{ gridArea: 'stats' }}>
       <div className="db-section-left db-stats-title">
         <span className="db-section-icon">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         </span>
-        <h3 className="db-section-title">流量概览</h3>
+        <h3 className="db-section-title">{t('dashboard.trafficOverview')}</h3>
       </div>
       <div className="db-stats-grid">
         <div className="db-stats-cell">
           <span className="db-stats-num">{totalSessions.toLocaleString()}</span>
-          <span className="db-stats-label">总会话</span>
+          <span className="db-stats-label">{t('dashboard.totalSessions')}</span>
           <span className="db-stats-sub">
             {protocolTotal > 0
               ? `SMTP ${smtpSessions} / POP3 ${pop3Sessions} / IMAP ${imapSessions}`
-              : '等待数据'}
+              : t('dashboard.waitingData')}
           </span>
         </div>
         <div className="db-stats-cell">
           <span className="db-stats-num">{totalPackets.toLocaleString()}</span>
-          <span className="db-stats-label">数据包</span>
+          <span className="db-stats-label">{t('dashboard.packets')}</span>
           <span className="db-stats-sub accent">{effectivePps}/s</span>
         </div>
         <div className="db-stats-cell">
           <span className="db-stats-num">{formatBytes(totalBytes)}</span>
-          <span className="db-stats-label">网络流量</span>
+          <span className="db-stats-label">{t('dashboard.networkTraffic')}</span>
           <span className="db-stats-sub accent">{formatBytes(effectiveBps)}/s</span>
         </div>
         <div className="db-stats-cell">
           <span className="db-stats-num">{activeSessions}</span>
-          <span className="db-stats-label">活跃会话</span>
+          <span className="db-stats-label">{t('dashboard.activeSessions')}</span>
           <span className={`db-stats-live ${connected ? 'on' : ''}`}>
             <span className="db-stats-live-dot" />
             {connected ? 'LIVE' : 'OFF'}
@@ -469,13 +476,14 @@ const ProtocolDistributionCard = React.memo(function ProtocolDistributionCard({
   pop3Sessions: number
   imapSessions: number
 }) {
+  const { t } = useTranslation()
   return (
     <div className="db-card db-proto" style={{ gridArea: 'proto' }}>
       <div className="db-section-left">
         <span className="db-section-icon purple">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
         </span>
-        <h3 className="db-section-title">协议分布</h3>
+        <h3 className="db-section-title">{t('dashboard.protocolDistribution')}</h3>
       </div>
       <div className="db-proto-bar">
         <div className="db-proto-seg smtp" style={{ width: `${smtpPct}%` }} title={`SMTP ${smtpPct}%`} />
@@ -505,6 +513,7 @@ const ProtocolDistributionCard = React.memo(function ProtocolDistributionCard({
 
 const SystemHealthCard = React.memo(function SystemHealthCard() {
   const sysMetrics = useSystemMetrics(30000) // 30s interval; system metrics do not need frequent refreshes
+  const { t } = useTranslation()
   const { cpuPct, memPct, cpuBarColor, memBarColor } = useMemo(() => {
     const cpu = Math.min(sysMetrics?.cpu_usage ?? 0, 100)
     const mem = Math.min(sysMetrics?.memory_percent ?? 0, 100)
@@ -522,7 +531,7 @@ const SystemHealthCard = React.memo(function SystemHealthCard() {
         <span className="db-section-icon green">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
         </span>
-        <h3 className="db-section-title">系统健康</h3>
+        <h3 className="db-section-title">{t('dashboard.systemHealth')}</h3>
       </div>
       <div className="db-sys-metrics">
         <div className="db-sys-row">
@@ -533,7 +542,7 @@ const SystemHealthCard = React.memo(function SystemHealthCard() {
           <span className="db-sys-val">{cpuPct.toFixed(0)}%</span>
         </div>
         <div className="db-sys-row">
-          <span className="db-sys-label">内存</span>
+          <span className="db-sys-label">{t('dashboard.memory')}</span>
           <div className="db-sys-track">
             <div className="db-sys-fill" style={{ width: `${memPct}%`, background: memBarColor }} />
           </div>
@@ -569,11 +578,11 @@ function useDashboardRefresh(callback: () => void, delayMs = 5000) {
       }, delayMs)
     }
 
-    window.addEventListener('vigilyx:dashboard-refresh', onDashboardRefresh)
-    window.addEventListener('vigilyx:ws-reconnected', onDashboardRefresh)
+    window.addEventListener(EVENTS.DASHBOARD_REFRESH, onDashboardRefresh)
+    window.addEventListener(EVENTS.WS_RECONNECTED, onDashboardRefresh)
     return () => {
-      window.removeEventListener('vigilyx:dashboard-refresh', onDashboardRefresh)
-      window.removeEventListener('vigilyx:ws-reconnected', onDashboardRefresh)
+      window.removeEventListener(EVENTS.DASHBOARD_REFRESH, onDashboardRefresh)
+      window.removeEventListener(EVENTS.WS_RECONNECTED, onDashboardRefresh)
       if (timerRef.current) clearTimeout(timerRef.current)
     }
   }, [delayMs])
@@ -645,6 +654,7 @@ const SecurityHeroContainer = React.memo(function SecurityHeroContainer() {
 const LoginCardContainer = React.memo(function LoginCardContainer() {
   const [loginStats, setLoginStats] = useState<ExternalLoginStats | null>(null)
   const loginStatsSigRef = useRef('')
+  const { t } = useTranslation()
 
   const fetchLoginStats = useCallback(async () => {
     try {
@@ -685,9 +695,7 @@ const LoginCardContainer = React.memo(function LoginCardContainer() {
     const maxVal = Math.max(1, ...loginStats.hourly.map(entry => entry.total))
     return loginStats.hourly.map((entry, index) => {
       const pct = Math.max(3, (entry.total / maxVal) * 100)
-      const localDate = new Date(entry.hour)
-      const hr = localDate.getHours()
-      const hourLabel = `${String(hr).padStart(2, '0')}:00`
+      const hourLabel = formatHourLabel(entry.hour)
       return {
         pct,
         hourLabel,
@@ -696,10 +704,10 @@ const LoginCardContainer = React.memo(function LoginCardContainer() {
         pop3: entry.pop3,
         imap: entry.imap,
         http: entry.http,
-        tooltip: `${hourLabel}\nSMTP: ${entry.smtp}  POP3: ${entry.pop3}\nIMAP: ${entry.imap}  HTTP: ${entry.http}\n合计: ${entry.total}`,
+        tooltip: `${hourLabel}\nSMTP: ${entry.smtp}  POP3: ${entry.pop3}\nIMAP: ${entry.imap}  HTTP: ${entry.http}\n${t('dashboard.total')}: ${entry.total}`,
       }
     })
-  }, [loginStats])
+  }, [loginStats, t])
 
   return <LoginCard loginStats={loginStats} loginChartData={loginChartData} />
 })
@@ -743,12 +751,12 @@ const RecentThreatsContainer = React.memo(function RecentThreatsContainer() {
 
 function Dashboard() {
   useEffect(() => {
-    const onSettingsChanged = () => window.dispatchEvent(new Event('vigilyx:dashboard-refresh'))
+    const onSettingsChanged = () => window.dispatchEvent(new Event(EVENTS.DASHBOARD_REFRESH))
     window.addEventListener('storage', onSettingsChanged)
-    window.addEventListener('vigilyx:display-settings-changed', onSettingsChanged)
+    window.addEventListener(EVENTS.DISPLAY_SETTINGS_CHANGED, onSettingsChanged)
     return () => {
       window.removeEventListener('storage', onSettingsChanged)
-      window.removeEventListener('vigilyx:display-settings-changed', onSettingsChanged)
+      window.removeEventListener(EVENTS.DISPLAY_SETTINGS_CHANGED, onSettingsChanged)
     }
   }, [])
 

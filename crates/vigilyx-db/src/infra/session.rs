@@ -165,75 +165,6 @@ impl VigilDb {
         Ok(is_new)
     }
 
-   /// Update session
-    pub async fn update_session(&self, session: &EmailSession) -> Result<()> {
-        let rcpt_to = serde_json::to_string(&session.rcpt_to)?;
-        let content = serde_json::to_value(&session.content)?;
-       // Security: Password, skip_serializing (defense-in-depth)
-        let auth_info = session.auth_info.as_ref().and_then(|a| {
-            let mut safe = a.clone();
-            safe.password = None;
-            serde_json::to_value(&safe).ok()
-        });
-
-        let message_id = session.message_id.clone().or_else(|| {
-            session
-                .content
-                .get_header("Message-ID")
-                .map(|s| s.trim().to_string())
-        });
-
-        sqlx::query(
-            r#"
-            UPDATE sessions SET
-                ended_at = $1,
-                status = $2,
-                packet_count = $3,
-                total_bytes = $4,
-                mail_from = COALESCE($5, sessions.mail_from),
-                rcpt_to = CASE
-                    WHEN $6 = '[]' AND sessions.rcpt_to != '[]'
-                    THEN sessions.rcpt_to
-                    ELSE $7
-                END,
-                subject = COALESCE($8, sessions.subject),
-                content = CASE
-                    WHEN (sessions.content->>'body_text' IS NOT NULL
-                       OR sessions.content->>'body_html' IS NOT NULL)
-                      AND ($9)->>'body_text' IS NULL
-                      AND ($10)->>'body_html' IS NULL
-                    THEN sessions.content
-                    ELSE $11
-                END,
-                email_count = $12,
-                error_reason = $13,
-                message_id = COALESCE($14, sessions.message_id),
-                auth_info = COALESCE($15, sessions.auth_info)
-            WHERE id = $16
-            "#,
-        )
-        .bind(session.ended_at.map(|t| t.to_rfc3339()))
-        .bind(format!("{:?}", session.status))
-        .bind(session.packet_count as i32)
-        .bind(session.total_bytes as i64)
-        .bind(&session.mail_from)
-        .bind(&rcpt_to)
-        .bind(&rcpt_to)
-        .bind(&session.subject)
-        .bind(&content)
-        .bind(&content)
-        .bind(&content)
-        .bind(session.email_count as i32)
-        .bind(&session.error_reason)
-        .bind(&message_id)
-        .bind(&auth_info)
-        .bind(session.id.to_string())
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
-    }
-
    /// Batch insert sessions (transaction + multi-row UPSERT)
    ///
    /// Use dynamic multi-row VALUES instead of row-by-row INSERT, reduce N DB round-trips to ceil(N/CHUNK).
@@ -261,8 +192,8 @@ impl VigilDb {
             existing_rows.into_iter().map(|(id,)| id).collect();
 
        // Preprocessing: serialize all params (avoid serde errors in SQL build loop)
-        const COLS_PER_ROW: usize = 19;
-        const BATCH_CHUNK_SIZE: usize = 500; // 500 x 19 = 9500 params, well under 65535
+        const COLS_PER_ROW: usize = 20;
+        const BATCH_CHUNK_SIZE: usize = 500; // 500 x 20 = 10000 params, well under 65535
 
         struct PreparedSession {
             id_str: String,
@@ -284,6 +215,7 @@ impl VigilDb {
             error_reason: Option<String>,
             message_id: Option<String>,
             auth_info: Option<serde_json::Value>,
+            sender_domain: Option<String>,
         }
 
         let mut prepared: Vec<PreparedSession> = Vec::with_capacity(sessions.len());
@@ -333,6 +265,11 @@ impl VigilDb {
                 error_reason: session.error_reason.clone(),
                 message_id,
                 auth_info,
+                sender_domain: session
+                    .mail_from
+                    .as_deref()
+                    .and_then(|m| m.split('@').nth(1))
+                    .map(|d| d.to_lowercase()),
             });
         }
 
@@ -347,7 +284,8 @@ impl VigilDb {
                 "INSERT INTO sessions (\
                     id, protocol, client_ip, client_port, server_ip, server_port, \
                     started_at, ended_at, status, packet_count, total_bytes, \
-                    mail_from, rcpt_to, subject, content, email_count, error_reason, message_id, auth_info\
+                    mail_from, rcpt_to, subject, content, email_count, error_reason, message_id, auth_info, \
+                    sender_domain\
                 ) VALUES ",
             );
 
@@ -376,6 +314,7 @@ impl VigilDb {
                     packet_count = excluded.packet_count, \
                     total_bytes = excluded.total_bytes, \
                     mail_from = COALESCE(excluded.mail_from, sessions.mail_from), \
+                    sender_domain = COALESCE(excluded.sender_domain, sessions.sender_domain), \
                     rcpt_to = excluded.rcpt_to, \
                     subject = COALESCE(excluded.subject, sessions.subject), \
                     content = CASE \
@@ -413,7 +352,8 @@ impl VigilDb {
                     .bind(row.email_count)
                     .bind(&row.error_reason)
                     .bind(&row.message_id)
-                    .bind(&row.auth_info);
+                    .bind(&row.auth_info)
+                    .bind(&row.sender_domain);
             }
             query.execute(&mut *tx).await?;
         }
@@ -746,7 +686,24 @@ impl VigilDb {
         Ok(exists.0)
     }
 
-   /// Get Session
+    /// Count distinct senders (mail_from addresses) for a given domain.
+    /// Used for sender diversity heuristic in identity_anomaly module.
+    pub async fn count_distinct_senders_for_domain(
+        &self,
+        sender_domain: &str,
+    ) -> Result<i64> {
+        let row: (i64,) = sqlx::query_as(
+            "SELECT COUNT(DISTINCT mail_from)::BIGINT \
+             FROM sessions \
+             WHERE sender_domain = $1 AND status = 'Completed'",
+        )
+        .bind(sender_domain)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.0)
+    }
+
+    /// Get Session
     pub async fn get_session(&self, id: Uuid) -> Result<Option<EmailSession>> {
         let row: Option<SessionRow> = sqlx::query_as(
             "SELECT id, protocol, client_ip, client_port, server_ip, server_port, \

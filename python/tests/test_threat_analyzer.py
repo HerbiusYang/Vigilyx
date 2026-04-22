@@ -67,13 +67,13 @@ class TestAnalyzeSender:
 
     def test_long_numbers_in_domain(self, analyzer):
         # Pattern: @.*\d{5,}\..*
-        score, cats = analyzer._analyze_sender("user@domain12345.com")
+        score, cats = analyzer._analyze_sender("user@domain12345.test")
         assert score > 0
         assert "suspicious_sender" in cats
 
     def test_many_hyphens_in_domain(self, analyzer):
         # Pattern: @.*-.*-.*\..*
-        score, cats = analyzer._analyze_sender("user@foo-bar-baz.com")
+        score, cats = analyzer._analyze_sender("user@foo-bar-baz.test")
         assert score > 0
         assert "suspicious_sender" in cats
 
@@ -83,7 +83,7 @@ class TestAnalyzeSender:
         assert cats == []
 
     def test_only_one_hyphen_not_suspicious(self, analyzer):
-        score, cats = analyzer._analyze_sender("user@my-domain.com")
+        score, cats = analyzer._analyze_sender("user@my-domain.test")
         assert score == 0.0
         assert cats == []
 

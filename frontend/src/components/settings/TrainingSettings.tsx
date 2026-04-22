@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
+import i18n from '../../i18n'
 import { apiFetch } from '../../utils/api'
+import { formatDateFull } from '../../utils/format'
 
 interface TrainingStats {
   total_samples: number
@@ -23,13 +26,13 @@ interface TrainingSampleItem {
   created_at: string
 }
 
-const LABEL_CN_MAP: Record<string, string> = {
-  legitimate: '正常邮件',
-  phishing: '钓鱼邮件',
-  spoofing: '仿冒邮件',
-  social_engineering: '社会工程学',
-  other_threat: '其他威胁',
-}
+const getLabelCnMap = (): Record<string, string> => ({
+  legitimate: i18n.t('settings.training.labelLegitimate'),
+  phishing: i18n.t('settings.training.labelPhishing'),
+  spoofing: i18n.t('settings.training.labelSpoofing'),
+  social_engineering: i18n.t('settings.training.labelSocialEngineering'),
+  other_threat: i18n.t('settings.training.labelOtherThreat'),
+})
 
 const LABEL_COLOR_MAP: Record<string, string> = {
   legitimate: '#16a34a',
@@ -40,11 +43,15 @@ const LABEL_COLOR_MAP: Record<string, string> = {
 }
 
 export default function TrainingSettings() {
+  const { t } = useTranslation()
+  const LABEL_CN_MAP = getLabelCnMap()
+
   const [trainingStats, setTrainingStats] = useState<TrainingStats | null>(null)
   const [trainingSamples, setTrainingSamples] = useState<TrainingSampleItem[]>([])
   const [trainingLoading, setTrainingLoading] = useState(false)
   const [trainingInProgress, setTrainingInProgress] = useState(false)
   const [trainingResult, setTrainingResult] = useState<string | null>(null)
+  const [trainingSucceeded, setTrainingSucceeded] = useState(false)
   const [trainingProgress, setTrainingProgress] = useState<{
     active?: boolean
     phase?: string
@@ -126,6 +133,7 @@ export default function TrainingSettings() {
   const handleTriggerTraining = async () => {
     setTrainingInProgress(true)
     setTrainingResult(null)
+    setTrainingSucceeded(false)
     setTrainingProgress(null)
     lastProgressJson.current = ''
 
@@ -159,13 +167,15 @@ export default function TrainingSettings() {
       const data = await resp.json()
       const result = data.success ? data.data : data
       if (result?.ok) {
-        setTrainingResult(`训练完成! 模型 ${result.version}, 准确率 ${(result.accuracy * 100).toFixed(1)}%, F1 ${(result.macro_f1 * 100).toFixed(1)}%, 耗时 ${result.train_duration_s}s`)
+        setTrainingSucceeded(true)
+        setTrainingResult(t('settings.training.trainComplete', { version: result.version, accuracy: (result.accuracy * 100).toFixed(1), f1: (result.macro_f1 * 100).toFixed(1), duration: result.train_duration_s }))
       } else {
-        setTrainingResult(`训练失败: ${result?.error || '未知错误'}`)
+        setTrainingSucceeded(false)
+        setTrainingResult(t('settings.training.trainFailed', { error: result?.error || t('settings.training.unknownError') }))
       }
       fetchTrainingData()
     } catch (e) {
-      setTrainingResult(`训练失败: ${e}`)
+      setTrainingResult(t('settings.training.trainFailed', { error: e }))
     } finally {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current)
@@ -222,33 +232,33 @@ export default function TrainingSettings() {
           <span className="s-section-icon training">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
           </span>
-          NLP 模型训练
+          {t('settings.training.title')}
         </h2>
-        <p className="s-section-subtitle">管理训练样本和触发五分类 fine-tuning，持续提升检测能力</p>
+        <p className="s-section-subtitle">{t('settings.training.subtitle')}</p>
       </div>
 
       {trainingLoading && !trainingStats ? (
-        <p className="s-loading-hint">加载中...</p>
+        <p className="s-loading-hint">{t('settings.training.loading')}</p>
       ) : trainingStats ? (
         <>
           {/* Model status */}
           <div className="s-train-card">
             <h3 className="s-train-card-title">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-              模型状态
+              {t('settings.training.modelStatus')}
             </h3>
             <div className="s-model-grid">
               <div className="s-model-stat">
-                <span className="s-model-stat-label">当前版本</span>
+                <span className="s-model-stat-label">{t('settings.training.currentVersion')}</span>
                 <span className="s-model-stat-value">{trainingStats.model_version || 'base'}</span>
               </div>
               <div className="s-model-stat">
-                <span className="s-model-stat-label">已 Fine-tuned</span>
-                <span className="s-model-stat-value">{trainingStats.has_finetuned ? '是' : '否'}</span>
+                <span className="s-model-stat-label">{t('settings.training.finetuned')}</span>
+                <span className="s-model-stat-value">{trainingStats.has_finetuned ? t('settings.training.yes') : t('settings.training.no')}</span>
               </div>
               <div className="s-model-stat">
-                <span className="s-model-stat-label">上次训练</span>
-                <span className="s-model-stat-value">{trainingStats.last_trained ? new Date(trainingStats.last_trained).toLocaleString() : '无'}</span>
+                <span className="s-model-stat-label">{t('settings.training.lastTrained')}</span>
+                <span className="s-model-stat-value">{trainingStats.last_trained ? formatDateFull(trainingStats.last_trained) : t('settings.training.none')}</span>
               </div>
             </div>
           </div>
@@ -257,7 +267,7 @@ export default function TrainingSettings() {
           <div className="s-train-card">
             <h3 className="s-train-card-title">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              训练数据 ({trainingStats.total_samples} / {trainingStats.min_samples_required} 样本)
+              {t('settings.training.trainingData')} ({trainingStats.total_samples} / {trainingStats.min_samples_required} {t('settings.training.samples')})
             </h3>
             <div className="s-label-badges">
               {Object.entries(LABEL_CN_MAP).map(([key, cn]) => {
@@ -284,7 +294,7 @@ export default function TrainingSettings() {
           <div className="s-train-card">
             <h3 className="s-train-card-title">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-              训练控制
+              {t('settings.training.trainingControl')}
             </h3>
             <button
               className={`s-train-btn ${trainingStats.can_train && !trainingInProgress ? 'ready' : 'disabled'}`}
@@ -294,14 +304,14 @@ export default function TrainingSettings() {
               {trainingInProgress || trainingStats.is_training ? (
                 <>
                   <svg className="s-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-                  训练中...
+                  {t('settings.training.trainingInProgress')}
                 </>
               ) : trainingStats.can_train ? (
                 <>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                  开始训练
+                  {t('settings.training.startTraining')}
                 </>
-              ) : `样本不足 (需 ${trainingStats.min_samples_required} 条)`}
+              ) : t('settings.training.insufficientSamples', { count: trainingStats.min_samples_required })}
             </button>
 
             {/* Training progress */}
@@ -309,22 +319,22 @@ export default function TrainingSettings() {
               <div className="s-train-progress">
                 <div className="s-train-progress-header">
                   <span className="s-train-progress-phase">
-                    {trainingProgress.phase === 'preprocessing' && '正在预处理邮件数据...'}
+                    {trainingProgress.phase === 'preprocessing' && t('settings.training.phasePreprocessing')}
                     {trainingProgress.phase === 'cross_validation' && (
                       trainingProgress.fold != null
-                        ? `交叉验证 — Fold ${trainingProgress.fold}/${trainingProgress.total_folds || '?'}`
-                        : '正在启动交叉验证...'
+                        ? t('settings.training.phaseCrossValidationFold', { fold: trainingProgress.fold, total: trainingProgress.total_folds || '?' })
+                        : t('settings.training.phaseCrossValidationStart')
                     )}
                     {trainingProgress.phase === 'training' && trainingProgress.epoch != null &&
-                      `训练中 — Epoch ${trainingProgress.epoch}/${trainingProgress.total_epochs || '?'}${trainingProgress.fold != null ? ` (Fold ${trainingProgress.fold}/${trainingProgress.total_folds})` : ''}`}
-                    {trainingProgress.phase === 'quality_check' && '正在评估模型质量...'}
-                    {trainingProgress.phase === 'final_training' && '质量达标，正在训练最终模型...'}
-                    {trainingProgress.phase === 'saving' && '正在保存模型...'}
-                    {trainingProgress.phase === 'initializing' && '正在初始化...'}
-                    {!trainingProgress.phase && '训练中...'}
+                      t('settings.training.phaseTrainingEpoch', { epoch: trainingProgress.epoch, totalEpochs: trainingProgress.total_epochs || '?', foldInfo: trainingProgress.fold != null ? ` (Fold ${trainingProgress.fold}/${trainingProgress.total_folds})` : '' })}
+                    {trainingProgress.phase === 'quality_check' && t('settings.training.phaseQualityCheck')}
+                    {trainingProgress.phase === 'final_training' && t('settings.training.phaseFinalTraining')}
+                    {trainingProgress.phase === 'saving' && t('settings.training.phaseSaving')}
+                    {trainingProgress.phase === 'initializing' && t('settings.training.phaseInitializing')}
+                    {!trainingProgress.phase && t('settings.training.trainingInProgress')}
                   </span>
                   {trainingProgress.total_samples != null && (
-                    <span className="s-train-progress-meta">{trainingProgress.total_samples} 样本</span>
+                    <span className="s-train-progress-meta">{trainingProgress.total_samples} {t('settings.training.samples')}</span>
                   )}
                 </div>
 
@@ -358,7 +368,7 @@ export default function TrainingSettings() {
             )}
 
             {trainingResult && (
-              <p className={`s-train-result ${trainingResult.includes('完成') ? 'success' : 'error'}`}>
+              <p className={`s-train-result ${trainingSucceeded ? 'success' : 'error'}`}>
                 {trainingResult}
               </p>
             )}
@@ -368,31 +378,31 @@ export default function TrainingSettings() {
           <div className="s-train-card">
             <h3 className="s-train-card-title">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-              最近训练样本
+              {t('settings.training.recentSamples')}
             </h3>
             {trainingSamples.length === 0 ? (
               <div className="s-empty-state">
                 <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-                <span>暂无训练样本</span>
-                <span className="s-empty-state-sub">在邮件详情页标注后，样本将自动出现在这里</span>
+                <span>{t('settings.training.noSamples')}</span>
+                <span className="s-empty-state-sub">{t('settings.training.noSamplesHint')}</span>
               </div>
             ) : (
               <div className="s-sample-table-wrap">
                 <table className="s-sample-table">
                   <thead>
                     <tr>
-                      <th>时间</th>
-                      <th>分类</th>
-                      <th>主题</th>
-                      <th>发件人</th>
-                      <th>操作</th>
+                      <th>{t('settings.training.colTime')}</th>
+                      <th>{t('settings.training.colCategory')}</th>
+                      <th>{t('settings.training.colSubject')}</th>
+                      <th>{t('settings.training.colFrom')}</th>
+                      <th>{t('settings.training.colAction')}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {trainingSamples.map(sample => (
                       <tr key={sample.id}>
                         <td className="s-td-time">
-                          {new Date(sample.created_at).toLocaleString()}
+                          {formatDateFull(sample.created_at)}
                         </td>
                         <td>
                           {editingSampleId === sample.id ? (
@@ -423,7 +433,7 @@ export default function TrainingSettings() {
                                 background: (LABEL_COLOR_MAP[sample.label_name] || '#6b7280') + '18',
                                 color: LABEL_COLOR_MAP[sample.label_name] || '#6b7280',
                               }}
-                              title="点击修改分类"
+                              title={t('settings.training.clickToChangeLabel')}
                               onClick={() => { setEditingSampleId(sample.id); setEditingLabel(sample.label_name) }}
                             >
                               {LABEL_CN_MAP[sample.label_name] || sample.label_name}
@@ -441,7 +451,7 @@ export default function TrainingSettings() {
                             className="s-sample-delete-btn"
                             onClick={() => handleDeleteSample(sample.id)}
                           >
-                            删除
+                            {t('settings.training.delete')}
                           </button>
                         </td>
                       </tr>
@@ -453,7 +463,7 @@ export default function TrainingSettings() {
           </div>
         </>
       ) : (
-        <p className="s-empty-hint">无法加载训练数据</p>
+        <p className="s-empty-hint">{t('settings.training.loadFailed')}</p>
       )}
     </div>
   )

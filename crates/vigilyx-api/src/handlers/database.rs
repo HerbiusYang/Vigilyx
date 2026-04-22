@@ -1,6 +1,11 @@
 //! Database handlers: session import, statistics, clear operations, rotation config
 
-use axum::{Json, extract::State, response::IntoResponse};
+use axum::{
+    Json,
+    extract::{ConnectInfo, State},
+    http::HeaderMap,
+    response::IntoResponse,
+};
 use serde::{Deserialize, Serialize};
 use sqlx::{Postgres, Transaction};
 use std::sync::Arc;
@@ -72,28 +77,8 @@ pub async fn import_sessions(
             let _ = state.messaging.ws_tx.send(ws_msg);
         }
 
-       // Engine processes sessions via Redis topic
+       // Engine processes sessions via Redis Streams
        // API does not run SecurityEngine directly
-
-       // UDS: push terminal sessions with analyzable content to the Engine.
-        #[cfg(unix)]
-        if let Some(ref uds_tx) = state.messaging.uds_tx
-            && broadcast_session.is_terminal_for_analysis()
-            && broadcast_session.has_analyzable_content()
-            && let Ok(payload) = serde_json::to_value(&broadcast_session)
-        {
-            let msg = vigilyx_db::mq::UdsMessage {
-                topic: vigilyx_db::mq::topics::SESSION_NEW.to_string(),
-                payload,
-            };
-            if let Err(e) = uds_tx.try_send(msg) {
-                tracing::warn!(
-                    session_id = %broadcast_session.id,
-                    "UDS push session to Engine failed (channel full or shutdown): {}",
-                    e
-                );
-            }
-        }
     }
 
     ApiResponse::ok(serde_json::json!({
@@ -210,6 +195,8 @@ pub async fn clear_database(
 
 pub async fn factory_reset(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
+    request_headers: HeaderMap,
     user: AuthenticatedUser,
 ) -> axum::response::Response {
     let start = std::time::Instant::now();
@@ -268,6 +255,7 @@ pub async fn factory_reset(
 
             state.auth.login_rate_limiter.clear_all();
             state.ws_tickets.clear();
+            crate::websocket::invalidate_websocket_sessions(&state);
 
             let elapsed_ms = start.elapsed().as_millis();
             tracing::warn!("FACTORY RESET completed in {}ms — all data and config cleared", elapsed_ms);
@@ -286,7 +274,9 @@ pub async fn factory_reset(
             let _ = state.messaging.ws_tx.send(WsMessage::StatsUpdate(zeroed_stats));
 
             let mut headers = axum::http::HeaderMap::new();
-            if let Ok(val) = build_clear_cookie(state.secure_cookie).parse() {
+            let secure_cookie =
+                crate::routes::request_is_secure(&request_headers, addr, state.secure_cookie);
+            if let Ok(val) = build_clear_cookie(secure_cookie).parse() {
                 headers.insert(axum::http::header::SET_COOKIE, val);
             }
 

@@ -8,6 +8,7 @@ use axum::{
 use chrono::Utc;
 use secrecy::ExposeSecret;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::sync::Arc;
 use url::Url;
 use uuid::Uuid;
@@ -16,6 +17,7 @@ use vigilyx_db::DispositionRuleRow;
 use super::super::ApiResponse;
 use super::alerts::encrypt_config_value;
 use crate::AppState;
+use crate::auth::AuthenticatedUser;
 
 
 // Sensitive header masking for API responses
@@ -25,6 +27,7 @@ use crate::AppState;
 /// returning disposition rules to the browser. The full plaintext values
 /// remain in the database so that the webhook executor can use them.
 const MASKED_SECRET: &str = "***";
+const MASKED_INVALID_ACTIONS_NOTICE: &str = "[sensitive actions hidden: invalid stored JSON]";
 
 const SENSITIVE_HEADER_KEYWORDS: &[&str] = &[
     "authorization",
@@ -69,9 +72,56 @@ fn action_type(action: &serde_json::Value) -> Option<&str> {
     action.get("action_type").and_then(|value| value.as_str())
 }
 
+fn action_type_counts(actions: &[serde_json::Value]) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    for action in actions {
+        if let Some(action_type) = action_type(action) {
+            *counts.entry(action_type.to_string()).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+fn masked_sensitive_header_names(action: &serde_json::Value) -> Vec<String> {
+    action
+        .get("headers")
+        .and_then(|headers| headers.as_object())
+        .map(|headers| {
+            headers
+                .iter()
+                .filter(|(key, value)| {
+                    is_sensitive_header(key) && value.as_str() == Some(MASKED_SECRET)
+                })
+                .map(|(key, _)| key.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn action_contains_masked_placeholders(action: &serde_json::Value) -> bool {
+    !masked_sensitive_header_names(action).is_empty()
+        || action
+            .get("webhook_url")
+            .and_then(|value| value.as_str())
+            .is_some_and(|url| url == MASKED_SECRET || url.ends_with("/***"))
+}
+
+fn parse_actions_json(actions_json: &str) -> Result<Vec<serde_json::Value>, String> {
+    serde_json::from_str(actions_json)
+        .or_else(|_| {
+            let inner: String = serde_json::from_str(actions_json)?;
+            serde_json::from_str(&inner)
+        })
+        .map_err(|e| format!("动作解析失败: {e}"))
+}
+
+fn masked_invalid_actions_json() -> String {
+    serde_json::to_string(MASKED_INVALID_ACTIONS_NOTICE)
+        .unwrap_or_else(|_| "\"***\"".to_string())
+}
+
 fn encrypt_action_secrets(actions_json: &str, jwt_secret: &str) -> Result<String, String> {
-    let mut actions: Vec<serde_json::Value> =
-        serde_json::from_str(actions_json).map_err(|e| format!("动作解析失败: {e}"))?;
+    let mut actions = parse_actions_json(actions_json)?;
 
     for action in &mut actions {
         if let Some(webhook_url) = action.get_mut("webhook_url")
@@ -103,52 +153,142 @@ fn encrypt_action_secrets(actions_json: &str, jwt_secret: &str) -> Result<String
     serde_json::to_string(&actions).map_err(|e| format!("动作序列化失败: {e}"))
 }
 
-fn restore_masked_action_secrets(existing_actions_json: &str, incoming_actions_json: &str) -> String {
-    let existing_actions: Vec<serde_json::Value> = match serde_json::from_str(existing_actions_json) {
+fn restore_masked_action_secrets(
+    existing_actions_json: &str,
+    incoming_actions_json: &str,
+) -> Result<String, String> {
+    let mut incoming_actions = parse_actions_json(incoming_actions_json)?;
+    let incoming_has_masked_placeholders = incoming_actions
+        .iter()
+        .any(action_contains_masked_placeholders);
+    let existing_actions: Vec<serde_json::Value> = match parse_actions_json(existing_actions_json) {
         Ok(value) => value,
-        Err(_) => return incoming_actions_json.to_string(),
-    };
-    let mut incoming_actions: Vec<serde_json::Value> = match serde_json::from_str(incoming_actions_json) {
-        Ok(value) => value,
-        Err(_) => return incoming_actions_json.to_string(),
-    };
-
-    for (incoming_action, existing_action) in incoming_actions.iter_mut().zip(existing_actions.iter()) {
-        if action_type(incoming_action) != action_type(existing_action) {
-            continue;
+        Err(_) if incoming_has_masked_placeholders => {
+            return Err("现有规则中的敏感动作无法安全恢复，请重新输入 webhook URL 和敏感请求头".to_string());
         }
+        Err(_) => return Ok(incoming_actions_json.to_string()),
+    };
 
-        if let (Some(incoming_headers), Some(existing_headers)) = (
-            incoming_action.get_mut("headers").and_then(|headers| headers.as_object_mut()),
-            existing_action.get("headers").and_then(|headers| headers.as_object()),
-        ) {
-            for (key, incoming_value) in incoming_headers.iter_mut() {
-                if incoming_value.as_str() != Some(MASKED_SECRET) || !is_sensitive_header(key) {
-                    continue;
-                }
-                if let Some(existing_value) = existing_headers.get(key) {
-                    *incoming_value = existing_value.clone();
-                }
+    let existing_type_counts = action_type_counts(&existing_actions);
+    let incoming_type_counts = action_type_counts(&incoming_actions);
+
+    for (index, incoming_action) in incoming_actions.iter_mut().enumerate() {
+        let masked_header_names = masked_sensitive_header_names(incoming_action);
+        let incoming_action_type = action_type(incoming_action);
+        let has_masked_headers = !masked_header_names.is_empty();
+
+        let Some(existing_action) = existing_actions.get(index) else {
+            if has_masked_headers || action_contains_masked_placeholders(incoming_action) {
+                return Err(format!(
+                    "第 {} 个动作仍包含掩码敏感字段，但已无法与原动作安全匹配，请重新输入 webhook URL 和敏感请求头",
+                    index + 1
+                ));
             }
-        }
+            continue;
+        };
 
-        let Some(existing_url) = existing_action
+        let duplicated_action_type = incoming_action_type.is_some_and(|action_type| {
+            existing_type_counts.get(action_type).copied().unwrap_or(0) > 1
+                || incoming_type_counts.get(action_type).copied().unwrap_or(0) > 1
+        });
+
+        let existing_action_type = action_type(existing_action);
+        let incoming_url = incoming_action
             .get("webhook_url")
             .and_then(|value| value.as_str())
-        else {
-            continue;
+            .map(ToOwned::to_owned);
+        let existing_url = existing_action
+            .get("webhook_url")
+            .and_then(|value| value.as_str());
+        let masked_existing_url = existing_url.map(mask_webhook_url);
+        let uses_masked_webhook_url = incoming_url
+            .as_deref()
+            .zip(masked_existing_url.as_deref())
+            .is_some_and(|(incoming, masked_existing)| incoming == masked_existing);
+
+        if (has_masked_headers || uses_masked_webhook_url) && incoming_action_type != existing_action_type
+        {
+            return Err(format!(
+                "第 {} 个动作类型已变更，不能安全复用已掩码的敏感字段，请重新输入 webhook URL 和敏感请求头",
+                index + 1
+            ));
+        }
+
+        if duplicated_action_type && (has_masked_headers || uses_masked_webhook_url) {
+            return Err(format!(
+                "第 {} 个动作存在多个同类型候选项，无法安全恢复已掩码的敏感字段，请重新输入 webhook URL 和敏感请求头",
+                index + 1
+            ));
+        }
+
+        let webhook_url_changed = match (incoming_url.as_deref(), existing_url, masked_existing_url.as_deref()) {
+            (Some(incoming), Some(existing), Some(masked_existing)) => {
+                incoming != existing && incoming != masked_existing
+            }
+            (Some(incoming), Some(existing), None) => incoming != existing,
+            (None, Some(_), _) => true,
+            _ => false,
         };
-        let Some(incoming_url) = incoming_action.get_mut("webhook_url") else {
-            continue;
-        };
-        let masked_existing_url = mask_webhook_url(existing_url);
-        if incoming_url.as_str() == Some(masked_existing_url.as_str()) {
+
+        if has_masked_headers && webhook_url_changed {
+            return Err(format!(
+                "第 {} 个 webhook URL 已变更，不能复用已掩码的敏感请求头，请重新输入这些字段",
+                index + 1
+            ));
+        }
+
+        if uses_masked_webhook_url {
+            let Some(existing_url) = existing_url else {
+                return Err(format!(
+                    "第 {} 个动作缺少可恢复的 webhook URL，请重新输入",
+                    index + 1
+                ));
+            };
+            let Some(incoming_url) = incoming_action.get_mut("webhook_url") else {
+                return Err(format!(
+                    "第 {} 个动作缺少 webhook URL 字段，请重新输入",
+                    index + 1
+                ));
+            };
             *incoming_url = serde_json::Value::String(existing_url.to_string());
+        }
+
+        if !has_masked_headers {
+            continue;
+        }
+
+        let Some(existing_headers) = existing_action
+            .get("headers")
+            .and_then(|headers| headers.as_object())
+        else {
+            return Err(format!(
+                "第 {} 个动作缺少可恢复的敏感请求头，请重新输入",
+                index + 1
+            ));
+        };
+        let Some(incoming_headers) = incoming_action
+            .get_mut("headers")
+            .and_then(|headers| headers.as_object_mut())
+        else {
+            return Err(format!(
+                "第 {} 个动作的请求头格式无效，请重新输入",
+                index + 1
+            ));
+        };
+
+        for key in masked_header_names {
+            let Some(existing_value) = existing_headers.get(&key).cloned() else {
+                return Err(format!(
+                    "第 {} 个动作缺少可恢复的敏感请求头 {}，请重新输入",
+                    index + 1,
+                    key
+                ));
+            };
+            incoming_headers.insert(key, existing_value);
         }
     }
 
-    serde_json::to_string(&incoming_actions)
-        .unwrap_or_else(|_| incoming_actions_json.to_string())
+    serde_json::to_string(&incoming_actions).map_err(|e| format!("动作序列化失败: {e}"))
 }
 
 /// Mask sensitive header values inside the `actions` JSON string of a
@@ -160,9 +300,9 @@ fn restore_masked_action_secrets(existing_actions_json: &str, incoming_actions_j
 /// never break the response - the worst case is that an un-parseable rule
 /// leaks no extra information (it was already opaque JSON text).
 fn mask_actions_secrets(actions_json: &str) -> String {
-    let mut actions: Vec<serde_json::Value> = match serde_json::from_str(actions_json) {
+    let mut actions: Vec<serde_json::Value> = match parse_actions_json(actions_json) {
         Ok(v) => v,
-        Err(_) => return actions_json.to_string(),
+        Err(_) => return masked_invalid_actions_json(),
     };
 
     for action in &mut actions {
@@ -183,7 +323,7 @@ fn mask_actions_secrets(actions_json: &str) -> String {
     }
 
    // Serialization of a Vec<Value> cannot fail in practice.
-    serde_json::to_string(&actions).unwrap_or_else(|_| actions_json.to_string())
+    serde_json::to_string(&actions).unwrap_or_else(|_| masked_invalid_actions_json())
 }
 
 /// Return a copy of the rule with sensitive header values masked.
@@ -231,6 +371,7 @@ fn default_priority() -> i64 {
 /// Create
 pub async fn create_disposition_rule(
     State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
     Json(req): Json<CreateDispositionRuleRequest>,
 ) -> axum::response::Response {
     let now = Utc::now().to_rfc3339();
@@ -278,6 +419,14 @@ pub async fn create_disposition_rule(
 
     match state.engine_db.insert_disposition_rule(&rule).await {
         Ok(()) => {
+            crate::handlers::spawn_audit_log(
+                state.engine_db.clone(),
+                user.username,
+                "create_disposition_rule",
+                Some("security"),
+                Some(rule.id.clone()),
+                None,
+            );
             let masked = mask_rule_secrets(rule);
             ApiResponse::ok(serde_json::to_value(&masked).unwrap_or_default()).into_response()
         }
@@ -290,6 +439,7 @@ pub async fn create_disposition_rule(
 /// New
 pub async fn update_disposition_rule(
     State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
     Path(id): Path<String>,
     Json(req): Json<CreateDispositionRuleRequest>,
 ) -> axum::response::Response {
@@ -304,7 +454,12 @@ pub async fn update_disposition_rule(
     };
 
     let actions = match serde_json::to_string(&req.actions) {
-        Ok(raw) => restore_masked_action_secrets(&existing_rule.actions, &raw),
+        Ok(raw) => match restore_masked_action_secrets(&existing_rule.actions, &raw) {
+            Ok(actions) => actions,
+            Err(e) => {
+                return ApiResponse::<serde_json::Value>::bad_request(e).into_response();
+            }
+        },
         Err(e) => {
             return ApiResponse::<serde_json::Value>::bad_request(format!(
                 "序列化动作failed: {}",
@@ -344,6 +499,14 @@ pub async fn update_disposition_rule(
 
     match state.engine_db.update_disposition_rule(&rule).await {
         Ok(true) => {
+            crate::handlers::spawn_audit_log(
+                state.engine_db.clone(),
+                user.username,
+                "update_disposition_rule",
+                Some("security"),
+                Some(rule.id.clone()),
+                None,
+            );
             let masked = mask_rule_secrets(rule);
             ApiResponse::ok(serde_json::to_value(&masked).unwrap_or_default()).into_response()
         }
@@ -357,10 +520,21 @@ pub async fn update_disposition_rule(
 /// Delete
 pub async fn delete_disposition_rule(
     State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
     Path(id): Path<String>,
 ) -> axum::response::Response {
     match state.engine_db.delete_disposition_rule(&id).await {
-        Ok(true) => ApiResponse::ok(serde_json::json!({"deleted": true})).into_response(),
+        Ok(true) => {
+            crate::handlers::spawn_audit_log(
+                state.engine_db.clone(),
+                user.username,
+                "delete_disposition_rule",
+                Some("security"),
+                Some(id),
+                None,
+            );
+            ApiResponse::ok(serde_json::json!({"deleted": true})).into_response()
+        }
         Ok(false) => ApiResponse::<serde_json::Value>::not_found("Rule not found").into_response(),
         Err(e) => {
             ApiResponse::<serde_json::Value>::server_error(&e, "Operation failed").into_response()
@@ -553,12 +727,42 @@ mod tests {
     }
 
     #[test]
-    fn test_mask_actions_secrets_invalid_json_returns_original() {
+    fn test_mask_actions_secrets_invalid_json_returns_redacted_placeholder() {
         let bad_json = "this is not valid json {{{}";
         let result = mask_actions_secrets(bad_json);
+        let parsed: String = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed, MASKED_INVALID_ACTIONS_NOTICE);
+    }
+
+    #[test]
+    fn test_mask_actions_secrets_supports_legacy_double_encoded_json() {
+        let legacy = serde_json::to_string(
+            r#"[{"action_type":"webhook","headers":{"Authorization":"Bearer legacy-secret"}}]"#,
+        )
+        .unwrap();
+
+        let masked = mask_actions_secrets(&legacy);
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&masked).unwrap();
+        assert_eq!(parsed[0]["headers"]["Authorization"].as_str().unwrap(), "***");
+    }
+
+    #[test]
+    fn test_restore_masked_action_secrets_supports_legacy_existing_json() {
+        let existing = serde_json::to_string(
+            r#"[{"action_type":"webhook","webhook_url":"https://hooks.slack.com/services/T00/B00/secret","headers":{"Authorization":"Bearer legacy-secret"}}]"#,
+        )
+        .unwrap();
+        let incoming = r#"[{
+            "action_type": "webhook",
+            "webhook_url": "https://hooks.slack.com/***",
+            "headers": {"Authorization": "***"}
+        }]"#;
+
+        let restored = restore_masked_action_secrets(&existing, incoming).unwrap();
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&restored).unwrap();
         assert_eq!(
-            result, bad_json,
-            "Invalid JSON should be returned unchanged"
+            parsed[0]["headers"]["Authorization"].as_str().unwrap(),
+            "Bearer legacy-secret"
         );
     }
 
@@ -665,7 +869,7 @@ mod tests {
             }
         }]"#;
 
-        let restored = restore_masked_action_secrets(existing, incoming);
+        let restored = restore_masked_action_secrets(existing, incoming).unwrap();
         let parsed: Vec<serde_json::Value> = serde_json::from_str(&restored).unwrap();
 
         assert_eq!(
@@ -699,7 +903,7 @@ mod tests {
             "headers": {"Authorization": "Bearer new-secret"}
         }]"#;
 
-        let restored = restore_masked_action_secrets(existing, incoming);
+        let restored = restore_masked_action_secrets(existing, incoming).unwrap();
         let parsed: Vec<serde_json::Value> = serde_json::from_str(&restored).unwrap();
 
         assert_eq!(
@@ -710,5 +914,80 @@ mod tests {
             parsed[0]["headers"]["Authorization"].as_str().unwrap(),
             "Bearer new-secret"
         );
+    }
+
+    #[test]
+    fn test_restore_masked_action_secrets_rejects_masked_headers_when_webhook_url_changes() {
+        let existing = r#"[{
+            "action_type": "webhook",
+            "webhook_url": "ENC:old-url",
+            "headers": {"Authorization": "ENC:old-secret"}
+        }]"#;
+        let incoming = r#"[{
+            "action_type": "webhook",
+            "webhook_url": "https://example.com/new-hook",
+            "headers": {"Authorization": "***"}
+        }]"#;
+
+        let error = restore_masked_action_secrets(existing, incoming).unwrap_err();
+        assert!(error.contains("webhook URL 已变更"));
+    }
+
+    #[test]
+    fn test_restore_masked_action_secrets_rejects_reordered_masked_actions() {
+        let existing = r#"[
+            {
+                "action_type": "webhook",
+                "webhook_url": "ENC:webhook-a",
+                "headers": {"Authorization": "ENC:secret-a"}
+            },
+            {
+                "action_type": "log"
+            }
+        ]"#;
+        let incoming = r#"[
+            {
+                "action_type": "log"
+            },
+            {
+                "action_type": "webhook",
+                "webhook_url": "***",
+                "headers": {"Authorization": "***"}
+            }
+        ]"#;
+
+        let error = restore_masked_action_secrets(existing, incoming).unwrap_err();
+        assert!(error.contains("动作类型已变更"));
+    }
+
+    #[test]
+    fn test_restore_masked_action_secrets_rejects_ambiguous_duplicate_webhooks() {
+        let existing = r#"[
+            {
+                "action_type": "webhook",
+                "webhook_url": "ENC:webhook-a",
+                "headers": {"Authorization": "ENC:secret-a"}
+            },
+            {
+                "action_type": "webhook",
+                "webhook_url": "ENC:webhook-b",
+                "headers": {"Authorization": "ENC:secret-b"}
+            }
+        ]"#;
+        let incoming = r#"[
+            {
+                "action_type": "webhook",
+                "webhook_url": "***",
+                "headers": {"Authorization": "***"}
+            },
+            {
+                "action_type": "webhook",
+                "webhook_url": "***",
+                "headers": {"Authorization": "***"}
+            }
+        ]"#;
+
+        let error = restore_masked_action_secrets(existing, incoming).unwrap_err();
+        assert!(error.contains("多个同类型候选项"));
     }
 }

@@ -76,7 +76,8 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Security cleanup: DROP TABLE + recreate + VACUUM + ANALYZE
+   /// Full cleanup with table recreation and VACUUM/ANALYZE.
+   /// Removes all captured sessions and derived security data.
     pub async fn clear_safe(&self) -> Result<()> {
         let drop_tables = [
             "DROP TABLE IF EXISTS security_module_results",
@@ -114,7 +115,8 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Fast cleanup: DROP TABLE + recreate
+   /// Full cleanup with table recreation but without VACUUM.
+   /// Faster than `clear_safe`, but disk space may be reclaimed later.
     pub async fn clear_quick(&self) -> Result<()> {
         let drop_tables = [
             "DROP TABLE IF EXISTS security_module_results",
@@ -149,83 +151,11 @@ impl VigilDb {
         Ok(())
     }
 
-   /// High-performance cleanup: DELETE without VACUUM
+   /// Compatibility path for older clients.
+   /// The previous implementation depended on legacy tables and could fail with
+   /// a 500 when those tables were absent, so it now falls back to `clear_quick`.
     pub async fn clear_high_performance(&self) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-
-        sqlx::query("DELETE FROM security_module_results")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM security_verdicts")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM security_ioc")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM security_whitelist")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM security_feedback")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM security_sender_baselines")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM security_disposition_rules")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM security_temporal_cusum")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM security_temporal_ewma")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM security_entity_risk")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM security_alerts")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM security_config")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM quarantine")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM security_threat_scenes")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM training_samples")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM sessions")
-            .execute(&mut *tx)
-            .await?;
-       // Data security engine tables
-        sqlx::query("DELETE FROM data_security_incidents")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM data_security_http_sessions")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("DELETE FROM stats_cache")
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query(
-            r#"
-            INSERT INTO stats_cache (
-                id, total_sessions, active_sessions, total_bytes, total_packets,
-                smtp_sessions, pop3_sessions, imap_sessions, http_sessions
-            ) VALUES (1, 0, 0, 0, 0, 0, 0, 0, 0)
-            "#,
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        tx.commit().await?;
-        let _ = tokio::task::spawn_blocking(cleanup_all_http_temp_files).await;
-
-        Ok(())
+        self.clear_quick().await
     }
 
    /// ClearData (, clear_safe)

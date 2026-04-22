@@ -8,6 +8,9 @@ use crate::infra::migrate::record_migration;
 const KEYWORD_SYSTEM_SEED_JSON: &str =
     include_str!("../../../../shared/schemas/keyword_overrides_seed.json");
 
+const ENGINE_MODULE_DATA_SEED_JSON: &str =
+    include_str!("../../../../shared/schemas/engine_module_data_seed.json");
+
 impl VigilDb {
    /// SecurityEngine
     pub async fn init_security_tables(&self) -> Result<()> {
@@ -563,6 +566,16 @@ impl VigilDb {
         .await?;
 
         sqlx::query(
+            r#"
+            INSERT INTO security_scene_rules (scene_type, enabled, config, updated_at)
+            VALUES ('internal_domain_impersonation', TRUE, '{}', NOW()::TEXT)
+            ON CONFLICT DO NOTHING
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_sessions_bounce_candidates
              ON sessions(started_at DESC)
              WHERE mail_from IS NULL OR mail_from = '' OR mail_from = '<>'",
@@ -632,6 +645,26 @@ impl VigilDb {
             &self.pool,
             "116_keyword_system_seed_v4",
             "refresh keyword seed with production gateway warning phrases used by content prefilter",
+        )
+        .await?;
+
+        // Migration #117: Seed engine module data (all hardcoded static lists from detection modules)
+        let module_data_seed = serde_json::to_string(&serde_json::from_str::<serde_json::Value>(
+            ENGINE_MODULE_DATA_SEED_JSON,
+        )?)?;
+        sqlx::query(
+            "INSERT INTO config (key, value) VALUES ($1, $2) \
+             ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value",
+        )
+        .bind("engine_module_data_seed")
+        .bind(module_data_seed)
+        .execute(&self.pool)
+        .await?;
+
+        record_migration(
+            &self.pool,
+            "117_engine_module_data_seed_v1",
+            "seed all engine detection module data lists (58 lists) from JSON into config table",
         )
         .await?;
 

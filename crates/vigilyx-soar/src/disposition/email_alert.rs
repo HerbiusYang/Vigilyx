@@ -4,9 +4,14 @@ use std::collections::HashSet;
 
 use lettre::message::{Mailbox, header::ContentType};
 use lettre::transport::smtp::authentication::Credentials;
+use lettre::transport::smtp::client::{Tls, TlsParameters};
+use lettre::transport::smtp::AsyncSmtpTransportBuilder;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use tracing::{error, info, warn};
-use vigilyx_core::{DEFAULT_BLOCKED_HOSTNAMES, models::EmailSession, validate_network_target};
+use vigilyx_core::{
+    DEFAULT_BLOCKED_HOSTNAMES, extract_host_from_network_target, models::EmailSession,
+    resolve_network_host,
+};
 use vigilyx_core::security::{SecurityVerdict, ThreatLevel};
 
 use crate::config::EmailAlertConfig;
@@ -104,39 +109,85 @@ fn html_escape_multiline(s: &str) -> String {
 
 // SMTP transport builder
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PinnedSmtpTarget {
+    connect_addr: std::net::SocketAddr,
+    tls_host: String,
+}
+
+fn resolve_smtp_tls_host(host: &str) -> Result<String, String> {
+    let tls_host = extract_host_from_network_target(host)
+        .unwrap_or_else(|| host.trim().to_string())
+        .trim()
+        .trim_matches('[')
+        .trim_matches(']')
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+
+    if tls_host.is_empty() {
+        return Err("SMTP host is empty".to_string());
+    }
+
+    Ok(tls_host)
+}
+
+fn resolve_smtp_target(config: &EmailAlertConfig) -> Result<PinnedSmtpTarget, String> {
+    let connect_addr = resolve_network_host(
+        &config.smtp_host,
+        config.smtp_port,
+        DEFAULT_BLOCKED_HOSTNAMES,
+    )
+    .map_err(|reason| format!("SMTP host blocked (SSRF prevention): {reason}"))?
+    .into_iter()
+    .next()
+    .ok_or_else(|| "SMTP host resolved to no addresses".to_string())?;
+
+    Ok(PinnedSmtpTarget {
+        connect_addr,
+        tls_host: resolve_smtp_tls_host(&config.smtp_host)?,
+    })
+}
+
+fn build_smtp_transport_with_builder(
+    builder: AsyncSmtpTransportBuilder,
+    auth: &Option<(String, String)>,
+) -> AsyncSmtpTransport<Tokio1Executor> {
+    if let Some((username, password)) = auth {
+        builder
+            .credentials(Credentials::new(username.clone(), password.clone()))
+            .build()
+    } else {
+        builder.build()
+    }
+}
 
 fn build_smtp_transport(
     config: &EmailAlertConfig,
 ) -> Result<AsyncSmtpTransport<Tokio1Executor>, String> {
-    validate_network_target(&config.smtp_host, DEFAULT_BLOCKED_HOSTNAMES)
-        .map_err(|reason| format!("SMTP host blocked (SSRF prevention): {reason}"))?;
-
+    let target = resolve_smtp_target(config)?;
     let auth = smtp_auth_fields(config)?;
+    let connect_host = target.connect_addr.ip().to_string();
 
     let transport = match config.smtp_tls.as_str() {
         "tls" => {
-            let builder = AsyncSmtpTransport::<Tokio1Executor>::relay(&config.smtp_host)
-                .map_err(|e| format!("SMTP relay error: {}", e))?
-                .port(config.smtp_port);
-            if let Some((username, password)) = &auth {
-                builder
-                    .credentials(Credentials::new(username.clone(), password.clone()))
-                    .build()
-            } else {
-                builder.build()
-            }
+            let tls = TlsParameters::new(target.tls_host.clone())
+                .map_err(|e| format!("SMTP TLS error: {}", e))?;
+            let builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(
+                connect_host.clone(),
+            )
+                .port(target.connect_addr.port())
+                .tls(Tls::Wrapper(tls));
+            build_smtp_transport_with_builder(builder, &auth)
         }
         "starttls" => {
-            let builder = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.smtp_host)
-                .map_err(|e| format!("SMTP STARTTLS error: {}", e))?
-                .port(config.smtp_port);
-            if let Some((username, password)) = &auth {
-                builder
-                    .credentials(Credentials::new(username.clone(), password.clone()))
-                    .build()
-            } else {
-                builder.build()
-            }
+            let tls = TlsParameters::new(target.tls_host.clone())
+                .map_err(|e| format!("SMTP STARTTLS error: {}", e))?;
+            let builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(
+                connect_host.clone(),
+            )
+            .port(target.connect_addr.port())
+            .tls(Tls::Required(tls));
+            build_smtp_transport_with_builder(builder, &auth)
         }
         "none" => {
            // Plaintext SMTP requires explicit admin opt-in in the persisted alert config.
@@ -148,16 +199,14 @@ fn build_smtp_transport(
                 );
             }
             warn!("SMTP transport configured without TLS");
-            let builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&config.smtp_host)
-                .port(config.smtp_port);
-            if let Some((username, password)) = &auth {
+            let builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(
+                connect_host.clone(),
+            )
+            .port(target.connect_addr.port());
+            if auth.is_some() {
                 warn!("SMTP credentials will be sent in plaintext!");
-                builder
-                    .credentials(Credentials::new(username.clone(), password.clone()))
-                    .build()
-            } else {
-                builder.build()
             }
+            build_smtp_transport_with_builder(builder, &auth)
         }
         other => {
            // Unknown TLS mode -> default to STARTTLS rather than plaintext
@@ -165,16 +214,12 @@ fn build_smtp_transport(
                 smtp_tls = other,
                 "Unknown SMTP TLS mode, defaulting to STARTTLS"
             );
-            let builder = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.smtp_host)
-                .map_err(|e| format!("SMTP STARTTLS error: {}", e))?
-                .port(config.smtp_port);
-            if let Some((username, password)) = &auth {
-                builder
-                    .credentials(Credentials::new(username.clone(), password.clone()))
-                    .build()
-            } else {
-                builder.build()
-            }
+            let tls = TlsParameters::new(target.tls_host.clone())
+                .map_err(|e| format!("SMTP STARTTLS error: {}", e))?;
+            let builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(connect_host)
+                .port(target.connect_addr.port())
+                .tls(Tls::Required(tls));
+            build_smtp_transport_with_builder(builder, &auth)
         }
     };
 
@@ -195,6 +240,53 @@ fn smtp_auth_fields(config: &EmailAlertConfig) -> Result<Option<(String, String)
                 .to_string(),
         ),
     }
+}
+
+fn should_notify_original_recipient(
+    recipient: &str,
+    internal_domains: &HashSet<String>,
+) -> bool {
+    if internal_domains.is_empty() {
+        return false;
+    }
+
+    super::extract_email_domain(recipient)
+        .is_some_and(|domain| internal_domains.contains(&domain))
+}
+
+fn collect_alert_recipients(
+    config: &EmailAlertConfig,
+    session: &EmailSession,
+    internal_domains: &HashSet<String>,
+) -> Vec<String> {
+    let mut recipients = Vec::new();
+    let mut seen = HashSet::new();
+
+    let mut push_unique = |address: &str| {
+        let trimmed = address.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+
+        let dedupe_key = trimmed.to_ascii_lowercase();
+        if seen.insert(dedupe_key) {
+            recipients.push(trimmed.to_string());
+        }
+    };
+
+    if config.notify_admin {
+        push_unique(&config.admin_email);
+    }
+
+    if config.notify_recipient {
+        for rcpt in &session.rcpt_to {
+            if should_notify_original_recipient(rcpt, internal_domains) {
+                push_unique(rcpt);
+            }
+        }
+    }
+
+    recipients
 }
 
 
@@ -403,21 +495,7 @@ impl DispositionEngine {
         internal_domains: &HashSet<String>,
         inbound_mail_servers: &HashSet<String>,
     ) {
-
-       // Recipient
-        let mut recipients: Vec<String> = Vec::new();
-
-        if config.notify_admin && !config.admin_email.is_empty() {
-            recipients.push(config.admin_email.clone());
-        }
-
-        if config.notify_recipient {
-            for rcpt in &session.rcpt_to {
-                if !rcpt.is_empty() && !recipients.contains(rcpt) {
-                    recipients.push(rcpt.clone());
-                }
-            }
-        }
+        let recipients = collect_alert_recipients(config, session, internal_domains);
 
         if recipients.is_empty() {
             return;
@@ -471,8 +549,11 @@ impl DispositionEngine {
                         decrypt_smtp_password(&config.smtp_password).unwrap_or_default();
                 }
                 if config.enabled
-                    && let Err(reason) =
-                        validate_network_target(&config.smtp_host, DEFAULT_BLOCKED_HOSTNAMES)
+                    && let Err(reason) = resolve_network_host(
+                        &config.smtp_host,
+                        config.smtp_port,
+                        DEFAULT_BLOCKED_HOSTNAMES,
+                    )
                 {
                     warn!(
                         smtp_host = %config.smtp_host,
@@ -628,7 +709,7 @@ mod tests {
     fn make_smtp_config(tls_mode: &str) -> EmailAlertConfig {
         EmailAlertConfig {
             enabled: true,
-            smtp_host: "smtp.example.com".to_string(),
+            smtp_host: "8.8.8.8".to_string(),
             smtp_port: 587,
             smtp_username: "user".to_string(),
             smtp_password: "pass".to_string(),
@@ -963,6 +1044,60 @@ mod tests {
         config.smtp_host = "fd00:ec2::254".to_string();
         let result = build_smtp_transport(&config);
         assert!(result.is_err(), "IPv6 ULA SMTP hosts must be blocked");
+    }
+
+    #[test]
+    fn test_resolve_smtp_target_uses_pinned_ip_addr() {
+        let config = make_smtp_config("starttls");
+        let target = resolve_smtp_target(&config).expect("public SMTP IP should resolve");
+
+        assert_eq!(
+            target.connect_addr,
+            "8.8.8.8:587".parse().expect("valid socket addr")
+        );
+        assert_eq!(target.tls_host, "8.8.8.8");
+    }
+
+    #[test]
+    fn test_resolve_smtp_target_rejects_localhost_with_trailing_dot() {
+        let mut config = make_smtp_config("starttls");
+        config.smtp_host = "localhost.".to_string();
+
+        let err = resolve_smtp_target(&config).expect_err("localhost must be rejected");
+        assert!(err.contains("SMTP host blocked"));
+    }
+
+    #[test]
+    fn test_collect_alert_recipients_only_notifies_internal_original_recipients() {
+        let mut config = make_smtp_config("starttls");
+        config.notify_recipient = true;
+        config.admin_email = "soc@corp.com".to_string();
+        let session = make_session(
+            Some("sender@evil.com"),
+            vec!["user@corp.com", "customer@example.org", "USER@CORP.COM"],
+            Some("test"),
+        );
+        let internal_domains = HashSet::from([String::from("corp.com")]);
+
+        let recipients = collect_alert_recipients(&config, &session, &internal_domains);
+
+        assert_eq!(recipients, vec!["soc@corp.com", "user@corp.com"]);
+    }
+
+    #[test]
+    fn test_collect_alert_recipients_skips_original_recipients_without_internal_domains() {
+        let mut config = make_smtp_config("starttls");
+        config.notify_admin = false;
+        config.notify_recipient = true;
+        let session = make_session(
+            Some("sender@evil.com"),
+            vec!["user@corp.com"],
+            Some("test"),
+        );
+
+        let recipients = collect_alert_recipients(&config, &session, &HashSet::new());
+
+        assert!(recipients.is_empty());
     }
 
     

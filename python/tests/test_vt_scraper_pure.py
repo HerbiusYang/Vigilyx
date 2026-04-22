@@ -94,24 +94,24 @@ class TestExtractFromApiResponses:
 
     def test_nested_data_structure(self, scraper):
         resp = make_vt_api_response(malicious=0, harmless=60, undetected=10, nested=True)
-        result = scraper._extract_from_api_responses([resp], "test.com", "domain")
+        result = scraper._extract_from_api_responses([resp], "example.test", "domain")
         assert result is not None
         assert result.success is True
 
     def test_flat_data_structure(self, scraper):
         resp = make_vt_api_response(malicious=3, harmless=57, undetected=10, nested=False)
-        result = scraper._extract_from_api_responses([resp], "test.com", "domain")
+        result = scraper._extract_from_api_responses([resp], "example.test", "domain")
         assert result is not None
         assert result.success is True
         assert result.malicious_count == 3
 
     def test_empty_responses_returns_none(self, scraper):
-        result = scraper._extract_from_api_responses([], "test.com", "domain")
+        result = scraper._extract_from_api_responses([], "example.test", "domain")
         assert result is None
 
     def test_confidence_calculation_clean(self, scraper):
         resp = make_vt_api_response(malicious=0, harmless=60, undetected=10, nested=True)
-        result = scraper._extract_from_api_responses([resp], "test.com", "domain")
+        result = scraper._extract_from_api_responses([resp], "example.test", "domain")
         assert result is not None
         # ratio=0, clean: confidence = max(0.5, 1.0 - 0.0) = 1.0
         assert result.confidence == pytest.approx(1.0)

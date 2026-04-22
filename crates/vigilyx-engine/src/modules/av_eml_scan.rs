@@ -1,12 +1,11 @@
-//! email Module - Use ClamAV complete EML line detect
-
-//! From `EmailSession` RFC 2822 EML ByteStream(headers + body + Attachment),
-//! clamd INSTREAM ProtocolSendgiving ClamAV line Sign.
-
-
-//! - MemoryMediumcomplete, writetempFile
-//! - ClamAV Return `not_applicable`(downgradelevel)
-//! ->10MB ofAttachment `content_base64`,EML hops 2Base/Radix
+//! EML antivirus scan module - scans the complete reconstructed EML using ClamAV.
+//!
+//! Reconstructs an RFC 2822 EML byte stream (headers + body + attachments) from
+//! `EmailSession` and sends it to ClamAV via the INSTREAM protocol.
+//!
+//! - If ClamAV is unavailable or times out, returns `scan_incomplete` with a low
+//!   suspicion score (BPA b=0.08) — NOT `not_applicable` / safe (CWE-636 fix).
+//! - Attachments >10MB without `content_base64` are omitted from the EML stream.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -113,27 +112,49 @@ impl SecurityModule for AvEmlScanModule {
             Err(e) => {
                 let duration_ms = start.elapsed().as_millis() as u64;
                 let err_msg = format!("{}", e);
+                // F02 fix: Return scan_incomplete with non-zero suspicion instead
+                // of not_applicable (vacuous BPA). ClamAV failure must not be
+                // silently treated as "safe".
                 warn!(
                     module = "av_eml_scan",
                     error = %err_msg,
-                    "ClamAV scan failed, module downgraded"
+                    eml_size,
+                    "ClamAV unavailable — EML virus scan could not be completed, marking as incomplete"
                 );
-                match e {
-                    ClamAvError::Timeout => Ok(ModuleResult::not_applicable(
-                        &self.meta.id,
-                        &self.meta.name,
-                        self.meta.pillar,
-                        &format!("ClamAV scan timed out (EML {} bytes)", eml_size),
-                        duration_ms,
-                    )),
-                    _ => Ok(ModuleResult::not_applicable(
-                        &self.meta.id,
-                        &self.meta.name,
-                        self.meta.pillar,
-                        &format!("ClamAV unavailable: {}", err_msg),
-                        duration_ms,
-                    )),
-                }
+                let reason = match e {
+                    ClamAvError::Timeout => "clamav_timeout",
+                    _ => "clamav_unavailable",
+                };
+                Ok(ModuleResult {
+                    module_id: self.meta.id.clone(),
+                    module_name: self.meta.name.clone(),
+                    pillar: self.meta.pillar,
+                    threat_level: ThreatLevel::Low,
+                    confidence: 0.10,
+                    categories: vec!["scan_incomplete".to_string()],
+                    summary: format!(
+                        "Antivirus scan could not be completed — ClamAV {} (EML {} bytes)",
+                        if reason == "clamav_timeout" { "timed out" } else { "unavailable" },
+                        eml_size
+                    ),
+                    evidence: vec![Evidence {
+                        description: format!(
+                            "ClamAV EML scan failed: {} (EML {} bytes)",
+                            err_msg, eml_size
+                        ),
+                        location: Some("eml:full".to_string()),
+                        snippet: None,
+                    }],
+                    details: serde_json::json!({
+                        "scan_status": "incomplete",
+                        "reason": reason,
+                        "eml_size": eml_size,
+                    }),
+                    duration_ms,
+                    analyzed_at: Utc::now(),
+                    bpa: Some(vigilyx_core::security::Bpa::new(0.08, 0.0, 0.92)),
+                    engine_id: None,
+                })
             }
         }
     }

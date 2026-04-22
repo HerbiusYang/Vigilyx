@@ -89,6 +89,15 @@ rayon = "1.10"
 # High-performance hashing (FxHash: non-cryptographic, 5-8x faster than SipHash)
 rustc-hash = "2"
 
+# Image decoding (multi-format: JPEG, PNG, GIF, BMP, WebP, TIFF)
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "bmp", "webp", "tiff"] }
+
+# Security: pinned minimum versions to fix known vulnerabilities
+# RUSTSEC-2026-0049: rustls-webpki CRL validation defect (fixed in 0.103.10)
+rustls-webpki = ">=0.103.10"
+# RUSTSEC-2026-0097: rand unsoundness (fixed in 0.9.3)
+rand = ">=0.9.3"
+
 # ============================================
 # Performance tuning
 # ============================================

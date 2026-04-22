@@ -28,6 +28,14 @@ pub trait DbQueryService: Send + Sync {
         sender_domain: &str,
         exclude_session_id: &str,
     ) -> anyhow::Result<i64>;
+
+    /// Count distinct senders (mail_from) from a given domain in completed sessions.
+    /// Used as a heuristic: if a domain has many different senders, it's likely a shared/public
+    /// email domain, and domain-level "first contact" is meaningless.
+    async fn count_distinct_senders_for_domain(
+        &self,
+        sender_domain: &str,
+    ) -> anyhow::Result<i64>;
 }
 
 /// Blanket implementation that delegates to `VigilDb`.
@@ -44,5 +52,12 @@ impl DbQueryService for vigilyx_db::VigilDb {
     ) -> anyhow::Result<i64> {
         self.count_sender_domain_history(sender_domain, exclude_session_id)
             .await
+    }
+
+    async fn count_distinct_senders_for_domain(
+        &self,
+        sender_domain: &str,
+    ) -> anyhow::Result<i64> {
+        self.count_distinct_senders_for_domain(sender_domain).await
     }
 }

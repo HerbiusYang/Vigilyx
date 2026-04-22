@@ -14,6 +14,7 @@ path = "src/main.rs"
 vigilyx-core = { path = "../vigilyx-core" }
 vigilyx-db = { path = "../vigilyx-db" }
 vigilyx-engine = { path = "../vigilyx-engine" }
+vigilyx-mta = { path = "../vigilyx-mta" }
 vigilyx-soar = { path = "../vigilyx-soar" }
 
 # Async runtime

@@ -5,7 +5,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License"></a>
-  <img src="https://img.shields.io/badge/Rust-1.94+-orange.svg" alt="Rust">
+  <img src="https://img.shields.io/badge/Rust-1.95.0-orange.svg" alt="Rust">
   <img src="https://img.shields.io/badge/React-18-61DAFB.svg" alt="React">
   <img src="https://img.shields.io/badge/Python-3.12-3776AB.svg" alt="Python">
 </p>
@@ -74,7 +74,7 @@ Mail client / upstream MTA
 
 - `SOAR` is library logic executed inside the engine and API flows, not a standalone container.
 - `AI`, `ClamAV`, and `Sandbox` are engine-side integrations used by the standalone engine and the embedded MTA engine when enabled.
-- In the current `docker-compose.yml` defaults, `docker compose --profile mta up -d` adds `vigilyx-mta`; it does not automatically disable the standalone engine inside `vigilyx`. An MTA-only topology requires a custom compose override; there is no tracked `STANDALONE_ENGINE` toggle in the default deployment files.
+- In the current `docker-compose.yml` defaults, `docker compose --profile mta up -d` adds `vigilyx-mta`; it does not automatically disable the standalone engine inside `vigilyx`. The `STANDALONE_ENGINE` environment variable (default `true`) controls whether the main `vigilyx` container runs its embedded engine; set it to `false` when using the standalone `engine` profile (`deploy.sh --engine` does this automatically).
 
 ### Features
 
@@ -223,6 +223,7 @@ python/vigilyx_ai/      FastAPI AI / VT scrape service
 # One-time setup
 cp deploy.conf.example deploy.conf
 $EDITOR deploy.conf
+ssh root@<server> "docker pull rust:1.95.0-bookworm"
 ./deploy.sh --init
 
 # Day-to-day deployment
@@ -319,7 +320,7 @@ See [Deployment Guide](docs/DEPLOYMENT.md) for production hardening.
 
 | Layer | Stack |
 |-------|-------|
-| Backend | Rust 1.94+, tokio, axum, sqlx, redis, pnet/pcap, yara-x, petgraph, dashmap, rayon, crossbeam, tracing |
+| Backend | Rust 1.95.0, tokio, axum, sqlx, redis, pnet/pcap, yara-x, petgraph, dashmap, rayon, crossbeam, tracing |
 | Frontend | React 18, TypeScript, Vite, React Router |
 | AI | Python 3.12, FastAPI, Transformers, PyTorch |
 | Infra | Docker Compose, PostgreSQL 17, Valkey/Redis 8, Caddy 2 |

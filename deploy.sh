@@ -116,12 +116,6 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if $DO_PRODUCTION && $DO_ENGINE; then
-    echo "Error: --production does not currently support --engine."
-    echo "Reason: the standalone engine service currently only has a fast Dockerfile (deploy/docker/Dockerfile.engine.fast)."
-    exit 1
-fi
-
 # -- Helper functions --
 step() { echo ""; echo "━━━ $1 ━━━"; }
 elapsed() { echo "  Time: $(( $(date +%s) - $1 ))s"; }
@@ -181,7 +175,10 @@ apply_capture_host_tuning() {
 }
 
 rsync_source_tree() {
-    local rsync_args=(-avz --no-times --delete)
+    local rsync_args=(-avz --no-times --delete --compress --partial
+        --timeout=300
+        -e "ssh -o ServerAliveInterval=10 -o ServerAliveCountMax=30 -o ConnectTimeout=30"
+    )
     local pattern
     for pattern in "${RSYNC_EXCLUDES[@]}"; do
         rsync_args+=(--exclude "$pattern")
@@ -505,9 +502,26 @@ fi
 
 # Engine standalone deployment (explicit --engine)
 if $DO_ENGINE; then
+    echo "  Setting STANDALONE_ENGINE=false in remote .env (so the main container runs API-only)..."
+    ssh "$SERVER" "cd ${REMOTE_DIR} && \
+        if grep -q '^STANDALONE_ENGINE=' deploy/docker/.env 2>/dev/null; then \
+            sed -i 's/^STANDALONE_ENGINE=.*/STANDALONE_ENGINE=false/' deploy/docker/.env; \
+        else \
+            echo 'STANDALONE_ENGINE=false' >> deploy/docker/.env; \
+        fi"
+
+    echo "  Restarting main vigilyx container in API-only mode..."
+    compose_up_with_retry "Main service (API-only)" "cd ${REMOTE_DIR} && \
+        docker compose -f ${COMPOSE_FILE} ${MODE_PROFILE} --profile ai ${ANTIVIRUS_PROFILE} ${TLS_PROFILE} up -d vigilyx"
+
     echo "  Starting standalone Engine container..."
-    compose_up_with_retry "Standalone engine" "cd ${REMOTE_DIR} && \
-        docker compose -f ${COMPOSE_FILE} -f ${FAST_OVERRIDE} --profile engine-standalone up -d engine"
+    if $DO_PRODUCTION; then
+        compose_up_with_retry "Standalone engine" "cd ${REMOTE_DIR} && \
+            docker compose -f ${COMPOSE_FILE} --profile engine-standalone up -d engine"
+    else
+        compose_up_with_retry "Standalone engine" "cd ${REMOTE_DIR} && \
+            docker compose -f ${COMPOSE_FILE} -f ${FAST_OVERRIDE} --profile engine-standalone up -d engine"
+    fi
 fi
 
 elapsed $T
@@ -534,6 +548,6 @@ echo "Deployment complete. Total time: $(( $(date +%s) - TOTAL_START ))s"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "Check status: ssh $SERVER 'docker compose -f ${REMOTE_DIR}/${COMPOSE_FILE} ps'"
-echo "API logs:     ssh $SERVER 'docker exec vigilyx tail -30 /app/logs/api.log'"
-echo "Engine logs:  ssh $SERVER 'docker exec vigilyx tail -30 /app/logs/engine.log'"
+echo "API logs:     ssh $SERVER 'docker compose -f ${REMOTE_DIR}/${COMPOSE_FILE} logs --tail 30 vigilyx'"
+echo "Engine logs:  ssh $SERVER 'docker compose -f ${REMOTE_DIR}/${COMPOSE_FILE} logs --tail 30 vigilyx'  # or: logs --tail 30 engine (if standalone)"
 echo "Sniffer logs: ssh $SERVER 'docker compose -f ${REMOTE_DIR}/${COMPOSE_FILE} logs --tail 30 sniffer'"

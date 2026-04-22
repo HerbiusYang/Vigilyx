@@ -7,10 +7,19 @@ use axum::{
 };
 use std::sync::Arc;
 use uuid::Uuid;
-use vigilyx_core::EmailSession;
+use vigilyx_core::{EmailContent, EmailSession};
 
 use super::{ApiResponse, PaginatedResponse, PaginationParams, clamp_limit};
 use crate::AppState;
+
+fn redact_related_session_content(mut session: EmailSession) -> EmailSession {
+    session.content = EmailContent {
+        is_complete: session.content.is_complete,
+        is_encrypted: session.content.is_encrypted,
+        ..EmailContent::default()
+    };
+    session
+}
 
 /// GetSession table
 pub async fn list_sessions(
@@ -174,9 +183,63 @@ pub async fn get_related_sessions(
         && !mid.is_empty()
         && let Ok(msg_related) = state.db.find_related_sessions(mid, uuid).await
     {
-        related = msg_related;
+        related = msg_related
+            .into_iter()
+            .map(redact_related_session_content)
+            .collect();
     }
 
     related.sort_by_key(|s| s.started_at);
     (StatusCode::OK, ApiResponse::ok(related))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact_related_session_content;
+    use vigilyx_core::{EmailAttachment, EmailLink, EmailSession, Protocol, SmtpDialogEntry};
+
+    #[test]
+    fn related_session_redaction_drops_message_payload() {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            25000,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.content.is_complete = true;
+        session.content.is_encrypted = true;
+        session.content.headers = vec![("Subject".to_string(), "hello".to_string())];
+        session.content.body_text = Some("plain".to_string());
+        session.content.body_html = Some("<p>html</p>".to_string());
+        session.content.attachments = vec![EmailAttachment {
+            filename: "a.txt".to_string(),
+            content_type: "text/plain".to_string(),
+            size: 5,
+            hash: "abc".to_string(),
+            content_base64: None,
+        }];
+        session.content.links = vec![EmailLink {
+            url: "https://example.com".to_string(),
+            text: Some("example".to_string()),
+            suspicious: false,
+        }];
+        session.content.smtp_dialog = vec![SmtpDialogEntry {
+            direction: vigilyx_core::Direction::Inbound,
+            command: "DATA".to_string(),
+            size: 4,
+            timestamp: chrono::Utc::now(),
+        }];
+
+        let redacted = redact_related_session_content(session);
+
+        assert!(redacted.content.is_complete);
+        assert!(redacted.content.is_encrypted);
+        assert!(redacted.content.headers.is_empty());
+        assert!(redacted.content.body_text.is_none());
+        assert!(redacted.content.body_html.is_none());
+        assert!(redacted.content.attachments.is_empty());
+        assert!(redacted.content.links.is_empty());
+        assert!(redacted.content.smtp_dialog.is_empty());
+    }
 }

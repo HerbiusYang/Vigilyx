@@ -3,16 +3,15 @@
 //! ClamAV:ClamAV Use Sign detectalready,
 //! YARA Use ofmodeRuledetectMaliciousDocumentation, Executeline, APT And.
 
-//! CPU Module, `spawn_blocking` Thread MediumExecuteline.
+//! CPU-bound module — the orchestrator runs `analyze()` inside `spawn_blocking`
+//! when `cpu_bound = true`, so no inner `spawn_blocking` is needed here.
 
 use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use tracing::warn;
-
-use vigilyx_core::models::decode_base64_bytes;
+use vigilyx_core::models::{decode_base64_bytes, EmailSession};
 
 use crate::context::SecurityContext;
 use crate::error::EngineError;
@@ -58,6 +57,30 @@ fn severity_to_threat(severity: &str) -> ThreatLevel {
     }
 }
 
+fn reconstruct_yara_eml(session: &EmailSession) -> Vec<u8> {
+    let estimated_size = session.content.raw_size.max(1024);
+    let mut eml = Vec::with_capacity(estimated_size);
+
+    for (name, value) in &session.content.headers {
+        eml.extend_from_slice(name.as_bytes());
+        eml.extend_from_slice(b": ");
+        eml.extend_from_slice(value.as_bytes());
+        eml.extend_from_slice(b"\r\n");
+    }
+    eml.extend_from_slice(b"\r\n");
+
+    if let Some(text) = &session.content.body_text {
+        eml.extend_from_slice(text.as_bytes());
+        eml.extend_from_slice(b"\r\n");
+    }
+    if let Some(html) = &session.content.body_html {
+        eml.extend_from_slice(html.as_bytes());
+        eml.extend_from_slice(b"\r\n");
+    }
+
+    eml
+}
+
 #[async_trait]
 impl SecurityModule for YaraScanModule {
     fn metadata(&self) -> &ModuleMetadata {
@@ -66,55 +89,35 @@ impl SecurityModule for YaraScanModule {
 
     async fn analyze(&self, ctx: &SecurityContext) -> Result<ModuleResult, EngineError> {
         let start = Instant::now();
-        let engine = Arc::clone(&self.engine);
-        let session = Arc::clone(&ctx.session);
 
-       // YARA match CPU, blocking Thread MediumExecuteline
-        let scan_result = tokio::task::spawn_blocking(move || {
-            let mut all_matches: Vec<YaraMatch> = Vec::new();
+        // Orchestrator already runs cpu_bound=true modules inside spawn_blocking,
+        // so we execute the YARA scan directly here without a redundant inner spawn_blocking.
+        let mut matches: Vec<YaraMatch> = Vec::new();
 
-           // 1. complete EML
-            let eml = session.reconstruct_eml();
-            if !eml.is_empty() {
-                all_matches.extend(engine.scan(&eml));
-            }
+        // 1. Scan message headers/body only. Attachments are scanned separately
+        // below so their raw bytes keep their original container context.
+        let eml = reconstruct_yara_eml(&ctx.session);
+        if !eml.is_empty() {
+            matches.extend(self.engine.scan(&eml));
+        }
 
-           // 2. Attachment (possibly Medium EML ofRule)
-            for att in &session.content.attachments {
-                if let Some(ref b64) = att.content_base64
-                    && let Some(decoded) = decode_base64_bytes(b64)
-                {
-                    let att_matches = engine.scan(&decoded);
-                    for m in att_matches {
-                       // Deduplicate:Same1RuleName
-                        if !all_matches
-                            .iter()
-                            .any(|existing| existing.rule_name == m.rule_name)
-                        {
-                            all_matches.push(m);
-                        }
+        // 2. Scan attachments (may match different rules than the EML envelope)
+        for att in &ctx.session.content.attachments {
+            if let Some(ref b64) = att.content_base64
+                && let Some(decoded) = decode_base64_bytes(b64)
+            {
+                let att_matches = self.engine.scan(&decoded);
+                for m in att_matches {
+                    // Deduplicate: same rule name
+                    if !matches
+                        .iter()
+                        .any(|existing| existing.rule_name == m.rule_name)
+                    {
+                        matches.push(m);
                     }
                 }
             }
-
-            all_matches
-        })
-        .await;
-
-        let matches = match scan_result {
-            Ok(m) => m,
-            Err(e) => {
-                warn!(error = %e, "YARA 扫描任务 panic");
-                let duration_ms = start.elapsed().as_millis() as u64;
-                return Ok(ModuleResult::not_applicable(
-                    &self.meta.id,
-                    &self.meta.name,
-                    self.meta.pillar,
-                    &format!("YARA 扫描InternalError: {}", e),
-                    duration_ms,
-                ));
-            }
-        };
+        }
 
         let duration_ms = start.elapsed().as_millis() as u64;
 
@@ -209,6 +212,7 @@ impl SecurityModule for YaraScanModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine as _;
     use crate::pipeline::context::SecurityContext;
     use vigilyx_core::models::{EmailAttachment, EmailContent, Protocol};
 
@@ -241,6 +245,29 @@ mod tests {
         Arc::new(session)
     }
 
+    #[test]
+    fn reconstruct_yara_eml_does_not_append_attachment_bytes() {
+        let session = make_session(
+            Some("body"),
+            vec![EmailAttachment {
+                filename: "invoice.pdf".to_string(),
+                content_type: "application/pdf".to_string(),
+                size: 32,
+                hash: String::new(),
+                content_base64: Some(
+                    base64::engine::general_purpose::STANDARD
+                        .encode(b"%PDF-1.7\nIcedID\nJFIF\n\x1F\x8B\x08\nMZ"),
+                ),
+            }],
+        );
+        let eml = reconstruct_yara_eml(&session);
+        let eml_text = String::from_utf8_lossy(&eml);
+        assert!(eml_text.contains("Subject: Test"));
+        assert!(eml_text.contains("body"));
+        assert!(!eml_text.contains("%PDF-1.7"));
+        assert!(!eml_text.contains("IcedID"));
+    }
+
     #[tokio::test]
     async fn test_clean_email_safe() {
         let module = YaraScanModule::new(make_engine());
@@ -270,5 +297,28 @@ mod tests {
         let result = module.analyze(&ctx).await.unwrap();
        // Empty email - should still complete without error
         assert!(result.threat_level <= ThreatLevel::Safe);
+    }
+
+    #[tokio::test]
+    async fn test_pdf_attachment_lure_content_does_not_trigger_icedid_via_eml_scan() {
+        let module = YaraScanModule::new(make_engine());
+        let attachment = EmailAttachment {
+            filename: "invoice.pdf".to_string(),
+            content_type: "application/pdf".to_string(),
+            size: 64,
+            hash: String::new(),
+            content_base64: Some(
+                base64::engine::general_purpose::STANDARD
+                    .encode(b"%PDF-1.7\nIcedID\nJFIF\n\x1F\x8B\x08\nMZ"),
+            ),
+        };
+        let ctx = SecurityContext::new(make_session(Some("Normal business email"), vec![attachment]));
+        let result = module.analyze(&ctx).await.unwrap();
+        assert!(
+            !result.summary.contains("Mal_IcedID_BokBot"),
+            "PDF lure content should not match IcedID via reconstructed EML: {}",
+            result.summary
+        );
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
     }
 }

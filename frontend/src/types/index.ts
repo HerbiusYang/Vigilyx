@@ -627,7 +627,7 @@ export interface HttpSessionItem {
 }
 
 // Threat scene types
-export type ThreatSceneType = 'bulk_mailing' | 'bounce_harvest'
+export type ThreatSceneType = 'bulk_mailing' | 'bounce_harvest' | 'internal_domain_impersonation'
 export type ThreatSceneStatus = 'active' | 'acknowledged' | 'auto_blocked' | 'resolved'
 
 export interface ThreatScene {
@@ -670,4 +670,5 @@ export interface SceneTypeStats {
 export interface ThreatSceneStats {
   bulk_mailing: SceneTypeStats
   bounce_harvest: SceneTypeStats
+  internal_domain_impersonation: SceneTypeStats
 }

@@ -14,6 +14,7 @@ use super::super::ApiResponse;
 use super::mask_api_key;
 use super::publish_engine_reload;
 use crate::AppState;
+use crate::auth::AuthenticatedUser;
 
 
 // SEC-REMAINING-001: Configurationvalue (AES-256-GCM)
@@ -126,19 +127,16 @@ pub async fn get_ai_config(State(state): State<Arc<AppState>>) -> impl IntoRespo
 /// New AI Service configuration
 pub async fn update_ai_config(
     State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
     Json(mut body): Json<serde_json::Value>,
 ) -> axum::response::Response {
-   // Such as desensitize key, Data value
+   // Missing or masked values keep the stored key; an explicit empty string clears it.
     if let Some(obj) = body.as_object_mut() {
         obj.remove("api_key_set"); // , Data
-
-        if let Some(key_val) = obj.get("api_key").and_then(|k| k.as_str())
-            && (key_val.contains("...") || key_val == "****" || key_val.is_empty())
-            && let Ok(Some(existing_json)) = state.engine_db.get_ai_service_config().await
+        if let Ok(Some(existing_json)) = state.engine_db.get_ai_service_config().await
             && let Ok(existing) = serde_json::from_str::<serde_json::Value>(&existing_json)
-            && let Some(real_key) = existing.get("api_key")
         {
-            obj.insert("api_key".to_string(), real_key.clone());
+            restore_existing_secret(obj, "api_key", &existing);
         }
     }
 
@@ -203,6 +201,14 @@ pub async fn update_ai_config(
 
            // Engine process New AI Configuration
             publish_engine_reload(&state, "ai_config").await;
+            crate::handlers::spawn_audit_log(
+                state.engine_db.clone(),
+                user.username,
+                "update_ai_config",
+                Some("security"),
+                Some("ai_service_config".to_string()),
+                None,
+            );
 
             ApiResponse::ok(serde_json::json!({
                 "saved": true,
@@ -287,19 +293,17 @@ pub async fn get_email_alert_config(State(state): State<Arc<AppState>>) -> impl 
 /// NewEmail alert configuration
 pub async fn update_email_alert_config(
     State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
     Json(mut body): Json<serde_json::Value>,
 ) -> axum::response::Response {
-   // Such as desensitizePassword, Data value
+   // Missing or masked values keep the stored password; an explicit empty string clears it.
     if let Some(obj) = body.as_object_mut() {
         obj.remove("smtp_password_set");
 
-        if let Some(pwd_val) = obj.get("smtp_password").and_then(|k| k.as_str())
-            && (pwd_val.contains("...") || pwd_val == "****" || pwd_val.is_empty())
-            && let Ok(Some(existing_json)) = state.engine_db.get_email_alert_config().await
+        if let Ok(Some(existing_json)) = state.engine_db.get_email_alert_config().await
             && let Ok(existing) = serde_json::from_str::<serde_json::Value>(&existing_json)
-            && let Some(real_pwd) = existing.get("smtp_password")
         {
-            obj.insert("smtp_password".to_string(), real_pwd.clone());
+            restore_existing_secret(obj, "smtp_password", &existing);
         }
     }
 
@@ -355,7 +359,17 @@ pub async fn update_email_alert_config(
         }
     };
     match state.engine_db.set_email_alert_config(&json_str).await {
-        Ok(()) => ApiResponse::ok(serde_json::json!({ "saved": true })).into_response(),
+        Ok(()) => {
+            crate::handlers::spawn_audit_log(
+                state.engine_db.clone(),
+                user.username,
+                "update_email_alert_config",
+                Some("security"),
+                Some("email_alert_config".to_string()),
+                None,
+            );
+            ApiResponse::ok(serde_json::json!({ "saved": true })).into_response()
+        }
         Err(e) => {
             ApiResponse::<serde_json::Value>::server_error(&e, "Operation failed").into_response()
         }
@@ -382,10 +396,8 @@ pub async fn test_email_alert(
             }
         };
 
-   // Such as Password desensitizevalue,FromData Load Password
-    if (config.smtp_password.contains("...")
-        || config.smtp_password == "****"
-        || config.smtp_password.is_empty())
+   // Masked UI placeholders keep the stored password; an explicit empty string does not.
+    if is_masked_secret_placeholder(&config.smtp_password)
         && let Ok(Some(existing_json)) = state.engine_db.get_email_alert_config().await
         && let Ok(existing) =
             serde_json::from_str::<vigilyx_engine::config::EmailAlertConfig>(&existing_json)
@@ -466,18 +478,16 @@ pub async fn get_wechat_alert_config(State(state): State<Arc<AppState>>) -> impl
 
 pub async fn update_wechat_alert_config(
     State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
     Json(mut body): Json<serde_json::Value>,
 ) -> axum::response::Response {
     if let Some(obj) = body.as_object_mut() {
         obj.remove("webhook_url_set");
 
-        if let Some(webhook_val) = obj.get("webhook_url").and_then(|value| value.as_str())
-            && (webhook_val.contains("...") || webhook_val == "****" || webhook_val.is_empty())
-            && let Ok(Some(existing_json)) = state.engine_db.get_wechat_alert_config().await
+        if let Ok(Some(existing_json)) = state.engine_db.get_wechat_alert_config().await
             && let Ok(existing) = serde_json::from_str::<serde_json::Value>(&existing_json)
-            && let Some(real_url) = existing.get("webhook_url")
         {
-            obj.insert("webhook_url".to_string(), real_url.clone());
+            restore_existing_secret(obj, "webhook_url", &existing);
         }
     }
 
@@ -533,7 +543,17 @@ pub async fn update_wechat_alert_config(
     };
 
     match state.engine_db.set_wechat_alert_config(&json_str).await {
-        Ok(()) => ApiResponse::ok(serde_json::json!({ "saved": true })).into_response(),
+        Ok(()) => {
+            crate::handlers::spawn_audit_log(
+                state.engine_db.clone(),
+                user.username,
+                "update_wechat_alert_config",
+                Some("security"),
+                Some("wechat_alert_config".to_string()),
+                None,
+            );
+            ApiResponse::ok(serde_json::json!({ "saved": true })).into_response()
+        }
         Err(e) => {
             ApiResponse::<serde_json::Value>::server_error(&e, "Operation failed").into_response()
         }
@@ -556,7 +576,7 @@ pub async fn test_wechat_alert(
             }
         };
 
-    if (config.webhook_url.contains("...") || config.webhook_url == "****" || config.webhook_url.is_empty())
+    if is_masked_secret_placeholder(&config.webhook_url)
         && let Ok(Some(existing_json)) = state.engine_db.get_wechat_alert_config().await
         && let Ok(existing) =
             serde_json::from_str::<vigilyx_engine::config::WechatAlertConfig>(&existing_json)
@@ -609,6 +629,113 @@ fn mask_wechat_webhook_url(value: &mut serde_json::Value) {
         obj.insert(
             "webhook_url_set".to_string(),
             serde_json::json!(has_webhook),
+        );
+    }
+}
+
+fn restore_existing_secret(
+    body: &mut serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    existing: &serde_json::Value,
+) {
+    let should_restore = match body.get(field) {
+        None => true,
+        Some(value) => value
+            .as_str()
+            .is_some_and(is_masked_secret_placeholder),
+    };
+
+    if should_restore
+        && let Some(real_value) = existing.get(field)
+    {
+        body.insert(field.to_string(), real_value.clone());
+    }
+}
+
+fn normalize_empty_optional_secret_field(
+    body: &mut serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) {
+    if body.get(field).and_then(|value| value.as_str()) == Some("") {
+        body.insert(field.to_string(), serde_json::Value::Null);
+    }
+}
+
+fn is_masked_secret_placeholder(value: &str) -> bool {
+    value.contains("...") || value == "****"
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{
+        is_masked_secret_placeholder, normalize_empty_optional_secret_field,
+        restore_existing_secret,
+    };
+
+    #[test]
+    fn restores_missing_ai_key_from_existing_config() {
+        let mut incoming = serde_json::Map::new();
+        let existing = json!({
+            "api_key": "ENC:stored-secret"
+        });
+
+        restore_existing_secret(&mut incoming, "api_key", &existing);
+
+        assert_eq!(incoming.get("api_key"), Some(&json!("ENC:stored-secret")));
+    }
+
+    #[test]
+    fn restores_masked_ai_key_from_existing_config() {
+        let mut incoming = serde_json::Map::from_iter([(
+            "api_key".to_string(),
+            json!("****...abcd"),
+        )]);
+        let existing = json!({
+            "api_key": "ENC:stored-secret"
+        });
+
+        restore_existing_secret(&mut incoming, "api_key", &existing);
+
+        assert_eq!(incoming.get("api_key"), Some(&json!("ENC:stored-secret")));
+    }
+
+    #[test]
+    fn keeps_explicit_empty_ai_key_to_allow_clearing() {
+        let mut incoming = serde_json::Map::from_iter([(
+            "api_key".to_string(),
+            json!(""),
+        )]);
+        let existing = json!({
+            "api_key": "ENC:stored-secret"
+        });
+
+        restore_existing_secret(&mut incoming, "api_key", &existing);
+
+        assert_eq!(incoming.get("api_key"), Some(&json!("")));
+    }
+
+    #[test]
+    fn placeholder_detection_does_not_treat_empty_string_as_keep() {
+        assert!(is_masked_secret_placeholder("****"));
+        assert!(is_masked_secret_placeholder("****...abcd"));
+        assert!(!is_masked_secret_placeholder(""));
+        assert!(!is_masked_secret_placeholder("real-secret"));
+    }
+
+    #[test]
+    fn normalizes_empty_optional_secret_to_null() {
+        let mut incoming = serde_json::Map::from_iter([(
+            "virustotal_api_key".to_string(),
+            json!(""),
+        )]);
+
+        normalize_empty_optional_secret_field(&mut incoming, "virustotal_api_key");
+
+        assert_eq!(
+            incoming.get("virustotal_api_key"),
+            Some(&serde_json::Value::Null)
         );
     }
 }
@@ -683,6 +810,7 @@ pub struct AddIntelCleanRequest {
 
 pub async fn add_intel_clean(
     State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
     Json(req): Json<AddIntelCleanRequest>,
 ) -> axum::response::Response {
     let ioc_type = req.ioc_type.trim().to_lowercase();
@@ -700,6 +828,14 @@ pub async fn add_intel_clean(
     {
         Ok(ioc) => {
             publish_engine_reload(&state, "ioc").await;
+            crate::handlers::spawn_audit_log(
+                state.engine_db.clone(),
+                user.username,
+                "add_intel_clean",
+                Some("security"),
+                Some(ioc.id.to_string()),
+                None,
+            );
             ApiResponse::ok(serde_json::to_value(ioc).unwrap_or_default()).into_response()
         }
         Err(e) => {
@@ -711,6 +847,7 @@ pub async fn add_intel_clean(
 /// Delete (Security)
 pub async fn delete_intel_whitelist(
     State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
     Path(id): Path<String>,
 ) -> axum::response::Response {
     let ioc_id = match Uuid::parse_str(&id) {
@@ -723,6 +860,14 @@ pub async fn delete_intel_whitelist(
     match state.engine_db.delete_ioc(ioc_id).await {
         Ok(true) => {
             publish_engine_reload(&state, "ioc").await;
+            crate::handlers::spawn_audit_log(
+                state.engine_db.clone(),
+                user.username,
+                "delete_intel_clean",
+                Some("security"),
+                Some(id),
+                None,
+            );
             ApiResponse::ok(serde_json::json!({"deleted": true})).into_response()
         }
         Ok(false) => {
@@ -763,14 +908,14 @@ pub async fn get_intel_config(State(state): State<Arc<AppState>>) -> impl IntoRe
 /// New SourceConfiguration
 pub async fn update_intel_config(
     State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
     Json(mut body): Json<serde_json::Value>,
 ) -> axum::response::Response {
-   // Such as desensitize key, Data value
+   // Missing or masked values keep stored API keys; explicit null/empty clears them.
     if let Some(obj) = body.as_object_mut() {
-        
         obj.remove("abuseipdb_api_key_set");
+        obj.remove("virustotal_api_key_set");
 
-       // getfound Configuration key
         let existing: Option<serde_json::Value> =
             if let Ok(Some(json)) = state.engine_db.get_config("intel_sources").await {
                 serde_json::from_str(&json).ok()
@@ -779,16 +924,10 @@ pub async fn update_intel_config(
             };
 
         for key_field in &["abuseipdb_api_key", "virustotal_api_key"] {
-            if let Some(val) = obj.get(*key_field).and_then(|k| k.as_str())
-                && (val.contains("...") || val == "****" || val.is_empty())
-            {
-               // desensitizevalue -> value
-                if let Some(ref existing) = existing
-                    && let Some(real_key) = existing.get(*key_field)
-                {
-                    obj.insert(key_field.to_string(), real_key.clone());
-                }
+            if let Some(ref existing) = existing {
+                restore_existing_secret(obj, key_field, existing);
             }
+            normalize_empty_optional_secret_field(obj, key_field);
         }
     }
 
@@ -863,11 +1002,21 @@ pub async fn update_intel_config(
         }
     };
     match state.engine_db.set_config("intel_sources", &json_str).await {
-        Ok(()) => ApiResponse::ok(serde_json::json!({
-            "saved": true,
-            "note": "Intel configuration saved. Takes effect after engine restart.",
-        }))
-        .into_response(),
+        Ok(()) => {
+            crate::handlers::spawn_audit_log(
+                state.engine_db.clone(),
+                user.username,
+                "update_intel_config",
+                Some("security"),
+                Some("intel_sources".to_string()),
+                None,
+            );
+            ApiResponse::ok(serde_json::json!({
+                "saved": true,
+                "note": "Intel configuration saved. Takes effect after engine restart.",
+            }))
+            .into_response()
+        }
         Err(e) => {
             ApiResponse::<serde_json::Value>::server_error(&e, "Operation failed").into_response()
         }

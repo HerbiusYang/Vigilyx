@@ -2,7 +2,7 @@ use super::*;
 use std::sync::Arc;
 
 use crate::context::SecurityContext;
-use crate::module::SecurityModule;
+use crate::module::{SecurityModule, ThreatLevel};
 use vigilyx_core::models::{EmailContent, EmailLink, EmailSession, Protocol};
 
 #[test]
@@ -30,11 +30,9 @@ fn system_seed_keywords_are_normalized_out_of_user_added() {
     let builtin_phishing = builtin["phishing_keywords"]
         .as_array()
         .expect("builtin phishing keyword array");
-    assert!(
-        builtin_phishing
-            .iter()
-            .any(|value| value.as_str() == Some("account suspended"))
-    );
+    assert!(builtin_phishing
+        .iter()
+        .any(|value| value.as_str() == Some("account suspended")));
 }
 
 #[test]
@@ -69,11 +67,9 @@ fn seeded_keywords_can_still_be_removed_as_user_delta() {
     let effective_bec = effective["bec_phrases"]
         .as_array()
         .expect("effective bec phrase array");
-    assert!(
-        !effective_bec
-            .iter()
-            .any(|value| value.as_str() == Some("same day wire"))
-    );
+    assert!(!effective_bec
+        .iter()
+        .any(|value| value.as_str() == Some("same day wire")));
 }
 
 #[test]
@@ -170,7 +166,10 @@ fn collect_gateway_prior_hits_uses_configured_patterns() {
         "该邮件可能存在恶意内容，请谨慎甄别邮件。如有疑问请联系管理员。",
         &["该邮件可能存在恶意内容，请谨慎甄别邮件".to_string()],
     );
-    assert_eq!(hits, vec!["该邮件可能存在恶意内容，请谨慎甄别邮件".to_string()]);
+    assert_eq!(
+        hits,
+        vec!["该邮件可能存在恶意内容，请谨慎甄别邮件".to_string()]
+    );
 }
 
 #[test]
@@ -236,18 +235,44 @@ fn make_ctx(
     SecurityContext::new(Arc::new(session))
 }
 
+fn make_ctx_with_subject_and_body(
+    subject: &str,
+    body_text: Option<&str>,
+    body_html: Option<&str>,
+    links: Vec<EmailLink>,
+    mail_from: Option<&str>,
+) -> SecurityContext {
+    let mut session = EmailSession::new(
+        Protocol::Smtp,
+        "10.0.0.1".to_string(),
+        2525,
+        "10.0.0.2".to_string(),
+        25,
+    );
+    session.subject = Some(subject.to_string());
+    session.mail_from = mail_from.map(str::to_string);
+    session.rcpt_to.push("victim@example.com".to_string());
+    session.content = EmailContent {
+        body_text: body_text.map(str::to_string),
+        body_html: body_html.map(str::to_string),
+        links,
+        ..Default::default()
+    };
+    SecurityContext::new(Arc::new(session))
+}
+
 #[test]
 fn embedded_business_card_layout_is_not_marked_as_image_only_phishing() {
     let module = ContentScanModule::new();
     let ctx = make_ctx(
-        Some("弦上沽酒\n347831865@qq.com"),
+        Some("测试联系人\ntest.contact@example.test"),
         Some(
-            r#"<div><a class="xm_write_card" href="https://wx.mail.qq.com/home/index?t=readmail_businesscard_midpage&mail=347831865%40qq.com&code=abc"><img src="http://thirdqq.qlogo.cn/qq_product/AQWJ/example.jpg" />弦上沽酒 347831865@qq.com</a></div>"#,
+            r#"<div><a class="xm_write_card" href="https://wx.mail.qq.com/home/index?t=readmail_businesscard_midpage&mail=test.contact%40example.test&code=test-card"><img src="http://thirdqq.qlogo.cn/qq_product/AQWJ/example.jpg" />测试联系人 test.contact@example.test</a></div>"#,
         ),
         vec![
             EmailLink {
-                url: "https://wx.mail.qq.com/home/index?t=readmail_businesscard_midpage&mail=347831865%40qq.com&code=abc".to_string(),
-                text: Some("弦上沽酒 347831865@qq.com".to_string()),
+                url: "https://wx.mail.qq.com/home/index?t=readmail_businesscard_midpage&mail=test.contact%40example.test&code=test-card".to_string(),
+                text: Some("测试联系人 test.contact@example.test".to_string()),
                 suspicious: false,
             },
             EmailLink {
@@ -256,13 +281,15 @@ fn embedded_business_card_layout_is_not_marked_as_image_only_phishing() {
                 suspicious: false,
             },
         ],
-        Some("347831865@qq.com"),
+        Some("test.contact@example.test"),
     );
 
     let result = analyze_with_runtime(&module, &ctx);
 
     assert!(
-        !result.categories.contains(&"image_only_phishing".to_string()),
+        !result
+            .categories
+            .contains(&"image_only_phishing".to_string()),
         "contact-card layouts should not be classified as image-only phishing: {:?}",
         result.categories
     );
@@ -287,8 +314,298 @@ fn real_short_text_image_lure_still_triggers_image_only_phishing() {
     let result = analyze_with_runtime(&module, &ctx);
 
     assert!(
-        result.categories.contains(&"image_only_phishing".to_string()),
+        result
+            .categories
+            .contains(&"image_only_phishing".to_string()),
         "true short-text image lures should still be flagged: {:?}",
+        result.categories
+    );
+}
+
+#[test]
+fn wps_share_notice_is_not_marked_as_image_only_phishing() {
+    let module = ContentScanModule::new();
+    let ctx = make_ctx_with_subject_and_body(
+        "分享给你 'dzfp_test_invoice_示例商贸有限公司_20260416160403.pdf'，来自WPS Office",
+        Some("请查收"),
+        Some(
+            r#"<html><body><a href="https://wx.mail.qq.com/info/get_mailhead_icon?key=TESTWPSICONKEY123&amp;r=2085971486"><img src="https://wx.mail.qq.com/info/get_mailhead_icon?key=TESTWPSICONKEY123&amp;r=2085971486" /></a></body></html>"#,
+        ),
+        vec![EmailLink {
+            url: "https://wx.mail.qq.com/info/get_mailhead_icon?key=TESTWPSICONKEY123&r=2085971486".to_string(),
+            text: None,
+            suspicious: false,
+        }],
+        Some("wps_share_test@qq.com"),
+    );
+
+    let result = analyze_with_runtime(&module, &ctx);
+
+    assert!(
+        !result.categories.contains(&"image_only_phishing".to_string()),
+        "WPS share notices sent from public mailboxes should not be treated as image-only phishing: {:?}",
+        result.categories
+    );
+}
+
+// ─── P2-3: phone_in_subject chat export skip regression tests ───
+
+fn make_ctx_with_subject(
+    subject: &str,
+    body_text: Option<&str>,
+    mail_from: Option<&str>,
+) -> SecurityContext {
+    let mut session = EmailSession::new(
+        Protocol::Smtp,
+        "10.0.0.1".to_string(),
+        2525,
+        "10.0.0.2".to_string(),
+        25,
+    );
+    session.subject = Some(subject.to_string());
+    session.mail_from = mail_from.map(str::to_string);
+    session.rcpt_to.push("victim@example.com".to_string());
+    session.content = EmailContent {
+        body_text: body_text.map(str::to_string),
+        ..Default::default()
+    };
+    SecurityContext::new(Arc::new(session))
+}
+
+#[test]
+fn phone_in_subject_skipped_for_chat_record_export() {
+    // P2-3: WeChat chat record forwarding subjects naturally contain phone numbers
+    // e.g. "13800138000和李四的聊天记录" — should NOT trigger phone_in_subject
+    let module = ContentScanModule::new();
+    let ctx = make_ctx_with_subject(
+        "13800138000和李四的聊天记录",
+        Some("这是一段聊天记录的内容。"),
+        Some("sender@example.com"),
+    );
+
+    let result = analyze_with_runtime(&module, &ctx);
+
+    assert!(
+        !result.categories.contains(&"phone_in_subject".to_string()),
+        "Chat record export subject should not trigger phone_in_subject, got categories={:?}",
+        result.categories
+    );
+}
+
+#[test]
+fn phone_in_subject_skipped_for_group_chat_export() {
+    let module = ContentScanModule::new();
+    let ctx = make_ctx_with_subject(
+        "项目群聊 13600136000",
+        Some("群聊内容。"),
+        Some("sender@example.com"),
+    );
+
+    let result = analyze_with_runtime(&module, &ctx);
+
+    assert!(
+        !result.categories.contains(&"phone_in_subject".to_string()),
+        "Group chat subject should not trigger phone_in_subject, got categories={:?}",
+        result.categories
+    );
+}
+
+#[test]
+fn phone_in_subject_still_triggers_for_suspicious_email() {
+    // A subject with a phone number but NOT a chat export should still trigger
+    let module = ContentScanModule::new();
+    let ctx = make_ctx_with_subject(
+        "紧急通知 13800138000 请回电",
+        Some("尊敬的客户，您的账户有异常。"),
+        Some("notify@unknown-domain.xyz"),
+    );
+
+    let result = analyze_with_runtime(&module, &ctx);
+
+    assert!(
+        result.categories.contains(&"phone_in_subject".to_string()),
+        "Non-chat subject with phone number should trigger phone_in_subject, got categories={:?}",
+        result.categories
+    );
+}
+
+#[test]
+fn verification_code_notice_is_not_marked_as_phishing() {
+    let module = ContentScanModule::new();
+    let ctx = make_ctx_with_subject_and_body(
+        "邮箱验证码(Email Verification Code)",
+        Some("您的验证码为 123456，5 分钟内有效。"),
+        None,
+        vec![],
+        Some("noreply@notice.example.com"),
+    );
+
+    let result = analyze_with_runtime(&module, &ctx);
+
+    assert_eq!(result.threat_level, ThreatLevel::Safe);
+    assert!(
+        !result.categories.contains(&"phishing_subject".to_string()),
+        "verification-code subjects should not trigger phishing_subject: {:?}",
+        result.categories
+    );
+    assert!(
+        !result.categories.contains(&"phishing".to_string()),
+        "verification-code bodies should not trigger phishing: {:?}",
+        result.categories
+    );
+}
+
+#[test]
+fn verification_code_lure_with_untrusted_link_still_flags() {
+    let module = ContentScanModule::new();
+    let ctx = make_ctx_with_subject_and_body(
+        "Email Verification Code - account suspended",
+        Some(
+            "Your verification code is 123456. Your account will be suspended unless you verify your account immediately.",
+        ),
+        None,
+        vec![EmailLink {
+            url: "https://evil.example/verify".to_string(),
+            text: Some("Verify now".to_string()),
+            suspicious: false,
+        }],
+        Some("noreply@example.com"),
+    );
+
+    let result = analyze_with_runtime(&module, &ctx);
+
+    assert!(
+        result.categories.contains(&"phishing_subject".to_string())
+            || result.categories.contains(&"phishing".to_string())
+            || result
+                .categories
+                .contains(&"account_security_phishing".to_string()),
+        "verification-code lures with untrusted links must still be flagged: {:?}",
+        result.categories
+    );
+}
+
+#[test]
+fn subsidy_subject_variant_without_body_still_flags() {
+    let module = ContentScanModule::new();
+    let ctx = make_ctx_with_subject_and_body(
+        "[注意风险邮件]2026年入职综合补贴申请通知！",
+        None,
+        None,
+        vec![],
+        Some("service@cdsnkj.com.cn"),
+    );
+
+    let result = analyze_with_runtime(&module, &ctx);
+
+    assert!(
+        result.categories.contains(&"subsidy_fraud".to_string()),
+        "subsidy scam subject variants should trigger subsidy_fraud even when body is empty: {:?}",
+        result.categories
+    );
+}
+
+#[test]
+fn japanese_icloud_billing_subject_triggers_account_security_detection() {
+    let module = ContentScanModule::new();
+    let ctx = make_ctx_with_subject_and_body(
+        "[注意风险邮件]<iCloud+ 支払い情報異常のご通知 >",
+        Some("お支払い方法を更新してください。確認はこちら。"),
+        None,
+        vec![EmailLink {
+            url: "https://github-jp.homes/account/update".to_string(),
+            text: Some("お支払い方法を更新".to_string()),
+            suspicious: false,
+        }],
+        Some("feww.applestore.updateservice.mailmaky@ana.co.jp"),
+    );
+
+    let result = analyze_with_runtime(&module, &ctx);
+
+    assert!(
+        result
+            .categories
+            .contains(&"account_security_phishing".to_string()),
+        "Japanese iCloud billing lures should trigger account_security_phishing: {:?}",
+        result.categories
+    );
+    assert!(
+        result.threat_level >= ThreatLevel::Medium,
+        "Japanese iCloud billing lures should not remain Safe/Low: {:?}",
+        result.threat_level
+    );
+}
+
+#[test]
+fn invoice_spam_with_qq_and_wechat_contact_is_detected() {
+    let module = ContentScanModule::new();
+    let ctx = make_ctx_with_subject_and_body(
+        "[注意风险邮件]开增值税普票加Q:3826878185陈姐 +薇yygx778",
+        Some("开电子普票加Q-3826878185陈姐 +薇yygx778"),
+        None,
+        vec![],
+        Some("fieifltq@crjj.com"),
+    );
+
+    let result = analyze_with_runtime(&module, &ctx);
+
+    assert!(
+        result.categories.contains(&"invoice_spam".to_string()),
+        "invoice spam solicitations should trigger invoice_spam: {:?}",
+        result.categories
+    );
+    assert!(
+        result.threat_level >= ThreatLevel::Medium,
+        "invoice spam solicitations should not remain Safe/Low: {:?}",
+        result.threat_level
+    );
+}
+
+#[test]
+fn obfuscated_invoice_spam_with_separators_is_still_detected() {
+    let module = ContentScanModule::new();
+    let ctx = make_ctx_with_subject_and_body(
+        "[注意风险邮件]21:12\"正▎规▎税 票\"(“扣扣-3826878185陈姐) +薇yygx778",
+        Some("正 规 税 票，扣扣3826878185，陈姐，+薇yygx778"),
+        None,
+        vec![],
+        Some("vyoyysq@lnlpfrcpd.com"),
+    );
+
+    let result = analyze_with_runtime(&module, &ctx);
+
+    assert!(
+        result.categories.contains(&"invoice_spam".to_string()),
+        "invoice spam with separator obfuscation should still trigger invoice_spam: {:?}",
+        result.categories
+    );
+    assert!(
+        result.threat_level >= ThreatLevel::Medium,
+        "invoice spam with separator obfuscation should not remain Safe/Low: {:?}",
+        result.threat_level
+    );
+}
+
+#[test]
+fn legitimate_bank_invoice_notice_is_not_invoice_spam() {
+    let module = ContentScanModule::new();
+    let ctx = make_ctx_with_subject_and_body(
+        "示例银行电子发票",
+        Some("尊敬的用户您好，您在我行申请的电子发票已开具成功，请点此链接进行下载。"),
+        None,
+        vec![EmailLink {
+            url: "https://billing.example-bank.test/invoice/download?invoice=test-2046757649382641664".to_string(),
+            text: Some("下载电子发票".to_string()),
+            suspicious: false,
+        }],
+        Some("billing@example-bank.test"),
+    );
+
+    let result = analyze_with_runtime(&module, &ctx);
+
+    assert!(
+        !result.categories.contains(&"invoice_spam".to_string()),
+        "legitimate bank invoice delivery should not trigger invoice_spam: {:?}",
         result.categories
     );
 }

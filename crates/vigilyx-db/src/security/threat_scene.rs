@@ -5,7 +5,8 @@ use chrono::{Duration, Utc};
 use uuid::Uuid;
 
 use vigilyx_core::security::{
-    BounceHarvestConfig, BulkMailingConfig, SceneTypeStats, ThreatScene, ThreatSceneRule,
+    BounceHarvestConfig, BulkMailingConfig, InternalDomainImpersonationConfig,
+    SceneTypeStats, ThreatScene, ThreatSceneRule,
     ThreatSceneStats, ThreatSceneStatus, ThreatSceneType,
 };
 
@@ -33,6 +34,18 @@ pub struct BounceHarvestRow {
     pub target_domain: String,
     pub bounce_count: i64,
     pub unique_targets: i64,
+    pub window_start: String,
+    pub window_end: String,
+    pub sample_subjects: Vec<String>,
+    pub sample_recipients: Vec<String>,
+}
+
+/// Raw row from external sender aggregation (used by internal domain impersonation detection).
+#[derive(Debug)]
+pub struct ExternalSenderRow {
+    pub sender_domain: String,
+    pub email_count: i64,
+    pub unique_recipients: i64,
     pub window_start: String,
     pub window_end: String,
     pub sample_subjects: Vec<String>,
@@ -267,11 +280,13 @@ impl VigilDb {
 
         let mut bulk = SceneTypeStats::default();
         let mut bounce = SceneTypeStats::default();
+        let mut impersonation = SceneTypeStats::default();
 
         for (scene_type, status, cnt) in &rows {
             let target = match scene_type.as_str() {
                 "bulk_mailing" => &mut bulk,
                 "bounce_harvest" => &mut bounce,
+                "internal_domain_impersonation" => &mut impersonation,
                 _ => continue,
             };
             match status.as_str() {
@@ -286,6 +301,7 @@ impl VigilDb {
             match scene_type.as_str() {
                 "bulk_mailing" => bulk.total_24h = *cnt,
                 "bounce_harvest" => bounce.total_24h = *cnt,
+                "internal_domain_impersonation" => impersonation.total_24h = *cnt,
                 _ => {}
             }
         }
@@ -293,6 +309,7 @@ impl VigilDb {
         Ok(ThreatSceneStats {
             bulk_mailing: bulk,
             bounce_harvest: bounce,
+            internal_domain_impersonation: impersonation,
         })
     }
 
@@ -570,6 +587,103 @@ impl VigilDb {
         Ok(results)
     }
 
+    /// Aggregate: find external sender domains with stats (for internal domain impersonation detection).
+    /// Returns ALL external sender domains that meet min_emails threshold.
+    /// Engine-side does the similarity comparison against internal domains.
+    ///
+    /// Aggregation is fully pushed down to PostgreSQL — only grouped results are
+    /// returned (typically <100 rows), avoiding the previous pattern of fetching
+    /// all sessions (potentially 100 k+) into application memory.
+    pub async fn query_external_sender_stats(
+        &self,
+        internal_domains: &[String],
+        config: &InternalDomainImpersonationConfig,
+    ) -> Result<Vec<ExternalSenderRow>> {
+        if internal_domains.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let cutoff = (Utc::now() - Duration::hours(config.time_window_hours)).to_rfc3339();
+
+        // Build the exclude list: internal domains + user-configured excludes.
+        // Passed as a single TEXT[] parameter to avoid dynamic SQL.
+        let mut exclude_list: Vec<String> = internal_domains.to_vec();
+        exclude_list.extend(config.exclude_domains.iter().cloned());
+
+        // All aggregation happens in SQL:
+        //  - CTE `base` filters sessions and excludes internal/configured domains
+        //  - CTE `expanded` unnests the rcpt_to JSON array for COUNT(DISTINCT recipient)
+        //  - Final SELECT groups by sender_domain, applies HAVING threshold, and
+        //    collects sample subjects/recipients via array_agg slicing.
+        //
+        // rcpt_to is a TEXT column storing a JSON array (e.g. '["a@x.com","b@y.com"]').
+        // We use rcpt_to::jsonb → jsonb_array_elements_text to unnest.
+        // Rows where rcpt_to is NULL or not valid JSON are handled with LEFT JOIN LATERAL
+        // so they still count toward email_count but contribute 0 unique recipients.
+        let rows = sqlx::query_as::<_, ExternalSenderAggRow>(
+            r#"
+            WITH base AS (
+                SELECT
+                    LOWER(sender_domain) AS sd,
+                    started_at,
+                    subject,
+                    rcpt_to
+                FROM sessions
+                WHERE started_at > $1
+                  AND protocol = 'Smtp'
+                  AND status = 'Completed'
+                  AND sender_domain IS NOT NULL
+                  AND LOWER(sender_domain) != ALL($2)
+            ),
+            expanded AS (
+                SELECT
+                    b.sd,
+                    b.started_at,
+                    b.subject,
+                    LOWER(r.addr) AS recipient
+                FROM base b
+                LEFT JOIN LATERAL
+                    jsonb_array_elements_text(b.rcpt_to::jsonb) AS r(addr) ON true
+            )
+            SELECT
+                sd                                                   AS sender_domain,
+                COUNT(DISTINCT started_at)::BIGINT                   AS email_count,
+                COUNT(DISTINCT recipient)::BIGINT                    AS unique_recipients,
+                MIN(started_at)                                      AS window_start,
+                MAX(started_at)                                      AS window_end,
+                (array_agg(DISTINCT subject) FILTER (WHERE subject IS NOT NULL AND subject != ''))[1:5]
+                                                                     AS sample_subjects,
+                (array_agg(DISTINCT recipient) FILTER (WHERE recipient IS NOT NULL))[1:10]
+                                                                     AS sample_recipients
+            FROM expanded
+            GROUP BY sd
+            HAVING COUNT(DISTINCT started_at) >= $3
+            ORDER BY COUNT(DISTINCT started_at) DESC
+            "#,
+        )
+        .bind(&cutoff)                          // $1: time window cutoff
+        .bind(&exclude_list)                    // $2: TEXT[] of excluded domains
+        .bind(config.min_emails)                // $3: BIGINT min_emails threshold
+        .fetch_all(&self.pool)
+        .await?;
+
+        // Map DB rows to ExternalSenderRow (field types already match).
+        let results = rows
+            .into_iter()
+            .map(|r| ExternalSenderRow {
+                sender_domain: r.sender_domain,
+                email_count: r.email_count,
+                unique_recipients: r.unique_recipients,
+                window_start: r.window_start,
+                window_end: r.window_end,
+                sample_subjects: r.sample_subjects.unwrap_or_default(),
+                sample_recipients: r.sample_recipients.unwrap_or_default(),
+            })
+            .collect();
+
+        Ok(results)
+    }
+
     /// Get emails related to a scene (same actor, within time window).
     pub async fn get_scene_emails(
         &self,
@@ -615,6 +729,25 @@ impl VigilDb {
                      ORDER BY s.started_at DESC
                      LIMIT $3",
                 )
+                .bind(&window_start)
+                .bind(&window_end)
+                .bind(limit)
+                .fetch_all(&self.pool)
+                .await?
+            }
+            ThreatSceneType::InternalDomainImpersonation => {
+                sqlx::query_as::<_, (String, Option<String>, Option<String>, Option<String>, String, Option<String>, Option<String>)>(
+                    "SELECT s.id, s.mail_from, s.rcpt_to, s.subject, s.started_at, s.client_ip,
+                            v.threat_level
+                     FROM sessions s
+                     LEFT JOIN security_verdicts v ON v.session_id = s.id
+                     WHERE s.sender_domain = $1
+                       AND s.started_at BETWEEN $2 AND $3
+                       AND s.protocol = 'Smtp'
+                     ORDER BY s.started_at DESC
+                     LIMIT $4",
+                )
+                .bind(&scene.actor)
                 .bind(&window_start)
                 .bind(&window_end)
                 .bind(limit)
@@ -725,4 +858,18 @@ impl SceneRuleRow {
                 .unwrap_or_else(|_| Utc::now()),
         }
     }
+}
+
+/// Internal sqlx row for the SQL-aggregated external sender stats query.
+#[derive(sqlx::FromRow)]
+struct ExternalSenderAggRow {
+    sender_domain: String,
+    email_count: i64,
+    unique_recipients: i64,
+    window_start: String,
+    window_end: String,
+    /// PostgreSQL `array_agg(...)[1:5]` returns `NULL` when no qualifying rows exist.
+    sample_subjects: Option<Vec<String>>,
+    /// PostgreSQL `array_agg(...)[1:10]` returns `NULL` when no qualifying rows exist.
+    sample_recipients: Option<Vec<String>>,
 }

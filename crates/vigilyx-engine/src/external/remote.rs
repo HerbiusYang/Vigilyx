@@ -138,8 +138,9 @@ impl RemoteModuleProxy {
         let internal_token = std::env::var("AI_INTERNAL_TOKEN").unwrap_or_default();
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
-            .unwrap_or_default();
+            .expect("AI remote client should build");
 
         Self {
             base_url,
@@ -192,7 +193,7 @@ impl RemoteModuleProxy {
                 let ready_url = format!("{}/health/ready", base_url);
                 let probe_timeout = Duration::from_secs(5);
 
-                let ok = match tokio::time::timeout(probe_timeout, async {
+                let ok: bool = tokio::time::timeout(probe_timeout, async {
                     let mut req = client.get(&ready_url);
                     if !internal_token.is_empty() {
                         req = req.header("X-Internal-Token", &internal_token);
@@ -212,10 +213,7 @@ impl RemoteModuleProxy {
                     }
                 })
                 .await
-                {
-                    Ok(result) => result,
-                    Err(_) => false, // probe timed out
-                };
+                .unwrap_or_default();
 
                 if ok {
                     availability

@@ -42,8 +42,9 @@ pub use disposition::{
     update_disposition_rule,
 };
 pub use pipeline::{
-    get_content_rules, get_keyword_overrides, get_modules_metadata, get_pipeline_config,
-    update_keyword_overrides, update_pipeline_config,
+    get_content_rules, get_keyword_overrides, get_module_data_overrides, get_modules_metadata,
+    get_pipeline_config, update_keyword_overrides, update_module_data_overrides,
+    update_pipeline_config,
 };
 pub use rescan::{rescan_session, trigger_rescan};
 pub use sniffer_config::{
@@ -67,10 +68,8 @@ use vigilyx_db::mq::topics;
 
 use crate::AppState;
 
-const ENGINE_STATUS_HEARTBEAT_PATHS: [&str; 2] =
-    ["data/engine-status.json", "/app/data/engine-status.json"];
-
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub(crate) struct EngineStatusSnapshot {
     pub snapshot: serde_json::Value,
     pub status: serde_json::Value,
@@ -84,7 +83,7 @@ pub(crate) struct EngineStatusSnapshot {
 /// Engine process New (IOC/ /Configuration)
 pub(in crate::handlers) async fn publish_engine_reload(state: &AppState, target: &str) {
     if let Some(ref mq) = state.messaging.mq
-        && let Err(e) = mq.publish(topics::ENGINE_CMD_RELOAD, &target).await
+        && let Err(e) = mq.publish_cmd(topics::ENGINE_CMD_RELOAD, &target).await
     {
         tracing::warn!("send Engine reload 指令failed: {}", e);
     }
@@ -93,7 +92,7 @@ pub(in crate::handlers) async fn publish_engine_reload(state: &AppState, target:
 /// Sniffer process Configuration
 pub(super) async fn publish_sniffer_reload(state: &AppState) {
     if let Some(ref mq) = state.messaging.mq
-        && let Err(e) = mq.publish(topics::SNIFFER_CMD_RELOAD, &"config").await
+        && let Err(e) = mq.publish_cmd(topics::SNIFFER_CMD_RELOAD, &"config").await
     {
         tracing::warn!("send Sniffer reload 指令failed: {}", e);
     }
@@ -177,7 +176,15 @@ pub(crate) async fn load_engine_status_snapshot(
             .get_json::<serde_json::Value>(vigilyx_db::mq::keys::ENGINE_HEARTBEAT)
             .await
     {
-        let wrapper = wrap_engine_status_snapshot(heartbeat);
+        // Guard: engine heartbeat already has { "updated_at": ..., "status": {...} }
+        // structure — don't double-wrap it (same guard as the Pub/Sub path in main.rs).
+        let wrapper = if heartbeat.get("updated_at").is_some()
+            && heartbeat.get("status").is_some()
+        {
+            heartbeat
+        } else {
+            wrap_engine_status_snapshot(heartbeat)
+        };
         if let Some(snapshot) = parse_engine_status_snapshot(wrapper.clone()) {
             *state.monitoring.engine_status.write().await = Some(wrapper);
             return Some(snapshot);
@@ -185,17 +192,8 @@ pub(crate) async fn load_engine_status_snapshot(
     }
 
     // 2. Fall back to in-memory cache (populated by Pub/Sub subscription)
-    let cached = {
-        let cached = state.monitoring.engine_status.read().await;
-        cached.clone().and_then(parse_engine_status_snapshot)
-    };
-
-    // 3. Fall back to file (legacy, will be removed in Phase 6)
-    let file = read_engine_status_snapshot().await;
-    let snapshot = newer_engine_status_snapshot(cached, file)?;
-
-    *state.monitoring.engine_status.write().await = Some(snapshot.snapshot.clone());
-    Some(snapshot)
+    let guard = state.monitoring.engine_status.read().await;
+    guard.clone().and_then(parse_engine_status_snapshot)
 }
 
 fn parse_engine_status_snapshot(value: serde_json::Value) -> Option<EngineStatusSnapshot> {
@@ -206,34 +204,6 @@ fn parse_engine_status_snapshot(value: serde_json::Value) -> Option<EngineStatus
         status,
         heartbeat_secs,
     })
-}
-
-fn newer_engine_status_snapshot(
-    cached: Option<EngineStatusSnapshot>,
-    file: Option<EngineStatusSnapshot>,
-) -> Option<EngineStatusSnapshot> {
-    match (cached, file) {
-        (Some(cached), Some(file)) if cached.heartbeat_secs <= file.heartbeat_secs => Some(cached),
-        (Some(_), Some(file)) => Some(file),
-        (Some(cached), None) => Some(cached),
-        (None, Some(file)) => Some(file),
-        (None, None) => None,
-    }
-}
-
-async fn read_engine_status_snapshot() -> Option<EngineStatusSnapshot> {
-    for path in ENGINE_STATUS_HEARTBEAT_PATHS {
-        let Ok(content) = tokio::fs::read_to_string(path).await else {
-            continue;
-        };
-        let Ok(snapshot) = serde_json::from_str::<serde_json::Value>(&content) else {
-            continue;
-        };
-        if let Some(snapshot) = parse_engine_status_snapshot(snapshot) {
-            return Some(snapshot);
-        }
-    }
-    None
 }
 
 /// API Key desensitize (AI Service configuration)
@@ -276,27 +246,5 @@ mod tests {
         let parsed = parse_engine_status_snapshot(snapshot).expect("snapshot should parse");
         assert_eq!(parsed.status["running"], true);
         assert!(parsed.heartbeat_secs <= 1);
-    }
-
-    #[test]
-    fn newer_engine_snapshot_prefers_fresher_payload() {
-        let older = json!({
-            "updated_at": "2026-04-06T01:00:00Z",
-            "status": {"running": true}
-        });
-        let newer = json!({
-            "updated_at": "2026-04-06T01:00:10Z",
-            "status": {"running": true}
-        });
-
-        let older = parse_engine_status_snapshot(older).expect("older snapshot");
-        let newer = parse_engine_status_snapshot(newer).expect("newer snapshot");
-
-        assert_eq!(
-            newer_engine_status_snapshot(Some(older), Some(newer.clone()))
-                .expect("newer snapshot should win")
-                .snapshot,
-            newer.snapshot
-        );
     }
 }

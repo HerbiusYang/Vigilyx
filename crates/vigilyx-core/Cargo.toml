@@ -17,6 +17,7 @@ url = "2"
 
 [dev-dependencies]
 proptest = "1.4"
+rand.workspace = true  # RUSTSEC-2026-0097: pin minimum safe version
 
 [lints]
 workspace = true

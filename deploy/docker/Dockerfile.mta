@@ -17,7 +17,7 @@
 #     vigilyx-mta:latest
 
 # -- Stage 1: cargo-chef - extract the dependency recipe --
-FROM rust:1.94.1-bookworm@sha256:6ae102bdbf528294bc79ad6e1fae682f6f7c2a6e6621506ba959f9685b308a55 AS chef
+FROM rust:1.95.0-bookworm AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /app
 

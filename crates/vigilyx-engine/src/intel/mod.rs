@@ -19,6 +19,7 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use crate::ioc::IocManager;
+use crate::modules::common::domain_matches_policy_set;
 use vigilyx_core::{
     DEFAULT_INTERNAL_SERVICE_HOSTS, security::IocEntry, validate_internal_service_url,
 };
@@ -72,24 +73,13 @@ impl IntelResult {
     }
 }
 
-/// Check whether `domain` appears in the safe-domain set (exact or suffix match).
+/// Check whether `domain` appears in the safe-domain set.
 ///
 /// The safe set is loaded from DB entries where source='system'|'admin_clean' and
-/// verdict='clean'. It can also be managed via the admin UI.
+/// verdict='clean'. Plain entries are exact-match only; `*.example.com` enables
+/// explicit subdomain trust. It can also be managed via the admin UI.
 fn is_domain_in_set(domain: &str, safe_set: &HashSet<String>) -> bool {
-    let lower = domain.to_lowercase();
-    if safe_set.contains(&lower) {
-        return true;
-    }
-    // Suffix match: sub.qq.com -> qq.com
-    let mut parts = lower.as_str();
-    while let Some(pos) = parts.find('.') {
-        parts = &parts[pos + 1..];
-        if safe_set.contains(parts) {
-            return true;
-        }
-    }
-    false
+    domain_matches_policy_set(domain, safe_set)
 }
 
 /// Reload the safe-domain cache into the given shared set (loaded from DB verdict='clean').
@@ -111,18 +101,15 @@ pub async fn reload_safe_domains_into(
 
 /// Classify OTX pulse count into a verdict and confidence.
 ///
-/// Legitimate high-traffic domains (e.g. CDNs) may accumulate many pulses, so
-/// the "malicious" threshold is set high (10+) to avoid false positives.
+/// OTX is treated as a weak intel source. High-profile legitimate domains can
+/// accumulate many public pulses, so OTX alone must never promote a domain to
+/// "malicious". Strong verdicts should come from higher-signal sources such as
+/// VT results, local IOC hits, or structural corroboration.
 fn classify_otx_pulses(pulse_count: u64) -> (&'static str, f64) {
-    if pulse_count >= 10 {
-        // Many pulses -> high-confidence malicious
-        ("malicious", 0.6 + (pulse_count as f64 * 0.01).min(0.3))
+    if pulse_count >= 25 {
+        ("suspicious", 0.45)
     } else if pulse_count >= 3 {
-        // Moderate pulses -> suspicious (downgraded from malicious to reduce FPs)
-        ("suspicious", 0.3 + (pulse_count as f64 * 0.05).min(0.3))
-    } else if pulse_count >= 1 {
-        // Few pulses -> low-confidence suspicious
-        ("suspicious", 0.2 + (pulse_count as f64 * 0.05).min(0.1))
+        ("suspicious", 0.28 + (pulse_count as f64 * 0.01).min(0.10))
     } else {
         ("clean", 0.8)
     }
@@ -295,14 +282,17 @@ impl IntelLayer {
        // SEC-H07: VT scrape request uses the AI-scoped internal token only
         let http_vt = {
             let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(25));
-            if allow_internal_vt_auth && let Ok(token) = std::env::var("AI_INTERNAL_TOKEN") {
-                let mut headers = reqwest::header::HeaderMap::new();
-                if let Ok(v) = token.parse() {
-                    headers.insert("X-Internal-Token", v);
+            if allow_internal_vt_auth {
+                builder = builder.redirect(reqwest::redirect::Policy::none());
+                if let Ok(token) = std::env::var("AI_INTERNAL_TOKEN") {
+                    let mut headers = reqwest::header::HeaderMap::new();
+                    if let Ok(v) = token.parse() {
+                        headers.insert("X-Internal-Token", v);
+                    }
+                    builder = builder.default_headers(headers);
                 }
-                builder = builder.default_headers(headers);
             }
-            builder.build().unwrap_or_default()
+            builder.build().expect("VT scrape client should build")
         };
 
         let rate_limiter = Arc::new(Mutex::new(RateLimiterState {
@@ -896,12 +886,12 @@ mod tests {
     }
 
     #[test]
-    fn test_otx_pulses_1_is_suspicious_low_confidence() {
+    fn test_otx_pulses_1_is_clean_noise() {
         let (verdict, confidence) = classify_otx_pulses(1);
-        assert_eq!(verdict, "suspicious");
+        assert_eq!(verdict, "clean");
         assert!(
-            confidence < 0.4,
-            "1 pulse should have low confidence: {}",
+            confidence >= 0.8,
+            "single-pulse OTX noise should be treated as clean: {}",
             confidence
         );
     }
@@ -923,30 +913,29 @@ mod tests {
     }
 
     #[test]
-    fn test_otx_pulses_10_is_malicious() {
+    fn test_otx_pulses_10_is_still_suspicious() {
         let (verdict, _) = classify_otx_pulses(10);
-        assert_eq!(verdict, "malicious");
+        assert_eq!(verdict, "suspicious");
     }
 
     #[test]
-    fn test_otx_pulses_50_malicious_confidence_capped() {
-        // 50 pulses (e.g. adnxs.com-like scenario) -> malicious, but confidence is capped
+    fn test_otx_pulses_50_stays_suspicious() {
         let (verdict, confidence) = classify_otx_pulses(50);
-        assert_eq!(verdict, "malicious");
+        assert_eq!(verdict, "suspicious");
         assert!(
-            confidence <= 0.9,
-            "Confidence should be capped: {}",
+            confidence <= 0.45,
+            "OTX confidence should remain capped as a weak signal: {}",
             confidence
         );
         assert!(
-            confidence >= 0.6,
-            "Confidence should be at least 0.6: {}",
+            confidence >= 0.4,
+            "High-pulse OTX hits should still remain only moderately confident: {}",
             confidence
         );
     }
 
     // ================================================================
-    // Safe-domain set tests (is_domain_in_set - exact + suffix match)
+    // Safe-domain set tests (exact + explicit wildcard only)
     // ================================================================
 
     fn build_test_safe_set() -> HashSet<String> {
@@ -954,9 +943,10 @@ mod tests {
             "qq.com",
             "163.com",
             "partner.example.com",
-            "partner.example.cn",
+            "*.partner.example.cn",
             "gmail.com",
             "127.net",
+            "*.127.net",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -979,10 +969,10 @@ mod tests {
     fn test_safe_domain_subdomain_match() {
         let set = build_test_safe_set();
         assert!(is_domain_in_set("rep.partner.example.cn", &set));
-        assert!(is_domain_in_set("mail.qq.com", &set));
-        assert!(is_domain_in_set("smtp.163.com", &set));
         assert!(is_domain_in_set("127.net", &set));
         assert!(is_domain_in_set("mail-online.nosdn.127.net", &set));
+        assert!(!is_domain_in_set("mail.qq.com", &set));
+        assert!(!is_domain_in_set("smtp.163.com", &set));
         // Parent domain not in set, so subdomain also not matched
         assert!(!is_domain_in_set("oss-cn-hangzhou.aliyuncs.com", &set));
     }

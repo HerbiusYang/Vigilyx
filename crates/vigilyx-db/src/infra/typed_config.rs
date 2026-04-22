@@ -14,6 +14,18 @@ use anyhow::Result;
 
 use crate::VigilDb;
 
+/// Whitelist of allowed config table names for SQL interpolation (defense-in-depth).
+const ALLOWED_TABLES: &[&str] = &[
+    "config_security_pipeline",
+    "config_ai_service",
+    "config_email_alert",
+    "config_sniffer",
+    "config_syslog",
+    "config_time_policy",
+    "config_deployment",
+    "config_internal_domains",
+];
+
 /// Result of reading a typed config: the config value and its version.
 #[derive(Debug, Clone)]
 pub struct VersionedConfig<T> {
@@ -26,6 +38,7 @@ impl VigilDb {
     ///
     /// Returns `None` if the singleton row does not exist.
     async fn get_typed_config_raw(&self, table: &str) -> Result<Option<(serde_json::Value, i64)>> {
+        assert!(ALLOWED_TABLES.contains(&table), "Invalid config table name: {table}");
         let sql = format!("SELECT config, version FROM {table} WHERE id = 1");
         let row: Option<(serde_json::Value, i64)> =
             sqlx::query_as(&sql).fetch_optional(&self.pool).await?;
@@ -41,6 +54,7 @@ impl VigilDb {
         table: &str,
         config: &serde_json::Value,
     ) -> Result<i64> {
+        assert!(ALLOWED_TABLES.contains(&table), "Invalid config table name: {table}");
         let sql = format!(
             r#"
             INSERT INTO {table} (id, version, config, updated_at)

@@ -1,18 +1,26 @@
-export type TopicId = 'mta' | 'opportunistic-tls' | 'mandatory-tls' | 'starttls' | 'spf-dkim-dmarc' | 'ds-fusion' | 'temporal-evt' | 'module-pipeline' | 'phishing-detection' | 'ioc-intel' | 'ai-nlp' | 'soar-alerts' | 'data-security' | 'bec-attack' | 'social-engineering' | 'attachment-weaponization' | 'link-obfuscation'
+import { englishTopics } from './knowledgeEnglish'
+
+export type TopicId = 'mta' | 'opportunistic-tls' | 'mandatory-tls' | 'starttls' | 'spf-dkim-dmarc' | 'ds-fusion' | 'temporal-evt' | 'module-pipeline' | 'phishing-detection' | 'ioc-intel' | 'ai-nlp' | 'soar-alerts' | 'data-security' | 'mirror-vs-mta' | 'message-bus' | 'mta-quarantine' | 'bec-attack' | 'social-engineering' | 'attachment-weaponization' | 'link-obfuscation'
 
 export interface TopicSection {
   heading: string
   plainText: string
+  headingEn?: string
+  plainTextEn?: string
 }
 
-export type CategoryFilter = '全部' | '邮件安全知识' | '通用知识' | '平台相关'
+export type CategoryFilter = 'all' | 'email-security' | 'general' | 'platform'
 
 export interface TopicEntry {
   id: TopicId
   title: string
+  titleEn?: string
   subtitle: string
+  subtitleEn?: string
   lead: string
+  leadEn?: string
   tag: string
+  tagEn?: string
   tagClass: string
   iconType: 'mail' | 'lock-open' | 'lock-closed' | 'code' | 'shield' | 'analytics'
   category: CategoryFilter
@@ -23,15 +31,18 @@ export interface TopicEntry {
   referenceUrl?: string
 }
 
-export const categoryFilters: CategoryFilter[] = ['全部', '邮件安全知识', '通用知识', '平台相关']
+export const categoryFilters: CategoryFilter[] = ['all', 'email-security', 'general', 'platform']
 
 function buildSearchableText(entry: Omit<TopicEntry, 'searchableText' | 'readingTime'>): string {
   const parts = [
     entry.title,
+    entry.titleEn || '',
     entry.subtitle,
+    entry.subtitleEn || '',
     entry.lead,
+    entry.leadEn || '',
     ...entry.keywords,
-    ...entry.sections.flatMap(s => [s.heading, s.plainText]),
+    ...entry.sections.flatMap(s => [s.heading, s.headingEn || '', s.plainText, s.plainTextEn || '']),
   ]
   return parts.join(' ').toLowerCase()
 }
@@ -51,7 +62,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     tagClass: 'sk-tag-blue',
     referenceUrl: 'https://en.wikipedia.org/wiki/Message_transfer_agent',
     iconType: 'mail',
-    category: '通用知识',
+    category: 'general',
     keywords: ['MTA', 'Mail Transfer Agent', 'Postfix', 'Sendmail', 'Exim', 'Exchange', 'Coremail', 'SMTP', 'MUA', 'MDA', 'MSA', 'Mail User Agent', 'Mail Delivery Agent', 'Mail Submission Agent', '邮件传输代理', '邮件投递'],
     sections: [
       {
@@ -64,7 +75,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
       },
       {
         heading: 'MTA 与 Vigilyx 的关系',
-        plainText: 'Vigilyx 通过镜像抓包捕获 MTA 之间的 SMTP 通信。当邮件在中继链路上传递时，每一跳都会产生一个独立的 session。MTA Mail Transfer Agent 服务器间转发邮件 SMTP。MUA Mail User Agent 用户的邮件客户端 Outlook Thunderbird。MDA Mail Delivery Agent 将邮件投递到用户邮箱 dovecot。MSA Mail Submission Agent 接收用户提交的邮件 端口 587',
+        plainText: 'Vigilyx 支持两种邮件流量接入方式。旁路镜像模式通过抓包观察 MTA 之间的 SMTP 会话，适合事后审计与告警；MTA 代理模式则直接作为 SMTP 中继接收邮件，在投递前完成解析 判定与可选隔离或拦截。两种模式共享同一套解析器与检测引擎，只是介入时机不同。MTA Mail Transfer Agent 负责服务器间转发邮件。MUA Mail User Agent 是 Outlook Thunderbird 等用户客户端。MDA Mail Delivery Agent 负责本地投递。MSA Mail Submission Agent 接收用户提交邮件，常见端口为 587。',
       },
     ],
   },
@@ -76,7 +87,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     tag: '加密',
     tagClass: 'sk-tag-amber',
     iconType: 'lock-open',
-    category: '邮件安全知识',
+    category: 'email-security',
     keywords: ['Opportunistic TLS', 'STARTTLS', 'TLS', 'encryption', '加密', 'STRIPTLS', '降级攻击', 'downgrade attack', 'EHLO', '机会性加密', '明文', 'plaintext'],
     sections: [
       {
@@ -105,7 +116,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     tag: '加密',
     tagClass: 'sk-tag-green',
     iconType: 'lock-closed',
-    category: '邮件安全知识',
+    category: 'email-security',
     keywords: ['Mandatory TLS', 'MTA-STS', 'DANE', 'DNSSEC', 'TLSA', 'RFC 8461', 'RFC 7672', '强制加密', 'enforce', 'TLS Policy', 'Postfix', 'certificate', '证书'],
     sections: [
       {
@@ -130,7 +141,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     tag: '协议',
     tagClass: 'sk-tag-purple',
     iconType: 'code',
-    category: '邮件安全知识',
+    category: 'email-security',
     keywords: ['STARTTLS', 'SMTP', 'EHLO', 'TLS handshake', 'implicit TLS', '显式 TLS', '隐式 TLS', 'port 25', 'port 465', 'port 587', '协议升级', 'protocol upgrade', 'Postfix', 'ESMTP'],
     sections: [
       {
@@ -151,7 +162,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     tag: '认证',
     tagClass: 'sk-tag-cyan',
     iconType: 'shield',
-    category: '邮件安全知识',
+    category: 'email-security',
     keywords: ['SPF', 'DKIM', 'DMARC', 'Sender Policy Framework', 'DomainKeys Identified Mail', 'Domain-based Message Authentication', 'DNS', 'TXT record', 'email authentication', '发件人验证', '伪造', 'spoof', 'phishing', '钓鱼'],
     sections: [
       {
@@ -172,7 +183,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     tag: '风险模型',
     tagClass: 'sk-tag-red',
     iconType: 'analytics',
-    category: '平台相关',
+    category: 'platform',
     keywords: ['Dempster-Shafer', 'D-S', '证据理论', 'BPA', 'belief', 'disbelief', 'uncertainty', '不确定性', 'Murphy', '融合', 'fusion', 'Jousselme', '距离', 'Zadeh', '悖论', 'Copula', '依赖校正', '主观逻辑', 'subjective logic', 'Noisy-OR', '贝叶斯', 'Bayesian', '多引擎', 'risk score', '风险分数', 'BEC', 'phishing', 'ATO', '对抗鲁棒性', 'robustness', 'diversity'],
     sections: [
       {
@@ -213,7 +224,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     tag: '风险模型',
     tagClass: 'sk-tag-red',
     iconType: 'analytics',
-    category: '平台相关',
+    category: 'platform',
     keywords: ['CUSUM', 'EWMA', 'HMM', 'Hidden Markov Model', '隐马尔可夫', '时序分析', 'temporal', '变点检测', 'change point', '基线漂移', 'drift', '实体风险', 'entity risk', '攻击阶段', 'attack phase', '通信图谱', 'communication graph', 'GPD', 'EVT', '极值理论', 'Extreme Value Theory', 'Generalized Pareto', 'P0', 'P1', 'P2', 'P3', '告警', 'alert', '期望损失', 'expected loss', 'CVaR', '重现期', 'return period', 'BEC', 'ATO', '温水煮青蛙'],
     sections: [
       {
@@ -254,11 +265,11 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     id: 'module-pipeline',
     title: '安全模块管线与融合实现',
     subtitle: 'Security Module Pipeline & D-S Fusion Integration',
-    lead: 'Vigilyx 的安全分析管线由 14 个专业模块组成，通过 DAG 并行编排执行，每个模块输出 (score, confidence) 评分对。这些评分通过 BPA 转换进入八引擎 D-S Murphy 融合管线，最终产生统一的风险判定。本文详解模块如何运作以及如何与数学模型衔接。',
+    lead: 'Vigilyx 的默认邮件分析管线包含 20 个条目，其中 19 个是分析模块，1 个是 verdict 汇总模块。它们通过 DAG 并行编排执行，模块输出 (score, confidence) 后再进入八引擎 D-S Murphy 融合。运行时还可按配置注册 QR 扫描、落地页扫描、AITM、沙箱等扩展模块。',
     tag: '风险模型',
     tagClass: 'sk-tag-red',
     iconType: 'analytics',
-    category: '平台相关',
+    category: 'platform',
     keywords: ['模块', 'module', 'pipeline', '管线', 'SecurityModule', 'ModuleResult', '编排', 'orchestrator', 'DAG', '并行', 'parallel', 'timeout', '超时', 'score', 'confidence', 'BPA', '转换', 'conversion', '引擎映射', 'engine map', 'content_scan', 'domain_verify', 'link_scan', 'header_scan', 'semantic_scan', 'anomaly_detect', 'attach_scan', '融合管线', 'fusion pipeline', 'Dempster', 'Copula', 'Murphy', '信任折扣', 'trust discount', 'threat level', '威胁等级'],
     sections: [
       {
@@ -266,12 +277,12 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
         plainText: '每个安全模块实现 SecurityModule trait 包含三个核心方法。metadata 返回模块元数据包括 ID 名称 所属支柱 依赖列表和超时配置。analyze 接收 SecurityContext 执行分析返回 ModuleResult。should_run 可选的前置过滤器决定是否执行。SecurityContext 上下文包含完整的邮件会话数据 EmailSession 含邮件头 正文 附件 链接等 以及已完成模块的结果缓存 允许后续模块引用前序模块的输出。ModuleResult 是所有模块统一的输出结构 包含 module_id 模块标识 threat_level 威胁等级 confidence 置信度 categories 威胁分类标签 summary 人类可读摘要 evidence 详细证据列表 details JSON 扩展信息含 score 原始评分',
       },
       {
-        heading: '十四个安全模块',
-        plainText: '引擎A 发件人信誉 domain_verify 验证发件域名与 Received 链 DKIM 链接域名的一致性 输出 trust_score 0-1 用于最终判定折扣。引擎B 内容分析包含五个模块 content_scan 扫描正文中的钓鱼关键词 BEC 话术 DLP 敏感信息 外部冒充 语言不一致。html_scan 检测 HTML 特有威胁如隐藏文本 混淆标签 可疑表单 data URI。attach_scan 检查附件元数据如危险扩展名 双扩展名 伪装 exe。attach_content 深度检测附件内容如嵌入宏 脚本 PE 头 ZIP 炸弹。attach_hash 附件 SHA256 哈希与 IOC 黑名单匹配。引擎C 行为基线 anomaly_detect 检测行为异常如群发邮件 空主题带附件 全大写标题 spam cannon。引擎D URL 分析包含三个模块 link_scan 检测 URL 模式如 IP 地址 URL data URI javascript URI 文本链接不匹配 短链接 过多链接。link_reputation 外部信誉查询 VirusTotal URLhaus PhishTank。link_content 实时抓取 URL 目标页面分析着陆页风险。引擎E 协议合规包含两个模块 header_scan 邮件头验证如缺失 Date Message-ID SPF DKIM DMARC 失败 Received 链异常。mime_scan MIME 结构检查如畸形 multipart boundary 违规 编码错误 嵌套深度滥用。引擎F 语义意图 semantic_scan 无语义文本检测通过三个指标 CJK 罕用字符比率 Shannon 熵异常 Bigram 唯一性',
+        heading: '默认管线与扩展模块',
+        plainText: '默认管线的核心条目包括 content_scan、html_scan、html_pixel_art、attach_scan、attach_content、attach_hash、mime_scan、header_scan、link_scan、link_reputation、link_content、anomaly_detect、semantic_scan、domain_verify、identity_anomaly、transaction_correlation、av_eml_scan、av_attach_scan、yara_scan 与 verdict。运行时注册表还可按环境启用 attachment_qr_scan、landing_page_scan、aitm_detect 与 sandbox_scan 等扩展模块。换句话说，20 条目是默认管线快照，不是系统能力上限；verdict 负责汇总判定，不应与前面的分析模块混为一谈。',
       },
       {
         heading: '管线编排器：DAG 并行分层执行',
-        plainText: '编排器使用 Kahn 拓扑排序算法将模块依赖关系构建为有向无环图 DAG 然后分层执行。每一层中的模块无依赖关系 可以并行执行。层间是串行的 确保前层结果对后层可用。典型分层 第 0 层包含所有无依赖的基础模块如 content_scan link_scan header_scan domain_verify anomaly_detect 等约 12 个模块同时运行。第 1 层是依赖前序结果的模块如 verdict_module。每个模块有独立的超时配置 默认 3-5 秒。超时后模块返回 Safe 结果并标记超时 不影响其他模块继续执行。条件执行 每个模块可通过 should_run 方法跳过不适用的分析 如邮件无附件时跳过 attach_scan。ConditionConfig 支持最低威胁等级门槛 仅当前序模块已发现一定威胁时才运行高级分析',
+        plainText: '编排器使用 Kahn 拓扑排序算法将模块依赖关系构建为有向无环图 DAG 然后分层执行。每一层中的模块无依赖关系 可以并行执行。层间是串行的，确保前层结果对后层可用。第 0 层通常包含大多数基础分析模块，如内容 链接 协议 身份与行为模块；末端的 verdict 以及部分依赖前序结果的扩展模块在后续层执行。每个模块有独立超时配置，超时后返回安全占位结果并记录状态，不阻塞整条流水线。ConditionConfig 支持基于前序发现动态启停高级分析，例如仅在发现可疑链接后再启用更昂贵的落地页或沙箱检查。',
       },
       {
         heading: '从评分到三元组：模块输出转换',
@@ -279,7 +290,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
       },
       {
         heading: '八引擎映射与引擎内合成',
-        plainText: '16 个模块映射到 8 个概念引擎。引擎A domain_verify 1个模块。引擎B content_scan html_scan html_pixel_art attach_scan attach_content attach_hash 6个模块。引擎C anomaly_detect 1个模块。引擎D link_scan link_reputation link_content 3个模块。引擎E header_scan mime_scan 2个模块。引擎F semantic_scan 1个模块。引擎G identity_anomaly 1个模块。引擎H transaction_correlation 1个模块。对于多模块引擎 如 B 和 D 需要先进行引擎内 Dempster 合成。将同一引擎内各模块的 BPA 通过标准 Dempster 规则逐步合成为一个引擎级 BPA。例如引擎 B 的五个模块输出五个 BPA 先将 m1 与 m2 合成得到 m12 再与 m3 合成得到 m123 依此类推。引擎内合成过程中如果冲突因子 K 接近 1 说明同一引擎的子模块产生矛盾 合成退回 vacuous BPA 即完全不确定',
+        plainText: '默认检测证据主要映射到 8 个概念引擎。引擎A 对应 domain_verify。引擎B 聚合 content_scan、html_scan、html_pixel_art、attach_scan、attach_content、attach_hash，以及按配置启用的 attachment_qr_scan。引擎C 对应 anomaly_detect。引擎D 聚合 link_scan、link_reputation、link_content，以及按配置启用的 landing_page_scan 与 aitm_detect。引擎E 包含 header_scan 与 mime_scan。引擎F 对应 semantic_scan。引擎G 对应 identity_anomaly。引擎H 对应 transaction_correlation。av_eml_scan、av_attach_scan、yara_scan 是独立高价值检测源，参与最终融合；verdict 是末端汇总模块，不作为独立证据引擎。对于多模块引擎，如 B 和 D，需要先进行引擎内 Dempster 合成。',
       },
       {
         heading: 'Copula 折扣与 Murphy 融合',
@@ -291,7 +302,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
       },
       {
         heading: '最终判定：风险分数与威胁等级',
-        plainText: '经过 D-S Murphy 融合和信任折扣后 最终风险分数通过固定阈值映射到五级威胁等级。Risk_single = b_final + η × u_final 其中 η=0.3。Critical 危急 risk ≥ 0.85 确认的高危攻击。High 高危 risk ≥ 0.65 多引擎交叉确认的威胁。Medium 中危 risk ≥ 0.40 部分引擎标记需人工复核。Low 低危 risk ≥ 0.15 轻微可疑但不足以告警。Safe 安全 risk 小于 0.15 正常邮件。完整的端到端流程 16个模块并行分析 → 各输出 score confidence → 转换为 BPA 三元组 → 按引擎映射分组 → 引擎内 Dempster 合成 → Copula 依赖折扣 → Murphy 加权平均 → 多样性约束 → 自合成 N-1 次 → 计算 Risk_single → 信任折扣 → 映射威胁等级 → 写入判定记录 + WebSocket 广播',
+        plainText: '经过 D-S Murphy 融合和信任折扣后，最终风险分数通过固定阈值映射到五级威胁等级。Risk_single = b_final + η × u_final，其中 η=0.3。Critical 危急 risk ≥ 0.85。High 高危 risk ≥ 0.65。Medium 中危 risk ≥ 0.40。Low 低危 risk ≥ 0.15。Safe 安全 risk 小于 0.15。完整端到端流程是 默认 20 条目按依赖并行分析 → 各模块输出 score confidence → 转换为 BPA 三元组 → 按引擎或检测域聚合 → 引擎内 Dempster 合成 → Copula 依赖折扣 → Murphy 加权平均 → 多样性约束 → 自合成 N-1 次 → 计算 Risk_single → 信任折扣 → verdict 汇总写入记录并通过 WebSocket 广播。',
       },
     ],
   },
@@ -299,28 +310,28 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
   {
     id: 'phishing-detection' as TopicId,
     title: '钓鱼邮件检测技术',
-    subtitle: '20 个检测模块的原理与协作',
-    lead: 'Vigilyx 通过 20 个检测模块从内容、附件、链接、协议、语义、行为 6 个维度分析邮件，覆盖 75 种威胁类别。',
+    subtitle: '默认 20 条目管线与扩展检测模块的协作',
+    lead: 'Vigilyx 的默认邮件分析管线包含 20 个条目，并可按配置启用 QR 扫描、落地页扫描、AITM、沙箱等扩展模块，从内容、附件、链接、协议、语义、身份、行为多个维度分析邮件。',
     tag: '检测',
     tagClass: 'sk-tag-red',
     iconType: 'shield' as const,
-    category: '平台相关' as CategoryFilter,
+    category: 'platform',
     sections: [
       {
         heading: '多维检测架构',
-        plainText: '邮件威胁不是单一维度能捕获的。一封精心制作的钓鱼邮件可能通过了 SPF/DKIM 验证（协议层无异常），使用了合法域名的子域名（发件人层难以判断），但在正文中包含紧迫性话术（内容层异常）+ 伪装成银行登录页的链接（链接层异常）。Vigilyx 的 16 个模块分属 8 个引擎，每个引擎独立输出证据，最终通过 D-S Murphy 融合产生裁决。没有任何单一模块能决定最终结果。',
+        plainText: '邮件威胁不是单一维度能捕获的。一封精心制作的钓鱼邮件可能通过了 SPF/DKIM 验证，使用了看似正常的发件域名，但在正文中包含紧迫性话术、在附件中夹带二维码或在链接目标页中暴露 OAuth 设备码诱导。Vigilyx 的默认 20 条目管线分布在 8 个概念引擎中，每个引擎独立输出证据，最终通过 D-S Murphy 融合产生裁决；落地页扫描 AITM 与沙箱等扩展模块则作为更昂贵的二级分析补充证据。',
       },
       {
         heading: '内容分析引擎 (B)',
-        plainText: 'content_scan 是核心模块，维护三类检测规则库：钓鱼关键词库（如"账户异常""立即验证""密码过期"等），每命中一个关键词加 0.08 分，上限 0.50；BEC 商务欺诈短语库（如"紧急汇款""更改收款账户"等 27 个短语），每命中加 0.15 分，上限 0.50；DLP 敏感数据模式（信用卡 Luhn 校验、身份证号、API Key 正则匹配）。html_scan 检测恶意 HTML 元素（隐藏表单、脚本注入、事件处理器、Base64 嵌入）。html_pixel_art 检测 1px 追踪信标和隐藏图片。attach_scan 检测危险文件类型（PE 可执行文件、双扩展名如 .pdf.exe、加密压缩包、宏文档），通过 magic bytes 魔数识别 26 种文件类型。attach_content 对 ZIP/RAR 解压后提取文档文本再做内容分析。attach_hash 计算附件 SHA256 并查询本地黑名单 + 外部情报源。',
+        plainText: 'content_scan 是核心规则模块，维护钓鱼关键词 BEC 短语与 DLP 模式等规则库。html_scan 检测隐藏表单 脚本注入 事件处理器与 data URI 等 HTML 威胁。html_pixel_art 识别 1px 追踪信标与像素伪装。attach_scan 通过扩展名和 magic bytes 识别危险文件类型。attach_content 负责解压和提取附件文本进行深度分析。attach_hash 对附件 SHA256 做本地与外部情报比对。若运行时启用 attachment_qr_scan，系统还会解析图片附件中的二维码并进一步评估其是否指向设备码钓鱼或伪造登录页。',
       },
       {
         heading: 'URL 链接分析引擎 (D)',
-        plainText: 'link_scan 从 HTML 中提取所有 URL，检测 IP 地址直接访问链接、同形字攻击（如用 а(Cyrillic) 替代 a(Latin)）、Punycode 编码域名、短链服务、href 与显示文本不匹配（"点击这里"指向钓鱼站）。link_reputation 查询 OTX AlienVault 和 VirusTotal 情报，OTX 查看域名/IP/URL 关联的威胁脉冲数，VT 通过 Playwright 自动化抓取检测引擎共识比例。link_content 实际抓取链接目标页面，分析是否包含登录表单、JavaScript 载荷、可疑重定向链条。',
+        plainText: 'link_scan 从 HTML 中提取 URL，检测 IP 直连链接、同形字攻击、Punycode 域名、短链服务、href 与显示文本不匹配、@ 符号滥用等模式。link_reputation 查询本地 IOC 缓存和外部情报源。link_content 实际抓取目标页面并分析登录表单 JavaScript 载荷与可疑路径关键词。若运行时启用 landing_page_scan 与 aitm_detect，系统还能进一步识别设备码钓鱼链条、验证码门控页面和中间人登录页等更深层的着陆页风险。',
       },
       {
         heading: '语义与行为分析 (F/G/H)',
-        plainText: 'semantic_scan 采用双层架构：Rust 本地引擎做 CJK 稀有字符比例、Shannon 熵、双字符唯一性分析，检测无语义乱码垃圾邮件；Python NLP 引擎使用 mDeBERTa 多语言模型做零样本或微调五分类（钓鱼/诈骗/BEC/垃圾/正常），输出恶意概率。identity_anomaly 检测首次联系人、显示名与域名不匹配（如显示"中国银行"但域名是 gmail.com）、通信模式突变。transaction_correlation 识别邮件中的银行账号（正则+上下文）、商业实体名称（NER 抽取）、紧迫性关键词与金融实体同时出现的 BEC 风险信号。',
+        plainText: 'semantic_scan 采用双层架构：Rust 本地引擎负责 CJK 稀有字符比例 Shannon 熵与双字符唯一性分析，Python AI 服务在启用时执行 NLP 语义分类。零样本路径使用 phishing scam bec spam legitimate 五个候选标签；微调路径则使用 legitimate phishing spoofing social_engineering other_threat 五类标签。identity_anomaly 检测首次联系人 显示名与域名不匹配 回复链异常与通信模式突变。transaction_correlation 识别银行账号 商业实体 紧迫性关键词与金融实体同时出现的 BEC 风险信号。',
       },
       {
         heading: '安全熔断器：防止融合漏报',
@@ -337,7 +348,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     tag: '情报',
     tagClass: 'sk-tag-amber',
     iconType: 'analytics' as const,
-    category: '平台相关' as CategoryFilter,
+    category: 'platform',
     sections: [
       {
         heading: 'IOC 类型与来源',
@@ -366,15 +377,15 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     tag: 'AI',
     tagClass: 'sk-tag-purple',
     iconType: 'analytics' as const,
-    category: '平台相关' as CategoryFilter,
+    category: 'platform',
     sections: [
       {
         heading: '双模型优先级',
-        plainText: '推理时优先使用 Fine-tuned 五分类模型（如果已训练）。Fine-tuned 模型保存在 data/nlp_models/latest/ 目录，基于分析师的误报/漏报反馈训练而来，对本组织的邮件特征有更好的适应性。如果没有 Fine-tuned 模型或加载失败，回退到零样本分类模型。零样本模型使用 NLI（自然语言推理）机制，不需要训练数据即可工作，但准确率略低。两个模型共享同一个基座：MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7（约 550MB，支持 100+ 语言）。',
+        plainText: '推理时优先使用 Fine-tuned 五分类模型（如果已训练）。Fine-tuned 模型保存在 data/nlp_models/latest/ 目录，基于分析师反馈训练而来，对本组织邮件特征的适配性更好；如果没有 Fine-tuned 模型或加载失败，则回退到零样本分类模型。零样本模型使用 NLI 机制，不需要本地训练数据即可工作，但准确率略低。两个模型共享同一个基座：MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7（约 550MB，支持 100+ 语言）。',
       },
       {
         heading: '零样本分类原理',
-        plainText: '零样本分类将邮件内容与 5 个候选标签组成前提-假设对，通过 NLI 模型判断蕴含关系。候选标签（中文版）：钓鱼邮件试图窃取密码或个人信息、诈骗邮件包含虚假优惠或社交工程攻击、商务邮件欺诈要求紧急汇款、垃圾邮件或未经请求的营销广告、正常的工作邮件或个人通信。模型输出每个标签的概率分布，恶意概率 = P(phishing) + P(scam) + P(bec)。语言检测：CJK 字符占比 > 30% 使用中文标签集，否则用英文标签集。',
+        plainText: '零样本分类将邮件内容与 5 个候选标签组成前提-假设对，通过 NLI 模型判断蕴含关系。候选标签分为 phishing scam bec spam legitimate 五类，CJK 字符占比大于 30% 时使用中文标签集，否则使用英文标签集。系统将 phishing scam bec 三类概率累加为恶意概率。需要注意的是，这套标签与微调模型并不完全相同；微调模型使用 legitimate phishing spoofing social_engineering other_threat 五类，更贴近平台中的分析师标注任务。',
       },
       {
         heading: 'LoRA 微调训练',
@@ -382,7 +393,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
       },
       {
         heading: 'NLP 与规则引擎的协作',
-        plainText: 'semantic_scan 模块中，NLP 结果与 Rust 本地规则引擎结果融合。NLP 模块在断路器中被标记为"非规则模块"（is_rule_module=false），不能单独触发安全地板——因为 NLP 误判率较高（约 60%），允许其单独触发断路器会让 14 个规则模块的"安全"共识被 1 个噪音传感器否决。但 NLP 信号仍然参与 D-S 融合和收敛断路器（多模块共识），当 NLP + 规则模块同时检测到威胁时，收敛断路器自然触发。这种设计在保持 NLP 贡献的同时控制了误报风险。',
+        plainText: 'semantic_scan 模块中，NLP 结果会与 Rust 本地规则结果融合。NLP 模块在断路器逻辑中被标记为非规则模块，不能单独触发安全地板；否则会让大量规则模块形成的安全共识被单个噪音传感器否决。但 NLP 信号仍然参与 D-S 融合和收敛断路器。当 NLP 与内容 链接 身份等规则模块同时检出风险时，系统会自然提高最终风险分数，从而在保留语义信息的同时控制误报。',
       },
     ],
     keywords: ['AI', 'NLP', 'mDeBERTa', '零样本', 'zero-shot', 'LoRA', '微调', 'fine-tune', '钓鱼检测', 'Focal Loss', 'R-Drop', '交叉验证', '热替换', '训练', 'NLI', '自然语言推理', '语义', '多语言', '分类'],
@@ -395,7 +406,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     tag: '告警',
     tagClass: 'sk-tag-red',
     iconType: 'shield' as const,
-    category: '平台相关' as CategoryFilter,
+    category: 'platform',
     sections: [
       {
         heading: 'P0-P3 四级告警',
@@ -420,11 +431,11 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     tag: '数据安全',
     tagClass: 'sk-tag-green',
     iconType: 'lock-closed' as const,
-    category: '平台相关' as CategoryFilter,
+    category: 'platform',
     sections: [
       {
         heading: 'HTTP 流量捕获',
-        plainText: 'Sniffer 通过 WEBMAIL_SERVERS 环境变量配置需要监控的 Webmail 服务器 IP。当捕获到目标 IP 的 HTTP 流量时，解析请求方法、URI、Host、Content-Type、Cookie，提取请求体（前 64KB）中的邮件字段（from/to/subject），支持 URL-encoded、JSON、Coremail 嵌套 JSON 三种格式。HTTP 会话通过 Redis 发布到 vigilyx:http_session:new channel，由数据安全引擎 (DataSecurityEngine) 独立处理。',
+        plainText: 'Sniffer 通过 WEBMAIL_SERVERS 环境变量配置需要监控的 Webmail 服务器 IP。当捕获到目标 IP 的 HTTP 流量时，解析请求方法 URI Host Content-Type Cookie，并提取请求体前 64KB 中的邮件字段（from/to/subject）。支持 URL-encoded JSON 和 Coremail 嵌套 JSON 三种格式。HTTP 会话通过 Redis Streams 写入 vigilyx:stream:http_sessions，由引擎侧使用 consumer groups 读取并执行数据安全检测。',
       },
       {
         heading: '三类数据泄露检测模式',
@@ -437,6 +448,81 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     ],
     keywords: ['数据安全', 'HTTP', 'Webmail', 'DLP', '数据泄露', '草稿箱', '文件中转', '自发送', 'Coremail', '银行卡', '身份证', '敏感数据', '分块上传', 'chunked', 'DataSecurityEngine', '请求体'],
   },
+  {
+    id: 'mirror-vs-mta' as TopicId,
+    title: '镜像模式与 MTA 代理模式',
+    subtitle: 'Vigilyx 两种部署路径与适用场景',
+    lead: 'Vigilyx 同时支持旁路镜像和 MTA 代理两种部署模式。两者共用解析器与检测引擎，但介入时机、阻断能力与运维要求完全不同。',
+    tag: '架构',
+    tagClass: 'sk-tag-cyan',
+    iconType: 'mail' as const,
+    category: 'platform',
+    sections: [
+      {
+        heading: '旁路镜像模式',
+        plainText: '旁路镜像模式通过 SPAN TAP 或交换机镜像口捕获现网 SMTP POP3 IMAP HTTP 流量，优点是对现网几乎无侵入，不改变收发路径，适合事后审计与告警。缺点是它只能在邮件已经经过现网设备后再进行分析，因此默认场景下更擅长观测 取证 和告警，而不是投递前阻断。',
+      },
+      {
+        heading: 'MTA 代理模式',
+        plainText: 'MTA 代理模式把 Vigilyx 直接放在 SMTP 中继链路上。客户端或上游 MTA 先把邮件投递给 vigilyx-mta，再由其完成 SMTP 会话 解析 MIME 调用内嵌安全引擎 并依据判定结果接受 转发 隔离或拒绝。它支持 TLS 终结 内联超时控制 以及 fail-open 或 fail-closed 策略，是实时阻断能力的基础。',
+      },
+      {
+        heading: '如何选择',
+        plainText: '如果你的目标是先以最小改动观察流量 验证规则与排查误报，镜像模式更稳妥；如果你的目标是上线前置拦截 隔离高风险邮件 并接受 SMTP 路径改造，MTA 代理模式更合适。很多团队会先在镜像模式验证，再逐步迁移到 MTA 代理模式。',
+      },
+    ],
+    keywords: ['镜像模式', 'MTA代理', 'MTA Proxy', 'Mirror mode', 'SMTP relay', 'inline', '旁路', '阻断', '隔离', '部署模式', '投递前检查'],
+  },
+  {
+    id: 'message-bus' as TopicId,
+    title: '消息总线与可靠投递',
+    subtitle: 'Redis Streams 数据面与 Pub/Sub 控制面',
+    lead: 'Vigilyx 的消息层不是单一通道。会话数据走 Redis Streams，控制命令和通知走 Pub/Sub，这样才能兼顾可靠投递与实时广播。',
+    tag: '架构',
+    tagClass: 'sk-tag-purple',
+    iconType: 'analytics' as const,
+    category: 'platform',
+    sections: [
+      {
+        heading: '数据面：Redis Streams',
+        plainText: 'Sniffer 把邮件会话写入 vigilyx:stream:sessions，把 HTTP 会话写入 vigilyx:stream:http_sessions。Engine 侧使用 consumer groups 读取这些流，成功处理后再执行 XACK，因此具备 at-least-once 交付语义。相比单纯 Pub/Sub，Streams 更适合承载不能丢的原始分析数据。',
+      },
+      {
+        heading: '失败恢复：PEL 与 XAUTOCLAIM',
+        plainText: '如果消费者在处理过程中崩溃，未 ACK 的消息会留在 Pending Entries List 中。Engine 启动后会通过 XAUTOCLAIM 回收闲置超过阈值的消息，从而继续处理先前中断的工作。这个机制让会话摄取在异常重启后仍然具备恢复能力。',
+      },
+      {
+        heading: '控制面：Pub/Sub',
+        plainText: '控制面命令例如 reload rescan，以及 verdict status heartbeat 等广播通知，仍然使用 Pub/Sub。原因是这些消息更偏实时通知或幂等命令，fire-and-forget 可以接受，而且 Pub/Sub 更适合广播到 API WebSocket 和多个内部组件。当前架构的核心原则是 数据面求可靠 控制面求轻量。',
+      },
+    ],
+    keywords: ['Redis Streams', 'Pub/Sub', 'consumer groups', 'XREADGROUP', 'XAUTOCLAIM', 'XACK', '消息总线', '数据面', '控制面', 'at-least-once', 'vigilyx:stream:sessions'],
+  },
+  {
+    id: 'mta-quarantine' as TopicId,
+    title: '隔离区与邮件放行',
+    subtitle: 'Inline 判定、quarantine 存储与释放流程',
+    lead: '在 MTA 代理模式下，Vigilyx 不必只在“放行”和“拒绝”之间二选一。隔离区提供了第三种处置路径：先接收并保全原始邮件，再由管理员审查和释放。',
+    tag: '处置',
+    tagClass: 'sk-tag-amber',
+    iconType: 'shield' as const,
+    category: 'platform',
+    sections: [
+      {
+        heading: '何时进入隔离区',
+        plainText: 'MTA 代理模式下，内联引擎会在 DATA 阶段后对邮件执行快速判定。典型策略是 Safe 和 Low 直接转发，Medium 和 High 写入 quarantine 表并向发件方返回成功，从而避免把检测细节暴露给攻击者；Critical 则直接拒绝。这样既保留实时处置能力，也能给分析师留下复核空间。',
+      },
+      {
+        heading: '隔离区保存了什么',
+        plainText: '隔离区记录通常包含 session_id mail_from rcpt_to subject threat_level reason status created_at released_at released_by ttl_days 以及原始 raw_eml。设计目标不是只存一个摘要，而是把后续复盘和人工放行所需的信息保全下来。',
+      },
+      {
+        heading: '释放与删除',
+        plainText: '管理员可以通过 /api/security/quarantine 查看列表和统计，通过 POST /api/security/quarantine/:id/release 执行放行，通过 DELETE /api/security/quarantine/:id 删除记录。released_by 来自已认证的 JWT 用户，而不是前端自报字段。换句话说，隔离区既是处置队列，也是审计链路的一部分。',
+      },
+    ],
+    keywords: ['quarantine', '隔离区', 'release', 'raw_eml', 'MTA', 'inline verdict', '放行', '删除', '审计', 'POST /api/security/quarantine/:id/release'],
+  },
   // === Attack-technique category ===
   {
     id: 'bec-attack' as TopicId,
@@ -446,7 +532,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     tag: '攻击手段',
     tagClass: 'sk-tag-red',
     iconType: 'shield' as const,
-    category: '邮件安全知识' as CategoryFilter,
+    category: 'email-security',
     referenceUrl: 'https://www.ic3.gov/Media/Y2023/PSA230609',
     sections: [
       {
@@ -459,7 +545,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
       },
       {
         heading: 'Vigilyx 检测能力',
-        plainText: 'content_scan 模块检测 BEC 关键词组合（紧急+转账+高管头衔）。identity_anomaly 模块检测显示名欺诈（显示名是内部高管但邮箱是外部域名）。transaction_correlation 模块关联紧迫性关键词与金融实体。NLP 模型分类中包含 nlp_bec 类别。首次通信检测标记从未联系过的"供应商"。',
+        plainText: 'content_scan 模块检测 BEC 关键词组合（紧急+转账+高管头衔）。identity_anomaly 模块检测显示名欺诈（显示名是内部高管但邮箱是外部域名）。transaction_correlation 模块关联紧迫性关键词与金融实体。AI 路径中，零样本模型会显式给出 bec 候选概率，而微调模型则主要通过 spoofing social_engineering other_threat 等标签间接表达风险。首次通信检测还能标记从未联系过的外部供应商。',
       },
     ],
     keywords: ['BEC', '商业邮件欺诈', 'CEO欺诈', '发票欺诈', '转账', '线程劫持', '供应商冒充', 'wire transfer', '付款', '账户入侵'],
@@ -472,7 +558,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     tag: '攻击手段',
     tagClass: 'sk-tag-red',
     iconType: 'shield' as const,
-    category: '邮件安全知识' as CategoryFilter,
+    category: 'email-security',
     referenceUrl: 'https://attack.mitre.org/techniques/T1566/',
     sections: [
       {
@@ -498,7 +584,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     tag: '攻击手段',
     tagClass: 'sk-tag-red',
     iconType: 'code' as const,
-    category: '邮件安全知识' as CategoryFilter,
+    category: 'email-security',
     referenceUrl: 'https://attack.mitre.org/techniques/T1566/001/',
     sections: [
       {
@@ -524,7 +610,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     tag: '攻击手段',
     tagClass: 'sk-tag-red',
     iconType: 'lock-open' as const,
-    category: '邮件安全知识' as CategoryFilter,
+    category: 'email-security',
     referenceUrl: 'https://attack.mitre.org/techniques/T1566/002/',
     sections: [
       {
@@ -544,15 +630,69 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
   },
 ]
 
-export const topicEntries: TopicEntry[] = rawTopics.map(raw => {
-  const searchableText = buildSearchableText(raw)
+export interface LocalizedTopicSection {
+  heading: string
+  plainText: string
+}
+
+export interface LocalizedTopicContent {
+  title: string
+  subtitle: string
+  lead: string
+  tag: string
+  sections: LocalizedTopicSection[]
+}
+
+function isEnglishLanguage(language: string): boolean {
+  return language.toLowerCase().startsWith('en')
+}
+
+export function getLocalizedTopicContent(entry: TopicEntry, language: string): LocalizedTopicContent {
+  const useEnglish = isEnglishLanguage(language)
   return {
+    title: useEnglish ? (entry.titleEn || entry.title) : entry.title,
+    subtitle: useEnglish ? (entry.subtitleEn || entry.subtitle) : entry.subtitle,
+    lead: useEnglish ? (entry.leadEn || entry.lead) : entry.lead,
+    tag: useEnglish ? (entry.tagEn || entry.tag) : entry.tag,
+    sections: entry.sections.map(section => ({
+      heading: useEnglish ? (section.headingEn || section.heading) : section.heading,
+      plainText: useEnglish ? (section.plainTextEn || section.plainText) : section.plainText,
+    })),
+  }
+}
+
+const topicIdSet = new Set<TopicId>(rawTopics.map(topic => topic.id))
+
+export const topicEntries: TopicEntry[] = rawTopics.map(raw => {
+  const english = englishTopics[raw.id]
+  const merged: Omit<TopicEntry, 'searchableText' | 'readingTime'> = {
     ...raw,
+    titleEn: english?.titleEn,
+    subtitleEn: english?.subtitleEn,
+    leadEn: english?.leadEn,
+    tagEn: english?.tagEn,
+    sections: raw.sections.map((section, index) => ({
+      ...section,
+      headingEn: english?.sectionsEn[index]?.heading,
+      plainTextEn: english?.sectionsEn[index]?.plainText,
+    })),
+  }
+  const searchableText = buildSearchableText(merged)
+  return {
+    ...merged,
     searchableText,
-    readingTime: estimateReadingTime(searchableText),
+    readingTime: estimateReadingTime([raw.title, raw.subtitle, raw.lead, ...raw.sections.flatMap(section => [section.heading, section.plainText])].join(' ')),
   }
 })
 
 export function getTopicEntry(id: TopicId): TopicEntry | undefined {
   return topicEntries.find(t => t.id === id)
+}
+
+export function isTopicId(id: string | null | undefined): id is TopicId {
+  return typeof id === 'string' && topicIdSet.has(id as TopicId)
+}
+
+export function getTopicPath(id: TopicId): string {
+  return `/knowledge/${id}`
 }

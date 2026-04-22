@@ -30,7 +30,7 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 use vigilyx_core::{CaptureMode as ConfigCaptureMode, Config};
-use vigilyx_db::mq::{MqClient, MqConfig};
+use vigilyx_db::mq::{MqClient, MqConfig, verify_cmd_payload};
 
 /// BuildpacketContainsInternalAuthentication of HTTP DefaultHeader
 pub(crate) fn internal_api_headers() -> reqwest::header::HeaderMap {
@@ -41,6 +41,13 @@ pub(crate) fn internal_api_headers() -> reqwest::header::HeaderMap {
         h.insert("X-Internal-Token", v);
     }
     h
+}
+
+pub(crate) fn internal_api_client_builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .default_headers(internal_api_headers())
 }
 
 /// Sniffer Status (Used for API)
@@ -467,10 +474,24 @@ async fn main() -> Result<()> {
                 .await
             {
                 Ok(mut pubsub) => {
+                    // SEC-P06: Read shared token once for control-plane message auth
+                    let cmd_token = std::env::var("INTERNAL_API_TOKEN").unwrap_or_default();
+                    if cmd_token.is_empty() {
+                        warn!("INTERNAL_API_TOKEN not set — sniffer reload commands will be rejected");
+                    }
                     info!("already订阅 Sniffer Configuration重载channel");
                     use futures::StreamExt;
                     let mut stream = pubsub.on_message();
-                    if let Some(_msg) = stream.next().await {
+                    while let Some(msg) = stream.next().await {
+                        let raw: String = match msg.get_payload() {
+                            Ok(p) => p,
+                            Err(_) => continue,
+                        };
+                        // SEC-P06: Verify shared token prefix before processing
+                        if verify_cmd_payload(&raw, &cmd_token).is_none() {
+                            warn!("Sniffer rejected reload command with invalid/missing token (SEC-P06)");
+                            continue;
+                        }
                         warn!(
                             "ReceivedConfiguration重载指令，Sniffer immediately将重启以应用NewConfiguration..."
                         );
@@ -570,12 +591,10 @@ async fn main() -> Result<()> {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
        // HTTP fallback client (Redis Use)
-        let stats_http_client = reqwest::Client::builder()
-            .no_proxy()
-            .default_headers(crate::internal_api_headers())
+        let stats_http_client = crate::internal_api_client_builder()
             .timeout(Duration::from_secs(2))
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .expect("internal stats HTTP client should build");
 
         let mut prev_packets: u64 = 0;
         let mut prev_bytes: u64 = 0;
@@ -633,11 +652,9 @@ async fn main() -> Result<()> {
     );
     tokio::spawn(async move {
        // Create Use of HTTP client (Avoid sudo Environment of 502 Error)
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .default_headers(crate::internal_api_headers())
+        let client = crate::internal_api_client_builder()
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+            .expect("internal status HTTP client should build");
         let mut interval = tokio::time::interval(Duration::from_secs(3));
         let mut report_count = 0u32;
 
@@ -756,9 +773,7 @@ async fn fetch_sniffer_config_from_api(config: &Config) -> Result<Option<serde_j
         "http://{}:{}/api/internal/sniffer-config",
         config.api_host, config.api_port
     );
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .default_headers(crate::internal_api_headers())
+    let client = crate::internal_api_client_builder()
         .timeout(Duration::from_secs(3))
         .build()?;
 

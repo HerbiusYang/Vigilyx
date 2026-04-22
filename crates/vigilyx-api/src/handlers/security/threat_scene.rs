@@ -13,6 +13,7 @@ use serde_json::json;
 use vigilyx_core::security::ThreatSceneRule;
 
 use crate::AppState;
+use crate::auth::AuthenticatedUser;
 
 // ─── Query params ───────────────────────────────────────────────────────
 
@@ -132,6 +133,7 @@ pub async fn get_scene_emails(
 /// POST /api/security/threat-scenes/:id/acknowledge
 pub async fn acknowledge_scene(
     State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let updated = state
@@ -147,6 +149,14 @@ pub async fn acknowledge_scene(
         })?;
 
     if updated {
+        crate::handlers::spawn_audit_log(
+            state.engine_db.clone(),
+            user.username,
+            "acknowledge_threat_scene",
+            Some("security"),
+            Some(id),
+            None,
+        );
         Ok(Json(json!({"ok": true})))
     } else {
         Err((
@@ -159,6 +169,7 @@ pub async fn acknowledge_scene(
 /// POST /api/security/threat-scenes/:id/block
 pub async fn block_scene(
     State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let scene = state.db.get_threat_scene(&id).await.map_err(|e| {
@@ -219,6 +230,15 @@ pub async fn block_scene(
             )
         })?;
 
+    crate::handlers::spawn_audit_log(
+        state.engine_db.clone(),
+        user.username,
+        "block_threat_scene",
+        Some("security"),
+        Some(id),
+        Some(format!("ioc_id={ioc_id}")),
+    );
+
     Ok(Json(json!({
         "ok": true,
         "ioc_id": ioc_id.to_string(),
@@ -228,6 +248,7 @@ pub async fn block_scene(
 /// POST /api/security/threat-scenes/:id/resolve
 pub async fn resolve_scene(
     State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let updated = state
@@ -243,6 +264,14 @@ pub async fn resolve_scene(
         })?;
 
     if updated {
+        crate::handlers::spawn_audit_log(
+            state.engine_db.clone(),
+            user.username,
+            "resolve_threat_scene",
+            Some("security"),
+            Some(id),
+            None,
+        );
         Ok(Json(json!({"ok": true})))
     } else {
         Err((
@@ -255,6 +284,7 @@ pub async fn resolve_scene(
 /// DELETE /api/security/threat-scenes/:id
 pub async fn delete_threat_scene(
     State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     let deleted = state.db.delete_threat_scene(&id).await.map_err(|e| {
@@ -266,6 +296,14 @@ pub async fn delete_threat_scene(
     })?;
 
     if deleted {
+        crate::handlers::spawn_audit_log(
+            state.engine_db.clone(),
+            user.username,
+            "delete_threat_scene",
+            Some("security"),
+            Some(id),
+            None,
+        );
         Ok(Json(json!({"ok": true})))
     } else {
         Err((
@@ -293,6 +331,7 @@ pub async fn get_scene_rules(
 /// PUT /api/security/scene-rules
 pub async fn update_scene_rules(
     State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
     Json(rules): Json<Vec<ThreatSceneRule>>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     for rule in &rules {
@@ -304,6 +343,15 @@ pub async fn update_scene_rules(
             )
         })?;
     }
+
+    crate::handlers::spawn_audit_log(
+        state.engine_db.clone(),
+        user.username,
+        "update_threat_scene_rules",
+        Some("security"),
+        Some("scene_rules".to_string()),
+        Some(format!("rules={}", rules.len())),
+    );
 
     Ok(Json(json!({"ok": true})))
 }

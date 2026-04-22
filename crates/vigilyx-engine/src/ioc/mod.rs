@@ -230,33 +230,45 @@ impl IocManager {
         self.export_csv_filtered(None).await
     }
 
-   /// CSV export (with verdict filter)
+   /// CSV export (with verdict filter, paginated to avoid memory issues)
     pub async fn export_csv_filtered(&self, verdicts: Option<&[String]>) -> anyhow::Result<String> {
-        let (items, _) = self.db.list_ioc(None, None, None, 100_000, 0).await?;
        // UTF-8 BOM - Excel needs BOM for correct UTF-8 encoding recognition
         let mut csv = String::from(
             "\u{FEFF}indicator,type,verdict,confidence,attack_type,source,first_seen,last_seen,hit_count,context\n",
         );
 
-        for item in &items {
-            if let Some(filter) = verdicts
-                && !filter.iter().any(|v| v == &item.verdict)
-            {
-                continue;
+        // Paginated export: fetch in batches to avoid loading all IOCs into memory at once.
+        // Verdict filtering is pushed down to DB layer for efficiency.
+        const BATCH_SIZE: u32 = 10_000;
+        let mut offset: u32 = 0;
+        loop {
+            let (items, _total) = self
+                .db
+                .list_ioc_filtered(None, None, None, verdicts, BATCH_SIZE, offset)
+                .await?;
+            if items.is_empty() {
+                break;
             }
-            csv.push_str(&format!(
-                "{},{},{},{},{},{},{},{},{},{}\n",
-                csv_escape(&item.indicator),
-                csv_escape(&item.ioc_type),
-                csv_escape(&item.verdict),
-                item.confidence,
-                csv_escape(&item.attack_type),
-                csv_escape(&item.source),
-                item.first_seen.to_rfc3339(),
-                item.last_seen.to_rfc3339(),
-                item.hit_count,
-                csv_escape(item.context.as_deref().unwrap_or("")),
-            ));
+            let batch_len = items.len() as u32;
+            for item in &items {
+                csv.push_str(&format!(
+                    "{},{},{},{},{},{},{},{},{},{}\n",
+                    csv_escape(&item.indicator),
+                    csv_escape(&item.ioc_type),
+                    csv_escape(&item.verdict),
+                    item.confidence,
+                    csv_escape(&item.attack_type),
+                    csv_escape(&item.source),
+                    item.first_seen.to_rfc3339(),
+                    item.last_seen.to_rfc3339(),
+                    item.hit_count,
+                    csv_escape(item.context.as_deref().unwrap_or("")),
+                ));
+            }
+            if batch_len < BATCH_SIZE {
+                break;
+            }
+            offset += batch_len;
         }
 
         Ok(csv)

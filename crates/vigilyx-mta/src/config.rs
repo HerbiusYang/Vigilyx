@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use vigilyx_core::validate_mta_hostname;
 use vigilyx_core::security::ThreatLevel;
 
 /// MTA
@@ -100,7 +101,14 @@ impl MtaConfig {
                     self.inline_timeout_secs = t as u32;
                 }
                 if let Some(h) = val.get("mta_hostname").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
-                    self.hostname = h.to_string();
+                    match validate_mta_hostname(h) {
+                        Ok(validated) => self.hostname = validated,
+                        Err(reason) => tracing::warn!(
+                            hostname = %h,
+                            reason = %reason,
+                            "Ignoring invalid MTA hostname from DB override"
+                        ),
+                    }
                 }
                 if let Some(m) = val.get("mta_max_connections").and_then(|v| v.as_u64()) {
                     self.max_connections = m as usize;
@@ -230,8 +238,10 @@ impl MtaConfig {
             max_recipients: 100,
             database_url: std::env::var("DATABASE_URL")?,
             redis_url: std::env::var("REDIS_URL").ok(),
-            hostname: std::env::var("MTA_HOSTNAME")
-                .unwrap_or_else(|_| "vigilyx-mta".into()),
+            hostname: validate_mta_hostname(
+                &std::env::var("MTA_HOSTNAME").unwrap_or_else(|_| "vigilyx-mta".into()),
+            )
+            .map_err(|reason| anyhow::anyhow!("invalid MTA_HOSTNAME: {reason}"))?,
             dlp: crate::dlp::DlpConfig::from_env(),
         })
     }
@@ -247,6 +257,6 @@ mod tests {
         assert!(ThreatLevel::Medium >= ThreatLevel::Medium);
         assert!(ThreatLevel::High >= ThreatLevel::Medium);
         assert!(ThreatLevel::Critical >= ThreatLevel::Critical);
-        assert!(!(ThreatLevel::Low >= ThreatLevel::Medium));
+        assert!(ThreatLevel::Low < ThreatLevel::Medium);
     }
 }

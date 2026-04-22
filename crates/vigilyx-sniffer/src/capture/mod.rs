@@ -273,18 +273,15 @@ impl HighPerformanceCapturer {
                 vigilyx_db::mq::consumer_groups::ENGINE,
             );
             PublishMode::Mq {
-                mq: Arc::new(mq),
                 stream: Arc::new(stream),
             }
         } else {
             let api_url = format!("http://{}:{}", config.api_host, config.api_port);
             info!("Use HTTP 直ConnectSenddata到 API: {}", api_url);
            // Create an HTTP client that bypasses proxy inheritance from `sudo`.
-            let client = reqwest::Client::builder()
-                .no_proxy()
-                .default_headers(crate::internal_api_headers())
+            let client = crate::internal_api_client_builder()
                 .build()
-                .unwrap_or_else(|_| reqwest::Client::new());
+                .expect("internal publish HTTP client should build");
             PublishMode::Http {
                 client: Arc::new(client),
                 api_url,

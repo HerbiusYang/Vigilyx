@@ -1,7 +1,10 @@
 //! Webhook dispatch with SSRF protection.
 
 use tracing::{error, info, warn};
-use vigilyx_core::{DEFAULT_BLOCKED_HOSTNAMES, security::SecurityVerdict, validate_network_host};
+use vigilyx_core::{
+    DEFAULT_BLOCKED_HOSTNAMES, resolve_network_host, security::SecurityVerdict,
+    validate_network_host,
+};
 
 use super::DispositionEngine;
 
@@ -37,22 +40,117 @@ pub(super) fn validate_webhook_url(raw: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn redact_webhook_url(raw: &str) -> String {
+    let Ok(parsed) = url::Url::parse(raw) else {
+        return "<invalid-webhook-url>".to_string();
+    };
 
-// Tests
+    let Some(host) = parsed.host_str() else {
+        return "<invalid-webhook-url>".to_string();
+    };
 
+    let mut redacted = format!("{}://{}", parsed.scheme(), host);
+    if let Some(port) = parsed.port() {
+        redacted.push(':');
+        redacted.push_str(&port.to_string());
+    }
+    redacted.push_str("/***");
+    redacted
+}
+impl DispositionEngine {
+    pub(super) async fn send_webhook(
+        &self,
+        url: &str,
+        headers: &std::collections::HashMap<String, String>,
+        verdict: &SecurityVerdict,
+    ) {
+        let redacted_url = redact_webhook_url(url);
+
+       // SSRF protection: block internal/private URLs
+        if let Err(reason) = validate_webhook_url(url) {
+            warn!(webhook = %redacted_url, "Webhook blocked (SSRF prevention): {}", reason);
+            return;
+        }
+
+        let parsed = match url::Url::parse(url) {
+            Ok(url) => url,
+            Err(e) => {
+                warn!(webhook = %redacted_url, "Webhook blocked (invalid URL): {}", e);
+                return;
+            }
+        };
+
+        let mut client_builder = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none());
+        if let Some(host) = parsed.host_str()
+            && host.parse::<std::net::IpAddr>().is_err()
+        {
+            let Some(port) = parsed.port_or_known_default() else {
+                warn!(webhook = %redacted_url, "Webhook blocked (missing port)");
+                return;
+            };
+            let addrs = match resolve_network_host(host, port, DEFAULT_BLOCKED_HOSTNAMES) {
+                Ok(addrs) => addrs,
+                Err(reason) => {
+                    warn!(webhook = %redacted_url, "Webhook blocked (SSRF prevention): {}", reason);
+                    return;
+                }
+            };
+            client_builder = client_builder.resolve_to_addrs(host, &addrs);
+        }
+        let client = match client_builder.build() {
+            Ok(client) => client,
+            Err(e) => {
+                error!(webhook = %redacted_url, "Webhook client init failed: {}", e);
+                return;
+            }
+        };
+
+        let payload = serde_json::json!({
+            "event": "security_verdict",
+            "session_id": verdict.session_id.to_string(),
+            "threat_level": verdict.threat_level.to_string(),
+            "confidence": verdict.confidence,
+            "categories": verdict.categories,
+            "summary": verdict.summary,
+            "modules_run": verdict.modules_run,
+            "modules_flagged": verdict.modules_flagged,
+            "created_at": verdict.created_at.to_rfc3339(),
+        });
+
+        let mut req = client.post(parsed).json(&payload);
+        for (k, v) in headers {
+            req = req.header(k, v);
+        }
+
+        match req.send().await {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    info!(webhook = %redacted_url, "Webhook sent successfully");
+                } else {
+                    warn!(
+                        webhook = %redacted_url,
+                        status = %resp.status(),
+                        "Webhook returned non-success"
+                    );
+                }
+            }
+            Err(e) => {
+                error!(webhook = %redacted_url, "Webhook failed: {}", e);
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    
-   // validate_webhook_url - valid URLs
-    
-
     #[test]
     fn test_validate_webhook_url_valid_https() {
         assert!(
-            validate_webhook_url("https://hooks.example.com/webhook").is_ok(),
+            validate_webhook_url("https://8.8.8.8/webhook").is_ok(),
             "Valid https URL should pass validation"
         );
     }
@@ -60,7 +158,7 @@ mod tests {
     #[test]
     fn test_validate_webhook_url_valid_http() {
         assert!(
-            validate_webhook_url("http://hooks.example.com/webhook").is_ok(),
+            validate_webhook_url("http://8.8.8.8/webhook").is_ok(),
             "Valid http URL should pass validation"
         );
     }
@@ -68,7 +166,7 @@ mod tests {
     #[test]
     fn test_validate_webhook_url_valid_https_with_port() {
         assert!(
-            validate_webhook_url("https://hooks.example.com:8443/webhook").is_ok(),
+            validate_webhook_url("https://8.8.8.8:8443/webhook").is_ok(),
             "Valid https URL with port should pass validation"
         );
     }
@@ -81,9 +179,13 @@ mod tests {
         );
     }
 
-    
-   // validate_webhook_url - blocked: localhost / loopback
-    
+    #[test]
+    fn test_redact_webhook_url_masks_path_and_query() {
+        assert_eq!(
+            redact_webhook_url("https://example.com:8443/services/secret?token=abc"),
+            "https://example.com:8443/***"
+        );
+    }
 
     #[test]
     fn test_validate_webhook_url_rejects_localhost() {
@@ -121,10 +223,6 @@ mod tests {
         );
     }
 
-    
-   // validate_webhook_url - blocked: private IP ranges
-    
-
     #[test]
     fn test_validate_webhook_url_rejects_10_x_private() {
         let result = validate_webhook_url("http://10.0.0.1/webhook");
@@ -155,10 +253,6 @@ mod tests {
         );
     }
 
-    
-   // validate_webhook_url - blocked: link-local
-    
-
     #[test]
     fn test_validate_webhook_url_rejects_link_local() {
         let result = validate_webhook_url("http://169.254.169.254/metadata");
@@ -168,10 +262,6 @@ mod tests {
             result
         );
     }
-
-    
-   // validate_webhook_url - blocked: non-http schemes
-    
 
     #[test]
     fn test_validate_webhook_url_rejects_ftp_scheme() {
@@ -203,10 +293,6 @@ mod tests {
         );
     }
 
-    
-   // validate_webhook_url - blocked: internal domains
-    
-
     #[test]
     fn test_validate_webhook_url_rejects_dot_internal() {
         let result = validate_webhook_url("http://service.internal/hook");
@@ -237,14 +323,10 @@ mod tests {
         );
     }
 
-    
-   // validate_webhook_url - blocked: edge cases
-    
-
     #[test]
     fn test_validate_webhook_url_rejects_empty_host() {
-       // url::Url normalizes "http:///path" to "http://path/" (host=path).
-       // Test truly empty/missing host via cannot-be-a-base URL instead.
+        // url::Url normalizes "http:///path" to "http://path/" (host=path).
+        // Test truly empty/missing host via cannot-be-a-base URL instead.
         let result = validate_webhook_url("http://");
         assert!(
             result.is_err(),
@@ -271,50 +353,5 @@ mod tests {
             "255.255.255.255 (broadcast) should be blocked: {:?}",
             result
         );
-    }
-}
-
-impl DispositionEngine {
-    pub(super) async fn send_webhook(
-        &self,
-        url: &str,
-        headers: &std::collections::HashMap<String, String>,
-        verdict: &SecurityVerdict,
-    ) {
-       // SSRF protection: block internal/private URLs
-        if let Err(reason) = validate_webhook_url(url) {
-            warn!(url, "Webhook blocked (SSRF prevention): {}", reason);
-            return;
-        }
-
-        let payload = serde_json::json!({
-            "event": "security_verdict",
-            "session_id": verdict.session_id.to_string(),
-            "threat_level": verdict.threat_level.to_string(),
-            "confidence": verdict.confidence,
-            "categories": verdict.categories,
-            "summary": verdict.summary,
-            "modules_run": verdict.modules_run,
-            "modules_flagged": verdict.modules_flagged,
-            "created_at": verdict.created_at.to_rfc3339(),
-        });
-
-        let mut req = self.http.post(url).json(&payload);
-        for (k, v) in headers {
-            req = req.header(k, v);
-        }
-
-        match req.send().await {
-            Ok(resp) => {
-                if resp.status().is_success() {
-                    info!(url, "Webhook sent successfully");
-                } else {
-                    warn!(url, status = %resp.status(), "Webhook returned non-success");
-                }
-            }
-            Err(e) => {
-                error!(url, "Webhook failed: {}", e);
-            }
-        }
     }
 }

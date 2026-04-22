@@ -101,6 +101,11 @@ impl SecurityEngine {
             .init_security_tables()
             .await
             .map_err(|e| EngineError::Other(format!("Failed to init engine tables: {}", e)))?;
+        match engine_db.seed_system_whitelist().await {
+            Ok(n) if n > 0 => info!("System whitelist seed applied: {} rows inserted/refreshed", n),
+            Ok(_) => info!("System whitelist seed already up to date"),
+            Err(e) => warn!("Failed to seed system whitelist: {}", e),
+        }
 
        // Initialize subsystems
         let ioc_manager = IocManager::new(engine_db.clone());
@@ -453,11 +458,14 @@ impl SecurityEngine {
 
                     if remaining.is_zero() {
                         warn!(session_id = %session_id, "Inline verdict deadline already expired");
+                        // SEC-A01: Timeout must NOT return Safe — an unscanned message
+                        // has unknown threat level. Use Low ("fail-closed light") so it
+                        // gets flagged for review rather than silently passing as safe.
                         let _ = inline_req.respond_to.send(InlineVerdictResponse {
                             disposition: VerdictDisposition::Tempfail,
-                            threat_level: ThreatLevel::Safe,
+                            threat_level: ThreatLevel::Low,
                             confidence: 0.0,
-                            summary: "Inline verdict deadline expired".into(),
+                            summary: "Security analysis timed out — conservative verdict applied (deadline already expired)".into(),
                             session_id,
                             modules_run: 0,
                             modules_flagged: 0,
@@ -475,12 +483,15 @@ impl SecurityEngine {
                             timeout_ms = remaining.as_millis() as u64,
                             "Inline verdict hit deadline before tier-1 analysis completed"
                         );
+                        // SEC-A01: Timeout must NOT return Safe — an unscanned message
+                        // has unknown threat level. Use Low ("fail-closed light") so it
+                        // gets flagged for review rather than silently passing as safe.
                         let _ = inline_req.respond_to.send(InlineVerdictResponse {
                             disposition: VerdictDisposition::Tempfail,
-                            threat_level: ThreatLevel::Safe,
+                            threat_level: ThreatLevel::Low,
                             confidence: 0.0,
                             summary: format!(
-                                "Inline tier-1 analysis timed out after {}ms",
+                                "Security analysis timed out — conservative verdict applied (tier-1 incomplete after {}ms)",
                                 remaining.as_millis()
                             ),
                             session_id,
@@ -544,6 +555,7 @@ impl SecurityEngine {
                         verdict_count: Arc::clone(&verdict_count),
                         temporal_semaphore: Arc::clone(&temporal_semaphore),
                         temporal_flush_interval: Self::TEMPORAL_FLUSH_INTERVAL,
+                        internal_domains: internal_domains.clone(),
                     });
                     let s = session.clone();
                     inflight.spawn(async move {
@@ -575,15 +587,15 @@ impl SecurityEngine {
             //     only analyze sessions delivered TO those IPs (the final hop).
             //     Intermediate relay hops are skipped — the final inbound has
             //     the most complete info (gateway headers, all Received hops).
-            let inbound_filter_active = {
+            let (inbound_filter_active, is_inbound_target) = {
                 let servers = inbound_mail_servers.read().await;
-                !servers.is_empty()
+                if servers.is_empty() {
+                    (false, true) // No filter configured — all sessions pass
+                } else {
+                    (true, servers.contains(&session.server_ip))
+                }
             };
-            let is_inbound_target = {
-                let servers = inbound_mail_servers.read().await;
-                servers.contains(&session.server_ip)
-            };
-            if inbound_filter_active && !is_inbound_target {
+            if !is_inbound_target {
                 debug!(
                     session_id = %session_id,
                     server_ip = %session.server_ip,
@@ -716,6 +728,7 @@ impl SecurityEngine {
                 verdict_count: Arc::clone(&verdict_count),
                 temporal_semaphore: Arc::clone(&temporal_semaphore),
                 temporal_flush_interval: Self::TEMPORAL_FLUSH_INTERVAL,
+                internal_domains: int_domains.clone(),
             });
 
            // 6. Spawn per-email processing task
@@ -759,6 +772,13 @@ impl SecurityEngine {
                     duration_ms = verdict_result.total_duration_ms,
                     "Security verdict produced"
                 );
+
+               // Persist session to DB (UPSERT — idempotent).
+                // In Redis Streams mode the Sniffer only publishes to the stream;
+                // the Engine is the component that persists sessions to PostgreSQL.
+                if let Err(e) = pv_ctx.db.insert_session(&session).await {
+                    error!(session_id = %session_id, "Failed to persist session: {e}");
+                }
 
                // Post-verdict processing: DB storage, IOC, disposition, temporal, alerts
                 run_post_verdict(&pv_ctx, &session, &verdict_result, &results).await;

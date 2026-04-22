@@ -120,9 +120,9 @@ pub async fn get_security_stats(State(state): State<Arc<AppState>>) -> impl Into
 /// GetEngine status
 
 /// DataSource Level:
-/// 1. UDS/Redis status (engine_status RwLock)
-/// 2. File data/engine-status.json (Engine 5)
-/// 3. -> running: false
+/// 1. Redis TTL key (engine heartbeat)
+/// 2. In-memory cache (engine_status RwLock)
+/// 3. Fallback -> running: false
 pub async fn get_engine_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     if let Some(snapshot) = super::load_engine_status_snapshot(&state).await
         && snapshot.heartbeat_secs < 30

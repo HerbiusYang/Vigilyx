@@ -1,132 +1,22 @@
 //! MTA
-
+//!
 //! lettre SmtpTransport MTA.
 //! EML (,).
 
-use std::net::IpAddr;
 use std::time::Duration;
 
-use lettre::transport::smtp::client::Tls;
+use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::address::Envelope;
 use lettre::{Address, AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
 use tracing::{error, info, warn};
+#[allow(unused_imports)]
+use vigilyx_core::{
+    DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES, extract_host_from_network_target,
+    resolve_mail_relay_host, validate_mail_relay_host,
+};
 
 use crate::config::DownstreamConfig;
 use crate::envelope::is_valid_envelope_address;
-
-/// SEC: Check whether an IP address is private, reserved, or otherwise forbidden
-/// for use as a downstream relay target (CWE-918).
-///
-/// Covers: loopback, private (RFC 1918), link-local, broadcast, unspecified,
-/// IPv6 ULA (fc00::/7), and IPv4-mapped IPv6 addresses that map to private ranges.
-fn is_forbidden_ip(ip: IpAddr) -> Option<String> {
-    match ip {
-        IpAddr::V4(v4) => {
-            if v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_broadcast()
-                || v4.is_unspecified()
-                || v4.octets()[0] == 0
-            {
-                return Some(format!("私有/保留 IPv4 地址: {v4}"));
-            }
-        }
-        IpAddr::V6(v6) => {
-            if v6.is_loopback() || v6.is_unspecified() {
-                return Some(format!("回环/未指定 IPv6 地址: {v6}"));
-            }
-            let segments = v6.segments();
-            // fe80::/10 link-local
-            if segments[0] & 0xffc0 == 0xfe80 {
-                return Some(format!("link-local IPv6 地址: {v6}"));
-            }
-            // fc00::/7 ULA (Unique Local Address)
-            if segments[0] & 0xfe00 == 0xfc00 {
-                return Some(format!("ULA 私有 IPv6 地址: {v6}"));
-            }
-            // ::ffff:a.b.c.d  IPv4-mapped IPv6 — check the embedded v4 address
-            if let Some(v4) = v6.to_ipv4_mapped()
-                && (v4.is_loopback()
-                    || v4.is_private()
-                    || v4.is_link_local()
-                    || v4.is_broadcast()
-                    || v4.is_unspecified()
-                    || v4.octets()[0] == 0)
-            {
-                return Some(format!("IPv4-mapped 私有地址: {v6} -> {v4}"));
-            }
-        }
-    }
-    None
-}
-
-/// SEC: validate the downstream host string and reject private/reserved/loopback addresses (CWE-918).
-///
-/// This is the synchronous string-level check. For hostnames, it only blocks
-/// obviously internal names; DNS-based validation is done by [`validate_downstream_host_resolved`].
-pub fn validate_downstream_host(host: &str) -> Result<(), String> {
-    if host.is_empty() {
-        return Err("下游主机地址不能为空".into());
-    }
-    if host.len() > 255 {
-        return Err("下游主机地址过长".into());
-    }
-
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if let Some(reason) = is_forbidden_ip(ip) {
-            return Err(format!("下游主机不能使用{reason}"));
-        }
-    } else {
-        // Hostname: reject obviously internal service names
-        let lower = host.to_lowercase();
-        const BLOCKED_HOSTS: &[&str] = &[
-            "localhost", "redis", "postgres", "vigilyx-postgres",
-            "metadata.google.internal", "instance-data",
-        ];
-        if BLOCKED_HOSTS.iter().any(|&b| lower == b || lower.ends_with(&format!(".{b}"))) {
-            return Err(format!("下游主机不能指向内部服务: {host}"));
-        }
-    }
-    Ok(())
-}
-
-/// SEC: Async validation that resolves DNS and checks all resulting addresses (CWE-918).
-///
-/// After passing the string-level [`validate_downstream_host`] check, this function
-/// performs DNS resolution and verifies that none of the A/AAAA records point to
-/// private, reserved, or otherwise forbidden IP addresses.
-///
-/// This prevents attacks where `mta_downstream_host` is set to a hostname that
-/// resolves to an internal/loopback address.
-pub async fn validate_downstream_host_resolved(host: &str, port: u16) -> Result<(), String> {
-    // First, run the sync string-level validation
-    validate_downstream_host(host)?;
-
-    // If the host is already a literal IP, we already validated it above
-    if host.parse::<IpAddr>().is_ok() {
-        return Ok(());
-    }
-
-    // Resolve DNS and check all resulting addresses
-    let addrs = tokio::net::lookup_host((host, port))
-        .await
-        .map_err(|e| format!("DNS 解析失败 ({host}): {e}"))?;
-
-    let mut found_any = false;
-    for addr in addrs {
-        found_any = true;
-        if let Some(reason) = is_forbidden_ip(addr.ip()) {
-            return Err(format!("下游主机 {host} 解析到禁止的地址: {reason}"));
-        }
-    }
-
-    if !found_any {
-        return Err(format!("下游主机 {host} DNS 解析无结果"));
-    }
-
-    Ok(())
-}
 
 /// MTA
 pub struct DownstreamRelay {
@@ -134,6 +24,44 @@ pub struct DownstreamRelay {
     config: DownstreamConfig,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PinnedRelayTarget {
+    connect_addr: std::net::SocketAddr,
+    tls_host: String,
+}
+
+fn resolve_relay_tls_host(host: &str) -> anyhow::Result<String> {
+    let tls_host = extract_host_from_network_target(host)
+        .unwrap_or_else(|| host.trim().to_string())
+        .trim()
+        .trim_matches('[')
+        .trim_matches(']')
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+
+    if tls_host.is_empty() {
+        anyhow::bail!("SEC: 下游地址校验失败: relay host is empty");
+    }
+
+    Ok(tls_host)
+}
+
+fn resolve_relay_target(config: &DownstreamConfig) -> anyhow::Result<PinnedRelayTarget> {
+    let connect_addr = resolve_mail_relay_host(
+        &config.host,
+        config.port,
+        DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES,
+    )
+    .map_err(|e| anyhow::anyhow!("SEC: 下游地址校验失败: {e}"))?
+    .into_iter()
+    .next()
+    .ok_or_else(|| anyhow::anyhow!("SEC: 下游地址校验失败: relay resolved to no addresses"))?;
+
+    Ok(PinnedRelayTarget {
+        connect_addr,
+        tls_host: resolve_relay_tls_host(&config.host)?,
+    })
+}
 
 pub enum RelayResult {
     
@@ -148,10 +76,9 @@ pub enum RelayResult {
 
 impl DownstreamRelay {
     pub async fn new(config: &DownstreamConfig) -> anyhow::Result<Self> {
-        // SEC: reject private/reserved downstream addresses with DNS resolution (CWE-918)
-        validate_downstream_host_resolved(&config.host, config.port)
-            .await
-            .map_err(|e| anyhow::anyhow!("SEC: 下游地址校验失败: {e}"))?;
+        // Allow RFC1918 relay targets used by real deployments, but still reject
+        // loopback/link-local/internal service endpoints and fail closed on DNS errors.
+        let target = resolve_relay_target(config)?;
 
         // SEC: plaintext SMTP requires explicit opt-in via env var (defense-in-depth)
         if !config.starttls {
@@ -166,14 +93,18 @@ impl DownstreamRelay {
             warn!("Plaintext downstream SMTP enabled via VIGILYX_ALLOW_PLAINTEXT_SMTP — all relayed mail is unencrypted!");
         }
 
-        let addr = format!("{}:{}", config.host, config.port);
+        let addr = target.connect_addr.to_string();
+        let connect_host = target.connect_addr.ip().to_string();
 
         let builder = if config.starttls {
-            AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.host)
-                .map_err(|e| anyhow::anyhow!("STARTTLS relay error: {e}"))?
+            AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(connect_host)
                 .port(config.port)
+                .tls(Tls::Required(
+                    TlsParameters::new(target.tls_host)
+                        .map_err(|e| anyhow::anyhow!("STARTTLS relay error: {e}"))?,
+                ))
         } else {
-            AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&config.host)
+            AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(connect_host)
                 .port(config.port)
                 .tls(Tls::None)
         };
@@ -307,132 +238,100 @@ mod tests {
         assert!(err.contains("Invalid RCPT TO"));
     }
 
-    // --- is_forbidden_ip tests ---
-
-    #[test]
-    fn test_forbidden_ip_rejects_ipv4_loopback() {
-        let ip: IpAddr = "127.0.0.1".parse().unwrap();
-        assert!(is_forbidden_ip(ip).is_some());
-    }
-
-    #[test]
-    fn test_forbidden_ip_rejects_ipv4_private_10() {
-        let ip: IpAddr = "10.0.0.1".parse().unwrap();
-        assert!(is_forbidden_ip(ip).is_some());
-    }
-
-    #[test]
-    fn test_forbidden_ip_rejects_ipv4_private_172() {
-        let ip: IpAddr = "172.16.0.1".parse().unwrap();
-        assert!(is_forbidden_ip(ip).is_some());
-    }
-
-    #[test]
-    fn test_forbidden_ip_rejects_ipv4_private_192() {
-        let ip: IpAddr = "192.168.1.1".parse().unwrap();
-        assert!(is_forbidden_ip(ip).is_some());
-    }
-
-    #[test]
-    fn test_forbidden_ip_rejects_ipv4_link_local() {
-        let ip: IpAddr = "169.254.169.254".parse().unwrap();
-        assert!(is_forbidden_ip(ip).is_some(), "Cloud metadata address should be blocked");
-    }
-
-    #[test]
-    fn test_forbidden_ip_allows_public_ipv4() {
-        let ip: IpAddr = "8.8.8.8".parse().unwrap();
-        assert!(is_forbidden_ip(ip).is_none());
-    }
-
-    #[test]
-    fn test_forbidden_ip_rejects_ipv6_loopback() {
-        let ip: IpAddr = "::1".parse().unwrap();
-        assert!(is_forbidden_ip(ip).is_some());
-    }
-
-    #[test]
-    fn test_forbidden_ip_rejects_ipv6_link_local() {
-        let ip: IpAddr = "fe80::1".parse().unwrap();
-        assert!(is_forbidden_ip(ip).is_some());
-    }
-
-    #[test]
-    fn test_forbidden_ip_rejects_ipv6_ula() {
-        let ip: IpAddr = "fd12:3456:789a::1".parse().unwrap();
-        assert!(is_forbidden_ip(ip).is_some(), "ULA (fc00::/7) should be blocked");
-    }
-
-    #[test]
-    fn test_forbidden_ip_rejects_ipv6_ula_fc() {
-        let ip: IpAddr = "fc00::1".parse().unwrap();
-        assert!(is_forbidden_ip(ip).is_some(), "ULA fc00:: should be blocked");
-    }
-
-    #[test]
-    fn test_forbidden_ip_rejects_v4_mapped_loopback() {
-        let ip: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
-        assert!(is_forbidden_ip(ip).is_some(), "IPv4-mapped loopback should be blocked");
-    }
-
-    #[test]
-    fn test_forbidden_ip_rejects_v4_mapped_private() {
-        let ip: IpAddr = "::ffff:10.0.0.1".parse().unwrap();
-        assert!(is_forbidden_ip(ip).is_some(), "IPv4-mapped private should be blocked");
-    }
-
-    #[test]
-    fn test_forbidden_ip_rejects_v4_mapped_link_local() {
-        let ip: IpAddr = "::ffff:169.254.169.254".parse().unwrap();
-        assert!(is_forbidden_ip(ip).is_some(), "IPv4-mapped metadata should be blocked");
-    }
-
-    #[test]
-    fn test_forbidden_ip_allows_public_ipv6() {
-        let ip: IpAddr = "2001:4860:4860::8888".parse().unwrap();
-        assert!(is_forbidden_ip(ip).is_none(), "Public IPv6 should be allowed");
-    }
-
-    #[test]
-    fn test_forbidden_ip_allows_v4_mapped_public() {
-        let ip: IpAddr = "::ffff:8.8.8.8".parse().unwrap();
-        assert!(is_forbidden_ip(ip).is_none(), "IPv4-mapped public should be allowed");
-    }
-
-    // --- validate_downstream_host tests ---
-
     #[test]
     fn test_validate_rejects_empty_host() {
-        assert!(validate_downstream_host("").is_err());
+        assert!(
+            validate_mail_relay_host("", DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES).is_err()
+        );
     }
 
     #[test]
     fn test_validate_rejects_localhost() {
-        assert!(validate_downstream_host("localhost").is_err());
+        assert!(
+            validate_mail_relay_host("localhost", DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES).is_err()
+        );
     }
 
     #[test]
     fn test_validate_rejects_redis() {
-        assert!(validate_downstream_host("redis").is_err());
+        assert!(
+            validate_mail_relay_host("redis", DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES).is_err()
+        );
     }
 
     #[test]
     fn test_validate_rejects_metadata_service() {
-        assert!(validate_downstream_host("metadata.google.internal").is_err());
+        assert!(
+            validate_mail_relay_host(
+                "metadata.google.internal",
+                DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn test_validate_allows_public_hostname() {
-        assert!(validate_downstream_host("mail.example.com").is_ok());
+        assert!(
+            validate_mail_relay_host("mail.example.com", DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES)
+                .is_ok()
+        );
     }
 
     #[test]
-    fn test_validate_rejects_ipv6_ula_string() {
-        assert!(validate_downstream_host("fd00::1").is_err());
+    fn test_validate_allows_private_ipv4_relay() {
+        assert!(
+            validate_mail_relay_host("10.1.246.33", DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES)
+                .is_ok()
+        );
     }
 
     #[test]
-    fn test_validate_rejects_v4_mapped_private_string() {
-        assert!(validate_downstream_host("::ffff:192.168.1.1").is_err());
+    fn test_validate_rejects_link_local_ipv4() {
+        assert!(
+            validate_mail_relay_host("169.254.169.254", DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_validate_rejects_urls() {
+        assert!(
+            validate_mail_relay_host(
+                "http://mail.example.com",
+                DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn test_resolve_relay_target_uses_private_ipv4_socket_addr() {
+        let config = DownstreamConfig {
+            host: "10.1.246.33".into(),
+            port: 2525,
+            starttls: true,
+            timeout_secs: 30,
+        };
+
+        let target = resolve_relay_target(&config).expect("private relay IP should be allowed");
+        assert_eq!(
+            target.connect_addr,
+            "10.1.246.33:2525".parse().expect("valid socket addr")
+        );
+        assert_eq!(target.tls_host, "10.1.246.33");
+    }
+
+    #[test]
+    fn test_resolve_relay_target_rejects_localhost_with_trailing_dot() {
+        let config = DownstreamConfig {
+            host: "localhost.".into(),
+            port: 25,
+            starttls: true,
+            timeout_secs: 30,
+        };
+
+        let err = resolve_relay_target(&config).expect_err("localhost must be rejected");
+        assert!(err.to_string().contains("SEC: 下游地址校验失败"));
     }
 }

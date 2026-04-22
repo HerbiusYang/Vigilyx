@@ -269,14 +269,39 @@ impl SecurityModule for SandboxScanModule {
 
         let duration_ms = start.elapsed().as_millis() as u64;
 
+        // F01 fix: If sandbox was unavailable / all analyses failed, return
+        // scan_incomplete with non-zero suspicion instead of not_applicable.
+        // High-risk attachments that bypass sandbox represent unknown risk
+        // (CWE-636 fail-open prevention).
         if all_reports.is_empty() {
-            return Ok(ModuleResult::not_applicable(
-                &self.meta.id,
-                &self.meta.name,
-                self.meta.pillar,
-                "SandboxAnalyze未ReturnValidResult ",
+            warn!(
+                module = "sandbox_scan",
+                candidates = candidates.len(),
+                "Sandbox unavailable — all analyses failed, marking as incomplete"
+            );
+            return Ok(ModuleResult {
+                module_id: self.meta.id.clone(),
+                module_name: self.meta.name.clone(),
+                pillar: self.meta.pillar,
+                threat_level: ThreatLevel::Low,
+                confidence: 0.10,
+                categories: vec!["scan_incomplete".to_string()],
+                summary: format!(
+                    "Sandbox analysis could not be completed — {} high-risk attachment(s) not analyzed",
+                    candidates.len()
+                ),
+                evidence: all_evidence,
+                details: serde_json::json!({
+                    "scan_status": "incomplete",
+                    "reason": "sandbox_unavailable",
+                    "candidates_count": candidates.len(),
+                    "reports_count": 0,
+                }),
                 duration_ms,
-            ));
+                analyzed_at: Utc::now(),
+                bpa: Some(vigilyx_core::security::Bpa::new(0.08, 0.0, 0.92)),
+                engine_id: Some("content_analysis".to_string()),
+            });
         }
 
         all_categories.sort();

@@ -12,9 +12,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-
 // Pillar - Securityanalyze
-
 
 /// Security analysis pillar
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -40,7 +38,7 @@ pub const ALL_PILLARS: [Pillar; PILLAR_COUNT] = [
 ];
 
 impl Pillar {
-   /// Convert to array index (0-4).
+    /// Convert to array index (0-4).
     #[inline(always)]
     pub const fn as_index(self) -> usize {
         self as usize
@@ -112,9 +110,7 @@ impl std::fmt::Display for ThreatLevel {
     }
 }
 
-
 // BPA - Dempster-Shafer Basic Probability Assignment
-
 
 /// BPA four-tuple: mass function over {Threat, Normal,, }.
 ///
@@ -131,14 +127,14 @@ pub struct Bpa {
     pub b: f64,
     pub d: f64,
     pub u: f64,
-   /// Open-world leakage rate (TBM): m().
-   /// Default 0.0 = closed-world (backward compatible).
+    /// Open-world leakage rate (TBM): m().
+    /// Default 0.0 = closed-world (backward compatible).
     #[serde(default)]
     pub epsilon: f64,
 }
 
 impl Bpa {
-   /// Create a closed-world BPA (epsilon = 0), normalizing to ensure sum = 1.0.
+    /// Create a closed-world BPA (epsilon = 0), normalizing to ensure sum = 1.0.
     #[inline]
     pub fn new(b: f64, d: f64, u: f64) -> Self {
         let b = b.max(0.0);
@@ -157,8 +153,8 @@ impl Bpa {
         }
     }
 
-   /// Create a TBM open-world BPA with epsilon (m()).
-   /// Normalizes so that b + d + u + epsilon = 1.0.
+    /// Create a TBM open-world BPA with epsilon (m()).
+    /// Normalizes so that b + d + u + epsilon = 1.0.
     #[inline]
     pub fn new_tbm(b: f64, d: f64, u: f64, epsilon: f64) -> Self {
         let b = b.max(0.0);
@@ -178,7 +174,7 @@ impl Bpa {
         }
     }
 
-   /// Vacuous BPA: total uncertainty, zero information.
+    /// Vacuous BPA: total uncertainty, zero information.
     #[inline(always)]
     pub const fn vacuous() -> Self {
         Self {
@@ -189,7 +185,7 @@ impl Bpa {
         }
     }
 
-   /// Fully certain malicious.
+    /// Fully certain malicious.
     #[inline(always)]
     pub const fn certain_threat() -> Self {
         Self {
@@ -200,7 +196,7 @@ impl Bpa {
         }
     }
 
-   /// Fully certain benign.
+    /// Fully certain benign.
     #[inline(always)]
     pub const fn certain_benign() -> Self {
         Self {
@@ -211,12 +207,12 @@ impl Bpa {
         }
     }
 
-   /// Weak safe signal for modules that analyzed content and found nothing.
-   ///
-   /// BPA = {b=0, d=0.15, u=0.85}: "I looked and found nothing bad, but I'm
-   /// 85% uncertain." Crucially, this is **not** an absorbing element in
-   /// Dempster combination - threat signals from other modules pass through
-   /// because u> 0.
+    /// Weak safe signal for modules that analyzed content and found nothing.
+    ///
+    /// BPA = {b=0, d=0.15, u=0.85}: "I looked and found nothing bad, but I'm
+    /// 85% uncertain." Crucially, this is **not** an absorbing element in
+    /// Dempster combination - threat signals from other modules pass through
+    /// because u> 0.
     #[inline(always)]
     pub const fn safe_analyzed() -> Self {
         Self {
@@ -227,7 +223,7 @@ impl Bpa {
         }
     }
 
-   /// Convert legacy (score, confidence) pair to BPA (closed-world).
+    /// Convert legacy (score, confidence) pair to BPA (closed-world).
     #[inline]
     pub fn from_score_confidence(score: f64, confidence: f64) -> Self {
         let s = score.clamp(0.0, 1.0);
@@ -240,21 +236,21 @@ impl Bpa {
         }
     }
 
-   /// Risk score: `b + u` where controls uncertainty -> threat conversion.
-   /// Note: contributes through the Novelty signal, not directly in risk.
+    /// Risk score: `b + u` where controls uncertainty -> threat conversion.
+    /// Note: contributes through the Novelty signal, not directly in risk.
     #[inline(always)]
     pub fn risk_score(self, eta: f64) -> f64 {
         self.b + eta * self.u
     }
 
-   /// Pignistic probability (closed-world): `b + u/2`.
+    /// Pignistic probability (closed-world): `b + u/2`.
     #[inline(always)]
     pub fn pignistic_threat(self) -> f64 {
         self.b + self.u * 0.5
     }
 
-   /// TBM Pignistic probability: `b/(1-) + u/(2 (1-))`.
-   /// When -> 1.0, returns 0.5 as fallback.
+    /// TBM Pignistic probability: `b/(1-) + u/(2 (1-))`.
+    /// When -> 1.0, returns 0.5 as fallback.
     #[inline]
     pub fn pignistic_tbm(self) -> f64 {
         let denom = 1.0 - self.epsilon;
@@ -264,7 +260,7 @@ impl Bpa {
         self.b / denom + self.u / (2.0 * denom)
     }
 
-   /// Check BPA validity (sum 1.0, non-negative components).
+    /// Check BPA validity (sum 1.0, non-negative components).
     #[inline]
     pub fn is_valid(self) -> bool {
         self.b >= 0.0
@@ -274,14 +270,14 @@ impl Bpa {
             && (self.b + self.d + self.u + self.epsilon - 1.0).abs() < 1e-6
     }
 
-   /// Whether this BPA carries no information (vacuous).
+    /// Whether this BPA carries no information (vacuous).
     #[inline(always)]
     pub fn is_vacuous(self) -> bool {
         self.u > 1.0 - 1e-9
     }
 
-   /// Discount this BPA by factor `alpha` [0,1].
-   /// Moves committed mass (b, d) into uncertainty; preserves epsilon.
+    /// Discount this BPA by factor `alpha` [0,1].
+    /// Moves committed mass (b, d) into uncertainty; preserves epsilon.
     #[inline]
     pub fn discount(self, alpha: f64) -> Self {
         let a = alpha.clamp(0.0, 1.0);
@@ -370,9 +366,7 @@ pub fn dempster_combine_n(bpas: &[Bpa]) -> DempsterResult {
     }
 }
 
-
 // Evidence -
-
 
 /// Evidence supporting a finding
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -384,9 +378,7 @@ pub struct Evidence {
     pub snippet: Option<String>,
 }
 
-
 // ModuleResult - Moduledetect
-
 
 /// Result from a single security module
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -402,20 +394,20 @@ pub struct ModuleResult {
     pub details: serde_json::Value,
     pub duration_ms: u64,
     pub analyzed_at: DateTime<Utc>,
-   /// D-S BPA triple. `None` for legacy modules (auto-converted in fusion layer).
+    /// D-S BPA triple. `None` for legacy modules (auto-converted in fusion layer).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bpa: Option<Bpa>,
-   /// Parent engine ID (A-H). `None` for legacy modules (auto-mapped via engine_map).
+    /// Parent engine ID (A-H). `None` for legacy modules (auto-mapped via engine_map).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub engine_id: Option<String>,
 }
 
 impl ModuleResult {
-   /// Create a safe result for a module that actually analyzed content and
-   /// found nothing suspicious.
-   ///
-   /// Produces `Bpa::safe_analyzed()` = {b=0, d=0.15, u=0.85}.
-   /// This is NOT an absorbing element in Dempster combination.
+    /// Create a safe result for a module that actually analyzed content and
+    /// found nothing suspicious.
+    ///
+    /// Produces `Bpa::safe_analyzed()` = {b=0, d=0.15, u=0.85}.
+    /// This is NOT an absorbing element in Dempster combination.
     pub fn safe_analyzed(
         module_id: &str,
         module_name: &str,
@@ -440,11 +432,11 @@ impl ModuleResult {
         }
     }
 
-   /// Create a safe result for a module that had nothing to analyze
-   /// (e.g., no attachments for attach_scan, no links for link_scan).
-   ///
-   /// Produces `Bpa::vacuous()` = {b=0, d=0, u=1.0} - the identity element
-   /// in Dempster combination, contributing zero information to the fusion.
+    /// Create a safe result for a module that had nothing to analyze
+    /// (e.g., no attachments for attach_scan, no links for link_scan).
+    ///
+    /// Produces `Bpa::vacuous()` = {b=0, d=0, u=1.0} - the identity element
+    /// in Dempster combination, contributing zero information to the fusion.
     pub fn not_applicable(
         module_id: &str,
         module_name: &str,
@@ -469,7 +461,7 @@ impl ModuleResult {
         }
     }
 
-   /// Create a safe (no threat) result.
+    /// Create a safe (no threat) result.
     #[deprecated(note = "use safe_analyzed() or not_applicable() instead")]
     pub fn safe(
         module_id: &str,
@@ -495,7 +487,7 @@ impl ModuleResult {
         }
     }
 
-   /// Extract continuous raw score from details.score or fallback to threat_level numeric.
+    /// Extract continuous raw score from details.score or fallback to threat_level numeric.
     #[inline]
     pub fn raw_score(&self) -> f64 {
         self.details
@@ -504,7 +496,7 @@ impl ModuleResult {
             .unwrap_or_else(|| self.threat_level.as_numeric())
     }
 
-   /// Get or compute BPA triple. If `bpa` is None, auto-converts from (score, confidence).
+    /// Get or compute BPA triple. If `bpa` is None, auto-converts from (score, confidence).
     #[inline]
     pub fn effective_bpa(&self) -> Bpa {
         self.bpa
@@ -512,9 +504,7 @@ impl ModuleResult {
     }
 }
 
-
 // SecurityVerdict - Security
-
 
 /// Per-engine BPA detail for the verdict output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -534,13 +524,13 @@ pub struct EngineBpaDetail {
 /// breaker applies a minimum risk floor to prevent complete suppression.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CircuitBreakerInfo {
-   /// The module that triggered the circuit breaker.
+    /// The module that triggered the circuit breaker.
     pub trigger_module_id: String,
-   /// The raw belief value of the triggering module's BPA.
+    /// The raw belief value of the triggering module's BPA.
     pub trigger_belief: f64,
-   /// The computed floor value: `trigger_belief * alert_floor_factor`.
+    /// The computed floor value: `trigger_belief * alert_floor_factor`.
     pub floor_value: f64,
-   /// The original `risk_single` before floor application.
+    /// The original `risk_single` before floor application.
     pub original_risk: f64,
 }
 
@@ -553,13 +543,13 @@ pub struct CircuitBreakerInfo {
 /// combination, zeroing out threat signals.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConvergenceBreakerInfo {
-   /// Number of modules that flagged threats.
+    /// Number of modules that flagged threats.
     pub modules_flagged: u32,
-   /// The applied floor value.
+    /// The applied floor value.
     pub floor_value: f64,
-   /// The original `risk_single` before floor application.
+    /// The original `risk_single` before floor application.
     pub original_risk: f64,
-   /// IDs of modules that flagged threats.
+    /// IDs of modules that flagged threats.
     pub flagged_modules: Vec<String>,
 }
 
@@ -572,24 +562,24 @@ pub struct FusionDetails {
     pub eta: f64,
     pub engine_details: Vec<EngineBpaDetail>,
     pub credibility_weights: HashMap<String, f64>,
-   /// v5.0 TBM: Novelty = 1 - (1-). None for closed-world paths.
+    /// v5.0 TBM: Novelty = 1 - (1-). None for closed-world paths.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub novelty: Option<f64>,
-   /// v5.0 TBM: Cross-layer conflict between tech and blind-spot layers.
+    /// v5.0 TBM: Cross-layer conflict between tech and blind-spot layers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub k_cross: Option<f64>,
-   /// v5.0 TBM: Pignistic probability BetP(Threat).
+    /// v5.0 TBM: Pignistic probability BetP(Threat).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub betp: Option<f64>,
-   /// Fusion method used: "ds_murphy" | "tbm_v5" | "noisy_or" | "weighted_max".
+    /// Fusion method used: "ds_murphy" | "tbm_v5" | "noisy_or" | "weighted_max".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fusion_method: Option<String>,
-   /// Post-fusion safety circuit breaker: activated when D-S fusion suppresses
-   /// a strong minority signal. None = no activation needed.
+    /// Post-fusion safety circuit breaker: activated when D-S fusion suppresses
+    /// a strong minority signal. None = no activation needed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub circuit_breaker: Option<CircuitBreakerInfo>,
-   /// Multi-signal convergence breaker: activated when 3+ modules flag threats
-   /// but D-S fusion dilutes them all. None = no activation needed.
+    /// Multi-signal convergence breaker: activated when 3+ modules flag threats
+    /// but D-S fusion dilutes them all. None = no activation needed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub convergence_breaker: Option<ConvergenceBreakerInfo>,
 }
@@ -612,9 +602,7 @@ pub struct SecurityVerdict {
     pub fusion_details: Option<FusionDetails>,
 }
 
-
 // AlertLevel / AlertRecord - Alert Level record
-
 
 /// P0-P3 alert severity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -685,7 +673,7 @@ pub struct CusumState {
 }
 
 impl CusumState {
-   /// Create a new CUSUM tracker for an entity.
+    /// Create a new CUSUM tracker for an entity.
     #[inline]
     pub fn new(entity_key: String) -> Self {
         Self {
@@ -700,7 +688,7 @@ impl CusumState {
         }
     }
 
-   /// Reset CUSUM statistics (e.g., after acknowledged alarm).
+    /// Reset CUSUM statistics (e.g., after acknowledged alarm).
     pub fn reset(&mut self) {
         self.s_pos = 0.0;
         self.s_neg = 0.0;
@@ -719,7 +707,7 @@ pub struct DualEwmaState {
 }
 
 impl DualEwmaState {
-   /// Create a new dual EWMA tracker.
+    /// Create a new dual EWMA tracker.
     #[inline]
     pub fn new(entity_key: String) -> Self {
         Self {
@@ -742,7 +730,7 @@ pub struct EntityRiskState {
 }
 
 impl EntityRiskState {
-   /// Create a new entity risk tracker.
+    /// Create a new entity risk tracker.
     #[inline]
     pub fn new(entity_key: String, alpha: f64) -> Self {
         Self {
@@ -753,7 +741,7 @@ impl EntityRiskState {
         }
     }
 
-   /// Create with default alpha (0.92).
+    /// Create with default alpha (0.92).
     #[inline]
     pub fn with_defaults(entity_key: String) -> Self {
         Self::new(entity_key, 0.92)
@@ -784,7 +772,7 @@ pub struct IocEntry {
     pub source: String,
     pub verdict: String,
     pub confidence: f64,
-   /// AttackType: phishing, spoofing, malware, bec, spam, unknown
+    /// AttackType: phishing, spoofing, malware, bec, spam, unknown
     #[serde(default)]
     pub attack_type: String,
     pub first_seen: DateTime<Utc>,
@@ -797,7 +785,7 @@ pub struct IocEntry {
 }
 
 impl IocEntry {
-   /// FromSecurity Create IOC
+    /// FromSecurity Create IOC
     pub fn auto_from_indicator(
         indicator: String,
         ioc_type: String,
@@ -813,7 +801,7 @@ impl IocEntry {
         )
     }
 
-   /// FromSecurity Create IOC (AttackType)
+    /// FromSecurity Create IOC (AttackType)
     pub fn auto_from_indicator_with_attack(
         indicator: String,
         ioc_type: String,
@@ -831,7 +819,7 @@ impl IocEntry {
         )
     }
 
-   /// FromSecurity Create IOC (AttackType + verdict)
+    /// FromSecurity Create IOC (AttackType + verdict)
     pub fn auto_from_indicator_full(
         indicator: String,
         ioc_type: String,
@@ -919,9 +907,9 @@ pub fn feedback_type_to_label(feedback_type: &str) -> Option<(i32, &'static str)
 pub struct TrainingSample {
     pub id: Uuid,
     pub session_id: Uuid,
-   /// 5Classification (0-4)
+    /// 5Classification (0-4)
     pub label: i32,
-   /// : legitimate / phishing / spoofing / social_engineering / other_threat
+    /// : legitimate / phishing / spoofing / social_engineering / other_threat
     pub label_name: String,
     pub subject: Option<String>,
     pub body_text: Option<String>,
@@ -934,9 +922,7 @@ pub struct TrainingSample {
     pub created_at: DateTime<Utc>,
 }
 
-
 // FeedbackEntry - items
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeedbackEntry {
@@ -951,9 +937,7 @@ pub struct FeedbackEntry {
     pub created_at: DateTime<Utc>,
 }
 
-
 // FeedbackStat - Statistics
-
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeedbackStat {
@@ -962,9 +946,7 @@ pub struct FeedbackStat {
     pub false_positives: u64,
 }
 
-
 // Tests
-
 
 #[cfg(test)]
 mod tests {
@@ -1026,7 +1008,7 @@ mod tests {
         let safe = Bpa::safe_analyzed();
         assert!(safe.is_valid());
         assert!(!safe.is_vacuous());
-       // Must have positive uncertainty - NOT an absorbing element
+        // Must have positive uncertainty - NOT an absorbing element
         assert!(safe.u > 0.5, "safe_analyzed must retain high uncertainty");
         assert!(
             (safe.b).abs() < 1e-10,
@@ -1037,8 +1019,8 @@ mod tests {
 
     #[test]
     fn test_safe_analyzed_does_not_absorb_threat() {
-       // This is the critical test: a threat BPA combined with safe_analyzed
-       // must NOT zero out the threat signal.
+        // This is the critical test: a threat BPA combined with safe_analyzed
+        // must NOT zero out the threat signal.
         let threat = Bpa {
             b: 0.6,
             d: 0.1,
@@ -1048,7 +1030,7 @@ mod tests {
         let safe = Bpa::safe_analyzed();
 
         let result = dempster_combine(threat, safe);
-       // The combined belief must remain significantly positive
+        // The combined belief must remain significantly positive
         assert!(
             result.combined.b > 0.1,
             "threat signal must survive combination with safe_analyzed, got b={}",
@@ -1058,8 +1040,8 @@ mod tests {
 
     #[test]
     fn test_old_safe_was_absorbing_element() {
-       // Verify the old behavior: from_score_confidence(0.0, 1.0) = certain_benign
-       // IS an absorbing element - combining with it zeroes all threat.
+        // Verify the old behavior: from_score_confidence(0.0, 1.0) = certain_benign
+        // IS an absorbing element - combining with it zeroes all threat.
         let old_safe = Bpa::from_score_confidence(0.0, 1.0);
         assert!((old_safe.d - 1.0).abs() < 1e-10);
         assert!((old_safe.u).abs() < 1e-10);
@@ -1071,7 +1053,7 @@ mod tests {
             epsilon: 0.0,
         };
         let result = dempster_combine(threat, old_safe);
-       // Old behavior: threat completely absorbed -> b 0
+        // Old behavior: threat completely absorbed -> b 0
         assert!(
             result.combined.b < 0.01,
             "old safe BPA should absorb threat (demonstrating the bug)"
@@ -1176,29 +1158,26 @@ mod tests {
     }
 }
 
-
 // MTA Proxy - Inline Verdict Types
-
 
 /// MTA
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "action")]
 pub enum VerdictDisposition {
-   /// - MTA
+    /// - MTA
     Accept,
-   /// - SMTP 550
+    /// - SMTP 550
     Reject {
-       /// (SMTP)
+        /// (SMTP)
         reason: String,
     },
-    
+
     Quarantine,
-   /// - / 451, fail-open
+    /// - / 451, fail-open
     Tempfail,
 }
 
 impl VerdictDisposition {
-    
     pub fn from_threat_level(
         level: ThreatLevel,
         quarantine_threshold: ThreatLevel,
@@ -1215,17 +1194,17 @@ impl VerdictDisposition {
         }
     }
 
-   /// SMTP
+    /// SMTP
     pub fn smtp_code(&self) -> u16 {
         match self {
             VerdictDisposition::Accept => 250,
             VerdictDisposition::Reject { .. } => 550,
-            VerdictDisposition::Quarantine => 250, 
+            VerdictDisposition::Quarantine => 250,
             VerdictDisposition::Tempfail => 451,
         }
     }
 
-   /// SMTP
+    /// SMTP
     pub fn smtp_message(&self) -> String {
         match self {
             VerdictDisposition::Accept => "2.0.0 OK".to_string(),
@@ -1250,21 +1229,21 @@ impl std::fmt::Display for VerdictDisposition {
 /// MTA inline verdict (MTA)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InlineVerdictResponse {
-   /// Comment retained in English.
+    /// Comment retained in English.
     pub disposition: VerdictDisposition,
-   /// Comment retained in English.
+    /// Comment retained in English.
     pub threat_level: ThreatLevel,
-   /// Comment retained in English.
+    /// Comment retained in English.
     pub confidence: f64,
-   /// Summary
+    /// Summary
     pub summary: String,
-   /// Session ID
+    /// Session ID
     pub session_id: Uuid,
-   /// Comment retained in English.
+    /// Comment retained in English.
     pub modules_run: u32,
-   /// Comment retained in English.
+    /// Comment retained in English.
     pub modules_flagged: u32,
-   /// ()
+    /// ()
     pub duration_ms: u64,
 }
 
@@ -1280,6 +1259,8 @@ pub enum ThreatSceneType {
     BulkMailing,
     /// 退信扫描: 大量退信涌入, 表明攻击者在枚举内部邮箱地址 (Directory Harvest Attack)
     BounceHarvest,
+    /// 内部域名仿冒: 外部发件人使用与内部域名相似的域名 (TLD变种/子域前缀/同形攻击)
+    InternalDomainImpersonation,
 }
 
 impl std::fmt::Display for ThreatSceneType {
@@ -1287,6 +1268,7 @@ impl std::fmt::Display for ThreatSceneType {
         match self {
             Self::BulkMailing => write!(f, "bulk_mailing"),
             Self::BounceHarvest => write!(f, "bounce_harvest"),
+            Self::InternalDomainImpersonation => write!(f, "internal_domain_impersonation"),
         }
     }
 }
@@ -1296,6 +1278,7 @@ impl ThreatSceneType {
         match s {
             "bulk_mailing" => Some(Self::BulkMailing),
             "bounce_harvest" => Some(Self::BounceHarvest),
+            "internal_domain_impersonation" => Some(Self::InternalDomainImpersonation),
             _ => None,
         }
     }
@@ -1372,6 +1355,7 @@ pub struct ThreatSceneRule {
 pub struct ThreatSceneStats {
     pub bulk_mailing: SceneTypeStats,
     pub bounce_harvest: SceneTypeStats,
+    pub internal_domain_impersonation: SceneTypeStats,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1449,11 +1433,63 @@ impl Default for BounceHarvestConfig {
     }
 }
 
-fn default_true() -> bool { true }
-fn default_3() -> i64 { 3 }
-fn default_5() -> i64 { 5 }
-fn default_10() -> i64 { 10 }
-fn default_20() -> i64 { 20 }
-fn default_24() -> i64 { 24 }
-fn default_48() -> i64 { 48 }
-fn default_72() -> i64 { 72 }
+/// 内部域名仿冒检测配置 (从 JSON 反序列化)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InternalDomainImpersonationConfig {
+    /// 检测时间窗口 (小时)
+    #[serde(default = "default_24")]
+    pub time_window_hours: i64,
+    /// 触发场景的最少邮件数
+    #[serde(default = "default_3")]
+    pub min_emails: i64,
+    /// 是否启用自动封禁
+    #[serde(default)]
+    pub auto_block_enabled: bool,
+    /// 自动封禁持续时间 (小时)
+    #[serde(default = "default_48")]
+    pub auto_block_duration_hours: i64,
+    /// 自动封禁最少邮件数门控 (达到此数量才允许自动封禁)
+    #[serde(default = "default_10")]
+    pub auto_block_min_emails: i64,
+    /// 排除的域名列表 (不做仿冒检测)
+    #[serde(default)]
+    pub exclude_domains: Vec<String>,
+}
+
+impl Default for InternalDomainImpersonationConfig {
+    fn default() -> Self {
+        Self {
+            time_window_hours: 24,
+            min_emails: 3,
+            auto_block_enabled: false,
+            auto_block_duration_hours: 48,
+            auto_block_min_emails: 10,
+            exclude_domains: Vec::new(),
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_3() -> i64 {
+    3
+}
+fn default_5() -> i64 {
+    5
+}
+fn default_10() -> i64 {
+    10
+}
+fn default_20() -> i64 {
+    20
+}
+fn default_24() -> i64 {
+    24
+}
+fn default_48() -> i64 {
+    48
+}
+fn default_72() -> i64 {
+    72
+}

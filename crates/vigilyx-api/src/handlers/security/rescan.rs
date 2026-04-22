@@ -1,4 +1,4 @@
-//! scanProcess
+//! Rescan (re-analysis) handlers.
 
 use axum::{
     Json,
@@ -23,10 +23,10 @@ struct SessionIdRow {
 }
 
 
-// scan
+// Batch rescan
 
 
-/// scan
+/// Trigger batch rescan
 pub async fn trigger_rescan(
     State(state): State<Arc<AppState>>,
     user: AuthenticatedUser,
@@ -38,8 +38,8 @@ pub async fn trigger_rescan(
 
     if !rescan_channel_available(&state) {
         return ApiResponse::<serde_json::Value>::server_error(
-            &"Redis 和 UDS channelAll不可用",
-            "无法ConnectionanalyzeEngine",
+            &"Redis 通道不可用",
+            "无法连接分析引擎",
         )
         .into_response();
     }
@@ -77,7 +77,7 @@ pub async fn trigger_rescan(
             )
             .await
         {
-            tracing::error!(error = %e, task_id = %task_id, "审计: 回溯扫描审计log写入failed");
+            tracing::error!(error = %e, task_id = %task_id, "审计: 回溯扫描审计日志写入失败");
         }
     });
 
@@ -106,7 +106,7 @@ pub async fn trigger_rescan(
     .into_response()
 }
 
-/// Newanalyze session (Redis UDS send Engine process)
+/// Rescan a single session (submit to engine via Redis)
 pub async fn rescan_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -119,7 +119,7 @@ pub async fn rescan_session(
         }
     };
 
-   // FromData get session
+   // Load session from database
     let session = match state.db.get_session(session_id).await {
         Ok(Some(s)) => s,
         Ok(None) => {
@@ -143,7 +143,7 @@ pub async fn rescan_session(
         }
         Err(e) => ApiResponse::<serde_json::Value>::server_error(
             &e,
-            "无法ConnectionanalyzeEngine",
+            "无法连接分析引擎",
         )
         .into_response(),
     }
@@ -260,49 +260,20 @@ fn parse_rfc3339(value: &str) -> Result<chrono::DateTime<chrono::FixedOffset>, S
 }
 
 fn rescan_channel_available(state: &AppState) -> bool {
-    if state.messaging.mq.is_some() {
-        return true;
-    }
-
-    #[cfg(unix)]
-    {
-        state.messaging.uds_tx.is_some()
-    }
-
-    #[cfg(not(unix))]
-    {
-        false
-    }
+    state.messaging.mq.is_some()
 }
 
 async fn submit_rescan_session(state: &AppState, session: &EmailSession) -> Result<&'static str, String> {
     if let Some(ref mq) = state.messaging.mq {
-        match mq.publish(topics::ENGINE_CMD_RESCAN, session).await {
+        match mq.publish_cmd(topics::ENGINE_CMD_RESCAN, session).await {
             Ok(()) => return Ok("Redis"),
             Err(e) => {
-                tracing::warn!(session_id = %session.id, "Redis rescan failed, 尝试 UDS: {}", e);
+                tracing::warn!(session_id = %session.id, "Redis rescan failed: {}", e);
             }
         }
     }
 
-    #[cfg(unix)]
-    if let Some(ref uds_tx) = state.messaging.uds_tx {
-        let payload = serde_json::to_value(session)
-            .map_err(|e| format!("Rescan payload serialize failed: {e}"))?;
-        let msg = vigilyx_db::mq::UdsMessage {
-            topic: topics::ENGINE_CMD_RESCAN.to_string(),
-            payload,
-        };
-
-        uds_tx
-            .send(msg)
-            .await
-            .map_err(|e| format!("UDS rescan 推送failed: {e}"))?;
-
-        return Ok("UDS");
-    }
-
-    Err("Redis 和 UDS channelAll不可用".to_string())
+    Err("Redis not available for rescan".to_string())
 }
 
 async fn count_rescan_candidates(

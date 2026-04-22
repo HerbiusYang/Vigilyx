@@ -67,6 +67,8 @@ pub enum SmtpCommand {
     Data,
    /// emailContentEnd (of.)
     DataEnd,
+   /// RFC 3030: BDAT <size> [LAST]
+    Bdat { size: usize, is_last: bool },
    /// RSET
     Reset,
    /// QUIT
@@ -134,6 +136,15 @@ pub struct SmtpStateMachine {
     cmd_line_buf: Vec<u8>,
    /// FIX #3: Partial response line buffer (server) - lines split across TCP segments
     resp_line_buf: Vec<u8>,
+    /// RFC 3030 BDAT: whether we are in BDAT data collection mode.
+    #[allow(dead_code)]
+    in_bdat_mode: bool,
+    /// RFC 3030 BDAT: remaining bytes to read for the current chunk.
+    #[allow(dead_code)]
+    bdat_remaining: usize,
+    /// RFC 3030 BDAT: whether the current/last chunk had the LAST flag.
+    #[allow(dead_code)]
+    bdat_is_last: bool,
 }
 
 impl SmtpStateMachine {
@@ -156,6 +167,9 @@ impl SmtpStateMachine {
             auth_password: None,
             pending_commands: SmallVec::new(),
             pipelined_data: None,
+            in_bdat_mode: false,
+            bdat_remaining: 0,
+            bdat_is_last: false,
         }
     }
 

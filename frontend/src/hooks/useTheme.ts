@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { loadCachedUiPreferences, saveUiPreferencesPatch } from '../utils/uiPreferences'
+import { EVENTS } from '../utils/events'
 
 type Theme = 'dark' | 'light'
 
@@ -21,8 +22,8 @@ export function useTheme() {
         setThemeState(nextTheme)
       }
     }
-    window.addEventListener('vigilyx:ui-preferences-changed', onPreferencesChanged)
-    return () => window.removeEventListener('vigilyx:ui-preferences-changed', onPreferencesChanged)
+    window.addEventListener(EVENTS.UI_PREFERENCES_CHANGED, onPreferencesChanged)
+    return () => window.removeEventListener(EVENTS.UI_PREFERENCES_CHANGED, onPreferencesChanged)
   }, [])
 
   const toggleTheme = useCallback(() => {

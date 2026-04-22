@@ -1,20 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import type { EmailSession, ApiResponse, PaginatedResponse, Protocol } from '../../types'
 import { decodeMimeWord } from '../../utils/mime'
-import { formatDate, getRelativeTime, isEncryptedPort } from '../../utils/format'
+import { formatDate, getRelativeTime, getServerNowMs, isEncryptedPort } from '../../utils/format'
 import { apiFetch } from '../../utils/api'
 
 type TimeFilter = 'ALL' | '30m' | '1h' | '6h' | '24h'
 type ProtocolFilter = Protocol | 'ALL'
 type LogStatusFilter = 'finished' | 'ALL'
 
-const statusLabels: Record<string, string> = {
-  active: '活跃',
-  completed: '完成',
-  timeout: '超时',
-  error: '错误',
-}
 
 /** Build link-trace nodes by ordering the current session and related sessions over time into a full transmission path. */
 function buildChainNodes(current: EmailSession, related: EmailSession[]) {
@@ -55,6 +50,7 @@ function buildChainNodes(current: EmailSession, related: EmailSession[]) {
 }
 
 export default function EncryptedLogs() {
+  const { t } = useTranslation()
   const [sessions, setSessions] = useState<EmailSession[]>([])
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
@@ -98,7 +94,7 @@ export default function EncryptedLogs() {
         '30m': 30 * 60_000, '1h': 60 * 60_000,
         '6h': 6 * 60 * 60_000, '24h': 24 * 60 * 60_000,
       }
-      params.set('since', new Date(Date.now() - ms[timeFilter]).toISOString())
+      params.set('since', new Date(getServerNowMs() - ms[timeFilter]).toISOString())
     }
     if (searchTerm) params.set('search', searchTerm)
     return params.toString()
@@ -190,10 +186,10 @@ export default function EncryptedLogs() {
     <div className="traffic-list">
       <div className="traffic-list-header">
         <div className="header-left">
-          <h1>日志</h1>
+          <h1>{t('logs.title')}</h1>
           <div className="email-stats">
             <span className="email-count">
-              共 {total} 条
+              {t('logs.totalCount', { count: total })}
             </span>
           </div>
         </div>
@@ -202,7 +198,7 @@ export default function EncryptedLogs() {
             <input
               type="text"
               className="log-search-input"
-              placeholder="搜索 IP、发件人、收件人、主题..."
+              placeholder={t('logs.searchPlaceholder')}
               value={searchInput}
               onChange={e => setSearchInput(e.target.value)}
               onKeyDown={e => {
@@ -213,26 +209,26 @@ export default function EncryptedLogs() {
               }}
             />
             {searchInput && (
-              <button className="log-search-clear" onClick={() => { setSearchInput(''); setSearchTerm('') }} title="清除搜索">x</button>
+              <button className="log-search-clear" onClick={() => { setSearchInput(''); setSearchTerm('') }} title={t('logs.clearSearch')}>x</button>
             )}
           </div>
           <div className="filters">
             <select className="filter-select" value={statusFilter} onChange={e => setStatusFilter(e.target.value as LogStatusFilter)}>
-              <option value="finished">已完成</option>
-              <option value="ALL">全部状态</option>
+              <option value="finished">{t('logs.statusFinished')}</option>
+              <option value="ALL">{t('logs.statusAll')}</option>
             </select>
             <select className="filter-select" value={protocolFilter} onChange={e => setProtocolFilter(e.target.value as ProtocolFilter)}>
-              <option value="ALL">全部协议</option>
+              <option value="ALL">{t('logs.protocolAll')}</option>
               <option value="SMTP">SMTP</option>
               <option value="POP3">POP3</option>
               <option value="IMAP">IMAP</option>
             </select>
             <select className="filter-select" value={timeFilter} onChange={e => setTimeFilter(e.target.value as TimeFilter)}>
-              <option value="ALL">全部时间</option>
-              <option value="30m">最近 30 分钟</option>
-              <option value="1h">最近 1 小时</option>
-              <option value="6h">最近 6 小时</option>
-              <option value="24h">最近 24 小时</option>
+              <option value="ALL">{t('logs.timeAll')}</option>
+              <option value="30m">{t('logs.timeLast30m')}</option>
+              <option value="1h">{t('logs.timeLast1h')}</option>
+              <option value="6h">{t('logs.timeLast6h')}</option>
+              <option value="24h">{t('logs.timeLast24h')}</option>
             </select>
           </div>
         </div>
@@ -241,7 +237,7 @@ export default function EncryptedLogs() {
       {loading ? (
         <div className="table-container">
           <table><thead><tr>
-            <th></th><th>时间</th><th>协议</th><th>状态</th><th>源地址</th><th>目的地址</th><th>发件人</th><th>收件人</th><th>主题</th><th>操作</th>
+            <th></th><th>{t('logs.colTime')}</th><th>{t('logs.colProtocol')}</th><th>{t('logs.colStatus')}</th><th>{t('logs.colSource')}</th><th>{t('logs.colDest')}</th><th>{t('logs.colSender')}</th><th>{t('logs.colRecipient')}</th><th>{t('logs.colSubject')}</th><th>{t('logs.colAction')}</th>
           </tr></thead><tbody>
             {[1,2,3,4].map(i => <tr key={i} className="skeleton-row">{Array.from({length: colCount}, (_,j) => <td key={j}><div className="skeleton-line narrow"/></td>)}</tr>)}
           </tbody></table>
@@ -254,12 +250,12 @@ export default function EncryptedLogs() {
             </svg>
           </div>
           {fetchError ? (
-            <><h3>数据加载失败</h3><p>请检查网络连接或稍后重试</p></>
+            <><h3>{t('logs.loadFailed')}</h3><p>{t('logs.loadFailedHint')}</p></>
           ) : searchTerm ? (
-            <><h3>未找到匹配的日志</h3><p>没有匹配 "{searchTerm}" 的记录</p>
-              <button className="view-all-btn" onClick={() => {setSearchInput('');setSearchTerm('')}}>清除搜索</button></>
+            <><h3>{t('logs.noMatch')}</h3><p>{t('logs.noSearchMatch', { term: searchTerm })}</p>
+              <button className="view-all-btn" onClick={() => {setSearchInput('');setSearchTerm('')}}>{t('logs.clearSearch')}</button></>
           ) : (
-            <><h3>暂无日志记录</h3><p>等待邮件传输完成后自动记录</p></>
+            <><h3>{t('logs.empty')}</h3><p>{t('logs.emptyHint')}</p></>
           )}
         </div>
       ) : (
@@ -267,15 +263,15 @@ export default function EncryptedLogs() {
           <table>
             <thead><tr>
               <th className="chain-col"></th>
-              <th>时间</th>
-              <th>协议</th>
-              <th>状态</th>
-              <th>源地址</th>
-              <th>目的地址</th>
-              <th>发件人</th>
-              <th>收件人</th>
-              <th>主题</th>
-              <th>操作</th>
+              <th>{t('logs.colTime')}</th>
+              <th>{t('logs.colProtocol')}</th>
+              <th>{t('logs.colStatus')}</th>
+              <th>{t('logs.colSource')}</th>
+              <th>{t('logs.colDest')}</th>
+              <th>{t('logs.colSender')}</th>
+              <th>{t('logs.colRecipient')}</th>
+              <th>{t('logs.colSubject')}</th>
+              <th>{t('logs.colAction')}</th>
             </tr></thead>
             <tbody>
               {sessions.map(s => {
@@ -291,7 +287,7 @@ export default function EncryptedLogs() {
                         <button
                           className={`chain-toggle-btn ${isExpanded ? 'expanded' : ''}`}
                           onClick={() => toggleChain(s.id)}
-                          title="链路追踪 (Message-ID 关联)"
+                          title={t('logs.chainTrace')}
                         >
                           {isExpanded ? '▼' : '▶'}
                         </button>
@@ -301,7 +297,7 @@ export default function EncryptedLogs() {
                         <span className={`protocol-badge ${s.protocol.toLowerCase()}`}>{s.protocol}</span>
                         {isEncrypted && <span className="encrypted-badge small" style={{marginLeft:4}}>TLS</span>}
                       </td>
-                      <td><span className={`status-badge ${s.status}`}>{statusLabels[s.status] || s.status}</span></td>
+                      <td><span className={`status-badge ${s.status}`}>{t('logs.status.' + s.status, { defaultValue: s.status })}</span></td>
                       <td className="mono-cell">{highlight(`${s.client_ip}:${s.client_port}`)}</td>
                       <td className="mono-cell">{highlight(`${s.server_ip}:${s.server_port}`)}</td>
                       <td className="ellipsis-cell">{highlight(s.mail_from) || '-'}</td>
@@ -313,13 +309,13 @@ export default function EncryptedLogs() {
                           : '-'}
                       </td>
                       <td className="subject-cell">
-                        {highlight(decodeMimeWord(s.subject)) || (isEncrypted ? '(已加密)' : '(无主题)')}
+                        {highlight(decodeMimeWord(s.subject)) || (isEncrypted ? t('logs.encrypted') : t('logs.noSubject'))}
                       </td>
                       <td>
                         {hasContent || !isEncrypted ? (
-                          <Link to={`/emails/${s.id}`} className="table-action">详情</Link>
+                          <Link to={`/emails/${s.id}`} className="table-action">{t('logs.detail')}</Link>
                         ) : (
-                          <span className="table-action disabled">已加密</span>
+                          <span className="table-action disabled">{t('logs.encryptedShort')}</span>
                         )}
                       </td>
                     </tr>
@@ -329,21 +325,21 @@ export default function EncryptedLogs() {
                       <tr className="chain-detail-row">
                         <td colSpan={colCount}>
                           {isLoadingRelated ? (
-                            <div className="chain-loading">加载链路信息...</div>
+                            <div className="chain-loading">{t('logs.chainLoading')}</div>
                           ) : !related || related.length === 0 ? (
                             <div className="chain-empty">
                               {s.message_id
                                 ? <span className="chain-msg-id" title={s.message_id}>Message-ID: {s.message_id}</span>
-                                : <span className="chain-msg-id">无 Message-ID (加密会话)</span>
+                                : <span className="chain-msg-id">{t('logs.noMessageId')}</span>
                               }
-                              <span className="chain-no-related">未找到关联会话</span>
+                              <span className="chain-no-related">{t('logs.noRelated')}</span>
                             </div>
                           ) : (
                             <div className="chain-trace">
                               <div className="chain-msg-id" title={s.message_id || ''}>
                                 {s.message_id
                                   ? <>Message-ID: {s.message_id}</>
-                                  : <>无 Message-ID (加密会话)</>
+                                  : <>{t('logs.noMessageId')}</>
 
                                 }
                               </div>
@@ -355,10 +351,10 @@ export default function EncryptedLogs() {
                                         <span className={`protocol-badge small ${node.protocol.toLowerCase()}`}>{node.protocol}</span>
                                         {node.encrypted
                                           ? <span className="chain-tls-badge">TLS</span>
-                                          : <span className="chain-plain-badge">明文</span>
+                                          : <span className="chain-plain-badge">{t('logs.plaintext')}</span>
                                         }
-                                        {node.hasContent && <span className="chain-content-badge">有内容</span>}
-                                        {node.isCurrent && <span className="chain-current-badge">当前</span>}
+                                        {node.hasContent && <span className="chain-content-badge">{t('logs.hasContent')}</span>}
+                                        {node.isCurrent && <span className="chain-current-badge">{t('logs.current')}</span>}
                                       </div>
                                       <div className="chain-hop-endpoints">
                                         <span className="chain-ip">{node.clientIp}:{node.clientPort}</span>
@@ -369,7 +365,7 @@ export default function EncryptedLogs() {
                                       </div>
                                       <div className="chain-hop-time">{formatDate(node.time)}</div>
                                       {!node.isCurrent && (
-                                        <Link to={`/emails/${node.id}`} className="chain-hop-link">查看此段</Link>
+                                        <Link to={`/emails/${node.id}`} className="chain-hop-link">{t('logs.viewHop')}</Link>
                                       )}
                                     </div>
                                     {idx < arr.length - 1 && (
@@ -387,7 +383,7 @@ export default function EncryptedLogs() {
                                   const parts: string[] = []
                                   for (let i = 0; i < nodes.length; i++) {
                                     if (i === 0) parts.push(nodes[i].clientIp)
-                                    parts.push(nodes[i].encrypted ? '--TLS-->' : '--明文-->')
+                                    parts.push(nodes[i].encrypted ? '--TLS-->' : `--${t('logs.plaintext')}-->`)
                                     parts.push(nodes[i].serverIp)
                                   }
                                   return <code className="chain-summary-path">{parts.join(' ')}</code>
@@ -410,13 +406,13 @@ export default function EncryptedLogs() {
         <div className="pagination-controls">
           <div className="pagination-info">
             <span className="pagination-text">
-              第 <b>{page}</b> / {totalPages} 页，共 {total} 条
+              {t('logs.pageInfo', { page, totalPages, total })}
             </span>
           </div>
           {totalPages > 1 && (
             <div className="pagination-buttons">
-              <button className="pagination-btn" disabled={page<=1} onClick={() => fetchPage(1)} title="首页">&laquo;</button>
-              <button className="pagination-btn" disabled={page<=1} onClick={() => fetchPage(page-1)} title="上一页">&lsaquo;</button>
+              <button className="pagination-btn" disabled={page<=1} onClick={() => fetchPage(1)} title={t('logs.firstPage')}>&laquo;</button>
+              <button className="pagination-btn" disabled={page<=1} onClick={() => fetchPage(page-1)} title={t('logs.prevPage')}>&lsaquo;</button>
               {(() => {
                 const items: (number | '...')[] = []
                 if (totalPages <= 7) {
@@ -438,8 +434,8 @@ export default function EncryptedLogs() {
                   )
                 )
               })()}
-              <button className="pagination-btn" disabled={page>=totalPages} onClick={() => fetchPage(page+1)} title="下一页">&rsaquo;</button>
-              <button className="pagination-btn" disabled={page>=totalPages} onClick={() => fetchPage(totalPages)} title="末页">&raquo;</button>
+              <button className="pagination-btn" disabled={page>=totalPages} onClick={() => fetchPage(page+1)} title={t('logs.nextPage')}>&rsaquo;</button>
+              <button className="pagination-btn" disabled={page>=totalPages} onClick={() => fetchPage(totalPages)} title={t('logs.lastPage')}>&raquo;</button>
             </div>
           )}
         </div>

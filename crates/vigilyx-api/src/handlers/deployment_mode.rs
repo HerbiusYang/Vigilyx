@@ -13,6 +13,10 @@ use axum::{Json, extract::State, response::IntoResponse};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use vigilyx_core::{
+    DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES, validate_mail_relay_host_resolved,
+    validate_mta_hostname,
+};
 
 use super::ApiResponse;
 use crate::AppState;
@@ -114,14 +118,6 @@ pub async fn update_deployment_mode(
         .into_response();
     }
 
-    // -- Guard: downstream host SSRF validation (CWE-918) --
-    if let Some(ref host) = body.mta_downstream_host
-        && !host.is_empty()
-        && let Err(msg) = validate_downstream_host(host)
-    {
-        return ApiResponse::<serde_json::Value>::err(msg).into_response();
-    }
-
     // -- Step 1: merge and save MTA parameters to DB --
     let mut merged = match state.engine_db.get_config(DEPLOYMENT_MODE_KEY).await {
         Ok(Some(raw)) => serde_json::from_str::<serde_json::Value>(&raw)
@@ -136,6 +132,42 @@ pub async fn update_deployment_mode(
             }
         }
     }
+
+    if let Some(host) = merged
+        .get("mta_downstream_host")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|host| !host.is_empty())
+    {
+        let port = merged
+            .get("mta_downstream_port")
+            .and_then(|value| value.as_u64())
+            .and_then(|value| u16::try_from(value).ok())
+            .unwrap_or(25);
+        if let Err(msg) = validate_downstream_host(host, port) {
+            return ApiResponse::<serde_json::Value>::err(msg).into_response();
+        }
+    }
+
+    if let Some(hostname) = merged
+        .get("mta_hostname")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|hostname| !hostname.is_empty())
+    {
+        let normalized = match validate_mta_hostname(hostname) {
+            Ok(value) => value,
+            Err(msg) => return ApiResponse::<serde_json::Value>::err(msg).into_response(),
+        };
+
+        if let Some(base) = merged.as_object_mut() {
+            base.insert(
+                "mta_hostname".to_string(),
+                serde_json::Value::String(normalized),
+            );
+        }
+    }
+
     let json_str = serde_json::to_string(&merged).unwrap_or_default();
 
     if let Err(e) = state
@@ -287,26 +319,10 @@ async fn resolve_deployment_mode(state: &AppState) -> DeploymentMode {
     }
 }
 
-/// SSRF validation for MTA downstream host (CWE-918).
-fn validate_downstream_host(host: &str) -> Result<(), String> {
-    let lower = host.to_lowercase();
-    // Block cloud metadata endpoints
-    if lower.starts_with("169.254.") || lower.starts_with("fe80") {
-        return Err("Blocked: cloud metadata / link-local address".into());
-    }
-    // Block localhost variants (downstream should be a real MTA)
-    if lower == "localhost" || lower == "127.0.0.1" || lower == "::1" {
-        return Err("Downstream host cannot be localhost".into());
-    }
-    // Block protocol schemes
-    if lower.starts_with("http://")
-        || lower.starts_with("https://")
-        || lower.starts_with("file:")
-        || lower.starts_with("gopher:")
-    {
-        return Err("Downstream host should be a hostname or IP, not a URL".into());
-    }
-    Ok(())
+/// Validate the effective downstream relay target exactly the way the MTA runtime does.
+fn validate_downstream_host(host: &str, port: u16) -> Result<(), String> {
+    validate_mail_relay_host_resolved(host, port, DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES)
+        .map_err(|reason| format!("Downstream host blocked: {reason}"))
 }
 
 #[cfg(test)]
@@ -315,17 +331,17 @@ mod tests {
 
     #[test]
     fn test_validate_downstream_host_valid() {
-        assert!(validate_downstream_host("10.1.246.33").is_ok());
-        assert!(validate_downstream_host("mail.example.com").is_ok());
+        assert!(validate_downstream_host("10.1.246.33", 25).is_ok());
+        assert!(validate_downstream_host("8.8.8.8", 25).is_ok());
     }
 
     #[test]
     fn test_validate_downstream_host_blocked() {
-        assert!(validate_downstream_host("169.254.169.254").is_err());
-        assert!(validate_downstream_host("localhost").is_err());
-        assert!(validate_downstream_host("127.0.0.1").is_err());
-        assert!(validate_downstream_host("http://evil.com").is_err());
-        assert!(validate_downstream_host("file:///etc/passwd").is_err());
+        assert!(validate_downstream_host("169.254.169.254", 25).is_err());
+        assert!(validate_downstream_host("localhost", 25).is_err());
+        assert!(validate_downstream_host("127.0.0.1", 25).is_err());
+        assert!(validate_downstream_host("http://evil.com", 25).is_err());
+        assert!(validate_downstream_host("file:///etc/passwd", 25).is_err());
     }
 
     #[test]
@@ -354,5 +370,11 @@ mod tests {
 
         assert_eq!(config["mta_fail_open"], serde_json::Value::Bool(false));
         assert_eq!(config["mta_downstream_host"], "mail.example.com");
+    }
+
+    #[test]
+    fn test_validate_mta_hostname_rejects_smtp_response_injection() {
+        let result = validate_mta_hostname("mail\r\n250-STARTTLS");
+        assert!(result.is_err());
     }
 }

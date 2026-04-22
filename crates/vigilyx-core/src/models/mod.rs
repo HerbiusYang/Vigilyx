@@ -463,7 +463,6 @@ pub enum SessionStatus {
     Error,
 }
 
-
 // Email content models.
 
 
@@ -747,9 +746,11 @@ pub enum SmtpState {
     MailFrom,
     /// At least one `RCPT TO` was accepted.
     RcptTo,
-   /// The session is receiving message body data.
+    /// The session is receiving message body data (DATA command).
     Data,
-   /// End of message data was observed.
+    /// The session is receiving BDAT chunk data (RFC 3030 CHUNKING).
+    BdatData,
+    /// End of message data was observed.
     DataDone,
    /// `QUIT` was observed.
     Quit,
@@ -1122,6 +1123,8 @@ pub enum WsMessage {
     DataSecurityAlert(DataSecurityIncident),
    /// Generic alert message, typically for P0-P3 notifications.
     Alert(String),
+   /// Internal control message used to tear down authenticated WebSocket sessions.
+    SessionInvalidated,
    /// Heartbeat ping.
     Ping,
    /// Heartbeat response.

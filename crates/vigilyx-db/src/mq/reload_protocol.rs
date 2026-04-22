@@ -84,8 +84,8 @@ pub async fn request_reload(
 ) -> ReloadResult {
     let ack_key = format!("{}:{}", ack_prefix, cmd.reload_id);
 
-    // Publish the reload command via Pub/Sub
-    if let Err(e) = mq.publish(topic, &cmd).await {
+    // Publish the reload command via Pub/Sub (with control-plane token prefix)
+    if let Err(e) = mq.publish_cmd(topic, &cmd).await {
         return ReloadResult::PublishFailed {
             error: e.to_string(),
         };

@@ -16,7 +16,7 @@ use tracing::{error, info, warn};
 
 use vigilyx_core::models::WsMessage;
 use vigilyx_db::mq::topics;
-use vigilyx_db::mq::{MqClient, MqConfig};
+use vigilyx_db::mq::{MqClient, MqConfig, verify_cmd_payload};
 use vigilyx_db::VigilDb;
 use vigilyx_engine::config::PipelineConfig;
 use vigilyx_engine::modules::registry::reload_runtime_ioc_caches;
@@ -216,14 +216,29 @@ async fn redis_reload_loop(
         .subscribe(&[topics::ENGINE_CMD_RELOAD])
         .await?;
 
+    // SEC-P06: Read shared token once at startup for control-plane message auth
+    let cmd_token = std::env::var("INTERNAL_API_TOKEN").unwrap_or_default();
+    if cmd_token.is_empty() {
+        warn!("INTERNAL_API_TOKEN not set — MTA reload commands will be rejected");
+    }
+
     info!("MTA Redis reload subscription started (cmd:reload)");
 
     let mut stream = pubsub.on_message();
     while let Some(msg) = stream.next().await {
-        let payload: String = match msg.get_payload() {
+        let raw_payload: String = match msg.get_payload() {
             Ok(p) => p,
             Err(e) => {
                 error!("Failed to read reload payload: {e}");
+                continue;
+            }
+        };
+
+        // SEC-P06: Verify shared token prefix before processing
+        let payload = match verify_cmd_payload(&raw_payload, &cmd_token) {
+            Some(p) => p,
+            None => {
+                warn!("MTA rejected reload command with invalid/missing token (SEC-P06)");
                 continue;
             }
         };

@@ -154,7 +154,7 @@ class TestPreprocessEmail:
 
     def test_body_truncated_at_max_chars(self):
         long_body = "A" * 10000
-        result = preprocess_email("Subj", long_body, "user@ex.com", max_chars=500)
+        result = preprocess_email("Subj", long_body, "user@example.test", max_chars=500)
         assert len(result) <= 500
 
     def test_html_body_cleaned(self):

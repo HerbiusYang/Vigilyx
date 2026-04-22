@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
-import { formatBytes } from '../../utils/format'
+import { useTranslation } from 'react-i18next'
+import { formatBytes, syncServerClock } from '../../utils/format'
 import { apiFetch } from '../../utils/api'
+import { EVENTS } from '../../utils/events'
+import i18n from '../../i18n'
 
-type ClearMode = 'safe' | 'quick' | 'high_performance'
+type ClearMode = 'safe' | 'quick'
 
 interface ClearResult {
   message: string
@@ -10,12 +13,15 @@ interface ClearResult {
   elapsed_ms: number
 }
 
-const CLEAR_MODES: { key: ClearMode; label: string; desc: string; risk: string; icon: JSX.Element }[] = [
+const CLEAR_CONFIRM_TOKEN = 'CLEAR'
+const FACTORY_RESET_CONFIRM_TOKEN = 'RESET'
+
+const getClearModes = (): { key: ClearMode; label: string; desc: string; risk: string; icon: JSX.Element }[] => [
   {
     key: 'safe',
-    label: '安全清理',
-    desc: '事务删除 + VACUUM + ANALYZE，回收磁盘空间并更新查询统计。',
-    risk: '速度最慢但最彻底，推荐日常维护使用。',
+    label: i18n.t('settings.database.modeSafe'),
+    desc: i18n.t('settings.database.modeSafeDesc'),
+    risk: i18n.t('settings.database.modeSafeRisk'),
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
@@ -24,29 +30,19 @@ const CLEAR_MODES: { key: ClearMode; label: string; desc: string; risk: string; 
   },
   {
     key: 'quick',
-    label: '快速清理',
-    desc: 'DROP TABLE 后重建表和索引，从头重建数据库结构。',
-    risk: '速度较快，适合需要全新数据库的场景。',
+    label: i18n.t('settings.database.modeQuick'),
+    desc: i18n.t('settings.database.modeQuickDesc'),
+    risk: i18n.t('settings.database.modeQuickRisk'),
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
       </svg>
     ),
   },
-  {
-    key: 'high_performance',
-    label: '极速清理',
-    desc: '仅 DELETE，不执行 VACUUM，不会立即回收磁盘空间。',
-    risk: '速度最快，适合对速度要求高于磁盘空间的场景。',
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-      </svg>
-    ),
-  },
 ]
 
 export default function DatabaseSettings() {
+  const { t } = useTranslation()
   const [dbSize, setDbSize] = useState<number>(0)
   const [autoRotateEnabled, setAutoRotateEnabled] = useState(true)
   const [rotateThreshold, setRotateThreshold] = useState(90)
@@ -66,12 +62,28 @@ export default function DatabaseSettings() {
   const [preciseResult, setPreciseResult] = useState<string | null>(null)
   const [preciseError, setPreciseError] = useState<string | null>(null)
   const [sessionOlderDays, setSessionOlderDays] = useState(30)
+  const clearConfirmed = confirmInput.trim().toUpperCase() === CLEAR_CONFIRM_TOKEN
+  const factoryResetConfirmed = factoryResetConfirm.trim().toUpperCase() === FACTORY_RESET_CONFIRM_TOKEN
+
+  const getModeLabel = useCallback((mode: string) => {
+    switch (mode) {
+      case 'safe':
+        return t('settings.database.modeSafe')
+      case 'quick':
+        return t('settings.database.modeQuick')
+      case 'high_performance':
+        return t('settings.database.modeHighPerf')
+      default:
+        return mode
+    }
+  }, [t])
 
   const fetchDbSize = useCallback(async () => {
     try {
       const res = await apiFetch('/api/system/status')
       const data = await res.json()
       if (data.success && data.data) {
+        syncServerClock(data.data)
         setDbSize(data.data.database_size)
       }
     } catch {
@@ -129,12 +141,12 @@ export default function DatabaseSettings() {
         setResult(data.data as ClearResult)
         fetchDbSize()
         // Notify other pages to refresh their statistics (Dashboard, etc.)
-        window.dispatchEvent(new CustomEvent('vigilyx:stats-cleared'))
+        window.dispatchEvent(new CustomEvent(EVENTS.STATS_CLEARED))
       } else {
-        setError(data.error || '未知错误')
+        setError(data.error || t('settings.database.unknownError'))
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : '请求失败')
+      setError(e instanceof Error ? e.message : t('settings.database.requestFailed'))
     } finally {
       setClearing(false)
       setConfirmMode(null)
@@ -143,7 +155,7 @@ export default function DatabaseSettings() {
   }
 
   const handleFactoryReset = async () => {
-    if (factoryResetConfirm !== 'RESET') return
+    if (!factoryResetConfirmed) return
     setFactoryResetting(true)
     setResult(null)
     setError(null)
@@ -158,10 +170,10 @@ export default function DatabaseSettings() {
           window.location.href = '/'
         }, 2000)
       } else {
-        setError(data.error || '重置失败')
+        setError(data.error || t('settings.database.resetFailed'))
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : '请求失败')
+      setError(e instanceof Error ? e.message : t('settings.database.requestFailed'))
     } finally {
       setFactoryResetting(false)
       setFactoryResetConfirm('')
@@ -170,15 +182,15 @@ export default function DatabaseSettings() {
 
   const handlePreciseClear = async (target: string, threatLevel?: string) => {
     const labels: Record<string, string> = {
-      sessions: '邮件流量',
-      'verdicts-high': '高危研判',
-      'verdicts-medium': '中危研判',
-      'verdicts-low': '低危研判',
-      'verdicts-safe': '安全研判',
-      'verdicts-all': '全部研判',
+      sessions: t('settings.database.emailTraffic'),
+      'verdicts-high': t('settings.database.highVerdict'),
+      'verdicts-medium': t('settings.database.mediumVerdict'),
+      'verdicts-low': t('settings.database.lowVerdict'),
+      'verdicts-safe': t('settings.database.safeVerdict'),
+      'verdicts-all': t('settings.database.allVerdicts'),
     }
     const label = labels[threatLevel ? `verdicts-${threatLevel}` : target] || target
-    if (!confirm(`确定要删除${label}数据吗？此操作不可撤销。`)) return
+    if (!confirm(t('settings.database.confirmDelete', { label }))) return
 
     setPreciseClearing(true)
     setPreciseResult(null)
@@ -194,16 +206,18 @@ export default function DatabaseSettings() {
       })
       const data = await res.json()
       if (data.success) {
-        setPreciseResult(data.data?.details || '清理完成')
+        setPreciseResult(data.data?.details || t('settings.database.clearComplete'))
       } else {
-        setPreciseError(data.error || '清理失败')
+        setPreciseError(data.error || t('settings.database.clearFailed'))
       }
     } catch (e: unknown) {
-      setPreciseError(e instanceof Error ? e.message : '请求失败')
+      setPreciseError(e instanceof Error ? e.message : t('settings.database.requestFailed'))
     } finally {
       setPreciseClearing(false)
     }
   }
+
+  const CLEAR_MODES = getClearModes()
 
   return (
     <>
@@ -214,17 +228,17 @@ export default function DatabaseSettings() {
             <span className="s-section-icon database">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
             </span>
-            数据库管理
+            {t('settings.database.title')}
           </h2>
           <span className="s-db-badge">{formatBytes(dbSize)}</span>
         </div>
-        <p className="s-section-subtitle">清理和维护数据库，释放存储空间，保障系统运行效率</p>
+        <p className="s-section-subtitle">{t('settings.database.subtitle')}</p>
       </div>
 
       {result && (
         <div className="s-alert success">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-          <span>{result.message}（{result.mode} 模式，耗时 {result.elapsed_ms}ms）</span>
+          <span>{t('settings.database.resultInfo', { mode: getModeLabel(result.mode), elapsed: result.elapsed_ms })}</span>
         </div>
       )}
       {error && (
@@ -235,12 +249,12 @@ export default function DatabaseSettings() {
       )}
 
       <div className="s-setting-group">
-        <div className="s-setting-group-header">自动覆写 (数据轮转)</div>
+        <div className="s-setting-group-header">{t('settings.database.autoRotation')}</div>
 
         <div className="s-setting-row">
           <div className="s-setting-info">
-            <span className="s-setting-label">当前磁盘使用率</span>
-            <span className="s-setting-desc">数据库所在分区的磁盘占用百分比</span>
+            <span className="s-setting-label">{t('settings.database.currentDiskUsage')}</span>
+            <span className="s-setting-desc">{t('settings.database.currentDiskUsageDesc')}</span>
           </div>
           <div className="s-disk-bar">
             <div className="s-disk-bar-fill" style={{
@@ -257,8 +271,8 @@ export default function DatabaseSettings() {
 
         <div className="s-setting-row">
           <div className="s-setting-info">
-            <span className="s-setting-label">启用自动覆写</span>
-            <span className="s-setting-desc">当磁盘使用率超过阈值时，自动删除最旧的 10% 数据来为新数据腾出空间</span>
+            <span className="s-setting-label">{t('settings.database.enableAutoRotation')}</span>
+            <span className="s-setting-desc">{t('settings.database.enableAutoRotationDesc')}</span>
           </div>
           <label className="s-toggle">
             <input type="checkbox" checked={autoRotateEnabled} onChange={e => {
@@ -271,8 +285,8 @@ export default function DatabaseSettings() {
 
         <div className="s-setting-row">
           <div className="s-setting-info">
-            <span className="s-setting-label">覆写触发阈值</span>
-            <span className="s-setting-desc">磁盘使用率达到此值时触发自动删除旧数据（范围 50% ~ 99%）</span>
+            <span className="s-setting-label">{t('settings.database.rotationThreshold')}</span>
+            <span className="s-setting-desc">{t('settings.database.rotationThresholdDesc')}</span>
           </div>
           <div className="s-threshold-control">
             <input
@@ -290,7 +304,12 @@ export default function DatabaseSettings() {
         </div>
       </div>
 
-      <div className="s-section-divider-label">手动清理</div>
+      <div className="s-section-divider-label">{t('settings.database.manualClear')}</div>
+
+      <div className="s-alert warning">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span>{t('settings.database.manualClearNote')}</span>
+      </div>
 
       <div className="s-db-cards">
         {CLEAR_MODES.map(mode => (
@@ -311,13 +330,13 @@ export default function DatabaseSettings() {
               }}
               disabled={clearing}
             >
-              {clearing && confirmMode === mode.key ? '清理中...' : '执行'}
+              {clearing && confirmMode === mode.key ? t('settings.database.clearing') : t('settings.database.execute')}
             </button>
           </div>
         ))}
       </div>
 
-      <div className="s-section-divider-label">精准清理</div>
+      <div className="s-section-divider-label">{t('settings.database.preciseClear')}</div>
 
       {preciseResult && (
         <div className="s-alert success" style={{ marginBottom: 12 }}>
@@ -333,11 +352,11 @@ export default function DatabaseSettings() {
       )}
 
       <div className="s-setting-group">
-        <div className="s-setting-group-header">邮件流量</div>
+        <div className="s-setting-group-header">{t('settings.database.emailTraffic')}</div>
         <div className="s-setting-row">
           <div className="s-setting-info">
-            <span className="s-setting-label">清理邮件会话</span>
-            <span className="s-setting-desc">删除指定天数前的邮件流量数据（设为 0 则清空全部）</span>
+            <span className="s-setting-label">{t('settings.database.clearSessions')}</span>
+            <span className="s-setting-desc">{t('settings.database.clearSessionsDesc')}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <input
@@ -348,36 +367,36 @@ export default function DatabaseSettings() {
               onChange={e => setSessionOlderDays(Number(e.target.value))}
               style={{ width: 60, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border-muted)', background: 'var(--bg-tertiary)', color: 'var(--text-primary)', textAlign: 'center' }}
             />
-            <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>天前</span>
+            <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{t('settings.database.daysAgo', { days: sessionOlderDays })}</span>
             <button
               className="s-btn-danger"
               onClick={() => handlePreciseClear('sessions')}
               disabled={preciseClearing}
               style={{ padding: '4px 12px', fontSize: 12, borderRadius: 4, background: 'var(--status-error)', color: '#fff', border: 'none', cursor: 'pointer', opacity: preciseClearing ? 0.5 : 1 }}
             >
-              {preciseClearing ? '清理中...' : '清理'}
+              {preciseClearing ? t('settings.database.clearing') : t('settings.database.clear')}
             </button>
           </div>
         </div>
       </div>
 
       <div className="s-setting-group">
-        <div className="s-setting-group-header">安全研判</div>
+        <div className="s-setting-group-header">{t('settings.database.securityVerdicts')}</div>
         {[
-          { level: 'high', label: '高危', color: '#f97316' },
-          { level: 'medium', label: '中危', color: '#eab308' },
-          { level: 'low', label: '低危', color: '#3b82f6' },
-          { level: 'safe', label: '安全', color: '#22c55e' },
-          { level: 'all', label: '全部研判', color: '#ef4444' },
+          { level: 'high', label: t('settings.database.high'), color: '#f97316' },
+          { level: 'medium', label: t('settings.database.medium'), color: '#eab308' },
+          { level: 'low', label: t('settings.database.low'), color: '#3b82f6' },
+          { level: 'safe', label: t('settings.database.safe'), color: '#22c55e' },
+          { level: 'all', label: t('settings.database.allVerdicts'), color: '#ef4444' },
         ].map(item => (
           <div className="s-setting-row" key={item.level}>
             <div className="s-setting-info">
               <span className="s-setting-label">
                 <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: item.color, marginRight: 6 }} />
-                清理{item.label}数据
+                {t('settings.database.clearLabel', { label: item.label })}
               </span>
               <span className="s-setting-desc">
-                {item.level === 'all' ? '删除所有安全研判记录' : `删除威胁等级为"${item.label}"的研判记录`}
+                {item.level === 'all' ? t('settings.database.deleteAllVerdicts') : t('settings.database.deleteVerdictLevel', { label: item.label })}
               </span>
             </div>
             <button
@@ -386,7 +405,7 @@ export default function DatabaseSettings() {
               disabled={preciseClearing}
               style={{ padding: '4px 12px', fontSize: 12, borderRadius: 4, background: item.level === 'all' ? '#ef4444' : item.color, color: '#fff', border: 'none', cursor: 'pointer', opacity: preciseClearing ? 0.5 : 1 }}
             >
-              {preciseClearing ? '清理中...' : '清理'}
+              {preciseClearing ? t('settings.database.clearing') : t('settings.database.clear')}
             </button>
           </div>
         ))}
@@ -399,16 +418,16 @@ export default function DatabaseSettings() {
         background: 'rgba(239,68,68,0.03)',
       }}>
         <div style={{ fontSize: 14, fontWeight: 600, color: '#ef4444', marginBottom: 6 }}>
-          恢复出厂设置
+          {t('settings.database.factoryReset')}
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 12, lineHeight: 1.6 }}>
-          清空全部数据和配置，系统恢复到全新安装状态。此操作不可恢复。
+          {t('settings.database.factoryResetDesc')}
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <input
             value={factoryResetConfirm}
             onChange={e => setFactoryResetConfirm(e.target.value)}
-            placeholder="输入 RESET 确认"
+            placeholder={t('settings.database.factoryResetPlaceholder')}
             style={{
               width: 160, padding: '6px 10px', borderRadius: 4, fontSize: 13,
               fontFamily: 'var(--font-mono)',
@@ -419,17 +438,17 @@ export default function DatabaseSettings() {
           />
           <button
             onClick={handleFactoryReset}
-            disabled={factoryResetConfirm !== 'RESET' || factoryResetting}
+            disabled={!factoryResetConfirmed || factoryResetting}
             style={{
               padding: '6px 16px', borderRadius: 6, fontSize: 13, fontWeight: 600,
               border: 'none',
-              cursor: factoryResetConfirm === 'RESET' && !factoryResetting ? 'pointer' : 'not-allowed',
-              background: factoryResetConfirm === 'RESET' ? '#ef4444' : 'var(--bg-tertiary)',
-              color: factoryResetConfirm === 'RESET' ? '#fff' : 'var(--text-tertiary)',
+              cursor: factoryResetConfirmed && !factoryResetting ? 'pointer' : 'not-allowed',
+              background: factoryResetConfirmed ? '#ef4444' : 'var(--bg-tertiary)',
+              color: factoryResetConfirmed ? '#fff' : 'var(--text-tertiary)',
               opacity: factoryResetting ? 0.5 : 1,
             }}
           >
-            {factoryResetting ? '重置中...' : '恢复出厂设置'}
+            {factoryResetting ? t('settings.database.resetting') : t('settings.database.factoryReset')}
           </button>
         </div>
       </div>
@@ -445,34 +464,34 @@ export default function DatabaseSettings() {
               <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
             </svg>
           </div>
-          <h3>确认清理数据库</h3>
+          <h3>{t('settings.database.confirmClearTitle')}</h3>
           <p>
-            即将以 <strong>{CLEAR_MODES.find(m => m.key === confirmMode)?.label}</strong> 模式清除所有数据，此操作不可撤销。
+            {t('settings.database.confirmClearDesc', { mode: CLEAR_MODES.find(m => m.key === confirmMode)?.label })}
           </p>
           <p className="s-dialog-hint">
-            请输入 <code>CLEAR</code> 确认操作：
+            {t('settings.database.confirmClearHint')}
           </p>
           <input
             type="text"
             className="s-dialog-input"
             value={confirmInput}
             onChange={e => setConfirmInput(e.target.value)}
-            placeholder='输入 CLEAR'
+            placeholder={t('settings.database.confirmClearPlaceholder')}
             autoFocus
             onKeyDown={e => {
-              if (e.key === 'Enter' && confirmInput === 'CLEAR') {
+              if (e.key === 'Enter' && clearConfirmed) {
                 handleClear(confirmMode)
               }
             }}
           />
           <div className="s-dialog-actions">
-            <button className="s-btn-ghost" onClick={() => setConfirmMode(null)}>取消</button>
+            <button className="s-btn-ghost" onClick={() => setConfirmMode(null)}>{t('settings.database.cancel')}</button>
             <button
               className="s-btn-danger"
-              disabled={confirmInput !== 'CLEAR' || clearing}
+              disabled={!clearConfirmed || clearing}
               onClick={() => handleClear(confirmMode)}
             >
-              {clearing ? '清理中...' : '确认清理'}
+              {clearing ? t('settings.database.clearing') : t('settings.database.confirmClear')}
             </button>
           </div>
         </div>

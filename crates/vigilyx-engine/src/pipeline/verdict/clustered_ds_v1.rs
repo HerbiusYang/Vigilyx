@@ -4,17 +4,32 @@ use chrono::Utc;
 use uuid::Uuid;
 use vigilyx_core::models::EmailSession;
 use vigilyx_core::security::{
-    ALL_PILLARS, Bpa, EngineBpaDetail, FusionDetails, ModuleResult, PILLAR_COUNT, SecurityVerdict,
-    ThreatLevel, dempster_combine, dempster_combine_n,
+    dempster_combine, dempster_combine_n, Bpa, CircuitBreakerInfo, ConvergenceBreakerInfo,
+    EngineBpaDetail, FusionDetails, ModuleResult, SecurityVerdict, ThreatLevel, ALL_PILLARS,
+    PILLAR_COUNT,
 };
 
 use crate::config::VerdictConfig;
 
 use super::empty_verdict;
 use super::evidence_clusters::{
-    ClusterEvidence, EvidenceClusterId, NormalizedEvidence, ScenarioContext,
-    normalize_results,
+    normalize_results, ClusterEvidence, EvidenceClusterId, NormalizedEvidence, ScenarioContext,
 };
+
+/// Result of floor/cap adjustments, including breaker activation records.
+struct FloorCapResult {
+    risk: f64,
+    circuit_breaker: Option<CircuitBreakerInfo>,
+    convergence_breaker: Option<ConvergenceBreakerInfo>,
+}
+
+fn append_scenario_context(summary: String, scenario: &ScenarioContext) -> String {
+    if scenario.tags.is_empty() {
+        summary
+    } else {
+        format!("{summary} [context: {}]", scenario.tags.join(", "))
+    }
+}
 
 pub(super) fn aggregate_clustered_ds_v1(
     session: Option<&EmailSession>,
@@ -37,9 +52,12 @@ pub(super) fn aggregate_clustered_ds_v1(
             threat_level: ThreatLevel::Safe,
             confidence: 1.0,
             categories: normalized.categories,
-            summary: format!(
-                "No security threats found ({} modules, 0 evidence clusters active)",
-                normalized.modules_run
+            summary: append_scenario_context(
+                format!(
+                    "No security threats found ({} modules, 0 evidence clusters active)",
+                    normalized.modules_run
+                ),
+                &normalized.scenario,
             ),
             pillar_scores: std::mem::take(&mut pillar_scores),
             modules_run: normalized.modules_run,
@@ -78,9 +96,12 @@ pub(super) fn aggregate_clustered_ds_v1(
             threat_level: ThreatLevel::Safe,
             confidence: 1.0,
             categories: normalized.categories,
-            summary: format!(
-                "No security threats found ({} modules, 0 evidence clusters active after normalization)",
-                normalized.modules_run
+            summary: append_scenario_context(
+                format!(
+                    "No security threats found ({} modules, 0 evidence clusters active after normalization)",
+                    normalized.modules_run
+                ),
+                &normalized.scenario,
             ),
             pillar_scores: std::mem::take(&mut pillar_scores),
             modules_run: normalized.modules_run,
@@ -134,20 +155,15 @@ pub(super) fn aggregate_clustered_ds_v1(
     }
 
     let simple_conflict = if cluster_bpas.len() > 1 {
-        dempster_combine_n(
-            &cluster_bpas
-                .iter()
-                .map(|(_, bpa)| *bpa)
-                .collect::<Vec<_>>(),
-        )
-        .conflict
+        dempster_combine_n(&cluster_bpas.iter().map(|(_, bpa)| *bpa).collect::<Vec<_>>()).conflict
     } else {
         0.0
     };
     total_k = total_k.max(simple_conflict);
 
     let mut risk_single = fused.risk_score(config.eta);
-    risk_single = apply_cluster_floors_and_caps(risk_single, &cluster_state, &normalized);
+    let floor_result = apply_cluster_floors_and_caps(risk_single, &cluster_state, &normalized);
+    risk_single = floor_result.risk;
     let final_level = ThreatLevel::from_score(risk_single);
     let confidence = active_clusters
         .iter()
@@ -191,8 +207,8 @@ pub(super) fn aggregate_clustered_ds_v1(
             k_cross: None,
             betp: Some(fused.pignistic_threat()),
             fusion_method: Some("clustered_ds_v1".to_string()),
-            circuit_breaker: None,
-            convergence_breaker: None,
+            circuit_breaker: floor_result.circuit_breaker,
+            convergence_breaker: floor_result.convergence_breaker,
         }),
     }
 }
@@ -202,8 +218,15 @@ fn compute_pillar_scores(
     config: &VerdictConfig,
 ) -> HashMap<String, f64> {
     let mut pillar_scores_raw: [Vec<f64>; PILLAR_COUNT] = Default::default();
-    for result in results.values().filter(|result| result.module_id != "verdict") {
-        let weight = config.weights.get(&result.module_id).copied().unwrap_or(1.0);
+    for result in results
+        .values()
+        .filter(|result| result.module_id != "verdict")
+    {
+        let weight = config
+            .weights
+            .get(&result.module_id)
+            .copied()
+            .unwrap_or(1.0);
         let effective = (result.raw_score() * weight).min(1.0);
         if effective > 0.0 {
             pillar_scores_raw[result.pillar.as_index()].push(effective);
@@ -224,8 +247,10 @@ fn compute_pillar_scores(
 }
 
 fn apply_context_adjustments(clusters: &mut [ClusterEvidence], normalized: &NormalizedEvidence) {
-    let mut scores: HashMap<EvidenceClusterId, f64> =
-        clusters.iter().map(|cluster| (cluster.id, cluster.score)).collect();
+    let mut scores: HashMap<EvidenceClusterId, f64> = clusters
+        .iter()
+        .map(|cluster| (cluster.id, cluster.score))
+        .collect();
     let alignment = normalized.scenario.alignment_score;
 
     let link_raw = score_of(&scores, EvidenceClusterId::LinkAndHtmlDeception);
@@ -244,6 +269,12 @@ fn apply_context_adjustments(clusters: &mut [ClusterEvidence], normalized: &Norm
         payload_raw,
         external_raw,
         social_raw,
+    );
+    let gateway_independent_corroboration = gateway_banner_has_independent_corroboration(
+        &normalized.scenario,
+        identity_raw,
+        payload_raw,
+        external_raw,
     );
     let only_contextual = !strong_link
         && !strong_payload
@@ -269,7 +300,25 @@ fn apply_context_adjustments(clusters: &mut [ClusterEvidence], normalized: &Norm
     if normalized.scenario.gateway_banner_polluted {
         scale_cluster(&mut scores, EvidenceClusterId::InheritedGatewayPrior, 0.35);
         if !strong_identity && !strong_link && !strong_payload {
-            scale_cluster(&mut scores, EvidenceClusterId::SocialEngineeringIntent, 0.72);
+            // Pure structural heuristics under a gateway banner are still
+            // advisory. Only independently corroborated signals should let the
+            // social-engineering cluster retain most of its weight.
+            let social_scale = if gateway_independent_corroboration {
+                0.88
+            } else if normalized.scenario.has_structural_threat_signal {
+                0.52
+            } else {
+                0.40
+            };
+            scale_cluster(
+                &mut scores,
+                EvidenceClusterId::SocialEngineeringIntent,
+                social_scale,
+            );
+        }
+        if !gateway_independent_corroboration && link_raw < 0.45 && payload_raw < 0.45 {
+            scale_cluster(&mut scores, EvidenceClusterId::LinkAndHtmlDeception, 0.72);
+            scale_cluster(&mut scores, EvidenceClusterId::BusinessSensitivity, 0.78);
         }
     }
 
@@ -279,7 +328,11 @@ fn apply_context_adjustments(clusters: &mut [ClusterEvidence], normalized: &Norm
         && !strong_payload
         && !strong_external
     {
-        scale_cluster(&mut scores, EvidenceClusterId::SocialEngineeringIntent, 0.28);
+        scale_cluster(
+            &mut scores,
+            EvidenceClusterId::SocialEngineeringIntent,
+            0.28,
+        );
         scale_cluster(&mut scores, EvidenceClusterId::InheritedGatewayPrior, 0.25);
     }
 
@@ -299,9 +352,16 @@ fn apply_context_adjustments(clusters: &mut [ClusterEvidence], normalized: &Norm
         }
     }
 
-    if normalized.scenario.auto_reply_like && payload_raw < 0.45 && link_raw < 0.45 && external_raw < 0.45
+    if normalized.scenario.auto_reply_like
+        && payload_raw < 0.45
+        && link_raw < 0.45
+        && external_raw < 0.45
     {
-        scale_cluster(&mut scores, EvidenceClusterId::SocialEngineeringIntent, 0.35);
+        scale_cluster(
+            &mut scores,
+            EvidenceClusterId::SocialEngineeringIntent,
+            0.35,
+        );
         scale_cluster(
             &mut scores,
             EvidenceClusterId::SenderIdentityAuthenticity,
@@ -318,7 +378,11 @@ fn apply_context_adjustments(clusters: &mut [ClusterEvidence], normalized: &Norm
         && identity_raw < 0.25
         && external_raw < 0.25
     {
-        scale_cluster(&mut scores, EvidenceClusterId::SocialEngineeringIntent, 0.58);
+        scale_cluster(
+            &mut scores,
+            EvidenceClusterId::SocialEngineeringIntent,
+            0.58,
+        );
     }
 
     if only_contextual {
@@ -337,9 +401,11 @@ fn apply_cluster_floors_and_caps(
     mut risk: f64,
     clusters: &[ClusterEvidence],
     normalized: &NormalizedEvidence,
-) -> f64 {
-    let score_map: HashMap<EvidenceClusterId, f64> =
-        clusters.iter().map(|cluster| (cluster.id, cluster.score)).collect();
+) -> FloorCapResult {
+    let score_map: HashMap<EvidenceClusterId, f64> = clusters
+        .iter()
+        .map(|cluster| (cluster.id, cluster.score))
+        .collect();
     let identity = score_of(&score_map, EvidenceClusterId::SenderIdentityAuthenticity);
     let link = score_of(&score_map, EvidenceClusterId::LinkAndHtmlDeception);
     let payload = score_of(&score_map, EvidenceClusterId::PayloadMalware);
@@ -348,12 +414,32 @@ fn apply_cluster_floors_and_caps(
     let business = score_of(&score_map, EvidenceClusterId::BusinessSensitivity);
     let inherited = score_of(&score_map, EvidenceClusterId::InheritedGatewayPrior);
     let delivery = score_of(&score_map, EvidenceClusterId::DeliveryIntegrity);
+    let has_cross_locale_lure_signal = normalized.categories.iter().any(|category| {
+        matches!(
+            category.as_str(),
+            "japanese_to_cn_corp"
+                | "foreign_to_cn_corp"
+                | "japanese_unexpected"
+                | "multilingual_gibberish"
+        )
+    });
     let structural_credential_phish = identity >= 0.10
         && link >= 0.08
         && external >= 0.12
         && normalized.scenario.has_credential_link_signal
         && normalized.scenario.has_malicious_ioc_signal;
+    let payment_redirect_lure = normalized.scenario.has_payment_change_signal
+        && normalized.scenario.has_credential_link_signal
+        && (normalized.scenario.has_malicious_ioc_signal
+            || normalized.scenario.has_structural_threat_signal);
+    let gateway_independent_corroboration = gateway_banner_has_independent_corroboration(
+        &normalized.scenario,
+        identity,
+        payload,
+        external,
+    );
 
+    // ── Phase 1: Scenario-specific floors (hand-written rules) ──────────
     if payload >= 0.75 {
         risk = risk.max(payload.clamp(0.75, 0.90));
     }
@@ -398,6 +484,21 @@ fn apply_cluster_floors_and_caps(
         };
         risk = risk.max(structural_phish_floor);
     }
+    if normalized.scenario.has_account_security_signal
+        && normalized.scenario.has_credential_link_signal
+        && social >= 0.24
+        && link >= 0.08
+    {
+        let account_floor = if identity >= 0.15
+            || external >= 0.15
+            || normalized.scenario.has_structural_threat_signal
+        {
+            0.56
+        } else {
+            0.48
+        };
+        risk = risk.max(account_floor);
+    }
     if identity >= 0.35
         && social >= 0.40
         && business >= 0.35
@@ -405,23 +506,185 @@ fn apply_cluster_floors_and_caps(
     {
         risk = risk.max(0.60);
     }
+    if normalized.scenario.has_account_security_signal
+        && normalized.scenario.has_payment_change_signal
+        && has_cross_locale_lure_signal
+        && social >= 0.18
+    {
+        risk = risk.max(0.68);
+    }
+    if social >= 0.40
+        && link >= 0.28
+        && external >= 0.35
+        && normalized.scenario.has_credential_link_signal
+        && normalized.scenario.has_malicious_ioc_signal
+    {
+        let redirect_phish_floor = if normalized.scenario.has_account_security_signal {
+            0.78
+        } else {
+            0.70
+        };
+        risk = risk.max(redirect_phish_floor);
+    }
+    if normalized.scenario.has_subsidy_fraud_signal {
+        let subsidy_floor = if link >= 0.20
+            && (normalized.scenario.has_structural_threat_signal
+                || normalized.scenario.has_credential_link_signal
+                || external >= 0.20)
+        {
+            0.74
+        } else {
+            0.48
+        };
+        risk = risk.max(subsidy_floor);
+    }
+    if normalized.scenario.has_invoice_spam_signal {
+        let invoice_floor = if link >= 0.15 || identity >= 0.20 || external >= 0.20 {
+            0.56
+        } else {
+            0.48
+        };
+        risk = risk.max(invoice_floor);
+    }
+    if normalized.scenario.has_attachment_phishing_signal
+        && payload >= 0.24
+        && (link >= 0.16 || normalized.scenario.has_high_risk_attachment_content)
+        && !normalized.scenario.dsn_like_system_mail
+        && !normalized.scenario.auto_reply_like
+    {
+        let attachment_payload_floor =
+            if normalized.scenario.has_high_risk_attachment_content || payload >= 0.40 {
+                0.68
+            } else {
+                0.56
+            };
+        risk = risk.max(attachment_payload_floor);
+    }
+    if normalized.scenario.has_payment_change_signal
+        && normalized.scenario.has_credential_link_signal
+        && (normalized.scenario.has_malicious_ioc_signal
+            || normalized.scenario.has_structural_threat_signal)
+        && (external >= 0.20 || link >= 0.18)
+        && (link >= 0.18 || social >= 0.20 || business >= 0.18)
+    {
+        risk = risk.max(0.72);
+    }
+    if normalized.scenario.has_high_risk_attachment_content
+        && normalized.scenario.has_attachment_phishing_signal
+        && normalized.scenario.has_attachment_sensitive_data_signal
+    {
+        risk = risk.max(0.68);
+    }
+    if normalized.scenario.has_crypto_wallet_signal && business >= 0.24 {
+        let wallet_floor = if social >= 0.30 || external >= 0.20 || payload >= 0.25 {
+            0.64
+        } else {
+            0.40
+        };
+        risk = risk.max(wallet_floor);
+    }
+    if normalized.scenario.has_header_spoof_signal
+        && identity >= 0.35
+        && business >= 0.18
+        && !normalized.scenario.dsn_like_system_mail
+        && !normalized.scenario.auto_reply_like
+    {
+        let spoofed_finance_floor = if normalized.scenario.has_payment_change_signal {
+            0.62
+        } else {
+            0.44
+        };
+        risk = risk.max(spoofed_finance_floor);
+    }
+    if normalized.scenario.has_encrypted_attachment_signal
+        && payload >= 0.12
+        && (social >= 0.28 || identity >= 0.30 || link >= 0.16 || external >= 0.18)
+        && !normalized.scenario.dsn_like_system_mail
+        && !normalized.scenario.auto_reply_like
+    {
+        risk = risk.max(0.56);
+    }
 
+    // ── Phase 2: Generic cluster-level circuit breaker ──────────────────
+    //
+    // Safety net for scenarios not covered by hand-written floor rules.
+    // When a single cluster has a strong score (>= 0.55) with decent
+    // confidence (>= 0.70), D-S fusion should not dilute it below a
+    // minimum floor. This is the cluster-level equivalent of the legacy
+    // ds_murphy circuit breaker.
+    //
+    // Thresholds:
+    //   - cluster score >= 0.55 (meaningful threat signal)
+    //   - confidence >= 0.70 (not speculative)
+    //   - floor = score * 0.80, minimum 0.40 (at least Medium)
+    let mut cb_info: Option<CircuitBreakerInfo> = None;
+    for cluster in clusters {
+        if cluster.score >= 0.55 && cluster.confidence >= 0.70 {
+            let floor = (cluster.score * 0.80).max(0.40);
+            if risk < floor {
+                cb_info = Some(CircuitBreakerInfo {
+                    trigger_module_id: cluster.id.label().to_string(),
+                    trigger_belief: cluster.score,
+                    floor_value: floor,
+                    original_risk: risk,
+                });
+                risk = floor;
+            }
+        }
+    }
+
+    // ── Phase 3: Cluster convergence breaker ────────────────────────────
+    //
+    // When 3+ independent evidence clusters have meaningful signal
+    // (score >= 0.15), their convergence is strong evidence of a real
+    // threat even if no single cluster is dominant. D-S fusion can dilute
+    // many weak signals to Safe — this breaker prevents that.
+    //
+    // Floor formula: 0.35 + 0.05 * (active_count - 2), capped at 0.55.
+    //   3 clusters → 0.40 (Low/Medium boundary)
+    //   4 clusters → 0.45 (Medium)
+    //   5 clusters → 0.50 (Medium)
+    //   6+ clusters → 0.55 (Medium)
+    let mut conv_info: Option<ConvergenceBreakerInfo> = None;
+    let convergence_clusters: Vec<&ClusterEvidence> =
+        clusters.iter().filter(|c| c.score >= 0.15).collect();
+    let active_count = convergence_clusters.len();
+    if active_count >= 3 {
+        let convergence_floor = (0.35 + 0.05 * (active_count as f64 - 2.0)).min(0.55);
+        if risk < convergence_floor {
+            let flagged_modules: Vec<String> = convergence_clusters
+                .iter()
+                .map(|c| c.id.label().to_string())
+                .collect();
+            conv_info = Some(ConvergenceBreakerInfo {
+                modules_flagged: active_count as u32,
+                floor_value: convergence_floor,
+                original_risk: risk,
+                flagged_modules,
+            });
+            risk = convergence_floor;
+        }
+    }
+
+    // ── Phase 4: Scenario-specific caps (suppress false positives) ──────
     let only_contextual = inherited > 0.0
         && link < 0.30
         && payload < 0.30
         && external < 0.40
         && identity < 0.35
         && social < 0.40;
-    if only_contextual && !structural_credential_phish {
+    if only_contextual
+        && !structural_credential_phish
+        && !payment_redirect_lure
+        && !normalized.scenario.has_subsidy_fraud_signal
+        && !normalized.scenario.has_invoice_spam_signal
+    {
         risk = risk.min(0.35);
     }
 
-    let intel_only = external > 0.0
-        && identity < 0.25
-        && link < 0.30
-        && payload < 0.30
-        && social < 0.30;
-    if intel_only && !structural_credential_phish {
+    let intel_only =
+        external > 0.0 && identity < 0.25 && link < 0.30 && payload < 0.30 && social < 0.30;
+    if intel_only && !structural_credential_phish && !payment_redirect_lure {
         risk = risk.min(0.55);
     }
 
@@ -430,9 +693,9 @@ fn apply_cluster_floors_and_caps(
         && payload < 0.45
         && identity < 0.45
         && external < 0.35
-        && !normalized.scenario.has_account_security_signal
-        && !normalized.scenario.has_credential_link_signal
-        && !normalized.scenario.has_malicious_ioc_signal
+        && !gateway_independent_corroboration
+        && !normalized.scenario.has_subsidy_fraud_signal
+        && !normalized.scenario.has_invoice_spam_signal
     {
         risk = risk.min(0.35);
     }
@@ -445,7 +708,12 @@ fn apply_cluster_floors_and_caps(
         && external < 0.20
         && business < 0.20
         && delivery < 0.20;
-    if normalized.scenario.gateway_banner_polluted && gateway_prior_only_noise {
+    if normalized.scenario.gateway_banner_polluted
+        && gateway_prior_only_noise
+        && !gateway_independent_corroboration
+        && !normalized.scenario.has_subsidy_fraud_signal
+        && !normalized.scenario.has_invoice_spam_signal
+    {
         risk = risk.min(0.12);
     }
 
@@ -463,7 +731,7 @@ fn apply_cluster_floors_and_caps(
         && !normalized.scenario.has_credential_link_signal
         && !normalized.scenario.has_malicious_ioc_signal
     {
-        risk = risk.min(0.24);
+        risk = risk.min(0.14);
     }
 
     if normalized.scenario.transcript_like_structure
@@ -476,11 +744,8 @@ fn apply_cluster_floors_and_caps(
         risk = risk.min(0.18);
     }
 
-    let semantic_notice_only = social > 0.0
-        && identity < 0.25
-        && link < 0.25
-        && payload < 0.25
-        && external < 0.25;
+    let semantic_notice_only =
+        social > 0.0 && identity < 0.25 && link < 0.25 && payload < 0.25 && external < 0.25;
     if (normalized.scenario.notice_banner_polluted
         || normalized.scenario.auto_reply_like
         || normalized.scenario.dsn_like_system_mail)
@@ -488,6 +753,8 @@ fn apply_cluster_floors_and_caps(
         && !normalized.scenario.has_account_security_signal
         && !normalized.scenario.has_credential_link_signal
         && !normalized.scenario.has_malicious_ioc_signal
+        && !normalized.scenario.has_subsidy_fraud_signal
+        && !normalized.scenario.has_invoice_spam_signal
     {
         risk = risk.min(0.12);
     }
@@ -496,6 +763,8 @@ fn apply_cluster_floors_and_caps(
         && payload < 0.45
         && link < 0.45
         && external < 0.55
+        && !normalized.scenario.has_subsidy_fraud_signal
+        && !normalized.scenario.has_invoice_spam_signal
     {
         risk = risk.min(0.30_f64.max(delivery));
     }
@@ -506,11 +775,19 @@ fn apply_cluster_floors_and_caps(
         && payload < 0.20
         && external < 0.20
         && business < 0.20;
-    if normalized.scenario.dsn_like_system_mail && dsn_identity_only {
+    if normalized.scenario.dsn_like_system_mail
+        && dsn_identity_only
+        && !normalized.scenario.has_subsidy_fraud_signal
+        && !normalized.scenario.has_invoice_spam_signal
+    {
         risk = risk.min(0.12);
     }
 
-    risk.clamp(0.0, 0.99)
+    FloorCapResult {
+        risk: risk.clamp(0.0, 0.99),
+        circuit_breaker: cb_info,
+        convergence_breaker: conv_info,
+    }
 }
 
 fn has_corroborated_threat_signal(
@@ -529,6 +806,28 @@ fn has_corroborated_threat_signal(
     }
 
     social_raw >= 0.55 && (link_raw >= 0.10 || external_raw >= 0.25 || identity_raw >= 0.35)
+}
+
+fn gateway_banner_has_independent_corroboration(
+    scenario: &ScenarioContext,
+    identity: f64,
+    payload: f64,
+    external: f64,
+) -> bool {
+    scenario.has_account_security_signal
+        || scenario.has_credential_link_signal
+        || scenario.has_malicious_ioc_signal
+        || scenario.has_header_spoof_signal
+        || scenario.has_payment_change_signal
+        || scenario.has_subsidy_fraud_signal
+        || scenario.has_invoice_spam_signal
+        || scenario.has_crypto_wallet_signal
+        || scenario.has_attachment_phishing_signal
+        || scenario.has_high_risk_attachment_content
+        || scenario.has_encrypted_attachment_signal
+        || payload >= 0.45
+        || external >= 0.35
+        || identity >= 0.45
 }
 
 fn normalize_weights(inputs: &[(EvidenceClusterId, f64)]) -> HashMap<EvidenceClusterId, f64> {
@@ -586,15 +885,12 @@ fn build_clustered_summary(
     risk: f64,
     scenario: &ScenarioContext,
 ) -> String {
-    let context_str = if scenario.tags.is_empty() {
-        String::new()
-    } else {
-        format!(" [context: {}]", scenario.tags.join(", "))
-    };
-
     if level == ThreatLevel::Safe {
-        return format!(
-            "No security threats found ({total} modules, {active_clusters} evidence clusters, risk={risk:.3}){context_str}"
+        return append_scenario_context(
+            format!(
+                "No security threats found ({total} modules, {active_clusters} evidence clusters, risk={risk:.3})"
+            ),
+            scenario,
         );
     }
 
@@ -612,15 +908,15 @@ fn build_clustered_summary(
     } else {
         format!(" ({})", headline_categories.join(", "))
     };
-    format!(
-        "{level_str}{cat_str} — {flagged}/{total} modules flagged, {active_clusters} evidence clusters active, risk={risk:.3}{context_str}"
+    append_scenario_context(
+        format!(
+            "{level_str}{cat_str} — {flagged}/{total} modules flagged, {active_clusters} evidence clusters active, risk={risk:.3}"
+        ),
+        scenario,
     )
 }
 
-fn select_headline_categories(
-    categories: &[String],
-    scenario: &ScenarioContext,
-) -> Vec<String> {
+fn select_headline_categories(categories: &[String], scenario: &ScenarioContext) -> Vec<String> {
     let has_strong_signal = categories
         .iter()
         .any(|category| headline_category_priority(category) >= 90);
@@ -691,5 +987,598 @@ fn headline_category_priority(category: &str) -> u8 {
         "gateway_pre_classified" => 10,
         "no_auth_results" | "no_received" | "first_contact" => 16,
         _ => 60,
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Tests for apply_cluster_floors_and_caps (Phase 2 & Phase 3 breakers)
+// ═══════════════════════════════════════════════════════════════════════════
+#[cfg(test)]
+mod tests {
+    use super::super::evidence_clusters::{
+        ClusterEvidence, EvidenceClusterId, NormalizedEvidence, ScenarioContext,
+    };
+    use super::*;
+
+    fn make_cluster(id: EvidenceClusterId, score: f64, confidence: f64) -> ClusterEvidence {
+        ClusterEvidence {
+            id,
+            score,
+            confidence,
+            modules: vec![],
+            key_factors: vec![],
+        }
+    }
+
+    fn make_normalized(clusters: &[ClusterEvidence]) -> NormalizedEvidence {
+        NormalizedEvidence {
+            clusters: clusters.to_vec(),
+            categories: vec![],
+            modules_run: 15,
+            modules_flagged: 0,
+            total_duration_ms: 100,
+            scenario: ScenarioContext::default(),
+        }
+    }
+
+    // ── Phase 2: Generic cluster-level circuit breaker ──────────────────
+
+    #[test]
+    fn test_generic_cluster_floor_fires_for_strong_identity() {
+        let clusters = vec![make_cluster(
+            EvidenceClusterId::SenderIdentityAuthenticity,
+            0.65,
+            0.80,
+        )];
+        let normalized = make_normalized(&clusters);
+        let result = apply_cluster_floors_and_caps(0.10, &clusters, &normalized);
+        // floor = 0.65 * 0.80 = 0.52
+        assert!(
+            (result.risk - 0.52).abs() < 1e-9,
+            "risk should be 0.52, got {}",
+            result.risk
+        );
+        assert!(result.circuit_breaker.is_some());
+        let cb = result.circuit_breaker.unwrap();
+        assert_eq!(cb.trigger_module_id, "sender_identity_authenticity");
+        assert!((cb.trigger_belief - 0.65).abs() < 1e-9);
+        assert!((cb.floor_value - 0.52).abs() < 1e-9);
+        assert!((cb.original_risk - 0.10).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_generic_cluster_floor_does_not_fire_low_score() {
+        let clusters = vec![make_cluster(
+            EvidenceClusterId::SenderIdentityAuthenticity,
+            0.40, // < 0.55 threshold
+            0.80,
+        )];
+        let normalized = make_normalized(&clusters);
+        let result = apply_cluster_floors_and_caps(0.10, &clusters, &normalized);
+        assert!(
+            (result.risk - 0.10).abs() < 1e-9,
+            "risk should remain 0.10, got {}",
+            result.risk
+        );
+        assert!(result.circuit_breaker.is_none());
+    }
+
+    #[test]
+    fn test_generic_cluster_floor_does_not_fire_low_confidence() {
+        let clusters = vec![make_cluster(
+            EvidenceClusterId::SenderIdentityAuthenticity,
+            0.60,
+            0.50, // < 0.70 threshold
+        )];
+        let normalized = make_normalized(&clusters);
+        let result = apply_cluster_floors_and_caps(0.10, &clusters, &normalized);
+        assert!(
+            (result.risk - 0.10).abs() < 1e-9,
+            "risk should remain 0.10, got {}",
+            result.risk
+        );
+        assert!(result.circuit_breaker.is_none());
+    }
+
+    #[test]
+    fn test_generic_cluster_floor_skipped_when_risk_already_above() {
+        let clusters = vec![make_cluster(
+            EvidenceClusterId::SenderIdentityAuthenticity,
+            0.60,
+            0.80,
+        )];
+        let normalized = make_normalized(&clusters);
+        // floor = 0.60 * 0.80 = 0.48, but risk = 0.55 > 0.48
+        let result = apply_cluster_floors_and_caps(0.55, &clusters, &normalized);
+        assert!(
+            (result.risk - 0.55).abs() < 1e-9,
+            "risk should remain 0.55, got {}",
+            result.risk
+        );
+        assert!(result.circuit_breaker.is_none());
+    }
+
+    // ── Phase 3: Cluster convergence breaker ────────────────────────────
+
+    #[test]
+    fn test_convergence_floor_fires_for_3_clusters() {
+        // Use 3 clusters without InheritedGatewayPrior to avoid only_contextual cap
+        let clusters = vec![
+            make_cluster(EvidenceClusterId::SenderIdentityAuthenticity, 0.20, 0.30),
+            make_cluster(EvidenceClusterId::SocialEngineeringIntent, 0.20, 0.30),
+            make_cluster(EvidenceClusterId::PayloadMalware, 0.20, 0.30),
+        ];
+        let normalized = make_normalized(&clusters);
+        let result = apply_cluster_floors_and_caps(0.10, &clusters, &normalized);
+        // floor = 0.35 + 0.05 * (3 - 2) = 0.40
+        assert!(
+            (result.risk - 0.40).abs() < 1e-9,
+            "risk should be 0.40, got {}",
+            result.risk
+        );
+        assert!(result.convergence_breaker.is_some());
+        let conv = result.convergence_breaker.unwrap();
+        assert_eq!(conv.modules_flagged, 3);
+        assert!((conv.floor_value - 0.40).abs() < 1e-9);
+        assert!((conv.original_risk - 0.10).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_convergence_floor_scales_with_cluster_count() {
+        let clusters = vec![
+            make_cluster(EvidenceClusterId::SenderIdentityAuthenticity, 0.20, 0.30),
+            make_cluster(EvidenceClusterId::LinkAndHtmlDeception, 0.20, 0.30),
+            make_cluster(EvidenceClusterId::PayloadMalware, 0.20, 0.30),
+            make_cluster(EvidenceClusterId::SocialEngineeringIntent, 0.20, 0.30),
+            make_cluster(EvidenceClusterId::DeliveryIntegrity, 0.20, 0.30),
+        ];
+        let normalized = make_normalized(&clusters);
+        let result = apply_cluster_floors_and_caps(0.10, &clusters, &normalized);
+        // floor = 0.35 + 0.05 * (5 - 2) = 0.50
+        assert!(
+            (result.risk - 0.50).abs() < 1e-9,
+            "risk should be 0.50, got {}",
+            result.risk
+        );
+        assert!(result.convergence_breaker.is_some());
+        assert_eq!(result.convergence_breaker.unwrap().modules_flagged, 5);
+    }
+
+    #[test]
+    fn test_convergence_floor_capped_at_055() {
+        // All 8 clusters; identity=0.40 to avoid only_contextual cap (needs identity < 0.35)
+        let clusters = vec![
+            make_cluster(EvidenceClusterId::SenderIdentityAuthenticity, 0.40, 0.30),
+            make_cluster(EvidenceClusterId::LinkAndHtmlDeception, 0.20, 0.30),
+            make_cluster(EvidenceClusterId::PayloadMalware, 0.20, 0.30),
+            make_cluster(EvidenceClusterId::ExternalReputationIoc, 0.20, 0.30),
+            make_cluster(EvidenceClusterId::SocialEngineeringIntent, 0.20, 0.30),
+            make_cluster(EvidenceClusterId::DeliveryIntegrity, 0.20, 0.30),
+            make_cluster(EvidenceClusterId::InheritedGatewayPrior, 0.20, 0.30),
+            make_cluster(EvidenceClusterId::BusinessSensitivity, 0.20, 0.30),
+        ];
+        let normalized = make_normalized(&clusters);
+        let result = apply_cluster_floors_and_caps(0.10, &clusters, &normalized);
+        // formula = 0.35 + 0.05 * (8 - 2) = 0.65, capped at 0.55
+        assert!(
+            (result.risk - 0.55).abs() < 1e-9,
+            "risk should be 0.55 (convergence capped), got {}",
+            result.risk
+        );
+        assert!(result.convergence_breaker.is_some());
+        assert_eq!(result.convergence_breaker.unwrap().modules_flagged, 8);
+    }
+
+    #[test]
+    fn test_convergence_floor_does_not_fire_below_3() {
+        let clusters = vec![
+            make_cluster(EvidenceClusterId::SenderIdentityAuthenticity, 0.20, 0.30),
+            make_cluster(EvidenceClusterId::SocialEngineeringIntent, 0.20, 0.30),
+        ];
+        let normalized = make_normalized(&clusters);
+        let result = apply_cluster_floors_and_caps(0.10, &clusters, &normalized);
+        assert!(
+            (result.risk - 0.10).abs() < 1e-9,
+            "risk should remain 0.10, got {}",
+            result.risk
+        );
+        assert!(result.convergence_breaker.is_none());
+    }
+
+    // ── Phase 4: Cap overrides breaker ──────────────────────────────────
+
+    #[test]
+    fn test_cap_overrides_convergence_floor() {
+        // 3 clusters including InheritedGatewayPrior → only_contextual cap fires at 0.35
+        // (inherited=0.20>0, link=0<0.30, payload=0<0.30, external=0<0.40,
+        //  identity=0.20<0.35, social=0<0.40)
+        let clusters = vec![
+            make_cluster(EvidenceClusterId::InheritedGatewayPrior, 0.20, 0.30),
+            make_cluster(EvidenceClusterId::DeliveryIntegrity, 0.20, 0.30),
+            make_cluster(EvidenceClusterId::SenderIdentityAuthenticity, 0.20, 0.30),
+        ];
+        let normalized = make_normalized(&clusters);
+        let result = apply_cluster_floors_and_caps(0.10, &clusters, &normalized);
+        // Convergence floor = 0.40, then only_contextual cap → 0.35
+        assert!(
+            (result.risk - 0.35).abs() < 1e-9,
+            "risk should be capped at 0.35, got {}",
+            result.risk
+        );
+        // Convergence breaker was activated (before cap overrode it)
+        assert!(result.convergence_breaker.is_some());
+    }
+
+    // ── Gateway-banner pollution only escapes with independent corroboration ──
+
+    #[test]
+    fn test_gateway_banner_cap_fires_without_structural_signal() {
+        // gateway_banner_polluted + no structural signals → cap at 0.35
+        let clusters = vec![make_cluster(
+            EvidenceClusterId::SocialEngineeringIntent,
+            0.40,
+            0.80,
+        )];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.gateway_banner_polluted = true;
+        let result = apply_cluster_floors_and_caps(0.42, &clusters, &normalized);
+        assert!(
+            (result.risk - 0.35).abs() < 1e-9,
+            "risk should be capped at 0.35 (no structural signal), got {}",
+            result.risk
+        );
+    }
+
+    #[test]
+    fn test_gateway_banner_cap_still_fires_for_structural_only_signal() {
+        // gateway_banner_polluted + structural heuristics alone should stay capped.
+        let clusters = vec![
+            make_cluster(EvidenceClusterId::SocialEngineeringIntent, 0.40, 0.80),
+            make_cluster(EvidenceClusterId::LinkAndHtmlDeception, 0.20, 0.70),
+        ];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.gateway_banner_polluted = true;
+        normalized.scenario.has_structural_threat_signal = true;
+        let result = apply_cluster_floors_and_caps(0.42, &clusters, &normalized);
+        assert!(
+            (result.risk - 0.35).abs() < 1e-9,
+            "risk should remain capped at 0.35 (structural-only under gateway banner), got {}",
+            result.risk
+        );
+    }
+
+    #[test]
+    fn test_gateway_prior_only_noise_stays_capped_for_structural_only_signal() {
+        // gateway_banner_polluted + gateway_prior_only_noise + structural-only heuristics
+        // should still collapse to gateway noise.
+        let clusters = vec![make_cluster(
+            EvidenceClusterId::InheritedGatewayPrior,
+            0.15,
+            0.30,
+        )];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.gateway_banner_polluted = true;
+        normalized.scenario.has_structural_threat_signal = true;
+        let result = apply_cluster_floors_and_caps(0.18, &clusters, &normalized);
+        assert!(
+            (result.risk - 0.12).abs() < 1e-9,
+            "risk should remain capped at 0.12 (structural-only under gateway banner), got {}",
+            result.risk
+        );
+    }
+
+    #[test]
+    fn test_gateway_banner_cap_escapes_with_independent_ioc_signal() {
+        let clusters = vec![
+            make_cluster(EvidenceClusterId::SocialEngineeringIntent, 0.40, 0.80),
+            make_cluster(EvidenceClusterId::ExternalReputationIoc, 0.44, 0.86),
+        ];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.gateway_banner_polluted = true;
+        normalized.scenario.has_malicious_ioc_signal = true;
+
+        let result = apply_cluster_floors_and_caps(0.42, &clusters, &normalized);
+
+        assert!(
+            result.risk > 0.35,
+            "independent IOC corroboration should escape gateway-only cap, got {}",
+            result.risk
+        );
+    }
+
+    #[test]
+    fn test_gateway_prior_only_noise_cap_fires_without_structural() {
+        // gateway_banner_polluted + gateway_prior_only_noise, no structural
+        // → cap at 0.12
+        let clusters = vec![make_cluster(
+            EvidenceClusterId::InheritedGatewayPrior,
+            0.15,
+            0.30,
+        )];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.gateway_banner_polluted = true;
+        let result = apply_cluster_floors_and_caps(0.18, &clusters, &normalized);
+        assert!(
+            (result.risk - 0.12).abs() < 1e-9,
+            "risk should be capped at 0.12 (no structural signal), got {}",
+            result.risk
+        );
+    }
+
+    #[test]
+    fn test_gateway_banner_cap_does_not_collapse_invoice_spam_signal() {
+        let clusters = vec![make_cluster(
+            EvidenceClusterId::SocialEngineeringIntent,
+            0.34,
+            0.84,
+        )];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.gateway_banner_polluted = true;
+        normalized.scenario.has_invoice_spam_signal = true;
+
+        let result = apply_cluster_floors_and_caps(0.18, &clusters, &normalized);
+
+        assert!(
+            (result.risk - 0.48).abs() < 1e-9,
+            "gateway noise caps should not collapse invoice-spam signals, got {}",
+            result.risk
+        );
+    }
+
+    #[test]
+    fn test_dsn_cap_does_not_collapse_subsidy_signal() {
+        let clusters = vec![make_cluster(
+            EvidenceClusterId::SocialEngineeringIntent,
+            0.28,
+            0.80,
+        )];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.dsn_like_system_mail = true;
+        normalized.scenario.has_subsidy_fraud_signal = true;
+
+        let result = apply_cluster_floors_and_caps(0.12, &clusters, &normalized);
+
+        assert!(
+            (result.risk - 0.48).abs() < 1e-9,
+            "dsn-like senders should not suppress subsidy-fraud signals to Safe/Low, got {}",
+            result.risk
+        );
+    }
+
+    #[test]
+    fn test_redirect_ioc_phish_without_sender_spoof_gets_high_floor() {
+        let clusters = vec![
+            make_cluster(EvidenceClusterId::LinkAndHtmlDeception, 0.42, 0.88),
+            make_cluster(EvidenceClusterId::ExternalReputationIoc, 0.48, 0.90),
+            make_cluster(EvidenceClusterId::SocialEngineeringIntent, 0.52, 0.86),
+        ];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.has_credential_link_signal = true;
+        normalized.scenario.has_malicious_ioc_signal = true;
+
+        let result = apply_cluster_floors_and_caps(0.34, &clusters, &normalized);
+
+        assert!(
+            (result.risk - 0.70).abs() < 1e-9,
+            "malicious redirect phishing should hold a High floor, got {}",
+            result.risk
+        );
+    }
+
+    #[test]
+    fn test_subsidy_fraud_with_structural_link_signal_gets_high_floor() {
+        let clusters = vec![
+            make_cluster(EvidenceClusterId::LinkAndHtmlDeception, 0.30, 0.82),
+            make_cluster(EvidenceClusterId::SocialEngineeringIntent, 0.50, 0.88),
+        ];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.has_subsidy_fraud_signal = true;
+        normalized.scenario.has_structural_threat_signal = true;
+
+        let result = apply_cluster_floors_and_caps(0.36, &clusters, &normalized);
+
+        assert!(
+            (result.risk - 0.74).abs() < 1e-9,
+            "subsidy fraud with structural corroboration should not stay Medium, got {}",
+            result.risk
+        );
+    }
+
+    #[test]
+    fn test_subsidy_fraud_without_link_still_gets_medium_floor() {
+        let clusters = vec![make_cluster(
+            EvidenceClusterId::SocialEngineeringIntent,
+            0.42,
+            0.86,
+        )];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.has_subsidy_fraud_signal = true;
+
+        let result = apply_cluster_floors_and_caps(0.18, &clusters, &normalized);
+
+        assert!(
+            (result.risk - 0.48).abs() < 1e-9,
+            "external subsidy-fraud themes should not remain Safe/Low without link corroboration, got {}",
+            result.risk
+        );
+    }
+
+    #[test]
+    fn test_invoice_spam_signal_gets_medium_floor() {
+        let clusters = vec![make_cluster(
+            EvidenceClusterId::SocialEngineeringIntent,
+            0.44,
+            0.88,
+        )];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.has_invoice_spam_signal = true;
+
+        let result = apply_cluster_floors_and_caps(0.16, &clusters, &normalized);
+
+        assert!(
+            (result.risk - 0.48).abs() < 1e-9,
+            "invoice-spam solicitations should not remain Safe/Low, got {}",
+            result.risk
+        );
+    }
+
+    #[test]
+    fn test_attachment_phish_with_sensitive_data_gets_high_floor() {
+        let clusters = vec![make_cluster(
+            EvidenceClusterId::SocialEngineeringIntent,
+            0.48,
+            0.84,
+        )];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.has_high_risk_attachment_content = true;
+        normalized.scenario.has_attachment_phishing_signal = true;
+        normalized.scenario.has_attachment_sensitive_data_signal = true;
+
+        let result = apply_cluster_floors_and_caps(0.42, &clusters, &normalized);
+
+        assert!(
+            (result.risk - 0.68).abs() < 1e-9,
+            "attachment phishing with sensitive data should be uplifted to High, got {}",
+            result.risk
+        );
+    }
+
+    #[test]
+    fn test_attachment_phish_with_payload_signal_gets_medium_floor() {
+        let clusters = vec![
+            make_cluster(EvidenceClusterId::LinkAndHtmlDeception, 0.26, 0.82),
+            make_cluster(EvidenceClusterId::PayloadMalware, 0.34, 0.88),
+        ];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.has_attachment_phishing_signal = true;
+
+        let result = apply_cluster_floors_and_caps(0.28, &clusters, &normalized);
+
+        assert!(
+            (result.risk - 0.56).abs() < 1e-9,
+            "attachment phishing backed by payload evidence should not remain Low, got {}",
+            result.risk
+        );
+    }
+
+    #[test]
+    fn test_account_security_with_link_gets_medium_floor() {
+        let clusters = vec![
+            make_cluster(EvidenceClusterId::SocialEngineeringIntent, 0.28, 0.86),
+            make_cluster(EvidenceClusterId::LinkAndHtmlDeception, 0.12, 0.78),
+        ];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.has_account_security_signal = true;
+        normalized.scenario.has_credential_link_signal = true;
+
+        let result = apply_cluster_floors_and_caps(0.27, &clusters, &normalized);
+
+        assert!(
+            (result.risk - 0.48).abs() < 1e-9,
+            "account-security lures with credential links should not remain Low, got {}",
+            result.risk
+        );
+    }
+
+    #[test]
+    fn test_cross_locale_account_lure_with_payment_signal_gets_high_floor() {
+        let clusters = vec![
+            make_cluster(EvidenceClusterId::SocialEngineeringIntent, 0.24, 0.84),
+            make_cluster(EvidenceClusterId::BusinessSensitivity, 0.18, 0.76),
+        ];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.has_account_security_signal = true;
+        normalized.scenario.has_payment_change_signal = true;
+        normalized
+            .categories
+            .extend([
+                "japanese_to_cn_corp".to_string(),
+                "multilingual_gibberish".to_string(),
+            ]);
+
+        let result = apply_cluster_floors_and_caps(0.32, &clusters, &normalized);
+
+        assert!(
+            (result.risk - 0.68).abs() < 1e-9,
+            "cross-locale account-payment lures should be uplifted to High, got {}",
+            result.risk
+        );
+    }
+
+    #[test]
+    fn test_payment_update_lure_with_redirect_and_ioc_gets_high_floor() {
+        let clusters = vec![
+            make_cluster(EvidenceClusterId::LinkAndHtmlDeception, 0.24, 0.82),
+            make_cluster(EvidenceClusterId::ExternalReputationIoc, 0.48, 0.88),
+            make_cluster(EvidenceClusterId::SocialEngineeringIntent, 0.22, 0.76),
+            make_cluster(EvidenceClusterId::BusinessSensitivity, 0.20, 0.74),
+        ];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.has_payment_change_signal = true;
+        normalized.scenario.has_credential_link_signal = true;
+        normalized.scenario.has_malicious_ioc_signal = true;
+
+        let result = apply_cluster_floors_and_caps(0.56, &clusters, &normalized);
+
+        assert!(
+            (result.risk - 0.72).abs() < 1e-9,
+            "payment-update redirect phish should be uplifted to High, got {}",
+            result.risk
+        );
+    }
+
+    #[test]
+    fn test_crypto_wallet_signal_forces_medium_floor() {
+        let clusters = vec![make_cluster(
+            EvidenceClusterId::BusinessSensitivity,
+            0.30,
+            0.86,
+        )];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.has_crypto_wallet_signal = true;
+
+        let result = apply_cluster_floors_and_caps(0.18, &clusters, &normalized);
+
+        assert!(
+            (result.risk - 0.40).abs() < 1e-9,
+            "standalone crypto wallet demands should not remain Low, got {}",
+            result.risk
+        );
+    }
+
+    #[test]
+    fn test_header_spoof_plus_financial_context_gets_medium_floor() {
+        let clusters = vec![
+            make_cluster(EvidenceClusterId::SenderIdentityAuthenticity, 0.44, 0.82),
+            make_cluster(EvidenceClusterId::BusinessSensitivity, 0.22, 0.78),
+        ];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.has_header_spoof_signal = true;
+
+        let result = apply_cluster_floors_and_caps(0.24, &clusters, &normalized);
+
+        assert!(
+            (result.risk - 0.44).abs() < 1e-9,
+            "spoofed sender plus financial context should not collapse to Low, got {}",
+            result.risk
+        );
+    }
+
+    #[test]
+    fn test_encrypted_attachment_plus_social_signal_gets_medium_floor() {
+        let clusters = vec![
+            make_cluster(EvidenceClusterId::PayloadMalware, 0.16, 0.82),
+            make_cluster(EvidenceClusterId::SocialEngineeringIntent, 0.34, 0.80),
+        ];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.has_encrypted_attachment_signal = true;
+
+        let result = apply_cluster_floors_and_caps(0.26, &clusters, &normalized);
+
+        assert!(
+            (result.risk - 0.56).abs() < 1e-9,
+            "encrypted attachment plus social lure should be uplifted to Medium, got {}",
+            result.risk
+        );
     }
 }

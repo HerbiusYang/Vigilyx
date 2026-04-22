@@ -1,17 +1,15 @@
 import { useState, useEffect } from 'react'
 import { useLocation, useParams, Link } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import type { EmailSession, ApiResponse, SecurityVerdict, ModuleResult } from '../../types'
 import { decodeMimeWord } from '../../utils/mime'
-import { formatBytes, formatDateFull, isEncryptedPort, getFileIcon } from '../../utils/format'
+import { formatBytes, formatClockTime, formatDateFull, getFileIcon, isEncryptedPort } from '../../utils/format'
 import { apiFetch } from '../../utils/api'
 import { buildEmailPreviewDoc } from '../../utils/emailHtml'
 import SecurityAnalysisView, { RadarChart } from './SecurityAnalysisView'
 
-const THREAT_CN: Record<string, string> = {
-  safe: '安全', low: '低危', medium: '中危', high: '高危', critical: '危急',
-}
-
 export default function EmailDetail() {
+  const { t } = useTranslation()
   const { id } = useParams<{ id: string }>()
   const location = useLocation()
   const [session, setSession] = useState<EmailSession | null>(null)
@@ -33,6 +31,10 @@ export default function EmailDetail() {
   const detailLink = (sessionId: string) =>
     `/emails/${sessionId}${fromSearch ? `?from=${encodeURIComponent(listSearch)}` : ''}`
 
+  const THREAT_CN: Record<string, string> = {
+    safe: t('emailSecurity.threat_safe'), low: t('emailSecurity.threat_low'), medium: t('emailSecurity.threat_medium'), high: t('emailSecurity.threat_high'), critical: t('emailSecurity.threat_critical'),
+  }
+
   useEffect(() => {
     if (!id) return
 
@@ -46,7 +48,7 @@ export default function EmailDetail() {
         const sessionData: ApiResponse<EmailSession> = await sessionRes.json()
 
         if (!sessionData.success || !sessionData.data) {
-          setError('无法加载会话信息')
+          setError(t('emailSecurity.cannotLoadSession'))
           return
         }
         setSession(sessionData.data)
@@ -86,7 +88,7 @@ export default function EmailDetail() {
         if (security.results.length > 0) setModuleResults(security.results)
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return
-        setError('网络错误')
+        setError(t('emailSecurity.networkError'))
       } finally {
         if (!signal.aborted) setLoading(false)
       }
@@ -95,7 +97,7 @@ export default function EmailDetail() {
     fetchData()
 
     return () => controller.abort()
-  }, [id])
+  }, [id, t])
 
   // Accordion: expand alert modules by default
   useEffect(() => {
@@ -121,7 +123,7 @@ export default function EmailDetail() {
     return (
       <div className="email-detail-loading">
         <div className="spinner"></div>
-        <p>加载邮件详情...</p>
+        <p>{t('emailSecurity.loadingEmailDetail')}</p>
       </div>
     )
   }
@@ -130,9 +132,9 @@ export default function EmailDetail() {
     return (
       <div className="email-detail-error">
         <div className="error-icon">⚠️</div>
-        <h2>加载失败</h2>
-        <p>{error || '会话不存在'}</p>
-        <Link to={backToList} className="back-btn">返回列表</Link>
+        <h2>{t('emailSecurity.loadFailedTitle')}</h2>
+        <p>{error || t('emailSecurity.sessionNotExist')}</p>
+        <Link to={backToList} className="back-btn">{t('emailSecurity.backToList')}</Link>
       </div>
     )
   }
@@ -142,24 +144,25 @@ export default function EmailDetail() {
     return (
       <div className="email-detail-error">
         <div className="error-icon">🔒</div>
-        <h2>加密邮件不在页面展示</h2>
-        <p>TLS 加密会话仅在日志中提示，不在 Web 页面展示邮件内容与详情。</p>
-        <Link to={backToList} className="back-btn">返回列表</Link>
+        <h2>{t('emailSecurity.encryptedEmailNotDisplayed')}</h2>
+        <p>{t('emailSecurity.encryptedEmailHint')}</p>
+        <Link to={backToList} className="back-btn">{t('emailSecurity.backToList')}</Link>
       </div>
     )
   }
 
   const smtpDialog = session.content?.smtp_dialog ?? []
-  const hasContent = session.content?.body_text || session.content?.body_html
-  const attachmentCount = session.content?.attachments?.length || 0
+  const displayContent = session.content
+  const hasContent = displayContent?.body_text || displayContent?.body_html
+  const attachmentCount = displayContent?.attachments?.length || 0
   const headerCount = session.content?.headers?.length || 0
-  const linkCount = session.content?.links?.length || 0
-  const suspiciousLinkCount = session.content?.links?.filter(l => l.suspicious).length || 0
+  const linkCount = displayContent?.links?.length || 0
+  const suspiciousLinkCount = displayContent?.links?.filter(l => l.suspicious).length || 0
   const riskPct = verdict
     ? Math.round((verdict.fusion_details?.risk_single ?? verdict.confidence) * 100)
     : 0
-  const safeHtmlPreview = session.content?.body_html
-    ? buildEmailPreviewDoc(session.content.body_html)
+  const safeHtmlPreview = displayContent?.body_html
+    ? buildEmailPreviewDoc(displayContent.body_html)
     : ''
 
   // Mask SMTP AUTH credentials in dialog display
@@ -170,15 +173,15 @@ export default function EmailDetail() {
     return cmd
   }
 
-  const senderShort = (session.mail_from || '未知').split('@')[0]
+  const senderShort = (session.mail_from || t('emailSecurity.unknown')).split('@')[0]
 
   return (
     <div className="email-detail-page">
       {/* Breadcrumb navigation */}
       <nav className="ed-breadcrumb">
-        <Link to={backToList} className="ed-bc-link">邮件安全</Link>
+        <Link to={backToList} className="ed-bc-link">{t('emailSecurity.breadcrumbSecurity')}</Link>
         <span className="ed-bc-sep">/</span>
-        <Link to={backToList} className="ed-bc-link">邮件列表</Link>
+        <Link to={backToList} className="ed-bc-link">{t('emailSecurity.breadcrumbList')}</Link>
         <span className="ed-bc-sep">/</span>
         <span className="ed-bc-current" title={session.mail_from || ''}>{senderShort}</span>
       </nav>
@@ -203,48 +206,53 @@ export default function EmailDetail() {
             </div>
           )}
 
-          <h2 className="ed-subject" title={decodeMimeWord(session.subject) || '(无主题)'}>
-            {decodeMimeWord(session.subject) || '(无主题)'}
+          <h2 className="ed-subject" title={decodeMimeWord(session.subject) || t('emailSecurity.noSubject')}>
+            {decodeMimeWord(session.subject) || t('emailSecurity.noSubject')}
           </h2>
 
           <div className="ed-badges">
             {verdict && (
-              <span className={`ed-threat-tag ed-threat--${verdict.threat_level}`}>
-                {THREAT_CN[verdict.threat_level] || verdict.threat_level} {riskPct}%
-              </span>
+              <>
+                <span className={`ed-threat-tag ed-threat--${verdict.threat_level}`}>
+                  {THREAT_CN[verdict.threat_level] || verdict.threat_level}
+                </span>
+                <span className="ed-risk-tag">
+                  {t('emailSecurity.overallRisk')} {riskPct}%
+                </span>
+              </>
             )}
             <span className={`protocol-badge ${session.protocol.toLowerCase()}`}>{session.protocol}</span>
             <span className={`status-badge ${session.status}`}>
-              {session.status === 'active' ? '进行中' : session.status === 'completed' ? '已完成' : session.status === 'timeout' ? '超时' : '错误'}
+              {session.status === 'active' ? t('emailSecurity.statusActive') : session.status === 'completed' ? t('emailSecurity.statusCompleted') : session.status === 'timeout' ? t('emailSecurity.statusTimeout') : t('emailSecurity.statusError')}
             </span>
           </div>
 
           <div className="ed-meta-list">
             <div className="ed-meta-item">
-              <span className="ed-meta-label">发件人</span>
-              <span className="ed-meta-value ed-mono">{session.mail_from || '未知'}</span>
+              <span className="ed-meta-label">{t('emailSecurity.sender')}</span>
+              <span className="ed-meta-value ed-mono">{session.mail_from || t('emailSecurity.unknown')}</span>
             </div>
             <div className="ed-meta-item">
-              <span className="ed-meta-label">收件人</span>
-              <span className="ed-meta-value ed-mono">{session.rcpt_to.length > 0 ? session.rcpt_to.join('; ') : '未知'}</span>
+              <span className="ed-meta-label">{t('emailSecurity.recipient')}</span>
+              <span className="ed-meta-value ed-mono">{session.rcpt_to.length > 0 ? session.rcpt_to.join('; ') : t('emailSecurity.unknown')}</span>
             </div>
             <div className="ed-meta-item">
-              <span className="ed-meta-label">时间</span>
+              <span className="ed-meta-label">{t('emailSecurity.time')}</span>
               <span className="ed-meta-value">{formatDateFull(session.started_at)}</span>
             </div>
             <div className="ed-meta-item">
-              <span className="ed-meta-label">大小</span>
+              <span className="ed-meta-label">{t('emailSecurity.size')}</span>
               <span className="ed-meta-value">{formatBytes(session.total_bytes)}</span>
             </div>
             <div className="ed-meta-item">
-              <span className="ed-meta-label">数据包</span>
+              <span className="ed-meta-label">{t('emailSecurity.packets')}</span>
               <span className="ed-meta-value">{session.packet_count}</span>
             </div>
             {linkCount > 0 && (
               <div className="ed-meta-item">
-                <span className="ed-meta-label">链接</span>
+                <span className="ed-meta-label">{t('emailSecurity.links')}</span>
                 <span className={`ed-meta-value ${suspiciousLinkCount > 0 ? 'ed-meta-warn' : ''}`}>
-                  {linkCount} 个{suspiciousLinkCount > 0 && ` (${suspiciousLinkCount} 可疑)`}
+                  {t('emailSecurity.linkCount', { count: linkCount })}{suspiciousLinkCount > 0 && ` (${t('emailSecurity.suspiciousCount', { count: suspiciousLinkCount })})`}
                 </span>
               </div>
             )}
@@ -255,13 +263,13 @@ export default function EmailDetail() {
               {session.client_ip}:{session.client_port} → {session.server_ip}:{session.server_port}
             </span>
             {isEncrypted && <span className="ed-conn-tag ed-conn-tls">TLS</span>}
-            {!isEncrypted && session.protocol === 'SMTP' && <span className="ed-conn-tag ed-conn-plain">明文</span>}
+            {!isEncrypted && session.protocol === 'SMTP' && <span className="ed-conn-tag ed-conn-plain">{t('emailSecurity.plaintext')}</span>}
           </div>
 
           {/* SMTP authentication info */}
           {session.auth_info && (
             <div className="ed-auth">
-              <span className="ed-meta-label">SMTP 认证</span>
+              <span className="ed-meta-label">{t('emailSecurity.smtpAuth')}</span>
               <code className="ed-mono">{session.auth_info.auth_method}</code>
               {session.auth_info.username && <span className="ed-mono" style={{ fontSize: 11, wordBreak: 'break-all' }}>{session.auth_info.username}</span>}
             </div>
@@ -269,20 +277,20 @@ export default function EmailDetail() {
 
           {/* Encryption/plaintext warning */}
           {isEncrypted && (
-            <div className="ed-banner ed-banner--tls">🔒 TLS 加密，内容无法解析</div>
+            <div className="ed-banner ed-banner--tls">{t('emailSecurity.tlsEncryptedBanner')}</div>
           )}
           {!isEncrypted && session.protocol === 'SMTP' && !session.server_ip.startsWith('10.') && !session.server_ip.startsWith('192.168.') && (
-            <div className="ed-banner ed-banner--warn">⚠ 明文传输</div>
+            <div className="ed-banner ed-banner--warn">{t('emailSecurity.plaintextBanner')}</div>
           )}
 
           {/* Content navigation */}
           <nav className="ed-nav">
             {[
-              { key: 'content', label: '邮件正文', count: 0 },
-              { key: 'headers', label: '邮件头', count: headerCount },
-              { key: 'attachments', label: '附件', count: attachmentCount },
-              { key: 'smtp-dialog', label: 'SMTP 对话', count: smtpDialog.length },
-              { key: 'security', label: '安全分析', count: 0 },
+              { key: 'content', label: t('emailSecurity.tabBody'), count: 0 },
+              { key: 'headers', label: t('emailSecurity.tabHeaders'), count: headerCount },
+              { key: 'attachments', label: t('emailSecurity.tabAttachments'), count: attachmentCount },
+              { key: 'smtp-dialog', label: t('emailSecurity.tabSmtpDialog'), count: smtpDialog.length },
+              { key: 'security', label: t('emailSecurity.tabSecurityAnalysis'), count: 0 },
             ].map(item => (
               <button
                 key={item.key}
@@ -298,7 +306,7 @@ export default function EmailDetail() {
           {/* Related sessions */}
           {relatedSessions.length > 0 && (
             <div className="ed-related">
-              <span className="ed-meta-label">原始来源</span>
+              <span className="ed-meta-label">{t('emailSecurity.originalSource')}</span>
               {relatedSessions.map(rel => (
                 <Link key={rel.id} to={detailLink(rel.id)} className="ed-related-link">
                   {rel.client_ip} → {rel.server_ip}:{rel.server_port}
@@ -319,31 +327,31 @@ export default function EmailDetail() {
           className={`detail-tab ${activeTab === 'content' ? 'active' : ''}`}
           onClick={() => setActiveTab('content')}
         >
-          邮件正文
+          {t('emailSecurity.tabBody')}
         </button>
         <button
           className={`detail-tab ${activeTab === 'headers' ? 'active' : ''}`}
           onClick={() => setActiveTab('headers')}
         >
-          邮件头 ({headerCount})
+          {t('emailSecurity.tabHeaders')} ({headerCount})
         </button>
         <button
           className={`detail-tab ${activeTab === 'attachments' ? 'active' : ''}`}
           onClick={() => setActiveTab('attachments')}
         >
-          附件 ({attachmentCount})
+          {t('emailSecurity.tabAttachments')} ({attachmentCount})
         </button>
         <button
           className={`detail-tab ${activeTab === 'smtp-dialog' ? 'active' : ''}`}
           onClick={() => setActiveTab('smtp-dialog')}
         >
-          SMTP 对话 ({smtpDialog.length})
+          {t('emailSecurity.tabSmtpDialog')} ({smtpDialog.length})
         </button>
         <button
           className={`detail-tab ${activeTab === 'security' ? 'active' : ''} ${verdict ? (verdict.threat_level === 'high' || verdict.threat_level === 'critical' ? 'tab-danger' : '') : ''}`}
           onClick={() => setActiveTab('security')}
         >
-          安全分析 {verdict && (
+          {t('emailSecurity.tabSecurityAnalysis')} {verdict && (
             <span style={{
               marginLeft: 4,
               padding: '1px 6px',
@@ -364,11 +372,11 @@ export default function EmailDetail() {
           {!feedbackDone && (
             <div className="ed-fb-inline">
               {([
-                ['legitimate', '正常'],
-                ['phishing', '钓鱼'],
-                ['spoofing', '仿冒'],
-                ['social_engineering', '社工'],
-                ['other_threat', '其他'],
+                ['legitimate', t('emailSecurity.feedbackLegitimate')],
+                ['phishing', t('emailSecurity.feedbackPhishing')],
+                ['spoofing', t('emailSecurity.feedbackSpoofing')],
+                ['social_engineering', t('emailSecurity.feedbackSocialEng')],
+                ['other_threat', t('emailSecurity.feedbackOther')],
               ] as const).map(([val, label]) => (
                 <button
                   key={val}
@@ -394,13 +402,13 @@ export default function EmailDetail() {
               ))}
             </div>
           )}
-          {feedbackDone && <span className="ed-fb-done">已反馈: {feedbackType === 'legitimate' ? '正常' : feedbackType === 'phishing' ? '钓鱼' : feedbackType === 'spoofing' ? '仿冒' : feedbackType === 'social_engineering' ? '社工' : '其他'}</span>}
+          {feedbackDone && <span className="ed-fb-done">{t('emailSecurity.feedbackDone')}: {feedbackType === 'legitimate' ? t('emailSecurity.feedbackLegitimate') : feedbackType === 'phishing' ? t('emailSecurity.feedbackPhishing') : feedbackType === 'spoofing' ? t('emailSecurity.feedbackSpoofing') : feedbackType === 'social_engineering' ? t('emailSecurity.feedbackSocialEng') : t('emailSecurity.feedbackOther')}</span>}
           {/* Whitelist false-positive button */}
           {session && session.mail_from && (
             <button
               className={`ed-wl-btn ${whitelistStatus === 'done' ? 'ed-wl-btn--done' : ''}`}
               disabled={whitelistStatus === 'loading' || whitelistStatus === 'done'}
-              title={`将 ${session.mail_from?.split('@')[1]} 和发件 IP ${session.client_ip} 加入整封白名单，后续同域名+IP 邮件将直接跳过安全检测`}
+              title={t('emailSecurity.whitelistTitle', { domain: session.mail_from?.split('@')[1], ip: session.client_ip })}
               onClick={async () => {
                 setWhitelistStatus('loading')
                 const domain = session.mail_from?.split('@')[1]
@@ -411,14 +419,14 @@ export default function EmailDetail() {
                     promises.push(apiFetch('/api/security/whitelist', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ entry_type: 'domain', value: domain, description: `详情页整封加白 (session ${id})` }),
+                      body: JSON.stringify({ entry_type: 'domain', value: domain, description: t('emailSecurity.whitelistDesc', { id }) }),
                     }))
                   }
                   if (ip) {
                     promises.push(apiFetch('/api/security/whitelist', {
                       method: 'POST',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ entry_type: 'ip', value: ip, description: `详情页整封加白 (session ${id})` }),
+                      body: JSON.stringify({ entry_type: 'ip', value: ip, description: t('emailSecurity.whitelistDesc', { id }) }),
                     }))
                   }
                   await Promise.all(promises)
@@ -429,7 +437,7 @@ export default function EmailDetail() {
                 }
               }}
             >
-              {whitelistStatus === 'loading' ? '...' : whitelistStatus === 'done' ? '已整封加白' : '整封加白'}
+              {whitelistStatus === 'loading' ? '...' : whitelistStatus === 'done' ? t('emailSecurity.whitelistDone') : t('emailSecurity.whitelistAction')}
             </button>
           )}
           <button
@@ -451,7 +459,7 @@ export default function EmailDetail() {
                 console.error('EML download failed:', e)
               }
             }}
-            title="下载 EML 文件"
+            title={t('emailSecurity.downloadEml')}
           >
             📥 EML
           </button>
@@ -466,23 +474,23 @@ export default function EmailDetail() {
             {isEncrypted ? (
               <div className="no-content-notice">
                 <div className="notice-icon">🔒</div>
-                <h3>加密邮件不显示正文</h3>
-                <p>TLS 加密会话仅保留日志与元数据，页面不展示邮件正文内容。</p>
+                <h3>{t('emailSecurity.encryptedNoBody')}</h3>
+                <p>{t('emailSecurity.encryptedNoBodyHint')}</p>
               </div>
             ) : !hasContent ? (
               <div className="no-content-notice">
                 <div className="notice-icon">📄</div>
-                <h3>暂无邮件正文</h3>
-                <p>邮件正文可能正在接收中，或者邮件没有正文内容</p>
+                <h3>{t('emailSecurity.noBodyYet')}</h3>
+                <p>{t('emailSecurity.noBodyHint')}</p>
               </div>
             ) : (
               <>
-                {session.content?.body_html ? (
+                {displayContent?.body_html ? (
                   <div className="email-body-container">
                     <div className="body-header">
-                      <span className="body-type-badge html">HTML 安全预览</span>
-                      {session.content?.body_text && (
-                        <span className="body-type-hint">同时包含纯文本版本</span>
+                      <span className="body-type-badge html">{t('emailSecurity.htmlSafePreview')}</span>
+                      {displayContent?.body_text && (
+                        <span className="body-type-hint">{t('emailSecurity.alsoHasPlaintext')}</span>
                       )}
                     </div>
                     <div className="email-html-body">
@@ -491,33 +499,33 @@ export default function EmailDetail() {
                       <iframe
                         srcDoc={safeHtmlPreview}
                         sandbox=""
-                        title="邮件内容"
+                        title={t('emailSecurity.emailContent')}
                         referrerPolicy="no-referrer"
                       />
                     </div>
                   </div>
-                ) : session.content?.body_text ? (
+                ) : displayContent?.body_text ? (
                   <div className="email-body-container">
                     <div className="body-header">
-                      <span className="body-type-badge text">纯文本格式</span>
+                      <span className="body-type-badge text">{t('emailSecurity.plainTextFormat')}</span>
                     </div>
                     <div className="email-text-body">
-                      <pre>{session.content.body_text}</pre>
+                      <pre>{displayContent.body_text}</pre>
                     </div>
                   </div>
                 ) : null}
 
                 {/* Links inside the message */}
-                {session.content?.links && session.content.links.length > 0 && (
+                {displayContent?.links && displayContent.links.length > 0 && (
                   <div className="email-links-section">
                     <h3 className="section-title">
-                      邮件中的链接 ({session.content.links.length})
+                      {t('emailSecurity.linksInEmail', { count: displayContent.links.length })}
                       {suspiciousLinkCount > 0 && (
-                        <span className="warning-badge">{suspiciousLinkCount} 个可疑链接</span>
+                        <span className="warning-badge">{t('emailSecurity.suspiciousLinks', { count: suspiciousLinkCount })}</span>
                       )}
                     </h3>
                     <div className="links-list">
-                      {session.content.links.map((link, idx) => (
+                      {displayContent.links.map((link, idx) => (
                         <div key={idx} className={`link-item ${link.suspicious ? 'suspicious' : ''}`}>
                           {link.suspicious && <span className="suspicious-icon">⚠️</span>}
                           <div className="link-content">
@@ -525,11 +533,11 @@ export default function EmailDetail() {
                               {link.url}
                             </a>
                             {link.text && link.text !== link.url && (
-                              <span className="link-text">显示文本: {link.text}</span>
+                              <span className="link-text">{t('emailSecurity.displayText')}: {link.text}</span>
                             )}
                           </div>
                           {link.suspicious && (
-                            <span className="suspicious-badge">可疑链接</span>
+                            <span className="suspicious-badge">{t('emailSecurity.suspiciousLink')}</span>
                           )}
                         </div>
                       ))}
@@ -555,7 +563,7 @@ export default function EmailDetail() {
               </div>
             ) : (
               <div className="no-data-notice">
-                <p>暂无邮件头信息</p>
+                <p>{t('emailSecurity.noHeaders')}</p>
               </div>
             )}
           </div>
@@ -564,9 +572,9 @@ export default function EmailDetail() {
         {/* Attachments */}
         {activeTab === 'attachments' && (
           <div className="attachments-section">
-            {session.content?.attachments && session.content.attachments.length > 0 ? (
+            {displayContent?.attachments && displayContent.attachments.length > 0 ? (
               <div className="attachments-grid">
-                {session.content.attachments.map((att, idx) => (
+                {displayContent.attachments.map((att, idx) => (
                   <div key={idx} className="attachment-card">
                     <div className="attachment-icon">
                       {getFileIcon(att.content_type)}
@@ -598,10 +606,10 @@ export default function EmailDetail() {
                             URL.revokeObjectURL(url)
                           }}
                         >
-                          下载附件
+                          {t('emailSecurity.downloadAttachment')}
                         </button>
                       ) : (
-                        <span className="attachment-no-data">附件数据不可用</span>
+                        <span className="attachment-no-data">{t('emailSecurity.attachmentUnavailable')}</span>
                       )}
                     </div>
                   </div>
@@ -610,7 +618,7 @@ export default function EmailDetail() {
             ) : (
               <div className="no-data-notice">
                 <div className="notice-icon">📎</div>
-                <p>此邮件没有附件</p>
+                <p>{t('emailSecurity.noAttachments')}</p>
               </div>
             )}
           </div>
@@ -638,9 +646,7 @@ export default function EmailDetail() {
                           {isClient ? 'C' : 'S'}
                         </span>
                         <span className="dialog-time">
-                          {new Date(entry.timestamp).toLocaleTimeString('zh-CN', {
-                            hour: '2-digit', minute: '2-digit', second: '2-digit'
-                          })}
+                          {formatClockTime(entry.timestamp)}
                         </span>
                         <span className="dialog-size">{formatBytes(entry.size)}</span>
                       </div>
@@ -663,7 +669,7 @@ export default function EmailDetail() {
                 {/* STARTTLS analysis summary */}
                 {session.protocol === 'SMTP' && (
                   <div className="smtp-analysis-summary">
-                    <h4>SMTP 安全分析</h4>
+                    <h4>{t('emailSecurity.smtpSecurityAnalysis')}</h4>
                     <div className="analysis-items">
                       {(() => {
                         const ehloResponse = smtpDialog.find(p =>
@@ -677,7 +683,7 @@ export default function EmailDetail() {
                           <>
                             <div className={`analysis-item ${hasStartTlsCap ? 'good' : 'warn'}`}>
                               <span className="analysis-icon">{hasStartTlsCap ? '✓' : '✗'}</span>
-                              <span>服务器{hasStartTlsCap ? '支持' : '未声明'} STARTTLS</span>
+                              <span>{hasStartTlsCap ? t('emailSecurity.serverSupportsStarttls') : t('emailSecurity.serverNoStarttls')}</span>
                             </div>
                             <div className={`analysis-item ${clientSentStartTls ? 'good' : isEncrypted ? 'good' : 'warn'}`}>
                               <span className="analysis-icon">
@@ -685,25 +691,25 @@ export default function EmailDetail() {
                               </span>
                               <span>
                                 {clientSentStartTls
-                                  ? '客户端已发起 STARTTLS'
+                                  ? t('emailSecurity.clientInitiatedStarttls')
                                   : isEncrypted
-                                    ? '连接使用隐式 TLS (端口 465)'
+                                    ? t('emailSecurity.implicitTls')
                                     : hasStartTlsCap
-                                      ? '客户端未发起 STARTTLS (服务器支持但未使用)'
-                                      : '连接未加密'}
+                                      ? t('emailSecurity.clientSkippedStarttls')
+                                      : t('emailSecurity.connectionUnencrypted')}
                               </span>
                             </div>
                             <div className={`analysis-item ${isEncrypted ? 'good' : 'warn'}`}>
                               <span className="analysis-icon">{isEncrypted ? '🔒' : '⚠️'}</span>
-                              <span>{isEncrypted ? '邮件通过加密通道传输' : '邮件以明文传输'}</span>
+                              <span>{isEncrypted ? t('emailSecurity.emailEncryptedTransmit') : t('emailSecurity.emailPlaintextTransmit')}</span>
                             </div>
                             {session.auth_info && (
                               <div className={`analysis-item ${session.auth_info.auth_success ? 'good' : 'warn'}`}>
                                 <span className="analysis-icon">&#128273;</span>
                                 <span>
-                                  SMTP AUTH {session.auth_info.auth_method} 登录
+                                  SMTP AUTH {session.auth_info.auth_method} {t('emailSecurity.login')}
                                   {session.auth_info.username ? ` (${session.auth_info.username})` : ''}
-                                  {!isEncrypted && ' - 凭据以明文传输!'}
+                                  {!isEncrypted && ` - ${t('emailSecurity.credentialsPlaintext')}`}
                                 </span>
                               </div>
                             )}
@@ -716,7 +722,7 @@ export default function EmailDetail() {
               </div>
             ) : (
               <div className="no-data-notice">
-                <p>暂无 SMTP 对话数据</p>
+                <p>{t('emailSecurity.noSmtpDialog')}</p>
               </div>
             )}
           </div>

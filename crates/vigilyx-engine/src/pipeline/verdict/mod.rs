@@ -17,7 +17,9 @@ use vigilyx_core::security::{ModuleResult, ThreatLevel};
 
 // Re-export for backward compatibility
 pub use vigilyx_core::security::{EngineBpaDetail, FusionDetails, SecurityVerdict};
-pub use evidence_clusters::{ScenarioPatternLists, set_runtime_scenario_patterns};
+pub use evidence_clusters::{
+    ScenarioPatternLists, runtime_scenario_patterns, set_runtime_scenario_patterns,
+};
 
 use crate::config::VerdictConfig;
 
@@ -829,7 +831,7 @@ mod tests {
     }
 
     #[test]
-    fn test_clustered_semantic_nlp_only_signal_capped_to_low_floor() {
+    fn test_clustered_semantic_nlp_only_signal_capped_to_safe() {
         init_test_scenario_patterns();
         let session = make_session(
             "关于陕西交控投资集团有限公司开立银行账户不可归集情况说明",
@@ -854,13 +856,13 @@ mod tests {
             &VerdictConfig::default(),
         );
         assert!(
-            verdict.threat_level <= ThreatLevel::Low,
-            "Single-cluster NLP signal should not float near Medium: {:?}",
+            verdict.threat_level <= ThreatLevel::Safe,
+            "NLP-only signal without corroboration should be Safe: {:?}",
             verdict.threat_level
         );
         assert!(
-            verdict.fusion_details.as_ref().unwrap().risk_single <= 0.24,
-            "Single-cluster NLP signal should be capped to the low floor"
+            verdict.fusion_details.as_ref().unwrap().risk_single <= 0.14,
+            "NLP-only signal should be capped to Safe floor (0.14)"
         );
         assert!(
             verdict.summary.contains("semantic_nlp_only_signal"),
