@@ -39,7 +39,10 @@ async fn load_inbound_mail_servers(db: &VigilDb) -> HashSet<String> {
         Ok(servers) if !servers.is_empty() => servers,
         Ok(_) => load_inbound_mail_servers_from_env(),
         Err(err) => {
-            warn!("Failed to load inbound targets from ui_preferences: {}", err);
+            warn!(
+                "Failed to load inbound targets from ui_preferences: {}",
+                err
+            );
             load_inbound_mail_servers_from_env()
         }
     }
@@ -54,18 +57,16 @@ fn log_inbound_mail_servers(servers: &HashSet<String>) {
     }
 }
 
-
 // MTA Inline Verdict - (oneshot, vigilyx-core)
-
 
 /// MTA inline (, tokio oneshot channel)
 pub struct InlineVerdictRequest {
     pub session: EmailSession,
     pub respond_to: oneshot::Sender<InlineVerdictResponse>,
     pub deadline: Instant,
-    
+
     pub quarantine_threshold: ThreatLevel,
-    
+
     pub reject_threshold: ThreatLevel,
 }
 
@@ -85,8 +86,8 @@ pub struct SecurityEngine {
 }
 
 impl SecurityEngine {
-   /// Create and start the security engine.
-   /// Returns the engine handle (for sending sessions) and spawns the background processor.
+    /// Create and start the security engine.
+    /// Returns the engine handle (for sending sessions) and spawns the background processor.
     pub async fn start(
         db: VigilDb,
         pipeline_config: PipelineConfig,
@@ -95,28 +96,31 @@ impl SecurityEngine {
         let (tx, rx) = mpsc::channel::<EmailSession>(10_000);
         let (inline_tx, inline_rx) = mpsc::channel::<InlineVerdictRequest>(500);
 
-       // Initialize engine DB and tables
+        // Initialize engine DB and tables
         let engine_db = db;
         engine_db
             .init_security_tables()
             .await
             .map_err(|e| EngineError::Other(format!("Failed to init engine tables: {}", e)))?;
         match engine_db.seed_system_whitelist().await {
-            Ok(n) if n > 0 => info!("System whitelist seed applied: {} rows inserted/refreshed", n),
+            Ok(n) if n > 0 => info!(
+                "System whitelist seed applied: {} rows inserted/refreshed",
+                n
+            ),
             Ok(_) => info!("System whitelist seed already up to date"),
             Err(e) => warn!("Failed to seed system whitelist: {}", e),
         }
 
-       // Initialize subsystems
+        // Initialize subsystems
         let ioc_manager = IocManager::new(engine_db.clone());
         let whitelist_manager = WhitelistManager::new(engine_db.clone());
         let disposition_engine = DispositionEngine::new(engine_db.clone());
         let metrics = EngineMetrics::new();
 
-       // Initialize temporal analyzer (Phase 3)
+        // Initialize temporal analyzer (Phase 3)
         let temporal_analyzer = Arc::new(TemporalAnalyzer::new());
 
-       // Load temporal state from DB
+        // Load temporal state from DB
         match (
             engine_db.load_cusum_states().await,
             engine_db.load_ewma_states().await,
@@ -134,21 +138,21 @@ impl SecurityEngine {
             }
         }
 
-       // Initialize alert engine (Phase 4)
+        // Initialize alert engine (Phase 4)
         let alert_engine = Arc::new(AlertEngine::new());
 
-       // Load whitelist cache
+        // Load whitelist cache
         if let Err(e) = whitelist_manager.load().await {
             warn!("Failed to load whitelist cache: {}", e);
         }
 
-       // AutodetectInternalDomain(From DB ConfigurationLoad, Firstdetect)
+        // AutodetectInternalDomain(From DB ConfigurationLoad, Firstdetect)
         let internal_domains = Arc::new(RwLock::new(load_internal_domains(&engine_db).await));
 
-       // Build module registry (async: loads source config from DB)
+        // Build module registry (async: loads source config from DB)
         let (modules, safe_domains_handle) = build_module_registry(&engine_db).await;
 
-       // detectwhether AI Module (supports_ai && is_remote)
+        // detectwhether AI Module (supports_ai && is_remote)
         let has_ai = modules
             .values()
             .any(|m| m.metadata().supports_ai && m.metadata().is_remote);
@@ -157,12 +161,12 @@ impl SecurityEngine {
             info!("AI service detected (NLP modules ready)");
         }
 
-       // Build orchestrator
+        // Build orchestrator
         let orchestrator = PipelineOrchestrator::build(&modules, &pipeline_config)?;
         let inline_pipeline_config = Self::inline_pipeline_config(&pipeline_config);
         let inline_orchestrator = PipelineOrchestrator::build(&modules, &inline_pipeline_config)?;
 
-       // Clone subsystems for background task
+        // Clone subsystems for background task
         let bg_engine_db = engine_db.clone();
         let bg_ioc = ioc_manager.clone();
         let bg_whitelist = whitelist_manager.clone();
@@ -171,7 +175,7 @@ impl SecurityEngine {
         let bg_temporal = Arc::clone(&temporal_analyzer);
         let bg_alert = Arc::clone(&alert_engine);
 
-       // Spawn background processor
+        // Spawn background processor
         tokio::spawn(async move {
             Self::run_loop(
                 rx,
@@ -207,7 +211,7 @@ impl SecurityEngine {
         })
     }
 
-   /// Submit a session for security analysis (awaits channel capacity).
+    /// Submit a session for security analysis (awaits channel capacity).
     pub async fn submit(&self, session: EmailSession) -> Result<(), EngineError> {
         self.tx
             .send(session)
@@ -215,10 +219,10 @@ impl SecurityEngine {
             .map_err(|_| EngineError::Other("Engine channel closed".into()))
     }
 
-   /// Submit a session without blocking (returns error if channel is full).
-    
-   /// Use this in the import pipeline to avoid stalling the HTTP handler
-   /// when the engine can't keep up with incoming session volume.
+    /// Submit a session without blocking (returns error if channel is full).
+
+    /// Use this in the import pipeline to avoid stalling the HTTP handler
+    /// when the engine can't keep up with incoming session volume.
     pub fn try_submit(&self, session: EmailSession) -> Result<(), EngineError> {
         self.tx.try_send(session).map_err(|e| match e {
             tokio::sync::mpsc::error::TrySendError::Full(_) => {
@@ -230,18 +234,18 @@ impl SecurityEngine {
         })
     }
 
-   /// Submit a session with a timeout - retries briefly instead of immediately dropping.
-    
-   /// Provides backpressure without permanently blocking the caller.
+    /// Submit a session with a timeout - retries briefly instead of immediately dropping.
+
+    /// Provides backpressure without permanently blocking the caller.
     pub async fn submit_with_backoff(&self, session: EmailSession) -> Result<(), EngineError> {
-       // First try non-blocking
+        // First try non-blocking
         match self.tx.try_send(session) {
             Ok(()) => Ok(()),
             Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                 Err(EngineError::Other("Engine channel closed".into()))
             }
             Err(tokio::sync::mpsc::error::TrySendError::Full(session)) => {
-               // Wait up to 2 seconds for capacity
+                // Wait up to 2 seconds for capacity
                 match tokio::time::timeout(std::time::Duration::from_secs(2), self.tx.send(session))
                     .await
                 {
@@ -255,10 +259,10 @@ impl SecurityEngine {
         }
     }
 
-   /// Submit a session for synchronous inline verdict (MTA proxy mode).
-    
-   /// Blocks until the engine produces a verdict or the timeout expires.
-   /// On timeout/error: returns Tempfail so the caller can choose fail-open or fail-closed.
+    /// Submit a session for synchronous inline verdict (MTA proxy mode).
+
+    /// Blocks until the engine produces a verdict or the timeout expires.
+    /// On timeout/error: returns Tempfail so the caller can choose fail-open or fail-closed.
     pub async fn submit_inline(
         &self,
         session: EmailSession,
@@ -318,7 +322,10 @@ impl SecurityEngine {
                     disposition: VerdictDisposition::Tempfail,
                     threat_level: ThreatLevel::Low,
                     confidence: 0.0,
-                    summary: format!("Engine verdict timeout after {}s (unscanned)", timeout.as_secs()),
+                    summary: format!(
+                        "Engine verdict timeout after {}s (unscanned)",
+                        timeout.as_secs()
+                    ),
                     session_id,
                     modules_run: 0,
                     modules_flagged: 0,
@@ -328,10 +335,10 @@ impl SecurityEngine {
         }
     }
 
-   /// Deduplicate: Same1 session timestamp may be Analyze
+    /// Deduplicate: Same1 session timestamp may be Analyze
     const DEDUP_WINDOW_SECS: u64 = 30;
 
-   /// Temporal state flush interval (every N verdicts).
+    /// Temporal state flush interval (every N verdicts).
     const TEMPORAL_FLUSH_INTERVAL: u64 = 50;
 
     fn inline_pipeline_config(config: &PipelineConfig) -> PipelineConfig {
@@ -364,7 +371,7 @@ impl SecurityEngine {
         ws_tx: broadcast::Sender<WsMessage>,
         internal_domains: Arc<RwLock<HashSet<String>>>,
     ) {
-       // Shared state for concurrent processing
+        // Shared state for concurrent processing
         let orchestrator = Arc::new(orchestrator);
         let inline_orchestrator = Arc::new(inline_orchestrator);
         let config = Arc::new(config);
@@ -405,48 +412,44 @@ impl SecurityEngine {
 
         // Message-ID dedup: same email captured at multiple network hops
         // should only produce one verdict (the final inbound hop).
-        let msgid_dedup: Arc<RwLock<HashMap<String, Uuid>>> =
-            Arc::new(RwLock::new(HashMap::new()));
+        let msgid_dedup: Arc<RwLock<HashMap<String, Uuid>>> = Arc::new(RwLock::new(HashMap::new()));
 
-       // Semaphore: limit concurrent email processing.
-       // Most modules are I/O-bound (DB queries, DNS lookups, intel API), not CPU-bound.
-       // Using 4x CPU cores to prevent I/O-wait from starving the pipeline.
+        // Semaphore: limit concurrent email processing.
+        // Most modules are I/O-bound (DB queries, DNS lookups, intel API), not CPU-bound.
+        // Using 4x CPU cores to prevent I/O-wait from starving the pipeline.
         let max_concurrent = (num_cpus::get() * 6).max(8);
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
         info!(max_concurrent, "Engine concurrent pipeline capacity");
 
-       // Limit temporal analysis background tasks (prevent unbounded spawning)
+        // Limit temporal analysis background tasks (prevent unbounded spawning)
         let temporal_semaphore = Arc::new(Semaphore::new(max_concurrent));
 
-       // InternalDomain New (6 small)
+        // InternalDomain New (6 small)
         {
             let domains = internal_domains.clone();
             let db = engine_db.clone();
             tokio::spawn(async move {
-               // First New 10 minute(Engine Stable)
+                // First New 10 minute(Engine Stable)
                 tokio::time::sleep(std::time::Duration::from_secs(600)).await;
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(6 * 3600));
                 loop {
                     interval.tick().await;
                     info!("Refreshing internal domains...");
                     let new_domains = refresh_internal_domains(&db).await;
-                   *domains.write().await = new_domains;
+                    *domains.write().await = new_domains;
                 }
             });
         }
 
-       // Threat scene detector (bulk mailing + bounce harvest, every 5 min)
-        crate::threat_scene::spawn_scene_detector(
-            engine_db.clone(),
-            internal_domains.clone(),
-        );
+        // Threat scene detector (bulk mailing + bounce harvest, every 5 min)
+        crate::threat_scene::spawn_scene_detector(engine_db.clone(), internal_domains.clone());
 
-       // JoinSet tracks in-flight per-email tasks for graceful shutdown
+        // JoinSet tracks in-flight per-email tasks for graceful shutdown
         let mut inflight = tokio::task::JoinSet::new();
         let mut dedup_cleanup_counter: u64 = 0;
 
         loop {
-           // Select: inline requests have priority (biased)
+            // Select: inline requests have priority (biased)
             let session = tokio::select! {
                 biased;
                 Some(inline_req) = inline_rx.recv() => {
@@ -571,9 +574,9 @@ impl SecurityEngine {
             let session = Arc::new(session);
             let session_id = session.id;
 
-           // 1. Skip non-email sessions (permanent filter)
-           // emailHeaderofSession completeemail, Security
-           // override: 554, QUIT-only, entering DATA Segmentof connection
+            // 1. Skip non-email sessions (permanent filter)
+            // emailHeaderofSession completeemail, Security
+            // override: 554, QUIT-only, entering DATA Segmentof connection
             if session.content.headers.is_empty() {
                 debug!(
                     session_id = %session_id,
@@ -583,7 +586,7 @@ impl SecurityEngine {
                 continue;
             }
 
-           // 1b. Inbound IP filter: when INBOUND_MAIL_SERVERS is configured,
+            // 1b. Inbound IP filter: when INBOUND_MAIL_SERVERS is configured,
             //     only analyze sessions delivered TO those IPs (the final hop).
             //     Intermediate relay hops are skipped — the final inbound has
             //     the most complete info (gateway headers, all Received hops).
@@ -604,14 +607,15 @@ impl SecurityEngine {
                 continue;
             }
 
-           // 1c. Message-ID dedup: only active when INBOUND_MAIL_SERVERS is set.
+            // 1c. Message-ID dedup: only active when INBOUND_MAIL_SERVERS is set.
             //     When inbound filter is active, same email at the same inbound
             //     server should only produce one verdict.
             //     When inbound filter is NOT set, all sessions are analyzed (no dedup).
-            if inbound_filter_active
-                && let Some(ref mid) = session.message_id
-            {
-                let norm_mid = mid.trim().trim_matches(|c| c == '<' || c == '>').to_lowercase();
+            if inbound_filter_active && let Some(ref mid) = session.message_id {
+                let norm_mid = mid
+                    .trim()
+                    .trim_matches(|c| c == '<' || c == '>')
+                    .to_lowercase();
                 if !norm_mid.is_empty() {
                     let mut map = msgid_dedup.write().await;
                     if let Some(&prev_sid) = map.get(&norm_mid) {
@@ -637,7 +641,7 @@ impl SecurityEngine {
                 }
             }
 
-           // 2. Whitelist check (fast async)
+            // 2. Whitelist check (fast async)
             let mut whitelisted = false;
             if let Some(ref mail_from) = session.mail_from
                 && let Some(domain) = mail_from.split('@').nth(1)
@@ -662,7 +666,7 @@ impl SecurityEngine {
                 continue;
             }
 
-           // 3. Dedup check (atomic: write lock -> check -> insert -> release)
+            // 3. Dedup check (atomic: write lock -> check -> insert -> release)
             //
             // Key fix: when a session was previously analyzed while still Active
             // (e.g. on MAIL FROM dirty flush with empty links/body), allow
@@ -692,7 +696,7 @@ impl SecurityEngine {
                         continue;
                     }
                 }
-               // PeriodicCleanupExpiredentry: 50 session map 100 Item Cleanup
+                // PeriodicCleanupExpiredentry: 50 session map 100 Item Cleanup
                 dedup_cleanup_counter += 1;
                 if dedup_cleanup_counter.is_multiple_of(50) || map.len() > 100 {
                     map.retain(|_, &mut (t, _)| {
@@ -702,7 +706,7 @@ impl SecurityEngine {
                 map.insert(session_id, (now_instant, is_completed));
             } // write lock released
 
-           // 4. Acquire semaphore permit (backpressure)
+            // 4. Acquire semaphore permit (backpressure)
             let permit = match Arc::clone(&semaphore).acquire_owned().await {
                 Ok(p) => p,
                 Err(_) => {
@@ -711,7 +715,7 @@ impl SecurityEngine {
                 }
             };
 
-           // 5. Clone shared state for the per-email task
+            // 5. Clone shared state for the per-email task
             let orch = Arc::clone(&orchestrator);
             let cfg = Arc::clone(&config);
             let met = metrics.clone();
@@ -731,7 +735,7 @@ impl SecurityEngine {
                 internal_domains: int_domains.clone(),
             });
 
-           // 6. Spawn per-email processing task
+            // 6. Spawn per-email processing task
             inflight.spawn(async move {
                 let _permit = permit; // held until task completes
 
@@ -742,7 +746,7 @@ impl SecurityEngine {
                 let ctx = SecurityContext::with_internal_domains(session.clone(), domains_snapshot);
                 let results = orch.execute(&ctx).await;
 
-               // Record per-module metrics
+                // Record per-module metrics
                 for (module_id, result) in &results {
                     let success = result.threat_level != crate::module::ThreatLevel::Safe
                         || !result.summary.contains("ModuleExecutelineFailed");
@@ -756,7 +760,7 @@ impl SecurityEngine {
                     .await;
                 }
 
-               // Aggregate verdict (synchronous, <1ms)
+                // Aggregate verdict (synchronous, <1ms)
                 let verdict_result = crate::verdict::aggregate_verdict_with_session(
                     Some(session.as_ref()),
                     session_id,
@@ -773,18 +777,18 @@ impl SecurityEngine {
                     "Security verdict produced"
                 );
 
-               // Persist session to DB (UPSERT — idempotent).
+                // Persist session to DB (UPSERT — idempotent).
                 // In Redis Streams mode the Sniffer only publishes to the stream;
                 // the Engine is the component that persists sessions to PostgreSQL.
                 if let Err(e) = pv_ctx.db.insert_session(&session).await {
                     error!(session_id = %session_id, "Failed to persist session: {e}");
                 }
 
-               // Post-verdict processing: DB storage, IOC, disposition, temporal, alerts
+                // Post-verdict processing: DB storage, IOC, disposition, temporal, alerts
                 run_post_verdict(&pv_ctx, &session, &verdict_result, &results).await;
             });
 
-           // Reap completed tasks without blocking the receive loop
+            // Reap completed tasks without blocking the receive loop
             while let Some(result) = inflight.try_join_next() {
                 if let Err(e) = result {
                     error!("Email processing task panicked: {}", e);
@@ -792,7 +796,7 @@ impl SecurityEngine {
             }
         }
 
-       // Graceful shutdown: wait for all in-flight tasks
+        // Graceful shutdown: wait for all in-flight tasks
         info!(
             inflight = inflight.len(),
             "Channel closed, waiting for in-flight tasks"
@@ -803,7 +807,7 @@ impl SecurityEngine {
             }
         }
 
-       // Final temporal flush
+        // Final temporal flush
         let (cusum, ewma, entity) = temporal_analyzer.export_states().await;
         if let Err(e) = engine_db
             .flush_temporal_states(&cusum, &ewma, &entity)
@@ -824,7 +828,7 @@ mod tests {
     use tokio::sync::mpsc;
     use vigilyx_core::models::{EmailSession, Protocol};
 
-   /// Helper: create a minimal EmailSession with content headers for pipeline processing
+    /// Helper: create a minimal EmailSession with content headers for pipeline processing
     fn make_session_with_headers() -> EmailSession {
         let mut session = EmailSession::new(
             Protocol::Smtp,
@@ -852,7 +856,7 @@ mod tests {
         session
     }
 
-   /// Helper: create a session without headers (should be skipped by engine)
+    /// Helper: create a session without headers (should be skipped by engine)
     fn make_empty_session() -> EmailSession {
         EmailSession::new(
             Protocol::Smtp,
@@ -866,11 +870,11 @@ mod tests {
     #[tokio::test]
     async fn test_try_submit_returns_error_when_channel_full() {
         let (tx, _rx) = mpsc::channel::<EmailSession>(2);
-       // Fill the channel
+        // Fill the channel
         tx.try_send(make_session_with_headers()).unwrap();
         tx.try_send(make_session_with_headers()).unwrap();
 
-       // Third should fail
+        // Third should fail
         let result = tx.try_send(make_session_with_headers());
         assert!(result.is_err(), "Expected channel full error");
     }
@@ -878,17 +882,17 @@ mod tests {
     #[tokio::test]
     async fn test_submit_with_backoff_succeeds_after_drain() {
         let (tx, mut rx) = mpsc::channel::<EmailSession>(2);
-       // Fill the channel
+        // Fill the channel
         tx.try_send(make_session_with_headers()).unwrap();
         tx.try_send(make_session_with_headers()).unwrap();
 
-       // Spawn a drainer that frees space after 100ms
+        // Spawn a drainer that frees space after 100ms
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             let _ = rx.recv().await;
         });
 
-       // submit_with_backoff should succeed (waits up to 2s)
+        // submit_with_backoff should succeed (waits up to 2s)
         let session = make_session_with_headers();
         match tx.try_send(session) {
             Ok(()) => panic!("Expected full channel"),
@@ -909,7 +913,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel::<EmailSession>(1);
         tx.try_send(make_session_with_headers()).unwrap();
 
-       // No drainer - should timeout after 200ms (using short timeout for test speed)
+        // No drainer - should timeout after 200ms (using short timeout for test speed)
         let session = make_session_with_headers();
         let result = match tx.try_send(session) {
             Err(tokio::sync::mpsc::error::TrySendError::Full(session)) => {
@@ -925,7 +929,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_channel_capacity_allows_burst() {
-       // Verify the increased channel capacity (10,000) can handle burst imports
+        // Verify the increased channel capacity (10,000) can handle burst imports
         let (tx, _rx) = mpsc::channel::<EmailSession>(10_000);
         let mut success_count = 0;
 
@@ -963,13 +967,13 @@ mod tests {
         let dedup: Arc<RwLock<HashMap<Uuid, Instant>>> = Arc::new(RwLock::new(HashMap::new()));
         let session_id = Uuid::new_v4();
 
-       // First submission: insert into dedup map
+        // First submission: insert into dedup map
         {
             let mut map = dedup.write().await;
             map.insert(session_id, Instant::now());
         }
 
-       // Second submission within window: should be skipped
+        // Second submission within window: should be skipped
         {
             let now = Instant::now();
             let map = dedup.read().await;
@@ -984,7 +988,7 @@ mod tests {
     async fn test_dedup_cleanup_at_threshold() {
         let dedup: Arc<RwLock<HashMap<Uuid, Instant>>> = Arc::new(RwLock::new(HashMap::new()));
 
-       // Add 250 entries (above the 200 threshold)
+        // Add 250 entries (above the 200 threshold)
         {
             let mut map = dedup.write().await;
             for _ in 0..250 {
@@ -992,19 +996,19 @@ mod tests {
             }
             assert_eq!(map.len(), 250);
 
-           // Simulate cleanup (retain only entries within window)
+            // Simulate cleanup (retain only entries within window)
             if map.len() > 200 {
                 let now = Instant::now();
                 map.retain(|_, t| now.duration_since(*t).as_secs() < 30);
             }
-           // All entries are recent so all retained
+            // All entries are recent so all retained
             assert_eq!(map.len(), 250);
         }
     }
 
     #[tokio::test]
     async fn test_concurrent_semaphore_capacity() {
-       // Verify semaphore allows sufficient concurrency for I/O-bound workloads
+        // Verify semaphore allows sufficient concurrency for I/O-bound workloads
         let max_concurrent = (num_cpus::get() * 6).max(8);
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
 
@@ -1014,25 +1018,25 @@ mod tests {
             permits.push(permit);
         }
 
-       // All permits acquired
+        // All permits acquired
         assert_eq!(semaphore.available_permits(), 0);
 
-       // Next acquire should not immediately succeed
+        // Next acquire should not immediately succeed
         let try_result = semaphore.try_acquire();
         assert!(try_result.is_err(), "No permits should be available");
 
-       // Drop one permit
+        // Drop one permit
         drop(permits.pop());
         assert_eq!(semaphore.available_permits(), 1);
     }
 
-   // MTA Inline Verdict Tests
+    // MTA Inline Verdict Tests
 
     #[tokio::test]
     async fn test_verdict_disposition_from_threat_level_safe_accepts() {
         let d = VerdictDisposition::from_threat_level(
             ThreatLevel::Safe,
-            ThreatLevel::Medium, // quarantine threshold
+            ThreatLevel::Medium,   // quarantine threshold
             ThreatLevel::Critical, // reject threshold
         );
         assert!(matches!(d, VerdictDisposition::Accept));
@@ -1057,7 +1061,7 @@ mod tests {
             ThreatLevel::Critical,
         );
         assert!(matches!(d, VerdictDisposition::Quarantine));
-        assert_eq!(d.smtp_code(), 250); 
+        assert_eq!(d.smtp_code(), 250);
     }
 
     #[tokio::test]
@@ -1083,10 +1087,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_inline_channel_full_returns_tempfail() {
-       // Create a tiny inline channel (capacity 1)
+        // Create a tiny inline channel (capacity 1)
         let (inline_tx, _inline_rx) = mpsc::channel::<InlineVerdictRequest>(1);
 
-       // Fill it with a dummy request
+        // Fill it with a dummy request
         let (dummy_tx, _dummy_rx) = oneshot::channel();
         inline_tx
             .try_send(InlineVerdictRequest {
@@ -1098,7 +1102,7 @@ mod tests {
             })
             .unwrap();
 
-       // Second request should fail (channel full)
+        // Second request should fail (channel full)
         let (resp_tx, _resp_rx) = oneshot::channel();
         let result = inline_tx.try_send(InlineVerdictRequest {
             session: make_session_with_headers(),
@@ -1131,20 +1135,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_inline_tier1_module_classification() {
-        use crate::modules::registry::{is_inline_tier1, INLINE_TIER1_MODULES};
+        use crate::modules::registry::{INLINE_TIER1_MODULES, is_inline_tier1};
 
-       // Tier 1 modules
+        // Tier 1 modules
         assert!(is_inline_tier1("content_scan"));
         assert!(is_inline_tier1("header_scan"));
         assert!(is_inline_tier1("yara_scan"));
 
-       // Tier 2 modules (should NOT be tier 1)
+        // Tier 2 modules (should NOT be tier 1)
         assert!(!is_inline_tier1("semantic_scan"));
         assert!(!is_inline_tier1("link_content"));
         assert!(!is_inline_tier1("sandbox_scan"));
         assert!(!is_inline_tier1("transaction_correlation"));
 
-       // Tier 1 should have 15 modules
+        // Tier 1 should have 15 modules
         assert_eq!(INLINE_TIER1_MODULES.len(), 15);
     }
 
@@ -1154,15 +1158,24 @@ mod tests {
         let inline = SecurityEngine::inline_pipeline_config(&config);
 
         assert!(
-            inline.modules.iter().all(|module| is_inline_tier1(&module.id)),
+            inline
+                .modules
+                .iter()
+                .all(|module| is_inline_tier1(&module.id)),
             "inline config should only contain tier-1 modules"
         );
         assert!(
-            !inline.modules.iter().any(|module| module.id == "semantic_scan"),
+            !inline
+                .modules
+                .iter()
+                .any(|module| module.id == "semantic_scan"),
             "AI module must stay out of SMTP inline path"
         );
         assert!(
-            !inline.modules.iter().any(|module| module.id == "link_content"),
+            !inline
+                .modules
+                .iter()
+                .any(|module| module.id == "link_content"),
             "link_content must stay out of SMTP inline path"
         );
     }
@@ -1170,6 +1183,10 @@ mod tests {
     #[test]
     fn test_tempfail_uses_smtp_451() {
         assert_eq!(VerdictDisposition::Tempfail.smtp_code(), 451);
-        assert!(VerdictDisposition::Tempfail.smtp_message().starts_with("4.7.1"));
+        assert!(
+            VerdictDisposition::Tempfail
+                .smtp_message()
+                .starts_with("4.7.1")
+        );
     }
 }

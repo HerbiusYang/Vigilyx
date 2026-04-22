@@ -25,7 +25,7 @@ struct MetricsInner {
     total_verdicts: AtomicU64,
     started_at: DateTime<Utc>,
     ai_available: AtomicBool,
-   /// Unix timestamp in seconds (0 = never)
+    /// Unix timestamp in seconds (0 = never)
     last_session_ts: AtomicU64,
 }
 
@@ -87,7 +87,7 @@ impl EngineMetrics {
         }
     }
 
-   /// RecordingModuleExecutelineResult
+    /// RecordingModuleExecutelineResult
     pub async fn record_module_run(
         &self,
         module_id: &str,
@@ -117,24 +117,24 @@ impl EngineMetrics {
         }
     }
 
-   /// Recording session ProcessStart
+    /// Recording session ProcessStart
     pub fn record_session_start(&self) {
         self.inner.total_sessions.fetch_add(1, Ordering::Relaxed);
     }
 
-   /// Recording verdict (lock-free)
+    /// Recording verdict (lock-free)
     pub fn record_verdict(&self) {
         self.inner.total_verdicts.fetch_add(1, Ordering::Relaxed);
         let ts = Utc::now().timestamp() as u64;
         self.inner.last_session_ts.store(ts, Ordering::Relaxed);
     }
 
-   /// Update AI Status (lock-free)
+    /// Update AI Status (lock-free)
     pub fn set_ai_available(&self, available: bool) {
         self.inner.ai_available.store(available, Ordering::Relaxed);
     }
 
-   /// GetEngineStatus
+    /// GetEngineStatus
     pub async fn get_status(&self) -> EngineStatus {
         let uptime = (Utc::now() - self.inner.started_at).num_seconds().max(0) as u64;
         let total_sessions = self.inner.total_sessions.load(Ordering::Relaxed);

@@ -15,21 +15,21 @@ const JWT_AUDIENCE: &str = "vigilyx-api";
 /// JWT Claims
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
-   /// user
+    /// user
     pub sub: String,
-   /// time (Unix time)
+    /// time (Unix time)
     pub exp: usize,
-   /// time
+    /// time
     pub iat: usize,
-    
+
     pub role: String,
-    
+
     #[serde(default)]
     pub iss: String,
-    
+
     #[serde(default)]
     pub aud: String,
-   /// Token version - incremented on password change, old tokens rejected (SEC: CWE-613)
+    /// Token version - incremented on password change, old tokens rejected (SEC: CWE-613)
     #[serde(default)]
     pub tv: u64,
 }
@@ -73,8 +73,8 @@ pub fn verify_token(config: &AuthConfig, token: &str) -> Result<Claims, AuthErro
     let mut validation = Validation::default();
     validation.set_issuer(&[JWT_ISSUER]);
     validation.set_audience(&[JWT_AUDIENCE]);
-   // SEC-C01: CVE-2026-25537 mitigation - require all time claims to be present
-   // and correctly typed. Without this, a string-typed "exp" bypasses time validation.
+    // SEC-C01: CVE-2026-25537 mitigation - require all time claims to be present
+    // and correctly typed. Without this, a string-typed "exp" bypasses time validation.
     validation.set_required_spec_claims(&["exp", "iat", "iss", "aud"]);
 
     let token_data = decode::<Claims>(
@@ -90,7 +90,7 @@ pub fn verify_token(config: &AuthConfig, token: &str) -> Result<Claims, AuthErro
         }
     })?;
 
-   // SEC: Validate token version - password change increments version, invalidating old tokens
+    // SEC: Validate token version - password change increments version, invalidating old tokens
     let current_tv = config
         .token_version
         .load(std::sync::atomic::Ordering::Relaxed);

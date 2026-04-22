@@ -91,9 +91,7 @@ pub async fn reload_safe_domains_into(
         Ok(domains) => {
             let set: HashSet<String> = domains.into_iter().collect();
             info!(count = set.len(), "Safe domain cache reloaded from DB");
-            *target
-                .write()
-                .expect("safe domain lock poisoned") = set;
+            *target.write().expect("safe domain lock poisoned") = set;
         }
         Err(e) => warn!("Failed to reload safe domain cache: {}", e),
     }
@@ -258,15 +256,15 @@ pub struct IntelLayer {
 }
 
 impl IntelLayer {
-    pub fn new(ioc: IocManager, config: IntelSourceConfig, safe_domains: Arc<StdRwLock<HashSet<String>>>) -> Self {
-
+    pub fn new(
+        ioc: IocManager,
+        config: IntelSourceConfig,
+        safe_domains: Arc<StdRwLock<HashSet<String>>>,
+    ) -> Self {
         let vt_scrape_base_url = config.vt_scrape_base_url();
         let allow_internal_vt_auth = config.vt_scrape_enabled
-            && validate_internal_service_url(
-                &vt_scrape_base_url,
-                DEFAULT_INTERNAL_SERVICE_HOSTS,
-            )
-            .is_ok();
+            && validate_internal_service_url(&vt_scrape_base_url, DEFAULT_INTERNAL_SERVICE_HOSTS)
+                .is_ok();
         if config.vt_scrape_enabled && !allow_internal_vt_auth {
             warn!(
                 url = %vt_scrape_base_url,
@@ -279,7 +277,7 @@ impl IntelLayer {
             .build()
             .unwrap_or_default();
 
-       // SEC-H07: VT scrape request uses the AI-scoped internal token only
+        // SEC-H07: VT scrape request uses the AI-scoped internal token only
         let http_vt = {
             let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(25));
             if allow_internal_vt_auth {
@@ -296,7 +294,7 @@ impl IntelLayer {
         };
 
         let rate_limiter = Arc::new(Mutex::new(RateLimiterState {
-            otx: ApiRateLimit::new(10), // OTX: 10/min (free, no key)
+            otx: ApiRateLimit::new(10),      // OTX: 10/min (free, no key)
             vt_scrape: ApiRateLimit::new(6), // VT Scrape: 6/min (Playwright)
             vt_api: ApiRateLimit::new(4).with_daily_quota(500), // VT API free: 4/min, 500/day
             abuseipdb: ApiRateLimit::new(15).with_daily_quota(1000), // AbuseIPDB free: 1000/day
@@ -461,7 +459,10 @@ impl IntelLayer {
             // If quota exhausted, degrade gracefully — skip scrape too
             let quota_exhausted = self.rate_limiter.lock().await.vt_api.is_quota_exhausted();
             if quota_exhausted {
-                warn!("VT API daily quota exhausted, skipping VT for {}", indicator);
+                warn!(
+                    "VT API daily quota exhausted, skipping VT for {}",
+                    indicator
+                );
                 return None;
             }
             // API failed for non-quota reason, fall through to scrape
@@ -664,7 +665,11 @@ mod tests {
             abuseipdb_enabled: false,
             ..Default::default()
         };
-        let layer = IntelLayer::new(ioc_manager, config, Arc::new(StdRwLock::new(HashSet::new())));
+        let layer = IntelLayer::new(
+            ioc_manager,
+            config,
+            Arc::new(StdRwLock::new(HashSet::new())),
+        );
 
         let otx_result = Some(IntelResult {
             indicator: "evil.com".into(),
@@ -715,7 +720,11 @@ mod tests {
             abuseipdb_enabled: false,
             ..Default::default()
         };
-        let layer = IntelLayer::new(ioc_manager, config, Arc::new(StdRwLock::new(HashSet::new())));
+        let layer = IntelLayer::new(
+            ioc_manager,
+            config,
+            Arc::new(StdRwLock::new(HashSet::new())),
+        );
 
         let fused = layer
             .fuse_and_cache("test.com", "domain", &[None, None])
@@ -742,7 +751,11 @@ mod tests {
             abuseipdb_enabled: false,
             ..Default::default()
         };
-        let layer = IntelLayer::new(ioc_manager, config, Arc::new(StdRwLock::new(HashSet::new())));
+        let layer = IntelLayer::new(
+            ioc_manager,
+            config,
+            Arc::new(StdRwLock::new(HashSet::new())),
+        );
 
         let single = Some(IntelResult {
             indicator: "1.2.3.4".into(),
@@ -799,7 +812,11 @@ mod tests {
             abuseipdb_enabled: false,
             ..Default::default()
         };
-        let layer = IntelLayer::new(ioc_manager, config, Arc::new(StdRwLock::new(HashSet::new())));
+        let layer = IntelLayer::new(
+            ioc_manager,
+            config,
+            Arc::new(StdRwLock::new(HashSet::new())),
+        );
 
         let result = layer.query_domain("cached-evil.com").await;
         assert!(result.found);
@@ -824,7 +841,11 @@ mod tests {
             abuseipdb_enabled: false,
             ..Default::default()
         };
-        let layer = IntelLayer::new(ioc_manager, config, Arc::new(StdRwLock::new(HashSet::new())));
+        let layer = IntelLayer::new(
+            ioc_manager,
+            config,
+            Arc::new(StdRwLock::new(HashSet::new())),
+        );
 
         let result = layer.query_ip("8.8.8.8").await;
         assert!(!result.found);

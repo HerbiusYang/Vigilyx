@@ -35,8 +35,8 @@ impl IocManager {
         Self { db }
     }
 
-   /// Check if indicator is whitelisted (verdict=clean)
-   /// Pre-check before auto-recording to avoid overwriting manually added whitelist entries
+    /// Check if indicator is whitelisted (verdict=clean)
+    /// Pre-check before auto-recording to avoid overwriting manually added whitelist entries
     pub(crate) async fn is_whitelisted(&self, ioc_type: &str, indicator: &str) -> bool {
         let indicator = normalize_ioc_indicator(ioc_type, indicator);
         match self.db.find_ioc(ioc_type, &indicator).await {
@@ -45,7 +45,7 @@ impl IocManager {
         }
     }
 
-   /// Lookup IOC matches (for module use)
+    /// Lookup IOC matches (for module use)
     pub async fn check_indicator(&self, ioc_type: &str, indicator: &str) -> Option<IocEntry> {
         let indicator = normalize_ioc_indicator(ioc_type, indicator);
         match self.db.find_ioc(ioc_type, &indicator).await {
@@ -57,13 +57,13 @@ impl IocManager {
         }
     }
 
-   /// Lookup IOC matches, excluding `source=auto` ofentry(For intel)
-    
-   /// source isolation: auto IOCs come from engine auto-recording, allowing them to be hit by intel queries
-   /// Creates positive feedback loop: FP A -> auto IOC -> Email B hits IOC -> FP B -> more IOCs
-    
-   /// This method only returns IOCs from external intelligence sources (otx, vt_scrape, manual, import, admin_clean)
-   /// Cutting off auto IOC self-reinforcement loops.
+    /// Lookup IOC matches, excluding `source=auto` ofentry(For intel)
+
+    /// source isolation: auto IOCs come from engine auto-recording, allowing them to be hit by intel queries
+    /// Creates positive feedback loop: FP A -> auto IOC -> Email B hits IOC -> FP B -> more IOCs
+
+    /// This method only returns IOCs from external intelligence sources (otx, vt_scrape, manual, import, admin_clean)
+    /// Cutting off auto IOC self-reinforcement loops.
     pub async fn check_indicator_external_only(
         &self,
         ioc_type: &str,
@@ -81,7 +81,7 @@ impl IocManager {
         }
     }
 
-   /// Add IOC manually (with attack type)
+    /// Add IOC manually (with attack type)
     pub async fn add_manual(
         &self,
         indicator: String,
@@ -101,7 +101,7 @@ impl IocManager {
         .await
     }
 
-   /// Add IOC manually (with attack type)
+    /// Add IOC manually (with attack type)
     pub async fn add_manual_with_attack(
         &self,
         indicator: String,
@@ -133,7 +133,7 @@ impl IocManager {
         Ok(ioc)
     }
 
-   /// JSON batch import
+    /// JSON batch import
     pub async fn import_batch(&self, entries: Vec<BatchIocInput>) -> anyhow::Result<ImportResult> {
         let mut imported = 0u64;
         let mut skipped = 0u64;
@@ -175,14 +175,14 @@ impl IocManager {
         Ok(ImportResult { imported, skipped })
     }
 
-   /// CSV Import
+    /// CSV Import
     pub async fn import_csv(&self, csv_content: &str) -> anyhow::Result<ImportResult> {
         let mut imported = 0u64;
         let mut skipped = 0u64;
         let now = Utc::now();
 
         for line in csv_content.lines().skip(1) {
-           // hopstableHeader; Number of Number
+            // hopstableHeader; Number of Number
             let parts = parse_csv_line(line);
             if parts.len() < 3 {
                 skipped += 1;
@@ -225,14 +225,14 @@ impl IocManager {
         Ok(ImportResult { imported, skipped })
     }
 
-   /// CSV export (all)
+    /// CSV export (all)
     pub async fn export_csv(&self) -> anyhow::Result<String> {
         self.export_csv_filtered(None).await
     }
 
-   /// CSV export (with verdict filter, paginated to avoid memory issues)
+    /// CSV export (with verdict filter, paginated to avoid memory issues)
     pub async fn export_csv_filtered(&self, verdicts: Option<&[String]>) -> anyhow::Result<String> {
-       // UTF-8 BOM - Excel needs BOM for correct UTF-8 encoding recognition
+        // UTF-8 BOM - Excel needs BOM for correct UTF-8 encoding recognition
         let mut csv = String::from(
             "\u{FEFF}indicator,type,verdict,confidence,attack_type,source,first_seen,last_seen,hit_count,context\n",
         );
@@ -274,7 +274,7 @@ impl IocManager {
         Ok(csv)
     }
 
-   /// Cleanup expired IOCs
+    /// Cleanup expired IOCs
     pub async fn cleanup_expired(&self) -> anyhow::Result<u64> {
         let count = self.db.cleanup_expired_ioc().await?;
         if count > 0 {
@@ -291,12 +291,12 @@ impl IocManager {
 fn csv_escape(s: &str) -> String {
     let needs_quote = s.contains(',') || s.contains('"') || s.contains('\n');
 
-   // SEC: Neutralize formula injection - prefix dangerous first-chars with single quote
+    // SEC: Neutralize formula injection - prefix dangerous first-chars with single quote
     let first = s.as_bytes().first().copied().unwrap_or(0);
     let formula_prefix = matches!(first, b'=' | b'+' | b'-' | b'@' | b'\t' | b'\r');
 
     if formula_prefix {
-       // Always quote, and prepend ' inside the quotes to defuse formulas
+        // Always quote, and prepend ' inside the quotes to defuse formulas
         format!("\"'{}\"", s.replace('"', "\"\""))
     } else if needs_quote {
         format!("\"{}\"", s.replace('"', "\"\""))
@@ -316,7 +316,7 @@ fn parse_csv_line(line: &str) -> Vec<String> {
         if in_quotes {
             if c == '"' {
                 if chars.peek() == Some(&'"') {
-                   // Escaped quote ""
+                    // Escaped quote ""
                     current.push('"');
                     chars.next();
                 } else {

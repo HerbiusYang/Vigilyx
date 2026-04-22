@@ -1,6 +1,5 @@
 //! SecurityEngine API Process
 
-
 //! - GET /sessions/:id/verdict - session Security
 //! - GET /sessions/:id/security-results - session Module
 //! - GET /security/pipeline - getStream Configuration
@@ -26,9 +25,9 @@ mod pipeline;
 pub mod quarantine;
 mod rescan;
 mod sniffer_config;
+pub mod threat_scene;
 mod verdict;
 mod whitelist;
-pub mod threat_scene;
 
 // Re-export all public handlers so routes.rs paths remain unchanged
 pub use alerts::{
@@ -51,18 +50,15 @@ pub use sniffer_config::{
     get_sniffer_config, get_sniffer_config_internal, get_time_policy_config, update_sniffer_config,
     update_time_policy_config,
 };
+pub use threat_scene::{
+    acknowledge_scene, block_scene, delete_threat_scene, get_scene_emails, get_scene_rules,
+    get_threat_scene, list_threat_scenes, resolve_scene, threat_scene_stats, update_scene_rules,
+};
 pub use verdict::{
     get_engine_status, get_feedback_stats, get_security_stats, get_session_security_results,
     get_session_verdict, list_recent_verdicts, submit_feedback,
 };
-pub use whitelist::{
-    add_whitelist_entry, delete_whitelist_entry, get_whitelist, update_whitelist,
-};
-pub use threat_scene::{
-    list_threat_scenes, threat_scene_stats, get_threat_scene, get_scene_emails,
-    acknowledge_scene, block_scene, resolve_scene, delete_threat_scene,
-    get_scene_rules, update_scene_rules,
-};
+pub use whitelist::{add_whitelist_entry, delete_whitelist_entry, get_whitelist, update_whitelist};
 
 use vigilyx_db::mq::topics;
 
@@ -76,9 +72,7 @@ pub(crate) struct EngineStatusSnapshot {
     pub heartbeat_secs: i64,
 }
 
-
 // (Module Module)
-
 
 /// Engine process New (IOC/ /Configuration)
 pub(in crate::handlers) async fn publish_engine_reload(state: &AppState, target: &str) {
@@ -178,8 +172,7 @@ pub(crate) async fn load_engine_status_snapshot(
     {
         // Guard: engine heartbeat already has { "updated_at": ..., "status": {...} }
         // structure — don't double-wrap it (same guard as the Pub/Sub path in main.rs).
-        let wrapper = if heartbeat.get("updated_at").is_some()
-            && heartbeat.get("status").is_some()
+        let wrapper = if heartbeat.get("updated_at").is_some() && heartbeat.get("status").is_some()
         {
             heartbeat
         } else {

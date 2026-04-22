@@ -74,13 +74,13 @@ pub(super) async fn query_ioc_ips(
     categories: &mut Vec<String>,
     evidence: &mut Vec<Evidence>,
 ) -> HashSet<String> {
-   // Record IPs already found in IOC to avoid duplicate scoring in Step 7
-   // (query_ip also checks IOC cache, so the same IOC would be counted twice)
+    // Record IPs already found in IOC to avoid duplicate scoring in Step 7
+    // (query_ip also checks IOC cache, so the same IOC would be counted twice)
     let mut ioc_checked_ips = HashSet::new();
     let mut ioc_score_total = 0.0;
     for ip in received_ips {
         if let Ok(Some(ioc)) = db.find_ioc("ip", ip).await {
-           // Skip IPs with verdict=clean (already vetted as safe)
+            // Skip IPs with verdict=clean (already vetted as safe)
             if ioc.verdict == "clean" {
                 ioc_checked_ips.insert(ip.clone());
                 continue;
@@ -133,7 +133,7 @@ pub(super) async fn query_external_intel(
     categories: &mut Vec<String>,
     evidence: &mut Vec<Evidence>,
 ) {
-   // Deduplicate: each IP queried only once, skip those already found in IOC
+    // Deduplicate: each IP queried only once, skip those already found in IOC
     let mut unique_ips: Vec<String> = received_ips.to_vec();
     unique_ips.sort();
     unique_ips.dedup();
@@ -143,7 +143,7 @@ pub(super) async fn query_external_intel(
         return;
     }
 
-   // Parallel query IPs (3 concurrent, 10s timeout per IP)
+    // Parallel query IPs (3 concurrent, 10s timeout per IP)
     let semaphore = Arc::new(tokio::sync::Semaphore::new(3));
     let mut join_set = tokio::task::JoinSet::new();
 
@@ -171,7 +171,7 @@ pub(super) async fn query_external_intel(
         });
     }
 
-   // Collect query results
+    // Collect query results
     while let Some(join_result) = join_set.join_next().await {
         if let Ok(Some((ip, intel_result))) = join_result {
             if !intel_result.found {
@@ -222,15 +222,18 @@ pub(super) async fn query_external_intel(
                         snippet: Some(ip),
                     });
                 }
-               // "clean" -> no score added (result is auto-cached in IOC)
-               // Still record evidence for audit trail
+                // "clean" -> no score added (result is auto-cached in IOC)
+                // Still record evidence for audit trail
                 _ => {
                     evidence.push(Evidence {
                         description: format!(
                             "Sender IP {} reputation clean (source: {}, {})",
                             ip,
                             intel_result.source,
-                            intel_result.details.as_deref().unwrap_or("no threat records")
+                            intel_result
+                                .details
+                                .as_deref()
+                                .unwrap_or("no threat records")
                         ),
                         location: Some("headers:Received".to_string()),
                         snippet: Some(ip),
@@ -281,7 +284,10 @@ mod tests {
 
     #[test]
     fn multi_source_local_ioc_hits_keep_existing_weight() {
-        assert_eq!(local_ioc_ip_weight("otx+vt_scrape", "malicious", 0.90), 0.40);
+        assert_eq!(
+            local_ioc_ip_weight("otx+vt_scrape", "malicious", 0.90),
+            0.40
+        );
         assert_eq!(local_ioc_ip_weight("auto", "suspicious", 0.80), 0.20);
     }
 }

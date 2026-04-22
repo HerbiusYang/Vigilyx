@@ -9,7 +9,7 @@ use vigilyx_core::security::{AlertLevel, AlertRecord};
 use crate::VigilDb;
 
 impl VigilDb {
-   /// InsertAlert
+    /// InsertAlert
     pub async fn insert_alert(&self, alert: &AlertRecord) -> Result<()> {
         sqlx::query(
             r#"
@@ -37,7 +37,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Query alerts (Pagination)
+    /// Query alerts (Pagination)
     pub async fn list_alerts(
         &self,
         level_filter: Option<&str>,
@@ -65,7 +65,7 @@ impl VigilDb {
         Ok(rows.into_iter().map(|r| r.into_record()).collect())
     }
 
-   /// Acknowledge alert
+    /// Acknowledge alert
     pub async fn acknowledge_alert(&self, alert_id: Uuid, acknowledged_by: &str) -> Result<bool> {
         let result = sqlx::query(
             r#"
@@ -83,9 +83,7 @@ impl VigilDb {
     }
 }
 
-
 // Database row type
-
 
 #[derive(Debug, sqlx::FromRow)]
 struct AlertRow {

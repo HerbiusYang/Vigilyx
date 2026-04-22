@@ -13,10 +13,10 @@ fn is_case_insensitive_ioc_type(ioc_type: &str) -> bool {
 }
 
 impl VigilDb {
-   /// New IOC (UPSERT: New last_seen + hit_count)
-   ///
-   /// : admin_clean items, Source.
-   /// confidence New MAX(),.
+    /// New IOC (UPSERT: New last_seen + hit_count)
+    ///
+    /// : admin_clean items, Source.
+    /// confidence New MAX(),.
     pub async fn upsert_ioc(&self, ioc: &IocEntry) -> Result<()> {
         sqlx::query(
             r#"
@@ -82,11 +82,11 @@ impl VigilDb {
         Ok(())
     }
 
-   /// upsert IOC (, VALUES)
-   ///
-   /// upsert_ioc 1: admin_clean,confidence MAX.
-   /// VALUES INSERT, N DB ceil(N/CHUNK).
-   /// 14 x 500 = 7000,Security.
+    /// upsert IOC (, VALUES)
+    ///
+    /// upsert_ioc 1: admin_clean,confidence MAX.
+    /// VALUES INSERT, N DB ceil(N/CHUNK).
+    /// 14 x 500 = 7000,Security.
     pub async fn batch_upsert_iocs(&self, iocs: &[IocEntry]) -> Result<()> {
         if iocs.is_empty() {
             return Ok(());
@@ -95,7 +95,7 @@ impl VigilDb {
         const COLS_PER_ROW: usize = 14;
         const BATCH_CHUNK_SIZE: usize = 500;
 
-       // Process:
+        // Process:
         struct PreparedIoc {
             id: String,
             indicator: String,
@@ -224,7 +224,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// According toType+ IOC
+    /// According toType+ IOC
     pub async fn find_ioc(&self, ioc_type: &str, indicator: &str) -> Result<Option<IocEntry>> {
         let row = if is_case_insensitive_ioc_type(ioc_type) {
             sqlx::query_as::<_, IocRow>(
@@ -266,7 +266,7 @@ impl VigilDb {
         }
     }
 
-   /// IOC (Pagination)
+    /// IOC (Pagination)
     pub async fn list_ioc(
         &self,
         ioc_type: Option<&str>,
@@ -275,7 +275,8 @@ impl VigilDb {
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<IocEntry>, u64)> {
-        self.list_ioc_filtered(ioc_type, source, search, None, limit, offset).await
+        self.list_ioc_filtered(ioc_type, source, search, None, limit, offset)
+            .await
     }
 
     /// IOC with verdict filter (Pagination)
@@ -340,7 +341,7 @@ impl VigilDb {
         Ok((items?, total))
     }
 
-   /// IOC (source='system' items, New)
+    /// IOC (source='system' items, New)
     pub async fn delete_ioc(&self, id: Uuid) -> Result<bool> {
         let result = sqlx::query("DELETE FROM security_ioc WHERE id = $1")
             .bind(id.to_string())
@@ -349,7 +350,7 @@ impl VigilDb {
         Ok(result.rows_affected() > 0)
     }
 
-   /// IOC
+    /// IOC
     pub async fn cleanup_expired_ioc(&self) -> Result<u64> {
         let result = sqlx::query(
             "DELETE FROM security_ioc WHERE expires_at IS NOT NULL AND expires_at::timestamptz < NOW()",
@@ -359,7 +360,7 @@ impl VigilDb {
         Ok(result.rows_affected())
     }
 
-   /// (source='admin_clean'/'system' clean IOC)
+    /// (source='admin_clean'/'system' clean IOC)
     pub async fn list_intel_whitelist(
         &self,
         ioc_type: Option<&str>,
@@ -406,7 +407,7 @@ impl VigilDb {
         Ok((items?, total))
     }
 
-   /// (Security)
+    /// (Security)
     pub async fn add_intel_clean(
         &self,
         indicator: &str,
@@ -426,7 +427,7 @@ impl VigilDb {
             last_seen: now,
             hit_count: 0,
             context: description.map(|s| s.to_string()),
-            expires_at: None, 
+            expires_at: None,
             created_at: now,
             updated_at: now,
         };
@@ -434,11 +435,11 @@ impl VigilDb {
         Ok(ioc)
     }
 
-   /// IOC
+    /// IOC
     pub async fn extend_ioc_expiry(&self, id: Uuid, days: i64) -> Result<bool> {
         let now = Utc::now();
         let extension = chrono::Duration::days(days);
-       // FromWhen expires_at now, Rust RFC3339
+        // FromWhen expires_at now, Rust RFC3339
         let row: Option<(Option<String>,)> =
             sqlx::query_as("SELECT expires_at FROM security_ioc WHERE id = $1")
                 .bind(id.to_string())
@@ -455,7 +456,7 @@ impl VigilDb {
                 .unwrap_or(now),
             None => return Ok(false), // items
         };
-       // Such as,From now; From expires_at
+        // Such as,From now; From expires_at
         let new_expires = if base < now {
             now + extension
         } else {
@@ -472,7 +473,7 @@ impl VigilDb {
         Ok(result.rows_affected() > 0)
     }
 
-   /// Load clean (source='system' 'admin_clean')
+    /// Load clean (source='system' 'admin_clean')
     pub async fn load_clean_domains(&self) -> Result<Vec<String>> {
         let rows: Vec<(String,)> = sqlx::query_as(
             r#"SELECT indicator FROM security_ioc
@@ -485,7 +486,7 @@ impl VigilDb {
         Ok(rows.into_iter().map(|(ind,)| ind).collect())
     }
 
-   /// Load clean domains used by well-known sender heuristics.
+    /// Load clean domains used by well-known sender heuristics.
     ///
     /// Includes both built-in system seeds and admin-curated whitelist entries.
     /// Admin-added clean domains should be treated as safe everywhere — not
@@ -502,7 +503,7 @@ impl VigilDb {
         Ok(rows.into_iter().map(|(ind,)| ind).collect())
     }
 
-   /// Load URL-structure trusted domains (used by link structural checks).
+    /// Load URL-structure trusted domains (used by link structural checks).
     ///
     /// Includes system seeds with `context='url_trusted'` AND all admin-curated
     /// clean domains (if an admin explicitly marks a domain clean, it should
@@ -522,13 +523,13 @@ impl VigilDb {
         Ok(rows.into_iter().map(|(ind,)| ind).collect())
     }
 
-   /// Seed or refresh the built-in system whitelist at startup.
-   ///
-   /// Domain:
-   /// - `intel_safe`: Query (OTX/VT) SecurityDomain
-   /// - `url_trusted`: URL ServiceDomain
+    /// Seed or refresh the built-in system whitelist at startup.
+    ///
+    /// Domain:
+    /// - `intel_safe`: Query (OTX/VT) SecurityDomain
+    /// - `url_trusted`: URL ServiceDomain
     pub async fn seed_system_whitelist(&self) -> Result<u64> {
-       // Load from compiled-in JSON seed file (shared/schemas/system_whitelist_seed.json)
+        // Load from compiled-in JSON seed file (shared/schemas/system_whitelist_seed.json)
         let seed_json: &str = include_str!("../../../../shared/schemas/system_whitelist_seed.json");
         let seed: serde_json::Value = serde_json::from_str(seed_json)
             .map_err(|e| anyhow::anyhow!("system_whitelist_seed.json parse error: {}", e))?;
@@ -615,9 +616,18 @@ impl VigilDb {
 
         for item in &malicious_domains {
             let indicator = item.get("indicator").and_then(|v| v.as_str()).unwrap_or("");
-            let confidence = item.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.9);
-            let attack_type = item.get("attack_type").and_then(|v| v.as_str()).unwrap_or("");
-            let description = item.get("description").and_then(|v| v.as_str()).unwrap_or("");
+            let confidence = item
+                .get("confidence")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.9);
+            let attack_type = item
+                .get("attack_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let description = item
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let context = if description.is_empty() {
                 "system_malicious".to_string()
             } else {
@@ -656,7 +666,7 @@ impl VigilDb {
         Ok(inserted)
     }
 
-   /// IOC ()
+    /// IOC ()
     pub async fn reduce_ioc_confidence(
         &self,
         ioc_type: &str,
@@ -681,9 +691,7 @@ impl VigilDb {
     }
 }
 
-
 // Database row type
-
 
 #[derive(Debug, sqlx::FromRow)]
 struct IocRow {

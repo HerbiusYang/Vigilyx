@@ -6,19 +6,19 @@ use std::env;
 /// Capture mode
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum CaptureMode {
-   /// Local network interface capture
+    /// Local network interface capture
     #[default]
     Local,
-   /// Actively connect to remote server (suitable for local NAT environment)
+    /// Actively connect to remote server (suitable for local NAT environment)
     RemoteConnect,
-   /// Listen on TCP port to receive remote traffic
+    /// Listen on TCP port to receive remote traffic
     RemoteListen,
-   /// Read pcap stream from stdin
+    /// Read pcap stream from stdin
     Stdin,
 }
 
 impl CaptureMode {
-   /// Parse capture mode from string
+    /// Parse capture mode from string
     pub fn parse(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "remote_connect" | "remote-connect" | "remoteconnect" => Self::RemoteConnect,
@@ -32,45 +32,45 @@ impl CaptureMode {
 /// Application configuration
 #[derive(Debug, Clone)]
 pub struct Config {
-   /// Capture mode
+    /// Capture mode
     pub capture_mode: CaptureMode,
-   /// Remote server address (RemoteConnect Mode only)
+    /// Remote server address (RemoteConnect Mode only)
     pub remote_address: Option<String>,
-   /// Local listen port (RemoteListen Mode only)
+    /// Local listen port (RemoteListen Mode only)
     pub remote_listen_port: u16,
-   /// Network interface name
+    /// Network interface name
     pub sniffer_interface: String,
-   /// Whether to enable promiscuous mode
+    /// Whether to enable promiscuous mode
     pub sniffer_promiscuous: bool,
-   /// SMTP port list
+    /// SMTP port list
     pub smtp_ports: Vec<u16>,
-   /// POP3 port list
+    /// POP3 port list
     pub pop3_ports: Vec<u16>,
-   /// IMAP port list
+    /// IMAP port list
     pub imap_ports: Vec<u16>,
-   /// HTTP port list (webmail login detection)
+    /// HTTP port list (webmail login detection)
     pub http_ports: Vec<u16>,
-   /// Webmail Service IP table (capture IP HTTP Stream, capture HTTP)
+    /// Webmail Service IP table (capture IP HTTP Stream, capture HTTP)
     pub webmail_servers: Vec<String>,
-   /// API ListenAddress
+    /// API ListenAddress
     pub api_host: String,
-   /// API listen port
+    /// API listen port
     pub api_port: u16,
-   /// Database URL
+    /// Database URL
     pub database_url: String,
 }
 
 impl Config {
-   /// Load configuration from environment variables
+    /// Load configuration from environment variables
     pub fn from_env() -> Result<Self> {
-       // Try to load.env file
+        // Try to load.env file
         let _ = dotenvy::dotenv();
 
-       // Capture mode
+        // Capture mode
         let capture_mode =
             CaptureMode::parse(&env::var("CAPTURE_MODE").unwrap_or_else(|_| "local".to_string()));
 
-       // Remote address (verify format)
+        // Remote address (verify format)
         let remote_address = env::var("REMOTE_ADDRESS").ok().filter(|s| !s.is_empty());
         if let Some(ref addr) = remote_address
             && !Self::validate_remote_address(addr)
@@ -81,13 +81,13 @@ impl Config {
             )));
         }
 
-       // remoteListenport
+        // remoteListenport
         let remote_listen_port = env::var("REMOTE_LISTEN_PORT")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(5000);
 
-       // verifyinterfacename
+        // verifyinterfacename
         let sniffer_interface = env::var("SNIFFER_INTERFACE").unwrap_or_else(|_| "en0".to_string());
         if !Self::validate_interface(&sniffer_interface) {
             return Err(Error::Config(format!(
@@ -132,22 +132,22 @@ impl Config {
         })
     }
 
-   /// verifyremoteAddressformat (host:port)
+    /// verifyremoteAddressformat (host:port)
     pub fn validate_remote_address(addr: &str) -> bool {
         let parts: Vec<&str> = addr.rsplitn(2, ':').collect();
         if parts.len() != 2 {
             return false;
         }
-       // verifyport
+        // verifyport
         if parts[0].parse::<u16>().is_err() {
             return false;
         }
-       // verify /IP ()
+        // verify /IP ()
         let host = parts[1];
         !host.is_empty() && host.len() <= 255 && !host.contains(' ')
     }
 
-   /// ParseremoteAddress (host, port)
+    /// ParseremoteAddress (host, port)
     pub fn parse_remote_address(&self) -> Option<(String, u16)> {
         self.remote_address.as_ref().and_then(|addr| {
             let parts: Vec<&str> = addr.rsplitn(2, ':').collect();
@@ -161,7 +161,7 @@ impl Config {
         })
     }
 
-   /// Parseport table (Securityverify)
+    /// Parseport table (Securityverify)
     fn parse_ports(ports_str: &str) -> Result<Vec<u16>> {
         let ports: Vec<u16> = ports_str
             .split(',')
@@ -170,7 +170,7 @@ impl Config {
                     .trim()
                     .parse::<u16>()
                     .map_err(|_| Error::Config(format!("Invalid port: {}", s)))?;
-               // Security: port (1-65535)
+                // Security: port (1-65535)
                 if port == 0 {
                     return Err(Error::Config("Port 0 is not allowed".to_string()));
                 }
@@ -178,7 +178,7 @@ impl Config {
             })
             .collect::<Result<Vec<_>>>()?;
 
-       // Security: port ConfigurationAttack
+        // Security: port ConfigurationAttack
         if ports.len() > 100 {
             return Err(Error::Config(
                 "Too many ports configured (max 100)".to_string(),
@@ -188,9 +188,8 @@ impl Config {
         Ok(ports)
     }
 
-   /// verifyinterfacename (Attack)
+    /// verifyinterfacename (Attack)
     pub fn validate_interface(name: &str) -> bool {
-        
         !name.is_empty()
             && name.len() <= 64
             && name
@@ -198,7 +197,7 @@ impl Config {
                 .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
     }
 
-   /// get Listenport (HTTP - When webmail_servers)
+    /// get Listenport (HTTP - When webmail_servers)
     pub fn all_ports(&self) -> Vec<u16> {
         let mut ports = Vec::new();
         ports.extend(&self.smtp_ports);
@@ -210,19 +209,19 @@ impl Config {
         ports
     }
 
-   /// port protocolport
+    /// port protocolport
     pub fn is_email_port(&self, port: u16) -> bool {
         self.smtp_ports.contains(&port)
             || self.pop3_ports.contains(&port)
             || self.imap_ports.contains(&port)
     }
 
-   /// port HTTP port
+    /// port HTTP port
     pub fn is_http_port(&self, port: u16) -> bool {
         self.http_ports.contains(&port)
     }
 
-   /// API Address
+    /// API Address
     pub fn api_addr(&self) -> String {
         format!("{}:{}", self.api_host, self.api_port)
     }

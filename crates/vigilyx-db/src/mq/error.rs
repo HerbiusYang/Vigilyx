@@ -4,25 +4,25 @@ use thiserror::Error;
 /// Message queue errors
 #[derive(Error, Debug)]
 pub enum MqError {
-   /// Connection error
+    /// Connection error
     #[error("Connection error: {0}")]
     Connection(String),
-   /// Publish error
+    /// Publish error
     #[error("Publish error: {0}")]
     Publish(String),
-   /// Subscribe error
+    /// Subscribe error
     #[error("Subscribe error: {0}")]
     Subscribe(String),
-   /// Serialization error
+    /// Serialization error
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
-   /// Redis error
+    /// Redis error
     #[error("Redis error: {0}")]
     Redis(#[from] redis::RedisError),
-   /// Channel closed
+    /// Channel closed
     #[error("Channel closed")]
     ChannelClosed,
-   /// Timeout
+    /// Timeout
     #[error("Timeout")]
     Timeout,
 }

@@ -13,9 +13,9 @@ use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModu
 
 pub struct AttachHashModule {
     meta: ModuleMetadata,
-   /// Local hash blacklist - will be populated from IOC feeds in a future phase.
+    /// Local hash blacklist - will be populated from IOC feeds in a future phase.
     hash_blacklist: HashSet<String>,
-   /// (VT Scrape FileHashQuery)
+    /// (VT Scrape FileHashQuery)
     intel: Option<IntelLayer>,
 }
 
@@ -68,13 +68,13 @@ impl SecurityModule for AttachHashModule {
         let mut total_score: f64 = 0.0;
         let mut hashes_found: Vec<serde_json::Value> = Vec::new();
         let mut flagged_files: Vec<String> = Vec::new();
-       // Recordingalready Name MediumofHash,
+        // Recordingalready Name MediumofHash,
         let mut blacklisted_hashes: HashSet<String> = HashSet::new();
 
         for att in attachments {
             let hash_lower = att.hash.to_lowercase();
 
-           // Record every hash we see (for reporting / future IOC matching)
+            // Record every hash we see (for reporting / future IOC matching)
             hashes_found.push(serde_json::json!({
                 "filename": att.filename,
                 "hash": hash_lower,
@@ -82,7 +82,7 @@ impl SecurityModule for AttachHashModule {
                 "content_type": att.content_type,
             }));
 
-           // Check against local blacklist
+            // Check against local blacklist
             if self.hash_blacklist.contains(&hash_lower) {
                 total_score += 0.90;
                 categories.push("malware_hash".to_string());
@@ -99,17 +99,17 @@ impl SecurityModule for AttachHashModule {
             }
         }
 
-       // --- Query: VT Hash (Name MediumofAttachmentQuery VT) ---
+        // --- Query: VT Hash (Name MediumofAttachmentQuery VT) ---
         if let Some(ref intel) = self.intel {
             let mut join_set = tokio::task::JoinSet::new();
 
             for att in attachments {
                 let hash_lower = att.hash.to_lowercase();
-               // already Medium Name of
+                // already Medium Name of
                 if blacklisted_hashes.contains(&hash_lower) {
                     continue;
                 }
-               // Hashhops
+                // Hashhops
                 if hash_lower.is_empty() {
                     continue;
                 }

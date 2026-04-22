@@ -16,16 +16,14 @@ use vigilyx_core::models::EmailSession;
 use vigilyx_core::security::{ModuleResult, ThreatLevel};
 
 // Re-export for backward compatibility
-pub use vigilyx_core::security::{EngineBpaDetail, FusionDetails, SecurityVerdict};
 pub use evidence_clusters::{
     ScenarioPatternLists, runtime_scenario_patterns, set_runtime_scenario_patterns,
 };
+pub use vigilyx_core::security::{EngineBpaDetail, FusionDetails, SecurityVerdict};
 
 use crate::config::VerdictConfig;
 
-
 // Aggregation dispatcher
-
 
 /// Aggregate module results into a final verdict.
 pub fn aggregate_verdict(
@@ -55,9 +53,7 @@ pub fn aggregate_verdict_with_session(
     }
 }
 
-
 // Shared helpers
-
 
 fn empty_verdict(session_id: Uuid, now: DateTime<Utc>) -> SecurityVerdict {
     SecurityVerdict {
@@ -76,9 +72,7 @@ fn empty_verdict(session_id: Uuid, now: DateTime<Utc>) -> SecurityVerdict {
     }
 }
 
-
 // YuanTest
-
 
 #[cfg(test)]
 mod tests {
@@ -195,7 +189,7 @@ mod tests {
         result
     }
 
-   // Noisy-OR tests (preserved)
+    // Noisy-OR tests (preserved)
 
     #[test]
     fn test_single_weak_signal_stays_low() {
@@ -378,7 +372,7 @@ mod tests {
         );
     }
 
-   // D-S Murphy tests (new)
+    // D-S Murphy tests (new)
 
     #[test]
     fn test_ds_murphy_basic_threat() {
@@ -422,11 +416,11 @@ mod tests {
 
     #[test]
     fn test_ds_murphy_uncertainty_raises_risk() {
-       // Low-confidence modules -> high uncertainty -> pushes risk up
+        // Low-confidence modules -> high uncertainty -> pushes risk up
         let mut results = HashMap::new();
-       // score=0.3 but confidence=0.2 -> b=0.06, d=0.14, u=0.8
-       // risk(=0.30) = 0.06 + 0.30*0.8 = 0.30
-       // (bare belief=0.06, so =0.30 raises risk ~5x above bare belief)
+        // score=0.3 but confidence=0.2 -> b=0.06, d=0.14, u=0.8
+        // risk(=0.30) = 0.06 + 0.30*0.8 = 0.30
+        // (bare belief=0.06, so =0.30 raises risk ~5x above bare belief)
         let mut r = make_result("content_scan", Pillar::Content, 0.30, vec!["suspicious"]);
         r.confidence = 0.2;
         results.insert("content_scan".into(), r);
@@ -434,7 +428,7 @@ mod tests {
         let config = VerdictConfig::default();
         let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
 
-       // With =0.30, high uncertainty should still raise risk above bare belief (0.06)
+        // With =0.30, high uncertainty should still raise risk above bare belief (0.06)
         let fd = verdict.fusion_details.as_ref().unwrap();
         assert!(
             fd.risk_single > 0.15,
@@ -445,7 +439,7 @@ mod tests {
 
     #[test]
     fn test_ds_murphy_engine_grouping() {
-       // Two modules in same engine (B) should be pre-fused
+        // Two modules in same engine (B) should be pre-fused
         let mut results = HashMap::new();
         results.insert(
             "content_scan".into(),
@@ -460,7 +454,7 @@ mod tests {
         let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
 
         let fd = verdict.fusion_details.as_ref().unwrap();
-       // Should have 1 engine (B) not 2
+        // Should have 1 engine (B) not 2
         assert_eq!(
             fd.engine_details.len(),
             1,
@@ -472,7 +466,7 @@ mod tests {
 
     #[test]
     fn test_ds_murphy_multi_engine_reinforcement() {
-       // Multiple engines with clear threat signals -> should reinforce
+        // Multiple engines with clear threat signals -> should reinforce
         let mut results = HashMap::new();
         results.insert(
             "content_scan".into(),
@@ -686,10 +680,10 @@ mod tests {
             "Returned mail: see transcript for details.",
             "MAILER-DAEMON@ddei2.localdomain",
         );
-        session.content.headers.push((
-            "Auto-Submitted".to_string(),
-            "auto-generated".to_string(),
-        ));
+        session
+            .content
+            .headers
+            .push(("Auto-Submitted".to_string(), "auto-generated".to_string()));
 
         let mut results = HashMap::new();
         results.insert(
@@ -792,10 +786,10 @@ mod tests {
             "谢谢来信，我已收到。",
             "engram@yeah.net",
         );
-        session.content.headers.push((
-            "Auto-Submitted".to_string(),
-            "auto-replied".to_string(),
-        ));
+        session
+            .content
+            .headers
+            .push(("Auto-Submitted".to_string(), "auto-replied".to_string()));
         let mut results = HashMap::new();
         results.insert(
             "semantic_scan".into(),
@@ -1092,10 +1086,9 @@ mod tests {
             verdict.summary
         );
         assert!(
-            social_cluster
-                .key_factors
-                .iter()
-                .any(|factor| factor.to_ascii_lowercase().contains("account security phishing")),
+            social_cluster.key_factors.iter().any(|factor| factor
+                .to_ascii_lowercase()
+                .contains("account security phishing")),
             "Social cluster factors should reflect credential-phishing evidence, not gateway-banner noise: {:?}",
             social_cluster.key_factors
         );
@@ -1267,12 +1260,7 @@ mod tests {
         );
         results.insert(
             "content_scan".into(),
-            make_result(
-                "content_scan",
-                Pillar::Content,
-                0.45,
-                vec!["dlp_api_key"],
-            ),
+            make_result("content_scan", Pillar::Content, 0.45, vec!["dlp_api_key"]),
         );
 
         let verdict = aggregate_verdict_with_session(
@@ -1332,7 +1320,7 @@ mod tests {
         );
     }
 
-   // TBM v5 tests
+    // TBM v5 tests
 
     #[test]
     fn test_tbm_v5_basic_threat() {
@@ -1398,13 +1386,13 @@ mod tests {
 
         let config = VerdictConfig {
             aggregation: "tbm_v5".into(),
-            default_epsilon: 0.1, 
+            default_epsilon: 0.1,
             ..VerdictConfig::default()
         };
         let verdict = aggregate_tbm_v5(Uuid::new_v4(), &results, &config);
 
         let fd = verdict.fusion_details.as_ref().unwrap();
-       // With 3 engines reporting ~0.1, Novelty = 1 - 0.9^3 0.271
+        // With 3 engines reporting ~0.1, Novelty = 1 - 0.9^3 0.271
         assert!(
             fd.novelty.unwrap() > 0.1,
             "Novelty should be significant with ε=0.1: got {:.3}",
@@ -1414,7 +1402,7 @@ mod tests {
 
     #[test]
     fn test_tbm_v5_backward_compat_safe() {
-       // All safe modules -> Safe verdict
+        // All safe modules -> Safe verdict
         let mut results = HashMap::new();
         results.insert(
             "content_scan".into(),
@@ -1434,21 +1422,21 @@ mod tests {
         assert_eq!(verdict.threat_level, ThreatLevel::Safe);
     }
 
-   // Circuit breaker tests
+    // Circuit breaker tests
 
     #[test]
     fn test_ds_murphy_circuit_breaker_lone_dissenter() {
-       // Scenario: 1 Module Critical (score=0.95, b=0.76) + 4 Safe Engine
-       // Murphy -> risk 0
-       // Break/JudgeRoadhandler: floor = 0.76 * 1.0 = 0.76 -> High
+        // Scenario: 1 Module Critical (score=0.95, b=0.76) + 4 Safe Engine
+        // Murphy -> risk 0
+        // Break/JudgeRoadhandler: floor = 0.76 * 1.0 = 0.76 -> High
         let mut results = HashMap::new();
 
-       // link_reputation: score=0.95, conf=0.80 -> b=0.76 (Engine D)
+        // link_reputation: score=0.95, conf=0.80 -> b=0.76 (Engine D)
         results.insert(
             "link_reputation".into(),
             make_result("link_reputation", Pillar::Link, 0.95, vec!["malicious_url"]),
         );
-       // 4 SameEngineof Safe Module
+        // 4 SameEngineof Safe Module
         results.insert(
             "content_scan".into(),
             make_result("content_scan", Pillar::Content, 0.0, vec![]),
@@ -1470,7 +1458,7 @@ mod tests {
         let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
 
         let fd = verdict.fusion_details.as_ref().unwrap();
-       // Break/JudgeRoadhandler When (b=0.76>= threshold=0.20)
+        // Break/JudgeRoadhandler When (b=0.76>= threshold=0.20)
         assert!(
             fd.circuit_breaker.is_some(),
             "Circuit breaker should fire when lone dissenter has b=0.76"
@@ -1478,8 +1466,8 @@ mod tests {
         let cb = fd.circuit_breaker.as_ref().unwrap();
         assert_eq!(cb.trigger_module_id, "link_reputation");
         assert!((cb.trigger_belief - 0.76).abs() < 0.01);
-       // floor = 0.76 * 1.0 * 0.30 (: 1 Engine Signal ->)
-       // After consensus gating floor 0.228, max(0.228, 0.15) = 0.228
+        // floor = 0.76 * 1.0 * 0.30 (: 1 Engine Signal ->)
+        // After consensus gating floor 0.228, max(0.228, 0.15) = 0.228
         assert!(
             (cb.floor_value - 0.228).abs() < 0.05,
             "Floor should be ~0.228 (b * factor * consensus=0.30), got {:.3}",
@@ -1491,8 +1479,8 @@ mod tests {
             cb.original_risk,
             cb.floor_value
         );
-       // After consensus gating: Signal Low District (0.15-0.40)
-       // of Target: prevent Module Critical
+        // After consensus gating: Signal Low District (0.15-0.40)
+        // of Target: prevent Module Critical
         assert!(
             fd.risk_single >= 0.15,
             "Risk should be at least Low (0.15): got {:.3}",
@@ -1507,7 +1495,7 @@ mod tests {
 
     #[test]
     fn test_ds_murphy_circuit_breaker_not_triggered_when_fusion_agrees() {
-       // Scenario: Engineall -> Result already High -> Break/JudgeRoadhandler
+        // Scenario: Engineall -> Result already High -> Break/JudgeRoadhandler
         let mut results = HashMap::new();
         results.insert(
             "content_scan".into(),
@@ -1526,7 +1514,7 @@ mod tests {
         let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
 
         let fd = verdict.fusion_details.as_ref().unwrap();
-       // Result already High,Break/JudgeRoadhandler
+        // Result already High,Break/JudgeRoadhandler
         assert!(
             fd.circuit_breaker.is_none(),
             "Circuit breaker should NOT fire when fusion already agrees: risk={:.3}",
@@ -1536,7 +1524,7 @@ mod tests {
 
     #[test]
     fn test_ds_murphy_circuit_breaker_disabled_when_threshold_zero() {
-       // lone_dissenter SameScenario,But threshold=0.0 -> Break/JudgeRoadhandler
+        // lone_dissenter SameScenario,But threshold=0.0 -> Break/JudgeRoadhandler
         let mut results = HashMap::new();
         results.insert(
             "link_reputation".into(),
@@ -1570,8 +1558,8 @@ mod tests {
 
     #[test]
     fn test_ds_murphy_circuit_breaker_configurable() {
-       // Threshold: threshold=0.80, factor=0.30
-       // link_reputation b=0.76 <0.80 -> Do not trigger
+        // Threshold: threshold=0.80, factor=0.30
+        // link_reputation b=0.76 <0.80 -> Do not trigger
         let mut results = HashMap::new();
         results.insert(
             "link_reputation".into(),
@@ -1594,7 +1582,7 @@ mod tests {
         let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
 
         let fd = verdict.fusion_details.as_ref().unwrap();
-       // b=0.76 <threshold=0.80 -> Do not trigger
+        // b=0.76 <threshold=0.80 -> Do not trigger
         assert!(
             fd.circuit_breaker.is_none(),
             "Circuit breaker should NOT fire: b=0.76 < threshold=0.80"
@@ -1603,7 +1591,7 @@ mod tests {
 
     #[test]
     fn test_tbm_v5_cross_layer_fusion() {
-       // Both tech and blind-spot modules present
+        // Both tech and blind-spot modules present
         let mut results = HashMap::new();
         results.insert(
             "content_scan".into(),
@@ -1626,25 +1614,23 @@ mod tests {
         let verdict = aggregate_tbm_v5(Uuid::new_v4(), &results, &config);
 
         let fd = verdict.fusion_details.as_ref().unwrap();
-       // K_cross should be computed (tech vs blind)
+        // K_cross should be computed (tech vs blind)
         assert!(fd.k_cross.is_some());
-       // BetP should be in [0, 1]
+        // BetP should be in [0, 1]
         let betp = fd.betp.unwrap();
         assert!((0.0..=1.0).contains(&betp), "BetP out of range: {}", betp);
     }
 
-    
-   // Multi-signal convergence breaker tests
-    
+    // Multi-signal convergence breaker tests
 
-   /// 3 ModuleMark Low (belief>= 0.20) + Safe Module
-   /// -> D-S Safe -> ConvergeBreak/JudgeRoadhandler
-   /// : content_scan(0.32) + link_scan(0.28) + link_reputation(0.28) + Safe
-   /// belief: 0.32*0.80=0.256, 0.28*0.80=0.224, 0.28*0.80=0.224,>= 0.20
+    /// 3 ModuleMark Low (belief>= 0.20) + Safe Module
+    /// -> D-S Safe -> ConvergeBreak/JudgeRoadhandler
+    /// : content_scan(0.32) + link_scan(0.28) + link_reputation(0.28) + Safe
+    /// belief: 0.32*0.80=0.256, 0.28*0.80=0.224, 0.28*0.80=0.224,>= 0.20
     #[test]
     fn test_convergence_breaker_3_low_modules() {
         let mut results = HashMap::new();
-       // 3 Low Module (SameEngine),belief All>= 0.20
+        // 3 Low Module (SameEngine),belief All>= 0.20
         results.insert(
             "content_scan".into(),
             make_result("content_scan", Pillar::Content, 0.32, vec!["phishing"]),
@@ -1662,7 +1648,7 @@ mod tests {
                 vec!["suspicious_tld"],
             ),
         );
-       // Safe Module Engine
+        // Safe Module Engine
         for safe_mod in &[
             ("html_scan", Pillar::Content),
             ("attach_scan", Pillar::Attachment),
@@ -1685,18 +1671,18 @@ mod tests {
         let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
         let fd = verdict.fusion_details.as_ref().unwrap();
 
-       // ConvergeBreak/JudgeRoadhandler
+        // ConvergeBreak/JudgeRoadhandler
         assert!(
             fd.convergence_breaker.is_some(),
             "Convergence breaker should activate with 3 modules having belief >= 0.20"
         );
         let cb = fd.convergence_breaker.as_ref().unwrap();
         assert_eq!(cb.modules_flagged, 3);
-       // 3 ModuleConverge + boost: 0.40 * (1 + 0.15 * (3-2)) = 0.46
-       // : 3 Module Butpossibly 1-2 Engine -> CheckEngine
-       // TestMedium 3 Module (content_scan, link_scan, link_reputation) 2 Engine
-       // (content_analysis, url_analysis) -> supporting=2 -> consensus=0.75
-       // floor = 0.46 * 0.75 = 0.345, max(0.345, 0.15) = 0.345
+        // 3 ModuleConverge + boost: 0.40 * (1 + 0.15 * (3-2)) = 0.46
+        // : 3 Module Butpossibly 1-2 Engine -> CheckEngine
+        // TestMedium 3 Module (content_scan, link_scan, link_reputation) 2 Engine
+        // (content_analysis, url_analysis) -> supporting=2 -> consensus=0.75
+        // floor = 0.46 * 0.75 = 0.345, max(0.345, 0.15) = 0.345
         assert!(
             cb.floor_value >= 0.15,
             "Floor after consensus gating should be >= 0.15 (Safe threshold), got {:.4}",
@@ -1709,7 +1695,7 @@ mod tests {
             cb.floor_value
         );
 
-       // After consensus gating: ConvergeSignal But waitlevel
+        // After consensus gating: ConvergeSignal But waitlevel
         assert!(
             fd.risk_single >= 0.15,
             "Risk should be at least Low (0.15), got {:.4}",
@@ -1722,16 +1708,16 @@ mod tests {
         );
     }
 
-   /// 3 ModuleMark But belief AllLow -> ConvergeBreak/JudgeRoadhandler ()
-   /// : LegitimateemailMedium content_scan detectMobile phoneNumber (score=0.16, belief=0.128)
-   /// + semantic_scan verdict (score=0.20, belief=0.160)
-   /// + transaction_correlation Signal (score=0.18, belief=0.144)
-   /// All threat_level> Safe,But belief All <0.20, ConvergeBreak/JudgeRoadhandler
+    /// 3 ModuleMark But belief AllLow -> ConvergeBreak/JudgeRoadhandler ()
+    /// : LegitimateemailMedium content_scan detectMobile phoneNumber (score=0.16, belief=0.128)
+    /// + semantic_scan verdict (score=0.20, belief=0.160)
+    /// + transaction_correlation Signal (score=0.18, belief=0.144)
+    /// All threat_level> Safe,But belief All <0.20, ConvergeBreak/JudgeRoadhandler
     #[test]
     fn test_convergence_breaker_skips_low_belief_modules() {
         let mut results = HashMap::new();
-       // 3 Low belief Module (Legitimateemailof)
-       // belief All <0.10 (convergence_belief_threshold), Converge
+        // 3 Low belief Module (Legitimateemailof)
+        // belief All <0.10 (convergence_belief_threshold), Converge
         results.insert(
             "content_scan".into(),
             make_result("content_scan", Pillar::Content, 0.06, vec!["phone_in_body"]),
@@ -1754,7 +1740,7 @@ mod tests {
                 vec!["iban_detected"],
             ),
         );
-       // Safe Module
+        // Safe Module
         for safe_mod in &[
             ("html_scan", Pillar::Content),
             ("attach_scan", Pillar::Attachment),
@@ -1776,8 +1762,8 @@ mod tests {
         let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
         let fd = verdict.fusion_details.as_ref().unwrap();
 
-       // ConvergeBreak/JudgeRoadhandler: 3 Module threat_level> Safe,
-       // But belief All <0.10 (convergence_belief_threshold)
+        // ConvergeBreak/JudgeRoadhandler: 3 Module threat_level> Safe,
+        // But belief All <0.10 (convergence_belief_threshold)
         assert!(
             fd.convergence_breaker.is_none(),
             "Convergence breaker should NOT activate when module beliefs are all below threshold. \
@@ -1787,16 +1773,16 @@ mod tests {
         );
     }
 
-   /// 1 ModuleMark -> full convergence_min_modules=2 -> Do not trigger
+    /// 1 ModuleMark -> full convergence_min_modules=2 -> Do not trigger
     #[test]
     fn test_convergence_breaker_not_triggered_below_threshold() {
         let mut results = HashMap::new();
-       // only 1 Low Module
+        // only 1 Low Module
         results.insert(
             "content_scan".into(),
             make_result("content_scan", Pillar::Content, 0.32, vec!["phishing"]),
         );
-       // Safe Module
+        // Safe Module
         for safe_mod in &[
             ("html_scan", Pillar::Content),
             ("link_scan", Pillar::Link),
@@ -1817,14 +1803,14 @@ mod tests {
         let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
         let fd = verdict.fusion_details.as_ref().unwrap();
 
-       // ConvergeBreak/JudgeRoadhandler (only 1 Module, Need/Require 2)
+        // ConvergeBreak/JudgeRoadhandler (only 1 Module, Need/Require 2)
         assert!(
             fd.convergence_breaker.is_none(),
             "Convergence breaker should NOT activate with only 1 flagged module"
         );
     }
 
-   /// convergence_min_modules=0
+    /// convergence_min_modules=0
     #[test]
     fn test_convergence_breaker_disabled_when_zero() {
         let mut results = HashMap::new();
@@ -1872,11 +1858,11 @@ mod tests {
         );
     }
 
-   /// ConvergeBreak/JudgeRoadhandlerRecording of flagged_modules List (belief>= ofModule)
+    /// ConvergeBreak/JudgeRoadhandlerRecording of flagged_modules List (belief>= ofModule)
     #[test]
     fn test_convergence_breaker_records_flagged_modules() {
         let mut results = HashMap::new();
-       // belief: 0.32*0.80=0.256, 0.28*0.80=0.224, 0.28*0.80=0.224
+        // belief: 0.32*0.80=0.256, 0.28*0.80=0.224, 0.28*0.80=0.224
         results.insert(
             "content_scan".into(),
             make_result("content_scan", Pillar::Content, 0.32, vec!["phishing"]),
@@ -1921,24 +1907,22 @@ mod tests {
         assert_eq!(flagged.len(), 3);
     }
 
-    
-   // Break/JudgeRoadhandler: Low High belief Module
-    
+    // Break/JudgeRoadhandler: Low High belief Module
 
-   /// Scenario: Phishingemail
-   /// - link_content: score=0.70, conf=0.75 -> b=0.525 (High belief But conf <0.80)
-   /// - content_scan: score=0.55, conf=0.85 -> b=0.4675 (Low belief But conf>= 0.80)
-   /// - transaction_correlation: score=0.33, conf=0.75 -> b=0.2475
-   /// - semantic_scan (NLP): score=0.15, conf=0.60 -> b=0.09 (Exclude: nlp_ first)
-   /// - Module Safe
-    
-   /// first: Break/JudgeRoadhandlerTrace link_content (b=0.525, conf=0.75),conf <0.80 -> Do not trigger.
-   /// : Break/JudgeRoadhandlerTrace content_scan (b=0.4675, conf=0.85), floor=0.4675*1.15=0.54.
+    /// Scenario: Phishingemail
+    /// - link_content: score=0.70, conf=0.75 -> b=0.525 (High belief But conf <0.80)
+    /// - content_scan: score=0.55, conf=0.85 -> b=0.4675 (Low belief But conf>= 0.80)
+    /// - transaction_correlation: score=0.33, conf=0.75 -> b=0.2475
+    /// - semantic_scan (NLP): score=0.15, conf=0.60 -> b=0.09 (Exclude: nlp_ first)
+    /// - Module Safe
+
+    /// first: Break/JudgeRoadhandlerTrace link_content (b=0.525, conf=0.75),conf <0.80 -> Do not trigger.
+    /// : Break/JudgeRoadhandlerTrace content_scan (b=0.4675, conf=0.85), floor=0.4675*1.15=0.54.
     #[test]
     fn test_circuit_breaker_low_confidence_high_belief_does_not_shadow() {
         let mut results = HashMap::new();
 
-       // link_content: High belief But confidence (0.75 <0.80)
+        // link_content: High belief But confidence (0.75 <0.80)
         let mut link_content = make_result(
             "link_content",
             Pillar::Link,
@@ -1948,7 +1932,7 @@ mod tests {
         link_content.confidence = 0.75;
         results.insert("link_content".into(), link_content);
 
-       // content_scan: Low belief But confidence (0.85>= 0.80)
+        // content_scan: Low belief But confidence (0.85>= 0.80)
         let mut content_scan = make_result(
             "content_scan",
             Pillar::Content,
@@ -1958,7 +1942,7 @@ mod tests {
         content_scan.confidence = 0.85;
         results.insert("content_scan".into(), content_scan);
 
-       // transaction_correlation: Low, confidence 0.75
+        // transaction_correlation: Low, confidence 0.75
         let mut tx_corr = make_result(
             "transaction_correlation",
             Pillar::Semantic,
@@ -1968,7 +1952,7 @@ mod tests {
         tx_corr.confidence = 0.75;
         results.insert("transaction_correlation".into(), tx_corr);
 
-       // semantic_scan (NLP): Exclude Break/JudgeRoadhandlerAndConverge (nlp_ first)
+        // semantic_scan (NLP): Exclude Break/JudgeRoadhandlerAndConverge (nlp_ first)
         let mut nlp = make_result(
             "semantic_scan",
             Pillar::Semantic,
@@ -1978,7 +1962,7 @@ mod tests {
         nlp.confidence = 0.60;
         results.insert("semantic_scan".into(), nlp);
 
-       // Safe Module
+        // Safe Module
         for safe_mod in &[
             ("html_scan", Pillar::Content),
             ("attach_scan", Pillar::Attachment),
@@ -2002,7 +1986,7 @@ mod tests {
         let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
         let fd = verdict.fusion_details.as_ref().unwrap();
 
-       // Break/JudgeRoadhandler By content_scan (b=0.4675, conf=0.85), link_content
+        // Break/JudgeRoadhandler By content_scan (b=0.4675, conf=0.85), link_content
         assert!(
             fd.circuit_breaker.is_some(),
             "Circuit breaker should fire via content_scan (b=0.47, conf=0.85). \
@@ -2020,10 +2004,10 @@ mod tests {
             cb.trigger_belief
         );
 
-       // After consensus gating: Signal (1 Engine) -> consensus=0.30
-       // floor = 0.4675 * 1.0 * 0.30 0.14, max(0.14, 0.15) = 0.15
-       // Butif Converge large (convergence_flagged>= 3),floor High
-       // Risk At least Low
+        // After consensus gating: Signal (1 Engine) -> consensus=0.30
+        // floor = 0.4675 * 1.0 * 0.30 0.14, max(0.14, 0.15) = 0.15
+        // Butif Converge large (convergence_flagged>= 3),floor High
+        // Risk At least Low
         assert!(
             fd.risk_single >= 0.15,
             "Risk should be at least Low (0.15) after consensus-gated breaker: got {:.4}",

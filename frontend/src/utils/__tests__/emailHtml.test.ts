@@ -180,12 +180,12 @@ describe('buildEmailPreviewDoc', () => {
   it('handles empty string input', () => {
     const result = buildEmailPreviewDoc('')
     expect(result).toContain('<!doctype html>')
-    expect(result).toContain('该 HTML 邮件在安全净化后没有保留可展示的内容')
+    expect(result).toContain('[内容已清理] 该邮件的 HTML 内容经安全过滤后为空')
   })
 
   it('shows fallback for content that sanitizes to empty', () => {
     const result = buildEmailPreviewDoc('<script>alert(1)</script><style>.x{}</style>')
-    expect(result).toContain('该 HTML 邮件在安全净化后没有保留可展示的内容')
+    expect(result).toContain('[内容已清理] 该邮件的 HTML 内容经安全过滤后为空')
   })
 
   // ---------- Normal email renders correctly ----------

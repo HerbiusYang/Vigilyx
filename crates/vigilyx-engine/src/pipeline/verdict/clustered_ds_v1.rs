@@ -4,16 +4,15 @@ use chrono::Utc;
 use uuid::Uuid;
 use vigilyx_core::models::EmailSession;
 use vigilyx_core::security::{
-    dempster_combine, dempster_combine_n, Bpa, CircuitBreakerInfo, ConvergenceBreakerInfo,
-    EngineBpaDetail, FusionDetails, ModuleResult, SecurityVerdict, ThreatLevel, ALL_PILLARS,
-    PILLAR_COUNT,
+    ALL_PILLARS, Bpa, CircuitBreakerInfo, ConvergenceBreakerInfo, EngineBpaDetail, FusionDetails,
+    ModuleResult, PILLAR_COUNT, SecurityVerdict, ThreatLevel, dempster_combine, dempster_combine_n,
 };
 
 use crate::config::VerdictConfig;
 
 use super::empty_verdict;
 use super::evidence_clusters::{
-    normalize_results, ClusterEvidence, EvidenceClusterId, NormalizedEvidence, ScenarioContext,
+    ClusterEvidence, EvidenceClusterId, NormalizedEvidence, ScenarioContext, normalize_results,
 };
 
 /// Result of floor/cap adjustments, including breaker activation records.
@@ -1489,12 +1488,10 @@ mod tests {
         let mut normalized = make_normalized(&clusters);
         normalized.scenario.has_account_security_signal = true;
         normalized.scenario.has_payment_change_signal = true;
-        normalized
-            .categories
-            .extend([
-                "japanese_to_cn_corp".to_string(),
-                "multilingual_gibberish".to_string(),
-            ]);
+        normalized.categories.extend([
+            "japanese_to_cn_corp".to_string(),
+            "multilingual_gibberish".to_string(),
+        ]);
 
         let result = apply_cluster_floors_and_caps(0.32, &clusters, &normalized);
 

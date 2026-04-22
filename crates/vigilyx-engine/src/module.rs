@@ -29,13 +29,13 @@ pub struct ModuleMetadata {
     pub timeout_ms: u64,
     pub is_remote: bool,
     pub supports_ai: bool,
-   /// If true, `analyze()` is CPU-bound and will be dispatched to the blocking
-   /// thread pool via `spawn_blocking`, freeing async worker threads for I/O.
+    /// If true, `analyze()` is CPU-bound and will be dispatched to the blocking
+    /// thread pool via `spawn_blocking`, freeing async worker threads for I/O.
     #[serde(default)]
     pub cpu_bound: bool,
-   /// MTA inline verdict.
-   /// - `Some(n)`: inline,n (Tier 1:)
-   /// - `None`: (Tier 2: NLP/)
+    /// MTA inline verdict.
+    /// - `Some(n)`: inline,n (Tier 1:)
+    /// - `None`: (Tier 2: NLP/)
     #[serde(default)]
     pub inline_priority: Option<u8>,
 }

@@ -23,9 +23,7 @@ use vigilyx_core::{DataSecurityIncident, DataSecurityStats, HttpSession};
 use super::{ApiResponse, PaginatedResponse};
 use crate::AppState;
 
-
 // Query parameters
-
 
 /// Data security incident query parameters
 #[derive(Debug, Deserialize)]
@@ -34,15 +32,15 @@ pub struct IncidentQueryParams {
     pub page: u32,
     #[serde(default = "default_limit")]
     pub limit: u32,
-   /// Incident type: draft_box_abuse | file_transit_abuse | self_sending
+    /// Incident type: draft_box_abuse | file_transit_abuse | self_sending
     pub incident_type: Option<String>,
-   /// Severity: info | low | medium | high | critical
+    /// Severity: info | low | medium | high | critical
     pub severity: Option<String>,
-   /// Filter by client IP
+    /// Filter by client IP
     pub client_ip: Option<String>,
-   /// Filter by user
+    /// Filter by user
     pub user: Option<String>,
-   /// Filter by keyword (summary)
+    /// Filter by keyword (summary)
     pub keyword: Option<String>,
 }
 
@@ -54,9 +52,7 @@ fn default_limit() -> u32 {
     50
 }
 
-
 // Statistics API
-
 
 /// Get data security statistics
 pub async fn get_data_security_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -66,9 +62,7 @@ pub async fn get_data_security_stats(State(state): State<Arc<AppState>>) -> impl
     }
 }
 
-
 // Incident API
-
 
 /// Validate incident type parameter
 fn validate_incident_type(t: &str) -> bool {
@@ -93,7 +87,7 @@ pub async fn list_data_security_incidents(
     Query(mut params): Query<IncidentQueryParams>,
 ) -> axum::response::Response {
     params.limit = params.limit.clamp(1, 1000);
-   // Validate parameters
+    // Validate parameters
     if let Some(ref t) = params.incident_type
         && !validate_incident_type(t)
     {
@@ -179,9 +173,7 @@ pub async fn get_data_security_incident(
     }
 }
 
-
 // HTTP Session API
-
 
 /// HTTP session list query parameters
 #[derive(Debug, Deserialize)]
@@ -190,13 +182,13 @@ pub struct HttpSessionQueryParams {
     pub page: u32,
     #[serde(default = "default_limit")]
     pub limit: u32,
-   /// Client IP (filter)
+    /// Client IP (filter)
     pub client_ip: Option<String>,
-   /// User (filter)
+    /// User (filter)
     pub user: Option<String>,
-   /// HTTP method: GET | POST | PUT | DELETE
+    /// HTTP method: GET | POST | PUT | DELETE
     pub method: Option<String>,
-   /// URL keyword (filter)
+    /// URL keyword (filter)
     pub keyword: Option<String>,
 }
 
@@ -208,7 +200,7 @@ pub async fn list_http_sessions(
     params.limit = params.limit.clamp(1, 1000);
     let offset = (params.page.saturating_sub(1)) * params.limit;
 
-   // Build filters
+    // Build filters
     let filters = vigilyx_db::HttpSessionFilters {
         client_ip: params.client_ip.filter(|s| !s.is_empty()),
         user: params.user.filter(|s| !s.is_empty()),
@@ -258,7 +250,7 @@ pub async fn get_http_session(
 
     match state.db.get_http_session(uuid).await {
         Ok(Some(mut session)) => {
-           // SEC: Redact password-like fields from request_body before API delivery (CWE-312)
+            // SEC: Redact password-like fields from request_body before API delivery (CWE-312)
             if let Some(ref body) = session.request_body {
                 session.request_body =
                     Some(redact_request_body(body, session.content_type.as_deref()));
@@ -276,9 +268,7 @@ pub async fn get_http_session(
     }
 }
 
-
 // HTTP session import (internal / sniffer)
-
 
 /// Import HTTP sessions (internal).
 ///
@@ -298,7 +288,7 @@ pub async fn import_http_sessions(
     let mut success_count = 0u64;
 
     for session in &sessions {
-       // Save HTTP session
+        // Save HTTP session
         if let Err(e) = state.db.insert_http_session(session).await {
             tracing::warn!(session_id = %session.id, "保存 HTTP Session 失败: {}", e);
             continue;
@@ -347,9 +337,7 @@ pub async fn get_data_security_engine_status(
     }
 }
 
-
 // HTTP session body download
-
 
 /// Download HTTP session body file.
 ///
@@ -359,13 +347,13 @@ pub async fn download_http_session_body(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-   // Validate UUID
+    // Validate UUID
     let uuid = match Uuid::parse_str(&id) {
         Ok(u) => u,
         Err(_) => return (axum::http::StatusCode::BAD_REQUEST, "Invalid UUID").into_response(),
     };
 
-   // Query session to get body_temp_file path
+    // Query session to get body_temp_file path
     let session = match state.db.get_http_session(uuid).await {
         Ok(Some(s)) => s,
         Ok(None) => {
@@ -381,12 +369,12 @@ pub async fn download_http_session_body(
         }
     };
 
-   // File path: prefer body_temp_file, fallback to convention
+    // File path: prefer body_temp_file, fallback to convention
     let file_path = session
         .body_temp_file
         .unwrap_or_else(|| format!("data/tmp/http/{}.bin", uuid));
 
-   // Security: ensure path stays within data/tmp/http/ (path traversal guard)
+    // Security: ensure path stays within data/tmp/http/ (path traversal guard)
     let canonical = match std::path::Path::new(&file_path).canonicalize() {
         Ok(p) => p,
         Err(_) => {
@@ -412,7 +400,7 @@ pub async fn download_http_session_body(
         return (axum::http::StatusCode::FORBIDDEN, "Access denied").into_response();
     }
 
-   // Read file
+    // Read file
     let raw_data = match tokio::fs::read(&canonical).await {
         Ok(d) => d,
         Err(_) => {
@@ -424,23 +412,20 @@ pub async fn download_http_session_body(
         .content_type
         .unwrap_or_else(|| "application/octet-stream".to_string());
 
-    let data = match build_redacted_download_payload(
-        &raw_data,
-        Some(&raw_ct),
-        session.body_is_binary,
-    ) {
-        Ok(data) => data,
-        Err(message) => {
-            tracing::warn!(
-                session_id = %uuid,
-                body_is_binary = session.body_is_binary,
-                content_type = %raw_ct,
-                "Blocked unsafe HTTP body download: {}",
-                message
-            );
-            return (axum::http::StatusCode::FORBIDDEN, message).into_response();
-        }
-    };
+    let data =
+        match build_redacted_download_payload(&raw_data, Some(&raw_ct), session.body_is_binary) {
+            Ok(data) => data,
+            Err(message) => {
+                tracing::warn!(
+                    session_id = %uuid,
+                    body_is_binary = session.body_is_binary,
+                    content_type = %raw_ct,
+                    "Blocked unsafe HTTP body download: {}",
+                    message
+                );
+                return (axum::http::StatusCode::FORBIDDEN, message).into_response();
+            }
+        };
     let download_name =
         build_redacted_download_name(session.uploaded_filename.as_deref(), &uuid.to_string());
 
@@ -515,7 +500,7 @@ fn redact_json_value(value: &mut serde_json::Value) {
         serde_json::Value::Object(map) => {
             for (key, item) in map.iter_mut() {
                 if is_sensitive_key(key) {
-                   *item = serde_json::Value::String(REDACTED_VALUE.to_string());
+                    *item = serde_json::Value::String(REDACTED_VALUE.to_string());
                 } else {
                     redact_json_value(item);
                 }
@@ -591,8 +576,8 @@ fn build_redacted_download_payload(
         return Err("出于安全考虑，二进制请求体的原始下载已禁用");
     }
 
-    let body = std::str::from_utf8(raw_data)
-        .map_err(|_| "请求体不是可安全导出的 UTF-8 文本内容")?;
+    let body =
+        std::str::from_utf8(raw_data).map_err(|_| "请求体不是可安全导出的 UTF-8 文本内容")?;
 
     Ok(redact_request_body(body, content_type).into_bytes())
 }

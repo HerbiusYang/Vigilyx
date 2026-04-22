@@ -4,7 +4,6 @@
 //! ```text
 //! P(X> x | X> u) = (1 + xi*(x-u)/sigma)^{-1/xi}
 
-
 //! PWM is more stable than MLE for small samples and avoids iterative optimization.
 
 use std::collections::VecDeque;
@@ -12,13 +11,13 @@ use std::collections::VecDeque;
 /// GPD parameters fitted from exceedances.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct GpdParams {
-   /// Shape parameter xi
+    /// Shape parameter xi
     xi: f64,
-   /// Scale parameter sigma
+    /// Scale parameter sigma
     sigma: f64,
-   /// Threshold u (95th percentile)
+    /// Threshold u (95th percentile)
     threshold: f64,
-   /// Exceedance rate lambda = N_u / N
+    /// Exceedance rate lambda = N_u / N
     exceedance_rate: f64,
 }
 
@@ -31,13 +30,13 @@ pub(super) struct GpdParams {
 /// sigma = 2*beta_0*beta_1 / (beta_0 - 2*beta_1)
 /// xi = beta_0 / (beta_0 - 2*beta_1) - 2
 pub(super) struct GpdEstimator {
-   /// Rolling window of recent risk scores for percentile estimation.
+    /// Rolling window of recent risk scores for percentile estimation.
     risk_window: VecDeque<f64>,
-   /// Maximum window size.
+    /// Maximum window size.
     max_window: usize,
-   /// Quantile for threshold (default: 0.95).
+    /// Quantile for threshold (default: 0.95).
     quantile: f64,
-   /// Cached GPD fit (invalidated on push).
+    /// Cached GPD fit (invalidated on push).
     cached_params: Option<Option<GpdParams>>,
 }
 
@@ -51,7 +50,7 @@ impl GpdEstimator {
         }
     }
 
-   /// Push a new risk score observation.
+    /// Push a new risk score observation.
     #[inline]
     pub(super) fn push(&mut self, score: f64) {
         if self.risk_window.len() >= self.max_window {
@@ -61,8 +60,8 @@ impl GpdEstimator {
         self.cached_params = None; // Invalidate cache
     }
 
-   /// Fit GPD to current window. Returns None if insufficient data.
-   /// Uses cached result if available (cache invalidated on push).
+    /// Fit GPD to current window. Returns None if insufficient data.
+    /// Uses cached result if available (cache invalidated on push).
     pub(super) fn fit(&mut self) -> Option<GpdParams> {
         if let Some(cached) = self.cached_params {
             return cached;
@@ -72,22 +71,22 @@ impl GpdEstimator {
         result
     }
 
-   /// Internal GPD fitting (uncached).
+    /// Internal GPD fitting (uncached).
     fn fit_inner(&self) -> Option<GpdParams> {
         let n = self.risk_window.len();
         if n < 30 {
             return None;
         }
 
-       // Sort scores for percentile computation
+        // Sort scores for percentile computation
         let mut sorted: Vec<f64> = self.risk_window.iter().copied().collect();
         sorted.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-       // Threshold u = quantile
+        // Threshold u = quantile
         let idx = ((n as f64) * self.quantile) as usize;
         let threshold = sorted[idx.min(n - 1)];
 
-       // Extract exceedances - already sorted (from sorted tail), no re-sort needed
+        // Extract exceedances - already sorted (from sorted tail), no re-sort needed
         let exceedances: Vec<f64> = sorted
             .iter()
             .filter(|&&x| x > threshold)
@@ -99,11 +98,11 @@ impl GpdEstimator {
             return None;
         }
 
-       // PWM estimation
+        // PWM estimation
         let beta_0: f64 = exceedances.iter().sum::<f64>() / n_exc as f64;
 
-       // beta_1 from order statistics - exceedances already sorted (ascending)
-       // Hoist invariant divisor out of the loop (was recomputed N_exc times)
+        // beta_1 from order statistics - exceedances already sorted (ascending)
+        // Hoist invariant divisor out of the loop (was recomputed N_exc times)
         let inv_denom = 1.0 / ((n_exc * (n_exc - 1)) as f64).max(1.0);
         let beta_1: f64 = exceedances
             .iter()
@@ -139,16 +138,16 @@ impl GpdEstimator {
         })
     }
 
-   /// Compute return period and CVaR in a single call (single GPD fit).
-   ///
-   /// Returns `(return_period, cvar)`.
+    /// Compute return period and CVaR in a single call (single GPD fit).
+    ///
+    /// Returns `(return_period, cvar)`.
     pub(super) fn return_period_and_cvar(&mut self, x: f64) -> (f64, f64) {
         let params = match self.fit() {
             Some(p) => p,
             None => return (0.0, x),
         };
 
-       // -- Return period --
+        // -- Return period --
         let return_period = if x <= params.threshold {
             1.0
         } else {
@@ -171,9 +170,9 @@ impl GpdEstimator {
             }
         };
 
-       // -- CVaR --
+        // -- CVaR --
         let cvar = if x <= params.threshold {
-           // Below threshold: streaming mean of exceedances above x (no allocation)
+            // Below threshold: streaming mean of exceedances above x (no allocation)
             let (sum, count) = self
                 .risk_window
                 .iter()
@@ -204,19 +203,19 @@ mod tests {
     #[test]
     fn test_gpd_estimator_with_data() {
         let mut est = GpdEstimator::new(200);
-       // Feed 100 normal observations
+        // Feed 100 normal observations
         for i in 0..100 {
             est.push(0.1 + (i as f64) * 0.005);
         }
-       // The fit may or may not succeed depending on tail structure
-       // At minimum it shouldn't panic
+        // The fit may or may not succeed depending on tail structure
+        // At minimum it shouldn't panic
         let _ = est.fit();
     }
 
     #[test]
     fn test_gpd_return_period_monotonic() {
         let mut est = GpdEstimator::new(500);
-       // Create a distribution with a clear tail
+        // Create a distribution with a clear tail
         for _ in 0..80 {
             est.push(0.1);
         }
@@ -226,10 +225,10 @@ mod tests {
         for _ in 0..5 {
             est.push(0.8);
         }
-       // Higher risk should have higher return period (combined call)
+        // Higher risk should have higher return period (combined call)
         let (rp_low, _cvar_low) = est.return_period_and_cvar(0.3);
         let (rp_high, _cvar_high) = est.return_period_and_cvar(0.8);
-       // rp_high should be>= rp_low (more extreme = rarer)
+        // rp_high should be>= rp_low (more extreme = rarer)
         assert!(
             rp_high >= rp_low,
             "Higher risk should have higher return period: rp(0.3)={}, rp(0.8)={}",

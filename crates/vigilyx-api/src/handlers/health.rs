@@ -11,14 +11,13 @@ use std::time::Instant;
 
 use crate::AppState;
 
-
 #[derive(Debug, Serialize)]
 pub struct CheckResult {
-   /// "up" | "down" | "degraded"
+    /// "up" | "down" | "degraded"
     pub status: &'static str,
-   /// ()
+    /// ()
     pub latency_ms: u64,
-   /// Failed (status != "up" ; internal)
+    /// Failed (status != "up" ; internal)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
@@ -26,9 +25,9 @@ pub struct CheckResult {
 /// Engine (ContainsHeartbeatinfo)
 #[derive(Debug, Serialize)]
 pub struct EngineCheckResult {
-   /// "up" | "down" | "degraded"
+    /// "up" | "down" | "degraded"
     pub status: &'static str,
-   /// (None = From Received)
+    /// (None = From Received)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_heartbeat_secs: Option<i64>,
 }
@@ -36,7 +35,7 @@ pub struct EngineCheckResult {
 /// Readiness response
 #[derive(Debug, Serialize)]
 pub struct ReadinessResponse {
-   /// "ready" | "not_ready"
+    /// "ready" | "not_ready"
     pub status: &'static str,
     pub checks: ReadinessChecks,
 }
@@ -44,7 +43,7 @@ pub struct ReadinessResponse {
 /// Public readiness response
 #[derive(Debug, Serialize)]
 pub struct PublicReadinessResponse {
-   /// "ready" | "not_ready"
+    /// "ready" | "not_ready"
     pub status: &'static str,
 }
 
@@ -62,9 +61,7 @@ pub struct LivenessResponse {
     pub status: &'static str,
 }
 
-
 // Handlers
-
 
 /// `GET /health/live` -
 
@@ -97,10 +94,8 @@ pub async fn public_readiness(State(state): State<Arc<AppState>>) -> impl IntoRe
     )
 }
 
-async fn build_readiness_response(
-    state: &Arc<AppState>,
-) -> (StatusCode, ReadinessResponse) {
-   // 1. Database check (5s timeout)
+async fn build_readiness_response(state: &Arc<AppState>) -> (StatusCode, ReadinessResponse) {
+    // 1. Database check (5s timeout)
     let db_check = {
         let start = Instant::now();
         let result =
@@ -134,13 +129,13 @@ async fn build_readiness_response(
         }
     };
 
-   // 2. Redis check (3s timeout)
+    // 2. Redis check (3s timeout)
     let redis_check = {
         let start = Instant::now();
         let result = if let Some(ref mq) = state.messaging.mq {
             tokio::time::timeout(std::time::Duration::from_secs(3), mq.is_connected()).await
         } else {
-           // Redis not configured - still "up" in local mode (by design)
+            // Redis not configured - still "up" in local mode (by design)
             Ok(false)
         };
         let latency_ms = start.elapsed().as_millis() as u64;
@@ -172,7 +167,7 @@ async fn build_readiness_response(
         }
     };
 
-   // 3. Engine check (via cached heartbeat)
+    // 3. Engine check (via cached heartbeat)
     let engine_check = {
         match crate::handlers::security::load_engine_status_snapshot(state).await {
             Some(snapshot) => {
@@ -194,7 +189,7 @@ async fn build_readiness_response(
         }
     };
 
-   // Aggregate
+    // Aggregate
     let all_up =
         db_check.status == "up" && redis_check.status == "up" && engine_check.status != "down";
 
@@ -216,9 +211,7 @@ async fn build_readiness_response(
     (http_status, response)
 }
 
-
 // Tests
-
 
 #[cfg(test)]
 mod tests {
@@ -256,7 +249,7 @@ mod tests {
         assert_eq!(json["status"], "ready");
         assert_eq!(json["checks"]["database"]["status"], "up");
         assert_eq!(json["checks"]["database"]["latency_ms"], 2);
-       // "message" should be absent when None (skip_serializing_if)
+        // "message" should be absent when None (skip_serializing_if)
         assert!(json["checks"]["database"].get("message").is_none());
         assert_eq!(json["checks"]["redis"]["status"], "up");
         assert_eq!(json["checks"]["engine"]["status"], "up");

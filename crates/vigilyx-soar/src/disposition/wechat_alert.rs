@@ -182,19 +182,11 @@ impl DispositionEngine {
                     ),
                     220,
                 ),
-                build_wechat_alert_text(
-                    verdict,
-                    session,
-                    internal_domains,
-                    inbound_mail_servers,
-                )
+                build_wechat_alert_text(verdict, session, internal_domains, inbound_mail_servers,)
             ),
-            None => build_wechat_alert_text(
-                verdict,
-                session,
-                internal_domains,
-                inbound_mail_servers,
-            ),
+            None => {
+                build_wechat_alert_text(verdict, session, internal_domains, inbound_mail_servers)
+            }
         };
 
         let config = if let Some(webhook_url) = action.webhook_url.as_deref() {
@@ -202,7 +194,9 @@ impl DispositionEngine {
                 enabled: true,
                 webhook_url: webhook_url.to_string(),
                 min_threat_level: "medium".to_string(),
-                mentioned_mobile_list: normalize_mentioned_mobile_list(&action.mentioned_mobile_list),
+                mentioned_mobile_list: normalize_mentioned_mobile_list(
+                    &action.mentioned_mobile_list,
+                ),
             }
         } else {
             let Some(mut config) = self.load_wechat_alert_config().await else {
@@ -366,10 +360,8 @@ mod tests {
     #[test]
     fn validate_wechat_webhook_url_rejects_non_wechat_host() {
         assert!(
-            validate_wechat_webhook_url(
-                "https://example.com/cgi-bin/webhook/send?key=test-key"
-            )
-            .is_err()
+            validate_wechat_webhook_url("https://example.com/cgi-bin/webhook/send?key=test-key")
+                .is_err()
         );
     }
 

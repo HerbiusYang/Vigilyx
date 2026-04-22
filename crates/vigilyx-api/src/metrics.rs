@@ -25,9 +25,7 @@ use prometheus::{
     register_counter_vec, register_gauge, register_histogram_vec,
 };
 
-
 // Metric definitions (global singletons via LazyLock)
-
 
 /// HTTP request (According to method, path, status)
 static HTTP_REQUESTS_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
@@ -99,12 +97,9 @@ pub static ENGINE_MODULE_DURATION_SECONDS: LazyLock<HistogramVec> = LazyLock::ne
     .expect("engine_module_duration_seconds metric must register")
 });
 
-
 // Path normalization (prevent high-cardinality labels)
 
-
 /// 1 URL Road, UUID Road `:id`
-
 
 /// - `/api/sessions/550e8400-e29b-41d4-a716-446655440000` -> `/api/sessions/:id`
 /// - `/api/security/rules/42` -> `/api/security/rules/:id`
@@ -115,14 +110,14 @@ fn normalize_path(path: &str) -> String {
             if segment.is_empty() {
                 return segment;
             }
-           // UUID: 8-4-4-4-12 hex pattern (36 chars with dashes)
+            // UUID: 8-4-4-4-12 hex pattern (36 chars with dashes)
             if segment.len() == 36 && segment.chars().filter(|c| *c == '-').count() == 4 {
                 let hex_only: String = segment.chars().filter(|c| *c != '-').collect();
                 if hex_only.len() == 32 && hex_only.chars().all(|c| c.is_ascii_hexdigit()) {
                     return ":id";
                 }
             }
-           // Pure numeric segment
+            // Pure numeric segment
             if segment.chars().all(|c| c.is_ascii_digit()) {
                 return ":id";
             }
@@ -132,9 +127,7 @@ fn normalize_path(path: &str) -> String {
         .join("/")
 }
 
-
 // Middleware
-
 
 /// Prometheus
 
@@ -144,7 +137,7 @@ pub async fn metrics_middleware(req: Request<axum::body::Body>, next: Next) -> R
     let method = req.method().to_string();
     let raw_path = req.uri().path().to_string();
 
-   // metrics (request)
+    // metrics (request)
     if raw_path == "/api/metrics" {
         return next.run(req).await;
     }
@@ -167,9 +160,7 @@ pub async fn metrics_middleware(req: Request<axum::body::Body>, next: Next) -> R
     response
 }
 
-
 // Handler
-
 
 /// `GET /api/metrics` - Prometheus (public, authentication)
 
@@ -178,8 +169,8 @@ pub async fn metrics_handler() -> impl IntoResponse {
     let encoder = TextEncoder::new();
     let metric_families = prometheus::gather();
     let mut buffer = Vec::with_capacity(4096);
-   // SAFETY: TextEncoder::encode only fails on I/O errors writing to Vec,
-   // which cannot happen (Vec::write never fails).
+    // SAFETY: TextEncoder::encode only fails on I/O errors writing to Vec,
+    // which cannot happen (Vec::write never fails).
     encoder
         .encode(&metric_families, &mut buffer)
         .expect("encoding to Vec<u8> is infallible");
@@ -192,9 +183,7 @@ pub async fn metrics_handler() -> impl IntoResponse {
     )
 }
 
-
 // Tests
-
 
 #[cfg(test)]
 mod tests {
@@ -243,21 +232,21 @@ mod tests {
 
     #[test]
     fn test_normalize_path_hex_but_not_uuid() {
-       // 8 hex chars, not UUID format
+        // 8 hex chars, not UUID format
         let path = "/api/sessions/abcdef12";
         assert_eq!(normalize_path(path), "/api/sessions/abcdef12");
     }
 
     #[test]
     fn test_normalize_path_preserves_query_segment_like_strings() {
-       // Path segments that look like words should not be replaced
+        // Path segments that look like words should not be replaced
         let path = "/api/security/intel-whitelist";
         assert_eq!(normalize_path(path), "/api/security/intel-whitelist");
     }
 
     #[test]
     fn test_metrics_handler_returns_text_content() {
-       // Force all LazyLock metrics to register by touching them
+        // Force all LazyLock metrics to register by touching them
         HTTP_REQUESTS_TOTAL
             .with_label_values(&["GET", "/api/test", "200"])
             .inc();
@@ -328,7 +317,7 @@ mod tests {
         VERDICTS_TOTAL.with_label_values(&["high"]).inc();
         VERDICTS_TOTAL.with_label_values(&["critical"]).inc();
 
-       // All labels should have at least 1
+        // All labels should have at least 1
         for level in &["safe", "low", "medium", "high", "critical"] {
             assert!(VERDICTS_TOTAL.with_label_values(&[level]).get() >= 1.0);
         }

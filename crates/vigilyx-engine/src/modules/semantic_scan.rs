@@ -26,9 +26,7 @@ use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
 use crate::module_data::module_data;
 use crate::modules::common::looks_like_raw_mime_container_text;
-use crate::modules::content_scan::{
-    sanitize_body_for_keyword_scan, strip_subject_banner_prefixes,
-};
+use crate::modules::content_scan::{sanitize_body_for_keyword_scan, strip_subject_banner_prefixes};
 use crate::pipeline::verdict::runtime_scenario_patterns;
 use crate::remote::{ContentAnalysisRequest, RemoteError, RemoteModuleProxy};
 
@@ -37,7 +35,7 @@ const BIGRAM_PAR_THRESHOLD: usize = 10_000;
 
 pub struct SemanticScanModule {
     meta: ModuleMetadata,
-   /// Remote NLP Service (Python HuggingFace)
+    /// Remote NLP Service (Python HuggingFace)
     remote: Option<RemoteModuleProxy>,
 }
 
@@ -97,7 +95,7 @@ fn is_cjk_basic(ch: char) -> bool {
 /// Includes Ext-A, Ext-B, Ext-C, Ext-D, Ext-E, Ext-F, Ext-G, and Compatibility Ideographs
 fn is_cjk_rare(ch: char) -> bool {
     let c = ch as u32;
-   // CJK Ext-A: U+3400..U+4DBF
+    // CJK Ext-A: U+3400..U+4DBF
     (0x3400..=0x4DBF).contains(&c)
    // CJK Ext-B: U+20000..U+2A6DF
     || (0x20000..=0x2A6DF).contains(&c)
@@ -129,7 +127,6 @@ fn is_hiragana(ch: char) -> bool {
 fn is_katakana(ch: char) -> bool {
     ('\u{30A0}'..='\u{30FF}').contains(&ch)
 }
-
 
 fn is_japanese_kana(ch: char) -> bool {
     is_hiragana(ch) || is_katakana(ch)
@@ -166,7 +163,7 @@ fn analyze_entropy(text: &str) -> f64 {
 
     for ch in text.chars() {
         if is_cjk_any(ch) {
-           *freq.entry(ch).or_insert(0) += 1;
+            *freq.entry(ch).or_insert(0) += 1;
             total += 1;
         }
     }
@@ -211,7 +208,7 @@ fn analyze_bigram(text: &str) -> (f64, usize) {
     } else {
         let mut bigram_counts: HashMap<(char, char), usize> = HashMap::new();
         for pair in cjk_chars.windows(2) {
-           *bigram_counts.entry((pair[0], pair[1])).or_insert(0) += 1;
+            *bigram_counts.entry((pair[0], pair[1])).or_insert(0) += 1;
         }
         bigram_counts.len()
     };
@@ -231,7 +228,7 @@ fn score_semantics(text: &str) -> (f64, Vec<Evidence>) {
         return (0.0, evidence);
     }
 
-   // Dimension 1: Rare character ratio (weight 0.4)
+    // Dimension 1: Rare character ratio (weight 0.4)
     if rare_ratio > RARE_CJK_THRESHOLD {
         let normalized = ((rare_ratio - RARE_CJK_THRESHOLD) / 0.25).min(1.0);
         let dim_score = (normalized * 0.4).min(0.4);
@@ -259,7 +256,7 @@ fn score_semantics(text: &str) -> (f64, Vec<Evidence>) {
         });
     }
 
-   // Dimension 2: Entropy anomaly (weight 0.3)
+    // Dimension 2: Entropy anomaly (weight 0.3)
     let entropy = analyze_entropy(text);
     let entropy_anomaly = if entropy < ENTROPY_NORMAL_LOW && entropy > 0.0 {
         ((ENTROPY_NORMAL_LOW - entropy) / ENTROPY_NORMAL_LOW).min(1.0)
@@ -289,7 +286,7 @@ fn score_semantics(text: &str) -> (f64, Vec<Evidence>) {
         });
     }
 
-   // Dimension 3: Bigram uniqueness anomaly (weight 0.3)
+    // Dimension 3: Bigram uniqueness anomaly (weight 0.3)
     let (bigram_unique, bigram_total) = analyze_bigram(text);
     if bigram_total >= 50 {
         let bigram_anomaly = if bigram_unique > BIGRAM_UNIQUE_THRESHOLD {
@@ -394,9 +391,17 @@ pub(super) fn detect_llm_generated_text(text: &str) -> (f64, Vec<&'static str>) 
     // 2. Transitional connective density (Latin-script bodies). Genuine
     // business mail rarely chains 3+ formal connectives in a short message.
     const CONNECTIVES: &[&str] = &[
-        "furthermore", "moreover", "additionally", "consequently",
-        "subsequently", "nevertheless", "nonetheless", "henceforth",
-        "thereafter", "in conclusion", "to summarize",
+        "furthermore",
+        "moreover",
+        "additionally",
+        "consequently",
+        "subsequently",
+        "nevertheless",
+        "nonetheless",
+        "henceforth",
+        "thereafter",
+        "in conclusion",
+        "to summarize",
     ];
     let connective_hits: usize = CONNECTIVES.iter().filter(|c| lower.contains(*c)).count();
     if connective_hits >= 3 {
@@ -406,9 +411,18 @@ pub(super) fn detect_llm_generated_text(text: &str) -> (f64, Vec<&'static str>) 
     // 3. Mandarin equivalent — overly literary connectives are also a strong
     // signal in Chinese LLM-translated phishing.
     const ZH_CONNECTIVES: &[&str] = &[
-        "此外", "然而", "尽管如此", "综上所述", "因此", "鉴于此", "与此同时",
+        "此外",
+        "然而",
+        "尽管如此",
+        "综上所述",
+        "因此",
+        "鉴于此",
+        "与此同时",
     ];
-    let zh_connective_hits: usize = ZH_CONNECTIVES.iter().filter(|c| trimmed.contains(*c)).count();
+    let zh_connective_hits: usize = ZH_CONNECTIVES
+        .iter()
+        .filter(|c| trimmed.contains(*c))
+        .count();
     if zh_connective_hits >= 3 {
         hits.push("dense formal Chinese connectives");
     }
@@ -440,10 +454,17 @@ pub(super) fn detect_llm_generated_text(text: &str) -> (f64, Vec<&'static str>) 
     // 5. Latin-script "no contractions" register: count "do not / will not /
     // cannot / I am" vs the contracted forms. LLMs systematically prefer the
     // expanded form; a real human under urgency uses contractions.
-    let expanded = ["do not ", "will not ", "cannot ", "i am ", "we are ", "you are "]
-        .iter()
-        .map(|p| lower.matches(*p).count())
-        .sum::<usize>();
+    let expanded = [
+        "do not ",
+        "will not ",
+        "cannot ",
+        "i am ",
+        "we are ",
+        "you are ",
+    ]
+    .iter()
+    .map(|p| lower.matches(*p).count())
+    .sum::<usize>();
     let contracted = ["don't ", "won't ", "can't ", "i'm ", "we're ", "you're "]
         .iter()
         .map(|p| lower.matches(*p).count())
@@ -572,12 +593,14 @@ impl SecurityModule for SemanticScanModule {
     async fn analyze(&self, ctx: &SecurityContext) -> Result<ModuleResult, EngineError> {
         let start = Instant::now();
 
-       // Get email body text
+        // Get email body text
         let raw_body = match (
             ctx.session.content.body_text.as_ref(),
             ctx.session.content.body_html.as_ref(),
         ) {
-            (Some(text), Some(html)) if looks_like_raw_mime_container_text(text) => strip_html_tags(html),
+            (Some(text), Some(html)) if looks_like_raw_mime_container_text(text) => {
+                strip_html_tags(html)
+            }
             (Some(text), None) if looks_like_raw_mime_container_text(text) => {
                 let duration_ms = start.elapsed().as_millis() as u64;
                 return Ok(ModuleResult::not_applicable(
@@ -615,12 +638,15 @@ impl SecurityModule for SemanticScanModule {
             ));
         }
 
-        
-       // Engine B: NLP phishing detection - fire request immediately (async, non-blocking)
-        
+        // Engine B: NLP phishing detection - fire request immediately (async, non-blocking)
+
         let nlp_configured = self.remote.is_some();
         let mut nlp_skipped_temporarily = false;
-        let mut nlp_status = if nlp_configured { "pending" } else { "disabled" };
+        let mut nlp_status = if nlp_configured {
+            "pending"
+        } else {
+            "disabled"
+        };
         let mut nlp_retry_after_secs: Option<u64> = None;
         let mut nlp_status_message = if nlp_configured {
             None
@@ -666,9 +692,8 @@ impl SecurityModule for SemanticScanModule {
             None
         };
 
-        
-       // Engine A: Rust CJK gibberish detection (runs in parallel with NLP request)
-        
+        // Engine A: Rust CJK gibberish detection (runs in parallel with NLP request)
+
         let (mut score, mut evidence) = score_semantics(&body);
         let gibberish_evidence_count = evidence.len(); // P2-4: track gibberish-specific evidence
         let mut categories: Vec<String> = Vec::new();
@@ -692,20 +717,21 @@ impl SecurityModule for SemanticScanModule {
             });
         }
 
-       // Language anomaly detection
+        // Language anomaly detection
         let total_chars: usize = body.chars().filter(|c| !c.is_whitespace()).count();
         let cjk_count: usize = body.chars().filter(|c| is_cjk_any(*c)).count();
         let is_non_chinese = total_chars > 30 && cjk_count == 0;
 
         if is_non_chinese {
-           // Skip known financial sender domains (legitimate foreign-language emails)
+            // Skip known financial sender domains (legitimate foreign-language emails)
             let sender_domain = ctx
                 .session
                 .mail_from
                 .as_deref()
                 .and_then(|m| m.rsplit('@').next())
                 .unwrap_or("");
-            let is_known_financial_sender = module_data().contains("known_financial_sender_domains", sender_domain);
+            let is_known_financial_sender =
+                module_data().contains("known_financial_sender_domains", sender_domain);
 
             if !is_known_financial_sender {
                 let rcpt_domains: Vec<String> = ctx
@@ -744,17 +770,12 @@ impl SecurityModule for SemanticScanModule {
                     });
                 }
             }
-           // Skip further anomaly detection for known senders
+            // Skip further anomaly detection for known senders
         }
 
-        
-        
-        
-        
         {
             let jp_kana_count = body.chars().filter(|c| is_japanese_kana(*c)).count();
             if jp_kana_count >= 10 {
-                
                 let rcpt_domains: Vec<String> = ctx
                     .session
                     .rcpt_to
@@ -767,12 +788,11 @@ impl SecurityModule for SemanticScanModule {
                         || ctx.is_internal_domain(d)
                         || module_data().contains("protected_domains", d)
                 });
-                let is_jp_corp = rcpt_domains.iter().any(|d| {
-                    d.ends_with(".jp") || d.ends_with(".co.jp")
-                });
+                let is_jp_corp = rcpt_domains
+                    .iter()
+                    .any(|d| d.ends_with(".jp") || d.ends_with(".co.jp"));
 
                 if is_cn_corp && !is_jp_corp {
-                    
                     score += 0.35;
                     categories.push("japanese_to_cn_corp".to_string());
                     evidence.push(Evidence {
@@ -784,7 +804,6 @@ impl SecurityModule for SemanticScanModule {
                         snippet: Some(body.chars().take(100).collect::<String>()),
                     });
                 } else if !is_jp_corp {
-                    
                     score += 0.15;
                     categories.push("japanese_unexpected".to_string());
                     evidence.push(Evidence {
@@ -799,8 +818,8 @@ impl SecurityModule for SemanticScanModule {
             }
         }
 
-       // Rule-based sextortion detection (works even when NLP is unavailable)
-       // Pattern: threat language + cryptocurrency payment demand
+        // Rule-based sextortion detection (works even when NLP is unavailable)
+        // Pattern: threat language + cryptocurrency payment demand
         let body_lower = body.to_lowercase();
         let (threat_signals, payment_signals): (Vec<String>, Vec<String>) = {
             let md = module_data();
@@ -820,7 +839,7 @@ impl SecurityModule for SemanticScanModule {
         };
 
         if !threat_signals.is_empty() && !payment_signals.is_empty() {
-               // Threat language + payment demand = sextortion email
+            // Threat language + payment demand = sextortion email
             score += 0.60;
             categories.push("sextortion".to_string());
             evidence.push(Evidence {
@@ -840,7 +859,10 @@ impl SecurityModule for SemanticScanModule {
             score += 0.30;
             categories.push("extortion_threat".to_string());
             evidence.push(Evidence {
-                description: format!("Detected {} threatening/intimidating phrases", threat_signals.len()),
+                description: format!(
+                    "Detected {} threatening/intimidating phrases",
+                    threat_signals.len()
+                ),
                 location: Some("body:semantic".to_string()),
                 snippet: Some(threat_signals.join(", ")),
             });
@@ -854,9 +876,8 @@ impl SecurityModule for SemanticScanModule {
             categories.push("nonsensical_spam".to_string());
         }
 
-        
-       // Await NLP result (Rust analysis already complete, NLP should be done or nearly done)
-        
+        // Await NLP result (Rust analysis already complete, NLP should be done or nearly done)
+
         let has_rule_corroboration =
             gibberish_evidence_count > 0 || !categories.is_empty() || score >= 0.20;
 
@@ -873,12 +894,9 @@ impl SecurityModule for SemanticScanModule {
                     let nlp_confidence = ai_resp.confidence;
                     nlp_details = ai_resp.details.unwrap_or(serde_json::Value::Null);
                     let signal_profile = summarize_nlp_signal(&nlp_details);
-                    let zero_shot_advisory_only =
-                        signal_profile.model_type.as_deref() == Some("zero-shot")
-                            && !zero_shot_nlp_is_actionable(
-                                &signal_profile,
-                                has_rule_corroboration,
-                            );
+                    let zero_shot_advisory_only = signal_profile.model_type.as_deref()
+                        == Some("zero-shot")
+                        && !zero_shot_nlp_is_actionable(&signal_profile, has_rule_corroboration);
 
                     let mut nlp_evidence_description = format!(
                         "NLP model verdict: {} (confidence {:.1}%) — {}",
@@ -887,9 +905,8 @@ impl SecurityModule for SemanticScanModule {
                         ai_resp.summary,
                     );
                     if zero_shot_advisory_only {
-                        nlp_evidence_description.push_str(
-                            " (zero-shot advisory only; not used for scoring)",
-                        );
+                        nlp_evidence_description
+                            .push_str(" (zero-shot advisory only; not used for scoring)");
                     }
                     evidence.push(Evidence {
                         description: nlp_evidence_description,
@@ -1003,7 +1020,10 @@ impl SecurityModule for SemanticScanModule {
                     ));
                     warn!("NLP task panicked: {}, falling back to rule-based", e);
                     evidence.push(Evidence {
-                        description: format!("NLP task abnormal: {} (falling back to rule-based detection)", e),
+                        description: format!(
+                            "NLP task abnormal: {} (falling back to rule-based detection)",
+                            e
+                        ),
                         location: Some("body:nlp".to_string()),
                         snippet: None,
                     });
@@ -1011,9 +1031,8 @@ impl SecurityModule for SemanticScanModule {
             }
         }
 
-        
-       // Build final result
-        
+        // Build final result
+
         // Apply LLM-style fingerprint contribution only when corroborated by
         // at least one other risk signal — formal prose alone must never push
         // a benign newsletter into Low. We treat the presence of any
@@ -1061,9 +1080,11 @@ impl SecurityModule for SemanticScanModule {
             } else if nlp_status == "disabled" {
                 "Rule engine analysis completed (AI/NLP not configured)".to_string()
             } else if is_non_chinese {
-                "Pure foreign-language email, below threat threshold (NLP service not enabled)".to_string()
+                "Pure foreign-language email, below threat threshold (NLP service not enabled)"
+                    .to_string()
             } else {
-                "Email body semantics normal, no gibberish or rare character anomalies found".to_string()
+                "Email body semantics normal, no gibberish or rare character anomalies found"
+                    .to_string()
             };
 
             return Ok(ModuleResult {
@@ -1103,8 +1124,8 @@ impl SecurityModule for SemanticScanModule {
             });
         }
 
-       // NLP confidence set lower (model misclassifies ~60% of the time)
-       // Rule-based heuristics have more predictable behavior, so they get higher confidence
+        // NLP confidence set lower (model misclassifies ~60% of the time)
+        // Rule-based heuristics have more predictable behavior, so they get higher confidence
         let confidence = if nlp_contributed { 0.60 } else { 0.80 };
 
         let summary = if nlp_contributed {
@@ -1138,8 +1159,7 @@ impl SecurityModule for SemanticScanModule {
             if let Some(retry_after_secs) = nlp_retry_after_secs {
                 format!(
                     "Semantic anomaly detected (score {:.2}) while AI/NLP service cooldown was active (~{}s retry)",
-                    score,
-                    retry_after_secs
+                    score, retry_after_secs
                 )
             } else {
                 format!(
@@ -1212,8 +1232,16 @@ mod tests {
                     Additionally, you are required to confirm your identity. \
                     Should you have any questions, please do not hesitate to contact us.";
         let (score, hits) = detect_llm_generated_text(text);
-        assert!(score > 0.0, "should fire on multi-signal LLM text, got hits={:?}", hits);
-        assert!(hits.len() >= 2, "expected >=2 independent fingerprints, got {:?}", hits);
+        assert!(
+            score > 0.0,
+            "should fire on multi-signal LLM text, got hits={:?}",
+            hits
+        );
+        assert!(
+            hits.len() >= 2,
+            "expected >=2 independent fingerprints, got {:?}",
+            hits
+        );
     }
 
     #[test]
@@ -1230,7 +1258,11 @@ mod tests {
                     I've got a doctor's appointment that ran long. Can someone cover the \
                     deployment? Thanks!";
         let (score, hits) = detect_llm_generated_text(text);
-        assert_eq!(score, 0.0, "natural human prose must not fire, got hits={:?}", hits);
+        assert_eq!(
+            score, 0.0,
+            "natural human prose must not fire, got hits={:?}",
+            hits
+        );
     }
 
     #[test]
@@ -1252,7 +1284,11 @@ mod tests {
                     如有任何疑问，请随时联系我们。\
                     感谢您的理解与配合。";
         let (score, hits) = detect_llm_generated_text(text);
-        assert!(score > 0.0, "Chinese LLM-style text should fire, got hits={:?}", hits);
+        assert!(
+            score > 0.0,
+            "Chinese LLM-style text should fire, got hits={:?}",
+            hits
+        );
     }
 
     #[test]
@@ -1350,7 +1386,10 @@ mod tests {
         assert_eq!(result.threat_level, ThreatLevel::Safe);
         assert_eq!(result.details["nlp_configured"], serde_json::json!(false));
         assert_eq!(result.details["nlp_status"], serde_json::json!("disabled"));
-        assert_eq!(result.details["analysis_type"], serde_json::json!("rules_only"));
+        assert_eq!(
+            result.details["analysis_type"],
+            serde_json::json!("rules_only")
+        );
         assert!(result.summary.contains("AI/NLP not configured"));
     }
 
@@ -1412,13 +1451,17 @@ mod tests {
         let ctx = make_ctx_with_sender(
             "user@163.com",
             &["recipient@company.cn"],
-            Some("This is a pure English business email with enough characters to exceed the 30 char threshold for language detection."),
+            Some(
+                "This is a pure English business email with enough characters to exceed the 30 char threshold for language detection.",
+            ),
         );
 
         let result = module.analyze(&ctx).await.unwrap();
 
         assert!(
-            !result.categories.contains(&"foreign_to_cn_corp".to_string()),
+            !result
+                .categories
+                .contains(&"foreign_to_cn_corp".to_string()),
             "163.com sender to .cn recipient should not trigger foreign_to_cn_corp, got categories={:?}",
             result.categories
         );
@@ -1430,13 +1473,17 @@ mod tests {
         let ctx = make_ctx_with_sender(
             "user@qq.com",
             &["recipient@company.com.cn"],
-            Some("This is another pure English email with sufficient length to trigger the non-Chinese content detection logic."),
+            Some(
+                "This is another pure English email with sufficient length to trigger the non-Chinese content detection logic.",
+            ),
         );
 
         let result = module.analyze(&ctx).await.unwrap();
 
         assert!(
-            !result.categories.contains(&"foreign_to_cn_corp".to_string()),
+            !result
+                .categories
+                .contains(&"foreign_to_cn_corp".to_string()),
             "qq.com sender to .com.cn recipient should not trigger foreign_to_cn_corp, got categories={:?}",
             result.categories
         );
@@ -1448,13 +1495,17 @@ mod tests {
         let ctx = make_ctx_with_sender(
             "noreply.cs.deployment@swift.com",
             &["recipient@company.com.cn"],
-            Some("Dear customer, your invoice remains open. Please review the billing portal and settle within payment terms."),
+            Some(
+                "Dear customer, your invoice remains open. Please review the billing portal and settle within payment terms.",
+            ),
         );
 
         let result = module.analyze(&ctx).await.unwrap();
 
         assert!(
-            !result.categories.contains(&"foreign_to_cn_corp".to_string()),
+            !result
+                .categories
+                .contains(&"foreign_to_cn_corp".to_string()),
             "known transactional senders like swift.com should not trip foreign_to_cn_corp, got categories={:?}",
             result.categories
         );
@@ -1467,13 +1518,17 @@ mod tests {
         let ctx = make_ctx_with_sender(
             "attacker@evil-domain.xyz",
             &["victim@bank.com.cn"],
-            Some("Dear valued customer, your account has been compromised. Please click here to verify your identity immediately."),
+            Some(
+                "Dear valued customer, your account has been compromised. Please click here to verify your identity immediately.",
+            ),
         );
 
         let result = module.analyze(&ctx).await.unwrap();
 
         assert!(
-            result.categories.contains(&"foreign_to_cn_corp".to_string()),
+            result
+                .categories
+                .contains(&"foreign_to_cn_corp".to_string()),
             "Unknown foreign sender to .cn should trigger foreign_to_cn_corp, got categories={:?}",
             result.categories
         );
@@ -1486,7 +1541,9 @@ mod tests {
         // Normal readable Chinese text should NOT produce nonsensical_spam
         let module = SemanticScanModule::new(None);
         let ctx = make_ctx(
-            Some("尊敬的客户，您好！感谢您对我们公司的支持。本月账单已经生成，请查收。如有疑问请联系客服。"),
+            Some(
+                "尊敬的客户，您好！感谢您对我们公司的支持。本月账单已经生成，请查收。如有疑问请联系客服。",
+            ),
             None,
         );
 
@@ -1504,7 +1561,9 @@ mod tests {
         // English-only email — may trigger language mismatch but NOT nonsensical_spam
         let module = SemanticScanModule::new(None);
         let ctx = make_ctx(
-            Some("Dear customer, please find attached your monthly invoice. If you have any questions, please contact our support team at support@example.com."),
+            Some(
+                "Dear customer, please find attached your monthly invoice. If you have any questions, please contact our support team at support@example.com.",
+            ),
             None,
         );
 

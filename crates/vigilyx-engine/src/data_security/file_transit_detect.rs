@@ -27,18 +27,18 @@ const UPLOAD_URI_PATTERNS: &[&str] = &[
     "/filestation",
     "/file_transit",
     "/filetransit",
-   // Coremail FileUpload (API)
+    // Coremail FileUpload (API)
     "func=mbox:uploadatt",
     "func=mbox:compose&sid", // compose with attachment upload
     "/coremail/main/netdisk",
     "func=global:netdisk",
     "/coremail/xt5/proxy/upload",
-   // Coremail ChunkedUpload (chunked upload via upload.jsp)
+    // Coremail ChunkedUpload (chunked upload via upload.jsp)
     "upload.jsp",
     "func=directdata",
-   // Exchange OWA
+    // Exchange OWA
     "/owa/service.svc",
-   // General API
+    // General API
     "/api/file/upload",
     "/api/attachment/upload",
     "/webmail/upload",
@@ -77,7 +77,7 @@ impl FileTransitDetector {
             .any(|pattern| uri_lower.contains(pattern))
     }
 
-   /// CheckFileextensionwhether HighRiskType(Key/ /data wait emailTransmissionofFile)
+    /// CheckFileextensionwhether HighRiskType(Key/ /data wait emailTransmissionofFile)
     fn is_sensitive_extension(filename: &str) -> Option<String> {
         let filename_lower = filename.to_lowercase();
         for &ext in SENSITIVE_EXTENSIONS {
@@ -94,7 +94,7 @@ impl FileTransitDetector {
             .unwrap_or(false)
     }
 
-   /// Read body from temp file for DLP scan - limited to 50MB to prevent OOM
+    /// Read body from temp file for DLP scan - limited to 50MB to prevent OOM
     fn read_body_for_dlp(path: &str) -> Option<String> {
         const DLP_MAX_READ: usize = 50 * 1024 * 1024;
 
@@ -117,11 +117,11 @@ impl FileTransitDetector {
         Some(text.into_owned())
     }
 
-   /// Read raw binary data for document extraction - limited to 50MB
+    /// Read raw binary data for document extraction - limited to 50MB
     fn read_body_bytes(session: &HttpSession) -> Vec<u8> {
         const MAX_READ: usize = 50 * 1024 * 1024;
 
-       // priorityFromtempFilereadGet — SEC: path validation (CWE-22)
+        // priorityFromtempFilereadGet — SEC: path validation (CWE-22)
         if let Some(ref path) = session.body_temp_file
             && let Some(validated) = super::validate_temp_path(path)
         {
@@ -136,7 +136,7 @@ impl FileTransitDetector {
             }
         }
 
-       // Fallback: FromMemory body readGet
+        // Fallback: FromMemory body readGet
         if let Some(ref body) = session.request_body {
             let cap = body.len().min(MAX_READ);
             return body.as_bytes()[..cap].to_vec();
@@ -156,12 +156,12 @@ impl DataSecurityDetector for FileTransitDetector {
     }
 
     fn analyze(&self, session: &HttpSession) -> DetectorResult {
-       // onlyCheck POST Request
+        // onlyCheck POST Request
         if session.method != HttpMethod::Post {
             return None;
         }
 
-       // URI matchUploadmode
+        // URI matchUploadmode
         if !Self::is_upload_uri(&session.uri) {
             return None;
         }
@@ -170,10 +170,10 @@ impl DataSecurityDetector for FileTransitDetector {
         let mut dlp_matches = Vec::new();
         let mut dlp_for_jrt: Option<dlp::DlpScanResult> = None;
 
-       // Checkwhether FileUpload (multipart FileName Coremail directData)
-        
-       // Coremail upload.jsp?func=directData application/octet-stream
-       // multipart/form-data, URL
+        // Checkwhether FileUpload (multipart FileName Coremail directData)
+
+        // Coremail upload.jsp?func=directData application/octet-stream
+        // multipart/form-data, URL
         let uri_lower = session.uri.to_lowercase();
         let is_coremail_direct_upload =
             uri_lower.contains("func=directdata") || uri_lower.contains("func=directdata");
@@ -185,13 +185,12 @@ impl DataSecurityDetector for FileTransitDetector {
             return None;
         }
 
-        
-       // 1. Executable fileUploaddetect (magic bytes)
-        
+        // 1. Executable fileUploaddetect (magic bytes)
+
         if let Some(ft) = session.detected_file_type {
             match ft.base_risk() {
                 FileTypeRisk::High => {
-                   // PE/ELF/MachO/LNK/JavaClass - HighRiskExecutable file
+                    // PE/ELF/MachO/LNK/JavaClass - HighRiskExecutable file
                     dlp_matches.push("executable_upload".to_string());
                     evidence.push(Evidence {
                         description: format!(
@@ -204,7 +203,7 @@ impl DataSecurityDetector for FileTransitDetector {
                     });
                 }
                 FileTypeRisk::Medium => {
-                   // ZIP/RAR/7z/Gzip/OLE - RecordingFileType
+                    // ZIP/RAR/7z/Gzip/OLE - RecordingFileType
                     evidence.push(Evidence {
                         description: format!(
                             "UploadFileType: {} (largesmall: {} Byte)",
@@ -219,9 +218,8 @@ impl DataSecurityDetector for FileTransitDetector {
             }
         }
 
-        
-       // 2. FileType detect (extension vs magic bytes)
-        
+        // 2. FileType detect (extension vs magic bytes)
+
         if let Some(ref mismatch) = session.file_type_mismatch {
             dlp_matches.push("file_type_mismatch".to_string());
             evidence.push(Evidence {
@@ -231,11 +229,10 @@ impl DataSecurityDetector for FileTransitDetector {
             });
         }
 
-        
-       // 2b. EncryptFiledetect (ZIP/RAR/7z/PDF - DLP Risk)
-        
+        // 2b. EncryptFiledetect (ZIP/RAR/7z/PDF - DLP Risk)
+
         {
-           // Read full body for encryption detection - no truncation (full-audit mode)
+            // Read full body for encryption detection - no truncation (full-audit mode)
             // SEC: path validation prevents arbitrary file reads via body_temp_file (CWE-22)
             let header_bytes: Option<Vec<u8>> = session
                 .request_body
@@ -250,7 +247,7 @@ impl DataSecurityDetector for FileTransitDetector {
                 });
 
             if let Some(ref hdr) = header_bytes {
-               // EncryptCompresspacket: ZIP/RAR4/RAR5/7z
+                // EncryptCompresspacket: ZIP/RAR4/RAR5/7z
                 if is_encrypted_archive(hdr) {
                     dlp_matches.push("encrypted_archive".to_string());
                     evidence.push(Evidence {
@@ -263,7 +260,7 @@ impl DataSecurityDetector for FileTransitDetector {
                         snippet: session.uploaded_filename.clone(),
                     });
                 }
-               // Password PDF
+                // Password PDF
                 if vigilyx_core::magic_bytes::is_encrypted_pdf(hdr) {
                     dlp_matches.push("encrypted_pdf".to_string());
                     evidence.push(Evidence {
@@ -278,8 +275,8 @@ impl DataSecurityDetector for FileTransitDetector {
             }
         }
 
-       // CheckFileextensionwhether HighRiskType(Key/ /data wait)
-       // Note: CheckFileNameKeywords(" Same"/" table"wait),Sensitive ByFileContent DLP
+        // CheckFileextensionwhether HighRiskType(Key/ /data wait)
+        // Note: CheckFileNameKeywords(" Same"/" table"wait),Sensitive ByFileContent DLP
         if let Some(ref filename) = session.uploaded_filename {
             if let Some(reason) = Self::is_sensitive_extension(filename) {
                 dlp_matches.push("sensitive_extension".to_string());
@@ -301,26 +298,24 @@ impl DataSecurityDetector for FileTransitDetector {
             });
         }
 
-        
-       // 3. DLP (UploadFileContent Sensitivedatadetect)
-        
-        
-       // strategy:
-       // 1. File (DOCX/XLSX/PDF/OLE) -> Decompress/ParseExtractText
-       // 2. Plain text body (body_is_binary=false) -> Connect
-       // 3. 2Base/RadixFile (PNG/JPEG/EXE/Unknown2Base/Radix) -> hopsText DLP(Byte only)
+        // 3. DLP (UploadFileContent Sensitivedatadetect)
+
+        // strategy:
+        // 1. File (DOCX/XLSX/PDF/OLE) -> Decompress/ParseExtractText
+        // 2. Plain text body (body_is_binary=false) -> Connect
+        // 3. 2Base/RadixFile (PNG/JPEG/EXE/Unknown2Base/Radix) -> hopsText DLP(Byte only)
         {
             let mut scanned = false;
 
-           // : whether 2Base/RadixFile(Used for step 3b And FP-1)
-           // unwrap_or(false): UnknownFileTypeDefault (possibly sniffer ofPlain text)
+            // : whether 2Base/RadixFile(Used for step 3b And FP-1)
+            // unwrap_or(false): UnknownFileTypeDefault (possibly sniffer ofPlain text)
             let is_binary_file = session.body_is_binary
                 || session
                     .detected_file_type
                     .map(|ft| !ft.is_text_scannable())
                     .unwrap_or(false);
 
-           // 3a. FileDocumentationExtract (DOCX/XLSX/PPTX/PDF/OLE)
+            // 3a. FileDocumentationExtract (DOCX/XLSX/PPTX/PDF/OLE)
             if session
                 .detected_file_type
                 .map(|ft| ft.is_extractable_document())
@@ -355,9 +350,9 @@ impl DataSecurityDetector for FileTransitDetector {
                 }
             }
 
-           // 3b. FileofPlain text DLP
-           // 2Base/RadixFileExecuteline: Plain text (body_is_binary=false) And octet-stream Uploadof TXT/CSV
-           // 2Base/RadixFile (PNG/JPEG/EXE/Unknown2Base/Radix) Byte only, Connecthops
+            // 3b. FileofPlain text DLP
+            // 2Base/RadixFileExecuteline: Plain text (body_is_binary=false) And octet-stream Uploadof TXT/CSV
+            // 2Base/RadixFile (PNG/JPEG/EXE/Unknown2Base/Radix) Byte only, Connecthops
             if !scanned && !is_binary_file {
                 let body_text = session.request_body.clone().or_else(|| {
                     session
@@ -392,13 +387,9 @@ impl DataSecurityDetector for FileTransitDetector {
             }
         }
 
-        
-        
-        
-
-       // FP-1: swift_code 2Base/RadixFile(Image/PDF Byte/Unknown2Base/Radix)Medium match
-       // When swift_code 1 DLP Medium (MediumDescription ContainsSensitivedata)
-       // : is_binary_file already step 3 first; step 3a ExtractofDocumentationText Security
+        // FP-1: swift_code 2Base/RadixFile(Image/PDF Byte/Unknown2Base/Radix)Medium match
+        // When swift_code 1 DLP Medium (MediumDescription ContainsSensitivedata)
+        // : is_binary_file already step 3 first; step 3a ExtractofDocumentationText Security
         let is_binary_for_fp1 = session.body_is_binary
             || session
                 .detected_file_type
@@ -415,13 +406,13 @@ impl DataSecurityDetector for FileTransitDetector {
             });
         }
 
-       // FP-2: employee_info ByFileNameMediumof" bit/ "waitGeneral
-       // multipart Uploadof body packetContains filename,DLP body Mediummatch multipart header MediumofFileName
-       // if employee_info 1 Medium According to snippet onlyContainsFileNameDistrict,
+        // FP-2: employee_info ByFileNameMediumof" bit/ "waitGeneral
+        // multipart Uploadof body packetContains filename,DLP body Mediummatch multipart header MediumofFileName
+        // if employee_info 1 Medium According to snippet onlyContainsFileNameDistrict,
         if dlp_matches == ["employee_info"] {
             let only_filename_match = evidence.iter().all(|e| {
                 if e.location.as_deref() == Some("FileContent") {
-                   // snippet MediumContains multipart form-data / filename -> FileName match
+                    // snippet MediumContains multipart form-data / filename -> FileName match
                     e.snippet
                         .as_deref()
                         .map(|s| s.contains("filename=") || s.contains("form-data"))
@@ -436,13 +427,13 @@ impl DataSecurityDetector for FileTransitDetector {
             }
         }
 
-       // if not SensitiveFound,
+        // if not SensitiveFound,
         if dlp_matches.is_empty() {
             return None;
         }
 
-       // Critical: Executable file/ /EncryptCompresspacket -> High (Securitystrategy)
-       // By dataof High JR/T level (JR/T 0197-2020)
+        // Critical: Executable file/ /EncryptCompresspacket -> High (Securitystrategy)
+        // By dataof High JR/T level (JR/T 0197-2020)
         let has_executable = dlp_matches.contains(&"executable_upload".to_string());
         let has_mismatch = dlp_matches.contains(&"file_type_mismatch".to_string());
         let has_encrypted = dlp_matches.contains(&"encrypted_archive".to_string())
@@ -512,7 +503,7 @@ mod tests {
 
     #[test]
     fn test_file_transit_filename_keyword_no_longer_triggers() {
-       // FileNameKeywords(" Name ") Alert, Content DLP
+        // FileNameKeywords(" Name ") Alert, Content DLP
         let detector = FileTransitDetector::new();
         let session = make_session("/netdisk/upload", Some("公司客户Name单2026.xlsx"), None);
         let result = detector.analyze(&session);
@@ -524,7 +515,7 @@ mod tests {
 
     #[test]
     fn test_file_transit_sensitive_extension_triggers() {
-       // HighRiskextension(.sql)
+        // HighRiskextension(.sql)
         let detector = FileTransitDetector::new();
         let session = make_session("/netdisk/upload", Some("database_backup.sql"), None);
         let result = detector.analyze(&session);
@@ -543,7 +534,7 @@ mod tests {
         let session = make_session(
             "/file/upload",
             Some("data.txt"),
-           // 4532015112830366 is Luhn-valid
+            // 4532015112830366 is Luhn-valid
             Some("员工Info: 4532015112830366"),
         );
         let result = detector.analyze(&session);
@@ -577,7 +568,7 @@ mod tests {
 
     #[test]
     fn test_file_transit_coremail_binary_chunk_no_alert() {
-       // Coremail AttachmentChunkedUpload (application/octet-stream) Alert
+        // Coremail AttachmentChunkedUpload (application/octet-stream) Alert
         let detector = FileTransitDetector::new();
         let mut s = HttpSession::new(
             "192.168.1.100".to_string(),
@@ -589,7 +580,7 @@ mod tests {
         );
         s.content_type = Some("application/octet-stream".to_string());
         s.request_body_size = 366566;
-       // body,DLP
+        // body,DLP
         let result = detector.analyze(&s);
         assert!(
             result.is_none(),
@@ -597,14 +588,12 @@ mod tests {
         );
     }
 
-    
-   // Coremail directData ()
-    
+    // Coremail directData ()
 
     #[test]
     fn test_coremail_directdata_with_sensitive_txt_triggers_alert() {
-       // : txt
-       // upload.jsp?func=directData + application/octet-stream +
+        // : txt
+        // upload.jsp?func=directData + application/octet-stream +
         let detector = FileTransitDetector::new();
         let mut s = HttpSession::new(
             "10.1.141.140".to_string(),
@@ -617,9 +606,9 @@ mod tests {
         s.content_type = Some("application/octet-stream".to_string());
         s.uploaded_filename = Some("DLP测试_敏感数据样本.txt".to_string());
         s.body_is_binary = false;
-        
-       // GB 11643-1999
-       // 4532015112830366 is Luhn-valid
+
+        // GB 11643-1999
+        // 4532015112830366 is Luhn-valid
         s.request_body = Some(
             "客户: 110101199001011237\n\
              信用卡: 4532015112830366\n\
@@ -650,7 +639,7 @@ mod tests {
 
     #[test]
     fn test_coremail_directdata_without_filename_still_detects() {
-       // uploaded_filename(prepare),
+        // uploaded_filename(prepare),
         let detector = FileTransitDetector::new();
         let mut s = HttpSession::new(
             "192.168.1.100".to_string(),
@@ -661,7 +650,7 @@ mod tests {
             "/coremail/XT/jsp/upload.jsp?func=directData&sid=abc&composeId=123&attachmentId=1&offset=0".to_string(),
         );
         s.content_type = Some("application/octet-stream".to_string());
-        s.uploaded_filename = None; 
+        s.uploaded_filename = None;
         s.body_is_binary = false;
         s.request_body = Some("密码: Test@2026Secure!\nPassword: MyBankP@ss123".to_string());
 
@@ -680,7 +669,7 @@ mod tests {
 
     #[test]
     fn test_coremail_directdata_clean_content_no_alert() {
-       // directData ->
+        // directData ->
         let detector = FileTransitDetector::new();
         let mut s = HttpSession::new(
             "192.168.1.100".to_string(),
@@ -704,7 +693,7 @@ mod tests {
 
     #[test]
     fn test_coremail_directdata_has_file_gate_passes() {
-       // func=directdata URL has_file
+        // func=directdata URL has_file
         let detector = FileTransitDetector::new();
         let mut s = HttpSession::new(
             "192.168.1.100".to_string(),
@@ -715,11 +704,11 @@ mod tests {
             "/coremail/XT/jsp/upload.jsp?func=directData&sid=abc".to_string(),
         );
         s.content_type = Some("application/octet-stream".to_string());
-        s.uploaded_filename = None; 
-       // multipart, uploaded_filename, URI func=directdata
-       // has_file true(is_coremail_direct_upload)
+        s.uploaded_filename = None;
+        // multipart, uploaded_filename, URI func=directdata
+        // has_file true(is_coremail_direct_upload)
         s.body_is_binary = false;
-       // 4532015112830366 is Luhn-valid
+        // 4532015112830366 is Luhn-valid
         s.request_body = Some("信用卡: 4532015112830366".to_string());
 
         let result = detector.analyze(&s);
@@ -732,15 +721,13 @@ mod tests {
     #[test]
     fn test_file_transit_normal_office_file_no_alert() {
         let detector = FileTransitDetector::new();
-       // FileUpload SensitiveContent -> Alert(FileName)
+        // FileUpload SensitiveContent -> Alert(FileName)
         let session = make_session("/file/upload", Some("report.xlsx"), None);
         let result = detector.analyze(&session);
         assert!(result.is_none(), "普通办公File无SensitiveContent不应Alert");
     }
 
-    
-   // Executable fileUploaddetectTest
-    
+    // Executable fileUploaddetectTest
 
     fn make_session_with_file_type(
         uri: &str,
@@ -822,7 +809,7 @@ mod tests {
     #[test]
     fn test_file_transit_binary_body_skips_dlp() {
         let detector = FileTransitDetector::new();
-       // body_is_binary = true request_body = None -> DLP line
+        // body_is_binary = true request_body = None -> DLP line
         let session = make_session_with_file_type(
             "/file/upload",
             Some("data.bin"),
@@ -832,7 +819,7 @@ mod tests {
             None,
         );
         let result = detector.analyze(&session);
-       // UnknownBinary HighRisk + FileName SensitiveKeywords + DLP -> match -> None
+        // UnknownBinary HighRisk + FileName SensitiveKeywords + DLP -> match -> None
         assert!(
             result.is_none(),
             "Binary body with no sensitive info should not alert"
@@ -842,14 +829,14 @@ mod tests {
     #[test]
     fn test_file_transit_text_body_still_does_dlp() {
         let detector = FileTransitDetector::new();
-       // body_is_binary = false -> DLP Normal line
+        // body_is_binary = false -> DLP Normal line
         let session = make_session_with_file_type(
             "/file/upload",
             Some("notes.txt"),
             Some(DetectedFileType::PlainText),
             None,
             false,
-           // 4532015112830366 is Luhn-valid
+            // 4532015112830366 is Luhn-valid
             Some("客户信用Card number: 4532015112830366"),
         );
         let result = detector.analyze(&session);
@@ -864,7 +851,7 @@ mod tests {
     #[test]
     fn test_file_transit_zip_as_docx_no_alert() {
         let detector = FileTransitDetector::new();
-       // ZIP.docx Normalof (OOXML),FileNameContains" Same" Do not trigger(FileNameKeywords)
+        // ZIP.docx Normalof (OOXML),FileNameContains" Same" Do not trigger(FileNameKeywords)
         let session = make_session_with_file_type(
             "/file/upload",
             Some("合Same草案.docx"),
@@ -883,7 +870,7 @@ mod tests {
     #[test]
     fn test_file_transit_jpeg_upload_no_alert() {
         let detector = FileTransitDetector::new();
-       // JPEG ImageUpload, SensitiveFileName -> Alert
+        // JPEG ImageUpload, SensitiveFileName -> Alert
         let session = make_session_with_file_type(
             "/netdisk/upload",
             Some("vacation.jpg"),
@@ -902,7 +889,7 @@ mod tests {
     #[test]
     fn test_file_transit_pe_disguised_as_jpg_critical() {
         let detector = FileTransitDetector::new();
-       // PE jpg -> executable_upload + file_type_mismatch
+        // PE jpg -> executable_upload + file_type_mismatch
         let session = make_session_with_file_type(
             "/file/upload",
             Some("photo.jpg"),
@@ -924,7 +911,7 @@ mod tests {
                 .dlp_matches
                 .contains(&"file_type_mismatch".to_string())
         );
-       // 0.5 + 0.35 = 0.85 -> High
+        // 0.5 + 0.35 = 0.85 -> High
         assert_eq!(incident.severity, DataSecuritySeverity::High);
     }
 
@@ -949,9 +936,7 @@ mod tests {
         );
     }
 
-    
-   // body_temp_file DLP Test
-    
+    // body_temp_file DLP Test
 
     #[test]
     fn test_file_transit_dlp_from_temp_file() {
@@ -962,7 +947,11 @@ mod tests {
         std::fs::create_dir_all(base).unwrap();
         let file_path = base.join("test_body_dlp.bin");
         // 4532015112830366 is Luhn-valid
-        std::fs::write(&file_path, "Internal data: credit card number 4532015112830366").unwrap();
+        std::fs::write(
+            &file_path,
+            "Internal data: credit card number 4532015112830366",
+        )
+        .unwrap();
 
         let mut session = HttpSession::new(
             "192.168.1.100".to_string(),
@@ -997,7 +986,7 @@ mod tests {
     fn test_file_transit_dlp_prefers_memory_body() {
         let detector = FileTransitDetector::new();
 
-       // tempFile SensitiveContent
+        // tempFile SensitiveContent
         let dir = tempfile::tempdir().unwrap();
         let file_path = dir.path().join("empty.bin");
         std::fs::write(&file_path, "nothing here").unwrap();
@@ -1014,8 +1003,8 @@ mod tests {
         session.uploaded_filename = Some("report.txt".to_string());
         session.uploaded_file_size = Some(1024);
         session.body_is_binary = false;
-       // Memory body Sensitivedata
-       // 4532015112830366 is Luhn-valid
+        // Memory body Sensitivedata
+        // 4532015112830366 is Luhn-valid
         session.request_body = Some("信用卡: 4532015112830366".to_string());
         session.body_temp_file = Some(file_path.to_string_lossy().to_string());
 
@@ -1028,14 +1017,12 @@ mod tests {
         );
     }
 
-    
-   // EncryptCompresspacketdetectTest
-    
+    // EncryptCompresspacketdetectTest
 
     #[test]
     fn test_file_transit_encrypted_zip_detected() {
         let detector = FileTransitDetector::new();
-       // constructEncrypt ZIP offirst 8 Byte body
+        // constructEncrypt ZIP offirst 8 Byte body
         let encrypted_zip_header = "\x50\x4B\x03\x04\x14\x00\x01\x00";
         let mut session = make_session_with_file_type(
             "/file/upload",
@@ -1046,8 +1033,8 @@ mod tests {
             Some(encrypted_zip_header),
         );
         session.body_is_binary = true;
-       // request_body Need/RequirepacketContains Byte; String
-       // Connect request_body = Some(String) 2Base/RadixHeader
+        // request_body Need/RequirepacketContains Byte; String
+        // Connect request_body = Some(String) 2Base/RadixHeader
         session.request_body = Some(
             String::from_utf8_lossy(&[0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x01, 0x00]).into_owned(),
         );
@@ -1075,13 +1062,13 @@ mod tests {
             true,
             None,
         );
-       // Set Encryptof ZIP header body
+        // Set Encryptof ZIP header body
         session.request_body = Some(
             String::from_utf8_lossy(&[0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00]).into_owned(),
         );
 
         let result = detector.analyze(&session);
-       // FileName SensitiveKeywords, Encrypt -> Alert
+        // FileName SensitiveKeywords, Encrypt -> Alert
         assert!(
             result.is_none(),
             "Unencrypted ZIP with normal filename should not alert"
@@ -1090,7 +1077,7 @@ mod tests {
 
     #[test]
     fn test_file_transit_coremail_upload_jsp_uri_matches() {
-       // Verify upload.jsp is now recognized as upload URI
+        // Verify upload.jsp is now recognized as upload URI
         assert!(FileTransitDetector::is_upload_uri(
             "/coremail/XT/jsp/upload.jsp?sid=abc&func=directdata"
         ));
@@ -1099,9 +1086,7 @@ mod tests {
         ));
     }
 
-    
-   // Test: URI match
-    
+    // Test: URI match
 
     #[test]
     fn test_file_transit_uri_case_insensitive() {
@@ -1133,9 +1118,7 @@ mod tests {
         }
     }
 
-    
-   // Test: FileTypedetect
-    
+    // Test: FileTypedetect
 
     #[test]
     fn test_file_transit_macho_binary_detected() {
@@ -1188,16 +1171,14 @@ mod tests {
             None,
         );
         let result = detector.analyze(&session);
-       // PDF HighRiskFileType, DLP Medium Alert
+        // PDF HighRiskFileType, DLP Medium Alert
         assert!(
             result.is_none(),
             "Normal PDF upload without DLP content should not alert"
         );
     }
 
-    
-   // Test: DLP Content
-    
+    // Test: DLP Content
 
     #[test]
     fn test_file_transit_text_with_multiple_dlp() {
@@ -1266,7 +1247,7 @@ mod tests {
 
     #[test]
     fn test_file_transit_no_file_at_all_no_alert() {
-       // FileUpload(multipart, FileName) -> Do not trigger
+        // FileUpload(multipart, FileName) -> Do not trigger
         let detector = FileTransitDetector::new();
         let mut session = HttpSession::new(
             "192.168.1.100".to_string(),
@@ -1286,13 +1267,11 @@ mod tests {
         );
     }
 
-    
-   // 2Base/RadixFilehops Step 3b DLP Test
-    
+    // 2Base/RadixFilehops Step 3b DLP Test
 
     #[test]
     fn test_binary_file_with_swift_pattern_skips_dlp() {
-       // 2Base/RadixFile body MediumpacketContains match SWIFT Code/DigitofByte -> step 3b hops, DLP
+        // 2Base/RadixFile body MediumpacketContains match SWIFT Code/DigitofByte -> step 3b hops, DLP
         let detector = FileTransitDetector::new();
         let mut session = make_session_with_file_type(
             "/file/upload",
@@ -1300,7 +1279,7 @@ mod tests {
             Some(DetectedFileType::Png),
             None,
             true,
-           // 2Base/RadixMediumof SWIFT match
+            // 2Base/RadixMediumof SWIFT match
             Some("binary header BKCHCNBJ more binary data"),
         );
         session.body_is_binary = true;
@@ -1313,7 +1292,7 @@ mod tests {
 
     #[test]
     fn test_unknown_filetype_nonbinary_still_scans() {
-       // detected_file_type=None + body_is_binary=false -> possibly ofPlain text, Normal DLP
+        // detected_file_type=None + body_is_binary=false -> possibly ofPlain text, Normal DLP
         let detector = FileTransitDetector::new();
         let mut session = HttpSession::new(
             "192.168.1.100".to_string(),
@@ -1328,7 +1307,7 @@ mod tests {
         session.uploaded_file_size = Some(1024);
         session.detected_file_type = None; // sniffer
         session.body_is_binary = false;
-       // 4532015112830366 is Luhn-valid
+        // 4532015112830366 is Luhn-valid
         session.request_body = Some("客户信用Card number: 4532015112830366".to_string());
         let result = detector.analyze(&session);
         assert!(

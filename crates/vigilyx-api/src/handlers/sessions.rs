@@ -110,7 +110,7 @@ pub async fn download_eml(
                 return (StatusCode::NOT_FOUND, "No email content to reconstruct").into_response();
             }
 
-           // Sanitize filename from subject
+            // Sanitize filename from subject
             let filename = session
                 .subject
                 .as_deref()
@@ -142,7 +142,7 @@ pub async fn download_eml(
                 })
         }
         Ok(None) => (StatusCode::NOT_FOUND, "Session not found").into_response(),
-       // SEC-H06: client Data error (CWE-209)
+        // SEC-H06: client Data error (CWE-209)
         Err(e) => {
             tracing::error!("EML 下载failed: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response()
@@ -178,7 +178,7 @@ pub async fn get_related_sessions(
 
     let mut related: Vec<EmailSession> = Vec::new();
 
-   // Message-ID
+    // Message-ID
     if let Some(ref mid) = session.message_id
         && !mid.is_empty()
         && let Ok(msg_related) = state.db.find_related_sessions(mid, uuid).await

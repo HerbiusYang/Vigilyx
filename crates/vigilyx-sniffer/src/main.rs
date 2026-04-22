@@ -2,7 +2,6 @@
 
 //! Target: 1Gbps+ emailStream Capture
 
-
 //! - Multi-threadParallelProcess (CPU - 1)
 //! - LockSessionManagement (DashMap)
 //! - BPF
@@ -111,20 +110,20 @@ impl GlobalSnifferState {
     }
 
     pub async fn set_error(&self, error: &str) {
-       *self.last_error.write().await = Some(error.to_string());
-       *self.connection_status.write().await = "error".to_string();
+        *self.last_error.write().await = Some(error.to_string());
+        *self.connection_status.write().await = "error".to_string();
         self.retry_count.fetch_add(1, Ordering::Relaxed);
     }
 
     pub async fn set_connected(&self) {
         self.online.store(true, Ordering::Relaxed);
-       *self.connection_status.write().await = "connected".to_string();
-       *self.last_error.write().await = None;
+        *self.connection_status.write().await = "connected".to_string();
+        *self.last_error.write().await = None;
         self.retry_count.store(0, Ordering::Relaxed);
     }
 
     pub async fn set_connecting(&self) {
-       *self.connection_status.write().await = "connecting".to_string();
+        *self.connection_status.write().await = "connecting".to_string();
     }
 }
 
@@ -146,44 +145,44 @@ use crate::session::ShardedSessionManager;
 #[command(about = "High-performanceemailStream量Capture与AnalyzeEngine")]
 #[command(version)]
 struct Args {
-   /// FromStandardInputreadGet pcap Stream (Used forRemoteCapture)
-    
-   /// UseMethod:
-   /// ssh root@remote "tcpdump -i eth1 -U -s0 -w -" | vigilyx-sniffer --stdin
+    /// FromStandardInputreadGet pcap Stream (Used forRemoteCapture)
+
+    /// UseMethod:
+    /// ssh root@remote "tcpdump -i eth1 -U -s0 -w -" | vigilyx-sniffer --stdin
     #[arg(long, conflicts_with_all = ["remote_listen", "interface"])]
     stdin: bool,
 
-   /// Listen TCP PortReceiveRemote pcap Stream
-    
-   /// UseMethod:
-   /// 1. vigilyx-sniffer --remote-listen 5000
-   /// 2. Remote: tcpdump -i eth1 -U -s0 -w - | nc <local_ip> 5000
+    /// Listen TCP PortReceiveRemote pcap Stream
+
+    /// UseMethod:
+    /// 1. vigilyx-sniffer --remote-listen 5000
+    /// 2. Remote: tcpdump -i eth1 -U -s0 -w - | nc <local_ip> 5000
     #[arg(long, value_name = "PORT", conflicts_with_all = ["stdin", "interface", "remote_connect"])]
     remote_listen: Option<u16>,
 
-   /// ConnectionRemoteServicehandler Get pcap Stream (Used for NAT Environment)
-   ///
-   /// UseMethod:
-   /// 1. Remote: socat TCP-LISTEN:5000,reuseaddr,fork EXEC:"tcpdump -i eth1 -U -s0 -w -"
-   ///    2.: vigilyx-sniffer --remote-connect 203.0.113.10:5000
+    /// ConnectionRemoteServicehandler Get pcap Stream (Used for NAT Environment)
+    ///
+    /// UseMethod:
+    /// 1. Remote: socat TCP-LISTEN:5000,reuseaddr,fork EXEC:"tcpdump -i eth1 -U -s0 -w -"
+    ///    2.: vigilyx-sniffer --remote-connect 203.0.113.10:5000
     #[arg(long, value_name = "HOST:PORT", conflicts_with_all = ["stdin", "interface", "remote_listen", "remote_connect_v3"])]
     remote_connect: Option<String>,
 
-   /// ConnectionRemote v3 FileProtocolServicehandler (pcapng + Break/Judge)
-   ///
-   /// v3 Protocol: SUBSCRIBE/RESUME, pcapng Segment, HEARTBEAT
+    /// ConnectionRemote v3 FileProtocolServicehandler (pcapng + Break/Judge)
+    ///
+    /// v3 Protocol: SUBSCRIBE/RESUME, pcapng Segment, HEARTBEAT
     #[arg(long, value_name = "HOST:PORT", conflicts_with_all = ["stdin", "interface", "remote_listen", "remote_connect"])]
     remote_connect_v3: Option<String>,
 
-   /// NetworkInterface (overrideEnvironmentVariable)
+    /// NetworkInterface (overrideEnvironmentVariable)
     #[arg(short, long, value_name = "INTERFACE")]
     interface: Option<String>,
 
-   /// BPF table (overrideDefaultofemailPort)
+    /// BPF table (overrideDefaultofemailPort)
     #[arg(long, value_name = "FILTER")]
     bpf_filter: Option<String>,
 
-   /// .env Filepath (sudo EnvironmentVariable, ParameterEnsureConfiguration Load)
+    /// .env Filepath (sudo EnvironmentVariable, ParameterEnsureConfiguration Load)
     #[arg(long, value_name = "PATH")]
     env_file: Option<String>,
 }
@@ -191,26 +190,26 @@ struct Args {
 /// CaptureMode
 #[derive(Debug, Clone)]
 pub enum CaptureMode {
-   /// Capture
+    /// Capture
     Local { interface: String },
-   /// FromStandardInputreadGet pcap Stream
+    /// FromStandardInputreadGet pcap Stream
     Stdin,
-   /// Listen TCP Port
+    /// Listen TCP Port
     RemoteListen { port: u16 },
-   /// ConnectionRemoteServicehandler (Used for NAT Environment)
+    /// ConnectionRemoteServicehandler (Used for NAT Environment)
     RemoteConnect { host: String, port: u16 },
-   /// ConnectionRemote v3 FileProtocolServicehandler (pcapng + Break/Judge)
+    /// ConnectionRemote v3 FileProtocolServicehandler (pcapng + Break/Judge)
     RemoteConnectV3 { host: String, port: u16 },
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-   // ParseCommandlineParameter
+    // ParseCommandlineParameter
     let args = Args::parse();
 
-   // initializelog (if not Set RUST_LOG,UseDefaultvalue)
+    // initializelog (if not Set RUST_LOG,UseDefaultvalue)
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-       // Defaultloglevel: info (pathlogalreadydowngradelevel trace, RUST_LOG=trace Output)
+        // Defaultloglevel: info (pathlogalreadydowngradelevel trace, RUST_LOG=trace Output)
         tracing_subscriber::EnvFilter::new("info,vigilyx_sniffer=info")
     });
 
@@ -233,7 +232,7 @@ async fn main() -> Result<()> {
     info!("  Target: 1Gbps+ emailStream量Capture");
     info!("============================================");
 
-   // Load.env File (--env-file priority, sudo EnvironmentVariableof)
+    // Load.env File (--env-file priority, sudo EnvironmentVariableof)
     if let Some(ref env_file) = args.env_file {
         info!("From指定RoadPathLoad .env: {}", env_file);
         match dotenvy::from_filename(env_file) {
@@ -242,12 +241,12 @@ async fn main() -> Result<()> {
         }
     }
 
-   // LoadConfiguration (.env Defaultvalue)
+    // LoadConfiguration (.env Defaultvalue)
     let mut config = Config::from_env()?;
     info!("API Target: {}:{}", config.api_host, config.api_port);
 
-   // From API/DB GetdataSecurityConfiguration (webmail_servers / http_ports)
-   // DB 1 source,infiniteretry API (, 30)
+    // From API/DB GetdataSecurityConfiguration (webmail_servers / http_ports)
+    // DB 1 source,infiniteretry API (, 30)
     {
         let mut retry_interval = Duration::from_secs(2);
         let max_retry_interval = Duration::from_secs(30);
@@ -257,7 +256,7 @@ async fn main() -> Result<()> {
             attempt += 1;
             match fetch_sniffer_config_from_api(&config).await {
                 Ok(Some(sniffer_cfg)) => {
-                   // webmail_servers: DB value Connectoverride(DB source)
+                    // webmail_servers: DB value Connectoverride(DB source)
                     if let Some(servers) = sniffer_cfg
                         .get("webmail_servers")
                         .and_then(|v| v.as_array())
@@ -271,7 +270,7 @@ async fn main() -> Result<()> {
                             config.webmail_servers
                         );
                     }
-                   // http_ports: DB override
+                    // http_ports: DB override
                     if let Some(ports) = sniffer_cfg.get("http_ports").and_then(|v| v.as_array()) {
                         let hp: Vec<u16> = ports
                             .iter()
@@ -307,20 +306,20 @@ async fn main() -> Result<()> {
         }
     }
 
-   // CommandlineParameteroverride.env Configuration
+    // CommandlineParameteroverride.env Configuration
     if let Some(interface) = &args.interface {
         config.sniffer_interface = interface.clone();
     }
 
-   // CaptureMode (CommandlineParameter>.env Configuration)
+    // CaptureMode (CommandlineParameter>.env Configuration)
     let capture_mode = if args.stdin {
-       // Command line specified --stdin
+        // Command line specified --stdin
         CaptureMode::Stdin
     } else if let Some(port) = args.remote_listen {
-       // Command line specified --remote-listen
+        // Command line specified --remote-listen
         CaptureMode::RemoteListen { port }
     } else if let Some(ref addr) = args.remote_connect {
-       // Command line specified --remote-connect
+        // Command line specified --remote-connect
         let parts: Vec<&str> = addr.rsplitn(2, ':').collect();
         if parts.len() != 2 {
             anyhow::bail!(
@@ -333,7 +332,7 @@ async fn main() -> Result<()> {
         let host = parts[1].to_string();
         CaptureMode::RemoteConnect { host, port }
     } else if let Some(ref addr) = args.remote_connect_v3 {
-       // Command line specified --remote-connect-v3
+        // Command line specified --remote-connect-v3
         let parts: Vec<&str> = addr.rsplitn(2, ':').collect();
         if parts.len() != 2 {
             anyhow::bail!(
@@ -346,12 +345,12 @@ async fn main() -> Result<()> {
         let host = parts[1].to_string();
         CaptureMode::RemoteConnectV3 { host, port }
     } else if let Some(ref interface) = args.interface {
-       // Command line specified --interface
+        // Command line specified --interface
         CaptureMode::Local {
             interface: interface.clone(),
         }
     } else {
-       // not CommandlineParameter,Use.env Configuration
+        // not CommandlineParameter,Use.env Configuration
         match config.capture_mode {
             ConfigCaptureMode::RemoteConnect => {
                 if let Some((host, port)) = config.parse_remote_address() {
@@ -372,7 +371,7 @@ async fn main() -> Result<()> {
         }
     };
 
-   // Configurationsource
+    // Configurationsource
     let mode_source = if args.stdin
         || args.remote_listen.is_some()
         || args.remote_connect.is_some()
@@ -385,7 +384,7 @@ async fn main() -> Result<()> {
     };
     info!("Configurationsource: {}", mode_source);
 
-   // ConfigurationInfo
+    // ConfigurationInfo
     match &capture_mode {
         CaptureMode::Local { interface } => {
             info!("CaptureMode: 本地网卡");
@@ -437,11 +436,11 @@ async fn main() -> Result<()> {
     }
     info!("  - CPU 核心数: {}", num_cpus::get());
 
-   // initializeMessageQueueclient (withTimeout)
+    // initializeMessageQueueclient (withTimeout)
     let mq_config = MqConfig::from_env();
     let mq = MqClient::new(mq_config);
 
-   // Connection Redis (3 Timeout)
+    // Connection Redis (3 Timeout)
     info!("正在Connection Redis...");
     let mq_client = match tokio::time::timeout(Duration::from_secs(3), mq.connect()).await {
         Ok(Ok(_)) => {
@@ -458,14 +457,14 @@ async fn main() -> Result<()> {
         }
     };
 
-   // write NetworkInterfaceList Redis(Forfirst Setup Wizard readGet)
+    // write NetworkInterfaceList Redis(Forfirst Setup Wizard readGet)
     if let Some(ref mq) = mq_client
         && let Err(e) = publish_host_interfaces(mq).await
     {
         warn!("write入NetworkInterfaceListFailed: {}", e);
     }
 
-   // Start Redis Configuration Listen (Received sniffer:cmd:reload Exit,By Docker Auto)
+    // Start Redis Configuration Listen (Received sniffer:cmd:reload Exit,By Docker Auto)
     if let Some(ref mq) = mq_client {
         let reload_mq = mq.clone();
         tokio::spawn(async move {
@@ -477,7 +476,9 @@ async fn main() -> Result<()> {
                     // SEC-P06: Read shared token once for control-plane message auth
                     let cmd_token = std::env::var("INTERNAL_API_TOKEN").unwrap_or_default();
                     if cmd_token.is_empty() {
-                        warn!("INTERNAL_API_TOKEN not set — sniffer reload commands will be rejected");
+                        warn!(
+                            "INTERNAL_API_TOKEN not set — sniffer reload commands will be rejected"
+                        );
                     }
                     info!("already订阅 Sniffer Configuration重载channel");
                     use futures::StreamExt;
@@ -489,13 +490,15 @@ async fn main() -> Result<()> {
                         };
                         // SEC-P06: Verify shared token prefix before processing
                         if verify_cmd_payload(&raw, &cmd_token).is_none() {
-                            warn!("Sniffer rejected reload command with invalid/missing token (SEC-P06)");
+                            warn!(
+                                "Sniffer rejected reload command with invalid/missing token (SEC-P06)"
+                            );
                             continue;
                         }
                         warn!(
                             "ReceivedConfiguration重载指令，Sniffer immediately将重启以应用NewConfiguration..."
                         );
-                       // giving1 timestamp logOutput
+                        // giving1 timestamp logOutput
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         std::process::exit(0);
                     }
@@ -510,7 +513,7 @@ async fn main() -> Result<()> {
         });
     }
 
-   // CreateSharded session manager (Lock)
+    // CreateSharded session manager (Lock)
     let session_manager = ShardedSessionManager::with_timeout(Duration::from_secs(900)); // 15minuteTimeout
     if !config.webmail_servers.is_empty() {
         info!(
@@ -518,7 +521,7 @@ async fn main() -> Result<()> {
             config.webmail_servers
         );
     }
-   // From Redis Load sid -> user Mapping (keep)
+    // From Redis Load sid -> user Mapping (keep)
     if let Some(ref mq) = mq_client {
         match mq.sid_user_load_all().await {
             Ok(entries) => session_manager.load_sid_user_from_redis(entries),
@@ -529,7 +532,7 @@ async fn main() -> Result<()> {
     let session_manager = Arc::new(session_manager);
     info!("SessionManagementDevice/Handlerinitializecomplete (分片无Lockmode, 15minuteTimeout)");
 
-   // Start sid -> user Redis handler (30 Batchwrite)
+    // Start sid -> user Redis handler (30 Batchwrite)
     if let Some(ref mq) = mq_client {
         let persist_manager = session_manager.clone();
         let persist_mq = mq.clone();
@@ -547,7 +550,7 @@ async fn main() -> Result<()> {
         });
     }
 
-   // StartSessionCleanup
+    // StartSessionCleanup
     let cleanup_manager = session_manager.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
@@ -557,7 +560,7 @@ async fn main() -> Result<()> {
         }
     });
 
-   // initialize Status
+    // initialize Status
     let sniffer_state = get_sniffer_state();
     {
         let mode_str = match &capture_mode {
@@ -571,18 +574,18 @@ async fn main() -> Result<()> {
                 format!("remote_connect_v3:{}:{}", host, port)
             }
         };
-       *sniffer_state.capture_mode.write().await = mode_str;
+        *sniffer_state.capture_mode.write().await = mode_str;
 
         match &capture_mode {
             CaptureMode::RemoteConnect { host, port }
             | CaptureMode::RemoteConnectV3 { host, port } => {
-               *sniffer_state.remote_address.write().await = Some(format!("{}:{}", host, port));
+                *sniffer_state.remote_address.write().await = Some(format!("{}:{}", host, port));
             }
             _ => {}
         }
     }
 
-   // StartStatistics
+    // StartStatistics
     let stats_manager = session_manager.clone();
     let stats_mq = mq_client.clone();
     let stats_sniffer_state = sniffer_state.clone();
@@ -590,7 +593,7 @@ async fn main() -> Result<()> {
     let stats_api_port = config.api_port;
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(5));
-       // HTTP fallback client (Redis Use)
+        // HTTP fallback client (Redis Use)
         let stats_http_client = crate::internal_api_client_builder()
             .timeout(Duration::from_secs(2))
             .build()
@@ -603,14 +606,14 @@ async fn main() -> Result<()> {
             interval.tick().await;
             let mut stats = stats_manager.get_stats();
 
-           // : (Whenfirstvalue - Time/Countvalue) / 5
+            // : (Whenfirstvalue - Time/Countvalue) / 5
             stats.packets_per_second =
                 (stats.total_packets.saturating_sub(prev_packets)) as f64 / 5.0;
             stats.bytes_per_second = (stats.total_bytes.saturating_sub(prev_bytes)) as f64 / 5.0;
             prev_packets = stats.total_packets;
             prev_bytes = stats.total_bytes;
 
-           // SynchronousStatisticsdata Status (Used forStatus)
+            // SynchronousStatisticsdata Status (Used forStatus)
             stats_sniffer_state
                 .packets_processed
                 .store(stats.total_packets, Ordering::Relaxed);
@@ -633,7 +636,7 @@ async fn main() -> Result<()> {
                     error!("PublishStatisticsInfoFailed: {}", e);
                 }
             } else {
-               // HTTP fallback: Redis Connect API
+                // HTTP fallback: Redis Connect API
                 let url = format!(
                     "http://{}:{}/api/import/stats",
                     stats_api_host, stats_api_port
@@ -643,7 +646,7 @@ async fn main() -> Result<()> {
         }
     });
 
-   // StartStatus (API sniffer Status)
+    // StartStatus (API sniffer Status)
     let state_for_report = sniffer_state.clone();
     let api_url = format!("http://{}:{}", config.api_host, config.api_port);
     info!(
@@ -651,7 +654,7 @@ async fn main() -> Result<()> {
         api_url
     );
     tokio::spawn(async move {
-       // Create Use of HTTP client (Avoid sudo Environment of 502 Error)
+        // Create Use of HTTP client (Avoid sudo Environment of 502 Error)
         let client = crate::internal_api_client_builder()
             .build()
             .expect("internal status HTTP client should build");
@@ -702,32 +705,32 @@ async fn main() -> Result<()> {
         }
     });
 
-   // CreateHigh-performance capture engine
+    // CreateHigh-performance capture engine
     let capturer = HighPerformanceCapturer::new(config, session_manager, mq_client);
 
-   // according tomodeStartCapture
+    // according tomodeStartCapture
     match capture_mode {
         CaptureMode::Local { .. } => {
             capturer.start()?;
-           // CaptureStartSuccess,SetStatus alreadyConnection
+            // CaptureStartSuccess,SetStatus alreadyConnection
             sniffer_state.set_connected().await;
         }
         CaptureMode::Stdin => {
             capturer.start_from_stdin()?;
-           // stdin modeStartSuccess,SetStatus alreadyConnection
+            // stdin modeStartSuccess,SetStatus alreadyConnection
             sniffer_state.set_connected().await;
         }
         CaptureMode::RemoteListen { port } => {
             capturer.start_remote_listen(port).await?;
-           // ListenmodeStartSuccess,SetStatus alreadyConnection
+            // ListenmodeStartSuccess,SetStatus alreadyConnection
             sniffer_state.set_connected().await;
         }
         CaptureMode::RemoteConnect { host, port } => {
-           // RemoteConnectionmode ConnectionSuccess AutoSetStatus
+            // RemoteConnectionmode ConnectionSuccess AutoSetStatus
             capturer.start_remote_connect(&host, port).await?;
         }
         CaptureMode::RemoteConnectV3 { host, port } => {
-           // v3 FileProtocolmode
+            // v3 FileProtocolmode
             capturer.start_remote_connect_v3(&host, port).await?;
         }
     }
@@ -736,13 +739,13 @@ async fn main() -> Result<()> {
     info!("  CaptureDevice/HandleralreadyStart，According to Ctrl+C 停止");
     info!("============================================");
 
-   // waitWaitExitSignal
+    // waitWaitExitSignal
     tokio::signal::ctrl_c().await?;
 
     info!("正在停止...");
     capturer.stop();
 
-   // Statistics
+    // Statistics
     let stats = capturer.stats();
     info!("最终Statistics:");
     info!(
@@ -782,7 +785,7 @@ async fn fetch_sniffer_config_from_api(config: &Config) -> Result<Option<serde_j
         return Ok(None);
     }
     let body: serde_json::Value = resp.json().await?;
-   // API Return { "success": true, "data": {... } }
+    // API Return { "success": true, "data": {... } }
     if let Some(data) = body.get("data") {
         Ok(Some(data.clone()))
     } else {
@@ -804,7 +807,7 @@ async fn publish_host_interfaces(mq: &vigilyx_db::mq::MqClient) -> anyhow::Resul
 
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-       // hops lo And docker/veth Interface
+        // hops lo And docker/veth Interface
         if name == "lo"
             || name.starts_with("veth")
             || name.starts_with("br-")
@@ -830,7 +833,7 @@ async fn publish_host_interfaces(mq: &vigilyx_db::mq::MqClient) -> anyhow::Resul
         }));
     }
 
-   // According to total_bytes downgrade
+    // According to total_bytes downgrade
     interfaces.sort_by(|a, b| {
         let ta = a["total_bytes"].as_u64().unwrap_or(0);
         let tb = b["total_bytes"].as_u64().unwrap_or(0);

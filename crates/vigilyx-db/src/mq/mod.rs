@@ -23,62 +23,62 @@ pub use stream::{PendingSummary, StreamClient};
 
 /// Message queue topic names (Pub/Sub channels)
 pub mod topics {
-   /// Statistics update notification (Pub/Sub: Sniffer → API)
+    /// Statistics update notification (Pub/Sub: Sniffer → API)
     pub const STATS_UPDATE: &str = "vigilyx:stats:update";
-   /// AI analysis request
+    /// AI analysis request
     pub const AI_ANALYZE_REQUEST: &str = "vigilyx:ai:request";
-   /// AI analysis result
+    /// AI analysis result
     pub const AI_ANALYZE_RESULT: &str = "vigilyx:ai:result";
 
-   // Engine API Communication
-   /// Security engine verdict result (Engine -> API)
+    // Engine API Communication
+    /// Security engine verdict result (Engine -> API)
     pub const ENGINE_VERDICT: &str = "vigilyx:engine:verdict";
-   /// Security alert (Engine -> API)
+    /// Security alert (Engine -> API)
     pub const ENGINE_ALERT: &str = "vigilyx:engine:alert";
-   /// Data security incident (Engine -> API)
+    /// Data security incident (Engine -> API)
     pub const ENGINE_DS_INCIDENT: &str = "vigilyx:engine:ds_incident";
-   /// Engine runtime status (Engine -> API)
+    /// Engine runtime status (Engine -> API)
     pub const ENGINE_STATUS: &str = "vigilyx:engine:status";
-   /// Rescan command (API -> Engine)
+    /// Rescan command (API -> Engine)
     pub const ENGINE_CMD_RESCAN: &str = "vigilyx:engine:cmd:rescan";
-   /// Cache refresh command (API -> Engine)
+    /// Cache refresh command (API -> Engine)
     pub const ENGINE_CMD_RELOAD: &str = "vigilyx:engine:cmd:reload";
-   /// Sniffer config reload command (API -> Sniffer)
+    /// Sniffer config reload command (API -> Sniffer)
     pub const SNIFFER_CMD_RELOAD: &str = "vigilyx:sniffer:cmd:reload";
 }
 
 /// Redis key names
 pub mod keys {
-   /// Network interface list (written by Sniffer, read by API)
+    /// Network interface list (written by Sniffer, read by API)
     pub const SNIFFER_INTERFACES: &str = "vigilyx:sniffer:interfaces";
 
-   // ── Service heartbeats (key with TTL, dead-man switch) ──
-   /// Engine heartbeat (30s TTL, written every 5-10s)
+    // ── Service heartbeats (key with TTL, dead-man switch) ──
+    /// Engine heartbeat (30s TTL, written every 5-10s)
     pub const ENGINE_HEARTBEAT: &str = "vigilyx:engine:heartbeat";
-   /// Sniffer heartbeat
+    /// Sniffer heartbeat
     pub const SNIFFER_HEARTBEAT: &str = "vigilyx:sniffer:heartbeat";
-   /// MTA heartbeat
+    /// MTA heartbeat
     pub const MTA_HEARTBEAT: &str = "vigilyx:mta:heartbeat";
 }
 
 /// Redis Stream names (data plane, at-least-once delivery)
 pub mod streams {
-   /// Email sessions stream (Sniffer -> Engine)
+    /// Email sessions stream (Sniffer -> Engine)
     pub const EMAIL_SESSIONS: &str = "vigilyx:stream:sessions";
-   /// HTTP sessions stream (Sniffer -> Engine, data security)
+    /// HTTP sessions stream (Sniffer -> Engine, data security)
     pub const HTTP_SESSIONS: &str = "vigilyx:stream:http_sessions";
-   /// AI tasks stream
+    /// AI tasks stream
     pub const AI_TASKS: &str = "vigilyx:stream:ai_tasks";
 
-   // ── Dead-letter queues ──
-   /// Email sessions DLQ (messages that failed processing after N attempts)
+    // ── Dead-letter queues ──
+    /// Email sessions DLQ (messages that failed processing after N attempts)
     pub const EMAIL_SESSIONS_DLQ: &str = "vigilyx:stream:sessions:dlq";
-   /// HTTP sessions DLQ
+    /// HTTP sessions DLQ
     pub const HTTP_SESSIONS_DLQ: &str = "vigilyx:stream:http_sessions:dlq";
 }
 
 /// Consumer group names
 pub mod consumer_groups {
-   /// Engine consumer group
+    /// Engine consumer group
     pub const ENGINE: &str = "vigilyx-engine";
 }

@@ -19,9 +19,7 @@ use vigilyx_core::{DEFAULT_INTERNAL_SERVICE_HOSTS, validate_internal_service_url
 use super::{ApiResponse, PaginationParams};
 use crate::AppState;
 
-
 // Handlers
-
 
 /// List training samples (paginated)
 pub async fn get_training_samples(
@@ -66,11 +64,13 @@ pub async fn get_training_stats(State(state): State<Arc<AppState>>) -> impl Into
 
     let min_samples_required = 30u64;
 
-   // Fetch model status from Python AI service
+    // Fetch model status from Python AI service
     let ai_url = get_ai_service_url(&state).await;
     let url = match build_ai_service_endpoint(&ai_url, "training/status") {
         Ok(url) => url,
-        Err(error) => return ApiResponse::<serde_json::Value>::internal_err(&error, "Operation failed"),
+        Err(error) => {
+            return ApiResponse::<serde_json::Value>::internal_err(&error, "Operation failed");
+        }
     };
 
     let client = &state.http_client;
@@ -84,7 +84,7 @@ pub async fn get_training_stats(State(state): State<Arc<AppState>>) -> impl Into
         _ => None,
     };
 
-   // can_train: enough samples and not currently training
+    // can_train: enough samples and not currently training
     let is_training = model_status
         .as_ref()
         .and_then(|s| s.get("is_training"))
@@ -139,11 +139,14 @@ pub async fn get_training_stats(State(state): State<Arc<AppState>>) -> impl Into
 ///
 /// Loads training samples from DB and sends them to the Python AI service.
 pub async fn trigger_nlp_training(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-   // 1. Load training samples from DB
+    // 1. Load training samples from DB
     let samples = match state.engine_db.get_all_training_samples().await {
         Ok(s) => s,
         Err(e) => {
-            return ApiResponse::<serde_json::Value>::err(format!("Failed to load training samples: {}", e));
+            return ApiResponse::<serde_json::Value>::err(format!(
+                "Failed to load training samples: {}",
+                e
+            ));
         }
     };
 
@@ -154,7 +157,7 @@ pub async fn trigger_nlp_training(State(state): State<Arc<AppState>>) -> impl In
         ));
     }
 
-   // 2. Build payload and send to Python AI service
+    // 2. Build payload and send to Python AI service
     let payload: Vec<serde_json::Value> = samples
         .iter()
         .map(|s| {
@@ -173,11 +176,13 @@ pub async fn trigger_nlp_training(State(state): State<Arc<AppState>>) -> impl In
     let ai_url = get_ai_service_url(&state).await;
     let url = match build_ai_service_endpoint(&ai_url, "training/train") {
         Ok(url) => url,
-        Err(error) => return ApiResponse::<serde_json::Value>::internal_err(&error, "Operation failed"),
+        Err(error) => {
+            return ApiResponse::<serde_json::Value>::internal_err(&error, "Operation failed");
+        }
     };
 
     let client = &state.http_client;
-   // CPU-intensive training; 24h timeout (Python handles progress internally)
+    // CPU-intensive training; 24h timeout (Python handles progress internally)
     match tokio::time::timeout(
         std::time::Duration::from_secs(86400),
         client
@@ -207,7 +212,9 @@ pub async fn get_nlp_training_status(State(state): State<Arc<AppState>>) -> impl
     let ai_url = get_ai_service_url(&state).await;
     let url = match build_ai_service_endpoint(&ai_url, "training/status") {
         Ok(url) => url,
-        Err(error) => return ApiResponse::<serde_json::Value>::internal_err(&error, "Operation failed"),
+        Err(error) => {
+            return ApiResponse::<serde_json::Value>::internal_err(&error, "Operation failed");
+        }
     };
 
     let client = &state.http_client;
@@ -231,7 +238,9 @@ pub async fn get_training_progress(State(state): State<Arc<AppState>>) -> impl I
     let ai_url = get_ai_service_url(&state).await;
     let url = match build_ai_service_endpoint(&ai_url, "training/progress") {
         Ok(url) => url,
-        Err(error) => return ApiResponse::<serde_json::Value>::internal_err(&error, "Operation failed"),
+        Err(error) => {
+            return ApiResponse::<serde_json::Value>::internal_err(&error, "Operation failed");
+        }
     };
 
     let client = &state.http_client;
@@ -249,7 +258,6 @@ pub async fn get_training_progress(State(state): State<Arc<AppState>>) -> impl I
         Err(_) => ApiResponse::<serde_json::Value>::err("AI service not responding"),
     }
 }
-
 
 pub async fn update_training_sample(
     State(state): State<Arc<AppState>>,
@@ -295,10 +303,6 @@ pub async fn update_training_sample(
     }
 }
 
-
-
-
-
 /// Get AI service URL from DB, with runtime allowlist validation (CWE-918).
 /// Falls back to default if DB value fails validation (DB poisoning protection).
 fn build_ai_service_endpoint(base_url: &str, endpoint: &str) -> Result<String, String> {
@@ -320,7 +324,7 @@ async fn get_ai_service_url(state: &AppState) -> String {
         _ => return default_url,
     };
 
-   // SEC: Validate URL allowlist at runtime - same as API save-time check
+    // SEC: Validate URL allowlist at runtime - same as API save-time check
     if validate_internal_service_url(&url, DEFAULT_INTERNAL_SERVICE_HOSTS).is_ok() {
         return url;
     }

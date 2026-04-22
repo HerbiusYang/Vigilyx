@@ -42,9 +42,9 @@ use std::{
 
 use crate::AppState;
 use crate::auth::{
-    ChangePasswordRequest, ChangePasswordResponse, LoginRequest,
-    build_token_cookie, handle_change_password, handle_login, handle_logout, handle_me,
-    require_admin, require_auth, require_internal_token, sanitize_login_username,
+    ChangePasswordRequest, ChangePasswordResponse, LoginRequest, build_token_cookie,
+    handle_change_password, handle_login, handle_logout, handle_me, require_admin, require_auth,
+    require_internal_token, sanitize_login_username,
 };
 use crate::handlers;
 use crate::handlers::data_security as data_security_handlers;
@@ -84,8 +84,15 @@ fn build_trusted_proxy_ips(
         IpAddr::V6(Ipv6Addr::LOCALHOST),
     ]);
 
-    if let Some(raw_ips) = configured_ips.map(str::trim).filter(|value| !value.is_empty()) {
-        for entry in raw_ips.split(',').map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(raw_ips) = configured_ips
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        for entry in raw_ips
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
             match entry.parse::<IpAddr>() {
                 Ok(ip) => {
                     trusted.insert(ip);
@@ -101,7 +108,9 @@ fn build_trusted_proxy_ips(
         }
     }
 
-    let configured_hosts = configured_hosts.map(str::trim).filter(|value| !value.is_empty());
+    let configured_hosts = configured_hosts
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
     let (hosts, defaults_only): (Vec<&str>, bool) = match configured_hosts {
         Some(raw_hosts) => (
             raw_hosts
@@ -123,7 +132,10 @@ fn build_trusted_proxy_ips(
                     trusted.insert(address.ip());
                 }
                 if !resolved_any && !defaults_only {
-                    tracing::warn!(proxy_host = host, "TRUSTED_PROXY_HOSTS: 条目未解析出任何 IP");
+                    tracing::warn!(
+                        proxy_host = host,
+                        "TRUSTED_PROXY_HOSTS: 条目未解析出任何 IP"
+                    );
                 }
             }
             Err(error) => {
@@ -203,7 +215,10 @@ fn extract_forwarded_client_ip(
     Some(client_ip)
 }
 
-pub(crate) fn extract_client_ip(headers: &axum::http::HeaderMap, direct_addr: SocketAddr) -> IpAddr {
+pub(crate) fn extract_client_ip(
+    headers: &axum::http::HeaderMap,
+    direct_addr: SocketAddr,
+) -> IpAddr {
     extract_client_ip_with_trusted(headers, direct_addr, trusted_proxy_ips())
 }
 
@@ -291,7 +306,7 @@ async fn login(
     )
     .await;
 
-   // Record login attempt (success or failure)
+    // Record login attempt (success or failure)
     let db = state.engine_db.clone();
     let username = sanitize_login_username(&request.username);
     let success = response.success;
@@ -315,7 +330,8 @@ async fn login(
 
     // Set the HttpOnly cookie on successful login; the JWT stays server-side and is not serialized into the JSON body.
     if let Some(ref token) = response.token {
-        let cookie_val = build_token_cookie(token, state.auth.config.token_expire_secs, secure_cookie);
+        let cookie_val =
+            build_token_cookie(token, state.auth.config.token_expire_secs, secure_cookie);
         let mut resp_headers = axum::http::HeaderMap::new();
         if let Ok(val) = cookie_val.parse() {
             resp_headers.insert(axum::http::header::SET_COOKIE, val);
@@ -346,7 +362,7 @@ async fn ws_ticket(
         )
             .into_response(),
         None => {
-           // SEC-M12: Rate limited, return 429
+            // SEC-M12: Rate limited, return 429
             (
                 axum::http::StatusCode::TOO_MANY_REQUESTS,
                 Json(serde_json::json!({
@@ -370,8 +386,8 @@ async fn logout(
     headers: axum::http::HeaderMap,
     user: crate::auth::AuthenticatedUser,
 ) -> axum::response::Response {
-   // JWTs are also accepted via Authorization headers, so logout must revoke
-   // the current token generation, not just clear the browser cookie.
+    // JWTs are also accepted via Authorization headers, so logout must revoke
+    // the current token generation, not just clear the browser cookie.
     let new_token_version = match state.engine_db.bump_auth_token_version().await {
         Ok(version) => version,
         Err(e) => {
@@ -436,29 +452,29 @@ async fn change_password(
 
 /// Build API routes
 pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
-   // Public routes (no authentication)
+    // Public routes (no authentication)
     let public_routes = Router::new()
-       // Health checks (K8s probes)
+        // Health checks (K8s probes)
         .route("/health", get(handlers::health_check))
         .route("/health/live", get(handlers::health::liveness))
         .route("/health/ready", get(handlers::health::public_readiness))
-       // Login
+        // Login
         .route(
             "/auth/login",
             post(login).layer(DefaultBodyLimit::max(8 * 1024)),
         );
 
-   // Protected routes (JWT authentication)
+    // Protected routes (JWT authentication)
     let protected_routes = Router::new()
-       // Session info (cookie-auth validation)
+        // Session info (cookie-auth validation)
         .route("/auth/me", get(me))
-       // Logout (clear the HttpOnly cookie)
+        // Logout (clear the HttpOnly cookie)
         .route("/auth/logout", post(logout))
-       // Password change (authenticated)
+        // Password change (authenticated)
         .route("/auth/change-password", post(change_password))
-       // SEC-H02: WebSocket ticket (authenticated)
+        // SEC-H02: WebSocket ticket (authenticated)
         .route("/auth/ws-ticket", post(ws_ticket))
-       // Sessions
+        // Sessions
         .route("/sessions", get(handlers::list_sessions))
         .route("/sessions/{id}", get(handlers::get_session))
         .route("/sessions/{id}/eml", get(handlers::download_eml))
@@ -466,7 +482,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/sessions/{id}/related",
             get(handlers::get_related_sessions),
         )
-       // Session security verdict
+        // Session security verdict
         .route(
             "/sessions/{id}/verdict",
             get(security_handlers::get_session_verdict),
@@ -475,32 +491,35 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/sessions/{id}/security-results",
             get(security_handlers::get_session_security_results),
         )
-       // Rescan session
+        // Rescan session
         .route(
             "/sessions/{id}/rescan",
             admin_only(post(security_handlers::rescan_session)),
         )
-       // Session feedback
+        // Session feedback
         .route(
             "/sessions/{id}/feedback",
             post(security_handlers::submit_feedback),
         )
-       // Statistics
+        // Statistics
         .route("/stats", get(handlers::get_stats))
         .route(
             "/stats/external-logins",
             get(handlers::get_external_login_stats),
         )
-       // System status
+        // System status
         .route("/system/status", get(handlers::get_system_status))
         .route("/system/metrics", get(handlers::get_system_metrics))
         .route("/system/interfaces", get(handlers::get_host_interfaces))
-       // Database management
+        // Database management
         .route(
             "/database/rotate-config",
             admin_only(get(handlers::get_rotate_config).put(handlers::update_rotate_config)),
         )
-        .route("/database/clear", admin_only(delete(handlers::clear_database)))
+        .route(
+            "/database/clear",
+            admin_only(delete(handlers::clear_database)),
+        )
         .route(
             "/database/factory-reset",
             admin_only(post(handlers::factory_reset)),
@@ -509,57 +528,71 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/database/precise-clear",
             admin_only(post(handlers::precise_clear)),
         )
-       // Audit logs and login history
+        // Audit logs and login history
         .route("/audit/logs", admin_only(get(handlers::list_audit_logs)))
         .route(
             "/audit/login-history",
             admin_only(get(handlers::list_login_history)),
         )
-       // Syslog Configuration
+        // Syslog Configuration
         .route(
             "/config/syslog",
-            admin_only(get(syslog_handlers::get_syslog_config).put(syslog_handlers::update_syslog_config)),
+            admin_only(
+                get(syslog_handlers::get_syslog_config).put(syslog_handlers::update_syslog_config),
+            ),
         )
         .route(
             "/config/syslog/test",
             admin_only(post(syslog_handlers::test_syslog_connection)),
         )
-       // Comment retained in English.
+        // Comment retained in English.
         .route(
             "/config/setup-status",
             admin_only(get(handlers::get_setup_status).put(handlers::update_setup_status)),
         )
         .route("/config/ui-preferences", get(handlers::get_ui_preferences))
-        .route("/config/ui-preferences", put(handlers::update_ui_preferences))
-       // Deployment mode (mirror / mta)
+        .route(
+            "/config/ui-preferences",
+            put(handlers::update_ui_preferences),
+        )
+        // Deployment mode (mirror / mta)
         .route(
             "/config/deployment-mode",
             admin_only(get(handlers::get_deployment_mode).put(handlers::update_deployment_mode)),
         )
-       // Sniffer / data security configuration (webmail_servers, http_ports)
+        // Sniffer / data security configuration (webmail_servers, http_ports)
         .route(
             "/config/sniffer",
-            admin_only(get(security_handlers::get_sniffer_config).put(security_handlers::update_sniffer_config)),
+            admin_only(
+                get(security_handlers::get_sniffer_config)
+                    .put(security_handlers::update_sniffer_config),
+            ),
         )
-       // Time policy configuration
+        // Time policy configuration
         .route(
             "/config/time-policy",
-            admin_only(get(security_handlers::get_time_policy_config).put(security_handlers::update_time_policy_config)),
+            admin_only(
+                get(security_handlers::get_time_policy_config)
+                    .put(security_handlers::update_time_policy_config),
+            ),
         );
 
-   // Security engine API
+    // Security engine API
     let security_routes = Router::new()
-       // Pipeline configuration
+        // Pipeline configuration
         .route(
             "/security/pipeline",
-            admin_only(get(security_handlers::get_pipeline_config).put(security_handlers::update_pipeline_config)),
+            admin_only(
+                get(security_handlers::get_pipeline_config)
+                    .put(security_handlers::update_pipeline_config),
+            ),
         )
-       // Module metadata
+        // Module metadata
         .route(
             "/security/modules",
             get(security_handlers::get_modules_metadata),
         )
-       // IOC
+        // IOC
         .route(
             "/security/ioc",
             admin_only(get(ioc_handlers::list_ioc).post(ioc_handlers::add_ioc)),
@@ -584,7 +617,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/security/ioc/export",
             admin_only(get(ioc_handlers::export_ioc)),
         )
-       // Comment retained in English.
+        // Comment retained in English.
         .route(
             "/security/whitelist",
             admin_only(
@@ -597,7 +630,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/security/whitelist/{id}",
             admin_only(delete(security_handlers::delete_whitelist_entry)),
         )
-       // Comment retained in English.
+        // Comment retained in English.
         .route(
             "/security/rules",
             admin_only(
@@ -613,7 +646,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/security/rules/{id}",
             admin_only(delete(security_handlers::delete_disposition_rule)),
         )
-       // Quarantine (MTA mode)
+        // Quarantine (MTA mode)
         .route(
             "/security/quarantine",
             admin_only(get(security_handlers::quarantine::list_quarantine)),
@@ -630,12 +663,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/security/quarantine/{id}",
             admin_only(delete(security_handlers::quarantine::delete_quarantine)),
         )
-       // YARA
+        // YARA
         .route(
             "/security/yara-rules",
-            admin_only(
-                get(yara_handlers::list_yara_rules).post(yara_handlers::create_yara_rule),
-            ),
+            admin_only(get(yara_handlers::list_yara_rules).post(yara_handlers::create_yara_rule)),
         )
         .route(
             "/security/yara-rules/{id}",
@@ -653,12 +684,12 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/security/yara-rules/validate",
             admin_only(post(yara_handlers::validate_yara_rule)),
         )
-       // Recent verdicts (paginated)
+        // Recent verdicts (paginated)
         .route(
             "/security/verdicts",
             get(security_handlers::list_recent_verdicts),
         )
-       // Security statistics and engine status
+        // Security statistics and engine status
         .route(
             "/security/stats",
             get(security_handlers::get_security_stats),
@@ -667,58 +698,72 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/security/engine-status",
             get(security_handlers::get_engine_status),
         )
-       // Rescan
+        // Rescan
         .route(
             "/security/rescan",
             admin_only(post(security_handlers::trigger_rescan)),
         )
-       // Feedback statistics
+        // Feedback statistics
         .route(
             "/security/feedback/stats",
             get(security_handlers::get_feedback_stats),
         )
-       // AI service configuration
+        // AI service configuration
         .route(
             "/security/ai-config",
-            admin_only(get(security_handlers::get_ai_config).put(security_handlers::update_ai_config)),
+            admin_only(
+                get(security_handlers::get_ai_config).put(security_handlers::update_ai_config),
+            ),
         )
         .route(
             "/security/ai-config/test",
             admin_only(post(security_handlers::test_ai_connection)),
         )
-       // Content detection rules
+        // Content detection rules
         .route(
             "/security/content-rules",
             get(security_handlers::get_content_rules),
         )
-       // Keyword override configuration
-         .route(
-             "/security/keyword-overrides",
-             admin_only(get(security_handlers::get_keyword_overrides).put(security_handlers::update_keyword_overrides)),
-         )
+        // Keyword override configuration
+        .route(
+            "/security/keyword-overrides",
+            admin_only(
+                get(security_handlers::get_keyword_overrides)
+                    .put(security_handlers::update_keyword_overrides),
+            ),
+        )
         // Module data override configuration
-         .route(
-             "/security/module-data-overrides",
-             admin_only(get(security_handlers::get_module_data_overrides).put(security_handlers::update_module_data_overrides)),
-         )
+        .route(
+            "/security/module-data-overrides",
+            admin_only(
+                get(security_handlers::get_module_data_overrides)
+                    .put(security_handlers::update_module_data_overrides),
+            ),
+        )
         // Email alert configuration
         .route(
             "/security/email-alert",
-            admin_only(get(security_handlers::get_email_alert_config).put(security_handlers::update_email_alert_config)),
+            admin_only(
+                get(security_handlers::get_email_alert_config)
+                    .put(security_handlers::update_email_alert_config),
+            ),
         )
-       .route(
+        .route(
             "/security/email-alert/test",
             admin_only(post(security_handlers::test_email_alert)),
         )
         .route(
             "/security/wechat-alert",
-            admin_only(get(security_handlers::get_wechat_alert_config).put(security_handlers::update_wechat_alert_config)),
+            admin_only(
+                get(security_handlers::get_wechat_alert_config)
+                    .put(security_handlers::update_wechat_alert_config),
+            ),
         )
         .route(
             "/security/wechat-alert/test",
             admin_only(post(security_handlers::test_wechat_alert)),
         )
-       // Comment retained in English.
+        // Comment retained in English.
         .route(
             "/security/intel-whitelist",
             admin_only(
@@ -730,20 +775,35 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/security/intel-whitelist/{id}",
             admin_only(delete(security_handlers::delete_intel_whitelist)),
         )
-       // Intel source configuration (VT / AbuseIPDB)
+        // Intel source configuration (VT / AbuseIPDB)
         .route(
             "/security/intel-config",
-            admin_only(get(security_handlers::get_intel_config).put(security_handlers::update_intel_config)),
+            admin_only(
+                get(security_handlers::get_intel_config)
+                    .put(security_handlers::update_intel_config),
+            ),
         )
-       // Threat scenes (bulk mailing + bounce harvest)
-        .route("/security/threat-scenes", get(security_handlers::list_threat_scenes))
-        .route("/security/threat-scenes/stats", get(security_handlers::threat_scene_stats))
-        .route("/security/threat-scenes/{id}", get(security_handlers::get_threat_scene))
+        // Threat scenes (bulk mailing + bounce harvest)
+        .route(
+            "/security/threat-scenes",
+            get(security_handlers::list_threat_scenes),
+        )
+        .route(
+            "/security/threat-scenes/stats",
+            get(security_handlers::threat_scene_stats),
+        )
+        .route(
+            "/security/threat-scenes/{id}",
+            get(security_handlers::get_threat_scene),
+        )
         .route(
             "/security/threat-scenes/{id}",
             admin_only(delete(security_handlers::delete_threat_scene)),
         )
-        .route("/security/threat-scenes/{id}/emails", get(security_handlers::get_scene_emails))
+        .route(
+            "/security/threat-scenes/{id}/emails",
+            get(security_handlers::get_scene_emails),
+        )
         .route(
             "/security/threat-scenes/{id}/acknowledge",
             admin_only(post(security_handlers::acknowledge_scene)),
@@ -758,10 +818,12 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         )
         .route(
             "/security/scene-rules",
-            admin_only(get(security_handlers::get_scene_rules).put(security_handlers::update_scene_rules)),
+            admin_only(
+                get(security_handlers::get_scene_rules).put(security_handlers::update_scene_rules),
+            ),
         );
 
-   // NLP model management API
+    // NLP model management API
     let admin_routes = Router::new()
         .route(
             "/admin/nlp/train",
@@ -790,7 +852,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         )
         .layer(middleware::from_fn(require_admin));
 
-   // Data security API (HTTP session analysis)
+    // Data security API (HTTP session analysis)
     let data_security_routes = Router::new()
         .route(
             "/data-security/stats",
@@ -821,47 +883,47 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             get(data_security_handlers::get_data_security_engine_status),
         );
 
-   // Internal service routes (sniffer/engine, INTERNAL_API_TOKEN auth)
+    // Internal service routes (sniffer/engine, INTERNAL_API_TOKEN auth)
     let internal_routes = Router::new()
-       // SEC-M06: Prometheus metrics (internal route, token auth, CWE-306)
+        // SEC-M06: Prometheus metrics (internal route, token auth, CWE-306)
         .route("/metrics", get(crate::metrics::metrics_handler))
         .route("/internal/health/ready", get(handlers::health::readiness))
-       // Sniffer status update
+        // Sniffer status update
         .route("/system/sniffer", post(handlers::update_sniffer_status))
-       // MTA proxy status update
+        // MTA proxy status update
         .route("/system/mta", post(handlers::update_mta_status))
-       // Data import
+        // Data import
         .route("/import/sessions", post(handlers::import_sessions))
         .route("/import/stats", post(handlers::update_stats))
-       // Data security HTTP session import
+        // Data security HTTP session import
         .route(
             "/data-security/import/http-sessions",
             post(data_security_handlers::import_http_sessions),
         )
-       // Engine status query (internal component auth)
+        // Engine status query (internal component auth)
         .route(
             "/internal/engine-status",
             get(security_handlers::get_engine_status),
         )
-       // Sniffer data security configuration (internal auth)
+        // Sniffer data security configuration (internal auth)
         .route(
             "/internal/sniffer-config",
             get(security_handlers::get_sniffer_config_internal),
         );
 
-   // Merge protected routes and apply JWT auth middleware
+    // Merge protected routes and apply JWT auth middleware
     let authed = protected_routes
         .merge(security_routes)
         .merge(admin_routes)
         .merge(data_security_routes)
         .layer(middleware::from_fn_with_state(state, require_auth));
 
-   // Internal routes with token auth middleware
+    // Internal routes with token auth middleware
     let internal_authed = internal_routes
         .layer(middleware::from_fn(crate::auth::require_internal_origin))
         .layer(middleware::from_fn(require_internal_token));
 
-   // Final merge: public + internal (token) + JWT-authenticated
+    // Final merge: public + internal (token) + JWT-authenticated
     public_routes.merge(internal_authed).merge(authed)
 }
 
@@ -924,10 +986,7 @@ mod tests {
     #[test]
     fn request_is_secure_respects_https_forwarded_proto_from_trusted_proxy() {
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-forwarded-proto",
-            HeaderValue::from_static("https"),
-        );
+        headers.insert("x-forwarded-proto", HeaderValue::from_static("https"));
 
         let direct_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8088));
         assert!(request_is_secure(&headers, direct_addr, false));
@@ -936,10 +995,7 @@ mod tests {
     #[test]
     fn request_is_secure_ignores_untrusted_forwarded_proto() {
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-forwarded-proto",
-            HeaderValue::from_static("https"),
-        );
+        headers.insert("x-forwarded-proto", HeaderValue::from_static("https"));
 
         let direct_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(203, 0, 113, 10), 8088));
         assert!(!request_is_secure(&headers, direct_addr, false));
@@ -948,13 +1004,13 @@ mod tests {
     #[test]
     fn internal_route_rejects_external_client_behind_trusted_proxy() {
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "x-forwarded-for",
-            HeaderValue::from_static("198.51.100.24"),
-        );
+        headers.insert("x-forwarded-for", HeaderValue::from_static("198.51.100.24"));
 
         let direct_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8088));
-        assert!(!request_originates_from_internal_network(&headers, direct_addr));
+        assert!(!request_originates_from_internal_network(
+            &headers,
+            direct_addr
+        ));
     }
 
     #[test]
@@ -962,7 +1018,10 @@ mod tests {
         let headers = HeaderMap::new();
         let direct_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 9), 8088));
 
-        assert!(request_originates_from_internal_network(&headers, direct_addr));
+        assert!(request_originates_from_internal_network(
+            &headers,
+            direct_addr
+        ));
     }
 
     #[test]
@@ -974,6 +1033,9 @@ mod tests {
         );
 
         let direct_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8088));
-        assert!(!request_originates_from_internal_network(&headers, direct_addr));
+        assert!(!request_originates_from_internal_network(
+            &headers,
+            direct_addr
+        ));
     }
 }

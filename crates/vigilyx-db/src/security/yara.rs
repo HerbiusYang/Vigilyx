@@ -21,7 +21,7 @@ pub struct YaraRuleRow {
 }
 
 impl VigilDb {
-   /// YARA ()
+    /// YARA ()
     pub async fn list_yara_rules(&self, enabled_only: Option<bool>) -> Result<Vec<YaraRuleRow>> {
         let rows = if let Some(true) = enabled_only {
             sqlx::query_as::<_, YaraRuleRow>(
@@ -50,7 +50,7 @@ impl VigilDb {
         Ok(rows)
     }
 
-   /// According to YARA
+    /// According to YARA
     pub async fn list_yara_rules_by_category(&self, category: &str) -> Result<Vec<YaraRuleRow>> {
         let rows = sqlx::query_as::<_, YaraRuleRow>(
             r#"
@@ -67,7 +67,7 @@ impl VigilDb {
         Ok(rows)
     }
 
-   /// items YARA
+    /// items YARA
     pub async fn get_yara_rule(&self, id: &str) -> Result<Option<YaraRuleRow>> {
         let row = sqlx::query_as::<_, YaraRuleRow>(
             r#"
@@ -83,7 +83,7 @@ impl VigilDb {
         Ok(row)
     }
 
-   /// YARA
+    /// YARA
     pub async fn insert_yara_rule(&self, rule: &YaraRuleRow) -> Result<()> {
         sqlx::query(
             r#"
@@ -109,7 +109,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// New YARA
+    /// New YARA
     pub async fn update_yara_rule(&self, rule: &YaraRuleRow) -> Result<bool> {
         let result = sqlx::query(
             r#"
@@ -132,7 +132,7 @@ impl VigilDb {
         Ok(result.rows_affected() > 0)
     }
 
-   /// YARA
+    /// YARA
     pub async fn delete_yara_rule(&self, id: &str) -> Result<bool> {
         let result = sqlx::query("DELETE FROM security_yara_rules WHERE id = $1")
             .bind(id)
@@ -141,7 +141,7 @@ impl VigilDb {
         Ok(result.rows_affected() > 0)
     }
 
-   /// / YARA
+    /// / YARA
     pub async fn toggle_yara_rule(&self, id: &str, enabled: bool) -> Result<bool> {
         let now = chrono::Utc::now().to_rfc3339();
         let result = sqlx::query(
@@ -155,7 +155,7 @@ impl VigilDb {
         Ok(result.rows_affected() > 0)
     }
 
-   /// According to ()
+    /// According to ()
     pub async fn count_builtin_yara_rules(&self) -> Result<i64> {
         let row: (i64,) = sqlx::query_as(
             "SELECT COUNT(*)::BIGINT FROM security_yara_rules WHERE source = 'builtin'",
@@ -165,7 +165,7 @@ impl VigilDb {
         Ok(row.0)
     }
 
-   /// UPSERT (According to rule_name, New rule_source)
+    /// UPSERT (According to rule_name, New rule_source)
     pub async fn upsert_builtin_yara_rule(&self, rule: &YaraRuleRow) -> Result<()> {
         sqlx::query(
             r#"

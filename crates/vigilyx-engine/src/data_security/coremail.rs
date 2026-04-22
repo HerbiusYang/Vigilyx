@@ -28,7 +28,7 @@ pub fn is_coremail_compose_uri(uri: &str) -> bool {
 ///
 /// Returns None for non-Coremail JSON, with fallback to raw body by the caller.
 pub fn extract_content_for_dlp(body: &str) -> Option<String> {
-   // Full-audit mode: parse entire body, no truncation
+    // Full-audit mode: parse entire body, no truncation
     let mut end = body.len();
     while end > 0 && !body.is_char_boundary(end) {
         end -= 1;
@@ -46,9 +46,9 @@ pub fn extract_content_for_dlp(body: &str) -> Option<String> {
     if let Some(content) = attrs.get("content").and_then(|v| v.as_str())
         && !content.is_empty()
     {
-       // content may be HTML (isHtml=true), need to strip tags so that
-       // ID numbers split across <span> tags are rejoined for matching
-       // e.g. <span>610582199</span><span>70624</span><span>0513</span>
+        // content may be HTML (isHtml=true), need to strip tags so that
+        // ID numbers split across <span> tags are rejoined for matching
+        // e.g. <span>610582199</span><span>70624</span><span>0513</span>
         let text = strip_html_tags(content);
         if !text.is_empty() {
             parts.push(text);
@@ -70,14 +70,14 @@ pub fn extract_content_for_dlp(body: &str) -> Option<String> {
 ///
 /// Returns the normalized (lowercase) email address.
 pub fn extract_user_from_body(body: &str) -> Option<String> {
-   // Full-audit mode: parse entire body
+    // Full-audit mode: parse entire body
     let mut end = body.len();
     while end > 0 && !body.is_char_boundary(end) {
         end -= 1;
     }
     let val: serde_json::Value = serde_json::from_str(&body[..end]).ok()?;
     let account = val.get("attrs")?.get("account")?.as_str()?;
-   // Extract email from angle-bracket format
+    // Extract email from angle-bracket format
     if let Some(start) = account.find('<')
         && let Some(end_pos) = account.find('>')
     {
@@ -86,7 +86,7 @@ pub fn extract_user_from_body(body: &str) -> Option<String> {
             return Some(email.to_lowercase());
         }
     }
-   // Plain email format
+    // Plain email format
     let trimmed = account.trim().trim_matches('"').trim();
     if trimmed.contains('@') {
         Some(trimmed.to_lowercase())
@@ -97,7 +97,7 @@ pub fn extract_user_from_body(body: &str) -> Option<String> {
 
 /// Strip HTML tags and style blocks, extracting plain text.
 fn strip_html_tags(html: &str) -> String {
-   // Step 1: Remove <style>...</style> blocks (CSS class names contain phone-number-like digits)
+    // Step 1: Remove <style>...</style> blocks (CSS class names contain phone-number-like digits)
     let mut no_style = String::with_capacity(html.len());
     let lower = html.to_lowercase();
     let mut pos = 0;
@@ -115,7 +115,7 @@ fn strip_html_tags(html: &str) -> String {
         }
     }
 
-   // Step 2: Strip remaining HTML tags
+    // Step 2: Strip remaining HTML tags
     let mut result = String::with_capacity(no_style.len() / 2);
     let mut in_tag = false;
     for ch in no_style.chars() {
@@ -128,7 +128,7 @@ fn strip_html_tags(html: &str) -> String {
         }
     }
 
-   // Normalize whitespace
+    // Normalize whitespace
     result.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
@@ -139,9 +139,9 @@ fn strip_html_tags(html: &str) -> String {
 /// parsing the entire (potentially huge) JSON, which is both slow and was previously
 /// broken by a 4KB truncation that missed the action field entirely.
 pub fn extract_body_action(body: &str) -> Option<String> {
-   // Fast path: search for "action":"..." near the end of the JSON
-   // Coremail format: {"id":"...","attrs":{...huge content...},"action":"save"}
-   // Search last 512 bytes for the action field
+    // Fast path: search for "action":"..." near the end of the JSON
+    // Coremail format: {"id":"...","attrs":{...huge content...},"action":"save"}
+    // Search last 512 bytes for the action field
     let search_start = body.len().saturating_sub(512);
     let mut start = search_start;
     while start > 0 && !body.is_char_boundary(start) {
@@ -149,17 +149,17 @@ pub fn extract_body_action(body: &str) -> Option<String> {
     }
     let tail = &body[start..];
 
-   // Look for "action":" pattern
+    // Look for "action":" pattern
     if let Some(pos) = tail.find("\"action\"") {
         let after_key = &tail[pos + 8..]; // skip past "action"
-       // Skip whitespace and colon
+        // Skip whitespace and colon
         let after_colon = after_key.trim_start().strip_prefix(':')?;
         let after_ws = after_colon.trim_start().strip_prefix('"')?;
         let end_quote = after_ws.find('"')?;
         return Some(after_ws[..end_quote].to_lowercase());
     }
 
-   // Fallback: full JSON parse - no truncation
+    // Fallback: full JSON parse - no truncation
     let mut end = body.len();
     while end > 0 && !body.is_char_boundary(end) {
         end -= 1;
@@ -217,7 +217,7 @@ mod tests {
         assert_eq!(extract_body_action(""), None);
     }
 
-   // extract_content_for_dlp Test
+    // extract_content_for_dlp Test
 
     #[test]
     fn test_extract_content_for_dlp_normal() {
@@ -227,7 +227,7 @@ mod tests {
         let text = result.unwrap();
         assert!(text.contains("Test主题"));
         assert!(text.contains("emailbodyContent"));
-       // packetContains id Segment
+        // packetContains id Segment
         assert!(
             !text.contains("1774418005615"),
             "Should not contain JSON id field"
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn test_extract_content_for_dlp_no_phone_in_id() {
-       // found Scenario:id MediumContainsClassMobile phoneNumber
+        // found Scenario:id MediumContainsClassMobile phoneNumber
         let body = r#"{"id":"1774418005615","attrs":{"account":"support@example.com","content":"<div>38D3670BE3FE3409</div>"},"action":"deliver"}"#;
         let result = extract_content_for_dlp(body);
         assert!(result.is_some());
@@ -269,7 +269,7 @@ mod tests {
         assert!(extract_content_for_dlp(body).is_none());
     }
 
-   // extract_user_from_body Test
+    // extract_user_from_body Test
 
     #[test]
     fn test_extract_user_plain_email() {
@@ -335,7 +335,7 @@ mod tests {
         assert_eq!(extract_user_from_body(""), None);
     }
 
-   // extract_content_for_dlp depthTest
+    // extract_content_for_dlp depthTest
 
     #[test]
     fn test_extract_content_strips_html_tags() {
@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn test_extract_content_preserves_id_number_across_tags() {
-       // found: ID cardNumber HTML
+        // found: ID cardNumber HTML
         let body = r#"{"attrs":{"content":"<span>610582</span><span>19950624</span><span>0513</span>","subject":""}}"#;
         let result = extract_content_for_dlp(body).unwrap();
         assert!(
@@ -399,7 +399,7 @@ mod tests {
         );
     }
 
-   // strip_html_tags
+    // strip_html_tags
 
     #[test]
     fn test_strip_html_nested_tags() {
@@ -432,7 +432,7 @@ mod tests {
         assert_eq!(result, "Hello World");
     }
 
-   // is_coremail_compose_uri depthTest
+    // is_coremail_compose_uri depthTest
 
     #[test]
     fn test_coremail_uri_case_insensitive() {
@@ -454,7 +454,7 @@ mod tests {
         assert!(!is_coremail_compose_uri("/other/compose.jsp"));
     }
 
-   // extract_body_action depthTest
+    // extract_body_action depthTest
 
     #[test]
     fn test_extract_body_action_autosave() {
@@ -470,19 +470,19 @@ mod tests {
 
     #[test]
     fn test_extract_body_action_multibyte_boundary_no_panic() {
-       // construct1 4096 BytecharactersofString
-       // of: Verify due to char boundary panic
+        // construct1 4096 BytecharactersofString
+        // of: Verify due to char boundary panic
         let mut body = String::with_capacity(4100);
         body.push_str(r#"{"action":"save","data":""#);
         while body.len() < 4090 {
             body.push('x');
         }
-       // Add Bytecharacters 4096
+        // Add Bytecharacters 4096
         while body.len() < 4096 {
             body.push('中');
         }
         body.push_str("\"}");
-       // : panic (JSON Break/Judge ParsepossiblyFailed, But panic)
+        // : panic (JSON Break/Judge ParsepossiblyFailed, But panic)
         let _ = extract_body_action(&body);
     }
 }

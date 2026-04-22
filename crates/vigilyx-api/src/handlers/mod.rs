@@ -22,15 +22,15 @@ pub use database::{
     clear_database, factory_reset, get_rotate_config, import_sessions, precise_clear,
     update_rotate_config, update_stats,
 };
-pub use sessions::{download_eml, get_related_sessions, get_session, list_sessions};
 pub use deployment_mode::{get_deployment_mode, update_deployment_mode};
+pub use sessions::{download_eml, get_related_sessions, get_session, list_sessions};
 pub use setup_status::{get_setup_status, update_setup_status};
 pub use stats::{get_external_login_stats, get_stats};
-pub use ui_preferences::{get_ui_preferences, update_ui_preferences};
 pub use system::{
     MtaStatus, SnifferStatus, get_host_interfaces, get_system_metrics, get_system_status,
     update_mta_status, update_sniffer_status,
 };
+pub use ui_preferences::{get_ui_preferences, update_ui_preferences};
 
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde::{Deserialize, Serialize};
@@ -75,19 +75,19 @@ pub struct PaginationParams {
     pub limit: u32,
     pub protocol: Option<String>,
     pub status: Option<String>,
-   /// time (ISO 8601)
+    /// time (ISO 8601)
     pub since: Option<String>,
-   /// : "WITH_CONTENT" | "ENCRYPTED" | "NON_ENCRYPTED"
+    /// : "WITH_CONTENT" | "ENCRYPTED" | "NON_ENCRYPTED"
     pub content_filter: Option<String>,
-   /// Authentication: "WITH_AUTH" | "AUTH_SUCCESS" | "AUTH_FAILED"
+    /// Authentication: "WITH_AUTH" | "AUTH_SUCCESS" | "AUTH_FAILED"
     pub auth_filter: Option<String>,
-   /// Source IP (): client_ip (send / Connection)
+    /// Source IP (): client_ip (send / Connection)
     pub source_ips: Option<String>,
-   /// target IP (): server_ip (receive / Service)
+    /// target IP (): server_ip (receive / Service)
     pub dest_ips: Option<String>,
-   /// : client_ip, server_ip, mail_from, rcpt_to, subject
+    /// : client_ip, server_ip, mail_from, rcpt_to, subject
     pub search: Option<String>,
-   /// COUNT Query (table, ~4.5s)
+    /// COUNT Query (table, ~4.5s)
     #[serde(default)]
     pub skip_count: bool,
 }
@@ -116,7 +116,7 @@ pub struct ApiResponse<T> {
     pub success: bool,
     pub data: Option<T>,
     pub error: Option<String>,
-   /// error (Such as "AUTH_001", "VAL_002", "RES_001"),successresponse Contains field
+    /// error (Such as "AUTH_001", "VAL_002", "RES_001"),successresponse Contains field
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
 }
@@ -131,7 +131,7 @@ impl<T: Serialize> ApiResponse<T> {
         })
     }
 
-   /// error (, error_code)
+    /// error (, error_code)
     pub fn err(error: impl Into<String>) -> Json<Self> {
         Json(Self {
             success: false,
@@ -141,7 +141,7 @@ impl<T: Serialize> ApiResponse<T> {
         })
     }
 
-   /// Log the internal error server-side while returning a masked client message.
+    /// Log the internal error server-side while returning a masked client message.
     pub fn internal_err(error: &dyn std::fmt::Display, context: &str) -> Json<Self> {
         tracing::error!(error = %error, "{}", context);
         Json(Self {
@@ -152,10 +152,10 @@ impl<T: Serialize> ApiResponse<T> {
         })
     }
 
-   /// 400 Bad Request - verifyerror, formaterror, parameter
-    
-   /// `bad_request_with_code` error,
-   /// Default `VAL_002` (VALIDATION_INVALID_PARAMS).
+    /// 400 Bad Request - verifyerror, formaterror, parameter
+
+    /// `bad_request_with_code` error,
+    /// Default `VAL_002` (VALIDATION_INVALID_PARAMS).
     pub fn bad_request(msg: impl Into<String>) -> (StatusCode, Json<Self>) {
         (
             StatusCode::BAD_REQUEST,
@@ -168,7 +168,7 @@ impl<T: Serialize> ApiResponse<T> {
         )
     }
 
-   /// 400 Bad Request - error
+    /// 400 Bad Request - error
     #[allow(dead_code)]
     pub fn bad_request_with_code(msg: impl Into<String>, code: &str) -> (StatusCode, Json<Self>) {
         (
@@ -182,7 +182,7 @@ impl<T: Serialize> ApiResponse<T> {
         )
     }
 
-   /// 404 Not Found - Source
+    /// 404 Not Found - Source
     pub fn not_found(msg: impl Into<String>) -> (StatusCode, Json<Self>) {
         (
             StatusCode::NOT_FOUND,
@@ -195,7 +195,7 @@ impl<T: Serialize> ApiResponse<T> {
         )
     }
 
-   /// Return a masked 500 response while logging the detailed error server-side.
+    /// Return a masked 500 response while logging the detailed error server-side.
     pub fn server_error(error: &dyn std::fmt::Display, context: &str) -> (StatusCode, Json<Self>) {
         tracing::error!(error = %error, "{}", context);
         (

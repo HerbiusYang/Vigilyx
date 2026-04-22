@@ -12,9 +12,7 @@ use uuid::Uuid;
 use super::super::ApiResponse;
 use crate::AppState;
 
-
 // Security Query
-
 
 /// Get session Security
 pub async fn get_session_verdict(
@@ -67,9 +65,7 @@ pub async fn get_session_security_results(
     }
 }
 
-
 // risk table (+ metadata)
-
 
 #[derive(Debug, Deserialize)]
 pub struct VerdictListParams {
@@ -105,9 +101,7 @@ pub async fn list_recent_verdicts(
     }
 }
 
-
 // Statistics monitor
-
 
 /// GetSecurityStatistics
 pub async fn get_security_stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -132,11 +126,6 @@ pub async fn get_engine_status(State(state): State<Arc<AppState>>) -> impl IntoR
 
     ApiResponse::ok(super::default_engine_status_payload())
 }
-
-
-
-
-
 
 pub async fn submit_feedback(
     State(state): State<Arc<AppState>>,

@@ -12,9 +12,9 @@ const ENGINE_MODULE_DATA_SEED_JSON: &str =
     include_str!("../../../../shared/schemas/engine_module_data_seed.json");
 
 impl VigilDb {
-   /// SecurityEngine
+    /// SecurityEngine
     pub async fn init_security_tables(&self) -> Result<()> {
-       // Security
+        // Security
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS security_verdicts (
@@ -36,7 +36,7 @@ impl VigilDb {
         .execute(&self.pool)
         .await?;
 
-       // Module
+        // Module
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS security_module_results (
@@ -71,7 +71,7 @@ impl VigilDb {
         )
         .await?;
 
-       // IOC
+        // IOC
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS security_ioc (
@@ -102,7 +102,6 @@ impl VigilDb {
         )
         .await?;
 
-        
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS security_whitelist (
@@ -125,7 +124,6 @@ impl VigilDb {
         )
         .await?;
 
-        
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS security_feedback (
@@ -152,7 +150,7 @@ impl VigilDb {
         )
         .await?;
 
-       // Sender (Used for anomaly_detect)
+        // Sender (Used for anomaly_detect)
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS security_sender_baselines (
@@ -177,7 +175,6 @@ impl VigilDb {
         )
         .await?;
 
-        
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS security_disposition_rules (
@@ -203,9 +200,7 @@ impl VigilDb {
         )
         .await?;
 
-        
-
-       // CUSUM
+        // CUSUM
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS security_temporal_cusum (
@@ -224,7 +219,7 @@ impl VigilDb {
         .execute(&self.pool)
         .await?;
 
-       // EWMA
+        // EWMA
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS security_temporal_ewma (
@@ -240,7 +235,6 @@ impl VigilDb {
         .execute(&self.pool)
         .await?;
 
-        
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS security_entity_risk (
@@ -262,7 +256,7 @@ impl VigilDb {
         )
         .await?;
 
-       // (NLP fine-tuning)
+        // (NLP fine-tuning)
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS training_samples (
@@ -292,7 +286,7 @@ impl VigilDb {
         )
         .await?;
 
-       // Alert (Phase 4)
+        // Alert (Phase 4)
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS security_alerts (
@@ -324,12 +318,12 @@ impl VigilDb {
         )
         .await?;
 
-       // Index
+        // Index
         let indexes = [
             "CREATE INDEX IF NOT EXISTS idx_verdicts_session ON security_verdicts(session_id)",
             "CREATE INDEX IF NOT EXISTS idx_verdicts_threat ON security_verdicts(threat_level)",
             "CREATE INDEX IF NOT EXISTS idx_verdicts_created ON security_verdicts(created_at DESC)",
-           // Index: SecurityStatistics JOIN + GROUP BY (session_id, threat_level, created_at)
+            // Index: SecurityStatistics JOIN + GROUP BY (session_id, threat_level, created_at)
             "CREATE INDEX IF NOT EXISTS idx_verdicts_session_threat_created ON security_verdicts(session_id, threat_level, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_results_verdict ON security_module_results(verdict_id)",
             "CREATE INDEX IF NOT EXISTS idx_results_session ON security_module_results(session_id)",
@@ -363,7 +357,7 @@ impl VigilDb {
         )
         .await?;
 
-       // YARA
+        // YARA
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS security_yara_rules (
@@ -384,7 +378,7 @@ impl VigilDb {
         .execute(&self.pool)
         .await?;
 
-       // YARA Index
+        // YARA Index
         let yara_indexes = [
             "CREATE INDEX IF NOT EXISTS idx_yara_rules_enabled ON security_yara_rules(enabled)",
             "CREATE INDEX IF NOT EXISTS idx_yara_rules_category ON security_yara_rules(category)",
@@ -401,7 +395,7 @@ impl VigilDb {
         )
         .await?;
 
-       // Data securityModule
+        // Data securityModule
         self.init_data_security_tables().await?;
 
         record_migration(
@@ -430,7 +424,7 @@ impl VigilDb {
         )
         .await?;
 
-       // MTA
+        // MTA
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS quarantine (

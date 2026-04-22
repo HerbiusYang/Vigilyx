@@ -86,9 +86,9 @@ static RE_URL_IP_HOST: LazyLock<Regex> =
 // attachment URL are weighted lightly — the goal is correlation, not
 // outright blocking.
 const SUSPICIOUS_TLDS: &[&str] = &[
-    ".zip", ".mov", ".tk", ".top", ".xyz", ".click", ".country", ".gq",
-    ".ml", ".cf", ".ga", ".work", ".loan", ".cam", ".rest", ".bar",
-    ".monster", ".buzz", ".live", ".surf", ".icu", ".cyou", ".lol",
+    ".zip", ".mov", ".tk", ".top", ".xyz", ".click", ".country", ".gq", ".ml", ".cf", ".ga",
+    ".work", ".loan", ".cam", ".rest", ".bar", ".monster", ".buzz", ".live", ".surf", ".icu",
+    ".cyou", ".lol",
 ];
 
 /// Heuristics for individual URLs found inside attachment text. Returns a
@@ -99,7 +99,10 @@ fn classify_attachment_url(url: &str) -> Vec<(&'static str, f64)> {
     let url_lower = url.to_ascii_lowercase();
 
     if RE_URL_AT.is_match(url) {
-        hits.push(("contains @ in authority (credential or display spoofing)", 0.30));
+        hits.push((
+            "contains @ in authority (credential or display spoofing)",
+            0.30,
+        ));
     }
     if RE_URL_IP_HOST.is_match(url) {
         hits.push(("uses raw IP address as host", 0.25));
@@ -121,7 +124,8 @@ fn classify_attachment_url(url: &str) -> Vec<(&'static str, f64)> {
         }
     }
     // Embedded credential phishing markers
-    if url_lower.contains("login") || url_lower.contains("verify") || url_lower.contains("account") {
+    if url_lower.contains("login") || url_lower.contains("verify") || url_lower.contains("account")
+    {
         hits.push(("auth-themed path segment", 0.10));
     }
     // OAuth / device-code phishing artifacts
@@ -286,7 +290,8 @@ impl SecurityModule for AttachContentModule {
             };
             retained_count += 1;
 
-            let Some(text) = extract_attachment_text(&attachment.content_type, content_base64) else {
+            let Some(text) = extract_attachment_text(&attachment.content_type, content_base64)
+            else {
                 continue;
             };
 
@@ -473,18 +478,14 @@ mod tests {
         )]);
         let attachment = EmailAttachment {
             filename: "voicemail.docx".to_string(),
-            content_type:
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    .to_string(),
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                .to_string(),
             size: docx.len(),
             hash: "hash".to_string(),
             content_base64: Some(base64::engine::general_purpose::STANDARD.encode(docx)),
         };
 
-        let result = make_module_with_keywords(
-            &["secure voicemail", "verify your account"],
-            &[],
-        )
+        let result = make_module_with_keywords(&["secure voicemail", "verify your account"], &[])
             .analyze(&make_ctx(vec![attachment]))
             .await
             .unwrap();
@@ -521,9 +522,9 @@ mod tests {
                 "review today",
             ],
         )
-            .analyze(&make_ctx(vec![attachment]))
-            .await
-            .unwrap();
+        .analyze(&make_ctx(vec![attachment]))
+        .await
+        .unwrap();
 
         assert!(
             result.categories.contains(&"weak_phishing".to_string()),
@@ -549,6 +550,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.threat_level, ThreatLevel::Safe);
-        assert_eq!(result.summary, "No attachments with extractable text content");
+        assert_eq!(
+            result.summary,
+            "No attachments with extractable text content"
+        );
     }
 }

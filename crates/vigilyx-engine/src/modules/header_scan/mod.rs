@@ -19,9 +19,7 @@ use crate::context::SecurityContext;
 use crate::db_service::DbQueryService;
 use crate::error::EngineError;
 use crate::intel::IntelLayer;
-use crate::module::{
-    Bpa, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel,
-};
+use crate::module::{Bpa, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
 
 pub struct HeaderScanModule {
     meta: ModuleMetadata,
@@ -31,7 +29,7 @@ pub struct HeaderScanModule {
 
 impl HeaderScanModule {
     pub fn new(db: Arc<dyn DbQueryService>, intel: Option<IntelLayer>) -> Self {
-       // Increase timeout when intel is enabled: IP queries run in parallel with 10s per-IP timeout
+        // Increase timeout when intel is enabled: IP queries run in parallel with 10s per-IP timeout
         let has_intel = intel.is_some();
         let timeout_ms = if has_intel { 12000 } else { 3000 };
 
@@ -108,7 +106,12 @@ impl SecurityModule for HeaderScanModule {
         checks::check_received_chain(&parsed, &mut total_score, &mut categories, &mut evidence);
 
         // --- Step 5b: Real-time domain impersonation (homoglyph + TLD swap) ---
-        let impersonation_hit = checks::check_domain_impersonation(ctx, &mut total_score, &mut categories, &mut evidence);
+        let impersonation_hit = checks::check_domain_impersonation(
+            ctx,
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
 
         // --- Step 5c: Known impersonation IOC lookup ---
         // If the sender domain was previously recorded as a domain_impersonation IOC,
@@ -116,9 +119,14 @@ impl SecurityModule for HeaderScanModule {
         // Uses find_ioc() (includes source=auto) so auto-recorded impersonation IOCs are matched.
         let mut known_impersonation_target: Option<String> = None;
         if impersonation_hit.is_none()
-            && let Some(sender_domain) = ctx.session.mail_from.as_deref().and_then(parsed::extract_domain)
+            && let Some(sender_domain) = ctx
+                .session
+                .mail_from
+                .as_deref()
+                .and_then(parsed::extract_domain)
             && let Ok(Some(ioc)) = self.db.find_ioc("domain", &sender_domain).await
-            && ioc.attack_type == "domain_impersonation" && ioc.verdict != "clean"
+            && ioc.attack_type == "domain_impersonation"
+            && ioc.verdict != "clean"
         {
             let score_add = (ioc.confidence * 0.4).min(0.35);
             total_score += score_add;
@@ -135,9 +143,9 @@ impl SecurityModule for HeaderScanModule {
             });
             // Extract target domain from IOC context for details
             known_impersonation_target = ioc.context.as_ref().and_then(|c| {
-                c.split("target=").nth(1).map(|s| {
-                    s.split([',', ' ', '|']).next().unwrap_or(s).to_string()
-                })
+                c.split("target=")
+                    .nth(1)
+                    .map(|s| s.split([',', ' ', '|']).next().unwrap_or(s).to_string())
             });
         }
 
@@ -175,7 +183,7 @@ impl SecurityModule for HeaderScanModule {
         let duration_ms = start.elapsed().as_millis() as u64;
         let threat_level = ThreatLevel::from_score(total_score);
 
-       // Build summary describing what was analyzed and the outcome
+        // Build summary describing what was analyzed and the outcome
         let summary = if threat_level == ThreatLevel::Safe {
             if parsed.received_ips.is_empty() {
                 "Email header check passed, no anomalies found".to_string()
@@ -197,7 +205,7 @@ impl SecurityModule for HeaderScanModule {
                 evidence
                     .iter()
                     .filter(|e| {
-                       // Only count anomaly evidence, exclude clean IP reputation entries
+                        // Only count anomaly evidence, exclude clean IP reputation entries
                         !e.description.contains("reputation clean")
                     })
                     .count(),

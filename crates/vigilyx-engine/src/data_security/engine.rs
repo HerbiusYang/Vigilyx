@@ -48,9 +48,9 @@ pub struct DataSecurityEngine {
 }
 
 impl DataSecurityEngine {
-   /// Create Startdata security engine
-    
-   /// ReturnEnginehandle, `submit()` HTTP Session lineAnalyze.
+    /// Create Startdata security engine
+
+    /// ReturnEnginehandle, `submit()` HTTP Session lineAnalyze.
     pub fn start(db: VigilDb, ws_tx: broadcast::Sender<WsMessage>) -> Self {
         let (tx, rx) = mpsc::channel::<HttpSession>(5_000);
         let sessions_processed = Arc::new(AtomicU64::new(0));
@@ -72,7 +72,7 @@ impl DataSecurityEngine {
         }
     }
 
-   /// HTTP Session lineAnalyze
+    /// HTTP Session lineAnalyze
     pub async fn submit(&self, session: HttpSession) -> Result<(), String> {
         self.tx
             .send(session)
@@ -80,7 +80,7 @@ impl DataSecurityEngine {
             .map_err(|_| "DataSecurityEngine channel closed".to_string())
     }
 
-   /// non-blocking (channelfull immediatelyReturnError)
+    /// non-blocking (channelfull immediatelyReturnError)
     pub fn try_submit(&self, session: HttpSession) -> Result<(), String> {
         self.tx.try_send(session).map_err(|e| match e {
             mpsc::error::TrySendError::Full(_) => "DataSecurityEngine channel full".to_string(),
@@ -88,7 +88,7 @@ impl DataSecurityEngine {
         })
     }
 
-   /// GetEngineStatistics
+    /// GetEngineStatistics
     pub fn stats(&self) -> DataSecurityEngineStats {
         DataSecurityEngineStats {
             http_sessions_processed: self.sessions_processed.load(Ordering::Relaxed),
@@ -96,17 +96,17 @@ impl DataSecurityEngine {
         }
     }
 
-   /// HTTP SessionofDeduplicate
-    
-   /// client_ip + method + NormalizeURI + filename generateHash.
-   /// Coremail ChunkedUploadof Same chunk(offset Same) Merge Same1,
-   /// due to URI Mediumof offset/attachmentId Parameter.
+    /// HTTP SessionofDeduplicate
+
+    /// client_ip + method + NormalizeURI + filename generateHash.
+    /// Coremail ChunkedUploadof Same chunk(offset Same) Merge Same1,
+    /// due to URI Mediumof offset/attachmentId Parameter.
     fn session_fingerprint(session: &HttpSession) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         session.client_ip.hash(&mut hasher);
         session.method.hash(&mut hasher);
 
-       // Normalize URI: offset/attachmentId Parameter(Coremail ChunkedUploadDeduplicate)
+        // Normalize URI: offset/attachmentId Parameter(Coremail ChunkedUploadDeduplicate)
         let normalized_uri = Self::normalize_uri_for_dedup(&session.uri);
         normalized_uri.hash(&mut hasher);
 
@@ -116,7 +116,7 @@ impl DataSecurityEngine {
         hasher.finish()
     }
 
-   /// URI MediumofChunkedUploadParameter (offset, attachmentId),keep composeId/sid/func
+    /// URI MediumofChunkedUploadParameter (offset, attachmentId),keep composeId/sid/func
     fn normalize_uri_for_dedup(uri: &str) -> String {
         if let Some(query_start) = uri.find('?') {
             let path = &uri[..query_start];
@@ -125,7 +125,7 @@ impl DataSecurityEngine {
                 .split('&')
                 .filter(|param| {
                     let key = param.split('=').next().unwrap_or("");
-                   // keep "Same1UploadOperations"ofParameter, Chunked Parameter
+                    // keep "Same1UploadOperations"ofParameter, Chunked Parameter
                     key != "offset" && key != "attachmentId"
                 })
                 .collect();
@@ -139,21 +139,21 @@ impl DataSecurityEngine {
         }
     }
 
-   /// CleanupDeduplicatetableMediumExpiredentry
+    /// CleanupDeduplicatetableMediumExpiredentry
     fn cleanup_dedup_table(table: &mut HashMap<u64, DateTime<Utc>>, now: DateTime<Utc>) {
         table.retain(|_, ts| (now - *ts).num_seconds() < DEDUP_WINDOW_SECS);
     }
 
-   /// URI Coremail composeId
-    
-   /// URL: `composeId=c%3Anf%3A8628193` -> `c:nf:8628193`
-   /// : `composeId=1775031606750` -> `1775031606750`
+    /// URI Coremail composeId
+
+    /// URL: `composeId=c%3Anf%3A8628193` -> `c:nf:8628193`
+    /// : `composeId=1775031606750` -> `1775031606750`
     fn extract_compose_id_from_uri(uri: &str) -> Option<String> {
         let query = uri.split('?').nth(1)?;
         for param in query.split('&') {
             let key_value: Vec<&str> = param.splitn(2, '=').collect();
             if key_value.len() == 2 && key_value[0].eq_ignore_ascii_case("composeId") {
-               // URL (%3A ->:)
+                // URL (%3A ->:)
                 let decoded = key_value[1]
                     .replace("%3A", ":")
                     .replace("%3a", ":")
@@ -165,10 +165,10 @@ impl DataSecurityEngine {
         None
     }
 
-   /// levelDeduplicate
-    
-   /// (user IP, FileName, ofDLPmatchType) generateHash.
-   /// overrideSessionlevelDeduplicate CaptureofScenario(ifChunkedreassemble ofCompositionSession, SID of Upload).
+    /// levelDeduplicate
+
+    /// (user IP, FileName, ofDLPmatchType) generateHash.
+    /// overrideSessionlevelDeduplicate CaptureofScenario(ifChunkedreassemble ofCompositionSession, SID of Upload).
     fn incident_fingerprint(
         user_or_ip: &str,
         filename: Option<&str>,
@@ -183,12 +183,12 @@ impl DataSecurityEngine {
         hasher.finish()
     }
 
-   /// ProcessLoop
-    
-   /// Use tokio::select! Same:
-   /// 1. Receive HTTP Session Analyze
-   /// 2. when checking Coremail ChunkedUploadwhethercomplete
-   /// 3. Output HTTP pipeline ReceiveStatistics
+    /// ProcessLoop
+
+    /// Use tokio::select! Same:
+    /// 1. Receive HTTP Session Analyze
+    /// 2. when checking Coremail ChunkedUploadwhethercomplete
+    /// 3. Output HTTP pipeline ReceiveStatistics
     async fn process_loop(
         mut rx: mpsc::Receiver<HttpSession>,
         db: VigilDb,
@@ -196,14 +196,14 @@ impl DataSecurityEngine {
         sessions_counter: Arc<AtomicU64>,
         incidents_counter: Arc<AtomicU64>,
     ) {
-       // initializedetecthandler (Arc packet,For spawn_blocking Shared)
+        // initializedetecthandler (Arc packet,For spawn_blocking Shared)
         let detectors: Arc<Vec<Box<dyn DataSecurityDetector>>> = Arc::new(vec![
             Box::new(DraftBoxDetector::new()),
             Box::new(FileTransitDetector::new()),
             Box::new(SelfSendDetector::new()),
         ]);
 
-       // LoadtimestampstrategyConfiguration (From DB, Failed Defaultvalue)
+        // LoadtimestampstrategyConfiguration (From DB, Failed Defaultvalue)
         let time_policy_config = match db.get_time_policy_config().await {
             Ok(Some(json)) => serde_json::from_str::<time_policy::TimePolicyConfig>(&json)
                 .unwrap_or_else(|e| {
@@ -228,7 +228,7 @@ impl DataSecurityEngine {
             time_policy_config.weekend_is_off_hours,
         );
 
-       // Load Syslog Configuration (From DB)
+        // Load Syslog Configuration (From DB)
         let syslog_forwarder = match db.get_syslog_config().await {
             Ok(Some(json)) => match serde_json::from_str::<SyslogForwardConfig>(&json) {
                 Ok(cfg) if cfg.enabled && !cfg.server_address.is_empty() => {
@@ -269,35 +269,35 @@ impl DataSecurityEngine {
             }
         };
 
-       // Coremail ChunkedUploadtracinghandler
+        // Coremail ChunkedUploadtracinghandler
         let mut chunk_tracker = ChunkedUploadTracker::new();
 
-       // Coremail upload:prepare
-       // (client_ip, composeId) -> (fileName, timestamp)
-       // upload:prepare JSON body fileName, upload.jsp?func=directData
+        // Coremail upload:prepare
+        // (client_ip, composeId) -> (fileName, timestamp)
+        // upload:prepare JSON body fileName, upload.jsp?func=directData
         let mut prepare_filename_tracker: HashMap<(String, String), (String, DateTime<Utc>)> =
             HashMap::with_capacity(128);
 
-       // Stream Abnormaltracinghandler
+        // Stream Abnormaltracinghandler
         let mut volume_tracker = VolumeAnomalyTracker::new();
 
-       // JR/T 0197-2020 Compliancetracinghandler
+        // JR/T 0197-2020 Compliancetracinghandler
         let mut jrt_tracker = JrtComplianceTracker::new();
 
-       // ChunkedCheck handler (5 Check1Time/Count)
+        // ChunkedCheck handler (5 Check1Time/Count)
         let mut tick_interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
 
-       // HTTP pipeline ReceiveStatistics handler (3 minute)
-       // Used for 100% Stream of packet/ Session
+        // HTTP pipeline ReceiveStatistics handler (3 minute)
+        // Used for 100% Stream of packet/ Session
         let mut stats_interval = tokio::time::interval(tokio::time::Duration::from_secs(180));
 
-       // SessionlevelDeduplicatetable: fingerprint -> First foundtimestamp
+        // SessionlevelDeduplicatetable: fingerprint -> First foundtimestamp
         let mut dedup_table: HashMap<u64, DateTime<Utc>> = HashMap::with_capacity(1024);
-       // levelDeduplicatetable: incident_fingerprint -> First foundtimestamp
+        // levelDeduplicatetable: incident_fingerprint -> First foundtimestamp
         let mut incident_dedup_table: HashMap<u64, DateTime<Utc>> = HashMap::with_capacity(256);
         let mut cleanup_counter: u64 = 0;
 
-       // Engine Statisticscounter
+        // Engine Statisticscounter
         let mut engine_dedup_skipped: u64 = 0;
         let mut engine_db_store_failed: u64 = 0;
         let mut engine_analyzed: u64 = 0;
@@ -365,11 +365,11 @@ impl DataSecurityEngine {
                         );
                     }
 
-                    
+
                    // Coremail upload:prepare
                    // prepare body: {"composeId":"xxx","attachmentId":-1,"fileName":"test.txt","size":1234}
                    // tracker, upload.jsp?func=directData composeId
-                    
+
                     let uri_lower = session.uri.to_lowercase();
                     if uri_lower.contains("func=upload") && uri_lower.contains("prepare")
                         && let Some(ref body) = session.request_body
@@ -388,7 +388,7 @@ impl DataSecurityEngine {
                         );
                         prepare_filename_tracker.insert(key, (filename.to_string(), now));
 
-                        
+
                         if prepare_filename_tracker.len() > 200 {
                             prepare_filename_tracker.retain(|_, (_, ts)| {
                                 (now - *ts).num_seconds() < 600
@@ -396,9 +396,9 @@ impl DataSecurityEngine {
                         }
                     }
 
-                    
+
                    // Coremail directData: prepare tracker uploaded_filename
-                    
+
                     if session.uploaded_filename.is_none()
                         && uri_lower.contains("func=directdata")
                         && let Some(compose_id) = Self::extract_compose_id_from_uri(&session.uri)
@@ -497,12 +497,12 @@ impl DataSecurityEngine {
         }
     }
 
-   /// Asynchronous read body tempFile (Used forChunkedUpload)
-    
-   /// Avoid async ContextMediumUse std::fs::read tokio Runtime.
-   /// priorityUseMemoryMediumof request_body, tempFilestored AsynchronousreadGet.
+    /// Asynchronous read body tempFile (Used forChunkedUpload)
+
+    /// Avoid async ContextMediumUse std::fs::read tokio Runtime.
+    /// priorityUseMemoryMediumof request_body, tempFilestored AsynchronousreadGet.
     async fn async_read_body(session: &HttpSession) -> Vec<u8> {
-       // priorityFromtempFileAsynchronousreadGet — SEC: path validation (CWE-22)
+        // priorityFromtempFileAsynchronousreadGet — SEC: path validation (CWE-22)
         if let Some(ref path) = session.body_temp_file
             && let Some(validated) = super::validate_temp_path(path)
         {
@@ -514,7 +514,7 @@ impl DataSecurityEngine {
             }
         }
 
-       // downgradelevel: FromMemoryMediumof request_body readGet
+        // downgradelevel: FromMemoryMediumof request_body readGet
         if let Some(ref body) = session.request_body {
             return body.as_bytes().to_vec();
         }
@@ -522,15 +522,15 @@ impl DataSecurityEngine {
         Vec::new()
     }
 
-   /// 1 HTTP Session line detecthandler
-    
-   /// detecthandler (Contains DLP) spawn_blocking MediumExecuteline,
-   /// Avoid CPU of match tokio AsynchronousRuntime.
-   /// Use `Arc<HttpSession>` Avoid HttpSession (Contains String Segment) Thread.
-    
-   /// Process:
-   /// 1. timestampstrategy (Non-workingtimestampCritical +1)
-   /// 2. Stream Abnormaltracing (user/IP)
+    /// 1 HTTP Session line detecthandler
+
+    /// detecthandler (Contains DLP) spawn_blocking MediumExecuteline,
+    /// Avoid CPU of match tokio AsynchronousRuntime.
+    /// Use `Arc<HttpSession>` Avoid HttpSession (Contains String Segment) Thread.
+
+    /// Process:
+    /// 1. timestampstrategy (Non-workingtimestampCritical +1)
+    /// 2. Stream Abnormaltracing (user/IP)
     #[allow(clippy::too_many_arguments)] // InternalMethod, Parameterall independentfocus on
     #[allow(clippy::too_many_arguments)]
     async fn run_detectors(
@@ -548,7 +548,7 @@ impl DataSecurityEngine {
         let detectors = Arc::clone(detectors);
         let session_arc = Arc::clone(session); // Arc reference counting +1,
 
-       // Return (incident, dlp_result) Yuan
+        // Return (incident, dlp_result) Yuan
         let results: Vec<(DataSecurityIncident, Option<DlpScanResult>)> =
             tokio::task::spawn_blocking(move || {
                 let mut results = Vec::new();
@@ -565,7 +565,7 @@ impl DataSecurityEngine {
                 Vec::new()
             });
 
-       // DLP Result Used for JR/T Compliancetracing
+        // DLP Result Used for JR/T Compliancetracing
         let mut all_dlp_results: Vec<DlpScanResult> = Vec::new();
         let mut incidents: Vec<DataSecurityIncident> = Vec::new();
         for (incident, dlp_result) in results {
@@ -576,11 +576,11 @@ impl DataSecurityEngine {
         }
 
         for mut incident in incidents {
-           // P0: user - When Cookie/body Extract user, Same IP of Session
+            // P0: user - When Cookie/body Extract user, Same IP of Session
             if incident.detected_user.is_none() {
                 match db.lookup_user_by_client_ip(&incident.client_ip).await {
                     Ok(Some(user)) => {
-                       // Update incident of detected_user And summary
+                        // Update incident of detected_user And summary
                         let old_summary = incident.summary.replace("Unknownuser", &user);
                         incident.summary = old_summary;
                         incident.detected_user = Some(user);
@@ -592,8 +592,8 @@ impl DataSecurityEngine {
                 }
             }
 
-           // levelDeduplicate(level):
-           // L1: MemoryDeduplicate - Same1 (user/IP, FileName, DLPmatch) 300s only 1Time/Count
+            // levelDeduplicate(level):
+            // L1: MemoryDeduplicate - Same1 (user/IP, FileName, DLPmatch) 300s only 1Time/Count
             let user_or_ip = incident
                 .detected_user
                 .as_deref()
@@ -617,8 +617,8 @@ impl DataSecurityEngine {
             }
             incident_dedup.insert(inc_fp, now_inc);
 
-           // L2: DB Deduplicate - preventEngine Memory (1 small)
-           // Same1user + Same1 Type + Same1 DLP match -> 1 small
+            // L2: DB Deduplicate - preventEngine Memory (1 small)
+            // Same1user + Same1 Type + Same1 DLP match -> 1 small
             {
                 let since = (now_inc - chrono::Duration::hours(1)).to_rfc3339();
                 let mut sorted_dlp = incident.dlp_matches.clone();
@@ -643,7 +643,7 @@ impl DataSecurityEngine {
                 }
             }
 
-           // P2.1: Non-workingtimestampCritical (Configuration)
+            // P2.1: Non-workingtimestampCritical (Configuration)
             incident.severity = time_policy::apply_time_policy_with_config(
                 incident.severity,
                 incident.created_at,
@@ -660,7 +660,7 @@ impl DataSecurityEngine {
 
             incidents_counter.fetch_add(1, Ordering::Relaxed);
 
-           // P2.2: Stream Abnormaltracing - user IP key
+            // P2.2: Stream Abnormaltracing - user IP key
             let volume_key = incident
                 .detected_user
                 .as_deref()
@@ -673,7 +673,7 @@ impl DataSecurityEngine {
                 &incident.request_url,
                 incident.host.as_deref(),
             ) {
-               // Stream Abnormal timestampstrategy
+                // Stream Abnormal timestampstrategy
                 let mut vi = volume_incident;
                 vi.severity = time_policy::apply_time_policy_with_config(
                     vi.severity,
@@ -705,7 +705,7 @@ impl DataSecurityEngine {
             Self::broadcast_incident(ws_tx, incident);
         }
 
-       // P3: JR/T 0197-2020 Compliancetracing - DLP Result According tolevel Cumulative
+        // P3: JR/T 0197-2020 Compliancetracing - DLP Result According tolevel Cumulative
         if !all_dlp_results.is_empty() {
             let jrt_key = session
                 .detected_user
@@ -740,20 +740,20 @@ impl DataSecurityEngine {
         }
     }
 
-   /// FromChunkedreassembleResult constructComposition HttpSession
+    /// FromChunkedreassembleResult constructComposition HttpSession
     fn build_synthetic_session(completed: &super::chunked_upload::CompletedUpload) -> HttpSession {
         let mut session = completed.base_session.clone();
         session.id = vigilyx_core::fast_uuid();
         session.request_body_size = completed.reassembled_data.len();
 
-       // Magic byte detect
+        // Magic byte detect
         let detected = vigilyx_core::magic_bytes::detect_file_type(&completed.reassembled_data);
         session.detected_file_type = detected;
 
         let is_binary = detected.map(|ft| !ft.is_text_scannable()).unwrap_or(false);
         session.body_is_binary = is_binary;
 
-       // Full-audit mode: store entire text body for DLP - no truncation
+        // Full-audit mode: store entire text body for DLP - no truncation
         if !is_binary {
             session.request_body = String::from_utf8_lossy(&completed.reassembled_data)
                 .into_owned()
@@ -763,10 +763,10 @@ impl DataSecurityEngine {
         session
     }
 
-   /// dataSecurity WebSocket
+    /// dataSecurity WebSocket
     fn broadcast_incident(ws_tx: &broadcast::Sender<WsMessage>, incident: DataSecurityIncident) {
         let msg = WsMessage::DataSecurityAlert(incident);
-       // send Return Err, Normal
+        // send Return Err, Normal
         let _ = ws_tx.send(msg);
     }
 }
@@ -806,7 +806,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_data_security_channel_capacity_5000() {
-       // Verify the increased channel capacity
+        // Verify the increased channel capacity
         let (tx, _rx) = mpsc::channel::<HttpSession>(5_000);
         let mut count = 0;
         for _ in 0..3_000 {
@@ -911,9 +911,7 @@ mod tests {
         assert!(table.contains_key(&333), "Current entry should remain");
     }
 
-    
-   // Test: URI NormalizeDeduplicate
-    
+    // Test: URI NormalizeDeduplicate
 
     #[test]
     fn test_normalize_uri_strips_offset() {
@@ -956,7 +954,7 @@ mod tests {
 
     #[test]
     fn test_fingerprint_coremail_chunks_same_file_same_hash() {
-       // Same1Fileof SameChunked (only offset/attachmentId Same) -> Same
+        // Same1Fileof SameChunked (only offset/attachmentId Same) -> Same
         let mut s1 = make_http_session();
         s1.client_ip = "10.0.0.1".to_string();
         s1.uri = "/upload.jsp?func=directdata&composeId=c1&attachmentId=1&offset=0".to_string();
@@ -975,7 +973,7 @@ mod tests {
 
     #[test]
     fn test_fingerprint_different_compose_different_hash() {
-       // Same composeId -> Same
+        // Same composeId -> Same
         let mut s1 = make_http_session();
         s1.client_ip = "10.0.0.1".to_string();
         s1.uri = "/upload.jsp?func=directdata&composeId=compose1&offset=0".to_string();
@@ -1045,7 +1043,7 @@ mod tests {
         assert!(table.is_empty(), "All expired entries should be removed");
     }
 
-   // levelDeduplicate Test
+    // levelDeduplicate Test
 
     #[test]
     fn test_incident_fingerprint_deterministic() {
@@ -1113,9 +1111,7 @@ mod tests {
         assert_eq!(fp1, fp2, "DLP match order should not affect fingerprint");
     }
 
-    
-   // extract_compose_id_from_uri
-    
+    // extract_compose_id_from_uri
 
     #[test]
     fn test_extract_compose_id_numeric() {
@@ -1127,7 +1123,7 @@ mod tests {
 
     #[test]
     fn test_extract_compose_id_url_encoded() {
-       // c%3Anf%3A8628193 -> c:nf:8628193
+        // c%3Anf%3A8628193 -> c:nf:8628193
         let uri = "/upload.jsp?sid=BAQk&func=directData&attachmentId=1&composeId=c%3Anf%3A8628193&offset=0";
         let result = DataSecurityEngine::extract_compose_id_from_uri(uri);
         assert_eq!(result, Some("c:nf:8628193".to_string()));
@@ -1151,7 +1147,7 @@ mod tests {
     fn test_extract_compose_id_case_insensitive() {
         let uri = "/upload.jsp?COMPOSEID=test123&func=directData";
         let result = DataSecurityEngine::extract_compose_id_from_uri(uri);
-       // eq_ignore_ascii_case
+        // eq_ignore_ascii_case
         assert_eq!(result, Some("test123".to_string()));
     }
 

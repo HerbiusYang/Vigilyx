@@ -3,16 +3,16 @@
 use std::collections::HashSet;
 
 use lettre::message::{Mailbox, header::ContentType};
+use lettre::transport::smtp::AsyncSmtpTransportBuilder;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::client::{Tls, TlsParameters};
-use lettre::transport::smtp::AsyncSmtpTransportBuilder;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use tracing::{error, info, warn};
+use vigilyx_core::security::{SecurityVerdict, ThreatLevel};
 use vigilyx_core::{
     DEFAULT_BLOCKED_HOSTNAMES, extract_host_from_network_target, models::EmailSession,
     resolve_network_host,
 };
-use vigilyx_core::security::{SecurityVerdict, ThreatLevel};
 
 use crate::config::EmailAlertConfig;
 
@@ -21,16 +21,14 @@ use super::{
     render_action_message_template,
 };
 
-
 // Helper functions
-
 
 /// SEC-REMAINING-001: smtp_password (AES-256-GCM, vigilyx-api Shared)
 fn decrypt_smtp_password(stored: &str) -> Option<String> {
     let encoded = stored.strip_prefix("ENC:")?;
     let jwt_secret = std::env::var("API_JWT_SECRET").ok()?;
 
-   // Key (vigilyx-api/handlers/security/alerts.rs)
+    // Key (vigilyx-api/handlers/security/alerts.rs)
     use sha2::{Digest, Sha256};
     let key_bytes: [u8; 32] = {
         let mut hasher = Sha256::new();
@@ -106,7 +104,6 @@ fn html_escape_multiline(s: &str) -> String {
     html_escape(s).replace('\n', "<br/>")
 }
 
-
 // SMTP transport builder
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,26 +169,24 @@ fn build_smtp_transport(
         "tls" => {
             let tls = TlsParameters::new(target.tls_host.clone())
                 .map_err(|e| format!("SMTP TLS error: {}", e))?;
-            let builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(
-                connect_host.clone(),
-            )
-                .port(target.connect_addr.port())
-                .tls(Tls::Wrapper(tls));
+            let builder =
+                AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(connect_host.clone())
+                    .port(target.connect_addr.port())
+                    .tls(Tls::Wrapper(tls));
             build_smtp_transport_with_builder(builder, &auth)
         }
         "starttls" => {
             let tls = TlsParameters::new(target.tls_host.clone())
                 .map_err(|e| format!("SMTP STARTTLS error: {}", e))?;
-            let builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(
-                connect_host.clone(),
-            )
-            .port(target.connect_addr.port())
-            .tls(Tls::Required(tls));
+            let builder =
+                AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(connect_host.clone())
+                    .port(target.connect_addr.port())
+                    .tls(Tls::Required(tls));
             build_smtp_transport_with_builder(builder, &auth)
         }
         "none" => {
-           // Plaintext SMTP requires explicit admin opt-in in the persisted alert config.
-           // Without this guard, a misconfiguration could leak credentials in cleartext.
+            // Plaintext SMTP requires explicit admin opt-in in the persisted alert config.
+            // Without this guard, a misconfiguration could leak credentials in cleartext.
             if !config.allow_plaintext_smtp {
                 return Err(
                     "SMTP plaintext mode blocked: enable the admin plaintext SMTP switch to allow"
@@ -199,17 +194,16 @@ fn build_smtp_transport(
                 );
             }
             warn!("SMTP transport configured without TLS");
-            let builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(
-                connect_host.clone(),
-            )
-            .port(target.connect_addr.port());
+            let builder =
+                AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(connect_host.clone())
+                    .port(target.connect_addr.port());
             if auth.is_some() {
                 warn!("SMTP credentials will be sent in plaintext!");
             }
             build_smtp_transport_with_builder(builder, &auth)
         }
         other => {
-           // Unknown TLS mode -> default to STARTTLS rather than plaintext
+            // Unknown TLS mode -> default to STARTTLS rather than plaintext
             warn!(
                 smtp_tls = other,
                 "Unknown SMTP TLS mode, defaulting to STARTTLS"
@@ -242,16 +236,12 @@ fn smtp_auth_fields(config: &EmailAlertConfig) -> Result<Option<(String, String)
     }
 }
 
-fn should_notify_original_recipient(
-    recipient: &str,
-    internal_domains: &HashSet<String>,
-) -> bool {
+fn should_notify_original_recipient(recipient: &str, internal_domains: &HashSet<String>) -> bool {
     if internal_domains.is_empty() {
         return false;
     }
 
-    super::extract_email_domain(recipient)
-        .is_some_and(|domain| internal_domains.contains(&domain))
+    super::extract_email_domain(recipient).is_some_and(|domain| internal_domains.contains(&domain))
 }
 
 fn collect_alert_recipients(
@@ -289,9 +279,7 @@ fn collect_alert_recipients(
     recipients
 }
 
-
 // HTML email builder
-
 
 /// BuildAlert HTML
 fn build_alert_html(
@@ -309,7 +297,7 @@ fn build_alert_html(
         .unwrap_or_else(|| "unknown".to_string());
     let external_ip = infer_external_ip(session, internal_domains, inbound_mail_servers)
         .unwrap_or_else(|| "-".to_string());
-   // HTML-escape all user-controlled content to prevent XSS
+    // HTML-escape all user-controlled content to prevent XSS
     let mail_from = html_escape(session.mail_from.as_deref().unwrap_or("(unknown)"));
     let rcpt_to = if session.rcpt_to.is_empty() {
         "(unknown)".to_string()
@@ -431,12 +419,10 @@ fn build_alert_html(
     )
 }
 
-
 // DispositionEngine email methods
 
-
 impl DispositionEngine {
-   /// Execute an email alert action using the saved email channel config.
+    /// Execute an email alert action using the saved email channel config.
     pub(super) async fn execute_email_action(
         &self,
         action: &DispositionAction,
@@ -454,7 +440,7 @@ impl DispositionEngine {
             return;
         }
 
-       // Threat level Threshold
+        // Threat level Threshold
         let min_level = parse_threat_level(&config.min_threat_level);
         if verdict.threat_level < min_level {
             return;
@@ -501,7 +487,7 @@ impl DispositionEngine {
             return;
         }
 
-       // BuildAlert
+        // BuildAlert
         let subject_text = session.subject.as_deref().unwrap_or("(no subject)");
         let mail_subject = format!(
             "[VIGILYX] {} - {}",
@@ -516,7 +502,7 @@ impl DispositionEngine {
             inbound_mail_servers,
         );
 
-       // Recipient
+        // Recipient
         for to_addr in &recipients {
             if let Err(e) = self
                 .send_alert_email(config, to_addr, &mail_subject, &html_body)
@@ -538,12 +524,12 @@ impl DispositionEngine {
         }
     }
 
-   /// FromData LoadEmail alert configuration (smtp_password)
+    /// FromData LoadEmail alert configuration (smtp_password)
     async fn load_email_alert_config(&self) -> Option<EmailAlertConfig> {
         match self.db.get_email_alert_config().await {
             Ok(Some(json)) => {
                 let mut config: EmailAlertConfig = serde_json::from_str(&json).ok()?;
-               // SEC-REMAINING-001: smtp_password (Such as "ENC:")
+                // SEC-REMAINING-001: smtp_password (Such as "ENC:")
                 if config.smtp_password.starts_with("ENC:") {
                     config.smtp_password =
                         decrypt_smtp_password(&config.smtp_password).unwrap_or_default();
@@ -568,7 +554,7 @@ impl DispositionEngine {
         }
     }
 
-   /// Alert
+    /// Alert
     async fn send_alert_email(
         &self,
         config: &EmailAlertConfig,
@@ -603,7 +589,7 @@ impl DispositionEngine {
         Ok(())
     }
 
-   /// SMTP Connection (For API)
+    /// SMTP Connection (For API)
     pub async fn test_email_connection(&self, config: &EmailAlertConfig) -> Result<String, String> {
         if config.smtp_host.is_empty() {
             return Err("SMTP host is empty".to_string());
@@ -649,9 +635,7 @@ impl DispositionEngine {
     }
 }
 
-
 // Tests
-
 
 #[cfg(test)]
 mod tests {
@@ -661,7 +645,7 @@ mod tests {
     use uuid::Uuid;
     use vigilyx_core::models::Protocol;
 
-   /// Build a minimal SecurityVerdict for testing.
+    /// Build a minimal SecurityVerdict for testing.
     fn make_verdict(
         threat_level: ThreatLevel,
         categories: Vec<String>,
@@ -683,7 +667,7 @@ mod tests {
         }
     }
 
-   /// Build a minimal EmailSession for testing.
+    /// Build a minimal EmailSession for testing.
     fn make_session(
         mail_from: Option<&str>,
         rcpt_to: Vec<&str>,
@@ -744,9 +728,7 @@ mod tests {
         );
     }
 
-    
-   // parse_threat_level
-    
+    // parse_threat_level
 
     #[test]
     fn test_parse_threat_level_safe() {
@@ -825,9 +807,7 @@ mod tests {
         );
     }
 
-    
-   // threat_level_label
-    
+    // threat_level_label
 
     #[test]
     fn test_threat_level_label_safe() {
@@ -854,9 +834,7 @@ mod tests {
         assert_eq!(threat_level_label(&ThreatLevel::Critical), "Critical");
     }
 
-    
-   // threat_level_color
-    
+    // threat_level_color
 
     #[test]
     fn test_threat_level_color_safe() {
@@ -903,9 +881,7 @@ mod tests {
         );
     }
 
-    
-   // html_escape
-    
+    // html_escape
 
     #[test]
     fn test_html_escape_ampersand() {
@@ -971,9 +947,7 @@ mod tests {
         );
     }
 
-    
-   // build_smtp_transport - plaintext rejection
-
+    // build_smtp_transport - plaintext rejection
 
     #[test]
     fn test_build_smtp_transport_rejects_plaintext_without_opt_in() {
@@ -1003,8 +977,8 @@ mod tests {
         );
     }
 
-   // These tests need a tokio runtime because lettre's AsyncSmtpTransport
-   // connection pool spawns a task on Drop.
+    // These tests need a tokio runtime because lettre's AsyncSmtpTransport
+    // connection pool spawns a task on Drop.
     #[tokio::test]
     async fn test_build_smtp_transport_tls_mode_succeeds() {
         let config = make_smtp_config("tls");
@@ -1089,20 +1063,14 @@ mod tests {
         let mut config = make_smtp_config("starttls");
         config.notify_admin = false;
         config.notify_recipient = true;
-        let session = make_session(
-            Some("sender@evil.com"),
-            vec!["user@corp.com"],
-            Some("test"),
-        );
+        let session = make_session(Some("sender@evil.com"), vec!["user@corp.com"], Some("test"));
 
         let recipients = collect_alert_recipients(&config, &session, &HashSet::new());
 
         assert!(recipients.is_empty());
     }
 
-    
-   // build_alert_html
-    
+    // build_alert_html
 
     #[test]
     fn test_build_alert_html_contains_threat_level_label() {
@@ -1199,7 +1167,7 @@ mod tests {
     #[test]
     fn test_build_alert_html_handles_missing_fields() {
         let verdict = make_verdict(ThreatLevel::Safe, vec![], "Clean email");
-       // mail_from = None, rcpt_to = empty, subject = None
+        // mail_from = None, rcpt_to = empty, subject = None
         let session = make_session(None, vec![], None);
         let html = build_html(&verdict, &session);
 
@@ -1258,7 +1226,7 @@ mod tests {
         let session = make_session(Some("a@b.com"), vec!["c@d.com"], Some("test"));
         let html = build_html(&verdict, &session);
 
-       // The categories field should contain "-" when empty
+        // The categories field should contain "-" when empty
         assert!(
             html.contains(">-</code>"),
             "Empty categories should show a dash"

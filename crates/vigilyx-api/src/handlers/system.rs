@@ -11,63 +11,61 @@ use crate::AppState;
 /// Sniffer status
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SnifferStatus {
-    
     pub online: bool,
-   /// Connectionstatus: connected, connecting, disconnected, error
+    /// Connectionstatus: connected, connecting, disconnected, error
     pub connection_status: String,
-   /// remoteServer address
+    /// remoteServer address
     pub remote_address: Option<String>,
-   /// Capture mode: local, stdin, remote_listen, remote_connect
+    /// Capture mode: local, stdin, remote_listen, remote_connect
     pub capture_mode: String,
-   /// 1 errorinfo
+    /// 1 errorinfo
     pub last_error: Option<String>,
-    
+
     pub retry_count: u32,
-   /// Newtime
+    /// Newtime
     pub last_update: String,
-   /// ProcessData
+    /// ProcessData
     pub packets_processed: u64,
-   /// Process
+    /// Process
     pub bytes_processed: u64,
 }
 
 /// MTA proxy status
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MtaStatus {
-    
     pub online: bool,
-   /// MTA
+    /// MTA
     pub downstream_host: String,
-   /// MTA
+    /// MTA
     pub downstream_port: u16,
-    
+
     pub active_connections: u64,
-   /// (ISO 8601)
+    /// (ISO 8601)
     pub last_update: String,
 }
 
 /// Systemstatus
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemStatus {
-   /// API status
+    /// API status
     pub api_online: bool,
-   /// API
+    /// API
     pub api_version: String,
-   /// Data status
+    /// Data status
     pub database_online: bool,
-   /// Data ()
+    /// Data ()
     pub database_size: u64,
-   /// Redis status
+    /// Redis status
     pub redis_online: bool,
-   /// Sniffer status
+    /// Sniffer status
     pub sniffer: SnifferStatus,
-   /// MTA proxy status
+    /// MTA proxy status
     pub mta: MtaStatus,
-   /// Service time
+    /// Service time
     pub server_time: String,
-   /// Service timezone name (prefer IANA, fallback to UTC offset label)
+    /// Service timezone name (prefer IANA, fallback to UTC offset label)
     pub server_timezone: String,
-   /// Service UTC offset in minutes
+    /// Service UTC offset in minutes
     pub server_utc_offset_minutes: i32,
 }
 
@@ -84,20 +82,20 @@ pub struct SystemMetrics {
 
 /// Getsystemstatus
 pub async fn get_system_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-   // Data status
+    // Data status
     let db_online = state.db.health_check().await.unwrap_or(false);
     let db_size = state.db.get_db_size().await.map(|(s, _)| s).unwrap_or(0);
 
-   // Redis status
+    // Redis status
     let redis_online = if let Some(ref mq) = state.messaging.mq {
         mq.is_connected().await
     } else {
         false
     };
 
-   // get sniffer status
+    // get sniffer status
     let sniffer = state.monitoring.sniffer_status.read().await.clone();
-   // get MTA status
+    // get MTA status
     let mta = state.monitoring.mta_status.read().await.clone();
 
     let local_now = Local::now();
@@ -129,7 +127,10 @@ fn detect_server_timezone(server_utc_offset_minutes: i32) -> String {
     if let Ok(target) = std::fs::canonicalize("/etc/localtime") {
         let zoneinfo_root = std::path::Path::new("/usr/share/zoneinfo");
         if let Ok(relative) = target.strip_prefix(zoneinfo_root) {
-            let tz = relative.to_string_lossy().trim_start_matches('/').to_string();
+            let tz = relative
+                .to_string_lossy()
+                .trim_start_matches('/')
+                .to_string();
             if !tz.is_empty() {
                 return tz;
             }
@@ -160,7 +161,7 @@ pub async fn update_sniffer_status(
     Json(status): Json<SnifferStatus>,
 ) -> impl IntoResponse {
     let mut sniffer = state.monitoring.sniffer_status.write().await;
-   *sniffer = status;
+    *sniffer = status;
     ApiResponse::ok(serde_json::json!({"status": "ok"}))
 }
 
@@ -170,21 +171,20 @@ pub async fn update_mta_status(
     Json(status): Json<MtaStatus>,
 ) -> impl IntoResponse {
     let mut mta = state.monitoring.mta_status.write().await;
-   *mta = status;
+    *mta = status;
     ApiResponse::ok(serde_json::json!({"status": "ok"}))
 }
 
-
 /// /sys/class/net/, Sniffer Redis
 pub async fn get_host_interfaces(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-   // /sys/class/net/ (spawn_blocking to avoid blocking the async runtime)
+    // /sys/class/net/ (spawn_blocking to avoid blocking the async runtime)
     if let Ok(Ok(interfaces)) = tokio::task::spawn_blocking(read_host_interfaces).await
         && !interfaces.is_empty()
     {
         return ApiResponse::ok(interfaces);
     }
 
-   // : Redis Sniffer
+    // : Redis Sniffer
     if let Some(ref mq) = state.messaging.mq {
         match mq
             .get_json::<Vec<serde_json::Value>>(vigilyx_db::mq::keys::SNIFFER_INTERFACES)
@@ -207,7 +207,6 @@ pub async fn get_host_interfaces(State(state): State<Arc<AppState>>) -> impl Int
 fn read_host_interfaces() -> Result<Vec<serde_json::Value>, std::io::Error> {
     use std::path::Path;
 
-    
     let net_dir = if Path::new("/host/sys/class/net").exists() {
         Path::new("/host/sys/class/net")
     } else if Path::new("/sys/class/net").exists() {
@@ -219,7 +218,7 @@ fn read_host_interfaces() -> Result<Vec<serde_json::Value>, std::io::Error> {
     let mut interfaces = Vec::new();
     for entry in std::fs::read_dir(net_dir)?.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-       // , Docker
+        // , Docker
         if name == "lo"
             || name.starts_with("veth")
             || name.starts_with("br-")
@@ -255,7 +254,6 @@ fn read_host_interfaces() -> Result<Vec<serde_json::Value>, std::io::Error> {
         }));
     }
 
-    
     interfaces.sort_by(|a, b| {
         let ta = a["total_bytes"].as_u64().unwrap_or(0);
         let tb = b["total_bytes"].as_u64().unwrap_or(0);
@@ -282,7 +280,7 @@ pub async fn get_system_metrics(State(state): State<Arc<AppState>>) -> impl Into
         0.0
     };
 
-   // Stream Statistics (request 4.5s COUNT tablescan)
+    // Stream Statistics (request 4.5s COUNT tablescan)
     let active_sessions = {
         let cache = state.cache.traffic_stats.read().await;
         cache.as_ref().map(|(_, s)| s.active_sessions).unwrap_or(0)

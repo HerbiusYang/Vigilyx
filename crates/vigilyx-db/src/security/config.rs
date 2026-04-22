@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use crate::VigilDb;
 
 impl VigilDb {
-   /// GetStream Configuration JSON
+    /// GetStream Configuration JSON
     pub async fn get_pipeline_config(&self) -> Result<Option<String>> {
         let row: Option<(String,)> =
             sqlx::query_as("SELECT value FROM config WHERE key = 'security_pipeline'")
@@ -15,7 +15,7 @@ impl VigilDb {
         Ok(row.map(|(v,)| v))
     }
 
-   /// Stream Configuration JSON
+    /// Stream Configuration JSON
     pub async fn set_pipeline_config(&self, json: &str) -> Result<()> {
         sqlx::query("INSERT INTO config (key, value) VALUES ('security_pipeline', $1) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value")
             .bind(json)
@@ -24,7 +24,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Get AI Service configuration JSON
+    /// Get AI Service configuration JSON
     pub async fn get_ai_service_config(&self) -> Result<Option<String>> {
         let row: Option<(String,)> =
             sqlx::query_as("SELECT value FROM config WHERE key = 'ai_service_config'")
@@ -33,7 +33,7 @@ impl VigilDb {
         Ok(row.map(|(v,)| v))
     }
 
-   /// AI Service configuration JSON
+    /// AI Service configuration JSON
     pub async fn set_ai_service_config(&self, json: &str) -> Result<()> {
         sqlx::query("INSERT INTO config (key, value) VALUES ('ai_service_config', $1) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value")
             .bind(json)
@@ -42,7 +42,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// GetEmail alert configuration JSON
+    /// GetEmail alert configuration JSON
     pub async fn get_email_alert_config(&self) -> Result<Option<String>> {
         let row: Option<(String,)> =
             sqlx::query_as("SELECT value FROM config WHERE key = 'email_alert_config'")
@@ -51,7 +51,7 @@ impl VigilDb {
         Ok(row.map(|(v,)| v))
     }
 
-   /// Email alert configuration JSON
+    /// Email alert configuration JSON
     pub async fn set_email_alert_config(&self, json: &str) -> Result<()> {
         sqlx::query("INSERT INTO config (key, value) VALUES ('email_alert_config', $1) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value")
             .bind(json)
@@ -60,7 +60,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Get WeChat alert configuration JSON
+    /// Get WeChat alert configuration JSON
     pub async fn get_wechat_alert_config(&self) -> Result<Option<String>> {
         let row: Option<(String,)> =
             sqlx::query_as("SELECT value FROM config WHERE key = 'wechat_alert_config'")
@@ -69,7 +69,7 @@ impl VigilDb {
         Ok(row.map(|(v,)| v))
     }
 
-   /// WeChat alert configuration JSON
+    /// WeChat alert configuration JSON
     pub async fn set_wechat_alert_config(&self, json: &str) -> Result<()> {
         sqlx::query("INSERT INTO config (key, value) VALUES ('wechat_alert_config', $1) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value")
             .bind(json)
@@ -78,7 +78,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Get DomainConfiguration
+    /// Get DomainConfiguration
     pub async fn get_internal_domains(&self) -> Result<Option<String>> {
         let row: Option<(String,)> =
             sqlx::query_as("SELECT value FROM config WHERE key = 'auto_internal_domains'")
@@ -87,7 +87,7 @@ impl VigilDb {
         Ok(row.map(|(v,)| v))
     }
 
-   /// DomainConfiguration
+    /// DomainConfiguration
     pub async fn set_internal_domains(&self, json: &str) -> Result<()> {
         sqlx::query("INSERT INTO config (key, value) VALUES ('auto_internal_domains', $1) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value")
             .bind(json)
@@ -96,7 +96,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// GetData security Configuration JSON
+    /// GetData security Configuration JSON
     pub async fn get_time_policy_config(&self) -> Result<Option<String>> {
         let row: Option<(String,)> =
             sqlx::query_as("SELECT value FROM config WHERE key = 'ds_time_policy'")
@@ -105,7 +105,7 @@ impl VigilDb {
         Ok(row.map(|(v,)| v))
     }
 
-   /// Data security Configuration JSON
+    /// Data security Configuration JSON
     pub async fn set_time_policy_config(&self, json: &str) -> Result<()> {
         sqlx::query("INSERT INTO config (key, value) VALUES ('ds_time_policy', $1) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value")
             .bind(json)
@@ -114,7 +114,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Get Syslog Configuration JSON(Configuration, Data security)
+    /// Get Syslog Configuration JSON(Configuration, Data security)
     pub async fn get_syslog_config(&self) -> Result<Option<String>> {
         let row: Option<(String,)> =
             sqlx::query_as("SELECT value FROM config WHERE key = 'syslog_config'")
@@ -123,7 +123,7 @@ impl VigilDb {
         Ok(row.map(|(v,)| v))
     }
 
-   /// Syslog Configuration JSON
+    /// Syslog Configuration JSON
     pub async fn set_syslog_config(&self, json: &str) -> Result<()> {
         sqlx::query("INSERT INTO config (key, value) VALUES ('syslog_config', $1) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value")
             .bind(json)
@@ -132,7 +132,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Get Sniffer Data securityConfiguration JSON (webmail_servers, http_ports)
+    /// Get Sniffer Data securityConfiguration JSON (webmail_servers, http_ports)
     pub async fn get_sniffer_config(&self) -> Result<Option<String>> {
         let row: Option<(String,)> =
             sqlx::query_as("SELECT value FROM config WHERE key = 'sniffer_config'")
@@ -141,7 +141,7 @@ impl VigilDb {
         Ok(row.map(|(v,)| v))
     }
 
-   /// Sniffer Data securityConfiguration JSON
+    /// Sniffer Data securityConfiguration JSON
     pub async fn set_sniffer_config(&self, json: &str) -> Result<()> {
         sqlx::query("INSERT INTO config (key, value) VALUES ('sniffer_config', $1) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value")
             .bind(json)
@@ -150,7 +150,7 @@ impl VigilDb {
         Ok(())
     }
 
-   /// Get inbound target IP rules from ui_preferences.capture.inbound_dst.
+    /// Get inbound target IP rules from ui_preferences.capture.inbound_dst.
     pub async fn get_capture_inbound_target_ips(&self) -> Result<HashSet<String>> {
         let raw = self.get_config("ui_preferences").await?;
         Ok(raw
@@ -159,14 +159,14 @@ impl VigilDb {
             .unwrap_or_default())
     }
 
-   /// Domain
-   ///
-   /// :Statistics N Day, DomainReceived SenderDomain.
-   /// Such as 1 DomainReceived>= min_senders SendingDomain,
-   /// Domain Domain(Source).
-   ///
-   /// rcpt_to JSON (Such as `["user@domain.com"]`),
-   /// jsonb_array_elements_text Extract Domain.
+    /// Domain
+    ///
+    /// :Statistics N Day, DomainReceived SenderDomain.
+    /// Such as 1 DomainReceived>= min_senders SendingDomain,
+    /// Domain Domain(Source).
+    ///
+    /// rcpt_to JSON (Such as `["user@domain.com"]`),
+    /// jsonb_array_elements_text Extract Domain.
     pub async fn detect_internal_domains(
         &self,
         days: i32,

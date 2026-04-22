@@ -55,7 +55,9 @@ impl LinkContentModule {
             meta: ModuleMetadata {
                 id: "link_content".to_string(),
                 name: "URL Content Analysis".to_string(),
-                description: "URL path, parameter, and fragment heuristic analysis + typosquatting detection".to_string(),
+                description:
+                    "URL path, parameter, and fragment heuristic analysis + typosquatting detection"
+                        .to_string(),
                 pillar: Pillar::Link,
                 depends_on: vec![],
                 timeout_ms: 5000,
@@ -105,12 +107,12 @@ fn edit_distance(a: &str, b: &str) -> usize {
 /// Extract word segments from URL path/fragment (split by / - _ . and camelCase)
 fn extract_url_words(text: &str) -> Vec<String> {
     let mut words = Vec::new();
-   // Split by / - _ .
+    // Split by / - _ .
     for segment in text.split(['/', '-', '_', '.']) {
         if segment.is_empty() {
             continue;
         }
-       // Split by camelCase/PascalCase: "InvoiveDown" -> ["Invoive", "Down"]
+        // Split by camelCase/PascalCase: "InvoiveDown" -> ["Invoive", "Down"]
         let mut current = String::new();
         for ch in segment.chars() {
             if ch.is_uppercase() && !current.is_empty() {
@@ -196,7 +198,7 @@ fn detect_typos(text: &str) -> (f64, Vec<(String, String)>) {
     let url_words = extract_url_words(text);
 
     let md = crate::module_data::module_data();
-   // Filter candidates (too short or exact match -> skip)
+    // Filter candidates (too short or exact match -> skip)
     let candidates: Vec<&String> = url_words
         .iter()
         .filter(|w| w.len() >= 4 && !md.contains("common_url_words", w))
@@ -214,7 +216,7 @@ fn detect_typos(text: &str) -> (f64, Vec<(String, String)>) {
             .collect()
     };
 
-   // Each typosquatting finding is a moderate signal; cap at 3+ findings
+    // Each typosquatting finding is a moderate signal; cap at 3+ findings
     let score = (findings.len() as f64 * 0.10).min(0.30);
     (score, findings)
 }
@@ -319,24 +321,25 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
     if is_probable_schema_reference_url(url) || is_probable_opaque_mail_callback_url(url) {
         return (score, findings);
     }
-   // Decode HTML entities (URLs in email body may contain &amp; etc.)
+    // Decode HTML entities (URLs in email body may contain &amp; etc.)
     let url_decoded = url
         .replace("&amp;", "&")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"");
-    let effective_url = crate::modules::link_scan::unwrap_mail_security_gateway_target(&url_decoded)
-        .unwrap_or_else(|| url_decoded.clone());
+    let effective_url =
+        crate::modules::link_scan::unwrap_mail_security_gateway_target(&url_decoded)
+            .unwrap_or_else(|| url_decoded.clone());
     let url_lower = effective_url.to_lowercase();
     let used_gateway_target = effective_url != url_decoded;
 
-   // Parse URL: scheme://host/path?query#fragment
+    // Parse URL: scheme://host/path?query#fragment
     let after_scheme = url_lower
         .strip_prefix("https://")
         .or_else(|| url_lower.strip_prefix("http://"))
         .unwrap_or(&url_lower);
 
-   // fragment
+    // fragment
     let (url_without_fragment, fragment) = match after_scheme.split_once('#') {
         Some((main, frag)) => (main, Some(frag)),
         None => (after_scheme, None),
@@ -356,11 +359,11 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
     let host_under_safe_domain =
         crate::modules::link_scan::is_well_known_safe_domain(host_for_check);
 
-   // Static image/font/script assets hosted on object storage frequently use
-   // bucket labels and long query strings, but they are not landing pages and
-   // should not trigger login-path/DGA heuristics on their own. The same
-   // treatment applies to static assets hosted under curated well-known safe
-   // domains such as provider CDN roots (for example *.127.net).
+    // Static image/font/script assets hosted on object storage frequently use
+    // bucket labels and long query strings, but they are not landing pages and
+    // should not trigger login-path/DGA heuristics on their own. The same
+    // treatment applies to static assets hosted under curated well-known safe
+    // domains such as provider CDN roots (for example *.127.net).
     if is_probable_safe_static_asset_url(&effective_url)
         || ((is_probable_cloud_asset_host(host_for_check) || host_under_safe_domain)
             && is_probable_static_asset_path(path))
@@ -368,10 +371,10 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
         return (score, findings);
     }
 
-   // Skip structural checks for trusted domains and mail security gateways.
-   // Trusted domains (e.g., QQ mail download URLs) naturally have long params.
-   // Security gateways (e.g., Trend Micro DDEI, Proofpoint) rewrite URLs with
-   // redirect/auth params that would otherwise trigger false positives.
+    // Skip structural checks for trusted domains and mail security gateways.
+    // Trusted domains (e.g., QQ mail download URLs) naturally have long params.
+    // Security gateways (e.g., Trend Micro DDEI, Proofpoint) rewrite URLs with
+    // redirect/auth params that would otherwise trigger false positives.
     if crate::modules::link_scan::is_trusted_url_domain(host_for_check)
         || (!used_gateway_target
             && crate::modules::link_scan::is_mail_security_gateway_pub(&url_lower))
@@ -379,14 +382,14 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
         return (score, findings);
     }
 
-   // 1. Suspicious path keywords (check both path and fragment)
+    // 1. Suspicious path keywords (check both path and fragment)
     let combined_path = if let Some(frag) = fragment {
         format!("{} {}", path, frag)
     } else {
         path.to_string()
     };
 
-   // Trusted domains (IOC verdict=clean) get reduced structural check weight
+    // Trusted domains (IOC verdict=clean) get reduced structural check weight
     let url_domain = host_path.split('/').next().unwrap_or("");
     let domain_trusted = crate::modules::link_scan::is_trusted_url_domain(url_domain);
 
@@ -414,7 +417,7 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
         ));
     }
 
-   // 2. Suspicious query parameters (parameter name matching)
+    // 2. Suspicious query parameters (parameter name matching)
     if let Some(q) = query {
         let mut param_hits: Vec<String> = Vec::new();
         let param_names: Vec<&str> = q
@@ -447,7 +450,7 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
         }
     }
 
-   // 3. Abnormally long URL (over 400 characters is suspicious)
+    // 3. Abnormally long URL (over 400 characters is suspicious)
     if effective_url.len() > 400 {
         score += 0.10;
         findings.push((
@@ -456,7 +459,7 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
         ));
     }
 
-   // 4. Encoding anomalies (check path and query for abnormal URL encoding)
+    // 4. Encoding anomalies (check path and query for abnormal URL encoding)
     let path_lower = path.to_lowercase();
     if path_lower.contains("%25") {
         score += 0.25;
@@ -473,9 +476,9 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
         ));
     }
 
-   // 5. @ sign in URL (domain obfuscation)
-   // Only flag @ in the authority section (before first / ? #), not in query strings
-   // e.g. http://user@evil.com is suspicious, but ?wght@700 (Google Fonts) is benign
+    // 5. @ sign in URL (domain obfuscation)
+    // Only flag @ in the authority section (before first / ? #), not in query strings
+    // e.g. http://user@evil.com is suspicious, but ?wght@700 (Google Fonts) is benign
     {
         let authority_part = if let Some(slash_pos) = after_scheme.find('/') {
             &after_scheme[..slash_pos]
@@ -495,11 +498,11 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
         }
     }
 
-   // 5b. DGA/random domain detection (consonant clustering analysis)
-   // e.g., rqvzkqb.shbllgs.cn is likely DGA-generated
+    // 5b. DGA/random domain detection (consonant clustering analysis)
+    // e.g., rqvzkqb.shbllgs.cn is likely DGA-generated
     if !host_under_safe_domain {
         let domain_part = host_for_check;
-       // Split into domain labels (excluding TLD)
+        // Split into domain labels (excluding TLD)
         let labels: Vec<&str> = domain_part.split('.').collect();
         let md = crate::module_data::module_data();
         let common_subdomains = md.get_list("common_service_subdomains");
@@ -507,17 +510,25 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
             if label.len() < 5 {
                 continue;
             }
-           // Skip well-known service subdomain prefixes (fonts, static, cdn, track, etc.)
-            if common_subdomains.iter().any(|s| s.eq_ignore_ascii_case(label)) {
+            // Skip well-known service subdomain prefixes (fonts, static, cdn, track, etc.)
+            if common_subdomains
+                .iter()
+                .any(|s| s.eq_ignore_ascii_case(label))
+            {
                 continue;
             }
-           // Only check ASCII labels
-            if !label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+            // Only check ASCII labels
+            if !label
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            {
                 continue;
             }
             let normalized_label = label.to_ascii_lowercase();
-            let label_segments: Vec<&str> =
-                normalized_label.split('-').filter(|segment| !segment.is_empty()).collect();
+            let label_segments: Vec<&str> = normalized_label
+                .split('-')
+                .filter(|segment| !segment.is_empty())
+                .collect();
             if label_segments.len() > 1
                 && label_segments
                     .iter()
@@ -545,9 +556,7 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
 
                 let (max_consonant_run, consonant_ratio) = consonant_metrics(&alpha_bytes);
                 if max_consonant_run >= 4
-                    || (max_consonant_run >= 3
-                        && consonant_ratio > 0.80
-                        && alpha_bytes.len() >= 8)
+                    || (max_consonant_run >= 3 && consonant_ratio > 0.80 && alpha_bytes.len() >= 8)
                 {
                     let dga_weight = if domain_trusted { 0.05 } else { 0.30 };
                     score += dga_weight;
@@ -571,8 +580,8 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
         }
     }
 
-   // 5c. IDN homograph attack detection (Cyrillic/Greek characters in domain)
-   // e.g., аpple.com (Cyrillic U+0430) vs apple.com (Latin a U+0061)
+    // 5c. IDN homograph attack detection (Cyrillic/Greek characters in domain)
+    // e.g., аpple.com (Cyrillic U+0430) vs apple.com (Latin a U+0061)
     {
         let host = host_path.split('/').next().unwrap_or("");
         let domain_part = host.split(':').next().unwrap_or(host);
@@ -595,7 +604,7 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
         }
     }
 
-   // 6. Multiple redirect parameters
+    // 6. Multiple redirect parameters
     let redirect_count = url_lower.matches("redirect").count()
         + url_lower.matches("return").count()
         + url_lower.matches("next=").count()
@@ -611,7 +620,7 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
         ));
     }
 
-   // 7. Non-standard port
+    // 7. Non-standard port
     let host = url_without_fragment.split('/').next().unwrap_or("");
     if let Some(port_str) = host.split(':').nth(1)
         && let Ok(port) = port_str.parse::<u16>()
@@ -627,11 +636,11 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
         ));
     }
 
-   // 8. Fragment (SPA RoadBy) Analyze
+    // 8. Fragment (SPA RoadBy) Analyze
     if let Some(frag) = fragment
         && !frag.is_empty()
     {
-       // Fragment contains multi-level path (common in SPA-based phishing)
+        // Fragment contains multi-level path (common in SPA-based phishing)
         let frag_depth = frag.matches('/').count();
         if frag_depth >= 2 {
             score += 0.10;
@@ -644,7 +653,7 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
             ));
         }
 
-       // Suspicious keywords in fragment
+        // Suspicious keywords in fragment
         let mut frag_hits: Vec<String> = Vec::new();
         for kw in md.get_list("suspicious_path_keywords") {
             if frag.contains(kw) {
@@ -663,7 +672,7 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
             ));
         }
 
-       // Fragment typosquatting detection
+        // Fragment typosquatting detection
         let (typo_score, typo_findings) = detect_typos(frag);
         if typo_score > 0.0 {
             score += typo_score;
@@ -671,7 +680,7 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
         }
     }
 
-   // 9. Path typosquatting detection (check URL path)
+    // 9. Path typosquatting detection (check URL path)
     let (path_typo_score, path_typo_findings) = detect_typos(path);
     if path_typo_score > 0.0 {
         score += path_typo_score;
@@ -712,10 +721,9 @@ impl SecurityModule for LinkContentModule {
         let mut suspicious_urls: Vec<String> = Vec::new();
 
         for link in links {
-            let effective_url = crate::modules::link_scan::unwrap_mail_security_gateway_target(
-                &link.url,
-            )
-            .unwrap_or_else(|| link.url.clone());
+            let effective_url =
+                crate::modules::link_scan::unwrap_mail_security_gateway_target(&link.url)
+                    .unwrap_or_else(|| link.url.clone());
             let link_text_empty = link
                 .text
                 .as_deref()
@@ -747,10 +755,10 @@ impl SecurityModule for LinkContentModule {
             }
         }
 
-       // Additional phishing URL pattern detection
+        // Additional phishing URL pattern detection
 
         // 10. Recipient email embedded in URL (targeted phishing)
-       // e.g., phishing link contains the recipient's email address as a parameter
+        // e.g., phishing link contains the recipient's email address as a parameter
         for link in links {
             let effective_url =
                 crate::modules::link_scan::unwrap_mail_security_gateway_target(&link.url)
@@ -772,8 +780,9 @@ impl SecurityModule for LinkContentModule {
                 total_score += 0.35;
                 categories.push("recipient_in_url".to_string());
                 evidence.push(Evidence {
-                    description: "URL contains recipient email address (targeted credential phishing)"
-                        .to_string(),
+                    description:
+                        "URL contains recipient email address (targeted credential phishing)"
+                            .to_string(),
                     location: Some("links".to_string()),
                     snippet: Some(if effective_url.len() > 120 {
                         format!("{}...", &effective_url[..120])
@@ -785,9 +794,9 @@ impl SecurityModule for LinkContentModule {
             }
         }
 
-       // 10b. @ obfuscation + recipient email compound signal
-       // If the same email has both URL @ sign obfuscation and embedded recipient address,
-       // this is a strong credential phishing indicator (e.g., spoofed Apple ID attack pattern)
+        // 10b. @ obfuscation + recipient email compound signal
+        // If the same email has both URL @ sign obfuscation and embedded recipient address,
+        // this is a strong credential phishing indicator (e.g., spoofed Apple ID attack pattern)
         {
             let has_at_obfuscation = categories.iter().any(|c| c == "at_sign_obfuscation");
             let has_recipient_in_url = categories.iter().any(|c| c == "recipient_in_url");
@@ -804,7 +813,7 @@ impl SecurityModule for LinkContentModule {
             }
         }
 
-       // 11. Organization domain mimicry in URL subdomain
+        // 11. Organization domain mimicry in URL subdomain
         {
             let org_domains: &[&str] = &["corp-internal.com"];
             for link in links {
@@ -824,7 +833,10 @@ impl SecurityModule for LinkContentModule {
                             total_score += 0.30;
                             categories.push("org_domain_mimicry".to_string());
                             evidence.push(Evidence {
-                                description: format!("URL subdomain mimics organization domain '{}': {}", org, host),
+                                description: format!(
+                                    "URL subdomain mimics organization domain '{}': {}",
+                                    org, host
+                                ),
                                 location: Some("links".to_string()),
                                 snippet: Some(effective_url.clone()),
                             });
@@ -834,7 +846,7 @@ impl SecurityModule for LinkContentModule {
             }
         }
 
-       // 12. Long random hex in subdomain (DGA indicator)
+        // 12. Long random hex in subdomain (DGA indicator)
         {
             for link in links {
                 let effective_url =
@@ -846,7 +858,7 @@ impl SecurityModule for LinkContentModule {
                 if let Ok(parsed) = url::Url::parse(&effective_url)
                     && let Some(host) = parsed.host_str()
                 {
-                   // Get first subdomain label
+                    // Get first subdomain label
                     let first_label = host.split('.').next().unwrap_or("");
                     if RE_HEX_DGA.is_match(first_label) {
                         total_score += 0.15;
@@ -865,10 +877,10 @@ impl SecurityModule for LinkContentModule {
             }
         }
 
-       // Analyze email body for URL-related phishing patterns (may not be extracted as links)
+        // Analyze email body for URL-related phishing patterns (may not be extracted as links)
         if let Some(ref body) = ctx.session.content.body_text {
             let body_lower = body.to_lowercase();
-           // Check for mobile browser redirect instructions (common phishing tactic)
+            // Check for mobile browser redirect instructions (common phishing tactic)
             if body_lower.contains("复制地址到")
                 || body_lower.contains("复制链接到")
                 || body_lower.contains("手机浏览器")
@@ -1049,7 +1061,11 @@ mod tests {
         crate::modules::link_scan::set_well_known_safe_domains(Arc::new(HashSet::new()));
     }
 
-    fn make_ctx_with_body(link: &str, body_text: Option<&str>, subject: Option<&str>) -> SecurityContext {
+    fn make_ctx_with_body(
+        link: &str,
+        body_text: Option<&str>,
+        subject: Option<&str>,
+    ) -> SecurityContext {
         let mut session = EmailSession::new(
             Protocol::Smtp,
             "10.0.0.1".to_string(),
@@ -1077,7 +1093,10 @@ mod tests {
 
     fn make_module_with_keywords(keywords: &[&str]) -> LinkContentModule {
         LinkContentModule::new_with_keyword_lists(EffectiveKeywordLists {
-            phishing_keywords: keywords.iter().map(|keyword| normalize_text(keyword)).collect(),
+            phishing_keywords: keywords
+                .iter()
+                .map(|keyword| normalize_text(keyword))
+                .collect(),
             ..Default::default()
         })
     }
@@ -1123,7 +1142,11 @@ mod tests {
 
         let result = analyze_with_runtime(&module, &ctx);
 
-        assert!(result.categories.is_empty(), "static cloud asset should be ignored: {:?}", result.categories);
+        assert!(
+            result.categories.is_empty(),
+            "static cloud asset should be ignored: {:?}",
+            result.categories
+        );
         assert_eq!(result.threat_level, ThreatLevel::Safe);
     }
 
@@ -1233,7 +1256,9 @@ mod tests {
         let module = LinkContentModule::new();
         let ctx = make_ctx_with_body(
             "https://www.swift.com/myswift/billing/direct-debit",
-            Some("Please review your invoice and settle the overdue amount through the billing portal."),
+            Some(
+                "Please review your invoice and settle the overdue amount through the billing portal.",
+            ),
             None,
         );
 
@@ -1250,11 +1275,14 @@ mod tests {
     fn test_login_landing_page_still_has_structural_path_signal() {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
-        let (_, findings) = analyze_url("https://pro.qcc.com/login?path=investigation/automation-check");
+        let (_, findings) =
+            analyze_url("https://pro.qcc.com/login?path=investigation/automation-check");
 
-        assert!(findings
-            .iter()
-            .any(|(_, category)| category == "suspicious_path"));
+        assert!(
+            findings
+                .iter()
+                .any(|(_, category)| category == "suspicious_path")
+        );
     }
 
     #[test]
@@ -1277,7 +1305,8 @@ mod tests {
     fn test_receive_path_is_not_treated_as_receipt_typo() {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
-        let (_, findings) = analyze_url("https://product-support.chaitin.cn/message/receive?id=12345");
+        let (_, findings) =
+            analyze_url("https://product-support.chaitin.cn/message/receive?id=12345");
 
         assert!(
             !findings.iter().any(|(_, category)| category == "url_typo"),
@@ -1300,7 +1329,9 @@ mod tests {
         let result = analyze_with_runtime(&module, &ctx);
 
         assert!(
-            result.categories.contains(&"device_code_phishing".to_string()),
+            result
+                .categories
+                .contains(&"device_code_phishing".to_string()),
             "device-code structure should only fire with keyword context: {:?}",
             result.categories
         );
@@ -1316,7 +1347,9 @@ mod tests {
         let result = analyze_with_runtime(&module, &ctx);
 
         assert!(
-            !result.categories.contains(&"device_code_phishing".to_string()),
+            !result
+                .categories
+                .contains(&"device_code_phishing".to_string()),
             "device-code URL alone should not trip the dynamic-keyword gate: {:?}",
             result.categories
         );

@@ -12,9 +12,9 @@ use axum::{
 use futures::{SinkExt, StreamExt};
 use serde::Deserialize;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 use tracing::{debug, error, info, warn};
 use vigilyx_core::WsMessage;
@@ -39,7 +39,7 @@ pub fn invalidate_websocket_sessions(state: &crate::AppState) {
 /// SEC-H02: `ticket` (1, JWT)
 #[derive(Deserialize)]
 pub struct WsAuthQuery {
-   /// 1 (: POST /api/auth/ws-ticket get)
+    /// 1 (: POST /api/auth/ws-ticket get)
     ticket: Option<String>,
 }
 
@@ -54,7 +54,7 @@ pub async fn ws_handler(
     let client_ip = extract_client_ip(&headers, addr);
     let user_agent = extract_user_agent(&headers);
 
-   // SEC-H02: 1 authentication
+    // SEC-H02: 1 authentication
     if let Some(ticket) = query.ticket.as_deref() {
         if !state
             .ws_tickets
@@ -68,7 +68,7 @@ pub async fn ws_handler(
         return Err(StatusCode::UNAUTHORIZED);
     }
 
-   // SEC: Reject WebSocket when default password not changed (prevents email content leak)
+    // SEC: Reject WebSocket when default password not changed (prevents email content leak)
     let password_changed = *state.auth.config.password_changed.read().await;
     if !password_changed {
         warn!("SEC: default-password session attempted WebSocket, rejected");
@@ -86,7 +86,7 @@ pub async fn ws_handler(
     *current += 1;
     drop(current);
 
-   // SEC-H05: WebSocket message OOM (CWE-400)
+    // SEC-H05: WebSocket message OOM (CWE-400)
     Ok(ws
         .max_message_size(64 * 1024) // 64 KB
         .max_frame_size(16 * 1024) // 16 KB
@@ -104,13 +104,13 @@ pub async fn ws_handler(
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_epoch: u64) {
     let (mut sender, mut receiver) = socket.split();
 
-   // Broadcast channel
+    // Broadcast channel
     let mut rx = state.messaging.ws_tx.subscribe();
 
     WS_CONNECTIONS_ACTIVE.inc();
     info!("New WebSocket Connection");
 
-   // send Statisticsinfo
+    // send Statisticsinfo
     if let Ok(stats) = state.db.get_stats().await {
         let msg = WsMessage::StatsUpdate(stats);
         if let Ok(json) = serde_json::to_string(&msg) {
@@ -118,7 +118,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_epoch: u64)
         }
     }
 
-   // receive message send client
+    // receive message send client
     let send_state = state.clone();
     let mut send_task = tokio::spawn(async move {
         let mut auth_check = tokio::time::interval(WS_AUTH_CHECK_INTERVAL);
@@ -180,13 +180,13 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_epoch: u64)
         }
     });
 
-   // receiveclientmessage
+    // receiveclientmessage
     let mut recv_task = tokio::spawn(async move {
         while let Some(msg) = receiver.next().await {
             match msg {
                 Ok(Message::Text(text)) => {
                     debug!("Receivedclientmessage: {}", text);
-                   // Process Pong response
+                    // Process Pong response
                     if let Ok(WsMessage::Pong) = serde_json::from_str::<WsMessage>(&text) {
                         debug!("Received Pong");
                     }
@@ -204,7 +204,6 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_epoch: u64)
         }
     });
 
-    
     tokio::select! {
         _ = &mut send_task => {
             recv_task.abort();
@@ -214,7 +213,6 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_epoch: u64)
         },
     }
 
-    
     WS_CONNECTIONS_ACTIVE.dec();
     info!("WebSocket Connectionshutdown");
 }

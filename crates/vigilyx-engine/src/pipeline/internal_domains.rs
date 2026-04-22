@@ -25,7 +25,7 @@ pub(crate) fn is_public_mail_domain(domain: &str) -> bool {
 
 /// From DB LoadalreadydetectofInternalDomain,if not Firstdetect
 pub(crate) async fn load_internal_domains(db: &VigilDb) -> HashSet<String> {
-   // From config tableLoadalreadySaveofResult
+    // From config tableLoadalreadySaveofResult
     if let Ok(Some(json)) = db.get_internal_domains().await
         && let Ok(domains) = serde_json::from_str::<Vec<String>>(&json)
         && !domains.is_empty()
@@ -37,7 +37,7 @@ pub(crate) async fn load_internal_domains(db: &VigilDb) -> HashSet<String> {
         return domains.into_iter().collect();
     }
 
-   // not SaveofResult,Firstdetect
+    // not SaveofResult,Firstdetect
     info!("FirstdetectInternalDomain...");
     refresh_internal_domains(db).await
 }
@@ -46,8 +46,8 @@ pub(crate) async fn load_internal_domains(db: &VigilDb) -> HashSet<String> {
 pub(crate) async fn refresh_internal_domains(db: &VigilDb) -> HashSet<String> {
     let mut domains = HashSet::new();
 
-   // InternalDomain ByAutodetect, Encode Domain.
-   // if, INTERNAL_DOMAINS EnvironmentVariable (Numberdelimited).
+    // InternalDomain ByAutodetect, Encode Domain.
+    // if, INTERNAL_DOMAINS EnvironmentVariable (Numberdelimited).
     if let Ok(env_domains) = std::env::var("INTERNAL_DOMAINS") {
         for d in env_domains
             .split(',')
@@ -64,7 +64,7 @@ pub(crate) async fn refresh_internal_domains(db: &VigilDb) -> HashSet<String> {
     {
         Ok(detected) => {
             for (domain, sender_count) in &detected {
-               // Exclude emailServiceDomain
+                // Exclude emailServiceDomain
                 if is_public_mail_domain(domain) {
                     continue;
                 }
@@ -81,7 +81,7 @@ pub(crate) async fn refresh_internal_domains(db: &VigilDb) -> HashSet<String> {
         }
     }
 
-   // Save config table
+    // Save config table
     let domain_list: Vec<&str> = domains.iter().map(|s| s.as_str()).collect();
     if let Ok(json) = serde_json::to_string(&domain_list)
         && let Err(e) = db.set_internal_domains(&json).await

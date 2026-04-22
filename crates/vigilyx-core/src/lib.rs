@@ -6,11 +6,11 @@ pub mod config;
 pub mod error;
 pub mod magic_bytes;
 pub mod models;
-pub mod ssrf;
 pub mod security;
+pub mod ssrf;
 
 pub use config::{CaptureMode, Config};
 pub use error::{Error, Result};
 pub use models::*;
-pub use ssrf::*;
 pub use security::*;
+pub use ssrf::*;

@@ -8,7 +8,7 @@ impl Pop3Parser {
         Self
     }
 
-   /// Parse POP3 data
+    /// Parse POP3 data
     pub fn parse(&self, data: &[u8]) -> Option<String> {
         let text = String::from_utf8_lossy(data);
         let text = text.trim();
@@ -17,7 +17,7 @@ impl Pop3Parser {
             return None;
         }
 
-       // Checkwhether Response
+        // Checkwhether Response
         if text.starts_with("+OK") {
             return Some(self.parse_ok_response(text));
         }
@@ -25,11 +25,11 @@ impl Pop3Parser {
             return Some(self.parse_err_response(text));
         }
 
-       // ParseCommand
+        // ParseCommand
         self.parse_command(text)
     }
 
-   /// Parse POP3 Command
+    /// Parse POP3 Command
     fn parse_command(&self, text: &str) -> Option<String> {
         let parts: Vec<&str> = text.split_whitespace().collect();
         if parts.is_empty() {
@@ -82,13 +82,13 @@ impl Pop3Parser {
         Some(parsed)
     }
 
-   /// Parse +OK Response
+    /// Parse +OK Response
     fn parse_ok_response(&self, text: &str) -> String {
         let message = text.strip_prefix("+OK").unwrap_or("").trim();
         if message.is_empty() {
             "+OK".to_string()
         } else if message.len() > 50 {
-           // Use floor_char_boundary to avoid panicking on multi-byte UTF-8
+            // Use floor_char_boundary to avoid panicking on multi-byte UTF-8
             let end = message.floor_char_boundary(50);
             format!("+OK {}...", &message[..end])
         } else {
@@ -96,7 +96,7 @@ impl Pop3Parser {
         }
     }
 
-   /// Parse -ERR Response
+    /// Parse -ERR Response
     fn parse_err_response(&self, text: &str) -> String {
         let message = text.strip_prefix("-ERR").unwrap_or("").trim();
         if message.is_empty() {

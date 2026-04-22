@@ -1,18 +1,14 @@
-
 // Noisy-OR According to model (keep)
-
 
 // giving N independent detecthandler, Output s [0,1],
 // of:
 // P(threat) = 1 - (1 - s) (Noisy-OR)
-
 
 // Step 1: T = 1 - (1 - s w)
 // Step 2: S = 1 - (1 - T)
 // Step 3: large S' = S + (1-S) (k/5)
 // Step 4: Danger S" = S' + (1-S') (if combo hit)
 // Step 5: Sf = S" (1 - trust 0.4)
-
 
 use std::collections::{HashMap, HashSet};
 
@@ -46,7 +42,7 @@ pub(super) fn aggregate_noisy_or(
         return empty_verdict(session_id, now);
     }
 
-   // Time/CountTraverse: Yuandata + According to
+    // Time/CountTraverse: Yuandata + According to
     let mut pillar_scores_raw: [Vec<f64>; PILLAR_COUNT] = Default::default();
     let mut categories: Vec<String> = Vec::new();
     let mut modules_flagged: u32 = 0;
@@ -80,7 +76,7 @@ pub(super) fn aggregate_noisy_or(
     categories.sort_unstable();
     categories.dedup();
 
-   // Step 1 & 2: Noisy-OR -> Noisy-OR
+    // Step 1 & 2: Noisy-OR -> Noisy-OR
     let mut pillar_threat: HashMap<String, f64> = HashMap::new();
     let mut cross_product = 1.0_f64;
 
@@ -100,7 +96,7 @@ pub(super) fn aggregate_noisy_or(
 
     let s_base = 1.0 - cross_product;
 
-   // Step 3: Signal large
+    // Step 3: Signal large
     let k = pillar_threat
         .values()
         .filter(|&&t| t > DIVERSITY_THRESHOLD)
@@ -108,7 +104,7 @@ pub(super) fn aggregate_noisy_or(
     let diversity = k / TOTAL_PILLARS;
     let s_amp = s_base + (1.0 - s_base) * diversity * DIVERSITY_BETA;
 
-   // Step 4: DangerClass
+    // Step 4: DangerClass
     let cat_set: HashSet<&str> = categories.iter().map(|s| s.as_str()).collect();
     let has_dangerous_combo = DANGEROUS_COMBOS
         .iter()
@@ -120,7 +116,7 @@ pub(super) fn aggregate_noisy_or(
         s_amp
     };
 
-   // Step 5: Sender alignment
+    // Step 5: Sender alignment
     let s_final = apply_alignment_discount(s_boosted, results);
 
     let final_level = ThreatLevel::from_score(s_final);

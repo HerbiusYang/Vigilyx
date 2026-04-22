@@ -21,13 +21,13 @@ const DEFAULT_MAX_CONNECTIONS: u32 = 20;
 const DEFAULT_MIN_CONNECTIONS: u32 = 2;
 
 impl VigilDb {
-   /// Create database connection pool
-   ///
-   /// `url` format: `postgres://user:password@host:port/dbname`
-   ///
-   /// Connection pool parameters can be overridden via environment variables:
-   /// - `PG_MAX_CONNECTIONS`: max connections(Default 50)
-   /// - `PG_MIN_CONNECTIONS`: min connections(Default 8)
+    /// Create database connection pool
+    ///
+    /// `url` format: `postgres://user:password@host:port/dbname`
+    ///
+    /// Connection pool parameters can be overridden via environment variables:
+    /// - `PG_MAX_CONNECTIONS`: max connections(Default 50)
+    /// - `PG_MIN_CONNECTIONS`: min connections(Default 8)
     pub async fn new(url: &str) -> Result<Self> {
         let max_conn = std::env::var("PG_MAX_CONNECTIONS")
             .ok()
@@ -49,10 +49,10 @@ impl VigilDb {
         Ok(Self { pool })
     }
 
-   /// Check database health status
-   ///
-   /// Returns `Ok(true)` if the database responds within 5 seconds,
-   /// `Err` on timeout or query failure.
+    /// Check database health status
+    ///
+    /// Returns `Ok(true)` if the database responds within 5 seconds,
+    /// `Err` on timeout or query failure.
     pub async fn health_check(&self) -> Result<bool> {
         match tokio::time::timeout(
             std::time::Duration::from_secs(5),

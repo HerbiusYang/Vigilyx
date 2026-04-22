@@ -22,25 +22,25 @@ use vigilyx_core::TrafficStats;
 /// SEC: Custom Debug impl to mask password in redis_url (CWE-532)
 #[derive(Clone)]
 pub struct MqConfig {
-   /// Redis URL
+    /// Redis URL
     pub redis_url: String,
-   /// Message retention time (secs)
+    /// Message retention time (secs)
     pub message_ttl: u64,
-   /// Stream max length
+    /// Stream max length
     pub stream_max_len: usize,
-   /// Batch send threshold
+    /// Batch send threshold
     pub batch_size: usize,
-   /// Batch send interval(ms)
+    /// Batch send interval(ms)
     pub batch_interval_ms: u64,
-   /// Reconnection interval (secs)
+    /// Reconnection interval (secs)
     pub reconnect_interval_secs: u64,
-   /// Max retry count
+    /// Max retry count
     pub max_retries: u32,
 }
 
 impl std::fmt::Debug for MqConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-       // SEC: mask password in redis_url (redis://:PASSWORD@host -> redis://:***@host)
+        // SEC: mask password in redis_url (redis://:PASSWORD@host -> redis://:***@host)
         let masked_url = if let Some(at_pos) = self.redis_url.find('@') {
             if let Some(colon_pos) = self.redis_url[..at_pos].rfind(':') {
                 format!(
@@ -77,7 +77,7 @@ impl Default for MqConfig {
 }
 
 impl MqConfig {
-   /// Load config from environment variables
+    /// Load config from environment variables
     pub fn from_env() -> Self {
         Self {
             redis_url: std::env::var("REDIS_URL")
@@ -115,14 +115,14 @@ impl MqConfig {
 pub struct MqClient {
     pub(crate) config: MqConfig,
     conn: Arc<RwLock<Option<ConnectionManager>>>,
-   /// Sent message count
+    /// Sent message count
     pub sent_count: Arc<AtomicU64>,
-   /// Error count
+    /// Error count
     pub error_count: Arc<AtomicU64>,
 }
 
 impl MqClient {
-   /// Create new client
+    /// Create new client
     pub fn new(config: MqConfig) -> Self {
         Self {
             config,
@@ -132,13 +132,13 @@ impl MqClient {
         }
     }
 
-   /// Connect to Redis (with retry)
+    /// Connect to Redis (with retry)
     pub async fn connect(&self) -> MqResult<()> {
         let mut retries = 0;
         loop {
             match self.try_connect().await {
                 Ok(_) => {
-                   // Security: hide Redis password in logs
+                    // Security: hide Redis password in logs
                     let redis_log = self.config.redis_url.find('@').map_or_else(
                         || self.config.redis_url.clone(),
                         |at| format!("redis://***@{}", &self.config.redis_url[at + 1..]),
@@ -164,20 +164,20 @@ impl MqClient {
         }
     }
 
-   /// Create a fresh Redis connection manager.
+    /// Create a fresh Redis connection manager.
     pub(crate) async fn new_connection_manager(&self) -> MqResult<ConnectionManager> {
         let client = Client::open(self.config.redis_url.clone())?;
         let conn = ConnectionManager::new(client).await?;
         Ok(conn)
     }
 
-   /// Create a dedicated async connection for stream reads.
-   ///
-   /// Redis stream consumers intentionally issue blocking `XREADGROUP` calls, so
-   /// the default 500ms async response timeout used by the redis crate would
-   /// incorrectly abort healthy reads before Redis returns. Stream consumers use a
-   /// separate connection with no built-in response timeout and rely on the caller
-   /// to apply an explicit timeout matched to the chosen `BLOCK` window.
+    /// Create a dedicated async connection for stream reads.
+    ///
+    /// Redis stream consumers intentionally issue blocking `XREADGROUP` calls, so
+    /// the default 500ms async response timeout used by the redis crate would
+    /// incorrectly abort healthy reads before Redis returns. Stream consumers use a
+    /// separate connection with no built-in response timeout and rely on the caller
+    /// to apply an explicit timeout matched to the chosen `BLOCK` window.
     pub(crate) async fn new_stream_read_connection(&self) -> MqResult<MultiplexedConnection> {
         let client = Client::open(self.config.redis_url.clone())?;
         let config = redis::AsyncConnectionConfig::new().set_response_timeout(None);
@@ -187,21 +187,21 @@ impl MqClient {
         Ok(conn)
     }
 
-   /// Try connect
+    /// Try connect
     async fn try_connect(&self) -> MqResult<()> {
         let conn = self.new_connection_manager().await?;
 
         let mut guard = self.conn.write().await;
-       *guard = Some(conn);
+        *guard = Some(conn);
 
         Ok(())
     }
 
-   /// Check if connected
+    /// Check if connected
     pub async fn is_connected(&self) -> bool {
         let guard = self.conn.read().await;
         if let Some(ref conn) = *guard {
-           // Try PING to check connection
+            // Try PING to check connection
             let mut conn = conn.clone();
             redis::cmd("PING")
                 .query_async::<String>(&mut conn)
@@ -212,7 +212,7 @@ impl MqClient {
         }
     }
 
-   /// Get connection (with automatic reconnection)
+    /// Get connection (with automatic reconnection)
     pub(crate) async fn get_conn(&self) -> MqResult<ConnectionManager> {
         {
             let guard = self.conn.read().await;
@@ -221,7 +221,7 @@ impl MqClient {
             }
         }
 
-       // Attempt reconnection
+        // Attempt reconnection
         self.try_connect().await?;
 
         let guard = self.conn.read().await;
@@ -230,7 +230,7 @@ impl MqClient {
             .ok_or_else(|| MqError::Connection("Not connected".to_string()))
     }
 
-   /// Get statistics
+    /// Get statistics
     pub fn get_stats(&self) -> (u64, u64) {
         (
             self.sent_count.load(Ordering::Relaxed),
@@ -238,7 +238,7 @@ impl MqClient {
         )
     }
 
-   /// Publish a **control-plane command** to a Pub/Sub channel.
+    /// Publish a **control-plane command** to a Pub/Sub channel.
     ///
     /// The on-wire payload becomes `<token>:<json>` (split on the **first**
     /// colon). Receivers must call [`verify_cmd_payload`] to validate and strip
@@ -256,13 +256,13 @@ impl MqClient {
         self.publish_raw(topic, &payload).await
     }
 
-   /// Publish message to Pub/Sub channel (with retry)
+    /// Publish message to Pub/Sub channel (with retry)
     pub async fn publish<T: Serialize>(&self, topic: &str, message: &T) -> MqResult<()> {
         let json = serde_json::to_string(message)?;
         self.publish_raw(topic, &json).await
     }
 
-   /// Low-level publish of an already-formatted payload string (with retry).
+    /// Low-level publish of an already-formatted payload string (with retry).
     async fn publish_raw(&self, topic: &str, payload: &str) -> MqResult<()> {
         let mut retries = 0;
 
@@ -288,10 +288,10 @@ impl MqClient {
                         retries, self.config.max_retries, e
                     );
 
-                   // Clear connection, force reconnection
+                    // Clear connection, force reconnection
                     {
                         let mut guard = self.conn.write().await;
-                       *guard = None;
+                        *guard = None;
                     }
 
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -300,7 +300,7 @@ impl MqClient {
         }
     }
 
-   /// Write Redis key (with TTL secs)
+    /// Write Redis key (with TTL secs)
     pub async fn set_json<T: Serialize>(
         &self,
         key: &str,
@@ -313,7 +313,7 @@ impl MqClient {
         Ok(())
     }
 
-   /// Read Redis key
+    /// Read Redis key
     pub async fn get_json<T: DeserializeOwned>(&self, key: &str) -> MqResult<Option<T>> {
         let mut conn = self.get_conn().await?;
         let val: Option<String> = conn.get(key).await?;
@@ -323,12 +323,12 @@ impl MqClient {
         }
     }
 
-   /// Publish message to Stream
+    /// Publish message to Stream
     pub async fn xadd<T: Serialize>(&self, stream: &str, message: &T) -> MqResult<String> {
         let mut conn = self.get_conn().await?;
         let json = serde_json::to_string(message)?;
 
-       // XADD with MAXLEN
+        // XADD with MAXLEN
         let id: String = redis::cmd("XADD")
             .arg(stream)
             .arg("MAXLEN")
@@ -344,7 +344,7 @@ impl MqClient {
         Ok(id)
     }
 
-   /// Read message from Stream
+    /// Read message from Stream
     pub async fn xread<T: DeserializeOwned>(
         &self,
         stream: &str,
@@ -365,12 +365,12 @@ impl MqClient {
             .query_async(&mut conn)
             .await?;
 
-       // Parse results
+        // Parse results
         let messages = self.parse_xread_result::<T>(result)?;
         Ok(messages)
     }
 
-   /// Parse XREAD results
+    /// Parse XREAD results
     fn parse_xread_result<T: DeserializeOwned>(
         &self,
         value: redis::Value,
@@ -387,7 +387,7 @@ impl MqClient {
                         if let redis::Value::Array(entry_data) = entry
                             && entry_data.len() >= 2
                         {
-                           // Get ID
+                            // Get ID
                             let id = match &entry_data[0] {
                                 redis::Value::BulkString(b) => {
                                     String::from_utf8_lossy(b).to_string()
@@ -395,7 +395,7 @@ impl MqClient {
                                 _ => continue,
                             };
 
-                           // Get data
+                            // Get data
                             if let redis::Value::Array(fields) = &entry_data[1]
                                 && fields.len() >= 2
                                 && let redis::Value::BulkString(data) = &fields[1]
@@ -414,16 +414,16 @@ impl MqClient {
         Ok(messages)
     }
 
-   // ==================== Convenience methods ====================
+    // ==================== Convenience methods ====================
 
-   /// Publish stats update
+    /// Publish stats update
     pub async fn publish_stats(&self, stats: &TrafficStats) -> MqResult<()> {
         self.publish(topics::STATS_UPDATE, stats).await
     }
 
-   // ==================== Batch publish methods (performance optimization) ====================
+    // ==================== Batch publish methods (performance optimization) ====================
 
-   /// Batch publish statistics (high-frequency update optimization)
+    /// Batch publish statistics (high-frequency update optimization)
     pub async fn publish_stats_throttled(
         &self,
         stats: &TrafficStats,
@@ -455,13 +455,13 @@ impl MqClient {
         Ok(false)
     }
 
-   // ============================================
-   // sid -> user mapping persistence (Redis Hash)
-   // ============================================
+    // ============================================
+    // sid -> user mapping persistence (Redis Hash)
+    // ============================================
 
     const SID_USER_KEY: &'static str = "vigilyx:sid_to_user";
 
-   /// Write sid -> user mapping to Redis Hash (single entry)
+    /// Write sid -> user mapping to Redis Hash (single entry)
     pub async fn sid_user_set(&self, sid: &str, user: &str) -> MqResult<()> {
         let mut conn = self.get_conn().await?;
         redis::cmd("HSET")
@@ -473,7 +473,7 @@ impl MqClient {
         Ok(())
     }
 
-   /// Batch write sid -> user mappings
+    /// Batch write sid -> user mappings
     pub async fn sid_user_set_batch(&self, entries: &[(String, String)]) -> MqResult<()> {
         if entries.is_empty() {
             return Ok(());
@@ -487,7 +487,7 @@ impl MqClient {
         Ok(())
     }
 
-   /// Load all sid -> user mappings (called at startup)
+    /// Load all sid -> user mappings (called at startup)
     pub async fn sid_user_load_all(&self) -> MqResult<Vec<(String, String)>> {
         let mut conn = self.get_conn().await?;
         let map: std::collections::HashMap<String, String> = redis::cmd("HGETALL")
@@ -497,7 +497,7 @@ impl MqClient {
         Ok(map.into_iter().collect())
     }
 
-   /// Delete specified sid mapping (batch delete on LRU eviction)
+    /// Delete specified sid mapping (batch delete on LRU eviction)
     pub async fn sid_user_delete_batch(&self, sids: &[String]) -> MqResult<()> {
         if sids.is_empty() {
             return Ok(());
@@ -511,7 +511,7 @@ impl MqClient {
         Ok(())
     }
 
-   /// Create Pub/Sub subscriber
+    /// Create Pub/Sub subscriber
     pub async fn subscribe(&self, topics: &[&str]) -> MqResult<redis::aio::PubSub> {
         let client = Client::open(self.config.redis_url.clone())?;
         let mut pubsub = client.get_async_pubsub().await?;

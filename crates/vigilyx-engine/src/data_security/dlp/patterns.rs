@@ -5,9 +5,7 @@
 use regex::{Regex, RegexSet};
 use std::sync::LazyLock;
 
-
 // mode (16)
-
 
 /// Card number (16 bit, Contains charactersdelimited)
 /// Use ASCII \b EnsureChinesecharacters (Unicode \b Chinese \w,)
@@ -125,9 +123,7 @@ pub(super) static RE_CONTRACT_NUMBER: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
-
 // JR/T 0197-2020 mode (idx 16-29)
-
 
 /// Keywords (C4) - At least 2 Keywords Medium
 pub(super) static RE_BIOMETRIC: LazyLock<Regex> = LazyLock::new(|| {
@@ -145,9 +141,8 @@ pub(super) static RE_VEHICLE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// VIN chassis number (C3) - 17 alphanumeric characters, excluding I/O/Q
-pub(super) static RE_VIN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b[A-HJ-NPR-Z0-9]{17}\b").unwrap()
-});
+pub(super) static RE_VIN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b[A-HJ-NPR-Z0-9]{17}\b").unwrap());
 
 /// / Keywords (C3) - Keywords + Serial numberContext
 pub(super) static RE_PROPERTY: LazyLock<Regex> = LazyLock::new(|| {
@@ -216,9 +211,7 @@ pub(super) static RE_BIZ_LICENSE: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
-
 // RegexSet (P3.1)
-
 
 /// DLP modeof RegexSet - 1Time/Count verdict modepossibly Medium
 
@@ -242,7 +235,7 @@ pub(super) static DLP_REGEX_SET: LazyLock<RegexSet> = LazyLock::new(|| {
         r"(?i)\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\s*(?:10k yuan|亿Yuan|USD|CNY|RMB|美Yuan|欧Yuan|EUR|GBP|JPY|英镑|SundayYuan)", // 13: large_amount
         r"(?i)(?:Account number|帐Number|account|acct|转入|转账|汇入|汇款|收款|付款|打款)\s*[：:=]?\s*\d{10,14}", // 14: bank_account (pre-filter; boundary check in detailed regex)
         r"(?i)(?:保单|贷款|合Same|contract|loan|policy)\s*(?:Number|Serial number|no|number)?\s*[：:=]?\s*[A-Z]{0,4}\d{8,20}", // 15: contract_number
-       // JR/T 0197-2020
+        // JR/T 0197-2020
         r"(?i)(?:指纹|虹膜|人脸识别|声纹|面部特征|生物特征|faceID|fingerprint|iris|voiceprint|步态|耳纹)", // 16: biometric
         r"(?i)(?:病历|诊Break/Judge|处方|病症|住院|手术|敏史|病史|医嘱|检验报告|用药Recording|血型|基due to|体检报告|传染病|麻醉)", // 17: medical
         r"[京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤川青藏琼宁][A-HJ-NP-Z]|(?i)\bVIN\b|\b[A-HJ-NPR-Z][A-HJ-NPR-Z0-9]{16}\b", // 18: vehicle (+ VIN)

@@ -4,8 +4,8 @@
 
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
@@ -137,10 +137,9 @@ pub async fn run_smtp_listener(
             let client_port = addr.port();
             info!(client_ip = %client_ip, "New SMTP connection");
 
-            let result = handle_smtp_connection(
-                stream, client_ip, client_port, cfg, eng, rl, orl, d, tls,
-            )
-            .await;
+            let result =
+                handle_smtp_connection(stream, client_ip, client_port, cfg, eng, rl, orl, d, tls)
+                    .await;
 
             if let Err(e) = result {
                 error!(error = %e, "SMTP connection error");
@@ -209,11 +208,12 @@ pub async fn run_smtps_listener(
             let client_ip = peer_addr.ip().to_string();
             let client_port = peer_addr.port();
 
-           // TLS:
-            let server_ip = stream.local_addr()
-                .map(|a| a.ip().to_string()).unwrap_or_else(|_| "0.0.0.0".into());
-            let server_port = stream.local_addr()
-                .map(|a| a.port()).unwrap_or(465);
+            // TLS:
+            let server_ip = stream
+                .local_addr()
+                .map(|a| a.ip().to_string())
+                .unwrap_or_else(|_| "0.0.0.0".into());
+            let server_port = stream.local_addr().map(|a| a.port()).unwrap_or(465);
             match acceptor.accept(stream).await {
                 Ok(tls_stream) => {
                     let mut tls_stream = tokio::io::BufStream::new(tls_stream);
@@ -225,7 +225,12 @@ pub async fn run_smtps_listener(
                         db: d.as_ref(),
                     };
                     let mut conn = SmtpConnection::new(
-                        client_ip, client_port, server_ip, server_port, cfg.clone(), true,
+                        client_ip,
+                        client_port,
+                        server_ip,
+                        server_port,
+                        cfg.clone(),
+                        true,
                     );
                     let _ = drive_connection(&mut tls_stream, &mut conn, false, &runtime).await;
                 }
@@ -254,10 +259,16 @@ async fn handle_smtp_connection(
     tls_acceptor: Option<TlsAcceptor>,
 ) -> anyhow::Result<()> {
     let mut stream = tokio::io::BufStream::new(stream);
-    let server_ip = stream.get_ref().local_addr()
-        .map(|a| a.ip().to_string()).unwrap_or_else(|_| "0.0.0.0".into());
-    let server_port = stream.get_ref().local_addr()
-        .map(|a| a.port()).unwrap_or(25);
+    let server_ip = stream
+        .get_ref()
+        .local_addr()
+        .map(|a| a.ip().to_string())
+        .unwrap_or_else(|_| "0.0.0.0".into());
+    let server_port = stream
+        .get_ref()
+        .local_addr()
+        .map(|a| a.port())
+        .unwrap_or(25);
     let runtime = SmtpRuntime {
         config: config.as_ref(),
         engine: engine.as_ref(),
@@ -267,30 +278,41 @@ async fn handle_smtp_connection(
     };
 
     let mut conn = SmtpConnection::new(
-        client_ip.clone(), client_port, server_ip.clone(), server_port, config.clone(), false,
+        client_ip.clone(),
+        client_port,
+        server_ip.clone(),
+        server_port,
+        config.clone(),
+        false,
     );
 
     match drive_connection(&mut stream, &mut conn, false, &runtime).await {
         ConnectionOutcome::Closed => {}
         ConnectionOutcome::StartTls => {
-        if let Some(acceptor) = tls_acceptor {
-            let inner = stream.into_inner();
-            match acceptor.accept(inner).await {
-                Ok(tls_stream) => {
-                    let mut tls_stream = tokio::io::BufStream::new(tls_stream);
-                    // After TLS upgrade: skip banner (client already saw 220 before STARTTLS)
-                    let mut tls_conn = SmtpConnection::new(
-                        client_ip, client_port, server_ip, server_port, config.clone(), true,
-                    );
-                    let _ = drive_connection(&mut tls_stream, &mut tls_conn, true, &runtime).await;
+            if let Some(acceptor) = tls_acceptor {
+                let inner = stream.into_inner();
+                match acceptor.accept(inner).await {
+                    Ok(tls_stream) => {
+                        let mut tls_stream = tokio::io::BufStream::new(tls_stream);
+                        // After TLS upgrade: skip banner (client already saw 220 before STARTTLS)
+                        let mut tls_conn = SmtpConnection::new(
+                            client_ip,
+                            client_port,
+                            server_ip,
+                            server_port,
+                            config.clone(),
+                            true,
+                        );
+                        let _ =
+                            drive_connection(&mut tls_stream, &mut tls_conn, true, &runtime).await;
+                    }
+                    Err(e) => {
+                        warn!(client_ip = %client_ip, "STARTTLS handshake failed: {e}");
+                    }
                 }
-                Err(e) => {
-                    warn!(client_ip = %client_ip, "STARTTLS handshake failed: {e}");
-                }
+            } else {
+                warn!(client_ip = %client_ip, "STARTTLS requested but no TLS acceptor is configured");
             }
-        } else {
-            warn!(client_ip = %client_ip, "STARTTLS requested but no TLS acceptor is configured");
-        }
         }
     }
 
@@ -335,11 +357,8 @@ where
 }
 
 /// : inline SMTP
-async fn process_results<S>(
-    results: Vec<HandleResult>,
-    stream: &mut S,
-    runtime: &SmtpRuntime<'_>,
-) where
+async fn process_results<S>(results: Vec<HandleResult>, stream: &mut S, runtime: &SmtpRuntime<'_>)
+where
     S: tokio::io::AsyncWrite + Unpin,
 {
     use tokio::io::AsyncWriteExt;
@@ -361,7 +380,6 @@ async fn process_results<S>(
                 let rcpt_to = session.rcpt_to.clone();
                 let subject = session.subject.clone();
 
-                
                 // SEC: port 25 has no SMTP AUTH, so all connections are treated as untrusted.
                 // trusted_submitter=false ensures spoofed local-domain MAIL FROM values cannot bypass inline scanning.
                 let trusted_submitter = false;
@@ -373,7 +391,8 @@ async fn process_results<S>(
                 );
 
                 // SEC: only log domain part to avoid leaking full addresses (CWE-532)
-                let from_domain = mail_from.as_deref()
+                let from_domain = mail_from
+                    .as_deref()
                     .and_then(|a| a.rsplit('@').next())
                     .unwrap_or("<>");
                 info!(
@@ -385,7 +404,6 @@ async fn process_results<S>(
                     "Email received"
                 );
 
-                
                 if direction == MailDirection::Internal {
                     match runtime
                         .relay
@@ -411,7 +429,7 @@ async fn process_results<S>(
                     continue;
                 }
 
-               // (->): DLP
+                // (->): DLP
                 if direction == MailDirection::Outbound && runtime.config.dlp.enabled {
                     let dlp_result = run_dlp_scan(&session);
                     if !dlp_result.is_empty()
@@ -426,14 +444,24 @@ async fn process_results<S>(
 
                         match runtime.config.dlp.action {
                             DlpAction::Block => {
-                                reply!(stream, b"550 5.7.1 Message blocked: sensitive data detected\r\n");
+                                reply!(
+                                    stream,
+                                    b"550 5.7.1 Message blocked: sensitive data detected\r\n"
+                                );
                                 continue;
                             }
                             DlpAction::Quarantine => {
                                 let stored = store_quarantine(
-                                    runtime.db, &session_id, mail_from.as_deref(), &rcpt_to,
-                                    subject.as_deref(), &raw_eml, "high", &reason,
-                                ).await;
+                                    runtime.db,
+                                    &session_id,
+                                    mail_from.as_deref(),
+                                    &rcpt_to,
+                                    subject.as_deref(),
+                                    &raw_eml,
+                                    "high",
+                                    &reason,
+                                )
+                                .await;
                                 if stored {
                                     reply!(stream, b"250 2.0.0 OK\r\n");
                                 } else {
@@ -443,16 +471,15 @@ async fn process_results<S>(
                                 continue;
                             }
                             DlpAction::AllowAndAlert => {
-                               // (quarantine status=released)
+                                // (quarantine status=released)
                                 warn!(
                                     session_id = %session_id,
                                     "DLP alert (allow_and_alert): {reason}"
                                 );
-                                
                             }
                         }
                     }
-                   // DLP AllowAndAlert ->
+                    // DLP AllowAndAlert ->
                     match runtime
                         .outbound_relay
                         .relay(mail_from.as_deref(), &rcpt_to, &raw_eml)
@@ -477,7 +504,7 @@ async fn process_results<S>(
                     continue;
                 }
 
-               // (->) DLP:
+                // (->) DLP:
                 let timeout =
                     std::time::Duration::from_secs(runtime.config.inline_timeout_secs as u64);
                 let response = runtime
@@ -498,7 +525,6 @@ async fn process_results<S>(
                     "Inline verdict: {}", response.summary
                 );
 
-                
                 match &response.disposition {
                     VerdictDisposition::Accept => {
                         match runtime
@@ -510,7 +536,8 @@ async fn process_results<S>(
                                 reply!(stream, b"250 2.0.0 OK\r\n");
                             }
                             RelayResult::TempFail(msg) => {
-                                let reply = format!("451 4.7.1 Downstream temporary failure: {msg}\r\n");
+                                let reply =
+                                    format!("451 4.7.1 Downstream temporary failure: {msg}\r\n");
                                 reply!(stream, reply.as_bytes());
                             }
                             RelayResult::PermFail(msg) => {
@@ -546,7 +573,8 @@ async fn process_results<S>(
                                 reply!(stream, b"250 2.0.0 OK\r\n");
                             }
                             RelayResult::TempFail(msg) => {
-                                let reply = format!("451 4.7.1 Downstream temporary failure: {msg}\r\n");
+                                let reply =
+                                    format!("451 4.7.1 Downstream temporary failure: {msg}\r\n");
                                 reply!(stream, reply.as_bytes());
                             }
                             RelayResult::PermFail(msg) => {
@@ -554,14 +582,13 @@ async fn process_results<S>(
                                 reply!(stream, reply.as_bytes());
                             }
                             RelayResult::ConnError(msg) => {
-                                
                                 warn!(session_id = %session_id, "Downstream unreachable: {msg}");
                                 reply!(stream, b"421 4.7.0 Downstream unavailable, try later\r\n");
                             }
                         }
                     }
                     VerdictDisposition::Quarantine => {
-                       // Quarantine -> 250,
+                        // Quarantine -> 250,
                         let stored = store_quarantine(
                             runtime.db,
                             &session_id,
@@ -584,7 +611,7 @@ async fn process_results<S>(
                         }
                     }
                     VerdictDisposition::Reject { reason } => {
-                       // Reject -> 550
+                        // Reject -> 550
                         let reply = format!("550 5.7.1 {reason}\r\n");
                         reply!(stream, reply.as_bytes());
                     }
@@ -618,7 +645,10 @@ mod tests {
         let ip: IpAddr = "10.0.0.1".parse().unwrap();
         assert!(limiter.try_acquire(ip));
         assert!(limiter.try_acquire(ip));
-        assert!(!limiter.try_acquire(ip), "Should reject 3rd connection when limit=2");
+        assert!(
+            !limiter.try_acquire(ip),
+            "Should reject 3rd connection when limit=2"
+        );
     }
 
     #[test]
@@ -637,8 +667,14 @@ mod tests {
         let ip_a: IpAddr = "10.0.0.1".parse().unwrap();
         let ip_b: IpAddr = "10.0.0.2".parse().unwrap();
         assert!(limiter.try_acquire(ip_a));
-        assert!(limiter.try_acquire(ip_b), "Different IPs should have independent limits");
-        assert!(!limiter.try_acquire(ip_a), "Same IP should still be blocked");
+        assert!(
+            limiter.try_acquire(ip_b),
+            "Different IPs should have independent limits"
+        );
+        assert!(
+            !limiter.try_acquire(ip_a),
+            "Same IP should still be blocked"
+        );
     }
 
     #[test]
@@ -649,7 +685,10 @@ mod tests {
         limiter.release(ip);
         // SAFETY: same rationale as try_acquire/release — only integer ops
         let counts = limiter.counts.lock().expect("mutex poisoned");
-        assert!(!counts.contains_key(&ip), "Zero-count entries should be cleaned up");
+        assert!(
+            !counts.contains_key(&ip),
+            "Zero-count entries should be cleaned up"
+        );
     }
 
     #[test]
@@ -659,6 +698,9 @@ mod tests {
         limiter.try_acquire(ip);
         limiter.release(ip);
         limiter.release(ip); // extra release should not underflow
-        assert!(limiter.try_acquire(ip), "Should still work after double release");
+        assert!(
+            limiter.try_acquire(ip),
+            "Should still work after double release"
+        );
     }
 }

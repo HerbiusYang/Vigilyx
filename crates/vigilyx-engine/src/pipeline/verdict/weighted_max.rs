@@ -1,6 +1,4 @@
-
 // Weighted-MAX (Backward compatible)
-
 
 use std::collections::{HashMap, HashSet};
 

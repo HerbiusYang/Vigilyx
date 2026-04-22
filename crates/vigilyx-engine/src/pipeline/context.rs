@@ -16,8 +16,8 @@ pub struct SecurityContext {
     pub session: Arc<EmailSession>,
     results: Arc<DashMap<String, ModuleResult>>,
     pub started_at: DateTime<Utc>,
-   /// AutodetectofInternalDomainSet(if corp-internal.com)
-   /// InternalDomainofSender Add,downgradeLow
+    /// AutodetectofInternalDomainSet(if corp-internal.com)
+    /// InternalDomainofSender Add,downgradeLow
     pub internal_domains: Arc<HashSet<String>>,
 }
 
@@ -31,7 +31,7 @@ impl SecurityContext {
         }
     }
 
-   /// CreatewithInternalDomainSetofContext
+    /// CreatewithInternalDomainSetofContext
     pub fn with_internal_domains(
         session: Arc<EmailSession>,
         domains: Arc<HashSet<String>>,
@@ -44,15 +44,15 @@ impl SecurityContext {
         }
     }
 
-   /// CheckDomainwhether InternalDomain
+    /// CheckDomainwhether InternalDomain
     pub fn is_internal_domain(&self, domain: &str) -> bool {
         self.internal_domains.contains(&domain.to_lowercase())
     }
 
-   /// Get a snapshot of all completed module results.
-    
-   /// Returns a clone so the context remains intact for subsequent callers
-   /// (e.g. verdict module reads first, then orchestrator reads the same data).
+    /// Get a snapshot of all completed module results.
+
+    /// Returns a clone so the context remains intact for subsequent callers
+    /// (e.g. verdict module reads first, then orchestrator reads the same data).
     pub async fn module_results(&self) -> HashMap<String, ModuleResult> {
         self.results
             .iter()
@@ -60,19 +60,19 @@ impl SecurityContext {
             .collect()
     }
 
-   /// Get a specific module's result
+    /// Get a specific module's result
     pub async fn get_result(&self, module_id: &str) -> Option<ModuleResult> {
         self.results
             .get(module_id)
             .map(|entry| entry.value().clone())
     }
 
-   /// Insert a module result (called by orchestrator after module completes)
+    /// Insert a module result (called by orchestrator after module completes)
     pub async fn insert_result(&self, result: ModuleResult) {
         self.results.insert(result.module_id.clone(), result);
     }
 
-   /// Check if any prior module has flagged threat>= given level
+    /// Check if any prior module has flagged threat>= given level
     pub async fn max_threat_level(&self) -> ThreatLevel {
         self.results
             .iter()
@@ -81,12 +81,12 @@ impl SecurityContext {
             .unwrap_or(ThreatLevel::Safe)
     }
 
-   /// Check if a specific module has completed
+    /// Check if a specific module has completed
     pub async fn has_result(&self, module_id: &str) -> bool {
         self.results.contains_key(module_id)
     }
 
-   /// Get the number of completed modules
+    /// Get the number of completed modules
     pub async fn completed_count(&self) -> usize {
         self.results.len()
     }
@@ -113,7 +113,7 @@ mod tests {
     async fn test_module_results_returns_snapshot_without_draining() {
         let ctx = SecurityContext::new(test_session());
 
-       // Insert a result
+        // Insert a result
         ctx.insert_result(ModuleResult::safe(
             "test_module",
             "Test",
@@ -125,17 +125,17 @@ mod tests {
 
         assert_eq!(ctx.completed_count().await, 1);
 
-       // First read - should return all results
+        // First read - should return all results
         let results1 = ctx.module_results().await;
         assert_eq!(results1.len(), 1);
         assert!(results1.contains_key("test_module"));
 
-       // Second read - context still intact (non-destructive)
+        // Second read - context still intact (non-destructive)
         let results2 = ctx.module_results().await;
         assert_eq!(results2.len(), 1);
         assert!(results2.contains_key("test_module"));
 
-       // Context retains data
+        // Context retains data
         assert_eq!(ctx.completed_count().await, 1);
     }
 

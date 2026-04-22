@@ -93,8 +93,9 @@ impl AttachmentQrScanModule {
             meta: ModuleMetadata {
                 id: "attach_qr_scan".to_string(),
                 name: "Attachment QR Scan".to_string(),
-                description: "Detect QR codes in image attachments and ASCII art, score phishing QR lures"
-                    .to_string(),
+                description:
+                    "Detect QR codes in image attachments and ASCII art, score phishing QR lures"
+                        .to_string(),
                 pillar: Pillar::Attachment,
                 depends_on: vec!["attach_scan".to_string()],
                 timeout_ms: 5000,
@@ -511,11 +512,10 @@ fn binarize_at_threshold(image: &GrayscaleImage, threshold: u8) -> GrayscaleImag
 /// Attempt QR decoding from a grayscale image using `rqrr`.
 /// Returns `(grid_count, decoded_payloads)`.
 fn try_rqrr_decode(grayscale: &GrayscaleImage) -> (usize, Vec<String>) {
-    let mut prepared = rqrr::PreparedImage::prepare_from_greyscale(
-        grayscale.width,
-        grayscale.height,
-        |x, y| grayscale.pixels[y * grayscale.width + x],
-    );
+    let mut prepared =
+        rqrr::PreparedImage::prepare_from_greyscale(grayscale.width, grayscale.height, |x, y| {
+            grayscale.pixels[y * grayscale.width + x]
+        });
     let grids = prepared.detect_grids();
 
     let mut decoded_payloads = Vec::new();
@@ -1080,8 +1080,8 @@ mod tests {
 
         for row in 0..qr_size {
             for col in 0..qr_size {
-                let is_finder_region = (row < 7 && (col < 7 || col >= qr_size - 7))
-                    || (row >= qr_size - 7 && col < 7);
+                let is_finder_region =
+                    (row < 7 && (col < 7 || col >= qr_size - 7)) || (row >= qr_size - 7 && col < 7);
 
                 let is_dark = if is_finder_region {
                     let local_row = if row >= qr_size - 7 {
@@ -1141,7 +1141,8 @@ mod tests {
             .expect("valid dimensions for GrayImage");
         let rgb = image::DynamicImage::ImageLuma8(gray).into_rgb8();
         let mut buf = std::io::Cursor::new(Vec::new());
-        rgb.write_to(&mut buf, ImageFormat::Gif).expect("GIF encode");
+        rgb.write_to(&mut buf, ImageFormat::Gif)
+            .expect("GIF encode");
         buf.into_inner()
     }
 
@@ -1171,12 +1172,16 @@ mod tests {
             .unwrap();
 
         assert!(
-            result.categories.contains(&"attachment_qr_code".to_string()),
+            result
+                .categories
+                .contains(&"attachment_qr_code".to_string()),
             "QR-bearing attachment should be detected: {:?}",
             result.categories
         );
         assert!(
-            result.categories.contains(&"attachment_qr_lure".to_string()),
+            result
+                .categories
+                .contains(&"attachment_qr_lure".to_string()),
             "QR login lure should be detected: {:?}",
             result.categories
         );
@@ -1232,7 +1237,9 @@ mod tests {
         let result = AttachmentQrScanModule::new().analyze(&ctx).await.unwrap();
 
         assert!(
-            result.categories.contains(&"attachment_qr_code".to_string()),
+            result
+                .categories
+                .contains(&"attachment_qr_code".to_string()),
             "JPEG QR should be detected: {:?}",
             result.categories
         );
@@ -1260,7 +1267,9 @@ mod tests {
         let result = AttachmentQrScanModule::new().analyze(&ctx).await.unwrap();
 
         assert!(
-            result.categories.contains(&"attachment_qr_code".to_string()),
+            result
+                .categories
+                .contains(&"attachment_qr_code".to_string()),
             "GIF QR should be detected: {:?}",
             result.categories
         );
@@ -1272,7 +1281,13 @@ mod tests {
         let width = 64;
         let height = 64;
         let pixels: Vec<u8> = (0..width * height)
-            .map(|i| if (i / width + i % width) % 2 == 0 { 100 } else { 160 })
+            .map(|i| {
+                if (i / width + i % width) % 2 == 0 {
+                    100
+                } else {
+                    160
+                }
+            })
             .collect();
         let img = GrayscaleImage {
             width,
@@ -1358,9 +1373,7 @@ mod tests {
         // Should complete without error — either Safe or NotApplicable.
         assert!(
             result.threat_level == ThreatLevel::Safe
-                || result
-                    .summary
-                    .contains("no QR phishing signals found"),
+                || result.summary.contains("no QR phishing signals found"),
             "malformed image should be handled gracefully: {:?}",
             result
         );
@@ -1392,26 +1405,46 @@ mod tests {
     #[test]
     fn test_is_raster_candidate_multi_format() {
         // PNG by magic bytes.
-        assert!(is_raster_qr_candidate("application/octet-stream", Some(DetectedFileType::Png)));
+        assert!(is_raster_qr_candidate(
+            "application/octet-stream",
+            Some(DetectedFileType::Png)
+        ));
         // JPEG by magic bytes.
-        assert!(is_raster_qr_candidate("application/octet-stream", Some(DetectedFileType::Jpeg)));
+        assert!(is_raster_qr_candidate(
+            "application/octet-stream",
+            Some(DetectedFileType::Jpeg)
+        ));
         // GIF by magic bytes.
-        assert!(is_raster_qr_candidate("application/octet-stream", Some(DetectedFileType::Gif)));
+        assert!(is_raster_qr_candidate(
+            "application/octet-stream",
+            Some(DetectedFileType::Gif)
+        ));
         // BMP by magic bytes.
-        assert!(is_raster_qr_candidate("application/octet-stream", Some(DetectedFileType::Bmp)));
+        assert!(is_raster_qr_candidate(
+            "application/octet-stream",
+            Some(DetectedFileType::Bmp)
+        ));
         // TIFF by magic bytes.
-        assert!(is_raster_qr_candidate("application/octet-stream", Some(DetectedFileType::Tiff)));
+        assert!(is_raster_qr_candidate(
+            "application/octet-stream",
+            Some(DetectedFileType::Tiff)
+        ));
         // WebP by content-type (no magic bytes variant in DetectedFileType).
         assert!(is_raster_qr_candidate("image/webp", None));
         // Non-image should not match.
-        assert!(!is_raster_qr_candidate("application/pdf", Some(DetectedFileType::Pdf)));
+        assert!(!is_raster_qr_candidate(
+            "application/pdf",
+            Some(DetectedFileType::Pdf)
+        ));
         assert!(!is_raster_qr_candidate("text/plain", None));
     }
 
     #[test]
     fn test_url_extraction_from_decoded_qr() {
         // Verify that analyze_url is callable with typical QR payloads.
-        let (score, cats) = analyze_url("https://evil-phish.example.com/login?token=abc123&redirect=http://bank.com");
+        let (score, cats) = analyze_url(
+            "https://evil-phish.example.com/login?token=abc123&redirect=http://bank.com",
+        );
         // We expect some score from suspicious URL patterns.
         // The exact score depends on link_content heuristics — just ensure no panic.
         assert!(score >= 0.0, "analyze_url should return non-negative score");

@@ -29,7 +29,7 @@ pub struct ProtocolParser {
 }
 
 impl ProtocolParser {
-   /// CreateNewofProtocolParsehandler
+    /// CreateNewofProtocolParsehandler
     pub fn new() -> Self {
         Self {
             smtp: SmtpParser::new(),
@@ -38,14 +38,14 @@ impl ProtocolParser {
         }
     }
 
-   /// Parsedatapacket
+    /// Parsedatapacket
     pub fn parse(&self, data: &[u8], protocol: Protocol) -> Option<String> {
         match protocol {
             Protocol::Smtp => self.smtp.parse(data),
             Protocol::Pop3 => self.pop3.parse(data),
             Protocol::Imap => self.imap.parse(data),
             Protocol::Http => {
-               // HTTP Command: Extract method + URI command Segment
+                // HTTP Command: Extract method + URI command Segment
                 http::parse_http_request(data).map(|req| format!("{} {}", req.method, req.uri))
             }
             Protocol::Unknown => None,

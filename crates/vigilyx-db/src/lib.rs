@@ -27,6 +27,8 @@ pub mod security;
 #[cfg(feature = "postgres")]
 pub use infra::migrate::SchemaMigration;
 #[cfg(feature = "postgres")]
+pub use infra::typed_config::VersionedConfig;
+#[cfg(feature = "postgres")]
 pub use security::data_security::HttpSessionFilters;
 #[cfg(feature = "postgres")]
 pub use security::disposition::DispositionRuleRow;
@@ -34,8 +36,6 @@ pub use security::disposition::DispositionRuleRow;
 pub use security::verdict::VerdictWithMeta;
 #[cfg(feature = "postgres")]
 pub use security::yara::YaraRuleRow;
-#[cfg(feature = "postgres")]
-pub use infra::typed_config::VersionedConfig;
 
 /// Unified data access layer
 ///
@@ -49,17 +49,17 @@ pub struct VigilDb {
 
 #[cfg(feature = "postgres")]
 impl VigilDb {
-   /// Get underlying connection pool
+    /// Get underlying connection pool
     pub fn pool(&self) -> &sqlx::Pool<sqlx::Postgres> {
         &self.pool
     }
 
-   /// Get underlying connection pool (backward compatibility alias)
+    /// Get underlying connection pool (backward compatibility alias)
     pub fn get_pool(&self) -> &sqlx::Pool<sqlx::Postgres> {
         &self.pool
     }
 
-   /// Execute SQL with parameters (for management operations like precise cleanup)
+    /// Execute SQL with parameters (for management operations like precise cleanup)
     pub async fn execute_sql(&self, sql: &str, params: &[&String]) -> anyhow::Result<()> {
         let mut query = sqlx::query(sql);
         for p in params {

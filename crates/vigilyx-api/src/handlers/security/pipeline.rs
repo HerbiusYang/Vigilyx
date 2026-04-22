@@ -27,9 +27,7 @@ async fn load_keyword_system_seed(
     }
 }
 
-
 // Stream Configuration
-
 
 /// GetStream Configuration
 pub async fn get_pipeline_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -40,7 +38,7 @@ pub async fn get_pipeline_config(State(state): State<Arc<AppState>>) -> impl Int
             ApiResponse::ok(value)
         }
         Ok(None) => {
-           // DefaultConfiguration
+            // DefaultConfiguration
             let default = vigilyx_engine::config::PipelineConfig::default();
             ApiResponse::ok(serde_json::to_value(default).unwrap_or_default())
         }
@@ -54,7 +52,7 @@ pub async fn update_pipeline_config(
     user: AuthenticatedUser,
     Json(config): Json<serde_json::Value>,
 ) -> axum::response::Response {
-   // verifyConfigurationformat
+    // verifyConfigurationformat
     let parsed: vigilyx_engine::config::PipelineConfig =
         match serde_json::from_value(config.clone()) {
             Ok(c) => c,
@@ -92,7 +90,7 @@ pub async fn update_pipeline_config(
     };
     match state.engine_db.set_pipeline_config(&json_str).await {
         Ok(()) => {
-           // Engine process NewConfiguration
+            // Engine process NewConfiguration
             publish_engine_reload(&state, "config").await;
             crate::handlers::spawn_audit_log(
                 state.engine_db.clone(),
@@ -112,7 +110,7 @@ pub async fn update_pipeline_config(
 
 /// Get Modulemetadata
 pub async fn get_modules_metadata(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
-   // Module metadata
+    // Module metadata
     let modules = serde_json::json!([
         {
             "id": "content_scan", "name": "内容detect", "pillar": "content",
@@ -184,9 +182,7 @@ pub async fn get_modules_metadata(State(_state): State<Arc<AppState>>) -> impl I
     ApiResponse::ok(modules)
 }
 
-
 // detect
-
 
 /// Get detect
 pub async fn get_content_rules(State(state): State<Arc<AppState>>) -> axum::response::Response {
@@ -198,9 +194,7 @@ pub async fn get_content_rules(State(state): State<Arc<AppState>>) -> axum::resp
     ApiResponse::ok(rules).into_response()
 }
 
-
 // Configuration
-
 
 /// Get Configuration (+ + Merge table)
 pub async fn get_keyword_overrides(State(state): State<Arc<AppState>>) -> axum::response::Response {
@@ -256,7 +250,7 @@ pub async fn update_keyword_overrides(
         Err(resp) => return resp,
     };
 
-   // verify JSON
+    // verify JSON
     let overrides: KeywordOverrides = match serde_json::from_value(payload.clone()) {
         Ok(o) => o,
         Err(e) => {
@@ -284,7 +278,7 @@ pub async fn update_keyword_overrides(
         .await
     {
         Ok(()) => {
-           // Engine New (When)
+            // Engine New (When)
             publish_engine_reload(&state, "keywords").await;
             crate::handlers::spawn_audit_log(
                 state.engine_db.clone(),
@@ -310,18 +304,18 @@ pub async fn update_keyword_overrides(
 pub async fn get_module_data_overrides(
     State(state): State<Arc<AppState>>,
 ) -> axum::response::Response {
-    let overrides: serde_json::Value =
-        match state.engine_db.get_config("engine_module_data_overrides").await {
-            Ok(Some(json)) => serde_json::from_str(&json).unwrap_or(serde_json::json!({})),
-            Ok(None) => serde_json::json!({}),
-            Err(e) => {
-                return ApiResponse::<serde_json::Value>::internal_err(
-                    &e,
-                    "读取模块数据覆盖配置失败",
-                )
+    let overrides: serde_json::Value = match state
+        .engine_db
+        .get_config("engine_module_data_overrides")
+        .await
+    {
+        Ok(Some(json)) => serde_json::from_str(&json).unwrap_or(serde_json::json!({})),
+        Ok(None) => serde_json::json!({}),
+        Err(e) => {
+            return ApiResponse::<serde_json::Value>::internal_err(&e, "读取模块数据覆盖配置失败")
                 .into_response();
-            }
-        };
+        }
+    };
 
     ApiResponse::ok(overrides).into_response()
 }
@@ -366,9 +360,7 @@ pub async fn update_module_data_overrides(
             );
             ApiResponse::ok(payload).into_response()
         }
-        Err(e) => {
-            ApiResponse::<serde_json::Value>::server_error(&e, "保存模块数据覆盖配置失败")
-                .into_response()
-        }
+        Err(e) => ApiResponse::<serde_json::Value>::server_error(&e, "保存模块数据覆盖配置失败")
+            .into_response(),
     }
 }

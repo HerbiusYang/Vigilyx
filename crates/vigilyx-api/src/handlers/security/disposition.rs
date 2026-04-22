@@ -19,9 +19,7 @@ use super::alerts::encrypt_config_value;
 use crate::AppState;
 use crate::auth::AuthenticatedUser;
 
-
 // Sensitive header masking for API responses
-
 
 /// Header names (case-insensitive) whose values must be masked before
 /// returning disposition rules to the browser. The full plaintext values
@@ -116,8 +114,7 @@ fn parse_actions_json(actions_json: &str) -> Result<Vec<serde_json::Value>, Stri
 }
 
 fn masked_invalid_actions_json() -> String {
-    serde_json::to_string(MASKED_INVALID_ACTIONS_NOTICE)
-        .unwrap_or_else(|_| "\"***\"".to_string())
+    serde_json::to_string(MASKED_INVALID_ACTIONS_NOTICE).unwrap_or_else(|_| "\"***\"".to_string())
 }
 
 fn encrypt_action_secrets(actions_json: &str, jwt_secret: &str) -> Result<String, String> {
@@ -133,7 +130,10 @@ fn encrypt_action_secrets(actions_json: &str, jwt_secret: &str) -> Result<String
             *webhook_url = serde_json::Value::String(encrypted);
         }
 
-        if let Some(headers) = action.get_mut("headers").and_then(|value| value.as_object_mut()) {
+        if let Some(headers) = action
+            .get_mut("headers")
+            .and_then(|value| value.as_object_mut())
+        {
             for (key, value) in headers.iter_mut() {
                 if !is_sensitive_header(key) {
                     continue;
@@ -164,7 +164,9 @@ fn restore_masked_action_secrets(
     let existing_actions: Vec<serde_json::Value> = match parse_actions_json(existing_actions_json) {
         Ok(value) => value,
         Err(_) if incoming_has_masked_placeholders => {
-            return Err("现有规则中的敏感动作无法安全恢复，请重新输入 webhook URL 和敏感请求头".to_string());
+            return Err(
+                "现有规则中的敏感动作无法安全恢复，请重新输入 webhook URL 和敏感请求头".to_string(),
+            );
         }
         Err(_) => return Ok(incoming_actions_json.to_string()),
     };
@@ -206,7 +208,8 @@ fn restore_masked_action_secrets(
             .zip(masked_existing_url.as_deref())
             .is_some_and(|(incoming, masked_existing)| incoming == masked_existing);
 
-        if (has_masked_headers || uses_masked_webhook_url) && incoming_action_type != existing_action_type
+        if (has_masked_headers || uses_masked_webhook_url)
+            && incoming_action_type != existing_action_type
         {
             return Err(format!(
                 "第 {} 个动作类型已变更，不能安全复用已掩码的敏感字段，请重新输入 webhook URL 和敏感请求头",
@@ -221,7 +224,11 @@ fn restore_masked_action_secrets(
             ));
         }
 
-        let webhook_url_changed = match (incoming_url.as_deref(), existing_url, masked_existing_url.as_deref()) {
+        let webhook_url_changed = match (
+            incoming_url.as_deref(),
+            existing_url,
+            masked_existing_url.as_deref(),
+        ) {
             (Some(incoming), Some(existing), Some(masked_existing)) => {
                 incoming != existing && incoming != masked_existing
             }
@@ -322,7 +329,7 @@ fn mask_actions_secrets(actions_json: &str) -> String {
         }
     }
 
-   // Serialization of a Vec<Value> cannot fail in practice.
+    // Serialization of a Vec<Value> cannot fail in practice.
     serde_json::to_string(&actions).unwrap_or_else(|_| masked_invalid_actions_json())
 }
 
@@ -331,10 +338,6 @@ fn mask_rule_secrets(mut rule: DispositionRuleRow) -> DispositionRuleRow {
     rule.actions = mask_actions_secrets(&rule.actions);
     rule
 }
-
-
-
-
 
 /// Get
 pub async fn list_disposition_rules(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -385,16 +388,14 @@ pub async fn create_disposition_rule(
             .into_response();
         }
     };
-    let actions = match encrypt_action_secrets(
-        &actions_raw,
-        state.auth.config.jwt_secret.expose_secret(),
-    ) {
-        Ok(actions) => actions,
-        Err(e) => {
-            return ApiResponse::<serde_json::Value>::server_error(&e, "Operation failed")
-                .into_response();
-        }
-    };
+    let actions =
+        match encrypt_action_secrets(&actions_raw, state.auth.config.jwt_secret.expose_secret()) {
+            Ok(actions) => actions,
+            Err(e) => {
+                return ApiResponse::<serde_json::Value>::server_error(&e, "Operation failed")
+                    .into_response();
+            }
+        };
 
     let rule = vigilyx_db::DispositionRuleRow {
         id: Uuid::new_v4().to_string(),
@@ -468,13 +469,14 @@ pub async fn update_disposition_rule(
             .into_response();
         }
     };
-    let actions = match encrypt_action_secrets(&actions, state.auth.config.jwt_secret.expose_secret()) {
-        Ok(actions) => actions,
-        Err(e) => {
-            return ApiResponse::<serde_json::Value>::server_error(&e, "Operation failed")
-                .into_response();
-        }
-    };
+    let actions =
+        match encrypt_action_secrets(&actions, state.auth.config.jwt_secret.expose_secret()) {
+            Ok(actions) => actions,
+            Err(e) => {
+                return ApiResponse::<serde_json::Value>::server_error(&e, "Operation failed")
+                    .into_response();
+            }
+        };
 
     let rule = vigilyx_db::DispositionRuleRow {
         id,
@@ -542,17 +544,13 @@ pub async fn delete_disposition_rule(
     }
 }
 
-
 // Tests
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    
-   // is_sensitive_header
-    
+    // is_sensitive_header
 
     #[test]
     fn test_is_sensitive_header_authorization_lowercase() {
@@ -609,9 +607,7 @@ mod tests {
         assert!(!is_sensitive_header("X-Request-Id"));
     }
 
-    
-   // mask_actions_secrets
-    
+    // mask_actions_secrets
 
     #[test]
     fn test_mask_actions_secrets_masks_authorization_header() {
@@ -720,7 +716,10 @@ mod tests {
         let masked = mask_actions_secrets(actions);
         let parsed: Vec<serde_json::Value> = serde_json::from_str(&masked).unwrap();
 
-        assert_eq!(parsed[0]["headers"]["Authorization"].as_str().unwrap(), "***");
+        assert_eq!(
+            parsed[0]["headers"]["Authorization"].as_str().unwrap(),
+            "***"
+        );
         assert_eq!(parsed[1]["headers"]["X-Api-Key"].as_str().unwrap(), "***");
         assert_eq!(parsed[1]["headers"]["Accept"].as_str().unwrap(), "*/*");
         assert_eq!(parsed[2]["action_type"].as_str().unwrap(), "log");
@@ -743,7 +742,10 @@ mod tests {
 
         let masked = mask_actions_secrets(&legacy);
         let parsed: Vec<serde_json::Value> = serde_json::from_str(&masked).unwrap();
-        assert_eq!(parsed[0]["headers"]["Authorization"].as_str().unwrap(), "***");
+        assert_eq!(
+            parsed[0]["headers"]["Authorization"].as_str().unwrap(),
+            "***"
+        );
     }
 
     #[test]
@@ -792,13 +794,14 @@ mod tests {
             "https://hooks.slack.com/***",
             "webhook_url should be masked before returning to the browser"
         );
-        assert_eq!(parsed[0]["headers"]["Authorization"].as_str().unwrap(), "***");
+        assert_eq!(
+            parsed[0]["headers"]["Authorization"].as_str().unwrap(),
+            "***"
+        );
         assert_eq!(parsed[0]["headers"]["Cookie"].as_str().unwrap(), "***");
     }
 
-    
-   // mask_rule_secrets
-    
+    // mask_rule_secrets
 
     #[test]
     fn test_mask_rule_secrets_masks_actions_field() {
@@ -809,21 +812,26 @@ mod tests {
             enabled: true,
             priority: 1,
             conditions: r#"{"min_threat_level":"high"}"#.to_string(),
-            actions: r#"[{"action_type":"webhook","headers":{"Authorization":"Bearer real-secret"}}]"#.to_string(),
+            actions:
+                r#"[{"action_type":"webhook","headers":{"Authorization":"Bearer real-secret"}}]"#
+                    .to_string(),
             created_at: "2026-01-01".to_string(),
             updated_at: "2026-01-01".to_string(),
         };
 
         let masked = mask_rule_secrets(rule);
 
-       // Non-action fields should be unchanged
+        // Non-action fields should be unchanged
         assert_eq!(masked.id, "rule-1");
         assert_eq!(masked.name, "test");
         assert_eq!(masked.conditions, r#"{"min_threat_level":"high"}"#);
 
-       // Actions should have the secret masked
+        // Actions should have the secret masked
         let parsed: Vec<serde_json::Value> = serde_json::from_str(&masked.actions).unwrap();
-        assert_eq!(parsed[0]["headers"]["Authorization"].as_str().unwrap(), "***");
+        assert_eq!(
+            parsed[0]["headers"]["Authorization"].as_str().unwrap(),
+            "***"
+        );
     }
 
     #[test]
@@ -844,7 +852,10 @@ mod tests {
         let parsed: Vec<serde_json::Value> = serde_json::from_str(&masked.actions).unwrap();
         let headers = parsed[0]["headers"].as_object().unwrap();
 
-        assert_eq!(headers["Content-Type"].as_str().unwrap(), "application/json");
+        assert_eq!(
+            headers["Content-Type"].as_str().unwrap(),
+            "application/json"
+        );
         assert_eq!(headers["X-Custom"].as_str().unwrap(), "hello");
     }
 

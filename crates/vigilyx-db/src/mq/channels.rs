@@ -11,38 +11,38 @@ pub struct LocalChannel<T> {
 }
 
 impl<T: Clone + Send + 'static> LocalChannel<T> {
-   /// Create new local channel
+    /// Create new local channel
     pub fn new(capacity: usize) -> Self {
         let (tx, rx) = bounded(capacity);
         Self { tx, rx }
     }
 
-   /// Get sender
+    /// Get sender
     pub fn sender(&self) -> Sender<T> {
         self.tx.clone()
     }
 
-   /// Get receiver
+    /// Get receiver
     pub fn receiver(&self) -> Receiver<T> {
         self.rx.clone()
     }
 
-   /// Send message
+    /// Send message
     pub async fn send(&self, msg: T) -> Result<(), async_channel::SendError<T>> {
         self.tx.send(msg).await
     }
 
-   /// Try send message (non-blocking)
+    /// Try send message (non-blocking)
     pub fn try_send(&self, msg: T) -> Result<(), async_channel::TrySendError<T>> {
         self.tx.try_send(msg)
     }
 
-   /// Receive message
+    /// Receive message
     pub async fn recv(&self) -> Result<T, async_channel::RecvError> {
         self.rx.recv().await
     }
 
-   /// Try receive message (non-blocking)
+    /// Try receive message (non-blocking)
     pub fn try_recv(&self) -> Result<T, async_channel::TryRecvError> {
         self.rx.try_recv()
     }
@@ -50,16 +50,16 @@ impl<T: Clone + Send + 'static> LocalChannel<T> {
 
 /// Event bus - For component communication in single-process mode
 pub struct EventBus {
-   /// Session channel
+    /// Session channel
     pub sessions: LocalChannel<EmailSession>,
-   /// Statistics channel
+    /// Statistics channel
     pub stats: LocalChannel<TrafficStats>,
-   /// WebSocket Broadcast channel
+    /// WebSocket Broadcast channel
     pub ws_broadcast: LocalChannel<WsMessage>,
 }
 
 impl EventBus {
-   /// Create new event bus
+    /// Create new event bus
     pub fn new(capacity: usize) -> Self {
         Self {
             sessions: LocalChannel::new(capacity),
@@ -68,7 +68,7 @@ impl EventBus {
         }
     }
 
-   /// Create with default capacity
+    /// Create with default capacity
     pub fn default_capacity() -> Self {
         Self::new(10000)
     }

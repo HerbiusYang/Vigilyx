@@ -40,9 +40,7 @@ fn extract_token_from_cookie(headers: &HeaderMap) -> Option<&str> {
         .filter_map(|v| v.to_str().ok())
         .flat_map(|s| s.split(';'))
         .map(str::trim)
-        .find_map(|pair| {
-            pair.strip_prefix("vigilyx_token=")
-        })
+        .find_map(|pair| pair.strip_prefix("vigilyx_token="))
 }
 
 /// Extract `AuthenticatedUser` from request parts.
@@ -53,17 +51,16 @@ where
     type Rejection = AuthError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-       // Read `AuthState` from request extensions.
+        // Read `AuthState` from request extensions.
         let auth_state = parts
             .extensions
             .get::<AuthState>()
             .ok_or(AuthError::InternalError("AuthState not found".into()))?;
 
-       // Extract the token from the cookie or Authorization header
-        let token = extract_jwt_token(&parts.headers)
-            .ok_or(AuthError::MissingToken)?;
+        // Extract the token from the cookie or Authorization header
+        let token = extract_jwt_token(&parts.headers).ok_or(AuthError::MissingToken)?;
 
-       // Verify the token.
+        // Verify the token.
         let claims = verify_token(&auth_state.config, token)?;
 
         Ok(AuthenticatedUser {
@@ -94,17 +91,16 @@ pub async fn require_auth(
     mut req: axum::http::Request<axum::body::Body>,
     next: axum::middleware::Next,
 ) -> Result<axum::response::Response, AuthError> {
-   // Expose `AuthState` to downstream extractors.
+    // Expose `AuthState` to downstream extractors.
     req.extensions_mut().insert(state.auth.clone());
 
-   // Extract the token from the cookie or Authorization header
-    let token = extract_jwt_token(req.headers())
-        .ok_or(AuthError::MissingToken)?;
+    // Extract the token from the cookie or Authorization header
+    let token = extract_jwt_token(req.headers()).ok_or(AuthError::MissingToken)?;
 
-   // Verify the token.
+    // Verify the token.
     verify_token(&state.auth.config, token)?;
 
-   // SEC: Enforce password change - default-password sessions can only access change-password
+    // SEC: Enforce password change - default-password sessions can only access change-password
     let password_changed = *state.auth.config.password_changed.read().await;
     if !password_changed {
         let path = req.uri().path();
@@ -147,7 +143,7 @@ pub async fn require_internal_token(
 ) -> Result<axum::response::Response, AuthError> {
     let expected = std::env::var("INTERNAL_API_TOKEN").unwrap_or_default();
     if expected.is_empty() {
-       // Fail closed when the internal token is not configured.
+        // Fail closed when the internal token is not configured.
         warn!("INTERNAL_API_TOKEN is not configured; rejecting internal API request");
         return Err(AuthError::MissingToken);
     }
@@ -158,8 +154,8 @@ pub async fn require_internal_token(
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default();
 
-   // SEC-H03 + SEC-M01: hash both inputs first to reduce length-based timing leakage
-   // before constant-time comparison of fixed-length digests.
+    // SEC-H03 + SEC-M01: hash both inputs first to reduce length-based timing leakage
+    // before constant-time comparison of fixed-length digests.
     use sha2::{Digest, Sha256};
     use subtle::ConstantTimeEq;
     let provided_hash = Sha256::digest(provided.as_bytes());

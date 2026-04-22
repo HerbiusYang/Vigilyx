@@ -44,9 +44,7 @@ use tracing::{debug, error, info, trace, warn};
 use vigilyx_core::Config;
 use vigilyx_db::mq::MqClient;
 
-
 // Performance constants tuned for modern CPUs.
-
 
 /// Capture timeout (100 ms, balancing latency and throughput)
 const CAPTURE_TIMEOUT_MS: i32 = 100;
@@ -96,9 +94,7 @@ fn capture_buffer_size_mb() -> usize {
     clamped
 }
 
-
 // Capture statistics
-
 
 /// Capture statistics, cache-line aligned to avoid false sharing.
 #[derive(Default)]
@@ -147,9 +143,7 @@ fn read_interface_counters(interface: &str) -> Option<InterfaceCounters> {
     })
 }
 
-
 // High-performance capture engine.
-
 
 /// High-performance traffic capture engine
 pub struct HighPerformanceCapturer {
@@ -157,11 +151,11 @@ pub struct HighPerformanceCapturer {
     stats: Arc<CaptureStats>,
     stop_flag: Arc<AtomicBool>,
     session_manager: Arc<ShardedSessionManager>,
-   /// Data publisher (MQ or HTTP)
+    /// Data publisher (MQ or HTTP)
     publisher: DataPublisher,
-   /// Port bitmap for O(1) matching
+    /// Port bitmap for O(1) matching
     port_bitmap: Arc<PortBitmap>,
-   /// Tokio runtime handle passed into worker threads from synchronous code
+    /// Tokio runtime handle passed into worker threads from synchronous code
     runtime_handle: Option<tokio::runtime::Handle>,
 }
 
@@ -249,13 +243,13 @@ impl HighPerformanceCapturer {
             .map_err(|err| (worker_idx, err))
     }
 
-   /// Create a new high-performance capture engine.
+    /// Create a new high-performance capture engine.
     pub fn new(
         config: Config,
         session_manager: Arc<ShardedSessionManager>,
         mq: Option<MqClient>,
     ) -> Self {
-       // Build the port bitmap.
+        // Build the port bitmap.
         let mut all_ports = Vec::with_capacity(16);
         all_ports.extend(&config.smtp_ports);
         all_ports.extend(&config.pop3_ports);
@@ -265,7 +259,7 @@ impl HighPerformanceCapturer {
         }
         let port_bitmap = Arc::new(PortBitmap::from_ports(&all_ports));
 
-       // Create the data publisher.
+        // Create the data publisher.
         let publish_mode = if let Some(mq) = mq {
             info!("Using Redis Streams + Pub/Sub for data publishing");
             let stream = vigilyx_db::mq::StreamClient::with_auto_consumer(
@@ -278,7 +272,7 @@ impl HighPerformanceCapturer {
         } else {
             let api_url = format!("http://{}:{}", config.api_host, config.api_port);
             info!("Use HTTP 直ConnectSenddata到 API: {}", api_url);
-           // Create an HTTP client that bypasses proxy inheritance from `sudo`.
+            // Create an HTTP client that bypasses proxy inheritance from `sudo`.
             let client = crate::internal_api_client_builder()
                 .build()
                 .expect("internal publish HTTP client should build");
@@ -289,7 +283,7 @@ impl HighPerformanceCapturer {
         };
         let publisher = DataPublisher::new(publish_mode);
 
-       // Capture the current Tokio runtime handle, if available.
+        // Capture the current Tokio runtime handle, if available.
         let runtime_handle = tokio::runtime::Handle::try_current().ok();
 
         Self {
@@ -303,16 +297,16 @@ impl HighPerformanceCapturer {
         }
     }
 
-   /// Return capture statistics.
+    /// Return capture statistics.
     pub fn stats(&self) -> &CaptureStats {
         &self.stats
     }
 
-   /// Start packet capture.
+    /// Start packet capture.
     pub fn start(&self) -> Result<()> {
         let interface = &self.config.sniffer_interface;
 
-       // Look up the configured network interface.
+        // Look up the configured network interface.
         let device = Device::list()?
             .into_iter()
             .find(|d| d.name == *interface)
@@ -331,20 +325,20 @@ impl HighPerformanceCapturer {
 
         info!("already选择NetworkInterface: {}", device.name);
 
-       // Attach the runtime handle to the publisher when one is available.
+        // Attach the runtime handle to the publisher when one is available.
         let publisher_with_handle = if let Some(ref handle) = self.runtime_handle {
             self.publisher.clone().with_runtime_handle(handle.clone())
         } else {
             self.publisher.clone()
         };
 
-       // Start worker threads (CPU count minus one, with a minimum of one).
+        // Start worker threads (CPU count minus one, with a minimum of one).
         let num_workers = (num_cpus::get().saturating_sub(1)).clamp(1, max_worker_threads());
         info!("Start {} Worker thread", num_workers);
 
         let worker_txs = self.start_worker_pool(num_workers, publisher_with_handle)?;
 
-       // Start the capture thread with panic isolation.
+        // Start the capture thread with panic isolation.
         let stats = self.stats.clone();
         let config = self.config.clone();
         let port_bitmap = self.port_bitmap.clone();
@@ -355,14 +349,7 @@ impl HighPerformanceCapturer {
             .name("capture".to_string())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    Self::capture_loop(
-                        device,
-                        worker_txs,
-                        stats,
-                        config,
-                        port_bitmap,
-                        stop_flag,
-                    )
+                    Self::capture_loop(device, worker_txs, stats, config, port_bitmap, stop_flag)
                 }));
 
                 match result {
@@ -379,34 +366,34 @@ impl HighPerformanceCapturer {
         Ok(())
     }
 
-   /// Request a graceful stop for capture and worker threads.
+    /// Request a graceful stop for capture and worker threads.
     pub fn stop(&self) {
         self.stop_flag.store(true, Ordering::SeqCst);
     }
 
-   /// Read a pcap byte stream from standard input.
-   ///
-   /// This mode is intended for remote piping, for example:
-   /// ```bash
-   /// ssh root@remote "tcpdump -i eth1 -U -s0 -w -" | vigilyx-sniffer --stdin
-   /// ```
+    /// Read a pcap byte stream from standard input.
+    ///
+    /// This mode is intended for remote piping, for example:
+    /// ```bash
+    /// ssh root@remote "tcpdump -i eth1 -U -s0 -w -" | vigilyx-sniffer --stdin
+    /// ```
     pub fn start_from_stdin(&self) -> Result<()> {
         info!("Start stdin modeCapture...");
 
-       // Reuse the Tokio runtime handle when available so workers can publish asynchronously.
+        // Reuse the Tokio runtime handle when available so workers can publish asynchronously.
         let publisher_with_handle = if let Some(ref handle) = self.runtime_handle {
             self.publisher.clone().with_runtime_handle(handle.clone())
         } else {
             self.publisher.clone()
         };
 
-       // Start worker threads before reading from stdin so parsed packets can flow immediately.
+        // Start worker threads before reading from stdin so parsed packets can flow immediately.
         let num_workers = (num_cpus::get().saturating_sub(1)).clamp(1, max_worker_threads());
         info!("Start {} Worker thread", num_workers);
 
         let worker_txs = self.start_worker_pool(num_workers, publisher_with_handle)?;
 
-       // Move stdin processing onto a dedicated blocking thread.
+        // Move stdin processing onto a dedicated blocking thread.
         let stats = self.stats.clone();
         let port_bitmap = self.port_bitmap.clone();
         let stop_flag = self.stop_flag.clone();
@@ -433,35 +420,35 @@ impl HighPerformanceCapturer {
         Ok(())
     }
 
-   /// Listen on a local TCP port and accept a remote pcap byte stream.
-   ///
-   /// This mode is designed to be exposed only through an SSH tunnel:
-   /// ```bash
-   /// vigilyx-sniffer --remote-listen 5000
-   ///
-   /// # SSH
-   /// ssh -R 5000:127.0.0.1:5000 root@203.0.113.10
-   ///
-   /// # Remote
-   /// tcpdump -i eth1 -U -s0 -w - | nc localhost 5000
-   /// ```
+    /// Listen on a local TCP port and accept a remote pcap byte stream.
+    ///
+    /// This mode is designed to be exposed only through an SSH tunnel:
+    /// ```bash
+    /// vigilyx-sniffer --remote-listen 5000
+    ///
+    /// # SSH
+    /// ssh -R 5000:127.0.0.1:5000 root@203.0.113.10
+    ///
+    /// # Remote
+    /// tcpdump -i eth1 -U -s0 -w - | nc localhost 5000
+    /// ```
     pub async fn start_remote_listen(&self, port: u16) -> Result<()> {
         info!("Start TCP ListenmodeCapture，Port: {}", port);
 
-       // Workers may need a runtime handle for async publishing.
+        // Workers may need a runtime handle for async publishing.
         let runtime_handle = tokio::runtime::Handle::current();
 
-       // Attach the runtime handle to the publisher clone used by workers.
+        // Attach the runtime handle to the publisher clone used by workers.
         let publisher_with_handle = self.publisher.clone().with_runtime_handle(runtime_handle);
 
-       // Start packet-processing workers before accepting connections.
+        // Start packet-processing workers before accepting connections.
         let num_workers = (num_cpus::get().saturating_sub(1)).clamp(1, max_worker_threads());
         info!("Start {} Worker thread", num_workers);
 
         let worker_txs = self.start_worker_pool(num_workers, publisher_with_handle)?;
 
-       // SEC: Bind 127.0.0.1 instead of 0.0.0.0 to prevent unauthenticated remote traffic injection (CWE-306)
-       // For cross-host access, use SSH tunnel forwarding (see docs)
+        // SEC: Bind 127.0.0.1 instead of 0.0.0.0 to prevent unauthenticated remote traffic injection (CWE-306)
+        // For cross-host access, use SSH tunnel forwarding (see docs)
         let bind_addr = format!("127.0.0.1:{}", port);
         let listener = TokioTcpListener::bind(&bind_addr).await?;
         warn!(
@@ -471,7 +458,7 @@ impl HighPerformanceCapturer {
         );
         info!("waitWaitRemoteConnection...");
 
-       // Accept each incoming stream and forward it to a blocking capture thread.
+        // Accept each incoming stream and forward it to a blocking capture thread.
         let stats = self.stats.clone();
         let port_bitmap = self.port_bitmap.clone();
         let stop_flag = self.stop_flag.clone();
@@ -492,7 +479,7 @@ impl HighPerformanceCapturer {
                         let stop_flag = stop_flag.clone();
                         let worker_txs = worker_txs.clone();
 
-                       // Convert Tokio's socket into a blocking std stream for the parser loop.
+                        // Convert Tokio's socket into a blocking std stream for the parser loop.
                         let std_socket = match socket.into_std() {
                             Ok(s) => s,
                             Err(e) => {
@@ -541,41 +528,41 @@ impl HighPerformanceCapturer {
         Ok(())
     }
 
-   /// Connect to a remote TCP endpoint that streams pcap data.
-   ///
-   /// This v2 mode is useful when the sniffer must pull from a remote capture
-   /// relay, for example behind NAT.
-   ///
-   /// Pipeline:
-   /// dumpcap -> tee -> FIFO -> ncat/socat TCP:5000
-   /// Each client connection writes a complete pcap stream with the global
-   /// header followed by packet records.
-   ///
-   /// Example:
-   /// ```bash
-   /// # Remote relay managed by `email-capture.sh`
-   /// # Local client
-   /// vigilyx-sniffer --remote-connect 203.0.113.10:5000
-   /// ```
+    /// Connect to a remote TCP endpoint that streams pcap data.
+    ///
+    /// This v2 mode is useful when the sniffer must pull from a remote capture
+    /// relay, for example behind NAT.
+    ///
+    /// Pipeline:
+    /// dumpcap -> tee -> FIFO -> ncat/socat TCP:5000
+    /// Each client connection writes a complete pcap stream with the global
+    /// header followed by packet records.
+    ///
+    /// Example:
+    /// ```bash
+    /// # Remote relay managed by `email-capture.sh`
+    /// # Local client
+    /// vigilyx-sniffer --remote-connect 203.0.113.10:5000
+    /// ```
     pub async fn start_remote_connect(&self, host: &str, port: u16) -> Result<()> {
         info!("StartRemoteConnectionmodeCapture: {}:{}", host, port);
 
         let sniffer_state = crate::get_sniffer_state();
         sniffer_state.set_connecting().await;
 
-       // Workers publish through the current Tokio runtime.
+        // Workers publish through the current Tokio runtime.
         let runtime_handle = tokio::runtime::Handle::current();
 
-       // Rebind the publisher with that runtime handle.
+        // Rebind the publisher with that runtime handle.
         let publisher_with_handle = self.publisher.clone().with_runtime_handle(runtime_handle);
 
-       // Start worker threads before opening the remote stream.
+        // Start worker threads before opening the remote stream.
         let num_workers = (num_cpus::get().saturating_sub(1)).clamp(1, max_worker_threads());
         info!("Start {} Worker thread", num_workers);
 
         let worker_txs = self.start_worker_pool(num_workers, publisher_with_handle)?;
 
-       // Maintain a reconnecting background task for the remote capture stream.
+        // Maintain a reconnecting background task for the remote capture stream.
         let stats = self.stats.clone();
         let port_bitmap = self.port_bitmap.clone();
         let stop_flag = self.stop_flag.clone();
@@ -587,7 +574,7 @@ impl HighPerformanceCapturer {
             let mut retry_count = 0u32;
             let max_retry_delay = Duration::from_secs(30);
 
-           // Update the shared sniffer-status object so the UI can reflect connection health.
+            // Update the shared sniffer-status object so the UI can reflect connection health.
             let sniffer_state = crate::get_sniffer_state();
 
             loop {
@@ -598,7 +585,7 @@ impl HighPerformanceCapturer {
                 info!("正在ConnectionRemoteServiceDevice/Handler: {}", addr);
                 sniffer_state.set_connecting().await;
 
-               // Bound each connection attempt so retries remain responsive.
+                // Bound each connection attempt so retries remain responsive.
                 let connect_result = tokio::time::timeout(
                     Duration::from_secs(10),
                     tokio::net::TcpStream::connect(&addr),
@@ -619,7 +606,7 @@ impl HighPerformanceCapturer {
                         let thread_stop_flag = stop_flag.clone();
                         let worker_txs = worker_txs.clone();
 
-                       // Switch to a blocking std socket for the packet reader thread.
+                        // Switch to a blocking std socket for the packet reader thread.
                         let std_socket = match socket.into_std() {
                             Ok(s) => s,
                             Err(e) => {
@@ -629,12 +616,12 @@ impl HighPerformanceCapturer {
                         };
                         std_socket.set_nonblocking(false).ok();
 
-                       // Align keepalive settings with the remote relay scripts.
+                        // Align keepalive settings with the remote relay scripts.
                         if let Err(e) = Self::configure_socket(&std_socket) {
                             warn!("Set socket ParameterFailed (不影响Function): {}", e);
                         }
 
-                       // Process the remote pcap stream on a dedicated blocking thread.
+                        // Process the remote pcap stream on a dedicated blocking thread.
                         let handle = thread::Builder::new()
                             .name(format!("remote-capture-{}", addr))
                             .spawn(move || {
@@ -706,10 +693,10 @@ impl HighPerformanceCapturer {
         Ok(())
     }
 
-   /// Connect to the v3 file-protocol relay with resume support.
-   ///
-   /// The v3 protocol carries pcapng chunks, supports resume after disconnects,
-   /// and exchanges heartbeat frames.
+    /// Connect to the v3 file-protocol relay with resume support.
+    ///
+    /// The v3 protocol carries pcapng chunks, supports resume after disconnects,
+    /// and exchanges heartbeat frames.
     pub async fn start_remote_connect_v3(&self, host: &str, port: u16) -> Result<()> {
         info!("Start v3 RemoteConnectionmodeCapture: {}:{}", host, port);
 
@@ -777,7 +764,7 @@ impl HighPerformanceCapturer {
                             warn!("Set socket ParameterFailed: {}", e);
                         }
 
-                       // Send SUBSCRIBE RESUME
+                        // Send SUBSCRIBE RESUME
                         use std::io::Write;
                         let resume_pos = Self::load_resume_position();
                         if let Some((ref file, offset)) = resume_pos {
@@ -789,7 +776,7 @@ impl HighPerformanceCapturer {
                         }
                         let _ = std_socket.flush();
 
-                       // v3 ProtocolCaptureLoop
+                        // v3 ProtocolCaptureLoop
                         let handle = thread::Builder::new()
                             .name(format!("v3-capture-{}", addr))
                             .spawn(move || {
@@ -866,32 +853,30 @@ impl HighPerformanceCapturer {
         Ok(())
     }
 
-   /// Configure TCP keepalive and receive buffering for relay sockets.
-   ///
-   /// These values are aligned with the `email-capture.sh` relay script:
-   /// idle=60s, interval=10s, retries=3
+    /// Configure TCP keepalive and receive buffering for relay sockets.
+    ///
+    /// These values are aligned with the `email-capture.sh` relay script:
+    /// idle=60s, interval=10s, retries=3
     fn configure_socket(socket: &std::net::TcpStream) -> Result<()> {
         let sock_ref = SockRef::from(socket);
 
-       // Detect dead peers within roughly 90 seconds without being too aggressive.
+        // Detect dead peers within roughly 90 seconds without being too aggressive.
         let keepalive = TcpKeepalive::new()
             .with_time(Duration::from_secs(60))
             .with_interval(Duration::from_secs(10))
             .with_retries(3);
         sock_ref.set_tcp_keepalive(&keepalive)?;
 
-       // Match the sender's large socket buffers to reduce backpressure during bursts.
+        // Match the sender's large socket buffers to reduce backpressure during bursts.
         sock_ref.set_recv_buffer_size(16 * 1024 * 1024)?;
 
         info!("Socket alreadyConfiguration: keepalive(idle=60s,intvl=10s,cnt=3), rcvbuf=16MB");
         Ok(())
     }
 
-    
-   // Capture-loop helpers.
-    
+    // Capture-loop helpers.
 
-   /// Run the generic stream capture loop over standard input.
+    /// Run the generic stream capture loop over standard input.
     fn stdin_capture_loop(
         worker_txs: Arc<Vec<Sender<RawpacketInfo>>>,
         stats: Arc<CaptureStats>,
@@ -903,7 +888,7 @@ impl HighPerformanceCapturer {
         Self::stream_capture_loop(handle, worker_txs, stats, port_bitmap, stop_flag)
     }
 
-   /// Read a classic pcap stream from any blocking reader.
+    /// Read a classic pcap stream from any blocking reader.
     fn stream_capture_loop<R: Read>(
         reader: R,
         worker_txs: Arc<Vec<Sender<RawpacketInfo>>>,
@@ -911,15 +896,15 @@ impl HighPerformanceCapturer {
         port_bitmap: Arc<PortBitmap>,
         stop_flag: Arc<AtomicBool>,
     ) -> Result<()> {
-       // Use pcap FromFileDescription readGet (savefile)
-       // pcap Stream: Header(24Byte) + [packetHeader(16Byte) + packetdata]*
+        // Use pcap FromFileDescription readGet (savefile)
+        // pcap Stream: Header(24Byte) + [packetHeader(16Byte) + packetdata]*
         let mut reader = BufReader::with_capacity(1024 * 1024, reader); // 1MB bufferDistrict
 
-       // readGet pcap Header (24 Byte)
+        // readGet pcap Header (24 Byte)
         let mut global_header = [0u8; 24];
         reader.read_exact(&mut global_header)?;
 
-       // Verify magic number
+        // Verify magic number
         let magic = u32::from_le_bytes([
             global_header[0],
             global_header[1],
@@ -929,8 +914,8 @@ impl HighPerformanceCapturer {
         let is_swapped = match magic {
             0xa1b2c3d4 => false, // StandardByte
             0xd4c3b2a1 => true,  // Byte
-            0xa1b23c4d => false, 
-            0x4d3cb2a1 => true,  // , Byte
+            0xa1b23c4d => false,
+            0x4d3cb2a1 => true, // , Byte
             _ => return Err(anyhow!("Invalidof pcap magic number: 0x{:08x}", magic)),
         };
 
@@ -942,7 +927,7 @@ impl HighPerformanceCapturer {
             }
         };
 
-       // readGetlinkType (20)
+        // readGetlinkType (20)
         let linktype = read_u32(&global_header[20..24]);
         info!("pcap linkType: {} (1=Ethernet)", linktype);
 
@@ -955,7 +940,7 @@ impl HighPerformanceCapturer {
         let mut packet_header = [0u8; 16];
         let mut packet_buffer = vec![0u8; 65536]; // largepacketsize
 
-       // counter: Batch New Variable, per-packet Operations
+        // counter: Batch New Variable, per-packet Operations
         let mut local_received: u64 = 0;
         let mut local_bytes: u64 = 0;
         let mut local_email: u64 = 0;
@@ -968,7 +953,7 @@ impl HighPerformanceCapturer {
                 break;
             }
 
-           // readGetpacketHeader (16 Byte)
+            // readGetpacketHeader (16 Byte)
             match reader.read_exact(&mut packet_header) {
                 Ok(_) => {}
                 Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
@@ -981,16 +966,16 @@ impl HighPerformanceCapturer {
                 }
             }
 
-           // Parse the pcap record header. Timestamps are reserved for future use.
+            // Parse the pcap record header. Timestamps are reserved for future use.
             let _ts_sec = read_u32(&packet_header[0..4]);
             let _ts_usec = read_u32(&packet_header[4..8]);
             let caplen = read_u32(&packet_header[8..12]) as usize;
             let _origlen = read_u32(&packet_header[12..16]);
 
-           // Refuse implausibly large packet records before allocating or parsing them.
+            // Refuse implausibly large packet records before allocating or parsing them.
             if caplen > 65536 {
                 warn!("packetLengthlarge: {}, hops", caplen);
-               // Drain the oversized record from the stream so parsing can continue.
+                // Drain the oversized record from the stream so parsing can continue.
                 let mut remaining = caplen;
                 while remaining > 0 {
                     let to_read = remaining.min(packet_buffer.len());
@@ -1002,15 +987,15 @@ impl HighPerformanceCapturer {
                 continue;
             }
 
-           // Read the full frame payload for this packet record.
+            // Read the full frame payload for this packet record.
             if reader.read_exact(&mut packet_buffer[..caplen]).is_err() {
                 break;
             }
 
-           // Track counters locally and flush them to atomics in batches.
+            // Track counters locally and flush them to atomics in batches.
             local_received += 1;
 
-           // ONE copy of entire frame; parse_raw_packet uses O(1) slice() internally
+            // ONE copy of entire frame; parse_raw_packet uses O(1) slice() internally
             let frame = Bytes::copy_from_slice(&packet_buffer[..caplen]);
             if let Some(packet_info) = packet_parser::parse_raw_packet(frame, &port_bitmap) {
                 local_bytes += packet_info.payload.len() as u64;
@@ -1056,9 +1041,9 @@ impl HighPerformanceCapturer {
                 }
             }
 
-           // Flush batched counters periodically to reduce atomic contention.
+            // Flush batched counters periodically to reduce atomic contention.
             if last_stats_time.elapsed() >= stats_interval {
-               // One atomic write per batch is cheaper than one per packet.
+                // One atomic write per batch is cheaper than one per packet.
                 stats
                     .packets_received
                     .fetch_add(local_received, Ordering::Relaxed);
@@ -1097,7 +1082,7 @@ impl HighPerformanceCapturer {
         Ok(())
     }
 
-   /// Capture Loop (High-performance-optimized version)
+    /// Capture Loop (High-performance-optimized version)
     fn capture_loop(
         device: Device,
         worker_txs: Arc<Vec<Sender<RawpacketInfo>>>,
@@ -1112,7 +1097,7 @@ impl HighPerformanceCapturer {
         let capture_buffer_bytes = i32::try_from(capture_buffer_mb * 1024 * 1024)
             .expect("capture buffer exceeds i32::MAX; MAX_CAPTURE_BUFFER_MB must be ≤ 2047");
 
-       // OpenCapture (Performance optimizationsConfiguration)
+        // OpenCapture (Performance optimizationsConfiguration)
         let mut cap = Capture::from_device(device)?
             .buffer_size(capture_buffer_bytes)
             .timeout(CAPTURE_TIMEOUT_MS) // 100ms, And CPU
@@ -1120,29 +1105,27 @@ impl HighPerformanceCapturer {
             .immediate_mode(true) // immediatelymode,
             .open()?;
 
-       // Linux Performance notes
+        // Linux Performance notes
         #[cfg(target_os = "linux")]
         {
             info!("Linux: 启用 TPACKET_V3 MemoryMappingmode");
         }
 
-       // macOS Performance notes
+        // macOS Performance notes
         #[cfg(target_os = "macos")]
         {
             info!("macOS: Use BPF 设备Capture");
         }
 
-       // Set BPF handler (onlyCaptureemailProtocolPort)
+        // Set BPF handler (onlyCaptureemailProtocolPort)
         let filter = bpf::build_bpf_filter(&config);
         cap.filter(&filter, true)?;
         info!("BPF 滤Device/Handler: {}", filter);
 
-       // PerformanceConfiguration
+        // PerformanceConfiguration
         info!(
             "CaptureConfiguration: bufferDistrict={}MB, Timeout={}ms, Queue={}",
-            capture_buffer_mb,
-            CAPTURE_TIMEOUT_MS,
-            WORKER_QUEUE_CAPACITY
+            capture_buffer_mb, CAPTURE_TIMEOUT_MS, WORKER_QUEUE_CAPACITY
         );
 
         let mut last_stats_time = Instant::now();
@@ -1156,7 +1139,7 @@ impl HighPerformanceCapturer {
                     stats.packets_received.fetch_add(1, Ordering::Relaxed);
                     debug!("Receiveddatapacket: {} Byte", packet.data.len());
 
-                   // ONE copy of entire frame here; all subsequent slicing is O(1)
+                    // ONE copy of entire frame here; all subsequent slicing is O(1)
                     let frame = Bytes::copy_from_slice(packet.data);
                     if let Some(packet_info) = packet_parser::parse_packet(frame, &port_bitmap) {
                         stats
@@ -1205,26 +1188,24 @@ impl HighPerformanceCapturer {
                     }
                 }
                 Err(pcap::Error::TimeoutExpired) => {
-                   // Normal,
+                    // Normal,
                 }
                 Err(e) => {
                     error!("CaptureError: {}", e);
                 }
             }
 
-           // Periodic Statistics
+            // Periodic Statistics
             if last_stats_time.elapsed() >= stats_interval {
                 let received = stats.packets_received.load(Ordering::Relaxed);
                 let processed = stats.packets_processed.load(Ordering::Relaxed);
                 let dropped = stats.packets_dropped.load(Ordering::Relaxed);
-                let worker_queue_full_total =
-                    stats.worker_queue_full_drops.load(Ordering::Relaxed);
-                let worker_queue_full_delta = worker_queue_full_total
-                    .saturating_sub(last_worker_queue_full_total);
+                let worker_queue_full_total = stats.worker_queue_full_drops.load(Ordering::Relaxed);
+                let worker_queue_full_delta =
+                    worker_queue_full_total.saturating_sub(last_worker_queue_full_total);
                 let bytes = stats.bytes_total.load(Ordering::Relaxed);
                 let throughput_mbps = bytes as f64 / 1024.0 / 1024.0 / 5.0;
-                let current_interface_counters =
-                    read_interface_counters(&config.sniffer_interface);
+                let current_interface_counters = read_interface_counters(&config.sniffer_interface);
                 let interface_delta = current_interface_counters
                     .zip(last_interface_counters)
                     .map(|(current, previous)| current.diff_since(previous));
@@ -1274,7 +1255,7 @@ impl HighPerformanceCapturer {
                     );
                 }
 
-               // Bytecount
+                // Bytecount
                 stats.bytes_total.store(0, Ordering::Relaxed);
                 last_interface_counters = current_interface_counters;
                 last_worker_queue_full_total = worker_queue_full_total;
@@ -1285,17 +1266,15 @@ impl HighPerformanceCapturer {
         Ok(())
     }
 
-    
-   // Worker thread
-    
+    // Worker thread
 
-   /// Main worker loop for packet parsing and session assembly.
-   ///
-   /// Performance notes:
-   /// - Avoids unnecessary `session.clone()` calls via `ProcessResult`
-   /// - Keeps parsed commands borrowed where possible
-   /// - Reuses batch buffers instead of allocating per packet
-   /// - Flushes work in batches to amortize synchronization costs
+    /// Main worker loop for packet parsing and session assembly.
+    ///
+    /// Performance notes:
+    /// - Avoids unnecessary `session.clone()` calls via `ProcessResult`
+    /// - Keeps parsed commands borrowed where possible
+    /// - Reuses batch buffers instead of allocating per packet
+    /// - Flushes work in batches to amortize synchronization costs
     fn worker_loop(
         worker_id: usize,
         rx: Receiver<RawpacketInfo>,
@@ -1307,7 +1286,7 @@ impl HighPerformanceCapturer {
     ) {
         let parser = ProtocolParser::new();
 
-       // Adaptive batching balances latency at low traffic and throughput at high traffic.
+        // Adaptive batching balances latency at low traffic and throughput at high traffic.
         let mut batcher = AdaptiveBatcher::new(BatchConfig {
             batch_size: BATCH_SIZE,
             timeout_us: BATCH_TIMEOUT_US,
@@ -1318,27 +1297,27 @@ impl HighPerformanceCapturer {
         let mut last_flush = Instant::now();
         let batch_timeout = Duration::from_micros(batcher.recommended_batch_size() as u64 * 20);
 
-       // Double-buffer session vectors so one can be filled while the other is published.
+        // Double-buffer session vectors so one can be filled while the other is published.
         let mut sessions_front: Vec<vigilyx_core::EmailSession> = Vec::with_capacity(BATCH_SIZE);
         let mut sessions_back: Vec<vigilyx_core::EmailSession> = Vec::with_capacity(BATCH_SIZE);
 
-       // Maintain local counters and publish them periodically.
+        // Maintain local counters and publish them periodically.
         let mut local_processed: u64 = 0;
 
-       // Only worker 0 emits HTTP pipeline stats to avoid duplicated logs.
-       // Log every three minutes to keep the signal useful without creating noise.
+        // Only worker 0 emits HTTP pipeline stats to avoid duplicated logs.
+        // Log every three minutes to keep the signal useful without creating noise.
         let mut last_http_stats_time = Instant::now();
         let http_stats_interval = Duration::from_secs(180);
 
         loop {
-           // Check the stop flag periodically without paying the cost on every packet.
+            // Check the stop flag periodically without paying the cost on every packet.
             if local_processed.is_multiple_of(1000) && stop_flag.load(Ordering::Relaxed) {
                 break;
             }
 
-           // Try non-blocking receive first, then block with 10ms timeout.
-           // 100s timeout causes 10K syscalls/sec per thread when idle;
-           // 10ms keeps sub-millisecond latency at <1K pps while slashing idle CPU.
+            // Try non-blocking receive first, then block with 10ms timeout.
+            // 100s timeout causes 10K syscalls/sec per thread when idle;
+            // 10ms keeps sub-millisecond latency at <1K pps while slashing idle CPU.
             let recv_result = rx
                 .try_recv()
                 .or_else(|_| rx.recv_timeout(Duration::from_millis(10)));
@@ -1353,22 +1332,22 @@ impl HighPerformanceCapturer {
                 }
             }
 
-           // Flush either when the batch is full or when it has been waiting too long.
+            // Flush either when the batch is full or when it has been waiting too long.
             let should_flush = batch.len() >= BATCH_SIZE
                 || (last_flush.elapsed() >= batch_timeout && !batch.is_empty());
 
             if should_flush {
                 let batch_count = batch.len() as u64;
 
-               // Reuse a single timestamp per flush to avoid repeated `Instant::now()` calls.
+                // Reuse a single timestamp per flush to avoid repeated `Instant::now()` calls.
                 let now = Instant::now();
                 for packet_info in batch.drain(..) {
                     local_processed += 1;
 
-                   // Parse the protocol payload before updating session state.
+                    // Parse the protocol payload before updating session state.
                     let command = parser.parse(&packet_info.payload, packet_info.protocol);
 
-                   // Session updates are keyed by flow and performed inside the manager.
+                    // Session updates are keyed by flow and performed inside the manager.
                     match session_manager.process_packet_with_worker(
                         &packet_info,
                         command.as_deref(),
@@ -1383,12 +1362,12 @@ impl HighPerformanceCapturer {
                     }
                 }
 
-               // Publish processed-packet counters once per flush.
+                // Publish processed-packet counters once per flush.
                 stats
                     .packets_processed
                     .fetch_add(batch_count, Ordering::Relaxed);
 
-               // Dirty sessions changed enough that the API/UI should be notified again.
+                // Dirty sessions changed enough that the API/UI should be notified again.
                 let dirty_sessions = session_manager.take_dirty_sessions();
                 if !dirty_sessions.is_empty() {
                     for ds in &dirty_sessions {
@@ -1407,7 +1386,7 @@ impl HighPerformanceCapturer {
                     sessions_front.extend(dirty_sessions);
                 }
 
-               // HTTP dataSecuritySession (By parse_http_data_security)
+                // HTTP dataSecuritySession (By parse_http_data_security)
                 let http_sessions = session_manager.take_http_sessions();
                 if !http_sessions.is_empty() {
                     let count = http_sessions.len() as u64;
@@ -1417,27 +1396,27 @@ impl HighPerformanceCapturer {
                         "HTTP dataSecurity: Publish {} Session到Engine",
                         count
                     );
-                   // HTTP pipeline: RecordingPublishCount
+                    // HTTP pipeline: RecordingPublishCount
                     session_manager.record_http_sessions_published(count);
                     publisher.publish_http_sessions(http_sessions);
                 }
 
-               // bufferPublish (first bufferDistrict,Avoid to_vec())
+                // bufferPublish (first bufferDistrict,Avoid to_vec())
                 if !sessions_front.is_empty() {
-                   // bufferDistrict (O(1) Operations)
+                    // bufferDistrict (O(1) Operations)
                     std::mem::swap(&mut sessions_front, &mut sessions_back);
 
-                   // AsynchronousPublish bufferDistrict (Ownership,)
+                    // AsynchronousPublish bufferDistrict (Ownership,)
                     publisher.publish(std::mem::take(&mut sessions_back));
                 }
 
-               // Update Batchhandler
+                // Update Batchhandler
                 let elapsed_ns = last_flush.elapsed().as_nanos() as u64;
                 batcher.update(batch_count as usize, elapsed_ns);
 
                 last_flush = Instant::now();
 
-               // Dynamic BatchTimeout
+                // Dynamic BatchTimeout
                 let new_batch_size = batcher.recommended_batch_size();
                 if new_batch_size != BATCH_SIZE {
                     debug!(
@@ -1446,7 +1425,7 @@ impl HighPerformanceCapturer {
                     );
                 }
 
-               // HTTP pipeline PeriodicStatistics (worker 0 Output)
+                // HTTP pipeline PeriodicStatistics (worker 0 Output)
                 if worker_id == 0 && last_http_stats_time.elapsed() >= http_stats_interval {
                     session_manager.log_smtp_pipeline_stats();
                     session_manager.log_http_pipeline_stats();
@@ -1455,7 +1434,7 @@ impl HighPerformanceCapturer {
             }
         }
 
-       // StatisticsUpdate
+        // StatisticsUpdate
         let (final_batch_size, avg_time_ns) = batcher.stats();
         stats
             .packets_processed
@@ -1469,11 +1448,9 @@ impl HighPerformanceCapturer {
         );
     }
 
-    
-   // v3 file-protocol helpers.
-    
+    // v3 file-protocol helpers.
 
-   /// Consume frames from the v3 file protocol and push parsed packets to workers.
+    /// Consume frames from the v3 file protocol and push parsed packets to workers.
     fn file_protocol_capture_loop<R: Read>(
         reader: R,
         worker_txs: Arc<Vec<Sender<RawpacketInfo>>>,
@@ -1493,13 +1470,13 @@ impl HighPerformanceCapturer {
 
             match protocol_reader.next_frame() {
                 Ok(Frame::Filedata { data, offset, .. }) => {
-                   // Decode any complete pcapng packets carried by this frame.
+                    // Decode any complete pcapng packets carried by this frame.
                     let packets = pcapng_parser.parse_blocks(&data);
 
                     for pkt in packets {
                         stats.packets_received.fetch_add(1, Ordering::Relaxed);
 
-                       // Zero-copy: Vec<u8> -> Bytes takes ownership, no memcpy
+                        // Zero-copy: Vec<u8> -> Bytes takes ownership, no memcpy
                         let frame = Bytes::from(pkt.data);
                         if let Some(packet_info) =
                             packet_parser::parse_raw_packet(frame, &port_bitmap)
@@ -1550,7 +1527,7 @@ impl HighPerformanceCapturer {
                 }
             }
 
-           // Periodic Statistics
+            // Periodic Statistics
             if last_stats_time.elapsed() >= stats_interval {
                 let received = stats.packets_received.load(Ordering::Relaxed);
                 let processed = stats.packets_processed.load(Ordering::Relaxed);
@@ -1569,7 +1546,7 @@ impl HighPerformanceCapturer {
         Ok((file.map(|s| s.to_string()), offset))
     }
 
-   /// Save bit File
+    /// Save bit File
     fn save_resume_position(file: Option<&str>, offset: u64) {
         if let Some(f) = file {
             let _ = std::fs::create_dir_all("data");
@@ -1578,7 +1555,7 @@ impl HighPerformanceCapturer {
         }
     }
 
-   /// Load bit
+    /// Load bit
     fn load_resume_position() -> Option<(String, u64)> {
         std::fs::read_to_string("data/resume_position.txt")
             .ok()

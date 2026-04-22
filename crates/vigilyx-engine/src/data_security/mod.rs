@@ -59,15 +59,15 @@ pub type DetectorResult = Option<(DataSecurityIncident, Option<DlpScanResult>)>;
 
 /// Data security detector trait.
 pub trait DataSecurityDetector: Send + Sync {
-   /// Unique detector ID.
+    /// Unique detector ID.
     fn id(&self) -> &str;
-   /// Human-readable detector name.
+    /// Human-readable detector name.
     fn name(&self) -> &str;
-   /// Analyze an HTTP session. Returns (incident, dlp_result) if a security issue is found.
+    /// Analyze an HTTP session. Returns (incident, dlp_result) if a security issue is found.
 
-   /// `dlp_result` is used by JR/T 0197-2020 compliance tracking to accumulate
-   /// sensitive data counts by classification level.
-   /// If the detector does not perform DLP internally, returns None for the second element.
+    /// `dlp_result` is used by JR/T 0197-2020 compliance tracking to accumulate
+    /// sensitive data counts by classification level.
+    /// If the detector does not perform DLP internally, returns None for the second element.
     fn analyze(&self, session: &HttpSession) -> DetectorResult;
 }
 
@@ -131,7 +131,7 @@ pub fn extract_snippet(source_text: &str, matched_values: &[String]) -> Option<S
             continue;
         }
         if let Some(pos) = source_text.find(val.as_str()) {
-           // Get up to CONTEXT_CHARS characters before match (UTF-8 safe)
+            // Get up to CONTEXT_CHARS characters before match (UTF-8 safe)
             let before_start = source_text[..pos]
                 .char_indices()
                 .rev()
@@ -140,7 +140,7 @@ pub fn extract_snippet(source_text: &str, matched_values: &[String]) -> Option<S
                 .unwrap_or(0);
             let before = source_text[before_start..pos].trim();
 
-           // Get up to CONTEXT_CHARS characters after match
+            // Get up to CONTEXT_CHARS characters after match
             let after_end_byte = pos + val.len();
             let after_end = source_text[after_end_byte..]
                 .char_indices()

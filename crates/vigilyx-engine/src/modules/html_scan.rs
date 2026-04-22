@@ -74,8 +74,9 @@ impl HtmlScanModule {
             meta: ModuleMetadata {
                 id: "html_scan".to_string(),
                 name: "HTML Scan".to_string(),
-                description: "Scan HTML body for malicious tags, script injection, and dangerous attributes"
-                    .to_string(),
+                description:
+                    "Scan HTML body for malicious tags, script injection, and dangerous attributes"
+                        .to_string(),
                 pillar: Pillar::Content,
                 depends_on: vec![],
                 timeout_ms: 3000,
@@ -163,37 +164,40 @@ fn analyze_scripts(html_lower: &str, html_original: &str) -> (f64, Vec<Evidence>
 
     while let Some(open_idx) = html_lower[search_from..].find("<script") {
         let abs_open = search_from + open_idx;
-       // find <script...> of >
+        // find <script...> of >
         let tag_end = match html_lower[abs_open..].find('>') {
             Some(i) => abs_open + i + 1,
             None => break,
         };
-       // find </script>
+        // find </script>
         let close_idx = match html_lower[tag_end..].find("</script") {
             Some(i) => tag_end + i,
             None => break,
         };
         let script_body = &html_lower[tag_end..close_idx];
 
-       // Check whether content contains dangerous operations
+        // Check whether content contains dangerous operations
         let dangerous_hits: Vec<&String> = dangerous_script_ops
             .iter()
             .filter(|op| script_body.contains(op.as_str()))
             .collect();
 
         if !dangerous_hits.is_empty() {
-           // Contains dangerous operations -> high severity
+            // Contains dangerous operations -> high severity
             score += 0.30;
             let ops: Vec<String> = dangerous_hits.iter().map(|s| s.to_string()).collect();
             let snip_start = abs_open.saturating_sub(10);
             let snip_end = (tag_end + 50).min(html_original.len());
             evidence.push(Evidence {
-                description: format!("Inline script contains dangerous operations: {}", ops.join(", ")),
+                description: format!(
+                    "Inline script contains dangerous operations: {}",
+                    ops.join(", ")
+                ),
                 location: Some("body_html".to_string()),
                 snippet: Some(html_original[snip_start..snip_end].to_string()),
             });
         }
-       // Scripts without dangerous operations are benign (e.g., var tracking = ...)
+        // Scripts without dangerous operations are benign (e.g., var tracking = ...)
 
         search_from = close_idx + 9; // skip past </script>
     }
@@ -253,10 +257,10 @@ fn check_base64_data_uris(html_lower: &str) -> Vec<(String, usize)> {
     while let Some(idx) = html_lower[pos..].find(search) {
         let abs_pos = pos + idx;
         let after = &html_lower[abs_pos + search.len()..];
-       // Look for ;base64, within the next 60 chars
+        // Look for ;base64, within the next 60 chars
         if let Some(b64_pos) = after.get(..60).and_then(|s| s.find(";base64,")) {
             let mime_type = &after[..b64_pos];
-           // Skip known-safe image types for favicon etc.
+            // Skip known-safe image types for favicon etc.
             if !mime_type.starts_with("image/png")
                 && !mime_type.starts_with("image/jpeg")
                 && !mime_type.starts_with("image/gif")
@@ -314,8 +318,7 @@ fn extract_meta_refresh_urls(html: &str) -> Vec<String> {
         while i + 3 <= bytes.len() {
             if &bytes[i..i + 3] == b"url" {
                 // Make sure this is the start of a token (not e.g. "curl=").
-                let prev_is_boundary = i == 0
-                    || matches!(bytes[i - 1], b' ' | b'\t' | b';' | b',');
+                let prev_is_boundary = i == 0 || matches!(bytes[i - 1], b' ' | b'\t' | b';' | b',');
                 if !prev_is_boundary {
                     i += 1;
                     continue;
@@ -421,7 +424,7 @@ impl SecurityModule for HtmlScanModule {
         let mut categories = Vec::new();
         let mut total_score: f64 = 0.0;
 
-       // Check each dangerous pattern (excluding <script> which is handled separately)
+        // Check each dangerous pattern (excluding <script> which is handled separately)
         for pat in HTML_PATTERNS {
             let pat_lower = pat.pattern.to_lowercase();
             let count = html_lower.matches(&pat_lower).count();
@@ -445,7 +448,7 @@ impl SecurityModule for HtmlScanModule {
             }
         }
 
-       // <script> content analysis: only flag scripts containing dangerous operations
+        // <script> content analysis: only flag scripts containing dangerous operations
         let (script_score, script_evidence) = analyze_scripts(&html_lower, body_html);
         if script_score > 0.0 {
             total_score += script_score;
@@ -466,7 +469,7 @@ impl SecurityModule for HtmlScanModule {
             }
         }
 
-       // Check base64 data URIs
+        // Check base64 data URIs
         let b64_findings = check_base64_data_uris(&html_lower);
         if !b64_findings.is_empty() {
             total_score += 0.2 * b64_findings.len() as f64;
@@ -482,10 +485,12 @@ impl SecurityModule for HtmlScanModule {
             }
         }
 
-       // CSS hidden text detection: display:none / visibility:hidden / font-size:0
-       // Used to hide malicious content from users while evading NLP analysis and email client rendering
+        // CSS hidden text detection: display:none / visibility:hidden / font-size:0
+        // Used to hide malicious content from users while evading NLP analysis and email client rendering
         {
-            let css_hidden_patterns = module_data().get_list("css_hidden_content_patterns").to_vec();
+            let css_hidden_patterns = module_data()
+                .get_list("css_hidden_content_patterns")
+                .to_vec();
 
             let hidden_count = css_hidden_patterns
                 .iter()
@@ -493,7 +498,7 @@ impl SecurityModule for HtmlScanModule {
                 .count();
 
             if hidden_count > 0 {
-               // Check whether hidden elements contain sensitive content (heuristic: count hidden elements)
+                // Check whether hidden elements contain sensitive content (heuristic: count hidden elements)
                 let display_none_count = html_lower.matches("display:none").count()
                     + html_lower.matches("display: none").count();
                 let visibility_hidden_count = html_lower.matches("visibility:hidden").count()
@@ -501,7 +506,7 @@ impl SecurityModule for HtmlScanModule {
                 let total_hidden = display_none_count + visibility_hidden_count;
 
                 if total_hidden >= 3 {
-                   // Many hidden elements - highly suspicious
+                    // Many hidden elements - highly suspicious
                     total_score += 0.30;
                     categories.push("css_hidden_content".to_string());
                     evidence.push(Evidence {
@@ -513,7 +518,7 @@ impl SecurityModule for HtmlScanModule {
                         snippet: None,
                     });
                 } else if total_hidden >= 1 {
-                   // Few hidden elements - possibly normal responsive design, low severity
+                    // Few hidden elements - possibly normal responsive design, low severity
                     total_score += 0.10;
                     categories.push("css_hidden_content".to_string());
                     evidence.push(Evidence {
@@ -528,7 +533,7 @@ impl SecurityModule for HtmlScanModule {
             }
         }
 
-       // Check overall HTML size for obfuscation indicator
+        // Check overall HTML size for obfuscation indicator
         if body_html.len() > 200_000 {
             total_score += 0.1;
             evidence.push(Evidence {
@@ -741,7 +746,8 @@ mod tests {
 
     #[test]
     fn extracts_meta_refresh_with_spaces_and_lowercase() {
-        let html = r#"<meta http-equiv='refresh' content=' 5 ; url = https://slow.example/step2 '>"#;
+        let html =
+            r#"<meta http-equiv='refresh' content=' 5 ; url = https://slow.example/step2 '>"#;
         let urls = extract_meta_refresh_urls(html);
         assert_eq!(urls.len(), 1);
         assert_eq!(urls[0].trim(), "https://slow.example/step2");

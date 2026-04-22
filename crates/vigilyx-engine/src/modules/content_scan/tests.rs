@@ -30,9 +30,11 @@ fn system_seed_keywords_are_normalized_out_of_user_added() {
     let builtin_phishing = builtin["phishing_keywords"]
         .as_array()
         .expect("builtin phishing keyword array");
-    assert!(builtin_phishing
-        .iter()
-        .any(|value| value.as_str() == Some("account suspended")));
+    assert!(
+        builtin_phishing
+            .iter()
+            .any(|value| value.as_str() == Some("account suspended"))
+    );
 }
 
 #[test]
@@ -67,9 +69,11 @@ fn seeded_keywords_can_still_be_removed_as_user_delta() {
     let effective_bec = effective["bec_phrases"]
         .as_array()
         .expect("effective bec phrase array");
-    assert!(!effective_bec
-        .iter()
-        .any(|value| value.as_str() == Some("same day wire")));
+    assert!(
+        !effective_bec
+            .iter()
+            .any(|value| value.as_str() == Some("same day wire"))
+    );
 }
 
 #[test]
@@ -332,7 +336,8 @@ fn wps_share_notice_is_not_marked_as_image_only_phishing() {
             r#"<html><body><a href="https://wx.mail.qq.com/info/get_mailhead_icon?key=TESTWPSICONKEY123&amp;r=2085971486"><img src="https://wx.mail.qq.com/info/get_mailhead_icon?key=TESTWPSICONKEY123&amp;r=2085971486" /></a></body></html>"#,
         ),
         vec![EmailLink {
-            url: "https://wx.mail.qq.com/info/get_mailhead_icon?key=TESTWPSICONKEY123&r=2085971486".to_string(),
+            url: "https://wx.mail.qq.com/info/get_mailhead_icon?key=TESTWPSICONKEY123&r=2085971486"
+                .to_string(),
             text: None,
             suspicious: false,
         }],
@@ -342,7 +347,9 @@ fn wps_share_notice_is_not_marked_as_image_only_phishing() {
     let result = analyze_with_runtime(&module, &ctx);
 
     assert!(
-        !result.categories.contains(&"image_only_phishing".to_string()),
+        !result
+            .categories
+            .contains(&"image_only_phishing".to_string()),
         "WPS share notices sent from public mailboxes should not be treated as image-only phishing: {:?}",
         result.categories
     );

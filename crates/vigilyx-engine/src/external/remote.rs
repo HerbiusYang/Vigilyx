@@ -125,7 +125,7 @@ fn extract_retry_after_secs(body: &str) -> Option<u64> {
 pub struct RemoteModuleProxy {
     base_url: String,
     client: reqwest::Client,
-   /// SEC-H07: AI service-scoped internal authentication token
+    /// SEC-H07: AI service-scoped internal authentication token
     internal_token: String,
     availability: Arc<RemoteAvailabilityState>,
     /// Controls the background health probe task lifetime.
@@ -272,8 +272,7 @@ impl RemoteModuleProxy {
             .fetch_add(1, Ordering::Relaxed)
             + 1;
         let shift = failures.saturating_sub(1).min(4);
-        let backoff_secs =
-            (AI_BACKOFF_BASE.as_secs() << shift).min(AI_BACKOFF_MAX.as_secs());
+        let backoff_secs = (AI_BACKOFF_BASE.as_secs() << shift).min(AI_BACKOFF_MAX.as_secs());
         let until = now_epoch_secs().saturating_add(backoff_secs);
         self.availability
             .unavailable_until_epoch_secs
@@ -287,7 +286,7 @@ impl RemoteModuleProxy {
         );
     }
 
-   /// Check AI Servicewhether
+    /// Check AI Servicewhether
     pub async fn health_check(&self) -> bool {
         let ready_url = format!("{}/health/ready", self.base_url);
         match self.client.get(&ready_url).send().await {
@@ -311,7 +310,7 @@ impl RemoteModuleProxy {
         }
     }
 
-   /// AnalyzeemailContent
+    /// AnalyzeemailContent
     pub async fn analyze_content(
         &self,
         req: &ContentAnalysisRequest,
@@ -320,7 +319,7 @@ impl RemoteModuleProxy {
         self.post_analyze(&url, req).await
     }
 
-   /// AnalyzeAttachmentContent
+    /// AnalyzeAttachmentContent
     pub async fn analyze_attachment(
         &self,
         req: &AttachmentAnalysisRequest,
@@ -329,7 +328,7 @@ impl RemoteModuleProxy {
         self.post_analyze(&url, req).await
     }
 
-   /// AnalyzelinkConnect
+    /// AnalyzelinkConnect
     pub async fn analyze_link(
         &self,
         req: &LinkAnalysisRequest,
@@ -350,7 +349,7 @@ impl RemoteModuleProxy {
         }
 
         let mut req = self.client.post(url).json(body);
-       // SEC-H07: AddInternalServiceAuthentication
+        // SEC-H07: AddInternalServiceAuthentication
         if !self.internal_token.is_empty() {
             req = req.header("X-Internal-Token", &self.internal_token);
         }
@@ -415,7 +414,11 @@ impl std::fmt::Display for RemoteError {
             RemoteError::ParseError(e) => write!(f, "Parse error: {}", e),
             RemoteError::Timeout => write!(f, "Request timeout"),
             RemoteError::TemporarilyUnavailable { retry_after_secs } => {
-                write!(f, "Temporarily unavailable, retry after {}s", retry_after_secs)
+                write!(
+                    f,
+                    "Temporarily unavailable, retry after {}s",
+                    retry_after_secs
+                )
             }
         }
     }

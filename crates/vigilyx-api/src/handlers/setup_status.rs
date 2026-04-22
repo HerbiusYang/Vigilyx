@@ -59,8 +59,9 @@ pub async fn update_setup_status(
 
             ApiResponse::ok(status).into_response()
         }
-        Err(e) => ApiResponse::<SetupStatus>::internal_err(&e, "save setup status failed")
-            .into_response(),
+        Err(e) => {
+            ApiResponse::<SetupStatus>::internal_err(&e, "save setup status failed").into_response()
+        }
     }
 }
 

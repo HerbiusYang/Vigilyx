@@ -39,8 +39,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, trace, warn};
 use vigilyx_core::{
-    Direction, EmailSession, HttpSession, MAX_SMTP_DIALOG_ENTRIES, Protocol,
-    SessionStatus, SmtpDialogEntry, TrafficStats,
+    Direction, EmailSession, HttpSession, MAX_SMTP_DIALOG_ENTRIES, Protocol, SessionStatus,
+    SmtpDialogEntry, TrafficStats,
 };
 
 // Re-export sub-module items used by the rest of the crate

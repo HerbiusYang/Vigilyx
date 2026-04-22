@@ -11,9 +11,7 @@ use vigilyx_core::{Direction, Protocol};
 /// Maximum supported payload size.
 pub(super) const MAX_PAYLOAD_SIZE: usize = 65535;
 
-
 // Core packet structures.
-
 
 /// Parsed packet metadata optimized for the hot path.
 #[derive(Clone)]
@@ -26,11 +24,11 @@ pub struct RawpacketInfo {
     pub dst_port: u16,
     pub protocol: Protocol,
     pub direction: Direction,
-   /// TCP sequence number used for stream reassembly.
+    /// TCP sequence number used for stream reassembly.
     pub tcp_seq: u32,
-   /// TCP acknowledgment number.
+    /// TCP acknowledgment number.
     pub tcp_ack: u32,
-   /// TCP flags (SYN/FIN/RST/ACK/PSH).
+    /// TCP flags (SYN/FIN/RST/ACK/PSH).
     pub tcp_flags: u8,
 }
 
@@ -64,11 +62,11 @@ pub(super) fn parse_raw_packet(frame: Bytes, port_bitmap: &PortBitmap) -> Option
         return None;
     }
 
-   // Parse the Ethernet header.
+    // Parse the Ethernet header.
     let mut ethertype = u16::from_be_bytes([frame[12], frame[13]]);
     let mut ip_header_start = 14;
 
-   // Walk VLAN tags, if present.
+    // Walk VLAN tags, if present.
     let mut vlan_depth = 0;
     const MAX_VLAN_DEPTH: u8 = 2;
 
@@ -97,7 +95,7 @@ pub(super) fn parse_raw_packet(frame: Bytes, port_bitmap: &PortBitmap) -> Option
         _ => return None,
     };
 
-   // slice() is O(1) - just Arc refcount bump, no memcpy
+    // slice() is O(1) - just Arc refcount bump, no memcpy
     let ip_data = frame.slice(ip_header_start..);
 
     if ip_version == 4 {
@@ -113,20 +111,20 @@ pub(super) fn parse_raw_packet(frame: Bytes, port_bitmap: &PortBitmap) -> Option
 #[inline]
 pub(super) fn parse_packet(frame: Bytes, port_bitmap: &PortBitmap) -> Option<RawpacketInfo> {
     if frame.len() < 54 {
-       // small: 14(Eth) + 20(IP) + 20(TCP)
+        // small: 14(Eth) + 20(IP) + 20(TCP)
         return None;
     }
 
-   // HeaderParse (VLAN)
+    // HeaderParse (VLAN)
     let mut ethertype = u16::from_be_bytes([frame[12], frame[13]]);
     let mut ip_header_start = 14;
 
-   // Process 802.1Q VLAN (possibly)
+    // Process 802.1Q VLAN (possibly)
     let mut vlan_depth = 0;
     const MAX_VLAN_DEPTH: u8 = 2; // prevent VLAN Attack
 
     while ethertype == 0x8100 || ethertype == 0x88A8 {
-       // 802.1Q QinQ
+        // 802.1Q QinQ
         vlan_depth += 1;
         if vlan_depth > MAX_VLAN_DEPTH {
             return None; // VLAN Attack
@@ -141,9 +139,9 @@ pub(super) fn parse_packet(frame: Bytes, port_bitmap: &PortBitmap) -> Option<Raw
         ethertype = u16::from_be_bytes([frame[ip_header_start - 2], frame[ip_header_start - 1]]);
     }
 
-       // Require enough bytes for the minimum IP and TCP headers.
+    // Require enough bytes for the minimum IP and TCP headers.
     if frame.len() < ip_header_start + 40 {
-       // Minimum sizes: 20-byte IP header + 20-byte TCP header.
+        // Minimum sizes: 20-byte IP header + 20-byte TCP header.
         return None;
     }
 
@@ -153,7 +151,7 @@ pub(super) fn parse_packet(frame: Bytes, port_bitmap: &PortBitmap) -> Option<Raw
         _ => return None,
     };
 
-   // slice() is O(1) - just Arc refcount bump, no memcpy
+    // slice() is O(1) - just Arc refcount bump, no memcpy
     let ip_data = frame.slice(ip_header_start..);
 
     if ip_version == 4 {
@@ -170,19 +168,19 @@ fn parse_ipv4(data: Bytes, port_bitmap: &PortBitmap) -> Option<RawpacketInfo> {
         return None;
     }
 
-   // IHL is measured in 32-bit words; valid values are 5..=15.
+    // IHL is measured in 32-bit words; valid values are 5..=15.
     let ihl_value = data[0] & 0x0F;
     if ihl_value < 5 {
         return None; // Invalid IHL.
     }
     let ihl = (ihl_value * 4) as usize;
 
-   // Ensure the buffer actually contains the full IPv4 header.
+    // Ensure the buffer actually contains the full IPv4 header.
     if data.len() < ihl {
         return None; // Truncated IPv4 header.
     }
 
-   // Honor the IPv4 total-length field to avoid reading padding or garbage.
+    // Honor the IPv4 total-length field to avoid reading padding or garbage.
     let total_length = u16::from_be_bytes([data[2], data[3]]) as usize;
     if total_length < ihl {
         return None; // Total length smaller than header length.
@@ -191,14 +189,14 @@ fn parse_ipv4(data: Bytes, port_bitmap: &PortBitmap) -> Option<RawpacketInfo> {
         return None; // Truncated packet.
     }
 
-   // Drop fragmented IPv4 packets; TCP reassembly expects complete transport headers.
+    // Drop fragmented IPv4 packets; TCP reassembly expects complete transport headers.
     let flags_offset = u16::from_be_bytes([data[6], data[7]]);
     let more_fragments = (flags_offset & 0x2000) != 0;
     let fragment_offset = (flags_offset & 0x1FFF) * 8;
     let src_ip = Ipv4Addr::new(data[12], data[13], data[14], data[15]);
     let dst_ip = Ipv4Addr::new(data[16], data[17], data[18], data[19]);
     if more_fragments || fragment_offset > 0 {
-       // Only log fragments that belong to monitored ports to avoid noisy warnings.
+        // Only log fragments that belong to monitored ports to avoid noisy warnings.
         if fragment_offset == 0 && total_length >= ihl + 4 {
             let src_port = u16::from_be_bytes([data[ihl], data[ihl + 1]]);
             let dst_port = u16::from_be_bytes([data[ihl + 2], data[ihl + 3]]);
@@ -214,12 +212,12 @@ fn parse_ipv4(data: Bytes, port_bitmap: &PortBitmap) -> Option<RawpacketInfo> {
 
     let protocol = data[9];
 
-   // Only TCP traffic is relevant to the mail and HTTP parsers.
+    // Only TCP traffic is relevant to the mail and HTTP parsers.
     if protocol != 6 {
         return None;
     }
 
-   // Slice only the valid transport payload described by the IP header.
+    // Slice only the valid transport payload described by the IP header.
     let tcp_data = data.slice(ihl..total_length);
 
     parse_tcp(
@@ -246,28 +244,28 @@ fn parse_ipv6(data: Bytes, port_bitmap: &PortBitmap) -> Option<RawpacketInfo> {
         data[33], data[34], data[35], data[36], data[37], data[38], data[39],
     ]);
 
-   // Walk IPv6 extension headers until we reach TCP.
+    // Walk IPv6 extension headers until we reach TCP.
     let mut next_header = data[6];
     let mut offset = 40usize;
     let mut extension_count = 0;
     const MAX_EXTENSIONS: u8 = 10; // Prevent pathological extension-header chains.
 
     while next_header != 6 {
-       // Stop if the chain is implausibly long.
+        // Stop if the chain is implausibly long.
         extension_count += 1;
         if extension_count > MAX_EXTENSIONS {
             return None;
         }
 
-       // Every extension header starts with at least two bytes.
+        // Every extension header starts with at least two bytes.
         if data.len() < offset + 2 {
             return None;
         }
 
         match next_header {
-           // Fragment header.
+            // Fragment header.
             44 => {
-               // Layout: next-header, reserved, offset/flags, identification.
+                // Layout: next-header, reserved, offset/flags, identification.
                 if data.len() < offset + 8 {
                     return None;
                 }
@@ -287,14 +285,14 @@ fn parse_ipv6(data: Bytes, port_bitmap: &PortBitmap) -> Option<RawpacketInfo> {
                             );
                         }
                     }
-                   // As with IPv4, fragments are ignored instead of being reassembled here.
+                    // As with IPv4, fragments are ignored instead of being reassembled here.
                     return None;
                 }
                 next_header = data[offset];
                 offset += 8;
             }
             0 | 43 | 60 => {
-               // Hop-by-hop, routing, and destination options share the same length encoding.
+                // Hop-by-hop, routing, and destination options share the same length encoding.
                 let ext_len = (data[offset + 1] as usize + 1) * 8;
                 if data.len() < offset + ext_len {
                     return None;
@@ -303,7 +301,7 @@ fn parse_ipv6(data: Bytes, port_bitmap: &PortBitmap) -> Option<RawpacketInfo> {
                 offset += ext_len;
             }
             51 => {
-               // Authentication Header length is stored in 32-bit words minus 2.
+                // Authentication Header length is stored in 32-bit words minus 2.
                 let ext_len = (data[offset + 1] as usize + 2) * 4;
                 if data.len() < offset + ext_len {
                     return None;
@@ -312,22 +310,22 @@ fn parse_ipv6(data: Bytes, port_bitmap: &PortBitmap) -> Option<RawpacketInfo> {
                 offset += ext_len;
             }
             59 => {
-               // No next header means there is no TCP payload to parse.
+                // No next header means there is no TCP payload to parse.
                 return None;
             }
             _ => {
-               // Unknown or unsupported next-header value.
+                // Unknown or unsupported next-header value.
                 return None;
             }
         }
     }
 
-   // A minimal TCP header is 20 bytes.
+    // A minimal TCP header is 20 bytes.
     if data.len() < offset + 20 {
         return None;
     }
 
-   // `Bytes::slice()` keeps this zero-copy.
+    // `Bytes::slice()` keeps this zero-copy.
     let tcp_data = data.slice(offset..);
 
     parse_tcp(
@@ -348,26 +346,26 @@ fn parse_tcp(
     dst_ip: IpAddr,
     port_bitmap: &PortBitmap,
 ) -> Option<RawpacketInfo> {
-   // Fast-fail before touching any header fields.
+    // Fast-fail before touching any header fields.
     if data.len() < 20 {
         return None;
     }
 
-   // Read ports directly from the fixed TCP header positions.
+    // Read ports directly from the fixed TCP header positions.
     let src_port = u16::from_be_bytes([data[0], data[1]]);
     let dst_port = u16::from_be_bytes([data[2], data[3]]);
 
-   // Preserve sequence and acknowledgment numbers for stream reassembly.
+    // Preserve sequence and acknowledgment numbers for stream reassembly.
     let tcp_seq = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
     let tcp_ack = u32::from_be_bytes([data[8], data[9], data[10], data[11]]);
 
-   // Preserve TCP flags so the session layer can handle opens and closes.
+    // Preserve TCP flags so the session layer can handle opens and closes.
     let tcp_flags = data[13];
 
-   // Check both ports in a single bitmap lookup.
+    // Check both ports in a single bitmap lookup.
     let (dst_match, src_match) = port_bitmap.contains_either(dst_port, src_port);
 
-   // Infer direction from the monitored endpoint.
+    // Infer direction from the monitored endpoint.
     let (protocol, direction) = if dst_match {
         (Protocol::from_port(dst_port), Direction::Outbound)
     } else if src_match {
@@ -376,7 +374,7 @@ fn parse_tcp(
         return None;
     };
 
-   // Data offset is encoded in 32-bit words.
+    // Data offset is encoded in 32-bit words.
     let data_offset_field = data[12] >> 4;
     if data_offset_field < 5 {
         return None;
@@ -384,8 +382,8 @@ fn parse_tcp(
     let data_offset = (data_offset_field as usize) << 2; // * 4
 
     if data.len() <= data_offset {
-       // Control packets may legitimately carry no payload.
-       // Keep SYN/FIN/RST so the session layer can update connection state.
+        // Control packets may legitimately carry no payload.
+        // Keep SYN/FIN/RST so the session layer can update connection state.
         const TCP_SYN: u8 = 0x02;
         const TCP_FIN: u8 = 0x01;
         const TCP_RST: u8 = 0x04;
@@ -411,8 +409,8 @@ fn parse_tcp(
         return None;
     }
 
-   // Zero-copy payload slice backed by the original frame allocation.
-   // The underlying memory stays shared with the frame `Bytes` from the capture loop.
+    // Zero-copy payload slice backed by the original frame allocation.
+    // The underlying memory stays shared with the frame `Bytes` from the capture loop.
     let payload = data.slice(data_offset..);
 
     Some(RawpacketInfo {

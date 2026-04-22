@@ -41,7 +41,7 @@ pub fn extract_text(data: &[u8], file_type: Option<DetectedFileType>) -> Option<
         _ => None,
     };
 
-   // Truncate if over limit
+    // Truncate if over limit
     result
         .map(|text| {
             if text.len() > MAX_EXTRACT_LEN {
@@ -59,7 +59,10 @@ pub fn extract_text(data: &[u8], file_type: Option<DetectedFileType>) -> Option<
 
 /// Safely read a ZIP entry: stream the contents, do not trust file.size(), and enforce dual limits.
 /// Prevents a zip bomb from triggering large allocations by forging the entry size.
-fn safe_read_zip_entry<R: Read>(mut entry: zip::read::ZipFile<'_, R>, remaining_budget: usize) -> Option<String> {
+fn safe_read_zip_entry<R: Read>(
+    mut entry: zip::read::ZipFile<'_, R>,
+    remaining_budget: usize,
+) -> Option<String> {
     let limit = remaining_budget.min(MAX_ENTRY_SIZE);
     let mut buf = Vec::with_capacity(STREAM_CHUNK_SIZE.min(limit));
     let mut total = 0usize;
@@ -102,13 +105,13 @@ fn extract_ooxml_text(data: &[u8]) -> Option<String> {
 
     let mut all_text = String::with_capacity(8192);
 
-   // According toprioritylevel readGet Same OOXML ofTextFile
+    // According toprioritylevel readGet Same OOXML ofTextFile
     let target_files = [
-       // DOCX
+        // DOCX
         "word/document.xml",
-       // XLSX - shared strings packetContains Yuan Text
+        // XLSX - shared strings packetContains Yuan Text
         "xl/sharedStrings.xml",
-       // PPTX slides
+        // PPTX slides
         "ppt/slides/slide1.xml",
         "ppt/slides/slide2.xml",
         "ppt/slides/slide3.xml",
@@ -167,7 +170,7 @@ fn extract_pdf_text(data: &[u8]) -> Option<String> {
     let content = String::from_utf8_lossy(data);
     let mut text = String::with_capacity(4096);
 
-   // Extract Number ofText: (Hello World) Tj
+    // Extract Number ofText: (Hello World) Tj
     let mut in_paren = false;
     let mut depth = 0u32;
     let mut current = String::new();
@@ -185,7 +188,7 @@ fn extract_pdf_text(data: &[u8]) -> Option<String> {
                 depth -= 1;
                 if depth == 0 {
                     in_paren = false;
-                   // TextContent (characters, Streamwait)
+                    // TextContent (characters, Streamwait)
                     let trimmed = current.trim();
                     if !trimmed.is_empty()
                         && trimmed.len() >= 2
@@ -230,7 +233,7 @@ fn extract_ole_text(data: &[u8]) -> Option<String> {
 
     for &byte in data {
         let ch = byte as char;
-       // readcharacters: Chinese UTF-8 ByteBy lossy Process
+        // readcharacters: Chinese UTF-8 ByteBy lossy Process
         if ch.is_ascii_graphic() || ch == ' ' || ch == '\t' {
             current.push(ch);
         } else {
@@ -248,7 +251,7 @@ fn extract_ole_text(data: &[u8]) -> Option<String> {
         }
     }
 
-   // Processlast1Segment
+    // Processlast1Segment
     if current.len() >= 4 && current.chars().any(|c| c.is_alphanumeric()) {
         if !text.is_empty() {
             text.push(' ');
@@ -256,7 +259,7 @@ fn extract_ole_text(data: &[u8]) -> Option<String> {
         text.push_str(current.trim());
     }
 
-   // OLE ChineseContent: From lossy UTF-8 MediumExtract
+    // OLE ChineseContent: From lossy UTF-8 MediumExtract
     let lossy = String::from_utf8_lossy(data);
     let mut chinese_parts = String::new();
     for ch in lossy.chars() {
@@ -292,7 +295,7 @@ fn strip_xml_tags(xml: &str) -> String {
     for ch in xml.chars() {
         if ch == '<' {
             in_tag = true;
-           // firstof delimited
+            // firstof delimited
             if !result.is_empty() && !result.ends_with(' ') && !result.ends_with('\n') {
                 result.push(' ');
             }
@@ -303,7 +306,7 @@ fn strip_xml_tags(xml: &str) -> String {
         }
     }
 
-   // Cleanup
+    // Cleanup
     let cleaned: String = result.split_whitespace().collect::<Vec<_>>().join(" ");
 
     cleaned
@@ -351,9 +354,9 @@ mod tests {
 
     #[test]
     fn test_extract_ole_text_ascii_strings() {
-       // OLE FileMedium of ASCII readString
+        // OLE FileMedium of ASCII readString
         let mut data = vec![0u8; 100];
-       // readString
+        // readString
         let text = b"account: 1234567890";
         data[20..20 + text.len()].copy_from_slice(text);
         let result = extract_ole_text(&data);
@@ -425,13 +428,11 @@ mod tests {
         );
     }
 
-    
-   // Test: Extract Security
-    
+    // Test: Extract Security
 
     #[test]
     fn test_extract_text_corrupt_zip_returns_none() {
-       // Invalid ZIP data
+        // Invalid ZIP data
         let corrupt = b"\x50\x4B\x03\x04INVALID_ZIP_DATA";
         let result = extract_text(corrupt, Some(DetectedFileType::ZipArchive));
         assert!(
@@ -442,10 +443,10 @@ mod tests {
 
     #[test]
     fn test_extract_text_corrupt_pdf_returns_none() {
-       // Invalid PDF data
+        // Invalid PDF data
         let corrupt = b"%PDF-1.4 CORRUPT DATA WITH NO TEXT OPERATORS";
         let result = extract_text(corrupt, Some(DetectedFileType::Pdf));
-       // PDF ExtractpossiblyReturn (Tj/TJ Operations) -> filter trim None
+        // PDF ExtractpossiblyReturn (Tj/TJ Operations) -> filter trim None
         assert!(
             result.is_none() || result.as_deref() == Some(""),
             "Corrupt PDF with no text ops should return None or empty"
@@ -454,7 +455,7 @@ mod tests {
 
     #[test]
     fn test_extract_ole_all_binary_no_text() {
-       // 2Base/Radix readString
+        // 2Base/Radix readString
         let data = vec![0x00u8; 200];
         let result = extract_ole_text(&data);
         assert!(
@@ -465,16 +466,16 @@ mod tests {
 
     #[test]
     fn test_extract_pdf_hex_strings() {
-       // PDF <hex> ofString
+        // PDF <hex> ofString
         let pdf = "%PDF-1.4 <48656C6C6F> Tj"; // "Hello" in hex
         let result = extract_pdf_text(pdf.as_bytes());
-       // of Extracthandlerpossibly hex - - Verify panic
+        // of Extracthandlerpossibly hex - - Verify panic
         drop(result);
     }
 
     #[test]
     fn test_extract_ooxml_xlsx_shared_strings() {
-       // XLSX ofText xl/sharedStrings.xml Medium
+        // XLSX ofText xl/sharedStrings.xml Medium
         let buf = Vec::new();
         let cursor = std::io::Cursor::new(buf);
         let mut zip_w = zip::ZipWriter::new(cursor);
@@ -504,7 +505,7 @@ mod tests {
 
     #[test]
     fn test_extract_ooxml_pptx() {
-       // PPTX ofText ppt/slides/slide*.xml Medium
+        // PPTX ofText ppt/slides/slide*.xml Medium
         let buf = Vec::new();
         let cursor = std::io::Cursor::new(buf);
         let mut zip_w = zip::ZipWriter::new(cursor);
@@ -529,7 +530,7 @@ mod tests {
 
     #[test]
     fn test_extract_text_truncates_at_limit() {
-       // largeText Break/Judge MAX_EXTRACT_LEN
+        // largeText Break/Judge MAX_EXTRACT_LEN
         let buf = Vec::new();
         let cursor = std::io::Cursor::new(buf);
         let mut zip_w = zip::ZipWriter::new(cursor);
@@ -538,7 +539,7 @@ mod tests {
             .compression_method(zip::CompressionMethod::Stored);
         zip_w.start_file("word/document.xml", options).unwrap();
         use std::io::Write;
-       // generate 512KB of XML
+        // generate 512KB of XML
         let mut xml = String::from("<?xml version=\"1.0\"?><w:document><w:body>");
         for i in 0..100_000 {
             xml.push_str(&format!(

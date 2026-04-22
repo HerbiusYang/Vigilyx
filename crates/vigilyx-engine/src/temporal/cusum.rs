@@ -6,7 +6,6 @@
 //! S_t = max(0, S_{t-1} - r_t + - k)
 //! Alarm: S_t> h or S_t> h
 
-
 //! - k = allowance (half- shift we want to detect)
 //! - h = decision threshold (controls false alarm rate)
 //! - = estimated in-control mean
@@ -16,15 +15,15 @@ pub use vigilyx_core::security::CusumState;
 /// CUSUM detection parameters.
 #[derive(Debug, Clone)]
 pub struct CusumParams {
-   /// Allowance parameter k (default: 0.5)
+    /// Allowance parameter k (default: 0.5)
     pub k: f64,
-   /// Decision threshold h (default: 4)
+    /// Decision threshold h (default: 4)
     pub h: f64,
-   /// Minimum samples before detection is active
+    /// Minimum samples before detection is active
     pub min_samples: u64,
-   /// Default in-control mean before enough samples
+    /// Default in-control mean before enough samples
     pub default_mu0: f64,
-   /// Default standard deviation before enough samples
+    /// Default standard deviation before enough samples
     pub default_sigma: f64,
 }
 
@@ -43,15 +42,15 @@ impl Default for CusumParams {
 /// Result of a CUSUM update step.
 #[derive(Debug, Clone)]
 pub struct CusumResult {
-   /// Whether a change-point alarm was triggered
+    /// Whether a change-point alarm was triggered
     pub alarm: bool,
-   /// Current S value
+    /// Current S value
     pub s_pos: f64,
-   /// Current S value
+    /// Current S value
     pub s_neg: f64,
-   /// Estimated in-control mean
+    /// Estimated in-control mean
     pub mu_0: f64,
-   /// Estimated standard deviation
+    /// Estimated standard deviation
     pub sigma: f64,
 }
 
@@ -65,7 +64,7 @@ pub fn cusum_update(state: &mut CusumState, risk_score: f64, params: &CusumParam
     state.running_sum += risk_score;
     state.running_sq_sum += risk_score * risk_score;
 
-   // Estimate and from observations
+    // Estimate and from observations
     let (mu_0, sigma) = if state.sample_count >= params.min_samples {
         let n = state.sample_count as f64;
         let mean = state.running_sum / n;
@@ -77,11 +76,11 @@ pub fn cusum_update(state: &mut CusumState, risk_score: f64, params: &CusumParam
         (params.default_mu0, params.default_sigma)
     };
 
-   // Adaptive k and h based on observed/default sigma
+    // Adaptive k and h based on observed/default sigma
     let k = sigma * 0.5; // Half-sigma shift detection
     let h = sigma * 4.0; // 4-sigma decision threshold
 
-   // CUSUM update
+    // CUSUM update
     state.s_pos = (state.s_pos + risk_score - mu_0 - k).max(0.0);
     state.s_neg = (state.s_neg - risk_score + mu_0 - k).max(0.0);
 
@@ -111,7 +110,7 @@ mod tests {
         let mut state = CusumState::new("test".to_string());
         let params = CusumParams::default();
 
-       // During warm-up, no alarm should fire
+        // During warm-up, no alarm should fire
         for _ in 0..5 {
             let r = cusum_update(&mut state, 0.1, &params);
             assert!(!r.alarm, "Should not alarm during warm-up");
@@ -123,7 +122,7 @@ mod tests {
         let mut state = CusumState::new("test".to_string());
         let params = CusumParams::default();
 
-       // Feed stable low-risk scores
+        // Feed stable low-risk scores
         for _ in 0..30 {
             let r = cusum_update(&mut state, 0.10, &params);
             assert!(!r.alarm);
@@ -135,12 +134,12 @@ mod tests {
         let mut state = CusumState::new("test".to_string());
         let params = CusumParams::default();
 
-       // Feed stable low-risk scores for warm-up
+        // Feed stable low-risk scores for warm-up
         for _ in 0..20 {
             cusum_update(&mut state, 0.10, &params);
         }
 
-       // Now inject sustained high-risk scores
+        // Now inject sustained high-risk scores
         let mut alarm_triggered = false;
         for _ in 0..30 {
             let r = cusum_update(&mut state, 0.80, &params);
@@ -158,20 +157,20 @@ mod tests {
         let mut state = CusumState::new("test".to_string());
         let params = CusumParams::default();
 
-       // Warm-up
+        // Warm-up
         for _ in 0..20 {
             cusum_update(&mut state, 0.10, &params);
         }
 
-       // Single spike should not trigger alarm
+        // Single spike should not trigger alarm
         let _r = cusum_update(&mut state, 0.90, &params);
-       // Might not alarm on a single spike if h is high enough
-       // (depends on accumulated S)
+        // Might not alarm on a single spike if h is high enough
+        // (depends on accumulated S)
 
-       // Return to normal
+        // Return to normal
         for _ in 0..5 {
             let r = cusum_update(&mut state, 0.10, &params);
-           // Should eventually return to non-alarm
+            // Should eventually return to non-alarm
             let _ = r;
         }
     }

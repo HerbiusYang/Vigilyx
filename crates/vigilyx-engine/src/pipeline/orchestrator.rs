@@ -37,7 +37,7 @@ struct DagNode {
     module: Arc<dyn SecurityModule>,
     condition: Option<ConditionConfig>,
     timeout: Duration,
-   /// If true, analyze() runs on the blocking thread pool via spawn_blocking.
+    /// If true, analyze() runs on the blocking thread pool via spawn_blocking.
     cpu_bound: bool,
 }
 
@@ -46,27 +46,27 @@ struct DagNode {
 /// The pipeline orchestrator: builds a petgraph DAG from module dependencies
 /// and executes modules with event-driven scheduling.
 pub struct PipelineOrchestrator {
-   /// DAG: edge A -> B means "A must complete before B can start".
+    /// DAG: edge A -> B means "A must complete before B can start".
     graph: StableDiGraph<DagNode, ()>,
-   /// module_id -> NodeIndex lookup (retained for future introspection).
+    /// module_id -> NodeIndex lookup (retained for future introspection).
     #[allow(dead_code)]
     node_index: HashMap<String, NodeIndex>,
-   /// Root nodes (in-degree 0) - scheduled immediately on execute().
+    /// Root nodes (in-degree 0) - scheduled immediately on execute().
     roots: Vec<NodeIndex>,
-   /// Total number of nodes to execute.
+    /// Total number of nodes to execute.
     node_count: usize,
-   /// Global pipeline timeout (safety net).
+    /// Global pipeline timeout (safety net).
     global_timeout: Duration,
 }
 
 impl PipelineOrchestrator {
-   /// Build the orchestrator from registered modules and pipeline config.
-   /// Validates no cycles exist in the dependency graph.
+    /// Build the orchestrator from registered modules and pipeline config.
+    /// Validates no cycles exist in the dependency graph.
     pub fn build(
         all_modules: &HashMap<String, Arc<dyn SecurityModule>>,
         config: &PipelineConfig,
     ) -> Result<Self, EngineError> {
-       // 1. Determine enabled modules
+        // 1. Determine enabled modules
         let enabled: HashSet<String> = config
             .modules
             .iter()
@@ -75,14 +75,14 @@ impl PipelineOrchestrator {
             .filter(|id| all_modules.contains_key(id))
             .collect();
 
-       // 2. Collect conditions
+        // 2. Collect conditions
         let conditions: HashMap<String, ConditionConfig> = config
             .modules
             .iter()
             .filter_map(|m| m.condition.clone().map(|c| (m.id.clone(), c)))
             .collect();
 
-       // 3. Build graph nodes
+        // 3. Build graph nodes
         let mut graph = StableDiGraph::<DagNode, ()>::new();
         let mut node_index: HashMap<String, NodeIndex> = HashMap::new();
 
@@ -105,7 +105,7 @@ impl PipelineOrchestrator {
             node_index.insert(id.clone(), idx);
         }
 
-       // 4. Add hard dependency edges from metadata.depends_on
+        // 4. Add hard dependency edges from metadata.depends_on
         for id in &enabled {
             let module = all_modules
                 .get(id)
@@ -118,7 +118,7 @@ impl PipelineOrchestrator {
             }
         }
 
-       // 5. Promote condition.depends_module to hard edges
+        // 5. Promote condition.depends_module to hard edges
         for id in &enabled {
             if let Some(cond) = conditions.get(id)
                 && let Some(ref dep_module) = cond.depends_module
@@ -130,7 +130,7 @@ impl PipelineOrchestrator {
             }
         }
 
-       // 6. Cycle detection via petgraph toposort
+        // 6. Cycle detection via petgraph toposort
         if let Err(cycle) = petgraph::algo::toposort(&graph, None) {
             let cycle_node_id = &graph[cycle.node_id()].module_id;
             return Err(EngineError::CyclicDependency(format!(
@@ -139,7 +139,7 @@ impl PipelineOrchestrator {
             )));
         }
 
-       // 7. Identify root nodes (in-degree = 0)
+        // 7. Identify root nodes (in-degree = 0)
         let roots: Vec<NodeIndex> = graph
             .node_indices()
             .filter(|&idx| {
@@ -168,15 +168,15 @@ impl PipelineOrchestrator {
         })
     }
 
-   /// Execute the pipeline for a given security context.
-   /// Returns all module results.
+    /// Execute the pipeline for a given security context.
+    /// Returns all module results.
     pub async fn execute(&self, ctx: &SecurityContext) -> HashMap<String, ModuleResult> {
         self.execute_with_timeout(ctx, self.global_timeout)
             .await
             .results
     }
 
-   /// Execute the pipeline with an explicit global timeout budget.
+    /// Execute the pipeline with an explicit global timeout budget.
     pub async fn execute_with_timeout(
         &self,
         ctx: &SecurityContext,
@@ -189,9 +189,9 @@ impl PipelineOrchestrator {
             };
         }
 
-       // Per-execution transient state
+        // Per-execution transient state
 
-       // Pending dependency count for each node, indexed by NodeIndex::index().
+        // Pending dependency count for each node, indexed by NodeIndex::index().
         let pending: Arc<Vec<AtomicUsize>> = Arc::new(
             self.graph
                 .node_indices()
@@ -205,16 +205,16 @@ impl PipelineOrchestrator {
                 .collect(),
         );
 
-       // Completion channel.
+        // Completion channel.
         let (done_tx, mut done_rx) = mpsc::channel::<NodeIndex>(self.node_count);
         let mut join_handles = Vec::with_capacity(self.node_count);
 
-       // Seed root nodes
+        // Seed root nodes
         for &root_idx in &self.roots {
             join_handles.push(self.spawn_node(root_idx, ctx, &done_tx));
         }
 
-       // Event loop
+        // Event loop
         let mut completed = 0usize;
         let mut timed_out = false;
         let deadline = tokio::time::sleep(global_timeout.min(self.global_timeout));
@@ -269,10 +269,10 @@ impl PipelineOrchestrator {
         }
     }
 
-   /// Spawn a single node as an independent tokio task.
-    
-   /// CPU-bound modules are dispatched to the blocking thread pool via
-   /// `spawn_blocking`, keeping async worker threads free for I/O modules.
+    /// Spawn a single node as an independent tokio task.
+
+    /// CPU-bound modules are dispatched to the blocking thread pool via
+    /// `spawn_blocking`, keeping async worker threads free for I/O modules.
     fn spawn_node(
         &self,
         node_idx: NodeIndex,
@@ -291,10 +291,10 @@ impl PipelineOrchestrator {
         tokio::spawn(async move {
             let start = Instant::now();
 
-           // Conditional execution check
+            // Conditional execution check
             if !Self::should_execute_node(&module, &condition, &ctx).await {
                 debug!(module = %module_id, "Node skipped (condition not met)");
-               // hopsofModule Result, first (Status: alreadyhops)
+                // hopsofModule Result, first (Status: alreadyhops)
                 let skipped_result = ModuleResult::not_applicable(
                     &module_id,
                     &module.metadata().name,
@@ -307,9 +307,9 @@ impl PipelineOrchestrator {
                 return;
             }
 
-           // Execute with per-module timeout
-           // CPU-bound modules run on the blocking thread pool;
-           // I/O-bound modules run on the async worker pool.
+            // Execute with per-module timeout
+            // CPU-bound modules run on the blocking thread pool;
+            // I/O-bound modules run on the async worker pool.
             let result = if cpu_bound {
                 let handle = tokio::runtime::Handle::current();
                 let m = module.clone();
@@ -363,7 +363,7 @@ impl PipelineOrchestrator {
         })
     }
 
-   /// Check whether a node should execute (conditions + module predicate).
+    /// Check whether a node should execute (conditions + module predicate).
     async fn should_execute_node(
         module: &Arc<dyn SecurityModule>,
         condition: &Option<ConditionConfig>,
@@ -380,8 +380,8 @@ impl PipelineOrchestrator {
             if current_max < *min_level {
                 return false;
             }
-           // depends_module ordering is guaranteed by the DAG edge,
-           // so no runtime has_result() check is needed.
+            // depends_module ordering is guaranteed by the DAG edge,
+            // so no runtime has_result() check is needed.
         }
 
         true
@@ -399,7 +399,7 @@ mod tests {
     use std::sync::atomic::AtomicU64;
     use vigilyx_core::models::{EmailSession, Protocol};
 
-   /// Helper: build a minimal SecurityContext for testing.
+    /// Helper: build a minimal SecurityContext for testing.
     fn test_ctx() -> SecurityContext {
         let session = EmailSession::new(
             Protocol::Smtp,
@@ -411,7 +411,7 @@ mod tests {
         SecurityContext::new(Arc::new(session))
     }
 
-   /// Helper: build a PipelineConfig from module configs.
+    /// Helper: build a PipelineConfig from module configs.
     fn make_config(modules: Vec<ModuleConfig>) -> PipelineConfig {
         PipelineConfig {
             version: 1,
@@ -420,7 +420,7 @@ mod tests {
         }
     }
 
-   /// Helper: build a ModuleConfig.
+    /// Helper: build a ModuleConfig.
     fn module_cfg(id: &str) -> ModuleConfig {
         ModuleConfig {
             id: id.to_string(),
@@ -431,13 +431,13 @@ mod tests {
         }
     }
 
-   // Mock module
+    // Mock module
 
     struct MockModule {
         meta: ModuleMetadata,
         delay: Duration,
         should_run_val: bool,
-       /// Monotonic counter: records the order in which modules complete.
+        /// Monotonic counter: records the order in which modules complete.
         completion_order: Arc<AtomicU64>,
     }
 
@@ -502,7 +502,7 @@ mod tests {
         }
     }
 
-   // Tests
+    // Tests
 
     #[tokio::test]
     async fn test_empty_pipeline() {
@@ -545,7 +545,10 @@ mod tests {
             .execute_with_timeout(&ctx, Duration::from_millis(20))
             .await;
 
-        assert!(outcome.timed_out, "pipeline should respect the timeout budget");
+        assert!(
+            outcome.timed_out,
+            "pipeline should respect the timeout budget"
+        );
         assert!(
             outcome.results.contains_key("fast"),
             "completed tier-1 work should be preserved"
@@ -601,7 +604,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_diamond_dag() {
-       // A -> B, A -> C, B -> D, C -> D
+        // A -> B, A -> C, B -> D, C -> D
         let order = Arc::new(AtomicU64::new(0));
         let mut modules: HashMap<String, Arc<dyn SecurityModule>> = HashMap::new();
         modules.insert(
@@ -656,10 +659,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_layer_barrier() {
-       // "fast_root" finishes in 10ms. "slow_root" takes 300ms.
-       // "dependent" depends only on fast_root.
-       // In event-driven: dependent starts at ~10ms, finishes at ~20ms.
-       // In layer-based: dependent would start at ~300ms.
+        // "fast_root" finishes in 10ms. "slow_root" takes 300ms.
+        // "dependent" depends only on fast_root.
+        // In event-driven: dependent starts at ~10ms, finishes at ~20ms.
+        // In layer-based: dependent would start at ~300ms.
         let order = Arc::new(AtomicU64::new(0));
         let mut modules: HashMap<String, Arc<dyn SecurityModule>> = HashMap::new();
         modules.insert(
@@ -703,9 +706,9 @@ mod tests {
         let elapsed = start.elapsed();
 
         assert_eq!(results.len(), 3);
-       // Total time should be ~300ms (slow_root dominates), NOT ~310ms+
-       // But dependent should have started at ~10ms, not ~300ms.
-       // We can verify total time is <400ms (generous upper bound).
+        // Total time should be ~300ms (slow_root dominates), NOT ~310ms+
+        // But dependent should have started at ~10ms, not ~300ms.
+        // We can verify total time is <400ms (generous upper bound).
         assert!(
             elapsed < Duration::from_millis(500),
             "Pipeline took too long: {:?}",
@@ -750,7 +753,7 @@ mod tests {
     async fn test_skipped_node_signals_successors() {
         let order = Arc::new(AtomicU64::new(0));
         let mut modules: HashMap<String, Arc<dyn SecurityModule>> = HashMap::new();
-       // "a" has should_run = false. "b" depends on "a".
+        // "a" has should_run = false. "b" depends on "a".
         modules.insert(
             "a".into(),
             Arc::new(
@@ -773,7 +776,7 @@ mod tests {
         let ctx = test_ctx();
         let results = orch.execute(&ctx).await;
 
-       // "a" was skipped but still produces a result (marked as skipped), "b" should still run.
+        // "a" was skipped but still produces a result (marked as skipped), "b" should still run.
         assert!(results.contains_key("a"));
         assert_eq!(results["a"].summary, "Condition not met, skipped");
         assert!(results.contains_key("b"));
@@ -783,7 +786,7 @@ mod tests {
     async fn test_module_timeout() {
         let order = Arc::new(AtomicU64::new(0));
         let mut modules: HashMap<String, Arc<dyn SecurityModule>> = HashMap::new();
-       // Module sleeps 5 seconds but has 100ms timeout.
+        // Module sleeps 5 seconds but has 100ms timeout.
         modules.insert(
             "slow".into(),
             Arc::new(
@@ -809,7 +812,7 @@ mod tests {
     async fn test_global_timeout() {
         let order = Arc::new(AtomicU64::new(0));
         let mut modules: HashMap<String, Arc<dyn SecurityModule>> = HashMap::new();
-       // 3 modules, each sleeping 60s. Individual timeout is also 60s.
+        // 3 modules, each sleeping 60s. Individual timeout is also 60s.
         for name in ["x", "y", "z"] {
             modules.insert(
                 name.into(),
@@ -829,14 +832,14 @@ mod tests {
         let results = orch.execute(&ctx).await;
         let elapsed = start.elapsed();
 
-       // Should return within ~200ms with 0 results (none finished).
+        // Should return within ~200ms with 0 results (none finished).
         assert!(elapsed < Duration::from_millis(500));
         assert!(results.is_empty());
     }
 
-   // P0: CPU-bound dispatch tests
+    // P0: CPU-bound dispatch tests
 
-   /// A mock module that marks itself as cpu_bound.
+    /// A mock module that marks itself as cpu_bound.
     struct CpuBoundMockModule {
         meta: ModuleMetadata,
         completion_order: Arc<AtomicU64>,
@@ -869,7 +872,7 @@ mod tests {
         }
 
         async fn analyze(&self, _ctx: &SecurityContext) -> Result<ModuleResult, EngineError> {
-           // Pure CPU work (no.await) - simulated by a busy spin.
+            // Pure CPU work (no.await) - simulated by a busy spin.
             let mut sum = 0u64;
             for i in 0..10_000 {
                 sum = sum.wrapping_add(i);
@@ -923,7 +926,7 @@ mod tests {
         let order = Arc::new(AtomicU64::new(0));
         let mut modules: HashMap<String, Arc<dyn SecurityModule>> = HashMap::new();
 
-       // "io_mod" is I/O-bound (uses tokio::sleep), takes 50ms
+        // "io_mod" is I/O-bound (uses tokio::sleep), takes 50ms
         modules.insert(
             "io_mod".into(),
             Arc::new(MockModule::new(
@@ -934,7 +937,7 @@ mod tests {
             )),
         );
 
-       // "cpu_mod" is CPU-bound, depends on io_mod
+        // "cpu_mod" is CPU-bound, depends on io_mod
         modules.insert(
             "cpu_mod".into(),
             Arc::new(CpuBoundMockModule::new(

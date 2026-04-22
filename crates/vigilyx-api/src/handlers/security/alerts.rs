@@ -16,18 +16,16 @@ use super::publish_engine_reload;
 use crate::AppState;
 use crate::auth::AuthenticatedUser;
 
-
 // SEC-REMAINING-001: Configurationvalue (AES-256-GCM)
 
 // Use HKDF-SHA256 to derive AES-256 key from API_JWT_SECRET,
 // Encrypt sensitive values like smtp_password and API key before storing in DB.
 // format: "ENC:" + base64(nonce || ciphertext || tag)
 
-
 /// Derive AES-256 encryption key from JWT secret
 fn derive_encryption_key(jwt_secret: &str) -> [u8; 32] {
     use sha2::{Digest, Sha256};
-   // HKDF-like: SHA256(salt || secret) - Simplified implementation,sufficient to defend against DB leaks
+    // HKDF-like: SHA256(salt || secret) - Simplified implementation,sufficient to defend against DB leaks
     let mut hasher = Sha256::new();
     hasher.update(b"vigilyx-config-encryption-v1");
     hasher.update(jwt_secret.as_bytes());
@@ -45,7 +43,7 @@ pub(super) fn encrypt_config_value(plaintext: &str, jwt_secret: &str) -> Result<
     let key_bytes = derive_encryption_key(jwt_secret);
     let cipher = Aes256Gcm::new_from_slice(&key_bytes).map_err(|e| format!("cipher init: {e}"))?;
 
-   // 96-bit random nonce
+    // 96-bit random nonce
     let mut nonce_bytes = [0u8; 12];
     getrandom::fill(&mut nonce_bytes).map_err(|e| format!("rng: {e}"))?;
     let nonce = Nonce::from_slice(&nonce_bytes);
@@ -54,7 +52,7 @@ pub(super) fn encrypt_config_value(plaintext: &str, jwt_secret: &str) -> Result<
         .encrypt(nonce, plaintext.as_bytes())
         .map_err(|e| format!("encrypt: {e}"))?;
 
-   // nonce (12) || ciphertext+tag
+    // nonce (12) || ciphertext+tag
     let mut combined = Vec::with_capacity(12 + ciphertext.len());
     combined.extend_from_slice(&nonce_bytes);
     combined.extend_from_slice(&ciphertext);
@@ -75,10 +73,10 @@ pub(super) fn decrypt_config_value(stored: &str, jwt_secret: &str) -> Result<Str
     if stored.is_empty() {
         return Ok(String::new());
     }
-   // : ENC: value ()
+    // : ENC: value ()
     let encoded = match stored.strip_prefix("ENC:") {
         Some(e) => e,
-        None => return Ok(stored.to_string()), 
+        None => return Ok(stored.to_string()),
     };
 
     use base64::Engine;
@@ -99,9 +97,7 @@ pub(super) fn decrypt_config_value(stored: &str, jwt_secret: &str) -> Result<Str
     String::from_utf8(plaintext).map_err(|e| format!("utf8: {e}"))
 }
 
-
 // AI Service configuration
-
 
 /// Get AI Service configuration (API Key desensitize)
 pub async fn get_ai_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -130,7 +126,7 @@ pub async fn update_ai_config(
     user: AuthenticatedUser,
     Json(mut body): Json<serde_json::Value>,
 ) -> axum::response::Response {
-   // Missing or masked values keep the stored key; an explicit empty string clears it.
+    // Missing or masked values keep the stored key; an explicit empty string clears it.
     if let Some(obj) = body.as_object_mut() {
         obj.remove("api_key_set"); // , Data
         if let Ok(Some(existing_json)) = state.engine_db.get_ai_service_config().await
@@ -140,7 +136,7 @@ pub async fn update_ai_config(
         }
     }
 
-   // verifyformat
+    // verifyformat
     let parsed: vigilyx_engine::config::AiServiceConfig = match serde_json::from_value(body.clone())
     {
         Ok(c) => c,
@@ -153,7 +149,7 @@ pub async fn update_ai_config(
         }
     };
 
-   // SEC: Validate URL allowlist on save, not just test - prevent SSRF/data exfil (CWE-918)
+    // SEC: Validate URL allowlist on save, not just test - prevent SSRF/data exfil (CWE-918)
     if !is_allowed_internal_url(&parsed.service_url) {
         return ApiResponse::<serde_json::Value>::bad_request(
             "AI service URL must be an internal service (e.g. http://ai:8900)",
@@ -161,7 +157,7 @@ pub async fn update_ai_config(
         .into_response();
     }
 
-   // SEC: Encrypt API key before storing in DB (CWE-312)
+    // SEC: Encrypt API key before storing in DB (CWE-312)
     if let Some(obj) = body.as_object_mut()
         && let Some(key) = obj
             .get("api_key")
@@ -195,11 +191,11 @@ pub async fn update_ai_config(
     };
     match state.engine_db.set_ai_service_config(&json_str).await {
         Ok(()) => {
-           // save AI Service
+            // save AI Service
             let proxy = vigilyx_engine::remote::RemoteModuleProxy::new(parsed.service_url);
             let available = proxy.health_check().await;
 
-           // Engine process New AI Configuration
+            // Engine process New AI Configuration
             publish_engine_reload(&state, "ai_config").await;
             crate::handlers::spawn_audit_log(
                 state.engine_db.clone(),
@@ -237,7 +233,7 @@ pub async fn test_ai_connection(
         }
     };
 
-   // SSRF protection: only allow internal service URLs such as `http://ai:8900`.
+    // SSRF protection: only allow internal service URLs such as `http://ai:8900`.
     if !is_allowed_internal_url(&ai_config.service_url) {
         return ApiResponse::<serde_json::Value>::bad_request(
             "Only internal service URLs are allowed (for example http://ai:8900).",
@@ -263,18 +259,17 @@ fn is_allowed_internal_url(url: &str) -> bool {
     validate_internal_service_url(url, DEFAULT_INTERNAL_SERVICE_HOSTS).is_ok()
 }
 
-
 // Email alert configuration
-
 
 /// GetEmail alert configuration (Passworddesensitize)
 pub async fn get_email_alert_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match state.engine_db.get_email_alert_config().await {
         Ok(Some(json)) => {
-            let mut value = match serde_json::from_str::<vigilyx_engine::config::EmailAlertConfig>(&json) {
-                Ok(config) => serde_json::to_value(&config).unwrap_or(serde_json::Value::Null),
-                Err(_) => serde_json::from_str(&json).unwrap_or(serde_json::Value::Null),
-            };
+            let mut value =
+                match serde_json::from_str::<vigilyx_engine::config::EmailAlertConfig>(&json) {
+                    Ok(config) => serde_json::to_value(&config).unwrap_or(serde_json::Value::Null),
+                    Err(_) => serde_json::from_str(&json).unwrap_or(serde_json::Value::Null),
+                };
             mask_smtp_password(&mut value);
             ApiResponse::ok(value)
         }
@@ -296,7 +291,7 @@ pub async fn update_email_alert_config(
     user: AuthenticatedUser,
     Json(mut body): Json<serde_json::Value>,
 ) -> axum::response::Response {
-   // Missing or masked values keep the stored password; an explicit empty string clears it.
+    // Missing or masked values keep the stored password; an explicit empty string clears it.
     if let Some(obj) = body.as_object_mut() {
         obj.remove("smtp_password_set");
 
@@ -307,7 +302,7 @@ pub async fn update_email_alert_config(
         }
     }
 
-   // verifyformat
+    // verifyformat
     let parsed: vigilyx_engine::config::EmailAlertConfig =
         match serde_json::from_value(body.clone()) {
             Ok(c) => c,
@@ -320,13 +315,13 @@ pub async fn update_email_alert_config(
             }
         };
 
-   // SEC: Validate SMTP host on save, not just test - prevent SSRF (CWE-918)
+    // SEC: Validate SMTP host on save, not just test - prevent SSRF (CWE-918)
     if crate::handlers::syslog_config::is_blocked_address(&parsed.smtp_host) {
         return ApiResponse::<serde_json::Value>::bad_request("Disallowed SMTP server address")
             .into_response();
     }
 
-   // SEC-REMAINING-001: smtp_password DB
+    // SEC-REMAINING-001: smtp_password DB
     if let Some(obj) = body.as_object_mut()
         && let Some(pwd) = obj
             .get("smtp_password")
@@ -383,7 +378,7 @@ pub async fn test_email_alert(
     State(state): State<Arc<AppState>>,
     Json(body): Json<serde_json::Value>,
 ) -> axum::response::Response {
-   // ParseConfiguration (send Configuration)
+    // ParseConfiguration (send Configuration)
     let mut config: vigilyx_engine::config::EmailAlertConfig =
         match serde_json::from_value(body.clone()) {
             Ok(c) => c,
@@ -396,7 +391,7 @@ pub async fn test_email_alert(
             }
         };
 
-   // Masked UI placeholders keep the stored password; an explicit empty string does not.
+    // Masked UI placeholders keep the stored password; an explicit empty string does not.
     if is_masked_secret_placeholder(&config.smtp_password)
         && let Ok(Some(existing_json)) = state.engine_db.get_email_alert_config().await
         && let Ok(existing) =
@@ -408,8 +403,10 @@ pub async fn test_email_alert(
     if config.smtp_password.starts_with("ENC:") {
         use secrecy::ExposeSecret;
 
-        match decrypt_config_value(&config.smtp_password, state.auth.config.jwt_secret.expose_secret())
-        {
+        match decrypt_config_value(
+            &config.smtp_password,
+            state.auth.config.jwt_secret.expose_secret(),
+        ) {
             Ok(password) => config.smtp_password = password,
             Err(e) => {
                 tracing::error!("SMTP password decrypt failed during test email: {}", e);
@@ -419,7 +416,7 @@ pub async fn test_email_alert(
         }
     }
 
-   // SSRF protection: Connection metadata internal Address
+    // SSRF protection: Connection metadata internal Address
     if crate::handlers::syslog_config::is_blocked_address(&config.smtp_host) {
         return ApiResponse::<serde_json::Value>::bad_request("不允许Connection到该 SMTP Address")
             .into_response();
@@ -640,14 +637,10 @@ fn restore_existing_secret(
 ) {
     let should_restore = match body.get(field) {
         None => true,
-        Some(value) => value
-            .as_str()
-            .is_some_and(is_masked_secret_placeholder),
+        Some(value) => value.as_str().is_some_and(is_masked_secret_placeholder),
     };
 
-    if should_restore
-        && let Some(real_value) = existing.get(field)
-    {
+    if should_restore && let Some(real_value) = existing.get(field) {
         body.insert(field.to_string(), real_value.clone());
     }
 }
@@ -688,10 +681,8 @@ mod tests {
 
     #[test]
     fn restores_masked_ai_key_from_existing_config() {
-        let mut incoming = serde_json::Map::from_iter([(
-            "api_key".to_string(),
-            json!("****...abcd"),
-        )]);
+        let mut incoming =
+            serde_json::Map::from_iter([("api_key".to_string(), json!("****...abcd"))]);
         let existing = json!({
             "api_key": "ENC:stored-secret"
         });
@@ -703,10 +694,7 @@ mod tests {
 
     #[test]
     fn keeps_explicit_empty_ai_key_to_allow_clearing() {
-        let mut incoming = serde_json::Map::from_iter([(
-            "api_key".to_string(),
-            json!(""),
-        )]);
+        let mut incoming = serde_json::Map::from_iter([("api_key".to_string(), json!(""))]);
         let existing = json!({
             "api_key": "ENC:stored-secret"
         });
@@ -726,10 +714,8 @@ mod tests {
 
     #[test]
     fn normalizes_empty_optional_secret_to_null() {
-        let mut incoming = serde_json::Map::from_iter([(
-            "virustotal_api_key".to_string(),
-            json!(""),
-        )]);
+        let mut incoming =
+            serde_json::Map::from_iter([("virustotal_api_key".to_string(), json!(""))]);
 
         normalize_empty_optional_secret_field(&mut incoming, "virustotal_api_key");
 
@@ -740,9 +726,7 @@ mod tests {
     }
 }
 
-
 // (IOC verdict=clean)
-
 
 fn default_ioc_limit() -> u32 {
     50
@@ -772,7 +756,6 @@ pub struct IntelWhitelistParams {
     pub ioc_type: Option<String>,
     pub search: Option<String>,
 }
-
 
 pub async fn list_intel_whitelist(
     State(state): State<Arc<AppState>>,
@@ -806,7 +789,6 @@ pub struct AddIntelCleanRequest {
     pub ioc_type: String,
     pub description: Option<String>,
 }
-
 
 pub async fn add_intel_clean(
     State(state): State<Arc<AppState>>,
@@ -879,9 +861,7 @@ pub async fn delete_intel_whitelist(
     }
 }
 
-
 // SourceConfiguration (VT/AbuseIPDB API Key)
-
 
 /// Get SourceConfiguration (API Key desensitize)
 pub async fn get_intel_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -896,8 +876,14 @@ pub async fn get_intel_config(State(state): State<Arc<AppState>>) -> impl IntoRe
             let default_cfg = vigilyx_engine::intel::IntelSourceConfig::default();
             let mut value = serde_json::to_value(&default_cfg).unwrap_or_default();
             if let Some(obj) = value.as_object_mut() {
-                obj.insert("abuseipdb_api_key_set".to_string(), serde_json::json!(false));
-                obj.insert("virustotal_api_key_set".to_string(), serde_json::json!(false));
+                obj.insert(
+                    "abuseipdb_api_key_set".to_string(),
+                    serde_json::json!(false),
+                );
+                obj.insert(
+                    "virustotal_api_key_set".to_string(),
+                    serde_json::json!(false),
+                );
             }
             ApiResponse::ok(value)
         }
@@ -911,7 +897,7 @@ pub async fn update_intel_config(
     user: AuthenticatedUser,
     Json(mut body): Json<serde_json::Value>,
 ) -> axum::response::Response {
-   // Missing or masked values keep stored API keys; explicit null/empty clears them.
+    // Missing or masked values keep stored API keys; explicit null/empty clears them.
     if let Some(obj) = body.as_object_mut() {
         obj.remove("abuseipdb_api_key_set");
         obj.remove("virustotal_api_key_set");
@@ -931,18 +917,18 @@ pub async fn update_intel_config(
         }
     }
 
-   // Validate format
-    let mut parsed: vigilyx_engine::intel::IntelSourceConfig = match serde_json::from_value(body.clone())
-    {
-        Ok(config) => config,
-        Err(e) => {
-            return ApiResponse::<serde_json::Value>::bad_request(format!(
-                "Invalid intel config: {}",
-                e
-            ))
-            .into_response();
-        }
-    };
+    // Validate format
+    let mut parsed: vigilyx_engine::intel::IntelSourceConfig =
+        match serde_json::from_value(body.clone()) {
+            Ok(config) => config,
+            Err(e) => {
+                return ApiResponse::<serde_json::Value>::bad_request(format!(
+                    "Invalid intel config: {}",
+                    e
+                ))
+                .into_response();
+            }
+        };
 
     if let Some(url) = parsed.vt_scrape_url.as_deref()
         && let Err(err) = validate_internal_service_url(url, DEFAULT_INTERNAL_SERVICE_HOSTS)
@@ -953,7 +939,7 @@ pub async fn update_intel_config(
         .into_response();
     }
 
-   // SEC: Encrypt API keys before storing in DB (CWE-312)
+    // SEC: Encrypt API keys before storing in DB (CWE-312)
     {
         use secrecy::ExposeSecret;
         let encrypt = |key: &Option<String>| -> Result<Option<String>, String> {
@@ -970,27 +956,21 @@ pub async fn update_intel_config(
             Ok(v) => parsed.virustotal_api_key = v,
             Err(e) => {
                 tracing::error!("Intel API key encryption failed: {}", e);
-                return ApiResponse::<serde_json::Value>::internal_err(
-                    &e,
-                    "Operation failed",
-                )
-                .into_response();
+                return ApiResponse::<serde_json::Value>::internal_err(&e, "Operation failed")
+                    .into_response();
             }
         }
         match encrypt(&parsed.abuseipdb_api_key) {
             Ok(v) => parsed.abuseipdb_api_key = v,
             Err(e) => {
                 tracing::error!("Intel API key encryption failed: {}", e);
-                return ApiResponse::<serde_json::Value>::internal_err(
-                    &e,
-                    "Operation failed",
-                )
-                .into_response();
+                return ApiResponse::<serde_json::Value>::internal_err(&e, "Operation failed")
+                    .into_response();
             }
         }
     }
 
-   // Serialize the canonical struct (only known fields, no DB pollution)
+    // Serialize the canonical struct (only known fields, no DB pollution)
     let json_str = match serde_json::to_string(&parsed) {
         Ok(s) => s,
         Err(e) => {

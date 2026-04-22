@@ -20,14 +20,13 @@ mod ws_ticket;
 
 // Re-exports: keep the public API stable
 
+pub(crate) use handlers::sanitize_login_username;
 pub use handlers::{
     ChangePasswordRequest, ChangePasswordResponse, LoginRequest, build_clear_cookie,
     build_token_cookie, handle_change_password, handle_login, handle_logout, handle_me,
 };
-pub(crate) use handlers::sanitize_login_username;
 pub use middleware::{
-    AuthenticatedUser, require_admin, require_auth, require_internal_origin,
-    require_internal_token,
+    AuthenticatedUser, require_admin, require_auth, require_internal_origin, require_internal_token,
 };
 pub use password::hash_password;
 pub use rate_limit::LoginRateLimiter;
@@ -47,26 +46,26 @@ use tracing::{info, warn};
 /// `password_hash` uses `RwLock` so password changes can be persisted to PostgreSQL at runtime.
 /// `jwt_secret` uses `SecretString` so the secret is zeroized on drop (SEC-REMAINING-004, CWE-316).
 pub struct AuthConfig {
-   /// JWT secret (SecretString zeroizes on drop and masks Debug output)
+    /// JWT secret (SecretString zeroizes on drop and masks Debug output)
     pub jwt_secret: SecretString,
-   /// Username.
+    /// Username.
     pub username: String,
-   /// Password hash (protected by `RwLock`)
+    /// Password hash (protected by `RwLock`)
     pub password_hash: RwLock<String>,
-   /// Token lifetime in seconds
+    /// Token lifetime in seconds
     pub token_expire_secs: u64,
-   /// Whether the default password has been changed
+    /// Whether the default password has been changed
     pub password_changed: RwLock<bool>,
-   /// Token version - incremented on password change, old tokens rejected (SEC: CWE-613)
+    /// Token version - incremented on password change, old tokens rejected (SEC: CWE-613)
     pub token_version: AtomicU64,
 }
 
 impl Clone for AuthConfig {
-   /// SEC-REMAINING-006: use `try_read` to avoid blocking in async contexts (CWE-667).
-    
-   /// NOTE: This `Clone` implementation is mainly used during startup (`AuthState` shares `Arc<AuthConfig>`).
-   /// Regular `Arc::clone` does not invoke this impl. If `try_read` fails in an extreme race,
-   /// it falls back to empty defaults and the values are reloaded from the database.
+    /// SEC-REMAINING-006: use `try_read` to avoid blocking in async contexts (CWE-667).
+
+    /// NOTE: This `Clone` implementation is mainly used during startup (`AuthState` shares `Arc<AuthConfig>`).
+    /// Regular `Arc::clone` does not invoke this impl. If `try_read` fails in an extreme race,
+    /// it falls back to empty defaults and the values are reloaded from the database.
     fn clone(&self) -> Self {
         let hash = self
             .password_hash
@@ -100,7 +99,7 @@ impl AuthConfig {
         hash_password(&password)
     }
 
-   /// Load configuration from environment variables.
+    /// Load configuration from environment variables.
     pub fn from_env() -> Result<Self, AuthError> {
         let jwt_secret = std::env::var("API_JWT_SECRET")
             .map_err(|_| AuthError::ConfigError("API_JWT_SECRET is not set".into()))?;
@@ -116,7 +115,7 @@ impl AuthConfig {
         let password = std::env::var("API_PASSWORD")
             .map_err(|_| AuthError::ConfigError("API_PASSWORD is not set".into()))?;
 
-       // Hash the configured password before storing it in memory.
+        // Hash the configured password before storing it in memory.
         let password_hash = hash_password(&password)?;
 
         let token_expire_hours: u64 = std::env::var("API_TOKEN_EXPIRE_HOURS")
@@ -134,17 +133,17 @@ impl AuthConfig {
         })
     }
 
-   /// Validate that runtime auth reset has the required environment configuration.
+    /// Validate that runtime auth reset has the required environment configuration.
     pub fn validate_factory_reset_prereqs() -> Result<(), AuthError> {
         Self::hash_runtime_password_from_env().map(|_| ())
     }
 
-   /// Create a test-only configuration with a secure random JWT secret.
+    /// Create a test-only configuration with a secure random JWT secret.
     #[cfg(test)]
     fn test_config(password: &str) -> Self {
         use std::fmt::Write;
 
-       // Generate a 64-byte random JWT secret
+        // Generate a 64-byte random JWT secret
         let mut secret = String::with_capacity(128);
         let random_bytes: [u8; 64] = {
             use argon2::password_hash::rand_core::RngCore;
@@ -166,23 +165,28 @@ impl AuthConfig {
         }
     }
 
-   /// Load the saved password hash from the database, overriding the default value when present
+    /// Load the saved password hash from the database, overriding the default value when present
     pub async fn load_password_from_db(&self, db: &vigilyx_db::VigilDb) {
         match db.get_config("auth_password_hash").await {
             Ok(Some(hash)) => {
                 info!("Loaded saved password hash from the database");
-               *self.password_hash.write().await = hash;
-               *self.password_changed.write().await = true;
+                *self.password_hash.write().await = hash;
+                *self.password_changed.write().await = true;
             }
             Ok(None) => {
-                info!("No saved password hash found in the database; first login will require a password change");
-               *self.password_changed.write().await = false;
+                info!(
+                    "No saved password hash found in the database; first login will require a password change"
+                );
+                *self.password_changed.write().await = false;
             }
             Err(e) => {
-                warn!("Failed to load password hash from the database: {}; using the environment default", e);
+                warn!(
+                    "Failed to load password hash from the database: {}; using the environment default",
+                    e
+                );
             }
         }
-       // SEC: Load token version from DB (CWE-613)
+        // SEC: Load token version from DB (CWE-613)
         match db.get_config("auth_token_version").await {
             Ok(Some(v)) => {
                 if let Ok(tv) = v.parse::<u64>() {
@@ -199,8 +203,8 @@ impl AuthConfig {
 
     pub async fn reset_after_factory_reset(&self) -> Result<u64, AuthError> {
         let hash = Self::hash_runtime_password_from_env()?;
-       *self.password_hash.write().await = hash;
-       *self.password_changed.write().await = false;
+        *self.password_hash.write().await = hash;
+        *self.password_changed.write().await = false;
         let next_tv = self.token_version.fetch_add(1, Ordering::SeqCst) + 1;
         Ok(next_tv)
     }
@@ -209,23 +213,23 @@ impl AuthConfig {
 /// Authentication error.
 #[derive(Debug)]
 pub enum AuthError {
-   /// Configuration error.
+    /// Configuration error.
     ConfigError(String),
-    
+
     InvalidCredentials,
-   /// Token has expired.
+    /// Token has expired.
     TokenExpired,
-   /// Token is invalid.
+    /// Token is invalid.
     InvalidToken,
-   /// Token is missing.
+    /// Token is missing.
     MissingToken,
-   /// Authenticated user lacks the required role.
+    /// Authenticated user lacks the required role.
     Forbidden,
-   /// Internal error.
+    /// Internal error.
     InternalError(String),
-   /// Must change default password before accessing other endpoints (SEC: CWE-620)
+    /// Must change default password before accessing other endpoints (SEC: CWE-620)
     PasswordChangeRequired,
-   /// Internal control-plane route accessed from a non-internal source.
+    /// Internal control-plane route accessed from a non-internal source.
     InternalSourceDenied,
 }
 
@@ -249,7 +253,7 @@ impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         use crate::error_codes;
 
-       // SEC-M07: errormessage, internal log (CWE-209)
+        // SEC-M07: errormessage, internal log (CWE-209)
         let (status, message, error_code) = match &self {
             AuthError::ConfigError(msg) => {
                 warn!("Authentication configuration error: {}", msg);
@@ -318,7 +322,7 @@ impl IntoResponse for AuthError {
 #[derive(Clone)]
 pub struct AuthState {
     pub config: std::sync::Arc<AuthConfig>,
-   /// Per-IP login Stream (Arc Shared, lock-free DashMap)
+    /// Per-IP login Stream (Arc Shared, lock-free DashMap)
     pub login_rate_limiter: std::sync::Arc<rate_limit::LoginRateLimiter>,
 }
 
@@ -333,12 +337,12 @@ mod tests {
 
     const TEST_ADMIN_PASSWORD: &str = "TestAdmin!2345";
 
-   /// Test helper: a deterministic IP for unit tests.
+    /// Test helper: a deterministic IP for unit tests.
     fn test_ip() -> IpAddr {
         IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))
     }
 
-   /// Test helper: create a fresh rate limiter (10 failures / 60s window).
+    /// Test helper: create a fresh rate limiter (10 failures / 60s window).
     fn test_limiter() -> LoginRateLimiter {
         LoginRateLimiter::new(10, 60)
     }
@@ -366,7 +370,7 @@ mod tests {
         let limiter = test_limiter();
         let ip = test_ip();
 
-       // login (default password,)
+        // login (default password,)
         let request = LoginRequest {
             username: "admin".to_string(),
             password: TEST_ADMIN_PASSWORD.to_string(),
@@ -376,7 +380,7 @@ mod tests {
         assert!(response.token.is_some());
         assert_eq!(response.must_change_password, Some(true));
 
-       // errorPassword
+        // errorPassword
         let request = LoginRequest {
             username: "admin".to_string(),
             password: "wrong".to_string(),
@@ -390,8 +394,8 @@ mod tests {
         let config = AuthConfig::test_config(TEST_ADMIN_PASSWORD);
         let limiter = test_limiter();
         let ip = test_ip();
-       // Password
-       *config.password_changed.write().await = true;
+        // Password
+        *config.password_changed.write().await = true;
 
         let request = LoginRequest {
             username: "admin".to_string(),
@@ -409,7 +413,7 @@ mod tests {
         let attacker_ip: IpAddr = "10.0.0.1".parse().expect("valid IP");
         let innocent_ip: IpAddr = "10.0.0.2".parse().expect("valid IP");
 
-       // Attacker: 10 failed attempts
+        // Attacker: 10 failed attempts
         for _ in 0..10 {
             let request = LoginRequest {
                 username: "admin".to_string(),
@@ -418,7 +422,7 @@ mod tests {
             let _ = handle_login(&config, &limiter, attacker_ip, &request).await;
         }
 
-       // Attacker is now blocked (even with correct password)
+        // Attacker is now blocked (even with correct password)
         let request = LoginRequest {
             username: "admin".to_string(),
             password: TEST_ADMIN_PASSWORD.to_string(),
@@ -427,7 +431,7 @@ mod tests {
         assert!(!response.success);
         assert!(response.error.as_deref().unwrap_or("").contains("过多"));
 
-       // Innocent user from different IP is NOT affected
+        // Innocent user from different IP is NOT affected
         let request = LoginRequest {
             username: "admin".to_string(),
             password: TEST_ADMIN_PASSWORD.to_string(),
@@ -445,7 +449,7 @@ mod tests {
         let limiter = test_limiter();
         let ip = test_ip();
 
-       // 5 failed attempts (under limit)
+        // 5 failed attempts (under limit)
         for _ in 0..5 {
             let request = LoginRequest {
                 username: "admin".to_string(),
@@ -454,7 +458,7 @@ mod tests {
             let _ = handle_login(&config, &limiter, ip, &request).await;
         }
 
-       // Successful login resets the counter
+        // Successful login resets the counter
         let request = LoginRequest {
             username: "admin".to_string(),
             password: TEST_ADMIN_PASSWORD.to_string(),
@@ -462,7 +466,7 @@ mod tests {
         let response = handle_login(&config, &limiter, ip, &request).await;
         assert!(response.success);
 
-       // Another 9 failures should still be allowed (counter was reset)
+        // Another 9 failures should still be allowed (counter was reset)
         for _ in 0..9 {
             let request = LoginRequest {
                 username: "admin".to_string(),
@@ -470,7 +474,7 @@ mod tests {
             };
             let response = handle_login(&config, &limiter, ip, &request).await;
             assert!(!response.success);
-           // Should get "user Passworderror" not " "
+            // Should get "user Passworderror" not " "
             assert!(
                 !response.error.as_deref().unwrap_or("").contains("过多"),
                 "should not be rate-limited yet after reset"

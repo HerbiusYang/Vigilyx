@@ -16,28 +16,28 @@ use serde::{Deserialize, Serialize};
 /// Communication edge between sender and recipient.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommEdge {
-   /// Sender email
+    /// Sender email
     pub sender: String,
-   /// Recipient email
+    /// Recipient email
     pub recipient: String,
-   /// Total communication count
+    /// Total communication count
     pub total_count: u64,
-   /// EWMA of risk scores on this edge
+    /// EWMA of risk scores on this edge
     pub avg_risk: f64,
-   /// EWMA of communication frequency (emails per day)
+    /// EWMA of communication frequency (emails per day)
     pub ewma_frequency: f64,
 }
 
 /// Per-sender summary statistics.
 #[derive(Debug, Clone, Default)]
 struct SenderStats {
-   /// Total unique recipients
+    /// Total unique recipients
     out_degree: usize,
-   /// Total emails sent
+    /// Total emails sent
     total_emails: u64,
-   /// Average risk across all edges
+    /// Average risk across all edges
     avg_risk: f64,
-   /// When this sender was first seen (email count at graph level)
+    /// When this sender was first seen (email count at graph level)
     #[allow(dead_code)]
     first_seen_at: u64,
 }
@@ -45,28 +45,28 @@ struct SenderStats {
 /// Communication graph state.
 #[derive(Debug, Clone)]
 pub struct CommGraph {
-   /// Edges indexed by "sender -> recipient"
+    /// Edges indexed by "sender -> recipient"
     edges: FxHashMap<String, CommEdge>,
-   /// Per-sender statistics
+    /// Per-sender statistics
     sender_stats: FxHashMap<String, SenderStats>,
-   /// Total emails processed (global counter)
+    /// Total emails processed (global counter)
     total_emails: u64,
-   /// EWMA smoothing for edge frequency
+    /// EWMA smoothing for edge frequency
     freq_alpha: f64,
-   /// EWMA smoothing for edge risk
+    /// EWMA smoothing for edge risk
     risk_alpha: f64,
 }
 
 /// Parameters for graph anomaly detection.
 #[derive(Debug, Clone)]
 pub struct GraphParams {
-   /// New sender threshold: sender with <N emails is "new"
+    /// New sender threshold: sender with <N emails is "new"
     pub new_sender_email_threshold: u64,
-   /// High out-degree threshold for new senders
+    /// High out-degree threshold for new senders
     pub new_sender_high_outdegree: usize,
-   /// Out-degree burst: ratio of new recipients to historical average
+    /// Out-degree burst: ratio of new recipients to historical average
     pub outdegree_burst_ratio: f64,
-   /// High risk edge threshold
+    /// High risk edge threshold
     pub high_risk_edge_threshold: f64,
 }
 
@@ -84,15 +84,15 @@ impl Default for GraphParams {
 /// Result of graph anomaly check for one email.
 #[derive(Debug, Clone)]
 pub struct GraphCheckResult {
-   /// Whether any anomaly was detected
+    /// Whether any anomaly was detected
     pub is_anomalous: bool,
-   /// Pattern label describing the anomaly
+    /// Pattern label describing the anomaly
     pub pattern_label: String,
-   /// Anomaly score [0, 1]
+    /// Anomaly score [0, 1]
     pub anomaly_score: f64,
-   /// Whether this is a new sender-recipient pair
+    /// Whether this is a new sender-recipient pair
     pub is_new_edge: bool,
-   /// Current out-degree of sender
+    /// Current out-degree of sender
     pub sender_out_degree: usize,
 }
 
@@ -103,7 +103,7 @@ impl Default for CommGraph {
 }
 
 impl CommGraph {
-   /// Create a new communication graph.
+    /// Create a new communication graph.
     pub fn new() -> Self {
         Self {
             edges: FxHashMap::default(),
@@ -114,16 +114,16 @@ impl CommGraph {
         }
     }
 
-   /// Record a communication and check for anomalies.
-    
-   /// # Arguments
-   /// - `sender`: sender email address
-   /// - `recipients`: list of recipient addresses
-   /// - `risk_single`: D-S fused risk score for this email
-   /// - `params`: detection parameters
-    
-   /// # Returns
-   /// Graph anomaly check result.
+    /// Record a communication and check for anomalies.
+
+    /// # Arguments
+    /// - `sender`: sender email address
+    /// - `recipients`: list of recipient addresses
+    /// - `risk_single`: D-S fused risk score for this email
+    /// - `params`: detection parameters
+
+    /// # Returns
+    /// Graph anomaly check result.
     pub fn observe(
         &mut self,
         sender: &str,
@@ -134,11 +134,11 @@ impl CommGraph {
         self.total_emails += 1;
         let sender_lower = sender.to_ascii_lowercase();
 
-       // Track new edges in this observation
+        // Track new edges in this observation
         let mut new_edges_count = 0;
         let mut new_edge_high_risk = false;
 
-       // Get or create sender stats, update immediately, then release borrow
+        // Get or create sender stats, update immediately, then release borrow
         {
             let stats = self
                 .sender_stats
@@ -160,20 +160,20 @@ impl CommGraph {
             .map(|s| s.out_degree)
             .unwrap_or(0);
 
-       // Pre-allocate edge key buffer - reused across recipients to avoid per-iteration format!()
+        // Pre-allocate edge key buffer - reused across recipients to avoid per-iteration format!()
         let prefix_len = sender_lower.len() + "→".len();
         let mut edge_key = String::with_capacity(prefix_len + 32); // typical recipient ~20-30 chars
 
         for recipient in recipients {
             let recipient_lower = recipient.to_ascii_lowercase();
 
-           // Build edge key via reusable buffer (avoids format!() allocation per recipient)
+            // Build edge key via reusable buffer (avoids format!() allocation per recipient)
             edge_key.clear();
             edge_key.push_str(&sender_lower);
             edge_key.push('→');
             edge_key.push_str(&recipient_lower);
 
-           // Single entry() lookup instead of contains_key() + entry() (was 2 hashes)
+            // Single entry() lookup instead of contains_key() + entry() (was 2 hashes)
             use std::collections::hash_map::Entry;
             let edge = match self.edges.entry(edge_key.clone()) {
                 Entry::Vacant(v) => {
@@ -198,24 +198,24 @@ impl CommGraph {
                 self.freq_alpha * 1.0 + (1.0 - self.freq_alpha) * edge.ewma_frequency;
         }
 
-       // Batch-update out-degree after loop - O(1), avoids borrow conflict
+        // Batch-update out-degree after loop - O(1), avoids borrow conflict
         if let Some(stats) = self.sender_stats.get_mut(&sender_lower) {
             stats.out_degree += new_edges_count;
         }
         let out_degree = old_out_degree + new_edges_count;
 
-       // Anomaly detection (track worst only - no Vec allocation)
+        // Anomaly detection (track worst only - no Vec allocation)
         let mut worst: Option<(String, f64)> = None;
 
-       // Helper: update worst if new score is higher
+        // Helper: update worst if new score is higher
         #[inline(always)]
         fn update_worst(worst: &mut Option<(String, f64)>, label: String, score: f64) {
             if worst.as_ref().is_none_or(|w| score > w.1) {
-               *worst = Some((label, score));
+                *worst = Some((label, score));
             }
         }
 
-       // Pattern 1: New sender with high out-degree (mass phishing)
+        // Pattern 1: New sender with high out-degree (mass phishing)
         let sender_age = self
             .sender_stats
             .get(&sender_lower)
@@ -235,7 +235,7 @@ impl CommGraph {
             );
         }
 
-       // Pattern 2: Known sender, new high-risk edge (BEC lateral movement)
+        // Pattern 2: Known sender, new high-risk edge (BEC lateral movement)
         if sender_age > params.new_sender_email_threshold && new_edge_high_risk {
             let score = risk_single.min(1.0);
             update_worst(
@@ -248,7 +248,7 @@ impl CommGraph {
             );
         }
 
-       // Pattern 3: Out-degree burst (sudden expansion of recipients)
+        // Pattern 3: Out-degree burst (sudden expansion of recipients)
         if old_out_degree > 3 && new_edges_count > 0 {
             let burst_ratio = (out_degree as f64) / (old_out_degree as f64);
             if burst_ratio > params.outdegree_burst_ratio {
@@ -282,7 +282,7 @@ impl CommGraph {
         }
     }
 
-   /// Get edge data for a sender-recipient pair.
+    /// Get edge data for a sender-recipient pair.
     pub fn get_edge(&self, sender: &str, recipient: &str) -> Option<&CommEdge> {
         let key = format!(
             "{}→{}",
@@ -292,7 +292,7 @@ impl CommGraph {
         self.edges.get(&key)
     }
 
-   /// Get all edges for a sender.
+    /// Get all edges for a sender.
     pub fn sender_edges(&self, sender: &str) -> Vec<&CommEdge> {
         let prefix = format!("{}→", sender.to_ascii_lowercase());
         self.edges
@@ -302,7 +302,7 @@ impl CommGraph {
             .collect()
     }
 
-   /// Get the out-degree of a sender.
+    /// Get the out-degree of a sender.
     pub fn sender_out_degree(&self, sender: &str) -> usize {
         self.sender_stats
             .get(&sender.to_ascii_lowercase())
@@ -310,32 +310,32 @@ impl CommGraph {
             .unwrap_or(0)
     }
 
-   /// Total edges in the graph.
+    /// Total edges in the graph.
     pub fn edge_count(&self) -> usize {
         self.edges.len()
     }
 
-   /// Total unique senders.
+    /// Total unique senders.
     pub fn sender_count(&self) -> usize {
         self.sender_stats.len()
     }
 
-   /// Export all edges for DB persistence.
+    /// Export all edges for DB persistence.
     pub fn export_edges(&self) -> Vec<CommEdge> {
         self.edges.values().cloned().collect()
     }
 
-   /// Import edges from DB (called on startup).
+    /// Import edges from DB (called on startup).
     pub fn import_edges(&mut self, edges: Vec<CommEdge>) {
-       // Pre-size maps to avoid rehashing
+        // Pre-size maps to avoid rehashing
         self.edges.reserve(edges.len());
 
         for edge in edges {
             let key = format!("{}→{}", edge.sender, edge.recipient);
 
-           // Rebuild sender stats incrementally - O(1) per edge
+            // Rebuild sender stats incrementally - O(1) per edge
             let stats = self.sender_stats.entry(edge.sender.clone()).or_default();
-           // Weighted average: combine previous avg with this edge's avg
+            // Weighted average: combine previous avg with this edge's avg
             let old_total = stats.total_emails;
             let new_total = old_total + edge.total_count;
             if new_total > 0 {
@@ -351,9 +351,7 @@ impl CommGraph {
     }
 }
 
-
 // Tests
-
 
 #[cfg(test)]
 mod tests {
@@ -396,7 +394,7 @@ mod tests {
         let mut g = CommGraph::new();
         let params = GraphParams::default();
 
-       // Same sender, same recipient, low risk -> no anomaly
+        // Same sender, same recipient, low risk -> no anomaly
         for _ in 0..20 {
             let r = g.observe("alice@a.com", &["bob@b.com".to_string()], 0.05, &params);
             assert!(!r.is_anomalous, "Normal usage should not be anomalous");
@@ -412,7 +410,7 @@ mod tests {
             ..Default::default()
         };
 
-       // New sender sends to many recipients at once
+        // New sender sends to many recipients at once
         let recipients: Vec<String> = (0..10)
             .map(|i| format!("victim{}@company.com", i))
             .collect();
@@ -432,12 +430,12 @@ mod tests {
             ..Default::default()
         };
 
-       // Build history: known sender
+        // Build history: known sender
         for _ in 0..10 {
             g.observe("alice@a.com", &["bob@b.com".to_string()], 0.05, &params);
         }
 
-       // New high-risk edge
+        // New high-risk edge
         let r = g.observe(
             "alice@a.com",
             &["cfo@company.com".to_string()],
@@ -459,12 +457,12 @@ mod tests {
             ..Default::default()
         };
 
-       // Build moderate out-degree
+        // Build moderate out-degree
         for i in 0..5 {
             g.observe("alice@a.com", &[format!("user{}@b.com", i)], 0.1, &params);
         }
 
-       // Sudden burst: 15 new recipients
+        // Sudden burst: 15 new recipients
         let burst_recipients: Vec<String> = (10..25)
             .map(|i| format!("target{}@external.com", i))
             .collect();

@@ -26,9 +26,9 @@ const DEFAULT_SCAN_TIMEOUT: Duration = Duration::from_secs(30);
 /// Result of a ClamAV scan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScanResult {
-   /// No virus detected.
+    /// No virus detected.
     Clean,
-   /// Virus detected with the given signature name.
+    /// Virus detected with the given signature name.
     Infected { virus_name: String },
 }
 
@@ -44,13 +44,13 @@ impl fmt::Display for ScanResult {
 /// Errors from ClamAV communication.
 #[derive(Debug)]
 pub enum ClamAvError {
-   /// Cannot connect to the ClamAV daemon.
+    /// Cannot connect to the ClamAV daemon.
     ConnectionFailed(String),
-   /// Scan timed out.
+    /// Scan timed out.
     Timeout,
-   /// Unexpected response from the daemon.
+    /// Unexpected response from the daemon.
     ProtocolError(String),
-   /// I/O error during communication.
+    /// I/O error during communication.
     IoError(std::io::Error),
 }
 
@@ -80,7 +80,7 @@ pub struct ClamAvClient {
 }
 
 impl ClamAvClient {
-   /// Create a new client from explicit host and port.
+    /// Create a new client from explicit host and port.
     pub fn new(host: String, port: u16) -> Self {
         Self {
             host,
@@ -90,11 +90,11 @@ impl ClamAvClient {
         }
     }
 
-   /// Create a client from environment variables.
-    
-   /// - `CLAMAV_HOST` (default: `clamav`)
-   /// - `CLAMAV_PORT` (default: `3310`)
-   /// - `CLAMAV_SCAN_TIMEOUT_SECS` (default: `30`)
+    /// Create a client from environment variables.
+
+    /// - `CLAMAV_HOST` (default: `clamav`)
+    /// - `CLAMAV_PORT` (default: `3310`)
+    /// - `CLAMAV_SCAN_TIMEOUT_SECS` (default: `30`)
     pub fn from_env() -> Self {
         let host = std::env::var("CLAMAV_HOST").unwrap_or_else(|_| "clamav".to_string());
         let port: u16 = std::env::var("CLAMAV_PORT")
@@ -113,12 +113,12 @@ impl ClamAvClient {
         }
     }
 
-   /// Address string for logging.
+    /// Address string for logging.
     pub fn address(&self) -> String {
         format!("{}:{}", self.host, self.port)
     }
 
-   /// Health check: send zPING, expect PONG.
+    /// Health check: send zPING, expect PONG.
     pub async fn ping(&self) -> bool {
         match self.ping_inner().await {
             Ok(true) => true,
@@ -136,7 +136,7 @@ impl ClamAvClient {
     async fn ping_inner(&self) -> Result<bool, ClamAvError> {
         let mut stream = self.connect().await?;
 
-       // Send zPING command (null-terminated)
+        // Send zPING command (null-terminated)
         stream.write_all(b"zPING\0").await?;
         stream.flush().await?;
 
@@ -150,14 +150,14 @@ impl ClamAvClient {
         Ok(response.trim_matches('\0').trim() == "PONG")
     }
 
-   /// Scan raw bytes via the INSTREAM protocol.
-    
-   /// Protocol:
-   /// 1. Send `zINSTREAM\0`
-   /// 2. Send data in chunks: `[4-byte big-endian length][chunk bytes]`
-   /// 3. Send terminator: `[0x00 0x00 0x00 0x00]`
-   /// 4. Read response until null byte
-   /// 5. Parse `stream: OK\0` or `stream: <virus_name> FOUND\0`
+    /// Scan raw bytes via the INSTREAM protocol.
+
+    /// Protocol:
+    /// 1. Send `zINSTREAM\0`
+    /// 2. Send data in chunks: `[4-byte big-endian length][chunk bytes]`
+    /// 3. Send terminator: `[0x00 0x00 0x00 0x00]`
+    /// 4. Read response until null byte
+    /// 5. Parse `stream: OK\0` or `stream: <virus_name> FOUND\0`
     pub async fn scan_bytes(&self, data: &[u8]) -> Result<ScanResult, ClamAvError> {
         tokio::time::timeout(self.scan_timeout, self.scan_bytes_inner(data))
             .await
@@ -167,21 +167,21 @@ impl ClamAvClient {
     async fn scan_bytes_inner(&self, data: &[u8]) -> Result<ScanResult, ClamAvError> {
         let mut stream = self.connect().await?;
 
-       // 1. Send INSTREAM command
+        // 1. Send INSTREAM command
         stream.write_all(b"zINSTREAM\0").await?;
 
-       // 2. Send data in chunks with 4-byte big-endian length prefix
+        // 2. Send data in chunks with 4-byte big-endian length prefix
         for chunk in data.chunks(CHUNK_SIZE) {
             let len = chunk.len() as u32;
             stream.write_all(&len.to_be_bytes()).await?;
             stream.write_all(chunk).await?;
         }
 
-       // 3. Send zero-length terminator
+        // 3. Send zero-length terminator
         stream.write_all(&0u32.to_be_bytes()).await?;
         stream.flush().await?;
 
-       // 4. Read response
+        // 4. Read response
         let mut response_buf = Vec::with_capacity(256);
         let mut tmp = [0u8; 256];
         loop {
@@ -190,7 +190,7 @@ impl ClamAvClient {
                 break;
             }
             response_buf.extend_from_slice(&tmp[..n]);
-           // Response is null-terminated
+            // Response is null-terminated
             if response_buf.contains(&0) {
                 break;
             }
@@ -201,13 +201,13 @@ impl ClamAvClient {
             }
         }
 
-       // 5. Parse response
+        // 5. Parse response
         let response = String::from_utf8_lossy(&response_buf);
         let response = response.trim_matches('\0').trim();
         parse_scan_response(response)
     }
 
-   /// Establish a TCP connection to clamd.
+    /// Establish a TCP connection to clamd.
     async fn connect(&self) -> Result<TcpStream, ClamAvError> {
         let addr = format!("{}:{}", self.host, self.port);
         let stream = tokio::time::timeout(self.connect_timeout, TcpStream::connect(&addr))
@@ -225,11 +225,11 @@ impl ClamAvClient {
 /// - `stream: <virus_name> FOUND` - virus detected
 /// - `stream: <error> ERROR` - scan error
 pub fn parse_scan_response(response: &str) -> Result<ScanResult, ClamAvError> {
-   // Remove the "stream: " prefix
+    // Remove the "stream: " prefix
     let body = if let Some(stripped) = response.strip_prefix("stream: ") {
         stripped
     } else {
-       // Some ClamAV versions omit "stream: " prefix
+        // Some ClamAV versions omit "stream: " prefix
         response
     };
 
@@ -340,8 +340,8 @@ mod tests {
 
     #[test]
     fn test_client_from_env_defaults() {
-       // Clear env to test defaults
-       // SAFETY: test-only, single-threaded test runner
+        // Clear env to test defaults
+        // SAFETY: test-only, single-threaded test runner
         unsafe {
             std::env::remove_var("CLAMAV_HOST");
             std::env::remove_var("CLAMAV_PORT");
@@ -354,9 +354,9 @@ mod tests {
 
     #[test]
     fn test_chunk_encoding_size() {
-       // Verify chunk size constant is reasonable
+        // Verify chunk size constant is reasonable
         assert_eq!(CHUNK_SIZE, 2048);
-       // A 5000-byte payload should produce 3 chunks: 2048 + 2048 + 904
+        // A 5000-byte payload should produce 3 chunks: 2048 + 2048 + 904
         let data = vec![0u8; 5000];
         let chunks: Vec<&[u8]> = data.chunks(CHUNK_SIZE).collect();
         assert_eq!(chunks.len(), 3);

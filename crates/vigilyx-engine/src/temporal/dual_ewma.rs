@@ -15,13 +15,13 @@ pub use vigilyx_core::security::DualEwmaState;
 /// EWMA parameters.
 #[derive(Debug, Clone)]
 pub struct EwmaParams {
-   /// Fast EWMA smoothing factor (default: 0.05 20 observations half-life)
+    /// Fast EWMA smoothing factor (default: 0.05 20 observations half-life)
     pub alpha_fast: f64,
-   /// Slow EWMA smoothing factor (default: 0.005 200 observations half-life)
+    /// Slow EWMA smoothing factor (default: 0.005 200 observations half-life)
     pub alpha_slow: f64,
-   /// Drift threshold: drift_score above this is considered anomalous
+    /// Drift threshold: drift_score above this is considered anomalous
     pub drift_threshold: f64,
-   /// Epsilon to avoid division by zero
+    /// Epsilon to avoid division by zero
     pub epsilon: f64,
 }
 
@@ -39,13 +39,13 @@ impl Default for EwmaParams {
 /// Result of a dual EWMA update.
 #[derive(Debug, Clone)]
 pub struct EwmaResult {
-   /// Current fast EWMA
+    /// Current fast EWMA
     pub fast: f64,
-   /// Current slow EWMA
+    /// Current slow EWMA
     pub slow: f64,
-   /// Drift score = |fast - slow| / max(slow,)
+    /// Drift score = |fast - slow| / max(slow,)
     pub drift_score: f64,
-   /// Whether drift exceeds threshold
+    /// Whether drift exceeds threshold
     pub drifting: bool,
 }
 
@@ -66,7 +66,7 @@ pub fn ewma_update(state: &mut DualEwmaState, value: f64, params: &EwmaParams) -
         };
     }
 
-   // EWMA update: new = * observation + (1 -) * old
+    // EWMA update: new = * observation + (1 -) * old
     state.fast_value = params.alpha_fast * value + (1.0 - params.alpha_fast) * state.fast_value;
     state.slow_value = params.alpha_slow * value + (1.0 - params.alpha_slow) * state.slow_value;
 
@@ -103,7 +103,7 @@ mod tests {
         let mut state = DualEwmaState::new("test".to_string());
         let params = EwmaParams::default();
 
-       // Feed constant values -> no drift
+        // Feed constant values -> no drift
         for _ in 0..100 {
             let r = ewma_update(&mut state, 0.1, &params);
             assert!(!r.drifting, "Constant input should not drift");
@@ -115,13 +115,13 @@ mod tests {
         let mut state = DualEwmaState::new("test".to_string());
         let params = EwmaParams::default();
 
-       // Phase 1: establish baseline at 0.1
+        // Phase 1: establish baseline at 0.1
         for _ in 0..50 {
             ewma_update(&mut state, 0.1, &params);
         }
 
-       // Phase 2: sustained high values - fast EWMA catches up quickly,
-       // slow EWMA trails behind -> drift_score = |fast-slow|/slow peaks early
+        // Phase 2: sustained high values - fast EWMA catches up quickly,
+        // slow EWMA trails behind -> drift_score = |fast-slow|/slow peaks early
         let mut drifted = false;
         for _ in 0..100 {
             let r = ewma_update(&mut state, 0.8, &params);
@@ -142,15 +142,15 @@ mod tests {
         let mut state = DualEwmaState::new("test".to_string());
         let params = EwmaParams::default();
 
-       // Baseline
+        // Baseline
         for _ in 0..30 {
             ewma_update(&mut state, 0.1, &params);
         }
 
-       // Sudden change
+        // Sudden change
         ewma_update(&mut state, 0.9, &params);
 
-       // Fast should react more than slow
+        // Fast should react more than slow
         assert!(
             state.fast_value > state.slow_value,
             "Fast EWMA should respond more to sudden change: fast={} slow={}",

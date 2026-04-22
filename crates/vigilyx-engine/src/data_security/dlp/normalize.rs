@@ -11,35 +11,34 @@
 
 /// Performance: O(n) (Decode + charactersNormalize).
 pub(super) fn normalize_for_dlp(text: &str) -> String {
-   // After1: HTML Decode (WhenpacketContains &# Executeline)
+    // After1: HTML Decode (WhenpacketContains &# Executeline)
     let text = if text.contains("&#") {
         decode_html_numeric_entities(text)
     } else {
         text.to_string()
     };
 
-   // After2: characters +
+    // After2: characters +
     let mut result = String::with_capacity(text.len());
     for ch in text.chars() {
         match ch {
-           // characters -
+            // characters -
             '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{200E}' | '\u{200F}' | '\u{FEFF}'
             | '\u{00AD}' | '\u{2060}' | '\u{2061}' | '\u{2062}' | '\u{2063}' | '\u{2064}'
             | '\u{180E}' | '\u{034F}' => {}
 
-            
             '\u{FF10}'..='\u{FF19}' => {
                 result.push((b'0' + (ch as u8 - 0x10)) as char);
             }
-           // largewrite ->
+            // largewrite ->
             '\u{FF21}'..='\u{FF3A}' => {
                 result.push((b'A' + (ch as u32 - 0xFF21) as u8) as char);
             }
-           // smallwrite ->
+            // smallwrite ->
             '\u{FF41}'..='\u{FF5A}' => {
                 result.push((b'a' + (ch as u32 - 0xFF41) as u8) as char);
             }
-           // Number/waitNumber ->
+            // Number/waitNumber ->
             '\u{FF1A}' => result.push(':'),
             '\u{FF1D}' => result.push('='),
 
@@ -118,14 +117,14 @@ fn decode_html_numeric_entities(text: &str) -> String {
 
     while let Some((_i, ch)) = chars.next() {
         if ch == '&' {
-           // Checkwhether &#
+            // Checkwhether &#
             if let Some(&(_, '#')) = chars.peek() {
-                chars.next(); 
+                chars.next();
                 let is_hex = matches!(chars.peek(), Some(&(_, 'x')) | Some(&(_, 'X')));
                 if is_hex {
                     chars.next(); // 'x'/'X'
                 }
-                
+
                 let mut num_str = String::new();
                 let mut found_semi = false;
                 while let Some(&(_, c)) = chars.peek() {
@@ -158,7 +157,7 @@ fn decode_html_numeric_entities(text: &str) -> String {
                         continue;
                     }
                 }
-               // ParseFailed: Output &#...
+                // ParseFailed: Output &#...
                 result.push('&');
                 result.push('#');
                 if is_hex {

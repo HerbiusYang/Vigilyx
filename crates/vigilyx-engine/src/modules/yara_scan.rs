@@ -11,7 +11,7 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use vigilyx_core::models::{decode_base64_bytes, EmailSession};
+use vigilyx_core::models::{EmailSession, decode_base64_bytes};
 
 use crate::context::SecurityContext;
 use crate::error::EngineError;
@@ -134,7 +134,7 @@ impl SecurityModule for YaraScanModule {
             ));
         }
 
-       // match - Build evidence And categories
+        // match - Build evidence And categories
         let mut categories: Vec<String> = Vec::new();
         let mut evidence: Vec<Evidence> = Vec::new();
         let mut max_threat = ThreatLevel::Low;
@@ -163,9 +163,9 @@ impl SecurityModule for YaraScanModule {
         categories.sort();
         categories.dedup();
 
-       // According tomatchType:
-       // - executable_disguise / malware_family / webshell: Malicious,High
-       // - malicious_document: Documentation High (Normal Excel table Contains VBA),downgradeLow
+        // According tomatchType:
+        // - executable_disguise / malware_family / webshell: Malicious,High
+        // - malicious_document: Documentation High (Normal Excel table Contains VBA),downgradeLow
         let has_high_confidence_match = categories
             .iter()
             .any(|c| c == "executable_disguise" || c == "malware_family" || c == "webshell");
@@ -212,8 +212,8 @@ impl SecurityModule for YaraScanModule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::Engine as _;
     use crate::pipeline::context::SecurityContext;
+    use base64::Engine as _;
     use vigilyx_core::models::{EmailAttachment, EmailContent, Protocol};
 
     fn make_engine() -> Arc<YaraEngine> {
@@ -295,7 +295,7 @@ mod tests {
         let module = YaraScanModule::new(make_engine());
         let ctx = SecurityContext::new(make_session(None, vec![]));
         let result = module.analyze(&ctx).await.unwrap();
-       // Empty email - should still complete without error
+        // Empty email - should still complete without error
         assert!(result.threat_level <= ThreatLevel::Safe);
     }
 
@@ -312,7 +312,10 @@ mod tests {
                     .encode(b"%PDF-1.7\nIcedID\nJFIF\n\x1F\x8B\x08\nMZ"),
             ),
         };
-        let ctx = SecurityContext::new(make_session(Some("Normal business email"), vec![attachment]));
+        let ctx = SecurityContext::new(make_session(
+            Some("Normal business email"),
+            vec![attachment],
+        ));
         let result = module.analyze(&ctx).await.unwrap();
         assert!(
             !result.summary.contains("Mal_IcedID_BokBot"),

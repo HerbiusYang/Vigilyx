@@ -16,18 +16,18 @@ use super::DispositionEngine;
 pub(super) fn validate_webhook_url(raw: &str) -> Result<(), String> {
     let parsed = url::Url::parse(raw).map_err(|e| format!("Invalid URL: {e}"))?;
 
-   // Scheme check
+    // Scheme check
     match parsed.scheme() {
         "http" | "https" => {}
         s => return Err(format!("Disallowed scheme: {s}")),
     }
 
-   // SEC: Reject userinfo (user:pass@host can bypass naive host extraction)
+    // SEC: Reject userinfo (user:pass@host can bypass naive host extraction)
     if !parsed.username().is_empty() || parsed.password().is_some() {
         return Err("URL must not contain userinfo (user:pass@)".to_string());
     }
 
-   // Require a non-empty host - url::Url may parse "http:///path" as valid with empty host
+    // Require a non-empty host - url::Url may parse "http:///path" as valid with empty host
     let host = match parsed.host() {
         Some(url::Host::Domain(d)) if !d.is_empty() => d.to_string(),
         Some(url::Host::Ipv4(ip)) => ip.to_string(),
@@ -66,7 +66,7 @@ impl DispositionEngine {
     ) {
         let redacted_url = redact_webhook_url(url);
 
-       // SSRF protection: block internal/private URLs
+        // SSRF protection: block internal/private URLs
         if let Err(reason) = validate_webhook_url(url) {
             warn!(webhook = %redacted_url, "Webhook blocked (SSRF prevention): {}", reason);
             return;
@@ -216,11 +216,7 @@ mod tests {
     #[test]
     fn test_validate_webhook_url_rejects_ipv6_ula() {
         let result = validate_webhook_url("http://[fd00:ec2::254]/webhook");
-        assert!(
-            result.is_err(),
-            "IPv6 ULA should be blocked: {:?}",
-            result
-        );
+        assert!(result.is_err(), "IPv6 ULA should be blocked: {:?}", result);
     }
 
     #[test]

@@ -140,7 +140,9 @@ pub fn resolve_network_host(
         resolved.push(SocketAddr::new(addr.ip(), port));
     }
     if !found_any {
-        return Err(format!("Hostname resolution returned no addresses for {host}"));
+        return Err(format!(
+            "Hostname resolution returned no addresses for {host}"
+        ));
     }
 
     Ok(resolved)
@@ -271,8 +273,7 @@ pub fn validate_internal_service_url(target: &str, allowed_hosts: &[&str]) -> Re
         return Err("Target is empty".to_string());
     }
 
-    let parsed =
-        url::Url::parse(trimmed).map_err(|e| format!("Invalid target URL: {e}"))?;
+    let parsed = url::Url::parse(trimmed).map_err(|e| format!("Invalid target URL: {e}"))?;
     let scheme = parsed.scheme().to_ascii_lowercase();
     if scheme != "http" && scheme != "https" {
         return Err(format!("Disallowed scheme: {scheme}"));
@@ -304,8 +305,8 @@ pub fn validate_internal_service_url(target: &str, allowed_hosts: &[&str]) -> Re
 }
 
 pub fn validate_network_target(target: &str, blocked_hostnames: &[&str]) -> Result<(), String> {
-    let host = extract_host_from_network_target(target)
-        .ok_or_else(|| "Target has no host".to_string())?;
+    let host =
+        extract_host_from_network_target(target).ok_or_else(|| "Target has no host".to_string())?;
     validate_network_host(&host, blocked_hostnames)
 }
 
@@ -339,8 +340,7 @@ pub fn validate_mta_hostname(hostname: &str) -> Result<String, String> {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
         {
             return Err(
-                "MTA hostname labels may only contain ASCII letters, digits, and '-'"
-                    .to_string(),
+                "MTA hostname labels may only contain ASCII letters, digits, and '-'".to_string(),
             );
         }
     }
@@ -354,7 +354,9 @@ mod tests {
 
     #[test]
     fn blocks_ipv6_unique_local_addresses() {
-        assert!(is_sensitive_ip("fd00:ec2::254".parse().expect("valid ipv6")));
+        assert!(is_sensitive_ip(
+            "fd00:ec2::254".parse().expect("valid ipv6")
+        ));
         assert!(is_sensitive_ip("fc00::1".parse().expect("valid ipv6")));
     }
 
@@ -373,24 +375,27 @@ mod tests {
 
     #[test]
     fn rejects_unresolvable_hostnames() {
-        let result = validate_network_target("definitely-does-not-exist.invalid:25", DEFAULT_BLOCKED_HOSTNAMES);
+        let result = validate_network_target(
+            "definitely-does-not-exist.invalid:25",
+            DEFAULT_BLOCKED_HOSTNAMES,
+        );
         assert!(result.is_err(), "unresolvable hostnames must fail closed");
     }
 
     #[test]
     fn blocks_localhost_with_trailing_dot() {
         let result = validate_network_target("localhost.:25", DEFAULT_BLOCKED_HOSTNAMES);
-        assert!(result.is_err(), "trailing dots must not bypass host blocking");
+        assert!(
+            result.is_err(),
+            "trailing dots must not bypass host blocking"
+        );
     }
 
     #[test]
     fn allows_internal_service_url() {
         assert!(
-            validate_internal_service_url(
-                "http://vigilyx-ai:8900",
-                DEFAULT_INTERNAL_SERVICE_HOSTS
-            )
-            .is_ok()
+            validate_internal_service_url("http://vigilyx-ai:8900", DEFAULT_INTERNAL_SERVICE_HOSTS)
+                .is_ok()
         );
         assert!(
             validate_internal_service_url("http://[::1]:8900", DEFAULT_INTERNAL_SERVICE_HOSTS)
@@ -407,9 +412,7 @@ mod tests {
         assert!(
             validate_internal_service_url("ftp://ai:21", DEFAULT_INTERNAL_SERVICE_HOSTS).is_err()
         );
-        assert!(
-            validate_internal_service_url("ai:8900", DEFAULT_INTERNAL_SERVICE_HOSTS).is_err()
-        );
+        assert!(validate_internal_service_url("ai:8900", DEFAULT_INTERNAL_SERVICE_HOSTS).is_err());
     }
 
     #[test]
@@ -438,14 +441,14 @@ mod tests {
 
     #[test]
     fn mail_relay_resolution_returns_private_ipv4_socket_addr() {
-        let addrs = resolve_mail_relay_host(
-            "10.1.246.33",
-            2525,
-            DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES,
-        )
-        .expect("private relay IP should be allowed");
+        let addrs =
+            resolve_mail_relay_host("10.1.246.33", 2525, DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES)
+                .expect("private relay IP should be allowed");
 
-        assert_eq!(addrs, vec!["10.1.246.33:2525".parse().expect("valid socket")]);
+        assert_eq!(
+            addrs,
+            vec!["10.1.246.33:2525".parse().expect("valid socket")]
+        );
     }
 
     #[test]
@@ -505,7 +508,10 @@ mod tests {
             validate_mta_hostname("Mail-Gateway.Example.COM.").as_deref(),
             Ok("mail-gateway.example.com")
         );
-        assert_eq!(validate_mta_hostname("vigilyx-mta").as_deref(), Ok("vigilyx-mta"));
+        assert_eq!(
+            validate_mta_hostname("vigilyx-mta").as_deref(),
+            Ok("vigilyx-mta")
+        );
     }
 
     #[test]

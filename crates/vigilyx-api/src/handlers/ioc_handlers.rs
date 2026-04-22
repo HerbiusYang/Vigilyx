@@ -22,9 +22,7 @@ use super::ApiResponse;
 use super::security::publish_engine_reload;
 use crate::AppState;
 
-
 // Request/response types
-
 
 #[derive(Debug, Deserialize)]
 pub struct IocQueryParams {
@@ -51,7 +49,7 @@ pub struct AddIocRequest {
     #[serde(default = "default_confidence")]
     pub confidence: f64,
     pub description: Option<String>,
-   /// Attack type: phishing, spoofing, malware, bec, spam, unknown
+    /// Attack type: phishing, spoofing, malware, bec, spam, unknown
     #[serde(default)]
     pub attack_type: String,
 }
@@ -66,7 +64,7 @@ fn default_confidence() -> f64 {
 /// IOC time
 #[derive(Debug, Deserialize)]
 pub struct ExtendIocRequest {
-   /// Day (Default 30)
+    /// Day (Default 30)
     #[serde(default = "default_extend_days")]
     pub days: i64,
 }
@@ -84,13 +82,11 @@ pub struct BatchImportIocRequest {
 /// Export IOC Queryparameter
 #[derive(Debug, Deserialize)]
 pub struct ExportIocParams {
-   /// verdict (Such as "malicious,suspicious")
+    /// verdict (Such as "malicious,suspicious")
     pub verdict: Option<String>,
 }
 
-
 // Process
-
 
 /// IOC
 pub async fn list_ioc(
@@ -247,7 +243,7 @@ pub async fn export_ioc(
             ],
             csv,
         ),
-       // SEC: client Data error (CWE-209)
+        // SEC: client Data error (CWE-209)
         Err(e) => {
             tracing::error!("IOC 导出failed: {}", e);
             (

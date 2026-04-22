@@ -22,30 +22,28 @@ use finders::*;
 use normalize::normalize_for_dlp;
 use patterns::*;
 
-
 // DLP Result
-
 
 /// DLP Result
 #[derive(Debug, Clone, Default)]
 pub struct DlpScanResult {
-   /// match ofSensitivedataTypeList
+    /// match ofSensitivedataTypeList
     pub matches: Vec<String>,
-   /// match (Type -> matchvalueList)
+    /// match (Type -> matchvalueList)
     pub details: Vec<(String, Vec<String>)>,
 }
 
 impl DlpScanResult {
-   /// whether DLP Medium
+    /// whether DLP Medium
     pub fn is_empty(&self) -> bool {
         self.matches.is_empty()
     }
 
-   /// Statistics JR/T 0197-2020 level ofmatch total
-    
-   /// `details` Medium modeofmatchInstance, Deduplicate ofmode Class.
-   /// if:1 FileContains 30 Mobile phoneNumber(C3) + 5 CVV(C4),
-   /// `count_items_at_level(3)` Return 35,`count_items_at_level(4)` Return 5.
+    /// Statistics JR/T 0197-2020 level ofmatch total
+
+    /// `details` Medium modeofmatchInstance, Deduplicate ofmode Class.
+    /// if:1 FileContains 30 Mobile phoneNumber(C3) + 5 CVV(C4),
+    /// `count_items_at_level(3)` Return 35,`count_items_at_level(4)` Return 5.
     pub fn count_items_at_level(&self, min_level: u8) -> usize {
         self.details
             .iter()
@@ -54,15 +52,15 @@ impl DlpScanResult {
             .sum()
     }
 
-   /// According to JR/T level match Count
-    
-   /// Return (level -> item_count) Mapping, packetContains matchoflevel.
+    /// According to JR/T level match Count
+
+    /// Return (level -> item_count) Mapping, packetContains matchoflevel.
     pub fn items_by_jrt_level(&self) -> std::collections::HashMap<u8, usize> {
         let mut counts = std::collections::HashMap::new();
         for (name, values) in &self.details {
             let level = crate::data_security::jrt::jrt_level(name);
             if level > 0 {
-               *counts.entry(level).or_insert(0) += values.len();
+                *counts.entry(level).or_insert(0) += values.len();
             }
         }
         counts
@@ -75,9 +73,7 @@ impl DlpScanResult {
 /// unbounded CPU/memory sink. Truncation is UTF-8 safe in `scan_text()`.
 const DLP_MAX_SCAN_LEN: usize = 512 * 1024; // 512 KiB
 
-
 // function (Use RegexSet Performance notes)
-
 
 /// From HTTP SessionMediumExtractUsed for DLP ofText
 
@@ -85,23 +81,23 @@ const DLP_MAX_SCAN_LEN: usize = 512 * 1024; // 512 KiB
 /// Avoid JSON Yuandata(id, CSS class name) match.
 /// Coremail ConnectReturn body.
 pub fn extract_dlp_text(body: &str, uri: &str) -> String {
-   // Checkwhether Coremail compose URI
+    // Checkwhether Coremail compose URI
     if super::coremail::is_coremail_compose_uri(uri)
         && let Some(content) = super::coremail::extract_content_for_dlp(body)
     {
         return content;
     }
-   // Coremail ExtractFailed,Return body
+    // Coremail ExtractFailed,Return body
     body.to_string()
 }
 
 /// Extractuser: priority session.detected_user (Cookie),fallback Coremail JSON body of attrs.account
 pub fn extract_user(session: &vigilyx_core::HttpSession) -> Option<String> {
-   // priority Cookie Extractofuser
+    // priority Cookie Extractofuser
     if session.detected_user.is_some() {
         return session.detected_user.clone();
     }
-   // Coremail compose URI -> From JSON body Extract attrs.account
+    // Coremail compose URI -> From JSON body Extract attrs.account
     if super::coremail::is_coremail_compose_uri(&session.uri)
         && let Some(ref body) = session.request_body
     {
@@ -135,7 +131,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
     let normalized = normalize_for_dlp(text);
     let text = normalized.as_str();
 
-   // RegexSet: 1Time/Count verdict modepossibly Medium
+    // RegexSet: 1Time/Count verdict modepossibly Medium
     let hits = DLP_REGEX_SET.matches(text);
     if !hits.matched_any() {
         return DlpScanResult::default();
@@ -143,7 +139,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
 
     let mut result = DlpScanResult::default();
 
-   // Card number (idx 0) - Same Used forBank Deduplicate
+    // Card number (idx 0) - Same Used forBank Deduplicate
     let cc_raw_digits = if hits.matched(0) {
         let (cc_matches, raw) = find_credit_cards(text);
         if !cc_matches.is_empty() {
@@ -155,7 +151,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         HashSet::new()
     };
 
-   // ID cardNumber (idx 1)
+    // ID cardNumber (idx 1)
     if hits.matched(1) {
         let id_matches = find_chinese_ids(text);
         if !id_matches.is_empty() {
@@ -164,7 +160,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // Mobile phoneNumber (idx 2) ->= 3 SameNumberCode/Digit Recording, Avoid Mobile phoneNumber
+    // Mobile phoneNumber (idx 2) ->= 3 SameNumberCode/Digit Recording, Avoid Mobile phoneNumber
     if hits.matched(2) {
         let phone_matches = find_chinese_phones(text);
         if phone_matches.len() >= 3 {
@@ -175,7 +171,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // BankCard number (idx 3) - Excludealreadymatchof Card number (P1.1 Deduplicate)
+    // BankCard number (idx 3) - Excludealreadymatchof Card number (P1.1 Deduplicate)
     if hits.matched(3) {
         let bank_matches = find_bank_cards(text, &cc_raw_digits);
         if !bank_matches.is_empty() {
@@ -184,7 +180,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // (idx 4)
+    // (idx 4)
     if hits.matched(4) {
         let addr_matches = find_chinese_addresses(text);
         if !addr_matches.is_empty() {
@@ -195,7 +191,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // email (idx 5) ->= 3 Sameemail Recording
+    // email (idx 5) ->= 3 Sameemail Recording
     if hits.matched(5) {
         let email_matches = find_emails(text);
         if email_matches.len() >= 3 {
@@ -206,7 +202,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // Number (idx 6)
+    // Number (idx 6)
     if hits.matched(6) {
         let passport_matches = find_passports(text);
         if !passport_matches.is_empty() {
@@ -217,7 +213,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // 1 Code/Digit (idx 7)
+    // 1 Code/Digit (idx 7)
     if hits.matched(7) {
         let scc_matches = find_social_credit_codes(text);
         if !scc_matches.is_empty() {
@@ -228,7 +224,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // Password/ (idx 8)
+    // Password/ (idx 8)
     if hits.matched(8) {
         let cred_matches = find_credentials(text);
         if !cred_matches.is_empty() {
@@ -239,7 +235,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // SWIFT Code/Digit (idx 9)
+    // SWIFT Code/Digit (idx 9)
     if hits.matched(9) {
         let swift_matches = find_swift_codes(text);
         if !swift_matches.is_empty() {
@@ -250,7 +246,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // CVV/SecurityCode/Digit (idx 10)
+    // CVV/SecurityCode/Digit (idx 10)
     if hits.matched(10) {
         let cvv_matches = find_cvv_codes(text);
         if !cvv_matches.is_empty() {
@@ -259,9 +255,9 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // line Add
+    // line Add
 
-   // Number (idx 11)
+    // Number (idx 11)
     if hits.matched(11) {
         let tax_matches = find_tax_ids(text);
         if !tax_matches.is_empty() {
@@ -270,7 +266,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // IBAN BankAccount number (idx 12)
+    // IBAN BankAccount number (idx 12)
     if hits.matched(12) {
         let iban_matches = find_ibans(text);
         if !iban_matches.is_empty() {
@@ -279,7 +275,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // large Amount (idx 13) ->= 2 Recording, AvoidbodyMedium Amount
+    // large Amount (idx 13) ->= 2 Recording, AvoidbodyMedium Amount
     if hits.matched(13) {
         let amount_matches = find_large_amounts(text);
         if amount_matches.len() >= 2 {
@@ -290,7 +286,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // BankAccount number (Context) (idx 14)
+    // BankAccount number (Context) (idx 14)
     if hits.matched(14) {
         let acct_matches = find_bank_accounts(text);
         if !acct_matches.is_empty() {
@@ -301,7 +297,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // Policy number/ SameNumber (idx 15)
+    // Policy number/ SameNumber (idx 15)
     if hits.matched(15) {
         let contract_matches = find_contract_numbers(text);
         if !contract_matches.is_empty() {
@@ -312,9 +308,9 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // JR/T 0197-2020 mode (idx 16-29)
+    // JR/T 0197-2020 mode (idx 16-29)
 
-   // (idx 16) - C4, At least 2 SameKeywords
+    // (idx 16) - C4, At least 2 SameKeywords
     if hits.matched(16) {
         let matches = find_keyword_matches(&RE_BIOMETRIC, text, 2);
         if !matches.is_empty() {
@@ -323,7 +319,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // (idx 17) - C4, At least 2 SameKeywords
+    // (idx 17) - C4, At least 2 SameKeywords
     if hits.matched(17) {
         let matches = find_keyword_matches(&RE_MEDICAL, text, 2);
         if !matches.is_empty() {
@@ -332,7 +328,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // Info (idx 18) - C3
+    // Info (idx 18) - C3
     if hits.matched(18) {
         let matches = find_vehicle_info(text);
         if !matches.is_empty() {
@@ -341,7 +337,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // Info (idx 19) - C3
+    // Info (idx 19) - C3
     if hits.matched(19) {
         let matches = find_keyword_matches(&RE_PROPERTY, text, 1);
         if !matches.is_empty() {
@@ -350,7 +346,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // / (idx 20) - C3
+    // / (idx 20) - C3
     if hits.matched(20) {
         let matches = find_context_matches(&RE_INCOME, text);
         if !matches.is_empty() {
@@ -359,7 +355,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // bit / (idx 21) - C3
+    // bit / (idx 21) - C3
     if hits.matched(21) {
         let matches = find_context_matches(&RE_GEO, text);
         if !matches.is_empty() {
@@ -368,7 +364,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // VerifyCode/Digit/OTP (idx 22) - C3
+    // VerifyCode/Digit/OTP (idx 22) - C3
     if hits.matched(22) && !result.matches.contains(&"cvv_code".to_string()) {
         let matches = find_context_matches(&RE_OTP, text);
         if !matches.is_empty() {
@@ -379,7 +375,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // / (idx 23) - C3
+    // / (idx 23) - C3
     if hits.matched(23) {
         let matches = find_context_matches(&RE_LOAN, text);
         if !matches.is_empty() {
@@ -390,7 +386,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // (idx 24) - C3
+    // (idx 24) - C3
     if hits.matched(24) {
         let matches = find_context_matches(&RE_INSURANCE, text);
         if !matches.is_empty() {
@@ -401,7 +397,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // (idx 25) - C3
+    // (idx 25) - C3
     if hits.matched(25) {
         let matches = find_context_matches(&RE_FAMILY, text);
         if !matches.is_empty() {
@@ -412,7 +408,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // Info (idx 26) - C2
+    // Info (idx 26) - C2
     if hits.matched(26) {
         let matches = find_context_matches(&RE_EMPLOYEE, text);
         if !matches.is_empty() {
@@ -421,7 +417,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // Recording (idx 27) - C2, At least 2 SameKeywords
+    // Recording (idx 27) - C2, At least 2 SameKeywords
     if hits.matched(27) {
         let matches = find_keyword_matches(&RE_JUDICIAL, text, 2);
         if !matches.is_empty() {
@@ -432,7 +428,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // Info (idx 28) - C2
+    // Info (idx 28) - C2
     if hits.matched(28) {
         let matches = find_context_matches(&RE_EDUCATION, text);
         if !matches.is_empty() {
@@ -441,7 +437,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         }
     }
 
-   // Execute Number (idx 29) - C2
+    // Execute Number (idx 29) - C2
     if hits.matched(29) {
         let matches = find_context_matches(&RE_BIZ_LICENSE, text);
         if !matches.is_empty() {
@@ -454,7 +450,6 @@ pub fn scan_text(text: &str) -> DlpScanResult {
 
     result
 }
-
 
 #[cfg(test)]
 mod tests;

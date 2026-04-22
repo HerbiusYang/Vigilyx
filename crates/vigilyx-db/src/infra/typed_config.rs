@@ -38,7 +38,10 @@ impl VigilDb {
     ///
     /// Returns `None` if the singleton row does not exist.
     async fn get_typed_config_raw(&self, table: &str) -> Result<Option<(serde_json::Value, i64)>> {
-        assert!(ALLOWED_TABLES.contains(&table), "Invalid config table name: {table}");
+        assert!(
+            ALLOWED_TABLES.contains(&table),
+            "Invalid config table name: {table}"
+        );
         let sql = format!("SELECT config, version FROM {table} WHERE id = 1");
         let row: Option<(serde_json::Value, i64)> =
             sqlx::query_as(&sql).fetch_optional(&self.pool).await?;
@@ -49,12 +52,11 @@ impl VigilDb {
     ///
     /// Atomically increments `version` and returns the new version.
     /// Creates the singleton row if it doesn't exist.
-    async fn set_typed_config_raw(
-        &self,
-        table: &str,
-        config: &serde_json::Value,
-    ) -> Result<i64> {
-        assert!(ALLOWED_TABLES.contains(&table), "Invalid config table name: {table}");
+    async fn set_typed_config_raw(&self, table: &str, config: &serde_json::Value) -> Result<i64> {
+        assert!(
+            ALLOWED_TABLES.contains(&table),
+            "Invalid config table name: {table}"
+        );
         let sql = format!(
             r#"
             INSERT INTO {table} (id, version, config, updated_at)
@@ -76,7 +78,9 @@ impl VigilDb {
     // ── Domain-specific typed config accessors ──
 
     /// Get pipeline config (typed).
-    pub async fn get_pipeline_config_v2(&self) -> Result<Option<VersionedConfig<serde_json::Value>>> {
+    pub async fn get_pipeline_config_v2(
+        &self,
+    ) -> Result<Option<VersionedConfig<serde_json::Value>>> {
         Ok(self
             .get_typed_config_raw("config_security_pipeline")
             .await?
@@ -90,7 +94,9 @@ impl VigilDb {
     }
 
     /// Get AI service config (typed).
-    pub async fn get_ai_service_config_v2(&self) -> Result<Option<VersionedConfig<serde_json::Value>>> {
+    pub async fn get_ai_service_config_v2(
+        &self,
+    ) -> Result<Option<VersionedConfig<serde_json::Value>>> {
         Ok(self
             .get_typed_config_raw("config_ai_service")
             .await?
@@ -103,7 +109,9 @@ impl VigilDb {
     }
 
     /// Get email alert config (typed).
-    pub async fn get_email_alert_config_v2(&self) -> Result<Option<VersionedConfig<serde_json::Value>>> {
+    pub async fn get_email_alert_config_v2(
+        &self,
+    ) -> Result<Option<VersionedConfig<serde_json::Value>>> {
         Ok(self
             .get_typed_config_raw("config_email_alert")
             .await?
@@ -117,7 +125,9 @@ impl VigilDb {
     }
 
     /// Get sniffer config (typed).
-    pub async fn get_sniffer_config_v2(&self) -> Result<Option<VersionedConfig<serde_json::Value>>> {
+    pub async fn get_sniffer_config_v2(
+        &self,
+    ) -> Result<Option<VersionedConfig<serde_json::Value>>> {
         Ok(self
             .get_typed_config_raw("config_sniffer")
             .await?
@@ -143,7 +153,9 @@ impl VigilDb {
     }
 
     /// Get time policy config (typed).
-    pub async fn get_time_policy_config_v2(&self) -> Result<Option<VersionedConfig<serde_json::Value>>> {
+    pub async fn get_time_policy_config_v2(
+        &self,
+    ) -> Result<Option<VersionedConfig<serde_json::Value>>> {
         Ok(self
             .get_typed_config_raw("config_time_policy")
             .await?
@@ -157,7 +169,9 @@ impl VigilDb {
     }
 
     /// Get deployment config (typed).
-    pub async fn get_deployment_config_v2(&self) -> Result<Option<VersionedConfig<serde_json::Value>>> {
+    pub async fn get_deployment_config_v2(
+        &self,
+    ) -> Result<Option<VersionedConfig<serde_json::Value>>> {
         Ok(self
             .get_typed_config_raw("config_deployment")
             .await?
@@ -170,7 +184,9 @@ impl VigilDb {
     }
 
     /// Get internal domains (typed).
-    pub async fn get_internal_domains_v2(&self) -> Result<Option<VersionedConfig<serde_json::Value>>> {
+    pub async fn get_internal_domains_v2(
+        &self,
+    ) -> Result<Option<VersionedConfig<serde_json::Value>>> {
         Ok(self
             .get_typed_config_raw("config_internal_domains")
             .await?
@@ -216,11 +232,10 @@ impl VigilDb {
 
     /// Get the current token version (for JWT invalidation).
     pub async fn get_auth_token_version(&self) -> Result<i64> {
-        let row: Option<(i64,)> = sqlx::query_as(
-            "SELECT token_version FROM auth_credentials WHERE id = 1",
-        )
-        .fetch_optional(&self.pool)
-        .await?;
+        let row: Option<(i64,)> =
+            sqlx::query_as("SELECT token_version FROM auth_credentials WHERE id = 1")
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(row.map(|(v,)| v).unwrap_or(1))
     }
 }

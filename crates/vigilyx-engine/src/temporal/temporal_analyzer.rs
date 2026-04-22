@@ -54,48 +54,48 @@ pub struct GraphAnomalyResult {
 /// Result of temporal analysis for a single email.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemporalResult {
-   /// Sender entity key
+    /// Sender entity key
     pub sender_key: String,
-   /// CUSUM alarm status
+    /// CUSUM alarm status
     pub cusum_alarm: bool,
-   /// CUSUM S value
+    /// CUSUM S value
     pub cusum_s_pos: f64,
-   /// EWMA drift score
+    /// EWMA drift score
     pub ewma_drift_score: f64,
-   /// Whether EWMA drift was detected
+    /// Whether EWMA drift was detected
     pub ewma_drifting: bool,
-   /// Accumulated entity risk for sender
+    /// Accumulated entity risk for sender
     pub sender_risk: f64,
-   /// Whether sender is on watchlist
+    /// Whether sender is on watchlist
     pub sender_watchlisted: bool,
-   /// HMM attack phase inference (5-state)
+    /// HMM attack phase inference (5-state)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hmm_phase: Option<HmmPhaseResult>,
-   /// Communication graph anomaly
+    /// Communication graph anomaly
     #[serde(skip_serializing_if = "Option::is_none")]
     pub graph_anomaly: Option<GraphAnomalyResult>,
-   /// Hawkes self-excitation process result (v5.0)
+    /// Hawkes self-excitation process result (v5.0)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hawkes: Option<HawkesResult>,
-   /// Temporal risk contribution (max of all temporal signals)
+    /// Temporal risk contribution (max of all temporal signals)
     pub temporal_risk: f64,
-   /// Whether temporal analysis upgraded the risk
+    /// Whether temporal analysis upgraded the risk
     pub risk_upgraded: bool,
 }
 
 /// Extended observation context for temporal analysis.
 pub struct TemporalObservation<'a> {
-   /// Sender email
+    /// Sender email
     pub sender: &'a str,
-   /// Recipients
+    /// Recipients
     pub recipients: &'a [String],
-   /// D-S fused risk score
+    /// D-S fused risk score
     pub risk_single: f64,
-   /// Uncertainty from D-S fusion (u component)
+    /// Uncertainty from D-S fusion (u component)
     pub u_final: f64,
-   /// Conflict factor K
+    /// Conflict factor K
     pub k_conflict: f64,
-   /// Content similarity delta (0=identical, 1=completely different)
+    /// Content similarity delta (0=identical, 1=completely different)
     pub content_similarity_delta: f64,
 }
 
@@ -112,7 +112,7 @@ pub struct TemporalAnalyzer {
     ewma_params: EwmaParams,
     entity_params: EntityRiskParams,
     graph_params: GraphParams,
-   /// Track last email timestamp per sender for HMM interval calculation
+    /// Track last email timestamp per sender for HMM interval calculation
     last_email_ts: Arc<DashMap<String, std::time::Instant, FxBuildHasher>>,
 }
 
@@ -123,7 +123,7 @@ impl Default for TemporalAnalyzer {
 }
 
 impl TemporalAnalyzer {
-   /// Create a new temporal analyzer with default parameters.
+    /// Create a new temporal analyzer with default parameters.
     pub fn new() -> Self {
         Self {
             cusum_states: Arc::new(DashMap::with_hasher(FxBuildHasher::default())),
@@ -140,7 +140,7 @@ impl TemporalAnalyzer {
         }
     }
 
-   /// Simple analysis (backward compatible) - sender + risk_single only.
+    /// Simple analysis (backward compatible) - sender + risk_single only.
     pub async fn analyze(&self, sender: &str, risk_single: f64) -> TemporalResult {
         let obs = TemporalObservation {
             sender,
@@ -153,14 +153,14 @@ impl TemporalAnalyzer {
         self.analyze_full(&obs).await
     }
 
-   /// Full analysis with all observation context.
+    /// Full analysis with all observation context.
     pub async fn analyze_full(&self, obs: &TemporalObservation<'_>) -> TemporalResult {
         let sender_lower = obs.sender.to_ascii_lowercase();
         let mut sender_key = String::with_capacity(7 + sender_lower.len());
         sender_key.push_str("sender:");
         sender_key.push_str(&sender_lower);
 
-       // 1-3. CUSUM + EWMA + Entity (DashMap per-shard locks, no whole-map lock needed)
+        // 1-3. CUSUM + EWMA + Entity (DashMap per-shard locks, no whole-map lock needed)
         let cusum_result = {
             let mut entry = self
                 .cusum_states
@@ -198,7 +198,7 @@ impl TemporalAnalyzer {
             );
         }
 
-       // 4. Timestamp + HMM + Hawkes time (DashMap per-key lock)
+        // 4. Timestamp + HMM + Hawkes time (DashMap per-key lock)
         let now = std::time::Instant::now();
         let (time_interval_hours, now_hours) = {
             let interval = self
@@ -214,14 +214,14 @@ impl TemporalAnalyzer {
             self.last_email_ts.insert(sender_key.clone(), now);
             (interval, elapsed)
         };
-       // Lock released - no second acquisition needed for Hawkes
+        // Lock released - no second acquisition needed for Hawkes
 
-       // 5. HMM attack phase (per sender-recipient pair)
-       // Pre-allocate pair_key buffer - reused across HMM + Hawkes loops
+        // 5. HMM attack phase (per sender-recipient pair)
+        // Pre-allocate pair_key buffer - reused across HMM + Hawkes loops
         let prefix_len = sender_lower.len() + "→".len();
         let mut pair_key_buf = String::with_capacity(prefix_len + 32);
 
-       // Pre-compute lowercased recipients once (reused by HMM + Hawkes + CommGraph)
+        // Pre-compute lowercased recipients once (reused by HMM + Hawkes + CommGraph)
         let recipients_lower: Vec<String> = obs
             .recipients
             .iter()
@@ -278,7 +278,7 @@ impl TemporalAnalyzer {
             None
         };
 
-       // 6. Communication graph
+        // 6. Communication graph
         let graph_anomaly = if !obs.recipients.is_empty() {
             let result = {
                 let mut graph = self.comm_graph.write().await;
@@ -308,7 +308,7 @@ impl TemporalAnalyzer {
             None
         };
 
-       // 7. Hawkes self-excitation (reuses now_hours from step 4, pair_key_buf from step 5)
+        // 7. Hawkes self-excitation (reuses now_hours from step 4, pair_key_buf from step 5)
         let hawkes_result = if !obs.recipients.is_empty() {
             let mut worst_hawkes: Option<HawkesResult> = None;
             {
@@ -319,10 +319,7 @@ impl TemporalAnalyzer {
                     pair_key_buf.push_str(recipient_lower);
 
                     let result = {
-                        let mut entry = self
-                            .hawkes_states
-                            .entry(pair_key_buf.clone())
-                            .or_default();
+                        let mut entry = self.hawkes_states.entry(pair_key_buf.clone()).or_default();
                         entry.value_mut().observe(now_hours, obs.risk_single)
                     };
 
@@ -347,16 +344,13 @@ impl TemporalAnalyzer {
             worst_hawkes
         } else {
             let result = {
-                let mut entry = self
-                    .hawkes_states
-                    .entry(sender_key.clone())
-                    .or_default();
+                let mut entry = self.hawkes_states.entry(sender_key.clone()).or_default();
                 entry.value_mut().observe(now_hours, obs.risk_single)
             };
             Some(result)
         };
 
-       // 7. Composite temporal risk
+        // 7. Composite temporal risk
         let cusum_risk: f64 = if cusum_result.alarm { 0.3 } else { 0.0 };
         let ewma_risk: f64 = if ewma_result.drifting {
             (ewma_result.drift_score * 0.1).min(0.3)
@@ -425,7 +419,7 @@ impl TemporalAnalyzer {
         }
     }
 
-   /// Get the current watchlist (entities above watchlist threshold).
+    /// Get the current watchlist (entities above watchlist threshold).
     pub async fn get_watchlist(&self) -> Vec<(String, f64)> {
         self.entity_states
             .iter()
@@ -434,7 +428,7 @@ impl TemporalAnalyzer {
             .collect()
     }
 
-   /// Get CUSUM alarm list.
+    /// Get CUSUM alarm list.
     pub async fn get_cusum_alarms(&self) -> Vec<String> {
         self.cusum_states
             .iter()
@@ -443,7 +437,7 @@ impl TemporalAnalyzer {
             .collect()
     }
 
-   /// Export all temporal state for DB persistence.
+    /// Export all temporal state for DB persistence.
     pub async fn export_states(
         &self,
     ) -> (Vec<CusumState>, Vec<DualEwmaState>, Vec<EntityRiskState>) {
@@ -465,7 +459,7 @@ impl TemporalAnalyzer {
         (cusum, ewma, entity)
     }
 
-   /// Import temporal state from DB (called on startup).
+    /// Import temporal state from DB (called on startup).
     pub async fn import_states(
         &self,
         cusum: Vec<CusumState>,
@@ -483,12 +477,12 @@ impl TemporalAnalyzer {
         }
     }
 
-   /// Export communication graph edges.
+    /// Export communication graph edges.
     pub async fn export_graph_edges(&self) -> Vec<super::comm_graph::CommEdge> {
         self.comm_graph.read().await.export_edges()
     }
 
-   /// Import communication graph edges from DB.
+    /// Import communication graph edges from DB.
     pub async fn import_graph_edges(&self, edges: Vec<super::comm_graph::CommEdge>) {
         self.comm_graph.write().await.import_edges(edges);
     }

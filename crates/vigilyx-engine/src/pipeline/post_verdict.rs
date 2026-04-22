@@ -55,7 +55,7 @@ pub(crate) async fn run_post_verdict(
 ) {
     let session_id = session.id;
 
-   // 1. Store verdict and results to DB
+    // 1. Store verdict and results to DB
     if let Err(e) = ctx.db.insert_verdict(verdict_result).await {
         error!(session_id = %session_id, "Failed to store verdict: {}", e);
     }
@@ -69,9 +69,9 @@ pub(crate) async fn run_post_verdict(
         error!(session_id = %session_id, "Failed to store module results: {}", e);
     }
 
-   // 2. Auto-record IOC if threat_level>= High
-   // Security: UPSERT Use Connect (MAX),confidence downgrade;
-   // auto IOC 30 DayExpired;admin_clean Name override.
+    // 2. Auto-record IOC if threat_level>= High
+    // Security: UPSERT Use Connect (MAX),confidence downgrade;
+    // auto IOC 30 DayExpired;admin_clean Name override.
     ctx.ioc
         .auto_record_from_verdict(session, verdict_result)
         .await;
@@ -96,9 +96,7 @@ pub(crate) async fn run_post_verdict(
         )
     {
         ctx.ioc
-            .auto_record_impersonation_domain(
-                session, sender, target, sim_type, score,
-            )
+            .auto_record_impersonation_domain(session, sender, target, sim_type, score)
             .await;
     }
 
@@ -108,7 +106,7 @@ pub(crate) async fn run_post_verdict(
         ctx.ioc.auto_record_nonsensical(session, sem_result).await;
     }
 
-   // 3. Broadcast verdict via WebSocket
+    // 3. Broadcast verdict via WebSocket
     let summary = SecurityVerdictSummary {
         verdict_id: verdict_result.id,
         session_id: verdict_result.session_id,
@@ -122,13 +120,13 @@ pub(crate) async fn run_post_verdict(
     };
     let _ = ctx.ws_tx.send(WsMessage::SecurityVerdict(summary));
 
-   // 4. Evaluate disposition rules + email alerts
+    // 4. Evaluate disposition rules + email alerts
     ctx.disposition.evaluate(verdict_result, session).await;
 
-   // 5. Temporal analysis (spawned as background sub-task)
+    // 5. Temporal analysis (spawned as background sub-task)
     spawn_temporal_analysis(ctx, session, verdict_result);
 
-   // 6. Periodic temporal state flush
+    // 6. Periodic temporal state flush
     let count = ctx.verdict_count.fetch_add(1, Ordering::Relaxed) + 1;
     if count.is_multiple_of(ctx.temporal_flush_interval) {
         let temporal = Arc::clone(&ctx.temporal);
@@ -197,7 +195,7 @@ fn spawn_temporal_analysis(
         .and_then(|fd| fd.k_cross);
 
     tokio::spawn(async move {
-       // Limit concurrent temporal tasks to prevent resource exhaustion
+        // Limit concurrent temporal tasks to prevent resource exhaustion
         let _temporal_permit = match temporal_sem.acquire().await {
             Ok(p) => p,
             Err(_) => return, // semaphore closed

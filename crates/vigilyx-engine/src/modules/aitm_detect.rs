@@ -119,8 +119,8 @@ fn url_domain(url: &str) -> Option<String> {
         .replace("&amp;", "&")
         .replace("&lt;", "<")
         .replace("&gt;", ">");
-    let unwrapped = crate::modules::link_scan::unwrap_mail_security_gateway_target(&decoded)
-        .unwrap_or(decoded);
+    let unwrapped =
+        crate::modules::link_scan::unwrap_mail_security_gateway_target(&decoded).unwrap_or(decoded);
     extract_domain_from_url(&unwrapped.to_lowercase())
 }
 
@@ -130,8 +130,8 @@ fn url_path_query(url: &str) -> Option<String> {
         .replace("&amp;", "&")
         .replace("&lt;", "<")
         .replace("&gt;", ">");
-    let unwrapped = crate::modules::link_scan::unwrap_mail_security_gateway_target(&decoded)
-        .unwrap_or(decoded);
+    let unwrapped =
+        crate::modules::link_scan::unwrap_mail_security_gateway_target(&decoded).unwrap_or(decoded);
     let lower = unwrapped.to_lowercase();
     let after_scheme = lower
         .strip_prefix("https://")
@@ -206,10 +206,7 @@ fn detect_aitm_domain_patterns(
             } else {
                 score += 0.25;
                 findings.push((
-                    format!(
-                        "URL hosted on known AitM proxy platform: {}",
-                        domain
-                    ),
+                    format!("URL hosted on known AitM proxy platform: {}", domain),
                     "aitm_platform_domain".to_string(),
                 ));
             }
@@ -272,9 +269,8 @@ fn detect_oauth_redirect_anomalies(
                     // If the redirect target is not an official SSO domain
                     // and the main URL IS an official login page → suspicious
                     let main_domain = extract_domain_from_url(&effective);
-                    let main_is_official = main_domain
-                        .as_deref()
-                        .is_some_and(is_official_sso_domain);
+                    let main_is_official =
+                        main_domain.as_deref().is_some_and(is_official_sso_domain);
 
                     if main_is_official && !is_official_sso_domain(redir_domain) {
                         score += 0.40;
@@ -381,7 +377,12 @@ fn detect_mfa_bait_text(
     findings.push((
         format!(
             "Email contains MFA/2FA bait phrases: [{}]",
-            mfa_hits.iter().take(5).map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+            mfa_hits
+                .iter()
+                .take(5)
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         "aitm_mfa_bait".to_string(),
     ));
@@ -400,7 +401,12 @@ fn detect_mfa_bait_text(
         findings.push((
             format!(
                 "MFA bait combined with urgency language: [{}]",
-                urgency_hits.iter().take(3).map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                urgency_hits
+                    .iter()
+                    .take(3)
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
             "aitm_mfa_urgency".to_string(),
         ));
@@ -529,14 +535,17 @@ fn detect_brand_impersonation_login(
         let brands = md.get_structured("aitm_brand_impersonation_targets");
         let brand_arr = brands.and_then(|v| v.as_array()).unwrap_or(&empty_vec);
         for brand_obj in brand_arr {
-            let brand_keyword = brand_obj.get("brand").and_then(|v| v.as_str()).unwrap_or("");
-            let domain_values = brand_obj.get("legitimate_domains")
+            let brand_keyword = brand_obj
+                .get("brand")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let domain_values = brand_obj
+                .get("legitimate_domains")
                 .or_else(|| brand_obj.get("domains"))
-                .and_then(|v| v.as_array()).unwrap_or(&empty_vec);
-            let legitimate_suffixes: Vec<&str> = domain_values
-                .iter()
-                .filter_map(|v| v.as_str())
-                .collect();
+                .and_then(|v| v.as_array())
+                .unwrap_or(&empty_vec);
+            let legitimate_suffixes: Vec<&str> =
+                domain_values.iter().filter_map(|v| v.as_str()).collect();
 
             if brand_keyword.is_empty() {
                 continue;
@@ -664,15 +673,15 @@ fn detect_compound_aitm_signals(
     let mut bonus_score = 0.0_f64;
     let mut findings: Vec<(String, String)> = Vec::new();
 
-    let has_platform = categories.iter().any(|c| {
-        c.starts_with("aitm_platform") || c == "aitm_subdomain_auth"
-    });
+    let has_platform = categories
+        .iter()
+        .any(|c| c.starts_with("aitm_platform") || c == "aitm_subdomain_auth");
     let has_mfa_bait = categories.iter().any(|c| c.starts_with("aitm_mfa"));
     let has_brand = categories.iter().any(|c| c.starts_with("aitm_brand"));
     let has_captcha = categories.iter().any(|c| c.starts_with("aitm_captcha"));
-    let has_redirect = categories.iter().any(|c| {
-        c == "oauth_redirect_hijack" || c == "oauth_redirect_to_aitm"
-    });
+    let has_redirect = categories
+        .iter()
+        .any(|c| c == "oauth_redirect_hijack" || c == "oauth_redirect_to_aitm");
 
     // Platform domain + MFA bait = high-confidence AitM
     if has_platform && has_mfa_bait {
@@ -704,10 +713,16 @@ fn detect_compound_aitm_signals(
     }
 
     // Three or more independent AitM dimensions = very high confidence
-    let dimension_count = [has_platform, has_mfa_bait, has_brand, has_captcha, has_redirect]
-        .iter()
-        .filter(|&&v| v)
-        .count();
+    let dimension_count = [
+        has_platform,
+        has_mfa_bait,
+        has_brand,
+        has_captcha,
+        has_redirect,
+    ]
+    .iter()
+    .filter(|&&v| v)
+    .count();
     if dimension_count >= 3 {
         bonus_score += 0.15;
         findings.push((
@@ -974,7 +989,9 @@ mod tests {
         let result = analyze_with_runtime(&module, &ctx);
 
         assert!(
-            result.categories.contains(&"aitm_platform_login".to_string()),
+            result
+                .categories
+                .contains(&"aitm_platform_login".to_string()),
             "workers.dev with auth path should trigger aitm_platform_login: {:?}",
             result.categories
         );
@@ -991,7 +1008,9 @@ mod tests {
         let result = analyze_with_runtime(&module, &ctx);
 
         assert!(
-            result.categories.contains(&"aitm_platform_domain".to_string()),
+            result
+                .categories
+                .contains(&"aitm_platform_domain".to_string()),
             "pages.dev should trigger aitm_platform_domain: {:?}",
             result.categories
         );
@@ -1010,7 +1029,9 @@ mod tests {
         let result = analyze_with_runtime(&module, &ctx);
 
         assert!(
-            result.categories.contains(&"aitm_subdomain_auth".to_string()),
+            result
+                .categories
+                .contains(&"aitm_subdomain_auth".to_string()),
             "DGA subdomain + auth path should trigger aitm_subdomain_auth: {:?}",
             result.categories
         );
@@ -1029,9 +1050,10 @@ mod tests {
 
         let result = analyze_with_runtime(&module, &ctx);
 
-        let has_redirect_finding = result.categories.iter().any(|c| {
-            c == "oauth_redirect_hijack" || c == "oauth_redirect_to_aitm"
-        });
+        let has_redirect_finding = result
+            .categories
+            .iter()
+            .any(|c| c == "oauth_redirect_hijack" || c == "oauth_redirect_to_aitm");
         assert!(
             has_redirect_finding,
             "OAuth redirect to non-official domain should trigger redirect detection: {:?}",
@@ -1051,7 +1073,9 @@ mod tests {
         let result = analyze_with_runtime(&module, &ctx);
 
         assert!(
-            result.categories.contains(&"aitm_redirect_chain".to_string()),
+            result
+                .categories
+                .contains(&"aitm_redirect_chain".to_string()),
             "Multiple redirect parameters should trigger aitm_redirect_chain: {:?}",
             result.categories
         );
@@ -1066,7 +1090,9 @@ mod tests {
         let module = AitmDetectModule::new();
         let ctx = make_ctx_with_links_and_body(
             vec!["https://example.com/verify"],
-            Some("Please verify your identity. Authentication required. Enter verification code immediately."),
+            Some(
+                "Please verify your identity. Authentication required. Enter verification code immediately.",
+            ),
             None,
             Some("Security Verification Required"),
         );
@@ -1113,9 +1139,7 @@ mod tests {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
         let module = AitmDetectModule::new();
-        let ctx = make_ctx_links(vec![
-            "https://evil-phish.com/auth/login?cf-turnstile=true",
-        ]);
+        let ctx = make_ctx_links(vec!["https://evil-phish.com/auth/login?cf-turnstile=true"]);
 
         let result = analyze_with_runtime(&module, &ctx);
 
@@ -1141,7 +1165,9 @@ mod tests {
         let result = analyze_with_runtime(&module, &ctx);
 
         assert!(
-            result.categories.contains(&"aitm_turnstile_body".to_string()),
+            result
+                .categories
+                .contains(&"aitm_turnstile_body".to_string()),
             "Turnstile in HTML body should trigger aitm_turnstile_body: {:?}",
             result.categories
         );
@@ -1154,14 +1180,14 @@ mod tests {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
         let module = AitmDetectModule::new();
-        let ctx = make_ctx_links(vec![
-            "https://microsoft-login.evil-domain.com/auth/signin",
-        ]);
+        let ctx = make_ctx_links(vec!["https://microsoft-login.evil-domain.com/auth/signin"]);
 
         let result = analyze_with_runtime(&module, &ctx);
 
         assert!(
-            result.categories.contains(&"aitm_brand_subdomain_login".to_string()),
+            result
+                .categories
+                .contains(&"aitm_brand_subdomain_login".to_string()),
             "Microsoft brand in subdomain + login path should trigger: {:?}",
             result.categories
         );
@@ -1197,14 +1223,14 @@ mod tests {
         reset_url_domain_sets();
         let module = AitmDetectModule::new();
         // Using Cyrillic 'о' (U+043E) in "micros\u{043E}ft"
-        let ctx = make_ctx_links(vec![
-            "https://micros\u{043E}ft-login.com/auth/signin",
-        ]);
+        let ctx = make_ctx_links(vec!["https://micros\u{043E}ft-login.com/auth/signin"]);
 
         let result = analyze_with_runtime(&module, &ctx);
 
         assert!(
-            result.categories.contains(&"aitm_homograph_login".to_string()),
+            result
+                .categories
+                .contains(&"aitm_homograph_login".to_string()),
             "Homograph domain should trigger aitm_homograph_login: {:?}",
             result.categories
         );
@@ -1227,7 +1253,9 @@ mod tests {
         let result = analyze_with_runtime(&module, &ctx);
 
         assert!(
-            result.categories.contains(&"aitm_compound_platform_mfa".to_string()),
+            result
+                .categories
+                .contains(&"aitm_compound_platform_mfa".to_string()),
             "Platform + MFA bait compound should trigger: {:?}",
             result.categories
         );
@@ -1289,9 +1317,7 @@ mod tests {
 
         let result = analyze_with_runtime(&module, &ctx);
 
-        let has_captcha_auth = result
-            .categories
-            .contains(&"aitm_captcha_auth".to_string());
+        let has_captcha_auth = result.categories.contains(&"aitm_captcha_auth".to_string());
         assert!(
             !has_captcha_auth,
             "Official SSO domain should not trigger captcha_auth fingerprint: {:?}",

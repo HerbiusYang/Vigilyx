@@ -8,9 +8,7 @@ use std::collections::HashSet;
 
 use super::patterns::*;
 
-
 // modeVerbosematchfunction
-
 
 /// lookup Card number (BIN first + Luhn Verify)
 
@@ -47,38 +45,38 @@ pub(super) fn is_valid_card_bin(digits: &str) -> bool {
     let prefix4: u16 = digits[..4].parse().unwrap_or(0);
     let _prefix6: u32 = digits[..6].parse().unwrap_or(0);
 
-   // Visa: 4xxx
+    // Visa: 4xxx
     if d1 == 4 {
         return true;
     }
-   // Mastercard: 51-55 2221-2720
+    // Mastercard: 51-55 2221-2720
     if d1 == 5 && (1..=5).contains(&d2) {
         return true;
     }
     if (2221..=2720).contains(&prefix4) {
         return true;
     }
-   // UnionPay (): 62xxxx
+    // UnionPay (): 62xxxx
     if d1 == 6 && d2 == 2 {
         return true;
     }
-   // Amex: 34, 37
+    // Amex: 34, 37
     if d1 == 3 && (d2 == 4 || d2 == 7) {
         return true;
     }
-   // Discover: 6011, 65xx
+    // Discover: 6011, 65xx
     if prefix4 == 6011 || (d1 == 6 && d2 == 5) {
         return true;
     }
-   // JCB: 35xx
+    // JCB: 35xx
     if d1 == 3 && d2 == 5 {
         return true;
     }
-   // Medium Bank first (): 9xxx (District)
+    // Medium Bank first (): 9xxx (District)
     if d1 == 9 {
         return true;
     }
-   // already first (Diners: 36, 38)
+    // already first (Diners: 36, 38)
     if d1 == 3 && (d2 == 6 || d2 == 8) {
         return true;
     }
@@ -196,7 +194,7 @@ pub(super) fn find_chinese_addresses(text: &str) -> Vec<String> {
             let s = m.as_str();
             let chars: Vec<char> = s.chars().collect();
             if chars.len() > 6 {
-               // keepfirst 6 characters, ***
+                // keepfirst 6 characters, ***
                 let prefix: String = chars[..6].iter().collect();
                 format!("{}***", prefix)
             } else {
@@ -216,16 +214,16 @@ pub(super) fn find_emails(text: &str) -> Vec<String> {
         .filter_map(|m| {
             let email = m.as_str();
             let lower = email.to_lowercase();
-           // Deduplicate(sizewrite)
+            // Deduplicate(sizewrite)
             if !seen.insert(lower.clone()) {
                 return None;
             }
-           // ExcludeSystememail
+            // ExcludeSystememail
             let local = lower.split('@').next().unwrap_or("");
             if SYSTEM_EMAIL_PREFIXES.contains(&local) {
                 return None;
             }
-           // Desensitize: userName characters + *** + @domain
+            // Desensitize: userName characters + *** + @domain
             if let Some(at_pos) = email.find('@') {
                 let user_part = &email[..at_pos];
                 let domain_part = &email[at_pos..];
@@ -312,16 +310,16 @@ pub(super) fn find_credentials(text: &str) -> Vec<String> {
         .find_iter(text)
         .filter_map(|m| {
             let s = m.as_str();
-           // Extractdelimited firstofKeywords
+            // Extractdelimited firstofKeywords
             let keyword: String = s
                 .chars()
                 .take_while(|c| *c != '：' && *c != ':' && *c != '=')
                 .collect();
-           // Extractdelimited ofvalue
+            // Extractdelimited ofvalue
             let sep_pos = keyword.len();
             let value: String = s.chars().skip(sep_pos + 1).collect();
             let value_trimmed = value.trim();
-           // PasswordConfigurationvalue
+            // PasswordConfigurationvalue
             if is_non_secret_value(value_trimmed) {
                 return None;
             }
@@ -332,7 +330,7 @@ pub(super) fn find_credentials(text: &str) -> Vec<String> {
 
 /// Judgewhether PasswordConfigurationvalue(Systemlog/ConfigurationFileMediumof value, bit wait)
 pub(super) fn is_non_secret_value(value: &str) -> bool {
-   // value characters Password
+    // value characters Password
     if value.is_empty() || value.len() <= 1 {
         return true;
     }
@@ -373,12 +371,12 @@ pub(super) fn find_swift_codes(text: &str) -> Vec<String> {
             if len != 8 && len != 11 {
                 return false;
             }
-           // Verifybit 5-6 Legitimate ISO 3166-1 alpha-2 Code/Digit
+            // Verifybit 5-6 Legitimate ISO 3166-1 alpha-2 Code/Digit
             let country = &s[4..6];
             if !is_valid_swift_country(country) {
                 return false;
             }
-           // Exclude / Bank Code/Digit(bit 0-3)
+            // Exclude / Bank Code/Digit(bit 0-3)
             let bank_code = &s[..4];
             !is_common_word_prefix(bank_code)
         })
@@ -487,16 +485,16 @@ pub fn iban_mod97_check(iban: &str) -> bool {
     if iban.len() < 5 {
         return false;
     }
-   // first 4 bit
+    // first 4 bit
     let rearranged = format!("{}{}", &iban[4..], &iban[..4]);
-   // characters mod 97, Avoidlarge
+    // characters mod 97, Avoidlarge
     let mut remainder: u32 = 0;
     for ch in rearranged.chars() {
         if ch.is_ascii_digit() {
             remainder = (remainder * 10 + (ch as u32 - '0' as u32)) % 97;
         } else if ch.is_ascii_uppercase() {
             let val = (ch as u32) - ('A' as u32) + 10;
-           // bit: Process bit Processbit
+            // bit: Process bit Processbit
             remainder = (remainder * 10 + val / 10) % 97;
             remainder = (remainder * 10 + val % 10) % 97;
         } else {
@@ -510,8 +508,18 @@ pub fn iban_mod97_check(iban: &str) -> bool {
 pub(super) fn find_large_amounts(text: &str) -> Vec<String> {
     // Known currency unit keywords from the regex (order: longest first for correct matching)
     const UNIT_PATTERNS: &[&str] = &[
-        "10k yuan", "亿Yuan", "SundayYuan", "美Yuan", "欧Yuan",
-        "USD", "CNY", "RMB", "EUR", "GBP", "JPY", "英镑",
+        "10k yuan",
+        "亿Yuan",
+        "SundayYuan",
+        "美Yuan",
+        "欧Yuan",
+        "USD",
+        "CNY",
+        "RMB",
+        "EUR",
+        "GBP",
+        "JPY",
+        "英镑",
     ];
     RE_LARGE_AMOUNT
         .find_iter(text)
@@ -562,14 +570,12 @@ pub(super) fn find_contract_numbers(text: &str) -> Vec<String> {
         .collect()
 }
 
-
 // JR/T modematchfunction (General +)
-
 
 /// GeneralKeywordsmatch: ReturnDeduplicate ofKeywordsList, min_distinct SameKeywords
 pub(super) fn find_keyword_matches(re: &Regex, text: &str, min_distinct: usize) -> Vec<String> {
     let matches: Vec<String> = re.find_iter(text).map(|m| m.as_str().to_string()).collect();
-   // Deduplicate Checkwhether small Class
+    // Deduplicate Checkwhether small Class
     let mut unique: Vec<String> = matches.clone();
     unique.sort();
     unique.dedup();

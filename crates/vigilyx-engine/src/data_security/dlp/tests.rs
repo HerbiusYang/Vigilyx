@@ -2,11 +2,11 @@ use super::finders::*;
 use super::normalize::normalize_for_dlp;
 use super::*;
 
-   // Test (Keep)
+// Test (Keep)
 
 #[test]
 fn test_scan_text_with_credit_card() {
-   // Luhn-valid test card number
+    // Luhn-valid test card number
     let text = "请将款项汇入 4111111111111111 这Account";
     let result = scan_text(text);
     assert!(result.matches.contains(&"credit_card".to_string()));
@@ -101,7 +101,7 @@ fn test_api_key_no_longer_detected() {
     );
 }
 
-   // emailTest
+// emailTest
 
 #[test]
 fn test_scan_text_with_email() {
@@ -131,7 +131,7 @@ fn test_email_masking() {
     assert_eq!(emails[0], "u***@example.test");
 }
 
-   // NumberTest
+// NumberTest
 
 #[test]
 fn test_scan_text_with_passport() {
@@ -159,7 +159,7 @@ fn test_passport_lowercase_match() {
     );
 }
 
-   // 1 Code/DigitTest
+// 1 Code/DigitTest
 
 #[test]
 fn test_scan_text_with_social_credit_code() {
@@ -184,7 +184,7 @@ fn test_social_credit_code_wrong_length_rejected() {
     assert!(codes.is_empty(), "17-char string should not match");
 }
 
-   // Test
+// Test
 
 #[test]
 fn test_scan_text_with_credential_chinese() {
@@ -214,7 +214,7 @@ fn test_credential_masking() {
     assert!(creds[0].contains("Password"), "Keyword should be preserved");
 }
 
-   // SWIFT Code/DigitTest
+// SWIFT Code/DigitTest
 
 #[test]
 fn test_scan_text_with_swift_8() {
@@ -243,7 +243,7 @@ fn test_swift_masking() {
     assert_eq!(codes[0], "BKCH****");
 }
 
-   // CVV SecurityCode/DigitTest
+// CVV SecurityCode/DigitTest
 
 #[test]
 fn test_scan_text_with_cvv_chinese() {
@@ -275,7 +275,7 @@ fn test_cvv_no_false_positive_without_context() {
     );
 }
 
-   // DLP Test
+// DLP Test
 
 #[test]
 fn test_scan_text_truncates_oversized_body() {
@@ -306,7 +306,7 @@ fn test_scan_text_truncation_preserves_utf8_boundary() {
     assert!(result.matches.is_empty());
 }
 
-   // P1.1 /Bank DeduplicateTest
+// P1.1 /Bank DeduplicateTest
 
 #[test]
 fn test_credit_card_and_bank_card_no_duplicate() {
@@ -329,7 +329,7 @@ fn test_bank_card_19_digit_not_excluded() {
     );
 }
 
-   // P1.2 NumberTest
+// P1.2 NumberTest
 
 #[test]
 fn test_scan_text_with_tax_id_15() {
@@ -354,7 +354,7 @@ fn test_tax_id_wrong_length_rejected() {
     assert!(ids.is_empty(), "14-char string should not match tax_id");
 }
 
-   // P1.2 IBAN Test
+// P1.2 IBAN Test
 
 #[test]
 fn test_scan_text_with_iban_de() {
@@ -408,7 +408,7 @@ fn test_iban_mod97_invalid() {
     assert!(!iban_mod97_check("XXXX"));
 }
 
-   // P1.2 large AmountTest
+// P1.2 large AmountTest
 
 #[test]
 fn test_scan_text_with_large_amounts() {
@@ -451,7 +451,7 @@ fn test_large_amount_masking() {
     );
 }
 
-   // P1.2 BankAccount number (Context) Test
+// P1.2 BankAccount number (Context) Test
 
 #[test]
 fn test_scan_text_with_bank_account_context() {
@@ -490,7 +490,7 @@ fn test_bank_account_masking() {
     assert_eq!(accounts[0], "1234****23");
 }
 
-   // P1.2 Policy number/ SameNumberTest
+// P1.2 Policy number/ SameNumberTest
 
 #[test]
 fn test_scan_text_with_contract_number() {
@@ -530,7 +530,7 @@ fn test_contract_number_masking() {
     assert!(contracts[0].contains("****"));
 }
 
-   // RegexSet Performance notesTest
+// RegexSet Performance notesTest
 
 #[test]
 fn test_regex_set_clean_text_fast_path() {
@@ -547,7 +547,7 @@ fn test_regex_set_only_runs_matched_patterns() {
     assert_eq!(result.matches.len(), 1, "Only credit_card should match");
 }
 
-   // JR/T 0197-2020 modeTest
+// JR/T 0197-2020 modeTest
 
 #[test]
 fn test_biometric_data_two_keywords_hit() {
@@ -675,16 +675,15 @@ fn test_business_license_hit() {
 
 #[test]
 fn test_property_info_hit() {
-    let text =
-        "客户Name下有不动产权证Number: Beijing(2023)朝阳District不动产权After0012345Number";
+    let text = "客户Name下有不动产权证Number: Beijing(2023)朝阳District不动产权After0012345Number";
     let result = scan_text(text);
     assert!(result.matches.contains(&"property_info".to_string()));
 }
 
-   // The remaining ~3,200 lines of tests follow the same pattern.
-   // They are included verbatim from the original file below.
+// The remaining ~3,200 lines of tests follow the same pattern.
+// They are included verbatim from the original file below.
 
-   // JR/T: depthTest (Item +)
+// JR/T: depthTest (Item +)
 
 #[test]
 fn test_biometric_english_keywords() {
@@ -715,7 +714,8 @@ fn test_biometric_no_false_positive_on_product() {
 
 #[test]
 fn test_medical_full_record() {
-    let text = "患者诊Break/Judge 2型糖尿病，处方: 2甲双胍500mg，有青霉素敏史，家族病史Medium有High血压";
+    let text =
+        "患者诊Break/Judge 2型糖尿病，处方: 2甲双胍500mg，有青霉素敏史，家族病史Medium有High血压";
     let result = scan_text(text);
     assert!(result.matches.contains(&"medical_health".to_string()));
 }
@@ -979,12 +979,10 @@ fn test_clean_business_text_no_false_positive() {
     );
 }
 
-   // The file is getting very long. The remaining tests from the original dlp.rs
-   // (lines 2385-5272) are included below, exactly as they appeared in the original.
+// The file is getting very long. The remaining tests from the original dlp.rs
+// (lines 2385-5272) are included below, exactly as they appeared in the original.
 
-
-   // Test: (False Positive Prevention)
-
+// Test: (False Positive Prevention)
 
 #[test]
 fn test_credit_card_luhn_invalid_rejects() {
@@ -1138,8 +1136,7 @@ fn test_email_two_addresses_no_alert() {
 
 #[test]
 fn test_email_mixed_system_and_real() {
-    let text =
-        "noreply@example.com, admin@example.net, user1@example.org, user2@example.test";
+    let text = "noreply@example.com, admin@example.net, user1@example.org, user2@example.test";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"email_address".to_string()),
@@ -1432,9 +1429,9 @@ fn test_contract_short_number_rejected() {
     );
 }
 
-   // Due to the extreme length (5,272 lines), the remaining tests from the original
-   // file (lines 2786-5272) are included in a separate include below.
-   // Each test is preserved exactly as-is from the original.
+// Due to the extreme length (5,272 lines), the remaining tests from the original
+// file (lines 2786-5272) are included in a separate include below.
+// Each test is preserved exactly as-is from the original.
 
 #[test]
 fn test_biometric_faceid_and_fingerprint() {
@@ -1918,7 +1915,7 @@ fn test_business_license_registration_number() {
     );
 }
 
-   // Credential variants
+// Credential variants
 
 #[test]
 fn test_credential_pwd() {
@@ -2020,7 +2017,7 @@ fn test_credential_real_password_still_detected() {
     );
 }
 
-   // JRT level tests
+// JRT level tests
 
 #[test]
 fn test_items_by_jrt_level_distribution() {
@@ -2055,7 +2052,7 @@ fn test_items_by_jrt_level_empty_on_clean_text() {
     );
 }
 
-   // Realistic scenarios
+// Realistic scenarios
 
 #[test]
 fn test_realistic_hr_email() {
@@ -2151,7 +2148,7 @@ fn test_realistic_customer_kyc() {
     );
 }
 
-   // Empty/boundary inputs
+// Empty/boundary inputs
 
 #[test]
 fn test_empty_input() {
@@ -2316,7 +2313,7 @@ fn test_detail_item_count_matches_expected() {
     );
 }
 
-   // Masking consistency
+// Masking consistency
 
 #[test]
 fn test_masking_all_values_masked() {
@@ -2418,11 +2415,12 @@ fn test_masking_credential_chinese_keyword() {
     assert_eq!(creds[0], "口令: ****");
 }
 
-   // extract_dlp_text tests
+// extract_dlp_text tests
 
 #[test]
 fn test_extract_dlp_text_coremail_uri() {
-    let body = r#"{"id":"17744","attrs":{"subject":"Test","content":"<p>body</p>"},"action":"deliver"}"#;
+    let body =
+        r#"{"id":"17744","attrs":{"subject":"Test","content":"<p>body</p>"},"action":"deliver"}"#;
     let uri = "/coremail/common/mbox/compose.jsp?sid=abc";
     let text = extract_dlp_text(body, uri);
     assert!(text.contains("Test"), "Should extract subject");
@@ -2452,17 +2450,11 @@ fn test_extract_dlp_text_coremail_invalid_json() {
     );
 }
 
-   // Bug fix regression tests
+// Bug fix regression tests
 
 #[test]
 fn test_vehicle_plate_all_provinces() {
-    let plates = [
-        "京A12345",
-        "沪B67890",
-        "粤C11111",
-        "川D22222",
-        "鲁E33333",
-    ];
+    let plates = ["京A12345", "沪B67890", "粤C11111", "川D22222", "鲁E33333"];
     for plate in plates {
         let text = format!("车辆 {}", plate);
         let result = scan_text(&text);
@@ -2479,10 +2471,7 @@ fn test_vehicle_plate_masking_after_fix() {
     let vins = find_vehicle_info("京A12345");
     assert!(!vins.is_empty(), "Standard plate should be found");
     assert!(vins[0].contains("***"), "Plate should be masked");
-    assert!(
-        vins[0].starts_with("京A1"),
-        "Should preserve first 3 chars"
-    );
+    assert!(vins[0].starts_with("京A1"), "Should preserve first 3 chars");
 }
 
 #[test]
@@ -2547,7 +2536,7 @@ fn test_credential_pin_chinese_variants() {
     }
 }
 
-   // False positive scenarios
+// False positive scenarios
 
 #[test]
 fn test_no_fp_meeting_notes() {
@@ -2629,7 +2618,7 @@ fn test_no_fp_english_business_email() {
     );
 }
 
-   // Phone dedup threshold
+// Phone dedup threshold
 
 #[test]
 fn test_phone_dedup_five_same_no_trigger() {
@@ -2687,7 +2676,7 @@ fn test_email_dedup_all_same_no_trigger() {
     );
 }
 
-   // SWIFT alignment
+// SWIFT alignment
 
 #[test]
 fn test_swift_code_regexset_alignment() {
@@ -2764,7 +2753,7 @@ fn test_swift_real_hsbc_detected() {
     assert_eq!(codes.len(), 1, "HSBC Hong Kong SWIFT should be detected");
 }
 
-   // DlpScanResult API
+// DlpScanResult API
 
 #[test]
 fn test_dlp_result_is_empty_on_clean() {
@@ -2802,7 +2791,7 @@ fn test_matches_and_details_consistent() {
     }
 }
 
-   // Bank account boundary fix
+// Bank account boundary fix
 
 #[test]
 fn test_bank_account_exact_10_digit() {
@@ -2844,7 +2833,7 @@ fn test_bank_account_followed_by_text() {
     );
 }
 
-   // Address false positive prevention
+// Address false positive prevention
 
 #[test]
 fn test_address_no_fp_simple_suffix() {
@@ -2886,7 +2875,7 @@ fn test_address_multiple_levels() {
     );
 }
 
-   // Realistic email scenarios
+// Realistic email scenarios
 
 #[test]
 fn test_realistic_payroll_batch() {
@@ -2997,7 +2986,7 @@ fn test_realistic_medical_insurance_claim() {
     );
 }
 
-   // More false positive scenarios
+// More false positive scenarios
 
 #[test]
 fn test_no_fp_coremail_css_class_numbers() {
@@ -3088,7 +3077,7 @@ fn test_no_fp_financial_regulation_text() {
     );
 }
 
-   // Phone/ID boundary tests
+// Phone/ID boundary tests
 
 #[test]
 fn test_phone_not_matched_inside_id_number() {
@@ -3157,7 +3146,7 @@ fn test_phone_mixed_with_ids_correct_count() {
     );
 }
 
-   // ID check digit validation
+// ID check digit validation
 
 #[test]
 fn test_id_check_digit_valid() {
@@ -3212,7 +3201,7 @@ fn test_id_invalid_check_digit_not_detected() {
     );
 }
 
-   // Social credit check digit
+// Social credit check digit
 
 #[test]
 fn test_social_credit_check_valid() {
@@ -3264,7 +3253,7 @@ fn test_social_credit_ma_prefix_valid() {
     );
 }
 
-   // End-to-end accuracy
+// End-to-end accuracy
 
 #[test]
 fn test_e2e_no_cross_contamination() {
@@ -3343,7 +3332,7 @@ fn test_e2e_judicial_requires_two_distinct() {
     }
 }
 
-   // Coremail scenarios
+// Coremail scenarios
 
 #[test]
 fn test_coremail_typical_body_no_fp() {
@@ -3416,7 +3405,7 @@ fn test_no_fp_internal_system_notification() {
     );
 }
 
-   // Traditional Chinese variants
+// Traditional Chinese variants
 
 #[test]
 fn test_bank_account_traditional_chinese() {
@@ -3438,7 +3427,7 @@ fn test_bank_account_acct_abbreviation() {
     );
 }
 
-   // Comprehensive scan
+// Comprehensive scan
 
 #[test]
 fn test_scan_many_patterns_no_panic() {
@@ -3480,7 +3469,7 @@ fn test_scan_many_patterns_no_panic() {
     );
 }
 
-   // Credit card BIN validation
+// Credit card BIN validation
 
 #[test]
 fn test_credit_card_visa_prefix() {
@@ -3547,7 +3536,7 @@ fn test_credit_card_bin_validation_unit() {
     assert!(!is_valid_card_bin("8000000000000000"), "Invalid prefix 8");
 }
 
-   // IBAN country length
+// IBAN country length
 
 #[test]
 fn test_iban_de_exact_length() {
@@ -3594,7 +3583,7 @@ fn test_iban_correct_length_detected() {
     );
 }
 
-   // Bank account new keywords
+// Bank account new keywords
 
 #[test]
 fn test_bank_account_remittance_keyword() {
@@ -3616,7 +3605,7 @@ fn test_bank_account_payment_transfer_keyword() {
     );
 }
 
-   // Attack scenarios
+// Attack scenarios
 
 #[test]
 fn test_attack_scenario_data_exfiltration_draft() {
@@ -3720,7 +3709,7 @@ fn test_no_fp_timestamp_like_number() {
     );
 }
 
-   // Anti-evasion: zero-width character stripping
+// Anti-evasion: zero-width character stripping
 
 #[test]
 fn test_normalize_strips_zero_width_space() {
@@ -3784,7 +3773,7 @@ fn test_normalize_empty_string() {
     assert_eq!(normalize_for_dlp(""), "");
 }
 
-   // Zero-width evasion attack detection
+// Zero-width evasion attack detection
 
 #[test]
 fn test_evasion_zero_width_in_phone() {
@@ -3826,7 +3815,7 @@ fn test_evasion_zero_width_in_credential() {
     );
 }
 
-   // Fullwidth evasion
+// Fullwidth evasion
 
 #[test]
 fn test_evasion_fullwidth_phone() {
@@ -3878,7 +3867,7 @@ fn test_evasion_mixed_width_digits() {
     );
 }
 
-   // Multiple zero-width types
+// Multiple zero-width types
 
 #[test]
 fn test_evasion_multiple_zero_width_types() {
@@ -3900,7 +3889,7 @@ fn test_evasion_soft_hyphen_in_swift() {
     );
 }
 
-   // Normalization doesn't create FP
+// Normalization doesn't create FP
 
 #[test]
 fn test_normalize_does_not_create_false_positives() {
@@ -3922,7 +3911,7 @@ fn test_normalize_fullwidth_in_normal_chinese() {
     );
 }
 
-   // normalize_for_dlp unit tests
+// normalize_for_dlp unit tests
 
 #[test]
 fn test_normalize_all_invisible_chars() {
@@ -3954,7 +3943,7 @@ fn test_normalize_fullwidth_letter_boundary() {
     assert_eq!(normalize_for_dlp("\u{FF5A}"), "z");
 }
 
-   // HTML entity decoding
+// HTML entity decoding
 
 #[test]
 fn test_decode_html_decimal_entity() {
@@ -4037,7 +4026,7 @@ fn test_evasion_html_entity_credential() {
     );
 }
 
-   // CVV/OTP double-count fix
+// CVV/OTP double-count fix
 
 #[test]
 fn test_cvv_otp_no_double_count_4digit() {
@@ -4098,7 +4087,7 @@ fn test_cvv_security_code_still_works() {
     );
 }
 
-   // Combined evasion
+// Combined evasion
 
 #[test]
 fn test_evasion_combo_fullwidth_plus_zero_width() {

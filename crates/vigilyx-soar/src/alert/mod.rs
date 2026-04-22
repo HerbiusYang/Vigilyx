@@ -4,7 +4,6 @@
 //! ```text
 //! P(X> x | X> u) = (1 + (x-u)/)^{-1/}
 
-
 //! Alert levels (8.3):
 //! - **P0**: Critical - EL>= 3.0 or K_conflict> 0.7 or CUSUM breach or EVT T>= 10000
 //! - **P1**: High - EL [1.5, 3.0) or K_conflict> 0.6 or EVT T [1000, 10000)
@@ -26,9 +25,7 @@ pub use impact::ImpactConfig;
 // Re-export core types
 pub use vigilyx_core::security::{AlertLevel, AlertRecord};
 
-
 // Alert signals (flattened temporal signals for decoupling)
-
 
 /// Flattened temporal signals for alert evaluation.
 ///
@@ -36,31 +33,29 @@ pub use vigilyx_core::security::{AlertLevel, AlertRecord};
 /// This decouples the alert engine from the temporal analysis implementation.
 #[derive(Debug, Clone, Default)]
 pub struct AlertSignals {
-   /// CUSUM change-point alarm
+    /// CUSUM change-point alarm
     pub cusum_alarm: bool,
-   /// HMM trust-building phase probability (S2)
+    /// HMM trust-building phase probability (S2)
     pub hmm_trust_building: f64,
-   /// HMM attack-execution phase probability (S3)
+    /// HMM attack-execution phase probability (S3)
     pub hmm_attack_execution: f64,
-   /// Whether sender is on watchlist
+    /// Whether sender is on watchlist
     pub sender_watchlisted: bool,
-   /// Accumulated sender risk score
+    /// Accumulated sender risk score
     pub sender_risk: f64,
-   /// Whether EWMA drift was detected
+    /// Whether EWMA drift was detected
     pub ewma_drifting: bool,
-   /// EWMA drift score
+    /// EWMA drift score
     pub ewma_drift_score: f64,
-   /// Whether communication graph anomaly was detected
+    /// Whether communication graph anomaly was detected
     pub graph_anomalous: bool,
-   /// Communication graph anomaly pattern label
+    /// Communication graph anomaly pattern label
     pub graph_pattern_label: String,
-   /// Hawkes self-excitation intensity ratio (/)
+    /// Hawkes self-excitation intensity ratio (/)
     pub hawkes_intensity_ratio: f64,
 }
 
-
 // Alert decision (in-memory result before persistence)
-
 
 /// Result of alert evaluation for one verdict.
 #[derive(Debug, Clone)]
@@ -68,7 +63,7 @@ pub struct AlertDecision {
     pub level: AlertLevel,
     pub expected_loss: f64,
     pub return_period: f64,
-   /// CVaR (Conditional Value at Risk): E[L | L> VaR]
+    /// CVaR (Conditional Value at Risk): E[L | L> VaR]
     pub cvar: f64,
     pub risk_final: f64,
     pub k_conflict: f64,
@@ -76,15 +71,13 @@ pub struct AlertDecision {
     pub rationale: Vec<String>,
 }
 
-
 // Alert engine
-
 
 /// The EVT alert engine - evaluates each verdict and produces P0-P3 alerts.
 pub struct AlertEngine {
-   /// GPD tail estimator (fed by all risk scores).
+    /// GPD tail estimator (fed by all risk scores).
     gpd: Arc<RwLock<GpdEstimator>>,
-   /// Impact configuration.
+    /// Impact configuration.
     impact: ImpactConfig,
 }
 
@@ -95,7 +88,7 @@ impl Default for AlertEngine {
 }
 
 impl AlertEngine {
-   /// Create a new alert engine.
+    /// Create a new alert engine.
     pub fn new() -> Self {
         Self {
             gpd: Arc::new(RwLock::new(GpdEstimator::new(2000))),
@@ -103,7 +96,7 @@ impl AlertEngine {
         }
     }
 
-   /// Create with custom impact config.
+    /// Create with custom impact config.
     pub fn with_impact(impact: ImpactConfig) -> Self {
         Self {
             gpd: Arc::new(RwLock::new(GpdEstimator::new(2000))),
@@ -111,21 +104,21 @@ impl AlertEngine {
         }
     }
 
-   /// Feed a risk score observation (call for every verdict).
+    /// Feed a risk score observation (call for every verdict).
     pub async fn observe(&self, risk_score: f64) {
         self.gpd.write().await.push(risk_score);
     }
 
-   /// Evaluate alert level for a verdict.
-   ///
-   /// # Arguments
-   /// - `risk_final`: final risk score (after temporal adjustment)
-   /// - `k_conflict`: Dempster-Shafer conflict coefficient
-   /// - `u_final`: final uncertainty value
-   /// - `novelty`: TBM novelty score (optional)
-   /// - `k_cross`: tech vs blind-spot layer conflict (optional)
-   /// - `signals`: flattened temporal analysis signals (optional)
-   /// - `recipients`: list of recipient addresses
+    /// Evaluate alert level for a verdict.
+    ///
+    /// # Arguments
+    /// - `risk_final`: final risk score (after temporal adjustment)
+    /// - `k_conflict`: Dempster-Shafer conflict coefficient
+    /// - `u_final`: final uncertainty value
+    /// - `novelty`: TBM novelty score (optional)
+    /// - `k_cross`: tech vs blind-spot layer conflict (optional)
+    /// - `signals`: flattened temporal analysis signals (optional)
+    /// - `recipients`: list of recipient addresses
     #[allow(clippy::too_many_arguments)]
     pub async fn evaluate(
         &self,
@@ -137,31 +130,31 @@ impl AlertEngine {
         signals: Option<&AlertSignals>,
         recipients: &[String],
     ) -> Option<AlertDecision> {
-       // Don't alert on low-risk emails
+        // Don't alert on low-risk emails
         if risk_final < 0.15 {
             return None;
         }
 
         let mut rationale: Vec<String> = Vec::new();
 
-       // Extract signals
+        // Extract signals
         let cusum_alarm = signals.map(|s| s.cusum_alarm).unwrap_or(false);
 
-       // Expected Loss
+        // Expected Loss
         let max_impact: f64 = recipients
             .iter()
             .map(|r| self.impact.weight_for(r))
             .fold(self.impact.default_weight, f64::max);
         let expected_loss = risk_final * max_impact;
 
-       // EVT Return Period + CVaR (single GPD fit, no duplicate sort)
+        // EVT Return Period + CVaR (single GPD fit, no duplicate sort)
         let (return_period, cvar) = self.gpd.write().await.return_period_and_cvar(risk_final);
 
-       // P0-P3 classification (documentation 8.3 alert level definitions)
-       // EL threshold considers Impact amplification (CEO=5.0, CFO=4.5)
+        // P0-P3 classification (documentation 8.3 alert level definitions)
+        // EL threshold considers Impact amplification (CEO=5.0, CFO=4.5)
         let mut level = AlertLevel::P3;
 
-       // Expected loss thresholds (documentation: P0>= 3.0, P1[1.5,3.0), P2[0.5,1.5), P3[0.2,0.5))
+        // Expected loss thresholds (documentation: P0>= 3.0, P1[1.5,3.0), P2[0.5,1.5), P3[0.2,0.5))
         if expected_loss >= 3.0 {
             level = AlertLevel::P0;
             rationale.push(format!("EL={:.2} ≥ 3.0", expected_loss));
@@ -179,7 +172,7 @@ impl AlertEngine {
             rationale.push(format!("EL={:.2} ∈ [0.2, 0.5)", expected_loss));
         }
 
-       // K_conflict thresholds (documentation: K>0.7 -> P0)
+        // K_conflict thresholds (documentation: K>0.7 -> P0)
         if k_conflict > 0.7 {
             level = AlertLevel::P0;
             rationale.push(format!(
@@ -188,13 +181,13 @@ impl AlertEngine {
             ));
         }
 
-       // CUSUM alarm (documentation: CUSUM breach threshold -> P0)
+        // CUSUM alarm (documentation: CUSUM breach threshold -> P0)
         if cusum_alarm {
             level = AlertLevel::P0;
             rationale.push("CUSUM breach threshold: risk continues to drift".to_string());
         }
 
-       // Uncertainty (documentation: u_final> 0.6 -> P2)
+        // Uncertainty (documentation: u_final> 0.6 -> P2)
         if u_final > 0.6 {
             if level > AlertLevel::P2 {
                 level = AlertLevel::P2;
@@ -202,7 +195,7 @@ impl AlertEngine {
             rationale.push(format!("u_final={:.2} > 0.6 (high uncertainty)", u_final));
         }
 
-       // EVT return period (documentation: T>= 10000 -> P0, [1000,10000) -> P1, [100,1000) -> P2, [20,100) -> P3)
+        // EVT return period (documentation: T>= 10000 -> P0, [1000,10000) -> P1, [100,1000) -> P2, [20,100) -> P3)
         if return_period >= 10000.0 {
             level = AlertLevel::P0;
             rationale.push(format!(
@@ -223,7 +216,7 @@ impl AlertEngine {
             rationale.push(format!("EVT T={:.0} ∈ [20, 100)", return_period));
         }
 
-       // HMM attack phase signals (documentation 7.2: (S2)>0.25 -> P2)
+        // HMM attack phase signals (documentation 7.2: (S2)>0.25 -> P2)
         if let Some(s) = signals {
             if s.hmm_trust_building > 0.25 {
                 if level > AlertLevel::P2 {
@@ -262,7 +255,7 @@ impl AlertEngine {
                 ));
             }
 
-           // Hawkes burst detection (v5.0 8.3)
+            // Hawkes burst detection (v5.0 8.3)
             if s.hawkes_intensity_ratio > 5.0 {
                 level = AlertLevel::P0;
                 rationale.push(format!(
@@ -280,7 +273,7 @@ impl AlertEngine {
             }
         }
 
-       // Novelty detection (v5.0 6.2)
+        // Novelty detection (v5.0 6.2)
         if let Some(nov) = novelty {
             if nov > 0.6 {
                 if level > AlertLevel::P1 {
@@ -298,7 +291,7 @@ impl AlertEngine {
             }
         }
 
-       // K_cross signal (v5.0: technical layer vs blind spot layer conflict)
+        // K_cross signal (v5.0: technical layer vs blind spot layer conflict)
         if let Some(kx) = k_cross
             && kx > 0.5
         {
@@ -327,7 +320,7 @@ impl AlertEngine {
         })
     }
 
-   /// Convert AlertDecision to AlertRecord for DB persistence.
+    /// Convert AlertDecision to AlertRecord for DB persistence.
     pub fn to_record(decision: &AlertDecision, verdict_id: Uuid, session_id: Uuid) -> AlertRecord {
         AlertRecord {
             id: Uuid::new_v4(),
@@ -349,9 +342,7 @@ impl AlertEngine {
     }
 }
 
-
 // Tests
-
 
 #[cfg(test)]
 mod tests {
@@ -385,7 +376,7 @@ mod tests {
     #[tokio::test]
     async fn test_alert_p0_for_high_el() {
         let engine = AlertEngine::new();
-       // risk=0.9, ceo target (weight=5.0) -> EL = 4.5>> 0.8 -> P0
+        // risk=0.9, ceo target (weight=5.0) -> EL = 4.5>> 0.8 -> P0
         let decision = engine
             .evaluate(0.9, 0.0, 0.0, None, None, None, &["ceo@company.com".into()])
             .await;
@@ -459,7 +450,7 @@ mod tests {
         assert!(!record.acknowledged);
     }
 
-   // v5.0 TBM alert tests
+    // v5.0 TBM alert tests
 
     #[tokio::test]
     async fn test_alert_hawkes_burst_p0() {
