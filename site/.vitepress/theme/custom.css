@@ -3,41 +3,107 @@
   --vp-c-brand-2: #0f5f66;
   --vp-c-brand-3: #144b54;
   --vp-c-brand-soft: rgba(15, 118, 110, 0.16);
-  --vp-c-bg: #07111d;
-  --vp-c-bg-alt: #0b1624;
-  --vp-c-bg-elv: #0f1a2b;
-  --vp-c-divider: rgba(148, 163, 184, 0.15);
+  --vp-c-bg: #f4f7fb;
+  --vp-c-bg-alt: #edf2f7;
+  --vp-c-bg-elv: #ffffff;
+  --vp-c-divider: rgba(15, 23, 42, 0.08);
   --vp-font-family-base: "Avenir Next", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   --vp-font-family-heading: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
   --vp-home-hero-name-color: transparent;
   --vp-home-hero-name-background: linear-gradient(135deg, #7dd3fc 0%, #5eead4 35%, #34d399 100%);
   --vp-home-hero-image-background-image: radial-gradient(circle at top, rgba(34, 211, 238, 0.32), rgba(15, 23, 42, 0) 56%);
   --vp-home-hero-image-filter: blur(46px);
+  --vig-surface-1: rgba(255, 255, 255, 0.94);
+  --vig-surface-2: rgba(244, 248, 252, 0.98);
+  --vig-outline: rgba(15, 23, 42, 0.08);
+  --vig-shadow: 0 20px 60px rgba(15, 23, 42, 0.08);
+  --vig-muted: #52657b;
+  --vig-text-strong: #0d1b2a;
+  --vig-doc-text: #344a60;
+  --vig-accent: #0f766e;
+  --vig-accent-2: #0891b2;
+  --vig-body-base-1: #f7fbff;
+  --vig-body-base-2: #eef5fb;
+  --vig-body-base-3: #f5f8fb;
+  --vig-body-glow-1: rgba(14, 165, 164, 0.1);
+  --vig-body-glow-2: rgba(56, 189, 248, 0.08);
+  --vig-layout-base-1: rgba(248, 251, 255, 0.94);
+  --vig-layout-base-2: rgba(245, 248, 252, 0.98);
+  --vig-layout-glow: rgba(14, 165, 164, 0.05);
+  --vig-nav-bg: rgba(250, 252, 255, 0.78);
+  --vig-search-border: rgba(14, 165, 164, 0.14);
+  --vig-search-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(245, 248, 252, 0.94));
+  --vig-search-shadow: 0 18px 34px rgba(15, 23, 42, 0.08);
+  --vig-search-placeholder: #163047;
+  --vig-key-bg: rgba(14, 165, 164, 0.08);
+  --vig-key-color: #486075;
+  --vig-pill-bg: rgba(255, 255, 255, 0.8);
+  --vig-pill-text: #294257;
+  --vig-surface-glow: rgba(14, 165, 164, 0.06);
+  --vig-panel-glow: rgba(56, 189, 248, 0.07);
+  --vig-label-bg: rgba(255, 255, 255, 0.84);
+  --vig-button-alt-bg: rgba(255, 255, 255, 0.84);
+  --vig-button-alt-hover: rgba(245, 249, 252, 0.96);
+  --vig-cta-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.97), rgba(244, 248, 252, 0.94));
+  --vig-code-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
+}
+
+html.dark {
+  --vp-c-bg: #07111d;
+  --vp-c-bg-alt: #0b1624;
+  --vp-c-bg-elv: #0f1a2b;
+  --vp-c-divider: rgba(148, 163, 184, 0.15);
   --vig-surface-1: rgba(9, 18, 32, 0.88);
   --vig-surface-2: rgba(13, 24, 41, 0.92);
   --vig-outline: rgba(148, 163, 184, 0.14);
   --vig-shadow: 0 24px 80px rgba(2, 8, 23, 0.42);
   --vig-muted: #93a9bf;
+  --vig-text-strong: #f5fbff;
+  --vig-doc-text: #d7e3ef;
   --vig-accent: #7dd3fc;
   --vig-accent-2: #5eead4;
+  --vig-body-base-1: #07111d;
+  --vig-body-base-2: #091423;
+  --vig-body-base-3: #08111d;
+  --vig-body-glow-1: rgba(34, 211, 238, 0.12);
+  --vig-body-glow-2: rgba(16, 185, 129, 0.12);
+  --vig-layout-base-1: rgba(7, 17, 29, 0.92);
+  --vig-layout-base-2: rgba(7, 17, 29, 0.97);
+  --vig-layout-glow: rgba(34, 211, 238, 0.08);
+  --vig-nav-bg: rgba(7, 17, 29, 0.74);
+  --vig-search-border: rgba(125, 211, 252, 0.18);
+  --vig-search-bg: linear-gradient(180deg, rgba(10, 18, 31, 0.94), rgba(11, 21, 36, 0.86));
+  --vig-search-shadow: 0 18px 40px rgba(2, 8, 23, 0.28);
+  --vig-search-placeholder: #edf7ff;
+  --vig-key-bg: rgba(125, 211, 252, 0.1);
+  --vig-key-color: #dcedfb;
+  --vig-pill-bg: rgba(9, 19, 33, 0.72);
+  --vig-pill-text: #dce8f5;
+  --vig-surface-glow: rgba(52, 211, 153, 0.08);
+  --vig-panel-glow: rgba(34, 211, 238, 0.1);
+  --vig-label-bg: rgba(10, 18, 31, 0.72);
+  --vig-button-alt-bg: rgba(10, 18, 31, 0.72);
+  --vig-button-alt-hover: rgba(12, 23, 39, 0.92);
+  --vig-cta-bg: linear-gradient(135deg, rgba(10, 18, 31, 0.96), rgba(8, 15, 28, 0.84));
+  --vig-code-shadow: 0 20px 55px rgba(2, 8, 23, 0.22);
 }
 
 body {
   background:
-    radial-gradient(circle at top right, rgba(34, 211, 238, 0.12), transparent 28%),
-    radial-gradient(circle at 10% 20%, rgba(16, 185, 129, 0.12), transparent 30%),
-    linear-gradient(180deg, #07111d 0%, #091423 40%, #08111d 100%);
+    radial-gradient(circle at top right, var(--vig-body-glow-1), transparent 28%),
+    radial-gradient(circle at 10% 20%, var(--vig-body-glow-2), transparent 30%),
+    linear-gradient(180deg, var(--vig-body-base-1) 0%, var(--vig-body-base-2) 40%, var(--vig-body-base-3) 100%);
 }
 
 .Layout {
   background:
-    linear-gradient(180deg, rgba(7, 17, 29, 0.92), rgba(7, 17, 29, 0.97)),
-    radial-gradient(circle at top right, rgba(34, 211, 238, 0.08), transparent 32%);
+    linear-gradient(180deg, var(--vig-layout-base-1), var(--vig-layout-base-2)),
+    radial-gradient(circle at top right, var(--vig-layout-glow), transparent 32%);
 }
 
 .VPNavBar,
 .VPLocalNav {
-  background: rgba(7, 17, 29, 0.74) !important;
+  background: var(--vig-nav-bg) !important;
   backdrop-filter: blur(18px);
 }
 
@@ -67,11 +133,11 @@ body {
   margin: 0;
   padding: 0 0.8rem 0 1.1rem;
   border-radius: 999px;
-  border: 1px solid rgba(125, 211, 252, 0.18);
+  border: 1px solid var(--vig-search-border);
   background:
-    linear-gradient(180deg, rgba(10, 18, 31, 0.94), rgba(11, 21, 36, 0.86)),
-    radial-gradient(circle at right, rgba(34, 211, 238, 0.12), transparent 50%);
-  box-shadow: 0 18px 40px rgba(2, 8, 23, 0.28);
+    var(--vig-search-bg),
+    radial-gradient(circle at right, var(--vig-panel-glow), transparent 50%);
+  box-shadow: var(--vig-search-shadow);
   transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
 }
 
@@ -88,7 +154,7 @@ body {
 }
 
 .VPNavBarSearch .DocSearch-Button-Placeholder {
-  color: #edf7ff;
+  color: var(--vig-search-placeholder);
   font-size: 0.98rem;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -102,8 +168,8 @@ body {
   min-width: 4rem;
   padding: 0.25rem 0.45rem;
   border-radius: 999px;
-  background: rgba(125, 211, 252, 0.1);
-  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.1);
+  background: var(--vig-key-bg);
+  box-shadow: inset 0 0 0 1px var(--vig-key-bg);
 }
 
 .VPNavBarSearch .DocSearch-Button-Key {
@@ -114,7 +180,7 @@ body {
   border: none;
   background: transparent;
   box-shadow: none;
-  color: #dcedfb;
+  color: var(--vig-key-color);
   font-size: 0.72rem;
 }
 
@@ -155,6 +221,7 @@ body {
   font-size: clamp(2.8rem, 6vw, 4.9rem);
   line-height: 0.95;
   letter-spacing: -0.045em;
+  color: var(--vig-text-strong);
 }
 
 .VPHomeHero .tagline {
@@ -184,8 +251,9 @@ body {
 }
 
 .VPButton.alt {
-  border-color: rgba(125, 211, 252, 0.18);
-  background: rgba(15, 23, 42, 0.56);
+  border-color: var(--vig-search-border);
+  background: var(--vig-button-alt-bg);
+  color: var(--vig-text-strong);
 }
 
 .VPHomeHero .image {
@@ -194,10 +262,10 @@ body {
 
 .VPHomeHero .image-container {
   border-radius: 30px;
-  border: 1px solid rgba(125, 211, 252, 0.14);
+  border: 1px solid var(--vig-search-border);
   background:
-    linear-gradient(180deg, rgba(8, 15, 28, 0.88), rgba(9, 18, 32, 0.96)),
-    radial-gradient(circle at top right, rgba(34, 211, 238, 0.12), transparent 48%);
+    linear-gradient(180deg, var(--vig-surface-1), var(--vig-surface-2)),
+    radial-gradient(circle at top right, var(--vig-panel-glow), transparent 48%);
   padding: 1rem;
   box-shadow: var(--vig-shadow);
 }
@@ -215,8 +283,8 @@ body {
   border-radius: 24px;
   background:
     linear-gradient(180deg, var(--vig-surface-1), var(--vig-surface-2)),
-    radial-gradient(circle at top right, rgba(34, 211, 238, 0.08), transparent 45%);
-  box-shadow: 0 10px 40px rgba(2, 8, 23, 0.18);
+    radial-gradient(circle at top right, var(--vig-panel-glow), transparent 45%);
+  box-shadow: var(--vig-shadow);
   transition: transform 0.22s ease, border-color 0.22s ease, box-shadow 0.22s ease;
 }
 
@@ -229,6 +297,7 @@ body {
 .VPFeature .title {
   letter-spacing: 0.01em;
   font-size: 1.1rem;
+  color: var(--vig-text-strong);
 }
 
 .VPFeature .details {
@@ -252,9 +321,9 @@ body {
 .home-strip span {
   padding: 0.7rem 1rem;
   border-radius: 999px;
-  border: 1px solid rgba(125, 211, 252, 0.14);
-  background: rgba(9, 19, 33, 0.72);
-  color: #dce8f5;
+  border: 1px solid var(--vig-search-border);
+  background: var(--vig-pill-bg);
+  color: var(--vig-pill-text);
   font-size: 0.9rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -324,8 +393,8 @@ body {
   border-radius: 28px;
   padding: 1.5rem;
   background:
-    linear-gradient(180deg, rgba(9, 18, 32, 0.92), rgba(9, 18, 32, 0.84)),
-    radial-gradient(circle at top right, rgba(52, 211, 153, 0.08), transparent 42%);
+    linear-gradient(180deg, var(--vig-surface-1), var(--vig-surface-2)),
+    radial-gradient(circle at top right, var(--vig-surface-glow), transparent 42%);
   box-shadow: var(--vig-shadow);
 }
 
@@ -334,7 +403,7 @@ body {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: linear-gradient(135deg, rgba(125, 211, 252, 0.08), transparent 32%);
+  background: linear-gradient(135deg, var(--vig-panel-glow), transparent 32%);
 }
 
 .mode-label,
@@ -345,8 +414,8 @@ body {
   min-width: 4.5rem;
   padding: 0.35rem 0.7rem;
   border-radius: 999px;
-  border: 1px solid rgba(125, 211, 252, 0.18);
-  background: rgba(10, 18, 31, 0.72);
+  border: 1px solid var(--vig-search-border);
+  background: var(--vig-label-bg);
   color: var(--vig-accent);
   font-size: 0.78rem;
   font-weight: 700;
@@ -363,6 +432,7 @@ body {
   font-size: 1.7rem;
   line-height: 1.1;
   letter-spacing: -0.03em;
+  color: var(--vig-text-strong);
 }
 
 .mode-card p,
@@ -377,7 +447,7 @@ body {
 .mode-card ul {
   margin: 1rem 0 0;
   padding-left: 1.15rem;
-  color: #dce8f5;
+  color: var(--vig-text-strong);
 }
 
 .mode-card li + li {
@@ -399,7 +469,7 @@ body {
   font-size: clamp(2.3rem, 5vw, 3.4rem);
   line-height: 0.95;
   letter-spacing: -0.05em;
-  color: #f5fbff;
+  color: var(--vig-text-strong);
 }
 
 .metric-card span {
@@ -418,11 +488,11 @@ body {
   gap: 1.6rem;
   align-items: center;
   padding: 1.75rem;
-  border: 1px solid rgba(94, 234, 212, 0.16);
+  border: 1px solid var(--vig-search-border);
   border-radius: 30px;
   background:
-    linear-gradient(135deg, rgba(10, 18, 31, 0.96), rgba(8, 15, 28, 0.84)),
-    radial-gradient(circle at top right, rgba(52, 211, 153, 0.12), transparent 40%);
+    var(--vig-cta-bg),
+    radial-gradient(circle at top right, var(--vig-surface-glow), transparent 40%);
   box-shadow: var(--vig-shadow);
 }
 
@@ -438,9 +508,9 @@ body {
   min-height: 3.25rem;
   padding: 0.85rem 1rem;
   border-radius: 18px;
-  border: 1px solid rgba(125, 211, 252, 0.18);
-  background: rgba(10, 18, 31, 0.72);
-  color: #f5fbff;
+  border: 1px solid var(--vig-search-border);
+  background: var(--vig-button-alt-bg);
+  color: var(--vig-text-strong);
   font-weight: 700;
   text-decoration: none;
   transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
@@ -449,7 +519,7 @@ body {
 .home-cta-link:hover {
   transform: translateY(-2px);
   border-color: rgba(125, 211, 252, 0.32);
-  background: rgba(12, 23, 39, 0.92);
+  background: var(--vig-button-alt-hover);
 }
 
 .home-cta-link--primary {
@@ -460,12 +530,12 @@ body {
 .share-panel {
   margin: 2rem auto 0;
   padding: 1.2rem 1.25rem;
-  border: 1px solid rgba(125, 211, 252, 0.14);
+  border: 1px solid var(--vig-search-border);
   border-radius: 26px;
   background:
-    linear-gradient(180deg, rgba(9, 18, 32, 0.92), rgba(9, 18, 32, 0.84)),
-    radial-gradient(circle at top right, rgba(34, 211, 238, 0.1), transparent 44%);
-  box-shadow: 0 20px 55px rgba(2, 8, 23, 0.22);
+    linear-gradient(180deg, var(--vig-surface-1), var(--vig-surface-2)),
+    radial-gradient(circle at top right, var(--vig-panel-glow), transparent 44%);
+  box-shadow: var(--vig-shadow);
 }
 
 .share-panel--home {
@@ -487,7 +557,7 @@ body {
 
 .share-panel__title {
   margin: 0;
-  color: #eaf4fb;
+  color: var(--vig-text-strong);
   line-height: 1.7;
 }
 
@@ -503,10 +573,10 @@ body {
   justify-content: center;
   min-height: 2.9rem;
   padding: 0.75rem 1rem;
-  border: 1px solid rgba(125, 211, 252, 0.16);
+  border: 1px solid var(--vig-search-border);
   border-radius: 999px;
-  background: rgba(10, 18, 31, 0.72);
-  color: #f6fbff;
+  background: var(--vig-button-alt-bg);
+  color: var(--vig-text-strong);
   font-weight: 700;
   text-decoration: none;
   cursor: pointer;
@@ -516,7 +586,7 @@ body {
 .share-panel__button:hover {
   transform: translateY(-1px);
   border-color: rgba(125, 211, 252, 0.28);
-  background: rgba(12, 23, 39, 0.92);
+  background: var(--vig-button-alt-hover);
 }
 
 .share-panel__button:disabled {
@@ -574,7 +644,7 @@ body {
 
 .vp-doc p,
 .vp-doc li {
-  color: #d7e3ef;
+  color: var(--vig-doc-text);
   line-height: 1.8;
 }
 
@@ -584,9 +654,9 @@ body {
 }
 
 .vp-doc div[class*="language-"] {
-  border: 1px solid rgba(125, 211, 252, 0.14);
+  border: 1px solid var(--vig-search-border);
   border-radius: 22px;
-  box-shadow: 0 20px 55px rgba(2, 8, 23, 0.22);
+  box-shadow: var(--vig-code-shadow);
 }
 
 @media (max-width: 1100px) {
