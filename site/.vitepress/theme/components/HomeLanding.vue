@@ -68,6 +68,18 @@ type LandingCopy = {
       body: string;
     }>;
   };
+  highlights: {
+    kicker: string;
+    title: string;
+    body: string;
+    cards: Array<{
+      tag: string;
+      title: string;
+      body: string;
+      why: string;
+      source: string;
+    }>;
+  };
   cta: {
     kicker: string;
     title: string;
@@ -85,10 +97,10 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
     hero: {
       badge: "Open source · Rust core · Mirror + Inline",
       stats: [
-        { value: "20+", label: "pipeline stages" },
-        { value: "30+", label: "DLP patterns" },
-        { value: "<2s", label: "inline verdict" },
-        { value: "2", label: "deploy modes" },
+        { value: "D-S + Murphy", label: "evidence fusion" },
+        { value: "5-state HMM", label: "BEC phase tracking" },
+        { value: "Hawkes", label: "self-exciting time series" },
+        { value: "JR/T 0197", label: "financial DLP compliance" },
       ],
       terminal: {
         title: "verdict.jsonl",
@@ -232,6 +244,70 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
         },
       ],
     },
+    highlights: {
+      kicker: "Under the hood",
+      title: "Seven things most email-security products do not actually have.",
+      body:
+        "These are not marketing bullet points — each one is implemented in the repository and you can read it. We are only listing the detection surfaces where Vigilyx is meaningfully different from a typical mail gateway, not the table-stakes features every product in this space already ships.",
+      cards: [
+        {
+          tag: "Evidence fusion",
+          title: "Murphy-corrected D-S fusion with Copula discount & Jousselme distance",
+          body:
+            "Most mail security products either use weighted-sum scoring or a black-box classifier. Vigilyx runs a proper Dempster–Shafer / TBM open-world fusion with Murphy's weighted-average correction and Copula-based discount for correlated engines — so agreeing detectors reinforce, disagreeing detectors are de-weighted, and redundant same-family signals do not amplify each other.",
+          why: "Avoids Zadeh's paradox, handles correlated evidence explicitly, and the verdict trail is explainable per-engine instead of a single score.",
+          source: "crates/vigilyx-engine/src/fusion/murphy.rs",
+        },
+        {
+          tag: "Temporal layer",
+          title: "CUSUM + dual-EWMA + Hawkes self-excitation + 5-state HMM + comm graph",
+          body:
+            "Most tools judge each email in isolation. Vigilyx keeps a persistent temporal layer on top of single-email verdicts: CUSUM for shift detection, dual-speed EWMA for baseline drift, a marked Hawkes process for attack-campaign self-excitation (λ(t) = μ + Σ φ(r)·g(t−tᵢ)), a 5-state HMM that infers BEC / ATO phases (recon → trust-build → execute → exfil), and a directed communication graph that flags mass-phishing and data-exfil fan-out patterns.",
+          why: "Catches campaigns, slow-burn BEC, and exfil bursts that look fine one email at a time.",
+          source: "crates/vigilyx-engine/src/temporal/",
+        },
+        {
+          tag: "AitM phishing",
+          title: "Reverse-proxy MFA-bypass kit fingerprinting (Tycoon2FA / EvilProxy / Evilginx3)",
+          body:
+            "Modern phishing is no longer \"fake login page\" — attackers proxy the real Microsoft/Google login flow through a reverse-proxy kit to steal live session tokens and bypass MFA. Vigilyx detects Cloudflare Workers / Pages DGA hosting patterns, OAuth redirect_uri mismatches, Turnstile CAPTCHA fingerprints, toolkit URI shapes, and Latin/Cyrillic mixed-script brand homograph attempts.",
+          why: "This class of phishing bypasses traditional link-reputation and attachment scanning entirely.",
+          source: "crates/vigilyx-engine/src/modules/aitm_detect.rs",
+        },
+        {
+          tag: "HTML pixel art",
+          title: "Table-cell QR codes and div pixel-text smuggled inside HTML",
+          body:
+            "Attackers render QR codes using <table> cells with bgcolor and render phishing text using floated <div>s with margin-left / background-color instead of actual text — specifically to bypass OCR and sandbox image scanning. Vigilyx runs a three-stage pipeline: string pre-filter → DOM structural analysis → rqrr QR decoding on the reconstructed bitmap.",
+          why: "Nothing in the usual \"scan images with OCR\" toolchain sees these.",
+          source: "crates/vigilyx-engine/src/modules/html_pixel_art.rs",
+        },
+        {
+          tag: "Attachment QR",
+          title: "Multi-format QR decode + ASCII block-char QR + CWE-400 bomb safety",
+          body:
+            "QR-code attachments (PNG / JPEG / GIF / BMP / WebP / TIFF) are decoded with a fallback chain — a zero-alloc manual PNG fast path first, then the `image` crate, then adaptive thresholding — and the decoded URLs are scored against phishing-specific lures (login / OAuth / device-code). Unicode block-character \"ASCII-art\" QR codes in the body text are also reconstructed into a bitmap and decoded.",
+          why: "Image size is hard-capped to prevent decompression-bomb DoS; most OSS QR detectors are not this defensive.",
+          source: "crates/vigilyx-engine/src/modules/attach_qr_scan.rs",
+        },
+        {
+          tag: "Chinese financial DLP",
+          title: "JR/T 0197-2020 compliance thresholds with Luhn / IBAN mod-97 validation",
+          body:
+            "JR/T 0197-2020 is the People's Bank of China's financial data classification standard. Vigilyx tracks per-user / per-IP cumulative counts at levels C3 (sensitive, ≥ 500 / 24h → High) and C4 (highly sensitive, ≥ 50 / 24h → Critical). Chinese ID / mobile / bank card detection uses proper boundary-aware regex (`(?-u:\\b)`) so 18-digit IDs do not leak out as phone numbers, bank cards are Luhn-checked, IBAN is mod-97 validated, and the 18-digit unified social credit code excludes I / O / Z / S / V as specified.",
+          why: "Almost no Western mail-security vendor knows this standard exists, and regex-only DLP products miss the boundary and checksum rules.",
+          source: "crates/vigilyx-engine/src/data_security/jrt_compliance.rs",
+        },
+        {
+          tag: "Coremail / webmail",
+          title: "Chunked-upload reassembly and draft / self-send abuse detection",
+          body:
+            "Vigilyx understands the Coremail webmail protocol at HTTP layer: the shared compose.jsp URL is disambiguated by the JSON `action` field (deliver / save / autosave), multi-part chunked uploads are reassembled by `(client_ip, composeId, attachmentId, offset)` before DLP scans run, and self-to-self delivery via webmail is flagged as a common exfil path.",
+          why: "Plain SMTP sniffing misses webmail-based exfiltration entirely; this goes after a real, Chinese-market-specific exfil channel.",
+          source: "crates/vigilyx-engine/src/data_security/coremail.rs",
+        },
+      ],
+    },
     cta: {
       kicker: "Who should look at this",
       title: "Built for engineering-led security teams.",
@@ -251,10 +327,10 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
     hero: {
       badge: "开源 · Rust 核心 · 旁路 + Inline",
       stats: [
-        { value: "20+", label: "检测模块" },
-        { value: "30+", label: "DLP 规则" },
-        { value: "<2s", label: "Inline 判定" },
-        { value: "2", label: "部署模式" },
+        { value: "D-S + Murphy", label: "证据融合" },
+        { value: "5 状态 HMM", label: "BEC 阶段推断" },
+        { value: "Hawkes", label: "自激时序建模" },
+        { value: "JR/T 0197", label: "金融 DLP 合规" },
       ],
       terminal: {
         title: "verdict.jsonl",
@@ -394,7 +470,71 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
         },
         {
           title: "更适合生产运维",
-          body: "只有当 AI 真正提升分析效率时才启用，而不是“不开 AI 就没法工作”。",
+          body: "只有当 AI 真正提升分析效率时才启用，而不是「不开 AI 就没法工作」。",
+        },
+      ],
+    },
+    highlights: {
+      kicker: "真正不一样的地方",
+      title: "七件邮件安全产品里几乎看不到的实现。",
+      body:
+        "下面这些不是市场话术，而是仓库里真实存在的代码。我们只列那些相对于主流邮件网关确实不一样的检测面，而不是所有邮件安全产品都已经做的基础功能。",
+      cards: [
+        {
+          tag: "证据融合",
+          title: "Murphy 修正的 D-S 融合 + Copula 相关性折扣 + Jousselme 距离",
+          body:
+            "大多数邮件安全产品要么用加权求和评分，要么用黑盒分类器。Vigilyx 实现的是正经的 Dempster–Shafer / TBM 开世界融合，配合 Murphy 权重平均修正和针对相关检测器的 Copula 折扣——立场一致的检测器会互相强化，立场相反的会被降权，同源同族的冗余信号不会互相放大。",
+          why: "规避 Zadeh 悖论，显式建模相关性，每个引擎的判定贡献都可以单独解释，而不是只给一个神秘分数。",
+          source: "crates/vigilyx-engine/src/fusion/murphy.rs",
+        },
+        {
+          tag: "时序层",
+          title: "CUSUM + 双速 EWMA + Hawkes 自激 + 5 状态 HMM + 通信图",
+          body:
+            "多数工具按「单封邮件」孤立判定。Vigilyx 在单邮件 verdict 之上维持一整层跨时间窗状态：CUSUM 做累计漂移检测、双速 EWMA 做基线漂移、带 mark 的 Hawkes 过程建模攻击「自激」节奏（λ(t) = μ + Σ φ(r)·g(t−tᵢ)）、5 状态 HMM 推断 BEC/ATO 的阶段（侦察 → 建信任 → 执行 → 收割）、再加一张有向通信图识别群发钓鱼和外泄扇出模式。",
+          why: "可以抓到那些「单封看起来没问题」的营销期攻击、慢速 BEC 和外泄 burst。",
+          source: "crates/vigilyx-engine/src/temporal/",
+        },
+        {
+          tag: "AitM 钓鱼",
+          title: "反向代理 MFA 绕过工具指纹（Tycoon2FA / EvilProxy / Evilginx3）",
+          body:
+            "现代钓鱼已经不是「伪造登录页」——攻击者会通过反向代理把用户接到真实的 Microsoft / Google 登录流程，中间偷会话 token 绕过 MFA。Vigilyx 识别 Cloudflare Workers / Pages 上的 DGA 托管模式、OAuth redirect_uri 与官方域不匹配、Turnstile 验证码指纹、工具包的 URI 形态，以及 Latin/Cyrillic 混合字符脚本做品牌同形异义伪装。",
+          why: "这一类钓鱼会完全绕过传统的链接信誉库和附件扫描。",
+          source: "crates/vigilyx-engine/src/modules/aitm_detect.rs",
+        },
+        {
+          tag: "HTML 像素艺术",
+          title: "藏在 HTML 里的表格二维码和 div 像素文字",
+          body:
+            "攻击者会用 <table> 单元格配合 bgcolor 去「画」二维码，或用浮动的 <div> 配合 margin-left / background-color 去拼出钓鱼话术的文字形状——而不是真的写文字——就是为了绕过 OCR 和沙箱的图片扫描。Vigilyx 有一套三阶段管线：字符串预过滤 → DOM 结构分析 → 用 rqrr 对重建出来的位图解 QR。",
+          why: "常见「用 OCR 扫图片」的工具链一个都看不到这些东西。",
+          source: "crates/vigilyx-engine/src/modules/html_pixel_art.rs",
+        },
+        {
+          tag: "附件二维码",
+          title: "多格式 QR 解码 + ASCII 块字符 QR + CWE-400 安全防炸",
+          body:
+            "QR 附件（PNG / JPEG / GIF / BMP / WebP / TIFF）会走一条降级解码链：先用零分配的手写 PNG 快速路径，再 fallback 到 `image` crate，再做自适应阈值重试；解出来的 URL 会按「钓鱼专属落地页」（登录 / OAuth / device-code）打分。正文里用 Unicode 方块字符拼出来的 ASCII-art 二维码也会被重建成位图解码。",
+          why: "图像尺寸有硬上限防 decompression bomb DoS，多数开源 QR 检测实现没做这一步防御。",
+          source: "crates/vigilyx-engine/src/modules/attach_qr_scan.rs",
+        },
+        {
+          tag: "金融级中文 DLP",
+          title: "JR/T 0197-2020 合规阈值 + Luhn / IBAN mod-97 数学校验",
+          body:
+            "JR/T 0197-2020 是中国人民银行发布的金融数据安全分级国家标准。Vigilyx 按 C3（敏感，24h 内 ≥ 500 条 → High）和 C4（高敏感，24h 内 ≥ 50 条 → Critical）做 per-user / per-IP 累计追踪。中国身份证 / 手机号 / 银行卡用带边界感知的正则 `(?-u:\\b)`——避免 18 位身份证被截成 11 位「手机号」——银行卡做 Luhn 校验，IBAN 做 mod-97 校验，18 位统一社会信用代码严格排除 I / O / Z / S / V 字符。",
+          why: "海外邮件安全厂商基本不知道这套标准存在，纯正则 DLP 产品会在边界和 checksum 环节漏检。",
+          source: "crates/vigilyx-engine/src/data_security/jrt_compliance.rs",
+        },
+        {
+          tag: "Coremail / Webmail",
+          title: "分片上传重组 + 草稿 / 自发自收滥用检测",
+          body:
+            "Vigilyx 在 HTTP 层原生理解 Coremail 协议：compose.jsp 的公共 URL 靠 JSON `action` 字段区分 deliver / save / autosave；multipart 分片上传会按 `(client_ip, composeId, attachmentId, offset)` 重组之后再跑 DLP；Webmail 自发自收（发给自己）作为一种常见外泄路径会被单独标记。",
+          why: "单纯抓 SMTP 完全看不到 Webmail 层面的外泄；这是针对中国企业邮箱生态的真实外泄通道做的深度定制。",
+          source: "crates/vigilyx-engine/src/data_security/coremail.rs",
         },
       ],
     },
@@ -551,6 +691,30 @@ onBeforeUnmount(() => {
           <ul>
             <li v-for="point in card.points" :key="point">{{ point }}</li>
           </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="home-section">
+      <div class="home-section-heading">
+        <p class="home-kicker">{{ copy.highlights.kicker }}</p>
+        <h2>{{ copy.highlights.title }}</h2>
+        <p>{{ copy.highlights.body }}</p>
+      </div>
+
+      <div class="home-highlight-grid">
+        <article
+          v-for="(card, idx) in copy.highlights.cards"
+          :key="card.title"
+          class="home-surface highlight-card"
+          :style="{ animationDelay: `${idx * 60}ms` }"
+        >
+          <span class="highlight-card__index">{{ String(idx + 1).padStart(2, "0") }}</span>
+          <span class="highlight-card__tag">{{ card.tag }}</span>
+          <h3>{{ card.title }}</h3>
+          <p class="highlight-card__body">{{ card.body }}</p>
+          <p class="highlight-card__why"><strong>Why it matters:</strong> {{ card.why }}</p>
+          <code class="highlight-card__source">{{ card.source }}</code>
         </article>
       </div>
     </section>

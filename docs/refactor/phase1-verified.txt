@@ -1,0 +1,39 @@
+Phase 1 verification snapshot
+==============================
+Timestamp: 2026-04-23 11:35 +08:00 (remote)
+Branch: refactor/mirror-topology
+
+Topology after deploy:
+  vigilyx (main)         : Up (healthy)  -- runs ONLY ./vigilyx-api (no engine process)
+  vigilyx-engine-standalone : Up (healthy) -- runs ./vigilyx-engine (dedicated container)
+  vigilyx-sniffer        : Up
+  vigilyx-ai             : Up
+  vigilyx-postgres       : Up (healthy)
+  vigilyx-redis          : Up (healthy)
+  vigilyx-caddy          : Up
+
+Verified separation:
+  docker top vigilyx                  -> only ./vigilyx-api (no vigilyx-engine pid) ✅
+  docker top vigilyx-engine-standalone -> only ./vigilyx-engine ✅
+
+Data plane health (vs baseline-pre-phase1.txt):
+  sessions: 3984954 -> 3989217 (+4263) ✅
+  verdicts: 11434  -> 11477   (+43)   ✅
+  engine logs: continuous "Processing session" / "Security verdict produced" entries ✅
+
+Remote .env converged:
+  STANDALONE_ENGINE=false (was unset, now appended by deploy.sh Step 1.7) ✅
+
+deploy.sh changes verified:
+  - DEPLOY_MODE detection moved to Step 1.6 (before any usage) ✅
+  - STANDALONE_ENGINE convergence moved to Step 1.7 (preflight) ✅
+  - --backend now triggers engine image rebuild + engine container recreation ✅
+  - --engine flag prints deprecation warning and is no-op ✅
+
+Bug fixed in this session:
+  Original: line 382 referenced $DEPLOY_MODE before initialization (line 447)
+            -> set -euo pipefail aborted with "DEPLOY_MODE: unbound variable"
+  Fix:      moved DEPLOY_MODE detection + STANDALONE_ENGINE convergence blocks
+            from Step 7 vicinity to immediately after Step 1.5 preflight
+
+Next: observe ≥24h before starting Phase 2 (entrypoint cleanup + main image healthcheck)
