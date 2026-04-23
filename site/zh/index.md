@@ -29,6 +29,8 @@ features:
     details: 两种部署共用同一套多模块检测流水线（解析、头部、内容、链接、附件、YARA、DLP、身份、证据融合、SOAR）。规则、IOC、调参与审计链都可以通用——唯一的区别是判定结果是"事后参考"（旁路）还是"投递前拦截"（MTA）。
   - title: Rust 核心运行时
     details: 抓包、解析、检测、API 与 MTA 逻辑围绕同一套 Rust 栈构建，更适合做稳定的安全工程系统。
+  - title: 可选外部 AI 接入
+    details: Rust 核心本身就能独立工作。外部 AI 作为可选组件，用 NLP 做钓鱼语义、意图分析与说服话术打分——可以在纯 CPU 环境运行，不依赖 GPU——也可以对接外部大模型（Claude / OpenAI）辅助分析师复核。按需开关，AI 永远不是单点依赖。
 ---
 
 <HomeLanding locale="zh" />
