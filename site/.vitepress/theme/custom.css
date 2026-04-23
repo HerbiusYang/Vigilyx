@@ -238,7 +238,26 @@ html.dark body {
 }
 
 .VPHomeHero {
-  padding-top: 2.5rem;
+  position: relative;
+  padding-top: 3.5rem;
+  padding-bottom: 2rem;
+}
+
+/* Eyebrow badge above the hero name */
+.VPHomeHero::before {
+  content: "";
+  position: absolute;
+  top: 1.2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: #14b8a6;
+  box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.14),
+    0 0 14px rgba(20, 184, 166, 0.55);
+  animation: vig-pulse 2.6s ease-in-out infinite;
 }
 
 .VPHomeHero .container {
@@ -251,33 +270,93 @@ html.dark body {
 
 .VPHomeHero .main,
 .VPHomeHero:not(.has-image) .main {
-  max-width: 52rem;
+  max-width: 58rem;
   margin: 0 auto;
   text-align: center;
+  position: relative;
+}
+
+/* Small meta label rendered before the name via ::before on .main */
+.VPHomeHero .main::before {
+  content: "Rust · Open Source · Banking-grade";
+  display: inline-block;
+  margin-bottom: 1.25rem;
+  padding: 0.35rem 0.85rem;
+  border: 1px solid var(--vig-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vig-bg-1) 70%, transparent);
+  color: var(--vig-text-soft);
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+html[lang="zh"] .VPHomeHero .main::before {
+  content: "Rust · 开源 · 银行级标准";
+  letter-spacing: 0.04em;
 }
 
 .VPHomeHero .name {
   font-family: var(--vp-font-family-heading);
-  font-weight: 700;
-  letter-spacing: -0.04em;
-  line-height: 1;
-  font-size: clamp(2.2rem, 5vw, 3.6rem);
+  font-weight: 800;
+  letter-spacing: -0.055em;
+  line-height: 0.95;
+  font-size: clamp(3rem, 7.5vw, 5.5rem);
+  margin: 0;
+  background: linear-gradient(
+    135deg,
+    #0f766e 0%,
+    #14b8a6 45%,
+    #5eead4 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.VPHomeHero .name .clip {
+  color: inherit;
+  background: inherit;
+  -webkit-background-clip: inherit;
+  background-clip: inherit;
+  -webkit-text-fill-color: inherit;
 }
 
 .VPHomeHero .text {
-  max-width: 22ch;
-  margin: 0.5rem auto 0;
+  max-width: 26ch;
+  margin: 1.25rem auto 0;
   font-family: var(--vp-font-family-heading);
-  font-size: clamp(1.6rem, 3vw, 2.25rem);
-  line-height: 1.15;
-  letter-spacing: -0.025em;
+  font-size: clamp(1.25rem, 2.2vw, 1.75rem);
+  line-height: 1.25;
+  letter-spacing: -0.02em;
   font-weight: 600;
   color: var(--vig-text);
+  position: relative;
+}
+
+/* Subtle underline accent below the text */
+.VPHomeHero .text::after {
+  content: "";
+  display: block;
+  width: 3rem;
+  height: 2px;
+  margin: 1.1rem auto 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    #14b8a6 50%,
+    transparent 100%
+  );
+  border-radius: 2px;
 }
 
 .VPHomeHero .tagline {
-  max-width: 40rem;
-  margin: 1rem auto 0;
+  max-width: 42rem;
+  margin: 1.1rem auto 0;
   color: var(--vig-text-soft);
   font-size: 1.02rem;
   line-height: 1.7;
@@ -289,7 +368,42 @@ html.dark body {
   flex-wrap: wrap;
   justify-content: center;
   gap: 0.6rem;
-  margin-top: 1.8rem;
+  margin-top: 2rem;
+}
+
+/* Keyword chips rendered under the actions via ::after on .main */
+.VPHomeHero .main::after {
+  content: "Mirror mode    Inline SMTP    Explainable verdicts";
+  display: block;
+  margin: 1.75rem auto 0;
+  color: color-mix(in srgb, var(--vig-text-soft) 75%, transparent);
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: pre;
+}
+
+html[lang="zh"] .VPHomeHero .main::after {
+  content: "旁路镜像    Inline SMTP    可解释判定";
+  letter-spacing: 0.08em;
+}
+
+@keyframes vig-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.14),
+      0 0 14px rgba(20, 184, 166, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(20, 184, 166, 0.08),
+      0 0 20px rgba(20, 184, 166, 0.75);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .VPHomeHero::before {
+    animation: none;
+  }
 }
 
 .VPHomeHero .action {
@@ -1268,7 +1382,25 @@ html.dark .home-surface::before {
 
 @media (max-width: 760px) {
   .VPHomeHero {
-    padding-top: 1rem;
+    padding-top: 2.25rem;
+  }
+
+  .VPHomeHero::before {
+    top: 0.7rem;
+  }
+
+  .VPHomeHero .main::before {
+    margin-bottom: 1rem;
+    font-size: 0.66rem;
+    padding: 0.3rem 0.7rem;
+  }
+
+  .VPHomeHero .main::after {
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    white-space: normal;
+    max-width: 22rem;
+    margin: 1.5rem auto 0;
   }
 
   .VPHomeHero .container {
