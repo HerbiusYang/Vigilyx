@@ -9,9 +9,6 @@ hero:
   name: Vigilyx
   text: Email security gateway for passive analysis and inline SMTP decisions
   tagline: Open source, Rust-powered, and built for teams that want explainable verdicts instead of a black-box appliance. Mirror first, enforce later, keep the same detection stack.
-  image:
-    src: /hero-illustration.svg
-    alt: Vigilyx mirror mode and inline MTA inspection architecture
   actions:
     - theme: brand
       text: Quick Start
