@@ -243,23 +243,6 @@ html.dark body {
   padding-bottom: 2rem;
 }
 
-/* Eyebrow badge above the hero name */
-.VPHomeHero::before {
-  content: "";
-  position: absolute;
-  top: 1.2rem;
-  left: 50%;
-  transform: translateX(-50%);
-  display: block;
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 999px;
-  background: #14b8a6;
-  box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.14),
-    0 0 14px rgba(20, 184, 166, 0.55);
-  animation: vig-pulse 2.6s ease-in-out infinite;
-}
-
 .VPHomeHero .container {
   gap: 3rem;
 }
@@ -274,29 +257,6 @@ html.dark body {
   margin: 0 auto;
   text-align: center;
   position: relative;
-}
-
-/* Small meta label rendered before the name via ::before on .main */
-.VPHomeHero .main::before {
-  content: "Rust · Open Source · Banking-grade";
-  display: inline-block;
-  margin-bottom: 1.25rem;
-  padding: 0.35rem 0.85rem;
-  border: 1px solid var(--vig-border);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--vig-bg-1) 70%, transparent);
-  color: var(--vig-text-soft);
-  font-family: var(--vp-font-family-mono);
-  font-size: 0.72rem;
-  font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  line-height: 1;
-}
-
-html[lang="zh"] .VPHomeHero .main::before {
-  content: "Rust · 开源 · 银行级标准";
-  letter-spacing: 0.04em;
 }
 
 .VPHomeHero .name {
@@ -417,14 +377,8 @@ html[lang="zh"] .VPHomeHero .main::after {
 }
 
 @keyframes vig-pulse {
-  0%, 100% {
-    box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.14),
-      0 0 14px rgba(20, 184, 166, 0.55);
-  }
-  50% {
-    box-shadow: 0 0 0 6px rgba(20, 184, 166, 0.08),
-      0 0 20px rgba(20, 184, 166, 0.75);
-  }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1410,16 +1364,6 @@ html.dark .home-surface::before {
 @media (max-width: 760px) {
   .VPHomeHero {
     padding-top: 2.25rem;
-  }
-
-  .VPHomeHero::before {
-    top: 0.7rem;
-  }
-
-  .VPHomeHero .main::before {
-    margin-bottom: 1rem;
-    font-size: 0.66rem;
-    padding: 0.3rem 0.7rem;
   }
 
   .VPHomeHero .main::after {
