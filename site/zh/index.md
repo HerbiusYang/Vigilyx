@@ -9,9 +9,6 @@ hero:
   name: Vigilyx
   text: 面向旁路分析与 Inline SMTP 决策的邮件安全网关
   tagline: 开源、Rust 驱动，并且按工程系统去构建，而不是按黑盒 appliance 去包装。可以先旁路观察，再逐步走向 Inline 决策，检测逻辑保持同一套。
-  image:
-    src: /hero-illustration.svg
-    alt: Vigilyx 旁路镜像模式与 Inline MTA 检测架构
   actions:
     - theme: brand
       text: 快速开始

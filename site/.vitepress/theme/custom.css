@@ -134,6 +134,16 @@ body {
   max-width: 38rem;
 }
 
+.VPHomeHero:not(.has-image) .container {
+  justify-content: center;
+}
+
+.VPHomeHero:not(.has-image) .main {
+  max-width: 50rem;
+  margin: 0 auto;
+  text-align: center;
+}
+
 .VPHomeHero .name {
   font-family: var(--vp-font-family-heading);
   letter-spacing: -0.03em;
@@ -156,6 +166,15 @@ body {
 
 .VPHomeHero .actions {
   gap: 0.85rem;
+}
+
+.VPHomeHero:not(.has-image) .tagline {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.VPHomeHero:not(.has-image) .actions {
+  justify-content: center;
 }
 
 .VPButton.brand {
@@ -571,6 +590,7 @@ body {
 }
 
 @media (max-width: 1100px) {
+  .home-dual-grid,
   .home-stack-grid,
   .home-metric-grid,
   .home-ai-grid {
@@ -591,8 +611,44 @@ body {
 }
 
 @media (max-width: 760px) {
+  .VPHomeHero {
+    padding-top: 0.25rem;
+  }
+
+  .VPHomeHero .container {
+    gap: 1.8rem;
+  }
+
   .VPHomeHero .text {
     max-width: 11ch;
+    font-size: clamp(2.25rem, 12vw, 3.4rem);
+    line-height: 0.98;
+  }
+
+  .VPHomeHero .main,
+  .VPHomeHero:not(.has-image) .main {
+    max-width: 100%;
+  }
+
+  .VPHomeHero .tagline {
+    font-size: 0.98rem;
+    line-height: 1.7;
+  }
+
+  .VPHomeHero .actions,
+  .VPHomeHero:not(.has-image) .actions {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.7rem;
+  }
+
+  .VPHomeHero .action {
+    width: 100%;
+  }
+
+  .VPHomeHero .action .VPButton {
+    width: 100%;
+    justify-content: center;
   }
 
   .home-dual-grid,
@@ -616,21 +672,80 @@ body {
   }
 
   .home-surface,
-  .home-cta {
+  .home-cta,
+  .share-panel {
     border-radius: 24px;
     padding: 1.25rem;
+  }
+
+  .home-section-heading h2 {
+    font-size: clamp(1.8rem, 9vw, 2.5rem);
+  }
+
+  .mode-card h3,
+  .stack-card h3,
+  .ai-card h3,
+  .home-cta h2 {
+    font-size: 1.5rem;
+  }
+
+  .metric-card {
+    min-height: auto;
+  }
+
+  .metric-card strong {
+    font-size: clamp(2rem, 14vw, 2.8rem);
   }
 
   .VPNavBarSearch {
     flex-basis: auto;
   }
 
+  .share-panel__actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .share-panel__button {
+    width: 100%;
+  }
+
   .share-panel__qr {
     grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
   }
 
   .share-panel__qr img {
     width: min(220px, 100%);
     height: auto;
+  }
+}
+
+@media (max-width: 520px) {
+  .VPHomeHero .text {
+    max-width: 10ch;
+    font-size: clamp(2rem, 13vw, 2.9rem);
+  }
+
+  .home-strip span {
+    font-size: 0.82rem;
+    letter-spacing: 0.03em;
+  }
+
+  .home-kicker,
+  .share-panel__eyebrow {
+    letter-spacing: 0.12em;
+  }
+
+  .home-section-heading p:last-child,
+  .mode-card p,
+  .stack-card p,
+  .ai-card p,
+  .metric-card p,
+  .home-cta p,
+  .share-panel__title,
+  .share-panel__qr p {
+    font-size: 0.96rem;
   }
 }
