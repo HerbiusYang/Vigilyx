@@ -56,6 +56,7 @@ type LandingCopy = {
       value: string;
       label: string;
       body: string;
+      icon: "pipeline" | "shield" | "deploy" | "rust";
     }>;
   };
   ai: {
@@ -189,21 +190,25 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           value: "20",
           label: "default pipeline entries",
           body: "Detection stages for content, identity, link, attachment, YARA, DLP, and verdicting.",
+          icon: "pipeline",
         },
         {
           value: "30",
           label: "DLP patterns",
           body: "Data-security inspection paths for sensitive content and suspicious transfer behavior.",
+          icon: "shield",
         },
         {
           value: "2",
           label: "deployment modes",
           body: "Passive mirror monitoring for visibility and inline MTA inspection for enforcement.",
+          icon: "deploy",
         },
         {
           value: "Rust",
           label: "core runtime",
           body: "Parsing, detection, API, sniffer, and MTA code paths stay in one performance-oriented stack.",
+          icon: "rust",
         },
       ],
     },
@@ -351,21 +356,25 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           value: "20",
           label: "默认 pipeline entries",
           body: "覆盖内容、身份、链接、附件、YARA、DLP 与 verdict 的检测链路。",
+          icon: "pipeline",
         },
         {
           value: "30",
           label: "DLP patterns",
           body: "覆盖敏感内容识别与可疑传输行为的数据安全检测路径。",
+          icon: "shield",
         },
         {
           value: "2",
           label: "deployment modes",
           body: "既能做旁路可视化分析，也能做 Inline MTA 决策。",
+          icon: "deploy",
         },
         {
           value: "Rust",
           label: "core runtime",
           body: "抓包、解析、检测、API 与 MTA 逻辑都维持在同一套高性能栈里。",
+          icon: "rust",
         },
       ],
     },
@@ -412,6 +421,40 @@ function isExternalLink(href: string): boolean {
   return href.startsWith("http://") || href.startsWith("https://");
 }
 
+// Lightweight terminal tokenizer — pre-computed once per locale change.
+// Produces typed token segments for fine-grained CSS coloring without
+// requiring a heavyweight syntax highlighter bundle.
+type TermToken = { t: "str" | "num" | "key" | "op" | "txt" | "path"; v: string };
+
+function tokenizeTerm(text: string): TermToken[] {
+  // Regex matches (in order): "quoted strings" | numbers | KEY= pattern |
+  // path-like identifier (module names) | verdict/key words | plain text.
+  const re =
+    /("(?:[^"\\]|\\.)*")|(\b\d+(?:\.\d+)?\b)|(\b(?:verdict|score|modules|dlp|nlp|ioc|content|yara|action|subject|stream)\b)|([A-Za-z_][A-Za-z0-9_-]+=[A-Za-z0-9_.\-]+)|([A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+)|([#$·→•\[\]])/g;
+  const out: TermToken[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    if (m.index > last) out.push({ t: "txt", v: text.slice(last, m.index) });
+    if (m[1]) out.push({ t: "str", v: m[1] });
+    else if (m[2]) out.push({ t: "num", v: m[2] });
+    else if (m[3]) out.push({ t: "key", v: m[3] });
+    else if (m[4]) out.push({ t: "path", v: m[4] });
+    else if (m[5]) out.push({ t: "str", v: m[5] });
+    else if (m[6]) out.push({ t: "op", v: m[6] });
+    last = re.lastIndex;
+  }
+  if (last < text.length) out.push({ t: "txt", v: text.slice(last) });
+  return out;
+}
+
+const tokenizedTerminal = computed(() =>
+  copy.value.hero.terminal.lines.map((line) => ({
+    ...line,
+    tokens: tokenizeTerm(line.text),
+  })),
+);
+
 // One-shot scroll-in reveal via IntersectionObserver.
 // Disabled: created a jarring "block-by-block" feel on slower machines.
 // Entrance animations on hero elements (term-line, pipeline-stage) are enough.
@@ -448,11 +491,15 @@ onBeforeUnmount(() => {
               <span class="hero-terminal__live">● live</span>
             </div>
             <pre class="hero-terminal__body"><code><span
-              v-for="(line, idx) in copy.hero.terminal.lines"
+              v-for="(line, idx) in tokenizedTerminal"
               :key="idx"
               :class="['term-line', `term-line--${line.kind}`]"
               :style="{ animationDelay: `${idx * 90}ms` }"
-            ><template v-if="line.kind === 'prompt'"><span class="term-caret">$</span> </template>{{ line.text }}</span></code></pre>
+            ><template v-if="line.kind === 'prompt'"><span class="term-caret">$</span> </template><span
+              v-for="(tok, ti) in line.tokens"
+              :key="ti"
+              :class="`tt tt--${tok.t}`"
+            >{{ tok.v }}</span></span></code></pre>
           </div>
 
           <!-- Pipeline card -->
@@ -541,8 +588,36 @@ onBeforeUnmount(() => {
           :key="card.label"
           class="home-surface metric-card"
         >
+          <span class="metric-card__icon" aria-hidden="true">
+            <!-- pipeline -->
+            <svg v-if="card.icon === 'pipeline'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="5" cy="6" r="2" />
+              <circle cx="5" cy="18" r="2" />
+              <circle cx="19" cy="12" r="2" />
+              <path d="M7 6h4a4 4 0 0 1 4 4v0a4 4 0 0 1-4 4H7" />
+              <path d="M7 18h4a4 4 0 0 0 4-4" opacity=".55" />
+            </svg>
+            <!-- shield -->
+            <svg v-else-if="card.icon === 'shield'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3l8 3v6c0 4.5-3.2 8.5-8 10-4.8-1.5-8-5.5-8-10V6l8-3z" />
+              <path d="M9 12l2 2 4-4" />
+            </svg>
+            <!-- deploy -->
+            <svg v-else-if="card.icon === 'deploy'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="6" rx="1.5" />
+              <rect x="3" y="14" width="18" height="6" rx="1.5" />
+              <path d="M7 7h.01M7 17h.01" />
+            </svg>
+            <!-- rust -->
+            <svg v-else-if="card.icon === 'rust'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="8" />
+              <path d="M8 8h5a2.5 2.5 0 0 1 0 5H8z" />
+              <path d="M11 13l3 5" />
+              <path d="M8 13v5" />
+            </svg>
+          </span>
           <strong>{{ card.value }}</strong>
-          <span>{{ card.label }}</span>
+          <span class="metric-card__label">{{ card.label }}</span>
           <p>{{ card.body }}</p>
         </article>
       </div>
