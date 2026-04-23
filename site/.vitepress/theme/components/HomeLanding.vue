@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import SharePanel from "./SharePanel.vue";
+import HeroBackdrop from "./HeroBackdrop.vue";
 
 const props = withDefaults(
   defineProps<{
@@ -12,6 +13,18 @@ const props = withDefaults(
 );
 
 type LandingCopy = {
+  hero: {
+    badge: string;
+    stats: Array<{ value: string; label: string }>;
+    terminal: {
+      title: string;
+      lines: Array<{ kind: "prompt" | "out" | "ok" | "warn" | "bad" | "muted"; text: string }>;
+    };
+    pipeline: {
+      title: string;
+      stages: Array<{ name: string; verdict: "safe" | "suspicious" | "malicious" | "clean" }>;
+    };
+  };
   strip: string[];
   deployment: {
     kicker: string;
@@ -68,6 +81,40 @@ type LandingCopy = {
 
 const landingCopy: Record<"en" | "zh", LandingCopy> = {
   en: {
+    hero: {
+      badge: "Open source · Rust core · Mirror + Inline",
+      stats: [
+        { value: "20+", label: "pipeline stages" },
+        { value: "30+", label: "DLP patterns" },
+        { value: "<8s", label: "inline verdict" },
+        { value: "2", label: "deploy modes" },
+      ],
+      terminal: {
+        title: "verdict.jsonl",
+        lines: [
+          { kind: "muted", text: "# live verdict stream — mirror mode" },
+          { kind: "prompt", text: "vigilyx tail --stream verdicts" },
+          { kind: "out", text: "[SMTP] mail-01 → alice@corp · subject: \"Invoice 2026-Q1\"" },
+          { kind: "ok", text: "verdict: safe    score 0.08  modules 0/15  dlp ok" },
+          { kind: "out", text: "[SMTP] mx-2 → bob@corp · subject: \"Account verification\"" },
+          { kind: "warn", text: "verdict: medium  score 0.52  modules 4/15  nlp phishing=0.71" },
+          { kind: "bad", text: "verdict: high    score 0.81  ioc=sender_ip content=urgency yara=phish_01" },
+          { kind: "muted", text: "# action: quarantined · session replayable · explain trail saved" },
+        ],
+      },
+      pipeline: {
+        title: "Detection pipeline",
+        stages: [
+          { name: "Parse", verdict: "clean" },
+          { name: "Header", verdict: "clean" },
+          { name: "Content", verdict: "suspicious" },
+          { name: "Link", verdict: "suspicious" },
+          { name: "YARA", verdict: "malicious" },
+          { name: "DLP", verdict: "clean" },
+          { name: "Fuse", verdict: "malicious" },
+        ],
+      },
+    },
     strip: [
       "Mirror monitoring",
       "Inline SMTP inspection",
@@ -196,6 +243,40 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
     },
   },
   zh: {
+    hero: {
+      badge: "开源 · Rust 核心 · 旁路 + Inline",
+      stats: [
+        { value: "20+", label: "检测模块" },
+        { value: "30+", label: "DLP 规则" },
+        { value: "<8s", label: "Inline 判定" },
+        { value: "2", label: "部署模式" },
+      ],
+      terminal: {
+        title: "verdict.jsonl",
+        lines: [
+          { kind: "muted", text: "# 实时 verdict 数据流 · 旁路镜像模式" },
+          { kind: "prompt", text: "vigilyx tail --stream verdicts" },
+          { kind: "out", text: "[SMTP] mail-01 → alice@corp · 主题：\"发票 2026-Q1\"" },
+          { kind: "ok", text: "verdict: safe    score 0.08  modules 0/15  dlp ok" },
+          { kind: "out", text: "[SMTP] mx-2 → bob@corp · 主题：\"账户验证提醒\"" },
+          { kind: "warn", text: "verdict: medium  score 0.52  modules 4/15  nlp phishing=0.71" },
+          { kind: "bad", text: "verdict: high    score 0.81  ioc=sender_ip content=urgency yara=phish_01" },
+          { kind: "muted", text: "# action: 已隔离 · 会话可复盘 · 解释链已保存" },
+        ],
+      },
+      pipeline: {
+        title: "检测流水线",
+        stages: [
+          { name: "解析", verdict: "clean" },
+          { name: "头部", verdict: "clean" },
+          { name: "内容", verdict: "suspicious" },
+          { name: "链接", verdict: "suspicious" },
+          { name: "YARA", verdict: "malicious" },
+          { name: "DLP", verdict: "clean" },
+          { name: "融合", verdict: "malicious" },
+        ],
+      },
+    },
     strip: [
       "旁路镜像监控",
       "Inline SMTP 检测",
@@ -330,15 +411,102 @@ const copy = computed(() => landingCopy[props.locale]);
 function isExternalLink(href: string): boolean {
   return href.startsWith("http://") || href.startsWith("https://");
 }
+
+// One-shot scroll-in reveal via IntersectionObserver.
+// Once revealed, we unobserve — no sustained work on the main thread.
+const rootRef = ref<HTMLElement | null>(null);
+let io: IntersectionObserver | null = null;
+
+onMounted(() => {
+  if (typeof window === "undefined") return;
+  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  const targets = rootRef.value?.querySelectorAll<HTMLElement>("[data-reveal]") ?? [];
+
+  if (reduced || !("IntersectionObserver" in window)) {
+    targets.forEach((el) => el.classList.add("is-revealed"));
+    return;
+  }
+
+  io = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("is-revealed");
+          io?.unobserve(entry.target);
+        }
+      }
+    },
+    { threshold: 0.12, rootMargin: "0px 0px -60px 0px" },
+  );
+
+  targets.forEach((el) => io?.observe(el));
+});
+
+onBeforeUnmount(() => {
+  io?.disconnect();
+});
 </script>
 
 <template>
-  <div class="home-landing">
-    <div class="home-strip">
+  <div ref="rootRef" class="home-landing">
+    <!-- HERO VISUAL: backdrop + terminal + pipeline -->
+    <section class="hero-visual" data-reveal>
+      <HeroBackdrop />
+      <div class="hero-visual__inner">
+        <div class="hero-visual__badge">
+          <span class="hero-visual__dot"></span>
+          {{ copy.hero.badge }}
+        </div>
+
+        <div class="hero-visual__grid">
+          <!-- Terminal card -->
+          <div class="hero-terminal" role="img" :aria-label="copy.hero.terminal.title">
+            <div class="hero-terminal__bar">
+              <span class="hero-terminal__dots">
+                <i></i><i></i><i></i>
+              </span>
+              <span class="hero-terminal__title">{{ copy.hero.terminal.title }}</span>
+              <span class="hero-terminal__live">● live</span>
+            </div>
+            <pre class="hero-terminal__body"><code><span
+              v-for="(line, idx) in copy.hero.terminal.lines"
+              :key="idx"
+              :class="['term-line', `term-line--${line.kind}`]"
+              :style="{ animationDelay: `${idx * 90}ms` }"
+            ><template v-if="line.kind === 'prompt'"><span class="term-caret">$</span> </template>{{ line.text }}</span></code></pre>
+          </div>
+
+          <!-- Pipeline card -->
+          <div class="hero-pipeline">
+            <div class="hero-pipeline__title">{{ copy.hero.pipeline.title }}</div>
+            <ol class="hero-pipeline__list">
+              <li
+                v-for="(stage, idx) in copy.hero.pipeline.stages"
+                :key="stage.name"
+                :class="['pipeline-stage', `pipeline-stage--${stage.verdict}`]"
+                :style="{ animationDelay: `${idx * 110}ms` }"
+              >
+                <span class="pipeline-stage__index">{{ String(idx + 1).padStart(2, "0") }}</span>
+                <span class="pipeline-stage__name">{{ stage.name }}</span>
+                <span class="pipeline-stage__pulse"></span>
+              </li>
+            </ol>
+            <div class="hero-pipeline__stats">
+              <div v-for="stat in copy.hero.stats" :key="stat.label" class="hero-stat">
+                <strong>{{ stat.value }}</strong>
+                <span>{{ stat.label }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="home-strip" data-reveal>
       <span v-for="item in copy.strip" :key="item">{{ item }}</span>
     </div>
 
-    <section class="home-section">
+    <section class="home-section" data-reveal>
       <div class="home-section-heading">
         <p class="home-kicker">{{ copy.deployment.kicker }}</p>
         <h2>{{ copy.deployment.title }}</h2>
@@ -361,7 +529,7 @@ function isExternalLink(href: string): boolean {
       </div>
     </section>
 
-    <section class="home-section">
+    <section class="home-section" data-reveal>
       <div class="home-section-heading">
         <p class="home-kicker">{{ copy.flow.kicker }}</p>
         <h2>{{ copy.flow.title }}</h2>
@@ -381,7 +549,7 @@ function isExternalLink(href: string): boolean {
       </div>
     </section>
 
-    <section class="home-section">
+    <section class="home-section" data-reveal>
       <div class="home-section-heading">
         <p class="home-kicker">{{ copy.product.kicker }}</p>
         <h2>{{ copy.product.title }}</h2>
@@ -401,7 +569,7 @@ function isExternalLink(href: string): boolean {
       </div>
     </section>
 
-    <section class="home-section">
+    <section class="home-section" data-reveal>
       <div class="home-section-heading">
         <p class="home-kicker">{{ copy.ai.kicker }}</p>
         <h2>{{ copy.ai.title }}</h2>
@@ -420,7 +588,7 @@ function isExternalLink(href: string): boolean {
       </div>
     </section>
 
-    <section class="home-section home-cta">
+    <section class="home-section home-cta" data-reveal>
       <div>
         <p class="home-kicker">{{ copy.cta.kicker }}</p>
         <h2>{{ copy.cta.title }}</h2>

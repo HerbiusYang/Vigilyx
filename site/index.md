@@ -7,8 +7,8 @@ description: Rust-powered email security gateway and analysis platform for passi
 
 hero:
   name: Vigilyx
-  text: Email security gateway for passive analysis and inline SMTP decisions
-  tagline: Open source, Rust-powered, and built for teams that want explainable verdicts instead of a black-box appliance. Mirror first, enforce later, keep the same detection stack.
+  text: Email security gateway built like an engineering system.
+  tagline: Open source, Rust-powered, explainable. Observe traffic in mirror mode, then move to inline SMTP decisions — without swapping out the detection stack or trusting a black box.
   actions:
     - theme: brand
       text: Quick Start
