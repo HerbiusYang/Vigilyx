@@ -74,7 +74,7 @@ function createThemeConfig(locale: "en" | "zh"): DefaultTheme.Config {
   const docsPrefix = isZh ? "/zh/docs/" : "/docs/";
 
   return {
-    logo: "/logo.svg",
+    logo: "/logo.png",
     siteTitle: "Vigilyx",
     search: localSearch,
     nav: isZh
@@ -185,10 +185,12 @@ export default defineConfig({
       },
     ],
     ["meta", { property: "og:site_name", content: "Vigilyx" }],
-    ["meta", { property: "og:image", content: new URL("og-card.svg", siteUrl).toString() }],
+    ["meta", { property: "og:image", content: new URL("banner.png", siteUrl).toString() }],
+    ["meta", { property: "og:image:width", content: "1448" }],
+    ["meta", { property: "og:image:height", content: "1086" }],
     ["meta", { name: "twitter:card", content: "summary_large_image" }],
-    ["meta", { name: "twitter:image", content: new URL("og-card.svg", siteUrl).toString() }],
-    ["link", { rel: "icon", type: "image/svg+xml", href: `${siteBase}logo.svg` }],
+    ["meta", { name: "twitter:image", content: new URL("banner.png", siteUrl).toString() }],
+    ["link", { rel: "icon", type: "image/png", href: `${siteBase}logo.png` }],
   ],
   transformHead({ pageData }) {
     const canonical = canonicalFor(pageData.relativePath);
