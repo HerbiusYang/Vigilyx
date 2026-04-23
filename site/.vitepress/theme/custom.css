@@ -163,7 +163,7 @@ body {
 .VPNavBar,
 .VPLocalNav {
   background: var(--vig-nav-bg) !important;
-  backdrop-filter: blur(18px);
+  backdrop-filter: blur(10px);
 }
 
 .VPNavBar .divider,
@@ -292,7 +292,19 @@ body {
 }
 
 .VPHomeHero .actions {
-  gap: 0.85rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: center;
+  row-gap: 0.75rem;
+}
+
+.VPHomeHero .action {
+  flex: 0 0 auto;
+}
+
+.VPHomeHero .action .VPButton {
+  white-space: nowrap;
 }
 
 .VPHomeHero:not(.has-image) .tagline {
@@ -434,7 +446,7 @@ body {
 
 .hero-visual__grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  grid-template-columns: 1fr;
   gap: 1.2rem;
   margin-top: 1.4rem;
 }
@@ -667,22 +679,7 @@ body {
   letter-spacing: 0.06em;
 }
 
-/* Scroll-in reveal (one-shot) */
-[data-reveal] {
-  opacity: 0;
-  transform: translateY(14px);
-  transition:
-    opacity 0.6s ease,
-    transform 0.6s ease;
-  will-change: opacity, transform;
-}
-
-[data-reveal].is-revealed {
-  opacity: 1;
-  transform: translateY(0);
-  /* Release compositor hint once done */
-  will-change: auto;
-}
+/* Scroll-in reveal removed — caused jank on slower machines */
 
 /* Home strip */
 .home-strip {
@@ -1063,10 +1060,6 @@ body {
    ========================================================================= */
 
 @media (max-width: 1100px) {
-  .hero-visual__grid {
-    grid-template-columns: 1fr;
-  }
-
   .home-dual-grid,
   .home-stack-grid,
   .home-metric-grid,
@@ -1114,9 +1107,13 @@ body {
 
   .VPHomeHero .actions,
   .VPHomeHero:not(.has-image) .actions {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 0.7rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    width: 100%;
+    max-width: 22rem;
+    margin-left: auto;
+    margin-right: auto;
   }
 
   .VPHomeHero .action {
@@ -1126,7 +1123,7 @@ body {
   .VPHomeHero .action .VPButton {
     width: 100%;
     justify-content: center;
-    min-height: 3.1rem;
+    min-height: 3rem;
   }
 
   .hero-visual {
@@ -1278,12 +1275,6 @@ body {
    ========================================================================= */
 
 @media (prefers-reduced-motion: reduce) {
-  [data-reveal] {
-    opacity: 1 !important;
-    transform: none !important;
-    transition: none !important;
-  }
-
   .term-line,
   .pipeline-stage {
     opacity: 1 !important;
