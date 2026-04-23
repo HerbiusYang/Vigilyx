@@ -413,44 +413,23 @@ function isExternalLink(href: string): boolean {
 }
 
 // One-shot scroll-in reveal via IntersectionObserver.
-// Once revealed, we unobserve — no sustained work on the main thread.
+// Disabled: created a jarring "block-by-block" feel on slower machines.
+// Entrance animations on hero elements (term-line, pipeline-stage) are enough.
 const rootRef = ref<HTMLElement | null>(null);
-let io: IntersectionObserver | null = null;
 
 onMounted(() => {
-  if (typeof window === "undefined") return;
-  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-  const targets = rootRef.value?.querySelectorAll<HTMLElement>("[data-reveal]") ?? [];
-
-  if (reduced || !("IntersectionObserver" in window)) {
-    targets.forEach((el) => el.classList.add("is-revealed"));
-    return;
-  }
-
-  io = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) {
-          entry.target.classList.add("is-revealed");
-          io?.unobserve(entry.target);
-        }
-      }
-    },
-    { threshold: 0.12, rootMargin: "0px 0px -60px 0px" },
-  );
-
-  targets.forEach((el) => io?.observe(el));
+  // No-op: reveal removed for smoother scrolling.
 });
 
 onBeforeUnmount(() => {
-  io?.disconnect();
+  // No-op.
 });
 </script>
 
 <template>
   <div ref="rootRef" class="home-landing">
     <!-- HERO VISUAL: backdrop + terminal + pipeline -->
-    <section class="hero-visual" data-reveal>
+    <section class="hero-visual">
       <HeroBackdrop />
       <div class="hero-visual__inner">
         <div class="hero-visual__badge">
@@ -502,11 +481,11 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <div class="home-strip" data-reveal>
+    <div class="home-strip">
       <span v-for="item in copy.strip" :key="item">{{ item }}</span>
     </div>
 
-    <section class="home-section" data-reveal>
+    <section class="home-section">
       <div class="home-section-heading">
         <p class="home-kicker">{{ copy.deployment.kicker }}</p>
         <h2>{{ copy.deployment.title }}</h2>
@@ -529,7 +508,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section class="home-section" data-reveal>
+    <section class="home-section">
       <div class="home-section-heading">
         <p class="home-kicker">{{ copy.flow.kicker }}</p>
         <h2>{{ copy.flow.title }}</h2>
@@ -549,7 +528,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section class="home-section" data-reveal>
+    <section class="home-section">
       <div class="home-section-heading">
         <p class="home-kicker">{{ copy.product.kicker }}</p>
         <h2>{{ copy.product.title }}</h2>
@@ -569,7 +548,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section class="home-section" data-reveal>
+    <section class="home-section">
       <div class="home-section-heading">
         <p class="home-kicker">{{ copy.ai.kicker }}</p>
         <h2>{{ copy.ai.title }}</h2>
@@ -588,7 +567,7 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <section class="home-section home-cta" data-reveal>
+    <section class="home-section home-cta">
       <div>
         <p class="home-kicker">{{ copy.cta.kicker }}</p>
         <h2>{{ copy.cta.title }}</h2>

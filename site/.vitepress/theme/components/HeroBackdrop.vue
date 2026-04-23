@@ -43,13 +43,14 @@ function shouldEnableCanvas(): boolean {
   if (typeof window === "undefined") return false;
   if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return false;
   // Disable on small screens — pure-CSS glow is enough for mobile
-  if (window.innerWidth < 760) return false;
-  // Low-end hint: low CPU cores
+  if (window.innerWidth < 900) return false;
+  // Low-end hint: require a decent CPU — CPU-only hosts (no GPU accel)
+  // can feel sluggish even with 4 cores, so raise the bar
   const cores = (navigator as any).hardwareConcurrency ?? 4;
-  if (cores <= 2) return false;
+  if (cores <= 4) return false;
   // Save-Data / low memory hint
   const mem = (navigator as any).deviceMemory;
-  if (typeof mem === "number" && mem <= 2) return false;
+  if (typeof mem === "number" && mem <= 4) return false;
   return true;
 }
 
@@ -140,7 +141,7 @@ function setupCanvas() {
 
   const MAX_DIST = 160;
   const MAX_DIST_SQ = MAX_DIST * MAX_DIST;
-  const FRAME_INTERVAL = 1000 / 30; // 30fps cap
+  const FRAME_INTERVAL = 1000 / 24; // 24fps cap — plenty for ambient motion
 
   const draw = (t: number) => {
     if (!running) return;
@@ -316,8 +317,8 @@ onBeforeUnmount(() => {
 .hero-backdrop__glow {
   position: absolute;
   border-radius: 50%;
-  filter: blur(60px);
-  opacity: 0.4;
+  filter: blur(40px);
+  opacity: 0.35;
 }
 
 .hero-backdrop__glow--teal {
@@ -367,7 +368,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 760px) {
   .hero-backdrop__glow {
-    filter: blur(40px);
+    filter: blur(28px);
   }
   .hero-backdrop__glow--teal {
     width: 240px;
