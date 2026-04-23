@@ -3,12 +3,12 @@ layout: home
 
 title: Vigilyx
 titleTemplate: Rust 驱动的邮件安全网关
-description: Rust 驱动的邮件安全网关与邮件安全分析平台，支持旁路镜像分析、Inline MTA 检测、威胁发现与审计处置。
+description: 按金融行业安全标准打造的 Rust 邮件安全网关与分析平台，支持旁路镜像分析、Inline MTA 检测、威胁发现与审计处置。
 
 hero:
   name: Vigilyx
-  text: 按工程系统打磨的邮件安全网关
-  tagline: 开源、Rust 驱动、可解释。先在旁路模式观察流量，再把同一套检测栈推进到 Inline SMTP 决策——不换引擎，也不交给黑盒。
+  text: 按金融行业安全标准打造的邮件安全网关
+  tagline: 开源、Rust 驱动、可解释。对标金融级安全要求构建——先在旁路模式观察流量，再把同一套检测栈推进到 Inline SMTP 决策，不换引擎，也不交给黑盒。
   actions:
     - theme: brand
       text: 快速开始
