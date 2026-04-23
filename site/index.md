@@ -3,12 +3,12 @@ layout: home
 
 title: Vigilyx
 titleTemplate: Rust-Powered Email Security Gateway
-description: Rust-powered email security gateway and analysis platform for passive mirror monitoring, inline MTA inspection, threat detection, and audit workflows.
+description: Rust-powered email security gateway and analysis platform built to financial-industry security standards — passive mirror monitoring, inline MTA inspection, threat detection, and audit workflows.
 
 hero:
   name: Vigilyx
-  text: Email security gateway built like an engineering system.
-  tagline: Open source, Rust-powered, explainable. Observe traffic in mirror mode, then move to inline SMTP decisions — without swapping out the detection stack or trusting a black box.
+  text: Email security gateway built to financial-industry security standards.
+  tagline: Open source, Rust-powered, explainable. Engineered against banking-grade security requirements — observe traffic in mirror mode, then move to inline SMTP decisions without swapping out the detection stack or trusting a black box.
   actions:
     - theme: brand
       text: Quick Start
