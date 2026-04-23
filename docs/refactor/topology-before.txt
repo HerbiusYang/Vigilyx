@@ -1,0 +1,16 @@
+NAME               SERVICE    STATUS                  IMAGE
+vigilyx            vigilyx    Up 25 hours (healthy)   vigilyx-vigilyx
+vigilyx-ai         ai         Up 25 hours (healthy)   vigilyx-ai
+vigilyx-caddy      caddy      Up 2 weeks              caddy:2
+vigilyx-postgres   postgres   Up 2 days (healthy)     postgres:17.9-alpine
+vigilyx-redis      redis      Up 2 days (healthy)     valkey/valkey:8.0.2-alpine
+vigilyx-sniffer    sniffer    Up 25 hours             vigilyx-sniffer
+OCI runtime exec failed: exec failed: unable to start container process: exec: "ps": executable file not found in $PATH
+AI_ENABLED=true
+SNIFFER_INTERFACE=ens224
+UID                 PID                 PPID                C                   STIME               TTY                 TIME                CMD
+systemd+            209828              209804              0                   Apr22               ?                   00:00:02            /usr/bin/tini -- ./entrypoint.sh
+systemd+            209978              209828              0                   Apr22               ?                   00:00:05            /bin/sh ./entrypoint.sh
+systemd+            209980              209978              0                   Apr22               ?                   00:00:43            ./vigilyx-api
+systemd+            210182              209978              2                   Apr22               ?                   00:33:15            ./vigilyx-engine
+systemd+            2262908             209978              0                   11:14               ?                   00:00:00            sleep 5
