@@ -45,6 +45,12 @@ The docs root is:
 https://herbiusyang.github.io/Vigilyx/docs/
 ```
 
+The Simplified Chinese site is:
+
+```text
+https://herbiusyang.github.io/Vigilyx/zh/
+```
+
 ## Custom domain variables
 
 The workflow supports three repository variables.

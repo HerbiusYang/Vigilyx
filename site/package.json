@@ -16,6 +16,7 @@
     "build": "npm run docs:build && node ./scripts/postbuild.mjs"
   },
   "dependencies": {
+    "qrcode": "1.5.4",
     "vitepress": "1.6.4"
   }
 }
