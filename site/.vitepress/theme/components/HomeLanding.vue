@@ -87,7 +87,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
       stats: [
         { value: "20+", label: "pipeline stages" },
         { value: "30+", label: "DLP patterns" },
-        { value: "<8s", label: "inline verdict" },
+        { value: "<2s", label: "inline verdict" },
         { value: "2", label: "deploy modes" },
       ],
       terminal: {
@@ -123,32 +123,32 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
       "Rust core, AI optional",
     ],
     deployment: {
-      kicker: "Two deployment paths",
-      title: "Start as an observer. Move to inline enforcement when the detections are ready.",
+      kicker: "Two independent deployment shapes",
+      title: "Pick the deployment that fits the environment. Not a migration path.",
       body:
-        "Vigilyx is built for teams that do not want to choose between visibility and control. The same codebase supports a passive email security analysis platform and an inline SMTP proxy with quarantine or rejection paths.",
+        "Mirror and MTA are two separate deployment shapes for two different operating models, not two phases of the same rollout. They share the same detection stack, but they are installed, operated, and evaluated independently. Run the one that matches how much of the mail path you can own.",
       cards: [
         {
-          label: "Mirror mode",
-          title: "Deploy beside the mail system, not inside it",
+          label: "Mirror deployment",
+          title: "Passive analysis next to the mail system",
           body:
-            "Mirror traffic from the existing environment, reconstruct mail sessions, and review verdicts after delivery. This is the lower-friction path for forensics, tuning, and alerting.",
+            "Vigilyx receives a copy of the traffic from a mirror / SPAN port. It reconstructs SMTP, POP3, IMAP, and webmail sessions and produces verdicts after delivery. The mail path is never touched, so the detection stack can never block mail.",
           points: [
-            "No mail-flow cutover required",
-            "Useful for SMTP, POP3, IMAP, and webmail observation",
-            "Good fit for audit, replay, and false-positive control",
+            "Zero-touch — no change to MX records or SMTP routing",
+            "Verdicts are advisory: alert, audit, replay, tune",
+            "Best fit when the mail path cannot be reshaped, or for forensics and rule iteration",
           ],
           className: "mode-card--mirror",
         },
         {
-          label: "Inline MTA mode",
-          title: "Become a decision point before final delivery",
+          label: "MTA deployment",
+          title: "Inline SMTP proxy that enforces before delivery",
           body:
-            "Put Vigilyx in the SMTP path as a relay. Messages can be accepted, quarantined, or rejected inline while the detection model stays explainable and operationally tunable.",
+            "Vigilyx runs as an SMTP relay in front of the final mail server. Every message goes through it, is inspected synchronously, and is then accepted, quarantined, or rejected before delivery. Typical inline verdict <2s, with configurable fail-open.",
           points: [
-            "Inline accept, quarantine, and reject actions",
-            "Fail-open behavior available for operational safety",
-            "Designed for real gateway-style inspection workflows",
+            "Enforcing — mail actually does not reach users until Vigilyx decides",
+            "Accept / quarantine / reject, with fail-open safety valve",
+            "Best fit when the mail path can be reshaped and real blocking is required",
           ],
           className: "mode-card--inline",
         },
@@ -164,7 +164,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           step: "01",
           title: "Collect and normalize",
           body:
-            "SMTP, MIME, attachment, link, header, and webmail signals are normalized into a shape the detection engine can reason about across both passive and inline paths.",
+            "SMTP, MIME, attachment, link, header, and webmail signals are normalized into a single shape the detection engine can reason about — whether they arrive from a mirror capture or from the inline MTA proxy.",
         },
         {
           step: "02",
@@ -201,7 +201,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
         {
           value: "2",
           label: "deployment modes",
-          body: "Passive mirror monitoring for visibility and inline MTA inspection for enforcement.",
+          body: "Two independent shapes — mirror deployment for passive visibility, MTA deployment for inline enforcement. Pick one per environment.",
           icon: "deploy",
         },
         {
@@ -253,7 +253,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
       stats: [
         { value: "20+", label: "检测模块" },
         { value: "30+", label: "DLP 规则" },
-        { value: "<8s", label: "Inline 判定" },
+        { value: "<2s", label: "Inline 判定" },
         { value: "2", label: "部署模式" },
       ],
       terminal: {
@@ -289,32 +289,32 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
       "Rust 核心，AI 可选",
     ],
     deployment: {
-      kicker: "两种部署路径",
-      title: "可以先做观察系统，再逐步变成真正的投递决策点。",
+      kicker: "两种独立的部署形态",
+      title: "按场景选一种来用，不是升级路径。",
       body:
-        "Vigilyx 的目标不是逼你在“可见性”和“可控性”之间二选一。同一套代码既能做旁路邮件安全分析平台，也能做支持隔离和拒收的 Inline SMTP 代理。",
+        "旁路镜像和 MTA 代理是两种独立的部署形态，服务于两种不同的运营模型，而不是同一次部署的两个阶段。它们共用同一套检测栈，但安装、运维和评估都互不相关。能接管多少邮件路径，就选对应的那一种。",
       cards: [
         {
-          label: "Mirror 模式",
-          title: "部署在邮件系统旁边，而不是先动主链路",
+          label: "旁路镜像部署",
+          title: "部署在邮件系统旁边做被动分析",
           body:
-            "从现有环境镜像流量，重组邮件会话，再在投递后做分析和复核。这条路径更适合取证、调参、告警和误报收敛。",
+            "Vigilyx 从镜像口 / SPAN 口收到一份流量副本，重组 SMTP、POP3、IMAP 与 Webmail 会话，在投递完成后产出判定。邮件路径完全不动，检测栈永远不会阻塞邮件。",
           points: [
-            "不需要先切换邮件收发链路",
-            "适合 SMTP、POP3、IMAP 与 Webmail 观察",
-            "更适合审计、回放和规则迭代",
+            "零侵入——不需要改 MX、不需要调整 SMTP 路由",
+            "判定是事后参考：告警、审计、复盘、调参",
+            "适合不能动邮件路径的环境，或者做取证与规则迭代",
           ],
           className: "mode-card--mirror",
         },
         {
-          label: "Inline MTA",
-          title: "在最终投递前真正参与决策",
+          label: "MTA 代理部署",
+          title: "作为 Inline SMTP 代理在投递前做决策",
           body:
-            "把 Vigilyx 放在 SMTP 路径里作为中继。邮件可以被接受、隔离或拒收，同时判定过程依旧保持可解释、可运营和可调优。",
+            "Vigilyx 作为 SMTP 中继放在最终邮件服务器之前，每一封邮件都会经过它做同步检查，然后在投递前被 accept / quarantine / reject。Inline 判定典型耗时 <2s，支持可配置的 fail-open。",
           points: [
-            "支持 Inline accept、quarantine、reject",
-            "可配置 fail-open，兼顾生产稳定性",
-            "适合做真正的网关型检测链路",
+            "真正的拦截——邮件在 Vigilyx 决策之前不会到达用户",
+            "支持 accept / quarantine / reject，并配 fail-open 作为安全阀",
+            "适合可以改造邮件路径、且需要真正阻断的场景",
           ],
           className: "mode-card--inline",
         },
@@ -330,7 +330,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           step: "01",
           title: "收集与归一化",
           body:
-            "SMTP、MIME、附件、链接、头部与 Webmail 行为都会被拉平到统一的数据形态，供旁路与 Inline 两条路径复用。",
+            "SMTP、MIME、附件、链接、头部与 Webmail 行为都会被拉平到统一的数据形态供检测引擎使用——无论这份流量来自旁路镜像抓包，还是来自 Inline MTA 代理。",
         },
         {
           step: "02",
@@ -367,7 +367,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
         {
           value: "2",
           label: "deployment modes",
-          body: "既能做旁路可视化分析，也能做 Inline MTA 决策。",
+          body: "两种独立形态——旁路镜像做被动可见性，MTA 代理做 Inline 拦截。每个环境选一种。",
           icon: "deploy",
         },
         {
