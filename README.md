@@ -14,9 +14,15 @@
 
 Two deployment modes: **Mirror** (passive network capture) and **MTA Proxy** (inline SMTP relay with block/quarantine). Vigilyx ships a default 20-entry mail-analysis pipeline, clustered Dempster-Shafer based evidence fusion, DLP, automated response, and a React dashboard in one Docker Compose deployment.
 
+### Website
+
+- Website: https://herbiusyang.github.io/Vigilyx/
+- Docs: https://herbiusyang.github.io/Vigilyx/docs/
+- Repository: https://github.com/HerbiusYang/Vigilyx
+
 ### Community
 
-- Linux.do: https://linux.do/
+- Linux.do project post: https://linux.do/t/topic/2027260
 
 ### Architecture
 
@@ -217,6 +223,7 @@ crates/
 └── vigilyx-mta/        SMTP proxy with embedded engine
 frontend/               React SPA (Vite + TypeScript)
 python/vigilyx_ai/      FastAPI AI / VT scrape service
+site/                   VitePress project site and public docs
 ```
 
 ### Development
@@ -242,9 +249,16 @@ ssh root@<server> "docker pull rust:1.95.0-bookworm"
 ./deploy.sh --production --backend
 ./deploy.sh --production --frontend
 ./deploy.sh --production --sniffer
+
+# Project site / docs
+cd site
+npm ci
+npm run dev
 ```
 
 `./deploy.sh` defaults to the fast developer path (`release-fast` + `docker-compose.fast.yml`). `./deploy.sh --production` switches back to the full Dockerfiles and Docker-side `cargo --release` image builds. For env/compose/host-tuning adjustments that do not need a rebuild, use `./deploy.sh --config-only` with the relevant component flag.
+
+The public project site lives in `site/` and is published through GitHub Pages with the workflow in `.github/workflows/pages.yml`. For GitHub-hosted Pages, the default URL is `https://herbiusyang.github.io/Vigilyx/`. For a custom domain, set `PAGES_CUSTOM_DOMAIN`, or override `PAGES_SITE_URL` and `PAGES_BASE_PATH` in repository variables.
 
 Passive mirror deployments can also reuse the host-side capture tuning helper directly:
 

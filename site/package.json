@@ -1,0 +1,21 @@
+{
+  "name": "vigilyx-site",
+  "private": true,
+  "version": "0.1.0",
+  "description": "GitHub Pages site for Vigilyx",
+  "license": "AGPL-3.0-only",
+  "engines": {
+    "node": ">=20.20.0 <25",
+    "npm": ">=10.8.2 <12"
+  },
+  "packageManager": "npm@11.12.1",
+  "scripts": {
+    "dev": "vitepress dev .",
+    "docs:build": "vitepress build .",
+    "docs:preview": "vitepress preview .",
+    "build": "npm run docs:build && node ./scripts/postbuild.mjs"
+  },
+  "dependencies": {
+    "vitepress": "1.6.4"
+  }
+}
