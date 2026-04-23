@@ -159,9 +159,10 @@ services:
       # Deployment mode: mirror (out-of-band mirroring, default) | mta (MTA proxy)
       # Once set, the frontend automatically switches its navigation and settings; env vars override DB values
       - VIGILYX_MODE=${VIGILYX_MODE:-}
-      # When STANDALONE_ENGINE=false, entrypoint.sh skips the embedded engine (API-only mode).
-      # Set this to false when using the engine-standalone profile to avoid dual-engine competition.
-      - STANDALONE_ENGINE=${STANDALONE_ENGINE:-true}
+      # Mirror 和 MTA 部署下，engine 都运行在自己的容器里（mirror profile 的 `engine` 服务 / mta profile 的 `mta` 服务内嵌）。
+      # 主 vigilyx 容器默认只跑 API 进程。STANDALONE_ENGINE 保留是为了向后兼容旧 .env；未设置 / 设为 false
+      # 都走正式拓扑。设为 true 会激活历史双进程模式（待阶段 3 彻底移除）。
+      - STANDALONE_ENGINE=${STANDALONE_ENGINE:-false}
       # Prevent internal service requests from going through a proxy (ai/clamav/sandbox containers connect directly over the Docker network)
       - no_proxy=localhost,127.0.0.1,redis,ai,postgres,clamav,sandbox
       - NO_PROXY=localhost,127.0.0.1,redis,ai,postgres,clamav
@@ -241,12 +242,10 @@ services:
       - ai
     restart: unless-stopped
 
-  # -- Standalone Security Engine --
-  # By default the engine is embedded in the main `vigilyx` container (entrypoint.sh starts both).
-  # Activate this service to run the engine in its own container:
-  #   1. Set STANDALONE_ENGINE=false in .env (so the main container skips its embedded engine)
-  #   2. docker compose --profile engine-standalone up -d
-  # Or simply: ./deploy.sh --engine
+  # -- Standalone Security Engine (default component of mirror deployment) --
+  # Mirror 正式拓扑: sniffer -> Redis Streams -> 这个独立 engine 容器 -> DB -> API/UI
+  # 由 `mirror` profile 激活，`./deploy.sh` 默认会启动它（与 sniffer 一起）。
+  # MTA 部署不启动本容器（MTA 容器自己内嵌 engine，两者互斥）。
   engine:
     build:
       context: ../..
@@ -293,7 +292,7 @@ services:
       redis:
         condition: service_healthy
     profiles:
-      - engine-standalone
+      - mirror
     restart: unless-stopped
 
   # -- ClamAV antivirus (optional) --

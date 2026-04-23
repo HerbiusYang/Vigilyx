@@ -6,18 +6,21 @@
 # Uses a persistent build container for incremental compilation to speed up deployment significantly.
 #
 # Usage:
-#   ./deploy.sh                  # Full deployment (frontend + backend)
-#   ./deploy.sh --backend        # Backend only
+#   ./deploy.sh                  # Full deployment (frontend + backend; mirror mode also starts the dedicated engine container)
+#   ./deploy.sh --backend        # Backend only (rebuilds vigilyx + engine in mirror mode)
 #   ./deploy.sh --frontend       # Frontend only (fastest, ~10s)
 #   ./deploy.sh --production     # Production release build (full Docker build, slower)
 #   ./deploy.sh --skip-test      # Skip tests (for emergency fixes)
 #   ./deploy.sh --skip-lint      # Skip clippy (for emergency fixes)
-#   ./deploy.sh --sniffer        # Sniffer only
+#   ./deploy.sh --sniffer        # Sniffer only (mirror deployment data plane)
 #   ./deploy.sh --config-only    # Sync config/scripts and recreate services without rebuilding images
 #   ./deploy.sh --antivirus      # Enable/start ClamAV antivirus profile
-#   ./deploy.sh --mta            # MTA proxy only
+#   ./deploy.sh --mta            # MTA proxy only (MTA deployment replaces sniffer + standalone engine)
 #   ./deploy.sh --tls            # Enable HTTPS (Caddy reverse proxy + self-signed/Let's Encrypt)
 #   ./deploy.sh --init           # Initial build-container setup
+#
+# Deprecated (no-op):
+#   --engine                     # Mirror deployment now always runs a dedicated engine container.
 #
 # Prerequisites:
 #   1. Passwordless SSH access to the target server
@@ -102,10 +105,11 @@ while [[ $# -gt 0 ]]; do
             DO_MTA=true
             shift ;;
         --engine)
-            DO_FRONTEND=false
-            DO_BACKEND=false
-            DO_SNIFFER=false
-            DO_ENGINE=true
+            # DEPRECATED: kept as a no-op for backwards compatibility.
+            # Mirror deployment now always runs engine as a dedicated container (via `./deploy.sh`).
+            # This flag will be removed in phase 3 of the topology refactor.
+            echo "warning: --engine is deprecated; mirror deployment always runs a dedicated engine container." >&2
+            echo "         run './deploy.sh' (or './deploy.sh --backend') without --engine." >&2
             shift ;;
         --skip-test)
             DO_TEST=false
@@ -291,6 +295,42 @@ if ! ssh "$SERVER" "test -f ${REMOTE_DIR}/deploy/docker/.env"; then
     exit 1
 fi
 
+# -- Step 1.6: detect deployment mode (env > DB > default mirror) --
+# sniffer and mta now both live behind profiles (mirror / mta), so deploy.sh needs to know the active mode
+# before any build/up step. Done early so $DEPLOY_MODE is available throughout the rest of the script.
+DEPLOY_MODE=""
+if ! $DO_MTA; then
+    # Check VIGILYX_MODE in .env first (highest priority)
+    DEPLOY_MODE=$(ssh "$SERVER" "grep -oP '(?<=^VIGILYX_MODE=).*' '${REMOTE_DIR}/deploy/docker/.env' 2>/dev/null | tr -d '\"' | tr -d \"'\" | tr '[:upper:]' '[:lower:]'")
+    # If env is unset, read the value from the DB config table
+    if [ -z "$DEPLOY_MODE" ] || { [ "$DEPLOY_MODE" != "mirror" ] && [ "$DEPLOY_MODE" != "mta" ]; }; then
+        DEPLOY_MODE=$(ssh "$SERVER" "docker exec vigilyx-postgres sh -lc \
+            'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -Atq -c \"SELECT value::jsonb->>\\x27mode\\x27 FROM config WHERE key=\\x27deployment_mode\\x27;\"' 2>/dev/null" || echo "")
+    fi
+    [ "$DEPLOY_MODE" != "mta" ] && DEPLOY_MODE="mirror"
+    echo "  Deployment mode: ${DEPLOY_MODE} (source: $([ -n \"$(ssh "$SERVER" "grep -oP '(?<=^VIGILYX_MODE=).*' '${REMOTE_DIR}/deploy/docker/.env' 2>/dev/null")\" ] && echo 'env' || echo 'db/default'))"
+else
+    DEPLOY_MODE="mta"
+    echo "  Deployment mode: mta (forced by --mta)"
+fi
+
+# -- Step 1.7: topology migration (idempotent): force STANDALONE_ENGINE=false in remote .env --
+# Mirror deployment now always runs the engine as a dedicated container (see `engine` service in docker-compose.yml).
+# MTA deployment always runs the engine embedded in the MTA container.
+# Either way the main vigilyx container must be API-only, so STANDALONE_ENGINE must be false.
+# Legacy environments may still carry STANDALONE_ENGINE=true; this block converges them.
+ssh "$SERVER" "cd ${REMOTE_DIR} && \
+    if grep -q '^STANDALONE_ENGINE=' deploy/docker/.env 2>/dev/null; then \
+        current=\$(grep -oP '(?<=^STANDALONE_ENGINE=).*' deploy/docker/.env | tr -d '\"' | tr -d \"'\"); \
+        if [ \"\$current\" != \"false\" ]; then \
+            sed -i 's/^STANDALONE_ENGINE=.*/STANDALONE_ENGINE=false/' deploy/docker/.env; \
+            echo '  Remote .env: STANDALONE_ENGINE normalized to false (was '\"\$current\"')'; \
+        fi; \
+    else \
+        echo 'STANDALONE_ENGINE=false' >> deploy/docker/.env; \
+        echo '  Remote .env: STANDALONE_ENGINE=false appended (was unset, compose default was true)'; \
+    fi"
+
 # -- Step 2: verify the build container exists --
 if $NEED_BUILDER && ! ssh "$SERVER" "docker ps --format '{{.Names}}' | grep -q '^${BUILDER_NAME}$'"; then
     echo ""
@@ -374,6 +414,10 @@ if ! $DO_CONFIG_ONLY; then
     if $DO_BACKEND || $DO_FRONTEND; then
         BUILD_TARGETS="$BUILD_TARGETS vigilyx"
     fi
+    # Mirror deployment: engine always runs as a dedicated container, keep its image in sync with backend builds.
+    if $DO_BACKEND && [ "$DEPLOY_MODE" = "mirror" ]; then
+        BUILD_TARGETS="$BUILD_TARGETS engine"
+    fi
     if $DO_SNIFFER; then
         BUILD_TARGETS="$BUILD_TARGETS sniffer"
     fi
@@ -434,21 +478,6 @@ if $DO_TLS; then
     echo "  HTTPS: https://${REMOTE_IP}"
 fi
 
-# -- Detect deployment mode (env > DB > default mirror) --
-# sniffer and mta now both live behind profiles (mirror / mta), so deploy.sh needs to know the active mode
-DEPLOY_MODE=""
-if ! $DO_MTA; then
-    # Check VIGILYX_MODE in .env first (highest priority)
-    DEPLOY_MODE=$(ssh "$SERVER" "grep -oP '(?<=^VIGILYX_MODE=).*' '${REMOTE_DIR}/deploy/docker/.env' 2>/dev/null | tr -d '\"' | tr -d \"'\" | tr '[:upper:]' '[:lower:]'")
-    # If env is unset, read the value from the DB config table
-    if [ -z "$DEPLOY_MODE" ] || { [ "$DEPLOY_MODE" != "mirror" ] && [ "$DEPLOY_MODE" != "mta" ]; }; then
-        DEPLOY_MODE=$(ssh "$SERVER" "docker exec vigilyx-postgres sh -lc \
-            'psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -Atq -c \"SELECT value::jsonb->>\\x27mode\\x27 FROM config WHERE key=\\x27deployment_mode\\x27;\"' 2>/dev/null" || echo "")
-    fi
-    [ "$DEPLOY_MODE" != "mta" ] && DEPLOY_MODE="mirror"
-    echo "  Deployment mode: ${DEPLOY_MODE} (source: $([ -n \"$(ssh "$SERVER" "grep -oP '(?<=^VIGILYX_MODE=).*' '${REMOTE_DIR}/deploy/docker/.env' 2>/dev/null")\" ] && echo 'env' || echo 'db/default'))"
-fi
-
 if $DO_ANTIVIRUS; then
     ssh "$SERVER" "
         if grep -q '^CLAMAV_ENABLED=' '${REMOTE_DIR}/deploy/docker/.env'; then
@@ -495,6 +524,10 @@ UP_TARGETS=""
 if $DO_BACKEND || $DO_FRONTEND; then
     UP_TARGETS="$UP_TARGETS vigilyx"
 fi
+# Mirror deployment: ensure the dedicated engine container is (re)started whenever the backend is touched.
+if $DO_BACKEND && [ "$DEPLOY_MODE" = "mirror" ]; then
+    UP_TARGETS="$UP_TARGETS engine"
+fi
 
 # Start non-sniffer/non-mta services first to ensure Redis/API are ready
 if [ -n "$UP_TARGETS" ]; then
@@ -531,30 +564,6 @@ if $DO_MTA || [ "$DEPLOY_MODE" = "mta" ]; then
     fi
 fi
 
-# Engine standalone deployment (explicit --engine)
-if $DO_ENGINE; then
-    echo "  Setting STANDALONE_ENGINE=false in remote .env (so the main container runs API-only)..."
-    ssh "$SERVER" "cd ${REMOTE_DIR} && \
-        if grep -q '^STANDALONE_ENGINE=' deploy/docker/.env 2>/dev/null; then \
-            sed -i 's/^STANDALONE_ENGINE=.*/STANDALONE_ENGINE=false/' deploy/docker/.env; \
-        else \
-            echo 'STANDALONE_ENGINE=false' >> deploy/docker/.env; \
-        fi"
-
-    echo "  Restarting main vigilyx container in API-only mode..."
-    compose_up_with_retry "Main service (API-only)" "cd ${REMOTE_DIR} && \
-        docker compose -f ${COMPOSE_FILE} ${MODE_PROFILE} --profile ai ${ANTIVIRUS_PROFILE} ${TLS_PROFILE} up -d vigilyx"
-
-    echo "  Starting standalone Engine container..."
-    if $DO_PRODUCTION; then
-        compose_up_with_retry "Standalone engine" "cd ${REMOTE_DIR} && \
-            docker compose -f ${COMPOSE_FILE} --profile engine-standalone up -d engine"
-    else
-        compose_up_with_retry "Standalone engine" "cd ${REMOTE_DIR} && \
-            docker compose -f ${COMPOSE_FILE} -f ${FAST_OVERRIDE} --profile engine-standalone up -d engine"
-    fi
-fi
-
 elapsed $T
 
 # -- Step 9: verify frontend dist inside the image --
@@ -577,5 +586,6 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 echo "Check status: ssh $SERVER 'docker compose -f ${REMOTE_DIR}/${COMPOSE_FILE} ps'"
 echo "API logs:     ssh $SERVER 'docker compose -f ${REMOTE_DIR}/${COMPOSE_FILE} logs --tail 30 vigilyx'"
-echo "Engine logs:  ssh $SERVER 'docker compose -f ${REMOTE_DIR}/${COMPOSE_FILE} logs --tail 30 vigilyx'  # or: logs --tail 30 engine (if standalone)"
+echo "Engine logs:  ssh $SERVER 'docker compose -f ${REMOTE_DIR}/${COMPOSE_FILE} logs --tail 30 engine'   # mirror deployment"
+echo "              ssh $SERVER 'docker compose -f ${REMOTE_DIR}/${COMPOSE_FILE} logs --tail 30 mta'      # MTA deployment (engine embedded)"
 echo "Sniffer logs: ssh $SERVER 'docker compose -f ${REMOTE_DIR}/${COMPOSE_FILE} logs --tail 30 sniffer'"
