@@ -58,6 +58,8 @@ artifacts/
 node_modules/
 frontend/dist/
 frontend/.vite/
+site/.vitepress/cache/
+site/.vitepress/dist/
 
 # 测试覆盖率
 coverage/

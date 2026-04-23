@@ -1,0 +1,111 @@
+name: Pages
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24.15.0
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: Resolve Pages URL and base path
+        shell: bash
+        run: |
+          if [ -n "${{ vars.PAGES_SITE_URL }}" ]; then
+            site_url="${{ vars.PAGES_SITE_URL }}"
+            site_base="${{ vars.PAGES_BASE_PATH }}"
+            if [ -z "$site_base" ]; then
+              site_base="/"
+            fi
+          elif [ -n "${{ vars.PAGES_CUSTOM_DOMAIN }}" ]; then
+            site_url="https://${{ vars.PAGES_CUSTOM_DOMAIN }}/"
+            site_base="/"
+          else
+            repo_name="${GITHUB_REPOSITORY#*/}"
+            owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+            site_url="https://${owner}.github.io/${repo_name}/"
+            site_base="/${repo_name}/"
+          fi
+
+          case "$site_url" in
+            */) ;;
+            *) site_url="${site_url}/" ;;
+          esac
+
+          case "$site_base" in
+            /*) ;;
+            *) site_base="/${site_base}" ;;
+          esac
+
+          case "$site_base" in
+            */) ;;
+            *) site_base="${site_base}/" ;;
+          esac
+
+          echo "SITE_URL=${site_url}" >> "$GITHUB_ENV"
+          echo "SITE_BASE=${site_base}" >> "$GITHUB_ENV"
+          echo "SITE_CUSTOM_DOMAIN=${{ vars.PAGES_CUSTOM_DOMAIN }}" >> "$GITHUB_ENV"
+
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Install site dependencies
+        working-directory: site
+        run: npm ci --no-fund --no-audit
+
+      - name: Build VitePress site
+        working-directory: site
+        run: npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/.vitepress/dist
+
+  deploy:
+    name: Deploy site
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
