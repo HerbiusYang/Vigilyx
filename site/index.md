@@ -29,6 +29,8 @@ features:
     details: The same multi-module pipeline (parsing, headers, content, links, attachments, YARA, DLP, identity, verdict fusion, SOAR) runs behind both deployments. Tuning, rules, IOCs, and audit trails carry over — the only thing that changes is whether verdicts are advisory (mirror) or enforcing (MTA).
   - title: Rust-first operations
     details: Packet capture, parsing, detection, API, and MTA logic are built around a Rust core optimized for operational safety, performance, and deployability.
+  - title: Optional external AI integration
+    details: The Rust core works fully on its own. An optional AI sidecar adds NLP-based phishing semantics, intent analysis, and persuasion-pattern scoring — designed to run on pure CPU hosts with no GPU required — and can also call out to external LLM providers (Claude / OpenAI) for analyst-facing review. Turn it on where it helps, keep it off when it does not, without ever making AI a single point of failure.
 ---
 
 <HomeLanding locale="en" />

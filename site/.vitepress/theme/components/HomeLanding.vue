@@ -220,7 +220,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
       cards: [
         {
           title: "AI-assisted semantic review",
-          body: "Use optional NLP analysis for phishing semantics, language intent, and suspicious persuasion patterns.",
+          body: "Optional NLP analysis for phishing semantics, intent, and persuasion patterns — runs on pure CPU hosts with no GPU required, and can optionally call external LLMs (Claude / OpenAI) for analyst review.",
         },
         {
           title: "Core pipeline still stands alone",
@@ -386,7 +386,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
       cards: [
         {
           title: "AI 辅助语义分析",
-          body: "可选接入 NLP 检测，用于钓鱼语义、说服话术和可疑意图分析。",
+          body: "可选接入 NLP 检测，用于钓鱼语义、意图分析和说服话术识别——可以在纯 CPU 环境运行，不依赖 GPU，也可以接入外部大模型（Claude / OpenAI）辅助分析师复核。",
         },
         {
           title: "核心系统不依赖 AI",
