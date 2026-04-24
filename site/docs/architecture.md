@@ -11,6 +11,12 @@ description: High-level architecture of Vigilyx, including sniffer, engine, data
 Sniffer -> Redis Streams -> Engine -> PostgreSQL -> API/WebSocket -> Frontend
 ```
 
+At runtime, the deployment is split into a control plane plus one active data plane:
+
+- Control plane: `vigilyx` + PostgreSQL + Valkey/Redis
+- Mirror data plane: `vigilyx-sniffer` + `vigilyx-engine-standalone`
+- MTA data plane: `vigilyx-mta` with its embedded inline engine
+
 The project is split into focused Rust crates plus a React frontend and optional Python AI service.
 
 ## Core crates
@@ -26,11 +32,11 @@ The project is split into focused Rust crates plus a React frontend and optional
 
 ## Mirror path
 
-In mirror mode, the sniffer captures network traffic and reconstructs sessions. Those sessions move through Redis Streams into the engine, which persists results to PostgreSQL and exposes them through the API and dashboard.
+In mirror mode, the sniffer captures network traffic and reconstructs sessions. Those sessions move through Redis Streams into the dedicated `vigilyx-engine-standalone` container, which persists results to PostgreSQL and exposes them through the API and dashboard.
 
 ## Inline path
 
-In MTA mode, the SMTP proxy accepts mail, parses the message, runs inline inspection, and then decides whether to relay, quarantine, or reject.
+In MTA mode, the SMTP proxy accepts mail, parses the message, runs inline inspection inside `vigilyx-mta`, and then decides whether to relay, quarantine, or reject.
 
 ## Design principles
 

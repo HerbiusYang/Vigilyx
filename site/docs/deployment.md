@@ -7,6 +7,24 @@ description: Deployment overview for Vigilyx, covering mirror mode, MTA mode, Do
 
 Vigilyx supports two main deployment patterns.
 
+## Recommended workflow
+
+The repository's primary deployment path is `deploy.sh`, not ad-hoc local `cargo` or manual image assembly.
+
+Common commands:
+
+```bash
+./deploy.sh
+./deploy.sh --backend
+./deploy.sh --frontend
+./deploy.sh --sniffer
+./deploy.sh --mta
+./deploy.sh --production
+./deploy.sh --production --mta
+```
+
+This remote-first workflow syncs the repository, verifies Rust code inside the remote `vigilyx-rust-builder`, builds `release-fast` artifacts for day-to-day deployment, packages the images, and restarts the active topology. Manual `docker compose` remains available as a fallback or for direct single-host operation.
+
 ## Mirror mode
 
 Use mirror mode when you want traffic visibility without changing the existing mail system.
@@ -27,6 +45,8 @@ Typical use cases:
 Recommended profile:
 
 ```bash
+./deploy.sh
+# or, on the target host:
 docker compose --profile mirror up -d
 ```
 
@@ -49,8 +69,18 @@ Typical use cases:
 Recommended profile:
 
 ```bash
+./deploy.sh --mta
+# or, on the target host:
 docker compose --profile mta up -d
 ```
+
+`docker compose up -d` without a profile only starts the control-plane services (`vigilyx`, `postgres`, `redis`). It does not enable passive capture or inline SMTP enforcement by itself.
+
+## Current topology notes
+
+- Mirror mode runs a dedicated `vigilyx-engine-standalone` container together with `vigilyx-sniffer`.
+- MTA mode runs the engine embedded inside `vigilyx-mta`; the standalone mirror engine is not part of that path.
+- The main `vigilyx` container is the API/frontend control plane in both topologies.
 
 ## Optional services
 

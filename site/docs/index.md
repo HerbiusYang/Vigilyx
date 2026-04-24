@@ -35,6 +35,7 @@ The project is designed as an engineering-oriented security system:
 
 ## Next pages
 
+- [Features](/docs/features)
 - [Quick Start](/docs/quick-start)
 - [Deployment](/docs/deployment)
 - [Architecture](/docs/architecture)
