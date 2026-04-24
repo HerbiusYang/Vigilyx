@@ -112,11 +112,11 @@ pub fn extract_user(session: &vigilyx_core::HttpSession) -> Option<String> {
 /// SensitivedataofText, 1Time/Count immediatelyReturn, mode ~10x Add.
 /// 512 KB ofTextonly first 512 KB (SensitiveInfo Header).
 
-/// 先截断再归一化再正则（anti-evasion）:
-/// - 零宽/不可见字符清理 (U+200B/200C/200D/FEFF/00AD 等)
-/// - 全角→半角转换 (Ａ -> A, ０ -> 0 等)
+/// Truncate first, then normalize, then run regex matching (anti-evasion):
+/// - Remove zero-width and invisible characters (such as U+200B/U+200C/U+200D/U+FEFF/U+00AD)
+/// - Convert full-width characters to half-width equivalents (for example, Ａ -> A and ０ -> 0)
 pub fn scan_text(text: &str) -> DlpScanResult {
-    // 步骤 1: 先截断原始输入（UTF-8 安全），避免 normalize 处理超大文本浪费 CPU
+    // Step 1: truncate the raw input first, preserving UTF-8 boundaries and avoiding wasted normalization work on huge text bodies.
     let text = if text.len() > DLP_MAX_SCAN_LEN {
         let mut end = DLP_MAX_SCAN_LEN;
         while end > 0 && !text.is_char_boundary(end) {
@@ -127,7 +127,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         text
     };
 
-    // 步骤 2: 归一化（仅处理截断后的文本）
+    // Step 2: normalize only the already-truncated text.
     let normalized = normalize_for_dlp(text);
     let text = normalized.as_str();
 

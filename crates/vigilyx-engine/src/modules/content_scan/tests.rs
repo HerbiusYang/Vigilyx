@@ -382,7 +382,7 @@ fn make_ctx_with_subject(
 #[test]
 fn phone_in_subject_skipped_for_chat_record_export() {
     // P2-3: WeChat chat record forwarding subjects naturally contain phone numbers
-    // e.g. "13800138000和李四的聊天记录" — should NOT trigger phone_in_subject
+    // Chat-record style subjects that contain a phone number should not trigger phone_in_subject.
     let module = ContentScanModule::new();
     let ctx = make_ctx_with_subject(
         "13800138000和李四的聊天记录",

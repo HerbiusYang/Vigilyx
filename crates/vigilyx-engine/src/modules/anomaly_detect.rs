@@ -256,7 +256,8 @@ impl SecurityModule for AnomalyDetectModule {
                 0.0
             };
             // P2-1 fix: skip all_caps check if subject contains CJK characters.
-            // CJK+Latin mixed subjects (e.g. "GOAIDC资产管理通知") use uppercase
+            // CJK+Latin mixed subjects (for example, uppercase abbreviations plus Chinese business text)
+            // often use uppercase
             // abbreviations that are perfectly normal, not phishing.
             let has_cjk = subject.chars().any(|c| {
                 ('\u{4E00}'..='\u{9FFF}').contains(&c) || ('\u{3400}'..='\u{4DBF}').contains(&c)
@@ -568,8 +569,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_all_caps_with_cjk_does_not_trigger() {
-        // P2-1: "GOAIDC资产管理通知" has CJK chars mixed with uppercase Latin
-        // This is a normal Chinese business subject, not phishing
+        // P2-1: uppercase Latin mixed with CJK text is a normal business subject pattern, not phishing.
         let module = AnomalyDetectModule::new();
         let ctx = make_ctx_with_subject("GOAIDC资产管理通知", vec![]);
 
