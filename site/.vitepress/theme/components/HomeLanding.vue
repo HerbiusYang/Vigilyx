@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import SharePanel from "./SharePanel.vue";
 import HeroBackdrop from "./HeroBackdrop.vue";
 
@@ -25,7 +25,6 @@ type LandingCopy = {
       stages: Array<{ name: string; verdict: "safe" | "suspicious" | "malicious" | "clean" }>;
     };
   };
-  strip: string[];
   deployment: {
     kicker: string;
     title: string;
@@ -80,10 +79,44 @@ type LandingCopy = {
       source: string;
     }>;
   };
-  cta: {
+  anatomy: {
     kicker: string;
     title: string;
     body: string;
+    selectorLabel: string;
+    captureLabel: string;
+    verdictLabel: string;
+    actionLabelPrefix: string;
+    hoverHint: string;
+    layerNames: [string, string, string, string, string];
+    emails: Array<{
+      id: string;
+      name: string;
+      headline: string;
+      lines: Array<{
+        label: string;
+        content: string;
+        tag: string;
+        why: string;
+      }>;
+      verdict: {
+        level: string;
+        score: string;
+        action: string;
+        className: "verdict-safe" | "verdict-low" | "verdict-medium" | "verdict-high" | "verdict-critical";
+      };
+    }>;
+  };
+  cta: {
+    title: string;
+    body: string;
+    terminal: {
+      title: string;
+      commands: Array<{ kind: "comment" | "prompt" | "hint"; text: string }>;
+      copyLabel: string;
+      copiedLabel: string;
+      copyPayload: string;
+    };
     actions: Array<{
       text: string;
       href: string;
@@ -100,7 +133,6 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
         { value: "D-S + Murphy", label: "evidence fusion" },
         { value: "5-state HMM", label: "BEC phase tracking" },
         { value: "Hawkes", label: "self-exciting time series" },
-        { value: "JR/T 0197", label: "financial DLP compliance" },
       ],
       terminal: {
         title: "verdict.jsonl",
@@ -128,12 +160,6 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
         ],
       },
     },
-    strip: [
-      "Mirror monitoring",
-      "Inline SMTP inspection",
-      "DLP + YARA + SOAR",
-      "Rust core, AI optional",
-    ],
     deployment: {
       kicker: "Two independent deployment shapes",
       title: "Pick the deployment that fits the environment. Not a migration path.",
@@ -246,78 +272,212 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
     },
     highlights: {
       kicker: "Under the hood",
-      title: "Seven things most email-security products do not actually have.",
+      title: "Four things most email-security products do not actually have.",
       body:
         "These are not marketing bullet points — each one is implemented in the repository and you can read it. We are only listing the detection surfaces where Vigilyx is meaningfully different from a typical mail gateway, not the table-stakes features every product in this space already ships.",
       cards: [
         {
           tag: "Evidence fusion",
-          title: "Murphy-corrected D-S fusion with Copula discount & Jousselme distance",
+          title: "Murphy-corrected D-S fusion with Copula discount",
           body:
-            "Most mail security products either use weighted-sum scoring or a black-box classifier. Vigilyx runs a proper Dempster–Shafer / TBM open-world fusion with Murphy's weighted-average correction and Copula-based discount for correlated engines — so agreeing detectors reinforce, disagreeing detectors are de-weighted, and redundant same-family signals do not amplify each other.",
-          why: "Avoids Zadeh's paradox, handles correlated evidence explicitly, and the verdict trail is explainable per-engine instead of a single score.",
+            "Not weighted-sum scoring, not a black-box classifier. A proper Dempster–Shafer implementation with Murphy's weighted-average correction and Copula-based discount for correlated detectors — so same-family signals do not amplify each other, and every verdict is explainable per-engine. Built in Rust, not a wrapper around someone else's commercial library.",
+          why: "Avoids Zadeh's paradox, handles correlated evidence explicitly, and the verdict trail is explainable per-engine instead of a single mystery score.",
           source: "crates/vigilyx-engine/src/fusion/murphy.rs",
         },
         {
           tag: "Temporal layer",
-          title: "CUSUM + dual-EWMA + Hawkes self-excitation + 5-state HMM + comm graph",
+          title: "Full temporal layer on top of single-email verdicts",
           body:
-            "Most tools judge each email in isolation. Vigilyx keeps a persistent temporal layer on top of single-email verdicts: CUSUM for shift detection, dual-speed EWMA for baseline drift, a marked Hawkes process for attack-campaign self-excitation (λ(t) = μ + Σ φ(r)·g(t−tᵢ)), a 5-state HMM that infers BEC / ATO phases (recon → trust-build → execute → exfil), and a directed communication graph that flags mass-phishing and data-exfil fan-out patterns.",
+            "CUSUM for shift detection, dual-speed EWMA for baseline drift, a marked Hawkes self-excitation process for attack-campaign tempo, a 5-state HMM that infers BEC / ATO phases (recon → trust-build → execute → exfil), plus a directed communication graph. Most mail-security products judge each email in isolation — this one doesn't.",
           why: "Catches campaigns, slow-burn BEC, and exfil bursts that look fine one email at a time.",
           source: "crates/vigilyx-engine/src/temporal/",
         },
         {
           tag: "AitM phishing",
-          title: "Reverse-proxy MFA-bypass kit fingerprinting (Tycoon2FA / EvilProxy / Evilginx3)",
+          title: "Reverse-proxy MFA-bypass kit fingerprinting",
           body:
-            "Modern phishing is no longer \"fake login page\" — attackers proxy the real Microsoft/Google login flow through a reverse-proxy kit to steal live session tokens and bypass MFA. Vigilyx detects Cloudflare Workers / Pages DGA hosting patterns, OAuth redirect_uri mismatches, Turnstile CAPTCHA fingerprints, toolkit URI shapes, and Latin/Cyrillic mixed-script brand homograph attempts.",
-          why: "This class of phishing bypasses traditional link-reputation and attachment scanning entirely.",
+            "Fingerprints the MFA-bypass tooling actually used in the wild from 2024 on — Tycoon2FA, EvilProxy, Evilginx3 — via DGA hosting on Cloudflare Workers / Pages, OAuth redirect_uri mismatches, Turnstile CAPTCHA toolkit fingerprints, and Latin/Cyrillic mixed-script brand homographs. This class of phishing bypasses traditional link reputation and attachment scanning entirely.",
+          why: "The reverse-proxy phishing surface is invisible to classic URL-reputation and sandbox-on-link stacks.",
           source: "crates/vigilyx-engine/src/modules/aitm_detect.rs",
         },
         {
           tag: "HTML pixel art",
-          title: "Table-cell QR codes and div pixel-text smuggled inside HTML",
+          title: "HTML pixel art & table-cell QR detection",
           body:
-            "Attackers render QR codes using <table> cells with bgcolor and render phishing text using floated <div>s with margin-left / background-color instead of actual text — specifically to bypass OCR and sandbox image scanning. Vigilyx runs a three-stage pipeline: string pre-filter → DOM structural analysis → rqrr QR decoding on the reconstructed bitmap.",
-          why: "Nothing in the usual \"scan images with OCR\" toolchain sees these.",
+            "Attackers \"draw\" QR codes with <table> bgcolor cells, or assemble phishing text from floated <div>s with background-color — specifically to bypass OCR and sandbox image scanning. Vigilyx reconstructs the bitmap from DOM structure and decodes with rqrr. Unicode block-character ASCII-art QR codes in body text are decoded through the same pipeline.",
+          why: "The usual \"scan images with OCR\" toolchain does not see these at all.",
           source: "crates/vigilyx-engine/src/modules/html_pixel_art.rs",
         },
+      ],
+    },
+    anatomy: {
+      kicker: "Layer by layer",
+      title: "Open one email. Watch every layer flag it.",
+      body:
+        "Pick a scenario. Scroll. Each line is a real detection Vigilyx runs against the captured email — from wire bytes to fused verdict. No stock imagery, no composite screenshot: the exact fields your engineers would see in a SOC triage.",
+      selectorLabel: "Scenario",
+      captureLabel: "captured",
+      verdictLabel: "Fused verdict",
+      actionLabelPrefix: "Action",
+      hoverHint: "Hover any line to see why Vigilyx flagged it.",
+      layerNames: ["Sniffer", "Parser", "Engine", "Fusion", "Temporal"],
+      emails: [
         {
-          tag: "Attachment QR",
-          title: "Multi-format QR decode + ASCII block-char QR + CWE-400 bomb safety",
-          body:
-            "QR-code attachments (PNG / JPEG / GIF / BMP / WebP / TIFF) are decoded with a fallback chain — a zero-alloc manual PNG fast path first, then the `image` crate, then adaptive thresholding — and the decoded URLs are scored against phishing-specific lures (login / OAuth / device-code). Unicode block-character \"ASCII-art\" QR codes in the body text are also reconstructed into a bitmap and decoded.",
-          why: "Image size is hard-capped to prevent decompression-bomb DoS; most OSS QR detectors are not this defensive.",
-          source: "crates/vigilyx-engine/src/modules/attach_qr_scan.rs",
+          id: "bec",
+          name: "BEC wire fraud",
+          headline: "From: ceo@acme-corp.com  ·  Subject: [URGENT] Wire transfer — vendor change  ·  Tue 14:03",
+          lines: [
+            {
+              label: "L1 · pcap",
+              content: "SMTP 203.0.113.44 → mx.acme-corp.com",
+              tag: "NEW SENDER IP",
+              why: "Sender IP has zero history in the directed communication graph; first-seen inbound path from this /24.",
+            },
+            {
+              label: "L2 · headers",
+              content: "SPF=softfail  DKIM=none  DMARC=fail  Reply-To: ceo.acme@proton.me",
+              tag: "REPLY-TO MISMATCH",
+              why: "Reply-To domain does not match From. Classic look-alike: free-mail reply, corporate display name.",
+            },
+            {
+              label: "L3 · content",
+              content: "subject=\"[URGENT] Wire transfer\"  urgency_financial_combo=0.78",
+              tag: "URGENCY + $",
+              why: "content_scan flags the urgency_financial_combo rule — urgency keyword + amount mention + deadline within 24h.",
+            },
+            {
+              label: "L4 · identity",
+              content: "display_name=\"CEO John Doe\"  first_comm_window=true",
+              tag: "IDENTITY ANOMALY",
+              why: "identity_anomaly: sender domain has never corresponded with this mailbox. First-contact wire-transfer asks are BEC gold.",
+            },
+            {
+              label: "L5 · temporal",
+              content: "HMM phase: EXECUTE  ·  CUSUM drift +3.2σ against baseline",
+              tag: "HMM EXECUTE",
+              why: "5-state HMM transitioned recon → trust-build → EXECUTE over the past 8 days. CUSUM confirms baseline drift.",
+            },
+          ],
+          verdict: {
+            level: "HIGH",
+            score: "0.87",
+            action: "Quarantine + notify finance approver via SOAR playbook",
+            className: "verdict-high",
+          },
         },
         {
-          tag: "Chinese financial DLP",
-          title: "JR/T 0197-2020 compliance thresholds with Luhn / IBAN mod-97 validation",
-          body:
-            "JR/T 0197-2020 is the People's Bank of China's financial data classification standard. Vigilyx tracks per-user / per-IP cumulative counts at levels C3 (sensitive, ≥ 500 / 24h → High) and C4 (highly sensitive, ≥ 50 / 24h → Critical). Chinese ID / mobile / bank card detection uses proper boundary-aware regex (`(?-u:\\b)`) so 18-digit IDs do not leak out as phone numbers, bank cards are Luhn-checked, IBAN is mod-97 validated, and the 18-digit unified social credit code excludes I / O / Z / S / V as specified.",
-          why: "Almost no Western mail-security vendor knows this standard exists, and regex-only DLP products miss the boundary and checksum rules.",
-          source: "crates/vigilyx-engine/src/data_security/jrt_compliance.rs",
+          id: "aitm",
+          name: "AitM MFA bypass",
+          headline: "From: no-reply@m1crosoft-auth.workers.dev  ·  Subject: Unusual sign-in — verify now  ·  Mon 09:41",
+          lines: [
+            {
+              label: "L1 · pcap",
+              content: "HTTPS 104.21.48.11  ·  SNI=m1crosoft-auth.workers.dev",
+              tag: "CLOUDFLARE DGA",
+              why: "Hostname matches the Tycoon2FA / EvilProxy DGA pattern on Cloudflare Workers. Registered < 72h ago.",
+            },
+            {
+              label: "L2 · link_scan",
+              content: "href=\"…/oauth2/authorize?redirect_uri=https://evil-proxy.xyz/callback\"",
+              tag: "OAUTH MISMATCH",
+              why: "redirect_uri does not match any Microsoft official callback. AitM proxy signature, not a typo'd link.",
+            },
+            {
+              label: "L3 · brand",
+              content: "display_text=\"Microsоft\" (Cyrillic о in brand name)",
+              tag: "HOMOGRAPH",
+              why: "Latin/Cyrillic mixed script. Renders identical, fails exact-match brand guard — classic homograph impersonation.",
+            },
+            {
+              label: "L4 · aitm_detect",
+              content: "turnstile_fingerprint=true  kit=\"Tycoon2FA\"",
+              tag: "TYCOON2FA",
+              why: "Turnstile CAPTCHA toolkit fingerprint + URI shape matches published Tycoon2FA samples. Reverse-proxy MFA bypass.",
+            },
+            {
+              label: "L5 · fusion",
+              content: "D-S belief=0.91  ·  Copula discount applied to 2 link-family engines",
+              tag: "D-S + COPULA",
+              why: "Murphy-corrected D-S fuses 4 independent detectors. Copula discount stops link_scan + aitm_detect from double-counting.",
+            },
+          ],
+          verdict: {
+            level: "CRITICAL",
+            score: "0.94",
+            action: "Block delivery  +  rewrite links  +  alert SOC on-call",
+            className: "verdict-critical",
+          },
         },
         {
-          tag: "Coremail / webmail",
-          title: "Chunked-upload reassembly and draft / self-send abuse detection",
-          body:
-            "Vigilyx understands the Coremail webmail protocol at HTTP layer: the shared compose.jsp URL is disambiguated by the JSON `action` field (deliver / save / autosave), multi-part chunked uploads are reassembled by `(client_ip, composeId, attachmentId, offset)` before DLP scans run, and self-to-self delivery via webmail is flagged as a common exfil path.",
-          why: "Plain SMTP sniffing misses webmail-based exfiltration entirely; this goes after a real, Chinese-market-specific exfil channel.",
-          source: "crates/vigilyx-engine/src/data_security/coremail.rs",
+          id: "exfil",
+          name: "Webmail data exfil",
+          headline: "HTTP POST /webmail/compose.jsp  ·  internal user → external @gmail.com  ·  Thu 18:22",
+          lines: [
+            {
+              label: "L1 · pcap",
+              content: "HTTP mirror  ·  multipart/form-data  ·  3 attachments, 42 MB total",
+              tag: "OFF-HOURS",
+              why: "Capture time is outside the user's baseline working hours (09:00–18:00) by dual-EWMA.",
+            },
+            {
+              label: "L2 · webmail",
+              content: "reassembled body extracted from compose.jsp action payload",
+              tag: "WEBMAIL RECON",
+              why: "data_security/webmail.rs rebuilds the outbound MIME object from the HTTP multipart — not just URL filtering.",
+            },
+            {
+              label: "L3 · dlp",
+              content: "PII hits: 11× id_card, 4× bank_account, 2× phone",
+              tag: "DLP PII",
+              why: "DLP engine matches 17 sensitive tokens after Unicode normalization (zero-width chars stripped).",
+            },
+            {
+              label: "L4 · recipient",
+              content: "to=user+backup@gmail.com  first_external_send=true",
+              tag: "FIRST EXTERNAL",
+              why: "Communication graph: user has never emailed this external domain. Classic pre-resignation exfil pattern.",
+            },
+            {
+              label: "L5 · temporal",
+              content: "Hawkes intensity λ(t) spiked 6.1× baseline over last 48h",
+              tag: "HAWKES BURST",
+              why: "Marked Hawkes self-excitation shows a staging burst: 14 large uploads in 48h vs. weekly average of 2.",
+            },
+          ],
+          verdict: {
+            level: "HIGH",
+            score: "0.82",
+            action: "Hold transfer  +  open DLP case  +  notify data-owner",
+            className: "verdict-high",
+          },
         },
       ],
     },
     cta: {
-      kicker: "Who should look at this",
-      title: "Built for engineering-led security teams.",
+      title: "Built for engineering-led security teams. Just clone it.",
       body:
-        "Useful for SOC teams, mail-security engineers, DFIR workflows, and anyone building an internal email security gateway who wants to own the logic instead of renting a black box.",
+        "If you'd rather own the detection logic than rent a black box, Vigilyx is ready to run. Three commands, mirror or inline on the same engine. AGPL-3.0, no telemetry, no license server.",
+      terminal: {
+        title: "deploy.sh",
+        commands: [
+          { kind: "comment", text: "# 1. Clone the repo" },
+          { kind: "prompt", text: "git clone https://github.com/HerbiusYang/Vigilyx.git" },
+          { kind: "prompt", text: "cd Vigilyx" },
+          { kind: "comment", text: "# 2. Initialize remote build environment (one-off)" },
+          { kind: "prompt", text: "./deploy.sh --init" },
+          { kind: "comment", text: "# 3. Open the dashboard" },
+          { kind: "hint", text: "→ https://localhost:8088" },
+        ],
+        copyLabel: "Copy",
+        copiedLabel: "Copied",
+        copyPayload:
+          "git clone https://github.com/HerbiusYang/Vigilyx.git\ncd Vigilyx\n./deploy.sh --init",
+      },
       actions: [
         { text: "Read Quick Start", href: "/docs/quick-start", primary: true },
         { text: "See deployment modes", href: "/docs/deployment" },
         {
-          text: "Browse GitHub",
+          text: "Star on GitHub",
           href: "https://github.com/HerbiusYang/Vigilyx",
         },
       ],
@@ -330,7 +490,6 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
         { value: "D-S + Murphy", label: "证据融合" },
         { value: "5 状态 HMM", label: "BEC 阶段推断" },
         { value: "Hawkes", label: "自激时序建模" },
-        { value: "JR/T 0197", label: "金融 DLP 合规" },
       ],
       terminal: {
         title: "verdict.jsonl",
@@ -358,12 +517,6 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
         ],
       },
     },
-    strip: [
-      "旁路镜像监控",
-      "Inline SMTP 检测",
-      "DLP + YARA + SOAR",
-      "Rust 核心，AI 可选",
-    ],
     deployment: {
       kicker: "两种独立的部署形态",
       title: "按场景选一种来用，不是升级路径。",
@@ -476,78 +629,212 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
     },
     highlights: {
       kicker: "真正不一样的地方",
-      title: "七件邮件安全产品里几乎看不到的实现。",
+      title: "四件邮件安全产品里几乎看不到的实现。",
       body:
         "下面这些不是市场话术，而是仓库里真实存在的代码。我们只列那些相对于主流邮件网关确实不一样的检测面，而不是所有邮件安全产品都已经做的基础功能。",
       cards: [
         {
           tag: "证据融合",
-          title: "Murphy 修正的 D-S 融合 + Copula 相关性折扣 + Jousselme 距离",
+          title: "Murphy 修正的 D-S 证据融合",
           body:
-            "大多数邮件安全产品要么用加权求和评分，要么用黑盒分类器。Vigilyx 实现的是正经的 Dempster–Shafer / TBM 开世界融合，配合 Murphy 权重平均修正和针对相关检测器的 Copula 折扣——立场一致的检测器会互相强化，立场相反的会被降权，同源同族的冗余信号不会互相放大。",
+            "不是加权求和，不是黑盒分类器。一套正经的 Dempster–Shafer 实现，配合 Murphy 权重平均修正和针对相关检测器的 Copula 折扣——同源同族的信号不会互相放大，每个 verdict 都能按引擎单独解释。用 Rust 自研，不是继承某个商用库。",
           why: "规避 Zadeh 悖论，显式建模相关性，每个引擎的判定贡献都可以单独解释，而不是只给一个神秘分数。",
           source: "crates/vigilyx-engine/src/fusion/murphy.rs",
         },
         {
           tag: "时序层",
-          title: "CUSUM + 双速 EWMA + Hawkes 自激 + 5 状态 HMM + 通信图",
+          title: "在单邮件判定之上的完整时序层",
           body:
-            "多数工具按「单封邮件」孤立判定。Vigilyx 在单邮件 verdict 之上维持一整层跨时间窗状态：CUSUM 做累计漂移检测、双速 EWMA 做基线漂移、带 mark 的 Hawkes 过程建模攻击「自激」节奏（λ(t) = μ + Σ φ(r)·g(t−tᵢ)）、5 状态 HMM 推断 BEC/ATO 的阶段（侦察 → 建信任 → 执行 → 收割）、再加一张有向通信图识别群发钓鱼和外泄扇出模式。",
+            "CUSUM 累计漂移检测、双速 EWMA 基线漂移、带 mark 的 Hawkes 自激过程建模攻击期节奏、5 状态 HMM 推断 BEC / ATO 阶段（侦察 → 建信 → 执行 → 收割），还叠了一张有向通信图。多数邮件安全产品按「单封邮件」孤立判定——这套不是。",
           why: "可以抓到那些「单封看起来没问题」的营销期攻击、慢速 BEC 和外泄 burst。",
           source: "crates/vigilyx-engine/src/temporal/",
         },
         {
           tag: "AitM 钓鱼",
-          title: "反向代理 MFA 绕过工具指纹（Tycoon2FA / EvilProxy / Evilginx3）",
+          title: "AitM 反向代理钓鱼检测",
           body:
-            "现代钓鱼已经不是「伪造登录页」——攻击者会通过反向代理把用户接到真实的 Microsoft / Google 登录流程，中间偷会话 token 绕过 MFA。Vigilyx 识别 Cloudflare Workers / Pages 上的 DGA 托管模式、OAuth redirect_uri 与官方域不匹配、Turnstile 验证码指纹、工具包的 URI 形态，以及 Latin/Cyrillic 混合字符脚本做品牌同形异义伪装。",
-          why: "这一类钓鱼会完全绕过传统的链接信誉库和附件扫描。",
+            "专门针对 2024 年起实战里真在用的 MFA 绕过工具（Tycoon2FA、EvilProxy、Evilginx3）做指纹——Cloudflare Workers / Pages 上的 DGA 托管、OAuth redirect_uri 不一致、Turnstile 验证码工具包指纹、Latin-Cyrillic 同形异义做品牌冒充。这一类钓鱼会完全绕过传统链接信誉库和附件扫描。",
+          why: "反向代理钓鱼这条攻击面对传统「URL 信誉 + 沙箱扫链接」的栈完全不可见。",
           source: "crates/vigilyx-engine/src/modules/aitm_detect.rs",
         },
         {
           tag: "HTML 像素艺术",
-          title: "藏在 HTML 里的表格二维码和 div 像素文字",
+          title: "HTML 像素艺术与表格二维码检测",
           body:
-            "攻击者会用 <table> 单元格配合 bgcolor 去「画」二维码，或用浮动的 <div> 配合 margin-left / background-color 去拼出钓鱼话术的文字形状——而不是真的写文字——就是为了绕过 OCR 和沙箱的图片扫描。Vigilyx 有一套三阶段管线：字符串预过滤 → DOM 结构分析 → 用 rqrr 对重建出来的位图解 QR。",
+            "攻击者用 <table> 的 bgcolor 单元格「画」二维码、用浮动 <div> 配 background-color 拼出钓鱼文字——就是为了绕开 OCR 和沙箱图片扫描。Vigilyx 从 DOM 结构重建位图并用 rqrr 解码。正文里用 Unicode 方块字符拼出来的 ASCII-art 二维码用同一套流程解出来。",
           why: "常见「用 OCR 扫图片」的工具链一个都看不到这些东西。",
           source: "crates/vigilyx-engine/src/modules/html_pixel_art.rs",
         },
+      ],
+    },
+    anatomy: {
+      kicker: "逐层剖析",
+      title: "打开一封邮件，看每一层是怎么识破它的。",
+      body:
+        "选一个场景，然后滚。每一行都是 Vigilyx 对这封捕获邮件真实跑过的一个检测——从网线字节一路到融合 verdict。不是示意图、不是拼接截图：就是你工程师在 SOC 排查时会看到的实际字段。",
+      selectorLabel: "场景",
+      captureLabel: "已捕获",
+      verdictLabel: "融合判定",
+      actionLabelPrefix: "处置",
+      hoverHint: "悬停任意一行可查看为什么被标记。",
+      layerNames: ["抓包层", "解析层", "检测层", "融合层", "时序层"],
+      emails: [
         {
-          tag: "附件二维码",
-          title: "多格式 QR 解码 + ASCII 块字符 QR + CWE-400 安全防炸",
-          body:
-            "QR 附件（PNG / JPEG / GIF / BMP / WebP / TIFF）会走一条降级解码链：先用零分配的手写 PNG 快速路径，再 fallback 到 `image` crate，再做自适应阈值重试；解出来的 URL 会按「钓鱼专属落地页」（登录 / OAuth / device-code）打分。正文里用 Unicode 方块字符拼出来的 ASCII-art 二维码也会被重建成位图解码。",
-          why: "图像尺寸有硬上限防 decompression bomb DoS，多数开源 QR 检测实现没做这一步防御。",
-          source: "crates/vigilyx-engine/src/modules/attach_qr_scan.rs",
+          id: "bec",
+          name: "BEC 电汇诈骗",
+          headline: "From: ceo@acme-corp.com  ·  Subject: [紧急] 电汇 — 供应商账户变更  ·  周二 14:03",
+          lines: [
+            {
+              label: "L1 · 抓包",
+              content: "SMTP 203.0.113.44 → mx.acme-corp.com",
+              tag: "新发件 IP",
+              why: "发件 IP 在通信图里零历史；这个 /24 段第一次出现在入站路径上。",
+            },
+            {
+              label: "L2 · 头部",
+              content: "SPF=softfail  DKIM=none  DMARC=fail  Reply-To: ceo.acme@proton.me",
+              tag: "Reply-To 不匹配",
+              why: "Reply-To 域名和 From 对不上。典型的伪冒：企业显示名 + 免费邮箱回信地址。",
+            },
+            {
+              label: "L3 · 内容",
+              content: "subject=\"[紧急] 电汇\"  urgency_financial_combo=0.78",
+              tag: "紧迫性 + 金额",
+              why: "content_scan 命中 urgency_financial_combo 规则——紧迫关键词 + 金额陈述 + 24 小时内截止。",
+            },
+            {
+              label: "L4 · 身份",
+              content: "display_name=\"CEO John Doe\"  first_comm_window=true",
+              tag: "身份异常",
+              why: "identity_anomaly：这个发件域从未和该收件人通信过。首次接触 + 电汇请求 = 典型 BEC。",
+            },
+            {
+              label: "L5 · 时序",
+              content: "HMM 阶段: EXECUTE  ·  CUSUM 漂移 +3.2σ",
+              tag: "HMM EXECUTE",
+              why: "5 状态 HMM 在过去 8 天完成 侦察 → 建信任 → EXECUTE 的状态转移，CUSUM 确认基线漂移。",
+            },
+          ],
+          verdict: {
+            level: "HIGH",
+            score: "0.87",
+            action: "隔离 + 通过 SOAR playbook 通知财务审批人",
+            className: "verdict-high",
+          },
         },
         {
-          tag: "金融级中文 DLP",
-          title: "JR/T 0197-2020 合规阈值 + Luhn / IBAN mod-97 数学校验",
-          body:
-            "JR/T 0197-2020 是中国人民银行发布的金融数据安全分级国家标准。Vigilyx 按 C3（敏感，24h 内 ≥ 500 条 → High）和 C4（高敏感，24h 内 ≥ 50 条 → Critical）做 per-user / per-IP 累计追踪。中国身份证 / 手机号 / 银行卡用带边界感知的正则 `(?-u:\\b)`——避免 18 位身份证被截成 11 位「手机号」——银行卡做 Luhn 校验，IBAN 做 mod-97 校验，18 位统一社会信用代码严格排除 I / O / Z / S / V 字符。",
-          why: "海外邮件安全厂商基本不知道这套标准存在，纯正则 DLP 产品会在边界和 checksum 环节漏检。",
-          source: "crates/vigilyx-engine/src/data_security/jrt_compliance.rs",
+          id: "aitm",
+          name: "AitM MFA 绕过",
+          headline: "From: no-reply@m1crosoft-auth.workers.dev  ·  Subject: 异常登录 — 立即验证  ·  周一 09:41",
+          lines: [
+            {
+              label: "L1 · 抓包",
+              content: "HTTPS 104.21.48.11  ·  SNI=m1crosoft-auth.workers.dev",
+              tag: "CLOUDFLARE DGA",
+              why: "主机名命中 Tycoon2FA / EvilProxy 在 Cloudflare Workers 上的 DGA 模式。域名注册不到 72 小时。",
+            },
+            {
+              label: "L2 · 链接扫描",
+              content: "href=\"…/oauth2/authorize?redirect_uri=https://evil-proxy.xyz/callback\"",
+              tag: "OAUTH 不一致",
+              why: "redirect_uri 不在任何 Microsoft 官方回调白名单内。这是 AitM 代理的特征，不是拼写错误。",
+            },
+            {
+              label: "L3 · 品牌",
+              content: "display_text=\"Microsоft\"（品牌名含西里尔字母 о）",
+              tag: "同形异义",
+              why: "Latin/Cyrillic 混合字符脚本。肉眼看一致、却让严格匹配的品牌保护失效——典型同形异义伪装。",
+            },
+            {
+              label: "L4 · AitM 检测",
+              content: "turnstile_fingerprint=true  kit=\"Tycoon2FA\"",
+              tag: "TYCOON2FA",
+              why: "Turnstile 工具包指纹 + URI 形态和已公开的 Tycoon2FA 样本吻合。反向代理 MFA 绕过确定。",
+            },
+            {
+              label: "L5 · 融合",
+              content: "D-S belief=0.91  ·  2 个链接家族引擎被 Copula 折扣",
+              tag: "D-S + COPULA",
+              why: "Murphy 修正的 D-S 融合 4 个独立检测器；Copula 折扣避免 link_scan 和 aitm_detect 因同源而重复计分。",
+            },
+          ],
+          verdict: {
+            level: "CRITICAL",
+            score: "0.94",
+            action: "拦截投递  +  改写链接  +  告警 SOC on-call",
+            className: "verdict-critical",
+          },
         },
         {
-          tag: "Coremail / Webmail",
-          title: "分片上传重组 + 草稿 / 自发自收滥用检测",
-          body:
-            "Vigilyx 在 HTTP 层原生理解 Coremail 协议：compose.jsp 的公共 URL 靠 JSON `action` 字段区分 deliver / save / autosave；multipart 分片上传会按 `(client_ip, composeId, attachmentId, offset)` 重组之后再跑 DLP；Webmail 自发自收（发给自己）作为一种常见外泄路径会被单独标记。",
-          why: "单纯抓 SMTP 完全看不到 Webmail 层面的外泄；这是针对中国企业邮箱生态的真实外泄通道做的深度定制。",
-          source: "crates/vigilyx-engine/src/data_security/coremail.rs",
+          id: "exfil",
+          name: "Webmail 数据外泄",
+          headline: "HTTP POST /webmail/compose.jsp  ·  内部员工 → 外部 @gmail.com  ·  周四 18:22",
+          lines: [
+            {
+              label: "L1 · 抓包",
+              content: "HTTP 镜像  ·  multipart/form-data  ·  3 个附件，42 MB 合计",
+              tag: "非工作时段",
+              why: "捕获时刻超出该用户的基线工作时段（09:00–18:00），双速 EWMA 偏差显著。",
+            },
+            {
+              label: "L2 · Webmail",
+              content: "从 compose.jsp 的 action payload 中重组出发件 body",
+              tag: "WEBMAIL 还原",
+              why: "data_security/webmail.rs 从 HTTP multipart 重建出站 MIME 对象——不是简单做 URL 过滤。",
+            },
+            {
+              label: "L3 · DLP",
+              content: "PII 命中：11× 身份证号、4× 银行账号、2× 手机号",
+              tag: "DLP PII",
+              why: "DLP 引擎在 Unicode 归一化（剥离零宽字符）之后命中 17 个敏感 token。",
+            },
+            {
+              label: "L4 · 收件人",
+              content: "to=user+backup@gmail.com  first_external_send=true",
+              tag: "首次外发",
+              why: "通信图：该员工从未给这个外部域名发过邮件。经典离职前外泄模式。",
+            },
+            {
+              label: "L5 · 时序",
+              content: "Hawkes 强度 λ(t) 过去 48 小时冲高到基线的 6.1 倍",
+              tag: "HAWKES BURST",
+              why: "带 mark 的 Hawkes 自激过程捕捉到外泄阶段性 burst：48 小时内 14 次大文件上传，周均仅 2 次。",
+            },
+          ],
+          verdict: {
+            level: "HIGH",
+            score: "0.82",
+            action: "阻断外发  +  建 DLP 工单  +  通知数据 owner",
+            className: "verdict-high",
+          },
         },
       ],
     },
     cta: {
-      kicker: "适合谁看",
-      title: "更适合工程驱动的安全团队。",
+      title: "给工程驱动的安全团队。直接 clone 就行。",
       body:
-        "适用于 SOC、邮件安全工程、DFIR 场景，以及任何想自己掌控邮件安全网关逻辑而不是租用黑盒系统的团队。",
+        "如果你更想自己掌控检测逻辑、而不是租一个黑盒，Vigilyx 已经可以跑起来。三条命令，旁路镜像或 Inline MTA 同一套引擎。AGPL-3.0，不回传任何遥测，不需要联网授权。",
+      terminal: {
+        title: "deploy.sh",
+        commands: [
+          { kind: "comment", text: "# 1. 拉取仓库" },
+          { kind: "prompt", text: "git clone https://github.com/HerbiusYang/Vigilyx.git" },
+          { kind: "prompt", text: "cd Vigilyx" },
+          { kind: "comment", text: "# 2. 初始化远程构建环境（一次性）" },
+          { kind: "prompt", text: "./deploy.sh --init" },
+          { kind: "comment", text: "# 3. 打开控制台" },
+          { kind: "hint", text: "→ https://localhost:8088" },
+        ],
+        copyLabel: "复制",
+        copiedLabel: "已复制",
+        copyPayload:
+          "git clone https://github.com/HerbiusYang/Vigilyx.git\ncd Vigilyx\n./deploy.sh --init",
+      },
       actions: [
         { text: "查看快速开始", href: "/zh/docs/quick-start", primary: true },
         { text: "了解部署方式", href: "/zh/docs/deployment" },
         {
-          text: "查看 GitHub",
+          text: "GitHub 上 Star",
           href: "https://github.com/HerbiusYang/Vigilyx",
         },
       ],
@@ -588,11 +875,118 @@ function tokenizeTerm(text: string): TermToken[] {
   return out;
 }
 
-const tokenizedTerminal = computed(() =>
-  copy.value.hero.terminal.lines.map((line) => ({
+// Dynamic verdict stream — seed lines stay pinned at top, new verdict
+// events append at the bottom every ~1.6s, oldest excess trimmed so the
+// buffer stays between [MIN_LINES, MAX_TERM_LINES]. Runs only when the
+// terminal is in the viewport; respects prefers-reduced-motion.
+type TermLine = { kind: "muted" | "prompt" | "out" | "ok" | "warn" | "bad"; text: string };
+type TermLineView = TermLine & { key: string; tokens: TermToken[] };
+
+const MAX_TERM_LINES = 14;
+const TERM_INTERVAL_MS = 1600;
+const TERM_ANCHOR = 2; // never trim the first 2 lines (comment + prompt)
+
+const tokenizedTerminal = shallowRef<TermLineView[]>([]);
+let termTimer: number | null = null;
+let termObserver: IntersectionObserver | null = null;
+let termFeedCursor = 0;
+let termLineKeySeq = 0;
+
+const TERM_FEED_POOL: Record<"en" | "zh", TermLine[][]> = {
+  en: [
+    [
+      { kind: "out", text: "[SMTP] edge-03 → carol@corp · subject: \"Re: purchase order\"" },
+      { kind: "ok", text: "verdict: safe    score 0.11  modules 0/15  dlp ok" },
+    ],
+    [
+      { kind: "out", text: "[IMAP] webmail → dave@corp · subject: \"wire transfer update\"" },
+      { kind: "warn", text: "verdict: low     score 0.28  modules 2/15  intel sender_domain=new" },
+    ],
+    [
+      { kind: "out", text: "[SMTP] mx-4 → finance@corp · subject: \"Microsoft 365 security alert\"" },
+      { kind: "bad", text: "verdict: critical score 0.92 modules 7/15  aitm=evilproxy oauth_abuse=1" },
+    ],
+    [
+      { kind: "out", text: "[HTTP] webmail upload · user=eve@corp · file=\"Q4_report.xlsx\"" },
+      { kind: "warn", text: "verdict: medium  score 0.48  modules 3/15  dlp=id_card hits=2" },
+    ],
+    [
+      { kind: "out", text: "[SMTP] mail-02 → ops@corp · subject: \"invoice reminder #7821\"" },
+      { kind: "ok", text: "verdict: safe    score 0.09  modules 0/15  dlp ok" },
+    ],
+    [
+      { kind: "out", text: "[SMTP] mx-1 → hr@corp · subject: \"urgent: payroll change\"" },
+      { kind: "bad", text: "verdict: high    score 0.78  modules 5/15  nlp bec=0.83 spoof=display_name" },
+    ],
+    [
+      { kind: "out", text: "[SMTP] edge-02 → team@corp · subject: \"shared document\"" },
+      { kind: "warn", text: "verdict: medium  score 0.41  modules 3/15  url=redirect_chain yara=phish_kit" },
+    ],
+  ],
+  zh: [
+    [
+      { kind: "out", text: "[SMTP] edge-03 → carol@corp · 主题：\"Re: 采购订单\"" },
+      { kind: "ok", text: "verdict: safe    score 0.11  modules 0/15  dlp ok" },
+    ],
+    [
+      { kind: "out", text: "[IMAP] webmail → dave@corp · 主题：\"电汇信息更新\"" },
+      { kind: "warn", text: "verdict: low     score 0.28  modules 2/15  intel sender_domain=new" },
+    ],
+    [
+      { kind: "out", text: "[SMTP] mx-4 → finance@corp · 主题：\"Microsoft 365 安全警报\"" },
+      { kind: "bad", text: "verdict: critical score 0.92 modules 7/15  aitm=evilproxy oauth_abuse=1" },
+    ],
+    [
+      { kind: "out", text: "[HTTP] webmail 上传 · user=eve@corp · file=\"Q4_report.xlsx\"" },
+      { kind: "warn", text: "verdict: medium  score 0.48  modules 3/15  dlp=id_card hits=2" },
+    ],
+    [
+      { kind: "out", text: "[SMTP] mail-02 → ops@corp · 主题：\"发票提醒 #7821\"" },
+      { kind: "ok", text: "verdict: safe    score 0.09  modules 0/15  dlp ok" },
+    ],
+    [
+      { kind: "out", text: "[SMTP] mx-1 → hr@corp · 主题：\"紧急：薪资变更\"" },
+      { kind: "bad", text: "verdict: high    score 0.78  modules 5/15  nlp bec=0.83 spoof=display_name" },
+    ],
+    [
+      { kind: "out", text: "[SMTP] edge-02 → team@corp · 主题：\"共享文档\"" },
+      { kind: "warn", text: "verdict: medium  score 0.41  modules 3/15  url=redirect_chain yara=phish_kit" },
+    ],
+  ],
+};
+
+function hydrateTermLine(line: TermLine): TermLineView {
+  return {
     ...line,
+    key: `${termLineKeySeq++}-${line.kind}-${line.text}`,
     tokens: tokenizeTerm(line.text),
-  })),
+  };
+}
+
+function seedStream() {
+  termLineKeySeq = 0;
+  tokenizedTerminal.value = copy.value.hero.terminal.lines.map(hydrateTermLine);
+  termFeedCursor = 0;
+}
+
+function pushNextFeed() {
+  const pool = TERM_FEED_POOL[props.locale] ?? TERM_FEED_POOL.en;
+  if (!pool.length) return;
+  const group = pool[termFeedCursor % pool.length];
+  termFeedCursor += 1;
+  const next = tokenizedTerminal.value.slice();
+  for (const line of group) next.push(hydrateTermLine(line));
+  while (next.length > MAX_TERM_LINES) next.splice(TERM_ANCHOR, 1);
+  tokenizedTerminal.value = next;
+}
+
+seedStream();
+
+watch(
+  () => props.locale,
+  () => {
+    seedStream();
+  },
 );
 
 // One-shot scroll-in reveal via IntersectionObserver.
@@ -600,12 +994,201 @@ const tokenizedTerminal = computed(() =>
 // Entrance animations on hero elements (term-line, pipeline-stage) are enough.
 const rootRef = ref<HTMLElement | null>(null);
 
+// -----------------------------------------------------------------------------
+// Anatomy section: email dissection with scroll-driven reveal
+// -----------------------------------------------------------------------------
+const anatomyEmailIdx = ref(0);
+const anatomyRevealedLines = ref<Set<number>>(new Set());
+const anatomyVerdictRevealed = ref(false);
+const anatomySectionArmed = ref(false);
+
+const anatomyActiveEmail = computed(
+  () => copy.value.anatomy.emails[anatomyEmailIdx.value],
+);
+
+function selectAnatomyEmail(idx: number) {
+  if (idx === anatomyEmailIdx.value) return;
+  anatomyEmailIdx.value = idx;
+  // Reset reveal state so the new email plays its reveal sequence.
+  anatomyRevealedLines.value = new Set();
+  anatomyVerdictRevealed.value = false;
+  // After Vue flushes new DOM, re-observe the new line/verdict elements.
+  if (typeof window !== "undefined") {
+    void nextTick(rewireAnatomyObservers);
+  }
+}
+
+const anatomyRailLit = computed(() => {
+  const n = anatomyRevealedLines.value.size;
+  return [0, 1, 2, 3, 4].map((i) => i < n);
+});
+
+const anatomyRailProgress = computed(() => {
+  const n = anatomyRevealedLines.value.size;
+  return Math.min(1, n / 5);
+});
+
+let anatomyLineObserver: IntersectionObserver | null = null;
+let anatomyVerdictObserver: IntersectionObserver | null = null;
+let anatomySectionObserver: IntersectionObserver | null = null;
+
+function rewireAnatomyObservers() {
+  if (typeof window === "undefined") return;
+  if (!("IntersectionObserver" in window)) return;
+
+  anatomyLineObserver?.disconnect();
+  anatomyVerdictObserver?.disconnect();
+  const scope = rootRef.value ?? document;
+
+  anatomyLineObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        const idxAttr = (entry.target as HTMLElement).dataset.lineIdx;
+        if (idxAttr == null) continue;
+        const idx = Number(idxAttr);
+        if (Number.isNaN(idx)) continue;
+        const next = new Set(anatomyRevealedLines.value);
+        next.add(idx);
+        anatomyRevealedLines.value = next;
+        anatomyLineObserver?.unobserve(entry.target);
+      }
+    },
+    { threshold: 0.55, rootMargin: "0px 0px -10% 0px" },
+  );
+
+  anatomyVerdictObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          anatomyVerdictRevealed.value = true;
+          anatomyVerdictObserver?.disconnect();
+          anatomyVerdictObserver = null;
+        }
+      }
+    },
+    { threshold: 0.4 },
+  );
+
+  scope
+    .querySelectorAll<HTMLElement>(".anatomy-line")
+    .forEach((el) => anatomyLineObserver!.observe(el));
+  const verdictEl = scope.querySelector<HTMLElement>(".anatomy-paper__verdict");
+  if (verdictEl) anatomyVerdictObserver?.observe(verdictEl);
+}
+
+// -----------------------------------------------------------------------------
+// CTA terminal: copy-to-clipboard with ephemeral "copied" state.
+// -----------------------------------------------------------------------------
+const ctaCopied = ref(false);
+let ctaCopyTimer: number | null = null;
+
+async function copyCtaCommands() {
+  const payload = copy.value.cta.terminal.copyPayload;
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(payload);
+    } else if (typeof document !== "undefined") {
+      // Fallback: hidden textarea + execCommand for older browsers / non-secure contexts.
+      const ta = document.createElement("textarea");
+      ta.value = payload;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    ctaCopied.value = true;
+    if (ctaCopyTimer !== null) clearTimeout(ctaCopyTimer);
+    ctaCopyTimer = window.setTimeout(() => {
+      ctaCopied.value = false;
+      ctaCopyTimer = null;
+    }, 1600);
+  } catch {
+    // Silently ignore clipboard failures — the user can still select the text manually.
+  }
+}
+
 onMounted(() => {
-  // No-op: reveal removed for smoother scrolling.
+  if (typeof window === "undefined") return;
+  const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
+  // Anatomy: for reduced-motion users, skip the scroll-reveal choreography
+  // and show everything immediately so the content is still readable.
+  if (reduce) {
+    anatomySectionArmed.value = true;
+    anatomyRevealedLines.value = new Set([0, 1, 2, 3, 4]);
+    anatomyVerdictRevealed.value = true;
+  } else if ("IntersectionObserver" in window) {
+    // Arm the section when it enters the viewport — CSS uses .is-armed
+    // as the gate for the reveal choreography.
+    const scope = rootRef.value ?? document;
+    const sectionEl = scope.querySelector<HTMLElement>(".home-anatomy-section");
+    if (sectionEl) {
+      anatomySectionObserver = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              anatomySectionArmed.value = true;
+              anatomySectionObserver?.disconnect();
+              anatomySectionObserver = null;
+            }
+          }
+        },
+        { threshold: 0.1 },
+      );
+      anatomySectionObserver.observe(sectionEl);
+    }
+    // Per-line + verdict observers.
+    rewireAnatomyObservers();
+  } else {
+    // Fallback for ancient browsers: just show everything.
+    anatomySectionArmed.value = true;
+    anatomyRevealedLines.value = new Set([0, 1, 2, 3, 4]);
+    anatomyVerdictRevealed.value = true;
+  }
+
+  if (reduce) return;
+
+  const termEl = (rootRef.value ?? document).querySelector<HTMLElement>(".hero-terminal");
+  if (!termEl || !("IntersectionObserver" in window)) return;
+
+  termObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          if (termTimer === null) {
+            termTimer = window.setInterval(pushNextFeed, TERM_INTERVAL_MS);
+          }
+        } else if (termTimer !== null) {
+          clearInterval(termTimer);
+          termTimer = null;
+        }
+      }
+    },
+    { threshold: 0.15 },
+  );
+  termObserver.observe(termEl);
 });
 
 onBeforeUnmount(() => {
-  // No-op.
+  if (termTimer !== null) {
+    clearInterval(termTimer);
+    termTimer = null;
+  }
+  termObserver?.disconnect();
+  termObserver = null;
+  anatomyLineObserver?.disconnect();
+  anatomyLineObserver = null;
+  anatomyVerdictObserver?.disconnect();
+  anatomyVerdictObserver = null;
+  anatomySectionObserver?.disconnect();
+  anatomySectionObserver = null;
+  if (ctaCopyTimer !== null) {
+    clearTimeout(ctaCopyTimer);
+    ctaCopyTimer = null;
+  }
 });
 </script>
 
@@ -631,10 +1214,9 @@ onBeforeUnmount(() => {
               <span class="hero-terminal__live">● live</span>
             </div>
             <pre class="hero-terminal__body"><code><span
-              v-for="(line, idx) in tokenizedTerminal"
-              :key="idx"
+              v-for="line in tokenizedTerminal"
+              :key="line.key"
               :class="['term-line', `term-line--${line.kind}`]"
-              :style="{ animationDelay: `${idx * 90}ms` }"
             ><template v-if="line.kind === 'prompt'"><span class="term-caret">$</span> </template><span
               v-for="(tok, ti) in line.tokens"
               :key="ti"
@@ -668,9 +1250,88 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
-    <div class="home-strip">
-      <span v-for="item in copy.strip" :key="item">{{ item }}</span>
-    </div>
+    <!-- ANATOMY: live dissection of one captured email -->
+    <section
+      class="home-section home-anatomy-section"
+      :class="{ 'is-armed': anatomySectionArmed }"
+      :style="{ '--rail-progress': anatomyRailProgress }"
+    >
+      <div class="home-section-heading">
+        <p class="home-kicker">{{ copy.anatomy.kicker }}</p>
+        <h2>{{ copy.anatomy.title }}</h2>
+        <p>{{ copy.anatomy.body }}</p>
+      </div>
+
+      <!-- Scenario selector tabs -->
+      <div class="anatomy-selector" role="tablist" :aria-label="copy.anatomy.selectorLabel">
+        <button
+          v-for="(email, idx) in copy.anatomy.emails"
+          :key="email.id"
+          type="button"
+          role="tab"
+          :aria-selected="idx === anatomyEmailIdx"
+          :class="['anatomy-selector__item', { 'is-active': idx === anatomyEmailIdx }]"
+          @click="selectAnatomyEmail(idx)"
+        >
+          {{ email.name }}
+        </button>
+      </div>
+
+      <!-- Email paper stage -->
+      <div class="anatomy-stage">
+        <article class="anatomy-paper" :key="anatomyActiveEmail.id">
+          <header class="anatomy-paper__head">
+            <span>{{ copy.anatomy.captureLabel }}</span>
+            · {{ anatomyActiveEmail.headline }}
+          </header>
+
+          <div class="anatomy-paper__body">
+            <div
+              v-for="(line, idx) in anatomyActiveEmail.lines"
+              :key="`${anatomyActiveEmail.id}-${idx}`"
+              :class="['anatomy-line', { 'is-revealed': anatomyRevealedLines.has(idx) }]"
+              :data-line-idx="idx"
+            >
+              <span class="anatomy-line__label">{{ line.label }}</span>
+              <span class="anatomy-line__content">{{ line.content }}</span>
+              <span class="anatomy-line__tag">{{ line.tag }}</span>
+              <span class="anatomy-line__why">{{ line.why }}</span>
+            </div>
+          </div>
+
+          <footer
+            :class="[
+              'anatomy-paper__verdict',
+              anatomyActiveEmail.verdict.className,
+              { 'is-revealed': anatomyVerdictRevealed },
+            ]"
+          >
+            <span class="anatomy-paper__verdict-label">{{ copy.anatomy.verdictLabel }}</span>
+            <span class="anatomy-paper__verdict-level">{{ anatomyActiveEmail.verdict.level }}</span>
+            <span class="anatomy-paper__verdict-score">{{ anatomyActiveEmail.verdict.score }}</span>
+            <span class="anatomy-paper__verdict-action">
+              {{ copy.anatomy.actionLabelPrefix }} · {{ anatomyActiveEmail.verdict.action }}
+            </span>
+          </footer>
+        </article>
+      </div>
+
+      <!-- L1-L5 rail -->
+      <div class="anatomy-rail" aria-hidden="true">
+        <div class="anatomy-rail__line"></div>
+        <div
+          v-for="(name, idx) in copy.anatomy.layerNames"
+          :key="name"
+          :class="['anatomy-rail__node', { 'is-lit': anatomyRailLit[idx] }]"
+        >
+          <span class="anatomy-rail__dot"></span>
+          <span class="anatomy-rail__idx">L{{ idx + 1 }}</span>
+          <span class="anatomy-rail__name">{{ name }}</span>
+        </div>
+      </div>
+
+      <p class="anatomy-hint">{{ copy.anatomy.hoverHint }}</p>
+    </section>
 
     <section class="home-section">
       <div class="home-section-heading">
@@ -712,9 +1373,33 @@ onBeforeUnmount(() => {
           <span class="highlight-card__index">{{ String(idx + 1).padStart(2, "0") }}</span>
           <span class="highlight-card__tag">{{ card.tag }}</span>
           <h3>{{ card.title }}</h3>
-          <p class="highlight-card__body">{{ card.body }}</p>
-          <p class="highlight-card__why"><strong>Why it matters:</strong> {{ card.why }}</p>
           <code class="highlight-card__source">{{ card.source }}</code>
+          <details class="highlight-card__details">
+            <summary>
+              <span class="highlight-card__summary-label">{{ props.locale === 'zh' ? '展开详情' : 'Read more' }}</span>
+              <svg
+                class="highlight-card__summary-chevron"
+                viewBox="0 0 16 16"
+                width="12"
+                height="12"
+                aria-hidden="true"
+              >
+                <path
+                  d="M3 6l5 5 5-5"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </summary>
+            <p class="highlight-card__body">{{ card.body }}</p>
+            <p class="highlight-card__why">
+              <strong>{{ props.locale === 'zh' ? '为什么关键：' : 'Why it matters:' }}</strong>
+              {{ card.why }}
+            </p>
+          </details>
         </article>
       </div>
     </section>
@@ -807,22 +1492,105 @@ onBeforeUnmount(() => {
     </section>
 
     <section class="home-section home-cta">
-      <div>
-        <p class="home-kicker">{{ copy.cta.kicker }}</p>
-        <h2>{{ copy.cta.title }}</h2>
-        <p>{{ copy.cta.body }}</p>
+      <!-- Aurora ambient layer: stardust particles + subtle gradient glow -->
+      <div class="home-cta__aurora" aria-hidden="true">
+        <span class="home-cta__aurora-blob home-cta__aurora-blob--a"></span>
+        <span class="home-cta__aurora-blob home-cta__aurora-blob--b"></span>
+        <span class="home-cta__aurora-grid"></span>
+        <span class="home-cta__stardust">
+          <i v-for="n in 18" :key="n" :style="`--i:${n}`"></i>
+        </span>
       </div>
-      <div class="home-cta-actions">
-        <a
-          v-for="action in copy.cta.actions"
-          :key="action.text"
-          :class="['home-cta-link', action.primary ? 'home-cta-link--primary' : '']"
-          :href="action.href"
-          :target="isExternalLink(action.href) ? '_blank' : undefined"
-          :rel="isExternalLink(action.href) ? 'noreferrer' : undefined"
-        >
-          {{ action.text }}
-        </a>
+
+      <div class="home-cta__stage">
+        <!-- LEFT: headline + body + 3 arrow links stacked vertically -->
+        <div class="home-cta__left">
+          <h2 class="home-cta__headline">{{ copy.cta.title }}</h2>
+          <p class="home-cta__body">{{ copy.cta.body }}</p>
+
+          <ul class="home-cta__links" role="list">
+            <li
+              v-for="action in copy.cta.actions"
+              :key="action.text"
+            >
+              <a
+                :class="['home-cta-arrow', action.primary ? 'home-cta-arrow--primary' : '']"
+                :href="action.href"
+                :target="isExternalLink(action.href) ? '_blank' : undefined"
+                :rel="isExternalLink(action.href) ? 'noreferrer' : undefined"
+              >
+                <span class="home-cta-arrow__text">{{ action.text }}</span>
+                <span class="home-cta-arrow__line" aria-hidden="true"></span>
+                <svg
+                  class="home-cta-arrow__icon"
+                  viewBox="0 0 16 16"
+                  width="14"
+                  height="14"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M3 8h10M9 4l4 4-4 4" />
+                </svg>
+              </a>
+            </li>
+          </ul>
+        </div>
+
+        <!-- RIGHT: Aurora glass terminal (same family as SharePanel) -->
+        <div class="cta-terminal" role="group" :aria-label="copy.cta.terminal.title">
+          <div class="cta-terminal__bar">
+            <span class="cta-terminal__dots">
+              <i></i><i></i><i></i>
+            </span>
+            <span class="cta-terminal__title">{{ copy.cta.terminal.title }}</span>
+            <button
+              type="button"
+              :class="['cta-terminal__copy', { 'is-copied': ctaCopied }]"
+              @click="copyCtaCommands"
+              :aria-label="ctaCopied ? copy.cta.terminal.copiedLabel : copy.cta.terminal.copyLabel"
+            >
+              <svg
+                v-if="!ctaCopied"
+                viewBox="0 0 16 16"
+                width="13"
+                height="13"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="4.5" y="4.5" width="8" height="9" rx="1.2" />
+                <path d="M3 10.5V3.5A1 1 0 0 1 4 2.5h7" />
+              </svg>
+              <svg
+                v-else
+                viewBox="0 0 16 16"
+                width="13"
+                height="13"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M3.5 8.5l3 3 6-7" />
+              </svg>
+              <span>{{ ctaCopied ? copy.cta.terminal.copiedLabel : copy.cta.terminal.copyLabel }}</span>
+            </button>
+          </div>
+          <pre class="cta-terminal__body"><code><span
+            v-for="(cmd, i) in copy.cta.terminal.commands"
+            :key="i"
+            :class="['cta-term-line', `cta-term-line--${cmd.kind}`]"
+          ><template v-if="cmd.kind === 'prompt'"><span class="cta-term-caret">$</span> </template>{{ cmd.text }}</span></code></pre>
+        </div>
       </div>
     </section>
 

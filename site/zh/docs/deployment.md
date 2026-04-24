@@ -7,6 +7,24 @@ description: Vigilyx 部署说明，覆盖旁路镜像模式、MTA 模式、Dock
 
 Vigilyx 支持两种主要部署形态。
 
+## 推荐工作流
+
+仓库当前的主部署路径是 `deploy.sh`，不是在本地随手跑 `cargo` 或手工拼装镜像。
+
+常用命令：
+
+```bash
+./deploy.sh
+./deploy.sh --backend
+./deploy.sh --frontend
+./deploy.sh --sniffer
+./deploy.sh --mta
+./deploy.sh --production
+./deploy.sh --production --mta
+```
+
+这条远程优先工作流会同步仓库、在远端 `vigilyx-rust-builder` 中验证 Rust 代码、日常用 `release-fast` 增量构建、打包镜像，并重启当前拓扑。手工 `docker compose` 仍然可以作为补充路径，或用于直接在单机目标主机上部署。
+
 ## 旁路镜像模式
 
 如果你想先获得邮件流量可视化与分析能力，而不改现有邮件系统，使用旁路模式。
@@ -27,6 +45,8 @@ libpcap capture -> Redis Streams -> Engine -> PostgreSQL -> API/UI
 推荐 profile：
 
 ```bash
+./deploy.sh
+# 或者在目标主机上直接执行：
 docker compose --profile mirror up -d
 ```
 
@@ -49,8 +69,18 @@ SMTP client -> vigilyx-mta -> inline engine -> quarantine/reject/relay -> downst
 推荐 profile：
 
 ```bash
+./deploy.sh --mta
+# 或者在目标主机上直接执行：
 docker compose --profile mta up -d
 ```
+
+如果只执行 `docker compose up -d`，只会启动控制面服务（`vigilyx`、`postgres`、`redis`），不会自动启用旁路抓包或 Inline SMTP 决策。
+
+## 当前拓扑说明
+
+- 旁路模式会启动独立的 `vigilyx-engine-standalone` 容器，并与 `vigilyx-sniffer` 组成数据面。
+- MTA 模式把引擎内嵌在 `vigilyx-mta` 中，不再走旁路模式的独立 engine 容器。
+- 主 `vigilyx` 容器在两种拓扑里都承担 API / 前端控制面角色。
 
 ## 可选服务
 

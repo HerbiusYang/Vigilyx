@@ -80,6 +80,7 @@ function createThemeConfig(locale: "en" | "zh"): DefaultTheme.Config {
     nav: isZh
       ? [
           { text: "指南", link: "/zh/docs/" },
+          { text: "特性", link: "/zh/docs/features" },
           { text: "快速开始", link: "/zh/docs/quick-start" },
           { text: "部署方式", link: "/zh/docs/deployment" },
           { text: "架构", link: "/zh/docs/architecture" },
@@ -87,6 +88,7 @@ function createThemeConfig(locale: "en" | "zh"): DefaultTheme.Config {
         ]
       : [
           { text: "Guide", link: "/docs/" },
+          { text: "Features", link: "/docs/features" },
           { text: "Quick Start", link: "/docs/quick-start" },
           { text: "Deployment", link: "/docs/deployment" },
           { text: "Architecture", link: "/docs/architecture" },
@@ -98,6 +100,7 @@ function createThemeConfig(locale: "en" | "zh"): DefaultTheme.Config {
           text: isZh ? "开始使用" : "Get Started",
           items: [
             { text: isZh ? "概览" : "Overview", link: `${docsPrefix}` },
+            { text: isZh ? "特性" : "Features", link: `${docsPrefix}features` },
             { text: isZh ? "快速开始" : "Quick Start", link: `${docsPrefix}quick-start` },
             { text: isZh ? "部署" : "Deployment", link: `${docsPrefix}deployment` },
             { text: isZh ? "架构" : "Architecture", link: `${docsPrefix}architecture` },
@@ -129,7 +132,10 @@ function createThemeConfig(locale: "en" | "zh"): DefaultTheme.Config {
     lightModeSwitchTitle: isZh ? "切换到浅色模式" : "Switch to light theme",
     darkModeSwitchTitle: isZh ? "切换到深色模式" : "Switch to dark theme",
     lastUpdatedText: isZh ? "最后更新" : "Last updated",
-  };
+    // Canonical deployed origin, consumed by SharePanel so dev/localhost URLs
+    // are never copied or shown — shares always point at the public site.
+    siteUrl,
+  } as DefaultTheme.Config & { siteUrl: string };
 }
 
 function canonicalFor(relativePath: string): string {
@@ -149,6 +155,9 @@ export default defineConfig({
   title: "Vigilyx",
   description:
     "Rust-powered email security gateway and analysis platform for passive mirror monitoring and inline MTA inspection.",
+  // Dark is the default theme on first visit; the toggle in the nav still lets
+  // visitors switch to light mode, and VitePress remembers their choice.
+  appearance: "dark",
   locales: {
     root: {
       label: "English",
