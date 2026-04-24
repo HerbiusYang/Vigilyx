@@ -22,20 +22,20 @@ class TestDetectLanguage:
         assert _detect_language("This is a plain English email") == "en"
 
     def test_mixed_high_cjk_ratio(self):
-        # >30% CJK → "zh"
-        text = "你好世界hello"  # 4 CJK / 9 total non-space ≈ 44%
+        # >30% CJK -> "zh"
+        text = "你好世界hello"  # 4 CJK chars / 9 total non-space chars ~= 44%
         assert _detect_language(text) == "zh"
 
     def test_mixed_low_cjk_ratio(self):
-        # <30% CJK → "en"
-        text = "hello world 你"  # 1 CJK / 11 non-space ≈ 9%
+        # <30% CJK -> "en"
+        text = "hello world 你"  # 1 CJK char / 11 non-space chars ~= 9%
         assert _detect_language(text) == "en"
 
     def test_empty_string(self):
         assert _detect_language("") == "unknown"
 
     def test_whitespace_only(self):
-        # All whitespace → total non-space = 0 → "unknown"
+        # All whitespace -> total non-space chars = 0 -> "unknown"
         assert _detect_language("   \t\n  ") == "unknown"
 
     def test_japanese_kanji_counted_as_cjk(self):
@@ -44,17 +44,17 @@ class TestDetectLanguage:
         assert _detect_language(text) == "zh"
 
     def test_numbers_only(self):
-        # Digits are non-space but not CJK → ratio 0 → "en"
+        # Digits are non-space but not CJK -> ratio 0 -> "en"
         assert _detect_language("123456789") == "en"
 
     def test_threshold_boundary_exactly_30_percent(self):
-        # 3 CJK out of 10 non-space chars = exactly 30%, > means strictly greater
-        text = "abcdefg你好吗"  # 3 CJK / 10 non-space = 0.30 → NOT > 0.3 → "en"
+        # 3 CJK out of 10 non-space chars = exactly 30%; detection requires strictly greater.
+        text = "abcdefg你好吗"  # 3 CJK / 10 non-space = 0.30 -> not > 0.3 -> "en"
         assert _detect_language(text) == "en"
 
     def test_threshold_just_above_30_percent(self):
-        # 4 CJK out of 10 non-space chars = 40% → "zh"
-        text = "abcdef你好吗呢"  # 4 CJK / 10 non-space = 0.40 → "zh"
+        # 4 CJK out of 10 non-space chars = 40% -> "zh"
+        text = "abcdef你好吗呢"  # 4 CJK / 10 non-space = 0.40 -> "zh"
         assert _detect_language(text) == "zh"
 
 

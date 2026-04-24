@@ -35,15 +35,15 @@ const W_CLIENT_FINGERPRINT: f64 = 0.15;
 const W_ENVELOPE_MISMATCH: f64 = 0.20;
 const W_LOCAL_PART_BRAND_SPOOF: f64 = 0.30;
 
-/// Chinese pinyin initials (声母). Used to support pinyin-initial abbreviations like
-/// "sxyhxh" (陕西银行协会 = S-X-Y-H-X-H). Each letter is a valid pinyin initial.
+/// Chinese pinyin initials (initial consonants). Used to support pinyin-initial abbreviations like
+/// "sxyhxh", where each character is a valid pinyin initial.
 /// Note: 'w' and 'y' are included because they commonly appear in abbreviations
-/// (e.g., 'w' for 网/文, 'y' for 银/余).
+/// for words whose romanized form starts with those letters.
 const PINYIN_INITIALS: &[u8] = b"bpmfdtnlgkhjqxrzcsyw";
 
 /// Check whether a short string consists entirely of valid pinyin initials.
-/// This catches abbreviations like "sxyhxh" (陕西银行协会), "dhcc" (东华软件),
-/// "psbc" (邮储银行). Only applies to short labels (2-6 chars) to avoid
+/// This catches abbreviations like "sxyhxh", "dhcc", and "psbc".
+/// It only applies to short labels (2-6 chars) to avoid
 /// false negatives on longer DGA strings.
 fn is_pinyin_initial_abbreviation(s: &str) -> bool {
     let len = s.len();
@@ -663,7 +663,7 @@ impl SecurityModule for IdentityAnomalyModule {
             // (a) 5+ consecutive consonants -> likely random/DGA (snajgc, bncgjwl)
             // (b) Short mixed alphanumeric -> likely random (8t5om, ycgg4)
             // Excludes pinyin+English names (qingcloud = qing+cloud)
-            // Excludes pinyin-initial abbreviations (sxyhxh = 陕西银行协会)
+            // Excludes pinyin-initial abbreviations such as "sxyhxh".
             // Excludes known brand domains (hundsun, cmbchina, etc.)
             if main_part.len() >= 4
                 && !is_human_readable_domain_label(main_part)

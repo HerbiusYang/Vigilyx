@@ -115,7 +115,7 @@ class TestAnalyzeSubject:
 
     def test_chinese_keywords(self, analyzer):
         score, cats = analyzer._analyze_subject("紧急：请验证您的账户")
-        # "紧急", "验证", "账户" → 3 keywords → 0.3
+        # Three suspicious Chinese keywords contribute 0.3 in total.
         assert score >= 0.3
         assert "suspicious_subject" in cats
 

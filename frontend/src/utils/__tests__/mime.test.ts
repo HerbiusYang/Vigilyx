@@ -23,7 +23,7 @@ describe('decodeMimeWord', () => {
 
   // ---------- Base64 (B) encoding ----------
   it('decodes base64 encoded UTF-8 subject', () => {
-    // "测试" in UTF-8 Base64
+    // The encoded value is the Chinese word for "test" in UTF-8 Base64.
     const encoded = '=?UTF-8?B?5rWL6K+V?='
     expect(decodeMimeWord(encoded)).toBe('测试')
   })
@@ -80,7 +80,7 @@ describe('decodeMimeWord', () => {
   })
 
   it('handles GBK charset base64 decoding', () => {
-    // GBK-encoded "测试": 0xB2, 0xE2, 0xCA, 0xD4
+    // GBK bytes for the Chinese word "test": 0xB2, 0xE2, 0xCA, 0xD4.
     const encoded = '=?GBK?B?suLK1A==?='
     const result = decodeMimeWord(encoded)
     // TextDecoder for GBK may not be available in all environments;

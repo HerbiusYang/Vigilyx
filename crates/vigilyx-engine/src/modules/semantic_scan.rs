@@ -329,9 +329,8 @@ fn score_semantics(text: &str) -> (f64, Vec<Evidence>) {
 ///
 /// * an unusually high density of long, multi-clause sentences;
 /// * boilerplate "AI assistant" phrases ("I hope this email finds you well",
-///   "I am reaching out regarding…", "please do not hesitate to…",
-///   "我希望这封邮件能在一切顺利时找到您");
-/// * over-frequent transitional connectives (Furthermore / Moreover / 此外 / 然而);
+///   "I am reaching out regarding…", "please do not hesitate to…");
+/// * over-frequent transitional connectives (for example, "furthermore" and "moreover");
 /// * conspicuously low contraction usage in English (LLMs prefer "do not"
 ///   over "don't"), combined with formal register that does not match a
 ///   short, urgent context.
