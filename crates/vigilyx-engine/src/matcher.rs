@@ -28,8 +28,8 @@
 //!
 //! ## API shape
 //!
-//! Modules call free functions like [`scan_prompt_strong`] /
-//! [`scan_mfa_bait_all_locales`] that return a small set of accessors:
+//! Modules call free functions like `scan_prompt_strong` /
+//! `scan_mfa_bait_all_locales` that return a small set of accessors:
 //!
 //! * [`MatchScan::is_match`] — fastest path, returns on first hit.
 //! * [`MatchScan::first_pattern`] — returns the matched phrase string, useful
