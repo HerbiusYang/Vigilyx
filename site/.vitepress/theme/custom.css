@@ -4042,16 +4042,55 @@ html[lang="zh"] .share-panel__eyebrow {
   }
 
   .share-panel {
-    padding: 1.3rem 1.15rem 1.1rem;
+    padding: 0;
     border-radius: 14px;
+  }
+
+  /* Single-column stack on phones — desktop's two-column grid otherwise
+     squeezes the copy column to ~150px and renders text as a vertical
+     strip (one or two CJK glyphs per line). */
+  .share-panel__content {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.1rem;
+    padding: 1.3rem 1.15rem 1.25rem 1.35rem;
+    align-items: stretch;
   }
 
   .share-panel__title {
     font-size: 1.25rem;
+    max-width: none;
   }
 
   .share-panel__desc {
     font-size: 0.95rem;
+    max-width: none;
+  }
+
+  /* Star CTA: keep the icon + text + arrow row but allow the hint to wrap
+     instead of ellipsing on narrow screens. */
+  .share-star {
+    min-height: 4.4rem;
+    padding: 0.85rem 1rem;
+    gap: 0.85rem;
+  }
+
+  .share-star__hint {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  /* Quick-share buttons: keep them on one row but let them shrink */
+  .share-panel__quick {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.4rem;
+  }
+
+  .share-quick {
+    min-height: 2.6rem;
+    padding: 0 0.5rem;
+    font-size: 0.88rem;
+    gap: 0.32rem;
   }
 
   .mode-card {
@@ -4098,15 +4137,11 @@ html[lang="zh"] .share-panel__eyebrow {
     flex-basis: auto;
   }
 
-  .share-panel__actions {
-    grid-template-columns: 1fr;
-    gap: 0.55rem;
-  }
-
   .share-panel__qr {
     grid-template-columns: 1fr;
     justify-items: center;
     text-align: center;
+    margin: 0 1.15rem 1.25rem 1.35rem;
     padding: 1rem;
   }
 
