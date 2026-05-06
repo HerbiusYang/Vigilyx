@@ -17,6 +17,8 @@ use vigilyx_core::{
 use super::dlp;
 use super::{DataSecurityDetector, DetectorResult};
 
+const ENCRYPTION_HEADER_READ_BYTES: usize = 4096;
+
 /// FileUpload URI mode (smallwritematch)
 const UPLOAD_URI_PATTERNS: &[&str] = &[
     "/upload",
@@ -96,21 +98,8 @@ impl FileTransitDetector {
 
     /// Read body from temp file for DLP scan - limited to 50MB to prevent OOM
     fn read_body_for_dlp(path: &str) -> Option<String> {
-        const DLP_MAX_READ: usize = 50 * 1024 * 1024;
-
-        // SEC: path validation prevents arbitrary file reads (CWE-22)
-        let validated = super::validate_temp_path(path)?;
-
-        let data = match std::fs::read(&validated) {
-            Ok(d) => d,
-            Err(e) => {
-                tracing::warn!(path = %path, error = %e, "readGet body tempFileFailed (DLP)");
-                return None;
-            }
-        };
-
-        let cap = data.len().min(DLP_MAX_READ);
-        let text = String::from_utf8_lossy(&data[..cap]);
+        let data = super::read_temp_path_limited(path, super::MAX_TEMP_BODY_READ_BYTES)?;
+        let text = String::from_utf8_lossy(&data);
         if text.is_empty() {
             return None;
         }
@@ -119,26 +108,16 @@ impl FileTransitDetector {
 
     /// Read raw binary data for document extraction - limited to 50MB
     fn read_body_bytes(session: &HttpSession) -> Vec<u8> {
-        const MAX_READ: usize = 50 * 1024 * 1024;
-
         // priorityFromtempFilereadGet — SEC: path validation (CWE-22)
         if let Some(ref path) = session.body_temp_file
-            && let Some(validated) = super::validate_temp_path(path)
+            && let Some(data) = super::read_temp_path_limited(path, super::MAX_TEMP_BODY_READ_BYTES)
         {
-            match std::fs::read(&validated) {
-                Ok(data) => {
-                    let cap = data.len().min(MAX_READ);
-                    return data[..cap].to_vec();
-                }
-                Err(e) => {
-                    tracing::warn!(path = %path, error = %e, "readGet body tempFileFailed (DocumentationExtract)");
-                }
-            }
+            return data;
         }
 
         // Fallback: FromMemory body readGet
         if let Some(ref body) = session.request_body {
-            let cap = body.len().min(MAX_READ);
+            let cap = body.len().min(super::MAX_TEMP_BODY_READ_BYTES);
             return body.as_bytes()[..cap].to_vec();
         }
 
@@ -232,18 +211,18 @@ impl DataSecurityDetector for FileTransitDetector {
         // 2b. EncryptFiledetect (ZIP/RAR/7z/PDF - DLP Risk)
 
         {
-            // Read full body for encryption detection - no truncation (full-audit mode)
-            // SEC: path validation prevents arbitrary file reads via body_temp_file (CWE-22)
+            // Encryption checks only inspect archive/PDF headers; do not load the full body.
             let header_bytes: Option<Vec<u8>> = session
                 .request_body
                 .as_ref()
-                .map(|b| b.as_bytes().to_vec())
+                .map(|b| {
+                    let bytes = b.as_bytes();
+                    bytes[..bytes.len().min(ENCRYPTION_HEADER_READ_BYTES)].to_vec()
+                })
                 .or_else(|| {
-                    session
-                        .body_temp_file
-                        .as_ref()
-                        .and_then(|path| super::validate_temp_path(path))
-                        .and_then(|validated| std::fs::read(validated).ok())
+                    session.body_temp_file.as_ref().and_then(|path| {
+                        super::read_temp_path_limited(path, ENCRYPTION_HEADER_READ_BYTES)
+                    })
                 });
 
             if let Some(ref hdr) = header_bytes {

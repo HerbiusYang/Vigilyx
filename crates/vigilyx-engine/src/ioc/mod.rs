@@ -24,6 +24,16 @@ fn normalize_ioc_indicator(ioc_type: &str, indicator: &str) -> String {
     }
 }
 
+fn normalize_ioc_verdict(verdict: &str) -> String {
+    match verdict.trim().to_ascii_lowercase().as_str() {
+        // The UI used to submit "safe", while the engine treats whitelist hits
+        // as "clean". Store one canonical value so export and lookup agree.
+        "safe" => "clean".to_string(),
+        "" => "suspicious".to_string(),
+        normalized => normalized.to_string(),
+    }
+}
+
 /// IOC Manager
 #[derive(Clone)]
 pub struct IocManager {
@@ -40,7 +50,7 @@ impl IocManager {
     pub(crate) async fn is_whitelisted(&self, ioc_type: &str, indicator: &str) -> bool {
         let indicator = normalize_ioc_indicator(ioc_type, indicator);
         match self.db.find_ioc(ioc_type, &indicator).await {
-            Ok(Some(ioc)) => ioc.verdict == "clean",
+            Ok(Some(ioc)) => matches!(ioc.verdict.to_ascii_lowercase().as_str(), "clean" | "safe"),
             _ => false,
         }
     }
@@ -113,12 +123,13 @@ impl IocManager {
     ) -> anyhow::Result<IocEntry> {
         let now = Utc::now();
         let normalized_indicator = normalize_ioc_indicator(&ioc_type, &indicator);
+        let normalized_verdict = normalize_ioc_verdict(&verdict_label);
         let ioc = IocEntry {
             id: Uuid::new_v4(),
             indicator: normalized_indicator,
             ioc_type,
             source: "manual".to_string(),
-            verdict: verdict_label,
+            verdict: normalized_verdict,
             confidence,
             attack_type,
             first_seen: now,
@@ -146,12 +157,17 @@ impl IocManager {
                 continue;
             }
             let normalized_indicator = normalize_ioc_indicator(&entry.ioc_type, &entry.indicator);
+            let verdict = entry
+                .verdict
+                .as_deref()
+                .map(normalize_ioc_verdict)
+                .unwrap_or_else(|| "suspicious".to_string());
             iocs.push(IocEntry {
                 id: Uuid::new_v4(),
                 indicator: normalized_indicator,
                 ioc_type: entry.ioc_type,
                 source: "import".to_string(),
-                verdict: entry.verdict.unwrap_or_else(|| "suspicious".to_string()),
+                verdict,
                 confidence: entry.confidence.unwrap_or(0.7),
                 attack_type: entry.attack_type.unwrap_or_default(),
                 first_seen: now,
@@ -191,7 +207,10 @@ impl IocManager {
 
             let indicator = parts[0].clone();
             let ioc_type = parts[1].clone();
-            let verdict_label = parts.get(2).cloned().unwrap_or_else(|| "suspicious".into());
+            let verdict_label = parts
+                .get(2)
+                .map(|v| normalize_ioc_verdict(v))
+                .unwrap_or_else(|| "suspicious".into());
             let confidence: f64 = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(0.7);
             let attack_type = parts.get(4).cloned().unwrap_or_default();
             let normalized_indicator = normalize_ioc_indicator(&ioc_type, &indicator);
@@ -286,14 +305,13 @@ impl IocManager {
 
 /// CSV field escaping with formula injection protection (CWE-1236).
 
-/// Prefixes cells starting with =, +, -, @, \t, \r with a single quote to prevent
-/// Excel/WPS formula execution. Also handles commas, quotes, newlines per RFC 4180.
+/// Prefixes cells that could be interpreted as formulas by Excel/WPS with a
+/// single quote. Also handles commas, quotes, CR/LF per RFC 4180.
 fn csv_escape(s: &str) -> String {
-    let needs_quote = s.contains(',') || s.contains('"') || s.contains('\n');
+    let needs_quote = s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r');
 
-    // SEC: Neutralize formula injection - prefix dangerous first-chars with single quote
-    let first = s.as_bytes().first().copied().unwrap_or(0);
-    let formula_prefix = matches!(first, b'=' | b'+' | b'-' | b'@' | b'\t' | b'\r');
+    // SEC: Neutralize formula injection, including formulas hidden after leading whitespace.
+    let formula_prefix = is_spreadsheet_formula_like(s);
 
     if formula_prefix {
         // Always quote, and prepend ' inside the quotes to defuse formulas
@@ -303,6 +321,22 @@ fn csv_escape(s: &str) -> String {
     } else {
         s.to_string()
     }
+}
+
+fn is_spreadsheet_formula_like(s: &str) -> bool {
+    let Some(first) = s.as_bytes().first().copied() else {
+        return false;
+    };
+
+    if matches!(first, b'\t' | b'\r' | b'\n') {
+        return true;
+    }
+
+    let trimmed = s.trim_start_matches([' ', '\t', '\r', '\n']);
+    matches!(
+        trimmed.as_bytes().first().copied(),
+        Some(b'=' | b'+' | b'-' | b'@')
+    )
 }
 
 /// CSV line parsing: Supporting commas within double quotes and escaped quotes
@@ -354,4 +388,38 @@ pub struct BatchIocInput {
 pub struct ImportResult {
     pub imported: u64,
     pub skipped: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn csv_escape_defuses_direct_formula_cells() {
+        assert_eq!(csv_escape("=cmd|'/C calc'!A0"), "\"'=cmd|'/C calc'!A0\"");
+        assert_eq!(csv_escape("+SUM(1,2)"), "\"'+SUM(1,2)\"");
+        assert_eq!(csv_escape("@malicious"), "\"'@malicious\"");
+    }
+
+    #[test]
+    fn csv_escape_defuses_formula_cells_after_leading_whitespace() {
+        assert_eq!(csv_escape(" =cmd"), "\"' =cmd\"");
+        assert_eq!(csv_escape("\t=cmd"), "\"'\t=cmd\"");
+        assert_eq!(csv_escape("\n=cmd"), "\"'\n=cmd\"");
+    }
+
+    #[test]
+    fn csv_escape_quotes_rfc4180_special_chars() {
+        assert_eq!(csv_escape("safe,value"), "\"safe,value\"");
+        assert_eq!(csv_escape("safe\rvalue"), "\"safe\rvalue\"");
+        assert_eq!(csv_escape("safe \"value\""), "\"safe \"\"value\"\"\"");
+    }
+
+    #[test]
+    fn normalize_ioc_verdict_canonicalizes_safe_and_case() {
+        assert_eq!(normalize_ioc_verdict(" Malicious "), "malicious");
+        assert_eq!(normalize_ioc_verdict("SUSPICIOUS"), "suspicious");
+        assert_eq!(normalize_ioc_verdict("safe"), "clean");
+        assert_eq!(normalize_ioc_verdict(""), "suspicious");
+    }
 }

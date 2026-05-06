@@ -1,6 +1,6 @@
 [project]
 name = "vigilyx-ai"
-version = "0.9.1"
+version = "0.9.2"
 description = "Vigilyx AI 分析模块 - NLP 钓鱼检测 + 邮件威胁分析"
 requires-python = ">=3.10"
 license = {text = "AGPL-3.0-only"}
@@ -34,7 +34,7 @@ Repository = "https://github.com/HerbiusYang/Vigilyx"
 
 [project.optional-dependencies]
 dev = [
-    "pytest==8.0.0",
+    "pytest==8.2.2",
     "pytest-asyncio==0.24.0",
     "ruff==0.7.0",
     "mypy==1.13.0",

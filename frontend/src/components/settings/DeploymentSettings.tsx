@@ -27,6 +27,7 @@ export default function DeploymentSettings() {
   const [deployModeSource, setDeployModeSource] = useState<string>('default')
   const [deployModeLocked, setDeployModeLocked] = useState(false)
   const [mtaLocalDomains, setMtaLocalDomains] = useState(() => localStorage.getItem('vigilyx-mta-local-domains') || '')
+  const [mtaTrustedUpstreamCidrs, setMtaTrustedUpstreamCidrs] = useState(() => localStorage.getItem('vigilyx-mta-trusted-upstream-cidrs') || '')
   const [mtaStarttls, setMtaStarttls] = useState(() => localStorage.getItem('vigilyx-mta-starttls') !== 'false')
   const [mtaFailOpen, setMtaFailOpen] = useState(false)
   const [mtaHostname, setMtaHostname] = useState(() => localStorage.getItem('vigilyx-mta-hostname') || 'vigilyx-mta')
@@ -69,6 +70,7 @@ export default function DeploymentSettings() {
                 if (mc.mta_max_connections) setMtaMaxConn(String(mc.mta_max_connections))
                 if (mc.mta_starttls !== undefined) setMtaStarttls(mc.mta_starttls)
                 if (mc.mta_local_domains) setMtaLocalDomains(mc.mta_local_domains)
+                if (mc.mta_trusted_upstream_cidrs !== undefined) setMtaTrustedUpstreamCidrs(mc.mta_trusted_upstream_cidrs || '')
                 if (mc.mta_dlp_enabled !== undefined) setMtaDlpEnabled(mc.mta_dlp_enabled)
                 if (mc.mta_dlp_action) setMtaDlpAction(mc.mta_dlp_action)
               }
@@ -142,6 +144,7 @@ export default function DeploymentSettings() {
             mta_starttls: mtaStarttls,
             mta_fail_open: mtaFailOpen,
             mta_local_domains: mtaLocalDomains || undefined,
+            mta_trusted_upstream_cidrs: mtaTrustedUpstreamCidrs,
             mta_dlp_enabled: mtaDlpEnabled,
             mta_dlp_action: mtaDlpAction || undefined,
           }),
@@ -152,7 +155,7 @@ export default function DeploymentSettings() {
     }, 1500)
     return () => { if (deployAutoSaveTimer.current) clearTimeout(deployAutoSaveTimer.current) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mtaDownstreamHost, mtaDownstreamPort, mtaTimeout, mtaHostname, mtaMaxConn, mtaStarttls, mtaFailOpen, mtaLocalDomains, mtaDlpEnabled, mtaDlpAction])
+  }, [mtaDownstreamHost, mtaDownstreamPort, mtaTimeout, mtaHostname, mtaMaxConn, mtaStarttls, mtaFailOpen, mtaLocalDomains, mtaTrustedUpstreamCidrs, mtaDlpEnabled, mtaDlpAction])
 
   // Suppress unused variable warning — state is used for display logic
   void deployModeSource
@@ -316,6 +319,23 @@ export default function DeploymentSettings() {
               value={mtaLocalDomains} onChange={e => { setMtaLocalDomains(e.target.value); localStorage.setItem('vigilyx-mta-local-domains', e.target.value) }}
               placeholder="example.com" />
           </div>
+        </div>
+
+        <div className="s-setting-row">
+          <div className="s-setting-info">
+            <span className="s-setting-label">{t('settings.deployment.trustedUpstreams')}</span>
+            <span className="s-setting-desc">{t('settings.deployment.trustedUpstreamsDesc')}</span>
+          </div>
+          <input
+            className="s-input"
+            style={{ width: 260, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 11 }}
+            value={mtaTrustedUpstreamCidrs}
+            onChange={e => {
+              setMtaTrustedUpstreamCidrs(e.target.value)
+              localStorage.setItem('vigilyx-mta-trusted-upstream-cidrs', e.target.value)
+            }}
+            placeholder={t('settings.deployment.trustedUpstreamsPlaceholder')}
+          />
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0' }}>

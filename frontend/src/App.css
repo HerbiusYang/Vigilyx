@@ -5024,7 +5024,8 @@ tr.chain-detail-row > td {
 
 .link-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 10px 14px;
   background: var(--bg-tertiary);
@@ -5048,21 +5049,16 @@ tr.chain-detail-row > td {
 }
 
 .link-content {
-  flex: 1;
+  flex: 1 1 280px;
   min-width: 0;
 }
 
 .link-url {
-  color: var(--accent-primary);
-  text-decoration: none;
+  color: var(--text-primary);
   word-break: break-all;
   display: block;
   font-size: 12px;
-}
-
-.link-url:hover {
-  text-decoration: underline;
-  color: var(--accent-secondary);
+  font-family: var(--font-mono);
 }
 
 .link-text {
@@ -5070,6 +5066,36 @@ tr.chain-detail-row > td {
   font-size: 11px;
   color: var(--text-tertiary);
   margin-top: 2px;
+}
+
+.link-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.link-action-btn {
+  border: 1px solid var(--border-muted);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.link-action-btn:hover {
+  border-color: var(--border-accent);
+  color: var(--text-primary);
+}
+
+.link-action-btn--danger {
+  color: var(--status-error);
+  border-color: rgba(239, 68, 68, 0.24);
 }
 
 .suspicious-badge {

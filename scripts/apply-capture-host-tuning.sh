@@ -80,6 +80,11 @@ run_cmd() {
 }
 
 if [ -f "$ENV_FILE" ]; then
+    env_perms=$(stat -f '%Lp' "$ENV_FILE" 2>/dev/null || stat -c '%a' "$ENV_FILE")
+    if [ $((10#$env_perms % 100)) -gt 0 ]; then
+        echo "Error: $ENV_FILE must not be group/world-accessible before sourcing (chmod 600 $ENV_FILE)." >&2
+        exit 1
+    fi
     set -a
     # shellcheck source=/dev/null
     source "$ENV_FILE"

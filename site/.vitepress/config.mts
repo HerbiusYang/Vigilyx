@@ -72,6 +72,7 @@ const localSearch = {
 function createThemeConfig(locale: "en" | "zh"): DefaultTheme.Config {
   const isZh = locale === "zh";
   const docsPrefix = isZh ? "/zh/docs/" : "/docs/";
+  const knowledgePrefix = `${docsPrefix}knowledge/`;
 
   return {
     logo: "/logo.png",
@@ -84,6 +85,7 @@ function createThemeConfig(locale: "en" | "zh"): DefaultTheme.Config {
           { text: "快速开始", link: "/zh/docs/quick-start" },
           { text: "部署方式", link: "/zh/docs/deployment" },
           { text: "架构", link: "/zh/docs/architecture" },
+          { text: "知识库", link: "/zh/docs/knowledge/" },
           { text: "GitHub", link: "https://github.com/HerbiusYang/Vigilyx" },
         ]
       : [
@@ -92,6 +94,7 @@ function createThemeConfig(locale: "en" | "zh"): DefaultTheme.Config {
           { text: "Quick Start", link: "/docs/quick-start" },
           { text: "Deployment", link: "/docs/deployment" },
           { text: "Architecture", link: "/docs/architecture" },
+          { text: "Knowledge", link: "/docs/knowledge/" },
           { text: "GitHub", link: "https://github.com/HerbiusYang/Vigilyx" },
         ],
     sidebar: {
@@ -105,6 +108,62 @@ function createThemeConfig(locale: "en" | "zh"): DefaultTheme.Config {
             { text: isZh ? "部署" : "Deployment", link: `${docsPrefix}deployment` },
             { text: isZh ? "架构" : "Architecture", link: `${docsPrefix}architecture` },
             { text: isZh ? "项目站点" : "Project Site", link: `${docsPrefix}project-site` },
+          ],
+        },
+      ],
+      [knowledgePrefix]: [
+        {
+          text: isZh ? "知识库" : "Knowledge",
+          collapsed: false,
+          items: [
+            {
+              text: isZh ? "概览" : "Overview",
+              link: knowledgePrefix,
+            },
+            {
+              text: isZh
+                ? "01 · ClickFix / Fake CAPTCHA"
+                : "01 · ClickFix / Fake CAPTCHA",
+              link: `${knowledgePrefix}clickfix`,
+            },
+            {
+              text: isZh
+                ? "02 · Storm-2372 设备码钓鱼"
+                : "02 · Storm-2372 device code",
+              link: `${knowledgePrefix}device-code-phishing`,
+            },
+            {
+              text: isZh ? "03 · Quishing / QR 钓鱼" : "03 · Quishing / QR phishing",
+              link: `${knowledgePrefix}quishing`,
+            },
+            {
+              text: isZh
+                ? "04 · HTML 拼凑文字 / 同形混淆"
+                : "04 · HTML text cloaking",
+              link: `${knowledgePrefix}html-text-cloaking`,
+            },
+            {
+              text: isZh ? "05 · HTML Smuggling 走私" : "05 · HTML smuggling",
+              link: `${knowledgePrefix}html-smuggling`,
+            },
+            {
+              text: isZh
+                ? "06 · Tycoon 2FA / EvilProxy AiTM"
+                : "06 · Tycoon 2FA / EvilProxy AiTM",
+              link: `${knowledgePrefix}aitm-phishing`,
+            },
+            {
+              text: isZh
+                ? "07 · VEC 供应商账户接管"
+                : "07 · VEC vendor compromise",
+              link: `${knowledgePrefix}vendor-email-compromise`,
+            },
+            {
+              text: isZh
+                ? "08 · TOAD 电话钓鱼"
+                : "08 · TOAD callback phishing",
+              link: `${knowledgePrefix}toad-callback-phishing`,
+            },
           ],
         },
       ],

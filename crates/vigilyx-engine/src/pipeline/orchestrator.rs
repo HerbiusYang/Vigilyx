@@ -551,7 +551,7 @@ mod tests {
         );
         assert!(
             outcome.results.contains_key("fast"),
-            "completed tier-1 work should be preserved"
+            "completed work before the timeout should be preserved"
         );
         assert!(
             !outcome.results.contains_key("slow"),

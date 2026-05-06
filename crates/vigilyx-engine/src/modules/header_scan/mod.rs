@@ -96,6 +96,15 @@ impl SecurityModule for HeaderScanModule {
         // --- Step 1c: SPF/DKIM/DMARC Authentication-Results ---
         checks::check_auth_results(&parsed, &mut total_score, &mut categories, &mut evidence);
 
+        // --- Step 1d: M365 Direct Send abuse (look-internal spoof at EOP) ---
+        checks::check_direct_send_abuse(
+            &parsed,
+            ctx,
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+
         // --- Step 2+3: Date anomaly + Missing Message-ID ---
         checks::check_date_anomaly(&parsed, &mut total_score, &mut categories, &mut evidence);
 

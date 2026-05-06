@@ -12,6 +12,26 @@ fn is_case_insensitive_ioc_type(ioc_type: &str) -> bool {
     matches!(ioc_type, "domain" | "email" | "hash" | "helo" | "x_mailer")
 }
 
+fn normalize_ioc_verdict_filter_values(verdicts: &[String]) -> Vec<String> {
+    let mut values = Vec::new();
+    for verdict in verdicts {
+        let normalized = verdict.trim().to_ascii_lowercase();
+        if normalized.is_empty() {
+            continue;
+        }
+        if normalized == "safe" || normalized == "clean" {
+            for value in ["clean", "safe"] {
+                if !values.iter().any(|existing| existing == value) {
+                    values.push(value.to_string());
+                }
+            }
+        } else if !values.iter().any(|existing| existing == &normalized) {
+            values.push(normalized);
+        }
+    }
+    values
+}
+
 impl VigilDb {
     /// New IOC (UPSERT: New last_seen + hit_count)
     ///
@@ -310,17 +330,21 @@ impl VigilDb {
             binds.push(format!("%{q}%"));
             sql.push_str(&format!(" AND indicator LIKE ${}", binds.len()));
         }
-        if let Some(v) = verdicts
-            && !v.is_empty()
-        {
-            let placeholders: Vec<String> = v
-                .iter()
-                .map(|val| {
-                    binds.push(val.clone());
-                    format!("${}", binds.len())
-                })
-                .collect();
-            sql.push_str(&format!(" AND verdict IN ({})", placeholders.join(",")));
+        if let Some(v) = verdicts {
+            let normalized_verdicts = normalize_ioc_verdict_filter_values(v);
+            if !normalized_verdicts.is_empty() {
+                let placeholders: Vec<String> = normalized_verdicts
+                    .iter()
+                    .map(|val| {
+                        binds.push(val.clone());
+                        format!("${}", binds.len())
+                    })
+                    .collect();
+                sql.push_str(&format!(
+                    " AND LOWER(verdict) IN ({})",
+                    placeholders.join(",")
+                ));
+            }
         }
 
         sql.push_str(" ORDER BY last_seen DESC");
@@ -374,7 +398,7 @@ impl VigilDb {
                       created_at, updated_at,
                       COUNT(*) OVER() as total_count
                FROM security_ioc
-               WHERE verdict = 'clean'
+               WHERE LOWER(verdict) IN ('clean', 'safe')
                AND source IN ('admin_clean', 'system')
                AND (expires_at IS NULL OR expires_at::timestamptz > NOW())"#,
         );
@@ -477,7 +501,7 @@ impl VigilDb {
     pub async fn load_clean_domains(&self) -> Result<Vec<String>> {
         let rows: Vec<(String,)> = sqlx::query_as(
             r#"SELECT indicator FROM security_ioc
-               WHERE ioc_type = 'domain' AND verdict = 'clean'
+               WHERE ioc_type = 'domain' AND LOWER(verdict) IN ('clean', 'safe')
                AND source IN ('admin_clean', 'system')
                AND (expires_at IS NULL OR expires_at::timestamptz > NOW())"#,
         )
@@ -494,7 +518,7 @@ impl VigilDb {
     pub async fn load_system_clean_domains(&self) -> Result<Vec<String>> {
         let rows: Vec<(String,)> = sqlx::query_as(
             r#"SELECT indicator FROM security_ioc
-               WHERE ioc_type = 'domain' AND verdict = 'clean'
+               WHERE ioc_type = 'domain' AND LOWER(verdict) IN ('clean', 'safe')
                AND source IN ('system', 'admin_clean')
                AND (expires_at IS NULL OR expires_at::timestamptz > NOW())"#,
         )
@@ -511,7 +535,7 @@ impl VigilDb {
     pub async fn load_url_trusted_domains(&self) -> Result<Vec<String>> {
         let rows: Vec<(String,)> = sqlx::query_as(
             r#"SELECT indicator FROM security_ioc
-               WHERE ioc_type = 'domain' AND verdict = 'clean'
+               WHERE ioc_type = 'domain' AND LOWER(verdict) IN ('clean', 'safe')
                AND (
                    (source = 'system' AND context = 'url_trusted')
                    OR source = 'admin_clean'
@@ -782,5 +806,35 @@ impl IocRowWithCount {
             created_at: DateTime::parse_from_rfc3339(&self.created_at)?.with_timezone(&Utc),
             updated_at: DateTime::parse_from_rfc3339(&self.updated_at)?.with_timezone(&Utc),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_ioc_verdict_filter_values;
+
+    #[test]
+    fn verdict_filter_is_case_insensitive_and_deduplicated() {
+        let input = vec![
+            " Malicious ".to_string(),
+            "malicious".to_string(),
+            "SUSPICIOUS".to_string(),
+            "".to_string(),
+        ];
+
+        assert_eq!(
+            normalize_ioc_verdict_filter_values(&input),
+            vec!["malicious".to_string(), "suspicious".to_string()]
+        );
+    }
+
+    #[test]
+    fn verdict_filter_treats_safe_as_clean_for_legacy_rows() {
+        let input = vec!["clean".to_string(), "SAFE".to_string()];
+
+        assert_eq!(
+            normalize_ioc_verdict_filter_values(&input),
+            vec!["clean".to_string(), "safe".to_string()]
+        );
     }
 }

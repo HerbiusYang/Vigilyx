@@ -19,6 +19,13 @@ use vigilyx_core::{DEFAULT_INTERNAL_SERVICE_HOSTS, validate_internal_service_url
 use super::{ApiResponse, PaginationParams};
 use crate::AppState;
 
+const MIN_TRAINING_SAMPLES: u64 = 30;
+const MAX_TRAINING_REQUEST_SAMPLES: u64 = 10_000;
+const MAX_TRAINING_SUBJECT_CHARS: usize = 500;
+const MAX_TRAINING_BODY_CHARS: usize = 20_000;
+const MAX_TRAINING_ADDRESS_CHARS: usize = 320;
+const MAX_TRAINING_RECIPIENTS: usize = 100;
+
 // Handlers
 
 /// List training samples (paginated)
@@ -62,7 +69,7 @@ pub async fn get_training_stats(State(state): State<Arc<AppState>>) -> impl Into
         Err(e) => return ApiResponse::<serde_json::Value>::internal_err(&e, "Operation failed"),
     };
 
-    let min_samples_required = 30u64;
+    let min_samples_required = MIN_TRAINING_SAMPLES;
 
     // Fetch model status from Python AI service
     let ai_url = get_ai_service_url(&state).await;
@@ -139,8 +146,37 @@ pub async fn get_training_stats(State(state): State<Arc<AppState>>) -> impl Into
 ///
 /// Loads training samples from DB and sends them to the Python AI service.
 pub async fn trigger_nlp_training(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    // 1. Load training samples from DB
-    let samples = match state.engine_db.get_all_training_samples().await {
+    // 1. Check sample count before loading and serializing training data.
+    let total_samples = match state.engine_db.count_training_samples().await {
+        Ok(n) => n,
+        Err(e) => {
+            return ApiResponse::<serde_json::Value>::err(format!(
+                "Failed to count training samples: {}",
+                e
+            ));
+        }
+    };
+
+    if total_samples < MIN_TRAINING_SAMPLES {
+        return ApiResponse::<serde_json::Value>::err(format!(
+            "Insufficient training samples: {}/{}",
+            total_samples, MIN_TRAINING_SAMPLES
+        ));
+    }
+
+    if total_samples > MAX_TRAINING_REQUEST_SAMPLES {
+        return ApiResponse::<serde_json::Value>::err(format!(
+            "Too many training samples for one training request: {}/{}",
+            total_samples, MAX_TRAINING_REQUEST_SAMPLES
+        ));
+    }
+
+    // 2. Load training samples from DB.
+    let samples = match state
+        .engine_db
+        .get_training_samples_for_export(MAX_TRAINING_REQUEST_SAMPLES as u32)
+        .await
+    {
         Ok(s) => s,
         Err(e) => {
             return ApiResponse::<serde_json::Value>::err(format!(
@@ -150,25 +186,18 @@ pub async fn trigger_nlp_training(State(state): State<Arc<AppState>>) -> impl In
         }
     };
 
-    if samples.len() < 30 {
-        return ApiResponse::<serde_json::Value>::err(format!(
-            "Insufficient training samples: {}/30",
-            samples.len()
-        ));
-    }
-
-    // 2. Build payload and send to Python AI service
+    // 3. Build bounded payload and send to Python AI service.
     let payload: Vec<serde_json::Value> = samples
         .iter()
         .map(|s| {
             serde_json::json!({
                 "session_id": s.session_id.to_string(),
                 "label": s.label,
-                "subject": s.subject,
-                "body_text": s.body_text,
-                "body_html": s.body_html,
-                "mail_from": s.mail_from,
-                "rcpt_to": s.rcpt_to,
+                "subject": limit_optional_json_string(s.subject.as_deref(), MAX_TRAINING_SUBJECT_CHARS),
+                "body_text": limit_optional_json_string(s.body_text.as_deref(), MAX_TRAINING_BODY_CHARS),
+                "body_html": limit_optional_json_string(s.body_html.as_deref(), MAX_TRAINING_BODY_CHARS),
+                "mail_from": limit_optional_json_string(s.mail_from.as_deref(), MAX_TRAINING_ADDRESS_CHARS),
+                "rcpt_to": limit_recipient_json_array(&s.rcpt_to),
             })
         })
         .collect();
@@ -205,6 +234,33 @@ pub async fn trigger_nlp_training(State(state): State<Arc<AppState>>) -> impl In
         )),
         Err(_) => ApiResponse::<serde_json::Value>::err("Training timed out"),
     }
+}
+
+fn limit_optional_json_string(value: Option<&str>, max_chars: usize) -> serde_json::Value {
+    match value {
+        Some(text) => serde_json::Value::String(limit_text(text, max_chars)),
+        None => serde_json::Value::Null,
+    }
+}
+
+fn limit_text(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        value.to_string()
+    } else {
+        value.chars().take(max_chars).collect()
+    }
+}
+
+fn limit_recipient_json_array(recipients: &[String]) -> serde_json::Value {
+    serde_json::Value::Array(
+        recipients
+            .iter()
+            .take(MAX_TRAINING_RECIPIENTS)
+            .map(|recipient| {
+                serde_json::Value::String(limit_text(recipient, MAX_TRAINING_ADDRESS_CHARS))
+            })
+            .collect(),
+    )
 }
 
 /// Query NLP model status from Python AI service
@@ -334,4 +390,36 @@ async fn get_ai_service_url(state: &AppState) -> String {
         "SEC: AI service URL from DB failed runtime allowlist, using default"
     );
     default_url
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn training_payload_limiter_preserves_utf8_boundaries() {
+        assert_eq!(limit_text("测试abc", 3), "测试a");
+        assert_eq!(
+            limit_optional_json_string(Some("测试abc"), 2),
+            serde_json::json!("测试")
+        );
+        assert_eq!(limit_optional_json_string(None, 2), serde_json::Value::Null);
+    }
+
+    #[test]
+    fn training_payload_limiter_caps_recipient_list() {
+        let recipients: Vec<String> = (0..150)
+            .map(|idx| format!("{}@example.com", "a".repeat(400 + idx)))
+            .collect();
+
+        let value = limit_recipient_json_array(&recipients);
+        let array = value.as_array().expect("recipient list should be an array");
+
+        assert_eq!(array.len(), MAX_TRAINING_RECIPIENTS);
+        assert!(array.iter().all(|item| {
+            item.as_str()
+                .map(|text| text.chars().count() <= MAX_TRAINING_ADDRESS_CHARS)
+                .unwrap_or(false)
+        }));
+    }
 }

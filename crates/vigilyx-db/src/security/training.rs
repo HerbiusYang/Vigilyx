@@ -9,6 +9,12 @@ use vigilyx_core::security::TrainingSample;
 
 use crate::VigilDb;
 
+const TRAINING_EXPORT_MAX_SUBJECT_CHARS: i32 = 500;
+const TRAINING_EXPORT_MAX_BODY_CHARS: i32 = 20_000;
+const TRAINING_EXPORT_MAX_ADDRESS_CHARS: i32 = 320;
+const TRAINING_EXPORT_MAX_COMMENT_CHARS: i32 = 2_000;
+const TRAINING_EXPORT_MAX_RCPT_JSON_CHARS: i32 = 64 * 1024;
+
 /// Database row type (clippy::type_complexity)
 type TrainingSampleRow = (
     String,         // id
@@ -92,6 +98,42 @@ impl VigilDb {
             ORDER BY created_at ASC
             "#,
         )
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter().map(row_to_training_sample).collect()
+    }
+
+    /// Get bounded training samples for NLP training export.
+    ///
+    /// This intentionally truncates large text fields in SQL so legacy oversized
+    /// rows do not have to be loaded into API memory before request-size checks.
+    pub async fn get_training_samples_for_export(&self, limit: u32) -> Result<Vec<TrainingSample>> {
+        let rows: Vec<TrainingSampleRow> = sqlx::query_as(
+            r#"
+            SELECT id, session_id, label, label_name,
+                   LEFT(subject, $2),
+                   LEFT(body_text, $3),
+                   LEFT(body_html, $3),
+                   LEFT(mail_from, $4),
+                   CASE
+                     WHEN rcpt_to IS NULL THEN rcpt_to
+                     WHEN length(rcpt_to) > $6 THEN '[]'
+                     ELSE rcpt_to
+                   END,
+                   LEFT(analyst_comment, $5),
+                   original_threat_level, verdict_id, created_at
+            FROM training_samples
+            ORDER BY created_at ASC
+            LIMIT $1
+            "#,
+        )
+        .bind(limit as i64)
+        .bind(TRAINING_EXPORT_MAX_SUBJECT_CHARS)
+        .bind(TRAINING_EXPORT_MAX_BODY_CHARS)
+        .bind(TRAINING_EXPORT_MAX_ADDRESS_CHARS)
+        .bind(TRAINING_EXPORT_MAX_COMMENT_CHARS)
+        .bind(TRAINING_EXPORT_MAX_RCPT_JSON_CHARS)
         .fetch_all(&self.pool)
         .await?;
 

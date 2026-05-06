@@ -409,6 +409,49 @@ impl VigilDb {
         )
         .await?;
 
+        let downstream_envelope_index =
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sessions_client_started \
+             ON sessions(client_ip, started_at)"
+                .to_string();
+        if let Err(e) = sqlx::query(&downstream_envelope_index)
+            .execute(&self.pool)
+            .await
+        {
+            tracing::warn!(
+                "Create downstream related-session index failed (non-fatal): {}",
+                e
+            );
+        }
+
+        record_migration(
+            &self.pool,
+            "011_downstream_related_session_index",
+            "concurrent index for downstream related-session lookup by client_ip and started_at",
+        )
+        .await?;
+
+        let completed_analyzable_v2_index = format!(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sessions_completed_analyzable_started_v2 \
+             ON sessions(started_at ASC, id ASC) WHERE status = 'Completed' AND {}",
+            crate::infra::session::session_with_content_predicate("")
+        );
+        if let Err(e) = sqlx::query(&completed_analyzable_v2_index)
+            .execute(&self.pool)
+            .await
+        {
+            tracing::warn!(
+                "Create completed analyzable sessions v2 index failed (non-fatal): {}",
+                e
+            );
+        }
+
+        record_migration(
+            &self.pool,
+            "012_completed_analyzable_sessions_index_v2",
+            "concurrent partial index for completed analyzable sessions including links and cursor id",
+        )
+        .await?;
+
         Ok(())
     }
 

@@ -15,13 +15,17 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use regex::RegexSet;
+use regex::{Regex, RegexSet};
 use tracing::debug;
 
 use crate::context::SecurityContext;
 use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
 use crate::module_data::module_data;
+use crate::matcher::{
+    aitm_toolkit_paths, aitm_urgency, captcha_indicators, device_code_enter_phrases,
+    mfa_bait_all_locales,
+};
 use crate::modules::common::extract_domain_from_url;
 
 // ---------------------------------------------------------------------------
@@ -113,6 +117,52 @@ fn domain_belongs_to_brand(domain: &str, legitimate_suffixes: &[&str]) -> bool {
         .any(|suffix| lower == *suffix || lower.ends_with(&format!(".{}", suffix)))
 }
 
+/// Check whether `keyword` appears in `haystack` with non-alphanumeric (or
+/// string) boundaries on both sides.
+///
+/// Used for brand-keyword matching to avoid false positives such as the brand
+/// `"line"` matching the substring inside `microsoftonline.com`. A keyword
+/// embedded inside a longer alphanumeric run is rejected; only matches where
+/// both surrounding characters are word boundaries (e.g. `.`, `-`, `/`, `_`,
+/// end-of-string) are accepted.
+///
+/// Boundary judgement is Unicode-aware: a CJK / Cyrillic / Greek letter
+/// adjacent to an ASCII brand name is treated as part of the same word run, so
+/// e.g. brand `"line"` will not match `账号line绑定` either. ASCII byte
+/// scanning is sufficient because UTF-8 guarantees that a byte-level substring
+/// match aligns on `char` boundaries when the keyword itself is valid UTF-8.
+fn keyword_has_word_boundary(haystack: &str, keyword: &str) -> bool {
+    if keyword.is_empty() || haystack.len() < keyword.len() {
+        return false;
+    }
+    let bytes = haystack.as_bytes();
+    let key_bytes = keyword.as_bytes();
+    let max_start = bytes.len() - key_bytes.len();
+    for start in 0..=max_start {
+        if &bytes[start..start + key_bytes.len()] != key_bytes {
+            continue;
+        }
+        let end = start + key_bytes.len();
+        // Defensive: only consider matches that align to char boundaries.
+        // For valid UTF-8 keywords this is always true, but be explicit.
+        if !haystack.is_char_boundary(start) || !haystack.is_char_boundary(end) {
+            continue;
+        }
+        let left_ok = haystack[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric());
+        let right_ok = haystack[end..]
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_alphanumeric());
+        if left_ok && right_ok {
+            return true;
+        }
+    }
+    false
+}
+
 /// Extract the domain from a URL, or return None.
 fn url_domain(url: &str) -> Option<String> {
     let decoded = url
@@ -182,11 +232,7 @@ fn detect_aitm_domain_patterns(
         if is_aitm_platform_domain(&domain) {
             // Also check if the URL path looks like a login/auth page
             let path = url_path_query(&link.url).unwrap_or_default();
-            let md = module_data();
-            let has_auth_path = md
-                .get_list("aitm_toolkit_path_patterns")
-                .iter()
-                .any(|p| path.contains(p.as_str()));
+            let has_auth_path = aitm_toolkit_paths().is_match(&path);
             let has_suspicious_keywords = path.contains("login")
                 || path.contains("signin")
                 || path.contains("verify")
@@ -216,11 +262,7 @@ fn detect_aitm_domain_patterns(
         // Check AitM-typical subdomain patterns
         if !flagged_domains.contains(&domain) && has_aitm_subdomain_pattern(&domain) {
             let path = url_path_query(&link.url).unwrap_or_default();
-            let md = module_data();
-            let has_auth_indicator = md
-                .get_list("aitm_toolkit_path_patterns")
-                .iter()
-                .any(|p| path.contains(p.as_str()));
+            let has_auth_indicator = aitm_toolkit_paths().is_match(&path);
             if has_auth_indicator {
                 score += 0.35;
                 findings.push((
@@ -353,19 +395,10 @@ fn detect_mfa_bait_text(
         return (score, findings);
     }
 
-    // Check for MFA bait phrases
-    let mut mfa_hits: Vec<String> = Vec::new();
-    let md = module_data();
-    for phrase in md.get_list("mfa_bait_phrases_en") {
-        if combined_lower.contains(phrase.as_str()) {
-            mfa_hits.push(phrase.clone());
-        }
-    }
-    for phrase in md.get_list("mfa_bait_phrases_zh") {
-        if combined_lower.contains(phrase.as_str()) {
-            mfa_hits.push(phrase.clone());
-        }
-    }
+    // Check for MFA bait phrases — single AC pass over EN/ZH/JA/KO/RU/ES/PT/FR/DE/AR.
+    // Replaces ~10 nested `phrases.iter().any(contains)` loops; the matcher
+    // is built once and reused across the whole engine lifetime.
+    let mfa_hits: Vec<String> = mfa_bait_all_locales().scan(&combined_lower).distinct_patterns();
 
     if mfa_hits.is_empty() {
         return (score, findings);
@@ -388,13 +421,7 @@ fn detect_mfa_bait_text(
     ));
 
     // Amplify if urgency language co-occurs
-    let mut urgency_hits: Vec<String> = Vec::new();
-    let urgency_md = module_data();
-    for phrase in urgency_md.get_list("aitm_urgency_phrases") {
-        if combined_lower.contains(&phrase.to_lowercase()) {
-            urgency_hits.push(phrase.clone());
-        }
-    }
+    let urgency_hits: Vec<String> = aitm_urgency().scan(&combined_lower).distinct_patterns();
 
     if !urgency_hits.is_empty() {
         score += 0.15;
@@ -456,16 +483,9 @@ fn detect_reverse_proxy_fingerprints(
             continue;
         }
 
-        let md = module_data();
-        let has_toolkit_path = md
-            .get_list("aitm_toolkit_path_patterns")
-            .iter()
-            .any(|p| path.contains(p.as_str()));
+        let has_toolkit_path = aitm_toolkit_paths().is_match(&path);
 
-        let has_captcha_indicator = md
-            .get_list("captcha_indicators")
-            .iter()
-            .any(|c| url_lower.contains(c.as_str()));
+        let has_captcha_indicator = captcha_indicators().is_match(&url_lower);
 
         // Cloudflare Turnstile + auth path on non-official domain = strong AitM signal
         if has_toolkit_path && has_captcha_indicator {
@@ -527,7 +547,6 @@ fn detect_brand_impersonation_login(
         let Some(domain) = url_domain(&link.url) else {
             continue;
         };
-        let url_lower = link.url.to_lowercase();
         let path = url_path_query(&link.url).unwrap_or_default();
 
         let empty_vec = vec![];
@@ -555,9 +574,10 @@ fn detect_brand_impersonation_login(
             }
 
             // Check if the URL path or subdomain contains the brand name
-            let brand_in_path = path.contains(brand_keyword);
-            let brand_in_subdomain = domain.contains(brand_keyword);
-            let brand_in_url = url_lower.contains(brand_keyword);
+            // with word boundaries (avoid e.g. "line" matching microsoftonline.com).
+            let brand_in_path = keyword_has_word_boundary(&path, brand_keyword);
+            let brand_in_subdomain = keyword_has_word_boundary(&domain, brand_keyword);
+            let brand_in_url = brand_in_path || brand_in_subdomain;
 
             if !brand_in_url {
                 continue;
@@ -658,6 +678,170 @@ fn detect_homograph_brand_in_domain(
             "aitm_homograph_login".to_string(),
         ));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Storm-2372 Device Code Phishing detection
+// ---------------------------------------------------------------------------
+//
+// Microsoft OAuth Device Code Flow lets a user-side device delegate
+// authentication via a short user_code shown on a second device. Storm-2372
+// (named by Microsoft Threat Intelligence, observed since late 2024) abuses
+// this flow:
+//
+//   1. Attacker initiates Device Code Flow at the legit
+//      https://microsoft.com/devicelogin endpoint and receives a fresh
+//      user_code (8-character alphanumeric, e.g. `BXFK7QHZ`).
+//   2. Attacker emails the victim asking them to "enter this code at
+//      microsoft.com/devicelogin to complete verification".
+//   3. The victim — believing this is a legitimate Microsoft authentication
+//      step — visits the URL (which is genuinely Microsoft) and enters the
+//      code, authorizing the *attacker's* session against the victim's
+//      tenant. MFA is satisfied by the victim's own browser/device.
+//   4. Attacker now holds OAuth tokens that bypass MFA, used to read mail,
+//      Teams, SharePoint, etc.
+//
+// The detection is hard because the URL is genuinely Microsoft; URL
+// reputation lookups, SafeBrowsing, and homograph checks all return clean.
+// The signal lives in the *combination*:
+//
+//   - Reference to a Device Code Flow URL (microsoft.com/devicelogin or
+//     login.microsoftonline.com/...deviceauth)
+//   - An 8-character user_code string in the body
+//   - Imperative "enter this code" / "输入此代码" phrasing
+//
+// False-positive guards:
+//   - If the sender domain is on a Microsoft-controlled list
+//     (microsoft.com, microsoftonline.com, office.com etc.), suppress.
+//     Real Microsoft notifications about devicelogin do exist (rare).
+//   - Require the user_code regex to match in close vicinity (same body)
+//     to the device-login URL or the enter-code phrase, not anywhere.
+fn detect_device_code_phishing(
+    links: &[vigilyx_core::models::EmailLink],
+    subject: Option<&str>,
+    body_text: Option<&str>,
+    body_html: Option<&str>,
+    sender_domain: Option<&str>,
+) -> (f64, Vec<(String, String)>) {
+    let mut score = 0.0_f64;
+    let mut findings: Vec<(String, String)> = Vec::new();
+
+    // ── Whitelist: real Microsoft sender domains ─────────────────────────
+    if let Some(d) = sender_domain {
+        let d = d.to_ascii_lowercase();
+        const MS_DOMAINS: &[&str] = &[
+            "microsoft.com",
+            "microsoftonline.com",
+            "office.com",
+            "office365.com",
+            "outlook.com",
+            "azure.com",
+        ];
+        if MS_DOMAINS
+            .iter()
+            .any(|sfx| d == *sfx || d.ends_with(&format!(".{}", sfx)))
+        {
+            return (score, findings);
+        }
+    }
+
+    // ── Build corpus ─────────────────────────────────────────────────────
+    let mut combined = String::new();
+    if let Some(s) = subject {
+        combined.push_str(s);
+        combined.push(' ');
+    }
+    if let Some(bt) = body_text {
+        combined.push_str(bt);
+        combined.push(' ');
+    }
+    if let Some(bh) = body_html {
+        let stripped: String = strip_html_tags(bh);
+        combined.push_str(&stripped);
+    }
+    let combined_lower = combined.to_ascii_lowercase();
+
+    // ── Signal 1: Device-login URL reference ────────────────────────────
+    let device_url_in_links = links.iter().any(|link| {
+        let ll = link.url.to_ascii_lowercase();
+        ll.contains("microsoft.com/devicelogin")
+            || ll.contains("microsoftonline.com/common/oauth2/deviceauth")
+            || ll.contains("/devicelogin")
+                && (ll.contains("microsoft") || ll.contains("microsoftonline"))
+    });
+    let device_url_in_text = combined_lower.contains("microsoft.com/devicelogin")
+        || combined_lower.contains("microsoftonline.com/common/oauth2/deviceauth")
+        || combined_lower.contains("aka.ms/devicelogin");
+    let has_device_url = device_url_in_links || device_url_in_text;
+
+    if has_device_url {
+        score += 0.30;
+        findings.push((
+            "Email references Microsoft Device Code Flow login URL".to_string(),
+            "device_code_login_url".to_string(),
+        ));
+    }
+
+    // ── Signal 2: 8-character alphanumeric user_code ────────────────────
+    // Microsoft device codes are uppercase letters + digits, 8 chars,
+    // sometimes with separators (BXFK-7QHZ). We require uppercase to
+    // avoid colliding with hexadecimal digests.
+    static RE_USER_CODE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\b([A-Z0-9]{4}[\s\-]?[A-Z0-9]{4})\b").expect("device code regex")
+    });
+    let mut user_codes: Vec<String> = Vec::new();
+    for caps in RE_USER_CODE.captures_iter(&combined) {
+        if let Some(m) = caps.get(1) {
+            // Reject if all-digits (likely an order/invoice number).
+            if m.as_str().chars().any(|c| c.is_ascii_alphabetic()) {
+                user_codes.push(m.as_str().to_string());
+            }
+        }
+    }
+    let has_user_code = !user_codes.is_empty();
+    if has_user_code {
+        score += 0.20;
+        findings.push((
+            format!(
+                "Possible Device Code user_code present in body: {}",
+                user_codes.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+            ),
+            "device_code_user_code".to_string(),
+        ));
+    }
+
+    // ── Signal 3: "enter this code" imperative phrasing ──────────────────
+    // Phrase list is data-driven (seed: `device_code_enter_phrases`) so
+    // ops can hot-tune wording without redeploying the engine.
+    //
+    // We deliberately defer the matcher invocation until at least one
+    // upstream signal has fired. Building the underlying automaton on first
+    // use takes ~1 ms; gating it behind upstream signals keeps the
+    // not-applicable / safe path completely free of work.
+    let enter_phrase_hit: Option<String> = if has_device_url || has_user_code {
+        device_code_enter_phrases().scan(&combined_lower).first_pattern()
+    } else {
+        None
+    };
+    if let Some(ref phrase) = enter_phrase_hit {
+        score += 0.20;
+        findings.push((
+            format!("Device-code enter-instruction phrase detected: '{}'", phrase),
+            "device_code_enter_phrase".to_string(),
+        ));
+    }
+
+    // ── Combo escalation: all three core signals together ────────────────
+    if has_device_url && has_user_code && enter_phrase_hit.is_some() {
+        score += 0.20;
+        findings.push((
+            "Compound device-code phishing signal (Storm-2372): URL + user_code + enter-phrase"
+                .to_string(),
+            "device_code_phishing_combo".to_string(),
+        ));
+    }
+
+    (score, findings)
 }
 
 // ---------------------------------------------------------------------------
@@ -844,6 +1028,31 @@ impl SecurityModule for AitmDetectModule {
             }
         }
 
+        // Dimension 6: Storm-2372 Device Code Phishing
+        {
+            let sender_domain = ctx
+                .session
+                .mail_from
+                .as_deref()
+                .and_then(|addr| addr.split('@').nth(1));
+            let (s, findings) = detect_device_code_phishing(
+                links,
+                subject,
+                body_text,
+                body_html,
+                sender_domain,
+            );
+            total_score += s;
+            for (desc, category) in findings {
+                all_categories.push(category);
+                all_evidence.push(Evidence {
+                    description: desc,
+                    location: Some("body+links".to_string()),
+                    snippet: None,
+                });
+            }
+        }
+
         // Compound signal amplification
         {
             let (bonus, findings) = detect_compound_aitm_signals(&all_categories, total_score);
@@ -926,6 +1135,43 @@ mod tests {
     use std::collections::HashSet;
     use std::sync::Arc;
     use vigilyx_core::models::{EmailContent, EmailLink, EmailSession, Protocol};
+
+    #[test]
+    fn keyword_has_word_boundary_ascii_runs_are_rejected() {
+        // Embedded inside an alphanumeric run -> no boundary.
+        assert!(!keyword_has_word_boundary("microsoftonline.com", "line"));
+        assert!(!keyword_has_word_boundary("paypalexpress.net", "paypal"));
+        assert!(!keyword_has_word_boundary("box123.example", "box"));
+    }
+
+    #[test]
+    fn keyword_has_word_boundary_ascii_with_separators_match() {
+        assert!(keyword_has_word_boundary("login.line.me", "line"));
+        assert!(keyword_has_word_boundary("paypal-login.com", "paypal"));
+        assert!(keyword_has_word_boundary(
+            "/auth/box/signin",
+            "box"
+        ));
+        assert!(keyword_has_word_boundary("paypal", "paypal"));
+    }
+
+    #[test]
+    fn keyword_has_word_boundary_unicode_neighbours_block_match() {
+        // CJK adjacent to an ASCII brand should not produce a boundary match,
+        // because CJK letters are alphanumeric in Unicode.
+        assert!(!keyword_has_word_boundary("账号line绑定", "line"));
+        assert!(!keyword_has_word_boundary("paypalパスワード", "paypal"));
+        // Cyrillic letter neighbour should also block.
+        assert!(!keyword_has_word_boundary("приlineсвет", "line"));
+    }
+
+    #[test]
+    fn keyword_has_word_boundary_punctuation_neighbours_match() {
+        // Punctuation / separators on either side should produce boundaries.
+        assert!(keyword_has_word_boundary("登录-line-入口", "line"));
+        assert!(keyword_has_word_boundary("https://支付宝.com/login", "支付宝"));
+        assert!(keyword_has_word_boundary("paypal/checkout", "paypal"));
+    }
 
     fn reset_url_domain_sets() {
         crate::modules::link_scan::set_trusted_url_domains(Arc::new(HashSet::new()));
@@ -1236,6 +1482,164 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_aitm_detect_short_brand_abc_does_not_match_random_domain() {
+        // Brand "abc" (Agricultural Bank of China) is 3 chars and would
+        // false-positive on any URL containing the substring "abc" before
+        // the word-boundary fix. The legitimate domain `taobaoabc.com`
+        // (synthetic) is unrelated to ABC bank, has the substring `abc` in
+        // its second-level label but not as a separate word.
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        let ctx = make_ctx_links(vec![
+            "https://login.taobaoabc.com/auth/signin",
+        ]);
+
+        let result = analyze_with_runtime(&module, &ctx);
+        let has_brand_finding = result
+            .categories
+            .iter()
+            .any(|c| c.starts_with("aitm_brand"));
+        assert!(
+            !has_brand_finding,
+            "Brand 'abc' must not match the substring inside taobaoabc.com: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_aitm_detect_short_brand_line_does_not_match_microsoft_online() {
+        // Regression test for the original word-boundary bug: brand "line"
+        // (the LINE messenger) was matching microsoftonline.com because the
+        // detection used a raw substring contains. This test guards that
+        // fix at the *module* level (the helper-only test only proves the
+        // boundary helper, not its integration into detect_brand_impersonation).
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        let ctx = make_ctx_links(vec![
+            "https://account.microsoftonline.com/users/login",
+        ]);
+
+        let result = analyze_with_runtime(&module, &ctx);
+        let line_brand_finding = result
+            .categories
+            .iter()
+            .any(|c| c.starts_with("aitm_brand"));
+        assert!(
+            !line_brand_finding,
+            "Brand 'line' must not match microsoftonline.com substring: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_aitm_detect_paypal_brand_in_phishing_subdomain() {
+        // Word-boundary case: paypal in a subdomain of an unrelated host
+        // should still trigger brand impersonation. The boundary helper
+        // accepts this because `paypal` is bordered by `.` on both sides.
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        let ctx = make_ctx_links(vec![
+            "https://paypal.evil-host.example/account/verify",
+        ]);
+
+        let result = analyze_with_runtime(&module, &ctx);
+        assert!(
+            result
+                .categories
+                .iter()
+                .any(|c| c.starts_with("aitm_brand")),
+            "paypal in subdomain of unrelated host should trigger brand impersonation: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_aitm_detect_brand_path_login_signal() {
+        // Brand in path (not subdomain) on an unrelated host with login
+        // indicators should trigger `aitm_brand_path_login`.
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        let ctx = make_ctx_links(vec![
+            "https://random-host.example/paypal/login",
+        ]);
+
+        let result = analyze_with_runtime(&module, &ctx);
+        assert!(
+            result
+                .categories
+                .contains(&"aitm_brand_path_login".to_string()),
+            "Brand in path with login indicator should trigger aitm_brand_path_login: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_aitm_detect_multiple_brands_in_one_url_only_flagged_once_per_brand() {
+        // The detect loop deduplicates flagged brands via `flagged_brands`
+        // HashSet. Two distinct brands in the same URL should still produce
+        // two separate findings, but the same brand in subdomain + path
+        // should not double-count.
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        // Both `paypal` (subdomain) and `microsoft` (path) on an unrelated
+        // host. We expect at least one brand finding and no duplicate
+        // findings for the same brand.
+        let ctx = make_ctx_links(vec![
+            "https://paypal.evil-host.example/microsoft/login",
+        ]);
+
+        let result = analyze_with_runtime(&module, &ctx);
+        let brand_findings: Vec<&String> = result
+            .categories
+            .iter()
+            .filter(|c| c.starts_with("aitm_brand"))
+            .collect();
+        assert!(
+            !brand_findings.is_empty(),
+            "expected at least one brand finding for paypal+microsoft URL: {:?}",
+            result.categories
+        );
+        // Distinct categories shouldn't have any duplicates for the same brand.
+        // (The flagged_brands HashSet ensures only one finding per brand.)
+        let mut seen = std::collections::HashSet::new();
+        for cat in &brand_findings {
+            assert!(
+                seen.insert((*cat).clone()),
+                "duplicate brand category {cat:?} in {brand_findings:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_aitm_detect_legitimate_paypal_subdomain_not_flagged() {
+        // Mirror of the microsoft legitimate-domain test, but for a
+        // different brand. Confirms `domain_belongs_to_brand` correctly
+        // accepts paypal.com and any subdomain thereof.
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        let ctx = make_ctx_links(vec![
+            "https://www.paypal.com/signin?country.x=US",
+        ]);
+
+        let result = analyze_with_runtime(&module, &ctx);
+        let has_brand_finding = result
+            .categories
+            .iter()
+            .any(|c| c.starts_with("aitm_brand"));
+        assert!(
+            !has_brand_finding,
+            "Legitimate paypal.com domain should not trigger brand impersonation: {:?}",
+            result.categories
+        );
+    }
+
     // --- Compound signal detection ---
 
     #[test]
@@ -1321,6 +1725,218 @@ mod tests {
         assert!(
             !has_captcha_auth,
             "Official SSO domain should not trigger captcha_auth fingerprint: {:?}",
+            result.categories
+        );
+    }
+
+    // ── Storm-2372 Device Code Phishing tests ────────────────────────────
+
+    /// Build a context with a sender (mail_from) so the device-code
+    /// whitelist can be exercised. The other test-helpers above don't
+    /// expose mail_from, so this one inlines the EmailSession construction.
+    fn make_ctx_device_code(
+        sender: &str,
+        subject: Option<&str>,
+        body_text: Option<&str>,
+        links: Vec<&str>,
+    ) -> SecurityContext {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "203.0.113.5".to_string(),
+            54321,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.mail_from = Some(sender.to_string());
+        session.subject = subject.map(str::to_string);
+        session.content = EmailContent {
+            body_text: body_text.map(str::to_string),
+            links: links
+                .into_iter()
+                .map(|url| EmailLink {
+                    url: url.to_string(),
+                    text: None,
+                    suspicious: false,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        SecurityContext::new(Arc::new(session))
+    }
+
+    #[test]
+    fn test_device_code_phishing_classic_storm2372_fires() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        let body = "Hello,\nTo finish setting up your new device, please \
+                    visit https://microsoft.com/devicelogin and enter this \
+                    code: BXFK7QHZ to complete verification. The code \
+                    expires in 15 minutes.";
+        let ctx = make_ctx_device_code(
+            "it-helpdesk@random-cdn-host.tld",
+            Some("Action required: complete device sign-in"),
+            Some(body),
+            vec!["https://microsoft.com/devicelogin"],
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            result
+                .categories
+                .contains(&"device_code_login_url".to_string()),
+            "must detect device-login URL, got {:?}",
+            result.categories
+        );
+        assert!(
+            result
+                .categories
+                .contains(&"device_code_user_code".to_string()),
+            "must detect user_code, got {:?}",
+            result.categories
+        );
+        assert!(
+            result
+                .categories
+                .contains(&"device_code_enter_phrase".to_string()),
+            "must detect enter-phrase, got {:?}",
+            result.categories
+        );
+        assert!(
+            result
+                .categories
+                .contains(&"device_code_phishing_combo".to_string()),
+            "must escalate to combo, got {:?}",
+            result.categories
+        );
+        assert!(
+            result.threat_level >= ThreatLevel::High,
+            "Storm-2372 combo must reach High, got {:?}",
+            result.threat_level
+        );
+    }
+
+    #[test]
+    fn test_device_code_phishing_chinese_lure_fires() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        let body = "您好，IT 部门提示请访问 microsoft.com/devicelogin, \
+                    请输入此代码 ABCD-1234 完成设备验证, 代码 15 分钟内有效。";
+        let ctx = make_ctx_device_code(
+            "noreply@some-random-host.cn",
+            Some("设备登录完成提醒"),
+            Some(body),
+            vec![],
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            result
+                .categories
+                .contains(&"device_code_login_url".to_string())
+                && result
+                    .categories
+                    .contains(&"device_code_user_code".to_string())
+                && result
+                    .categories
+                    .contains(&"device_code_enter_phrase".to_string()),
+            "Chinese lure must hit all three core signals, got {:?}",
+            result.categories
+        );
+        assert!(result.threat_level >= ThreatLevel::High);
+    }
+
+    #[test]
+    fn test_device_code_phishing_real_microsoft_sender_suppressed() {
+        // A genuine Microsoft notification mentioning devicelogin must
+        // NOT trigger device_code_* categories — sender whitelist short
+        // circuits the entire detector.
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        let body = "We noticed a sign-in to your account on a new device. \
+                    To complete sign-in please visit \
+                    https://microsoft.com/devicelogin and enter this code: \
+                    ABCD1234.";
+        let ctx = make_ctx_device_code(
+            "account-security-noreply@accountprotection.microsoft.com",
+            Some("Device sign-in"),
+            Some(body),
+            vec!["https://microsoft.com/devicelogin"],
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        let any_device_cat = result
+            .categories
+            .iter()
+            .any(|c| c.starts_with("device_code_"));
+        assert!(
+            !any_device_cat,
+            "Real Microsoft sender must suppress device_code categories, got {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_device_code_phishing_url_only_no_combo() {
+        // Just a microsoft.com/devicelogin reference without code or
+        // enter-phrase: scores Low only (single signal, no combo).
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        let body = "FYI: Microsoft has a device-login flow at \
+                    microsoft.com/devicelogin.";
+        let ctx = make_ctx_device_code(
+            "blog@tech-news.tld",
+            Some("Tech newsletter"),
+            Some(body),
+            vec![],
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            result
+                .categories
+                .contains(&"device_code_login_url".to_string()),
+            "URL alone should still fire URL category, got {:?}",
+            result.categories
+        );
+        assert!(
+            !result
+                .categories
+                .contains(&"device_code_phishing_combo".to_string()),
+            "single URL must not escalate to combo, got {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_device_code_phishing_user_code_rejects_all_digit_strings() {
+        // Order numbers / invoice IDs are 8-digit strings without any
+        // letters — must not be flagged as user_code.
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        let body = "Your order #12345678 has shipped.";
+        let ctx = make_ctx_device_code(
+            "shipping@store.example",
+            Some("Order shipped"),
+            Some(body),
+            vec![],
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            !result
+                .categories
+                .contains(&"device_code_user_code".to_string()),
+            "all-digit order number must not be classified as user_code, got {:?}",
             result.categories
         );
     }

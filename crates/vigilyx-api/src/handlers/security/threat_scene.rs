@@ -12,6 +12,7 @@ use serde_json::json;
 
 use vigilyx_core::security::ThreatSceneRule;
 
+use super::super::clamp_i64_pagination;
 use crate::AppState;
 use crate::auth::AuthenticatedUser;
 
@@ -33,8 +34,7 @@ pub async fn list_threat_scenes(
     State(state): State<Arc<AppState>>,
     Query(q): Query<ListScenesQuery>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let limit = q.limit.unwrap_or(50).min(500);
-    let offset = q.offset.unwrap_or(0);
+    let (limit, offset) = clamp_i64_pagination(q.limit, q.offset, 50, 500);
 
     let (scenes, total) = state
         .db

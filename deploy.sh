@@ -36,6 +36,11 @@ set -euo pipefail
 # -- Load the config file if it exists --
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -f "${SCRIPT_DIR}/deploy.conf" ]; then
+    conf_perms=$(stat -f '%Lp' "${SCRIPT_DIR}/deploy.conf" 2>/dev/null || stat -c '%a' "${SCRIPT_DIR}/deploy.conf")
+    if [ $((10#$conf_perms % 100)) -gt 0 ]; then
+        echo "Error: deploy.conf must not be group/world-accessible (chmod 600 deploy.conf)." >&2
+        exit 1
+    fi
     # shellcheck source=/dev/null
     source "${SCRIPT_DIR}/deploy.conf"
 fi

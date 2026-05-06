@@ -44,6 +44,73 @@ logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 logger = structlog.get_logger()
 
+DEFAULT_MAX_REQUEST_BYTES = 10 * 1024 * 1024
+
+
+class RequestBodyTooLarge(Exception):
+    """Raised when an incoming ASGI request body exceeds the configured cap."""
+
+
+def max_request_bytes() -> int:
+    raw = os.environ.get("AI_MAX_REQUEST_BYTES")
+    if not raw:
+        return DEFAULT_MAX_REQUEST_BYTES
+    try:
+        parsed = int(raw)
+    except ValueError:
+        logger.warning("Invalid AI_MAX_REQUEST_BYTES; using default", value=raw)
+        return DEFAULT_MAX_REQUEST_BYTES
+    return max(1024, parsed)
+
+
+class RequestBodyLimitMiddleware:
+    """Enforce a byte-level request cap before Pydantic buffers JSON bodies."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        max_bytes = max_request_bytes()
+        headers = {
+            key.decode("latin1").lower(): value.decode("latin1")
+            for key, value in scope.get("headers", [])
+        }
+        content_length = headers.get("content-length")
+        if content_length:
+            try:
+                if int(content_length) > max_bytes:
+                    await request_too_large_response(max_bytes)(scope, receive, send)
+                    return
+            except ValueError:
+                pass
+
+        received = 0
+
+        async def limited_receive():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > max_bytes:
+                    raise RequestBodyTooLarge()
+            return message
+
+        try:
+            await self.app(scope, limited_receive, send)
+        except RequestBodyTooLarge:
+            await request_too_large_response(max_bytes)(scope, receive, send)
+
+
+def request_too_large_response(max_bytes: int) -> JSONResponse:
+    return JSONResponse(
+        status_code=413,
+        content={"error": "REQUEST_TOO_LARGE", "max_bytes": max_bytes},
+    )
+
 
 async def _background_warmup():
     """Warm up models in the background without blocking the health check."""
@@ -80,6 +147,7 @@ app = FastAPI(
     version="0.3.0",
     lifespan=lifespan,
 )
+app.add_middleware(RequestBodyLimitMiddleware)
 
 # SEC-H07: Internal-service authentication middleware (CWE-306)
 # Verifies X-Internal-Token with constant-time comparison to resist timing attacks.

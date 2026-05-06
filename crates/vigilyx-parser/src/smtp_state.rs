@@ -950,8 +950,12 @@ impl SmtpStateMachine {
             return Some(SmtpCommand::Auth(arg));
         }
 
-        // STARTTLS (8 bytes)
-        if line.len() >= 8 && line[..8].eq_ignore_ascii_case(b"STARTTLS") {
+        // STARTTLS (8 bytes, no argument). Do not accept prefix-smuggled
+        // variants such as STARTTLSNOW.
+        if line.len() >= 8
+            && line[..8].eq_ignore_ascii_case(b"STARTTLS")
+            && (line.len() == 8 || line[8..].iter().all(|b| b.is_ascii_whitespace()))
+        {
             return Some(SmtpCommand::StartTls);
         }
 
@@ -1312,5 +1316,115 @@ mod tests {
         assert!(decoded.is_some());
         let bytes = decoded.unwrap();
         assert_eq!(bytes, b"\0user\0pass");
+    }
+
+    #[test]
+    fn test_command_line_split_across_packets() {
+        let mut sm = SmtpStateMachine::new();
+
+        let first = sm.process_client_data(b"MAIL FROM:<sender");
+        assert!(first.is_empty());
+
+        let second = sm.process_client_data(b"@example.com>\r\nRCPT TO:<rcpt@example.com>\r\n");
+
+        assert_eq!(second.len(), 2);
+        assert!(matches!(&second[0], SmtpCommand::MailFrom(addr) if addr == "sender@example.com"));
+        assert!(matches!(&second[1], SmtpCommand::RcptTo(addr) if addr == "rcpt@example.com"));
+        assert_eq!(sm.mail_from(), Some("sender@example.com"));
+        assert_eq!(sm.rcpt_to(), &["rcpt@example.com"]);
+    }
+
+    #[test]
+    fn test_response_line_split_across_packets() {
+        let mut sm = SmtpStateMachine::new();
+
+        let first = sm.process_server_response(b"250-smtp.example.com");
+        assert!(first.is_empty());
+
+        let second = sm.process_server_response(b"\r\n250 OK\r\n");
+
+        assert_eq!(second.len(), 2);
+        assert_eq!(second[0].code, 250);
+        assert!(!second[0].is_final);
+        assert_eq!(second[1].code, 250);
+        assert!(second[1].is_final);
+    }
+
+    #[test]
+    fn test_data_rejection_clears_pending_pipelined_body() {
+        let mut sm = SmtpStateMachine::new();
+
+        let cmds =
+            sm.process_client_data(b"DATA\r\nSubject: should-not-be-buffered\r\n\r\nbody\r\n.\r\n");
+        assert!(cmds.iter().any(|cmd| matches!(cmd, SmtpCommand::Data)));
+        assert!(sm.has_pending_data());
+        assert!(sm.buffered_email_bytes() > 0);
+
+        sm.process_server_response(b"503 5.5.1 Need RCPT command first\r\n");
+
+        assert!(!sm.has_pending_data());
+        assert_eq!(sm.buffered_email_bytes(), 0);
+
+        let next = sm.process_client_data(b"MAIL FROM:<fresh@example.com>\r\n");
+        assert!(matches!(&next[0], SmtpCommand::MailFrom(addr) if addr == "fresh@example.com"));
+    }
+
+    #[test]
+    fn test_starttls_prefix_smuggling_is_not_accepted() {
+        let mut sm = SmtpStateMachine::new();
+
+        let cmds = sm.process_client_data(b"STARTTLSNOW\r\nSTARTTLS \t\r\n");
+
+        assert!(matches!(&cmds[0], SmtpCommand::Other(cmd) if cmd == "STARTTLSNOW"));
+        assert!(matches!(&cmds[1], SmtpCommand::StartTls));
+    }
+
+    #[test]
+    fn test_starttls_acceptance_suppresses_plaintext_after_upgrade() {
+        let mut sm = SmtpStateMachine::new();
+
+        let cmds = sm.process_client_data(b"STARTTLS\r\n");
+        assert!(cmds.iter().any(|cmd| matches!(cmd, SmtpCommand::StartTls)));
+        sm.process_server_response(b"220 2.0.0 Ready to start TLS\r\n");
+
+        assert!(sm.is_encrypted());
+        let plaintext_after_tls = sm.process_client_data(b"MAIL FROM:<hidden@example.com>\r\n");
+        assert!(plaintext_after_tls.is_empty());
+    }
+
+    #[test]
+    fn test_take_pending_email_for_close_unstuffs_and_marks_complete() {
+        let mut sm = SmtpStateMachine::new();
+
+        sm.process_client_data(b"DATA\r\nSubject: Close Recovery\r\n\r\n..leading dot\r\n.\r\n");
+
+        let (raw, complete) = sm
+            .take_pending_email_for_close()
+            .expect("pending DATA should be recoverable on close");
+
+        assert!(complete);
+        assert_eq!(
+            std::str::from_utf8(&raw).unwrap(),
+            "Subject: Close Recovery\r\n\r\n.leading dot"
+        );
+        assert!(!sm.has_pending_data());
+    }
+
+    #[test]
+    fn test_take_pending_email_for_close_recovers_incomplete_pipelined_body() {
+        let mut sm = SmtpStateMachine::new();
+
+        sm.process_client_data(b"DATA\r\nSubject: Incomplete\r\n\r\npartial body");
+
+        let (raw, complete) = sm
+            .take_pending_email_for_close()
+            .expect("pipelined DATA should be recoverable on close");
+
+        assert!(!complete);
+        assert_eq!(
+            std::str::from_utf8(&raw).unwrap(),
+            "Subject: Incomplete\r\n\r\npartial body"
+        );
+        assert!(!sm.has_pending_data());
     }
 }

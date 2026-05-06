@@ -16,7 +16,7 @@ use crate::context::SecurityContext;
 use crate::error::EngineError;
 use crate::ioc::IocManager;
 use crate::metrics::EngineMetrics;
-use crate::modules::registry::{build_module_registry, is_inline_tier1};
+use crate::modules::registry::build_module_registry;
 use crate::orchestrator::PipelineOrchestrator;
 use crate::temporal::temporal_analyzer::TemporalAnalyzer;
 use crate::whitelist::WhitelistManager;
@@ -46,6 +46,27 @@ async fn load_inbound_mail_servers(db: &VigilDb) -> HashSet<String> {
             load_inbound_mail_servers_from_env()
         }
     }
+}
+
+async fn session_is_whitelisted(
+    session: &EmailSession,
+    whitelist_manager: &WhitelistManager,
+) -> bool {
+    let Some(mail_from) = session.mail_from.as_deref() else {
+        return false;
+    };
+    let Some(domain) = mail_from.split('@').nth(1) else {
+        return false;
+    };
+
+    let domain_ok = whitelist_manager
+        .is_trusted_domain(&domain.to_lowercase())
+        .await;
+    let ip_ok = whitelist_manager
+        .is_trusted_ip(&session.client_ip.to_string())
+        .await;
+
+    domain_ok && ip_ok
 }
 
 fn log_inbound_mail_servers(servers: &HashSet<String>) {
@@ -163,8 +184,10 @@ impl SecurityEngine {
 
         // Build orchestrator
         let orchestrator = PipelineOrchestrator::build(&modules, &pipeline_config)?;
-        let inline_pipeline_config = Self::inline_pipeline_config(&pipeline_config);
-        let inline_orchestrator = PipelineOrchestrator::build(&modules, &inline_pipeline_config)?;
+        // Inline SMTP verdicts and passive analysis must remain bit-for-bit
+        // aligned on module selection. We intentionally reuse the full
+        // pipeline config here instead of maintaining a reduced inline tier.
+        let inline_orchestrator = PipelineOrchestrator::build(&modules, &pipeline_config)?;
 
         // Clone subsystems for background task
         let bg_engine_db = engine_db.clone();
@@ -341,19 +364,6 @@ impl SecurityEngine {
     /// Temporal state flush interval (every N verdicts).
     const TEMPORAL_FLUSH_INTERVAL: u64 = 50;
 
-    fn inline_pipeline_config(config: &PipelineConfig) -> PipelineConfig {
-        PipelineConfig {
-            version: config.version,
-            modules: config
-                .modules
-                .iter()
-                .filter(|module| module.enabled && is_inline_tier1(&module.id))
-                .cloned()
-                .collect(),
-            verdict_config: config.verdict_config.clone(),
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     async fn run_loop(
         mut rx: mpsc::Receiver<EmailSession>,
@@ -477,6 +487,26 @@ impl SecurityEngine {
                         continue;
                     }
 
+                    if session_is_whitelisted(session.as_ref(), &whitelist_manager).await {
+                        info!(
+                            session_id = %session_id,
+                            mail_from = session.mail_from.as_deref().unwrap_or(""),
+                            client_ip = %session.client_ip,
+                            "Skipping whitelisted SMTP inline session"
+                        );
+                        let _ = inline_req.respond_to.send(InlineVerdictResponse {
+                            disposition: VerdictDisposition::Accept,
+                            threat_level: ThreatLevel::Safe,
+                            confidence: 1.0,
+                            summary: "Session bypassed by whitelist".into(),
+                            session_id,
+                            modules_run: 0,
+                            modules_flagged: 0,
+                            duration_ms: start.elapsed().as_millis() as u64,
+                        });
+                        continue;
+                    }
+
                     let domains_snapshot = Arc::new(internal_domains.read().await.clone());
                     let ctx = SecurityContext::with_internal_domains(session.clone(), domains_snapshot);
                     let inline_outcome = inline_orchestrator.execute_with_timeout(&ctx, remaining).await;
@@ -484,7 +514,7 @@ impl SecurityEngine {
                         warn!(
                             session_id = %session_id,
                             timeout_ms = remaining.as_millis() as u64,
-                            "Inline verdict hit deadline before tier-1 analysis completed"
+                            "Inline verdict hit deadline before full analysis completed"
                         );
                         // SEC-A01: Timeout must NOT return Safe — an unscanned message
                         // has unknown threat level. Use Low ("fail-closed light") so it
@@ -494,7 +524,7 @@ impl SecurityEngine {
                             threat_level: ThreatLevel::Low,
                             confidence: 0.0,
                             summary: format!(
-                                "Security analysis timed out — conservative verdict applied (tier-1 incomplete after {}ms)",
+                                "Security analysis timed out — conservative verdict applied (full pipeline incomplete after {}ms)",
                                 remaining.as_millis()
                             ),
                             session_id,
@@ -577,11 +607,11 @@ impl SecurityEngine {
             // 1. Skip non-email sessions (permanent filter)
             // emailHeaderofSession completeemail, Security
             // override: 554, QUIT-only, entering DATA Segmentof connection
-            if session.content.headers.is_empty() {
+            if !session.has_analyzable_content() {
                 debug!(
                     session_id = %session_id,
                     mail_from = session.mail_from.as_deref().unwrap_or("<none>"),
-                    "Skipping non-email session (no email headers, cannot reconstruct)"
+                    "Skipping non-email session (no analyzable message content)"
                 );
                 continue;
             }
@@ -642,21 +672,7 @@ impl SecurityEngine {
             }
 
             // 2. Whitelist check (fast async)
-            let mut whitelisted = false;
-            if let Some(ref mail_from) = session.mail_from
-                && let Some(domain) = mail_from.split('@').nth(1)
-            {
-                let domain_ok = whitelist_manager
-                    .is_trusted_domain(&domain.to_lowercase())
-                    .await;
-                let ip_ok = whitelist_manager
-                    .is_trusted_ip(&session.client_ip.to_string())
-                    .await;
-                if domain_ok && ip_ok {
-                    whitelisted = true;
-                }
-            }
-            if whitelisted {
+            if session_is_whitelisted(session.as_ref(), &whitelist_manager).await {
                 debug!(
                     session_id = %session_id,
                     mail_from = session.mail_from.as_deref().unwrap_or(""),
@@ -1133,51 +1149,52 @@ mod tests {
         assert!(matches!(deser.disposition, VerdictDisposition::Quarantine));
     }
 
-    #[tokio::test]
-    async fn test_inline_tier1_module_classification() {
-        use crate::modules::registry::{INLINE_TIER1_MODULES, is_inline_tier1};
-
-        // Tier 1 modules
-        assert!(is_inline_tier1("content_scan"));
-        assert!(is_inline_tier1("header_scan"));
-        assert!(is_inline_tier1("yara_scan"));
-
-        // Tier 2 modules (should NOT be tier 1)
-        assert!(!is_inline_tier1("semantic_scan"));
-        assert!(!is_inline_tier1("link_content"));
-        assert!(!is_inline_tier1("sandbox_scan"));
-        assert!(!is_inline_tier1("transaction_correlation"));
-
-        // Tier 1 should have 15 modules
-        assert_eq!(INLINE_TIER1_MODULES.len(), 15);
-    }
-
     #[test]
-    fn test_inline_pipeline_config_filters_tier2_modules() {
+    fn test_inline_pipeline_matches_full_pipeline_config() {
         let config = PipelineConfig::default();
-        let inline = SecurityEngine::inline_pipeline_config(&config);
+        let inline = config.clone();
+        let inline_ids = inline
+            .modules
+            .iter()
+            .map(|module| module.id.as_str())
+            .collect::<Vec<_>>();
 
         assert!(
-            inline
+            inline.modules.len() == config.modules.len(),
+            "inline and passive paths must use the same module count"
+        );
+        assert_eq!(
+            inline_ids,
+            config
                 .modules
                 .iter()
-                .all(|module| is_inline_tier1(&module.id)),
-            "inline config should only contain tier-1 modules"
+                .map(|module| module.id.as_str())
+                .collect::<Vec<_>>(),
+            "inline and passive paths must use the exact same module ordering"
         );
-        assert!(
-            !inline
-                .modules
-                .iter()
-                .any(|module| module.id == "semantic_scan"),
-            "AI module must stay out of SMTP inline path"
-        );
-        assert!(
-            !inline
-                .modules
-                .iter()
-                .any(|module| module.id == "link_content"),
-            "link_content must stay out of SMTP inline path"
-        );
+        for must_keep in [
+            "attach_qr_scan",
+            "aitm_detect",
+            "link_content",
+            "landing_page_scan",
+            "semantic_scan",
+            "transaction_correlation",
+        ] {
+            assert!(
+                config
+                    .modules
+                    .iter()
+                    .any(|module| module.id == must_keep && module.enabled),
+                "default full pipeline contract should include enabled {must_keep}"
+            );
+            assert!(
+                inline
+                    .modules
+                    .iter()
+                    .any(|module| module.id == must_keep && module.enabled),
+                "inline pipeline must not drop enabled {must_keep}"
+            );
+        }
     }
 
     #[test]

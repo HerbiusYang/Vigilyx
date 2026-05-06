@@ -238,6 +238,81 @@ mod tests {
     }
 
     #[test]
+    fn test_build_envelope_rejects_injected_rcpt() {
+        let err = build_envelope(
+            Some("sender@test.com"),
+            &["victim@test.com\r\nDATA\r\n".into()],
+        )
+        .expect_err("CRLF-injected RCPT TO should fail");
+
+        assert!(err.contains("Invalid RCPT TO"));
+    }
+
+    #[test]
+    fn test_build_envelope_accepts_null_sender_and_multiple_recipients() {
+        let envelope = build_envelope(None, &["first@test.com".into(), "second@test.com".into()])
+            .expect("bounce/null sender with valid recipients should be accepted");
+
+        assert!(envelope.from().is_none());
+        assert_eq!(envelope.to().len(), 2);
+    }
+
+    #[test]
+    fn test_build_envelope_preserves_recipient_order() {
+        let envelope = build_envelope(
+            Some("sender@test.com"),
+            &[
+                "first@test.com".into(),
+                "second@test.com".into(),
+                "third@test.com".into(),
+            ],
+        )
+        .expect("valid recipients should be accepted");
+
+        let to = envelope
+            .to()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            to,
+            vec!["first@test.com", "second@test.com", "third@test.com"]
+        );
+    }
+
+    #[test]
+    fn test_build_envelope_rejects_empty_recipient_list() {
+        let err = build_envelope(Some("sender@test.com"), &[])
+            .expect_err("empty recipient list should fail");
+
+        assert!(err.contains("No valid recipients"));
+    }
+
+    #[test]
+    fn test_resolve_relay_tls_host_normalizes_case_and_trailing_dot() {
+        let tls_host =
+            resolve_relay_tls_host("Mail.Example.COM.").expect("hostname should normalize");
+
+        assert_eq!(tls_host, "mail.example.com");
+    }
+
+    #[test]
+    fn test_resolve_relay_tls_host_strips_scheme_port_and_path() {
+        let tls_host = resolve_relay_tls_host("smtp://Mail.Example.COM:2525/relay")
+            .expect("network target should normalize");
+
+        assert_eq!(tls_host, "mail.example.com");
+    }
+
+    #[test]
+    fn test_resolve_relay_tls_host_strips_ipv6_brackets_and_port() {
+        let tls_host =
+            resolve_relay_tls_host("[2001:db8::25]:2525").expect("IPv6 target should normalize");
+
+        assert_eq!(tls_host, "2001:db8::25");
+    }
+
+    #[test]
     fn test_validate_rejects_empty_host() {
         assert!(validate_mail_relay_host("", DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES).is_err());
     }

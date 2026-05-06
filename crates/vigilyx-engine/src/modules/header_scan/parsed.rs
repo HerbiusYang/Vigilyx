@@ -71,6 +71,15 @@ pub(super) struct ParsedHeaders {
 pub(super) struct AuthResult {
     pub spf_fail: bool,
     pub dmarc_fail: bool,
+    /// DKIM=fail or DKIM=none (no signature). DKIM=pass leaves this false.
+    pub dkim_fail: bool,
+    /// `arc=pass` indicates an upstream MTA already authenticated this hop.
+    /// Used to suppress Direct Send false positives on legitimate forwarders.
+    pub arc_pass: bool,
+    /// True if any Authentication-Results header was emitted by an
+    /// `*.protection.outlook.com` (Exchange Online) host. Strong signal that
+    /// the recipient tenant is on M365 / EOP.
+    pub from_eop: bool,
 }
 
 impl ParsedHeaders {
@@ -137,9 +146,30 @@ impl ParsedHeaders {
                     let dmarc_fail =
                         val_lower.contains("dmarc=fail") || val_lower.contains("dmarc=none");
 
+                    // DKIM: only treat as failure if explicitly fail or no signature.
+                    // `dkim=pass` (anywhere in the line) clears the flag.
+                    let dkim_fail = (val_lower.contains("dkim=fail")
+                        || val_lower.contains("dkim=none")
+                        || val_lower.contains("dkim=neutral")
+                        || val_lower.contains("dkim=permerror"))
+                        && !val_lower.contains("dkim=pass");
+
+                    // ARC chain validation — when the upstream MTA has already
+                    // authenticated and forwarded the message we treat it as
+                    // a trusted hop. Only `arc=pass` clears.
+                    let arc_pass = val_lower.contains("arc=pass");
+
+                    // Detect Exchange Online / EOP origin. The header value
+                    // typically begins with the receiving host, e.g.
+                    // `Authentication-Results: contoso-com.mail.protection.outlook.com; ...`
+                    let from_eop = val_lower.contains("protection.outlook.com");
+
                     auth_results.push(AuthResult {
                         spf_fail,
                         dmarc_fail,
+                        dkim_fail,
+                        arc_pass,
+                        from_eop,
                     });
                 }
                 _ => {}

@@ -11,12 +11,14 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use vigilyx_core::models::{EmailSession, decode_base64_bytes};
+use vigilyx_core::models::{EmailSession, decode_base64_bytes_limited};
 
 use crate::context::SecurityContext;
 use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
 use crate::yara::engine::{YaraEngine, YaraMatch};
+
+const MAX_ATTACHMENT_SCAN_BYTES: usize = 25 * 1024 * 1024;
 
 pub struct YaraScanModule {
     meta: ModuleMetadata,
@@ -103,8 +105,11 @@ impl SecurityModule for YaraScanModule {
 
         // 2. Scan attachments (may match different rules than the EML envelope)
         for att in &ctx.session.content.attachments {
+            if att.size > MAX_ATTACHMENT_SCAN_BYTES {
+                continue;
+            }
             if let Some(ref b64) = att.content_base64
-                && let Some(decoded) = decode_base64_bytes(b64)
+                && let Some(decoded) = decode_base64_bytes_limited(b64, MAX_ATTACHMENT_SCAN_BYTES)
             {
                 let att_matches = self.engine.scan(&decoded);
                 for m in att_matches {

@@ -198,15 +198,58 @@ async fn main() -> Result<()> {
     {
         let state = Arc::clone(&state);
         tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(120)).await;
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(600));
+            let lookback_hours = std::env::var("ENGINE_BACKFILL_LOOKBACK_HOURS")
+                .ok()
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(72)
+                .clamp(1, 24 * 30);
+            let batch_limit = std::env::var("ENGINE_BACKFILL_BATCH_LIMIT")
+                .ok()
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(500)
+                .clamp(10, 2_000);
+            let settle_seconds = std::env::var("ENGINE_BACKFILL_SETTLE_SECONDS")
+                .ok()
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(30)
+                .clamp(0, 600);
+            let submit_delay_ms = std::env::var("ENGINE_BACKFILL_SUBMIT_DELAY_MS")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(100)
+                .min(1_000);
+            let mut cursor_started_at: Option<String> = None;
+            let mut cursor_id: Option<String> = None;
+
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(180));
             loop {
                 interval.tick().await;
-                let cutoff = (chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
-                match state.db.query_unanalyzed_sessions(&cutoff, 200).await {
-                    Ok(session_ids) if !session_ids.is_empty() => {
-                        info!(count = session_ids.len(), "补扫遗漏 Session");
-                        for sid in &session_ids {
+                let now = chrono::Utc::now();
+                let cutoff = (now - chrono::Duration::hours(lookback_hours)).to_rfc3339();
+                let until = (now - chrono::Duration::seconds(settle_seconds)).to_rfc3339();
+                if cursor_started_at
+                    .as_deref()
+                    .is_some_and(|cursor| cursor < cutoff.as_str())
+                {
+                    cursor_started_at = None;
+                    cursor_id = None;
+                }
+
+                match state
+                    .db
+                    .query_unanalyzed_session_candidates(
+                        &cutoff,
+                        cursor_started_at.as_deref(),
+                        cursor_id.as_deref(),
+                        &until,
+                        batch_limit,
+                    )
+                    .await
+                {
+                    Ok(candidates) if !candidates.is_empty() => {
+                        info!(count = candidates.len(), lookback_hours, "补扫遗漏 Session");
+                        for (sid, started_at) in &candidates {
                             // Load session from DB
                             match state.db.get_session(*sid).await {
                                 Ok(Some(session)) => {
@@ -217,11 +260,20 @@ async fn main() -> Result<()> {
                                 Ok(None) => warn!(session_id = %sid, "补扫: Session 不存在"),
                                 Err(e) => warn!(session_id = %sid, "补扫: 读取失败: {}", e),
                             }
-                            // Rate limit: 500ms between submissions
-                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                            cursor_started_at = Some(started_at.clone());
+                            cursor_id = Some(sid.to_string());
+                            if submit_delay_ms > 0 {
+                                tokio::time::sleep(std::time::Duration::from_millis(
+                                    submit_delay_ms,
+                                ))
+                                .await;
+                            }
                         }
                     }
-                    Ok(_) => {}
+                    Ok(_) => {
+                        cursor_started_at = None;
+                        cursor_id = None;
+                    }
                     Err(e) => warn!("查询遗漏 Session 失败: {}", e),
                 }
             }
@@ -517,29 +569,18 @@ async fn load_pipeline_config(db: &VigilDb) -> PipelineConfig {
             Ok(mut config) => {
                 info!("从数据库加载安全 Pipeline 配置");
 
-                // Auto-merge new modules from defaults
-                let default_config = PipelineConfig::default();
-                let existing_ids: std::collections::HashSet<String> =
-                    config.modules.iter().map(|m| m.id.clone()).collect();
-                let mut added = Vec::new();
-                for default_mod in &default_config.modules {
-                    if !existing_ids.contains(&default_mod.id) {
-                        added.push(default_mod.id.clone());
-                        config.modules.push(default_mod.clone());
-                    }
-                }
+                let added = config.merge_default_modules();
                 if !added.is_empty() {
                     info!("自动合并新模块到 Pipeline: {:?}", added);
                 }
 
                 // Defensive validation: reject DB-stored config with unsafe values
                 // (potential direct DB tampering indicator)
-                if let Err(violations) = config.verdict_config.validate() {
+                if let Some(violations) = config.repair_unsafe_verdict_config() {
                     warn!(
                         violations = ?violations,
                         "DB-stored VerdictConfig failed validation (possible DB tampering), falling back to safe defaults"
                     );
-                    config.verdict_config = vigilyx_engine::config::VerdictConfig::default();
                 }
 
                 config
@@ -589,36 +630,18 @@ async fn stream_input_loop(state: &Arc<EngineState>, stream: &StreamClient) -> R
         "Stream consumer started (email + HTTP sessions)"
     );
 
-    // Reclaim abandoned messages from crashed consumers (idle > 60s)
-    let reclaimed: Vec<(String, EmailSession)> = stream
-        .xautoclaim(streams::EMAIL_SESSIONS, 60_000, 100)
-        .await
-        .unwrap_or_default();
-    {
-        let mut ack_ids: Vec<String> = Vec::with_capacity(reclaimed.len());
-        for (id, session) in reclaimed {
-            if let AckDecision::Immediate = stream_process_email(state, stream, &id, session).await
-            {
-                ack_ids.push(id);
-            }
-        }
-        batch_ack(stream, streams::EMAIL_SESSIONS, &ack_ids).await;
+    // Reclaim abandoned messages from crashed consumers (idle > 60s). Drain
+    // multiple batches on startup; the old path reclaimed only 100 messages,
+    // so larger PELs could stay stuck indefinitely.
+    if let Err(e) = reclaim_email_pending(state, stream, 5).await {
+        warn!("Email Stream pending reclaim failed: {}", e);
     }
-
-    let reclaimed_http: Vec<(String, Vec<HttpSession>)> = stream
-        .xautoclaim(streams::HTTP_SESSIONS, 60_000, 100)
-        .await
-        .unwrap_or_default();
-    {
-        let mut ack_ids: Vec<String> = Vec::with_capacity(reclaimed_http.len());
-        for (id, sessions) in reclaimed_http {
-            stream_process_http(state, sessions);
-            ack_ids.push(id);
-        }
-        batch_ack(stream, streams::HTTP_SESSIONS, &ack_ids).await;
+    if let Err(e) = reclaim_http_pending(state, stream, 5).await {
+        warn!("HTTP Stream pending reclaim failed: {}", e);
     }
 
     // Main read loop: alternate between email and HTTP streams
+    let mut last_pending_reclaim = std::time::Instant::now();
     loop {
         // Read email sessions (block up to 2s)
         let email_msgs: Vec<(String, EmailSession)> = stream
@@ -647,6 +670,105 @@ async fn stream_input_loop(state: &Arc<EngineState>, stream: &StreamClient) -> R
             }
             batch_ack(stream, streams::HTTP_SESSIONS, &ack_ids).await;
         }
+
+        if last_pending_reclaim.elapsed() >= std::time::Duration::from_secs(30) {
+            log_pending_summary(stream).await;
+            if let Err(e) = reclaim_email_pending(state, stream, 3).await {
+                warn!("Email Stream periodic pending reclaim failed: {}", e);
+            }
+            if let Err(e) = reclaim_http_pending(state, stream, 3).await {
+                warn!("HTTP Stream periodic pending reclaim failed: {}", e);
+            }
+            last_pending_reclaim = std::time::Instant::now();
+        }
+    }
+}
+
+async fn reclaim_email_pending(
+    state: &Arc<EngineState>,
+    stream: &StreamClient,
+    max_batches: usize,
+) -> Result<usize> {
+    let mut total = 0usize;
+    for _ in 0..max_batches {
+        let reclaimed: Vec<(String, EmailSession)> = stream
+            .xautoclaim(streams::EMAIL_SESSIONS, 60_000, 200)
+            .await?;
+        if reclaimed.is_empty() {
+            break;
+        }
+        let reclaimed_len = reclaimed.len();
+        let mut ack_ids: Vec<String> = Vec::with_capacity(reclaimed_len);
+        for (id, session) in reclaimed {
+            if let AckDecision::Immediate = stream_process_email(state, stream, &id, session).await
+            {
+                ack_ids.push(id);
+            }
+        }
+        batch_ack(stream, streams::EMAIL_SESSIONS, &ack_ids).await;
+        total += reclaimed_len;
+        if reclaimed_len < 200 {
+            break;
+        }
+    }
+    if total > 0 {
+        info!(count = total, "Email Stream pending messages reclaimed");
+    }
+    Ok(total)
+}
+
+async fn reclaim_http_pending(
+    state: &Arc<EngineState>,
+    stream: &StreamClient,
+    max_batches: usize,
+) -> Result<usize> {
+    let mut total = 0usize;
+    for _ in 0..max_batches {
+        let reclaimed: Vec<(String, Vec<HttpSession>)> = stream
+            .xautoclaim(streams::HTTP_SESSIONS, 60_000, 200)
+            .await?;
+        if reclaimed.is_empty() {
+            break;
+        }
+        let reclaimed_len = reclaimed.len();
+        let mut ack_ids: Vec<String> = Vec::with_capacity(reclaimed_len);
+        for (id, sessions) in reclaimed {
+            stream_process_http(state, sessions);
+            ack_ids.push(id);
+        }
+        batch_ack(stream, streams::HTTP_SESSIONS, &ack_ids).await;
+        total += reclaimed_len;
+        if reclaimed_len < 200 {
+            break;
+        }
+    }
+    if total > 0 {
+        info!(count = total, "HTTP Stream pending messages reclaimed");
+    }
+    Ok(total)
+}
+
+async fn log_pending_summary(stream: &StreamClient) {
+    match stream.xpending_summary(streams::EMAIL_SESSIONS).await {
+        Ok(summary) if summary.total > 0 => warn!(
+            pending = summary.total,
+            min_id = summary.min_id.as_deref().unwrap_or(""),
+            max_id = summary.max_id.as_deref().unwrap_or(""),
+            "Email Stream has pending messages"
+        ),
+        Ok(_) => {}
+        Err(e) => warn!("Email Stream pending summary failed: {}", e),
+    }
+
+    match stream.xpending_summary(streams::HTTP_SESSIONS).await {
+        Ok(summary) if summary.total > 0 => warn!(
+            pending = summary.total,
+            min_id = summary.min_id.as_deref().unwrap_or(""),
+            max_id = summary.max_id.as_deref().unwrap_or(""),
+            "HTTP Stream has pending messages"
+        ),
+        Ok(_) => {}
+        Err(e) => warn!("HTTP Stream pending summary failed: {}", e),
     }
 }
 

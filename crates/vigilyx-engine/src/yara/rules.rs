@@ -1322,6 +1322,78 @@ rule Doc_Calendar_Phish_ICS {
         2 of ($urg*) and
         filesize < 1MB
 }
+
+rule Doc_RMM_Lure {
+    meta:
+        description = "Email/document weaponizing RMM (Remote Monitoring & Management) brand names + social-engineering lures, used in 2025-2026 ransomware staging and TOAD callback chains (T1219). Pairs ScreenConnect/AnyDesk/Atera/TeamViewer/Splashtop/etc. with install/connect/support-session verbs."
+        category = "advanced_threat"
+        severity = "high"
+        author = "Vigilyx YARA Foundry"
+        mitre_attack = "T1219"
+    strings:
+        // RMM brand identifiers (most-abused vendors per CISA AA23-025A + 2025 telemetry)
+        $brand_sc1   = "screenconnect" ascii nocase
+        $brand_sc2   = "ScreenConnect.ClientSetup" ascii nocase
+        $brand_cw    = "connectwise" ascii nocase
+        $brand_ad1   = "anydesk" ascii nocase
+        $brand_ad2   = "AnyDesk.exe" ascii nocase
+        $brand_tv1   = "teamviewer" ascii nocase
+        $brand_tv2   = "TeamViewer_Setup" ascii nocase
+        $brand_at1   = "atera" ascii nocase
+        $brand_at2   = "ateraagent" ascii nocase
+        $brand_sp1   = "splashtop" ascii nocase
+        $brand_sp2   = "splashtopstreamer" ascii nocase
+        $brand_sy    = "syncro" ascii nocase
+        $brand_lv    = "level.io" ascii nocase
+        $brand_fd    = "fleetdeck" ascii nocase
+        $brand_lm    = "logmein" ascii nocase
+        $brand_n1    = "ninjarmm" ascii nocase
+        $brand_n2    = "ninjaone" ascii nocase
+        $brand_kas   = "kaseya" ascii nocase
+        $brand_act1  = "action1" ascii nocase
+        $brand_trmm  = "tactical rmm" ascii nocase
+        $brand_rd    = "rustdesk" ascii nocase
+        $brand_zoho  = "zoho assist" ascii nocase
+
+        // Social-engineering action verbs / phishing context
+        $action_inst1  = "install" ascii nocase
+        $action_inst2  = "download and run" ascii nocase
+        $action_inst3  = "run the installer" ascii nocase
+        $action_conn1  = "connect id" ascii nocase
+        $action_conn2  = "connection id" ascii nocase
+        $action_conn3  = "access code" ascii nocase
+        $action_conn4  = "session code" ascii nocase
+        $action_conn5  = "support session" ascii nocase
+        $action_conn6  = "remote session" ascii nocase
+        $action_conn7  = "join the session" ascii nocase
+        $action_role1  = "technician" ascii nocase
+        $action_role2  = "tech support" ascii nocase
+        $action_role3  = "microsoft support" ascii nocase
+        $action_role4  = "geek squad" ascii nocase
+        $action_lure1  = "refund" ascii nocase
+        $action_lure2  = "verify your account" ascii nocase
+        $action_lure3  = "invoice attached" ascii nocase
+        $action_lure4  = "subscription renewal" ascii nocase
+        $action_lure5  = "unauthorized charge" ascii nocase
+
+        // Chinese-language equivalents (zh-CN/zh-TW phishing wave 2024-2025)
+        $cn_inst   = "运行安装" ascii wide
+        $cn_remote = "远程协助" ascii wide
+        $cn_code   = "连接代码" ascii wide
+        $cn_tech   = "技术支持" ascii wide
+        $cn_call   = "客服回拨" ascii wide
+    condition:
+        // ≥1 RMM brand AND ≥2 action/lure signals across two distinct families
+        any of ($brand_*) and
+        (
+            (any of ($action_inst*) and any of ($action_conn*)) or
+            (any of ($action_inst*) and any of ($action_role*)) or
+            (any of ($action_conn*) and any of ($action_role*)) or
+            (any of ($action_lure*) and any of ($action_inst*, $action_conn*, $action_role*)) or
+            (any of ($cn_inst, $cn_remote, $cn_code) and any of ($cn_tech, $cn_call))
+        ) and
+        filesize < 5MB
+}
 "#;
 
 /// Extended malware family rules V3 — Raccoon v2, Meduza, NetSupport RAT (3 rules)
@@ -1510,7 +1582,7 @@ pub const RULE_CATEGORIES: &[RuleCategoryMeta] = &[
     RuleCategoryMeta {
         id: "advanced_threat",
         name: "高级威胁",
-        description: "SVG 走私、Tycoon2FA AiTM、回拨钓鱼、HTML 凭证钓鱼、ClickFix 社工、ICS 日历钓鱼",
+        description: "SVG 走私、Tycoon2FA AiTM、回拨钓鱼、HTML 凭证钓鱼、ClickFix 社工、ICS 日历钓鱼、RMM 工具诱骗 (ScreenConnect/AnyDesk/Atera 等)",
     },
     RuleCategoryMeta {
         id: "evasion_technique",

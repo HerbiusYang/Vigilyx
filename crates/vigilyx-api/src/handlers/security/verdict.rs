@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use super::super::ApiResponse;
 use crate::AppState;
+use crate::auth::{AuthenticatedUser, is_admin_role};
 
 // Security Query
 
@@ -129,6 +130,7 @@ pub async fn get_engine_status(State(state): State<Arc<AppState>>) -> impl IntoR
 
 pub async fn submit_feedback(
     State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
     Path(id): Path<String>,
     Json(req): Json<vigilyx_engine::feedback::SubmitFeedbackRequest>,
 ) -> axum::response::Response {
@@ -145,8 +147,31 @@ pub async fn submit_feedback(
         state.managers.ioc_manager.clone(),
     );
 
-    match feedback_mgr.submit(session_id, &req).await {
+    let can_save_training_sample = is_admin_role(&user.role);
+    match feedback_mgr
+        .submit(session_id, &req, can_save_training_sample)
+        .await
+    {
         Ok(result) => {
+            if result.training_sample_saved {
+                let db = state.engine_db.clone();
+                let username = user.username.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = db
+                        .write_audit_log(
+                            &username,
+                            "feedback_training_sample_saved",
+                            Some("training"),
+                            Some(&session_id.to_string()),
+                            None,
+                            None,
+                        )
+                        .await
+                    {
+                        tracing::error!(error = %e, "Audit: failed to write feedback training audit log");
+                    }
+                });
+            }
             ApiResponse::ok(serde_json::to_value(result).unwrap_or_default()).into_response()
         }
         Err(e) => {

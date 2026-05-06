@@ -75,6 +75,63 @@ fn should_skip_registered_domain_intel_for_host(domain: &str, registered_domain:
         && is_probable_cloud_asset_host(domain)
 }
 
+const REPUTATION_NOISE_TOLERANT_DOMAINS: &[&str] = &[
+    // Social / collaboration platforms that often accumulate noisy public intel pulses.
+    "facebook.com",
+    "fb.com",
+    "youtube.com",
+    "youtu.be",
+    "linkedin.com",
+    "twitter.com",
+    "x.com",
+    "instagram.com",
+    // Microsoft / Office / Teams / Microsoft-owned short links.
+    "microsoft.com",
+    "microsoftonline.com",
+    "office.com",
+    "office365.com",
+    "sharepoint.com",
+    "live.com",
+    "outlook.com",
+    "aka.ms",
+    "teams.microsoft.com",
+    // SWIFT and Salesforce-hosted SWIFT service portals seen in customer mail.
+    "swift.com",
+    "swift.my.site.com",
+    // WTW / Willis Towers Watson benefit and survey services.
+    "wtwco.com",
+    "willistowerswatson.com",
+    "wtwrewardsdataintel.com",
+    "wtwdataservices.com",
+    // Official banking / payment / fund domains. These should not become
+    // high-confidence malicious solely from weak domain reputation noise.
+    "cmbchina.com",
+    "ccb.com",
+    "abchina.com",
+    "boc.cn",
+    "bankofchina.com",
+    "icbc.com.cn",
+    "psbc.com",
+    "bankcomm.com",
+    "unionpay.com",
+    "chinaunionpay.com",
+    "southernfund.com",
+    "efunds.com.cn",
+    "bosera.com",
+    "chinaamc.com",
+    "htsc.com",
+];
+
+fn is_reputation_noise_tolerant_domain(domain: &str) -> bool {
+    REPUTATION_NOISE_TOLERANT_DOMAINS
+        .iter()
+        .any(|trusted| host_matches_domain_or_subdomain(domain, trusted))
+}
+
+fn is_reputation_noise_tolerant_url(url: &str) -> bool {
+    extract_domain_from_url(url).is_some_and(|domain| is_reputation_noise_tolerant_domain(&domain))
+}
+
 fn sender_registered_domain(ctx: &SecurityContext) -> Option<String> {
     ctx.session
         .mail_from
@@ -107,14 +164,41 @@ fn suspicious_domain_intel_score(
         !sender_stem.is_empty() && sender_stem == domain_stem
     });
 
-    if is_otx_only_source(source)
-        && (sender_reg_domain == Some(registered_domain) || same_org_family)
-    {
-        None
-    } else if is_otx_only_source(source) {
-        Some(0.10)
+    let reputation_tolerant = is_reputation_noise_tolerant_domain(registered_domain);
+
+    if is_otx_only_source(source) {
+        if reputation_tolerant || sender_reg_domain == Some(registered_domain) || same_org_family {
+            None
+        } else {
+            Some(0.10)
+        }
+    } else if reputation_tolerant {
+        Some(0.05)
     } else {
         Some(0.25)
+    }
+}
+
+fn malicious_domain_intel_score(source: &str, registered_domain: &str) -> Option<f64> {
+    if is_otx_only_source(source) && is_reputation_noise_tolerant_domain(registered_domain) {
+        None
+    } else if is_reputation_noise_tolerant_domain(registered_domain) {
+        Some(0.20)
+    } else {
+        Some(0.60)
+    }
+}
+
+fn url_intel_score(verdict: &str, source: &str, url: &str) -> Option<f64> {
+    let reputation_tolerant = is_reputation_noise_tolerant_url(url);
+    match verdict {
+        "malicious" if is_otx_only_source(source) && reputation_tolerant => None,
+        "malicious" if reputation_tolerant => Some(0.10),
+        "malicious" => Some(0.65),
+        "suspicious" if is_otx_only_source(source) && reputation_tolerant => None,
+        "suspicious" if reputation_tolerant => Some(0.05),
+        "suspicious" => Some(0.30),
+        _ => Some(0.0),
     }
 }
 
@@ -539,6 +623,14 @@ impl SecurityModule for LinkReputationModule {
                 if should_skip_domain_reputation(domain) {
                     continue;
                 }
+                // Trusted enterprise/social/financial domains can carry stale
+                // OTX pulses or noisy registered-domain reputation (for example
+                // SWIFT Salesforce portals under my.site.com). Keep structural
+                // heuristics above, but avoid using weak domain reputation to
+                // escalate them.
+                if is_reputation_noise_tolerant_domain(domain) {
+                    continue;
+                }
 
                 // According toRegisterDomainDeduplicate (Same1RegisterDomainonly 1Time/Count)
                 let reg_domain = get_registered_domain(domain);
@@ -587,16 +679,46 @@ impl SecurityModule for LinkReputationModule {
                     }
                     match intel_result.verdict.as_str() {
                         "malicious" => {
-                            total_score += 0.60;
-                            categories.push("intel_malicious".to_string());
+                            let Some(score) =
+                                malicious_domain_intel_score(&intel_result.source, &domain)
+                            else {
+                                evidence.push(Evidence {
+                                    description: format!(
+                                        "Ignoring weak intel hit on reputation-tolerant domain: {} ({})",
+                                        domain,
+                                        intel_result
+                                            .details
+                                            .as_deref()
+                                            .unwrap_or("no additional details")
+                                    ),
+                                    location: Some("intel".to_string()),
+                                    snippet: Some(domain),
+                                });
+                                continue;
+                            };
+                            total_score += score;
+                            if score >= 0.60 {
+                                categories.push("intel_malicious".to_string());
+                            } else {
+                                categories.push("intel_malicious_reduced".to_string());
+                            }
                             suspicious_domains.push(domain.clone());
                             evidence.push(Evidence {
-                                description: format!(
-                                    "External intel flagged as malicious: {} (source: {}, {})",
-                                    domain,
-                                    intel_result.source,
-                                    intel_result.details.as_deref().unwrap_or("")
-                                ),
+                                description: if score >= 0.60 {
+                                    format!(
+                                        "External intel flagged as malicious: {} (source: {}, {})",
+                                        domain,
+                                        intel_result.source,
+                                        intel_result.details.as_deref().unwrap_or("")
+                                    )
+                                } else {
+                                    format!(
+                                        "External intel flagged reputation-tolerant domain as malicious with reduced weight: {} (source: {}, {})",
+                                        domain,
+                                        intel_result.source,
+                                        intel_result.details.as_deref().unwrap_or("")
+                                    )
+                                },
                                 location: Some("intel".to_string()),
                                 snippet: Some(domain),
                             });
@@ -611,7 +733,7 @@ impl SecurityModule for LinkReputationModule {
                             if suspicious_score.is_none() {
                                 evidence.push(Evidence {
                                     description: format!(
-                                        "Ignoring OTX-only weak intel hit on sender-owned domain: {} ({})",
+                                        "Ignoring OTX-only weak intel hit on sender-owned or reputation-tolerant domain: {} ({})",
                                         domain,
                                         intel_result.details.as_deref().unwrap_or("no additional details")
                                     ),
@@ -621,9 +743,12 @@ impl SecurityModule for LinkReputationModule {
                                 continue;
                             }
 
-                            total_score += suspicious_score.unwrap_or(0.0);
-                            if !otx_only {
+                            let score = suspicious_score.unwrap_or(0.0);
+                            total_score += score;
+                            if !otx_only && score >= 0.25 {
                                 categories.push("intel_suspicious".to_string());
+                            } else if !otx_only {
+                                categories.push("intel_suspicious_reduced".to_string());
                             }
                             suspicious_domains.push(domain.clone());
                             evidence.push(Evidence {
@@ -635,6 +760,13 @@ impl SecurityModule for LinkReputationModule {
                                             .details
                                             .as_deref()
                                             .unwrap_or("no additional details")
+                                    )
+                                } else if score < 0.25 {
+                                    format!(
+                                        "External intel flagged reputation-tolerant domain as suspicious with reduced weight: {} (source: {}, {})",
+                                        domain,
+                                        intel_result.source,
+                                        intel_result.details.as_deref().unwrap_or("")
                                     )
                                 } else {
                                     format!(
@@ -764,31 +896,91 @@ impl SecurityModule for LinkReputationModule {
                     }
                     match intel_result.verdict.as_str() {
                         "malicious" => {
-                            total_score += 0.65;
-                            categories.push("url_intel_malicious".to_string());
+                            let Some(score) =
+                                url_intel_score("malicious", &intel_result.source, &url)
+                            else {
+                                evidence.push(Evidence {
+                                    description: format!(
+                                        "Ignoring weak URL intel hit on reputation-tolerant URL: {} ({})",
+                                        url,
+                                        intel_result
+                                            .details
+                                            .as_deref()
+                                            .unwrap_or("no additional details")
+                                    ),
+                                    location: Some("intel:url".to_string()),
+                                    snippet: Some(url),
+                                });
+                                continue;
+                            };
+                            total_score += score;
+                            if score >= 0.65 {
+                                categories.push("url_intel_malicious".to_string());
+                            } else {
+                                categories.push("url_intel_malicious_reduced".to_string());
+                            }
                             suspicious_domains.push(url.clone());
                             evidence.push(Evidence {
-                                description: format!(
-                                    "URL intel flagged as malicious: {} (source: {}, {})",
-                                    url,
-                                    intel_result.source,
-                                    intel_result.details.as_deref().unwrap_or("")
-                                ),
+                                description: if score >= 0.65 {
+                                    format!(
+                                        "URL intel flagged as malicious: {} (source: {}, {})",
+                                        url,
+                                        intel_result.source,
+                                        intel_result.details.as_deref().unwrap_or("")
+                                    )
+                                } else {
+                                    format!(
+                                        "URL intel flagged reputation-tolerant URL as malicious with reduced weight: {} (source: {}, {})",
+                                        url,
+                                        intel_result.source,
+                                        intel_result.details.as_deref().unwrap_or("")
+                                    )
+                                },
                                 location: Some("intel:url".to_string()),
                                 snippet: Some(url),
                             });
                         }
                         "suspicious" => {
-                            total_score += 0.30;
-                            categories.push("url_intel_suspicious".to_string());
+                            let Some(score) =
+                                url_intel_score("suspicious", &intel_result.source, &url)
+                            else {
+                                evidence.push(Evidence {
+                                    description: format!(
+                                        "Ignoring weak URL intel hit on reputation-tolerant URL: {} ({})",
+                                        url,
+                                        intel_result
+                                            .details
+                                            .as_deref()
+                                            .unwrap_or("no additional details")
+                                    ),
+                                    location: Some("intel:url".to_string()),
+                                    snippet: Some(url),
+                                });
+                                continue;
+                            };
+                            total_score += score;
+                            if score >= 0.30 {
+                                categories.push("url_intel_suspicious".to_string());
+                            } else {
+                                categories.push("url_intel_suspicious_reduced".to_string());
+                            }
                             suspicious_domains.push(url.clone());
                             evidence.push(Evidence {
-                                description: format!(
-                                    "URL intel flagged as suspicious: {} (source: {}, {})",
-                                    url,
-                                    intel_result.source,
-                                    intel_result.details.as_deref().unwrap_or("")
-                                ),
+                                description: if score >= 0.30 {
+                                    format!(
+                                        "URL intel flagged as suspicious: {} (source: {}, {})",
+                                        url,
+                                        intel_result.source,
+                                        intel_result.details.as_deref().unwrap_or("")
+                                    )
+                                } else {
+                                    format!(
+                                        "URL intel flagged reputation-tolerant URL as suspicious with reduced weight: {} (source: {}, {})",
+                                        url,
+                                        intel_result.source,
+                                        intel_result.details.as_deref().unwrap_or("")
+                                    )
+                                },
                                 location: Some("intel:url".to_string()),
                                 snippet: Some(url),
                             });
@@ -1338,6 +1530,64 @@ mod tests {
         assert_eq!(
             suspicious_domain_intel_score("otx", "hundsun.com", Some("hundsun.cn")),
             None
+        );
+    }
+
+    #[test]
+    fn test_reputation_noise_tolerant_domains_match_subdomains_and_vendor_portals() {
+        assert!(is_reputation_noise_tolerant_domain(
+            "login.microsoftonline.com"
+        ));
+        assert!(is_reputation_noise_tolerant_domain("swift.my.site.com"));
+        assert!(is_reputation_noise_tolerant_domain("survey.wtwco.com"));
+        assert!(is_reputation_noise_tolerant_domain("static.linkedin.com"));
+        assert!(is_reputation_noise_tolerant_domain("service.cmbchina.com"));
+        assert!(!is_reputation_noise_tolerant_domain(
+            "microsoft-login.evil.example"
+        ));
+    }
+
+    #[test]
+    fn test_otx_only_reputation_tolerant_domain_is_ignored() {
+        assert_eq!(
+            suspicious_domain_intel_score("otx", "microsoftonline.com", Some("example.com")),
+            None
+        );
+        assert_eq!(
+            suspicious_domain_intel_score("otx", "linkedin.com", Some("example.com")),
+            None
+        );
+    }
+
+    #[test]
+    fn test_non_otx_reputation_tolerant_domain_is_reduced() {
+        assert_eq!(
+            suspicious_domain_intel_score("virustotal", "microsoftonline.com", Some("example.com")),
+            Some(0.05)
+        );
+        assert_eq!(
+            malicious_domain_intel_score("virustotal", "microsoftonline.com"),
+            Some(0.20)
+        );
+    }
+
+    #[test]
+    fn test_url_intel_on_reputation_tolerant_shortlinks_is_capped() {
+        assert_eq!(
+            url_intel_score("malicious", "virustotal", "https://aka.ms/joinmeeting"),
+            Some(0.10)
+        );
+        assert_eq!(
+            url_intel_score(
+                "suspicious",
+                "virustotal",
+                "https://forms.office.com/pages/responsepage.aspx?id=abc"
+            ),
+            Some(0.05)
+        );
+        assert_eq!(
+            url_intel_score("malicious", "virustotal", "https://evil.example/login"),
+            Some(0.65)
         );
     }
 

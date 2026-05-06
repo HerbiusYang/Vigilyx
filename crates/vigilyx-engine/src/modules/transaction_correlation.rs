@@ -23,6 +23,7 @@ use crate::bpa::Bpa;
 use crate::context::SecurityContext;
 use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
+use crate::matcher::{payment_change_keywords, transaction_urgency_keywords};
 use crate::module_data::module_data;
 use crate::modules::common::looks_like_raw_mime_container_text;
 
@@ -219,22 +220,19 @@ impl TransactionCorrelationModule {
     /// Check for payment change indicators (BEC attack signature)
     fn check_payment_change(text: &str) -> Option<(f64, Evidence)> {
         let text_lower = text.to_ascii_lowercase();
-        for kw in module_data().get_list("payment_change_keywords") {
-            if text_lower.contains(kw.as_str()) {
-                return Some((
-                    W_PAYMENT_CHANGE,
-                    Evidence {
-                        description: format!(
-                            "Detected payment change instruction keyword: \"{}\"",
-                            kw
-                        ),
-                        location: Some("body".to_string()),
-                        snippet: Self::find_context(text, kw),
-                    },
-                ));
-            }
-        }
-        None
+        // Aho-Corasick scan: O(n + matches), independent of phrase count.
+        let kw = payment_change_keywords().scan(&text_lower).first_pattern()?;
+        Some((
+            W_PAYMENT_CHANGE,
+            Evidence {
+                description: format!(
+                    "Detected payment change instruction keyword: \"{}\"",
+                    kw
+                ),
+                location: Some("body".to_string()),
+                snippet: Self::find_context(text, &kw),
+            },
+        ))
     }
 
     /// Check for urgency combined with financial entities
@@ -244,22 +242,20 @@ impl TransactionCorrelationModule {
         }
 
         let text_lower = text.to_ascii_lowercase();
-        for kw in module_data().get_list("transaction_urgency_keywords") {
-            if text_lower.contains(kw.as_str()) {
-                return Some((
-                    W_URGENCY_COMBO,
-                    Evidence {
-                        description: format!(
-                            "Urgency keyword \"{}\" co-occurs with financial entities (BEC risk signal)",
-                            kw
-                        ),
-                        location: Some("body".to_string()),
-                        snippet: Self::find_context(text, kw),
-                    },
-                ));
-            }
-        }
-        None
+        let kw = transaction_urgency_keywords()
+            .scan(&text_lower)
+            .first_pattern()?;
+        Some((
+            W_URGENCY_COMBO,
+            Evidence {
+                description: format!(
+                    "Urgency keyword \"{}\" co-occurs with financial entities (BEC risk signal)",
+                    kw
+                ),
+                location: Some("body".to_string()),
+                snippet: Self::find_context(text, &kw),
+            },
+        ))
     }
 
     /// Find a short context window around a keyword match

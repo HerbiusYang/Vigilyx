@@ -214,6 +214,141 @@ pub(super) fn check_auth_results(
 }
 
 // ---------------------------------------------------------------------------
+// 1d. M365 Direct Send abuse detection
+// ---------------------------------------------------------------------------
+//
+// Microsoft 365 Direct Send (a.k.a. unauthenticated SMTP submission to
+// `<tenant>.mail.protection.outlook.com`) lets attackers deliver messages
+// **into** a tenant from arbitrary public IPs while spoofing the recipient's
+// own domain in `From:`. The recipient-side mail flow looks "internal" so
+// external-banner / safety-tip rules are bypassed, even though no
+// authentication has occurred (spf=none, dkim=none, dmarc=none).
+//
+// This check fires only when ALL of the following are observed:
+//   1. EOP/Exchange Online routed the message
+//      (Authentication-Results emitted by `*.protection.outlook.com`)
+//   2. From-domain == one of the recipient (rcpt_to) domains
+//   3. SPF + DKIM + DMARC all failed/none
+//   4. ARC chain did NOT validate (`arc=pass` short-circuits)
+//
+// Confidence levels:
+//   - All four met            → +0.55  category=`direct_send_abuse`
+//   - 1+2+3 met, but no ARC   → +0.30  category=`direct_send_suspected`
+//
+// False-positive guards:
+//   - Internal forwarders that survive `arc=pass` are skipped entirely.
+//   - Skipped if rcpt_to is empty (cannot compare domains).
+//   - Skipped if no Authentication-Results were emitted at all
+//     (no signal to interpret).
+pub(super) fn check_direct_send_abuse(
+    parsed: &ParsedHeaders,
+    ctx: &SecurityContext,
+    total_score: &mut f64,
+    categories: &mut Vec<String>,
+    evidence: &mut Vec<Evidence>,
+) {
+    // Need at least one Authentication-Results header to reason about auth state.
+    if !parsed.auth_results_found {
+        return;
+    }
+
+    // Aggregate auth flags across all Authentication-Results headers.
+    let mut any_eop = false;
+    let mut all_spf_fail = true;
+    let mut all_dkim_fail = true;
+    let mut all_dmarc_fail = true;
+    let mut any_arc_pass = false;
+
+    for ar in &parsed.auth_results {
+        if ar.from_eop {
+            any_eop = true;
+        }
+        if !ar.spf_fail {
+            all_spf_fail = false;
+        }
+        if !ar.dkim_fail {
+            all_dkim_fail = false;
+        }
+        if !ar.dmarc_fail {
+            all_dmarc_fail = false;
+        }
+        if ar.arc_pass {
+            any_arc_pass = true;
+        }
+    }
+
+    // Gate 1: must be EOP-bound mail flow.
+    if !any_eop {
+        return;
+    }
+    // Gate 2: legitimate forwarders short-circuit via ARC.
+    if any_arc_pass {
+        return;
+    }
+    // Gate 3: full auth failure stack required.
+    if !(all_spf_fail && all_dkim_fail && all_dmarc_fail) {
+        return;
+    }
+
+    // Gate 4: From-domain must equal a recipient domain (look-internal spoof).
+    let from_domain = parsed
+        .from_value
+        .as_deref()
+        .and_then(extract_domain)
+        .map(|d| d.to_ascii_lowercase());
+    let Some(from_dom) = from_domain else {
+        return;
+    };
+
+    let rcpt_match = ctx.session.rcpt_to.iter().any(|r| {
+        extract_domain(r)
+            .map(|d| d.to_ascii_lowercase() == from_dom)
+            .unwrap_or(false)
+    });
+    if !rcpt_match {
+        return;
+    }
+
+    // All gates passed. Decide tier:
+    //   - If at least one received public IP exists  → high-confidence (the
+    //     attacker IP is observable in headers).
+    //   - Otherwise → suspected (still strongly indicative of Direct Send,
+    //     but we lack the IP to corroborate).
+    let has_public_ip = !parsed.received_ips.is_empty();
+    let (delta, category, summary) = if has_public_ip {
+        (
+            0.55,
+            "direct_send_abuse",
+            format!(
+                "M365 Direct Send abuse: From={} matches recipient domain, \
+                 SPF/DKIM/DMARC all failed at EOP, no ARC validation. \
+                 Received from public IP(s): {}",
+                from_dom,
+                parsed.received_ips.join(", ")
+            ),
+        )
+    } else {
+        (
+            0.30,
+            "direct_send_suspected",
+            format!(
+                "Suspected M365 Direct Send abuse: From={} matches recipient domain, \
+                 SPF/DKIM/DMARC all failed at EOP (no public Received IP captured)",
+                from_dom
+            ),
+        )
+    };
+
+    *total_score += delta;
+    categories.push(category.to_string());
+    evidence.push(Evidence {
+        description: summary,
+        location: Some("headers:Authentication-Results".to_string()),
+        snippet: Some(from_dom),
+    });
+}
+
+// ---------------------------------------------------------------------------
 // 2. Date anomaly
 // ---------------------------------------------------------------------------
 
@@ -678,5 +813,190 @@ mod tests {
         let hit = check_impersonation_quick("g00gle.com", &internals);
         assert!(hit.is_some());
         assert_eq!(hit.unwrap().similarity_type, "homoglyph");
+    }
+
+    // ------------------------------------------------------------------
+    // Direct Send abuse tests
+    // ------------------------------------------------------------------
+
+    use std::sync::Arc;
+    use vigilyx_core::models::{EmailContent, EmailSession, Protocol};
+
+    fn ds_ctx(rcpt_domain: &str, headers: Vec<(&str, &str)>) -> SecurityContext {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "203.0.113.5".to_string(), // public attacker IP
+            54321,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.mail_from = Some(format!("ceo@{}", rcpt_domain));
+        session.rcpt_to = vec![format!("victim@{}", rcpt_domain)];
+        session.content = EmailContent {
+            headers: headers
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            is_complete: true,
+            ..Default::default()
+        };
+        SecurityContext::new(Arc::new(session))
+    }
+
+    fn parse_for_ctx(ctx: &SecurityContext) -> super::super::parsed::ParsedHeaders {
+        super::super::parsed::ParsedHeaders::extract(
+            &ctx.session.content.headers,
+            &ctx.session.client_ip,
+            ctx.session.mail_from.as_deref(),
+            ctx.session.content.is_complete,
+            &|_| false, // no internal domains for these tests
+        )
+    }
+
+    #[test]
+    fn direct_send_abuse_eop_full_auth_fail_fires_high() {
+        // Attacker delivers via *.mail.protection.outlook.com with a spoofed
+        // From-domain matching the recipient's domain. SPF/DKIM/DMARC all
+        // failed, no ARC. Expect direct_send_abuse with high score.
+        let ctx = ds_ctx(
+            "contoso.com",
+            vec![
+                ("From", "CEO <ceo@contoso.com>"),
+                (
+                    "Received",
+                    "from mail.attacker.tld (203.0.113.5) by contoso-com.mail.protection.outlook.com",
+                ),
+                (
+                    "Authentication-Results",
+                    "contoso-com.mail.protection.outlook.com; spf=none; dkim=none; dmarc=none",
+                ),
+            ],
+        );
+        let parsed = parse_for_ctx(&ctx);
+        let mut score = 0.0;
+        let mut cats = vec![];
+        let mut ev = vec![];
+        check_direct_send_abuse(&parsed, &ctx, &mut score, &mut cats, &mut ev);
+        assert!(
+            cats.iter().any(|c| c == "direct_send_abuse"),
+            "expected direct_send_abuse, cats={:?} ev={:?}",
+            cats,
+            ev
+        );
+        assert!(score >= 0.50, "score should be >=0.50, got {}", score);
+    }
+
+    #[test]
+    fn direct_send_arc_pass_clears_signal() {
+        // Same EOP + spoof scenario but a legitimate forwarder produced
+        // arc=pass. Must NOT fire (would be a false positive on mailing
+        // lists / forwarders).
+        let ctx = ds_ctx(
+            "contoso.com",
+            vec![
+                ("From", "CEO <ceo@contoso.com>"),
+                (
+                    "Authentication-Results",
+                    "contoso-com.mail.protection.outlook.com; spf=none; dkim=none; dmarc=none; arc=pass",
+                ),
+            ],
+        );
+        let parsed = parse_for_ctx(&ctx);
+        let mut score = 0.0;
+        let mut cats = vec![];
+        let mut ev = vec![];
+        check_direct_send_abuse(&parsed, &ctx, &mut score, &mut cats, &mut ev);
+        assert!(cats.is_empty(), "arc=pass must suppress, got {:?}", cats);
+        assert_eq!(score, 0.0);
+    }
+
+    #[test]
+    fn direct_send_dkim_pass_clears_signal() {
+        // SPF and DMARC fail but DKIM passed (e.g. legit cross-tenant
+        // M365 internal forwarding). Must NOT fire.
+        let ctx = ds_ctx(
+            "contoso.com",
+            vec![
+                ("From", "user@contoso.com"),
+                (
+                    "Authentication-Results",
+                    "contoso-com.mail.protection.outlook.com; spf=none; dkim=pass; dmarc=none",
+                ),
+            ],
+        );
+        let parsed = parse_for_ctx(&ctx);
+        let mut score = 0.0;
+        let mut cats = vec![];
+        let mut ev = vec![];
+        check_direct_send_abuse(&parsed, &ctx, &mut score, &mut cats, &mut ev);
+        assert!(
+            cats.is_empty(),
+            "dkim=pass must suppress direct send, got {:?}",
+            cats
+        );
+    }
+
+    #[test]
+    fn direct_send_non_eop_does_not_fire() {
+        // Same auth-fail stack but the receiving MTA is Postfix (not EOP).
+        // Direct Send is an EOP-specific phenomenon; must NOT fire here.
+        let ctx = ds_ctx(
+            "contoso.com",
+            vec![
+                ("From", "user@contoso.com"),
+                (
+                    "Authentication-Results",
+                    "mx1.contoso.com; spf=none; dkim=none; dmarc=none",
+                ),
+            ],
+        );
+        let parsed = parse_for_ctx(&ctx);
+        let mut score = 0.0;
+        let mut cats = vec![];
+        let mut ev = vec![];
+        check_direct_send_abuse(&parsed, &ctx, &mut score, &mut cats, &mut ev);
+        assert!(
+            cats.is_empty(),
+            "non-EOP MTA must not trigger direct_send_abuse, got {:?}",
+            cats
+        );
+    }
+
+    #[test]
+    fn direct_send_from_domain_not_recipient_does_not_fire() {
+        // Auth-fail at EOP but From-domain != recipient domain (regular
+        // external phishing — handled by other checks, not direct_send).
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "203.0.113.5".to_string(),
+            54321,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.mail_from = Some("attacker@evil.tld".to_string());
+        session.rcpt_to = vec!["victim@contoso.com".to_string()];
+        session.content = EmailContent {
+            headers: vec![
+                ("From".to_string(), "attacker@evil.tld".to_string()),
+                (
+                    "Authentication-Results".to_string(),
+                    "contoso-com.mail.protection.outlook.com; spf=none; dkim=none; dmarc=none"
+                        .to_string(),
+                ),
+            ],
+            is_complete: true,
+            ..Default::default()
+        };
+        let ctx = SecurityContext::new(Arc::new(session));
+        let parsed = parse_for_ctx(&ctx);
+        let mut score = 0.0;
+        let mut cats = vec![];
+        let mut ev = vec![];
+        check_direct_send_abuse(&parsed, &ctx, &mut score, &mut cats, &mut ev);
+        assert!(
+            cats.is_empty(),
+            "From != rcpt domain must not trigger, got {:?}",
+            cats
+        );
     }
 }

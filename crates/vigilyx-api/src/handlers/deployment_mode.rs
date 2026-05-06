@@ -24,6 +24,12 @@ use crate::auth::AuthenticatedUser;
 const DEPLOYMENT_MODE_KEY: &str = "deployment_mode";
 
 const HEARTBEAT_TIMEOUT_SECS: i64 = 30;
+const MTA_INLINE_TIMEOUT_MIN_SECS: u64 = 1;
+const MTA_INLINE_TIMEOUT_MAX_SECS: u64 = 60;
+const MTA_MAX_CONNECTIONS_MIN: u64 = 1;
+const MTA_MAX_CONNECTIONS_MAX: u64 = 1000;
+const MTA_PORT_MIN: u64 = 1;
+const MTA_PORT_MAX: u64 = 65535;
 
 fn normalize_mta_config(mta_config: Option<serde_json::Value>) -> Option<serde_json::Value> {
     match mta_config {
@@ -81,6 +87,8 @@ pub struct UpdateDeploymentMode {
     #[serde(default)]
     pub mta_local_domains: Option<String>,
     #[serde(default)]
+    pub mta_trusted_upstream_cidrs: Option<String>,
+    #[serde(default)]
     pub mta_dlp_enabled: Option<bool>,
     #[serde(default)]
     pub mta_dlp_action: Option<String>,
@@ -131,6 +139,7 @@ pub async fn update_deployment_mode(
             }
         }
     }
+    normalize_mta_numeric_bounds(&mut merged);
 
     if let Some(host) = merged
         .get("mta_downstream_host")
@@ -213,6 +222,32 @@ pub async fn update_deployment_mode(
 
     let resolved = resolve_deployment_mode(&state).await;
     ApiResponse::ok(resolved).into_response()
+}
+
+fn clamp_json_u64(config: &mut serde_json::Value, key: &str, min: u64, max: u64) {
+    let Some(value) = config.get(key).and_then(|value| value.as_u64()) else {
+        return;
+    };
+    let clamped = value.clamp(min, max);
+    if let Some(base) = config.as_object_mut() {
+        base.insert(key.to_string(), serde_json::json!(clamped));
+    }
+}
+
+fn normalize_mta_numeric_bounds(config: &mut serde_json::Value) {
+    clamp_json_u64(config, "mta_downstream_port", MTA_PORT_MIN, MTA_PORT_MAX);
+    clamp_json_u64(
+        config,
+        "mta_inline_timeout_secs",
+        MTA_INLINE_TIMEOUT_MIN_SECS,
+        MTA_INLINE_TIMEOUT_MAX_SECS,
+    );
+    clamp_json_u64(
+        config,
+        "mta_max_connections",
+        MTA_MAX_CONNECTIONS_MIN,
+        MTA_MAX_CONNECTIONS_MAX,
+    );
 }
 
 /// Check if a heartbeat timestamp is within HEARTBEAT_TIMEOUT_SECS.
@@ -371,6 +406,21 @@ mod tests {
 
         assert_eq!(config["mta_fail_open"], serde_json::Value::Bool(false));
         assert_eq!(config["mta_downstream_host"], "mail.example.com");
+    }
+
+    #[test]
+    fn test_normalize_mta_numeric_bounds_clamps_operational_limits() {
+        let mut config = serde_json::json!({
+            "mta_downstream_port": 0,
+            "mta_inline_timeout_secs": 600,
+            "mta_max_connections": 50_000
+        });
+
+        normalize_mta_numeric_bounds(&mut config);
+
+        assert_eq!(config["mta_downstream_port"], 1);
+        assert_eq!(config["mta_inline_timeout_secs"], 60);
+        assert_eq!(config["mta_max_connections"], 1000);
     }
 
     #[test]

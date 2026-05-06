@@ -221,23 +221,11 @@ impl UrlFetcher {
             };
         }
 
-        // 4. readGet body (limitsize)
-        let body = match response.bytes().await {
-            Ok(b) => {
-                if b.len() as u64 > self.config.max_response_bytes {
-                    return FetchResult {
-                        url: url.to_string(),
-                        final_url,
-                        status_code,
-                        content_type,
-                        page_text: String::new(),
-                        page_title: None,
-                        form_analysis: FormAnalysis::default(),
-                        error: Some("Response body exceeded size limit".to_string()),
-                    };
-                }
-                String::from_utf8_lossy(&b).to_string()
-            }
+        // 4. Stream body with a hard cap. `Content-Length` is advisory only:
+        // chunked or decoded responses can exceed it, so enforce the limit while
+        // reading instead of buffering the whole body first.
+        let body = match read_limited_response(response, self.config.max_response_bytes).await {
+            Ok(b) => String::from_utf8_lossy(&b).to_string(),
             Err(e) => {
                 return FetchResult {
                     url: url.to_string(),
@@ -319,6 +307,30 @@ impl UrlFetcher {
 
         (text, title, form_analysis)
     }
+}
+
+async fn read_limited_response(
+    mut response: reqwest::Response,
+    max_response_bytes: u64,
+) -> Result<Vec<u8>, String> {
+    let max = usize::try_from(max_response_bytes).unwrap_or(usize::MAX - 1);
+    let mut body = Vec::with_capacity(max.min(64 * 1024));
+
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| format!("Failed to read body: {}", e))?
+    {
+        if body.len().saturating_add(chunk.len()) > max {
+            return Err(format!(
+                "Response body exceeded size limit: max {} bytes",
+                max_response_bytes
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    Ok(body)
 }
 
 fn validate_fetch_url(url: &str, skip_private_ips: bool) -> Result<(), String> {
@@ -436,7 +448,24 @@ pub fn check_domain_keywords(domain: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_fetch_url;
+    use super::{FetchConfig, UrlFetcher, validate_fetch_url};
+    use flate2::{Compression, write::GzEncoder};
+    use std::io::Write;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn spawn_one_response_server(
+        response: Vec<u8>,
+    ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 1024];
+            let _ = socket.read(&mut request).await;
+            socket.write_all(&response).await.unwrap();
+        });
+        (addr, server)
+    }
 
     #[test]
     fn blocks_localhost_hostname() {
@@ -469,5 +498,97 @@ mod tests {
     fn allows_public_https_url() {
         let result = validate_fetch_url("https://203.0.113.10/login?next=%2Fmail", true);
         assert!(result.is_ok(), "public URL should be allowed: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn aborts_chunked_response_when_decoded_body_exceeds_limit() {
+        let (addr, server) = spawn_one_response_server(
+            b"HTTP/1.1 200 OK\r\n\
+              Content-Type: text/plain\r\n\
+              Transfer-Encoding: chunked\r\n\r\n\
+              5\r\nabcde\r\n\
+              6\r\nabcdef\r\n\
+              0\r\n\r\n"
+                .to_vec(),
+        )
+        .await;
+
+        let fetcher = UrlFetcher::new(FetchConfig {
+            timeout_secs: 5,
+            max_redirects: 0,
+            max_response_bytes: 10,
+            skip_private_ips: false,
+        });
+        let result = fetcher.fetch(&format!("http://{addr}/")).await;
+        server.await.unwrap();
+
+        let error = result.error.unwrap_or_default();
+        assert!(
+            error.contains("exceeded size limit"),
+            "expected response size error, got {error:?}"
+        );
+        assert!(result.page_text.is_empty());
+    }
+
+    #[tokio::test]
+    async fn accepts_chunked_response_at_exact_decoded_limit() {
+        let (addr, server) = spawn_one_response_server(
+            b"HTTP/1.1 200 OK\r\n\
+              Content-Type: text/plain\r\n\
+              Transfer-Encoding: chunked\r\n\r\n\
+              5\r\nabcde\r\n\
+              5\r\n12345\r\n\
+              0\r\n\r\n"
+                .to_vec(),
+        )
+        .await;
+
+        let fetcher = UrlFetcher::new(FetchConfig {
+            timeout_secs: 5,
+            max_redirects: 0,
+            max_response_bytes: 10,
+            skip_private_ips: false,
+        });
+        let result = fetcher.fetch(&format!("http://{addr}/")).await;
+        server.await.unwrap();
+
+        assert_eq!(result.error, None);
+        assert_eq!(result.page_text, "abcde12345");
+    }
+
+    #[tokio::test]
+    async fn aborts_compressed_response_when_decoded_body_exceeds_limit() {
+        let decoded = vec![b'A'; 128];
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&decoded).unwrap();
+        let compressed = encoder.finish().unwrap();
+        assert!(
+            compressed.len() < 80,
+            "test fixture should be small enough to prove decoded-size enforcement"
+        );
+
+        let mut response = b"HTTP/1.1 200 OK\r\n\
+                             Content-Type: text/plain\r\n\
+                             Content-Encoding: gzip\r\n\
+                             Connection: close\r\n\r\n"
+            .to_vec();
+        response.extend_from_slice(&compressed);
+        let (addr, server) = spawn_one_response_server(response).await;
+
+        let fetcher = UrlFetcher::new(FetchConfig {
+            timeout_secs: 5,
+            max_redirects: 0,
+            max_response_bytes: 80,
+            skip_private_ips: false,
+        });
+        let result = fetcher.fetch(&format!("http://{addr}/")).await;
+        server.await.unwrap();
+
+        let error = result.error.unwrap_or_default();
+        assert!(
+            error.contains("exceeded size limit") || error.contains("Response too large"),
+            "expected decoded response size error, got {error:?}"
+        );
+        assert!(result.page_text.is_empty());
     }
 }

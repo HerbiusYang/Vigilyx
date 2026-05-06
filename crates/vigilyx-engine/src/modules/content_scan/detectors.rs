@@ -15,6 +15,10 @@ use super::{
 use crate::context::SecurityContext;
 use crate::module::Evidence;
 use crate::module_data::module_data;
+use crate::matcher::{
+    account_security_actions, account_security_threats, subject_threat_keywords,
+    subsidy_keywords_body, subsidy_keywords_subject, subsidy_urgency_body,
+};
 use crate::modules::common::{extract_domain_from_url, is_probable_non_clickable_render_asset_url};
 
 static RE_VERIFICATION_CODE: LazyLock<Regex> =
@@ -483,14 +487,8 @@ pub(super) fn detect_account_security_phishing(
         let body_lower = normalize_text(&body.to_lowercase());
 
         // AccountSecurity Keywords (: Description + line)
-        let has_threat = module_data()
-            .get_list("account_security_threat_phrases_body")
-            .iter()
-            .any(|p| body_lower.contains(p.as_str()));
-        let has_action = module_data()
-            .get_list("account_security_action_phrases_body")
-            .iter()
-            .any(|p| body_lower.contains(p.as_str()));
+        let has_threat = account_security_threats().is_match(&body_lower);
+        let has_action = account_security_actions().is_match(&body_lower);
         if has_threat && has_action {
             // DomainSendAccountSecurity email - according toDomainTrusted
             // TrustedDomain (if microsoft.com) possibly ofSecurity, Low
@@ -519,10 +517,7 @@ pub(super) fn detect_account_security_phishing(
     // body account_security_phishing,.
     if let Some(ref subject) = ctx.session.subject {
         let sub_lower = normalize_text(&subject.to_lowercase());
-        let has_subject_threat = module_data()
-            .get_list("subject_threat_keywords")
-            .iter()
-            .any(|kw| sub_lower.contains(kw.as_str()));
+        let has_subject_threat = subject_threat_keywords().is_match(&sub_lower);
         if has_subject_threat {
             let domain_str = sender_domain.as_deref().unwrap_or("");
             let is_well_known = crate::modules::link_scan::is_well_known_safe_domain(domain_str);
@@ -574,15 +569,8 @@ pub(super) fn detect_subsidy_fraud(
     // Signature: benefit keywords + urgency/deadline + suspicious URL or fake authority
     if let Some(body) = detector_body_fallback_text(ctx, body_for_cross) {
         let body_lower = normalize_text(&body.to_lowercase());
-        let has_subsidy = module_data()
-            .get_list("subsidy_keywords_body")
-            .iter()
-            .filter(|k| body_lower.contains(k.as_str()))
-            .count();
-        let has_urgency = module_data()
-            .get_list("subsidy_urgency_keywords_body")
-            .iter()
-            .any(|k| body_lower.contains(k.as_str()));
+        let has_subsidy = subsidy_keywords_body().scan(&body_lower).distinct_count();
+        let has_urgency = subsidy_urgency_body().is_match(&body_lower);
         // 2+ subsidy keywords + urgency = strong fraud signal
         // Score 0.60: after BPA conversion (x0.85 confidence) and consensus gating
         // (x0.50 for 2-engine support), floor = 0.60x0.85x0.50 = 0.255 which,
@@ -606,11 +594,7 @@ pub(super) fn detect_subsidy_fraud(
     // (body)
     if let Some(ref subject) = ctx.session.subject {
         let sub_lower = normalize_text(&subject.to_lowercase());
-        let has_subsidy = module_data()
-            .get_list("subsidy_keywords_subject")
-            .iter()
-            .filter(|k| sub_lower.contains(k.as_str()))
-            .count();
+        let has_subsidy = subsidy_keywords_subject().scan(&sub_lower).distinct_count();
         if has_subsidy >= 2 {
             *total_score += 0.45;
             categories.push("subsidy_fraud".to_string());

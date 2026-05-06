@@ -27,7 +27,32 @@ Two deployment modes: **Mirror** (passive network capture) and **MTA Proxy** (in
 ### Architecture
 
 ```text
-Default runtime (`docker compose up -d`)
+Core control plane (`docker compose up -d`)
+
+                           optional integrations
+                    +----------+----------+----------+
+                    |    AI    |  ClamAV  | Sandbox  |
+                    +----------+----------+----------+
+
+┌──────────────────────────────────────────────────────────────┐
+│ vigilyx                                                     │
+│ API + frontend control plane                                │
+│ - auth, REST, WebSocket, settings, SOAR                     │
+│ - serves the React UI                                       │
+│ - persists sessions, verdicts, stats, and config state      │
+└───────────────┬──────────────────────────────────────┬───────┘
+                │                                      │
+                │ control topics / API auth            │ SQL
+                │                                      │
+┌───────────────▼───────────────┐        ┌─────────────▼─────────────┐
+│ Valkey / Redis                │        │ PostgreSQL                │
+│ Streams + Pub/Sub             │        │ sessions / verdicts       │
+│ transport + control bus       │        │ config / audit / state    │
+└───────────────────────────────┘        └───────────────────────────┘
+```
+
+```text
+Mirror deployment (`docker compose --profile mirror up -d` or `./deploy.sh`)
 
                            optional integrations
                     +----------+----------+----------+
@@ -37,31 +62,28 @@ Default runtime (`docker compose up -d`)
                            \         |         /
                             v        v        v
 ┌──────────────────────────────────────────────────────────────┐
-│ vigilyx                                                     │
-│ API + frontend + standalone Engine                          │
-│ - consumes session streams and engine control topics        │
-│ - persists sessions, verdicts, stats, and config state      │
-│ - pushes WebSocket updates                                  │
-│ - executes SOAR / disposition flows                         │
+│ vigilyx-engine-standalone                                   │
+│ Dedicated analysis engine                                   │
+│ - consumes Redis Streams                                    │
+│ - runs parsing, detection, fusion, DLP, and SOAR hooks      │
 └───────────────┬──────────────────────────────────────┬───────┘
                 │                                      │
-                │ SESSION_* / STATS_* / ENGINE_*       │ SQL
+                │ SESSION_* / ENGINE_*                 │ SQL
                 │ Streams + Pub/Sub                    │
                 │                                      │
 ┌───────────────▼───────────────┐        ┌─────────────▼─────────────┐
 │ Valkey / Redis                │        │ PostgreSQL                │
 │ Streams + Pub/Sub             │        │ sessions / verdicts       │
 │ transport + control bus       │        │ config / audit / state    │
-└───────────────▲───────────────┘        └───────────────────────────┘
-                │
-                │ mirror ingress only
-                │
-┌───────────────┴───────────────┐
-│ vigilyx-sniffer               │
-│ libpcap capture               │
-│ -> Streams (primary)          │
-│ -> Pub/Sub (shadow/control)   │
-└───────────────────────────────┘
+└───────────────▲───────────────┘        └─────────────▲─────────────┘
+                │                                      │
+                │ mirror ingress only                  │
+┌───────────────┴───────────────┐        ┌─────────────┴─────────────┐
+│ vigilyx-sniffer               │        │ vigilyx                   │
+│ libpcap capture               │        │ API + frontend control    │
+│ -> Streams (primary)          │        │ plane                     │
+│ -> Pub/Sub (shadow/control)   │        │                           │
+└───────────────────────────────┘        └───────────────────────────┘
 ```
 
 ```text
@@ -83,8 +105,9 @@ Mail client / upstream MTA
 ```
 
 - `SOAR` is library logic executed inside the engine and API flows, not a standalone container.
-- `AI`, `ClamAV`, and `Sandbox` are engine-side integrations used by the standalone engine and the embedded MTA engine when enabled.
-- In the current `docker-compose.yml` defaults, `docker compose --profile mta up -d` adds `vigilyx-mta`; it does not automatically disable the standalone engine inside `vigilyx`. The `STANDALONE_ENGINE` environment variable (default `true`) controls whether the main `vigilyx` container runs its embedded engine; set it to `false` when using the standalone `engine` profile (`deploy.sh --engine` does this automatically).
+- `AI`, `ClamAV`, and `Sandbox` are engine-side integrations used by the dedicated mirror-mode engine and the embedded MTA engine when enabled.
+- `docker compose up -d` alone starts only the control-plane services (`vigilyx`, `postgres`, `redis`). Add `--profile mirror` for passive capture or `--profile mta` for inline SMTP.
+- `STANDALONE_ENGINE` remains only for backward compatibility. Current compose defaults and `deploy.sh` normalize it to `false`, so mirror mode uses the dedicated `engine` container and MTA mode uses the embedded engine inside `vigilyx-mta`.
 
 ### Features
 
@@ -102,25 +125,51 @@ Mail client / upstream MTA
 
 ### Quick Start
 
+Recommended remote-first workflow:
+
+```bash
+# 1. Point deploy.sh at your target host
+cp deploy.conf.example deploy.conf
+$EDITOR deploy.conf
+
+# 2. Pre-pull the pinned Rust builder image on the target host
+ssh root@<server> "docker pull rust:1.95.0-bookworm"
+
+# 3. One-time initialization (sync source, generate remote .env if missing, create build container)
+./deploy.sh --init
+
+# 4. Review the remote runtime configuration
+ssh root@<server> "cd <repo-root> && vi deploy/docker/.env"
+# Mirror mode: set SNIFFER_INTERFACE
+# Optional: AI_ENABLED=true, HF_ENDPOINT=https://hf-mirror.com
+# MTA mode: set MTA_DOWNSTREAM_HOST, MTA_DOWNSTREAM_PORT, and MTA_LOCAL_DOMAINS
+
+# 5. Deploy the topology you want
+./deploy.sh                 # mirror mode (default developer path)
+./deploy.sh --backend       # backend/API + mirror engine image refresh
+./deploy.sh --frontend      # frontend only
+./deploy.sh --sniffer       # sniffer only
+./deploy.sh --mta           # inline MTA deployment
+
+# 6. Release-grade packaging
+./deploy.sh --production
+./deploy.sh --production --mta
+```
+
+Manual Docker Compose on the target host is still supported:
+
 ```bash
 # 1. Generate secrets from the project root
 bash scripts/generate-secrets.sh
-# -> creates deploy/docker/.env with random passwords (chmod 600)
 
 # 2. Edit configuration
 vi deploy/docker/.env
-# Required: set SNIFFER_INTERFACE to your capture NIC (for mirror mode)
-# Optional: set AI_ENABLED=true to let the engine call the AI service
-#           Start the AI container separately with `--profile ai`
-# Optional: set HF_ENDPOINT=https://hf-mirror.com for mainland China
-# Optional: set CADDY_TLS_MODE=internal for IP-based HTTPS access
-# Optional: set API_LISTEN=0.0.0.0 only for temporary non-TLS remote testing
 
 # 3. Build and start
 cd deploy/docker
 docker compose build
 
-# Mirror mode
+# Mirror mode (control plane + standalone engine + sniffer)
 docker compose --profile mirror up -d
 
 # Mirror mode + AI
@@ -129,13 +178,11 @@ docker compose --profile mirror --profile ai up -d
 # Mirror mode + bundled TLS
 docker compose --profile mirror --profile tls up -d
 
-# Mirror mode + AI + bundled TLS
-docker compose --profile mirror --profile ai --profile tls up -d
-
 # Inline MTA mode
-# Set MTA_DOWNSTREAM_HOST, MTA_DOWNSTREAM_PORT, and MTA_LOCAL_DOMAINS in .env first
 docker compose --profile mta up -d
 ```
+
+> `docker compose up -d` without a profile only starts the control-plane containers. Use `--profile mirror` or `--profile mta` for an actual traffic-processing deployment.
 
 > **Production**: keep `API_LISTEN=127.0.0.1` and terminate TLS on the host with Caddy or Nginx. See [Deployment Guide](docs/DEPLOYMENT.md).
 >
@@ -153,7 +200,8 @@ Login as `admin` with `API_PASSWORD` from `deploy/docker/.env`.
 
 | Container | Port | Profile | Purpose |
 |-----------|------|---------|---------|
-| `vigilyx` | 8088 | default | API + frontend + standalone engine |
+| `vigilyx` | 8088 | default | API + frontend control plane |
+| `vigilyx-engine-standalone` | - | `mirror` | Dedicated analysis engine for passive deployments |
 | `vigilyx-sniffer` | host net | `mirror` | Packet capture for passive deployments |
 | `vigilyx-mta` | 25 / 465 | `mta` | SMTP proxy relay with embedded engine |
 | `vigilyx-postgres` | 5433 local | default | PostgreSQL persistence |
@@ -243,12 +291,14 @@ ssh root@<server> "docker pull rust:1.95.0-bookworm"
 ./deploy.sh --frontend
 ./deploy.sh --sniffer
 ./deploy.sh --sniffer --config-only
+./deploy.sh --mta
 
 # Release-grade builds
 ./deploy.sh --production
 ./deploy.sh --production --backend
 ./deploy.sh --production --frontend
 ./deploy.sh --production --sniffer
+./deploy.sh --production --mta
 
 # Project site / docs
 cd site
@@ -256,7 +306,7 @@ npm ci
 npm run dev
 ```
 
-`./deploy.sh` defaults to the fast developer path (`release-fast` + `docker-compose.fast.yml`). `./deploy.sh --production` switches back to the full Dockerfiles and Docker-side `cargo --release` image builds. For env/compose/host-tuning adjustments that do not need a rebuild, use `./deploy.sh --config-only` with the relevant component flag.
+`./deploy.sh` defaults to the fast developer path (`release-fast` + `docker-compose.fast.yml`). `./deploy.sh --production` switches back to the full Dockerfiles and Docker-side `cargo --release` image builds. By default it deploys the mirror topology; if the remote deployment mode is pinned to `mta`, `deploy.sh` keeps the MTA image in sync automatically, and `./deploy.sh --mta` forces an inline-proxy rollout. For env/compose/host-tuning adjustments that do not need a rebuild, use `./deploy.sh --config-only` with the relevant component flag.
 
 The public project site lives in `site/` and is published through GitHub Pages with the workflow in `.github/workflows/pages.yml`. For GitHub-hosted Pages, the default URL is `https://herbiusyang.github.io/Vigilyx/`. For a custom domain, set `PAGES_CUSTOM_DOMAIN`, or override `PAGES_SITE_URL` and `PAGES_BASE_PATH` in repository variables.
 

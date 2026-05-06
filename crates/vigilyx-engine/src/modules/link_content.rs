@@ -222,13 +222,7 @@ fn detect_typos(text: &str) -> (f64, Vec<(String, String)>) {
 }
 
 fn contains_any_suspicious_path_keywords(haystack: &str) -> bool {
-    let md = crate::module_data::module_data();
-    for kw in md.get_list("suspicious_path_keywords") {
-        if haystack.contains(kw) {
-            return true;
-        }
-    }
-    false
+    crate::matcher::suspicious_path_keywords().is_match(haystack)
 }
 
 fn domain_matches_official_login_suffix(domain: &str) -> bool {
@@ -394,12 +388,9 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
     let domain_trusted = crate::modules::link_scan::is_trusted_url_domain(url_domain);
 
     let md = crate::module_data::module_data();
-    let mut path_hits: Vec<String> = Vec::new();
-    for kw in md.get_list("suspicious_path_keywords") {
-        if combined_path.contains(kw) {
-            path_hits.push(kw.to_string());
-        }
-    }
+    let path_hits: Vec<String> = crate::matcher::suspicious_path_keywords()
+        .scan(&combined_path)
+        .distinct_patterns();
     if !path_hits.is_empty() {
         let weight = if domain_trusted { 0.02 } else { 0.10 };
         score += (path_hits.len() as f64 * weight).min(0.30);
@@ -654,12 +645,9 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
         }
 
         // Suspicious keywords in fragment
-        let mut frag_hits: Vec<String> = Vec::new();
-        for kw in md.get_list("suspicious_path_keywords") {
-            if frag.contains(kw) {
-                frag_hits.push(kw.to_string());
-            }
-        }
+        let frag_hits: Vec<String> = crate::matcher::suspicious_path_keywords()
+            .scan(frag)
+            .distinct_patterns();
         if !frag_hits.is_empty() {
             score += (frag_hits.len() as f64 * 0.10).min(0.25);
             findings.push((

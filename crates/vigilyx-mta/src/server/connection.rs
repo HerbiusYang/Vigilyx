@@ -433,22 +433,22 @@ impl SmtpConnection {
 
     /// SMTP,
     fn process_command(&mut self, upper: &str, original: &str) -> CmdResponse {
-        if upper.starts_with("QUIT") {
+        if smtp_command_no_args(upper, "QUIT") {
             return CmdResponse::Quit;
         }
 
-        if upper.starts_with("RSET") {
+        if smtp_command_no_args(upper, "RSET") {
             self.reset_transaction();
             return CmdResponse::Reply(250, "2.1.5 OK".into());
         }
 
-        if upper.starts_with("NOOP") {
+        if smtp_command_keyword(upper, "NOOP") {
             return CmdResponse::Reply(250, "2.0.0 OK".into());
         }
 
         match self.state {
             SmtpState::Connected => {
-                if upper.starts_with("EHLO") || upper.starts_with("HELO") {
+                if smtp_command_keyword(upper, "EHLO") || smtp_command_keyword(upper, "HELO") {
                     self.state = SmtpState::Ready;
                     let mut lines = vec![
                         format!("250-{} Hello", self.config.hostname),
@@ -467,7 +467,7 @@ impl SmtpConnection {
                 }
             }
             SmtpState::Ready | SmtpState::MailFrom | SmtpState::RcptTo => {
-                if upper.starts_with("STARTTLS") && self.state == SmtpState::Ready {
+                if smtp_command_no_args(upper, "STARTTLS") && self.state == SmtpState::Ready {
                     if self.tls_active {
                         return CmdResponse::Reply(503, "5.5.1 TLS already active".into());
                     }
@@ -477,7 +477,7 @@ impl SmtpConnection {
                     return CmdResponse::StartTls;
                 }
 
-                if upper.starts_with("EHLO") || upper.starts_with("HELO") {
+                if smtp_command_keyword(upper, "EHLO") || smtp_command_keyword(upper, "HELO") {
                     // EHLO (TLS)
                     self.reset_transaction();
                     let mut lines = vec![
@@ -494,7 +494,7 @@ impl SmtpConnection {
                     return CmdResponse::MultiLine(lines);
                 }
 
-                if upper.starts_with("MAIL FROM:") || upper.starts_with("MAIL FROM :") {
+                if smtp_path_command(upper, "MAIL FROM") {
                     if self.state != SmtpState::Ready {
                         return CmdResponse::Reply(503, "5.5.1 Nested MAIL command".into());
                     }
@@ -517,7 +517,7 @@ impl SmtpConnection {
                     return CmdResponse::Reply(250, "2.1.0 OK".into());
                 }
 
-                if upper.starts_with("RCPT TO:") || upper.starts_with("RCPT TO :") {
+                if smtp_path_command(upper, "RCPT TO") {
                     if self.state == SmtpState::Ready {
                         return CmdResponse::Reply(503, "5.5.1 Need MAIL command first".into());
                     }
@@ -543,7 +543,7 @@ impl SmtpConnection {
                     return CmdResponse::Reply(250, "2.1.5 OK".into());
                 }
 
-                if upper.starts_with("DATA") {
+                if smtp_command_no_args(upper, "DATA") {
                     if self.rcpt_to.is_empty() {
                         return CmdResponse::Reply(503, "5.5.1 Need RCPT command first".into());
                     }
@@ -557,7 +557,7 @@ impl SmtpConnection {
                 }
 
                 // RFC 3030: BDAT <size> [LAST]
-                if upper.starts_with("BDAT") {
+                if smtp_command_keyword(upper, "BDAT") {
                     if self.rcpt_to.is_empty() {
                         return CmdResponse::Reply(503, "5.5.1 Need RCPT command first".into());
                     }
@@ -748,6 +748,25 @@ fn trim_line_end(line: &[u8]) -> &[u8] {
     }
 }
 
+fn smtp_command_keyword(upper: &str, keyword: &str) -> bool {
+    upper == keyword
+        || upper
+            .strip_prefix(keyword)
+            .is_some_and(|rest| rest.starts_with(char::is_whitespace))
+}
+
+fn smtp_command_no_args(upper: &str, keyword: &str) -> bool {
+    upper
+        .strip_prefix(keyword)
+        .is_some_and(|rest| rest.trim().is_empty())
+}
+
+fn smtp_path_command(upper: &str, keyword: &str) -> bool {
+    upper
+        .strip_prefix(keyword)
+        .is_some_and(|rest| rest.trim_start().starts_with(':'))
+}
+
 /// Parse BDAT command arguments: "BDAT <size>" or "BDAT <size> LAST".
 /// Returns (chunk_size, is_last) on success.
 fn parse_bdat_args(upper: &str) -> Result<(usize, bool), &'static str> {
@@ -767,7 +786,12 @@ fn parse_bdat_args(upper: &str) -> Result<(usize, bool), &'static str> {
         (args, false)
     };
 
-    let size: usize = size_str.trim().parse().map_err(|_| "invalid chunk size")?;
+    let size_str = size_str.trim();
+    if size_str.is_empty() || !size_str.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("invalid chunk size");
+    }
+
+    let size: usize = size_str.parse().map_err(|_| "invalid chunk size")?;
 
     if size == 0 && !is_last {
         return Err("chunk size must be positive");
@@ -887,6 +911,7 @@ mod tests {
             },
             outbound: None,
             local_domains: vec!["test.com".into(), "corp.com".into()],
+            trusted_upstream_cidrs: Vec::new(),
             inline_timeout_secs: 8,
             fail_open: true,
             quarantine_threshold: vigilyx_core::security::ThreatLevel::Medium,
@@ -897,6 +922,23 @@ mod tests {
             redis_url: None,
             hostname: "test-mta".into(),
             dlp: crate::dlp::DlpConfig::default(),
+        })
+    }
+
+    fn test_config_with_tls() -> Arc<MtaConfig> {
+        Arc::new(MtaConfig {
+            tls: Some(crate::config::TlsConfig {
+                cert_path: std::path::PathBuf::from("/tmp/test.crt"),
+                key_path: std::path::PathBuf::from("/tmp/test.key"),
+            }),
+            ..(*test_config()).clone()
+        })
+    }
+
+    fn test_config_with_max_message_size(max_message_size: usize) -> Arc<MtaConfig> {
+        Arc::new(MtaConfig {
+            max_message_size,
+            ..(*test_config()).clone()
         })
     }
 
@@ -991,6 +1033,32 @@ mod tests {
         let r = cmd(&mut conn, "DATA");
         assert!(r.contains("354"));
         assert_eq!(conn.state, SmtpState::Data);
+    }
+
+    #[test]
+    fn test_ehlo_resets_partial_mail_transaction() {
+        let config = test_config();
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
+        cmd(&mut conn, "EHLO first");
+        cmd(&mut conn, "MAIL FROM:<sender@test.com>");
+        cmd(&mut conn, "RCPT TO:<rcpt@test.com>");
+        conn.data_buffer.extend_from_slice(b"partial");
+
+        let r = cmd(&mut conn, "EHLO second");
+
+        assert!(r.contains("250-test-mta Hello"));
+        assert_eq!(conn.state, SmtpState::Ready);
+        assert!(conn.mail_from.is_none());
+        assert!(conn.rcpt_to.is_empty());
+        assert!(conn.data_buffer.is_empty());
+        assert!(conn.data_phase_started.is_none());
     }
 
     #[test]
@@ -1139,6 +1207,163 @@ mod tests {
     }
 
     #[test]
+    fn test_smtp_ehlo_advertises_starttls_when_tls_configured() {
+        let config = test_config_with_tls();
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
+        let r = cmd(&mut conn, "EHLO test");
+        assert!(
+            r.contains("STARTTLS"),
+            "TLS-capable EHLO should advertise STARTTLS: {r}"
+        );
+    }
+
+    #[test]
+    fn test_smtp_starttls_with_tls_config_returns_starttls() {
+        let config = test_config_with_tls();
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
+        cmd(&mut conn, "EHLO test");
+        let r = cmd(&mut conn, "STARTTLS");
+        assert_eq!(r, "STARTTLS");
+    }
+
+    #[test]
+    fn test_smtp_starttls_rejected_after_mail_transaction_started() {
+        let config = test_config_with_tls();
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
+        cmd(&mut conn, "EHLO test");
+        cmd(&mut conn, "MAIL FROM:<sender@test.com>");
+
+        let r = cmd(&mut conn, "STARTTLS");
+
+        assert!(r.contains("502"), "STARTTLS mid-transaction must fail: {r}");
+        assert_eq!(conn.state, SmtpState::MailFrom);
+        assert_eq!(conn.mail_from, Some("sender@test.com".into()));
+    }
+
+    #[test]
+    fn test_smtp_rejects_command_keyword_prefix_smuggling() {
+        let config = test_config_with_tls();
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
+
+        let r = cmd(&mut conn, "EHLOX client.test");
+        assert!(r.contains("503"), "EHLOX must not be accepted as EHLO: {r}");
+        assert_eq!(conn.state, SmtpState::Connected);
+
+        let r = cmd(&mut conn, "EHLO client.test");
+        assert!(r.contains("250"));
+        let r = cmd(&mut conn, "STARTTLSNOW");
+        assert!(
+            r.contains("502"),
+            "STARTTLSNOW must not be accepted as STARTTLS: {r}"
+        );
+        assert_eq!(conn.state, SmtpState::Ready);
+
+        let r = cmd(&mut conn, "QUITNOW");
+        assert!(
+            r.contains("502"),
+            "QUITNOW must not be accepted as QUIT: {r}"
+        );
+        assert_eq!(conn.state, SmtpState::Ready);
+    }
+
+    #[test]
+    fn test_smtp_rejects_transaction_command_prefix_smuggling_without_state_change() {
+        let config = test_config();
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
+        cmd(&mut conn, "EHLO client.test");
+        cmd(&mut conn, "MAIL FROM:<sender@test.com>");
+
+        let r = cmd(&mut conn, "RSETNOW");
+        assert!(
+            r.contains("502"),
+            "RSETNOW must not be accepted as RSET: {r}"
+        );
+        assert_eq!(conn.state, SmtpState::MailFrom);
+        assert_eq!(conn.mail_from, Some("sender@test.com".into()));
+
+        cmd(&mut conn, "RCPT TO:<rcpt@test.com>");
+        let r = cmd(&mut conn, "DATAFOO");
+        assert!(
+            r.contains("502"),
+            "DATAFOO must not be accepted as DATA: {r}"
+        );
+        assert_eq!(conn.state, SmtpState::RcptTo);
+        assert!(conn.data_phase_started.is_none());
+
+        let r = cmd(&mut conn, "BDAT5 LAST");
+        assert!(r.contains("502"), "BDAT5 must not be accepted as BDAT: {r}");
+        assert_eq!(conn.state, SmtpState::RcptTo);
+        assert_eq!(conn.bdat_remaining, 0);
+    }
+
+    #[test]
+    fn test_smtp_rejects_mail_and_rcpt_keyword_prefix_smuggling() {
+        let config = test_config();
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
+        cmd(&mut conn, "EHLO client.test");
+
+        let r = cmd(&mut conn, "MAIL FROMX:<sender@test.com>");
+        assert!(
+            r.contains("502"),
+            "MAIL FROMX must not be accepted as MAIL FROM: {r}"
+        );
+        assert_eq!(conn.state, SmtpState::Ready);
+        assert!(conn.mail_from.is_none());
+
+        let r = cmd(&mut conn, "MAIL FROM:<sender@test.com>");
+        assert!(r.contains("250"));
+        let r = cmd(&mut conn, "RCPT TOX:<rcpt@test.com>");
+        assert!(
+            r.contains("502"),
+            "RCPT TOX must not be accepted as RCPT TO: {r}"
+        );
+        assert_eq!(conn.state, SmtpState::MailFrom);
+        assert!(conn.rcpt_to.is_empty());
+    }
+
+    #[test]
     fn test_smtp_rejects_non_local_recipient_domain() {
         let config = test_config();
         let mut conn = SmtpConnection::new(
@@ -1275,14 +1500,14 @@ mod tests {
         conn.mail_from = Some("test@example.com".into());
         conn.rcpt_to = vec!["admin@corp.com".into()];
 
-        let raw =
-            b"From: test@example.com\r\nTo: admin@corp.com\r\nSubject: Hello\r\n\r\nBody text";
+        let raw = b"From: test@example.com\r\nTo: admin@corp.com\r\nSubject: Hello\r\nMessage-ID: <mta-test@example.com>\r\n\r\nBody text";
         let session = conn.build_email_session(raw);
 
         assert_eq!(session.client_ip, "10.0.0.1");
         assert_eq!(session.mail_from, Some("test@example.com".into()));
         assert_eq!(session.rcpt_to, vec!["admin@corp.com"]);
         assert_eq!(session.subject, Some("Hello".into()));
+        assert_eq!(session.message_id, Some("<mta-test@example.com>".into()));
         assert!(session.content.body_text.is_some());
         assert_eq!(session.source, SessionSource::MtaProxy);
         assert_eq!(session.status, SessionStatus::Completed);
@@ -1388,6 +1613,135 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_read_smtp_line_accepts_crlf_split_across_reads() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut writer, reader) = tokio::io::duplex(64);
+        let writer_task = tokio::spawn(async move {
+            writer.write_all(b"EHLO split.test\r").await.unwrap();
+            tokio::task::yield_now().await;
+            writer.write_all(b"\n").await.unwrap();
+        });
+        let mut reader = tokio::io::BufReader::new(reader);
+
+        let line = read_smtp_line(&mut reader, MAX_COMMAND_LEN)
+            .await
+            .expect("split CRLF should be readable")
+            .expect("line should be present");
+
+        assert_eq!(line, b"EHLO split.test\r\n");
+        writer_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_read_smtp_line_rejects_cr_followed_by_non_lf_across_reads() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut writer, reader) = tokio::io::duplex(64);
+        let writer_task = tokio::spawn(async move {
+            writer.write_all(b"EHLO bad\r").await.unwrap();
+            tokio::task::yield_now().await;
+            writer.write_all(b"X").await.unwrap();
+        });
+        let mut reader = tokio::io::BufReader::new(reader);
+
+        let err = read_smtp_line(&mut reader, MAX_COMMAND_LEN)
+            .await
+            .expect_err("CR not followed by LF must be rejected");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidInput);
+        writer_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_handle_enforces_session_lifetime_before_reading_commands() {
+        let (mut client_stream, server_stream) = tokio::io::duplex(1024);
+        let mut server_stream = tokio::io::BufStream::new(server_stream);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config(),
+            false,
+        );
+        conn.session_started = Instant::now() - Duration::from_secs(MAX_SESSION_SECS + 1);
+
+        let results = conn.handle(&mut server_stream, false).await;
+
+        assert!(results.is_empty());
+        let replies = read_available(&mut client_stream).await;
+        assert!(replies.contains("220 test-mta ESMTP Vigilyx MTA\r\n"));
+        assert!(replies.contains("421 4.4.2 Session lifetime exceeded\r\n"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_data_transaction_timeout_resets_partial_message() {
+        let (mut client_stream, server_stream) = tokio::io::duplex(1024);
+        let mut server_stream = tokio::io::BufStream::new(server_stream);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config(),
+            false,
+        );
+        conn.state = SmtpState::Data;
+        conn.mail_from = Some("sender@test.com".into());
+        conn.rcpt_to = vec!["rcpt@test.com".into()];
+        conn.data_buffer.extend_from_slice(b"partial body");
+        conn.data_phase_started =
+            Some(Instant::now() - Duration::from_secs(MAX_DATA_TRANSACTION_SECS + 1));
+
+        let results = conn.handle(&mut server_stream, true).await;
+
+        assert!(results.is_empty());
+        assert_eq!(conn.state, SmtpState::Ready);
+        assert!(conn.mail_from.is_none());
+        assert!(conn.rcpt_to.is_empty());
+        assert!(conn.data_buffer.is_empty());
+        assert!(conn.data_phase_started.is_none());
+        let replies = read_available(&mut client_stream).await;
+        assert!(replies.contains("451 4.4.2 DATA transaction timeout\r\n"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_bdat_transaction_timeout_resets_partial_chunk() {
+        let (mut client_stream, server_stream) = tokio::io::duplex(1024);
+        let mut server_stream = tokio::io::BufStream::new(server_stream);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config(),
+            false,
+        );
+        conn.state = SmtpState::BdatData;
+        conn.mail_from = Some("sender@test.com".into());
+        conn.rcpt_to = vec!["rcpt@test.com".into()];
+        conn.data_buffer.extend_from_slice(b"partial bdat");
+        conn.bdat_remaining = 16;
+        conn.bdat_is_last = true;
+        conn.data_phase_started =
+            Some(Instant::now() - Duration::from_secs(MAX_DATA_TRANSACTION_SECS + 1));
+
+        let results = conn.handle(&mut server_stream, true).await;
+
+        assert!(results.is_empty());
+        assert_eq!(conn.state, SmtpState::Ready);
+        assert!(conn.mail_from.is_none());
+        assert!(conn.rcpt_to.is_empty());
+        assert!(conn.data_buffer.is_empty());
+        assert_eq!(conn.bdat_remaining, 0);
+        assert!(!conn.bdat_is_last);
+        assert!(conn.data_phase_started.is_none());
+        let replies = read_available(&mut client_stream).await;
+        assert!(replies.contains("451 4.4.2 DATA transaction timeout\r\n"));
+    }
+
+    #[tokio::test]
     async fn test_handle_rejects_lf_only_command_terminator() {
         use tokio::io::AsyncWriteExt;
 
@@ -1416,6 +1770,136 @@ mod tests {
 
         let replies = read_available(&mut client_stream).await;
         assert!(replies.contains("500 5.5.2 Line terminator must be CRLF\r\n"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_rejects_cr_only_command_terminator() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut client_stream, server_stream) = tokio::io::duplex(1024);
+        client_stream
+            .write_all(b"EHLO client.test\r")
+            .await
+            .unwrap();
+        client_stream.shutdown().await.unwrap();
+
+        let mut server_stream = tokio::io::BufStream::new(server_stream);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config(),
+            false,
+        );
+
+        let results = conn.handle(&mut server_stream, false).await;
+        assert!(
+            results.is_empty(),
+            "Malformed CR-only command should not yield SMTP events"
+        );
+
+        let replies = read_available(&mut client_stream).await;
+        assert!(replies.contains("500 5.5.2 Line terminator must be CRLF\r\n"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_rejects_invalid_command_encoding() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut client_stream, server_stream) = tokio::io::duplex(1024);
+        client_stream
+            .write_all(&[0xff, 0xfe, b'\r', b'\n'])
+            .await
+            .unwrap();
+        client_stream.shutdown().await.unwrap();
+
+        let mut server_stream = tokio::io::BufStream::new(server_stream);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config(),
+            false,
+        );
+
+        let results = conn.handle(&mut server_stream, false).await;
+        assert!(
+            results.is_empty(),
+            "Invalid-encoding command should not yield SMTP events"
+        );
+
+        let replies = read_available(&mut client_stream).await;
+        assert!(replies.contains("500 5.5.2 Invalid command encoding\r\n"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_rejects_overlong_command_line() {
+        use tokio::io::AsyncWriteExt;
+
+        let mut line = vec![b'A'; MAX_COMMAND_LEN + 1];
+        line.extend_from_slice(b"\r\n");
+
+        let (mut client_stream, server_stream) = tokio::io::duplex(4096);
+        client_stream.write_all(&line).await.unwrap();
+        client_stream.shutdown().await.unwrap();
+
+        let mut server_stream = tokio::io::BufStream::new(server_stream);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config(),
+            false,
+        );
+
+        let results = conn.handle(&mut server_stream, false).await;
+        assert!(
+            results.is_empty(),
+            "Overlong command should terminate handling"
+        );
+
+        let replies = read_available(&mut client_stream).await;
+        assert!(replies.contains("500 5.5.1 Line too long\r\n"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_rejects_overlong_data_line() {
+        use tokio::io::AsyncWriteExt;
+
+        let mut input = Vec::new();
+        input.extend_from_slice(b"EHLO client.test\r\n");
+        input.extend_from_slice(b"MAIL FROM:<sender@test.com>\r\n");
+        input.extend_from_slice(b"RCPT TO:<rcpt@test.com>\r\n");
+        input.extend_from_slice(b"DATA\r\n");
+        input.extend_from_slice(&vec![b'A'; MAX_DATA_LINE_LEN + 1]);
+        input.extend_from_slice(b"\r\n");
+
+        let (mut client_stream, server_stream) = tokio::io::duplex(32768);
+        client_stream.write_all(&input).await.unwrap();
+        client_stream.shutdown().await.unwrap();
+
+        let mut server_stream = tokio::io::BufStream::new(server_stream);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config(),
+            false,
+        );
+
+        let results = conn.handle(&mut server_stream, false).await;
+        assert!(
+            results.is_empty(),
+            "Overlong DATA line should abort the transaction"
+        );
+
+        let replies = read_available(&mut client_stream).await;
+        assert!(replies.contains("354 Start mail input; end with <CRLF>.<CRLF>\r\n"));
+        assert!(replies.contains("554 5.6.0 DATA line too long\r\n"));
     }
 
     // ── RFC 3030 BDAT / CHUNKING tests ────────────────────────────────────
@@ -1475,6 +1959,9 @@ mod tests {
     fn test_parse_bdat_args_invalid_size() {
         assert!(parse_bdat_args("BDAT abc").is_err());
         assert!(parse_bdat_args("BDAT -1").is_err());
+        assert!(parse_bdat_args("BDAT +1").is_err());
+        assert!(parse_bdat_args("BDAT 1.0").is_err());
+        assert!(parse_bdat_args("BDAT 1 LAST EXTRA").is_err());
     }
 
     #[test]
@@ -1619,6 +2106,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_bdat_cumulative_message_too_large_uses_existing_buffer_size() {
+        let config = test_config_with_max_message_size(10);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
+        cmd(&mut conn, "EHLO test");
+        cmd(&mut conn, "MAIL FROM:<sender@test.com>");
+        cmd(&mut conn, "RCPT TO:<rcpt@test.com>");
+        conn.data_buffer.extend_from_slice(b"123456");
+
+        let r = cmd(&mut conn, "BDAT 5 LAST");
+
+        assert!(
+            r.contains("552"),
+            "BDAT cumulative size should include already buffered chunks: {r}"
+        );
+        assert_eq!(conn.state, SmtpState::RcptTo);
+        assert_eq!(conn.bdat_remaining, 0);
+        assert!(!conn.bdat_is_last);
+        assert_eq!(conn.data_buffer, b"123456");
+    }
+
     #[tokio::test]
     async fn test_data_session_stops_at_message_boundary() {
         use tokio::io::AsyncWriteExt;
@@ -1672,6 +2187,558 @@ mod tests {
                 .iter()
                 .any(|result| matches!(result, HandleResult::Closed)),
             "QUIT should be processed on the next handle() call"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_data_session_preserves_message_id_and_resets_transaction() {
+        use tokio::io::AsyncWriteExt;
+
+        let mut input = Vec::new();
+        input.extend_from_slice(b"EHLO client.test\r\n");
+        input.extend_from_slice(b"MAIL FROM:<sender@test.com>\r\n");
+        input.extend_from_slice(b"RCPT TO:<rcpt@test.com>\r\n");
+        input.extend_from_slice(b"DATA\r\n");
+        input.extend_from_slice(
+            b"From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: DATA Test\r\nMessage-ID: <data@test.com>\r\n\r\nHello\r\n.\r\n",
+        );
+
+        let (mut client_stream, server_stream) = tokio::io::duplex(8192);
+        client_stream.write_all(&input).await.unwrap();
+        client_stream.shutdown().await.unwrap();
+
+        let mut server_stream = tokio::io::BufStream::new(server_stream);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config(),
+            false,
+        );
+
+        let results = conn.handle(&mut server_stream, false).await;
+        let Some(HandleResult::Email(session, _raw)) = results
+            .into_iter()
+            .find(|result| matches!(result, HandleResult::Email(_, _)))
+        else {
+            panic!("Expected DATA flow to emit an email result");
+        };
+
+        assert_eq!(session.message_id, Some("<data@test.com>".into()));
+        assert_eq!(conn.state, SmtpState::Ready);
+        assert!(conn.mail_from.is_none());
+        assert!(conn.rcpt_to.is_empty());
+        assert!(conn.data_buffer.is_empty());
+        assert!(conn.data_phase_started.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_data_sessions_are_isolated() {
+        use tokio::io::AsyncWriteExt;
+
+        let config = test_config();
+        let mut handles = Vec::new();
+
+        for idx in 0..64 {
+            let config = Arc::clone(&config);
+            handles.push(tokio::spawn(async move {
+                let subject = format!("Concurrent {idx}");
+                let message_id = format!("<concurrent-{idx}@test.com>");
+                let input = format!(
+                    concat!(
+                        "EHLO client.test\r\n",
+                        "MAIL FROM:<sender@test.com>\r\n",
+                        "RCPT TO:<rcpt@test.com>\r\n",
+                        "DATA\r\n",
+                        "From: sender@test.com\r\n",
+                        "To: rcpt@test.com\r\n",
+                        "Subject: {}\r\n",
+                        "Message-ID: {}\r\n",
+                        "\r\n",
+                        "Body {}\r\n",
+                        ".\r\n"
+                    ),
+                    subject, message_id, idx
+                );
+
+                let (mut client_stream, server_stream) = tokio::io::duplex(8192);
+                client_stream
+                    .write_all(input.as_bytes())
+                    .await
+                    .expect("write concurrent SMTP input");
+                client_stream.shutdown().await.expect("shutdown writer");
+
+                let mut server_stream = tokio::io::BufStream::new(server_stream);
+                let mut conn = SmtpConnection::new(
+                    format!("127.0.0.{}", (idx % 250) + 1),
+                    10000 + idx as u16,
+                    "0.0.0.0".into(),
+                    25,
+                    config,
+                    false,
+                );
+
+                let results = conn.handle(&mut server_stream, false).await;
+                let Some(HandleResult::Email(session, raw)) = results
+                    .into_iter()
+                    .find(|result| matches!(result, HandleResult::Email(_, _)))
+                else {
+                    panic!("Expected concurrent DATA flow {idx} to emit an email result");
+                };
+
+                assert_eq!(session.subject, Some(subject.clone()));
+                assert_eq!(session.message_id, Some(message_id.clone()));
+                assert_eq!(session.mail_from, Some("sender@test.com".into()));
+                assert_eq!(session.rcpt_to, vec!["rcpt@test.com"]);
+                assert!(
+                    raw.windows(subject.len())
+                        .any(|window| window == subject.as_bytes())
+                );
+                assert_eq!(conn.state, SmtpState::Ready);
+                assert!(conn.mail_from.is_none());
+                assert!(conn.rcpt_to.is_empty());
+                raw.len()
+            }));
+        }
+
+        let mut total_bytes = 0usize;
+        for handle in handles {
+            total_bytes += handle.await.expect("concurrent SMTP task should not panic");
+        }
+
+        assert!(
+            total_bytes > 64 * 64,
+            "Concurrent sessions should all return non-empty raw messages"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_mixed_data_and_bdat_sessions_are_isolated() {
+        use std::collections::HashSet;
+        use tokio::io::AsyncWriteExt;
+
+        let config = test_config();
+        let mut handles = Vec::new();
+
+        for idx in 0..48 {
+            let config = Arc::clone(&config);
+            handles.push(tokio::spawn(async move {
+                let subject = format!("Mixed Concurrent {idx}");
+                let message_id = format!("<mixed-concurrent-{idx}@test.com>");
+                let mut input = Vec::new();
+                input.extend_from_slice(b"EHLO client.test\r\n");
+                input.extend_from_slice(b"MAIL FROM:<sender@test.com>\r\n");
+                input.extend_from_slice(b"RCPT TO:<rcpt@test.com>\r\n");
+
+                let is_bdat = idx % 2 == 1;
+                if is_bdat {
+                    let body = format!(
+                        concat!(
+                            "From: sender@test.com\r\n",
+                            "To: rcpt@test.com\r\n",
+                            "Subject: {}\r\n",
+                            "Message-ID: {}\r\n",
+                            "\r\n",
+                            "BDAT body {}\r\n"
+                        ),
+                        &subject, &message_id, idx
+                    );
+                    input.extend_from_slice(format!("BDAT {} LAST\r\n", body.len()).as_bytes());
+                    input.extend_from_slice(body.as_bytes());
+                } else {
+                    input.extend_from_slice(b"DATA\r\n");
+                    input.extend_from_slice(
+                        format!(
+                            concat!(
+                                "From: sender@test.com\r\n",
+                                "To: rcpt@test.com\r\n",
+                                "Subject: {}\r\n",
+                                "Message-ID: {}\r\n",
+                                "\r\n",
+                                "DATA body {}\r\n",
+                                ".\r\n"
+                            ),
+                            &subject, &message_id, idx
+                        )
+                        .as_bytes(),
+                    );
+                }
+
+                let (mut client_stream, server_stream) =
+                    tokio::io::duplex(input.len().max(8192) + 1024);
+                client_stream
+                    .write_all(&input)
+                    .await
+                    .expect("write mixed concurrent SMTP input");
+                client_stream.shutdown().await.expect("shutdown writer");
+
+                let mut server_stream = tokio::io::BufStream::new(server_stream);
+                let mut conn = SmtpConnection::new(
+                    format!("127.0.1.{}", (idx % 250) + 1),
+                    11000 + idx as u16,
+                    "0.0.0.0".into(),
+                    25,
+                    config,
+                    false,
+                );
+
+                let results = conn.handle(&mut server_stream, false).await;
+                let Some(HandleResult::Email(session, raw)) = results
+                    .into_iter()
+                    .find(|result| matches!(result, HandleResult::Email(_, _)))
+                else {
+                    panic!("Expected mixed concurrent flow {idx} to emit an email result");
+                };
+
+                assert_eq!(session.subject, Some(subject.clone()));
+                assert_eq!(session.message_id, Some(message_id.clone()));
+                assert_eq!(session.mail_from, Some("sender@test.com".into()));
+                assert_eq!(session.rcpt_to, vec!["rcpt@test.com"]);
+                assert_eq!(conn.state, SmtpState::Ready);
+                assert!(conn.data_buffer.is_empty());
+                assert_eq!(conn.bdat_remaining, 0);
+
+                (session.id.to_string(), raw.len(), is_bdat)
+            }));
+        }
+
+        let mut session_ids = HashSet::new();
+        let mut bdat_count = 0usize;
+        let mut data_count = 0usize;
+        let mut total_bytes = 0usize;
+        for handle in handles {
+            let (session_id, raw_len, is_bdat) = handle
+                .await
+                .expect("mixed concurrent task should not panic");
+            assert!(
+                session_ids.insert(session_id),
+                "Concurrent MTA sessions must receive unique session IDs"
+            );
+            total_bytes += raw_len;
+            if is_bdat {
+                bdat_count += 1;
+            } else {
+                data_count += 1;
+            }
+        }
+
+        assert_eq!(data_count, 24);
+        assert_eq!(bdat_count, 24);
+        assert!(
+            total_bytes > 48 * 64,
+            "Mixed concurrent DATA/BDAT sessions should return non-empty raw messages"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_concurrent_valid_and_malformed_sessions_do_not_cross_contaminate() {
+        use tokio::io::AsyncWriteExt;
+
+        let normal_config = test_config();
+        let small_message_config = test_config_with_max_message_size(96);
+        let mut handles = Vec::new();
+
+        for idx in 0..40 {
+            let config = if idx % 5 == 2 {
+                Arc::clone(&small_message_config)
+            } else {
+                Arc::clone(&normal_config)
+            };
+            handles.push(tokio::spawn(async move {
+                let valid_subject = format!("Valid Concurrent {idx}");
+                let input = match idx % 5 {
+                    0 => {
+                        let mut input = Vec::new();
+                        input.extend_from_slice(b"EHLO ");
+                        input.extend_from_slice(&vec![b'A'; MAX_COMMAND_LEN + 8]);
+                        input.extend_from_slice(b"\r\n");
+                        input
+                    }
+                    1 => b"EHLO invalid-lf\n".to_vec(),
+                    2 => {
+                        let mut input = Vec::new();
+                        input.extend_from_slice(b"EHLO client.test\r\n");
+                        input.extend_from_slice(b"MAIL FROM:<sender@test.com>\r\n");
+                        input.extend_from_slice(b"RCPT TO:<rcpt@test.com>\r\n");
+                        input.extend_from_slice(b"DATA\r\n");
+                        input.extend_from_slice(b"Subject: Too Large\r\n\r\n");
+                        input.extend_from_slice(&vec![b'X'; 256]);
+                        input.extend_from_slice(b"\r\n.\r\n");
+                        input
+                    }
+                    _ => format!(
+                        concat!(
+                            "EHLO client.test\r\n",
+                            "MAIL FROM:<sender@test.com>\r\n",
+                            "RCPT TO:<rcpt@test.com>\r\n",
+                            "DATA\r\n",
+                            "From: sender@test.com\r\n",
+                            "To: rcpt@test.com\r\n",
+                            "Subject: {}\r\n",
+                            "Message-ID: <valid-concurrent-{}@test.com>\r\n",
+                            "\r\n",
+                            "Clean body {}\r\n",
+                            ".\r\n"
+                        ),
+                        &valid_subject, idx, idx
+                    )
+                    .into_bytes(),
+                };
+
+                let (mut client_stream, server_stream) =
+                    tokio::io::duplex(input.len().max(8192) + 1024);
+                client_stream
+                    .write_all(&input)
+                    .await
+                    .expect("write concurrent malformed SMTP input");
+                client_stream.shutdown().await.expect("shutdown writer");
+
+                let mut server_stream = tokio::io::BufStream::new(server_stream);
+                let mut conn = SmtpConnection::new(
+                    format!("127.0.2.{}", (idx % 250) + 1),
+                    12000 + idx as u16,
+                    "0.0.0.0".into(),
+                    25,
+                    config,
+                    false,
+                );
+
+                let results = conn.handle(&mut server_stream, false).await;
+                let replies = read_available(&mut client_stream).await;
+                let email_result = results
+                    .into_iter()
+                    .find(|result| matches!(result, HandleResult::Email(_, _)));
+
+                match idx % 5 {
+                    0 => {
+                        assert!(email_result.is_none());
+                        assert!(
+                            replies.contains("500 5.5.1 Line too long\r\n"),
+                            "Overlong command should be rejected without affecting other sessions: {replies}"
+                        );
+                        false
+                    }
+                    1 => {
+                        assert!(email_result.is_none());
+                        assert!(
+                            replies.contains("500 5.5.2 Line terminator must be CRLF\r\n"),
+                            "Bare-LF command should be rejected without affecting other sessions: {replies}"
+                        );
+                        false
+                    }
+                    2 => {
+                        assert!(email_result.is_none());
+                        assert!(
+                            replies.contains("552 5.3.4 Message too large\r\n"),
+                            "Oversized DATA should be rejected without affecting other sessions: {replies}"
+                        );
+                        false
+                    }
+                    _ => {
+                        let Some(HandleResult::Email(session, raw)) = email_result else {
+                            panic!("Expected valid concurrent flow {idx} to emit an email result");
+                        };
+                        assert_eq!(session.subject, Some(valid_subject.clone()));
+                        assert_eq!(
+                            session.message_id,
+                            Some(format!("<valid-concurrent-{idx}@test.com>"))
+                        );
+                        assert!(
+                            raw.windows(valid_subject.len())
+                                .any(|window| window == valid_subject.as_bytes())
+                        );
+                        true
+                    }
+                }
+            }));
+        }
+
+        let mut valid_count = 0usize;
+        let mut rejected_count = 0usize;
+        for handle in handles {
+            if handle
+                .await
+                .expect("valid/malformed concurrent task should not panic")
+            {
+                valid_count += 1;
+            } else {
+                rejected_count += 1;
+            }
+        }
+
+        assert_eq!(valid_count, 16);
+        assert_eq!(rejected_count, 24);
+    }
+
+    #[tokio::test]
+    async fn test_data_session_unstuffs_dot_lines_without_terminating() {
+        use tokio::io::AsyncWriteExt;
+
+        let mut input = Vec::new();
+        input.extend_from_slice(b"EHLO client.test\r\n");
+        input.extend_from_slice(b"MAIL FROM:<sender@test.com>\r\n");
+        input.extend_from_slice(b"RCPT TO:<rcpt@test.com>\r\n");
+        input.extend_from_slice(b"DATA\r\n");
+        input.extend_from_slice(
+            b"From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: Dot Stuff\r\nMessage-ID: <dot@test.com>\r\n\r\n..leading dot\r\n...two leading dots\r\n.\r\n",
+        );
+
+        let (mut client_stream, server_stream) = tokio::io::duplex(8192);
+        client_stream.write_all(&input).await.unwrap();
+        client_stream.shutdown().await.unwrap();
+
+        let mut server_stream = tokio::io::BufStream::new(server_stream);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config(),
+            false,
+        );
+
+        let results = conn.handle(&mut server_stream, false).await;
+        let Some(HandleResult::Email(session, raw)) = results
+            .into_iter()
+            .find(|result| matches!(result, HandleResult::Email(_, _)))
+        else {
+            panic!("Expected DATA flow to emit an email result");
+        };
+
+        assert_eq!(session.subject, Some("Dot Stuff".into()));
+        let raw_text = String::from_utf8(raw).expect("test raw email should be utf-8");
+        assert!(raw_text.contains("\r\n.leading dot\r\n"));
+        assert!(raw_text.contains("\r\n..two leading dots\r\n"));
+        assert!(!raw_text.contains("\r\n..leading dot\r\n"));
+        assert!(!raw_text.contains("\r\n...two leading dots\r\n"));
+
+        let replies = read_available(&mut client_stream).await;
+        assert!(replies.contains("354 Start mail input; end with <CRLF>.<CRLF>\r\n"));
+    }
+
+    #[tokio::test]
+    async fn test_data_message_too_large_resets_and_allows_fresh_transaction() {
+        use tokio::io::AsyncWriteExt;
+
+        let mut input = Vec::new();
+        input.extend_from_slice(b"EHLO client.test\r\n");
+        input.extend_from_slice(b"MAIL FROM:<oversize@test.com>\r\n");
+        input.extend_from_slice(b"RCPT TO:<rcpt@test.com>\r\n");
+        input.extend_from_slice(b"DATA\r\n");
+        input.extend_from_slice(b"Subject: Oversize\r\n\r\n");
+        let oversized_line = [b'A'; 256];
+        input.extend_from_slice(&oversized_line);
+        input.extend_from_slice(b"\r\n");
+        input.extend_from_slice(b"MAIL FROM:<fresh@test.com>\r\n");
+        input.extend_from_slice(b"RCPT TO:<rcpt@test.com>\r\n");
+        input.extend_from_slice(b"DATA\r\n");
+        input.extend_from_slice(
+            b"From: fresh@test.com\r\nTo: rcpt@test.com\r\nSubject: Fresh After Oversize\r\nMessage-ID: <fresh-after-oversize@test.com>\r\n\r\nClean body\r\n.\r\n",
+        );
+
+        let (mut client_stream, server_stream) = tokio::io::duplex(16384);
+        client_stream.write_all(&input).await.unwrap();
+        client_stream.shutdown().await.unwrap();
+
+        let mut server_stream = tokio::io::BufStream::new(server_stream);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config_with_max_message_size(192),
+            false,
+        );
+
+        let results = conn.handle(&mut server_stream, false).await;
+        let Some(HandleResult::Email(session, raw)) = results
+            .into_iter()
+            .find(|result| matches!(result, HandleResult::Email(_, _)))
+        else {
+            panic!("Expected fresh DATA flow to emit an email result after oversize reset");
+        };
+
+        assert_eq!(session.mail_from, Some("fresh@test.com".into()));
+        assert_eq!(session.subject, Some("Fresh After Oversize".into()));
+        assert_eq!(
+            session.message_id,
+            Some("<fresh-after-oversize@test.com>".into())
+        );
+        let raw_text = String::from_utf8(raw).expect("test raw email should be utf-8");
+        assert!(raw_text.contains("Subject: Fresh After Oversize"));
+        assert!(!raw_text.contains("Subject: Oversize"));
+
+        let replies = read_available(&mut client_stream).await;
+        assert!(
+            replies.contains("552 5.3.4 Message too large\r\n"),
+            "oversized DATA should be rejected before fresh transaction: {replies}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_data_session_supports_second_message_on_same_connection() {
+        use tokio::io::AsyncWriteExt;
+
+        let mut input = Vec::new();
+        input.extend_from_slice(b"EHLO client.test\r\n");
+        input.extend_from_slice(b"MAIL FROM:<first@test.com>\r\n");
+        input.extend_from_slice(b"RCPT TO:<rcpt@test.com>\r\n");
+        input.extend_from_slice(b"DATA\r\n");
+        input.extend_from_slice(
+            b"From: first@test.com\r\nTo: rcpt@test.com\r\nSubject: First\r\nMessage-ID: <first@test.com>\r\n\r\nOne\r\n.\r\n",
+        );
+        input.extend_from_slice(b"MAIL FROM:<second@test.com>\r\n");
+        input.extend_from_slice(b"RCPT TO:<rcpt@test.com>\r\n");
+        input.extend_from_slice(b"DATA\r\n");
+        input.extend_from_slice(
+            b"From: second@test.com\r\nTo: rcpt@test.com\r\nSubject: Second\r\nMessage-ID: <second@test.com>\r\n\r\nTwo\r\n.\r\n",
+        );
+        input.extend_from_slice(b"QUIT\r\n");
+
+        let (mut client_stream, server_stream) = tokio::io::duplex(16384);
+        client_stream.write_all(&input).await.unwrap();
+        client_stream.shutdown().await.unwrap();
+
+        let mut server_stream = tokio::io::BufStream::new(server_stream);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config(),
+            false,
+        );
+
+        let first_results = conn.handle(&mut server_stream, false).await;
+        let Some(HandleResult::Email(first_session, _)) = first_results
+            .into_iter()
+            .find(|result| matches!(result, HandleResult::Email(_, _)))
+        else {
+            panic!("Expected first DATA flow to emit an email result");
+        };
+        assert_eq!(first_session.subject, Some("First".into()));
+        assert_eq!(first_session.message_id, Some("<first@test.com>".into()));
+
+        let first_replies = read_available(&mut client_stream).await;
+        assert!(first_replies.contains("354 Start mail input; end with <CRLF>.<CRLF>\r\n"));
+
+        let second_results = conn.handle(&mut server_stream, true).await;
+        let Some(HandleResult::Email(second_session, _)) = second_results
+            .into_iter()
+            .find(|result| matches!(result, HandleResult::Email(_, _)))
+        else {
+            panic!("Expected second DATA flow to emit an email result");
+        };
+        assert_eq!(second_session.subject, Some("Second".into()));
+        assert_eq!(second_session.message_id, Some("<second@test.com>".into()));
+
+        let third_results = conn.handle(&mut server_stream, true).await;
+        assert!(
+            third_results
+                .iter()
+                .any(|result| matches!(result, HandleResult::Closed)),
+            "QUIT should still close the reused connection"
         );
     }
 
@@ -1755,6 +2822,57 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_bdat_short_chunk_disconnect_resets_without_email() {
+        use tokio::io::AsyncWriteExt;
+
+        let partial_body =
+            b"From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: Short BDAT\r\n\r\npartial";
+        let declared_len = partial_body.len() + 32;
+
+        let mut input = Vec::new();
+        input.extend_from_slice(b"EHLO client.test\r\n");
+        input.extend_from_slice(b"MAIL FROM:<sender@test.com>\r\n");
+        input.extend_from_slice(b"RCPT TO:<rcpt@test.com>\r\n");
+        input.extend_from_slice(format!("BDAT {declared_len} LAST\r\n").as_bytes());
+        input.extend_from_slice(partial_body);
+
+        let (mut client_stream, server_stream) = tokio::io::duplex(8192);
+        client_stream.write_all(&input).await.unwrap();
+        client_stream.shutdown().await.unwrap();
+
+        let mut server_stream = tokio::io::BufStream::new(server_stream);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config(),
+            false,
+        );
+
+        let results = conn.handle(&mut server_stream, false).await;
+
+        assert!(
+            !results
+                .iter()
+                .any(|result| matches!(result, HandleResult::Email(_, _))),
+            "A short BDAT chunk must not synthesize a partial email"
+        );
+        assert_eq!(conn.state, SmtpState::Ready);
+        assert!(conn.mail_from.is_none());
+        assert!(conn.rcpt_to.is_empty());
+        assert!(conn.data_buffer.is_empty());
+        assert_eq!(conn.bdat_remaining, 0);
+        assert!(!conn.bdat_is_last);
+
+        let replies = read_available(&mut client_stream).await;
+        assert!(
+            !replies.contains("250 2.0.0 BDAT chunk accepted, message complete\r\n"),
+            "A short BDAT chunk must not receive a final acceptance reply"
+        );
+    }
+
     /// Integration test: multi-chunk BDAT session (same sequential approach).
     #[tokio::test]
     async fn test_bdat_multi_chunk_via_handle() {
@@ -1831,6 +2949,216 @@ mod tests {
             quit_results
                 .iter()
                 .any(|result| matches!(result, HandleResult::Closed))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bdat_zero_last_final_chunk_completes_message_and_resets_transaction() {
+        use tokio::io::AsyncWriteExt;
+
+        let config = test_config();
+        let chunk1 =
+            b"From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: Zero Last\r\nMessage-ID: <bdat-zero@test.com>\r\n\r\nBody here";
+        let chunk1_len = chunk1.len();
+
+        let mut input = Vec::new();
+        input.extend_from_slice(b"EHLO client.test\r\n");
+        input.extend_from_slice(b"MAIL FROM:<sender@test.com>\r\n");
+        input.extend_from_slice(b"RCPT TO:<rcpt@test.com>\r\n");
+        input.extend_from_slice(format!("BDAT {chunk1_len}\r\n").as_bytes());
+        input.extend_from_slice(chunk1);
+        input.extend_from_slice(b"BDAT 0 LAST\r\n");
+
+        let (mut client_stream, server_stream) = tokio::io::duplex(8192);
+        client_stream.write_all(&input).await.unwrap();
+        client_stream.shutdown().await.unwrap();
+
+        let mut server_stream = tokio::io::BufStream::new(server_stream);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
+
+        let results = conn.handle(&mut server_stream, false).await;
+        let Some(HandleResult::Email(session, raw)) = results
+            .into_iter()
+            .find(|result| matches!(result, HandleResult::Email(_, _)))
+        else {
+            panic!("Expected BDAT 0 LAST flow to emit an email result");
+        };
+
+        assert_eq!(session.subject, Some("Zero Last".into()));
+        assert_eq!(session.message_id, Some("<bdat-zero@test.com>".into()));
+        assert_eq!(raw, chunk1);
+        assert_eq!(conn.state, SmtpState::Ready);
+        assert_eq!(conn.bdat_remaining, 0);
+        assert!(!conn.bdat_is_last);
+        assert!(conn.data_buffer.is_empty());
+        assert!(conn.data_phase_started.is_none());
+
+        let replies = read_available(&mut client_stream).await;
+        assert!(
+            replies.contains("250 2.0.0 BDAT chunk accepted\r\n"),
+            "Non-final BDAT chunk should be acknowledged before the empty LAST chunk"
+        );
+        assert!(
+            !replies.contains("250 2.0.0 BDAT chunk accepted, message complete\r\n"),
+            "Final delivery acknowledgement must still be deferred to the verdict path"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bdat_message_can_be_followed_by_data_message_on_same_connection() {
+        use tokio::io::AsyncWriteExt;
+
+        let config = test_config();
+        let chunk =
+            b"From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: BDAT First\r\nMessage-ID: <first-bdat@test.com>\r\n\r\nBody one";
+        let chunk_len = chunk.len();
+
+        let mut input = Vec::new();
+        input.extend_from_slice(b"EHLO client.test\r\n");
+        input.extend_from_slice(b"MAIL FROM:<sender@test.com>\r\n");
+        input.extend_from_slice(b"RCPT TO:<rcpt@test.com>\r\n");
+        input.extend_from_slice(format!("BDAT {chunk_len} LAST\r\n").as_bytes());
+        input.extend_from_slice(chunk);
+        input.extend_from_slice(b"MAIL FROM:<sender2@test.com>\r\n");
+        input.extend_from_slice(b"RCPT TO:<rcpt@test.com>\r\n");
+        input.extend_from_slice(b"DATA\r\n");
+        input.extend_from_slice(
+            b"From: sender2@test.com\r\nTo: rcpt@test.com\r\nSubject: DATA Second\r\nMessage-ID: <second-data@test.com>\r\n\r\nBody two\r\n.\r\n",
+        );
+        input.extend_from_slice(b"QUIT\r\n");
+
+        let (mut client_stream, server_stream) = tokio::io::duplex(16384);
+        client_stream.write_all(&input).await.unwrap();
+        client_stream.shutdown().await.unwrap();
+
+        let mut server_stream = tokio::io::BufStream::new(server_stream);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
+
+        let first_results = conn.handle(&mut server_stream, false).await;
+        let Some(HandleResult::Email(first_session, _)) = first_results
+            .into_iter()
+            .find(|result| matches!(result, HandleResult::Email(_, _)))
+        else {
+            panic!("Expected BDAT flow to emit an email result");
+        };
+        assert_eq!(first_session.subject, Some("BDAT First".into()));
+        assert_eq!(
+            first_session.message_id,
+            Some("<first-bdat@test.com>".into())
+        );
+        let first_replies = read_available(&mut client_stream).await;
+        assert!(
+            !first_replies.contains("250 2.0.0 BDAT chunk accepted, message complete\r\n"),
+            "BDAT final delivery acknowledgement must still be deferred to the verdict path"
+        );
+
+        let second_results = conn.handle(&mut server_stream, true).await;
+        let Some(HandleResult::Email(second_session, _)) = second_results
+            .into_iter()
+            .find(|result| matches!(result, HandleResult::Email(_, _)))
+        else {
+            panic!("Expected follow-up DATA flow to emit an email result");
+        };
+        assert_eq!(second_session.subject, Some("DATA Second".into()));
+        assert_eq!(
+            second_session.message_id,
+            Some("<second-data@test.com>".into())
+        );
+
+        let second_replies = read_available(&mut client_stream).await;
+        assert!(
+            second_replies.contains("354 Start mail input; end with <CRLF>.<CRLF>\r\n"),
+            "Follow-up DATA transaction should still emit a DATA challenge"
+        );
+
+        let third_results = conn.handle(&mut server_stream, true).await;
+        assert!(
+            third_results
+                .iter()
+                .any(|result| matches!(result, HandleResult::Closed)),
+            "QUIT should close the connection after BDAT -> DATA reuse"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bdat_partial_transaction_can_be_cleared_with_rset() {
+        use tokio::io::AsyncWriteExt;
+
+        let config = test_config();
+        let partial_chunk =
+            b"From: partial@test.com\r\nTo: rcpt@test.com\r\nSubject: Partial\r\n\r\nDiscard me";
+        let partial_len = partial_chunk.len();
+
+        let mut input = Vec::new();
+        input.extend_from_slice(b"EHLO client.test\r\n");
+        input.extend_from_slice(b"MAIL FROM:<partial@test.com>\r\n");
+        input.extend_from_slice(b"RCPT TO:<rcpt@test.com>\r\n");
+        input.extend_from_slice(format!("BDAT {partial_len}\r\n").as_bytes());
+        input.extend_from_slice(partial_chunk);
+        input.extend_from_slice(b"RSET\r\n");
+        input.extend_from_slice(b"MAIL FROM:<fresh@test.com>\r\n");
+        input.extend_from_slice(b"RCPT TO:<rcpt@test.com>\r\n");
+        input.extend_from_slice(b"DATA\r\n");
+        input.extend_from_slice(
+            b"From: fresh@test.com\r\nTo: rcpt@test.com\r\nSubject: Fresh\r\nMessage-ID: <fresh@test.com>\r\n\r\nClean body\r\n.\r\n",
+        );
+        input.extend_from_slice(b"QUIT\r\n");
+
+        let (mut client_stream, server_stream) = tokio::io::duplex(16384);
+        client_stream.write_all(&input).await.unwrap();
+        client_stream.shutdown().await.unwrap();
+
+        let mut server_stream = tokio::io::BufStream::new(server_stream);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
+
+        let results = conn.handle(&mut server_stream, false).await;
+        let Some(HandleResult::Email(session, raw)) = results
+            .into_iter()
+            .find(|result| matches!(result, HandleResult::Email(_, _)))
+        else {
+            panic!("Expected post-RSET DATA flow to emit an email result");
+        };
+
+        assert_eq!(session.subject, Some("Fresh".into()));
+        assert_eq!(session.message_id, Some("<fresh@test.com>".into()));
+        let raw_text = String::from_utf8(raw).expect("raw email should be utf-8 in test");
+        assert!(raw_text.contains("Subject: Fresh"));
+        assert!(!raw_text.contains("Subject: Partial"));
+
+        let replies = read_available(&mut client_stream).await;
+        assert!(replies.contains("250 2.0.0 BDAT chunk accepted\r\n"));
+        assert!(
+            replies.contains("250 2.1.5 OK\r\n"),
+            "RSET should return 250"
+        );
+
+        let quit_results = conn.handle(&mut server_stream, true).await;
+        assert!(
+            quit_results
+                .iter()
+                .any(|result| matches!(result, HandleResult::Closed)),
+            "QUIT should close the connection after RSET recovery"
         );
     }
 }
