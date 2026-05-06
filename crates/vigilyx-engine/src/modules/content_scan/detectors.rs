@@ -13,12 +13,12 @@ use super::{
     scan_text, strip_subject_banner_prefixes,
 };
 use crate::context::SecurityContext;
-use crate::module::Evidence;
-use crate::module_data::module_data;
 use crate::matcher::{
     account_security_actions, account_security_threats, subject_threat_keywords,
     subsidy_keywords_body, subsidy_keywords_subject, subsidy_urgency_body,
 };
+use crate::module::Evidence;
+use crate::module_data::module_data;
 use crate::modules::common::{extract_domain_from_url, is_probable_non_clickable_render_asset_url};
 
 static RE_VERIFICATION_CODE: LazyLock<Regex> =

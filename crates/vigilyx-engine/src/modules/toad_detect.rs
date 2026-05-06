@@ -57,10 +57,10 @@ use std::time::Instant;
 
 use crate::context::SecurityContext;
 use crate::error::EngineError;
+use crate::matcher::{toad_callback_verbs, toad_urgency_phrases};
 use crate::module::{
     Bpa, Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel,
 };
-use crate::matcher::{toad_callback_verbs, toad_urgency_phrases};
 use crate::module_data::module_data;
 
 pub struct ToadDetectModule {
@@ -304,8 +304,7 @@ impl SecurityModule for ToadDetectModule {
         // does not contain the brand token.
         let brand_hit = brand_list.iter().find(|b| {
             let b_lower = b.to_ascii_lowercase();
-            corpus_lower.contains(&b_lower)
-                && brand_mismatched(&b_lower, sender_domain.as_deref())
+            corpus_lower.contains(&b_lower) && brand_mismatched(&b_lower, sender_domain.as_deref())
         });
 
         let (phone_numbers, phone_kinds) = extract_phone_numbers(&corpus);
@@ -449,11 +448,7 @@ mod tests {
     use std::sync::Arc;
     use vigilyx_core::models::{EmailContent, EmailSession, Protocol};
 
-    fn ctx_with(
-        from: &str,
-        subject: Option<&str>,
-        body: Option<&str>,
-    ) -> SecurityContext {
+    fn ctx_with(from: &str, subject: Option<&str>, body: Option<&str>) -> SecurityContext {
         let mut session = EmailSession::new(
             Protocol::Smtp,
             "203.0.113.5".to_string(),
@@ -537,8 +532,7 @@ mod tests {
     async fn callback_verb_without_phone_does_not_fire() {
         // Marketing email mentions "call us" but no number embedded — Safe.
         let module = ToadDetectModule::new();
-        let body =
-            "Need help? Please call our sales team — see contact details on our website.";
+        let body = "Need help? Please call our sales team — see contact details on our website.";
         let ctx = ctx_with("sales@acme.com", Some("Talk to sales"), Some(body));
         let result = module.analyze(&ctx).await.expect("analyze ok");
         assert_eq!(

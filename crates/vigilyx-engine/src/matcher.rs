@@ -254,7 +254,10 @@ impl<'m, 'h> MatchScan<'m, 'h> {
 
 /// Internal helper: lazily build (and re-use) a [`PhraseMatcher`] keyed by
 /// the requested list-name set.
-fn static_matcher(slot: &'static OnceLock<PhraseMatcher>, lists: &'static [&'static str]) -> &'static PhraseMatcher {
+fn static_matcher(
+    slot: &'static OnceLock<PhraseMatcher>,
+    lists: &'static [&'static str],
+) -> &'static PhraseMatcher {
     slot.get_or_init(|| PhraseMatcher::with_lists(lists.to_vec()))
 }
 
@@ -516,7 +519,13 @@ mod tests {
         let mixed: String = phrase
             .chars()
             .enumerate()
-            .map(|(i, c)| if i % 2 == 0 { c.to_ascii_uppercase() } else { c })
+            .map(|(i, c)| {
+                if i % 2 == 0 {
+                    c.to_ascii_uppercase()
+                } else {
+                    c
+                }
+            })
             .collect();
         assert!(m.is_match(&mixed));
     }

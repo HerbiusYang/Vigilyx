@@ -724,11 +724,34 @@ html.dark body {
   letter-spacing: 0.01em;
 }
 
-.VPNavBarTranslations .button,
 .VPNavBarAppearance .VPSwitch,
 .VPNavBarExtra .button {
   transform: scale(1.08);
   transform-origin: center;
+}
+
+.VPNavBarTranslations .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform: none;
+}
+
+.VPNavBarTranslations .VPMenu {
+  min-width: 9.5rem;
+}
+
+.VPNavBarTranslations .VPMenuLink {
+  display: flex;
+  align-items: center;
+  min-height: 2.25rem;
+  line-height: 1.25;
+}
+
+.VPNavBarTranslations .VPMenuLink .text {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.25rem;
 }
 
 .VPNavBarSocialLinks .VPSocialLink {
@@ -741,6 +764,39 @@ html.dark body {
 .VPNavBarSocialLinks .VPSocialLink:hover {
   color: var(--vig-accent);
   transform: translateY(-1px);
+}
+
+/* =============================================================================
+   NavBar right padding — pull the GitHub icon away from the viewport edge.
+   VitePress applies right padding on `.VPNavBar.has-sidebar .content`
+   (NOT on .content-body). The default is:
+     padding-right: calc((100vw - var(--vp-layout-max-width)) / 2 + 32px)
+   Because we widened --vp-layout-max-width to 1600/1760, on typical 1440-1680
+   monitors the calc() collapses to ~32px, leaving the social icons glued to
+   the very right edge. We override with explicit, viewport-tiered values so
+   the icon mirrors the 24px left logo padding and breathes on wide screens.
+   ============================================================================= */
+.VPNavBar .content,
+.VPNavBar.has-sidebar .content {
+  padding-right: 24px !important;
+}
+@media (min-width: 768px) {
+  .VPNavBar .content,
+  .VPNavBar.has-sidebar .content {
+    padding-right: 32px !important;
+  }
+}
+@media (min-width: 1280px) {
+  .VPNavBar .content,
+  .VPNavBar.has-sidebar .content {
+    padding-right: 48px !important;
+  }
+}
+@media (min-width: 1600px) {
+  .VPNavBar .content,
+  .VPNavBar.has-sidebar .content {
+    padding-right: 64px !important;
+  }
 }
 
 @keyframes vig-brand-sheen {

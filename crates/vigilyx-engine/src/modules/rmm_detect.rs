@@ -38,8 +38,8 @@ use vigilyx_parser::mime::decode_rfc2047;
 
 use crate::context::SecurityContext;
 use crate::error::EngineError;
-use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
 use crate::matcher::{rmm_brand_keywords, rmm_installer_filenames, rmm_lure_action_keywords};
+use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
 use crate::module_data::module_data;
 
 // ---------------------------------------------------------------------------

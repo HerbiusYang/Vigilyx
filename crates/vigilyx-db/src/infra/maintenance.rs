@@ -373,7 +373,9 @@ impl VigilDb {
                 let mut files_cleaned = 0u64;
                 for id in &ids {
                     let Some(path) = http_temp_file_path_for_id(id) else {
-                        tracing::warn!("Skipping invalid HTTP temp file id during retention cleanup");
+                        tracing::warn!(
+                            "Skipping invalid HTTP temp file id during retention cleanup"
+                        );
                         continue;
                     };
 
@@ -701,7 +703,9 @@ mod tests {
 
         assert_eq!(
             http_temp_file_path_for_id(id).as_deref(),
-            Some(Path::new("data/tmp/http/550e8400-e29b-41d4-a716-446655440000.bin"))
+            Some(Path::new(
+                "data/tmp/http/550e8400-e29b-41d4-a716-446655440000.bin"
+            ))
         );
     }
 

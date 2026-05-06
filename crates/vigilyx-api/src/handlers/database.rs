@@ -754,7 +754,9 @@ mod tests {
 
         assert_eq!(
             http_temp_file_path_for_id(id).as_deref(),
-            Some(Path::new("data/tmp/http/550e8400-e29b-41d4-a716-446655440000.bin"))
+            Some(Path::new(
+                "data/tmp/http/550e8400-e29b-41d4-a716-446655440000.bin"
+            ))
         );
     }
 

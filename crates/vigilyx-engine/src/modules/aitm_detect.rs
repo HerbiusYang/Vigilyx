@@ -20,12 +20,12 @@ use tracing::debug;
 
 use crate::context::SecurityContext;
 use crate::error::EngineError;
-use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
-use crate::module_data::module_data;
 use crate::matcher::{
     aitm_toolkit_paths, aitm_urgency, captcha_indicators, device_code_enter_phrases,
     mfa_bait_all_locales,
 };
+use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
+use crate::module_data::module_data;
 use crate::modules::common::extract_domain_from_url;
 
 // ---------------------------------------------------------------------------
@@ -398,7 +398,9 @@ fn detect_mfa_bait_text(
     // Check for MFA bait phrases — single AC pass over EN/ZH/JA/KO/RU/ES/PT/FR/DE/AR.
     // Replaces ~10 nested `phrases.iter().any(contains)` loops; the matcher
     // is built once and reused across the whole engine lifetime.
-    let mfa_hits: Vec<String> = mfa_bait_all_locales().scan(&combined_lower).distinct_patterns();
+    let mfa_hits: Vec<String> = mfa_bait_all_locales()
+        .scan(&combined_lower)
+        .distinct_patterns();
 
     if mfa_hits.is_empty() {
         return (score, findings);
@@ -804,7 +806,12 @@ fn detect_device_code_phishing(
         findings.push((
             format!(
                 "Possible Device Code user_code present in body: {}",
-                user_codes.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+                user_codes
+                    .iter()
+                    .take(3)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
             "device_code_user_code".to_string(),
         ));
@@ -819,14 +826,19 @@ fn detect_device_code_phishing(
     // use takes ~1 ms; gating it behind upstream signals keeps the
     // not-applicable / safe path completely free of work.
     let enter_phrase_hit: Option<String> = if has_device_url || has_user_code {
-        device_code_enter_phrases().scan(&combined_lower).first_pattern()
+        device_code_enter_phrases()
+            .scan(&combined_lower)
+            .first_pattern()
     } else {
         None
     };
     if let Some(ref phrase) = enter_phrase_hit {
         score += 0.20;
         findings.push((
-            format!("Device-code enter-instruction phrase detected: '{}'", phrase),
+            format!(
+                "Device-code enter-instruction phrase detected: '{}'",
+                phrase
+            ),
             "device_code_enter_phrase".to_string(),
         ));
     }
@@ -1035,13 +1047,8 @@ impl SecurityModule for AitmDetectModule {
                 .mail_from
                 .as_deref()
                 .and_then(|addr| addr.split('@').nth(1));
-            let (s, findings) = detect_device_code_phishing(
-                links,
-                subject,
-                body_text,
-                body_html,
-                sender_domain,
-            );
+            let (s, findings) =
+                detect_device_code_phishing(links, subject, body_text, body_html, sender_domain);
             total_score += s;
             for (desc, category) in findings {
                 all_categories.push(category);
@@ -1148,10 +1155,7 @@ mod tests {
     fn keyword_has_word_boundary_ascii_with_separators_match() {
         assert!(keyword_has_word_boundary("login.line.me", "line"));
         assert!(keyword_has_word_boundary("paypal-login.com", "paypal"));
-        assert!(keyword_has_word_boundary(
-            "/auth/box/signin",
-            "box"
-        ));
+        assert!(keyword_has_word_boundary("/auth/box/signin", "box"));
         assert!(keyword_has_word_boundary("paypal", "paypal"));
     }
 
@@ -1169,7 +1173,10 @@ mod tests {
     fn keyword_has_word_boundary_punctuation_neighbours_match() {
         // Punctuation / separators on either side should produce boundaries.
         assert!(keyword_has_word_boundary("登录-line-入口", "line"));
-        assert!(keyword_has_word_boundary("https://支付宝.com/login", "支付宝"));
+        assert!(keyword_has_word_boundary(
+            "https://支付宝.com/login",
+            "支付宝"
+        ));
         assert!(keyword_has_word_boundary("paypal/checkout", "paypal"));
     }
 
@@ -1492,9 +1499,7 @@ mod tests {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
         let module = AitmDetectModule::new();
-        let ctx = make_ctx_links(vec![
-            "https://login.taobaoabc.com/auth/signin",
-        ]);
+        let ctx = make_ctx_links(vec!["https://login.taobaoabc.com/auth/signin"]);
 
         let result = analyze_with_runtime(&module, &ctx);
         let has_brand_finding = result
@@ -1518,9 +1523,7 @@ mod tests {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
         let module = AitmDetectModule::new();
-        let ctx = make_ctx_links(vec![
-            "https://account.microsoftonline.com/users/login",
-        ]);
+        let ctx = make_ctx_links(vec!["https://account.microsoftonline.com/users/login"]);
 
         let result = analyze_with_runtime(&module, &ctx);
         let line_brand_finding = result
@@ -1542,9 +1545,7 @@ mod tests {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
         let module = AitmDetectModule::new();
-        let ctx = make_ctx_links(vec![
-            "https://paypal.evil-host.example/account/verify",
-        ]);
+        let ctx = make_ctx_links(vec!["https://paypal.evil-host.example/account/verify"]);
 
         let result = analyze_with_runtime(&module, &ctx);
         assert!(
@@ -1564,9 +1565,7 @@ mod tests {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
         let module = AitmDetectModule::new();
-        let ctx = make_ctx_links(vec![
-            "https://random-host.example/paypal/login",
-        ]);
+        let ctx = make_ctx_links(vec!["https://random-host.example/paypal/login"]);
 
         let result = analyze_with_runtime(&module, &ctx);
         assert!(
@@ -1590,9 +1589,7 @@ mod tests {
         // Both `paypal` (subdomain) and `microsoft` (path) on an unrelated
         // host. We expect at least one brand finding and no duplicate
         // findings for the same brand.
-        let ctx = make_ctx_links(vec![
-            "https://paypal.evil-host.example/microsoft/login",
-        ]);
+        let ctx = make_ctx_links(vec!["https://paypal.evil-host.example/microsoft/login"]);
 
         let result = analyze_with_runtime(&module, &ctx);
         let brand_findings: Vec<&String> = result
@@ -1624,9 +1621,7 @@ mod tests {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
         let module = AitmDetectModule::new();
-        let ctx = make_ctx_links(vec![
-            "https://www.paypal.com/signin?country.x=US",
-        ]);
+        let ctx = make_ctx_links(vec!["https://www.paypal.com/signin?country.x=US"]);
 
         let result = analyze_with_runtime(&module, &ctx);
         let has_brand_finding = result

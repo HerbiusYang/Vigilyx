@@ -73,9 +73,8 @@ static RE_HIDDEN_STYLE_BLOCK: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// HTML comments (`<!-- ... -->`). LLMs that see raw HTML will read these.
-static RE_HTML_COMMENT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?s)<!--(.*?)-->").expect("html comment regex compile")
-});
+static RE_HTML_COMMENT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)<!--(.*?)-->").expect("html comment regex compile"));
 
 /// Hidden-attribute or `aria-hidden="true"` carriers. Same next-`<`
 /// approximation as above (no backref).
@@ -226,7 +225,9 @@ impl SecurityModule for PromptInjectionScanModule {
             use crate::module_data::module_data;
             let md = module_data();
             let strong_empty = md.get_list("prompt_injection_strong_patterns").is_empty();
-            let role_empty = md.get_list("prompt_injection_role_reset_patterns").is_empty();
+            let role_empty = md
+                .get_list("prompt_injection_role_reset_patterns")
+                .is_empty();
             let weak_empty = md.get_list("prompt_injection_weak_patterns").is_empty();
             if strong_empty && role_empty && weak_empty {
                 return Ok(ModuleResult::not_applicable(
@@ -274,10 +275,7 @@ impl SecurityModule for PromptInjectionScanModule {
             score += 0.55;
             categories.push("prompt_injection_hidden_override".to_string());
             evidence.push(Evidence {
-                description: format!(
-                    "Hidden text contains prompt-override phrase: '{}'",
-                    kw
-                ),
+                description: format!("Hidden text contains prompt-override phrase: '{}'", kw),
                 location: Some("body_html:hidden".to_string()),
                 snippet: None,
             });
@@ -286,10 +284,7 @@ impl SecurityModule for PromptInjectionScanModule {
             score += 0.45;
             categories.push("prompt_injection_hidden_role_reset".to_string());
             evidence.push(Evidence {
-                description: format!(
-                    "Hidden text contains role-reset phrase: '{}'",
-                    kw
-                ),
+                description: format!("Hidden text contains role-reset phrase: '{}'", kw),
                 location: Some("body_html:hidden".to_string()),
                 snippet: None,
             });

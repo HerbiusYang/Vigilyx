@@ -9,8 +9,8 @@ use regex::Regex;
 
 use crate::context::SecurityContext;
 use crate::error::EngineError;
-use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
 use crate::matcher::css_hidden_content_patterns;
+use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
 use crate::module_data::module_data;
 
 /// Unicode bidirectional control characters used in RTL-override attacks
