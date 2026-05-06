@@ -15,10 +15,24 @@
 //! ```
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
+
+/// Monotonically increasing version of the global registry.
+///
+/// Incremented on every successful `set_module_data()`. Cached structures
+/// (e.g. compiled `aho-corasick` automata in `crate::matcher`) compare against
+/// this counter to detect hot-reloads and rebuild lazily.
+static REGISTRY_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// Read the current registry epoch (load order: `Acquire`).
+#[inline]
+pub fn module_data_epoch() -> u64 {
+    REGISTRY_EPOCH.load(Ordering::Acquire)
+}
 
 // ── Global singleton ────────────────────────────────────────────────
 
@@ -31,9 +45,14 @@ const EMBEDDED_SEED_JSON: &str =
 static MODULE_DATA: OnceLock<Arc<RwLock<ModuleDataRegistry>>> = OnceLock::new();
 
 /// Initialize (or replace) the global module data registry.
+///
+/// Bumps `REGISTRY_EPOCH` so that consumers caching derived structures
+/// (e.g. `crate::matcher::PhraseMatcher`) can detect the hot-reload and
+/// rebuild on next access.
 pub fn set_module_data(registry: ModuleDataRegistry) {
     let shared = MODULE_DATA.get_or_init(|| Arc::new(RwLock::new(ModuleDataRegistry::default())));
     *shared.write().expect("module data lock poisoned") = registry;
+    REGISTRY_EPOCH.fetch_add(1, Ordering::Release);
 }
 
 /// Access the global module data registry (read lock).
@@ -190,6 +209,16 @@ impl ModuleDataRegistry {
     /// Whether the registry is empty.
     pub fn is_empty(&self) -> bool {
         self.sets.is_empty() && self.structured.is_empty()
+    }
+
+    /// Replace (or insert) a list under `name`. Used by unit tests in
+    /// sibling modules (e.g. [`crate::matcher`]) that need to inject a
+    /// known-shape registry for hot-reload assertions.
+    #[cfg(test)]
+    pub fn replace_list_for_test(&mut self, name: &str, items: Vec<String>) {
+        let set: HashSet<String> = items.iter().map(|s| s.to_lowercase()).collect();
+        self.sets.insert(name.to_string(), set);
+        self.lists.insert(name.to_string(), items);
     }
 
     /// Serialize the effective (merged) data back to JSON for the API response.

@@ -190,6 +190,25 @@ class TestAnalyzeContent:
         assert data["error"] == "ANALYSIS_FAILED"
 
 
+class TestRequestSizeLimit:
+    """Request body byte cap should reject oversized JSON before endpoint parsing."""
+
+    def test_oversized_request_body_413(self, monkeypatch):
+        monkeypatch.setenv("AI_MAX_REQUEST_BYTES", "1024")
+        mgr = _make_manager(_finetuned_model=object(), _finetuned_version="v1", _warmup_state="ready")
+        with patch("vigilyx_ai.api.get_model_manager", return_value=mgr):
+            from vigilyx_ai.api import app
+            with TestClient(app, raise_server_exceptions=False) as client:
+                resp = client.post(
+                    "/analyze/content",
+                    json={"session_id": "s1", "body_text": "A" * 2048},
+                    headers=AUTH_HEADERS,
+                )
+
+        assert resp.status_code == 413
+        assert resp.json()["error"] == "REQUEST_TOO_LARGE"
+
+
 # =====================================================================
 # GET /health
 # =====================================================================

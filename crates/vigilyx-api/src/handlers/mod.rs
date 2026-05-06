@@ -23,7 +23,9 @@ pub use database::{
     update_rotate_config, update_stats,
 };
 pub use deployment_mode::{get_deployment_mode, update_deployment_mode};
-pub use sessions::{download_eml, get_related_sessions, get_session, list_sessions};
+pub use sessions::{
+    download_attachment, download_eml, get_related_sessions, get_session, list_sessions,
+};
 pub use setup_status::{get_setup_status, update_setup_status};
 pub use stats::{get_external_login_stats, get_stats};
 pub use system::{
@@ -104,6 +106,17 @@ const MAX_LIMIT: u32 = 1000;
 /// limit [1, MAX_LIMIT]
 pub(crate) fn clamp_limit(limit: u32) -> u32 {
     limit.clamp(1, MAX_LIMIT)
+}
+
+pub(crate) fn clamp_i64_pagination(
+    limit: Option<i64>,
+    offset: Option<i64>,
+    default_limit: i64,
+    max_limit: i64,
+) -> (i64, i64) {
+    let limit = limit.unwrap_or(default_limit).clamp(1, max_limit);
+    let offset = offset.unwrap_or(0).max(0);
+    (limit, offset)
 }
 
 /// response
@@ -223,4 +236,20 @@ pub struct PaginatedResponse<T> {
 /// Health check (, liveness)
 pub async fn health_check() -> impl IntoResponse {
     health::liveness().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamp_i64_pagination_rejects_negative_values() {
+        assert_eq!(clamp_i64_pagination(Some(-10), Some(-1), 50, 200), (1, 0));
+    }
+
+    #[test]
+    fn clamp_i64_pagination_applies_default_and_max() {
+        assert_eq!(clamp_i64_pagination(None, Some(5), 50, 200), (50, 5));
+        assert_eq!(clamp_i64_pagination(Some(500), Some(5), 50, 200), (200, 5));
+    }
 }

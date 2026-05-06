@@ -10,6 +10,7 @@ use regex::Regex;
 use crate::context::SecurityContext;
 use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
+use crate::matcher::css_hidden_content_patterns;
 use crate::module_data::module_data;
 
 /// Unicode bidirectional control characters used in RTL-override attacks
@@ -488,14 +489,13 @@ impl SecurityModule for HtmlScanModule {
         // CSS hidden text detection: display:none / visibility:hidden / font-size:0
         // Used to hide malicious content from users while evading NLP analysis and email client rendering
         {
-            let css_hidden_patterns = module_data()
-                .get_list("css_hidden_content_patterns")
-                .to_vec();
-
-            let hidden_count = css_hidden_patterns
-                .iter()
-                .filter(|p| html_lower.contains(p.as_str()))
-                .count();
+            // Aho-Corasick scan over the CSS-hidden pattern list. Counts the
+            // number of distinct seeded patterns observed (so the policy
+            // below can distinguish "one accidental display:none" from
+            // "many overlapping hide tricks").
+            let hidden_count = css_hidden_content_patterns()
+                .scan(&html_lower)
+                .distinct_count();
 
             if hidden_count > 0 {
                 // Check whether hidden elements contain sensitive content (heuristic: count hidden elements)

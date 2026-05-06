@@ -162,8 +162,14 @@ html.dark body {
 /* NavBar — no backdrop-filter, pure semi-transparent */
 .VPNavBar,
 .VPLocalNav {
-  background: color-mix(in srgb, var(--vig-bg-0) 92%, transparent) !important;
-  border-bottom: 1px solid var(--vig-border);
+  background: color-mix(in srgb, var(--vig-bg-0) 96%, transparent) !important;
+  border-bottom: 0;
+}
+
+.VPNav,
+.VPNavBar,
+.VPLocalNav {
+  z-index: 40 !important;
 }
 
 .VPNavBar {
@@ -171,23 +177,7 @@ html.dark body {
 }
 
 .VPNavBar::after {
-  content: "";
-  position: absolute;
-  right: 0;
-  bottom: -1px;
-  left: 0;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(20, 184, 166, 0.15) 20%,
-    rgba(94, 234, 212, 0.75) 50%,
-    rgba(56, 189, 248, 0.18) 80%,
-    transparent 100%
-  );
-  background-size: 220% 100%;
-  animation: vig-nav-line 8s linear infinite;
-  pointer-events: none;
+  content: none;
 }
 
 .VPNavBar .divider,
@@ -210,6 +200,445 @@ html.dark body {
   font-weight: 850;
   letter-spacing: -0.025em;
   line-height: 1.2;
+}
+
+/* Pull the sidebar-aligned logo/title closer to the left edge of the
+   sidebar column. Default VitePress padding-left is 32px which leaves
+   the logo visually floating in the middle of the column. */
+/* Pull the sidebar-aligned logo/title closer to the left edge of the
+   sidebar column. Default VitePress padding-left is 32px which leaves
+   the logo visually floating in the middle of the column. We force
+   16px on every nested wrapper VitePress emits, plus shrink the
+   reserved title slot to the new sidebar width so the logo doesn't
+   get pushed right by extra layout padding. */
+.VPNavBar .title,
+.VPNavBar.has-sidebar .title,
+.VPNavBar.has-sidebar .VPNavBarTitle,
+.VPNavBar.has-sidebar .VPNavBarTitle .title,
+.VPNavBar.has-sidebar .container > .title {
+  padding-left: 24px !important;
+  padding-right: 0 !important;
+}
+.VPNavBar.has-sidebar .title {
+  width: var(--vp-sidebar-width) !important;
+  max-width: var(--vp-sidebar-width) !important;
+}
+
+/* Tighten sidebar: narrower column + flush-left items so the logo,
+   group titles ("知识库"), and item rows ("01 · …") all line up on
+   the same vertical guide. */
+/* ==========================================================================
+   Sidebar — final design
+   ==========================================================================
+   Width is locked at 260px (288px on ≥1440 displays). This is the smallest
+   width that holds "01 · HTML 拼凑文字 / 同形混淆" on a single line at
+   14px / 1.55 line-height — the longest legitimate item label in the case
+   study set. We DO NOT allow this width to drift; every other rule is
+   derived from it.
+
+   Visual language matches the rest of the site: a dark glass surface with a
+   1px gradient hairline along the top, generous breathing room, single-
+   accent (teal) hover/active states, no animations on idle elements.
+   ========================================================================== */
+
+:root {
+  --vp-sidebar-width: 272px;
+}
+@media (min-width: 1440px) {
+  :root {
+    --vp-sidebar-width: 292px;
+  }
+}
+
+.VPSidebar {
+  position: relative;
+  padding: 8px 16px 32px 24px !important;
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--vp-c-bg) 98%, transparent) 0%,
+      color-mix(in srgb, var(--vp-c-bg) 94%, transparent) 72%,
+      color-mix(in srgb, var(--vp-c-bg) 70%, transparent) 100%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(20, 184, 166, 0.04) 0%,
+      transparent 22%
+    ),
+    var(--vp-c-bg);
+  border-right: 0;
+}
+@media (min-width: 1440px) {
+  .VPSidebar {
+    padding: 10px 16px 32px 24px !important;
+  }
+}
+.VPSidebar::before {
+  content: none;
+}
+
+/* Inner containers no longer add padding — .VPSidebar itself owns it.
+   This single rule replaces the various .nav / .group padding hacks. */
+.VPSidebar .nav,
+.VPSidebar .group,
+.VPSidebar .VPSidebarNav {
+  padding: 0 !important;
+}
+
+/* Reset every inherited padding/margin VitePress sprays on items, then
+   build our own rhythm. */
+.VPSidebarItem,
+.VPSidebarItem.level-0,
+.VPSidebarItem .items {
+  padding-left: 0 !important;
+  margin-left: 0 !important;
+  border-left: 0 !important;
+}
+.VPSidebarItem > .item {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+.VPSidebarItem .text {
+  padding: 0 !important;
+}
+
+/* ---- Group headers ("知识库" / "案例研究") ----------------------------
+   Spacing rhythm: every value is a multiple of 4px so the column has
+   a single beat. The container .nav already provides 24/32px top
+   breathing room — group rules below only handle inter-group gaps.
+*/
+
+.VPSidebar .VPSidebarItem.level-0 > .item {
+  position: relative;
+  padding: 0 !important;
+  margin-bottom: 8px;
+}
+.VPSidebar .VPSidebarItem.level-0 > .item > .text {
+  display: block;
+  padding: 4px 0 !important;
+  font-size: 0.7rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--vig-text-muted) !important;
+  line-height: 1.4;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+/* VitePress sometimes renders the group label inside .title instead
+   of .text — guarantee it's visible either way. */
+.VPSidebar .VPSidebarItem.level-0 > .item > .title {
+  display: block;
+  font-size: 0.7rem !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--vig-text-muted) !important;
+  line-height: 1.4;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+.VPSidebar .VPSidebarItem.level-0 > .item > .caret {
+  color: var(--vig-text-muted);
+  opacity: 0.55;
+  transition: opacity 0.2s ease;
+}
+.VPSidebar .VPSidebarItem.level-0 > .item:hover > .caret {
+  opacity: 1;
+}
+
+/* Group → first item gap */
+.VPSidebar .VPSidebarItem.level-0 > .items {
+  margin-top: 4px !important;
+}
+
+/* Inter-group separator: a 1px hairline + 16px breathing on each side */
+.VPSidebar .VPSidebarItem.level-0 + .VPSidebarItem.level-0 {
+  margin-top: 16px !important;
+  padding-top: 16px !important;
+  border-top: 1px solid var(--vig-border);
+}
+
+/* ---- Item rows (knowledge case studies) ------------------------------- */
+
+.VPSidebar .VPSidebarItem.is-link > .item {
+  position: relative;
+  border-radius: 8px;
+  margin: 2px 0;
+  transition: background-color 0.18s ease;
+}
+.VPSidebar .VPSidebarItem.is-link > .item .link {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 10px 12px 10px 14px !important;
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: var(--vig-text-soft) !important;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  white-space: normal;
+  word-break: keep-all;
+  transition: color 0.18s ease;
+}
+
+/* Hover — single, calm gesture: subtle teal wash + text brightens. No
+   transform, no glow, no extra bullet. */
+.VPSidebar .VPSidebarItem.is-link > .item:hover {
+  background: rgba(20, 184, 166, 0.06);
+}
+.VPSidebar .VPSidebarItem.is-link > .item:hover .link {
+  color: var(--vig-text) !important;
+}
+
+/* Active — left rail (3px, no animation) + light wash + bold text. */
+.VPSidebar .VPSidebarItem.is-link.is-active > .item {
+  background: linear-gradient(
+    90deg,
+    rgba(20, 184, 166, 0.14) 0%,
+    rgba(20, 184, 166, 0.04) 60%,
+    transparent 100%
+  );
+}
+.VPSidebar .VPSidebarItem.is-link.is-active > .item::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(180deg, #5eead4 0%, #14b8a6 100%);
+  box-shadow: 0 0 12px rgba(20, 184, 166, 0.45);
+}
+.VPSidebar .VPSidebarItem.is-link.is-active > .item .link {
+  color: var(--vig-text) !important;
+  font-weight: 600;
+}
+
+/* Sidebar redesign override — compact case navigator. The earlier block is
+   intentionally left in place as a reset; this final layer defines the actual
+   rhythm and active states. */
+.VPSidebar {
+  padding: 8px 14px 32px 18px !important;
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--vp-c-bg) 98%, transparent) 0%,
+      color-mix(in srgb, var(--vp-c-bg) 94%, transparent) 72%,
+      color-mix(in srgb, var(--vp-c-bg) 66%, transparent) 100%
+    ),
+    linear-gradient(180deg, rgba(20, 184, 166, 0.045), transparent 18%),
+    var(--vp-c-bg) !important;
+}
+
+.VPSidebar::before {
+  content: none;
+}
+
+.VPSidebar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: -20px;
+  bottom: 0;
+  width: 20px;
+  background: linear-gradient(90deg, rgba(10, 14, 23, 0.18), transparent);
+  pointer-events: none;
+}
+
+@media (min-width: 960px) {
+  .VPSidebar {
+    position: fixed !important;
+    top: var(--vp-nav-height) !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    z-index: 20 !important;
+    width: var(--vp-sidebar-width) !important;
+    overflow-y: auto;
+  }
+}
+
+.VPSidebar .nav,
+.VPSidebar .group,
+.VPSidebar .VPSidebarNav,
+.VPSidebarItem,
+.VPSidebarItem.level-0,
+.VPSidebarItem.level-1,
+.VPSidebarItem.level-2,
+.VPSidebarItem .items {
+  margin-left: 0 !important;
+  padding-left: 0 !important;
+  border-left: 0 !important;
+}
+
+.VPSidebarItem > .item {
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+}
+
+.VPSidebarItem .indicator {
+  display: none !important;
+}
+
+.VPSidebar .VPSidebarItem.level-0 > .item {
+  margin: 0 0 10px !important;
+  padding: 0 2px !important;
+}
+
+.VPSidebar .VPSidebarNav > .group:first-child,
+.VPSidebar .VPSidebarNav > .group:first-child > .VPSidebarItem.level-0:first-child,
+.VPSidebar .VPSidebarNav > .group:first-child > .VPSidebarItem.level-0:first-child > .item {
+  margin-top: 0 !important;
+  padding-top: 0 !important;
+}
+
+.VPSidebar .curtain,
+.VPSidebar .aside-curtain,
+.VPSidebar .VPSidebarNav::before,
+.VPSidebar .group::before {
+  display: none !important;
+  content: none !important;
+}
+
+.VPSidebar .VPSidebarItem.level-0 > .item > .text,
+.VPSidebar .VPSidebarItem.level-0 > .item > .title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 !important;
+  font-size: 0.68rem !important;
+  font-weight: 780 !important;
+  letter-spacing: 0.18em;
+  line-height: 1.2;
+  text-transform: uppercase;
+  color: var(--vig-text-muted) !important;
+}
+
+.VPSidebar .VPSidebarItem.level-0 > .item > .text::after,
+.VPSidebar .VPSidebarItem.level-0 > .item > .title::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--vig-border), transparent);
+}
+
+.VPSidebar .VPSidebarItem.level-0 > .items {
+  margin-top: 0 !important;
+}
+
+.VPSidebar .VPSidebarItem.is-link + .VPSidebarItem.is-link {
+  margin-top: 3px !important;
+}
+
+.VPSidebar .VPSidebarItem.is-link > .item {
+  position: relative;
+  margin: 0 !important;
+  border-radius: 10px;
+  background: transparent !important;
+}
+
+.VPSidebar .VPSidebarItem.is-link > .item .link {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 34px !important;
+  padding: 7px 10px 7px 12px !important;
+  border-radius: 10px;
+  font-size: 0.84rem !important;
+  line-height: 1.35 !important;
+  letter-spacing: -0.01em;
+  color: var(--vig-text-muted) !important;
+  font-variant-numeric: tabular-nums;
+  font-weight: 520 !important;
+  white-space: normal;
+  word-break: keep-all;
+  transition:
+    background-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.VPSidebar .VPSidebarItem.is-link > .item:hover .link {
+  background: rgba(20, 184, 166, 0.07);
+  color: var(--vig-text-soft) !important;
+}
+
+.VPSidebar .VPSidebarItem.is-link.is-active > .item::before {
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--vig-accent);
+  box-shadow: 0 0 10px rgba(20, 184, 166, 0.34);
+}
+
+.VPSidebar .VPSidebarItem.is-link.is-active > .item .link {
+  background:
+    linear-gradient(90deg, rgba(20, 184, 166, 0.18), rgba(20, 184, 166, 0.055)),
+    rgba(20, 184, 166, 0.04);
+  color: var(--vig-accent-soft) !important;
+  font-weight: 720 !important;
+}
+
+@media (min-width: 1440px) {
+  .VPSidebar {
+    padding: 10px 16px 32px 20px !important;
+  }
+}
+
+@media (max-width: 959px) {
+  .VPSidebar {
+    padding: 18px 16px 28px !important;
+  }
+
+  .VPSidebar .VPSidebarItem.is-link > .item .link {
+    min-height: 40px !important;
+    padding: 9px 12px 9px 14px !important;
+    font-size: 0.92rem !important;
+  }
+}
+
+/* Right TOC keeps its own room. */
+.VPDoc .aside {
+  padding-left: 48px !important;
+}
+@media (min-width: 1280px) {
+  .VPDoc .aside {
+    padding-left: 72px !important;
+  }
+}
+
+/* ---- Widen the doc body ------------------------------------------------
+   With sidebar at 260/288px we can still afford a 1040–1120 column. */
+:root {
+  --vp-layout-max-width: 1600px;
+}
+@media (min-width: 1440px) {
+  :root {
+    --vp-layout-max-width: 1760px;
+  }
+}
+.VPDoc:not(.has-aside) .content-container,
+.VPDoc.has-aside .content-container {
+  max-width: 100% !important;
+}
+.VPDoc .content {
+  max-width: 920px !important;
+}
+@media (min-width: 1280px) {
+  .VPDoc .content {
+    max-width: 1040px !important;
+  }
+}
+@media (min-width: 1600px) {
+  .VPDoc .content {
+    max-width: 1120px !important;
+  }
+}
+.VPDoc.has-aside .content-container > .content {
+  padding-right: 16px;
 }
 
 .VPNavBarTitle .title > span {
@@ -3178,6 +3607,143 @@ html[lang="zh"] .share-panel__eyebrow {
   border: 1px solid var(--vig-border);
   border-radius: 12px;
   box-shadow: var(--vig-shadow-sm);
+}
+
+/* Knowledge landing page */
+.vp-doc:has(.knowledge-hero) {
+  position: relative;
+}
+
+.vp-doc:has(.knowledge-hero) > h1 {
+  margin-bottom: 0 !important;
+  max-width: 780px;
+  font-size: clamp(2.35rem, 4vw, 3.35rem);
+  font-weight: 850;
+  line-height: 1.16;
+  letter-spacing: -0.055em;
+  background: linear-gradient(120deg, var(--vig-text), #99f6e4 52%, #38bdf8);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.knowledge-hero {
+  position: relative;
+  margin: 2.6rem 0 1.65rem !important;
+  padding: 1.05rem 1.15rem 1.1rem;
+  border: 1px solid color-mix(in srgb, var(--vig-accent) 18%, var(--vig-border));
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(20, 184, 166, 0.16), transparent 36%),
+    linear-gradient(135deg, rgba(20, 184, 166, 0.075), rgba(56, 189, 248, 0.035) 42%, transparent),
+    color-mix(in srgb, var(--vig-bg-1) 82%, transparent);
+  box-shadow: var(--vig-shadow-md);
+  overflow: hidden;
+}
+
+.knowledge-hero::after {
+  content: "";
+  position: absolute;
+  right: -72px;
+  top: -96px;
+  width: 240px;
+  height: 240px;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(20, 184, 166, 0.13), transparent 62%);
+  pointer-events: none;
+}
+
+.knowledge-hero__eyebrow {
+  margin: 0 0 0.55rem !important;
+  color: var(--vig-accent) !important;
+  font-size: 0.72rem;
+  font-weight: 820;
+  letter-spacing: 0.18em;
+}
+
+.knowledge-hero__lead {
+  position: relative;
+  z-index: 1;
+  max-width: 820px;
+  margin: 0 !important;
+  color: var(--vig-text-soft) !important;
+  font-size: 1.02rem;
+  line-height: 1.72 !important;
+}
+
+.knowledge-hero__stats {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.6rem;
+  max-width: 680px;
+  margin-top: 1.05rem;
+}
+
+.knowledge-hero__stats span {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+  padding: 0.62rem 0.68rem;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 12px;
+  background: rgba(148, 163, 184, 0.06);
+  color: var(--vig-text-muted);
+}
+
+.knowledge-hero__stats strong {
+  display: block;
+  min-width: 0;
+  color: var(--vig-accent-soft);
+  font-size: clamp(1rem, 1.4vw, 1.16rem);
+  font-weight: 820;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.knowledge-hero__stats em {
+  display: block;
+  color: var(--vig-text-muted);
+  font-size: 0.74rem;
+  font-style: normal;
+  line-height: 1.25;
+}
+
+.vp-doc:has(.knowledge-hero) > p:not(.knowledge-hero__eyebrow):not(.knowledge-hero__lead),
+.vp-doc:has(.knowledge-hero) > ul {
+  max-width: 860px;
+}
+
+.vp-doc:has(.knowledge-hero) > h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-top: 2.1rem;
+  padding-top: 1.2rem;
+  border-top: 1px solid color-mix(in srgb, var(--vig-accent) 14%, var(--vig-border));
+  font-size: clamp(1.25rem, 2vw, 1.55rem);
+}
+
+.vp-doc:has(.knowledge-hero) > h2::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--vig-accent) 32%, var(--vig-border)), transparent);
+}
+
+@media (max-width: 720px) {
+  .knowledge-hero {
+    padding: 0.95rem;
+    border-radius: 16px;
+  }
+
+  .knowledge-hero__stats {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* =============================================================================

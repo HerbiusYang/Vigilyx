@@ -503,20 +503,23 @@ impl DataSecurityEngine {
     /// priorityUseMemoryMediumof request_body, tempFilestored AsynchronousreadGet.
     async fn async_read_body(session: &HttpSession) -> Vec<u8> {
         // priorityFromtempFileAsynchronousreadGet — SEC: path validation (CWE-22)
-        if let Some(ref path) = session.body_temp_file
-            && let Some(validated) = super::validate_temp_path(path)
-        {
-            match tokio::fs::read(&validated).await {
-                Ok(data) => return data,
-                Err(e) => {
-                    warn!("AsynchronousreadGet body tempFileFailed {}: {}", path, e);
-                }
+        if let Some(ref path) = session.body_temp_file {
+            if let Some(data) =
+                super::read_temp_path_limited_async(path, super::MAX_TEMP_BODY_READ_BYTES).await
+            {
+                return data;
             }
+            warn!(
+                "AsynchronousreadGet body tempFileFailed or blocked {}",
+                path
+            );
         }
 
         // downgradelevel: FromMemoryMediumof request_body readGet
         if let Some(ref body) = session.request_body {
-            return body.as_bytes().to_vec();
+            let bytes = body.as_bytes();
+            let cap = bytes.len().min(super::MAX_TEMP_BODY_READ_BYTES);
+            return bytes[..cap].to_vec();
         }
 
         Vec::new()

@@ -22,11 +22,15 @@ pub mod self_send_detect;
 pub mod time_policy;
 pub mod volume_anomaly;
 
+use std::io::Read;
 use std::path::Path;
 
 use vigilyx_core::{DataSecurityIncident, HttpSession};
 
 use self::dlp::DlpScanResult;
+
+/// Default upper bound for reading captured HTTP body temp files into the engine.
+pub const MAX_TEMP_BODY_READ_BYTES: usize = 50 * 1024 * 1024;
 
 /// SEC: validate that body_temp_file stays within the allowed temp directories to prevent path traversal reads (CWE-22).
 /// Returns the normalized path if it is valid; otherwise returns None and logs a warning.
@@ -52,6 +56,31 @@ pub fn validate_temp_path(path: &str) -> Option<std::path::PathBuf> {
         "SEC: body_temp_file path traversal blocked (not under allowed temp directory)"
     );
     None
+}
+
+/// Read at most `max_bytes` from a validated HTTP body temp file.
+///
+/// Several detectors only need a bounded prefix of the captured body. Using
+/// `take()` avoids allocating an unexpectedly large file before truncating it.
+pub fn read_temp_path_limited(path: &str, max_bytes: usize) -> Option<Vec<u8>> {
+    let validated = validate_temp_path(path)?;
+    let file = std::fs::File::open(&validated).ok()?;
+    let mut reader = file.take(max_bytes as u64);
+    let mut data = Vec::with_capacity(max_bytes.min(64 * 1024));
+    reader.read_to_end(&mut data).ok()?;
+    Some(data)
+}
+
+/// Async variant of `read_temp_path_limited`.
+pub async fn read_temp_path_limited_async(path: &str, max_bytes: usize) -> Option<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+
+    let validated = validate_temp_path(path)?;
+    let file = tokio::fs::File::open(&validated).await.ok()?;
+    let mut reader = file.take(max_bytes as u64);
+    let mut data = Vec::with_capacity(max_bytes.min(64 * 1024));
+    reader.read_to_end(&mut data).await.ok()?;
+    Some(data)
 }
 
 /// Detector analysis result: incident + optional DLP result (for JR/T compliance tracking).
@@ -175,6 +204,36 @@ pub fn extract_snippet(source_text: &str, matched_values: &[String]) -> Option<S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn allowed_test_path(name: &str) -> std::path::PathBuf {
+        let base = std::path::Path::new("data/tmp/http");
+        std::fs::create_dir_all(base).expect("create allowed temp dir");
+        base.join(name)
+    }
+
+    #[test]
+    fn read_temp_path_limited_reads_only_requested_prefix() {
+        let path = allowed_test_path("limited_read_test.bin");
+        std::fs::write(&path, b"0123456789").expect("write temp body");
+
+        let data = read_temp_path_limited(&path.to_string_lossy(), 4).expect("read limited body");
+        assert_eq!(data, b"0123");
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn read_temp_path_limited_async_reads_only_requested_prefix() {
+        let path = allowed_test_path("limited_read_async_test.bin");
+        std::fs::write(&path, b"abcdefghij").expect("write temp body");
+
+        let data = read_temp_path_limited_async(&path.to_string_lossy(), 3)
+            .await
+            .expect("read limited body");
+        assert_eq!(data, b"abc");
+
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn test_extract_snippet_basic() {

@@ -10,7 +10,7 @@ use vigilyx_core::magic_bytes::{
     self, DetectedFileType, detect_file_type, is_encrypted_archive, is_encrypted_pdf,
     is_high_risk_disguise,
 };
-use vigilyx_core::models::decode_base64_bytes;
+use vigilyx_core::models::decode_base64_bytes_limited;
 
 use crate::context::SecurityContext;
 use crate::error::EngineError;
@@ -238,8 +238,11 @@ impl SecurityModule for AttachScanModule {
             }
 
             // --- 6. Magic bytes cross-validation ---
+            if att.size > MAX_FILE_SIZE {
+                continue;
+            }
             if let Some(ref b64) = att.content_base64
-                && let Some(bytes) = decode_base64_bytes(b64)
+                && let Some(bytes) = decode_base64_bytes_limited(b64, MAX_FILE_SIZE)
             {
                 let magic_result =
                     analyze_magic_bytes(&bytes, &att.filename, last_ext, &att.content_type);

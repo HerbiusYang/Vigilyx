@@ -13,7 +13,7 @@ use vigilyx_db::security::quarantine::QuarantineEntry;
 use vigilyx_mta::config::MtaConfig;
 use vigilyx_mta::relay::downstream::{DownstreamRelay, RelayResult};
 
-use super::super::ApiResponse;
+use super::super::{ApiResponse, clamp_i64_pagination};
 use crate::AppState;
 use crate::auth::AuthenticatedUser;
 
@@ -133,8 +133,7 @@ pub async fn list_quarantine(
     State(state): State<Arc<AppState>>,
     Query(params): Query<QuarantineListQuery>,
 ) -> impl IntoResponse {
-    let limit = params.limit.unwrap_or(50).min(200);
-    let offset = params.offset.unwrap_or(0);
+    let (limit, offset) = clamp_i64_pagination(params.limit, params.offset, 50, 200);
 
     match state
         .db

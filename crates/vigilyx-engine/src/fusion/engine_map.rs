@@ -121,7 +121,8 @@ pub fn module_to_engine(module_id: &str) -> Option<EngineId> {
 
         // Engine B: Content Analysis (9 modules, incl. ClamAV + YARA)
         "content_scan" | "html_scan" | "html_pixel_art" | "attach_scan" | "attach_content"
-        | "attach_hash" | "av_eml_scan" | "av_attach_scan" | "yara_scan" => Some(EngineId::B),
+        | "attach_hash" | "av_eml_scan" | "av_attach_scan" | "yara_scan" | "rmm_detect"
+        | "prompt_injection_scan" | "toad_detect" => Some(EngineId::B),
 
         // Engine C: Behavior Baseline
         "anomaly_detect" => Some(EngineId::C),
@@ -216,6 +217,24 @@ mod tests {
     #[test]
     fn test_yara_module_maps_to_engine_b() {
         assert_eq!(module_to_engine("yara_scan"), Some(EngineId::B));
+    }
+
+    #[test]
+    fn test_rmm_detect_maps_to_engine_b() {
+        assert_eq!(module_to_engine("rmm_detect"), Some(EngineId::B));
+    }
+
+    #[test]
+    fn test_prompt_injection_maps_to_engine_b() {
+        assert_eq!(
+            module_to_engine("prompt_injection_scan"),
+            Some(EngineId::B)
+        );
+    }
+
+    #[test]
+    fn test_toad_detect_maps_to_engine_b() {
+        assert_eq!(module_to_engine("toad_detect"), Some(EngineId::B));
     }
 
     #[test]

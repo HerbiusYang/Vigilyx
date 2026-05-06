@@ -1,7 +1,7 @@
 //! ContentdetectModule - emailbodyMediumofPhishingKeywords, BEC modeAndSensitivedata
 
 mod detectors;
-mod html_utils;
+pub(crate) mod html_utils;
 
 use std::collections::HashSet;
 use std::time::Instant;

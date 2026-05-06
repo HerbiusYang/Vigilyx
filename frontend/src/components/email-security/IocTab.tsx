@@ -122,7 +122,7 @@ export default function IocTab() {
           .filter(Boolean)
           .join('-')
       : 'all'
-    fetch(url, { credentials: 'same-origin' })
+    apiFetch(url)
       .then(res => res.blob())
       .then(blob => {
         const a = document.createElement('a')
@@ -131,7 +131,10 @@ export default function IocTab() {
         a.click()
         URL.revokeObjectURL(a.href)
       })
-      .catch(e => console.error('Export failed:', e))
+      .catch(e => {
+        console.error('Export failed:', e)
+        alert(t('emailSecurity.exportFailed', { error: e instanceof Error ? e.message : String(e) }))
+      })
   }
 
   const importIocFile = async (file: File) => {
@@ -249,7 +252,7 @@ export default function IocTab() {
               <select className="sec-form-select" value={iocForm.verdict} onChange={e => setIocForm({ ...iocForm, verdict: e.target.value })}>
                 <option value="malicious">{t('emailSecurity.verdictMalicious')}</option>
                 <option value="suspicious">{t('emailSecurity.verdictSuspicious')}</option>
-                <option value="safe">{t('emailSecurity.verdictSafe')}</option>
+                <option value="clean">{t('emailSecurity.verdictSafe')}</option>
               </select>
             </div>
           </div>

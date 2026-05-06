@@ -90,17 +90,7 @@ async fn main() -> anyhow::Result<()> {
     db.init_security_tables().await?;
     info!("Database connected");
 
-    // pipeline (DB config, key='security_pipeline')
-    let pipeline_config = match db.get_config("security_pipeline").await {
-        Ok(Some(json)) => serde_json::from_str::<PipelineConfig>(&json).unwrap_or_else(|e| {
-            error!("Pipeline config parse failed: {e}, using defaults");
-            PipelineConfig::default()
-        }),
-        _ => {
-            info!("No pipeline config in DB, using defaults");
-            PipelineConfig::default()
-        }
-    };
+    let pipeline_config = load_pipeline_config(&db).await;
 
     // db (engine take ownership)
     let quarantine_db = db.clone();
@@ -198,6 +188,39 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Load the same pipeline contract used by the standalone engine.
+async fn load_pipeline_config(db: &VigilDb) -> PipelineConfig {
+    match db.get_config("security_pipeline").await {
+        Ok(Some(json)) => match serde_json::from_str::<PipelineConfig>(&json) {
+            Ok(mut config) => {
+                info!("从数据库加载安全 Pipeline 配置 (MTA)");
+
+                let added = config.merge_default_modules();
+                if !added.is_empty() {
+                    info!("MTA 自动合并新模块到 Pipeline: {:?}", added);
+                }
+
+                if let Some(violations) = config.repair_unsafe_verdict_config() {
+                    warn!(
+                        violations = ?violations,
+                        "MTA DB-stored VerdictConfig failed validation, falling back to safe defaults"
+                    );
+                }
+
+                config
+            }
+            Err(e) => {
+                error!("Pipeline config parse failed: {e}, using defaults");
+                PipelineConfig::default()
+            }
+        },
+        _ => {
+            info!("No pipeline config in DB, using defaults");
+            PipelineConfig::default()
+        }
+    }
 }
 
 /// Redis subscription loop: listen for ENGINE_CMD_RELOAD and hot-reload whitelist/IOC caches.

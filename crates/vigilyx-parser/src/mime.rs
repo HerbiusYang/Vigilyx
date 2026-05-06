@@ -1336,6 +1336,122 @@ Content-Transfer-Encoding: base64\r\n\
     }
 
     #[test]
+    fn test_header_folding_and_case_insensitive_lookup() {
+        let parser = MimeParser::new();
+        let email = b"From: sender@example.com\r\n\
+Subject: Security\r\n\
+\tNotice\r\n\
+X-Custom: first\r\n\
+\x20second\r\n\
+Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+Body";
+
+        let content = parser.parse(email).unwrap();
+
+        assert_eq!(content.get_header("subject"), Some("Security Notice"));
+        assert_eq!(content.get_header("x-custom"), Some("first second"));
+        assert_eq!(content.body_text.as_deref(), Some("Body"));
+    }
+
+    #[test]
+    fn test_text_plain_gbk_charset_decodes_to_utf8() {
+        let parser = MimeParser::new();
+        let mut email = b"Content-Type: text/plain; charset=gbk\r\n\r\n".to_vec();
+        email.extend_from_slice(&[0xc4, 0xe3, 0xba, 0xc3]); // 你好 in GBK
+
+        let content = parser.parse(&email).unwrap();
+
+        assert_eq!(content.body_text.as_deref(), Some("你好"));
+    }
+
+    #[test]
+    fn test_plain_text_links_deduplicate_and_trim_punctuation() {
+        let parser = MimeParser::new();
+        let email = b"Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+Open https:// example.com/login. Then open https://example.com/login, and http://10.0.0.1/verify)";
+
+        let content = parser.parse(email).unwrap();
+
+        let urls = content
+            .links
+            .iter()
+            .map(|link| (link.url.as_str(), link.suspicious))
+            .collect::<Vec<_>>();
+        assert_eq!(urls.len(), 2);
+        assert!(urls.contains(&("https://example.com/login", true)));
+        assert!(urls.contains(&("http://10.0.0.1/verify", true)));
+    }
+
+    #[test]
+    fn test_html_links_extract_anchor_text_and_image_src() {
+        let parser = MimeParser::new();
+        let email = b"Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+<html><body><a HREF='https://evil.example/login'><span>Review</span> invoice</a><img SRC=\"https://cdn.example/pixel.png\"></body></html>";
+
+        let content = parser.parse(email).unwrap();
+
+        let login = content
+            .links
+            .iter()
+            .find(|link| link.url == "https://evil.example/login")
+            .expect("anchor href should be extracted");
+        assert_eq!(login.text.as_deref(), Some("Review invoice"));
+        assert!(login.suspicious);
+        assert!(
+            content
+                .links
+                .iter()
+                .any(|link| link.url == "https://cdn.example/pixel.png")
+        );
+    }
+
+    #[test]
+    fn test_multipart_attachment_filename_star_is_percent_decoded() {
+        let parser = MimeParser::new();
+        let email = b"Content-Type: multipart/mixed; boundary=\"BOUND\"\r\n\
+\r\n\
+--BOUND\r\n\
+Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+Body\r\n\
+--BOUND\r\n\
+Content-Type: application/pdf; name*=utf-8''%E6%B5%8B%E8%AF%95.pdf\r\n\
+Content-Disposition: attachment; filename*=utf-8''%E6%B5%8B%E8%AF%95.pdf\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+SGVsbG8=\r\n\
+--BOUND--\r\n";
+
+        let content = parser.parse(email).unwrap();
+
+        assert_eq!(content.body_text.as_deref(), Some("Body\r\n"));
+        assert_eq!(content.attachments.len(), 1);
+        let attachment = &content.attachments[0];
+        assert_eq!(attachment.filename, "测试.pdf");
+        assert_eq!(attachment.content_type, "application/pdf");
+        assert_eq!(attachment.size, 5);
+        assert_eq!(attachment.content_base64.as_deref(), Some("SGVsbG8="));
+    }
+
+    #[test]
+    fn test_header_too_large_is_rejected_before_body_parse() {
+        let parser = MimeParser::new();
+        let mut email = Vec::new();
+        email.extend_from_slice(b"X-Large: ");
+        email.extend_from_slice(&vec![b'a'; MAX_HEADER_SIZE + 1]);
+        email.extend_from_slice(b"\r\n\r\nBody");
+
+        let err = parser
+            .parse(&email)
+            .expect_err("oversized header should fail");
+
+        assert_eq!(err, MimeError::HeaderTooLarge);
+    }
+
+    #[test]
     fn test_rfc2047_base64() {
         // =?utf-8?B?5Yqe5YWs5qW8?= -> " "
         let input = "=?utf-8?B?5Yqe5YWs5qW8?=";

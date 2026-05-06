@@ -663,12 +663,20 @@ async fn execute_tx(
 fn cleanup_http_temp_files(ids: &[String]) {
     let mut files_cleaned = 0u64;
     for id in ids {
-        let path = format!("data/tmp/http/{}.bin", id);
-        if !std::path::Path::new(&path).exists() {
+        let Some(path) = http_temp_file_path_for_id(id) else {
+            tracing::warn!("Skipping invalid HTTP temp file id during cleanup");
+            continue;
+        };
+
+        if !path.exists() {
             continue;
         }
         if let Err(e) = std::fs::remove_file(&path) {
-            tracing::warn!(path, "Failed to remove HTTP temp file: {}", e);
+            tracing::warn!(
+                path = %path.display(),
+                "Failed to remove HTTP temp file: {}",
+                e
+            );
         } else {
             files_cleaned += 1;
         }
@@ -680,6 +688,11 @@ fn cleanup_http_temp_files(ids: &[String]) {
             "Cleaned HTTP body temp files during precise clear"
         );
     }
+}
+
+fn http_temp_file_path_for_id(id: &str) -> Option<std::path::PathBuf> {
+    let id = Uuid::parse_str(id).ok()?;
+    Some(std::path::Path::new("data/tmp/http").join(format!("{id}.bin")))
 }
 
 // ============================================
@@ -728,4 +741,32 @@ pub async fn update_rotate_config(
         threshold_percent: Database::get_rotate_threshold(),
         disk_usage_percent: disk_usage,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn http_temp_file_path_accepts_uuid_ids_only() {
+        let id = "550e8400-e29b-41d4-a716-446655440000";
+
+        assert_eq!(
+            http_temp_file_path_for_id(id).as_deref(),
+            Some(Path::new("data/tmp/http/550e8400-e29b-41d4-a716-446655440000.bin"))
+        );
+    }
+
+    #[test]
+    fn http_temp_file_path_rejects_path_traversal_ids() {
+        for id in [
+            "../550e8400-e29b-41d4-a716-446655440000",
+            "550e8400-e29b-41d4-a716-446655440000/../../x",
+            "550e8400-e29b-41d4-a716-446655440000.bin",
+            "",
+        ] {
+            assert!(http_temp_file_path_for_id(id).is_none());
+        }
+    }
 }

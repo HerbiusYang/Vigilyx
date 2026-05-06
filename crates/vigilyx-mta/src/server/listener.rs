@@ -12,6 +12,7 @@ use tokio_rustls::TlsAcceptor;
 use tracing::{error, info, warn};
 
 use crate::config::MtaConfig;
+use crate::config::is_trusted_upstream_ip;
 use crate::dlp::{DlpAction, detect_direction, format_dlp_reason, run_dlp_scan};
 use crate::relay::downstream::{DownstreamRelay, RelayResult};
 use crate::relay::quarantine::store_quarantine;
@@ -33,6 +34,166 @@ struct SmtpRuntime<'a> {
     relay: &'a DownstreamRelay,
     outbound_relay: &'a DownstreamRelay,
     db: &'a VigilDb,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeliveryPlan {
+    Relay {
+        relay_direction: MailDirection,
+        enforce_outbound_dlp: bool,
+    },
+    TempfailReply,
+    Quarantine,
+    Reject,
+}
+
+fn delivery_plan(
+    disposition: &VerdictDisposition,
+    direction: MailDirection,
+    fail_open: bool,
+    outbound_dlp_enabled: bool,
+) -> DeliveryPlan {
+    match disposition {
+        VerdictDisposition::Accept => DeliveryPlan::Relay {
+            relay_direction: direction,
+            enforce_outbound_dlp: direction == MailDirection::Outbound && outbound_dlp_enabled,
+        },
+        VerdictDisposition::Tempfail if fail_open => DeliveryPlan::Relay {
+            relay_direction: direction,
+            enforce_outbound_dlp: direction == MailDirection::Outbound && outbound_dlp_enabled,
+        },
+        VerdictDisposition::Tempfail => DeliveryPlan::TempfailReply,
+        VerdictDisposition::Quarantine => DeliveryPlan::Quarantine,
+        VerdictDisposition::Reject { .. } => DeliveryPlan::Reject,
+    }
+}
+
+fn session_trusted_submitter(
+    session: &vigilyx_core::models::EmailSession,
+    trusted_upstream_cidrs: &[String],
+) -> bool {
+    let auth_ok = session
+        .auth_info
+        .as_ref()
+        .and_then(|auth| auth.auth_success)
+        .unwrap_or(false);
+
+    auth_ok || is_trusted_upstream_ip(&session.client_ip, trusted_upstream_cidrs)
+}
+
+async fn write_reply<S>(stream: &mut S, data: &[u8])
+where
+    S: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncWriteExt;
+
+    let _ = stream.write_all(data).await;
+    let _ = stream.flush().await;
+}
+
+fn relay_for_direction<'a>(
+    runtime: &'a SmtpRuntime<'a>,
+    direction: MailDirection,
+) -> &'a DownstreamRelay {
+    if direction == MailDirection::Outbound {
+        runtime.outbound_relay
+    } else {
+        runtime.relay
+    }
+}
+
+async fn relay_and_reply<S, I>(
+    stream: &mut S,
+    relay: &DownstreamRelay,
+    mail_from: Option<&str>,
+    rcpt_to: &[String],
+    raw_eml: &[u8],
+    session_id: I,
+) where
+    S: tokio::io::AsyncWrite + Unpin,
+    I: Copy + std::fmt::Display,
+{
+    match relay.relay(mail_from, rcpt_to, raw_eml).await {
+        RelayResult::Accepted => {
+            write_reply(stream, b"250 2.0.0 OK\r\n").await;
+        }
+        RelayResult::TempFail(msg) => {
+            let reply = format!("451 4.7.1 Downstream temporary failure: {msg}\r\n");
+            write_reply(stream, reply.as_bytes()).await;
+        }
+        RelayResult::PermFail(msg) => {
+            let reply = format!("550 5.7.1 Downstream rejected: {msg}\r\n");
+            write_reply(stream, reply.as_bytes()).await;
+        }
+        RelayResult::ConnError(msg) => {
+            warn!(session_id = %session_id, "Downstream unreachable: {msg}");
+            write_reply(stream, b"421 4.7.0 Downstream unavailable, try later\r\n").await;
+        }
+    }
+}
+
+async fn enforce_outbound_dlp<S>(
+    stream: &mut S,
+    runtime: &SmtpRuntime<'_>,
+    session: &vigilyx_core::models::EmailSession,
+    raw_eml: &[u8],
+) -> bool
+where
+    S: tokio::io::AsyncWrite + Unpin,
+{
+    if !runtime.config.dlp.enabled {
+        return false;
+    }
+
+    let dlp_result = run_dlp_scan(session);
+    if dlp_result.is_empty() || dlp_result.count_items_at_level(runtime.config.dlp.min_level) == 0 {
+        return false;
+    }
+
+    let reason = format_dlp_reason(&dlp_result);
+    info!(
+        session_id = %session.id,
+        matches = ?dlp_result.matches,
+        "DLP hit on outbound email: {reason}"
+    );
+
+    match runtime.config.dlp.action {
+        DlpAction::Block => {
+            write_reply(
+                stream,
+                b"550 5.7.1 Message blocked: sensitive data detected\r\n",
+            )
+            .await;
+            true
+        }
+        DlpAction::Quarantine => {
+            let stored = store_quarantine(
+                runtime.db,
+                &session.id,
+                session.mail_from.as_deref(),
+                &session.rcpt_to,
+                session.subject.as_deref(),
+                raw_eml,
+                "high",
+                &reason,
+            )
+            .await;
+            if stored {
+                write_reply(stream, b"250 2.0.0 OK\r\n").await;
+            } else {
+                warn!(session_id = %session.id, "DLP quarantine storage failed");
+                write_reply(stream, b"451 4.7.1 Quarantine storage unavailable\r\n").await;
+            }
+            true
+        }
+        DlpAction::AllowAndAlert => {
+            warn!(
+                session_id = %session.id,
+                "DLP alert (allow_and_alert): {reason}"
+            );
+            false
+        }
+    }
 }
 
 /// SEC: Maximum concurrent connections from a single IP address (CWE-400).
@@ -82,6 +243,23 @@ impl PerIpLimiter {
     }
 }
 
+fn try_acquire_global_connection_slot(
+    active_connections: &AtomicUsize,
+    max_connections: usize,
+) -> Option<usize> {
+    let previous = active_connections.fetch_add(1, Ordering::Relaxed);
+    if previous >= max_connections {
+        active_connections.fetch_sub(1, Ordering::Relaxed);
+        None
+    } else {
+        Some(previous + 1)
+    }
+}
+
+fn release_global_connection_slot(active_connections: &AtomicUsize) {
+    active_connections.fetch_sub(1, Ordering::Relaxed);
+}
+
 /// SMTP (+ STARTTLS)
 #[allow(clippy::too_many_arguments)]
 pub async fn run_smtp_listener(
@@ -106,9 +284,9 @@ pub async fn run_smtp_listener(
             }
         };
 
-        let current = active_connections.fetch_add(1, Ordering::Relaxed);
-        if current >= config.max_connections {
-            active_connections.fetch_sub(1, Ordering::Relaxed);
+        if try_acquire_global_connection_slot(&active_connections, config.max_connections).is_none()
+        {
+            let current = active_connections.load(Ordering::Relaxed);
             warn!(addr = %addr, current, "Max connections reached, rejecting");
             drop(stream);
             continue;
@@ -117,7 +295,7 @@ pub async fn run_smtp_listener(
         // SEC: per-IP connection limit (CWE-400)
         let client_ip_addr = addr.ip();
         if !per_ip_limiter.try_acquire(client_ip_addr) {
-            active_connections.fetch_sub(1, Ordering::Relaxed);
+            release_global_connection_slot(&active_connections);
             warn!(addr = %addr, limit = MAX_CONN_PER_IP, "Per-IP connection limit reached, rejecting");
             drop(stream);
             continue;
@@ -145,7 +323,7 @@ pub async fn run_smtp_listener(
                 error!(error = %e, "SMTP connection error");
             }
 
-            conn_counter.fetch_sub(1, Ordering::Relaxed);
+            release_global_connection_slot(&conn_counter);
             ip_limiter.release(client_ip_addr);
         });
     }
@@ -178,9 +356,8 @@ pub async fn run_smtps_listener(
             }
         };
 
-        let current = active_connections.fetch_add(1, Ordering::Relaxed);
-        if current >= config.max_connections {
-            active_connections.fetch_sub(1, Ordering::Relaxed);
+        if try_acquire_global_connection_slot(&active_connections, config.max_connections).is_none()
+        {
             warn!(addr = %peer_addr, "Max connections reached");
             drop(stream);
             continue;
@@ -189,7 +366,7 @@ pub async fn run_smtps_listener(
         // SEC: per-IP connection limit (CWE-400)
         let client_ip_addr = peer_addr.ip();
         if !per_ip_limiter.try_acquire(client_ip_addr) {
-            active_connections.fetch_sub(1, Ordering::Relaxed);
+            release_global_connection_slot(&active_connections);
             warn!(addr = %peer_addr, limit = MAX_CONN_PER_IP, "Per-IP connection limit reached, rejecting");
             drop(stream);
             continue;
@@ -239,7 +416,7 @@ pub async fn run_smtps_listener(
                 }
             }
 
-            conn_counter.fetch_sub(1, Ordering::Relaxed);
+            release_global_connection_slot(&conn_counter);
             ip_limiter.release(client_ip_addr);
         });
     }
@@ -361,16 +538,6 @@ async fn process_results<S>(results: Vec<HandleResult>, stream: &mut S, runtime:
 where
     S: tokio::io::AsyncWrite + Unpin,
 {
-    use tokio::io::AsyncWriteExt;
-
-    // Helper macro: write + flush (BufStream does not flush automatically)
-    macro_rules! reply {
-        ($stream:expr, $data:expr) => {{
-            let _ = $stream.write_all($data).await;
-            let _ = $stream.flush().await;
-        }};
-    }
-
     for result in results {
         match result {
             HandleResult::Email(session, raw_eml) => {
@@ -380,9 +547,10 @@ where
                 let rcpt_to = session.rcpt_to.clone();
                 let subject = session.subject.clone();
 
-                // SEC: port 25 has no SMTP AUTH, so all connections are treated as untrusted.
-                // trusted_submitter=false ensures spoofed local-domain MAIL FROM values cannot bypass inline scanning.
-                let trusted_submitter = false;
+                // Trusted submitter = authenticated submission (future AUTH path)
+                // or an explicitly trusted upstream relay IP/CIDR.
+                let trusted_submitter =
+                    session_trusted_submitter(&session, &runtime.config.trusted_upstream_cidrs);
                 let direction = detect_direction(
                     mail_from.as_deref(),
                     &rcpt_to,
@@ -404,107 +572,10 @@ where
                     "Email received"
                 );
 
-                if direction == MailDirection::Internal {
-                    match runtime
-                        .relay
-                        .relay(mail_from.as_deref(), &rcpt_to, &raw_eml)
-                        .await
-                    {
-                        RelayResult::Accepted => {
-                            reply!(stream, b"250 2.0.0 OK\r\n");
-                        }
-                        RelayResult::TempFail(msg) => {
-                            let reply = format!("451 4.7.1 {msg}\r\n");
-                            reply!(stream, reply.as_bytes());
-                        }
-                        RelayResult::PermFail(msg) => {
-                            let reply = format!("550 5.7.1 {msg}\r\n");
-                            reply!(stream, reply.as_bytes());
-                        }
-                        RelayResult::ConnError(msg) => {
-                            let reply = format!("421 4.7.0 {msg}\r\n");
-                            reply!(stream, reply.as_bytes());
-                        }
-                    }
-                    continue;
-                }
+                let outbound_dlp_session = (direction == MailDirection::Outbound
+                    && runtime.config.dlp.enabled)
+                    .then(|| session.clone());
 
-                // (->): DLP
-                if direction == MailDirection::Outbound && runtime.config.dlp.enabled {
-                    let dlp_result = run_dlp_scan(&session);
-                    if !dlp_result.is_empty()
-                        && dlp_result.count_items_at_level(runtime.config.dlp.min_level) > 0
-                    {
-                        let reason = format_dlp_reason(&dlp_result);
-                        info!(
-                            session_id = %session_id,
-                            matches = ?dlp_result.matches,
-                            "DLP hit on outbound email: {reason}"
-                        );
-
-                        match runtime.config.dlp.action {
-                            DlpAction::Block => {
-                                reply!(
-                                    stream,
-                                    b"550 5.7.1 Message blocked: sensitive data detected\r\n"
-                                );
-                                continue;
-                            }
-                            DlpAction::Quarantine => {
-                                let stored = store_quarantine(
-                                    runtime.db,
-                                    &session_id,
-                                    mail_from.as_deref(),
-                                    &rcpt_to,
-                                    subject.as_deref(),
-                                    &raw_eml,
-                                    "high",
-                                    &reason,
-                                )
-                                .await;
-                                if stored {
-                                    reply!(stream, b"250 2.0.0 OK\r\n");
-                                } else {
-                                    warn!(session_id = %session_id, "DLP quarantine storage failed");
-                                    reply!(stream, b"451 4.7.1 Quarantine storage unavailable\r\n");
-                                }
-                                continue;
-                            }
-                            DlpAction::AllowAndAlert => {
-                                // (quarantine status=released)
-                                warn!(
-                                    session_id = %session_id,
-                                    "DLP alert (allow_and_alert): {reason}"
-                                );
-                            }
-                        }
-                    }
-                    // DLP AllowAndAlert ->
-                    match runtime
-                        .outbound_relay
-                        .relay(mail_from.as_deref(), &rcpt_to, &raw_eml)
-                        .await
-                    {
-                        RelayResult::Accepted => {
-                            reply!(stream, b"250 2.0.0 OK\r\n");
-                        }
-                        RelayResult::TempFail(msg) => {
-                            let reply = format!("451 4.7.1 {msg}\r\n");
-                            reply!(stream, reply.as_bytes());
-                        }
-                        RelayResult::PermFail(msg) => {
-                            let reply = format!("550 5.7.1 {msg}\r\n");
-                            reply!(stream, reply.as_bytes());
-                        }
-                        RelayResult::ConnError(msg) => {
-                            let reply = format!("421 4.7.0 {msg}\r\n");
-                            reply!(stream, reply.as_bytes());
-                        }
-                    }
-                    continue;
-                }
-
-                // (->) DLP:
                 let timeout =
                     std::time::Duration::from_secs(runtime.config.inline_timeout_secs as u64);
                 let response = runtime
@@ -525,69 +596,50 @@ where
                     "Inline verdict: {}", response.summary
                 );
 
-                match &response.disposition {
-                    VerdictDisposition::Accept => {
-                        match runtime
-                            .relay
-                            .relay(mail_from.as_deref(), &rcpt_to, &raw_eml)
-                            .await
-                        {
-                            RelayResult::Accepted => {
-                                reply!(stream, b"250 2.0.0 OK\r\n");
-                            }
-                            RelayResult::TempFail(msg) => {
-                                let reply =
-                                    format!("451 4.7.1 Downstream temporary failure: {msg}\r\n");
-                                reply!(stream, reply.as_bytes());
-                            }
-                            RelayResult::PermFail(msg) => {
-                                let reply = format!("550 5.7.1 Downstream rejected: {msg}\r\n");
-                                reply!(stream, reply.as_bytes());
-                            }
-                            RelayResult::ConnError(msg) => {
-                                warn!(session_id = %session_id, "Downstream unreachable: {msg}");
-                                reply!(stream, b"421 4.7.0 Downstream unavailable, try later\r\n");
-                            }
-                        }
-                    }
-                    VerdictDisposition::Tempfail => {
-                        if !runtime.config.fail_open {
+                match delivery_plan(
+                    &response.disposition,
+                    direction,
+                    runtime.config.fail_open,
+                    runtime.config.dlp.enabled,
+                ) {
+                    DeliveryPlan::Relay {
+                        relay_direction,
+                        enforce_outbound_dlp: should_enforce_outbound_dlp,
+                    } => {
+                        if matches!(response.disposition, VerdictDisposition::Tempfail) {
                             warn!(
                                 session_id = %session_id,
-                                "Inline verdict unavailable and MTA_FAIL_OPEN=false, deferring delivery"
+                                "Inline verdict unavailable and MTA_FAIL_OPEN=true, relaying downstream"
                             );
-                            reply!(stream, b"451 4.7.1 Security engine temporary failure\r\n");
+                        }
+
+                        if should_enforce_outbound_dlp
+                            && let Some(ref dlp_session) = outbound_dlp_session
+                            && enforce_outbound_dlp(stream, runtime, dlp_session, &raw_eml).await
+                        {
                             continue;
                         }
 
+                        relay_and_reply(
+                            stream,
+                            relay_for_direction(runtime, relay_direction),
+                            mail_from.as_deref(),
+                            &rcpt_to,
+                            &raw_eml,
+                            session_id,
+                        )
+                        .await;
+                    }
+                    DeliveryPlan::TempfailReply => {
                         warn!(
                             session_id = %session_id,
-                            "Inline verdict unavailable and MTA_FAIL_OPEN=true, relaying downstream"
+                            "Inline verdict unavailable and MTA_FAIL_OPEN=false, deferring delivery"
                         );
-                        match runtime
-                            .relay
-                            .relay(mail_from.as_deref(), &rcpt_to, &raw_eml)
-                            .await
-                        {
-                            RelayResult::Accepted => {
-                                reply!(stream, b"250 2.0.0 OK\r\n");
-                            }
-                            RelayResult::TempFail(msg) => {
-                                let reply =
-                                    format!("451 4.7.1 Downstream temporary failure: {msg}\r\n");
-                                reply!(stream, reply.as_bytes());
-                            }
-                            RelayResult::PermFail(msg) => {
-                                let reply = format!("550 5.7.1 Downstream rejected: {msg}\r\n");
-                                reply!(stream, reply.as_bytes());
-                            }
-                            RelayResult::ConnError(msg) => {
-                                warn!(session_id = %session_id, "Downstream unreachable: {msg}");
-                                reply!(stream, b"421 4.7.0 Downstream unavailable, try later\r\n");
-                            }
-                        }
+                        write_reply(stream, b"451 4.7.1 Security engine temporary failure\r\n")
+                            .await;
+                        continue;
                     }
-                    VerdictDisposition::Quarantine => {
+                    DeliveryPlan::Quarantine => {
                         // Quarantine -> 250,
                         let stored = store_quarantine(
                             runtime.db,
@@ -601,19 +653,24 @@ where
                         )
                         .await;
                         if stored {
-                            reply!(stream, b"250 2.0.0 OK\r\n");
+                            write_reply(stream, b"250 2.0.0 OK\r\n").await;
                         } else {
                             warn!(
                                 session_id = %session_id,
                                 "Quarantine storage failed, returning temporary failure to avoid silent loss"
                             );
-                            reply!(stream, b"451 4.7.1 Quarantine storage unavailable\r\n");
+                            write_reply(stream, b"451 4.7.1 Quarantine storage unavailable\r\n")
+                                .await;
                         }
                     }
-                    VerdictDisposition::Reject { reason } => {
+                    DeliveryPlan::Reject => {
                         // Reject -> 550
+                        let reason = match &response.disposition {
+                            VerdictDisposition::Reject { reason } => reason,
+                            _ => unreachable!("delivery plan guaranteed reject disposition"),
+                        };
                         let reply = format!("550 5.7.1 {reason}\r\n");
-                        reply!(stream, reply.as_bytes());
+                        write_reply(stream, reply.as_bytes()).await;
                     }
                 }
             }
@@ -702,5 +759,438 @@ mod tests {
             limiter.try_acquire(ip),
             "Should still work after double release"
         );
+    }
+
+    #[test]
+    fn test_global_connection_slot_rejects_zero_limit_without_leaking_count() {
+        let active = AtomicUsize::new(0);
+
+        assert!(try_acquire_global_connection_slot(&active, 0).is_none());
+        assert_eq!(
+            active.load(Ordering::SeqCst),
+            0,
+            "Rejected global connection must roll back active counter"
+        );
+    }
+
+    #[test]
+    fn test_global_connection_slot_concurrent_acquire_never_exceeds_limit() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let start = Arc::new(std::sync::Barrier::new(65));
+        let successes = Arc::new(AtomicUsize::new(0));
+        let max_seen = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::new();
+
+        for _ in 0..64 {
+            let active = Arc::clone(&active);
+            let start = Arc::clone(&start);
+            let successes = Arc::clone(&successes);
+            let max_seen = Arc::clone(&max_seen);
+            handles.push(std::thread::spawn(move || {
+                start.wait();
+                if let Some(current) = try_acquire_global_connection_slot(&active, 7) {
+                    successes.fetch_add(1, Ordering::SeqCst);
+                    max_seen.fetch_max(current, Ordering::SeqCst);
+                }
+            }));
+        }
+
+        start.wait();
+        for handle in handles {
+            handle
+                .join()
+                .expect("global limiter worker thread should not panic");
+        }
+
+        assert_eq!(
+            successes.load(Ordering::SeqCst),
+            7,
+            "Concurrent global acquire must grant exactly max_connections slots"
+        );
+        assert_eq!(
+            max_seen.load(Ordering::SeqCst),
+            7,
+            "Observed active count must not exceed max_connections"
+        );
+        assert_eq!(
+            active.load(Ordering::SeqCst),
+            7,
+            "Rejected global acquisitions must not leak active counters"
+        );
+
+        for _ in 0..7 {
+            release_global_connection_slot(&active);
+        }
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+        assert!(try_acquire_global_connection_slot(&active, 7).is_some());
+    }
+
+    #[test]
+    fn test_per_ip_limiter_concurrent_acquire_same_ip_never_exceeds_limit() {
+        let limiter = Arc::new(PerIpLimiter::new(10));
+        let start = Arc::new(std::sync::Barrier::new(65));
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        let successes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut handles = Vec::new();
+
+        for _ in 0..64 {
+            let limiter = Arc::clone(&limiter);
+            let start = Arc::clone(&start);
+            let successes = Arc::clone(&successes);
+            handles.push(std::thread::spawn(move || {
+                start.wait();
+                if limiter.try_acquire(ip) {
+                    successes.fetch_add(1, Ordering::SeqCst);
+                }
+            }));
+        }
+
+        start.wait();
+        for handle in handles {
+            handle
+                .join()
+                .expect("limiter worker thread should not panic");
+        }
+
+        assert_eq!(
+            successes.load(Ordering::SeqCst),
+            10,
+            "Concurrent acquire must grant exactly max_per_ip slots"
+        );
+        assert!(
+            !limiter.try_acquire(ip),
+            "Limiter should remain saturated after concurrent acquisitions"
+        );
+
+        for _ in 0..10 {
+            limiter.release(ip);
+        }
+        assert!(
+            limiter.try_acquire(ip),
+            "Limiter should recover after releasing all concurrent slots"
+        );
+    }
+
+    #[test]
+    fn test_per_ip_limiter_concurrent_acquire_many_ips_are_independent() {
+        let limiter = Arc::new(PerIpLimiter::new(2));
+        let start = Arc::new(std::sync::Barrier::new(33));
+        let successes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut handles = Vec::new();
+
+        for idx in 0..32 {
+            let limiter = Arc::clone(&limiter);
+            let start = Arc::clone(&start);
+            let successes = Arc::clone(&successes);
+            handles.push(std::thread::spawn(move || {
+                let ip: IpAddr = format!("10.0.0.{}", idx + 1)
+                    .parse()
+                    .expect("test ip should parse");
+                start.wait();
+                if limiter.try_acquire(ip) {
+                    successes.fetch_add(1, Ordering::SeqCst);
+                }
+            }));
+        }
+
+        start.wait();
+        for handle in handles {
+            handle
+                .join()
+                .expect("limiter worker thread should not panic");
+        }
+
+        assert_eq!(
+            successes.load(Ordering::SeqCst),
+            32,
+            "Per-IP limit must not globally throttle independent client IPs"
+        );
+    }
+
+    #[test]
+    fn test_per_ip_limiter_concurrent_acquire_release_steady_state() {
+        let limiter = Arc::new(PerIpLimiter::new(4));
+        let start = Arc::new(std::sync::Barrier::new(17));
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        let in_flight = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let max_seen = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut handles = Vec::new();
+
+        for _ in 0..16 {
+            let limiter = Arc::clone(&limiter);
+            let start = Arc::clone(&start);
+            let in_flight = Arc::clone(&in_flight);
+            let max_seen = Arc::clone(&max_seen);
+            handles.push(std::thread::spawn(move || {
+                start.wait();
+                for _ in 0..100 {
+                    while !limiter.try_acquire(ip) {
+                        std::thread::yield_now();
+                    }
+
+                    let current = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                    max_seen.fetch_max(current, Ordering::SeqCst);
+                    std::thread::yield_now();
+                    let previous = in_flight.fetch_sub(1, Ordering::SeqCst);
+                    assert!(
+                        previous > 0,
+                        "In-flight counter must not underflow during concurrent release"
+                    );
+                    limiter.release(ip);
+                }
+            }));
+        }
+
+        start.wait();
+        for handle in handles {
+            handle
+                .join()
+                .expect("limiter worker thread should not panic");
+        }
+
+        assert_eq!(
+            in_flight.load(Ordering::SeqCst),
+            0,
+            "All concurrent acquisitions should have been released"
+        );
+        assert!(
+            max_seen.load(Ordering::SeqCst) <= 4,
+            "Concurrent acquire/release must never exceed max_per_ip"
+        );
+        assert!(
+            limiter.try_acquire(ip),
+            "Limiter should not retain stale counts after steady-state churn"
+        );
+    }
+
+    #[test]
+    fn test_delivery_plan_accept_inbound_relays_without_dlp() {
+        let plan = delivery_plan(
+            &VerdictDisposition::Accept,
+            MailDirection::Inbound,
+            false,
+            true,
+        );
+        assert_eq!(
+            plan,
+            DeliveryPlan::Relay {
+                relay_direction: MailDirection::Inbound,
+                enforce_outbound_dlp: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_delivery_plan_accept_outbound_relays_with_dlp_when_enabled() {
+        let plan = delivery_plan(
+            &VerdictDisposition::Accept,
+            MailDirection::Outbound,
+            false,
+            true,
+        );
+        assert_eq!(
+            plan,
+            DeliveryPlan::Relay {
+                relay_direction: MailDirection::Outbound,
+                enforce_outbound_dlp: true,
+            }
+        );
+    }
+
+    #[test]
+    fn test_delivery_plan_internal_never_requests_outbound_dlp() {
+        let plan = delivery_plan(
+            &VerdictDisposition::Accept,
+            MailDirection::Internal,
+            false,
+            true,
+        );
+        assert_eq!(
+            plan,
+            DeliveryPlan::Relay {
+                relay_direction: MailDirection::Internal,
+                enforce_outbound_dlp: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_delivery_plan_tempfail_fail_closed_returns_451() {
+        let plan = delivery_plan(
+            &VerdictDisposition::Tempfail,
+            MailDirection::Outbound,
+            false,
+            true,
+        );
+        assert_eq!(plan, DeliveryPlan::TempfailReply);
+    }
+
+    #[test]
+    fn test_delivery_plan_tempfail_fail_open_reuses_outbound_path_and_dlp() {
+        let plan = delivery_plan(
+            &VerdictDisposition::Tempfail,
+            MailDirection::Outbound,
+            true,
+            true,
+        );
+        assert_eq!(
+            plan,
+            DeliveryPlan::Relay {
+                relay_direction: MailDirection::Outbound,
+                enforce_outbound_dlp: true,
+            }
+        );
+    }
+
+    #[test]
+    fn test_delivery_plan_tempfail_fail_open_internal_relays_without_dlp() {
+        let plan = delivery_plan(
+            &VerdictDisposition::Tempfail,
+            MailDirection::Internal,
+            true,
+            true,
+        );
+        assert_eq!(
+            plan,
+            DeliveryPlan::Relay {
+                relay_direction: MailDirection::Internal,
+                enforce_outbound_dlp: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_delivery_plan_tempfail_fail_open_inbound_relays_without_dlp() {
+        let plan = delivery_plan(
+            &VerdictDisposition::Tempfail,
+            MailDirection::Inbound,
+            true,
+            true,
+        );
+        assert_eq!(
+            plan,
+            DeliveryPlan::Relay {
+                relay_direction: MailDirection::Inbound,
+                enforce_outbound_dlp: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_delivery_plan_outbound_skips_dlp_when_disabled() {
+        let plan = delivery_plan(
+            &VerdictDisposition::Accept,
+            MailDirection::Outbound,
+            false,
+            false,
+        );
+        assert_eq!(
+            plan,
+            DeliveryPlan::Relay {
+                relay_direction: MailDirection::Outbound,
+                enforce_outbound_dlp: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_delivery_plan_quarantine_short_circuits_delivery() {
+        let plan = delivery_plan(
+            &VerdictDisposition::Quarantine,
+            MailDirection::Outbound,
+            true,
+            true,
+        );
+        assert_eq!(plan, DeliveryPlan::Quarantine);
+    }
+
+    #[test]
+    fn test_delivery_plan_reject_short_circuits_delivery() {
+        let plan = delivery_plan(
+            &VerdictDisposition::Reject {
+                reason: "blocked".into(),
+            },
+            MailDirection::Outbound,
+            true,
+            true,
+        );
+        assert_eq!(plan, DeliveryPlan::Reject);
+    }
+
+    fn make_trusted_session(client_ip: &str) -> vigilyx_core::models::EmailSession {
+        use vigilyx_core::models::Protocol;
+
+        let mut session = vigilyx_core::models::EmailSession::new(
+            Protocol::Smtp,
+            client_ip.to_string(),
+            2525,
+            "127.0.0.1".into(),
+            25,
+        );
+        session.mail_from = Some("user@example.com".into());
+        session.rcpt_to = vec!["dest@example.net".into()];
+        session
+    }
+
+    #[test]
+    fn test_session_trusted_submitter_matches_trusted_upstream_cidr() {
+        let session = make_trusted_session("10.10.10.42");
+        let trusted = vec!["10.10.10.0/24".to_string()];
+        assert!(session_trusted_submitter(&session, &trusted));
+    }
+
+    #[test]
+    fn test_session_trusted_submitter_matches_authenticated_session() {
+        let mut session = make_trusted_session("203.0.113.10");
+        session.auth_info = Some(vigilyx_core::models::SmtpAuthInfo {
+            auth_method: "PLAIN".into(),
+            username: Some("alice".into()),
+            password: None,
+            auth_success: Some(true),
+        });
+        assert!(session_trusted_submitter(&session, &[]));
+    }
+
+    #[test]
+    fn test_session_trusted_submitter_rejects_unknown_auth_result() {
+        let mut session = make_trusted_session("203.0.113.10");
+        session.auth_info = Some(vigilyx_core::models::SmtpAuthInfo {
+            auth_method: "PLAIN".into(),
+            username: Some("alice".into()),
+            password: None,
+            auth_success: None,
+        });
+        assert!(!session_trusted_submitter(&session, &[]));
+    }
+
+    #[test]
+    fn test_session_trusted_submitter_rejects_untrusted_sender_claim() {
+        let session = make_trusted_session("203.0.113.10");
+        assert!(!session_trusted_submitter(&session, &[]));
+    }
+
+    #[test]
+    fn test_session_trusted_submitter_rejects_failed_auth_without_trusted_ip() {
+        let mut session = make_trusted_session("203.0.113.10");
+        session.auth_info = Some(vigilyx_core::models::SmtpAuthInfo {
+            auth_method: "PLAIN".into(),
+            username: Some("alice".into()),
+            password: None,
+            auth_success: Some(false),
+        });
+        assert!(!session_trusted_submitter(&session, &[]));
+    }
+
+    #[test]
+    fn test_session_trusted_submitter_accepts_trusted_ip_even_with_failed_auth() {
+        let mut session = make_trusted_session("10.10.10.42");
+        session.auth_info = Some(vigilyx_core::models::SmtpAuthInfo {
+            auth_method: "PLAIN".into(),
+            username: Some("alice".into()),
+            password: None,
+            auth_success: Some(false),
+        });
+        let trusted = vec!["10.10.10.0/24".to_string()];
+        assert!(session_trusted_submitter(&session, &trusted));
     }
 }

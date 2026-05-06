@@ -13,10 +13,30 @@ const SESSION_WITH_CONTENT_PREDICATE_TEMPLATE: &str = "(({prefix}content->>'is_e
       AND (({prefix}content->>'body_text') IS NOT NULL \
        OR ({prefix}content->>'body_html') IS NOT NULL \
        OR COALESCE(jsonb_array_length({prefix}content->'attachments'), 0) > 0 \
-       OR COALESCE(jsonb_array_length({prefix}content->'headers'), 0) > 0))";
+       OR COALESCE(jsonb_array_length({prefix}content->'headers'), 0) > 0 \
+       OR COALESCE(jsonb_array_length({prefix}content->'links'), 0) > 0))";
 
 pub(crate) fn session_with_content_predicate(prefix: &str) -> String {
     SESSION_WITH_CONTENT_PREDICATE_TEMPLATE.replace("{prefix}", prefix)
+}
+
+fn content_without_attachment_payload_sql(column: &str) -> String {
+    format!(
+        "CASE \
+           WHEN {column} IS NULL THEN NULL \
+           WHEN jsonb_typeof({column}->'attachments') = 'array' THEN \
+             jsonb_set( \
+               {column}, \
+               '{{attachments}}', \
+               COALESCE( \
+                 (SELECT jsonb_agg(attachment.value - 'content_base64') \
+                  FROM jsonb_array_elements({column}->'attachments') AS attachment(value)), \
+                 '[]'::jsonb \
+               ) \
+             )::TEXT \
+           ELSE {column}::TEXT \
+         END"
+    )
 }
 
 /// Session row (read from database - full version, includes content)
@@ -643,26 +663,51 @@ impl VigilDb {
         since: &str,
         limit: u32,
     ) -> Result<Vec<uuid::Uuid>> {
-        let rows: Vec<(String,)> = sqlx::query_as(
-            "SELECT s.id FROM sessions s \
+        let until = chrono::Utc::now().to_rfc3339();
+        let rows = self
+            .query_unanalyzed_session_candidates(since, None, None, &until, limit)
+            .await?;
+
+        Ok(rows.into_iter().map(|(id, _)| id).collect())
+    }
+
+    /// Query completed sessions that still have no verdict using a stable
+    /// `(started_at, id)` cursor. This is used by the Engine catch-up scanner
+    /// so a small batch of repeatedly missed sessions cannot starve older
+    /// unanalyzed mail.
+    pub async fn query_unanalyzed_session_candidates(
+        &self,
+        since: &str,
+        cursor_started_at: Option<&str>,
+        cursor_id: Option<&str>,
+        until: &str,
+        limit: u32,
+    ) -> Result<Vec<(uuid::Uuid, String)>> {
+        let content_predicate = session_with_content_predicate("s.");
+        let query = format!(
+            "SELECT s.id, s.started_at FROM sessions s \
              WHERE s.status = 'Completed' \
                AND s.started_at >= $1 \
+               AND s.started_at <= $2 \
+               AND ($3::TEXT IS NULL OR s.started_at > $3 \
+                    OR (s.started_at = $3 AND s.id > COALESCE($4::TEXT, ''))) \
                AND NOT EXISTS (SELECT 1 FROM security_verdicts v WHERE v.session_id = s.id) \
-               AND (s.mail_from IS NOT NULL OR s.content->>'body_text' IS NOT NULL \
-                    OR s.content->>'body_html' IS NOT NULL \
-                    OR COALESCE(jsonb_array_length(s.content->'attachments'), 0) > 0 \
-                    OR COALESCE(jsonb_array_length(s.content->'headers'), 0) > 0) \
-             ORDER BY s.started_at DESC \
-             LIMIT $2",
-        )
-        .bind(since)
-        .bind(limit as i32)
-        .fetch_all(&self.pool)
-        .await?;
+               AND {content_predicate} \
+             ORDER BY s.started_at ASC, s.id ASC \
+             LIMIT $5"
+        );
+        let rows: Vec<(String, String)> = sqlx::query_as(&query)
+            .bind(since)
+            .bind(until)
+            .bind(cursor_started_at)
+            .bind(cursor_id)
+            .bind(limit as i32)
+            .fetch_all(&self.pool)
+            .await?;
 
         Ok(rows
             .into_iter()
-            .filter_map(|(id,)| uuid::Uuid::parse_str(&id).ok())
+            .filter_map(|(id, started_at)| uuid::Uuid::parse_str(&id).ok().map(|u| (u, started_at)))
             .collect())
     }
 
@@ -712,6 +757,29 @@ impl VigilDb {
         .bind(id.to_string())
         .fetch_optional(&self.pool)
         .await?;
+
+        match row {
+            Some(r) => Ok(Some(row_to_session(r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Get Session without embedding attachment payload bytes.
+    pub async fn get_session_without_attachment_content(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<EmailSession>> {
+        let content_expr = content_without_attachment_payload_sql("content");
+        let query = format!(
+            "SELECT id, protocol, client_ip, client_port, server_ip, server_port, \
+             started_at, ended_at, status, packet_count, total_bytes, \
+             mail_from, rcpt_to, subject, {content_expr} as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info \
+             FROM sessions WHERE id = $1"
+        );
+        let row: Option<SessionRow> = sqlx::query_as(&query)
+            .bind(id.to_string())
+            .fetch_optional(&self.pool)
+            .await?;
 
         match row {
             Some(r) => Ok(Some(row_to_session(r)?)),
@@ -777,6 +845,33 @@ impl VigilDb {
         Ok(sessions)
     }
 
+    /// According to message_id Session, without embedding attachment payload bytes.
+    pub async fn find_related_sessions_without_attachment_content(
+        &self,
+        message_id: &str,
+        exclude_id: Uuid,
+    ) -> Result<Vec<EmailSession>> {
+        let content_expr = content_without_attachment_payload_sql("content");
+        let query = format!(
+            "SELECT id, protocol, client_ip, client_port, server_ip, server_port, \
+             started_at, ended_at, status, packet_count, total_bytes, \
+             mail_from, rcpt_to, subject, {content_expr} as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info \
+             FROM sessions WHERE message_id = $1 AND id != $2 ORDER BY started_at ASC"
+        );
+        let rows: Vec<SessionRow> = sqlx::query_as(&query)
+            .bind(message_id)
+            .bind(exclude_id.to_string())
+            .fetch_all(&self.pool)
+            .await?;
+
+        let sessions: Vec<EmailSession> = rows
+            .into_iter()
+            .filter_map(|row| row_to_session(row).ok())
+            .collect();
+
+        Ok(sessions)
+    }
+
     /// Find downstream delivery hops for the same mail envelope.
     pub async fn find_downstream_sessions_by_envelope(
         &self,
@@ -788,27 +883,39 @@ impl VigilDb {
         let started_at = session.started_at.to_rfc3339();
         let deadline =
             (session.started_at + chrono::Duration::seconds(lookahead_seconds)).to_rfc3339();
-        let rows: Vec<SessionRow> = sqlx::query_as(
+        let content_expr = content_without_attachment_payload_sql("content");
+        let mail_from_filter = if session.mail_from.is_some() {
+            "mail_from = $3"
+        } else {
+            "mail_from IS NULL AND $3::TEXT IS NULL"
+        };
+        let query = format!(
             "SELECT id, protocol, client_ip, client_port, server_ip, server_port, \
              started_at, ended_at, status, packet_count, total_bytes, \
-             mail_from, rcpt_to, subject, content::TEXT as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info \
+             mail_from, rcpt_to, subject, {content_expr} as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info \
              FROM sessions \
              WHERE id != $1 \
                AND client_ip = $2 \
-               AND mail_from IS NOT DISTINCT FROM $3 \
+               AND {mail_from_filter} \
                AND rcpt_to = $4 \
-               AND started_at::timestamptz >= $5::timestamptz \
-               AND started_at::timestamptz <= $6::timestamptz \
-             ORDER BY started_at::timestamptz ASC"
-        )
-        .bind(exclude_id.to_string())
-        .bind(&session.server_ip)
-        .bind(&session.mail_from)
-        .bind(&rcpt_to)
-        .bind(&started_at)
-        .bind(&deadline)
-        .fetch_all(&self.pool)
-        .await?;
+               AND started_at >= $5 \
+               AND started_at <= $6 \
+             ORDER BY started_at ASC"
+        );
+        let mut query = sqlx::query_as::<_, SessionRow>(&query)
+            .bind(exclude_id.to_string())
+            .bind(&session.server_ip);
+        if let Some(mail_from) = &session.mail_from {
+            query = query.bind(mail_from);
+        } else {
+            query = query.bind(Option::<String>::None);
+        }
+        let rows: Vec<SessionRow> = query
+            .bind(&rcpt_to)
+            .bind(&started_at)
+            .bind(&deadline)
+            .fetch_all(&self.pool)
+            .await?;
 
         let sessions: Vec<EmailSession> = rows
             .into_iter()

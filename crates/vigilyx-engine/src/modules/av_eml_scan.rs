@@ -19,6 +19,8 @@ use crate::error::EngineError;
 use crate::external::clamav::{ClamAvClient, ClamAvError, ScanResult};
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
 
+const MAX_EML_SCAN_BYTES: usize = 50 * 1024 * 1024;
+
 pub struct AvEmlScanModule {
     meta: ModuleMetadata,
     client: Arc<ClamAvClient>,
@@ -53,8 +55,48 @@ impl SecurityModule for AvEmlScanModule {
     async fn analyze(&self, ctx: &SecurityContext) -> Result<ModuleResult, EngineError> {
         let start = Instant::now();
 
-        // Reconstruct EML
-        let eml_bytes = ctx.session.reconstruct_eml();
+        // Reconstruct EML with a hard cap before sending it to ClamAV.
+        let estimated_size = ctx.session.estimated_reconstructed_eml_size();
+        let Some(eml_bytes) = ctx.session.reconstruct_eml_limited(MAX_EML_SCAN_BYTES) else {
+            let duration_ms = start.elapsed().as_millis() as u64;
+            warn!(
+                module = "av_eml_scan",
+                session_id = %ctx.session.id,
+                estimated_size,
+                max_size = MAX_EML_SCAN_BYTES,
+                "EML virus scan skipped because reconstructed message exceeds size limit"
+            );
+            return Ok(ModuleResult {
+                module_id: self.meta.id.clone(),
+                module_name: self.meta.name.clone(),
+                pillar: self.meta.pillar,
+                threat_level: ThreatLevel::Low,
+                confidence: 0.10,
+                categories: vec!["scan_skipped_size_limit".to_string()],
+                summary: format!(
+                    "Antivirus EML scan skipped because reconstructed message exceeds {} bytes",
+                    MAX_EML_SCAN_BYTES
+                ),
+                evidence: vec![Evidence {
+                    description: format!(
+                        "Reconstructed EML estimated at {} bytes, above scan limit {} bytes",
+                        estimated_size, MAX_EML_SCAN_BYTES
+                    ),
+                    location: Some("eml:full".to_string()),
+                    snippet: None,
+                }],
+                details: serde_json::json!({
+                    "scan_status": "skipped",
+                    "reason": "size_limit",
+                    "estimated_eml_size": estimated_size,
+                    "max_eml_scan_bytes": MAX_EML_SCAN_BYTES,
+                }),
+                duration_ms,
+                analyzed_at: Utc::now(),
+                bpa: Some(vigilyx_core::security::Bpa::new(0.08, 0.0, 0.92)),
+                engine_id: None,
+            });
+        };
         if eml_bytes.is_empty() {
             let duration_ms = start.elapsed().as_millis() as u64;
             return Ok(ModuleResult::not_applicable(
@@ -168,6 +210,12 @@ impl SecurityModule for AvEmlScanModule {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use super::{AvEmlScanModule, MAX_EML_SCAN_BYTES};
+    use crate::context::SecurityContext;
+    use crate::external::clamav::ClamAvClient;
+    use crate::module::{SecurityModule, ThreatLevel};
     use vigilyx_core::models::{EmailAttachment, EmailContent, EmailSession, Protocol};
 
     fn make_session(body: Option<&str>, attachments: Vec<EmailAttachment>) -> EmailSession {
@@ -256,5 +304,23 @@ mod tests {
 
         // Just the blank line separator
         assert_eq!(eml, b"\r\n");
+    }
+
+    #[tokio::test]
+    async fn oversized_reconstructed_eml_is_skipped_before_clamav() {
+        let mut session = make_session(Some("body"), vec![]);
+        session.content.raw_size = MAX_EML_SCAN_BYTES + 1;
+        let ctx = SecurityContext::new(Arc::new(session));
+        let module = AvEmlScanModule::new(Arc::new(ClamAvClient::new("127.0.0.1".to_string(), 1)));
+
+        let result = module.analyze(&ctx).await.expect("module result");
+
+        assert_eq!(result.threat_level, ThreatLevel::Low);
+        assert!(
+            result
+                .categories
+                .contains(&"scan_skipped_size_limit".to_string())
+        );
+        assert_eq!(result.details["reason"], "size_limit");
     }
 }

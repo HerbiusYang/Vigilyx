@@ -87,7 +87,7 @@ function Settings() {
     return VALID_TABS.has(h) ? h as SettingsTab : 'appearance'
   })
 
-  const [apiVersion, setApiVersion] = useState('0.9.1')
+  const [apiVersion, setApiVersion] = useState('0.9.2')
 
   const changeTab = useCallback((tab: SettingsTab) => {
     setActiveTab(tab)

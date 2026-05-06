@@ -12,7 +12,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.9.1"
+version = "0.9.2"
 edition = "2024"
 authors = ["Vigilyx Open Source Team"]
 license = "AGPL-3.0-only"
@@ -120,6 +120,14 @@ lto = "thin"                          # Thin LTO: much faster compilation, sligh
 codegen-units = 16                    # Multi-core parallel code generation
 strip = false                         # Skip strip to save time
 incremental = true                    # Incremental compilation (do not rebuild everything for one-line changes)
+
+# Benchmark profile: keep high optimization, but avoid fat-LTO / single-codegen-unit
+# compile times overwhelming iterative performance measurements.
+[profile.bench]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+strip = false
 
 # Enable some optimization in dev builds too
 [profile.dev]

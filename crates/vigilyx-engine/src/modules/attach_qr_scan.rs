@@ -14,7 +14,7 @@ use flate2::read::ZlibDecoder;
 use regex::Regex;
 use tracing::warn;
 use vigilyx_core::magic_bytes::{DetectedFileType, detect_file_type};
-use vigilyx_core::models::decode_base64_bytes;
+use vigilyx_core::models::decode_base64_bytes_limited;
 
 use crate::context::SecurityContext;
 use crate::error::EngineError;
@@ -23,6 +23,7 @@ use crate::modules::content_scan::{EffectiveKeywordLists, normalize_text};
 use crate::modules::link_content::analyze_url;
 
 const MAX_QR_IMAGE_DIM: u32 = 1024;
+const MAX_QR_ATTACHMENT_DECODE_BYTES: usize = 10 * 1024 * 1024;
 const STRUCTURAL_QR_PAYLOAD_TERMS: &[&str] = &[
     "microsoft.com/devicelogin",
     "login.microsoftonline.com",
@@ -871,10 +872,14 @@ impl SecurityModule for AttachmentQrScanModule {
 
         // --- Phase 1: Scan image attachments ---
         for attachment in &ctx.session.content.attachments {
+            if attachment.size > MAX_QR_ATTACHMENT_DECODE_BYTES {
+                continue;
+            }
             let Some(b64) = attachment.content_base64.as_deref() else {
                 continue;
             };
-            let Some(bytes) = decode_base64_bytes(b64) else {
+            let Some(bytes) = decode_base64_bytes_limited(b64, MAX_QR_ATTACHMENT_DECODE_BYTES)
+            else {
                 continue;
             };
             let file_type = detect_file_type(&bytes);

@@ -244,19 +244,16 @@ impl ChunkedUploadTracker {
     fn read_body(&self, session: &HttpSession) -> Vec<u8> {
         // priorityFromtempFilereadGet
         if let Some(ref path) = session.body_temp_file
-            && let Some(validated) = super::validate_temp_path(path)
+            && let Some(data) = super::read_temp_path_limited(path, MAX_REASSEMBLED_SIZE + 1)
         {
-            match std::fs::read(&validated) {
-                Ok(data) => return data,
-                Err(e) => {
-                    warn!("readGet body tempFileFailed {}: {}", path, e);
-                }
-            }
+            return data;
         }
 
         // downgradelevel: FromMemoryMediumof request_body readGet
         if let Some(ref body) = session.request_body {
-            return body.as_bytes().to_vec();
+            let bytes = body.as_bytes();
+            let cap = bytes.len().min(MAX_REASSEMBLED_SIZE + 1);
+            return bytes[..cap].to_vec();
         }
 
         Vec::new()

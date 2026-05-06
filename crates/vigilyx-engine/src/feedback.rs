@@ -16,6 +16,12 @@ use vigilyx_db::VigilDb;
 
 use crate::ioc::IocManager;
 
+const MAX_TRAINING_SUBJECT_CHARS: usize = 500;
+const MAX_TRAINING_BODY_CHARS: usize = 20_000;
+const MAX_TRAINING_COMMENT_CHARS: usize = 2_000;
+const MAX_TRAINING_ADDRESS_CHARS: usize = 320;
+const MAX_TRAINING_RECIPIENTS: usize = 100;
+
 /// FeedbackManagementhandler
 #[derive(Clone)]
 pub struct FeedbackManager {
@@ -55,6 +61,7 @@ impl FeedbackManager {
         &self,
         session_id: Uuid,
         req: &SubmitFeedbackRequest,
+        save_training_sample: bool,
     ) -> anyhow::Result<FeedbackResult> {
         // Verify feedback_type Valid
         let (label, label_name) = feedback_type_to_label(&req.feedback_type).ok_or_else(|| {
@@ -102,9 +109,12 @@ impl FeedbackManager {
         }
 
         // 3. write table (Deduplicate: Same1 session)
-        let training_sample_saved = self
-            .save_training_sample(session_id, label, label_name, &fb, req.comment.as_deref())
-            .await;
+        let training_sample_saved = if save_training_sample {
+            self.save_training_sample(session_id, label, label_name, &fb, req.comment.as_deref())
+                .await
+        } else {
+            false
+        };
 
         let total_samples = self.db.count_training_samples().await.unwrap_or(0);
 
@@ -161,12 +171,21 @@ impl FeedbackManager {
             session_id,
             label,
             label_name: label_name.to_string(),
-            subject: session.subject.clone(),
-            body_text: session.content.body_text.clone(),
-            body_html: session.content.body_html.clone(),
-            mail_from: session.mail_from.clone(),
-            rcpt_to: session.rcpt_to.clone(),
-            analyst_comment: comment.map(|c| c.to_string()),
+            subject: limit_optional_text(session.subject.as_deref(), MAX_TRAINING_SUBJECT_CHARS),
+            body_text: limit_optional_text(
+                session.content.body_text.as_deref(),
+                MAX_TRAINING_BODY_CHARS,
+            ),
+            body_html: limit_optional_text(
+                session.content.body_html.as_deref(),
+                MAX_TRAINING_BODY_CHARS,
+            ),
+            mail_from: limit_optional_text(
+                session.mail_from.as_deref(),
+                MAX_TRAINING_ADDRESS_CHARS,
+            ),
+            rcpt_to: limit_recipients(&session.rcpt_to),
+            analyst_comment: limit_optional_text(comment, MAX_TRAINING_COMMENT_CHARS),
             original_threat_level: feedback.original_threat_level.clone(),
             verdict_id: feedback.verdict_id,
             created_at: Utc::now(),
@@ -234,5 +253,53 @@ impl FeedbackManager {
     /// GetFeedbackStatistics
     pub async fn get_stats(&self) -> anyhow::Result<Vec<vigilyx_core::security::FeedbackStat>> {
         self.db.get_feedback_stats().await
+    }
+}
+
+fn limit_optional_text(value: Option<&str>, max_chars: usize) -> Option<String> {
+    value.map(|text| limit_text(text, max_chars))
+}
+
+fn limit_text(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        value.to_string()
+    } else {
+        value.chars().take(max_chars).collect()
+    }
+}
+
+fn limit_recipients(recipients: &[String]) -> Vec<String> {
+    recipients
+        .iter()
+        .take(MAX_TRAINING_RECIPIENTS)
+        .map(|recipient| limit_text(recipient, MAX_TRAINING_ADDRESS_CHARS))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn limit_text_preserves_utf8_boundaries() {
+        let limited = limit_text("测测测abc", 4);
+
+        assert_eq!(limited, "测测测a");
+    }
+
+    #[test]
+    fn limit_recipients_caps_count_and_address_length() {
+        let recipients: Vec<String> = (0..150)
+            .map(|idx| format!("{}@example.com", "x".repeat(400 + idx)))
+            .collect();
+
+        let limited = limit_recipients(&recipients);
+
+        assert_eq!(limited.len(), MAX_TRAINING_RECIPIENTS);
+        assert!(
+            limited
+                .iter()
+                .all(|item| item.chars().count() <= MAX_TRAINING_ADDRESS_CHARS)
+        );
     }
 }

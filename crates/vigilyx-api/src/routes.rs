@@ -479,6 +479,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/sessions/{id}", get(handlers::get_session))
         .route("/sessions/{id}/eml", get(handlers::download_eml))
         .route(
+            "/sessions/{id}/attachments/{index}",
+            get(handlers::download_attachment),
+        )
+        .route(
             "/sessions/{id}/related",
             get(handlers::get_related_sessions),
         )

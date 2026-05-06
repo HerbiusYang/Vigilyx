@@ -1,4 +1,4 @@
-use axum::{Json, extract::State, response::IntoResponse};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde_json::{Map, Value, json};
 use std::collections::HashSet;
 use std::net::IpAddr;
@@ -24,6 +24,13 @@ pub async fn update_ui_preferences(
 ) -> axum::response::Response {
     if !patch.is_object() {
         return ApiResponse::<Value>::bad_request("ui preferences payload must be an object")
+            .into_response();
+    }
+    if patch_touches_privileged_ui_preferences(&patch) && !user.role.eq_ignore_ascii_case("admin") {
+        return (
+            StatusCode::FORBIDDEN,
+            ApiResponse::<Value>::err("capture preferences require administrator privileges"),
+        )
             .into_response();
     }
 
@@ -137,6 +144,12 @@ fn deep_merge(base: &mut Value, patch: Value) {
         }
         (base_value, patch_value) => *base_value = patch_value,
     }
+}
+
+fn patch_touches_privileged_ui_preferences(patch: &Value) -> bool {
+    patch
+        .as_object()
+        .is_some_and(|object| object.contains_key("capture"))
 }
 
 fn normalize_ui_preferences(value: Value) -> Result<Value, String> {
@@ -300,4 +313,33 @@ fn normalize_ip_array(value: Option<&Value>, field: &str) -> Result<Value, Strin
     }
 
     Ok(json!(items))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn privileged_ui_preference_detection_blocks_capture_patch() {
+        assert!(patch_touches_privileged_ui_preferences(&json!({
+            "capture": {"inbound_dst": ["10.0.0.5"]}
+        })));
+    }
+
+    #[test]
+    fn privileged_ui_preference_detection_allows_personal_patch() {
+        assert!(!patch_touches_privileged_ui_preferences(&json!({
+            "appearance": {"theme": "light"},
+            "notifications": {"desktop_notify": true}
+        })));
+    }
+
+    #[test]
+    fn normalize_ui_preferences_rejects_invalid_capture_ip() {
+        let err = normalize_ui_preferences(json!({
+            "capture": {"inbound_dst": ["127.0.0.1", "not-an-ip"]}
+        }))
+        .expect_err("invalid IP must be rejected");
+        assert!(err.contains("capture.inbound_dst contains invalid IP"));
+    }
 }

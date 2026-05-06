@@ -1248,18 +1248,18 @@ pub struct InlineVerdictResponse {
 }
 
 // ============================================================================
-// ThreatScene - 邮件威胁场景 (群发检测 / 退信扫描)
+// ThreatScene - email threat scenes (bulk mail / bounce harvest)
 // ============================================================================
 
-/// 威胁场景类型
+/// Threat scene type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThreatSceneType {
-    /// 群发邮件: 外部域名在时间窗口内向多个内部收件人发送邮件
+    /// Bulk mailing: an external domain sends messages to multiple internal recipients within the time window.
     BulkMailing,
-    /// 退信扫描: 大量退信涌入, 表明攻击者在枚举内部邮箱地址 (Directory Harvest Attack)
+    /// Bounce harvest: a surge of bounce messages suggests directory harvesting against internal addresses.
     BounceHarvest,
-    /// 内部域名仿冒: 外部发件人使用与内部域名相似的域名 (TLD变种/子域前缀/同形攻击)
+    /// Internal domain impersonation: an external sender uses a domain that resembles an internal domain.
     InternalDomainImpersonation,
 }
 
@@ -1284,7 +1284,7 @@ impl ThreatSceneType {
     }
 }
 
-/// 威胁场景状态
+/// Threat scene status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThreatSceneStatus {
@@ -1317,7 +1317,7 @@ impl ThreatSceneStatus {
     }
 }
 
-/// 威胁场景事件记录
+/// Threat scene event record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreatScene {
     pub id: Uuid,
@@ -1341,7 +1341,7 @@ pub struct ThreatScene {
     pub updated_at: DateTime<Utc>,
 }
 
-/// 场景检测规则配置
+/// Threat-scene detection rule configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreatSceneRule {
     pub scene_type: ThreatSceneType,
@@ -1350,7 +1350,7 @@ pub struct ThreatSceneRule {
     pub updated_at: DateTime<Utc>,
 }
 
-/// 场景统计摘要
+/// Threat-scene statistics summary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreatSceneStats {
     pub bulk_mailing: SceneTypeStats,
@@ -1367,7 +1367,7 @@ pub struct SceneTypeStats {
     pub total_24h: i64,
 }
 
-/// 群发邮件检测配置 (从 JSON 反序列化)
+/// Bulk-mailing detection configuration (deserialized from JSON).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BulkMailingConfig {
     #[serde(default = "default_24")]
@@ -1403,7 +1403,7 @@ impl Default for BulkMailingConfig {
     }
 }
 
-/// 退信扫描检测配置 (从 JSON 反序列化)
+/// Bounce-harvest detection configuration (deserialized from JSON).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BounceHarvestConfig {
     #[serde(default = "default_24")]
@@ -1433,25 +1433,25 @@ impl Default for BounceHarvestConfig {
     }
 }
 
-/// 内部域名仿冒检测配置 (从 JSON 反序列化)
+/// Internal-domain-impersonation detection configuration (deserialized from JSON).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InternalDomainImpersonationConfig {
-    /// 检测时间窗口 (小时)
+    /// Detection time window in hours.
     #[serde(default = "default_24")]
     pub time_window_hours: i64,
-    /// 触发场景的最少邮件数
+    /// Minimum email count required to trigger the scene.
     #[serde(default = "default_3")]
     pub min_emails: i64,
-    /// 是否启用自动封禁
+    /// Whether automatic blocking is enabled.
     #[serde(default)]
     pub auto_block_enabled: bool,
-    /// 自动封禁持续时间 (小时)
+    /// Automatic block duration in hours.
     #[serde(default = "default_48")]
     pub auto_block_duration_hours: i64,
-    /// 自动封禁最少邮件数门控 (达到此数量才允许自动封禁)
+    /// Minimum email threshold required before automatic blocking is allowed.
     #[serde(default = "default_10")]
     pub auto_block_min_emails: i64,
-    /// 排除的域名列表 (不做仿冒检测)
+    /// Domains excluded from impersonation detection.
     #[serde(default)]
     pub exclude_domains: Vec<String>,
 }

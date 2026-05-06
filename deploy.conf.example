@@ -5,6 +5,7 @@
 # Usage:
 #   cp deploy.conf.example deploy.conf
 #   Edit deploy.conf and fill in your server information
+#   chmod 600 deploy.conf
 #
 # This file will not be committed to git (.gitignore already excludes it)
 # ============================================

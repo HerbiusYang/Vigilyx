@@ -1,5 +1,5 @@
--- Vigilyx YARA Custom Rules — 高质量版本
--- 用 $$dollar quoting$$ 避免转义问题
+-- Vigilyx YARA custom rules — production-quality set
+-- Use $$dollar quoting$$ to avoid escaping issues
 
 -- === HTML Smuggling ===
 INSERT INTO security_yara_rules (id, rule_name, category, severity, source, rule_source, description, enabled, hit_count, created_at, updated_at)
@@ -43,7 +43,7 @@ $$rule Doc_HTML_Smuggling_Base64PE {
 }$$, 'HTML 附件含 Base64 编码 PE + JS 解码器', TRUE, 0, now()::text, now()::text)
 ON CONFLICT (rule_name) DO UPDATE SET rule_source=EXCLUDED.rule_source, updated_at=EXCLUDED.updated_at;
 
--- === ISO/IMG 投递 ===
+-- === ISO/IMG Delivery ===
 INSERT INTO security_yara_rules (id, rule_name, category, severity, source, rule_source, description, enabled, hit_count, created_at, updated_at)
 VALUES (gen_random_uuid()::text, 'Doc_ISO_With_LNK', 'advanced_threat', 'critical', 'custom',
 $$rule Doc_ISO_With_LNK {
@@ -64,7 +64,7 @@ $$rule Doc_ISO_With_LNK {
 }$$, 'ISO 磁盘映像含 LNK + 命令执行', TRUE, 0, now()::text, now()::text)
 ON CONFLICT (rule_name) DO UPDATE SET rule_source=EXCLUDED.rule_source, updated_at=EXCLUDED.updated_at;
 
--- === OneNote 恶意嵌入 ===
+-- === Malicious OneNote Embedding ===
 INSERT INTO security_yara_rules (id, rule_name, category, severity, source, rule_source, description, enabled, hit_count, created_at, updated_at)
 VALUES (gen_random_uuid()::text, 'Doc_OneNote_EmbeddedScript', 'advanced_threat', 'critical', 'custom',
 $$rule Doc_OneNote_EmbeddedScript {
@@ -86,7 +86,7 @@ $$rule Doc_OneNote_EmbeddedScript {
 }$$, 'OneNote 嵌入脚本/可执行文件', TRUE, 0, now()::text, now()::text)
 ON CONFLICT (rule_name) DO UPDATE SET rule_source=EXCLUDED.rule_source, updated_at=EXCLUDED.updated_at;
 
--- === LNK 武器化 ===
+-- === LNK Weaponization ===
 INSERT INTO security_yara_rules (id, rule_name, category, severity, source, rule_source, description, enabled, hit_count, created_at, updated_at)
 VALUES (gen_random_uuid()::text, 'Mal_LNK_CmdExecution', 'advanced_threat', 'critical', 'custom',
 $$rule Mal_LNK_CmdExecution {
@@ -129,7 +129,7 @@ $$rule Mal_LNK_DownloadExec {
 }$$, 'LNK 下载并执行远程载荷', TRUE, 0, now()::text, now()::text)
 ON CONFLICT (rule_name) DO UPDATE SET rule_source=EXCLUDED.rule_source, updated_at=EXCLUDED.updated_at;
 
--- === .NET 恶意程序 ===
+-- === .NET Malware ===
 INSERT INTO security_yara_rules (id, rule_name, category, severity, source, rule_source, description, enabled, hit_count, created_at, updated_at)
 VALUES (gen_random_uuid()::text, 'Mal_DotNet_Obfuscated', 'malware_family', 'high', 'custom',
 $$rule Mal_DotNet_Obfuscated {
@@ -210,7 +210,7 @@ $$rule Mal_Shellcode_SyscallStub {
 }$$, '直接 syscall 绕过 EDR hook', TRUE, 0, now()::text, now()::text)
 ON CONFLICT (rule_name) DO UPDATE SET rule_source=EXCLUDED.rule_source, updated_at=EXCLUDED.updated_at;
 
--- === 宏免杀 ===
+-- === Macro Evasion ===
 INSERT INTO security_yara_rules (id, rule_name, category, severity, source, rule_source, description, enabled, hit_count, created_at, updated_at)
 VALUES (gen_random_uuid()::text, 'Doc_XLM_Macro4', 'malicious_document', 'high', 'custom',
 $$rule Doc_XLM_Macro4 {
@@ -232,7 +232,7 @@ $$rule Doc_XLM_Macro4 {
 }$$, 'Excel 4.0 XLM 宏绕过 VBA 检测', TRUE, 0, now()::text, now()::text)
 ON CONFLICT (rule_name) DO UPDATE SET rule_source=EXCLUDED.rule_source, updated_at=EXCLUDED.updated_at;
 
--- === SVG 脚本 ===
+-- === SVG Script Payloads ===
 INSERT INTO security_yara_rules (id, rule_name, category, severity, source, rule_source, description, enabled, hit_count, created_at, updated_at)
 VALUES (gen_random_uuid()::text, 'Doc_SVG_EmbeddedScript', 'advanced_threat', 'high', 'custom',
 $$rule Doc_SVG_EmbeddedScript {
@@ -253,7 +253,7 @@ $$rule Doc_SVG_EmbeddedScript {
 }$$, 'SVG 嵌入 JavaScript/事件处理器', TRUE, 0, now()::text, now()::text)
 ON CONFLICT (rule_name) DO UPDATE SET rule_source=EXCLUDED.rule_source, updated_at=EXCLUDED.updated_at;
 
--- === 勒索软件 ===
+-- === Ransomware ===
 INSERT INTO security_yara_rules (id, rule_name, category, severity, source, rule_source, description, enabled, hit_count, created_at, updated_at)
 VALUES (gen_random_uuid()::text, 'Mal_Ransomware_Note', 'malware_family', 'critical', 'custom',
 $$rule Mal_Ransomware_Note {
@@ -299,7 +299,7 @@ $$rule Mal_Ransomware_CryptoAPI {
 }$$, '勒索软件加密 API + 文件遍历 + 卷影删除', TRUE, 0, now()::text, now()::text)
 ON CONFLICT (rule_name) DO UPDATE SET rule_source=EXCLUDED.rule_source, updated_at=EXCLUDED.updated_at;
 
--- === 免杀对抗 ===
+-- === Evasion Techniques ===
 INSERT INTO security_yara_rules (id, rule_name, category, severity, source, rule_source, description, enabled, hit_count, created_at, updated_at)
 VALUES (gen_random_uuid()::text, 'Evasion_AMSI_Bypass', 'evasion_technique', 'critical', 'custom',
 $$rule Evasion_AMSI_Bypass {
@@ -336,7 +336,7 @@ $$rule Evasion_NTDLL_Unhook {
 }$$, 'NTDLL unhooking 绕过 EDR', TRUE, 0, now()::text, now()::text)
 ON CONFLICT (rule_name) DO UPDATE SET rule_source=EXCLUDED.rule_source, updated_at=EXCLUDED.updated_at;
 
--- === C2 框架 ===
+-- === C2 Frameworks ===
 INSERT INTO security_yara_rules (id, rule_name, category, severity, source, rule_source, description, enabled, hit_count, created_at, updated_at)
 VALUES (gen_random_uuid()::text, 'Mal_Mimikatz_Strings', 'malware_family', 'critical', 'custom',
 $$rule Mal_Mimikatz_Strings {

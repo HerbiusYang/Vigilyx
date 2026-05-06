@@ -8,6 +8,8 @@ import { apiFetch } from '../../utils/api'
 import { buildEmailPreviewDoc } from '../../utils/emailHtml'
 import SecurityAnalysisView, { RadarChart } from './SecurityAnalysisView'
 
+const MAX_ATTACHMENT_DOWNLOAD_BYTES = 25 * 1024 * 1024
+
 export default function EmailDetail() {
   const { t } = useTranslation()
   const { id } = useParams<{ id: string }>()
@@ -25,6 +27,7 @@ export default function EmailDetail() {
   const [feedbackType, setFeedbackType] = useState<'legitimate' | 'phishing' | 'spoofing' | 'social_engineering' | 'other_threat' | null>(null)
   const [feedbackComment, setFeedbackComment] = useState('')
   const [whitelistStatus, setWhitelistStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
+  const [copiedLinkIndex, setCopiedLinkIndex] = useState<number | null>(null)
   const fromSearch = new URLSearchParams(location.search).get('from') || ''
   const listSearch = fromSearch.startsWith('?') ? fromSearch : fromSearch ? `?${fromSearch}` : ''
   const backToList = `/emails${listSearch}`
@@ -117,6 +120,54 @@ export default function EmailDetail() {
       else next.add(id)
       return next
     })
+  }
+
+  const copyLinkUrl = async (url: string, idx: number) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url)
+      } else {
+        const textarea = document.createElement('textarea')
+        textarea.value = url
+        textarea.setAttribute('readonly', 'true')
+        textarea.style.position = 'fixed'
+        textarea.style.left = '-9999px'
+        document.body.appendChild(textarea)
+        textarea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textarea)
+      }
+      setCopiedLinkIndex(idx)
+      window.setTimeout(() => {
+        setCopiedLinkIndex(current => (current === idx ? null : current))
+      }, 1500)
+    } catch {
+      setCopiedLinkIndex(null)
+    }
+  }
+
+  const openOriginalLink = (url: string) => {
+    if (!/^https?:\/\//i.test(url)) return
+    if (!window.confirm(t('emailSecurity.confirmOpenOriginalLink'))) return
+    const opened = window.open(url, '_blank', 'noopener,noreferrer')
+    if (opened) opened.opener = null
+  }
+
+  const downloadAttachment = async (index: number, filename: string) => {
+    if (!id) return
+    try {
+      const res = await apiFetch(`/api/sessions/${id}/attachments/${index}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = decodeMimeWord(filename) || filename || `attachment-${index + 1}`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error('Attachment download failed:', e)
+    }
   }
 
   if (loading) {
@@ -529,11 +580,29 @@ export default function EmailDetail() {
                         <div key={idx} className={`link-item ${link.suspicious ? 'suspicious' : ''}`}>
                           {link.suspicious && <span className="suspicious-icon">⚠️</span>}
                           <div className="link-content">
-                            <a href={/^https?:\/\//i.test(link.url) ? link.url : '#'} target="_blank" rel="noopener noreferrer" className="link-url">
+                            <span className="link-url" title={link.url}>
                               {link.url}
-                            </a>
+                            </span>
                             {link.text && link.text !== link.url && (
                               <span className="link-text">{t('emailSecurity.displayText')}: {link.text}</span>
+                            )}
+                          </div>
+                          <div className="link-actions">
+                            <button
+                              type="button"
+                              className="link-action-btn"
+                              onClick={() => copyLinkUrl(link.url, idx)}
+                            >
+                              {copiedLinkIndex === idx ? t('emailSecurity.copiedLink') : t('emailSecurity.copyLink')}
+                            </button>
+                            {/^https?:\/\//i.test(link.url) && (
+                              <button
+                                type="button"
+                                className="link-action-btn link-action-btn--danger"
+                                onClick={() => openOriginalLink(link.url)}
+                              >
+                                {t('emailSecurity.openOriginalLink')}
+                              </button>
                             )}
                           </div>
                           {link.suspicious && (
@@ -588,23 +657,10 @@ export default function EmailDetail() {
                       <div className="attachment-hash" title={att.hash}>
                         SHA256: {att.hash.substring(0, 32)}...
                       </div>
-                      {att.content_base64 ? (
+                      {att.size <= MAX_ATTACHMENT_DOWNLOAD_BYTES ? (
                         <button
                           className="attachment-download-btn"
-                          onClick={() => {
-                            const byteChars = atob(att.content_base64!)
-                            const byteArray = new Uint8Array(byteChars.length)
-                            for (let i = 0; i < byteChars.length; i++) {
-                              byteArray[i] = byteChars.charCodeAt(i)
-                            }
-                            const blob = new Blob([byteArray], { type: att.content_type })
-                            const url = URL.createObjectURL(blob)
-                            const a = document.createElement('a')
-                            a.href = url
-                            a.download = decodeMimeWord(att.filename) || att.filename
-                            a.click()
-                            URL.revokeObjectURL(url)
-                          }}
+                          onClick={() => downloadAttachment(idx, att.filename)}
                         >
                           {t('emailSecurity.downloadAttachment')}
                         </button>

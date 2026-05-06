@@ -135,10 +135,22 @@ pub fn run_dlp_scan(session: &EmailSession) -> DlpScanResult {
             max_size = DLP_MAX_SCAN_SIZE,
             "DLP scan truncated: email content exceeds 100MB limit"
         );
-        text.truncate(DLP_MAX_SCAN_SIZE);
+        truncate_to_char_boundary(&mut text, DLP_MAX_SCAN_SIZE);
     }
 
     scan_text(&text)
+}
+
+fn truncate_to_char_boundary(text: &mut String, max_size: usize) {
+    if text.len() <= max_size {
+        return;
+    }
+
+    let mut end = max_size;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.truncate(end);
 }
 
 /// DLP
@@ -245,6 +257,45 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_direction_multiple_local_domains_case_insensitive() {
+        let d = detect_direction(
+            Some("alice@Sub.Corp.Com"),
+            &["bob@internal.example".into()],
+            &[
+                "corp.com".into(),
+                "sub.corp.com".into(),
+                "INTERNAL.EXAMPLE".into(),
+            ],
+            true,
+        );
+        assert_eq!(d, MailDirection::Internal);
+    }
+
+    #[test]
+    fn test_detect_direction_trusted_external_sender_remains_inbound() {
+        let d = detect_direction(
+            Some("vendor@example.net"),
+            &["user@corp.com".into()],
+            &["corp.com".into()],
+            true,
+        );
+
+        assert_eq!(d, MailDirection::Inbound);
+    }
+
+    #[test]
+    fn test_detect_direction_empty_local_domain_list_is_inbound() {
+        let d = detect_direction(
+            Some("user@corp.com"),
+            &["external@example.net".into()],
+            &[],
+            true,
+        );
+
+        assert_eq!(d, MailDirection::Inbound);
+    }
+
+    #[test]
     fn test_dlp_scan_detects_credit_card() {
         let mut session = EmailSession::new(
             vigilyx_core::Protocol::Smtp,
@@ -273,6 +324,41 @@ mod tests {
     }
 
     #[test]
+    fn test_dlp_scan_includes_html_body() {
+        let mut session = EmailSession::new(
+            vigilyx_core::Protocol::Smtp,
+            "10.0.0.1".into(),
+            25000,
+            "10.0.0.2".into(),
+            25,
+        );
+        session.content.body_html =
+            Some("<html><body>备用卡号 4532015112830366</body></html>".into());
+        let result = run_dlp_scan(&session);
+        assert!(
+            result.matches.iter().any(|name| name == "credit_card"),
+            "HTML-only sensitive content should be scanned"
+        );
+    }
+
+    #[test]
+    fn test_dlp_scan_includes_subject() {
+        let mut session = EmailSession::new(
+            vigilyx_core::Protocol::Smtp,
+            "10.0.0.1".into(),
+            25000,
+            "10.0.0.2".into(),
+            25,
+        );
+        session.subject = Some("收款账号 4532015112830366".into());
+        let result = run_dlp_scan(&session);
+        assert!(
+            result.matches.iter().any(|name| name == "credit_card"),
+            "Subject-only sensitive content should be scanned"
+        );
+    }
+
+    #[test]
     fn test_dlp_scan_empty_email() {
         let session = EmailSession::new(
             vigilyx_core::Protocol::Smtp,
@@ -283,6 +369,37 @@ mod tests {
         );
         let result = run_dlp_scan(&session);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_dlp_truncation_preserves_utf8_boundary() {
+        let mut text = "测测abc".to_string();
+
+        truncate_to_char_boundary(&mut text, 5);
+
+        assert_eq!(text, "测");
+        assert!(text.is_char_boundary(text.len()));
+    }
+
+    #[test]
+    fn test_dlp_truncation_zero_limit_clears_string() {
+        let mut text = "abc".to_string();
+
+        truncate_to_char_boundary(&mut text, 0);
+
+        assert!(text.is_empty());
+    }
+
+    #[test]
+    fn test_dlp_action_serde_uses_snake_case() {
+        assert_eq!(
+            serde_json::from_str::<DlpAction>("\"allow_and_alert\"").unwrap(),
+            DlpAction::AllowAndAlert
+        );
+        assert_eq!(
+            serde_json::to_string(&DlpAction::Quarantine).unwrap(),
+            "\"quarantine\""
+        );
     }
 
     #[test]
@@ -300,6 +417,14 @@ mod tests {
         let reason = format_dlp_reason(&result);
         assert!(reason.contains("credit_card(1)"));
         assert!(reason.contains("phone_number(2)"));
+    }
+
+    #[test]
+    fn test_format_dlp_reason_handles_empty_details() {
+        let result = DlpScanResult::default();
+        let reason = format_dlp_reason(&result);
+
+        assert!(reason.starts_with("DLP: 检测到敏感数据外发"));
     }
 
     #[test]

@@ -15,6 +15,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use chrono::Utc;
 use tracing::{info, warn};
+use vigilyx_core::models::decode_base64_bytes_limited;
 
 use crate::context::SecurityContext;
 use crate::error::EngineError;
@@ -25,6 +26,8 @@ pub struct AvAttachScanModule {
     meta: ModuleMetadata,
     client: Arc<ClamAvClient>,
 }
+
+const MAX_ATTACHMENT_SCAN_BYTES: usize = 25 * 1024 * 1024;
 
 impl AvAttachScanModule {
     pub fn new(client: Arc<ClamAvClient>) -> Self {
@@ -45,45 +48,6 @@ impl AvAttachScanModule {
             client,
         }
     }
-}
-
-/// Minimal base64 decoder (same approach as attach_content.rs / av_eml_scan.rs).
-fn decode_base64_bytes(input: &str) -> Option<Vec<u8>> {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut lookup = [255u8; 256];
-    for (i, &ch) in TABLE.iter().enumerate() {
-        lookup[ch as usize] = i as u8;
-    }
-
-    let bytes: Vec<u8> = input
-        .bytes()
-        .filter(|&b| b != b'=' && !b.is_ascii_whitespace())
-        .collect();
-    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
-
-    for chunk in bytes.chunks(4) {
-        let mut buf = [0u8; 4];
-        let len = chunk.len();
-        for (i, &b) in chunk.iter().enumerate() {
-            let val = lookup[b as usize];
-            if val == 255 {
-                return None;
-            }
-            buf[i] = val;
-        }
-
-        if len >= 2 {
-            out.push((buf[0] << 2) | (buf[1] >> 4));
-        }
-        if len >= 3 {
-            out.push((buf[1] << 4) | (buf[2] >> 2));
-        }
-        if len >= 4 {
-            out.push((buf[2] << 6) | buf[3]);
-        }
-    }
-
-    Some(out)
 }
 
 /// Per-attachment scan result for evidence collection.
@@ -126,7 +90,20 @@ impl SecurityModule for AvAttachScanModule {
 
         for att in attachments {
             if let Some(ref b64) = att.content_base64 {
-                if let Some(decoded) = decode_base64_bytes(b64) {
+                if att.size > MAX_ATTACHMENT_SCAN_BYTES {
+                    skipped_count += 1;
+                    evidence.push(Evidence {
+                        description: format!(
+                            "Attachment {} too large ({:.1} MB), skipped virus scan",
+                            att.filename,
+                            att.size as f64 / (1024.0 * 1024.0)
+                        ),
+                        location: Some(format!("attachment:{}", att.filename)),
+                        snippet: None,
+                    });
+                } else if let Some(decoded) =
+                    decode_base64_bytes_limited(b64, MAX_ATTACHMENT_SCAN_BYTES)
+                {
                     let client = Arc::clone(&self.client);
                     let filename = att.filename.clone();
                     let size = decoded.len();
@@ -413,13 +390,13 @@ mod tests {
 
     #[test]
     fn test_decode_base64_roundtrip() {
-        let result = decode_base64_bytes("SGVsbG8gV29ybGQ=");
+        let result = decode_base64_bytes_limited("SGVsbG8gV29ybGQ=", MAX_ATTACHMENT_SCAN_BYTES);
         assert_eq!(result, Some(b"Hello World".to_vec()));
     }
 
     #[test]
     fn test_decode_base64_no_padding() {
-        let result = decode_base64_bytes("SGVsbG8");
+        let result = decode_base64_bytes_limited("SGVsbG8", MAX_ATTACHMENT_SCAN_BYTES);
         assert_eq!(result, Some(b"Hello".to_vec()));
     }
 }

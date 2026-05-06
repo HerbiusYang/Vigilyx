@@ -25,6 +25,7 @@ pub use handlers::{
     ChangePasswordRequest, ChangePasswordResponse, LoginRequest, build_clear_cookie,
     build_token_cookie, handle_change_password, handle_login, handle_logout, handle_me,
 };
+pub(crate) use middleware::is_admin_role;
 pub use middleware::{
     AuthenticatedUser, require_admin, require_auth, require_internal_origin, require_internal_token,
 };

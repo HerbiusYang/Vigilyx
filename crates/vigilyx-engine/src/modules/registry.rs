@@ -32,6 +32,9 @@ use super::link_content::LinkContentModule;
 use super::link_reputation::LinkReputationModule;
 use super::link_scan::LinkScanModule;
 use super::mime_scan::MimeScanModule;
+use super::prompt_injection_scan::PromptInjectionScanModule;
+use super::rmm_detect::RmmDetectModule;
+use super::toad_detect::ToadDetectModule;
 use super::semantic_scan::SemanticScanModule;
 use super::transaction_correlation::TransactionCorrelationModule;
 use super::verdict_module::VerdictModule;
@@ -187,6 +190,9 @@ pub async fn build_module_registry(
     );
     register(&mut modules, Arc::new(AnomalyDetectModule::new()));
     register(&mut modules, Arc::new(AitmDetectModule::new()));
+    register(&mut modules, Arc::new(RmmDetectModule::new()));
+    register(&mut modules, Arc::new(PromptInjectionScanModule::new()));
+    register(&mut modules, Arc::new(ToadDetectModule::new()));
     register(&mut modules, Arc::new(SemanticScanModule::new(nlp_remote)));
     register(&mut modules, Arc::new(DomainVerifyModule::new()));
     register(
@@ -271,35 +277,6 @@ pub async fn build_module_registry(
     register(&mut modules, Arc::new(VerdictModule::new()));
 
     (modules, safe_domains_handle)
-}
-
-/// MTA inline verdict Tier 1 ID.
-/// MTA inline (SMTP).
-/// (Tier 2).
-pub const INLINE_TIER1_MODULES: &[&str] = &[
-    "content_scan",     // keyword / pattern scan (~200ms)
-    "header_scan",      // SPF/DKIM/header analysis (~100ms)
-    "html_scan",        // HTML structure scan (~200ms)
-    "mime_scan",        // MIME structure scan (~100ms)
-    "link_scan",        // URL analysis (~300ms)
-    "attach_scan",      // attachment metadata (~200ms)
-    "attach_hash",      // attachment hash IOC lookup (~200ms)
-    "domain_verify",    // DNS verification (~500ms)
-    "anomaly_detect",   // anomaly detection (~200ms)
-    "identity_anomaly", // identity anomaly (~200ms)
-    "yara_scan",        // YARA rule scan (~500ms)
-    "av_eml_scan",      // ClamAV EML scan (~1000ms)
-    "av_attach_scan",   // ClamAV attachment scan (~1000ms)
-    "html_pixel_art",   // pixel art detection (~100ms)
-    "attach_content",   // attachment content scan (~500ms)
-];
-
-// Tier 2 (async only): semantic_scan, link_content, link_reputation,
-// transaction_correlation, sandbox_scan, verdict_module
-
-/// Check whether a module is in Tier 1 (eligible for MTA inline verdict).
-pub fn is_inline_tier1(module_id: &str) -> bool {
-    INLINE_TIER1_MODULES.contains(&module_id)
 }
 
 /// Reload IOC-derived runtime caches without rebuilding the whole module registry.

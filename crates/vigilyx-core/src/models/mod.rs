@@ -326,11 +326,11 @@ impl EmailSession {
 
     /// Return whether the session contains enough content for downstream analysis.
     pub fn has_analyzable_content(&self) -> bool {
-        self.mail_from.as_ref().is_some_and(|s| !s.is_empty())
-            || !self.content.headers.is_empty()
+        !self.content.headers.is_empty()
             || self.content.body_text.is_some()
             || self.content.body_html.is_some()
             || !self.content.attachments.is_empty()
+            || !self.content.links.is_empty()
     }
 
     /// Return the number of attachments.
@@ -341,6 +341,48 @@ impl EmailSession {
     /// Return the number of suspicious links.
     pub fn suspicious_link_count(&self) -> usize {
         self.content.links.iter().filter(|l| l.suspicious).count()
+    }
+
+    /// Estimate the reconstructed EML byte size without decoding attachment payloads.
+    pub fn estimated_reconstructed_eml_size(&self) -> usize {
+        let mut reconstructed_estimate = 2usize; // header/body separator
+        for (name, value) in &self.content.headers {
+            reconstructed_estimate = reconstructed_estimate
+                .saturating_add(name.len())
+                .saturating_add(value.len())
+                .saturating_add(4);
+        }
+        if let Some(text) = &self.content.body_text {
+            reconstructed_estimate = reconstructed_estimate
+                .saturating_add(text.len())
+                .saturating_add(2);
+        }
+        if let Some(html) = &self.content.body_html {
+            reconstructed_estimate = reconstructed_estimate
+                .saturating_add(html.len())
+                .saturating_add(2);
+        }
+        for attachment in &self.content.attachments {
+            if let Some(content_base64) = &attachment.content_base64 {
+                reconstructed_estimate = reconstructed_estimate
+                    .saturating_add(content_base64.len().saturating_mul(3) / 4);
+            }
+        }
+
+        self.content.raw_size.max(reconstructed_estimate)
+    }
+
+    /// Reconstruct EML only when the estimated and actual output fit the caller's cap.
+    pub fn reconstruct_eml_limited(&self, max_bytes: usize) -> Option<Vec<u8>> {
+        if self.estimated_reconstructed_eml_size() > max_bytes {
+            return None;
+        }
+        let eml = self.reconstruct_eml();
+        if eml.len() > max_bytes {
+            None
+        } else {
+            Some(eml)
+        }
     }
 
     pub fn ws_signal(&self) -> WsSessionSignal {
@@ -406,6 +448,15 @@ impl From<&EmailSession> for WsSessionSignal {
 /// Minimal base64 decoder for attachment content.
 /// Strips whitespace, tolerates padding, returns None on invalid input.
 pub fn decode_base64_bytes(input: &str) -> Option<Vec<u8>> {
+    decode_base64_bytes_limited(input, usize::MAX)
+}
+
+/// Decode base64 while enforcing a hard decoded-size cap.
+///
+/// The cap is checked before allocation using the cleaned input length and again
+/// while emitting bytes, so malformed or whitespace-heavy payloads cannot force
+/// unbounded allocations in attachment scanners.
+pub fn decode_base64_bytes_limited(input: &str, max_decoded_bytes: usize) -> Option<Vec<u8>> {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut lookup = [255u8; 256];
     for (i, &ch) in TABLE.iter().enumerate() {
@@ -416,7 +467,12 @@ pub fn decode_base64_bytes(input: &str) -> Option<Vec<u8>> {
         .bytes()
         .filter(|&b| b != b'=' && !b.is_ascii_whitespace())
         .collect();
-    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    let estimated_decoded = bytes.len().saturating_mul(3) / 4;
+    if estimated_decoded > max_decoded_bytes {
+        return None;
+    }
+
+    let mut out = Vec::with_capacity(estimated_decoded);
 
     for chunk in bytes.chunks(4) {
         let mut buf = [0u8; 4];
@@ -430,12 +486,21 @@ pub fn decode_base64_bytes(input: &str) -> Option<Vec<u8>> {
         }
 
         if len >= 2 {
+            if out.len() >= max_decoded_bytes {
+                return None;
+            }
             out.push((buf[0] << 2) | (buf[1] >> 4));
         }
         if len >= 3 {
+            if out.len() >= max_decoded_bytes {
+                return None;
+            }
             out.push((buf[1] << 4) | (buf[2] >> 2));
         }
         if len >= 4 {
+            if out.len() >= max_decoded_bytes {
+                return None;
+            }
             out.push((buf[2] << 6) | buf[3]);
         }
     }
@@ -1121,7 +1186,10 @@ pub enum WsMessage {
 
 #[cfg(test)]
 mod tests {
-    use super::{EmailContent, EmailSession, Protocol, SessionStatus};
+    use super::{
+        EmailAttachment, EmailContent, EmailSession, Protocol, SessionStatus,
+        decode_base64_bytes_limited,
+    };
 
     #[test]
     fn test_extract_links_from_html_captures_anchor_text() {
@@ -1157,5 +1225,69 @@ mod tests {
 
         session.status = SessionStatus::Completed;
         assert!(session.is_terminal_for_analysis());
+    }
+
+    #[test]
+    fn mail_from_only_session_is_not_analyzable_content() {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.mail_from = Some("sender@example.com".to_string());
+
+        assert!(!session.has_analyzable_content());
+
+        session
+            .content
+            .headers
+            .push(("Subject".to_string(), "hello".to_string()));
+        assert!(session.has_analyzable_content());
+    }
+
+    #[test]
+    fn reconstruct_eml_limited_rejects_oversized_raw_size() {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.content.raw_size = 11;
+
+        assert!(session.reconstruct_eml_limited(10).is_none());
+    }
+
+    #[test]
+    fn estimated_reconstructed_eml_size_counts_attachment_payload() {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.content.attachments = vec![EmailAttachment {
+            filename: "a.bin".to_string(),
+            content_type: "application/octet-stream".to_string(),
+            size: 9,
+            hash: "abc".to_string(),
+            content_base64: Some("QUJDREVGR0hJ".to_string()),
+        }];
+
+        assert!(session.estimated_reconstructed_eml_size() >= 11);
+        assert!(session.reconstruct_eml_limited(10).is_none());
+    }
+
+    #[test]
+    fn decode_base64_bytes_limited_rejects_oversized_payload() {
+        assert_eq!(
+            decode_base64_bytes_limited("QUJD", 3),
+            Some(b"ABC".to_vec())
+        );
+        assert!(decode_base64_bytes_limited("QUJDRA==", 3).is_none());
     }
 }

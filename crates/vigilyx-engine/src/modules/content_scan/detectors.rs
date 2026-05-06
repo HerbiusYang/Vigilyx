@@ -15,6 +15,10 @@ use super::{
 use crate::context::SecurityContext;
 use crate::module::Evidence;
 use crate::module_data::module_data;
+use crate::matcher::{
+    account_security_actions, account_security_threats, subject_threat_keywords,
+    subsidy_keywords_body, subsidy_keywords_subject, subsidy_urgency_body,
+};
 use crate::modules::common::{extract_domain_from_url, is_probable_non_clickable_render_asset_url};
 
 static RE_VERIFICATION_CODE: LazyLock<Regex> =
@@ -211,7 +215,7 @@ pub(super) fn detect_subject_phishing(
 
         // /bodyMediumofMobile phoneNumberCode/Digit - Legitimate email Medium Mobile phoneNumber
         // P2-3 fix: skip phone detection for WeChat chat record exports.
-        // Forwarded chat records have subjects like "XXX和YYY的聊天记录" which
+        // Forwarded chat records often use participant-style subjects which
         // naturally contain phone numbers embedded in usernames.
         let is_chat_export = subject.contains("聊天记录")
             || subject.contains("群聊")
@@ -382,7 +386,7 @@ pub(super) fn detect_image_only_phishing(
         has_wps_brand && has_share_phrase && sender_is_public_or_safe
     });
 
-    // 内部域名豁免：银行员工发扫描件/截图报告天然命中少文字+图片+链接
+    // Internal-domain exemption: employee scan reports and screenshot summaries naturally contain little text plus many images and links.
     let sender_is_internal = ctx
         .session
         .mail_from
@@ -391,7 +395,7 @@ pub(super) fn detect_image_only_phishing(
         .map(|d| ctx.is_internal_domain(&d.to_lowercase()))
         .unwrap_or(false);
 
-    // 知名安全域名豁免：品牌营销邮件天然图片多、文字少
+    // Well-known safe-domain exemption: brand marketing mail naturally contains many images and relatively little text.
     let sender_is_safe = ctx
         .session
         .mail_from
@@ -400,8 +404,8 @@ pub(super) fn detect_image_only_phishing(
         .map(|d| crate::modules::link_scan::is_well_known_safe_domain(&d.to_lowercase()))
         .unwrap_or(false);
 
-    // 合法文档附件豁免：含 PDF/DOC/XLS 等商务文档的邮件，
-    // 图片+链接通常只是品牌 HTML 模板，正文内容在附件中
+    // Legitimate document-attachment exemption: mail with PDF/DOC/XLS business documents often uses branded HTML wrappers,
+    // and the substantive content lives in the attachment rather than the HTML body.
     let has_document_attachments = ctx.session.content.attachments.iter().any(|att| {
         let ct = att.content_type.to_lowercase();
         let fname = att.filename.to_lowercase();
@@ -447,7 +451,7 @@ pub(super) fn detect_image_only_phishing(
 // ─── Step 5: Account security phishing (merged original steps 4+6) ───
 
 /// Detects account-security phishing by checking body AND subject for
-/// threat + action phrase combos (e.g. "异常登录" + "立即验证").
+/// threat + action phrase combos (for example, an "abnormal login" lure paired with an immediate verification prompt).
 ///
 /// This merges original step 4 (body threat+action) and step 6 (subject-only
 /// fallback) into a single function.
@@ -483,14 +487,8 @@ pub(super) fn detect_account_security_phishing(
         let body_lower = normalize_text(&body.to_lowercase());
 
         // AccountSecurity Keywords (: Description + line)
-        let has_threat = module_data()
-            .get_list("account_security_threat_phrases_body")
-            .iter()
-            .any(|p| body_lower.contains(p.as_str()));
-        let has_action = module_data()
-            .get_list("account_security_action_phrases_body")
-            .iter()
-            .any(|p| body_lower.contains(p.as_str()));
+        let has_threat = account_security_threats().is_match(&body_lower);
+        let has_action = account_security_actions().is_match(&body_lower);
         if has_threat && has_action {
             // DomainSendAccountSecurity email - according toDomainTrusted
             // TrustedDomain (if microsoft.com) possibly ofSecurity, Low
@@ -519,10 +517,7 @@ pub(super) fn detect_account_security_phishing(
     // body account_security_phishing,.
     if let Some(ref subject) = ctx.session.subject {
         let sub_lower = normalize_text(&subject.to_lowercase());
-        let has_subject_threat = module_data()
-            .get_list("subject_threat_keywords")
-            .iter()
-            .any(|kw| sub_lower.contains(kw.as_str()));
+        let has_subject_threat = subject_threat_keywords().is_match(&sub_lower);
         if has_subject_threat {
             let domain_str = sender_domain.as_deref().unwrap_or("");
             let is_well_known = crate::modules::link_scan::is_well_known_safe_domain(domain_str);
@@ -574,15 +569,8 @@ pub(super) fn detect_subsidy_fraud(
     // Signature: benefit keywords + urgency/deadline + suspicious URL or fake authority
     if let Some(body) = detector_body_fallback_text(ctx, body_for_cross) {
         let body_lower = normalize_text(&body.to_lowercase());
-        let has_subsidy = module_data()
-            .get_list("subsidy_keywords_body")
-            .iter()
-            .filter(|k| body_lower.contains(k.as_str()))
-            .count();
-        let has_urgency = module_data()
-            .get_list("subsidy_urgency_keywords_body")
-            .iter()
-            .any(|k| body_lower.contains(k.as_str()));
+        let has_subsidy = subsidy_keywords_body().scan(&body_lower).distinct_count();
+        let has_urgency = subsidy_urgency_body().is_match(&body_lower);
         // 2+ subsidy keywords + urgency = strong fraud signal
         // Score 0.60: after BPA conversion (x0.85 confidence) and consensus gating
         // (x0.50 for 2-engine support), floor = 0.60x0.85x0.50 = 0.255 which,
@@ -606,11 +594,7 @@ pub(super) fn detect_subsidy_fraud(
     // (body)
     if let Some(ref subject) = ctx.session.subject {
         let sub_lower = normalize_text(&subject.to_lowercase());
-        let has_subsidy = module_data()
-            .get_list("subsidy_keywords_subject")
-            .iter()
-            .filter(|k| sub_lower.contains(k.as_str()))
-            .count();
+        let has_subsidy = subsidy_keywords_subject().scan(&sub_lower).distinct_count();
         if has_subsidy >= 2 {
             *total_score += 0.45;
             categories.push("subsidy_fraud".to_string());
@@ -624,7 +608,7 @@ pub(super) fn detect_subsidy_fraud(
 }
 
 /// Detects Chinese invoice-spam / fake invoice solicitation patterns such as
-/// "代开发票 + QQ/微信联系方式". This targets off-platform contact lures rather
+/// "invoice solicitation + off-platform contact details". This targets off-platform contact lures rather
 /// than legitimate invoice delivery notices.
 pub(super) fn detect_invoice_spam(
     ctx: &SecurityContext,
@@ -735,7 +719,7 @@ pub(super) fn detect_body_phone_numbers(
 // ─── Step 8: External impersonation ──────────────────────────────────
 
 /// Detects external senders impersonating internal departments (e.g.
-/// "财务部" from external domain). Requires ≥2 authority phrase hits.
+/// an internal finance-team label coming from an external domain). Requires >=2 authority phrase hits.
 /// Adds `external_impersonation` (+0.30).
 pub(super) fn detect_external_impersonation(
     ctx: &SecurityContext,
@@ -763,8 +747,8 @@ pub(super) fn detect_external_impersonation(
         };
 
         if is_external {
-            // 聊天记录/转发邮件豁免：微信/QQ 对话转发的正文天然包含
-            // 部门名称等权威短语，不应判为外部冒充
+            // Chat-log / forwarded-message exemption: forwarded messenger conversations naturally contain department labels
+            // and similar authority phrases, so they should not be treated as external impersonation.
             let subject = ctx.session.subject.as_deref().unwrap_or("");
             let is_chat_forward = subject.contains("聊天记录")
                 || subject.contains("群聊")
@@ -775,8 +759,8 @@ pub(super) fn detect_external_impersonation(
                 return;
             }
 
-            // QQ 个人邮箱豁免（纯数字@qq.com）：个人用户转发内部工作文件
-            // 正文天然包含部门名称，不应判为外部冒充
+            // QQ personal-mailbox exemption (numeric local-part@qq.com): users often forward internal work files from personal mailboxes,
+            // and those messages can naturally include department names without being external impersonation.
             let is_qq_personal = sender_domain
                 .as_ref()
                 .is_some_and(|d| d == "qq.com" || d == "foxmail.com")

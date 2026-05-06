@@ -9,6 +9,7 @@ import re
 # ---------------------------------------------------------------------------
 
 _MAX_USER_INPUT_LEN = 5000
+_MAX_CONTENT_PREVIEW_LEN = 2000
 
 # Patterns commonly used to hijack LLM context boundaries
 _INJECTION_MARKERS: re.Pattern[str] = re.compile(
@@ -133,7 +134,7 @@ def format_analyze_prompt(
         subject=_sanitize_user_input(subject or "No subject"),
         protocol=protocol,
         content_preview=_sanitize_user_input(
-            content_preview[:_MAX_USER_INPUT_LEN] if content_preview else "No content"
+            content_preview[:_MAX_CONTENT_PREVIEW_LEN] if content_preview else "No content"
         ),
     )
 

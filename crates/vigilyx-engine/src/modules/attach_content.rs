@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use regex::Regex;
 use vigilyx_core::magic_bytes::detect_file_type;
-use vigilyx_core::models::decode_base64_bytes;
+use vigilyx_core::models::decode_base64_bytes_limited;
 
 use crate::context::SecurityContext;
 use crate::data_security::document_extract;
@@ -91,6 +91,8 @@ const SUSPICIOUS_TLDS: &[&str] = &[
     ".cyou", ".lol",
 ];
 
+const MAX_ATTACHMENT_TEXT_DECODE_BYTES: usize = 25 * 1024 * 1024;
+
 /// Heuristics for individual URLs found inside attachment text. Returns a
 /// list of `(reason, weight)` tuples so the caller can both score and
 /// surface evidence.
@@ -149,7 +151,7 @@ fn decode_plain_text_bytes(bytes: &[u8]) -> Option<String> {
 }
 
 fn extract_attachment_text(content_type: &str, content_base64: &str) -> Option<String> {
-    let bytes = decode_base64_bytes(content_base64)?;
+    let bytes = decode_base64_bytes_limited(content_base64, MAX_ATTACHMENT_TEXT_DECODE_BYTES)?;
     let file_type = detect_file_type(&bytes);
 
     if file_type.is_some_and(|ft| ft.is_extractable_document()) {
@@ -285,6 +287,9 @@ impl SecurityModule for AttachContentModule {
         let mut retained_count = 0usize;
 
         for attachment in &ctx.session.content.attachments {
+            if attachment.size > MAX_ATTACHMENT_TEXT_DECODE_BYTES {
+                continue;
+            }
             let Some(content_base64) = attachment.content_base64.as_deref() else {
                 continue;
             };

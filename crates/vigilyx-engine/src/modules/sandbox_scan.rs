@@ -20,6 +20,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 use tracing::{debug, info, warn};
+use vigilyx_core::models::decode_base64_bytes_limited;
 
 use crate::context::SecurityContext;
 use crate::error::EngineError;
@@ -96,45 +97,6 @@ fn score_to_threat_level(score: f64) -> ThreatLevel {
     }
 }
 
-/// small base64 Decodehandler(av_attach_scan 1)
-fn decode_base64_bytes(input: &str) -> Option<Vec<u8>> {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut lookup = [255u8; 256];
-    for (i, &b) in TABLE.iter().enumerate() {
-        lookup[b as usize] = i as u8;
-    }
-
-    let clean: Vec<u8> = input
-        .bytes()
-        .filter(|&b| b != b'\n' && b != b'\r' && b != b' ' && b != b'\t')
-        .collect();
-    if clean.is_empty() {
-        return None;
-    }
-
-    let mut out = Vec::with_capacity(clean.len() * 3 / 4);
-    let mut buf = 0u32;
-    let mut bits = 0u32;
-
-    for &b in &clean {
-        if b == b'=' {
-            break;
-        }
-        let val = lookup[b as usize];
-        if val == 255 {
-            continue;
-        }
-        buf = (buf << 6) | val as u32;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buf >> bits) as u8);
-            buf &= (1 << bits) - 1;
-        }
-    }
-    Some(out)
-}
-
 #[async_trait]
 impl SecurityModule for SandboxScanModule {
     fn metadata(&self) -> &ModuleMetadata {
@@ -193,7 +155,7 @@ impl SecurityModule for SandboxScanModule {
                 None => continue,
             };
 
-            let data = match decode_base64_bytes(b64) {
+            let data = match decode_base64_bytes_limited(b64, MAX_ATTACHMENT_SIZE) {
                 Some(d) if !d.is_empty() => d,
                 _ => {
                     debug!(filename, "Sandbox: AttachmentDecodeFailed，hops");

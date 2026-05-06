@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +24,41 @@ impl Default for PipelineConfig {
             version: 1,
             modules: default_modules(),
             verdict_config: VerdictConfig::default(),
+        }
+    }
+}
+
+impl PipelineConfig {
+    /// Backfill modules added in newer binaries into DB-stored pipeline configs.
+    ///
+    /// Existing module entries are preserved exactly as configured; only missing
+    /// defaults are appended in default execution order.
+    pub fn merge_default_modules(&mut self) -> Vec<String> {
+        let mut existing_ids: HashSet<String> = self
+            .modules
+            .iter()
+            .map(|module| module.id.clone())
+            .collect();
+        let mut added = Vec::new();
+
+        for default_module in default_modules() {
+            if existing_ids.insert(default_module.id.clone()) {
+                added.push(default_module.id.clone());
+                self.modules.push(default_module);
+            }
+        }
+
+        added
+    }
+
+    /// Reset unsafe verdict settings to the compiled defaults.
+    pub fn repair_unsafe_verdict_config(&mut self) -> Option<Vec<String>> {
+        match self.verdict_config.validate() {
+            Ok(()) => None,
+            Err(violations) => {
+                self.verdict_config = VerdictConfig::default();
+                Some(violations)
+            }
         }
     }
 }
@@ -496,6 +531,13 @@ fn default_modules() -> Vec<ModuleConfig> {
             condition: None,
         },
         ModuleConfig {
+            id: "attach_qr_scan".into(),
+            enabled: true,
+            mode: RunMode::Builtin,
+            config: serde_json::Value::Null,
+            condition: None,
+        },
+        ModuleConfig {
             id: "attach_hash".into(),
             enabled: true,
             mode: RunMode::Builtin,
@@ -538,7 +580,21 @@ fn default_modules() -> Vec<ModuleConfig> {
             condition: None,
         },
         ModuleConfig {
+            id: "landing_page_scan".into(),
+            enabled: true,
+            mode: RunMode::Builtin,
+            config: serde_json::Value::Null,
+            condition: None,
+        },
+        ModuleConfig {
             id: "anomaly_detect".into(),
+            enabled: true,
+            mode: RunMode::Builtin,
+            config: serde_json::Value::Null,
+            condition: None,
+        },
+        ModuleConfig {
+            id: "aitm_detect".into(),
             enabled: true,
             mode: RunMode::Builtin,
             config: serde_json::Value::Null,
@@ -606,6 +662,96 @@ fn default_modules() -> Vec<ModuleConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const MODERN_PHISHING_MODULES: &[&str] =
+        &["attach_qr_scan", "landing_page_scan", "aitm_detect"];
+
+    fn module_index(config: &PipelineConfig, id: &str) -> usize {
+        config
+            .modules
+            .iter()
+            .position(|module| module.id == id)
+            .unwrap_or_else(|| panic!("missing default module {id}"))
+    }
+
+    #[test]
+    fn test_default_pipeline_includes_modern_phishing_modules() {
+        let config = PipelineConfig::default();
+
+        for module_id in MODERN_PHISHING_MODULES {
+            assert!(
+                config
+                    .modules
+                    .iter()
+                    .any(|module| module.id == *module_id && module.enabled),
+                "default pipeline must enable {module_id}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_default_pipeline_module_ids_are_unique() {
+        let config = PipelineConfig::default();
+        let mut seen = HashSet::new();
+
+        for module in &config.modules {
+            assert!(
+                seen.insert(module.id.as_str()),
+                "duplicate default module id {}",
+                module.id
+            );
+        }
+    }
+
+    #[test]
+    fn test_default_pipeline_preserves_dependency_order() {
+        let config = PipelineConfig::default();
+
+        assert!(module_index(&config, "attach_scan") < module_index(&config, "attach_qr_scan"));
+        assert!(module_index(&config, "link_scan") < module_index(&config, "landing_page_scan"));
+        assert!(module_index(&config, "link_content") < module_index(&config, "landing_page_scan"));
+        assert!(module_index(&config, "verdict") > module_index(&config, "aitm_detect"));
+    }
+
+    #[test]
+    fn test_merge_default_modules_backfills_modern_phishing_modules() {
+        let mut config = PipelineConfig::default();
+        config
+            .modules
+            .retain(|module| !MODERN_PHISHING_MODULES.contains(&module.id.as_str()));
+
+        let added = config.merge_default_modules();
+
+        for module_id in MODERN_PHISHING_MODULES {
+            assert!(
+                added.iter().any(|added_id| added_id == module_id),
+                "merge_default_modules should report added {module_id}"
+            );
+            assert!(
+                config.modules.iter().any(|module| module.id == *module_id),
+                "merge_default_modules should restore {module_id}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_repair_unsafe_verdict_config_resets_to_default() {
+        let mut config = PipelineConfig {
+            verdict_config: VerdictConfig {
+                alert_floor_factor: 0.5,
+                ..VerdictConfig::default()
+            },
+            ..PipelineConfig::default()
+        };
+
+        let violations = config.repair_unsafe_verdict_config();
+
+        assert!(violations.is_some());
+        assert_eq!(
+            config.verdict_config.alert_floor_factor,
+            VerdictConfig::default().alert_floor_factor
+        );
+    }
 
     #[test]
     fn test_default_verdict_config_passes_validation() {

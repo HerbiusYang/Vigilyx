@@ -14,6 +14,7 @@ pub mod error;
 pub mod feedback;
 pub mod intel;
 pub mod ioc;
+pub mod matcher;
 pub mod module;
 pub mod module_data;
 pub mod syslog;

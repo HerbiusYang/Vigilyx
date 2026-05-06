@@ -4,6 +4,27 @@ All notable changes to Vigilyx are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the project follows [Semantic Versioning](https://semver.org/).
 
+## [0.9.2] - 2026-04-29
+
+### Added
+
+- Multilingual phrase seed expansion: 77 lists / ~5300 entries across 10 languages (EN/ZH/JA/KO/RU/ES/PT/FR/DE/AR) for MFA bait, prompt injection, account-security phishing, subsidy fraud, AiTM lures, and related detectors
+- High-throughput multi-pattern matcher (`vigilyx-engine::matcher`) backed by Aho-Corasick with a process-wide `OnceLock` cache and epoch-versioned hot reload; replaces naive `phrases.iter().any(contains)` scans on the security pipeline hot path (now `O(n + matches)` instead of `O(haystack × patterns × pattern_len)`)
+- Unicode-aware brand keyword boundary detection in `aitm_detect` to prevent short brand names (`line`, `abc`, `box`, …) from substring-matching unrelated alphanumeric runs across ASCII, CJK, Cyrillic, Greek, and Arabic neighbours
+- Comprehensive new test coverage (≈20 new tests across `matcher`, `aitm_detect`, and seed coverage gates) — full workspace now at **1993 passed / 0 failed / 6 ignored**
+
+### Changed
+
+- Refactored 7 detection modules (`prompt_injection_scan`, `aitm_detect`, `content_scan::detectors`, `transaction_correlation`, `rmm_detect`, `toad_detect`, `html_scan`, `link_content`) to route 18+ substring-scan call sites through the shared phrase matcher; removed redundant per-module `find_substring_match` / `first_pattern_hit` helpers
+- Enabled `gzip` feature on `reqwest` so the URL fetcher enforces decoded-body size limits correctly when upstream responses are compressed
+- Refreshed release metadata and UI version strings to `0.9.2`
+
+### Fixed
+
+- Brand-impersonation false positive where the LINE messenger brand `"line"` matched the substring inside `microsoftonline.com`
+- URL fetcher decoded-response size enforcement test that silently passed because gzip decoding was not enabled
+- Test isolation: `ModuleDataRegistry::replace_list_for_test` now allows hot-reload assertions without polluting parallel tests that depend on neighbouring registry lists
+
 ## [0.9.1] - 2026-04-21
 
 ### Changed

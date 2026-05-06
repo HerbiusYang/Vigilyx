@@ -17,6 +17,7 @@ use regex::{Captures, Regex};
 use serde::Deserialize;
 use std::sync::Arc;
 use std::sync::OnceLock;
+use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 use vigilyx_core::{DataSecurityIncident, DataSecurityStats, HttpSession};
 
@@ -51,6 +52,8 @@ fn default_page() -> u32 {
 fn default_limit() -> u32 {
     50
 }
+
+const MAX_HTTP_BODY_DOWNLOAD_BYTES: usize = 5 * 1024 * 1024;
 
 // Statistics API
 
@@ -400,13 +403,56 @@ pub async fn download_http_session_body(
         return (axum::http::StatusCode::FORBIDDEN, "Access denied").into_response();
     }
 
-    // Read file
-    let raw_data = match tokio::fs::read(&canonical).await {
-        Ok(d) => d,
+    let metadata = match tokio::fs::metadata(&canonical).await {
+        Ok(metadata) => metadata,
         Err(_) => {
             return (axum::http::StatusCode::NOT_FOUND, "Body file not found").into_response();
         }
     };
+    if metadata.len() > MAX_HTTP_BODY_DOWNLOAD_BYTES as u64 {
+        tracing::warn!(
+            session_id = %uuid,
+            body_size = metadata.len(),
+            max_size = MAX_HTTP_BODY_DOWNLOAD_BYTES,
+            "Blocked oversized HTTP body download"
+        );
+        return (
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "请求体过大，无法导出脱敏副本",
+        )
+            .into_response();
+    }
+
+    // Read with a second hard cap to protect against file growth between
+    // metadata() and read().
+    let file = match tokio::fs::File::open(&canonical).await {
+        Ok(file) => file,
+        Err(_) => {
+            return (axum::http::StatusCode::NOT_FOUND, "Body file not found").into_response();
+        }
+    };
+    let mut reader = file.take((MAX_HTTP_BODY_DOWNLOAD_BYTES as u64) + 1);
+    let mut raw_data = Vec::with_capacity((metadata.len() as usize).min(64 * 1024));
+    if let Err(e) = reader.read_to_end(&mut raw_data).await {
+        tracing::warn!(session_id = %uuid, "HTTP body file read failed: {}", e);
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal error",
+        )
+            .into_response();
+    }
+    if raw_data.len() > MAX_HTTP_BODY_DOWNLOAD_BYTES {
+        tracing::warn!(
+            session_id = %uuid,
+            max_size = MAX_HTTP_BODY_DOWNLOAD_BYTES,
+            "Blocked HTTP body download after capped read"
+        );
+        return (
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "请求体过大，无法导出脱敏副本",
+        )
+            .into_response();
+    }
 
     let raw_ct = session
         .content_type

@@ -33,9 +33,9 @@ pub struct ModuleMetadata {
     /// thread pool via `spawn_blocking`, freeing async worker threads for I/O.
     #[serde(default)]
     pub cpu_bound: bool,
-    /// MTA inline verdict.
-    /// - `Some(n)`: inline,n (Tier 1:)
-    /// - `None`: (Tier 2: NLP/)
+    /// Optional inline execution priority hint.
+    /// The current pipeline keeps MTA and passive analysis on the same module
+    /// set, so this is only a scheduling hint for future staged execution.
     #[serde(default)]
     pub inline_priority: Option<u8>,
 }
