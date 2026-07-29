@@ -24,7 +24,10 @@
   },
   "language": {
     "switchToEnglish": "Switch to English",
-    "switchToChinese": "Switch to Chinese"
+    "switchToChinese": "Switch to Chinese",
+    "selectorLabel": "Interface language",
+    "chinese": "Chinese",
+    "english": "English"
   },
   "nav": {
     "dashboard": "Dashboard",

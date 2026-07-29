@@ -85,11 +85,14 @@ describe('SetupWizard', () => {
     expect(screen.getByText('企业邮件威胁情报平台')).toBeInTheDocument()
     expect(screen.getByText('多引擎威胁检测')).toBeInTheDocument()
     expect(screen.queryByText('setup.featureMultiEngine')).not.toBeInTheDocument()
+    expect(screen.getByRole('group', { name: '界面语言' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '中文' })).toHaveAttribute('aria-pressed', 'true')
 
-    await user.click(screen.getByRole('button', { name: '切换到英文' }))
+    await user.click(screen.getByRole('button', { name: '英文' }))
 
     expect(await screen.findByText('Enterprise Email Threat Intelligence Platform')).toBeInTheDocument()
     expect(screen.getByText('Multi-engine Detection')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'English' })).toHaveAttribute('aria-pressed', 'true')
     expect(document.documentElement.lang).toBe('en')
     expect(localStorage.getItem('vigilyx-lang')).toBe('en')
   })

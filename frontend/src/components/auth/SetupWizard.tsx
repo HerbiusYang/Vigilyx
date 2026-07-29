@@ -461,31 +461,32 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
       <div className="grok-bg" />
 
       <div className="setup-wizard">
-        <div className="setup-language-toggle">
-          <LanguageToggle />
-        </div>
-
-        {/* Progress bar */}
-        <div
-          className="setup-progress"
-          role="progressbar"
-          aria-label={t('setup.progressLabel')}
-          aria-valuemin={1}
-          aria-valuemax={STEPS.length}
-          aria-valuenow={step + 1}
-          aria-valuetext={t('setup.progressText', { current: step + 1, total: STEPS.length })}
-        >
-          {STEPS.map((s, i) => (
-            <div key={s.id} aria-hidden="true" className={`setup-progress-dot ${i === step ? 'active' : i < step ? 'done' : ''}`}>
-              {i < step ? (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
-              ) : (
-                <span>{i + 1}</span>
-              )}
+        <div className="setup-toolbar">
+          {/* Progress bar */}
+          <div
+            className="setup-progress"
+            role="progressbar"
+            aria-label={t('setup.progressLabel')}
+            aria-valuemin={1}
+            aria-valuemax={STEPS.length}
+            aria-valuenow={step + 1}
+            aria-valuetext={t('setup.progressText', { current: step + 1, total: STEPS.length })}
+          >
+            {STEPS.map((s, i) => (
+              <div key={s.id} aria-hidden="true" className={`setup-progress-dot ${i === step ? 'active' : i < step ? 'done' : ''}`}>
+                {i < step ? (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
+                ) : (
+                  <span>{i + 1}</span>
+                )}
+              </div>
+            ))}
+            <div className="setup-progress-bar">
+              <div className="setup-progress-fill" style={{ width: `${(step / (STEPS.length - 1)) * 100}%` }} />
             </div>
-          ))}
-          <div className="setup-progress-bar">
-            <div className="setup-progress-fill" style={{ width: `${(step / (STEPS.length - 1)) * 100}%` }} />
+          </div>
+          <div className="setup-language-toggle">
+            <LanguageToggle variant="segmented" />
           </div>
         </div>
 
@@ -520,16 +521,31 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
           {currentStep.id === 'welcome' && (
             <div className="setup-welcome">
               <div className="setup-hero-copy">
-                <span className="setup-eyebrow">{t('setup.platformEyebrow')}</span>
-                <p className="setup-welcome-text">
-                  {t('setup.welcomeText')}
-                </p>
+                <div className="setup-hero-emblem" aria-hidden="true">
+                  {FEATURE_ICONS.shield}
+                </div>
+                <div className="setup-hero-message">
+                  <span className="setup-eyebrow">{t('setup.platformEyebrow')}</span>
+                  <p className="setup-welcome-text">
+                    {t('setup.welcomeText')}
+                  </p>
+                </div>
+                <div className="setup-hero-lines" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </div>
               </div>
 
               <div className="setup-feature-grid">
-                {FEATURE_KEYS.map(f => (
-                  <div key={f.titleKey} className="setup-feature-card">
-                    <div className="setup-feature-icon" style={{ color: f.accent, borderColor: f.accent + '33', background: f.accent + '14' }}>
+                {FEATURE_KEYS.map((f, index) => (
+                  <div
+                    key={f.titleKey}
+                    className="setup-feature-card"
+                    style={{ '--feature-accent': f.accent } as React.CSSProperties}
+                  >
+                    <span className="setup-feature-index" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
+                    <div className="setup-feature-icon">
                       {FEATURE_ICONS[f.icon]}
                     </div>
                     <div className="setup-feature-copy">
@@ -541,7 +557,11 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
               </div>
 
               <p className="setup-welcome-hint">
-                {t('setup.welcomeHint')}
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M12 11v5M12 8h.01" />
+                </svg>
+                <span>{t('setup.welcomeHint')}</span>
               </p>
             </div>
           )}

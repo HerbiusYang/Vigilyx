@@ -24,7 +24,10 @@
   },
   "language": {
     "switchToEnglish": "切换到英文",
-    "switchToChinese": "切换到中文"
+    "switchToChinese": "切换到中文",
+    "selectorLabel": "界面语言",
+    "chinese": "中文",
+    "english": "英文"
   },
   "nav": {
     "dashboard": "数据总览",
