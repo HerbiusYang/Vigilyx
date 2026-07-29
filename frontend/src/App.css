@@ -1135,7 +1135,7 @@ html[lang="en"] .hd-brand-sub {
   position: relative;
   z-index: 1;
   width: 100%;
-  max-width: 860px;
+  max-width: 960px;
   max-height: 100%;
   display: flex;
   flex-direction: column;
@@ -2657,59 +2657,64 @@ html[lang="en"] .hd-brand-sub {
    controls stay fully available while decorative topology detail gets denser. */
 @media (max-height: 900px) {
   .setup-login .setup-wizard {
-    padding: 22px 36px 20px;
+    padding: 28px 44px 24px;
   }
   .setup-toolbar {
-    margin-bottom: 12px;
-  }
-  .setup-header {
     margin-bottom: 16px;
   }
+  .setup-header {
+    margin-bottom: 22px;
+  }
   .setup-step-meta {
-    margin-bottom: 7px;
+    margin-bottom: 9px;
   }
   .setup-step-chip {
-    padding: 5px 10px;
+    padding: 6px 12px;
   }
   .setup-title {
-    font-size: 28px;
+    font-size: 32px;
   }
   .setup-subtitle {
-    margin-top: 5px;
-    font-size: 14px;
-    line-height: 1.45;
-  }
-  .setup-welcome {
-    gap: 10px;
-  }
-  .setup-hero-copy {
-    padding: 14px 18px;
-  }
-  .setup-eyebrow {
-    margin-bottom: 5px;
-  }
-  .setup-welcome-text {
-    font-size: 13px;
+    margin-top: 7px;
+    font-size: 15px;
     line-height: 1.55;
   }
+  .setup-welcome {
+    gap: 12px;
+  }
+  .setup-hero-copy {
+    padding: 18px 22px;
+  }
+  .setup-eyebrow {
+    margin-bottom: 7px;
+  }
+  .setup-welcome-text {
+    font-size: 15px;
+    line-height: 1.65;
+  }
   .setup-feature-grid {
-    gap: 8px;
+    gap: 10px;
   }
   .setup-feature-card {
-    min-height: 72px;
-    padding: 11px 12px;
+    min-height: 82px;
+    padding: 14px;
   }
   .setup-feature-icon {
-    width: 36px;
-    height: 36px;
-    border-radius: 10px;
+    width: 40px;
+    height: 40px;
+    border-radius: 11px;
+  }
+  .setup-feature-title {
+    font-size: 14px;
   }
   .setup-feature-desc {
-    line-height: 1.35;
+    font-size: 12px;
+    line-height: 1.45;
   }
   .setup-welcome-hint {
-    padding: 8px 12px;
-    line-height: 1.45;
+    padding: 10px 14px;
+    font-size: 13px;
+    line-height: 1.55;
   }
   .setup-fields {
     gap: 9px;
@@ -2782,6 +2787,70 @@ html[lang="en"] .hd-brand-sub {
   .setup-btn {
     min-height: 40px;
     padding: 8px 18px;
+  }
+}
+
+/* Stronger compaction is reserved for genuinely short viewports. */
+@media (max-height: 760px) {
+  .setup-login .setup-wizard {
+    padding: 22px 36px 20px;
+  }
+  .setup-toolbar {
+    margin-bottom: 12px;
+  }
+  .setup-header {
+    margin-bottom: 16px;
+  }
+  .setup-step-meta {
+    margin-bottom: 7px;
+  }
+  .setup-step-chip {
+    padding: 5px 10px;
+  }
+  .setup-title {
+    font-size: 28px;
+  }
+  .setup-subtitle {
+    margin-top: 5px;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  .setup-welcome {
+    gap: 10px;
+  }
+  .setup-hero-copy {
+    padding: 14px 18px;
+  }
+  .setup-eyebrow {
+    margin-bottom: 5px;
+  }
+  .setup-welcome-text {
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .setup-feature-grid {
+    gap: 8px;
+  }
+  .setup-feature-card {
+    min-height: 72px;
+    padding: 11px 12px;
+  }
+  .setup-feature-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+  }
+  .setup-feature-title {
+    font-size: 13px;
+  }
+  .setup-feature-desc {
+    font-size: 11px;
+    line-height: 1.35;
+  }
+  .setup-welcome-hint {
+    padding: 8px 12px;
+    font-size: 12px;
+    line-height: 1.45;
   }
 }
 
