@@ -523,14 +523,19 @@ class ModelManager:
         """Interpret legacy two-class output for backward compatibility."""
         legit_prob = probs[0].item()
         phishing_prob = probs[1].item()
+        # Torch commonly exposes configured decimal thresholds as nearby
+        # float32 values (for example 0.65 -> 0.649999976). Normalize only for
+        # policy comparisons so exact threshold values are classified as
+        # documented without materially widening the bands.
+        policy_prob = round(phishing_prob, 6)
 
-        if phishing_prob >= 0.85:
+        if policy_prob >= 0.85:
             threat_level = "critical"
-        elif phishing_prob >= 0.65:
+        elif policy_prob >= 0.65:
             threat_level = "high"
-        elif phishing_prob >= 0.40:
+        elif policy_prob >= 0.40:
             threat_level = "medium"
-        elif phishing_prob >= 0.20:
+        elif policy_prob >= 0.20:
             threat_level = "low"
         else:
             threat_level = "safe"
@@ -538,7 +543,7 @@ class ModelManager:
         is_phishing = threat_level in ("high", "critical", "medium")
 
         categories = []
-        if phishing_prob > 0.3:
+        if policy_prob > 0.3:
             categories.append("nlp_phishing")
 
         lang = _detect_language(text)

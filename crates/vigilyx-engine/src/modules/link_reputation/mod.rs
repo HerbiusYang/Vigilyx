@@ -1626,7 +1626,7 @@ mod tests {
     /// VT detectResult: EngineMark malicious
     /// Period: Heuristic (free_hosting 0.20) + (intel_malicious 0.60) = HIGH
     #[tokio::test]
-    #[ignore] // Requires external PostgreSQL: TEST_DATABASE_URL=postgres://...
+    #[cfg(feature = "infra-tests")]
     async fn test_xred_mooo_com_with_intel() {
         use crate::intel::{IntelLayer, IntelSourceConfig};
         use crate::ioc::IocManager;

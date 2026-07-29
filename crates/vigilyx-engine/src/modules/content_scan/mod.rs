@@ -66,11 +66,45 @@ pub struct EffectiveKeywordLists {
     pub auto_reply_patterns: Vec<String>,
 }
 
-/// Unicode NFKC + charactersCleanup + ->
-/// preventAttack / characters/Same / characters Keywordsdetect
-/// : "" -> "0", "" -> "password", " \u{200B}Code/Digit" -> " "
+fn fold_common_confusable(ch: char) -> char {
+    match ch {
+        // Cyrillic and Greek letters commonly used in mixed-script phishing text.
+        'А' | 'Α' => 'A',
+        'В' | 'Β' => 'B',
+        'Е' | 'Ε' => 'E',
+        'З' | 'Ζ' => 'Z',
+        'Н' | 'Η' => 'H',
+        'І' | 'Ι' => 'I',
+        'К' | 'Κ' => 'K',
+        'М' | 'Μ' => 'M',
+        'О' | 'Ο' => 'O',
+        'Р' | 'Ρ' => 'P',
+        'С' => 'C',
+        'Т' | 'Τ' => 'T',
+        'У' | 'Υ' => 'Y',
+        'Х' | 'Χ' => 'X',
+        'а' | 'α' => 'a',
+        'е' | 'є' => 'e',
+        'і' | 'ι' => 'i',
+        'ј' => 'j',
+        'к' | 'κ' => 'k',
+        'о' | 'ο' => 'o',
+        'р' | 'ρ' => 'p',
+        'с' => 'c',
+        'т' | 'τ' => 't',
+        'у' | 'υ' => 'y',
+        'х' | 'χ' => 'x',
+        'ѕ' => 's',
+        'ӏ' => 'l',
+        _ => ch,
+    }
+}
+
+/// Unicode NFKC + charactersCleanup + common confusable folding.
+/// Prevents zero-width, full-width, separator, and mixed-script keyword evasion.
 pub(crate) fn normalize_text(text: &str) -> String {
     text.nfkc()
+        .map(fold_common_confusable)
         .filter(|c| {
             !matches!(
                 c,
@@ -949,7 +983,16 @@ impl SecurityModule for ContentScanModule {
             &mut evidence,
         );
 
-        // Step 8: Body phone number detection
+        // Step 8: Payment-account-change BEC detection
+        detectors::detect_payment_change_bec(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+
+        // Step 9: Body phone number detection
         detectors::detect_body_phone_numbers(
             body_for_cross.as_deref(),
             &mut total_score,
@@ -957,7 +1000,7 @@ impl SecurityModule for ContentScanModule {
             &mut evidence,
         );
 
-        // Step 9: External impersonation detection
+        // Step 10: External impersonation detection
         detectors::detect_external_impersonation(
             ctx,
             body_for_cross.as_deref(),
@@ -967,7 +1010,7 @@ impl SecurityModule for ContentScanModule {
             &mut evidence,
         );
 
-        // Step 10: Language inconsistency detection
+        // Step 11: Language inconsistency detection
         detectors::detect_lang_inconsistency(
             body_for_cross.as_deref(),
             &mut total_score,

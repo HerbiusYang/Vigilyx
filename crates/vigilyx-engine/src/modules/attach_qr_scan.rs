@@ -4,7 +4,7 @@
 //! and ASCII block-character QR codes in email body text.
 //! Scores phishing-specific QR lures such as login/OAuth/device-code landing pages.
 
-use std::io::Read;
+use std::io::{Cursor, Read};
 use std::sync::LazyLock;
 use std::time::Instant;
 
@@ -23,7 +23,19 @@ use crate::modules::content_scan::{EffectiveKeywordLists, normalize_text};
 use crate::modules::link_content::analyze_url;
 
 const MAX_QR_IMAGE_DIM: u32 = 1024;
+/// Reject implausibly large source canvases before the image decoder allocates them.
+/// Legitimate QR screenshots are resized to `MAX_QR_IMAGE_DIM` after decoding.
+const MAX_QR_SOURCE_IMAGE_DIM: u32 = 4096;
+const MAX_QR_SOURCE_PIXELS: u64 = 16 * 1024 * 1024;
+const MAX_QR_IMAGE_DECODE_ALLOC_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_QR_ATTACHMENT_DECODE_BYTES: usize = 10 * 1024 * 1024;
+const MAX_EMBEDDED_QR_IMAGE_BYTES: usize = 10 * 1024 * 1024;
+const MAX_EMBEDDED_QR_IMAGES_PER_ATTACHMENT: usize = 12;
+const MAX_QR_IMAGES_PER_MESSAGE: usize = 32;
+const MAX_QR_SOURCE_BYTES_PER_MESSAGE: usize = 32 * 1024 * 1024;
+const MAX_QR_ARCHIVE_ENTRIES_EXAMINED: usize = 256;
+const MAX_TEXT_CARRIER_SCAN_BYTES: usize = 2 * 1024 * 1024;
+const JPEG_SIGNATURE: &[u8; 3] = b"\xFF\xD8\xFF";
 const STRUCTURAL_QR_PAYLOAD_TERMS: &[&str] = &[
     "microsoft.com/devicelogin",
     "login.microsoftonline.com",
@@ -41,6 +53,8 @@ const ASCII_QR_MIN_BLOCK_RUN: usize = 10;
 const ASCII_QR_MIN_ROWS: usize = 10;
 /// Maximum pixel dimensions for rendered ASCII QR bitmaps (prevent abuse).
 const ASCII_QR_MAX_RENDER_DIM: usize = 512;
+const MAX_ASCII_QR_SCAN_BYTES: usize = 512 * 1024;
+const MAX_ASCII_QR_BLOCKS: usize = 4;
 
 /// Unicode block characters used in ASCII-art QR codes.
 /// Dark characters map to black, everything else maps to white.
@@ -65,6 +79,13 @@ static RE_BLOCK_LINE: LazyLock<Regex> = LazyLock::new(|| {
     // Match lines that have at least 10 block-like characters (full/half blocks, shades)
     Regex::new(r"[\u{2588}\u{2580}\u{2584}\u{258C}\u{2590}\u{2591}\u{2592}\u{2593} ]{10,}")
         .expect("valid block line regex")
+});
+
+static RE_DATA_IMAGE_URI: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?is)data:image/(png|jpe?g|gif|bmp|webp|tiff?);base64,([A-Za-z0-9+/=\r\n\t ]{32,})"#,
+    )
+    .expect("valid data image URI regex")
 });
 
 pub struct AttachmentQrScanModule {
@@ -187,6 +208,348 @@ fn is_raster_qr_candidate(content_type: &str, file_type: Option<DetectedFileType
         || ct.starts_with("image/webp")
 }
 
+fn extension_from_filename(filename: &str) -> &str {
+    filename
+        .rsplit('.')
+        .next()
+        .filter(|ext| *ext != filename)
+        .unwrap_or("")
+}
+
+fn is_zip_document_qr_candidate(filename: &str, content_type: &str) -> bool {
+    let ext = extension_from_filename(filename).to_ascii_lowercase();
+    let ct = content_type.to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp"
+    ) || ct.contains("officedocument")
+        || ct.contains("opendocument")
+}
+
+fn is_pdf_qr_candidate(
+    filename: &str,
+    content_type: &str,
+    file_type: Option<DetectedFileType>,
+) -> bool {
+    let ext = extension_from_filename(filename).to_ascii_lowercase();
+    let ct = content_type.to_ascii_lowercase();
+    file_type == Some(DetectedFileType::Pdf)
+        || ext == "pdf"
+        || ct.contains("application/pdf")
+        || ct.contains("application/x-pdf")
+}
+
+fn is_text_image_carrier_qr_candidate(
+    filename: &str,
+    content_type: &str,
+    file_type: Option<DetectedFileType>,
+) -> bool {
+    let ext = extension_from_filename(filename).to_ascii_lowercase();
+    let ct = content_type.to_ascii_lowercase();
+    matches!(ext.as_str(), "svg" | "html" | "htm" | "xhtml")
+        || ct.contains("image/svg")
+        || ct.contains("text/html")
+        || ct.contains("application/xhtml")
+        || file_type == Some(DetectedFileType::HtmlDocument)
+        || file_type == Some(DetectedFileType::PlainText)
+}
+
+fn is_qr_candidate_by_metadata(filename: &str, content_type: &str) -> bool {
+    let ext = extension_from_filename(filename).to_ascii_lowercase();
+    let ct = content_type.to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "bmp"
+            | "webp"
+            | "tif"
+            | "tiff"
+            | "pdf"
+            | "docx"
+            | "xlsx"
+            | "pptx"
+            | "odt"
+            | "ods"
+            | "odp"
+            | "svg"
+            | "html"
+            | "htm"
+            | "xhtml"
+    ) || ct.starts_with("image/")
+        || ct.contains("pdf")
+        || ct.contains("officedocument")
+        || ct.contains("opendocument")
+        || ct.contains("svg")
+        || ct.contains("html")
+        || ct.contains("application/octet-stream")
+}
+
+fn is_embedded_media_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    let in_media_dir = lower.contains("/media/")
+        || lower.starts_with("word/media/")
+        || lower.starts_with("ppt/media/")
+        || lower.starts_with("xl/media/");
+    if !in_media_dir {
+        return false;
+    }
+    matches!(
+        extension_from_filename(&lower),
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "tif" | "tiff"
+    )
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8], start: usize) -> Option<usize> {
+    if needle.is_empty() || start >= haystack.len() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack[start..]
+        .windows(needle.len())
+        .position(|window| window == needle)
+        .map(|offset| start + offset)
+}
+
+fn find_png_end(data: &[u8], start: usize) -> Option<usize> {
+    if start.checked_add(PNG_SIGNATURE.len())? > data.len()
+        || &data[start..start + PNG_SIGNATURE.len()] != PNG_SIGNATURE
+    {
+        return None;
+    }
+
+    let mut cursor = start + PNG_SIGNATURE.len();
+    while cursor + 12 <= data.len() {
+        let chunk_len = u32::from_be_bytes(data[cursor..cursor + 4].try_into().ok()?) as usize;
+        let chunk_type = &data[cursor + 4..cursor + 8];
+        let payload_start = cursor + 8;
+        let next = payload_start.checked_add(chunk_len)?.checked_add(4)?;
+        if next > data.len() || next - start > MAX_EMBEDDED_QR_IMAGE_BYTES {
+            return None;
+        }
+        if chunk_type == b"IEND" {
+            return Some(next);
+        }
+        cursor = next;
+    }
+    None
+}
+
+fn find_jpeg_end(data: &[u8], start: usize) -> Option<usize> {
+    if start.checked_add(JPEG_SIGNATURE.len())? > data.len()
+        || &data[start..start + JPEG_SIGNATURE.len()] != JPEG_SIGNATURE
+    {
+        return None;
+    }
+
+    let max_end = data.len().min(start + MAX_EMBEDDED_QR_IMAGE_BYTES);
+    let mut cursor = start + JPEG_SIGNATURE.len();
+    while cursor + 1 < max_end {
+        if data[cursor] == 0xFF && data[cursor + 1] == 0xD9 {
+            return Some(cursor + 2);
+        }
+        cursor += 1;
+    }
+    None
+}
+
+fn find_bmp_end(data: &[u8], start: usize) -> Option<usize> {
+    if start + 6 > data.len() || &data[start..start + 2] != b"BM" {
+        return None;
+    }
+    let file_size = u32::from_le_bytes(data[start + 2..start + 6].try_into().ok()?) as usize;
+    if file_size == 0 || file_size > MAX_EMBEDDED_QR_IMAGE_BYTES {
+        return None;
+    }
+    start
+        .checked_add(file_size)
+        .filter(|end| *end <= data.len())
+}
+
+fn find_webp_end(data: &[u8], start: usize) -> Option<usize> {
+    if start + 12 > data.len() || &data[start..start + 4] != b"RIFF" {
+        return None;
+    }
+    if &data[start + 8..start + 12] != b"WEBP" {
+        return None;
+    }
+    let riff_len = u32::from_le_bytes(data[start + 4..start + 8].try_into().ok()?) as usize;
+    let file_size = riff_len.checked_add(8)?;
+    if file_size == 0 || file_size > MAX_EMBEDDED_QR_IMAGE_BYTES {
+        return None;
+    }
+    start
+        .checked_add(file_size)
+        .filter(|end| *end <= data.len())
+}
+
+fn next_embedded_raster(data: &[u8], start: usize) -> Option<(&'static str, usize, usize)> {
+    let candidates = [
+        (
+            "png",
+            find_bytes(data, PNG_SIGNATURE, start),
+            find_png_end as fn(&[u8], usize) -> Option<usize>,
+        ),
+        (
+            "jpeg",
+            find_bytes(data, JPEG_SIGNATURE, start),
+            find_jpeg_end as fn(&[u8], usize) -> Option<usize>,
+        ),
+        (
+            "bmp",
+            find_bytes(data, b"BM", start),
+            find_bmp_end as fn(&[u8], usize) -> Option<usize>,
+        ),
+        (
+            "webp",
+            find_bytes(data, b"RIFF", start),
+            find_webp_end as fn(&[u8], usize) -> Option<usize>,
+        ),
+    ];
+
+    candidates
+        .into_iter()
+        .filter_map(|(kind, image_start, find_end)| {
+            let image_start = image_start?;
+            let image_end = find_end(data, image_start)?;
+            Some((kind, image_start, image_end))
+        })
+        .min_by_key(|(_, image_start, _)| *image_start)
+}
+
+fn decode_embedded_qr_images_from_binary(
+    data: &[u8],
+    label_prefix: &str,
+    max_images: usize,
+) -> (usize, Vec<(String, QrImageFinding)>, bool) {
+    let mut findings = Vec::new();
+    let mut scanned = 0usize;
+    let mut cursor = 0usize;
+    let image_limit = max_images.min(MAX_EMBEDDED_QR_IMAGES_PER_ATTACHMENT);
+
+    while scanned < image_limit {
+        let Some((kind, image_start, image_end)) = next_embedded_raster(data, cursor) else {
+            break;
+        };
+        cursor = image_end.max(image_start + 1);
+        let image_bytes = &data[image_start..image_end];
+        if image_bytes.len() > MAX_EMBEDDED_QR_IMAGE_BYTES
+            || !is_raster_qr_candidate(&format!("image/{kind}"), detect_file_type(image_bytes))
+        {
+            continue;
+        }
+
+        scanned += 1;
+        if let Some(qr) = decode_qr_from_image_bytes(image_bytes) {
+            findings.push((format!("{label_prefix}_{kind}_{}", scanned), qr));
+        }
+    }
+
+    let limited = scanned >= image_limit && next_embedded_raster(data, cursor).is_some();
+    (scanned, findings, limited)
+}
+
+fn read_zip_entry_limited<R: Read>(
+    mut entry: zip::read::ZipFile<'_, R>,
+    max_bytes: usize,
+) -> Option<Vec<u8>> {
+    if entry.size() > max_bytes as u64 {
+        return None;
+    }
+    let mut data = Vec::with_capacity((entry.size() as usize).min(max_bytes));
+    let mut limited = (&mut entry).take(max_bytes as u64 + 1);
+    limited.read_to_end(&mut data).ok()?;
+    if data.len() > max_bytes {
+        return None;
+    }
+    Some(data)
+}
+
+fn decode_embedded_qr_images_from_zip(
+    data: &[u8],
+    max_images: usize,
+) -> (usize, Vec<(String, QrImageFinding)>, bool) {
+    let cursor = Cursor::new(data);
+    let mut archive = match zip::ZipArchive::new(cursor) {
+        Ok(archive) => archive,
+        Err(_) => return (0, Vec::new(), false),
+    };
+
+    let mut findings = Vec::new();
+    let mut scanned = 0usize;
+    let image_limit = max_images.min(MAX_EMBEDDED_QR_IMAGES_PER_ATTACHMENT);
+    let entry_limit = archive.len().min(MAX_QR_ARCHIVE_ENTRIES_EXAMINED);
+    let mut limited = archive.len() > entry_limit;
+    for idx in 0..entry_limit {
+        if scanned >= image_limit {
+            limited = true;
+            break;
+        }
+        let Ok(entry) = archive.by_index(idx) else {
+            continue;
+        };
+        let name = entry.name().to_string();
+        if !is_embedded_media_path(&name) {
+            continue;
+        }
+        let Some(bytes) = read_zip_entry_limited(entry, MAX_EMBEDDED_QR_IMAGE_BYTES) else {
+            continue;
+        };
+        if !is_raster_qr_candidate("application/octet-stream", detect_file_type(&bytes)) {
+            continue;
+        }
+        scanned += 1;
+        if let Some(qr) = decode_qr_from_image_bytes(&bytes) {
+            findings.push((name, qr));
+        }
+    }
+
+    (scanned, findings, limited)
+}
+
+fn decode_data_uri_qr_images_from_text(
+    text: &str,
+    max_images: usize,
+) -> (usize, Vec<(String, QrImageFinding)>, bool) {
+    let scan_text = if text.len() <= MAX_TEXT_CARRIER_SCAN_BYTES {
+        text
+    } else {
+        let mut end = MAX_TEXT_CARRIER_SCAN_BYTES;
+        while end > 0 && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        &text[..end]
+    };
+
+    let mut findings = Vec::new();
+    let mut scanned = 0usize;
+    let image_limit = max_images.min(MAX_EMBEDDED_QR_IMAGES_PER_ATTACHMENT);
+    let mut limited = text.len() > scan_text.len();
+    for (idx, caps) in RE_DATA_IMAGE_URI.captures_iter(scan_text).enumerate() {
+        if idx >= image_limit {
+            limited = true;
+            break;
+        }
+        let image_type = caps.get(1).map(|m| m.as_str()).unwrap_or("unknown");
+        let Some(payload) = caps.get(2).map(|m| m.as_str()) else {
+            continue;
+        };
+        let Some(bytes) = decode_base64_bytes_limited(payload, MAX_EMBEDDED_QR_IMAGE_BYTES) else {
+            continue;
+        };
+        if !is_raster_qr_candidate(&format!("image/{image_type}"), detect_file_type(&bytes)) {
+            continue;
+        }
+        scanned += 1;
+        if let Some(qr) = decode_qr_from_image_bytes(&bytes) {
+            findings.push((format!("data_uri_image_{}", idx + 1), qr));
+        }
+    }
+
+    (scanned, findings, limited)
+}
+
 fn paeth_predictor(left: u8, up: u8, up_left: u8) -> u8 {
     let left = left as i32;
     let up = up as i32;
@@ -247,6 +610,9 @@ fn decode_png_grayscale(data: &[u8]) -> Option<GrayscaleImage> {
 
                 if width == 0
                     || height == 0
+                    || width > MAX_QR_SOURCE_IMAGE_DIM as usize
+                    || height > MAX_QR_SOURCE_IMAGE_DIM as usize
+                    || (width as u64).checked_mul(height as u64)? > MAX_QR_SOURCE_PIXELS
                     || bit_depth != 8
                     || compression != 0
                     || filter != 0
@@ -346,8 +712,8 @@ fn decode_png_grayscale(data: &[u8]) -> Option<GrayscaleImage> {
 /// Decode any supported image format (JPEG, GIF, BMP, WebP, TIFF, and PNG as fallback)
 /// to grayscale using the `image` crate.
 ///
-/// SECURITY: image dimensions are capped at `MAX_QR_IMAGE_DIM` x `MAX_QR_IMAGE_DIM` to
-/// prevent decompression bombs (CWE-400). Input byte length is also checked.
+/// SECURITY: dimensions and total pixels are inspected before full decoding. Decoder
+/// allocation limits provide a second layer of protection against malformed images.
 fn decode_image_crate_grayscale(data: &[u8]) -> Option<GrayscaleImage> {
     // SECURITY: reject excessively large input (10 MB compressed should be more than enough
     // for any legitimate QR-code image).
@@ -361,9 +727,36 @@ fn decode_image_crate_grayscale(data: &[u8]) -> Option<GrayscaleImage> {
         return None;
     }
 
-    let reader = image::ImageReader::new(std::io::Cursor::new(data))
+    // Post-decode resizing is too late for a compressed image that declares a huge canvas.
+    let (source_width, source_height) = image::ImageReader::new(Cursor::new(data))
+        .with_guessed_format()
+        .ok()?
+        .into_dimensions()
+        .ok()?;
+    let source_pixels = u64::from(source_width).checked_mul(u64::from(source_height))?;
+    if source_width == 0
+        || source_height == 0
+        || source_width > MAX_QR_SOURCE_IMAGE_DIM
+        || source_height > MAX_QR_SOURCE_IMAGE_DIM
+        || source_pixels > MAX_QR_SOURCE_PIXELS
+    {
+        warn!(
+            source_width,
+            source_height,
+            source_pixels,
+            "attach_qr_scan: rejecting unsafe source image dimensions"
+        );
+        return None;
+    }
+
+    let mut reader = image::ImageReader::new(Cursor::new(data))
         .with_guessed_format()
         .ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_QR_SOURCE_IMAGE_DIM);
+    limits.max_image_height = Some(MAX_QR_SOURCE_IMAGE_DIM);
+    limits.max_alloc = Some(MAX_QR_IMAGE_DECODE_ALLOC_BYTES);
+    reader.limits(limits);
 
     let dynamic_image = match reader.decode() {
         Ok(img) => img,
@@ -644,10 +1037,19 @@ fn is_block_or_space(ch: char) -> bool {
 /// Extract contiguous rectangular regions of block characters from body text.
 /// Returns a list of 2D char grids (each grid = Vec of rows of chars).
 fn extract_ascii_qr_blocks(text: &str) -> Vec<Vec<Vec<char>>> {
-    let lines: Vec<&str> = text.lines().collect();
+    let scan_text = if text.len() <= MAX_ASCII_QR_SCAN_BYTES {
+        text
+    } else {
+        let mut end = MAX_ASCII_QR_SCAN_BYTES;
+        while end > 0 && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        &text[..end]
+    };
+    let lines: Vec<&str> = scan_text.lines().collect();
     let mut results = Vec::new();
     let mut i = 0;
-    while i < lines.len() {
+    while i < lines.len() && results.len() < MAX_ASCII_QR_BLOCKS {
         // Check if this line has a block-character run.
         if !RE_BLOCK_LINE.is_match(lines[i]) {
             i += 1;
@@ -868,41 +1270,134 @@ impl SecurityModule for AttachmentQrScanModule {
         let mut evidence = Vec::new();
         let mut categories = Vec::new();
         let mut scanned_images = 0usize;
+        let mut source_bytes_scanned = 0usize;
+        let mut inspection_limited = false;
         let mut payloads = Vec::new();
 
-        // --- Phase 1: Scan image attachments ---
+        // --- Phase 1: Scan image attachments and embedded document/SVG images ---
         for attachment in &ctx.session.content.attachments {
-            if attachment.size > MAX_QR_ATTACHMENT_DECODE_BYTES {
+            if !is_qr_candidate_by_metadata(&attachment.filename, &attachment.content_type) {
+                continue;
+            }
+            if scanned_images >= MAX_QR_IMAGES_PER_MESSAGE {
+                inspection_limited = true;
+                break;
+            }
+            let remaining_source_bytes =
+                MAX_QR_SOURCE_BYTES_PER_MESSAGE.saturating_sub(source_bytes_scanned);
+            let attachment_decode_limit =
+                MAX_QR_ATTACHMENT_DECODE_BYTES.min(remaining_source_bytes);
+            if attachment_decode_limit == 0 || attachment.size > attachment_decode_limit {
+                inspection_limited = true;
                 continue;
             }
             let Some(b64) = attachment.content_base64.as_deref() else {
                 continue;
             };
-            let Some(bytes) = decode_base64_bytes_limited(b64, MAX_QR_ATTACHMENT_DECODE_BYTES)
-            else {
+            let Some(bytes) = decode_base64_bytes_limited(b64, attachment_decode_limit) else {
+                inspection_limited = true;
                 continue;
             };
+            source_bytes_scanned += bytes.len();
             let file_type = detect_file_type(&bytes);
-            if !is_raster_qr_candidate(&attachment.content_type, file_type) {
+
+            if is_raster_qr_candidate(&attachment.content_type, file_type) {
+                scanned_images += 1;
+                let Some(qr) = decode_qr_from_image_bytes(&bytes) else {
+                    continue;
+                };
+
+                payloads.extend(qr.decoded_payloads.iter().cloned());
+                let (s, cats, evs) = score_qr_payloads(
+                    &qr,
+                    &format!("attachment:{}", attachment.filename),
+                    keyword_context,
+                    &ctx.session.rcpt_to,
+                    &self.phishing_keywords,
+                );
+                total_score += s;
+                categories.extend(cats);
+                evidence.extend(evs);
                 continue;
             }
 
-            scanned_images += 1;
-            let Some(qr) = decode_qr_from_image_bytes(&bytes) else {
+            if is_pdf_qr_candidate(&attachment.filename, &attachment.content_type, file_type) {
+                let remaining_images = MAX_QR_IMAGES_PER_MESSAGE - scanned_images;
+                let (scanned, embedded_findings, limited) = decode_embedded_qr_images_from_binary(
+                    &bytes,
+                    "pdf_embedded_image",
+                    remaining_images,
+                );
+                scanned_images += scanned;
+                inspection_limited |= limited;
+                for (label, qr) in embedded_findings {
+                    payloads.extend(qr.decoded_payloads.iter().cloned());
+                    let (s, cats, evs) = score_qr_payloads(
+                        &qr,
+                        &format!("attachment:{}:{}", attachment.filename, label),
+                        keyword_context,
+                        &ctx.session.rcpt_to,
+                        &self.phishing_keywords,
+                    );
+                    total_score += s;
+                    categories.extend(cats);
+                    categories.push("pdf_embedded_qr".to_string());
+                    evidence.extend(evs);
+                }
                 continue;
-            };
+            }
 
-            payloads.extend(qr.decoded_payloads.iter().cloned());
-            let (s, cats, evs) = score_qr_payloads(
-                &qr,
-                &format!("attachment:{}", attachment.filename),
-                keyword_context,
-                &ctx.session.rcpt_to,
-                &self.phishing_keywords,
-            );
-            total_score += s;
-            categories.extend(cats);
-            evidence.extend(evs);
+            if file_type == Some(DetectedFileType::ZipArchive)
+                && is_zip_document_qr_candidate(&attachment.filename, &attachment.content_type)
+            {
+                let remaining_images = MAX_QR_IMAGES_PER_MESSAGE - scanned_images;
+                let (scanned, embedded_findings, limited) =
+                    decode_embedded_qr_images_from_zip(&bytes, remaining_images);
+                scanned_images += scanned;
+                inspection_limited |= limited;
+                for (path, qr) in embedded_findings {
+                    payloads.extend(qr.decoded_payloads.iter().cloned());
+                    let (s, cats, evs) = score_qr_payloads(
+                        &qr,
+                        &format!("attachment:{}:{}", attachment.filename, path),
+                        keyword_context,
+                        &ctx.session.rcpt_to,
+                        &self.phishing_keywords,
+                    );
+                    total_score += s;
+                    categories.extend(cats);
+                    categories.push("document_embedded_qr".to_string());
+                    evidence.extend(evs);
+                }
+                continue;
+            }
+
+            if is_text_image_carrier_qr_candidate(
+                &attachment.filename,
+                &attachment.content_type,
+                file_type,
+            ) {
+                let text = String::from_utf8_lossy(&bytes);
+                let remaining_images = MAX_QR_IMAGES_PER_MESSAGE - scanned_images;
+                let (scanned, data_uri_findings, limited) =
+                    decode_data_uri_qr_images_from_text(&text, remaining_images);
+                scanned_images += scanned;
+                inspection_limited |= limited;
+                for (label, qr) in data_uri_findings {
+                    payloads.extend(qr.decoded_payloads.iter().cloned());
+                    let (s, cats, evs) = score_qr_payloads(
+                        &qr,
+                        &format!("attachment:{}:{}", attachment.filename, label),
+                        keyword_context,
+                        &ctx.session.rcpt_to,
+                        &self.phishing_keywords,
+                    );
+                    total_score += s;
+                    categories.extend(cats);
+                    categories.push("embedded_data_uri_qr".to_string());
+                    evidence.extend(evs);
+                }
+            }
         }
 
         // --- Phase 2: Scan email body for ASCII block-character QR codes ---
@@ -910,7 +1405,17 @@ impl SecurityModule for AttachmentQrScanModule {
         if let Some(body) = ctx.session.content.body_text.as_deref()
             && body.len() >= ASCII_QR_MIN_BLOCK_RUN * ASCII_QR_MIN_ROWS
         {
-            let ascii_findings = decode_ascii_qr_from_text(body);
+            let body_scan = if body.len() <= MAX_ASCII_QR_SCAN_BYTES {
+                body
+            } else {
+                inspection_limited = true;
+                let mut end = MAX_ASCII_QR_SCAN_BYTES;
+                while end > 0 && !body.is_char_boundary(end) {
+                    end -= 1;
+                }
+                &body[..end]
+            };
+            let ascii_findings = decode_ascii_qr_from_text(body_scan);
             if !ascii_findings.is_empty() {
                 ascii_qr_scanned = true;
             }
@@ -932,12 +1437,23 @@ impl SecurityModule for AttachmentQrScanModule {
             }
         }
 
-        if scanned_images == 0 && !ascii_qr_scanned {
+        if inspection_limited {
+            total_score += 0.15;
+            categories.push("attachment_qr_inspection_limited".to_string());
+            evidence.push(Evidence {
+                description: "QR inspection reached its per-message image, byte, or archive-entry budget; remaining content requires deferred sandbox scanning"
+                    .to_string(),
+                location: Some("attachments".to_string()),
+                snippet: None,
+            });
+        }
+
+        if scanned_images == 0 && !ascii_qr_scanned && !inspection_limited {
             return Ok(ModuleResult::not_applicable(
                 &self.meta.id,
                 &self.meta.name,
                 self.meta.pillar,
-                "No raster image attachments with retained content",
+                "No image, document-embedded, or body QR content with retained data",
                 start.elapsed().as_millis() as u64,
             ));
         }
@@ -985,6 +1501,8 @@ impl SecurityModule for AttachmentQrScanModule {
             details: serde_json::json!({
                 "score": total_score,
                 "scanned_images": scanned_images,
+                "source_bytes_scanned": source_bytes_scanned,
+                "inspection_budget_exhausted": inspection_limited,
                 "ascii_qr_detected": ascii_qr_scanned,
                 "decoded_payloads": payloads,
             }),
@@ -1151,6 +1669,30 @@ mod tests {
         buf.into_inner()
     }
 
+    fn build_zip_with_files(files: &[(&str, Vec<u8>)]) -> Vec<u8> {
+        let cursor = std::io::Cursor::new(Vec::new());
+        let mut zip_w = zip::ZipWriter::new(cursor);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+
+        for (name, content) in files {
+            zip_w.start_file(*name, options).expect("start zip entry");
+            zip_w.write_all(content).expect("write zip entry");
+        }
+
+        zip_w.finish().expect("finish zip").into_inner()
+    }
+
+    fn build_pdf_with_embedded_bytes(bytes: &[u8]) -> Vec<u8> {
+        let mut pdf = Vec::new();
+        pdf.extend_from_slice(b"%PDF-1.7\n1 0 obj\n<< /Length ");
+        pdf.extend_from_slice(bytes.len().to_string().as_bytes());
+        pdf.extend_from_slice(b" >>\nstream\n");
+        pdf.extend_from_slice(bytes);
+        pdf.extend_from_slice(b"\nendstream\nendobj\n%%EOF\n");
+        pdf
+    }
+
     // -----------------------------------------------------------------------
     // Existing tests (preserved from original)
     // -----------------------------------------------------------------------
@@ -1276,6 +1818,299 @@ mod tests {
                 .categories
                 .contains(&"attachment_qr_code".to_string()),
             "GIF QR should be detected: {:?}",
+            result.categories
+        );
+    }
+
+    #[tokio::test]
+    async fn test_docx_embedded_qr_image_detected() {
+        let png = build_qr_like_png(8);
+        let docx = build_zip_with_files(&[
+            (
+                "[Content_Types].xml",
+                br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>"#.to_vec(),
+            ),
+            (
+                "word/document.xml",
+                br#"<w:document><w:body><w:t>Scan the QR code</w:t></w:body></w:document>"#
+                    .to_vec(),
+            ),
+            ("word/media/image1.png", png),
+        ]);
+        let attachment = EmailAttachment {
+            filename: "secure-voicemail.docx".to_string(),
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                .to_string(),
+            size: docx.len(),
+            hash: "hash".to_string(),
+            content_base64: Some(base64::engine::general_purpose::STANDARD.encode(docx)),
+        };
+        let ctx = make_ctx(
+            vec![attachment],
+            Some("Secure voice message"),
+            Some("Scan the QR code to review your Microsoft 365 voicemail"),
+        );
+
+        let result = make_module_with_keywords(&["scan the qr code", "secure voicemail"])
+            .analyze(&ctx)
+            .await
+            .unwrap();
+
+        assert!(
+            result
+                .categories
+                .contains(&"attachment_qr_code".to_string()),
+            "QR embedded in DOCX media should be detected: {:?}",
+            result.categories
+        );
+        assert!(
+            result
+                .categories
+                .contains(&"document_embedded_qr".to_string()),
+            "DOCX media QR should carry document_embedded_qr: {:?}",
+            result.categories
+        );
+        assert!(
+            result
+                .categories
+                .contains(&"attachment_qr_lure".to_string()),
+            "DOCX QR with lure context should be scored as a lure: {:?}",
+            result.categories
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pdf_embedded_png_qr_detected() {
+        let png = build_qr_like_png(8);
+        let pdf = build_pdf_with_embedded_bytes(&png);
+        let attachment = EmailAttachment {
+            filename: "secure-message.pdf".to_string(),
+            content_type: "application/pdf".to_string(),
+            size: pdf.len(),
+            hash: "hash".to_string(),
+            content_base64: Some(base64::engine::general_purpose::STANDARD.encode(pdf)),
+        };
+        let ctx = make_ctx(
+            vec![attachment],
+            Some("Secure message"),
+            Some("Scan QR to review the protected document"),
+        );
+
+        let result = make_module_with_keywords(&["scan qr", "protected document"])
+            .analyze(&ctx)
+            .await
+            .unwrap();
+
+        assert!(
+            result
+                .categories
+                .contains(&"attachment_qr_code".to_string()),
+            "QR embedded in PDF image stream should be detected: {:?}",
+            result.categories
+        );
+        assert!(
+            result.categories.contains(&"pdf_embedded_qr".to_string()),
+            "PDF image stream QR should carry pdf_embedded_qr: {:?}",
+            result.categories
+        );
+    }
+
+    #[tokio::test]
+    async fn test_svg_data_uri_embedded_qr_detected() {
+        let png = build_qr_like_png(8);
+        let png_b64 = base64::engine::general_purpose::STANDARD.encode(png);
+        let svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300"><image href="data:image/png;base64,{png_b64}" width="300" height="300"/></svg>"#
+        );
+        let attachment = EmailAttachment {
+            filename: "qr-invoice.svg".to_string(),
+            content_type: "image/svg+xml".to_string(),
+            size: svg.len(),
+            hash: "hash".to_string(),
+            content_base64: Some(base64::engine::general_purpose::STANDARD.encode(svg.as_bytes())),
+        };
+        let ctx = make_ctx(
+            vec![attachment],
+            Some("Invoice shared"),
+            Some("Scan QR to access the invoice portal"),
+        );
+
+        let result = make_module_with_keywords(&["scan qr", "invoice portal"])
+            .analyze(&ctx)
+            .await
+            .unwrap();
+
+        assert!(
+            result
+                .categories
+                .contains(&"attachment_qr_code".to_string()),
+            "QR embedded as SVG data URI should be detected: {:?}",
+            result.categories
+        );
+        assert!(
+            result
+                .categories
+                .contains(&"embedded_data_uri_qr".to_string()),
+            "SVG data URI QR should carry embedded_data_uri_qr: {:?}",
+            result.categories
+        );
+    }
+
+    #[tokio::test]
+    async fn test_html_data_uri_embedded_qr_detected() {
+        let png = build_qr_like_png(8);
+        let png_b64 = base64::engine::general_purpose::STANDARD.encode(png);
+        let html = format!(
+            r#"<!doctype html><html><body><img alt="review" src="data:image/png;base64,{png_b64}"></body></html>"#
+        );
+        let attachment = EmailAttachment {
+            filename: "secure-review.html".to_string(),
+            content_type: "text/html".to_string(),
+            size: html.len(),
+            hash: "hash".to_string(),
+            content_base64: Some(base64::engine::general_purpose::STANDARD.encode(html.as_bytes())),
+        };
+        let ctx = make_ctx(
+            vec![attachment],
+            Some("Secure review"),
+            Some("Scan QR to open the secure message"),
+        );
+
+        let result = make_module_with_keywords(&["scan qr", "secure message"])
+            .analyze(&ctx)
+            .await
+            .unwrap();
+
+        assert!(
+            result
+                .categories
+                .contains(&"attachment_qr_code".to_string()),
+            "QR embedded as HTML data URI should be detected: {:?}",
+            result.categories
+        );
+        assert!(
+            result
+                .categories
+                .contains(&"embedded_data_uri_qr".to_string()),
+            "HTML data URI QR should carry embedded_data_uri_qr: {:?}",
+            result.categories
+        );
+    }
+
+    #[tokio::test]
+    async fn test_docx_without_media_qr_is_not_flagged() {
+        let docx = build_zip_with_files(&[
+            (
+                "[Content_Types].xml",
+                br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>"#.to_vec(),
+            ),
+            (
+                "word/document.xml",
+                br#"<w:document><w:body><w:t>Quarterly business report</w:t></w:body></w:document>"#
+                    .to_vec(),
+            ),
+        ]);
+        let attachment = EmailAttachment {
+            filename: "report.docx".to_string(),
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                .to_string(),
+            size: docx.len(),
+            hash: "hash".to_string(),
+            content_base64: Some(base64::engine::general_purpose::STANDARD.encode(docx)),
+        };
+        let ctx = make_ctx(
+            vec![attachment],
+            Some("Quarterly report"),
+            Some("Please review the attached report."),
+        );
+
+        let result = AttachmentQrScanModule::new().analyze(&ctx).await.unwrap();
+
+        assert!(
+            !result
+                .categories
+                .contains(&"attachment_qr_code".to_string()),
+            "DOCX without QR media should not be flagged: {:?}",
+            result.categories
+        );
+    }
+
+    #[tokio::test]
+    async fn test_docx_clean_embedded_image_is_safe() {
+        let pixels = vec![255u8; 128 * 128];
+        let clean_png = encode_grayscale_png(128, 128, &pixels);
+        let docx = build_zip_with_files(&[
+            (
+                "[Content_Types].xml",
+                br#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"></Types>"#.to_vec(),
+            ),
+            (
+                "word/document.xml",
+                br#"<w:document><w:body><w:t>Quarterly business report</w:t></w:body></w:document>"#
+                    .to_vec(),
+            ),
+            ("word/media/image1.png", clean_png),
+        ]);
+        let attachment = EmailAttachment {
+            filename: "report.docx".to_string(),
+            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                .to_string(),
+            size: docx.len(),
+            hash: "hash".to_string(),
+            content_base64: Some(base64::engine::general_purpose::STANDARD.encode(docx)),
+        };
+        let ctx = make_ctx(
+            vec![attachment],
+            Some("Quarterly report"),
+            Some("Please review the attached report."),
+        );
+
+        let result = AttachmentQrScanModule::new().analyze(&ctx).await.unwrap();
+
+        assert_eq!(
+            result.threat_level,
+            ThreatLevel::Safe,
+            "clean embedded DOCX image should remain safe: {:?}",
+            result
+        );
+        assert!(
+            !result
+                .categories
+                .contains(&"document_embedded_qr".to_string()),
+            "clean embedded DOCX image should not carry document_embedded_qr: {:?}",
+            result.categories
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pdf_clean_embedded_image_is_safe() {
+        let pixels = vec![255u8; 128 * 128];
+        let clean_png = encode_grayscale_png(128, 128, &pixels);
+        let pdf = build_pdf_with_embedded_bytes(&clean_png);
+        let attachment = EmailAttachment {
+            filename: "statement.pdf".to_string(),
+            content_type: "application/pdf".to_string(),
+            size: pdf.len(),
+            hash: "hash".to_string(),
+            content_base64: Some(base64::engine::general_purpose::STANDARD.encode(pdf)),
+        };
+        let ctx = make_ctx(
+            vec![attachment],
+            Some("Statement"),
+            Some("Please review the attached statement."),
+        );
+
+        let result = AttachmentQrScanModule::new().analyze(&ctx).await.unwrap();
+
+        assert_eq!(
+            result.threat_level,
+            ThreatLevel::Safe,
+            "clean embedded PDF image should remain safe: {:?}",
+            result
+        );
+        assert!(
+            !result.categories.contains(&"pdf_embedded_qr".to_string()),
+            "clean embedded PDF image should not carry pdf_embedded_qr: {:?}",
             result.categories
         );
     }
@@ -1476,6 +2311,42 @@ mod tests {
     }
 
     #[test]
+    fn test_ascii_qr_block_extraction_has_a_per_message_cap() {
+        let mut body = String::new();
+        for _ in 0..(MAX_ASCII_QR_BLOCKS + 2) {
+            for _ in 0..ASCII_QR_MIN_ROWS {
+                body.push_str("██████████\n");
+            }
+            body.push_str("separator\n");
+        }
+
+        assert_eq!(extract_ascii_qr_blocks(&body).len(), MAX_ASCII_QR_BLOCKS);
+    }
+
+    #[test]
+    fn test_ascii_qr_after_scan_prefix_is_not_copied_or_processed() {
+        let mut body = "x".repeat(MAX_ASCII_QR_SCAN_BYTES + 1);
+        body.push('\n');
+        for _ in 0..ASCII_QR_MIN_ROWS {
+            body.push_str("██████████\n");
+        }
+
+        assert!(extract_ascii_qr_blocks(&body).is_empty());
+    }
+
+    #[test]
+    fn perf_ascii_qr_scan_cost_is_independent_of_trailing_body_size() {
+        let body = "ordinary body text\n".repeat(MAX_ASCII_QR_SCAN_BYTES / 2);
+        let started = Instant::now();
+
+        assert!(extract_ascii_qr_blocks(&body).is_empty());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "bounded ASCII QR scan exceeded the generous performance ceiling"
+        );
+    }
+
+    #[test]
     fn test_render_ascii_qr_oversized_rejected() {
         // A grid that would exceed the max render dimension.
         let dark = '\u{2588}';
@@ -1492,5 +2363,86 @@ mod tests {
         let data = vec![0u8; 11 * 1024 * 1024];
         let result = decode_image_crate_grayscale(&data);
         assert!(result.is_none(), "oversized input should be rejected");
+    }
+
+    #[test]
+    fn test_decode_rejects_huge_declared_dimensions_before_allocation() {
+        // Minimal BMP metadata declaring a 50,000 x 50,000 canvas. Header inspection
+        // must reject it without allocating the declared pixel buffer.
+        let mut bmp = vec![0u8; 54];
+        bmp[0..2].copy_from_slice(b"BM");
+        bmp[2..6].copy_from_slice(&(54u32).to_le_bytes());
+        bmp[10..14].copy_from_slice(&(54u32).to_le_bytes());
+        bmp[14..18].copy_from_slice(&(40u32).to_le_bytes());
+        bmp[18..22].copy_from_slice(&(50_000i32).to_le_bytes());
+        bmp[22..26].copy_from_slice(&(50_000i32).to_le_bytes());
+        bmp[26..28].copy_from_slice(&(1u16).to_le_bytes());
+        bmp[28..30].copy_from_slice(&(24u16).to_le_bytes());
+
+        assert!(decode_image_crate_grayscale(&bmp).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_oversized_qr_candidate_surfaces_incomplete_coverage() {
+        let attachment = EmailAttachment {
+            filename: "oversized.png".to_string(),
+            content_type: "image/png".to_string(),
+            size: MAX_QR_ATTACHMENT_DECODE_BYTES + 1,
+            hash: "hash".to_string(),
+            content_base64: Some("iVBORw0KGgo=".to_string()),
+        };
+        let ctx = make_ctx(vec![attachment], None, None);
+
+        let result = AttachmentQrScanModule::new().analyze(&ctx).await.unwrap();
+
+        assert!(
+            result
+                .categories
+                .contains(&"attachment_qr_inspection_limited".to_string())
+        );
+        assert_eq!(result.threat_level, ThreatLevel::Low);
+        assert_eq!(result.details["inspection_budget_exhausted"], true);
+    }
+
+    #[tokio::test]
+    async fn test_oversized_known_non_qr_attachment_does_not_create_coverage_alert() {
+        let attachment = EmailAttachment {
+            filename: "training.mp4".to_string(),
+            content_type: "video/mp4".to_string(),
+            size: MAX_QR_ATTACHMENT_DECODE_BYTES + 1,
+            hash: "hash".to_string(),
+            content_base64: Some("AAAA".to_string()),
+        };
+        let ctx = make_ctx(vec![attachment], None, None);
+
+        let result = AttachmentQrScanModule::new().analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert!(result.summary.starts_with("No image"));
+    }
+
+    #[tokio::test]
+    async fn test_per_message_image_budget_stops_additional_decoders() {
+        let png = encode_grayscale_png(1, 1, &[255]);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&png);
+        let attachments = (0..MAX_QR_IMAGES_PER_MESSAGE + 3)
+            .map(|index| EmailAttachment {
+                filename: format!("image_{index}.png"),
+                content_type: "image/png".to_string(),
+                size: png.len(),
+                hash: format!("hash_{index}"),
+                content_base64: Some(encoded.clone()),
+            })
+            .collect();
+        let ctx = make_ctx(attachments, None, None);
+
+        let result = AttachmentQrScanModule::new().analyze(&ctx).await.unwrap();
+
+        assert_eq!(
+            result.details["scanned_images"],
+            serde_json::json!(MAX_QR_IMAGES_PER_MESSAGE)
+        );
+        assert_eq!(result.details["inspection_budget_exhausted"], true);
+        assert_eq!(result.threat_level, ThreatLevel::Low);
     }
 }

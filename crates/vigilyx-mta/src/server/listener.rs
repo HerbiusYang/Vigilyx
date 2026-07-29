@@ -47,6 +47,9 @@ enum DeliveryPlan {
     Reject,
 }
 
+const SECURITY_INSPECTION_TEMPFAIL_REPLY: &[u8] =
+    b"451 4.7.1 Message could not be parsed for security inspection\r\n";
+
 fn delivery_plan(
     disposition: &VerdictDisposition,
     direction: MailDirection,
@@ -675,6 +678,10 @@ where
                 }
             }
             HandleResult::Closed => {}
+            HandleResult::SecurityTempfail(reason) => {
+                warn!("SMTP message could not be safely inspected: {reason}");
+                write_reply(stream, SECURITY_INSPECTION_TEMPFAIL_REPLY).await;
+            }
             HandleResult::Error(error) => {
                 warn!("SMTP connection handler reported error: {error}");
             }
@@ -686,6 +693,22 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_security_inspection_failure_is_a_retryable_smtp_reply() {
+        let reply = std::str::from_utf8(SECURITY_INSPECTION_TEMPFAIL_REPLY).unwrap();
+
+        assert!(reply.starts_with("451 4.7.1 "));
+        assert!(reply.ends_with("\r\n"));
+        assert!(
+            !reply.starts_with("250"),
+            "unsafe mail must not be accepted"
+        );
+        assert!(
+            !reply.starts_with("550"),
+            "parse failures should remain retryable"
+        );
+    }
 
     #[test]
     fn test_per_ip_limiter_allows_within_limit() {

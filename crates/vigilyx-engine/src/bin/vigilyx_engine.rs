@@ -598,6 +598,7 @@ async fn load_pipeline_config(db: &VigilDb) -> PipelineConfig {
 }
 
 /// How a Stream message should be acknowledged after processing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AckDecision {
     /// Caller should batch-ACK this message ID.
     Immediate,
@@ -665,8 +666,9 @@ async fn stream_input_loop(state: &Arc<EngineState>, stream: &StreamClient) -> R
         {
             let mut ack_ids: Vec<String> = Vec::with_capacity(http_msgs.len());
             for (id, sessions) in http_msgs {
-                stream_process_http(state, sessions);
-                ack_ids.push(id);
+                if stream_process_http(state, sessions) == AckDecision::Immediate {
+                    ack_ids.push(id);
+                }
             }
             batch_ack(stream, streams::HTTP_SESSIONS, &ack_ids).await;
         }
@@ -733,8 +735,9 @@ async fn reclaim_http_pending(
         let reclaimed_len = reclaimed.len();
         let mut ack_ids: Vec<String> = Vec::with_capacity(reclaimed_len);
         for (id, sessions) in reclaimed {
-            stream_process_http(state, sessions);
-            ack_ids.push(id);
+            if stream_process_http(state, sessions) == AckDecision::Immediate {
+                ack_ids.push(id);
+            }
         }
         batch_ack(stream, streams::HTTP_SESSIONS, &ack_ids).await;
         total += reclaimed_len;
@@ -840,16 +843,35 @@ async fn stream_process_email(
     }
 }
 
-/// Process HTTP sessions (always succeeds — caller batch-ACKs).
-fn stream_process_http(state: &Arc<EngineState>, sessions: Vec<HttpSession>) {
+/// Process HTTP sessions and ACK only when the complete Stream message was queued.
+fn stream_process_http(state: &Arc<EngineState>, sessions: Vec<HttpSession>) -> AckDecision {
+    submit_http_sessions(sessions, |session| {
+        state.data_security_engine.try_submit(session)
+    })
+}
+
+fn submit_http_sessions<F>(sessions: Vec<HttpSession>, mut submit: F) -> AckDecision
+where
+    F: FnMut(HttpSession) -> Result<(), String>,
+{
     let count = sessions.len();
+    let mut all_submitted = true;
     for session in sessions {
-        if let Err(e) = state.data_security_engine.try_submit(session) {
+        if let Err(e) = submit(session) {
+            all_submitted = false;
             warn!(error = %e, "HTTP data security submit failed (channel full)");
         }
     }
     if count > 0 {
         info!(count, "HTTP data security: processed from Stream");
+    }
+    if all_submitted {
+        AckDecision::Immediate
+    } else {
+        // Leave the message in the PEL. XAUTOCLAIM will retry it after the
+        // consumer has capacity; DataSecurityEngine deduplication makes the
+        // already-submitted prefix safe to replay.
+        AckDecision::Skip
     }
 }
 
@@ -905,4 +927,62 @@ async fn redis_command_loop(state: &Arc<EngineState>, mq: &MqClient) -> Result<(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vigilyx_core::models::HttpMethod;
+
+    fn http_session(id: usize) -> HttpSession {
+        HttpSession::new(
+            "10.0.0.10".to_string(),
+            40_000 + id as u16,
+            "10.0.0.20".to_string(),
+            80,
+            HttpMethod::Post,
+            format!("/upload/{id}"),
+        )
+    }
+
+    #[test]
+    fn http_stream_message_is_acked_when_every_session_is_queued() {
+        let sessions = vec![http_session(1), http_session(2), http_session(3)];
+        let mut submitted = Vec::new();
+
+        let decision = submit_http_sessions(sessions, |session| {
+            submitted.push(session.uri);
+            Ok(())
+        });
+
+        assert_eq!(decision, AckDecision::Immediate);
+        assert_eq!(submitted, ["/upload/1", "/upload/2", "/upload/3"]);
+    }
+
+    #[test]
+    fn http_stream_message_is_not_acked_when_queue_is_full() {
+        let sessions = vec![http_session(1), http_session(2), http_session(3)];
+        let mut attempts = 0usize;
+
+        let decision = submit_http_sessions(sessions, |_| {
+            attempts += 1;
+            if attempts == 2 {
+                Err("DataSecurityEngine channel full".to_string())
+            } else {
+                Ok(())
+            }
+        });
+
+        assert_eq!(decision, AckDecision::Skip);
+        assert_eq!(attempts, 3, "the whole batch should still be attempted");
+    }
+
+    #[test]
+    fn empty_http_stream_message_is_safe_to_ack() {
+        let decision = submit_http_sessions(Vec::new(), |_| {
+            panic!("empty stream message must not call submit")
+        });
+
+        assert_eq!(decision, AckDecision::Immediate);
+    }
 }

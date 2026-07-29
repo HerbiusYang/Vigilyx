@@ -2237,6 +2237,42 @@
         "telegram iletişim", "telegram üzerinden ulaşın"
       ]
     },
+    "bec_payment_action_terms": {
+      "description": "Payment, payroll, wire, and settlement terms that support payment-change BEC detection.",
+      "category": "content_scan_detectors",
+      "source_file": "modules/content_scan/detectors.rs",
+      "items": [
+        "wire", "transfer", "ach", "remittance", "payment",
+        "invoice payment", "settlement", "payroll", "salary",
+        "bank account", "beneficiary",
+        "付款", "转账", "汇款", "打款", "结算",
+        "发薪", "工资", "收款", "款项", "薪资"
+      ]
+    },
+    "bec_authority_terms": {
+      "description": "Authority or business-role phrases that support BEC detection.",
+      "category": "content_scan_detectors",
+      "source_file": "modules/content_scan/detectors.rs",
+      "items": [
+        "ceo", "cfo", "finance", "accounting", "controller",
+        "payroll", "hr", "human resources", "vendor", "supplier",
+        "executive", "board", "boss", "manager",
+        "财务", "出纳", "会计", "老板", "领导",
+        "总经理", "董事长", "人事", "供应商", "客户"
+      ]
+    },
+    "bec_confidentiality_terms": {
+      "description": "Confidentiality / out-of-band suppression phrases that support BEC detection.",
+      "category": "content_scan_detectors",
+      "source_file": "modules/content_scan/detectors.rs",
+      "items": [
+        "confidential", "do not call", "do not discuss",
+        "keep this between us", "reply by email only",
+        "i am in a meeting", "cannot talk",
+        "保密", "不要打电话", "不要声张",
+        "只邮件回复", "我在开会", "不方便电话"
+      ]
+    },
     "en_department_signatures": {
       "description": "Department/title signatures used in BEC impersonation detection (multi-language: EN+ZH+JA+KO+RU+ES+PT+FR+DE+AR). Field name kept as 'en_department_signatures' for backward compatibility.",
       "category": "content_scan",
@@ -2377,6 +2413,7 @@
         "html", "htm", "shtml", "mhtml", "mht",
         "eml", "msg",
         "lnk", "url", "scf", "inf", "reg",
+        "one", "onepkg", "onetoc2", "onecache",
         "jar", "class", "war",
         "py", "pyc", "pyz", "rb", "pl", "sh", "bash",
         "apk", "ipa", "appimage",
@@ -2430,6 +2467,7 @@
         "hta", "msi", "msp", "mst", "dll", "ocx", "cpl",
         "com", "pif", "wsf", "wsh", "ws", "ahk",
         "lnk", "url", "scf", "inf", "reg",
+        "one", "onepkg", "onetoc2", "onecache",
         "jar", "class", "war",
         "apk", "ipa", "appimage",
         "chm", "hlp",
@@ -3127,13 +3165,21 @@
       ]
     },
     "payment_change_keywords": {
-      "description": "Payment change keywords indicating BEC (Business Email Compromise) wire transfer fraud (multi-language: EN+ZH+JA+KO+RU+ES+PT+FR+DE+AR)",
+      "description": "Payment change keywords indicating BEC (Business Email Compromise) wire transfer fraud; used by transaction correlation and AI-independent content BEC detection (multi-language: EN+ZH+JA+KO+RU+ES+PT+FR+DE+AR)",
       "category": "transaction_correlation",
-      "source_file": "modules/transaction_correlation.rs",
+      "source_file": "modules/transaction_correlation.rs; modules/content_scan/detectors.rs",
       "items": [
         "new account", "updated account", "change of bank", "revised payment",
-        "new banking", "updated wire", "account has changed", "new beneficiary",
-        "更换账户", "新账户", "变更银行", "修改收款",
+        "new banking", "new bank", "new bank account", "updated wire",
+        "account has changed", "account changed", "beneficiary account changed",
+        "new beneficiary", "payment details changed", "bank details changed",
+        "new wire instructions", "direct deposit", "payroll bank",
+        "payroll information", "routing number", "beneficiary account",
+        "更换账户", "更换账号", "更改账户", "更改账号",
+        "账号变更", "账户变更", "改账号", "改账户",
+        "新账户", "新账号", "新的账户", "新的账号",
+        "收款账户", "收款账号", "变更银行", "修改收款",
+        "银行账户", "银行账号", "工资卡", "代发账户", "代发账号",
         "口座変更", "新しい口座", "振込先変更", "銀行変更", "受取人変更",
         "계좌 변경", "새 계좌", "송금 계좌 변경", "은행 변경", "수취인 변경",
         "новый счёт", "изменение счёта", "смена банка", "новые реквизиты", "новый получатель",

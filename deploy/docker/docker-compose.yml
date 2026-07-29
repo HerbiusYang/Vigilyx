@@ -402,6 +402,7 @@ services:
       - CADDY_ACME_EMAIL=${CADDY_ACME_EMAIL:-}
       - VIGILYX_TLS_CERT_FILE=${VIGILYX_TLS_CERT_FILE:-/data/vigilyx.crt}
       - VIGILYX_TLS_KEY_FILE=${VIGILYX_TLS_KEY_FILE:-/data/vigilyx.key}
+      - CADDY_ACCESS_LOG=${CADDY_ACCESS_LOG:-true}
       # Caddy reverse proxying must connect directly to the backend without an external proxy
       - HTTP_PROXY=
       - HTTPS_PROXY=

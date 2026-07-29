@@ -664,6 +664,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             admin_only(post(security_handlers::quarantine::release_quarantine)),
         )
         .route(
+            "/security/quarantine/{id}/preview",
+            admin_only(get(security_handlers::quarantine::preview_quarantine)),
+        )
+        .route(
             "/security/quarantine/{id}",
             admin_only(delete(security_handlers::quarantine::delete_quarantine)),
         )

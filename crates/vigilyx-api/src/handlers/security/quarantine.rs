@@ -6,12 +6,13 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::warn;
 use vigilyx_db::security::quarantine::QuarantineEntry;
 use vigilyx_mta::config::MtaConfig;
 use vigilyx_mta::relay::downstream::{DownstreamRelay, RelayResult};
+use vigilyx_parser::MimeParser;
 
 use super::super::{ApiResponse, clamp_i64_pagination};
 use crate::AppState;
@@ -29,6 +30,36 @@ pub struct ReleaseRequest {
     /// Ignored - operator is extracted from JWT. Kept for backward API compatibility.
     #[serde(default)]
     pub _released_by: Option<String>,
+}
+
+const QUARANTINE_PREVIEW_MAX_CHARS: usize = 12_000;
+
+#[derive(Debug, Serialize)]
+struct QuarantineAttachmentPreview {
+    filename: String,
+    content_type: String,
+    size: usize,
+    hash: String,
+}
+
+#[derive(Debug, Serialize)]
+struct QuarantinePreview {
+    entry: QuarantineEntry,
+    body_text: Option<String>,
+    /// Returned as source text only. The frontend must never inject it as HTML.
+    body_html_source: Option<String>,
+    attachments: Vec<QuarantineAttachmentPreview>,
+    parse_warning: Option<String>,
+}
+
+fn truncate_preview(value: &str) -> String {
+    let mut chars = value.chars();
+    let preview: String = chars.by_ref().take(QUARANTINE_PREVIEW_MAX_CHARS).collect();
+    if chars.next().is_some() {
+        format!("{preview}\n…")
+    } else {
+        preview
+    }
 }
 
 fn release_requires_outbound_relay(entry: &QuarantineEntry) -> bool {
@@ -178,6 +209,61 @@ pub async fn quarantine_stats(State(state): State<Arc<AppState>>) -> impl IntoRe
     }))
 }
 
+/// GET /security/quarantine/:id/preview
+///
+/// Returns a bounded, non-executable preview for an administrator reviewing a
+/// quarantined message. Attachment payloads are deliberately omitted.
+pub async fn preview_quarantine(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Response {
+    let (raw_eml, entry) = match state.db.quarantine_get_raw_eml(&id).await {
+        Ok(Some(value)) => value,
+        Ok(None) => {
+            return ApiResponse::<serde_json::Value>::not_found("Quarantine entry not found")
+                .into_response();
+        }
+        Err(error) => {
+            return ApiResponse::<serde_json::Value>::server_error(
+                &error,
+                "Failed to load quarantine preview",
+            )
+            .into_response();
+        }
+    };
+
+    let preview = match MimeParser::new().parse(&raw_eml) {
+        Ok(content) => QuarantinePreview {
+            entry,
+            body_text: content.body_text.as_deref().map(truncate_preview),
+            body_html_source: content.body_html.as_deref().map(truncate_preview),
+            attachments: content
+                .attachments
+                .into_iter()
+                .map(|attachment| QuarantineAttachmentPreview {
+                    filename: attachment.filename,
+                    content_type: attachment.content_type,
+                    size: attachment.size,
+                    hash: attachment.hash,
+                })
+                .collect(),
+            parse_warning: None,
+        },
+        Err(_) => QuarantinePreview {
+            entry,
+            body_text: None,
+            body_html_source: None,
+            attachments: Vec::new(),
+            parse_warning: Some(
+                "The message could not be parsed safely; download is not exposed from preview"
+                    .to_string(),
+            ),
+        },
+    };
+
+    ApiResponse::ok(preview).into_response()
+}
+
 /// POST /security/quarantine/:id/release
 pub async fn release_quarantine(
     State(state): State<Arc<AppState>>,
@@ -311,5 +397,30 @@ pub async fn delete_quarantine(
             .into_response(),
         Err(e) => ApiResponse::<serde_json::Value>::server_error(&e, "Failed to delete quarantine")
             .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preview_truncation_preserves_unicode_boundaries_and_marks_truncation() {
+        let input = "测".repeat(QUARANTINE_PREVIEW_MAX_CHARS + 2);
+        let preview = truncate_preview(&input);
+
+        assert_eq!(
+            preview
+                .chars()
+                .filter(|character| *character == '测')
+                .count(),
+            QUARANTINE_PREVIEW_MAX_CHARS
+        );
+        assert!(preview.ends_with('…'));
+    }
+
+    #[test]
+    fn preview_truncation_does_not_modify_short_content() {
+        assert_eq!(truncate_preview("short body"), "short body");
     }
 }

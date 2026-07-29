@@ -323,9 +323,13 @@ const LoginCard = React.memo(function LoginCard({
 
 const RecentThreatsCard = React.memo(function RecentThreatsCard({
   loading,
+  error,
+  onRetry,
   recentThreats,
 }: {
   loading: boolean
+  error: string | null
+  onRetry: () => void
   recentThreats: VerdictWithMeta[]
 }) {
   const { t } = useTranslation()
@@ -369,6 +373,11 @@ const RecentThreatsCard = React.memo(function RecentThreatsCard({
               <div className="skeleton-line medium" />
             </div>
           ))
+        ) : error ? (
+          <div className="db-empty" role="alert">
+            <span>{error}</span>
+            <button type="button" className="db-link" onClick={onRetry}>{t('dashboard.retry')}</button>
+          </div>
         ) : feedItems.length === 0 ? (
           <div className="db-empty">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ opacity: 0.3 }}>
@@ -715,30 +724,35 @@ const LoginCardContainer = React.memo(function LoginCardContainer() {
 const RecentThreatsContainer = React.memo(function RecentThreatsContainer() {
   const [recentThreats, setRecentThreats] = useState<VerdictWithMeta[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const recentThreatsSigRef = useRef('')
+  const { t } = useTranslation()
 
   const fetchRecentThreats = useCallback(async () => {
     try {
       const res = await apiFetch('/api/security/verdicts?limit=8&threat_level=medium,high,critical')
+      if (!res.ok) throw new Error(t('dashboard.recentThreatsLoadFailed'))
       const data: ApiResponse<{ items: VerdictWithMeta[]; total: number }> = await res.json()
-      if (data.success && data.data) {
-        const items = data.data.items
-        const nextSig = items
-          .map(item => `${item.verdict_id}:${item.threat_level}:${item.created_at}:${item.session_id}`)
-          .join('|')
-        if (nextSig !== recentThreatsSigRef.current) {
-          recentThreatsSigRef.current = nextSig
-          startTransition(() => {
-            setRecentThreats(items)
-          })
-        }
+      if (!data.success || !data.data) throw new Error(data.error || t('dashboard.recentThreatsLoadFailed'))
+
+      setError(null)
+      const items = data.data.items
+      const nextSig = items
+        .map(item => `${item.verdict_id}:${item.threat_level}:${item.created_at}:${item.session_id}`)
+        .join('|')
+      if (nextSig !== recentThreatsSigRef.current) {
+        recentThreatsSigRef.current = nextSig
+        startTransition(() => {
+          setRecentThreats(items)
+        })
       }
     } catch (e) {
       console.error('Failed to fetch recent threats:', e)
+      setError(e instanceof Error && e.message ? e.message : t('dashboard.recentThreatsLoadFailed'))
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
     void fetchRecentThreats()
@@ -746,7 +760,7 @@ const RecentThreatsContainer = React.memo(function RecentThreatsContainer() {
 
   useDashboardRefresh(() => { void fetchRecentThreats() })
 
-  return <RecentThreatsCard loading={loading} recentThreats={recentThreats} />
+  return <RecentThreatsCard loading={loading} error={error} onRetry={() => { void fetchRecentThreats() }} recentThreats={recentThreats} />
 })
 
 function Dashboard() {

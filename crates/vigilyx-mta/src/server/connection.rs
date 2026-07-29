@@ -86,6 +86,8 @@ enum SmtpState {
 pub enum HandleResult {
     /// : EmailSession,
     Email(Box<EmailSession>, Vec<u8>),
+    /// Message could not be parsed safely enough for inline inspection.
+    SecurityTempfail(String),
     /// QUIT
     Closed,
 
@@ -175,7 +177,18 @@ impl SmtpConnection {
     }
 
     fn complete_message(&mut self, raw_email: Vec<u8>, event: &'static str) -> HandleResult {
-        let session = self.build_email_session(&raw_email);
+        let session = match self.build_email_session(&raw_email) {
+            Ok(session) => session,
+            Err(reason) => {
+                warn!(
+                    client_ip = %self.client_ip,
+                    data_size = raw_email.len(),
+                    "MIME parse failed in inline MTA path: {reason}"
+                );
+                self.reset_transaction();
+                return HandleResult::SecurityTempfail(reason);
+            }
+        };
         let from_domain = session
             .mail_from
             .as_deref()
@@ -602,7 +615,7 @@ impl SmtpConnection {
     }
 
     /// EmailSession
-    fn build_email_session(&self, raw_email: &[u8]) -> EmailSession {
+    fn build_email_session(&self, raw_email: &[u8]) -> Result<EmailSession, String> {
         let mut session = EmailSession::new(
             Protocol::Smtp,
             self.client_ip.clone(),
@@ -621,13 +634,9 @@ impl SmtpConnection {
 
         // MIME
         let parser = MimeParser::new();
-        session.content = match parser.parse(raw_email) {
-            Ok(content) => content,
-            Err(e) => {
-                warn!(client_ip = %self.client_ip, "MIME parse error: {e:?}");
-                vigilyx_core::EmailContent::default()
-            }
-        };
+        session.content = parser
+            .parse(raw_email)
+            .map_err(|e| format!("MIME parse error: {e:?}"))?;
         session.content.is_complete = true;
 
         // headers subject message_id
@@ -643,7 +652,7 @@ impl SmtpConnection {
             }
         }
 
-        session
+        Ok(session)
     }
 }
 
@@ -1501,7 +1510,7 @@ mod tests {
         conn.rcpt_to = vec!["admin@corp.com".into()];
 
         let raw = b"From: test@example.com\r\nTo: admin@corp.com\r\nSubject: Hello\r\nMessage-ID: <mta-test@example.com>\r\n\r\nBody text";
-        let session = conn.build_email_session(raw);
+        let session = conn.build_email_session(raw).expect("valid raw email");
 
         assert_eq!(session.client_ip, "10.0.0.1");
         assert_eq!(session.mail_from, Some("test@example.com".into()));
@@ -1511,6 +1520,23 @@ mod tests {
         assert!(session.content.body_text.is_some());
         assert_eq!(session.source, SessionSource::MtaProxy);
         assert_eq!(session.status, SessionStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn test_malformed_mime_returns_security_tempfail() {
+        let config = test_config();
+        let mut conn =
+            SmtpConnection::new("10.0.0.1".into(), 4321, "0.0.0.0".into(), 25, config, false);
+        conn.mail_from = Some("test@example.com".into());
+        conn.rcpt_to = vec!["admin@corp.com".into()];
+
+        let raw = b"From: test@example.com\r\nTo: admin@corp.com\r\nSubject: Bad MIME\r\nContent-Type: multipart/mixed\r\n\r\nbody";
+        let result = conn.complete_message(raw.to_vec(), "malformed MIME test");
+
+        assert!(
+            matches!(result, HandleResult::SecurityTempfail(_)),
+            "malformed MIME must not be treated as an empty safe message"
+        );
     }
 
     // ── SEC: SMTP Smuggling regression tests (P01 / P02) ──────────────────
@@ -2785,6 +2811,7 @@ mod tests {
                 HandleResult::Email(_, _) => "Email",
                 HandleResult::Closed => "Closed",
                 HandleResult::Error(_) => "Error",
+                HandleResult::SecurityTempfail(_) => "SecurityTempfail",
                 HandleResult::StartTls => "StartTls",
             })
             .collect();
@@ -2916,6 +2943,7 @@ mod tests {
                 HandleResult::Email(_, _) => "Email",
                 HandleResult::Closed => "Closed",
                 HandleResult::Error(_) => "Error",
+                HandleResult::SecurityTempfail(_) => "SecurityTempfail",
                 HandleResult::StartTls => "StartTls",
             })
             .collect();

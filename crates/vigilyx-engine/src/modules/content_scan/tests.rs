@@ -133,6 +133,11 @@ fn api_key_detection_ignores_pure_hex_hashes_even_with_context() {
 }
 
 #[test]
+fn normalize_text_folds_common_confusable_letters() {
+    assert_eq!(normalize_text("pаsswоrd раyment"), "password payment");
+}
+
+#[test]
 fn sanitize_body_for_keyword_scan_strips_gateway_banner_and_separator_footer() {
     let text = "该邮件可能存在恶意内容，请谨慎甄别邮件，如有疑问，请联系邮件系统管理员。请注意，一定仔细核对发件人地址是否为正确地址，不要在外网电脑单击任何链接。\n\n检测结果：垃圾邮件。\n\n______ 声明： 此邮件仅发送给指定收件人。其内容可能包含某些享有专有法律权利或需要保密的信息。Any unauthorized use, disclosure, distribution or copy of this mail is strictly prohibited. If you are not the intended recipient, please immediately notify the sender by return e-mail and destroy this message.\n";
     let sanitized = sanitize_body_for_keyword_scan(
@@ -204,6 +209,38 @@ fn single_weak_bec_hint_does_not_create_bec_category() {
     assert_eq!(score, 0.0);
     assert!(categories.is_empty());
     assert!(evidence.is_empty());
+}
+
+#[test]
+fn html_alternative_risk_is_scanned_even_when_plain_text_is_clean() {
+    let module = ContentScanModule::new_with_keyword_lists(EffectiveKeywordLists {
+        phishing_keywords: vec![
+            normalize_text("verify your account"),
+            normalize_text("immediately"),
+        ],
+        ..Default::default()
+    });
+    let ctx = make_ctx(
+        Some("Hello, please see the routine update."),
+        Some("<html><body>Please verify your account immediately.</body></html>"),
+        vec![],
+        Some("vendor@example.com"),
+    );
+
+    let result = analyze_with_runtime(&module, &ctx);
+
+    assert!(
+        result
+            .categories
+            .contains(&"multipart_alternative_mismatch".to_string()),
+        "HTML/text mismatch should be surfaced: {:?}",
+        result.categories
+    );
+    assert!(
+        result.categories.contains(&"phishing".to_string()),
+        "HTML alternative should still use runtime phishing keywords: {:?}",
+        result.categories
+    );
 }
 
 fn analyze_with_runtime(module: &ContentScanModule, ctx: &SecurityContext) -> ModuleResult {
@@ -613,6 +650,115 @@ fn legitimate_bank_invoice_notice_is_not_invoice_spam() {
     assert!(
         !result.categories.contains(&"invoice_spam".to_string()),
         "legitimate bank invoice delivery should not trigger invoice_spam: {:?}",
+        result.categories
+    );
+}
+
+#[test]
+fn payment_account_change_bec_is_detected_without_ai() {
+    let module = ContentScanModule::new();
+    let ctx = make_ctx_with_subject_and_body(
+        "Updated wire instructions",
+        Some(
+            "Hi finance team, our beneficiary account changed. Please use the new bank account for today's invoice payment. I am in a meeting, reply by email only.",
+        ),
+        None,
+        vec![],
+        Some("vendor-payments@example-vendor.test"),
+    );
+
+    let result = analyze_with_runtime(&module, &ctx);
+
+    assert!(
+        result
+            .categories
+            .contains(&"bec_payment_change".to_string()),
+        "payment account change BEC should be detected without AI: {:?}",
+        result.categories
+    );
+    assert!(
+        result.categories.contains(&"bec_no_ioc_social".to_string()),
+        "no-link/no-attachment payment-change BEC should expose the social-only category: {:?}",
+        result.categories
+    );
+    assert!(
+        result.threat_level >= ThreatLevel::Medium,
+        "payment-change BEC should not remain Safe/Low: {:?}",
+        result.threat_level
+    );
+}
+
+#[test]
+fn chinese_payment_account_change_bec_with_separators_is_detected() {
+    let module = ContentScanModule::new();
+    let ctx = make_ctx_with_subject_and_body(
+        "供应商收款账户变更通知",
+        Some(
+            "财务您好，客户新 的 账 号 已启用，今天款项请立即转账到新的账户。老板在开会，不方便电话。",
+        ),
+        None,
+        vec![],
+        Some("notice@vendor-example.test"),
+    );
+
+    let result = analyze_with_runtime(&module, &ctx);
+
+    assert!(
+        result
+            .categories
+            .contains(&"bec_payment_change".to_string()),
+        "Chinese payment-change BEC with separator obfuscation should be detected: {:?}",
+        result.categories
+    );
+    assert!(
+        result.threat_level >= ThreatLevel::Medium,
+        "Chinese payment-change BEC should not remain Safe/Low: {:?}",
+        result.threat_level
+    );
+}
+
+#[test]
+fn benign_single_dimension_bank_update_notice_is_not_payment_change_bec() {
+    let module = ContentScanModule::new();
+    let ctx = make_ctx_with_subject_and_body(
+        "Bank account maintenance notice",
+        Some(
+            "We updated our customer service bank account FAQ page. No payment action is required.",
+        ),
+        None,
+        vec![],
+        Some("newsletter@example-vendor.test"),
+    );
+
+    let result = analyze_with_runtime(&module, &ctx);
+
+    assert!(
+        !result
+            .categories
+            .contains(&"bec_payment_change".to_string()),
+        "benign informational notices should not trigger payment-change BEC: {:?}",
+        result.categories
+    );
+}
+
+#[test]
+fn payment_change_without_two_support_dimensions_is_not_bec() {
+    let module = ContentScanModule::new();
+    let ctx = make_ctx_with_subject_and_body(
+        "Updated vendor account",
+        Some("The new account reference is now available in the vendor portal for your records."),
+        None,
+        vec![],
+        Some("updates@example-vendor.test"),
+    );
+
+    let result = analyze_with_runtime(&module, &ctx);
+
+    assert!(
+        !result
+            .categories
+            .contains(&"bec_payment_change".to_string()),
+        "payment-change wording without enough support dimensions should not trigger BEC: {:?}",
         result.categories
     );
 }

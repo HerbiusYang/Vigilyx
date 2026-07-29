@@ -38,6 +38,7 @@ pub fn extract_text(data: &[u8], file_type: Option<DetectedFileType>) -> Option<
         DetectedFileType::ZipArchive => extract_ooxml_text(data),
         DetectedFileType::Pdf => extract_pdf_text(data),
         DetectedFileType::OleCompound => extract_ole_text(data),
+        DetectedFileType::Rtf => extract_rtf_text(data),
         _ => None,
     };
 
@@ -287,6 +288,194 @@ fn extract_ole_text(data: &[u8]) -> Option<String> {
     }
 }
 
+fn extract_rtf_text(data: &[u8]) -> Option<String> {
+    let source = String::from_utf8_lossy(data);
+    if !source.trim_start().starts_with("{\\rtf") {
+        return None;
+    }
+
+    let mut out = String::with_capacity(source.len().min(8192));
+    let mut chars = source.chars().peekable();
+    let mut ignorable_stack: Vec<bool> = Vec::new();
+    let mut ignorable = false;
+    let mut uc_skip = 1usize;
+    let mut pending_unicode_fallback = 0usize;
+
+    while let Some(ch) = chars.next() {
+        if pending_unicode_fallback > 0 {
+            if ch != '\\' {
+                pending_unicode_fallback -= 1;
+                continue;
+            }
+
+            // RTF Unicode fallback characters may themselves be escaped. Consume
+            // the complete ANSI escape as one fallback character instead of
+            // emitting it alongside the decoded Unicode scalar.
+            match chars.peek().copied() {
+                Some('\'') => {
+                    chars.next();
+                    chars.next();
+                    chars.next();
+                    pending_unicode_fallback -= 1;
+                    continue;
+                }
+                Some('\\' | '{' | '}') => {
+                    chars.next();
+                    pending_unicode_fallback -= 1;
+                    continue;
+                }
+                _ => {
+                    // Control words are not fallback bytes; process normally.
+                }
+            }
+        }
+
+        match ch {
+            '{' => {
+                ignorable_stack.push(ignorable);
+            }
+            '}' => {
+                ignorable = ignorable_stack.pop().unwrap_or(false);
+            }
+            '\\' => {
+                let Some(next) = chars.next() else {
+                    break;
+                };
+
+                match next {
+                    '\\' | '{' | '}' => {
+                        if !ignorable {
+                            out.push(next);
+                        }
+                    }
+                    '\'' => {
+                        let hi = chars.next().and_then(|c| c.to_digit(16));
+                        let lo = chars.next().and_then(|c| c.to_digit(16));
+                        if !ignorable && let (Some(hi), Some(lo)) = (hi, lo) {
+                            out.push(((hi << 4 | lo) as u8) as char);
+                        }
+                    }
+                    '*' => {
+                        ignorable = true;
+                    }
+                    '\n' | '\r' => {}
+                    c if c.is_ascii_alphabetic() => {
+                        let mut word = String::new();
+                        word.push(c);
+                        while let Some(peek) = chars.peek().copied() {
+                            if peek.is_ascii_alphabetic() {
+                                word.push(peek);
+                                chars.next();
+                            } else {
+                                break;
+                            }
+                        }
+
+                        let mut negative = false;
+                        if chars.peek() == Some(&'-') {
+                            negative = true;
+                            chars.next();
+                        }
+                        let mut number = String::new();
+                        while let Some(peek) = chars.peek().copied() {
+                            if peek.is_ascii_digit() {
+                                number.push(peek);
+                                chars.next();
+                            } else {
+                                break;
+                            }
+                        }
+                        if chars.peek() == Some(&' ') {
+                            chars.next();
+                        }
+
+                        if is_rtf_ignored_destination(&word) {
+                            ignorable = true;
+                            continue;
+                        }
+
+                        if ignorable {
+                            continue;
+                        }
+
+                        match word.as_str() {
+                            "par" | "line" => out.push('\n'),
+                            "tab" => out.push('\t'),
+                            "emdash" => out.push('-'),
+                            "endash" => out.push('-'),
+                            "bullet" => out.push('*'),
+                            "uc" => {
+                                if let Ok(value) = number.parse::<usize>() {
+                                    uc_skip = value.min(8);
+                                }
+                            }
+                            "u" => {
+                                if let Ok(mut value) = number.parse::<i32>() {
+                                    if negative {
+                                        value = -value;
+                                    }
+                                    let scalar = if value < 0 {
+                                        (value + 65536) as u32
+                                    } else {
+                                        value as u32
+                                    };
+                                    if let Some(decoded) = char::from_u32(scalar) {
+                                        out.push(decoded);
+                                    }
+                                    pending_unicode_fallback = uc_skip;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    c => {
+                        if !ignorable && !c.is_control() {
+                            out.push(c);
+                        }
+                    }
+                }
+            }
+            c => {
+                if !ignorable {
+                    out.push(c);
+                }
+            }
+        }
+
+        if out.len() >= MAX_EXTRACT_LEN {
+            break;
+        }
+    }
+
+    let cleaned = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
+fn is_rtf_ignored_destination(word: &str) -> bool {
+    matches!(
+        word,
+        "fonttbl"
+            | "colortbl"
+            | "stylesheet"
+            | "info"
+            | "pict"
+            | "object"
+            | "datastore"
+            | "datafield"
+            | "generator"
+            | "xmlnstbl"
+            | "header"
+            | "footer"
+            | "annotation"
+            | "shp"
+            | "nonshppict"
+    )
+}
+
 /// Strip XML tags and extract plain text content.
 fn strip_xml_tags(xml: &str) -> String {
     let mut result = String::with_capacity(xml.len() / 3);
@@ -362,6 +551,52 @@ mod tests {
         let result = extract_ole_text(&data);
         assert!(result.is_some());
         assert!(result.unwrap().contains("account: 1234567890"));
+    }
+
+    #[test]
+    fn test_extract_rtf_text_basic_control_words() {
+        let rtf = br"{\rtf1\ansi This is \b urgent\b0 \par Please verify your account.}";
+        let text = extract_text(rtf, Some(DetectedFileType::Rtf)).expect("RTF text");
+
+        assert!(text.contains("urgent"));
+        assert!(text.contains("Please verify your account."));
+    }
+
+    #[test]
+    fn test_extract_rtf_text_unicode_and_ignored_pict() {
+        let rtf = "{\\rtf1\\ansi\\uc1 \\u20320?好{\\pict\\pngblip 41424344}\\par payment change}"
+            .as_bytes();
+        let text = extract_text(rtf, Some(DetectedFileType::Rtf)).expect("RTF text");
+
+        assert!(text.contains("你好"));
+        assert!(text.contains("payment change"));
+        assert!(!text.contains("41424344"));
+    }
+
+    #[test]
+    fn test_extract_rtf_text_skips_hex_escaped_unicode_fallback() {
+        let rtf = br"{\rtf1\ansi\uc1 \u20320\'3f payment}";
+        let text = extract_text(rtf, Some(DetectedFileType::Rtf)).expect("RTF text");
+
+        assert_eq!(text, "你 payment");
+        assert!(!text.contains('?'), "ANSI fallback must not be duplicated");
+    }
+
+    #[test]
+    fn test_extract_rtf_text_honors_uc_zero_and_negative_unicode() {
+        let rtf = br"{\rtf1\ansi\uc0 \u-25896\u22909  payment}";
+        let text = extract_text(rtf, Some(DetectedFileType::Rtf)).expect("RTF text");
+
+        assert_eq!(text, "高好 payment");
+    }
+
+    #[test]
+    fn test_extract_rtf_text_tolerates_unbalanced_groups() {
+        let rtf = br"{\rtf1\ansi visible {\*\generator hidden; still visible";
+        let text = extract_text(rtf, Some(DetectedFileType::Rtf)).expect("RTF text");
+
+        assert!(text.contains("visible"));
+        assert!(!text.contains("hidden"));
     }
 
     #[test]

@@ -280,7 +280,7 @@ impl ShardedSessionManager {
     /// - DashMap::retain Traverse, Eachentry Instant (~5ns)
     /// - 50,000 sessions x 5ns = ~250μs Time/Count
     /// - 60, <5μs CPU,
-    /// - 100,000 sessions (MAX_SESSIONS) ~500μs
+    /// - 25,000 sessions (MAX_SESSIONS) ~125μs
     ///   Comment retained in English.
     ///   (timeout_candidates priorityQueue) Whenfirst value :
     /// - AddAddEach process_packet of (path writeQueue)
@@ -445,8 +445,11 @@ impl ShardedSessionManager {
     }
 
     /// CleanupExpiredof IP rate limitingentry
-    fn cleanup_ip_rate_limits(&self) {
-        let now_ns = IpRateLimitEntry::now_ns();
+    pub(super) fn cleanup_ip_rate_limits(&self) {
+        self.cleanup_ip_rate_limits_at(IpRateLimitEntry::now_ns());
+    }
+
+    pub(super) fn cleanup_ip_rate_limits_at(&self, now_ns: u64) {
         let window_ns = RATE_LIMIT_WINDOW_SECS * 2 * 1_000_000_000;
 
         self.ip_rate_limits.retain(|_, entry| {

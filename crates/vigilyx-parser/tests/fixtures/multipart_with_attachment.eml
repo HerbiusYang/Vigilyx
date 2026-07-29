@@ -1,0 +1,29 @@
+From: Security Team <security@example.test>
+To: Analyst <analyst@example.test>
+Subject: Golden fixture
+Message-ID: <golden-001@example.test>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="outer-boundary"
+
+--outer-boundary
+Content-Type: multipart/alternative; boundary="inner-boundary"
+
+--inner-boundary
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+Hello=2C analyst.=0AReview https://example.test/login before noon.
+--inner-boundary
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<p>Hello, analyst.</p><a href=3D"https://example.test/login">Review</a>
+--inner-boundary--
+
+--outer-boundary
+Content-Type: text/plain; name="report.txt"
+Content-Disposition: attachment; filename="report.txt"
+Content-Transfer-Encoding: base64
+
+aGVsbG8gZml4dHVyZQo=
+--outer-boundary--

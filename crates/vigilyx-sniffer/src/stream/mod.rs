@@ -17,6 +17,7 @@ use rustc_hash::FxHasher;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::hash::BuildHasherDefault;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tracing::{debug, warn};
@@ -50,23 +51,68 @@ fn seq_ge(a: u32, b: u32) -> bool {
     a == b || seq_gt(a, b)
 }
 
-/// Max single stream size (50MB - HTTP large file upload needs enough room for complete body)
-const MAX_STREAM_SIZE: usize = 50 * 1024 * 1024;
+/// Maximum bytes retained by one half-stream. Larger bodies are deliberately truncated at
+/// the capture layer instead of allowing a single slow connection to dominate memory.
+const MAX_STREAM_SIZE: usize = 32 * 1024 * 1024;
 
-/// SEC: Global memory budget for all TCP reassembly buffers (2 GB).
+/// SEC: Global memory budget for all TCP reassembly buffers (512 MB).
 /// Prevents OOM when many large/slow streams accumulate simultaneously.
-const GLOBAL_REASSEMBLY_BUDGET: u64 = 2 * 1024 * 1024 * 1024;
+pub(crate) const GLOBAL_REASSEMBLY_BUDGET: u64 = 512 * 1024 * 1024;
 
-/// largepacketCount (Stream - 50MB / ~1400 bytes MTU 37500 packet)
+/// largepacketCount (Stream packet metadata guard)
 const MAX_PACKETS_PER_STREAM: usize = 50_000;
 
 /// Streamtimeout duration (15minute)
 const STREAM_TIMEOUT_SECS: u64 = 900;
 
 /// large StreamCount
-const MAX_ACTIVE_STREAMS: usize = 50_000;
+const MAX_ACTIVE_STREAMS: usize = 25_000;
 
 type FxDashMap<K, V> = DashMap<K, V, BuildHasherDefault<FxHasher>>;
+
+/// Shared byte quota used by every production half-stream. Reservation is atomic, so
+/// concurrent session workers cannot collectively exceed the configured limit.
+pub(crate) struct ReassemblyBudget {
+    used: AtomicU64,
+    limit: u64,
+}
+
+impl ReassemblyBudget {
+    pub(crate) fn new(limit: u64) -> Self {
+        Self {
+            used: AtomicU64::new(0),
+            limit,
+        }
+    }
+
+    fn try_reserve(&self, bytes: usize) -> bool {
+        let Ok(bytes) = u64::try_from(bytes) else {
+            return false;
+        };
+        self.used
+            .fetch_update(Ordering::AcqRel, Ordering::Relaxed, |used| {
+                used.checked_add(bytes).filter(|next| *next <= self.limit)
+            })
+            .is_ok()
+    }
+
+    fn release(&self, bytes: usize) {
+        let bytes = u64::try_from(bytes).unwrap_or(u64::MAX);
+        let _ = self
+            .used
+            .fetch_update(Ordering::AcqRel, Ordering::Relaxed, |used| {
+                Some(used.saturating_sub(bytes))
+            });
+    }
+
+    pub(crate) fn used(&self) -> u64 {
+        self.used.load(Ordering::Relaxed)
+    }
+
+    fn remaining(&self) -> u64 {
+        self.limit.saturating_sub(self.used())
+    }
+}
 
 /// TCP Stream (4Yuan)
 #[derive(Clone, Copy, Hash, Eq, PartialEq, Debug)]
@@ -181,37 +227,64 @@ pub struct TcpHalfStream {
     pub prepend_shift: usize,
     /// FIX #4: Number of bytes skipped due to gap tolerance (stream is not fully intact)
     pub gap_bytes_skipped: usize,
+    /// Shared production-wide memory quota.
+    budget: Arc<ReassemblyBudget>,
 }
 
 impl TcpHalfStream {
     pub fn new() -> Self {
+        Self::with_budget(Arc::new(ReassemblyBudget::new(GLOBAL_REASSEMBLY_BUDGET)))
+    }
+
+    pub(crate) fn with_budget(budget: Arc<ReassemblyBudget>) -> Self {
         Self {
             segments: BTreeMap::new(),
             first_seq: None,
             next_seq: None,
             reassembled_start_seq: None,
-            reassembled: BytesMut::with_capacity(4096),
+            reassembled: BytesMut::new(),
             total_bytes: 0,
             packet_count: 0,
             last_activity: Instant::now(),
             is_closed: false,
             prepend_shift: 0,
             gap_bytes_skipped: 0,
+            budget,
         }
+    }
+
+    fn reserve_bytes(&mut self, bytes: usize) -> Result<(), StreamError> {
+        if bytes == 0 {
+            return Ok(());
+        }
+        if self
+            .total_bytes
+            .checked_add(bytes)
+            .is_none_or(|total| total > MAX_STREAM_SIZE)
+        {
+            warn!(
+                current = self.total_bytes,
+                requested = bytes,
+                limit = MAX_STREAM_SIZE,
+                "TCP half-stream size limit exceeded"
+            );
+            return Err(StreamError::MaxSizeExceeded);
+        }
+        if !self.budget.try_reserve(bytes) {
+            warn!(
+                used = self.budget.used(),
+                requested = bytes,
+                limit = self.budget.limit,
+                "TCP reassembly global budget exceeded"
+            );
+            return Err(StreamError::GlobalBudgetExceeded);
+        }
+        self.total_bytes += bytes;
+        Ok(())
     }
 
     /// AdddataSegment
     pub fn add_segment(&mut self, segment: TcpSegment) -> Result<(), StreamError> {
-        // SecurityCheck
-        if self.total_bytes + segment.data.len() > MAX_STREAM_SIZE {
-            warn!(
-                "TCP Stream超出largesmalllimit: {} + {} > {}",
-                self.total_bytes,
-                segment.data.len(),
-                MAX_STREAM_SIZE
-            );
-            return Err(StreamError::MaxSizeExceeded);
-        }
         if self.packet_count >= MAX_PACKETS_PER_STREAM {
             warn!(
                 "TCP Stream超出packet数limit: {} >= {}",
@@ -305,6 +378,7 @@ impl TcpHalfStream {
                 };
                 let prepend_len = prepend_end.wrapping_sub(seg_start) as usize;
                 if prepend_len > 0 && prepend_len <= segment.data.len() {
+                    self.reserve_bytes(prepend_len)?;
                     let prepend_data = &segment.data[..prepend_len];
                     let mut new_buf =
                         BytesMut::with_capacity(prepend_data.len() + self.reassembled.len());
@@ -313,7 +387,6 @@ impl TcpHalfStream {
                     self.reassembled = new_buf;
                     self.reassembled_start_seq = Some(seg_start);
                     self.prepend_shift += prepend_len;
-                    self.total_bytes += prepend_len;
                     debug!(
                         "Prepended {} bytes (seq={}) before reassembly start",
                         prepend_len, seg_start
@@ -364,8 +437,23 @@ impl TcpHalfStream {
             next_seq
         );
 
-        // FIX #5: Increment counters AFTER dedup - only count genuinely new data
-        self.total_bytes += effective_data.len();
+        // Checkwhetheralreadystored SameSequenceNumberofSegment (Process)
+        let existing_len = self
+            .segments
+            .get(&effective_start)
+            .map(|existing| existing.data.len());
+        if existing_len.is_some_and(|len| len >= effective_data.len()) {
+            // already long waitofSegment,hops
+            debug!("hops较shortof重传packet: seq={}", effective_start);
+            return Ok(());
+        }
+
+        // Account only bytes that are genuinely retained. A longer retransmit at the
+        // same sequence replaces the old segment and reserves only the size delta.
+        let retained_bytes = effective_data
+            .len()
+            .saturating_sub(existing_len.unwrap_or(0));
+        self.reserve_bytes(retained_bytes)?;
         self.packet_count += 1;
 
         // UseValiddataCreateNewSegment
@@ -376,15 +464,6 @@ impl TcpHalfStream {
             is_rst: segment.is_rst,
             timestamp: segment.timestamp,
         };
-
-        // Checkwhetheralreadystored SameSequenceNumberofSegment (Process)
-        if let Some(existing) = self.segments.get(&effective_start)
-            && existing.data.len() >= effective_segment.data.len()
-        {
-            // already long waitofSegment,hops
-            debug!("hops较shortof重传packet: seq={}", effective_start);
-            return Ok(());
-        }
 
         // path: Segment Connect Add reassembled,hops BTreeMap
         // Item: 1) Segment equalsPeriod of 1SequenceNumber 2) not WaitProcessof Segment
@@ -648,6 +727,12 @@ impl TcpHalfStream {
     }
 }
 
+impl Drop for TcpHalfStream {
+    fn drop(&mut self) {
+        self.budget.release(self.total_bytes);
+    }
+}
+
 /// TCP Stream
 pub struct TcpStream {
     /// client -> Servicehandler
@@ -662,9 +747,16 @@ pub struct TcpStream {
 
 impl TcpStream {
     pub fn new(id: StreamId) -> Self {
+        Self::with_budget(
+            id,
+            Arc::new(ReassemblyBudget::new(GLOBAL_REASSEMBLY_BUDGET)),
+        )
+    }
+
+    fn with_budget(id: StreamId, budget: Arc<ReassemblyBudget>) -> Self {
         Self {
-            client_to_server: TcpHalfStream::new(),
-            server_to_client: TcpHalfStream::new(),
+            client_to_server: TcpHalfStream::with_budget(Arc::clone(&budget)),
+            server_to_client: TcpHalfStream::with_budget(budget),
             created_at: Instant::now(),
             id,
         }
@@ -719,6 +811,8 @@ pub enum StreamError {
     MaxpacketsExceeded,
     /// large StreamCount
     MaxStreamsExceeded,
+    /// Shared reassembly memory budget exhausted.
+    GlobalBudgetExceeded,
 }
 
 /// TCP Streamreassemblehandler
@@ -727,8 +821,8 @@ pub struct TcpStreamReassembler {
     streams: FxDashMap<StreamId, TcpStream>,
     /// timeout duration
     timeout: Duration,
-    /// SEC: Global byte counter for all reassembly buffers (CWE-770)
-    global_bytes: AtomicU64,
+    /// SEC: Shared quota used by the half-streams themselves (CWE-770).
+    budget: Arc<ReassemblyBudget>,
 }
 
 impl TcpStreamReassembler {
@@ -736,7 +830,7 @@ impl TcpStreamReassembler {
         Self {
             streams: DashMap::with_hasher(BuildHasherDefault::default()),
             timeout: Duration::from_secs(STREAM_TIMEOUT_SECS),
-            global_bytes: AtomicU64::new(0),
+            budget: Arc::new(ReassemblyBudget::new(GLOBAL_REASSEMBLY_BUDGET)),
         }
     }
 
@@ -766,17 +860,10 @@ impl TcpStreamReassembler {
             }
         }
 
-        // SEC: Global memory budget check - reject new segments when over budget (CWE-770)
-        let seg_len = data.len() as u64;
-        if self.global_bytes.load(Ordering::Relaxed) + seg_len > GLOBAL_REASSEMBLY_BUDGET {
+        // Make a best effort to free expired streams before the atomic reservation in
+        // `TcpHalfStream::add_segment`. The half-stream remains the enforcement point.
+        if u64::try_from(data.len()).is_ok_and(|len| len > self.budget.remaining()) {
             self.cleanup_timeout_streams();
-            if self.global_bytes.load(Ordering::Relaxed) + seg_len > GLOBAL_REASSEMBLY_BUDGET {
-                warn!(
-                    "TCP reassembly global budget exceeded ({} bytes), dropping segment",
-                    self.global_bytes.load(Ordering::Relaxed)
-                );
-                return Err(StreamError::MaxSizeExceeded);
-            }
         }
 
         let segment = TcpSegment {
@@ -790,14 +877,10 @@ impl TcpStreamReassembler {
         // Get CreateStream
         let mut entry = self.streams.entry(stream_id).or_insert_with(|| {
             debug!("New建Stream: {:?}", stream_id);
-            TcpStream::new(stream_id)
+            TcpStream::with_budget(stream_id, Arc::clone(&self.budget))
         });
 
-        let result = entry.add_segment(segment, is_client_to_server);
-        if result.is_ok() {
-            self.global_bytes.fetch_add(seg_len, Ordering::Relaxed);
-        }
-        result
+        entry.add_segment(segment, is_client_to_server)
     }
 
     /// GetStreamofreassembledata (reassemble)
@@ -810,17 +893,9 @@ impl TcpStreamReassembler {
         })
     }
 
-    /// Remove and return stream, updating global byte budget
+    /// Remove and return stream. Its half-streams release quota when the value is dropped.
     pub fn remove_stream(&self, stream_id: &StreamId) -> Option<TcpStream> {
-        self.streams.remove(stream_id).map(|(_, stream)| {
-            let stream_bytes = stream.total_bytes() as u64;
-            let _ = self
-                .global_bytes
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                    Some(v.saturating_sub(stream_bytes))
-                });
-            stream
-        })
+        self.streams.remove(stream_id).map(|(_, stream)| stream)
     }
 
     /// CleanupTimeoutStream
@@ -837,11 +912,6 @@ impl TcpStreamReassembler {
             }
         });
         if removed > 0 {
-            let _ = self
-                .global_bytes
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
-                    Some(v.saturating_sub(freed_bytes))
-                });
             debug!(
                 "Cleaned up {} timeout streams, freed {} bytes",
                 removed, freed_bytes
@@ -874,6 +944,8 @@ impl Default for TcpStreamReassembler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Barrier;
+    use std::sync::atomic::AtomicUsize;
 
     // Sequence number comparisonfunctionTest
 
@@ -1236,5 +1308,134 @@ mod tests {
         let (client_data, server_data) = reassembler.get_stream_data(&stream_id).unwrap();
         assert_eq!(&client_data[..], b"CLIENT");
         assert_eq!(&server_data[..], b"SERVER");
+    }
+
+    #[test]
+    fn shared_budget_rejects_excess_and_is_released_on_drop() {
+        let budget = Arc::new(ReassemblyBudget::new(5));
+        let mut first = TcpHalfStream::with_budget(Arc::clone(&budget));
+        let mut second = TcpHalfStream::with_budget(Arc::clone(&budget));
+
+        first
+            .add_segment(TcpSegment {
+                seq: 1000,
+                data: Bytes::from_static(b"hello"),
+                is_fin: false,
+                is_rst: false,
+                timestamp: Instant::now(),
+            })
+            .unwrap();
+        assert_eq!(budget.used(), 5);
+
+        // Retransmission does not consume quota a second time.
+        first
+            .add_segment(TcpSegment {
+                seq: 1000,
+                data: Bytes::from_static(b"hello"),
+                is_fin: false,
+                is_rst: false,
+                timestamp: Instant::now(),
+            })
+            .unwrap();
+        assert_eq!(budget.used(), 5);
+
+        let error = second
+            .add_segment(TcpSegment {
+                seq: 2000,
+                data: Bytes::from_static(b"x"),
+                is_fin: false,
+                is_rst: false,
+                timestamp: Instant::now(),
+            })
+            .expect_err("shared budget must reject excess data");
+        assert_eq!(error, StreamError::GlobalBudgetExceeded);
+
+        drop(first);
+        assert_eq!(budget.used(), 0);
+        second
+            .add_segment(TcpSegment {
+                seq: 2000,
+                data: Bytes::from_static(b"x"),
+                is_fin: false,
+                is_rst: false,
+                timestamp: Instant::now(),
+            })
+            .unwrap();
+        assert_eq!(budget.used(), 1);
+    }
+
+    #[test]
+    fn shared_budget_is_atomic_under_concurrent_half_streams() {
+        const WORKERS: usize = 64;
+        const SEGMENT_BYTES: usize = 128;
+        const SUCCESSFUL_RESERVATIONS: usize = WORKERS / 2;
+
+        let budget = Arc::new(ReassemblyBudget::new(
+            (SUCCESSFUL_RESERVATIONS * SEGMENT_BYTES) as u64,
+        ));
+        let phases = Arc::new(Barrier::new(WORKERS + 1));
+        let successes = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::with_capacity(WORKERS);
+
+        for worker in 0..WORKERS {
+            let budget = Arc::clone(&budget);
+            let phases = Arc::clone(&phases);
+            let successes = Arc::clone(&successes);
+            handles.push(std::thread::spawn(move || {
+                let mut stream = TcpHalfStream::with_budget(budget);
+                phases.wait();
+                if stream
+                    .add_segment(TcpSegment {
+                        seq: 1000 + worker as u32 * SEGMENT_BYTES as u32,
+                        data: Bytes::from(vec![worker as u8; SEGMENT_BYTES]),
+                        is_fin: false,
+                        is_rst: false,
+                        timestamp: Instant::now(),
+                    })
+                    .is_ok()
+                {
+                    successes.fetch_add(1, Ordering::SeqCst);
+                }
+                phases.wait();
+                phases.wait();
+            }));
+        }
+
+        phases.wait();
+        phases.wait();
+        assert_eq!(successes.load(Ordering::SeqCst), SUCCESSFUL_RESERVATIONS);
+        assert_eq!(
+            budget.used(),
+            (SUCCESSFUL_RESERVATIONS * SEGMENT_BYTES) as u64
+        );
+        phases.wait();
+
+        for handle in handles {
+            handle.join().expect("budget worker must not panic");
+        }
+        assert_eq!(budget.used(), 0, "all stream drops must return their quota");
+    }
+
+    #[test]
+    fn perf_duplicate_segment_flood_does_not_grow_counters() {
+        let budget = Arc::new(ReassemblyBudget::new(1024));
+        let mut stream = TcpHalfStream::with_budget(Arc::clone(&budget));
+        let segment = TcpSegment {
+            seq: 1000,
+            data: Bytes::from_static(b"retransmit"),
+            is_fin: false,
+            is_rst: false,
+            timestamp: Instant::now(),
+        };
+        let started = Instant::now();
+
+        for _ in 0..100_000 {
+            stream.add_segment(segment.clone()).unwrap();
+        }
+
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(stream.packet_count, 1);
+        assert_eq!(stream.total_bytes, segment.data.len());
+        assert_eq!(budget.used(), segment.data.len() as u64);
     }
 }

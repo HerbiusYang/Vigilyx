@@ -117,6 +117,124 @@ fn detector_body_fallback_text(
         })
 }
 
+fn count_config_terms(haystack: &str, compact_haystack: &str, terms: &[String]) -> usize {
+    terms
+        .iter()
+        .filter(|term| {
+            let normalized = normalize_text(&term.to_lowercase());
+            if normalized.is_empty() {
+                return false;
+            }
+            if haystack.contains(normalized.as_str()) {
+                return true;
+            }
+            let compact_term: String = normalized
+                .chars()
+                .filter(|ch| ch.is_alphanumeric())
+                .collect();
+            !compact_term.is_empty() && compact_haystack.contains(compact_term.as_str())
+        })
+        .count()
+}
+
+fn normalized_and_compact(text: &str) -> (String, String) {
+    let normalized = normalize_text(&text.to_lowercase())
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let compact = normalized
+        .chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .collect();
+    (normalized, compact)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn detect_multipart_alternative_mismatch(
+    ctx: &SecurityContext,
+    sanitized_plain: &str,
+    phishing_keywords: &[String],
+    weak_phishing_keywords: &[String],
+    bec_phrases: &[String],
+    gateway_banner_patterns: &[String],
+    notice_banner_patterns: &[String],
+    dsn_patterns: &[String],
+    auto_reply_patterns: &[String],
+    total_score: &mut f64,
+    categories: &mut Vec<String>,
+    evidence: &mut Vec<Evidence>,
+) {
+    let Some(body_html) = ctx.session.content.body_html.as_deref() else {
+        return;
+    };
+
+    let sanitized_html = sanitize_body_for_keyword_scan(
+        &strip_html_tags(body_html),
+        gateway_banner_patterns,
+        notice_banner_patterns,
+        dsn_patterns,
+        auto_reply_patterns,
+    );
+    if sanitized_html.trim().is_empty() {
+        return;
+    }
+
+    let (plain_norm, plain_compact) = normalized_and_compact(sanitized_plain);
+    let (html_norm, html_compact) = normalized_and_compact(&sanitized_html);
+    if html_norm == plain_norm || html_norm.len() < 20 {
+        return;
+    }
+
+    let plain_hits = count_config_terms(&plain_norm, &plain_compact, phishing_keywords)
+        + count_config_terms(&plain_norm, &plain_compact, weak_phishing_keywords)
+        + count_config_terms(&plain_norm, &plain_compact, bec_phrases);
+    let html_hits = count_config_terms(&html_norm, &html_compact, phishing_keywords)
+        + count_config_terms(&html_norm, &html_compact, weak_phishing_keywords)
+        + count_config_terms(&html_norm, &html_compact, bec_phrases);
+    if html_hits <= plain_hits {
+        return;
+    }
+
+    let html_score = scan_text(
+        &sanitized_html,
+        phishing_keywords,
+        weak_phishing_keywords,
+        bec_phrases,
+        evidence,
+        categories,
+    );
+    if html_score <= 0.0 {
+        return;
+    }
+
+    *total_score += (0.05 + html_score * 0.85).min(0.45);
+    categories.push("multipart_alternative_mismatch".to_string());
+    evidence.push(Evidence {
+        description: "HTML alternative carries risky semantics absent from text/plain".to_string(),
+        location: Some("body:html_alternative".to_string()),
+        snippet: Some(sanitized_html.chars().take(160).collect()),
+    });
+}
+
+fn external_sender_domain(ctx: &SecurityContext) -> Option<String> {
+    ctx.session
+        .mail_from
+        .as_deref()
+        .and_then(|addr| addr.rsplit('@').next())
+        .map(|d| d.to_lowercase())
+}
+
+fn is_external_sender_for_bec(ctx: &SecurityContext, sender_domain: Option<&str>) -> bool {
+    match sender_domain {
+        Some(domain) => {
+            !ctx.is_internal_domain(domain)
+                && !module_data().contains("protected_domains", domain)
+                && !crate::modules::link_scan::is_well_known_safe_domain(domain)
+        }
+        None => true,
+    }
+}
+
 // ─── Step 1: Gateway banner detection ────────────────────────────────
 
 /// Detects upstream security gateway banners in subject and body prefix.
@@ -279,6 +397,7 @@ pub(super) fn prepare_body_text(
         })
         .filter(|sanitized| !sanitized.trim().is_empty());
 
+    let selected_from_plain = text_candidate.is_some();
     let selected = if let Some(text) = text_candidate {
         Some(text)
     } else {
@@ -321,6 +440,22 @@ pub(super) fn prepare_body_text(
             evidence,
             categories,
         );
+        if selected_from_plain {
+            detect_multipart_alternative_mismatch(
+                ctx,
+                sanitized,
+                &filtered_phishing_keywords,
+                weak_phishing_keywords,
+                bec_phrases,
+                gateway_banner_patterns,
+                notice_banner_patterns,
+                dsn_patterns,
+                auto_reply_patterns,
+                total_score,
+                categories,
+                evidence,
+            );
+        }
     }
 
     selected
@@ -673,6 +808,99 @@ pub(super) fn detect_invoice_spam(
             },
         });
     }
+}
+
+/// Detects payment-account-change BEC lures without relying on AI.
+///
+/// The wording lists are runtime module data so operations teams can tune
+/// language coverage through the existing JSON/DB override path.
+pub(super) fn detect_payment_change_bec(
+    ctx: &SecurityContext,
+    body_for_cross: Option<&str>,
+    total_score: &mut f64,
+    categories: &mut Vec<String>,
+    evidence: &mut Vec<Evidence>,
+) {
+    let sender_domain = external_sender_domain(ctx);
+    if !is_external_sender_for_bec(ctx, sender_domain.as_deref()) {
+        return;
+    }
+
+    let subject = ctx.session.subject.as_deref().unwrap_or("");
+    let body = detector_body_fallback_text(ctx, body_for_cross).unwrap_or_default();
+    let combined = normalize_text(&format!("{subject}\n{body}").to_lowercase());
+    if combined.trim().is_empty() {
+        return;
+    }
+    let compact: String = combined.chars().filter(|ch| ch.is_alphanumeric()).collect();
+
+    let md = module_data();
+    let change_hits =
+        count_config_terms(&combined, &compact, md.get_list("payment_change_keywords"));
+    if change_hits == 0 {
+        return;
+    }
+
+    let action_hits =
+        count_config_terms(&combined, &compact, md.get_list("bec_payment_action_terms"));
+    let authority_hits =
+        count_config_terms(&combined, &compact, md.get_list("bec_authority_terms"));
+    let urgency_hits = count_config_terms(
+        &combined,
+        &compact,
+        md.get_list("transaction_urgency_keywords"),
+    );
+    let confidentiality_hits = count_config_terms(
+        &combined,
+        &compact,
+        md.get_list("bec_confidentiality_terms"),
+    );
+
+    let support_dimensions = usize::from(action_hits > 0)
+        + usize::from(authority_hits > 0)
+        + usize::from(urgency_hits > 0)
+        + usize::from(confidentiality_hits > 0);
+    if support_dimensions < 2 {
+        return;
+    }
+
+    let mut score = 0.38_f64;
+    if action_hits > 0 {
+        score += 0.10;
+    }
+    if authority_hits > 0 {
+        score += 0.08;
+    }
+    if urgency_hits > 0 {
+        score += 0.08;
+    }
+    if confidentiality_hits > 0 {
+        score += 0.10;
+    }
+    if ctx.session.content.links.is_empty() && ctx.session.content.attachments.is_empty() {
+        score += 0.05;
+        categories.push("bec_no_ioc_social".to_string());
+    }
+
+    *total_score += score.min(0.78_f64);
+    categories.push("bec_payment_change".to_string());
+    evidence.push(Evidence {
+        description: format!(
+            "Payment-account-change BEC pattern from external domain {}: change={}, action={}, authority={}, urgency={}, confidentiality={}",
+            sender_domain.as_deref().unwrap_or("unknown"),
+            change_hits,
+            action_hits,
+            authority_hits,
+            urgency_hits,
+            confidentiality_hits,
+        ),
+        location: Some("subject + body + envelope".to_string()),
+        snippet: if subject.is_empty() {
+            Some(body.chars().take(160).collect())
+        } else {
+            Some(subject.to_string())
+        },
+    });
 }
 
 // ─── Step 7: Body phone number detection ─────────────────────────────

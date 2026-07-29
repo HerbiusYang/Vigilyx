@@ -15,6 +15,7 @@ vigilyx-core = { path = "../vigilyx-core" }
 vigilyx-db = { path = "../vigilyx-db" }
 vigilyx-engine = { path = "../vigilyx-engine" }
 vigilyx-mta = { path = "../vigilyx-mta" }
+vigilyx-parser = { path = "../vigilyx-parser" }
 vigilyx-soar = { path = "../vigilyx-soar" }
 
 # Async runtime

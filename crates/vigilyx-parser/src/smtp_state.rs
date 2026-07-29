@@ -144,6 +144,9 @@ pub struct SmtpStateMachine {
     /// RFC 3030 BDAT: whether the current/last chunk had the LAST flag.
     #[allow(dead_code)]
     bdat_is_last: bool,
+    /// Offset where the current BDAT chunk begins in the accumulated message.
+    /// Late TCP prepend recovery must insert bytes here, not before prior chunks.
+    bdat_chunk_start: usize,
 }
 
 impl SmtpStateMachine {
@@ -169,6 +172,7 @@ impl SmtpStateMachine {
             in_bdat_mode: false,
             bdat_remaining: 0,
             bdat_is_last: false,
+            bdat_chunk_start: 0,
         }
     }
 
@@ -191,7 +195,7 @@ impl SmtpStateMachine {
 
     /// Whether in data collection mode
     pub fn is_in_data_mode(&self) -> bool {
-        self.in_data_mode
+        self.in_data_mode || self.in_bdat_mode
     }
 
     /// FIX #4: Release data_buffer memory after email extraction (avoid redundant copy)
@@ -206,7 +210,7 @@ impl SmtpStateMachine {
 
     /// Whether the parser is still waiting for DATA payload to finish.
     pub fn has_pending_data(&self) -> bool {
-        self.in_data_mode || self.data_cmd_pending
+        self.in_data_mode || self.data_cmd_pending || self.in_bdat_mode
     }
 
     /// Best-effort buffered email bytes not yet turned into a completed MIME message.
@@ -215,9 +219,76 @@ impl SmtpStateMachine {
     }
 
     fn data_terminator(buffer: &[u8]) -> Option<(usize, usize)> {
-        memmem::find(buffer, b"\r\n.\r\n")
-            .map(|pos| (pos, 5usize))
-            .or_else(|| memmem::find(buffer, b"\n.\n").map(|pos| (pos, 3usize)))
+        memmem::find(buffer, b"\r\n.\r\n").map(|pos| (pos, 5usize))
+    }
+
+    fn append_message_bytes(&mut self, data: &[u8]) {
+        if self.data_buffer.len() + data.len() > MAX_DATA_BUFFER_SIZE {
+            warn!(
+                "SMTP: emaildata超 {}MB limit，截Break/JudgeProcess",
+                MAX_DATA_BUFFER_SIZE / 1024 / 1024
+            );
+            let remaining = MAX_DATA_BUFFER_SIZE.saturating_sub(self.data_buffer.len());
+            if remaining > 0 {
+                self.data_buffer.extend_from_slice(&data[..remaining]);
+            }
+        } else {
+            self.data_buffer.extend_from_slice(data);
+        }
+    }
+
+    fn begin_bdat_chunk(&mut self, size: usize, is_last: bool) {
+        self.in_bdat_mode = true;
+        self.bdat_remaining = size;
+        self.bdat_is_last = is_last;
+        self.bdat_chunk_start = self.data_buffer.len();
+        self.state = SmtpState::Data;
+    }
+
+    fn process_bdat_payload(&mut self, data: &[u8]) -> SmallVec<[SmtpCommand; 4]> {
+        let mut commands = SmallVec::new();
+        let mut pos = 0usize;
+
+        while self.in_bdat_mode {
+            let available = data.len().saturating_sub(pos);
+            let take = self.bdat_remaining.min(available);
+            if take > 0 {
+                self.append_message_bytes(&data[pos..pos + take]);
+                self.bdat_remaining -= take;
+                pos += take;
+            }
+
+            if self.bdat_remaining > 0 {
+                break;
+            }
+
+            let is_last = self.bdat_is_last;
+            self.in_bdat_mode = false;
+            self.bdat_is_last = false;
+            self.bdat_chunk_start = 0;
+
+            if is_last {
+                let raw = std::mem::take(&mut self.data_buffer);
+                info!(
+                    "📧📧📧 SMTP BDAT: emaildataReceivecomplete! largesmall: {} Byte, mail_from={:?}, rcpt_to={:?}",
+                    raw.len(),
+                    self.mail_from,
+                    self.rcpt_to
+                );
+                self.completed_emails.push(Bytes::from(raw));
+                self.state = SmtpState::DataDone;
+                commands.push(SmtpCommand::DataEnd);
+            } else {
+                self.state = SmtpState::RcptTo;
+            }
+
+            if pos < data.len() {
+                commands.extend(self.parse_commands(&data[pos..]));
+                break;
+            }
+        }
+
+        commands
     }
 
     fn update_state_for_parsed_command(&mut self, cmd: &SmtpCommand) {
@@ -293,7 +364,22 @@ impl SmtpStateMachine {
             return commands;
         }
 
-        if self.in_data_mode {
+        if self.in_bdat_mode {
+            // Only the bytes still missing from this exact-size BDAT chunk belong to
+            // the message. Any overflow is the next SMTP command (often another
+            // BDAT or QUIT) and must be parsed after the chunk completes.
+            let payload_len = data.len().min(self.bdat_remaining);
+            let insert_at = self.bdat_chunk_start.min(self.data_buffer.len());
+            let retained_payload_len =
+                payload_len.min(MAX_DATA_BUFFER_SIZE.saturating_sub(self.data_buffer.len()));
+            let mut new_buffer = Vec::with_capacity(self.data_buffer.len() + retained_payload_len);
+            new_buffer.extend_from_slice(&self.data_buffer[..insert_at]);
+            new_buffer.extend_from_slice(&data[..retained_payload_len]);
+            new_buffer.extend_from_slice(&self.data_buffer[insert_at..]);
+            self.data_buffer = new_buffer;
+            self.bdat_remaining -= payload_len;
+            commands.extend(self.process_bdat_payload(&data[payload_len..]));
+        } else if self.in_data_mode {
             let mut new_buffer = Vec::with_capacity(data.len() + self.data_buffer.len());
             new_buffer.extend_from_slice(data);
             new_buffer.extend_from_slice(&self.data_buffer);
@@ -349,9 +435,7 @@ impl SmtpStateMachine {
             self.pipelined_data.take()?
         };
 
-        let terminator = memmem::find(&pending, b"\r\n.\r\n")
-            .map(|pos| (pos, 5usize))
-            .or_else(|| memmem::find(&pending, b"\n.\n").map(|pos| (pos, 3usize)));
+        let terminator = memmem::find(&pending, b"\r\n.\r\n").map(|pos| (pos, 5usize));
 
         let raw = match terminator {
             Some((pos, _)) => &pending[..pos],
@@ -359,6 +443,10 @@ impl SmtpStateMachine {
         };
 
         self.in_data_mode = false;
+        self.in_bdat_mode = false;
+        self.bdat_remaining = 0;
+        self.bdat_is_last = false;
+        self.bdat_chunk_start = 0;
         self.data_cmd_pending = false;
         self.state = SmtpState::DataDone;
         self.pipelined_data = None;
@@ -387,20 +475,11 @@ impl SmtpStateMachine {
             data.len(),
         );
 
-        if self.in_data_mode {
+        if self.in_bdat_mode {
+            commands.extend(self.process_bdat_payload(data));
+        } else if self.in_data_mode {
             // data mode: collect email content
-            if self.data_buffer.len() + data.len() > MAX_DATA_BUFFER_SIZE {
-                warn!(
-                    "SMTP: emaildata超 {}MB limit，截Break/JudgeProcess",
-                    MAX_DATA_BUFFER_SIZE / 1024 / 1024
-                );
-                let remaining = MAX_DATA_BUFFER_SIZE.saturating_sub(self.data_buffer.len());
-                if remaining > 0 {
-                    self.data_buffer.extend_from_slice(&data[..remaining]);
-                }
-            } else {
-                self.data_buffer.extend_from_slice(data);
-            }
+            self.append_message_bytes(data);
 
             trace!(
                 "📧 SMTP DATA mode: 收集data {} Byte, bufferDistrict总计: {} Byte",
@@ -647,6 +726,13 @@ impl SmtpStateMachine {
                         self.data_cmd_pending = false;
                         self.pipelined_data = None;
                     }
+                    if self.in_bdat_mode {
+                        self.in_bdat_mode = false;
+                        self.bdat_remaining = 0;
+                        self.bdat_is_last = false;
+                        self.bdat_chunk_start = 0;
+                        self.data_buffer.clear();
+                    }
                     if self.auth_phase != AuthPhase::None {
                         self.auth_phase = AuthPhase::None;
                     }
@@ -673,6 +759,7 @@ impl SmtpStateMachine {
         // Tracking consumed byte offset for DATA command pipelining
         let mut offset = 0;
         let mut data_cmd_seen = false;
+        let mut bdat_cmd_seen = false;
 
         // FIX #3: Check if data ends with incomplete line (no trailing \n)
         let has_trailing_newline = effective_data.last() == Some(&b'\n');
@@ -733,6 +820,12 @@ impl SmtpStateMachine {
                         data_cmd_seen = true;
                         break; // Parse line
                     }
+                    SmtpCommand::Bdat { size, is_last } => {
+                        self.begin_bdat_chunk(*size, *is_last);
+                        commands.push(cmd);
+                        bdat_cmd_seen = true;
+                        break;
+                    }
                     SmtpCommand::Reset => {
                         self.mail_from = None;
                         self.rcpt_to.clear();
@@ -740,6 +833,10 @@ impl SmtpStateMachine {
                         self.auth_phase = AuthPhase::None;
                         self.pipelined_data = None;
                         self.data_cmd_pending = false;
+                        self.in_bdat_mode = false;
+                        self.bdat_remaining = 0;
+                        self.bdat_is_last = false;
+                        self.bdat_chunk_start = 0;
                     }
                     SmtpCommand::Quit => {
                         self.state = SmtpState::Quit;
@@ -761,6 +858,15 @@ impl SmtpStateMachine {
                 );
                 self.pipelined_data = Some(remaining.to_vec());
             }
+        }
+
+        if bdat_cmd_seen {
+            let remaining = if offset < effective_data.len() {
+                &effective_data[offset..]
+            } else {
+                &[]
+            };
+            commands.extend(self.process_bdat_payload(remaining));
         }
 
         commands
@@ -985,6 +1091,10 @@ impl SmtpStateMachine {
             }
         }
 
+        if let Some((size, is_last)) = Self::parse_bdat_args(line) {
+            return Some(SmtpCommand::Bdat { size, is_last });
+        }
+
         // matchshortCommand (4 bytes,)
         if line.len() >= 4 {
             let cmd_part = &line[..4];
@@ -1009,6 +1119,35 @@ impl SmtpStateMachine {
         } else {
             None
         }
+    }
+
+    fn parse_bdat_args(line: &[u8]) -> Option<(usize, bool)> {
+        let line = std::str::from_utf8(line).ok()?.trim();
+        let mut parts = line.split_ascii_whitespace();
+        let cmd = parts.next()?;
+        if !cmd.eq_ignore_ascii_case("BDAT") {
+            return None;
+        }
+
+        let size_str = parts.next()?;
+        if !size_str.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        let size: usize = size_str.parse().ok()?;
+
+        let mut is_last = false;
+        for part in parts {
+            if part.eq_ignore_ascii_case("LAST") && !is_last {
+                is_last = true;
+            } else {
+                return None;
+            }
+        }
+        if size == 0 && !is_last {
+            return None;
+        }
+
+        Some((size, is_last))
     }
 
     /// FromStringMediumExtractemailAddress
@@ -1390,6 +1529,139 @@ mod tests {
         assert!(sm.is_encrypted());
         let plaintext_after_tls = sm.process_client_data(b"MAIL FROM:<hidden@example.com>\r\n");
         assert!(plaintext_after_tls.is_empty());
+    }
+
+    #[test]
+    fn test_bdat_last_restores_email() {
+        let mut sm = SmtpStateMachine::new();
+        let body = b"Subject: BDAT\r\n\r\nhello via chunking";
+        let mut input = format!(
+            "MAIL FROM:<sender@example.com>\r\nRCPT TO:<rcpt@example.com>\r\nBDAT {} LAST\r\n",
+            body.len()
+        )
+        .into_bytes();
+        input.extend_from_slice(body);
+        input.extend_from_slice(b"QUIT\r\n");
+
+        let cmds = sm.process_client_data(&input);
+
+        assert!(cmds.iter().any(|cmd| matches!(cmd, SmtpCommand::Bdat { size, is_last } if *size == body.len() && *is_last)));
+        assert!(cmds.iter().any(|cmd| matches!(cmd, SmtpCommand::DataEnd)));
+        assert!(cmds.iter().any(|cmd| matches!(cmd, SmtpCommand::Quit)));
+        let emails = sm.take_completed_emails();
+        assert_eq!(emails.len(), 1);
+        assert_eq!(&emails[0][..], body);
+    }
+
+    #[test]
+    fn test_bdat_multi_chunk_restores_email() {
+        let mut sm = SmtpStateMachine::new();
+        let first = b"Subject: Multi\r\n\r\n";
+        let second = b"chunk body";
+        let mut input = format!("BDAT {}\r\n", first.len()).into_bytes();
+        input.extend_from_slice(first);
+
+        let cmds = sm.process_client_data(&input);
+        assert!(cmds.iter().any(|cmd| matches!(cmd, SmtpCommand::Bdat { size, is_last } if *size == first.len() && !*is_last)));
+        assert!(sm.take_completed_emails().is_empty());
+        assert!(!sm.has_pending_data());
+
+        let mut last = format!("BDAT {} LAST\r\n", second.len()).into_bytes();
+        last.extend_from_slice(second);
+        let cmds = sm.process_client_data(&last);
+
+        assert!(cmds.iter().any(|cmd| matches!(cmd, SmtpCommand::DataEnd)));
+        let emails = sm.take_completed_emails();
+        assert_eq!(emails.len(), 1);
+        let mut expected = first.to_vec();
+        expected.extend_from_slice(second);
+        assert_eq!(&emails[0][..], expected.as_slice());
+    }
+
+    #[test]
+    fn test_bdat_command_split_from_payload() {
+        let mut sm = SmtpStateMachine::new();
+        let body = b"Subject: Split\r\n\r\npayload";
+
+        let cmds = sm.process_client_data(format!("BDAT {} LAST\r\n", body.len()).as_bytes());
+        assert!(cmds.iter().any(|cmd| matches!(cmd, SmtpCommand::Bdat { size, is_last } if *size == body.len() && *is_last)));
+        assert!(sm.is_in_data_mode());
+        assert!(sm.has_pending_data());
+
+        let cmds = sm.process_client_data(body);
+        assert!(cmds.iter().any(|cmd| matches!(cmd, SmtpCommand::DataEnd)));
+        let emails = sm.take_completed_emails();
+        assert_eq!(&emails[0][..], body);
+    }
+
+    #[test]
+    fn test_bdat_late_prepend_keeps_prior_chunks_and_parses_overflow_command() {
+        let mut sm = SmtpStateMachine::new();
+
+        let cmds = sm.process_client_data(b"BDAT 5\r\nprior");
+        assert!(cmds.iter().any(|cmd| matches!(
+            cmd,
+            SmtpCommand::Bdat {
+                size: 5,
+                is_last: false
+            }
+        )));
+
+        let cmds = sm.process_client_data(b"BDAT 3 LAST\r\nBC");
+        assert!(cmds.iter().any(|cmd| matches!(
+            cmd,
+            SmtpCommand::Bdat {
+                size: 3,
+                is_last: true
+            }
+        )));
+        assert!(sm.has_pending_data());
+
+        // `A` precedes the already processed `BC`; QUIT follows the exact three-byte
+        // BDAT payload and must not be absorbed into the message.
+        let cmds = sm.prepend_pending_client_data(b"AQUIT\r\n");
+
+        assert!(cmds.iter().any(|cmd| matches!(cmd, SmtpCommand::DataEnd)));
+        assert!(cmds.iter().any(|cmd| matches!(cmd, SmtpCommand::Quit)));
+        let emails = sm.take_completed_emails();
+        assert_eq!(emails.len(), 1);
+        assert_eq!(&emails[0][..], b"priorABC");
+    }
+
+    #[test]
+    fn test_bdat_zero_last_completes_empty_message() {
+        let mut sm = SmtpStateMachine::new();
+
+        let cmds = sm.process_client_data(b"BDAT 0 LAST\r\nQUIT\r\n");
+
+        assert!(cmds.iter().any(|cmd| matches!(
+            cmd,
+            SmtpCommand::Bdat {
+                size: 0,
+                is_last: true
+            }
+        )));
+        assert!(cmds.iter().any(|cmd| matches!(cmd, SmtpCommand::DataEnd)));
+        assert!(cmds.iter().any(|cmd| matches!(cmd, SmtpCommand::Quit)));
+        let emails = sm.take_completed_emails();
+        assert_eq!(emails.len(), 1);
+        assert!(emails[0].is_empty());
+    }
+
+    #[test]
+    fn test_data_bare_lf_dot_lf_is_not_accepted_as_terminator() {
+        let mut sm = SmtpStateMachine::new();
+
+        sm.process_client_data(b"DATA\r\nSubject: LF only\n\nbody\n.\nQUIT\n");
+        sm.process_server_response(b"354 Start mail input\r\n");
+
+        assert!(sm.take_completed_emails().is_empty());
+        assert!(sm.has_pending_data());
+        let (raw, complete) = sm
+            .take_pending_email_for_close()
+            .expect("pending DATA should be recoverable on close");
+        assert!(!complete);
+        assert!(std::str::from_utf8(&raw).unwrap().contains("\n.\nQUIT\n"));
     }
 
     #[test]

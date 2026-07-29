@@ -4,6 +4,7 @@ use crate::capture::{IpAddr, RawpacketInfo};
 use bytes::Bytes;
 use std::net::Ipv4Addr;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 use vigilyx_core::{Direction, EmailSession, Protocol, SessionStatus};
 
@@ -827,4 +828,145 @@ fn encrypted_session_finishes_after_tcp_close() {
             .iter()
             .any(|s| s.status == SessionStatus::Completed && s.content.is_encrypted)
     );
+}
+
+#[test]
+fn ip_rate_limit_active_count_returns_to_zero_after_session_removal() {
+    let manager = ShardedSessionManager::with_timeout(Duration::from_millis(1));
+    let syn = smtp_packet(Direction::Outbound, 35100, 465, 1000, 0x02, b"");
+    let client_ip = SessionKey::client_ip_from_packet(&syn);
+    let key = SessionKey::new(&syn);
+
+    let _ = manager.process_packet(&syn, None, Instant::now());
+    let entry = manager
+        .ip_rate_limits
+        .get(&client_ip)
+        .expect("rate-limit entry created");
+    assert_eq!(entry.active_session_count.load(Ordering::Relaxed), 1);
+    drop(entry);
+
+    {
+        let mut session = manager.sessions.get_mut(&key).expect("session created");
+        session.session.status = SessionStatus::Completed;
+        session.dirty = false;
+        session.last_activity = Instant::now() - Duration::from_secs(1);
+    }
+    manager.cleanup_timeout_sessions();
+
+    assert!(!manager.sessions.contains_key(&key));
+    assert_eq!(
+        manager
+            .ip_rate_limits
+            .get(&client_ip)
+            .expect("entry retained for rate window")
+            .active_session_count
+            .load(Ordering::Relaxed),
+        0
+    );
+}
+
+#[test]
+fn expired_inactive_ip_rate_limit_entry_is_evicted() {
+    let manager = ShardedSessionManager::new();
+    let ip = CompactIp::from_ip_addr(&crate::capture::IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)));
+    let entry = IpRateLimitEntry::new();
+    entry.window_start_ns.store(1, Ordering::Relaxed);
+    manager.ip_rate_limits.insert(ip, entry);
+
+    let eviction_time = 2 * rate_limit::RATE_LIMIT_WINDOW_SECS * 1_000_000_000 + 2;
+    manager.cleanup_ip_rate_limits_at(eviction_time);
+
+    assert!(!manager.ip_rate_limits.contains_key(&ip));
+}
+
+#[test]
+fn concurrent_first_packets_create_one_session_and_one_ip_count() {
+    const WORKERS: usize = 64;
+    let manager = Arc::new(ShardedSessionManager::new());
+    let packet = smtp_packet(Direction::Outbound, 35101, 465, 1000, 0x02, b"");
+    let client_ip = SessionKey::client_ip_from_packet(&packet);
+    let barrier = Arc::new(Barrier::new(WORKERS));
+    let mut handles = Vec::with_capacity(WORKERS);
+
+    for _ in 0..WORKERS {
+        let manager = Arc::clone(&manager);
+        let packet = packet.clone();
+        let barrier = Arc::clone(&barrier);
+        handles.push(std::thread::spawn(move || {
+            barrier.wait();
+            manager.process_packet(&packet, None, Instant::now())
+        }));
+    }
+
+    let mut new_results = 0usize;
+    for handle in handles {
+        if matches!(
+            handle.join().expect("session worker must not panic"),
+            ProcessResult::New(_)
+        ) {
+            new_results += 1;
+        }
+    }
+
+    assert_eq!(new_results, 1);
+    assert_eq!(manager.sessions.len(), 1);
+    let entry = manager
+        .ip_rate_limits
+        .get(&client_ip)
+        .expect("one rate-limit entry must remain");
+    assert_eq!(entry.new_session_count.load(Ordering::Relaxed), 1);
+    assert_eq!(entry.active_session_count.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn unique_ip_churn_is_fully_reclaimable() {
+    const SESSION_COUNT: usize = 1024;
+    let manager = ShardedSessionManager::with_timeout(Duration::from_millis(1));
+
+    for index in 0..SESSION_COUNT {
+        let packet = RawpacketInfo {
+            src_ip: IpAddr::V4(Ipv4Addr::new(
+                198,
+                18,
+                (index / 256) as u8,
+                (index % 256) as u8,
+            )),
+            dst_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 20)),
+            payload: Bytes::new(),
+            src_port: 20_000 + index as u16,
+            dst_port: 465,
+            protocol: Protocol::Smtp,
+            direction: Direction::Outbound,
+            tcp_seq: 1,
+            tcp_ack: 0,
+            tcp_flags: 0x02,
+        };
+        assert!(matches!(
+            manager.process_packet(&packet, None, Instant::now()),
+            ProcessResult::New(_)
+        ));
+    }
+    assert_eq!(manager.sessions.len(), SESSION_COUNT);
+    assert_eq!(manager.ip_rate_limits.len(), SESSION_COUNT);
+
+    for mut session in manager.sessions.iter_mut() {
+        session.session.status = SessionStatus::Completed;
+        session.dirty = false;
+        session.last_activity = Instant::now() - Duration::from_secs(1);
+    }
+    manager.cleanup_timeout_sessions();
+
+    assert!(manager.sessions.is_empty());
+    assert!(
+        manager
+            .ip_rate_limits
+            .iter()
+            .all(|entry| { entry.active_session_count.load(Ordering::Relaxed) == 0 })
+    );
+    for entry in manager.ip_rate_limits.iter() {
+        entry.window_start_ns.store(1, Ordering::Relaxed);
+    }
+    let eviction_time = 2 * rate_limit::RATE_LIMIT_WINDOW_SECS * 1_000_000_000 + 2;
+    manager.cleanup_ip_rate_limits_at(eviction_time);
+    assert!(manager.ip_rate_limits.is_empty());
 }

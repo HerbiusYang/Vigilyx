@@ -438,16 +438,25 @@ textarea:focus-visible {
   margin-left: 16px;
 }
 
-/* WebSocket status — compact dot only */
+/* WebSocket status — includes retry progress and the last successful sync. */
 .hd-ws {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
+  gap: 5px;
+  min-width: 28px;
   height: 28px;
+  padding: 0 8px;
   border-radius: 7px;
   transition: background var(--duration-fast);
   cursor: default;
+}
+
+.hd-ws-label {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text-secondary);
 }
 
 .hd-ws:hover {
@@ -694,6 +703,57 @@ html[lang="en"] .hd-brand-sub {
   overflow-x: hidden;
   contain: style;
   zoom: 1.12;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.auth-unavailable {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: var(--bg-primary, #050508);
+  color: var(--text-primary, #f5f5f5);
+}
+
+.auth-unavailable-card {
+  width: min(440px, 100%);
+  padding: 32px;
+  text-align: center;
+  border: 1px solid var(--border, rgba(255,255,255,0.12));
+  border-radius: 12px;
+  background: var(--bg-secondary, rgba(255,255,255,0.04));
+}
+
+.auth-unavailable-card h1 {
+  margin: 0 0 12px;
+  font-size: 22px;
+}
+
+.auth-unavailable-card p {
+  margin: 0 0 20px;
+  color: var(--text-secondary, #a0a0a0);
+  line-height: 1.6;
+}
+
+.auth-unavailable-card button {
+  padding: 8px 20px;
+  border: 1px solid var(--accent-primary, #3b82f6);
+  border-radius: 8px;
+  background: var(--accent-primary, #3b82f6);
+  color: #fff;
+  cursor: pointer;
 }
 
 /* -- Static background - pure CSS gradients, no animation, no runtime cost -- */
@@ -2413,6 +2473,12 @@ html[lang="en"] .hd-brand-sub {
   transition: color 0.15s;
 }
 .db-link:hover { color: var(--accent-secondary); }
+.db-link:is(button) {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
 
 /* ── Banner ── */
 .db-banner {

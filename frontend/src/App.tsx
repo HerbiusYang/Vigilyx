@@ -111,34 +111,84 @@ interface AppContentProps {
   onLogout: () => void
 }
 
+interface RealtimeConnection {
+  connected: boolean
+  status: 'connecting' | 'connected' | 'reconnecting'
+  attempt: number
+  lastSyncAt: number | null
+}
+
+const INITIAL_REALTIME_CONNECTION: RealtimeConnection = {
+  connected: false,
+  status: 'connecting',
+  attempt: 0,
+  lastSyncAt: null,
+}
+
+function RealtimeStatusBadge({ connection }: { connection: RealtimeConnection }) {
+  const { t } = useTranslation()
+  const lastSync = connection.lastSyncAt === null
+    ? t('app.wsNeverSynced')
+    : new Date(connection.lastSyncAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const label = connection.connected
+    ? t('app.wsLiveWithTime', { time: lastSync })
+    : connection.status === 'reconnecting'
+      ? t('app.wsRetrying', { attempt: connection.attempt, time: lastSync })
+      : t('app.wsConnecting')
+
+  return (
+    <div
+      className={`hd-ws ${connection.connected ? 'hd-ws--on' : 'hd-ws--off'}`}
+      title={connection.connected ? t('app.wsConnected') : label}
+      role="status"
+      aria-live="polite"
+    >
+      <span className="hd-ws-dot" />
+      <span className="hd-ws-label">{label}</span>
+    </div>
+  )
+}
+
 function RealtimeBridge({
   mode,
-  onConnectedChange,
+  onConnectionChange,
   refreshStats,
 }: {
   mode: 'app' | 'portal'
-  onConnectedChange: (connected: boolean) => void
+  onConnectionChange: (connection: RealtimeConnection) => void
   refreshStats?: () => void
 }) {
   const wsUrl = useMemo(() => {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     return `${proto}//${window.location.host}/ws`
   }, [])
-  const { lastMessage, readyState } = useWebSocket(wsUrl)
+  const {
+    lastMessage,
+    readyState,
+    connectionStatus,
+    reconnectAttempt,
+    lastConnectedAt,
+    lastMessageAt,
+  } = useWebSocket(wsUrl)
   const prevReadyState = usePrevious(readyState)
 
   useEffect(() => {
     const wasDisconnected = prevReadyState !== undefined && prevReadyState !== WebSocket.OPEN
     const nowConnected = readyState === WebSocket.OPEN
 
-    onConnectedChange(nowConnected)
+    onConnectionChange({
+      connected: nowConnected,
+      status: connectionStatus,
+      attempt: reconnectAttempt,
+      lastSyncAt: lastMessageAt ?? lastConnectedAt,
+    })
     window.dispatchEvent(new CustomEvent(EVENTS.CONNECTION_CHANGE, { detail: { connected: nowConnected } }))
 
     if (wasDisconnected && nowConnected) {
       refreshStats?.()
       window.dispatchEvent(new Event(EVENTS.WS_RECONNECTED))
     }
-  }, [onConnectedChange, prevReadyState, readyState, refreshStats])
+  }, [connectionStatus, lastConnectedAt, lastMessageAt, onConnectionChange, prevReadyState, readyState, reconnectAttempt, refreshStats])
 
   useEffect(() => {
     if (!lastMessage) return
@@ -185,7 +235,7 @@ function RealtimeBridge({
 function AppContent({ onLogout }: AppContentProps) {
   const { t } = useTranslation()
   const { theme, toggleTheme } = useTheme()
-  const [connected, setConnected] = useState(false)
+  const [realtimeConnection, setRealtimeConnection] = useState<RealtimeConnection>(INITIAL_REALTIME_CONNECTION)
   const [deployMode, setDeployMode] = useState<string>(
     () => localStorage.getItem('vigilyx-deploy-mode') || 'mirror'
   )
@@ -258,7 +308,7 @@ function AppContent({ onLogout }: AppContentProps) {
 
   return (
     <div className="app">
-      <RealtimeBridge mode="app" onConnectedChange={setConnected} refreshStats={loadStats} />
+      <RealtimeBridge mode="app" onConnectionChange={setRealtimeConnection} refreshStats={loadStats} />
       <header className="hd">
         <div className="hd-inner">
           {/* ── Brand ── */}
@@ -291,9 +341,7 @@ function AppContent({ onLogout }: AppContentProps) {
               <span>{deployMode === 'mta' ? t('app.deployMta') : t('app.deployMirror')}</span>
             </Link>
             <SystemStatusBar />
-            <div className={`hd-ws ${connected ? 'hd-ws--on' : 'hd-ws--off'}`} title={connected ? t('app.wsConnected') : t('app.wsOffline')}>
-              <span className="hd-ws-dot" />
-            </div>
+            <RealtimeStatusBadge connection={realtimeConnection} />
             <ThemeToggle theme={theme} onToggle={toggleTheme} />
             <LanguageToggle />
             <button className="hd-logout" onClick={onLogout} title={t('app.logout')}>
@@ -337,7 +385,7 @@ function AppContent({ onLogout }: AppContentProps) {
 function PortalContent({ onLogout }: AppContentProps) {
   const { t } = useTranslation()
   const { theme, toggleTheme } = useTheme()
-  const [connected, setConnected] = useState(false)
+  const [realtimeConnection, setRealtimeConnection] = useState<RealtimeConnection>(INITIAL_REALTIME_CONNECTION)
 
   useEffect(() => {
     void syncUiPreferencesFromServer()
@@ -364,7 +412,7 @@ function PortalContent({ onLogout }: AppContentProps) {
 
   return (
     <div className="app">
-      <RealtimeBridge mode="portal" onConnectedChange={setConnected} />
+      <RealtimeBridge mode="portal" onConnectionChange={setRealtimeConnection} />
       <header className="hd">
         <div className="hd-inner">
           <Link to="/portal" className="hd-brand">
@@ -380,9 +428,7 @@ function PortalContent({ onLogout }: AppContentProps) {
 
           <div className="hd-actions">
             <SystemStatusBar />
-            <div className={`hd-ws ${connected ? 'hd-ws--on' : 'hd-ws--off'}`} title={connected ? t('app.wsConnected') : t('app.wsOffline')}>
-              <span className="hd-ws-dot" />
-            </div>
+            <RealtimeStatusBadge connection={realtimeConnection} />
             <ThemeToggle theme={theme} onToggle={toggleTheme} />
             <LanguageToggle />
             <button className="hd-logout" onClick={onLogout} title={t('app.logout')}>
@@ -412,27 +458,40 @@ function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [needsSetup, setNeedsSetup] = useState(false)
   const [authReady, setAuthReady] = useState(false)
+  const [authUnavailable, setAuthUnavailable] = useState(false)
+  const [authAttempt, setAuthAttempt] = useState(0)
   const [portalMode, setPortalMode] = useState(false)
 
   // Validate the cookie session through /api/auth/me on page load instead of checking a localStorage token
   useEffect(() => {
     let cancelled = false
+    setAuthReady(false)
+    setAuthUnavailable(false)
 
     const restoreSession = async () => {
       try {
         const res = await fetch('/api/auth/me', { credentials: 'same-origin' })
         if (!res.ok) {
-          if (!cancelled) setAuthReady(true)
+          if (!cancelled) {
+            if (res.status === 401 || res.status === 403) {
+              setIsAuthenticated(false)
+            } else {
+              setAuthUnavailable(true)
+            }
+          }
           return
         }
 
         resetLogoutFlag()
-        if (!cancelled) setIsAuthenticated(true)
+        if (!cancelled) {
+          setAuthUnavailable(false)
+          setIsAuthenticated(true)
+        }
 
         const completed = await resolveSetupStatus()
         if (!cancelled) setNeedsSetup(!completed)
       } catch {
-        // Network error or missing cookie -> treat as logged out
+        if (!cancelled) setAuthUnavailable(true)
       } finally {
         if (!cancelled) setAuthReady(true)
       }
@@ -440,7 +499,7 @@ function App() {
 
     void restoreSession()
     return () => { cancelled = true }
-  }, [])
+  }, [authAttempt])
 
   // Periodically validate cookie-session freshness instead of decoding JWT expiry in the frontend
   useEffect(() => {
@@ -448,7 +507,7 @@ function App() {
     const interval = setInterval(async () => {
       try {
         const res = await fetch('/api/auth/me', { credentials: 'same-origin' })
-        if (!res.ok) {
+        if (res.status === 401 || res.status === 403) {
           setIsAuthenticated(false)
           setNeedsSetup(false)
         }
@@ -464,6 +523,7 @@ function App() {
       // Server-side cookie clearing is handled by /api/auth/logout; only update frontend state here
       setIsAuthenticated(false)
       setNeedsSetup(false)
+      setAuthUnavailable(false)
       setAuthReady(true)
     }
     window.addEventListener('auth:logout', onAuthLogout)
@@ -485,6 +545,7 @@ function App() {
 
   const handleLogin = async () => {
     resetLogoutFlag()
+    setAuthUnavailable(false)
     setIsAuthenticated(true)
     setNeedsSetup(false)
     setAuthReady(false)
@@ -514,6 +575,20 @@ function App() {
 
   if (!authReady) {
     return <div className="page-loading">{i18n.t('app.checkingInit')}</div>
+  }
+
+  if (authUnavailable) {
+    return (
+      <div className="auth-unavailable" role="alert" aria-live="polite">
+        <div className="auth-unavailable-card">
+          <h1>{i18n.t('app.serviceUnavailableTitle')}</h1>
+          <p>{i18n.t('app.serviceUnavailableDesc')}</p>
+          <button type="button" onClick={() => setAuthAttempt(attempt => attempt + 1)}>
+            {i18n.t('app.retryConnection')}
+          </button>
+        </div>
+      </div>
+    )
   }
 
   if (!isAuthenticated) {

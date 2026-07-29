@@ -39,13 +39,24 @@ const MAX_ATTACHMENTS: usize = 100;
 
 /// Full-audit mode: save ALL attachment content for scanning.
 /// Every attachment must pass through AV/YARA/Sandbox/content scanning.
-const MAX_ATTACHMENT_SAVE_SIZE: usize = 1024 * 1024 * 1024; // 1 GB
+const MAX_ATTACHMENT_SAVE_SIZE: usize = 32 * 1024 * 1024;
+
+/// Cumulative decoded attachment bytes retained for one message. This bounds the peak
+/// created by keeping decoded bytes while hashing and producing a Base64 copy.
+const MAX_TOTAL_ATTACHMENT_DECODED_BYTES: usize = 32 * 1024 * 1024;
 
 /// multipart large depth
 const MAX_MULTIPART_DEPTH: usize = 10;
 
 /// levelProcessof MIME part total,prevent O(k^2)
 const MAX_TOTAL_PARTS: usize = 200;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MultipartDelimiter {
+    start: usize,
+    content_start: usize,
+    closing: bool,
+}
 
 /// MIME Classification
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -262,6 +273,7 @@ impl MimeParser {
                 .collect();
             for attachment in relaxed.attachments {
                 if seen_hashes.insert(attachment.hash.clone()) {
+                    Self::ensure_attachment_budget(&salvaged, attachment.size)?;
                     salvaged.attachments.push(attachment);
                 }
             }
@@ -284,8 +296,13 @@ impl MimeParser {
         let trimmed = Self::trim_ascii_leading_newlines(body);
         let mut content = EmailContent::new();
         let mut cursor = 0usize;
+        let mut total_parts = 0usize;
 
         while let Some(boundary_start) = Self::find_boundary_line_start(trimmed, cursor) {
+            if total_parts >= MAX_TOTAL_PARTS {
+                return Err(MimeError::TooManyParts);
+            }
+            total_parts += 1;
             let boundary_line_end = Self::line_end_index(trimmed, boundary_start);
             let boundary_line = Self::trim_line_ending(&trimmed[boundary_start..boundary_line_end]);
 
@@ -329,7 +346,7 @@ impl MimeParser {
                 content_disposition,
                 is_attachment,
                 decoded,
-            );
+            )?;
         }
 
         Ok(content)
@@ -372,11 +389,8 @@ impl MimeParser {
             .unwrap_or(trimmed);
         let boundary_line = std::str::from_utf8(first_line).ok()?.trim();
         let boundary = boundary_line.strip_prefix("--")?;
-        if boundary.is_empty() || boundary.contains(char::is_whitespace) {
-            return None;
-        }
         let boundary = boundary.strip_suffix("--").unwrap_or(boundary).trim();
-        if boundary.len() < 3 {
+        if !Self::is_valid_boundary(boundary) {
             return None;
         }
         Some(boundary.to_string())
@@ -504,54 +518,53 @@ impl MimeParser {
         total_parts: &mut usize,
     ) -> Result<(), MimeError> {
         if depth >= MAX_MULTIPART_DEPTH {
-            warn!("multipart 递归depth超限 ({}), hops", depth);
-            return Ok(());
+            warn!("multipart 递归depth超限 ({})", depth);
+            return Err(MimeError::MultipartTooDeep);
         }
 
         if *total_parts >= MAX_TOTAL_PARTS {
-            warn!("multipart 总 part 数超限 ({}), hops后续部分", *total_parts);
-            return Ok(());
+            warn!("multipart 总 part 数超限 ({})", *total_parts);
+            return Err(MimeError::TooManyParts);
         }
 
         // Extract boundary
         let boundary = Self::extract_boundary(content_type).ok_or(MimeError::NoBoundary)?;
-        let boundary_marker = format!("--{}", boundary);
-        let boundary_bytes = boundary_marker.as_bytes();
+        let marker = format!("--{boundary}");
+        let finder = memmem::Finder::new(marker.as_bytes());
+        let mut delimiters = finder
+            .find_iter(body)
+            .filter_map(|start| Self::multipart_delimiter_at(body, marker.len(), start));
+        let Some(mut delimiter) = delimiters.next() else {
+            return Err(MimeError::BoundaryNotFound);
+        };
 
-        // SIMD boundary bit (Iterate collect)
-        let finder = memmem::Finder::new(boundary_bytes);
-        let positions: Vec<usize> = finder.find_iter(body).collect();
+        let mut saw_closing_delimiter = false;
+        loop {
+            if delimiter.closing {
+                saw_closing_delimiter = true;
+                break;
+            }
 
-        for i in 0..positions.len() {
+            let Some(next_delimiter) = delimiters.next() else {
+                break;
+            };
+
             // Check total parts budget before processing each part
             if *total_parts >= MAX_TOTAL_PARTS {
-                warn!("multipart 总 part 数超限 ({}), hops后续部分", *total_parts);
-                break;
+                warn!("multipart 总 part 数超限 ({})", *total_parts);
+                return Err(MimeError::TooManyParts);
             }
             *total_parts += 1;
 
-            let part_start = positions[i] + boundary_bytes.len();
-            let part_end = positions.get(i + 1).copied().unwrap_or(body.len());
+            let part_start = delimiter.content_start;
+            let part_end = next_delimiter.start;
+            delimiter = next_delimiter;
 
             if part_start >= part_end {
                 continue;
             }
 
             let part_data = &body[part_start..part_end];
-
-            // Checkwhether EndMark (--boundary--)
-            if part_data.starts_with(b"--") {
-                continue;
-            }
-
-            // hops CRLF
-            let part_data = if part_data.starts_with(b"\r\n") {
-                &part_data[2..]
-            } else if part_data.starts_with(b"\n") {
-                &part_data[1..]
-            } else {
-                part_data
-            };
 
             if part_data.is_empty() {
                 continue;
@@ -593,11 +606,53 @@ impl MimeParser {
                     content_disposition,
                     is_attachment,
                     decoded,
-                );
+                )?;
             }
         }
 
+        if !saw_closing_delimiter {
+            return Err(MimeError::MissingClosingBoundary);
+        }
+
         Ok(())
+    }
+
+    /// Validate one delimiter candidate without collecting every match in the message.
+    fn multipart_delimiter_at(
+        body: &[u8],
+        marker_len: usize,
+        start: usize,
+    ) -> Option<MultipartDelimiter> {
+        if start != 0 && body[start - 1] != b'\n' {
+            return None;
+        }
+
+        let mut cursor = start.checked_add(marker_len)?;
+        let closing = body.get(cursor..cursor + 2) == Some(b"--");
+        if closing {
+            cursor += 2;
+        }
+
+        while matches!(body.get(cursor), Some(b' ' | b'\t')) {
+            cursor += 1;
+        }
+
+        let content_start = if body.get(cursor..cursor + 2) == Some(b"\r\n") {
+            cursor + 2
+        } else if body.get(cursor) == Some(&b'\n') {
+            cursor + 1
+        } else if cursor == body.len() {
+            cursor
+        } else {
+            // Reject boundary-prefix collisions and non-whitespace suffixes.
+            return None;
+        };
+
+        Some(MultipartDelimiter {
+            start,
+            content_start,
+            closing,
+        })
     }
 
     fn apply_decoded_part(
@@ -607,12 +662,14 @@ impl MimeParser {
         content_disposition: &str,
         is_attachment: bool,
         decoded: Vec<u8>,
-    ) {
+    ) -> Result<(), MimeError> {
         if is_attachment {
             if content.attachments.len() >= MAX_ATTACHMENTS {
-                warn!("AttachmentCount超限，hops");
-                return;
+                warn!("AttachmentCount超限");
+                return Err(MimeError::TooManyParts);
             }
+
+            Self::ensure_attachment_budget(content, decoded.len())?;
 
             let filename = Self::extract_filename(content_disposition)
                 .or_else(|| Self::extract_filename(part_content_type))
@@ -654,7 +711,7 @@ impl MimeParser {
                 );
             }
 
-            return;
+            return Ok(());
         }
 
         if ascii_contains_ci(part_content_type, "text/plain") && content.body_text.is_none() {
@@ -662,6 +719,33 @@ impl MimeParser {
         } else if ascii_contains_ci(part_content_type, "text/html") && content.body_html.is_none() {
             content.body_html = Some(decode_charset(&decoded, part_content_type));
         }
+        Ok(())
+    }
+
+    fn ensure_attachment_budget(
+        content: &EmailContent,
+        additional_bytes: usize,
+    ) -> Result<(), MimeError> {
+        let current_bytes = content
+            .attachments
+            .iter()
+            .try_fold(0usize, |total, attachment| {
+                total.checked_add(attachment.size)
+            })
+            .ok_or(MimeError::AttachmentBudgetExceeded)?;
+        let total_bytes = current_bytes
+            .checked_add(additional_bytes)
+            .ok_or(MimeError::AttachmentBudgetExceeded)?;
+        if total_bytes > MAX_TOTAL_ATTACHMENT_DECODED_BYTES {
+            warn!(
+                current_bytes,
+                additional_bytes,
+                limit_bytes = MAX_TOTAL_ATTACHMENT_DECODED_BYTES,
+                "decoded attachment byte budget exceeded"
+            );
+            return Err(MimeError::AttachmentBudgetExceeded);
+        }
+        Ok(())
     }
 
     /// Extract boundary Parameter
@@ -676,12 +760,43 @@ impl MimeParser {
         })?;
 
         let rest = &content_type[pos + 9..];
-        let boundary = if let Some(stripped) = rest.strip_prefix('"') {
-            stripped.split('"').next()?
+        let (boundary, quoted) = if let Some(stripped) = rest.strip_prefix('"') {
+            (stripped.split_once('"')?.0, true)
         } else {
-            rest.split(';').next()?.split_whitespace().next()?
+            (rest.split(';').next()?.trim(), false)
         };
+        if !Self::is_valid_boundary(boundary)
+            || (!quoted && boundary.bytes().any(|byte| byte.is_ascii_whitespace()))
+        {
+            return None;
+        }
         Some(boundary.to_string())
+    }
+
+    /// RFC 2046 boundary values are 1-70 ASCII `bchars`, with no trailing space.
+    fn is_valid_boundary(boundary: &str) -> bool {
+        !boundary.is_empty()
+            && boundary.len() <= 70
+            && !boundary.ends_with(' ')
+            && boundary.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric()
+                    || matches!(
+                        byte,
+                        b'\''
+                            | b'('
+                            | b')'
+                            | b'+'
+                            | b'_'
+                            | b','
+                            | b'-'
+                            | b'.'
+                            | b'/'
+                            | b':'
+                            | b'='
+                            | b'?'
+                            | b' '
+                    )
+            })
     }
 
     /// ExtractFileName (Performance notes: 1ofsizewrite)
@@ -1200,6 +1315,16 @@ pub enum MimeError {
     InvalidUtf8,
     /// boundary
     NoBoundary,
+    /// Declared boundary never appears in the body.
+    BoundaryNotFound,
+    /// Multipart content has no terminating closing boundary.
+    MissingClosingBoundary,
+    /// Multipart nesting exceeded the parser safety limit.
+    MultipartTooDeep,
+    /// Multipart part count exceeded the parser safety limit.
+    TooManyParts,
+    /// Cumulative decoded attachment bytes exceeded the per-message safety limit.
+    AttachmentBudgetExceeded,
     /// Base64 DecodeError
     Base64DecodeError,
     /// Quoted-Printable DecodeError
@@ -1209,6 +1334,30 @@ pub enum MimeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, Instant};
+
+    fn nested_multipart_message(depth: usize) -> Vec<u8> {
+        assert!(depth > 0);
+        let mut email = b"Content-Type: multipart/mixed; boundary=BOUND_0\r\n\r\n".to_vec();
+        for level in 0..depth {
+            email.extend_from_slice(format!("--BOUND_{level}\r\n").as_bytes());
+            if level + 1 < depth {
+                email.extend_from_slice(
+                    format!(
+                        "Content-Type: multipart/mixed; boundary=BOUND_{}\r\n\r\n",
+                        level + 1
+                    )
+                    .as_bytes(),
+                );
+            } else {
+                email.extend_from_slice(b"Content-Type: text/plain\r\n\r\nstable\r\n");
+            }
+        }
+        for level in (0..depth).rev() {
+            email.extend_from_slice(format!("--BOUND_{level}--\r\n").as_bytes());
+        }
+        email
+    }
 
     #[test]
     fn test_simple_email() {
@@ -1255,6 +1404,198 @@ mod tests {
         let ct = "multipart/mixed; boundary=\"----=_Part_123\"";
         let boundary = MimeParser::extract_boundary(ct);
         assert_eq!(boundary, Some("----=_Part_123".to_string()));
+    }
+
+    #[test]
+    fn test_rejects_empty_oversized_and_illegal_boundaries() {
+        assert_eq!(
+            MimeParser::extract_boundary("multipart/mixed; boundary=\"\""),
+            None
+        );
+        assert_eq!(
+            MimeParser::extract_boundary(&format!(
+                "multipart/mixed; boundary=\"{}\"",
+                "a".repeat(71)
+            )),
+            None
+        );
+        assert_eq!(
+            MimeParser::extract_boundary("multipart/mixed; boundary=\"bad[boundary\""),
+            None
+        );
+        assert_eq!(
+            MimeParser::extract_boundary("multipart/mixed; boundary=\"边界\""),
+            None
+        );
+        assert_eq!(
+            MimeParser::extract_boundary("multipart/mixed; boundary=\"valid interior space\""),
+            Some("valid interior space".to_string())
+        );
+    }
+
+    #[test]
+    fn test_multipart_stops_at_total_part_budget() {
+        let mut email = b"Content-Type: multipart/mixed; boundary=BOUND\r\n\r\n".to_vec();
+        for _ in 0..=MAX_TOTAL_PARTS {
+            email.extend_from_slice(b"--BOUND\r\nContent-Type: text/plain\r\n\r\nx\r\n");
+        }
+        email.extend_from_slice(b"--BOUND--\r\n");
+
+        let error = MimeParser::new()
+            .parse(&email)
+            .expect_err("part budget must stop multipart parsing");
+        assert_eq!(error, MimeError::TooManyParts);
+    }
+
+    #[test]
+    fn test_boundary_substring_flood_does_not_create_parts() {
+        let mut email = b"Content-Type: multipart/mixed; boundary=BOUND\r\n\r\n".to_vec();
+        for _ in 0..20_000 {
+            email.extend_from_slice(b"payload--BOUNDsuffix\r\n");
+        }
+
+        let error = MimeParser::new()
+            .parse(&email)
+            .expect_err("boundary substrings are not delimiter lines");
+        assert_eq!(error, MimeError::BoundaryNotFound);
+    }
+
+    #[test]
+    fn test_multipart_depth_limit_is_stable_and_parser_remains_reusable() {
+        let parser = MimeParser::new();
+        let error = parser
+            .parse(&nested_multipart_message(MAX_MULTIPART_DEPTH + 1))
+            .expect_err("nesting over the limit must fail");
+        assert_eq!(error, MimeError::MultipartTooDeep);
+
+        for _ in 0..100 {
+            let content = parser
+                .parse(b"Content-Type: text/plain\r\n\r\nstill healthy")
+                .expect("an adversarial error must not poison parser reuse");
+            assert_eq!(content.body_text.as_deref(), Some("still healthy"));
+        }
+    }
+
+    #[test]
+    fn perf_boundary_substring_flood_remains_linear_and_bounded() {
+        let mut email = b"Content-Type: multipart/mixed; boundary=BOUND\r\n\r\n".to_vec();
+        for _ in 0..250_000 {
+            email.extend_from_slice(b"x--BOUND-not-a-delimiter\r\n");
+        }
+        let started = Instant::now();
+
+        let error = MimeParser::new()
+            .parse(&email)
+            .expect_err("no valid boundary delimiter exists");
+        assert_eq!(error, MimeError::BoundaryNotFound);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "streamed boundary scan exceeded the generous performance ceiling"
+        );
+    }
+
+    #[test]
+    fn test_attachment_budget_is_cumulative_without_allocating_payload() {
+        let mut content = EmailContent::new();
+        content.attachments.push(EmailAttachment {
+            filename: "existing.bin".to_string(),
+            content_type: "application/octet-stream".to_string(),
+            size: MAX_TOTAL_ATTACHMENT_DECODED_BYTES,
+            hash: "hash".to_string(),
+            content_base64: None,
+        });
+
+        assert_eq!(
+            MimeParser::ensure_attachment_budget(&content, 1),
+            Err(MimeError::AttachmentBudgetExceeded)
+        );
+    }
+
+    #[test]
+    fn test_declared_multipart_boundary_must_exist() {
+        let parser = MimeParser::new();
+        let email = b"From: sender@example.com\r\n\
+                     Content-Type: multipart/mixed; boundary=\"BOUND\"\r\n\
+                     \r\n\
+                     This body never contains the declared delimiter.\r\n";
+
+        let err = parser
+            .parse(email)
+            .expect_err("missing boundary should fail");
+
+        assert_eq!(err, MimeError::BoundaryNotFound);
+    }
+
+    #[test]
+    fn test_multipart_boundary_must_be_a_complete_delimiter_line() {
+        let parser = MimeParser::new();
+        let email = b"Content-Type: multipart/mixed; boundary=BOUND\r\n\
+\r\n\
+--BOUND\r\n\
+Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+This line contains prefix--BOUNDsuffix and must remain intact.\r\n\
+--BOUND--\r\n";
+
+        let content = parser.parse(email).unwrap();
+
+        assert!(
+            content
+                .body_text
+                .as_deref()
+                .is_some_and(|body| body.contains("prefix--BOUNDsuffix"))
+        );
+    }
+
+    #[test]
+    fn test_multipart_boundary_prefix_collision_is_rejected() {
+        let parser = MimeParser::new();
+        let email = b"Content-Type: multipart/mixed; boundary=BOUND\r\n\
+\r\n\
+--BOUNDARY\r\n\
+Content-Type: text/plain\r\n\
+\r\n\
+not a BOUND part\r\n\
+--BOUNDARY--\r\n";
+
+        let err = parser
+            .parse(email)
+            .expect_err("a longer delimiter must not match a boundary prefix");
+
+        assert_eq!(err, MimeError::BoundaryNotFound);
+    }
+
+    #[test]
+    fn test_multipart_requires_closing_delimiter() {
+        let parser = MimeParser::new();
+        let email = b"Content-Type: multipart/mixed; boundary=BOUND\r\n\
+\r\n\
+--BOUND\r\n\
+Content-Type: text/plain\r\n\
+\r\n\
+unterminated body\r\n";
+
+        let err = parser
+            .parse(email)
+            .expect_err("unterminated multipart content must not be marked complete");
+
+        assert_eq!(err, MimeError::MissingClosingBoundary);
+    }
+
+    #[test]
+    fn test_multipart_accepts_transport_padding_after_boundary() {
+        let parser = MimeParser::new();
+        let email = b"Content-Type: multipart/mixed; boundary=BOUND\r\n\
+\r\n\
+--BOUND \t\r\n\
+Content-Type: text/plain\r\n\
+\r\n\
+body\r\n\
+--BOUND-- \t\r\n";
+
+        let content = parser.parse(email).unwrap();
+
+        assert_eq!(content.body_text.as_deref(), Some("body\r\n"));
     }
 
     #[test]

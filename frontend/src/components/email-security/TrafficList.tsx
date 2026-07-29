@@ -432,6 +432,7 @@ export default function TrafficList() {
   const [totalPages, setTotalPages] = useState(1)
   const [loading, setLoading] = useState(true) // Show the skeleton screen on first load
   const [fetching, setFetching] = useState(false) // Loading indicator for pagination/filter changes
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [total, setTotal] = useState(0)
   const [pageSize, setPageSize] = useState(() => readNumberParam(initialParams, 'page_size', 20, [10, 20, 50]))
   const [jumpInput, setJumpInput] = useState('')
@@ -551,11 +552,15 @@ export default function TrafficList() {
     try {
       const qs = buildQueryString(pageNum)
       const res = await apiFetch(`/api/sessions?${qs}`, { signal: controller.signal })
+      if (!res.ok) throw new Error(t('emailSecurity.sessionListLoadFailed'))
       const data: ApiResponse<PaginatedResponse<EmailSession>> = await res.json()
+      if (!data.success || !data.data) throw new Error(data.error || t('emailSecurity.sessionListLoadFailed'))
       applyPageData(data, pageNum, false)
+      setLoadError(null)
     } catch (e: unknown) {
       if (e instanceof DOMException && e.name === 'AbortError') return
       console.error('Failed to fetch sessions:', e)
+      setLoadError(e instanceof Error && e.message ? e.message : t('emailSecurity.sessionListLoadFailed'))
     } finally {
       if (!controller.signal.aborted) {
         setLoading(false)
@@ -564,7 +569,7 @@ export default function TrafficList() {
         fetchingPageRef.current = false
       }
     }
-  }, [applyPageData, buildQueryString])
+  }, [applyPageData, buildQueryString, t])
 
   const refreshPage = useCallback(async (pageNum: number) => {
     if (fetchingPageRef.current || refreshingRef.current) return
@@ -577,20 +582,24 @@ export default function TrafficList() {
     try {
       const qs = buildQueryString(pageNum, true)
       const res = await apiFetch(`/api/sessions?${qs}`, { signal: controller.signal })
+      if (!res.ok) throw new Error(t('emailSecurity.sessionListRefreshFailed'))
       const data: ApiResponse<PaginatedResponse<EmailSession>> = await res.json()
+      if (!data.success || !data.data) throw new Error(data.error || t('emailSecurity.sessionListRefreshFailed'))
       if (!controller.signal.aborted) {
         applyPageData(data, pageNum, true)
+        setLoadError(null)
       }
     } catch (e: unknown) {
       if (e instanceof DOMException && e.name === 'AbortError') return
       console.error('Failed to refresh sessions:', e)
+      setLoadError(e instanceof Error && e.message ? e.message : t('emailSecurity.sessionListRefreshFailed'))
     } finally {
       if (refreshAbortRef.current === controller) {
         refreshAbortRef.current = null
       }
       refreshingRef.current = false
     }
-  }, [applyPageData, buildQueryString])
+  }, [applyPageData, buildQueryString, t])
 
   // ========================================
   // Effect: Initial load & filter changes (reset to page 1)
@@ -897,6 +906,14 @@ export default function TrafficList() {
             </table>
           </div>
         )
+      ) : loadError ? (
+        <div className="empty-state" role="alert" aria-live="polite">
+          <h3>{t('emailSecurity.loadFailedTitle')}</h3>
+          <p>{loadError}</p>
+          <button className="view-all-btn" type="button" onClick={() => { void fetchPage(pageRef.current) }}>
+            {t('emailSecurity.retry')}
+          </button>
+        </div>
       ) : displaySessions.length === 0 ? (
         <div className="empty-state">
           <div className="empty-icon">

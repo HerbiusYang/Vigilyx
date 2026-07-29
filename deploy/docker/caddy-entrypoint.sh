@@ -15,6 +15,7 @@ target_caddyfile="${CADDYFILE_TARGET:-/etc/caddy/Caddyfile}"
 email="${CADDY_ACME_EMAIL:-}"
 cert_file="${VIGILYX_TLS_CERT_FILE:-/data/vigilyx.crt}"
 key_file="${VIGILYX_TLS_KEY_FILE:-/data/vigilyx.key}"
+access_log="${CADDY_ACCESS_LOG:-true}"
 
 # -- Check whether the target is an IP or localhost --
 is_ip_or_localhost() {
@@ -73,6 +74,18 @@ write_security_headers() {
     echo "    }"
 }
 
+write_access_log() {
+    case "$(printf '%s' "$access_log" | tr '[:upper:]' '[:lower:]')" in
+        1|true|yes|on)
+            echo "    log {"
+            echo "        output stdout"
+            echo "        format json"
+            echo "    }"
+            echo
+            ;;
+    esac
+}
+
 # -- Generate the Caddyfile --
 case "$tls_mode" in
     auto)
@@ -84,6 +97,7 @@ case "$tls_mode" in
             echo "}"
             echo
             printf "%s {\n" "$domain"
+            write_access_log
             echo "    reverse_proxy vigilyx:8088"
             echo
             write_security_headers
@@ -106,12 +120,14 @@ case "$tls_mode" in
             # IP addresses don't use TLS SNI, so Caddy can't match by IP.
             echo ":443 {"
             printf "    tls %s/cert.pem %s/key.pem\n" "$cert_dir" "$cert_dir"
+            write_access_log
             echo "    reverse_proxy vigilyx:8088"
             echo
             write_security_headers
             echo "}"
             echo
             echo ":80 {"
+            write_access_log
             echo "    redir https://{host}{uri} permanent"
             echo "}"
         } > "$target_caddyfile"
@@ -124,6 +140,7 @@ case "$tls_mode" in
         {
             printf "%s {\n" "$domain"
             printf "    tls %s %s\n" "$cert_file" "$key_file"
+            write_access_log
             echo "    reverse_proxy vigilyx:8088"
             echo
             write_security_headers

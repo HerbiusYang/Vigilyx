@@ -5,6 +5,11 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[features]
+default = []
+# Explicit opt-in for tests that require a disposable PostgreSQL service.
+infra-tests = []
+
 [[bin]]
 name = "vigilyx-engine"
 path = "src/bin/vigilyx_engine.rs"

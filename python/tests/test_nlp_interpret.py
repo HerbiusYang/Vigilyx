@@ -147,6 +147,11 @@ class TestInterpret2Class:
         result = manager._interpret_2class(probs, "test email", 20)
         assert result.threat_level == "high"
 
+    def test_just_below_065_remains_medium(self, manager, torch):
+        probs = torch.tensor([0.35001, 0.64999])
+        result = manager._interpret_2class(probs, "test email", 20)
+        assert result.threat_level == "medium"
+
     def test_boundary_at_040(self, manager, torch):
         probs = torch.tensor([0.60, 0.40])
         result = manager._interpret_2class(probs, "test email", 20)

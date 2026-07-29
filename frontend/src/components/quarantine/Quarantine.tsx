@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { Fragment, useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { apiFetch } from '../../utils/api'
@@ -28,6 +28,29 @@ interface QuarantineStats {
   total: number
 }
 
+interface QuarantinePreview {
+  body_text: string | null
+  body_html_source: string | null
+  attachments: Array<{
+    filename: string
+    content_type: string
+    size: number
+    hash: string
+  }>
+  parse_warning: string | null
+}
+
+type PendingAction = { id: string; kind: 'release' | 'delete' } | null
+
+async function getApiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const data = await response.json() as { error?: string; message?: string }
+    return data.error || data.message || fallback
+  } catch {
+    return fallback
+  }
+}
+
 const THREAT_COLORS: Record<string, string> = {
   safe: 'var(--accent-emerald)',
   low: 'var(--accent-blue)',
@@ -45,6 +68,13 @@ export default function Quarantine() {
   const [entries, setEntries] = useState<QuarantineEntry[]>([])
   const [stats, setStats] = useState<QuarantineStats | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [pendingAction, setPendingAction] = useState<PendingAction>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [previewById, setPreviewById] = useState<Record<string, QuarantinePreview>>({})
+  const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<string>('quarantined')
   const [page, setPage] = useState(0)
   const limit = 30
@@ -62,7 +92,44 @@ export default function Quarantine() {
       .catch(() => {})
   }, [])
 
-  // Mirror mode - show the guidance page
+  const fetchData = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const params = new URLSearchParams({ limit: String(limit), offset: String(page * limit) })
+      if (statusFilter) params.set('status', statusFilter)
+
+      const [listRes, statsRes] = await Promise.all([
+        apiFetch(`/api/security/quarantine?${params}`),
+        apiFetch('/api/security/quarantine/stats'),
+      ])
+      if (!listRes.ok) throw new Error(await getApiError(listRes, t('quarantine.loadFailed')))
+      if (!statsRes.ok) throw new Error(await getApiError(statsRes, t('quarantine.loadFailed')))
+
+      const [listData, statsData] = await Promise.all([listRes.json(), statsRes.json()])
+      if (!listData.success || !listData.data) throw new Error(listData.error || t('quarantine.loadFailed'))
+      if (!statsData.success || !statsData.data) throw new Error(statsData.error || t('quarantine.loadFailed'))
+
+      setEntries(listData.data.items || [])
+      setStats(statsData.data)
+      setActionError(null)
+      setExpandedId(null)
+      setPreviewById({})
+      setPreviewError(null)
+    } catch (e) {
+      console.error('Failed to fetch quarantine data:', e)
+      setError(e instanceof Error && e.message ? e.message : t('quarantine.loadFailed'))
+    } finally {
+      setLoading(false)
+    }
+  }, [statusFilter, page, t])
+
+  useEffect(() => {
+    if (deployMode === 'mta') fetchData()
+  }, [deployMode, fetchData])
+
+  // Mirror mode - show the guidance page. Keep this return after all hooks so
+  // an asynchronous deployment-mode refresh cannot change hook ordering.
   if (deployMode !== 'mta') {
     return (
       <div style={{ padding: '24px', maxWidth: 1400, margin: '0 auto' }}>
@@ -101,54 +168,81 @@ export default function Quarantine() {
     )
   }
 
-  const fetchData = useCallback(async () => {
-    setLoading(true)
+  const handleRelease = async (entry: QuarantineEntry) => {
+    if (pendingAction) return
+    if (!confirm(t('quarantine.confirmRelease', {
+      subject: entry.subject || t('quarantine.noSubject'),
+      sender: entry.mail_from || '<>',
+      reason: entry.reason || t('quarantine.reasonUnavailable'),
+    }))) return
+    setActionError(null)
+    setPendingAction({ id: entry.id, kind: 'release' })
     try {
-      const params = new URLSearchParams({ limit: String(limit), offset: String(page * limit) })
-      if (statusFilter) params.set('status', statusFilter)
-
-      const [listRes, statsRes] = await Promise.all([
-        apiFetch(`/api/security/quarantine?${params}`),
-        apiFetch('/api/security/quarantine/stats'),
-      ])
-      if (listRes.ok) {
-        const data = await listRes.json()
-        setEntries(data.data?.items || [])
-      }
-      if (statsRes.ok) {
-        const data = await statsRes.json()
-        setStats(data.data || null)
-      }
-    } catch (e) {
-      console.error('Failed to fetch quarantine data:', e)
-    } finally {
-      setLoading(false)
-    }
-  }, [statusFilter, page])
-
-  useEffect(() => { fetchData() }, [fetchData])
-
-  const handleRelease = async (id: string) => {
-    if (!confirm(t('quarantine.confirmRelease'))) return
-    try {
-      const res = await apiFetch(`/api/security/quarantine/${id}/release`, {
+      const res = await apiFetch(`/api/security/quarantine/${entry.id}/release`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ released_by: 'admin' }),
+        // The API derives the operator from the authenticated session.
+        body: JSON.stringify({}),
       })
-      if (res.ok) fetchData()
+      if (!res.ok) throw new Error(await getApiError(res, t('quarantine.releaseFailed')))
+      await fetchData()
     } catch (e) {
       console.error('Release failed:', e)
+      setActionError(e instanceof Error && e.message ? e.message : t('quarantine.releaseFailed'))
+    } finally {
+      setPendingAction(null)
     }
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm(t('quarantine.confirmDelete'))) return
+  const handleDelete = async (entry: QuarantineEntry) => {
+    if (pendingAction) return
+    if (!confirm(t('quarantine.confirmDelete', {
+      subject: entry.subject || t('quarantine.noSubject'),
+      sender: entry.mail_from || '<>',
+    }))) return
+    setActionError(null)
+    setPendingAction({ id: entry.id, kind: 'delete' })
     try {
-      const res = await apiFetch(`/api/security/quarantine/${id}`, { method: 'DELETE' })
-      if (res.ok) fetchData()
+      const res = await apiFetch(`/api/security/quarantine/${entry.id}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error(await getApiError(res, t('quarantine.deleteFailed')))
+      await fetchData()
     } catch (e) {
       console.error('Delete failed:', e)
+      setActionError(e instanceof Error && e.message ? e.message : t('quarantine.deleteFailed'))
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  const handlePreview = async (entry: QuarantineEntry) => {
+    if (expandedId === entry.id) {
+      setExpandedId(null)
+      return
+    }
+
+    setExpandedId(entry.id)
+    setPreviewError(null)
+    if (previewById[entry.id]) return
+
+    setPreviewLoadingId(entry.id)
+    try {
+      const response = await apiFetch(`/api/security/quarantine/${entry.id}/preview`)
+      if (!response.ok) {
+        throw new Error(await getApiError(response, t('quarantine.previewFailed')))
+      }
+      const data = await response.json()
+      if (!data.success || !data.data) {
+        throw new Error(data.error || t('quarantine.previewFailed'))
+      }
+      setPreviewById(current => ({ ...current, [entry.id]: data.data }))
+    } catch (previewFailure) {
+      setPreviewError(
+        previewFailure instanceof Error && previewFailure.message
+          ? previewFailure.message
+          : t('quarantine.previewFailed')
+      )
+    } finally {
+      setPreviewLoadingId(null)
     }
   }
 
@@ -163,6 +257,7 @@ export default function Quarantine() {
         </h2>
         <button
           onClick={fetchData}
+          disabled={loading || pendingAction !== null}
           style={{
             padding: '6px 14px', borderRadius: 6, border: '1px solid var(--border)',
             background: 'var(--bg-secondary)', cursor: 'pointer', fontSize: 13,
@@ -171,6 +266,26 @@ export default function Quarantine() {
           {t('quarantine.refresh')}
         </button>
       </div>
+
+      {(error || actionError) && (
+        <div
+          role="alert"
+          aria-live="polite"
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+            padding: '10px 14px', marginBottom: 16, borderRadius: 8,
+            border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.08)',
+            color: 'var(--accent-red, #ef4444)', fontSize: 13,
+          }}
+        >
+          <span>{actionError || error}</span>
+          {error && (
+            <button type="button" onClick={fetchData} disabled={loading}>
+              {t('quarantine.retry')}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Stat cards */}
       {stats && (
@@ -219,6 +334,10 @@ export default function Quarantine() {
       {/* List */}
       {loading ? (
         <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>{t('quarantine.loading')}</div>
+      ) : error && entries.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>
+          {t('quarantine.unavailable')}
+        </div>
       ) : entries.length === 0 ? (
         <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-secondary)' }}>
           {t('quarantine.empty')}
@@ -240,7 +359,8 @@ export default function Quarantine() {
             </thead>
             <tbody>
               {entries.map(entry => (
-                <tr key={entry.id} style={{ borderBottom: '1px solid var(--border-light, var(--border))' }}>
+                <Fragment key={entry.id}>
+                <tr style={{ borderBottom: '1px solid var(--border-light, var(--border))' }}>
                   <td style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}>
                     {formatTimeFull(entry.created_at)}
                   </td>
@@ -251,7 +371,23 @@ export default function Quarantine() {
                     {entry.rcpt_to.join(', ')}
                   </td>
                   <td style={{ padding: '8px 12px', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {entry.subject || '(no subject)'}
+                    <div>{entry.subject || t('quarantine.noSubject')}</div>
+                    <div style={{ marginTop: 4, color: 'var(--text-secondary)', fontSize: 11, whiteSpace: 'normal' }}>
+                      <strong>{t('quarantine.reason')}:</strong>{' '}
+                      {entry.reason || t('quarantine.reasonUnavailable')}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => { void handlePreview(entry) }}
+                      aria-expanded={expandedId === entry.id}
+                      aria-controls={`quarantine-preview-${entry.id}`}
+                      style={{
+                        marginTop: 4, padding: 0, border: 0, background: 'transparent',
+                        color: 'var(--accent-primary)', cursor: 'pointer', fontSize: 11,
+                      }}
+                    >
+                      {expandedId === entry.id ? t('quarantine.hidePreview') : t('quarantine.preview')}
+                    </button>
                   </td>
                   <td style={{ padding: '8px 12px' }}>
                     <span style={{
@@ -296,29 +432,100 @@ export default function Quarantine() {
                     {entry.status === 'quarantined' && (
                       <>
                         <button
-                          onClick={() => handleRelease(entry.id)}
+                          onClick={() => handleRelease(entry)}
+                          disabled={pendingAction !== null || !previewById[entry.id]}
+                          aria-busy={pendingAction?.id === entry.id && pendingAction.kind === 'release'}
+                          title={!previewById[entry.id] ? t('quarantine.reviewBeforeRelease') : undefined}
                           style={{
                             padding: '3px 10px', borderRadius: 4, fontSize: 12, cursor: 'pointer',
                             border: '1px solid var(--accent-emerald)', background: 'transparent',
                             color: 'var(--accent-emerald)', marginRight: 6,
                           }}
                         >
-                          {t('quarantine.release')}
+                          {pendingAction?.id === entry.id && pendingAction.kind === 'release'
+                            ? t('quarantine.releasingAction')
+                            : t('quarantine.release')}
                         </button>
                         <button
-                          onClick={() => handleDelete(entry.id)}
+                          onClick={() => handleDelete(entry)}
+                          disabled={pendingAction !== null}
+                          aria-busy={pendingAction?.id === entry.id && pendingAction.kind === 'delete'}
                           style={{
                             padding: '3px 10px', borderRadius: 4, fontSize: 12, cursor: 'pointer',
                             border: '1px solid var(--accent-red, #ef4444)', background: 'transparent',
                             color: 'var(--accent-red, #ef4444)',
                           }}
                         >
-                          {t('quarantine.delete')}
+                          {pendingAction?.id === entry.id && pendingAction.kind === 'delete'
+                            ? t('quarantine.deletingAction')
+                            : t('quarantine.delete')}
                         </button>
                       </>
                     )}
                   </td>
                 </tr>
+                {expandedId === entry.id && (
+                  <tr id={`quarantine-preview-${entry.id}`}>
+                    <td colSpan={8} style={{ padding: 0 }}>
+                      <div style={{
+                        padding: 16, margin: '0 12px 12px', borderRadius: 8,
+                        border: '1px solid var(--border)', background: 'var(--bg-secondary)',
+                      }}>
+                        {previewLoadingId === entry.id ? (
+                          <div role="status" style={{ color: 'var(--text-secondary)' }}>
+                            {t('quarantine.previewLoading')}
+                          </div>
+                        ) : previewError ? (
+                          <div role="alert" style={{ color: 'var(--accent-red, #ef4444)' }}>
+                            {previewError}
+                          </div>
+                        ) : previewById[entry.id] ? (
+                          <>
+                            {previewById[entry.id].parse_warning && (
+                              <div role="alert" style={{ marginBottom: 12, color: 'var(--accent-yellow)' }}>
+                                {t('quarantine.previewParseWarning')}
+                              </div>
+                            )}
+                            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 8 }}>
+                              <strong>{t('quarantine.reason')}:</strong>{' '}
+                              {entry.reason || t('quarantine.reasonUnavailable')}
+                            </div>
+                            <pre style={{
+                              margin: 0, padding: 12, maxHeight: 280, overflow: 'auto',
+                              whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 12,
+                              borderRadius: 6, background: 'var(--bg-primary)', color: 'var(--text-primary)',
+                            }}>
+                              {previewById[entry.id].body_text
+                                || previewById[entry.id].body_html_source
+                                || t('quarantine.previewBodyUnavailable')}
+                            </pre>
+                            <div style={{ marginTop: 12, fontSize: 12 }}>
+                              <strong>{t('quarantine.attachments')}:</strong>{' '}
+                              {previewById[entry.id].attachments.length === 0
+                                ? t('quarantine.noAttachments')
+                                : previewById[entry.id].attachments.map(attachment => (
+                                    <span key={`${attachment.hash}:${attachment.filename}`} style={{ display: 'block', marginTop: 4 }}>
+                                      {attachment.filename} · {attachment.content_type} · {formatSize(attachment.size)}
+                                    </span>
+                                  ))}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/emails/${entry.session_id}`)}
+                              style={{
+                                marginTop: 12, padding: 0, border: 0, background: 'transparent',
+                                color: 'var(--accent-primary)', cursor: 'pointer', fontSize: 12,
+                              }}
+                            >
+                              {t('quarantine.viewEvidence')}
+                            </button>
+                          </>
+                        ) : null}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -326,10 +533,10 @@ export default function Quarantine() {
       )}
 
       {/* Pagination */}
-      {entries.length >= limit && (
+      {(page > 0 || entries.length >= limit) && (
         <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 16 }}>
           <button
-            disabled={page === 0}
+            disabled={page === 0 || loading}
             onClick={() => setPage(p => Math.max(0, p - 1))}
             style={{ padding: '4px 12px', borderRadius: 4, border: '1px solid var(--border)', cursor: 'pointer' }}
           >
@@ -340,6 +547,7 @@ export default function Quarantine() {
           </span>
           <button
             onClick={() => setPage(p => p + 1)}
+            disabled={entries.length < limit || loading}
             style={{ padding: '4px 12px', borderRadius: 4, border: '1px solid var(--border)', cursor: 'pointer' }}
           >
             {t('quarantine.nextPage')}
@@ -347,12 +555,6 @@ export default function Quarantine() {
         </div>
       )}
 
-      {/* Quarantine reason */}
-      {entries.length > 0 && entries.some(e => e.reason) && (
-        <div style={{ marginTop: 20, fontSize: 12, color: 'var(--text-secondary)' }}>
-          <strong>{t('quarantine.reasonExample')}</strong> {entries.find(e => e.reason)?.reason}
-        </div>
-      )}
     </div>
   )
 }

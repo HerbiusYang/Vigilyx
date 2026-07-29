@@ -110,18 +110,34 @@ export default function Login({ onLogin }: LoginProps) {
       const data = await res.json()
       if (data.success) {
         // Log in again after a successful password change to obtain a new cookie (the old tv cookie is already invalid)
-        const loginRes = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ username, password: newPassword }),
-        })
-        const loginData: LoginResponse = await loginRes.json()
-        if (loginData.success) {
-          onLogin()
-        } else {
-          // Even if re-login fails, still notify the parent layer (the old cookie may still be valid)
-          onLogin()
+        try {
+          const loginRes = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ username, password: newPassword }),
+          })
+          const loginData: LoginResponse = await loginRes.json()
+          if (loginData.success) {
+            onLogin()
+            return
+          }
+
+          // The password change invalidates the previous cookie. Never enter the
+          // application unless the new credentials have produced a fresh session.
+          setMustChange(false)
+          setPassword('')
+          setNewPassword('')
+          setConfirmPassword('')
+          setError(loginData.error || t('auth.reloginFailed'))
+        } catch {
+          // A network failure after the password was changed is not a failed
+          // password change. Return to login so the user can use the new password.
+          setMustChange(false)
+          setPassword('')
+          setNewPassword('')
+          setConfirmPassword('')
+          setError(t('auth.reloginFailed'))
         }
       } else {
         setChangeError(data.error || t('auth.changePasswordFailed'))
@@ -155,10 +171,14 @@ export default function Login({ onLogin }: LoginProps) {
           </p>
 
           <form onSubmit={handleChangePassword} className="grok-form">
-            {changeError && <div className="grok-error">{changeError}</div>}
+            {changeError && <div className="grok-error" role="alert" aria-live="polite">{changeError}</div>}
 
             <div className="grok-input-group">
+              <label className="visually-hidden" htmlFor="vigilyx-new-password">
+                {t('auth.newPasswordPlaceholder')}
+              </label>
               <input
+                id="vigilyx-new-password"
                 type="password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
@@ -166,11 +186,21 @@ export default function Login({ onLogin }: LoginProps) {
                 required
                 disabled={changeLoading}
                 autoComplete="new-password"
+                aria-describedby="vigilyx-password-policy vigilyx-password-strength"
                 className="grok-input"
               />
-              <span className="grok-hint" style={{ color: 'rgba(255,255,255,0.72)' }}>{getPasswordPolicyHint()}</span>
+              <span id="vigilyx-password-policy" className="grok-hint" style={{ color: 'rgba(255,255,255,0.72)' }}>{getPasswordPolicyHint()}</span>
               {pwStrength >= 0 && (
-                <div className="grok-pw-bar">
+                <div
+                  id="vigilyx-password-strength"
+                  className="grok-pw-bar"
+                  role="progressbar"
+                  aria-label={t('auth.passwordStrength')}
+                  aria-valuemin={0}
+                  aria-valuemax={3}
+                  aria-valuenow={pwStrength + 1}
+                  aria-valuetext={pwStrengthLabel[pwStrength]}
+                >
                   <div className="grok-pw-fill" style={{
                     width: `${(pwStrength + 1) * 33.33}%`,
                     background: pwStrengthColor[pwStrength],
@@ -183,7 +213,11 @@ export default function Login({ onLogin }: LoginProps) {
             </div>
 
             <div className="grok-input-group">
+              <label className="visually-hidden" htmlFor="vigilyx-confirm-password">
+                {t('auth.confirmPasswordPlaceholder')}
+              </label>
               <input
+                id="vigilyx-confirm-password"
                 type="password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
@@ -191,10 +225,12 @@ export default function Login({ onLogin }: LoginProps) {
                 required
                 disabled={changeLoading}
                 autoComplete="new-password"
+                aria-invalid={Boolean(confirmPassword && newPassword && confirmPassword !== newPassword)}
+                aria-describedby="vigilyx-password-mismatch"
                 className="grok-input"
               />
               {confirmPassword && newPassword && confirmPassword !== newPassword && (
-                <span className="grok-hint" style={{ color: '#ef4444' }}>{t('auth.passwordMismatchHint')}</span>
+                <span id="vigilyx-password-mismatch" className="grok-hint" style={{ color: '#ef4444' }}>{t('auth.passwordMismatchHint')}</span>
               )}
             </div>
 
@@ -231,10 +267,12 @@ export default function Login({ onLogin }: LoginProps) {
         <p className="grok-subtitle-cn">{t('auth.subtitleCn')}</p>
 
         <form onSubmit={handleSubmit} className="grok-form">
-          {error && <div className="grok-error">{error}</div>}
+          {error && <div className="grok-error" role="alert" aria-live="polite">{error}</div>}
 
           <div className="grok-input-group">
+            <label className="visually-hidden" htmlFor="vigilyx-username">{t('auth.username')}</label>
             <input
+              id="vigilyx-username"
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -249,7 +287,9 @@ export default function Login({ onLogin }: LoginProps) {
 
           <div className="grok-input-group">
             <div className="grok-input-row">
+              <label className="visually-hidden" htmlFor="vigilyx-password">{t('auth.password')}</label>
               <input
+                id="vigilyx-password"
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -265,7 +305,8 @@ export default function Login({ onLogin }: LoginProps) {
                   type="button"
                   className="grok-eye"
                   onClick={() => setShowPassword(!showPassword)}
-                  tabIndex={-1}
+                  aria-label={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
+                  aria-pressed={showPassword}
                 >
                   {showPassword ? (
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>

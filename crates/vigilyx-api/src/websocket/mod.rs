@@ -29,6 +29,27 @@ static WS_PER_IP: std::sync::LazyLock<dashmap::DashMap<std::net::IpAddr, usize>>
     std::sync::LazyLock::new(dashmap::DashMap::new);
 const WS_AUTH_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 
+fn try_acquire_ws_slot(client_ip: std::net::IpAddr) -> bool {
+    let mut current = WS_PER_IP.entry(client_ip).or_insert(0);
+    if *current >= MAX_WS_PER_IP {
+        return false;
+    }
+    *current += 1;
+    true
+}
+
+fn release_ws_slot(client_ip: std::net::IpAddr) {
+    use dashmap::mapref::entry::Entry;
+
+    if let Entry::Occupied(mut current) = WS_PER_IP.entry(client_ip) {
+        if *current.get() <= 1 {
+            current.remove();
+        } else {
+            *current.get_mut() -= 1;
+        }
+    }
+}
+
 pub fn invalidate_websocket_sessions(state: &crate::AppState) {
     state.ws_auth_epoch.fetch_add(1, Ordering::SeqCst);
     let _ = state.messaging.ws_tx.send(WsMessage::SessionInvalidated);
@@ -78,13 +99,10 @@ pub async fn ws_handler(
     let auth_epoch = state.ws_auth_epoch.load(Ordering::Acquire);
 
     // SEC: per-IP connection limit (prevents fd exhaustion)
-    let mut current = WS_PER_IP.entry(client_ip).or_insert(0);
-    if *current >= MAX_WS_PER_IP {
-        warn!(ip = %client_ip, count = *current, "WebSocket per-IP limit reached");
+    if !try_acquire_ws_slot(client_ip) {
+        warn!(ip = %client_ip, "WebSocket per-IP limit reached");
         return Err(StatusCode::TOO_MANY_REQUESTS);
     }
-    *current += 1;
-    drop(current);
 
     // SEC-H05: WebSocket message OOM (CWE-400)
     Ok(ws
@@ -95,7 +113,7 @@ pub async fn ws_handler(
             async move {
                 handle_socket(socket, state, auth_epoch).await;
                 // Decrement the counter on disconnect
-                WS_PER_IP.entry(ip).and_modify(|c| *c = c.saturating_sub(1));
+                release_ws_slot(ip);
             }
         }))
 }
@@ -215,4 +233,50 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_epoch: u64)
 
     WS_CONNECTIONS_ACTIVE.dec();
     info!("WebSocket Connectionshutdown");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn websocket_slot_limit_recovers_after_release() {
+        let ip = "192.0.2.41".parse().unwrap();
+        WS_PER_IP.remove(&ip);
+
+        for _ in 0..MAX_WS_PER_IP {
+            assert!(try_acquire_ws_slot(ip));
+        }
+        assert!(!try_acquire_ws_slot(ip));
+
+        release_ws_slot(ip);
+        assert!(try_acquire_ws_slot(ip));
+
+        for _ in 0..MAX_WS_PER_IP {
+            release_ws_slot(ip);
+        }
+        assert!(!WS_PER_IP.contains_key(&ip));
+    }
+
+    #[test]
+    fn websocket_slot_release_removes_unique_ip_entries() {
+        let base: std::net::Ipv4Addr = "198.51.100.0".parse().unwrap();
+        let ips: Vec<std::net::IpAddr> = (1..=64)
+            .map(|last| {
+                std::net::IpAddr::V4(std::net::Ipv4Addr::new(
+                    base.octets()[0],
+                    base.octets()[1],
+                    base.octets()[2],
+                    last,
+                ))
+            })
+            .collect();
+
+        for ip in &ips {
+            WS_PER_IP.remove(ip);
+            assert!(try_acquire_ws_slot(*ip));
+            release_ws_slot(*ip);
+            assert!(!WS_PER_IP.contains_key(ip));
+        }
+    }
 }

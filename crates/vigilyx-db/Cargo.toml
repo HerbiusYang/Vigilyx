@@ -10,6 +10,10 @@ description = "Vigilyx 统一数据层 - PostgreSQL 持久化 + Redis 消息队�
 default = ["postgres", "redis"]
 postgres = ["dep:sqlx", "dep:sysinfo", "dep:libc"]
 redis = ["dep:redis", "dep:backoff", "dep:async-channel"]
+# Explicit opt-in for tests that require disposable real PostgreSQL/Valkey services.
+# Keeping this outside the default feature set prevents accidental access to a
+# developer or production database during ordinary `cargo test --workspace` runs.
+infra-tests = ["postgres", "redis"]
 
 [dependencies]
 vigilyx-core = { path = "../vigilyx-core" }

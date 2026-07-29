@@ -27,7 +27,9 @@ use crate::capture::RawpacketInfo;
 use crate::parser::http_state::HttpRequestStateMachine;
 use crate::parser::mime::MimeParser;
 use crate::parser::smtp_state::{SmtpCommand, SmtpResponse, SmtpStateMachine};
-use crate::stream::{TcpHalfStream, TcpPendingSegmentsDiag, TcpSegment};
+use crate::stream::{
+    GLOBAL_REASSEMBLY_BUDGET, ReassemblyBudget, TcpHalfStream, TcpPendingSegmentsDiag, TcpSegment,
+};
 use crossbeam::queue::SegQueue;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
@@ -35,6 +37,7 @@ use memchr::memmem;
 use rustc_hash::FxHasher;
 
 use std::hash::BuildHasherDefault;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, trace, warn};
@@ -71,7 +74,10 @@ pub enum ProcessResult {
 // ============================================
 
 /// Maximum session count (Prevent memory exhaustion attacks)
-const MAX_SESSIONS: usize = 100_000;
+const MAX_SESSIONS: usize = 25_000;
+/// Bound rate-limiter metadata independently from active sessions. Entries are retained
+/// briefly after the last session closes so the per-minute counter remains effective.
+const MAX_IP_RATE_LIMIT_ENTRIES: usize = MAX_SESSIONS * 4;
 
 /// HTTP session queue maximum capacity (Prevent OOM)
 ///
@@ -104,6 +110,8 @@ pub struct ShardedSessionManager {
     pub(super) sessions: FxDashMap<SessionKey, Sessiondata>,
     /// IP rate limiter (FxHash DashMap)
     pub(super) ip_rate_limits: FxDashMap<CompactIp, IpRateLimitEntry>,
+    /// Production-wide quota shared by every client/server TCP half-stream.
+    pub(super) reassembly_budget: Arc<ReassemblyBudget>,
     /// Cache-line aligned statistics
     pub(super) stats: AlignedSessionStats,
     /// Rejectedof connectioncount (Security)
@@ -151,6 +159,7 @@ impl ShardedSessionManager {
         Self {
             sessions: DashMap::with_hasher(FxBuildHasher::default()),
             ip_rate_limits: DashMap::with_hasher(FxBuildHasher::default()),
+            reassembly_budget: Arc::new(ReassemblyBudget::new(GLOBAL_REASSEMBLY_BUDGET)),
             stats: AlignedSessionStats::default(),
             rejected_connections: AtomicU64::new(0),
             timeout,
@@ -361,6 +370,25 @@ impl ShardedSessionManager {
         // Getclient IP
         let client_ip = SessionKey::client_ip_from_packet(packet);
 
+        // A spoofed source address must not grow the per-IP metadata table without bound.
+        // Existing addresses remain usable at capacity; new addresses are admitted only
+        // after expired, inactive records have been evicted.
+        if self.ip_rate_limits.len() >= MAX_IP_RATE_LIMIT_ENTRIES
+            && !self.ip_rate_limits.contains_key(&client_ip)
+        {
+            self.cleanup_ip_rate_limits();
+            if self.ip_rate_limits.len() >= MAX_IP_RATE_LIMIT_ENTRIES
+                && !self.ip_rate_limits.contains_key(&client_ip)
+            {
+                self.rejected_connections.fetch_add(1, Ordering::Relaxed);
+                warn!(
+                    limit = MAX_IP_RATE_LIMIT_ENTRIES,
+                    "rejecting new source IP: rate-limit metadata capacity reached"
+                );
+                return ProcessResult::Rejected;
+            }
+        }
+
         // SecurityCheck 2: IP rate limiting
         let should_reject = {
             let entry = self
@@ -511,14 +539,16 @@ impl ShardedSessionManager {
 
                 // IP rate limitingof Add
                 if let Some(entry) = self.ip_rate_limits.get(&client_ip) {
-                    entry
-                        .value()
-                        .new_session_count
-                        .fetch_sub(1, Ordering::Relaxed);
-                    entry
-                        .value()
-                        .active_session_count
-                        .fetch_sub(1, Ordering::Relaxed);
+                    let _ = entry.value().new_session_count.fetch_update(
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                        |value| value.checked_sub(1),
+                    );
+                    let _ = entry.value().active_session_count.fetch_update(
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                        |value| value.checked_sub(1),
+                    );
                 }
 
                 // SMTP dataParse (Recording parse_smtp_data_simd Internal)
@@ -602,8 +632,8 @@ impl ShardedSessionManager {
             last_packet_payload_len: packet.payload.len(),
             smtp_state,
             http_state,
-            client_stream: TcpHalfStream::new(),
-            server_stream: TcpHalfStream::new(),
+            client_stream: TcpHalfStream::with_budget(Arc::clone(&self.reassembly_budget)),
+            server_stream: TcpHalfStream::with_budget(Arc::clone(&self.reassembly_budget)),
             client_processed_offset: 0,
             server_processed_offset: 0,
             client_gap_logged_bytes: 0,

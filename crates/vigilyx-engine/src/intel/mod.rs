@@ -649,7 +649,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires external PostgreSQL: TEST_DATABASE_URL=postgres://...
+    #[cfg(feature = "infra-tests")]
     async fn test_fuse_results_takes_highest_verdict() {
         let db = vigilyx_db::VigilDb::new(
             &std::env::var("TEST_DATABASE_URL")
@@ -704,7 +704,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires external PostgreSQL: TEST_DATABASE_URL=postgres://...
+    #[cfg(feature = "infra-tests")]
     async fn test_fuse_results_empty_returns_not_found() {
         let db = vigilyx_db::VigilDb::new(
             &std::env::var("TEST_DATABASE_URL")
@@ -735,7 +735,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires external PostgreSQL: TEST_DATABASE_URL=postgres://...
+    #[cfg(feature = "infra-tests")]
     async fn test_fuse_results_single_source() {
         let db = vigilyx_db::VigilDb::new(
             &std::env::var("TEST_DATABASE_URL")
@@ -775,7 +775,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires external PostgreSQL: TEST_DATABASE_URL=postgres://...
+    #[cfg(feature = "infra-tests")]
     async fn test_query_domain_local_ioc_hit() {
         let db = vigilyx_db::VigilDb::new(
             &std::env::var("TEST_DATABASE_URL")
@@ -825,7 +825,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires external PostgreSQL: TEST_DATABASE_URL=postgres://...
+    #[cfg(feature = "infra-tests")]
     async fn test_query_ip_all_disabled_returns_not_found() {
         let db = vigilyx_db::VigilDb::new(
             &std::env::var("TEST_DATABASE_URL")

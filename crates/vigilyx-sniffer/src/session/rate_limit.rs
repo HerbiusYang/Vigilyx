@@ -36,8 +36,10 @@ pub(crate) struct IpRateLimitEntry {
 impl IpRateLimitEntry {
     pub fn new() -> Self {
         Self {
-            new_session_count: AtomicU64::new(1),
-            active_session_count: AtomicU64::new(1),
+            // The caller increments these only after it has admitted a concrete
+            // session. Starting at one left a permanent phantom active session.
+            new_session_count: AtomicU64::new(0),
+            active_session_count: AtomicU64::new(0),
             window_start_ns: AtomicU64::new(Self::now_ns()),
             _pad: [0; 40],
         }
@@ -102,5 +104,17 @@ impl IpRateLimitEntry {
         }
 
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_entry_does_not_count_a_phantom_session() {
+        let entry = IpRateLimitEntry::new();
+        assert_eq!(entry.new_session_count.load(Ordering::Relaxed), 0);
+        assert_eq!(entry.active_session_count.load(Ordering::Relaxed), 0);
     }
 }

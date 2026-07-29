@@ -99,6 +99,10 @@ pub struct TemporalObservation<'a> {
     pub content_similarity_delta: f64,
 }
 
+fn temporal_risk_upgraded(temporal_risk: f64, single_email_risk: f64) -> bool {
+    temporal_risk.is_finite() && single_email_risk.is_finite() && temporal_risk > single_email_risk
+}
+
 /// In-memory temporal state cache for fast lookups.
 /// Backed by PostgreSQL for persistence (loaded on startup, flushed periodically).
 pub struct TemporalAnalyzer {
@@ -387,7 +391,7 @@ impl TemporalAnalyzer {
             .max(graph_risk)
             .max(hawkes_risk);
 
-        let risk_upgraded = temporal_risk > 0.0;
+        let risk_upgraded = temporal_risk_upgraded(temporal_risk, obs.risk_single);
 
         if risk_upgraded {
             debug!(
@@ -485,5 +489,24 @@ impl TemporalAnalyzer {
     /// Import communication graph edges from DB.
     pub async fn import_graph_edges(&self, edges: Vec<super::comm_graph::CommEdge>) {
         self.comm_graph.write().await.import_edges(edges);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::temporal_risk_upgraded;
+
+    #[test]
+    fn temporal_risk_only_upgrades_when_it_exceeds_single_email_risk() {
+        assert!(temporal_risk_upgraded(0.61, 0.60));
+        assert!(!temporal_risk_upgraded(0.60, 0.60));
+        assert!(!temporal_risk_upgraded(0.59, 0.60));
+    }
+
+    #[test]
+    fn non_finite_risk_never_triggers_an_upgrade() {
+        assert!(!temporal_risk_upgraded(f64::NAN, 0.2));
+        assert!(!temporal_risk_upgraded(0.8, f64::NAN));
+        assert!(!temporal_risk_upgraded(f64::INFINITY, 0.8));
     }
 }

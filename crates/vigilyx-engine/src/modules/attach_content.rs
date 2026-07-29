@@ -4,19 +4,22 @@
 //! text extraction beyond plain text so PDF / OOXML / legacy Office documents
 //! are covered by the same `/security/keywords` configuration.
 
+use std::io::{Cursor, Read};
 use std::sync::LazyLock;
 use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::Utc;
 use regex::Regex;
-use vigilyx_core::magic_bytes::detect_file_type;
+use vigilyx_core::magic_bytes::{DetectedFileType, detect_file_type};
 use vigilyx_core::models::decode_base64_bytes_limited;
+use vigilyx_parser::mime::MimeParser;
 
 use crate::context::SecurityContext;
 use crate::data_security::document_extract;
 use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
+use crate::modules::content_scan::html_utils::strip_html_tags;
 use crate::modules::content_scan::{EffectiveKeywordLists, normalize_text};
 
 pub struct AttachContentModule {
@@ -92,6 +95,82 @@ const SUSPICIOUS_TLDS: &[&str] = &[
 ];
 
 const MAX_ATTACHMENT_TEXT_DECODE_BYTES: usize = 25 * 1024 * 1024;
+const MAX_NESTED_ATTACHMENT_DEPTH: usize = 3;
+const MAX_ARCHIVE_ENTRIES: usize = 64;
+const MAX_ARCHIVE_ENTRY_BYTES: usize = 10 * 1024 * 1024;
+const MAX_NESTED_TEXT_CHARS: usize = 4 * 1024 * 1024;
+const MAX_TOTAL_ATTACHMENT_INPUT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_TOTAL_NESTED_EXPANDED_BYTES: usize = 32 * 1024 * 1024;
+const MAX_TOTAL_NESTED_ENTRIES: usize = 128;
+const MAX_TOTAL_SCANNED_TEXT_BYTES: usize = 8 * 1024 * 1024;
+
+#[derive(Debug)]
+struct AttachmentExtractionBudget {
+    remaining_input_bytes: usize,
+    remaining_nested_bytes: usize,
+    remaining_nested_entries: usize,
+    remaining_text_bytes: usize,
+    exhausted: bool,
+}
+
+impl Default for AttachmentExtractionBudget {
+    fn default() -> Self {
+        Self {
+            remaining_input_bytes: MAX_TOTAL_ATTACHMENT_INPUT_BYTES,
+            remaining_nested_bytes: MAX_TOTAL_NESTED_EXPANDED_BYTES,
+            remaining_nested_entries: MAX_TOTAL_NESTED_ENTRIES,
+            remaining_text_bytes: MAX_TOTAL_SCANNED_TEXT_BYTES,
+            exhausted: false,
+        }
+    }
+}
+
+impl AttachmentExtractionBudget {
+    fn decode_top_level(&mut self, encoded: &str, declared_size: usize) -> Option<Vec<u8>> {
+        let per_attachment_limit = MAX_ATTACHMENT_TEXT_DECODE_BYTES;
+        let limit = per_attachment_limit.min(self.remaining_input_bytes);
+        if declared_size > limit {
+            self.exhausted = true;
+            return None;
+        }
+
+        let decoded = decode_base64_bytes_limited(encoded, limit);
+        let Some(decoded) = decoded else {
+            if encoded.len().saturating_mul(3) / 4 > limit {
+                self.exhausted = true;
+            }
+            return None;
+        };
+        self.remaining_input_bytes = self.remaining_input_bytes.saturating_sub(decoded.len());
+        Some(decoded)
+    }
+
+    fn reserve_nested_entry(&mut self, size: usize) -> bool {
+        if self.remaining_nested_entries == 0 || size > self.remaining_nested_bytes {
+            self.exhausted = true;
+            return false;
+        }
+        self.remaining_nested_entries -= 1;
+        self.remaining_nested_bytes -= size;
+        true
+    }
+
+    fn retain_scannable_text(&mut self, mut text: String) -> Option<String> {
+        if text.is_empty() || self.remaining_text_bytes == 0 {
+            if !text.is_empty() {
+                self.exhausted = true;
+            }
+            return None;
+        }
+
+        if text.len() > self.remaining_text_bytes {
+            self.exhausted = true;
+            truncate_utf8(&mut text, self.remaining_text_bytes);
+        }
+        self.remaining_text_bytes = self.remaining_text_bytes.saturating_sub(text.len());
+        if text.is_empty() { None } else { Some(text) }
+    }
+}
 
 /// Heuristics for individual URLs found inside attachment text. Returns a
 /// list of `(reason, weight)` tuples so the caller can both score and
@@ -143,6 +222,8 @@ fn is_text_mime_candidate(content_type: &str) -> bool {
         || ct.contains("application/json")
         || ct.contains("application/xml")
         || ct.contains("application/csv")
+        || ct.contains("text/calendar")
+        || ct.contains("message/rfc822")
 }
 
 fn decode_plain_text_bytes(bytes: &[u8]) -> Option<String> {
@@ -150,19 +231,343 @@ fn decode_plain_text_bytes(bytes: &[u8]) -> Option<String> {
     if text.is_empty() { None } else { Some(text) }
 }
 
-fn extract_attachment_text(content_type: &str, content_base64: &str) -> Option<String> {
-    let bytes = decode_base64_bytes_limited(content_base64, MAX_ATTACHMENT_TEXT_DECODE_BYTES)?;
-    let file_type = detect_file_type(&bytes);
+fn extract_attachment_text(
+    filename: &str,
+    content_type: &str,
+    content_base64: &str,
+    declared_size: usize,
+    budget: &mut AttachmentExtractionBudget,
+) -> Option<String> {
+    let bytes = budget.decode_top_level(content_base64, declared_size)?;
+    extract_attachment_text_from_bytes(filename, content_type, &bytes, 0, budget)
+}
 
-    if file_type.is_some_and(|ft| ft.is_extractable_document()) {
-        return document_extract::extract_text(&bytes, file_type);
+fn extract_attachment_text_from_bytes(
+    filename: &str,
+    content_type: &str,
+    bytes: &[u8],
+    depth: usize,
+    budget: &mut AttachmentExtractionBudget,
+) -> Option<String> {
+    if bytes.is_empty() {
+        return None;
     }
 
-    if file_type.is_some_and(|ft| ft.is_text_scannable()) || is_text_mime_candidate(content_type) {
-        return decode_plain_text_bytes(&bytes);
+    let file_type = detect_file_type(bytes);
+    let ext = file_extension(filename);
+
+    if is_eml_candidate(ext.as_deref(), content_type, file_type) {
+        return extract_nested_eml_text(bytes, depth, budget);
+    }
+
+    if file_type == Some(DetectedFileType::ZipArchive) {
+        let direct_text = if is_ooxml_or_odf_extension(ext.as_deref()) {
+            cap_optional_text(document_extract::extract_text(bytes, file_type))
+        } else {
+            None
+        };
+        let nested_text = extract_nested_zip_text(bytes, depth, budget);
+
+        return join_optional_text(direct_text, nested_text);
+    }
+
+    if file_type.is_some_and(|ft| ft.is_extractable_document()) {
+        return cap_optional_text(document_extract::extract_text(bytes, file_type));
+    }
+
+    if file_type == Some(DetectedFileType::HtmlDocument)
+        || ext
+            .as_deref()
+            .is_some_and(|ext| matches!(ext, "html" | "htm" | "xhtml" | "hta"))
+    {
+        let html = decode_plain_text_bytes(bytes)?;
+        let text = strip_html_tags(&html).trim().to_string();
+        return if text.is_empty() {
+            None
+        } else {
+            Some(cap_text(text))
+        };
+    }
+
+    if file_type.is_some_and(|ft| ft.is_text_scannable())
+        || is_text_mime_candidate(content_type)
+        || is_plain_text_extension(ext.as_deref())
+    {
+        return cap_optional_text(decode_plain_text_bytes(bytes));
     }
 
     None
+}
+
+fn file_extension(filename: &str) -> Option<String> {
+    filename
+        .rsplit_once('.')
+        .map(|(_, ext)| {
+            ext.trim_matches(|ch| ch == '"' || ch == '\'')
+                .to_ascii_lowercase()
+        })
+        .filter(|ext| !ext.is_empty())
+}
+
+fn is_ooxml_or_odf_extension(ext: Option<&str>) -> bool {
+    matches!(
+        ext,
+        Some("docx" | "xlsx" | "pptx" | "docm" | "xlsm" | "pptm" | "odt" | "ods" | "odp")
+    )
+}
+
+fn is_plain_text_extension(ext: Option<&str>) -> bool {
+    matches!(
+        ext,
+        Some(
+            "txt"
+                | "csv"
+                | "json"
+                | "xml"
+                | "log"
+                | "md"
+                | "ics"
+                | "vcf"
+                | "yaml"
+                | "yml"
+                | "ini"
+                | "cfg"
+        )
+    )
+}
+
+fn is_eml_candidate(
+    ext: Option<&str>,
+    content_type: &str,
+    file_type: Option<DetectedFileType>,
+) -> bool {
+    let ct = content_type.to_ascii_lowercase();
+    matches!(ext, Some("eml"))
+        || ct.contains("message/rfc822")
+        || (file_type == Some(DetectedFileType::PlainText)
+            && ct.contains("application/vnd.ms-outlook"))
+}
+
+fn is_archive_scan_candidate(filename: &str, file_type: Option<DetectedFileType>) -> bool {
+    let ext = file_extension(filename);
+    matches!(
+        ext.as_deref(),
+        Some(
+            "pdf"
+                | "doc"
+                | "xls"
+                | "ppt"
+                | "docx"
+                | "xlsx"
+                | "pptx"
+                | "rtf"
+                | "txt"
+                | "csv"
+                | "json"
+                | "xml"
+                | "html"
+                | "htm"
+                | "ics"
+                | "eml"
+                | "zip"
+        )
+    ) || file_type.is_some_and(|ft| ft.is_extractable_document() || ft.is_text_scannable())
+}
+
+fn is_attachment_text_candidate_by_metadata(filename: &str, content_type: &str) -> bool {
+    let ext = file_extension(filename);
+    let ct = content_type.to_ascii_lowercase();
+    is_plain_text_extension(ext.as_deref())
+        || is_ooxml_or_odf_extension(ext.as_deref())
+        || matches!(
+            ext.as_deref(),
+            Some("pdf" | "doc" | "xls" | "ppt" | "rtf" | "html" | "htm" | "eml" | "zip")
+        )
+        || is_text_mime_candidate(&ct)
+        || ct.contains("pdf")
+        || ct.contains("rtf")
+        || ct.contains("officedocument")
+        || ct.contains("opendocument")
+        || ct.contains("application/zip")
+        || ct.contains("application/octet-stream")
+}
+
+fn truncate_utf8(text: &mut String, max_bytes: usize) {
+    if text.len() <= max_bytes {
+        return;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.truncate(end);
+}
+
+fn cap_text(mut text: String) -> String {
+    truncate_utf8(&mut text, MAX_NESTED_TEXT_CHARS);
+    text
+}
+
+fn cap_optional_text(text: Option<String>) -> Option<String> {
+    text.map(cap_text).filter(|text| !text.trim().is_empty())
+}
+
+fn append_nested_text(target: &mut String, text: &str) {
+    let separator_len = usize::from(!target.is_empty());
+    let remaining = MAX_NESTED_TEXT_CHARS.saturating_sub(target.len() + separator_len);
+    if remaining == 0 {
+        return;
+    }
+    if !target.is_empty() {
+        target.push('\n');
+    }
+    let mut end = remaining.min(text.len());
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    target.push_str(&text[..end]);
+}
+
+fn join_optional_text(first: Option<String>, second: Option<String>) -> Option<String> {
+    match (first, second) {
+        (Some(mut left), Some(right)) => {
+            append_nested_text(&mut left, &right);
+            Some(left)
+        }
+        (Some(text), None) | (None, Some(text)) => Some(text),
+        (None, None) => None,
+    }
+}
+
+fn extract_nested_zip_text(
+    bytes: &[u8],
+    depth: usize,
+    budget: &mut AttachmentExtractionBudget,
+) -> Option<String> {
+    if depth >= MAX_NESTED_ATTACHMENT_DEPTH {
+        budget.exhausted = true;
+        return None;
+    }
+
+    let cursor = Cursor::new(bytes);
+    let mut archive = zip::ZipArchive::new(cursor).ok()?;
+    let mut out = String::new();
+
+    if archive.len() > MAX_ARCHIVE_ENTRIES {
+        budget.exhausted = true;
+    }
+    let entry_count = archive.len().min(MAX_ARCHIVE_ENTRIES);
+    for i in 0..entry_count {
+        if out.len() >= MAX_NESTED_TEXT_CHARS {
+            budget.exhausted = true;
+            break;
+        }
+
+        let Ok(mut entry) = archive.by_index(i) else {
+            continue;
+        };
+        if entry.is_dir() {
+            continue;
+        }
+
+        let name = entry.name().to_string();
+        let Ok(entry_size) = usize::try_from(entry.size()) else {
+            budget.exhausted = true;
+            continue;
+        };
+        if entry_size > MAX_ARCHIVE_ENTRY_BYTES {
+            budget.exhausted = true;
+            continue;
+        }
+        if !budget.reserve_nested_entry(entry_size) {
+            continue;
+        }
+
+        let mut data = Vec::with_capacity((entry.size() as usize).min(64 * 1024));
+        let limit = (MAX_ARCHIVE_ENTRY_BYTES + 1) as u64;
+        if (&mut entry).take(limit).read_to_end(&mut data).is_err()
+            || data.len() > MAX_ARCHIVE_ENTRY_BYTES
+        {
+            continue;
+        }
+
+        let nested_type = detect_file_type(&data);
+        if !is_archive_scan_candidate(&name, nested_type) {
+            continue;
+        }
+
+        if let Some(text) = extract_attachment_text_from_bytes(&name, "", &data, depth + 1, budget)
+        {
+            append_nested_text(&mut out, &format!("[{name}]\n{text}"));
+        }
+    }
+
+    if out.trim().is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+fn extract_nested_eml_text(
+    bytes: &[u8],
+    depth: usize,
+    budget: &mut AttachmentExtractionBudget,
+) -> Option<String> {
+    if depth >= MAX_NESTED_ATTACHMENT_DEPTH {
+        budget.exhausted = true;
+        return None;
+    }
+
+    let parser = MimeParser::new();
+    let content = parser.parse(bytes).ok()?;
+    let mut out = String::new();
+
+    for header in ["Subject", "From", "To"] {
+        if let Some(value) = content.get_header(header) {
+            append_nested_text(&mut out, &format!("{header}: {value}"));
+        }
+    }
+
+    if let Some(text) = content.body_text.as_deref() {
+        append_nested_text(&mut out, text);
+    }
+    if let Some(html) = content.body_html.as_deref() {
+        append_nested_text(&mut out, &strip_html_tags(html));
+    }
+
+    if content.attachments.len() > 16 {
+        budget.exhausted = true;
+    }
+    for attachment in content.attachments.iter().take(16) {
+        let Some(content_base64) = attachment.content_base64.as_deref() else {
+            continue;
+        };
+        if attachment.size > MAX_ATTACHMENT_TEXT_DECODE_BYTES
+            || !budget.reserve_nested_entry(attachment.size)
+        {
+            budget.exhausted = true;
+            continue;
+        }
+        let Some(bytes) = decode_base64_bytes_limited(content_base64, attachment.size) else {
+            continue;
+        };
+        if let Some(text) = extract_attachment_text_from_bytes(
+            &attachment.filename,
+            &attachment.content_type,
+            &bytes,
+            depth + 1,
+            budget,
+        ) {
+            append_nested_text(&mut out, &format!("[{}]\n{text}", attachment.filename));
+        }
+    }
+
+    if out.trim().is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 fn scan_attachment_text(
@@ -285,9 +690,16 @@ impl SecurityModule for AttachContentModule {
         let mut total_score: f64 = 0.0;
         let mut scanned_count = 0usize;
         let mut retained_count = 0usize;
+        let mut budget = AttachmentExtractionBudget::default();
 
         for attachment in &ctx.session.content.attachments {
             if attachment.size > MAX_ATTACHMENT_TEXT_DECODE_BYTES {
+                if is_attachment_text_candidate_by_metadata(
+                    &attachment.filename,
+                    &attachment.content_type,
+                ) {
+                    budget.exhausted = true;
+                }
                 continue;
             }
             let Some(content_base64) = attachment.content_base64.as_deref() else {
@@ -295,8 +707,16 @@ impl SecurityModule for AttachContentModule {
             };
             retained_count += 1;
 
-            let Some(text) = extract_attachment_text(&attachment.content_type, content_base64)
-            else {
+            let Some(text) = extract_attachment_text(
+                &attachment.filename,
+                &attachment.content_type,
+                content_base64,
+                attachment.size,
+                &mut budget,
+            ) else {
+                continue;
+            };
+            let Some(text) = budget.retain_scannable_text(text) else {
                 continue;
             };
 
@@ -350,7 +770,18 @@ impl SecurityModule for AttachContentModule {
             }
         }
 
-        if scanned_count == 0 {
+        if budget.exhausted {
+            total_score += 0.15;
+            categories.push("attachment_inspection_limited".to_string());
+            evidence.push(Evidence {
+                description: "Attachment content inspection reached its per-message resource budget; remaining content requires deferred sandbox scanning"
+                    .to_string(),
+                location: Some("attachments".to_string()),
+                snippet: None,
+            });
+        }
+
+        if scanned_count == 0 && !budget.exhausted {
             let duration_ms = start.elapsed().as_millis() as u64;
             return Ok(ModuleResult::not_applicable(
                 &self.meta.id,
@@ -398,6 +829,11 @@ impl SecurityModule for AttachContentModule {
                 "score": total_score,
                 "scanned_count": scanned_count,
                 "retained_attachments": retained_count,
+                "inspection_budget_exhausted": budget.exhausted,
+                "input_bytes_scanned": MAX_TOTAL_ATTACHMENT_INPUT_BYTES - budget.remaining_input_bytes,
+                "nested_expanded_bytes_scanned": MAX_TOTAL_NESTED_EXPANDED_BYTES - budget.remaining_nested_bytes,
+                "nested_entries_examined": MAX_TOTAL_NESTED_ENTRIES - budget.remaining_nested_entries,
+                "text_bytes_scanned": MAX_TOTAL_SCANNED_TEXT_BYTES - budget.remaining_text_bytes,
             }),
             duration_ms,
             analyzed_at: Utc::now(),
@@ -473,6 +909,16 @@ mod tests {
         zip_w.finish().expect("finish zip").into_inner()
     }
 
+    fn make_attachment(filename: &str, content_type: &str, bytes: &[u8]) -> EmailAttachment {
+        EmailAttachment {
+            filename: filename.to_string(),
+            content_type: content_type.to_string(),
+            size: bytes.len(),
+            hash: "hash".to_string(),
+            content_base64: Some(base64::engine::general_purpose::STANDARD.encode(bytes)),
+        }
+    }
+
     #[tokio::test]
     async fn test_docx_attachment_uses_runtime_keywords() {
         let docx = build_ooxml_zip(&[(
@@ -481,14 +927,11 @@ mod tests {
                 "Please review the secure voicemail and verify your account immediately",
             ),
         )]);
-        let attachment = EmailAttachment {
-            filename: "voicemail.docx".to_string(),
-            content_type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                .to_string(),
-            size: docx.len(),
-            hash: "hash".to_string(),
-            content_base64: Some(base64::engine::general_purpose::STANDARD.encode(docx)),
-        };
+        let attachment = make_attachment(
+            "voicemail.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            &docx,
+        );
 
         let result = make_module_with_keywords(&["secure voicemail", "verify your account"], &[])
             .analyze(&make_ctx(vec![attachment]))
@@ -504,18 +947,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_rtf_attachment_uses_runtime_keywords() {
+        let rtf = br"{\rtf1\ansi Please \b verify your account\b0 before closing.}";
+        let attachment = make_attachment("notice.rtf", "application/rtf", rtf);
+
+        let result = make_module_with_keywords(&["verify your account", "before closing"], &[])
+            .analyze(&make_ctx(vec![attachment]))
+            .await
+            .unwrap();
+
+        assert!(
+            result.categories.contains(&"phishing".to_string()),
+            "RTF attachment text should be scanned: {:?}",
+            result.categories
+        );
+    }
+
+    #[tokio::test]
+    async fn test_zip_nested_document_attachment_is_scanned() {
+        let zip = build_ooxml_zip(&[(
+            "invoice.rtf",
+            r"{\rtf1\ansi Please verify your account to view the invoice.}",
+        )]);
+        let attachment = make_attachment("invoice_bundle.zip", "application/zip", &zip);
+
+        let result = make_module_with_keywords(&["verify your account", "view the invoice"], &[])
+            .analyze(&make_ctx(vec![attachment]))
+            .await
+            .unwrap();
+
+        assert!(
+            result.categories.contains(&"phishing".to_string()),
+            "documents nested in ZIP attachments should be scanned: {:?}",
+            result.categories
+        );
+    }
+
+    #[tokio::test]
+    async fn test_nested_eml_attachment_is_scanned() {
+        let nested_body = "Please verify your account using the attached notice.";
+        let nested_body_b64 =
+            base64::engine::general_purpose::STANDARD.encode(nested_body.as_bytes());
+        let eml = format!(
+            "From: vendor@example.com\r\n\
+             Subject: forwarded notice\r\n\
+             MIME-Version: 1.0\r\n\
+             Content-Type: multipart/mixed; boundary=\"B\"\r\n\
+             \r\n\
+             --B\r\n\
+             Content-Type: text/plain; charset=utf-8\r\n\
+             \r\n\
+             See attached.\r\n\
+             --B\r\n\
+             Content-Type: text/plain; name=\"notice.txt\"\r\n\
+             Content-Disposition: attachment; filename=\"notice.txt\"\r\n\
+             Content-Transfer-Encoding: base64\r\n\
+             \r\n\
+             {nested_body_b64}\r\n\
+             --B--\r\n"
+        );
+        let attachment = make_attachment("thread.eml", "message/rfc822", eml.as_bytes());
+
+        let result = make_module_with_keywords(&["verify your account", "attached notice"], &[])
+            .analyze(&make_ctx(vec![attachment]))
+            .await
+            .unwrap();
+
+        assert!(
+            result.categories.contains(&"phishing".to_string()),
+            "nested EML content should be scanned: {:?}",
+            result.categories
+        );
+    }
+
+    #[tokio::test]
     async fn test_plain_text_attachment_uses_weak_keyword_list() {
         let content =
             "Please review today the employee handbook acknowledgement policy document update";
-        let attachment = EmailAttachment {
-            filename: "notice.txt".to_string(),
-            content_type: "text/plain".to_string(),
-            size: content.len(),
-            hash: "hash".to_string(),
-            content_base64: Some(
-                base64::engine::general_purpose::STANDARD.encode(content.as_bytes()),
-            ),
-        };
+        let attachment = make_attachment("notice.txt", "text/plain", content.as_bytes());
 
         let result = make_module_with_keywords(
             &[],
@@ -541,12 +1050,52 @@ mod tests {
     #[tokio::test]
     async fn test_binary_image_attachment_is_not_scanned_as_text() {
         let png_stub = vec![0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1A, b'\n'];
+        let attachment = make_attachment("logo.png", "image/png", &png_stub);
+
+        let result = AttachContentModule::new()
+            .analyze(&make_ctx(vec![attachment]))
+            .await
+            .unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert_eq!(
+            result.summary,
+            "No attachments with extractable text content"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_uninspectable_oversized_attachment_surfaces_incomplete_coverage() {
         let attachment = EmailAttachment {
-            filename: "logo.png".to_string(),
-            content_type: "image/png".to_string(),
-            size: png_stub.len(),
+            filename: "oversized.txt".to_string(),
+            content_type: "text/plain".to_string(),
+            size: MAX_ATTACHMENT_TEXT_DECODE_BYTES + 1,
             hash: "hash".to_string(),
-            content_base64: Some(base64::engine::general_purpose::STANDARD.encode(png_stub)),
+            content_base64: Some("QQ==".to_string()),
+        };
+
+        let result = AttachContentModule::new()
+            .analyze(&make_ctx(vec![attachment]))
+            .await
+            .unwrap();
+
+        assert!(
+            result
+                .categories
+                .contains(&"attachment_inspection_limited".to_string())
+        );
+        assert_eq!(result.threat_level, ThreatLevel::Low);
+        assert_eq!(result.details["inspection_budget_exhausted"], true);
+    }
+
+    #[tokio::test]
+    async fn test_oversized_known_non_text_attachment_does_not_create_coverage_alert() {
+        let attachment = EmailAttachment {
+            filename: "training.mp4".to_string(),
+            content_type: "video/mp4".to_string(),
+            size: MAX_ATTACHMENT_TEXT_DECODE_BYTES + 1,
+            hash: "hash".to_string(),
+            content_base64: Some("AAAA".to_string()),
         };
 
         let result = AttachContentModule::new()
@@ -559,5 +1108,81 @@ mod tests {
             result.summary,
             "No attachments with extractable text content"
         );
+    }
+
+    #[test]
+    fn test_attachment_budget_rejects_cumulative_top_level_overflow() {
+        let mut budget = AttachmentExtractionBudget {
+            remaining_input_bytes: 2,
+            ..Default::default()
+        };
+        let encoded = base64::engine::general_purpose::STANDARD.encode(b"abc");
+
+        assert!(budget.decode_top_level(&encoded, 3).is_none());
+        assert!(budget.exhausted);
+        assert_eq!(budget.remaining_input_bytes, 2);
+    }
+
+    #[test]
+    fn test_attachment_budget_enforces_nested_entry_count_and_bytes() {
+        let mut budget = AttachmentExtractionBudget {
+            remaining_nested_bytes: 4,
+            remaining_nested_entries: 1,
+            ..Default::default()
+        };
+
+        assert!(budget.reserve_nested_entry(4));
+        assert!(!budget.reserve_nested_entry(1));
+        assert!(budget.exhausted);
+        assert_eq!(budget.remaining_nested_bytes, 0);
+        assert_eq!(budget.remaining_nested_entries, 0);
+    }
+
+    #[test]
+    fn test_attachment_budget_truncates_utf8_at_cumulative_text_limit() {
+        let mut budget = AttachmentExtractionBudget {
+            remaining_text_bytes: 4,
+            ..Default::default()
+        };
+
+        let retained = budget
+            .retain_scannable_text("测ab".to_string())
+            .expect("a UTF-8 prefix should remain");
+
+        assert_eq!(retained, "测a");
+        assert!(budget.exhausted);
+        assert_eq!(budget.remaining_text_bytes, 0);
+    }
+
+    #[test]
+    fn test_nested_archive_at_depth_limit_marks_incomplete_inspection() {
+        let zip = build_ooxml_zip(&[]);
+        let mut budget = AttachmentExtractionBudget::default();
+
+        let text = extract_nested_zip_text(&zip, MAX_NESTED_ATTACHMENT_DEPTH, &mut budget);
+
+        assert!(text.is_none());
+        assert!(budget.exhausted);
+    }
+
+    #[test]
+    fn test_archive_entry_limit_marks_incomplete_inspection() {
+        let cursor = Cursor::new(Vec::new());
+        let mut zip_w = zip::ZipWriter::new(cursor);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for index in 0..=MAX_ARCHIVE_ENTRIES {
+            zip_w
+                .start_file(format!("entry-{index}.txt"), options)
+                .expect("start zip entry");
+            zip_w.write_all(b"normal text").expect("write zip entry");
+        }
+        let zip = zip_w.finish().expect("finish zip").into_inner();
+        let mut budget = AttachmentExtractionBudget::default();
+
+        let text = extract_nested_zip_text(&zip, 0, &mut budget);
+
+        assert!(text.is_some());
+        assert!(budget.exhausted);
     }
 }
