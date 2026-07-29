@@ -1135,7 +1135,7 @@ html[lang="en"] .hd-brand-sub {
   position: relative;
   z-index: 1;
   width: 100%;
-  max-width: 960px;
+  max-width: 1080px;
   max-height: 100%;
   display: flex;
   flex-direction: column;
@@ -2657,7 +2657,7 @@ html[lang="en"] .hd-brand-sub {
    controls stay fully available while decorative topology detail gets denser. */
 @media (max-height: 900px) {
   .setup-login .setup-wizard {
-    padding: 28px 44px 24px;
+    padding: 30px 48px 26px;
   }
   .setup-toolbar {
     margin-bottom: 16px;
@@ -2669,51 +2669,68 @@ html[lang="en"] .hd-brand-sub {
     margin-bottom: 9px;
   }
   .setup-step-chip {
-    padding: 6px 12px;
+    padding: 7px 13px;
+    font-size: 12px;
   }
   .setup-title {
-    font-size: 32px;
+    font-size: 38px;
   }
   .setup-subtitle {
-    margin-top: 7px;
-    font-size: 15px;
-    line-height: 1.55;
+    margin-top: 8px;
+    font-size: 18px;
+    line-height: 1.5;
   }
   .setup-welcome {
     gap: 12px;
   }
   .setup-hero-copy {
-    padding: 18px 22px;
+    grid-template-columns: 60px minmax(0, 1fr) 48px;
+    padding: 20px 24px;
+  }
+  .setup-hero-emblem {
+    width: 60px;
+    height: 60px;
+    border-radius: 18px;
+  }
+  .setup-hero-emblem svg {
+    width: 30px;
+    height: 30px;
   }
   .setup-eyebrow {
-    margin-bottom: 7px;
+    margin-bottom: 8px;
+    font-size: 13px;
   }
   .setup-welcome-text {
-    font-size: 15px;
-    line-height: 1.65;
+    font-size: 18px;
+    line-height: 1.6;
   }
   .setup-feature-grid {
-    gap: 10px;
+    gap: 12px;
   }
   .setup-feature-card {
-    min-height: 82px;
-    padding: 14px;
+    grid-template-columns: 48px minmax(0, 1fr);
+    min-height: 100px;
+    padding: 18px;
   }
   .setup-feature-icon {
-    width: 40px;
-    height: 40px;
-    border-radius: 11px;
+    width: 48px;
+    height: 48px;
+    border-radius: 13px;
+  }
+  .setup-feature-icon svg {
+    width: 26px;
+    height: 26px;
   }
   .setup-feature-title {
-    font-size: 14px;
+    font-size: 16px;
   }
   .setup-feature-desc {
-    font-size: 12px;
-    line-height: 1.45;
+    font-size: 14px;
+    line-height: 1.5;
   }
   .setup-welcome-hint {
-    padding: 10px 14px;
-    font-size: 13px;
+    padding: 12px 16px;
+    font-size: 14px;
     line-height: 1.55;
   }
   .setup-fields {
@@ -2777,16 +2794,17 @@ html[lang="en"] .hd-brand-sub {
   .setup-step-note,
   .setup-tip,
   .setup-hint {
-    font-size: 11px;
-    line-height: 1.4;
+    font-size: 13px;
+    line-height: 1.5;
   }
   .setup-footer {
     margin-top: 16px;
     padding-top: 12px;
   }
   .setup-btn {
-    min-height: 40px;
-    padding: 8px 18px;
+    min-height: 44px;
+    padding: 9px 20px;
+    font-size: 15px;
   }
 }
 
@@ -2819,7 +2837,17 @@ html[lang="en"] .hd-brand-sub {
     gap: 10px;
   }
   .setup-hero-copy {
+    grid-template-columns: 52px minmax(0, 1fr) 42px;
     padding: 14px 18px;
+  }
+  .setup-hero-emblem {
+    width: 52px;
+    height: 52px;
+    border-radius: 16px;
+  }
+  .setup-hero-emblem svg {
+    width: 25px;
+    height: 25px;
   }
   .setup-eyebrow {
     margin-bottom: 5px;
@@ -2832,6 +2860,7 @@ html[lang="en"] .hd-brand-sub {
     gap: 8px;
   }
   .setup-feature-card {
+    grid-template-columns: 42px minmax(0, 1fr);
     min-height: 72px;
     padding: 11px 12px;
   }
@@ -2839,6 +2868,10 @@ html[lang="en"] .hd-brand-sub {
     width: 36px;
     height: 36px;
     border-radius: 10px;
+  }
+  .setup-feature-icon svg {
+    width: 22px;
+    height: 22px;
   }
   .setup-feature-title {
     font-size: 13px;
@@ -2851,6 +2884,23 @@ html[lang="en"] .hd-brand-sub {
     padding: 8px 12px;
     font-size: 12px;
     line-height: 1.45;
+  }
+  .setup-step-note,
+  .setup-tip,
+  .setup-hint {
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .setup-btn {
+    min-height: 40px;
+    padding: 8px 18px;
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 720px) and (max-height: 760px) {
+  .setup-hero-copy {
+    grid-template-columns: 44px minmax(0, 1fr);
   }
 }
 
