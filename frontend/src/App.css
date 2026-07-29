@@ -1100,6 +1100,19 @@ html[lang="en"] .hd-brand-sub {
   border-radius: 22px;
   pointer-events: none;
 }
+.setup-language-toggle {
+  position: absolute;
+  top: 18px;
+  right: 20px;
+  z-index: 2;
+}
+.setup-language-toggle .lang-toggle {
+  min-width: 36px;
+  height: 32px;
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(226, 232, 240, 0.82);
+}
 
 /* ── Progress indicator ── */
 /* -- Compact step bar -- */
@@ -1484,6 +1497,13 @@ html[lang="en"] .hd-brand-sub {
   transform: translateY(-3px);
   border-color: rgba(255, 255, 255, 0.16);
 }
+.setup-mode-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+.setup-mode-card:disabled:hover {
+  transform: none;
+}
 .setup-mode-card.active[data-mode="mirror"] {
   border-color: rgba(34, 211, 238, 0.34);
   background: linear-gradient(180deg, rgba(34, 211, 238, 0.1), rgba(255, 255, 255, 0.03));
@@ -1842,7 +1862,7 @@ html[lang="en"] .hd-brand-sub {
   border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.03);
-  cursor: pointer;
+  cursor: default;
   transition: transform 0.2s var(--ease-out), border-color 0.2s var(--ease-out), background 0.2s var(--ease-out);
   text-align: left;
   width: 100%;
@@ -1850,7 +1870,6 @@ html[lang="en"] .hd-brand-sub {
   font-family: inherit;
 }
 .setup-iface-card:hover {
-  transform: translateY(-2px);
   border-color: rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.05);
 }
@@ -2011,6 +2030,16 @@ html[lang="en"] .hd-brand-sub {
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.035);
   color: rgba(203, 213, 225, 0.72);
+  font-size: 12px;
+  line-height: 1.65;
+}
+.setup-warning {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(245, 158, 11, 0.26);
+  background: rgba(245, 158, 11, 0.08);
+  color: #fcd34d;
   font-size: 12px;
   line-height: 1.65;
 }
@@ -2253,6 +2282,15 @@ html[lang="en"] .hd-brand-sub {
 [data-theme="light"] .setup-mode-panel-item span {
   color: #7c2d12;
 }
+[data-theme="light"] .setup-language-toggle .lang-toggle {
+  border-color: rgba(15, 23, 42, 0.12);
+  background: rgba(255, 255, 255, 0.72);
+  color: #475569;
+}
+[data-theme="light"] .setup-warning {
+  color: #92400e;
+  background: rgba(245, 158, 11, 0.1);
+}
 [data-theme="light"] .setup-btn--ghost {
   background: rgba(255, 255, 255, 0.66);
 }
@@ -2302,6 +2340,10 @@ html[lang="en"] .hd-brand-sub {
   .setup-wizard {
     padding: 34px 18px 28px;
     border-radius: 22px;
+  }
+  .setup-language-toggle {
+    top: 12px;
+    right: 14px;
   }
   .setup-progress {
     gap: 12px;

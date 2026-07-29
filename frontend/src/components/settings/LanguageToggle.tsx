@@ -3,15 +3,17 @@ import { useTranslation } from 'react-i18next'
 import { changeLanguage } from '../../i18n'
 
 function LanguageToggle() {
-  const { i18n } = useTranslation()
+  const { i18n, t } = useTranslation()
   const isZh = i18n.language === 'zh'
+  const switchLabel = isZh ? t('language.switchToEnglish') : t('language.switchToChinese')
 
   return (
     <button
+      type="button"
       className="lang-toggle"
       onClick={() => changeLanguage(isZh ? 'en' : 'zh')}
-      title={isZh ? 'Switch to English' : '切换到中文'}
-      aria-label="Toggle language"
+      title={switchLabel}
+      aria-label={switchLabel}
     >
       {isZh ? 'EN' : '中'}
     </button>

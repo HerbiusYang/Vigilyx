@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
+import LanguageToggle from '../settings/LanguageToggle'
 import { apiFetch } from '../../utils/api'
 import { persistSetupStatus } from '../../utils/setupStatus'
 import { formatBytes } from '../../utils/format'
@@ -12,6 +13,63 @@ interface NetInterface {
   tx_bytes: number
   total_bytes: number
   status: string
+}
+
+interface ApiEnvelope<T> {
+  success: boolean
+  data?: T
+  error?: string
+}
+
+interface DeploymentModeData {
+  mode?: string
+  locked?: boolean
+  mta_config?: Record<string, unknown>
+}
+
+interface SnifferConfigData {
+  webmail_servers?: string[]
+  http_ports?: number[]
+}
+
+interface EmailAlertData {
+  enabled?: boolean
+  smtp_host?: string
+  smtp_port?: number
+  smtp_username?: string
+  smtp_password_set?: boolean
+  smtp_tls?: string
+  allow_plaintext_smtp?: boolean
+  from_address?: string
+  admin_email?: string
+  min_threat_level?: string
+}
+
+interface AiConfigData {
+  enabled?: boolean
+  service_url?: string
+}
+
+async function loadConfig<T>(path: string): Promise<T> {
+  const response = await apiFetch(path)
+  const payload = await response.json() as ApiEnvelope<T>
+  if (!payload.success || payload.data === undefined) {
+    throw new Error(payload.error || `Failed to load ${path}`)
+  }
+  return payload.data
+}
+
+function parsePort(value: string): number | null {
+  if (!/^\d+$/.test(value.trim())) return null
+  const port = Number(value)
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : null
+}
+
+function parsePortList(value: string): number[] | null {
+  if (!value.trim()) return []
+  const parsed = value.split(',').map(port => parsePort(port))
+  if (parsed.some(port => port === null)) return null
+  return [...new Set(parsed as number[])]
 }
 
 function getPlaintextSmtpLockMessage(): string {
@@ -79,51 +137,20 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
   const [step, setStep] = useState(0)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [configLoading, setConfigLoading] = useState(true)
+  const [configLoadFailed, setConfigLoadFailed] = useState(false)
   const glowVars = useWizardGlows()
-
-  // Build STEPS with translated titles/subtitles
-  const STEPS = [
-    { id: 'welcome' as const, title: t('setup.welcomeTitle'), subtitle: t('setup.welcomeSubtitle') },
-    { id: 'deploy_mode' as const, title: t('setup.deployModeTitle'), subtitle: t('setup.deployModeSubtitle') },
-    { id: 'network' as const, title: t('setup.networkTitle'), subtitle: t('setup.networkSubtitle') },
-    { id: 'domains' as const, title: t('setup.domainsTitle'), subtitle: t('setup.domainsSubtitle') },
-    { id: 'sniffer' as const, title: t('setup.snifferTitle'), subtitle: t('setup.snifferSubtitle') },
-    { id: 'alerts' as const, title: t('setup.alertsTitle'), subtitle: t('setup.alertsSubtitle') },
-    { id: 'ai' as const, title: t('setup.aiTitle'), subtitle: t('setup.aiSubtitle') },
-  ]
 
   // ── Step: Deploy Mode ──
   const [deployMode, setDeployMode] = useState<'mirror' | 'mta'>('mirror')
+  const [deployModeLocked, setDeployModeLocked] = useState(false)
   const [mtaDownstreamHost, setMtaDownstreamHost] = useState('')
   const [mtaDownstreamPort, setMtaDownstreamPort] = useState('25')
 
   // ── Step: Network Capture ──
   const [interfaces, setInterfaces] = useState<NetInterface[]>([])
   const [ifaceLoading, setIfaceLoading] = useState(false)
-  const [snifferIface, setSnifferIface] = useState('')
-  const [smtpPorts, setSmtpPorts] = useState('25,465,587,2525,2526')
-  const [pop3Ports, setPop3Ports] = useState('110,995')
-  const [imapPorts, setImapPorts] = useState('143,993')
-
-  // Load interfaces when entering the capture step
-  useEffect(() => {
-    if (STEPS[step]?.id !== 'network') return
-    setIfaceLoading(true)
-    apiFetch('/api/system/interfaces')
-      .then(r => r.json())
-      .then(data => {
-        if (data.success && Array.isArray(data.data) && data.data.length > 0) {
-          setInterfaces(data.data)
-          // Auto-select the interface with most traffic
-          if (!snifferIface) {
-            setSnifferIface(data.data[0].name)
-          }
-        }
-      })
-      .catch(() => {})
-      .finally(() => setIfaceLoading(false))
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step])
+  const [interfaceLoadFailed, setInterfaceLoadFailed] = useState(false)
 
   // ── Step 2: Internal Domains ──
   const [domains, setDomains] = useState('')
@@ -138,6 +165,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
   const [smtpPort, setSmtpPort] = useState('465')
   const [smtpUser, setSmtpUser] = useState('')
   const [smtpPass, setSmtpPass] = useState('')
+  const [smtpPasswordSet, setSmtpPasswordSet] = useState(false)
   const [smtpTls, setSmtpTls] = useState('tls')
   const [allowPlaintextSmtp, setAllowPlaintextSmtp] = useState(false)
   const [alertFrom, setAlertFrom] = useState('')
@@ -148,15 +176,114 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
   const [aiEnabled, setAiEnabled] = useState(false)
   const [aiUrl, setAiUrl] = useState('http://vigilyx-ai:8900')
 
-  const rawStep = STEPS[step]
-  // Dynamically adjust the network step title
-  const currentStep = rawStep.id === 'network'
-    ? {
-        ...rawStep,
-        title: deployMode === 'mta' ? t('setup.networkMtaTitle') : t('setup.networkSnifferTitle'),
-        subtitle: deployMode === 'mta' ? t('setup.networkMtaSubtitle') : t('setup.networkSnifferSubtitle'),
+  // Only show settings that belong to the selected runtime mode.
+  const STEPS = [
+    { id: 'welcome' as const, title: t('setup.welcomeTitle'), subtitle: t('setup.welcomeSubtitle') },
+    { id: 'deploy_mode' as const, title: t('setup.deployModeTitle'), subtitle: t('setup.deployModeSubtitle') },
+    {
+      id: 'network' as const,
+      title: deployMode === 'mta' ? t('setup.networkMtaTitle') : t('setup.networkSnifferTitle'),
+      subtitle: deployMode === 'mta' ? t('setup.networkMtaSubtitle') : t('setup.networkSnifferSubtitle'),
+    },
+    ...(deployMode === 'mta'
+      ? [{ id: 'domains' as const, title: t('setup.domainsTitle'), subtitle: t('setup.domainsSubtitle') }]
+      : [{ id: 'sniffer' as const, title: t('setup.snifferTitle'), subtitle: t('setup.snifferSubtitle') }]),
+    { id: 'alerts' as const, title: t('setup.alertsTitle'), subtitle: t('setup.alertsSubtitle') },
+    { id: 'ai' as const, title: t('setup.aiTitle'), subtitle: t('setup.aiSubtitle') },
+  ]
+
+  const currentStep = STEPS[step]
+  const isLastStep = step === STEPS.length - 1
+  const canSkipCurrentStep = currentStep.id === 'sniffer'
+    || currentStep.id === 'alerts'
+    || currentStep.id === 'ai'
+    || (currentStep.id === 'network' && deployMode === 'mirror')
+
+  // Load server-backed settings so a reset/reopened wizard never overwrites
+  // existing configuration with hard-coded defaults.
+  useEffect(() => {
+    let cancelled = false
+
+    void Promise.allSettled([
+      loadConfig<DeploymentModeData>('/api/config/deployment-mode'),
+      loadConfig<SnifferConfigData>('/api/config/sniffer'),
+      loadConfig<EmailAlertData>('/api/security/email-alert'),
+      loadConfig<AiConfigData>('/api/security/ai-config'),
+    ]).then(([deploymentResult, snifferResult, alertResult, aiResult]) => {
+      if (cancelled) return
+
+      const results = [deploymentResult, snifferResult, alertResult, aiResult]
+      setConfigLoadFailed(results.some(result => result.status === 'rejected'))
+
+      if (deploymentResult.status === 'fulfilled') {
+        const config = deploymentResult.value
+        if (config.mode === 'mirror' || config.mode === 'mta') setDeployMode(config.mode)
+        setDeployModeLocked(Boolean(config.locked))
+        const mta = config.mta_config
+        if (mta) {
+          if (typeof mta.mta_downstream_host === 'string') setMtaDownstreamHost(mta.mta_downstream_host)
+          if (typeof mta.mta_downstream_port === 'number') setMtaDownstreamPort(String(mta.mta_downstream_port))
+          if (typeof mta.mta_local_domains === 'string') setDomains(mta.mta_local_domains.split(',').join('\n'))
+        }
       }
-    : rawStep
+
+      if (snifferResult.status === 'fulfilled') {
+        const config = snifferResult.value
+        if (Array.isArray(config.webmail_servers)) setWebmailServers(config.webmail_servers.join(', '))
+        if (Array.isArray(config.http_ports)) setHttpPorts(config.http_ports.join(','))
+      }
+
+      if (alertResult.status === 'fulfilled') {
+        const config = alertResult.value
+        setAlertEnabled(Boolean(config.enabled))
+        if (typeof config.smtp_host === 'string') setSmtpHost(config.smtp_host)
+        if (typeof config.smtp_port === 'number') setSmtpPort(String(config.smtp_port))
+        if (typeof config.smtp_username === 'string') setSmtpUser(config.smtp_username)
+        setSmtpPasswordSet(Boolean(config.smtp_password_set))
+        if (typeof config.smtp_tls === 'string') setSmtpTls(config.smtp_tls)
+        setAllowPlaintextSmtp(Boolean(config.allow_plaintext_smtp))
+        if (typeof config.from_address === 'string') setAlertFrom(config.from_address)
+        if (typeof config.admin_email === 'string') setAlertTo(config.admin_email)
+        if (typeof config.min_threat_level === 'string') setAlertLevel(config.min_threat_level)
+      }
+
+      if (aiResult.status === 'fulfilled') {
+        const config = aiResult.value
+        setAiEnabled(Boolean(config.enabled))
+        if (typeof config.service_url === 'string') setAiUrl(config.service_url)
+      }
+    }).finally(() => {
+      if (!cancelled) setConfigLoading(false)
+    })
+
+    return () => { cancelled = true }
+  }, [])
+
+  // Interface discovery is informational: capture binding itself is controlled
+  // by deployment environment variables and requires a redeploy.
+  useEffect(() => {
+    if (currentStep.id !== 'network' || deployMode !== 'mirror') return
+    let cancelled = false
+    setIfaceLoading(true)
+    setInterfaceLoadFailed(false)
+    apiFetch('/api/system/interfaces')
+      .then(response => response.json() as Promise<ApiEnvelope<NetInterface[]>>)
+      .then(payload => {
+        if (cancelled) return
+        if (!payload.success || !Array.isArray(payload.data)) {
+          throw new Error(payload.error || 'Interface discovery failed')
+        }
+        setInterfaces(payload.data)
+      })
+      .catch(() => {
+        if (!cancelled) setInterfaceLoadFailed(true)
+      })
+      .finally(() => {
+        if (!cancelled) setIfaceLoading(false)
+      })
+
+    return () => { cancelled = true }
+  }, [step, deployMode])
 
   const finishSetup = async () => {
     setError(null)
@@ -177,136 +304,135 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
     }
   }
 
+  const putConfig = async (path: string, body: Record<string, unknown>, fallbackMessage: string) => {
+    const response = await apiFetch(path, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    const payload = await response.json() as ApiEnvelope<unknown>
+    if (!payload.success) throw new Error(payload.error || fallbackMessage)
+  }
+
   const saveStep = async () => {
     setError(null)
     setSaving(true)
     try {
       if (currentStep.id === 'deploy_mode') {
+        if (!deployModeLocked) {
+          await putConfig(
+            '/api/config/deployment-mode',
+            { mode: deployMode },
+            t('setup.saveFailed'),
+          )
+        }
         localStorage.setItem('vigilyx-deploy-mode', deployMode)
-        const body: Record<string, unknown> = { mode: deployMode }
-        if (deployMode === 'mta') {
-          if (mtaDownstreamHost) body.mta_downstream_host = mtaDownstreamHost
-          if (mtaDownstreamPort) body.mta_downstream_port = Number(mtaDownstreamPort)
-        }
-        const res = await apiFetch('/api/config/deployment-mode', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        })
-        const data = await res.json()
-        if (!data.success) throw new Error(data.error || t('setup.saveFailed'))
-      } else if (currentStep.id === 'network') {
-        // NIC/protocol port settings are currently controlled by container env vars; the frontend only stores them in localStorage for display/reference
-        localStorage.setItem('vigilyx-sniffer-iface', snifferIface)
-        localStorage.setItem('vigilyx-smtp-ports', smtpPorts)
-        localStorage.setItem('vigilyx-pop3-ports', pop3Ports)
-        localStorage.setItem('vigilyx-imap-ports', imapPorts)
-        if (deployMode === 'mta') {
-          // In MTA mode, domains are saved into the mta_local_domains field of the deployment_mode config
-          const domainList = domains
-            .split(/[,\n]/)
-            .map(d => d.trim().toLowerCase())
-            .filter(Boolean)
-          if (domainList.length > 0) {
-            const res = await apiFetch('/api/config/deployment-mode', {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ mta_local_domains: domainList.join(',') }),
-            })
-            const data = await res.json()
-            if (!data.success) throw new Error(data.error || t('setup.saveDomainsFailed'))
-          }
-        }
+      } else if (currentStep.id === 'network' && deployMode === 'mta') {
+        const downstreamHost = mtaDownstreamHost.trim()
+        const downstreamPort = parsePort(mtaDownstreamPort)
+        if (!downstreamHost) throw new Error(t('setup.downstreamRequired'))
+        if (downstreamPort === null) throw new Error(t('setup.invalidPort'))
+
+        await putConfig(
+          '/api/config/deployment-mode',
+          {
+            mta_downstream_host: downstreamHost,
+            mta_downstream_port: downstreamPort,
+          },
+          t('setup.saveFailed'),
+        )
+        localStorage.setItem('vigilyx-mta-downstream-host', downstreamHost)
+        localStorage.setItem('vigilyx-mta-downstream-port', String(downstreamPort))
       } else if (currentStep.id === 'domains') {
-        // Save MTA local domains into the deployment_mode config
         const domainList = domains
           .split(/[,\n]/)
           .map(d => d.trim().toLowerCase())
           .filter(Boolean)
-        if (domainList.length > 0) {
-          const res = await apiFetch('/api/config/deployment-mode', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mta_local_domains: domainList.join(',') }),
-          })
-          const data = await res.json()
-          if (!data.success) throw new Error(data.error || t('setup.saveDomainsFailed'))
-        }
+        if (domainList.length === 0) throw new Error(t('setup.domainsRequired'))
+        const normalizedDomains = [...new Set(domainList)].join(',')
+        await putConfig(
+          '/api/config/deployment-mode',
+          { mta_local_domains: normalizedDomains },
+          t('setup.saveDomainsFailed'),
+        )
+        localStorage.setItem('vigilyx-mta-local-domains', normalizedDomains)
       } else if (currentStep.id === 'sniffer') {
         const servers = webmailServers
           .split(/[,\n]/)
-          .map(s => s.trim())
+          .map(server => server.trim())
           .filter(Boolean)
-        const ports = httpPorts
-          .split(',')
-          .map(p => parseInt(p.trim()))
-          .filter(p => !isNaN(p) && p > 0 && p <= 65535)
-        await apiFetch('/api/config/sniffer', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ webmail_servers: servers, http_ports: ports }),
-        })
+        const ports = parsePortList(httpPorts)
+        if (ports === null) throw new Error(t('setup.invalidPortList'))
+
+        await putConfig(
+          '/api/config/sniffer',
+          { webmail_servers: [...new Set(servers)], http_ports: ports },
+          t('setup.saveFailed'),
+        )
       } else if (currentStep.id === 'alerts') {
         if (alertEnabled) {
+          const parsedSmtpPort = parsePort(smtpPort)
+          if (!smtpHost.trim() || !alertFrom.trim() || !alertTo.trim()) {
+            throw new Error(t('setup.alertRequiredFields'))
+          }
+          if (parsedSmtpPort === null) throw new Error(t('setup.invalidPort'))
           if (smtpTls === 'none' && !allowPlaintextSmtp) {
             throw new Error(getPlaintextSmtpLockMessage())
           }
-          await apiFetch('/api/security/email-alert', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              enabled: true,
-              smtp_host: smtpHost,
-              smtp_port: parseInt(smtpPort) || 465,
-              smtp_username: smtpUser,
-              smtp_password: smtpPass,
-              smtp_tls: smtpTls,
-              allow_plaintext_smtp: allowPlaintextSmtp,
-              from_address: alertFrom,
-              admin_email: alertTo,
-              min_threat_level: alertLevel,
-              notify_recipient: false,
-              notify_admin: true,
-            }),
-          })
         }
+
+        const alertBody: Record<string, unknown> = {
+          enabled: alertEnabled,
+          smtp_host: smtpHost.trim(),
+          smtp_port: parsePort(smtpPort) ?? 465,
+          smtp_username: smtpUser.trim(),
+          smtp_tls: smtpTls,
+          allow_plaintext_smtp: allowPlaintextSmtp,
+          from_address: alertFrom.trim(),
+          admin_email: alertTo.trim(),
+          min_threat_level: alertLevel,
+          notify_recipient: false,
+          notify_admin: true,
+        }
+        // Omitting an unchanged blank password preserves an existing encrypted secret.
+        if (smtpPass) alertBody.smtp_password = smtpPass
+        await putConfig('/api/security/email-alert', alertBody, t('setup.saveFailed'))
       } else if (currentStep.id === 'ai') {
-        await apiFetch('/api/security/ai-config', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+        if (aiEnabled && !aiUrl.trim()) throw new Error(t('setup.aiUrlRequired'))
+        await putConfig(
+          '/api/security/ai-config',
+          {
             enabled: aiEnabled,
-            service_url: aiUrl,
+            service_url: aiUrl.trim() || 'http://vigilyx-ai:8900',
             provider: 'local',
-            api_key: '',
             model: 'mDeBERTa',
             temperature: 0.0,
             max_tokens: 512,
             timeout_secs: 30,
-          }),
-        })
+          },
+          t('setup.saveFailed'),
+        )
       }
+      return true
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : t('setup.saveFailed')
       setError(normalizeSmtpUiError(msg))
-      setSaving(false)
       return false
+    } finally {
+      setSaving(false)
     }
-    setSaving(false)
-    return true
   }
 
   const handleNext = async (e?: FormEvent) => {
     e?.preventDefault()
-    // Welcome step has no save
-    if (step === 0) {
-      setStep(1)
+    if (currentStep.id === 'welcome') {
+      setStep(current => current + 1)
       return
     }
     const ok = await saveStep()
     if (!ok) return
-    if (step < STEPS.length - 1) {
-      setStep(step + 1)
+    if (!isLastStep) {
+      setStep(current => current + 1)
       setError(null)
     } else {
       await finishSetup()
@@ -315,14 +441,15 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
 
   const handleBack = () => {
     if (step > 0) {
-      setStep(step - 1)
+      setStep(current => current - 1)
       setError(null)
     }
   }
 
   const handleSkip = () => {
-    if (step < STEPS.length - 1) {
-      setStep(step + 1)
+    if (!canSkipCurrentStep) return
+    if (!isLastStep) {
+      setStep(current => current + 1)
       setError(null)
     } else {
       void finishSetup()
@@ -334,10 +461,22 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
       <div className="grok-bg" />
 
       <div className="setup-wizard">
+        <div className="setup-language-toggle">
+          <LanguageToggle />
+        </div>
+
         {/* Progress bar */}
-        <div className="setup-progress">
+        <div
+          className="setup-progress"
+          role="progressbar"
+          aria-label={t('setup.progressLabel')}
+          aria-valuemin={1}
+          aria-valuemax={STEPS.length}
+          aria-valuenow={step + 1}
+          aria-valuetext={t('setup.progressText', { current: step + 1, total: STEPS.length })}
+        >
           {STEPS.map((s, i) => (
-            <div key={s.id} className={`setup-progress-dot ${i === step ? 'active' : i < step ? 'done' : ''}`}>
+            <div key={s.id} aria-hidden="true" className={`setup-progress-dot ${i === step ? 'active' : i < step ? 'done' : ''}`}>
               {i < step ? (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>
               ) : (
@@ -353,7 +492,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
         {/* Header */}
         <div className="setup-header">
           <div className="setup-step-meta">
-            <span className="setup-step-chip">{t('setup.securityGuide')}</span>
+            <span className="setup-step-chip">{t('setup.initialSetup')}</span>
             <span className="setup-step-count">
               {String(step + 1).padStart(2, '0')} / {String(STEPS.length).padStart(2, '0')}
             </span>
@@ -361,9 +500,9 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
           <div className="setup-title-row">
             <h2 className="setup-title">{currentStep.title}</h2>
             {step === 0 && (
-              <button type="button" className="setup-btn setup-btn--primary" disabled={saving} onClick={() => handleNext()}>
-                {saving && <span className="grok-spinner" />}
-                {t('setup.startConfig')}
+              <button type="button" className="setup-btn setup-btn--primary" disabled={saving || configLoading} onClick={() => handleNext()}>
+                {(saving || configLoading) && <span className="grok-spinner" />}
+                {configLoading ? t('setup.loadingConfig') : t('setup.startConfig')}
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginLeft: 4 }}><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
               </button>
             )}
@@ -371,14 +510,17 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
           <p className="setup-subtitle">{currentStep.subtitle}</p>
         </div>
 
-        {error && <div className="grok-error" style={{ marginBottom: 16 }}>{error}</div>}
+        {configLoadFailed && (
+          <div className="setup-warning" role="status">{t('setup.loadConfigFailed')}</div>
+        )}
+        {error && <div className="grok-error" role="alert" style={{ marginBottom: 16 }}>{error}</div>}
 
         {/* Step content */}
         <form onSubmit={handleNext} className="setup-body">
           {currentStep.id === 'welcome' && (
             <div className="setup-welcome">
               <div className="setup-hero-copy">
-                <span className="setup-eyebrow">Email Threat Intelligence Platform</span>
+                <span className="setup-eyebrow">{t('setup.platformEyebrow')}</span>
                 <p className="setup-welcome-text">
                   {t('setup.welcomeText')}
                 </p>
@@ -415,6 +557,8 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                   type="button"
                   className={`setup-mode-card ${deployMode === 'mirror' ? 'active' : ''}`}
                   data-mode="mirror"
+                  aria-pressed={deployMode === 'mirror'}
+                  disabled={deployModeLocked}
                   onClick={() => setDeployMode('mirror')}
                 >
                   <div className="setup-mode-head">
@@ -440,6 +584,8 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                   type="button"
                   className={`setup-mode-card ${deployMode === 'mta' ? 'active' : ''}`}
                   data-mode="mta"
+                  aria-pressed={deployMode === 'mta'}
+                  disabled={deployModeLocked}
                   onClick={() => setDeployMode('mta')}
                 >
                   <div className="setup-mode-head">
@@ -461,6 +607,13 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                   </div>
                 </button>
               </div>
+
+              {deployModeLocked && (
+                <p className="setup-warning" role="status">
+                  {t('setup.modeLocked', { mode: deployMode === 'mta' ? t('setup.mtaTitle') : t('setup.mirrorTitle') })}
+                </p>
+              )}
+              <p className="setup-security-note">{t('setup.modeRequiresRedeploy')}</p>
             </div>
           )}
 
@@ -474,7 +627,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                   </div>
                   <div className="setup-flow-budget">
                     <span>{t('setup.flowInlineBudget')}</span>
-                    <strong>8s</strong>
+                    <strong>{t('setup.flowInlineBudgetValue')}</strong>
                   </div>
                 </div>
 
@@ -522,7 +675,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                     <div className="setup-flow-arrow" aria-hidden="true" />
                     <div className="setup-flow-node setup-flow-node--gateway">
                       <strong>{t('setup.flowPolicyVerdict')}</strong>
-                      <span>Inline verdict</span>
+                      <span>{t('setup.flowInlineVerdict')}</span>
                     </div>
                     <div className="setup-flow-arrow" aria-hidden="true" />
                     <div className="setup-flow-node setup-flow-node--quarantine">
@@ -564,15 +717,15 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
 
                 <div className="setup-flow-footer">
                   <div className="setup-flow-metric">
-                    <strong>20+</strong>
+                    <strong>{t('setup.flowMetricModulesValue')}</strong>
                     <span>{t('setup.flowMetricModules')}</span>
                   </div>
                   <div className="setup-flow-metric">
-                    <strong>Inbound / Outbound</strong>
+                    <strong>{t('setup.flowMetricDirectionValue')}</strong>
                     <span>{t('setup.flowMetricBidirectional')}</span>
                   </div>
                   <div className="setup-flow-metric">
-                    <strong>Quarantine Ready</strong>
+                    <strong>{t('setup.flowMetricQuarantineValue')}</strong>
                     <span>{t('setup.flowMetricQuarantine')}</span>
                   </div>
                 </div>
@@ -582,45 +735,34 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                 {t('setup.networkMtaNote')}
               </p>
 
-              {/* Listen address */}
-              <label className="setup-label">
-                {t('setup.listenAddress')}
-                <span className="setup-hint">{t('setup.listenAddressHint')}</span>
-              </label>
-              <div className="setup-row">
-                <select className="grok-input" defaultValue="0.0.0.0" style={{ flex: 1 }}>
-                  <option value="0.0.0.0">{t('setup.allInterfaces')}</option>
-                  <option value="127.0.0.1">{t('setup.localhostOnly')}</option>
-                  {interfaces.map(iface => (
-                    <option key={iface.name} value={iface.name}>{iface.name} — {formatBytes(iface.total_bytes)} {t('setup.traffic')}</option>
-                  ))}
-                </select>
-                <div className="setup-inline-port">:25 / :465</div>
-              </div>
+              <p className="setup-security-note">{t('setup.mtaListenDeployManaged')}</p>
 
               {/* Downstream relay */}
-              <label className="setup-label">
+              <label className="setup-label" htmlFor="setup-mta-downstream-host">
                 {t('setup.downstreamMta')}
                 <span className="setup-hint">{t('setup.downstreamMtaHint')}</span>
               </label>
               <div className="setup-row">
-                <input className="grok-input" style={{ flex: 1 }}
+                <input id="setup-mta-downstream-host" className="grok-input" style={{ flex: 1 }}
                   value={mtaDownstreamHost} onChange={e => setMtaDownstreamHost(e.target.value)}
-                  placeholder="10.1.246.33" />
+                  placeholder="10.1.246.33" required />
                 <input className="grok-input" style={{ width: 88, textAlign: 'center' }}
+                  type="number" min="1" max="65535" inputMode="numeric"
+                  aria-label={t('setup.downstreamPort')}
                   value={mtaDownstreamPort} onChange={e => setMtaDownstreamPort(e.target.value)}
-                  placeholder="25" />
+                  placeholder="25" required />
               </div>
+              <p className="setup-tip">{t('setup.mtaConfigRestartNote')}</p>
 
             </div>
           )}
 
           {currentStep.id === 'network' && deployMode !== 'mta' && (
             <div className="setup-fields">
-              <p className="setup-tip" style={{ marginBottom: 12, opacity: 0.7 }}>{t('setup.networkEnvNote')}</p>
+              <p className="setup-security-note">{t('setup.networkEnvNote')}</p>
               <label className="setup-label">
-                {t('setup.snifferInterface')}
-                <span className="setup-hint">{t('setup.snifferInterfaceHint')}</span>
+                {t('setup.detectedInterfaces')}
+                <span className="setup-hint">{t('setup.detectedInterfacesHint')}</span>
               </label>
               {ifaceLoading ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 0', color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>
@@ -629,74 +771,45 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
               ) : interfaces.length > 0 ? (
                 <div className="setup-iface-list">
                   {interfaces.map(iface => (
-                    <button
+                    <div
                       key={iface.name}
-                      type="button"
-                      className={`setup-iface-card ${snifferIface === iface.name ? 'active' : ''}`}
-                      onClick={() => setSnifferIface(iface.name)}
+                      className={`setup-iface-card ${interfaces[0]?.name === iface.name ? 'active' : ''}`}
                     >
                       <div className="setup-iface-name">
                         {iface.name}
-                        {iface.status === 'up' && <span className="setup-iface-up">UP</span>}
+                        {iface.status === 'up' && <span className="setup-iface-up">{t('setup.interfaceUp')}</span>}
                         {interfaces[0]?.name === iface.name && <span className="setup-iface-rec">{t('setup.recommended')}</span>}
                       </div>
                       <div className="setup-iface-stats">
                         <span>RX {formatBytes(iface.rx_bytes)}</span>
                         <span>TX {formatBytes(iface.tx_bytes)}</span>
                       </div>
-                    </button>
+                    </div>
                   ))}
                 </div>
-              ) : (
-                <input
-                  type="text"
-                  className="grok-input"
-                  placeholder="eth0"
-                  value={snifferIface}
-                  onChange={e => setSnifferIface(e.target.value)}
-                />
-              )}
-              {!ifaceLoading && interfaces.length === 0 && (
+              ) : interfaceLoadFailed ? (
+                <p className="setup-warning" role="status">{t('setup.interfacesLoadFailed')}</p>
+              ) : null}
+              {!ifaceLoading && !interfaceLoadFailed && interfaces.length === 0 && (
                 <p className="setup-tip">{t('setup.noInterfacesDetected')}</p>
               )}
-              <div className="setup-row" style={{ marginTop: 16 }}>
-                <div className="setup-field">
-                  <label className="setup-label">
-                    {t('setup.smtpPorts')}
-                    <span className="setup-hint">{t('setup.smtpPortsHint')}</span>
-                  </label>
-                  <input type="text" className="grok-input" placeholder="25,465,587" value={smtpPorts} onChange={e => setSmtpPorts(e.target.value)} />
-                </div>
-                <div className="setup-field">
-                  <label className="setup-label">
-                    {t('setup.pop3Ports')}
-                    <span className="setup-hint">{t('setup.pop3PortsHint')}</span>
-                  </label>
-                  <input type="text" className="grok-input" placeholder="110,995" value={pop3Ports} onChange={e => setPop3Ports(e.target.value)} />
-                </div>
-                <div className="setup-field">
-                  <label className="setup-label">
-                    {t('setup.imapPorts')}
-                    <span className="setup-hint">{t('setup.imapPortsHint')}</span>
-                  </label>
-                  <input type="text" className="grok-input" placeholder="143,993" value={imapPorts} onChange={e => setImapPorts(e.target.value)} />
-                </div>
-              </div>
             </div>
           )}
 
           {currentStep.id === 'domains' && (
             <div className="setup-fields">
-              <label className="setup-label">
+              <label className="setup-label" htmlFor="setup-mta-domains">
                 {t('setup.internalDomains')}
                 <span className="setup-hint">{t('setup.internalDomainsHint')}</span>
               </label>
               <textarea
+                id="setup-mta-domains"
                 className="grok-input setup-textarea"
                 placeholder="example.com&#10;company.cn&#10;mail.corp.local"
                 value={domains}
                 onChange={e => setDomains(e.target.value)}
                 rows={4}
+                required
               />
               <p className="setup-tip">
                 {t('setup.internalDomainsTip')}
@@ -741,6 +854,9 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                 <button
                   type="button"
                   className={`setup-toggle ${alertEnabled ? 'on' : ''}`}
+                  role="switch"
+                  aria-checked={alertEnabled}
+                  aria-label={t('setup.enableEmailAlerts')}
                   onClick={() => setAlertEnabled(!alertEnabled)}
                 >
                   <span className="setup-toggle-knob" />
@@ -751,11 +867,11 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                   <div className="setup-row">
                     <div className="setup-field">
                       <label className="setup-label">{t('setup.smtpServer')}</label>
-                      <input type="text" className="grok-input" placeholder="smtp.example.com" value={smtpHost} onChange={e => setSmtpHost(e.target.value)} />
+                      <input type="text" className="grok-input" placeholder="smtp.example.com" value={smtpHost} onChange={e => setSmtpHost(e.target.value)} required={alertEnabled} />
                     </div>
                     <div className="setup-field setup-field--sm">
                       <label className="setup-label">{t('setup.port')}</label>
-                      <input type="text" className="grok-input" placeholder="465" value={smtpPort} onChange={e => setSmtpPort(e.target.value)} />
+                      <input type="number" min="1" max="65535" inputMode="numeric" className="grok-input" placeholder="465" value={smtpPort} onChange={e => setSmtpPort(e.target.value)} required={alertEnabled} />
                     </div>
                     <div className="setup-field setup-field--sm">
                       <label className="setup-label">{t('setup.encryption')}</label>
@@ -803,7 +919,16 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                     </div>
                     <div className="setup-field">
                       <label className="setup-label">{t('setup.smtpPassword')}</label>
-                      <input type="password" className="grok-input" placeholder={t('setup.smtpPasswordPlaceholder')} value={smtpPass} onChange={e => setSmtpPass(e.target.value)} />
+                      <input
+                        type="password"
+                        className="grok-input"
+                        placeholder={smtpPasswordSet ? t('setup.smtpPasswordConfigured') : t('setup.smtpPasswordPlaceholder')}
+                        value={smtpPass}
+                        onChange={e => {
+                          setSmtpPass(e.target.value)
+                          if (e.target.value) setSmtpPasswordSet(false)
+                        }}
+                      />
                     </div>
                   </div>
                   <p className="setup-security-note">
@@ -812,11 +937,11 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                   <div className="setup-row">
                     <div className="setup-field">
                       <label className="setup-label">{t('setup.fromAddress')}</label>
-                      <input type="email" className="grok-input" placeholder="vigilyx-alert@example.com" value={alertFrom} onChange={e => setAlertFrom(e.target.value)} />
+                      <input type="email" className="grok-input" placeholder="vigilyx-alert@example.com" value={alertFrom} onChange={e => setAlertFrom(e.target.value)} required={alertEnabled} />
                     </div>
                     <div className="setup-field">
                       <label className="setup-label">{t('setup.alertRecipient')}</label>
-                      <input type="email" className="grok-input" placeholder="admin@example.com" value={alertTo} onChange={e => setAlertTo(e.target.value)} />
+                      <input type="email" className="grok-input" placeholder="admin@example.com" value={alertTo} onChange={e => setAlertTo(e.target.value)} required={alertEnabled} />
                     </div>
                   </div>
                   <label className="setup-label">{t('setup.minAlertLevel')}</label>
@@ -826,6 +951,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                         key={lv}
                         type="button"
                         className={`setup-pill ${alertLevel === lv ? 'active' : ''} setup-pill--${lv}`}
+                        aria-pressed={alertLevel === lv}
                         onClick={() => setAlertLevel(lv)}
                       >
                         {{ low: t('setup.levelLow'), medium: t('setup.levelMedium'), high: t('setup.levelHigh'), critical: t('setup.levelCritical') }[lv]}
@@ -844,6 +970,9 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                 <button
                   type="button"
                   className={`setup-toggle ${aiEnabled ? 'on' : ''}`}
+                  role="switch"
+                  aria-checked={aiEnabled}
+                  aria-label={t('setup.enableAi')}
                   onClick={() => setAiEnabled(!aiEnabled)}
                 >
                   <span className="setup-toggle-knob" />
@@ -861,6 +990,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                     placeholder="http://vigilyx-ai:8900"
                     value={aiUrl}
                     onChange={e => setAiUrl(e.target.value)}
+                    required={aiEnabled}
                   />
                   <p className="setup-tip">
                     {t('setup.aiModelNote')}
@@ -883,13 +1013,15 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                 {t('setup.prevStep')}
               </button>
               <div className="setup-footer-right">
-                <button type="button" className="setup-btn setup-btn--ghost" onClick={handleSkip} disabled={saving}>
-                  {t('setup.skip')}
-                </button>
+                {canSkipCurrentStep && (
+                  <button type="button" className="setup-btn setup-btn--ghost" onClick={handleSkip} disabled={saving}>
+                    {t('setup.skip')}
+                  </button>
+                )}
                 <button type="submit" className="setup-btn setup-btn--primary" disabled={saving}>
                   {saving && <span className="grok-spinner" />}
-                  {step === STEPS.length - 1 ? t('setup.finish') : t('setup.nextStep')}
-                  {!saving && step < STEPS.length - 1 && (
+                  {isLastStep ? t('setup.finish') : t('setup.nextStep')}
+                  {!saving && !isLastStep && (
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginLeft: 6 }}><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
                   )}
                 </button>
