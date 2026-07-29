@@ -176,6 +176,13 @@ body {
   overflow-y: scroll;
 }
 
+body.setup-page {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+
 /* Global focus-visible for keyboard accessibility */
 :focus-visible {
   outline: 2px solid var(--accent-primary);
@@ -751,6 +758,17 @@ html[lang="en"] .hd-brand-sub {
   zoom: 1.12;
 }
 
+.grok-login.setup-login {
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  padding: clamp(10px, 2vh, 22px) clamp(12px, 2vw, 24px);
+  overflow: hidden;
+  box-sizing: border-box;
+  zoom: 1;
+}
+
 .visually-hidden {
   position: absolute !important;
   width: 1px !important;
@@ -1118,8 +1136,12 @@ html[lang="en"] .hd-brand-sub {
   z-index: 1;
   width: 100%;
   max-width: 860px;
-  padding: 48px 56px 40px;
-  overflow: visible;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: clamp(24px, 3.8vh, 40px) clamp(28px, 4vw, 48px) clamp(20px, 3vh, 32px);
+  overflow: hidden;
+  box-sizing: border-box;
   border-radius: 28px;
   border: 1px solid var(--setup-line);
   background:
@@ -1254,7 +1276,20 @@ html[lang="en"] .hd-brand-sub {
 /* ── Body ── */
 .setup-body {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.setup-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.setup-content::-webkit-scrollbar {
+  display: none;
 }
 .setup-section-lead {
   margin: 0 0 18px;
@@ -2515,34 +2550,20 @@ html[lang="en"] .hd-brand-sub {
     grid-template-columns: 1fr;
   }
   .setup-flow-row {
-    grid-template-columns: 74px minmax(0, 1fr);
-    gap: 10px 12px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
   }
   .setup-flow-label {
-    align-items: flex-start;
-    padding-top: 8px;
+    display: none;
   }
   .setup-flow-arrow {
-    width: 2px;
-    height: 24px;
-    justify-self: center;
-    background: linear-gradient(180deg, rgba(34, 211, 238, 0.08), rgba(34, 211, 238, 0.85), rgba(34, 211, 238, 0.08));
-  }
-  .setup-flow-arrow::before {
-    inset: 0 -2px;
-    background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.42), transparent);
-  }
-  .setup-flow-arrow::after {
-    top: auto;
-    right: 50%;
-    bottom: -1px;
-    transform: translateX(50%) rotate(135deg);
+    display: none;
   }
 }
 
 @media (max-width: 720px) {
   .setup-wizard {
-    padding: 34px 18px 28px;
+    padding: 22px 18px 18px;
     border-radius: 22px;
   }
   .setup-toolbar {
@@ -2629,6 +2650,138 @@ html[lang="en"] .hd-brand-sub {
   }
   .setup-flow-grid {
     gap: 16px;
+  }
+}
+
+/* Keep the first-run workflow inside one desktop viewport. Configuration
+   controls stay fully available while decorative topology detail gets denser. */
+@media (max-height: 900px) {
+  .setup-login .setup-wizard {
+    padding: 22px 36px 20px;
+  }
+  .setup-toolbar {
+    margin-bottom: 12px;
+  }
+  .setup-header {
+    margin-bottom: 16px;
+  }
+  .setup-step-meta {
+    margin-bottom: 7px;
+  }
+  .setup-step-chip {
+    padding: 5px 10px;
+  }
+  .setup-title {
+    font-size: 28px;
+  }
+  .setup-subtitle {
+    margin-top: 5px;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  .setup-welcome {
+    gap: 10px;
+  }
+  .setup-hero-copy {
+    padding: 14px 18px;
+  }
+  .setup-eyebrow {
+    margin-bottom: 5px;
+  }
+  .setup-welcome-text {
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .setup-feature-grid {
+    gap: 8px;
+  }
+  .setup-feature-card {
+    min-height: 72px;
+    padding: 11px 12px;
+  }
+  .setup-feature-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+  }
+  .setup-feature-desc {
+    line-height: 1.35;
+  }
+  .setup-welcome-hint {
+    padding: 8px 12px;
+    line-height: 1.45;
+  }
+  .setup-fields {
+    gap: 9px;
+  }
+  .setup-section-lead {
+    margin-bottom: 10px;
+    line-height: 1.5;
+  }
+  .setup-mode-card {
+    padding: 14px 16px;
+  }
+  .setup-fields .grok-input,
+  .setup-seg-btn {
+    min-height: 40px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+  .setup-textarea {
+    min-height: 78px;
+  }
+  .setup-security-note,
+  .setup-warning {
+    margin-top: 5px;
+    padding: 8px 11px;
+    line-height: 1.45;
+  }
+  .setup-flow-shell {
+    padding: 13px;
+  }
+  .setup-flow-header {
+    margin-bottom: 8px;
+  }
+  .setup-flow-title {
+    font-size: 17px;
+  }
+  .setup-flow-budget {
+    padding: 6px 9px;
+  }
+  .setup-flow-budget strong {
+    font-size: 18px;
+  }
+  .setup-flow-legend,
+  .setup-flow-footer {
+    display: none;
+  }
+  .setup-flow-grid {
+    gap: 7px;
+  }
+  .setup-flow-node {
+    min-height: 48px;
+    padding: 8px 9px;
+    border-radius: 12px;
+  }
+  .setup-flow-node strong {
+    font-size: 12px;
+  }
+  .setup-flow-node span {
+    display: none;
+  }
+  .setup-step-note,
+  .setup-tip,
+  .setup-hint {
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .setup-footer {
+    margin-top: 16px;
+    padding-top: 12px;
+  }
+  .setup-btn {
+    min-height: 40px;
+    padding: 8px 18px;
   }
 }
 

@@ -80,8 +80,9 @@ describe('SetupWizard', () => {
 
   it('renders complete Chinese copy and switches the wizard to English', async () => {
     const user = userEvent.setup()
-    render(<SetupWizard onComplete={vi.fn()} />)
+    const { unmount } = render(<SetupWizard onComplete={vi.fn()} />)
 
+    expect(document.body).toHaveClass('setup-page')
     expect(screen.getByText('企业邮件威胁情报平台')).toBeInTheDocument()
     expect(screen.getByText('多引擎威胁检测')).toBeInTheDocument()
     expect(screen.queryByText('setup.featureMultiEngine')).not.toBeInTheDocument()
@@ -95,6 +96,9 @@ describe('SetupWizard', () => {
     expect(screen.getByRole('button', { name: 'English' })).toHaveAttribute('aria-pressed', 'true')
     expect(document.documentElement.lang).toBe('en')
     expect(localStorage.getItem('vigilyx-lang')).toBe('en')
+
+    unmount()
+    expect(document.body).not.toHaveClass('setup-page')
   })
 
   it('submits MTA downstream settings on the page where they are entered', async () => {

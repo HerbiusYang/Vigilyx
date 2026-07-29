@@ -141,6 +141,11 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
   const [configLoadFailed, setConfigLoadFailed] = useState(false)
   const glowVars = useWizardGlows()
 
+  useEffect(() => {
+    document.body.classList.add('setup-page')
+    return () => document.body.classList.remove('setup-page')
+  }, [])
+
   // ── Step: Deploy Mode ──
   const [deployMode, setDeployMode] = useState<'mirror' | 'mta'>('mirror')
   const [deployModeLocked, setDeployModeLocked] = useState(false)
@@ -457,7 +462,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
   }
 
   return (
-    <div className="grok-login" style={glowVars as React.CSSProperties}>
+    <div className="grok-login setup-login" style={glowVars as React.CSSProperties}>
       <div className="grok-bg" />
 
       <div className="setup-wizard">
@@ -518,7 +523,8 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
 
         {/* Step content */}
         <form onSubmit={handleNext} className="setup-body">
-          {currentStep.id === 'welcome' && (
+          <div className="setup-content">
+            {currentStep.id === 'welcome' && (
             <div className="setup-welcome">
               <div className="setup-hero-copy">
                 <div className="setup-hero-emblem" aria-hidden="true">
@@ -983,7 +989,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
             </div>
           )}
 
-          {currentStep.id === 'ai' && (
+            {currentStep.id === 'ai' && (
             <div className="setup-fields">
               <label className="setup-toggle-row">
                 <span>{t('setup.enableAi')}</span>
@@ -1023,7 +1029,8 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                 </p>
               )}
             </div>
-          )}
+            )}
+          </div>
 
           {/* Footer buttons - step 0 buttons were moved to the title row */}
           {step > 0 && (
