@@ -86,3 +86,6 @@ python/.pytest_cache/
 python/.ruff_cache/
 *.pyc
 *.pyo
+
+# Lotyra 本地治理记录（含部署审计与环境线索，不上传）
+.lotyra/
