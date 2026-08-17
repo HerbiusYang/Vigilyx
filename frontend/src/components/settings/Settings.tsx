@@ -94,7 +94,7 @@ function Settings({ authUser }: { authUser: AuthUser }) {
     return VALID_TABS.has(h) && (h !== 'platform' || canManageUsers) ? h as SettingsTab : 'appearance'
   })
 
-  const [apiVersion, setApiVersion] = useState('0.9.3')
+  const [apiVersion, setApiVersion] = useState('0.9.4')
 
   const changeTab = useCallback((tab: SettingsTab) => {
     setActiveTab(tab)

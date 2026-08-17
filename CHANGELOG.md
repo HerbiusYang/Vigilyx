@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and the proj
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-08-17
+
+### Changed
+
+- Bumped the Rust workspace, Python AI package, and frontend package metadata to 0.9.4.
+
 ## [0.9.3] - 2026-08-16
 
 ### Added

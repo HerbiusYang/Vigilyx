@@ -1,6 +1,6 @@
 [project]
 name = "vigilyx-ai"
-version = "0.9.3"
+version = "0.9.4"
 description = "Vigilyx AI 分析模块 - NLP 钓鱼检测 + 邮件威胁分析"
 requires-python = ">=3.10"
 license = {text = "AGPL-3.0-only"}

@@ -16,9 +16,9 @@ export default function OpenSourceCommunity() {
   ], [t])
 
   const OPEN_SOURCE_ROADMAP: { phase: string; title: string; status: 'done' | 'current' | 'planned'; date: string; items: string[] }[] = useMemo(() => [
-    { phase: 'v0.9.3', title: t('community.ossRoadmapCoreEngineTitle'), status: 'current' as const, date: '2026 Q1',
+    { phase: 'v0.9.4', title: t('community.ossRoadmapCoreEngineTitle'), status: 'current' as const, date: '2026 Q3',
       items: [t('community.ossRoadmapCoreItem1'), t('community.ossRoadmapCoreItem2'), t('community.ossRoadmapCoreItem3'), t('community.ossRoadmapCoreItem4'), t('community.ossRoadmapCoreItem5')] },
-    { phase: 'v1.0.0', title: t('community.ossRoadmapReleaseTitle'), status: 'planned' as const, date: '2026 Q2',
+    { phase: 'v1.0.0', title: t('community.ossRoadmapReleaseTitle'), status: 'planned' as const, date: '2026 Q4',
       items: [t('community.ossRoadmapReleaseItem1'), t('community.ossRoadmapReleaseItem2'), t('community.ossRoadmapReleaseItem3'), t('community.ossRoadmapReleaseItem4')] },
     { phase: 'v1.x.x', title: t('community.ossRoadmapIntelTitle'), status: 'planned' as const, date: '2026 Q3',
       items: [t('community.ossRoadmapIntelItem1'), t('community.ossRoadmapIntelItem2'), t('community.ossRoadmapIntelItem3'), t('community.ossRoadmapIntelItem4')] },

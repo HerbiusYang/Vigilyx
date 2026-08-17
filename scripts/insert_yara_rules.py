@@ -650,7 +650,7 @@ def parser() -> argparse.ArgumentParser:
     build.add_argument("--output", type=Path, required=True)
     build.add_argument("--pack-id", required=True)
     build.add_argument("--generation", required=True)
-    build.add_argument("--min-engine-version", default="0.9.3")
+    build.add_argument("--min-engine-version", default="0.9.4")
     build.add_argument("--min-rules", type=int, default=10_000)
     build.add_argument("--rules-per-shard", type=int, default=1_000)
     build.add_argument("--mode", choices=("shadow", "enforce"), default="shadow")

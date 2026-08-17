@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# RUSTSEC-2023-0071 was removed from the 0.9.3 lock graph. Fail if a future
+# RUSTSEC-2023-0071 was removed from the 0.9.4 lock graph. Fail if a future
 # dependency change silently reintroduces the affected RSA line.
 if grep -qE '^name = "rsa"$' Cargo.lock; then
   echo "RustSec guard failed: rsa has re-entered Cargo.lock" >&2

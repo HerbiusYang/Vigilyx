@@ -70,7 +70,7 @@ export default function AboutSettings() {
           </svg>
         </div>
         <div className="s-about-name">Vigilyx</div>
-        <div className="s-about-ver">v{systemInfo?.api_version || '0.9.3'}</div>
+        <div className="s-about-ver">v{systemInfo?.api_version || '0.9.4'}</div>
         <div className="s-about-tagline">{t('settings.about.tagline')}</div>
       </div>
 
