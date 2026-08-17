@@ -427,11 +427,6 @@ We are committed to giving back the vast majority of funds received to society. 
 
 > Fund usage details will be published on the `/community` page of the Vigilyx dashboard in a future release.
 
-<p align="center">
-  <img src="assets/donate.png" alt="WeChat Pay QR code" width="240">
-</p>
-<p align="center"><b>WeChat Pay</b></p>
-
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
