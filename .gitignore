@@ -19,9 +19,8 @@
 
 # 环境配置 (密码文件不提交)
 .env
-.env.local
-.env.production
 **/.env
+**/.env.*
 !**/.env.example
 
 # 密钥和证书
@@ -38,6 +37,10 @@ AGENTS.md
 AGENTS.local.md
 CLAUDE.md
 .claude/
+
+# Lotyra 本地治理状态（包含本机工作租约和审计记录）
+.lotyra/
+.lotyra-leases.json
 
 # 部署配置 (包含服务器地址等环境特定信息)
 deploy.conf
@@ -60,6 +63,12 @@ frontend/dist/
 frontend/.vite/
 site/.vitepress/cache/
 site/.vitepress/dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
+.eslintcache
 
 # 测试覆盖率
 coverage/
@@ -86,6 +95,30 @@ python/.pytest_cache/
 python/.ruff_cache/
 *.pyc
 *.pyo
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# 本地数据库和覆盖率/调试产物
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.trace
+
+# 本地 Docker 覆盖配置与临时密钥文件
+docker-compose.override.yml
+deploy/docker/docker-compose.override.yml
+secrets/
+*.secret
+*.secrets
+
+# 其他操作系统临时文件
+Thumbs.db
+ehthumbs.db
+._*
 
 # Lotyra 本地治理记录（含部署审计与环境线索，不上传）
 .lotyra/
