@@ -6,7 +6,16 @@ import time
 
 import pytest
 
-from vigilyx_ai.nlp_phishing import ModelManager
+from vigilyx_ai.nlp_phishing import ModelManager, ZEROSHOT_MODEL_REVISIONS
+
+
+def test_all_zero_shot_fallbacks_are_commit_pinned():
+    assert len(ZEROSHOT_MODEL_REVISIONS) == 3
+    assert all(
+        len(revision) == 40
+        and set(revision) <= set("0123456789abcdef")
+        for revision in ZEROSHOT_MODEL_REVISIONS.values()
+    )
 
 
 class TestMarkUnavailable:

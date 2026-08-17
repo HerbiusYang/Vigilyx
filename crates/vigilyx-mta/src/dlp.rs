@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 use vigilyx_core::models::{EmailSession, MailDirection};
 use vigilyx_engine::data_security::dlp::{DlpScanResult, scan_text};
+use vigilyx_engine::modules::attach_content::extract_attachment_text_for_policy;
 
 /// DLP
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,7 +109,22 @@ pub fn detect_direction(
 const DLP_MAX_SCAN_SIZE: usize = 100 * 1024 * 1024;
 
 /// DLP
-pub fn run_dlp_scan(session: &EmailSession) -> DlpScanResult {
+#[derive(Debug, Default)]
+pub struct DlpInspection {
+    pub result: DlpScanResult,
+    pub complete: bool,
+    pub attachments_scanned: usize,
+}
+
+impl std::ops::Deref for DlpInspection {
+    type Target = DlpScanResult;
+
+    fn deref(&self) -> &Self::Target {
+        &self.result
+    }
+}
+
+pub fn run_dlp_scan(session: &EmailSession) -> DlpInspection {
     let mut text = String::new();
 
     if let Some(ref subject) = session.subject {
@@ -124,8 +140,15 @@ pub fn run_dlp_scan(session: &EmailSession) -> DlpScanResult {
         text.push('\n');
     }
 
+    let attachment_text = extract_attachment_text_for_policy(&session.content.attachments);
+    text.push_str(&attachment_text.text);
+
     if text.is_empty() {
-        return DlpScanResult::default();
+        return DlpInspection {
+            result: DlpScanResult::default(),
+            complete: attachment_text.complete,
+            attachments_scanned: attachment_text.scanned_count,
+        };
     }
 
     if text.len() > DLP_MAX_SCAN_SIZE {
@@ -138,7 +161,11 @@ pub fn run_dlp_scan(session: &EmailSession) -> DlpScanResult {
         truncate_to_char_boundary(&mut text, DLP_MAX_SCAN_SIZE);
     }
 
-    scan_text(&text)
+    DlpInspection {
+        result: scan_text(&text),
+        complete: attachment_text.complete,
+        attachments_scanned: attachment_text.scanned_count,
+    }
 }
 
 fn truncate_to_char_boundary(text: &mut String, max_size: usize) {
@@ -359,6 +386,59 @@ mod tests {
     }
 
     #[test]
+    fn test_dlp_scan_includes_text_attachment_content() {
+        let mut session = EmailSession::new(
+            vigilyx_core::Protocol::Smtp,
+            "10.0.0.1".into(),
+            25000,
+            "10.0.0.2".into(),
+            25,
+        );
+        session
+            .content
+            .attachments
+            .push(vigilyx_core::EmailAttachment {
+                filename: "accounts.txt".into(),
+                content_type: "text/plain".into(),
+                size: 37,
+                hash: "test".into(),
+                content_base64: Some("Q3VzdG9tZXIgY2FyZDogNDUzMjAxNTExMjgzMDM2Ng==".into()),
+            });
+
+        let inspection = run_dlp_scan(&session);
+
+        assert!(inspection.complete);
+        assert_eq!(inspection.attachments_scanned, 1);
+        assert!(inspection.matches.iter().any(|name| name == "credit_card"));
+    }
+
+    #[test]
+    fn test_dlp_marks_missing_text_attachment_payload_incomplete() {
+        let mut session = EmailSession::new(
+            vigilyx_core::Protocol::Smtp,
+            "10.0.0.1".into(),
+            25000,
+            "10.0.0.2".into(),
+            25,
+        );
+        session
+            .content
+            .attachments
+            .push(vigilyx_core::EmailAttachment {
+                filename: "accounts.csv".into(),
+                content_type: "text/csv".into(),
+                size: 1024,
+                hash: "test".into(),
+                content_base64: None,
+            });
+
+        let inspection = run_dlp_scan(&session);
+
+        assert!(!inspection.complete);
+        assert_eq!(inspection.attachments_scanned, 0);
+    }
+
+    #[test]
     fn test_dlp_scan_empty_email() {
         let session = EmailSession::new(
             vigilyx_core::Protocol::Smtp,
@@ -413,6 +493,7 @@ mod tests {
                     vec!["138***".into(), "139***".into()],
                 ),
             ],
+            ..Default::default()
         };
         let reason = format_dlp_reason(&result);
         assert!(reason.contains("credit_card(1)"));

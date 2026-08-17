@@ -103,6 +103,21 @@ except ImportError:
 torch_available = _real_torch
 
 
+@pytest.fixture(autouse=True)
+def _reset_llm_rate_limit_state():
+    """Keep LLM rate-limit state (per-sender + global) isolated per test."""
+    try:
+        from vigilyx_ai import api as api_module
+    except Exception:
+        yield
+        return
+    api_module._llm_rate_log.clear()
+    api_module._llm_global_rate_log.clear()
+    yield
+    api_module._llm_rate_log.clear()
+    api_module._llm_global_rate_log.clear()
+
+
 # ---------------------------------------------------------------------------
 # Factories
 # ---------------------------------------------------------------------------

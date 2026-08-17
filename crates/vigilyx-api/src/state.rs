@@ -49,6 +49,9 @@ pub struct AppState {
     pub secure_cookie: bool,
     /// Global WebSocket auth epoch; increment to force authenticated sockets to reconnect.
     pub ws_auth_epoch: AtomicU64,
+    /// SEC (round-5): per-username WebSocket revocation epochs so a single
+    /// user's logout no longer breaks every operator's live dashboard socket.
+    pub ws_user_epochs: dashmap::DashMap<String, u64>,
 }
 
 /// Messaging state

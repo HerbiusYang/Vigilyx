@@ -5,6 +5,7 @@
 //! Scores phishing-specific QR lures such as login/OAuth/device-code landing pages.
 
 use std::io::{Cursor, Read};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::LazyLock;
 use std::time::Instant;
 
@@ -32,6 +33,12 @@ const MAX_QR_ATTACHMENT_DECODE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_EMBEDDED_QR_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_EMBEDDED_QR_IMAGES_PER_ATTACHMENT: usize = 12;
 const MAX_QR_IMAGES_PER_MESSAGE: usize = 32;
+/// Minimum pixel dimension for an image to be a plausible QR carrier. A
+/// version-1 QR code is 21x21 modules; with the mandatory quiet zone it
+/// cannot render below ~29px. Smaller images (1x1 tracking pixels, spacer
+/// GIFs) are decoys: scanning them wastes the per-message budget, so they
+/// are skipped without counting against it.
+const MIN_QR_CARRIER_DIM: u32 = 32;
 const MAX_QR_SOURCE_BYTES_PER_MESSAGE: usize = 32 * 1024 * 1024;
 const MAX_QR_ARCHIVE_ENTRIES_EXAMINED: usize = 256;
 const MAX_TEXT_CARRIER_SCAN_BYTES: usize = 2 * 1024 * 1024;
@@ -39,6 +46,7 @@ const JPEG_SIGNATURE: &[u8; 3] = b"\xFF\xD8\xFF";
 const STRUCTURAL_QR_PAYLOAD_TERMS: &[&str] = &[
     "microsoft.com/devicelogin",
     "login.microsoftonline.com",
+    "/login",
     "oauth2",
     "client_id=",
     "redirect_uri=",
@@ -176,9 +184,29 @@ fn build_email_context(ctx: &SecurityContext) -> String {
     context.to_lowercase()
 }
 
-fn has_keyword_context(text: &str, keywords: &[String]) -> bool {
+fn has_explicit_qr_lure_context(text: &str) -> bool {
+    // Generic phishing keywords (for example "please check" or "notice")
+    // appear in ordinary vendor signatures and must not turn a decorative QR
+    // image into a lure.  Require wording that actually instructs the user to
+    // scan/use the QR code or ties it to an authentication flow.
+    const QR_LURE_TERMS: &[&str] = &[
+        "qr code",
+        "scan qr",
+        "scan the code",
+        "scan to login",
+        "scan to sign in",
+        "scan to verify",
+        "二维码",
+        "扫描二维码",
+        "扫码",
+        "扫码登录",
+        "扫码验证",
+    ];
+
     let normalized = normalize_text(text);
-    keywords.iter().any(|keyword| normalized.contains(keyword))
+    QR_LURE_TERMS
+        .iter()
+        .any(|term| normalized.contains(term))
 }
 
 /// Check whether the attachment is a raster image that could contain a QR code.
@@ -206,6 +234,19 @@ fn is_raster_qr_candidate(content_type: &str, file_type: Option<DetectedFileType
         || ct.starts_with("image/bmp")
         || ct.starts_with("image/tiff")
         || ct.starts_with("image/webp")
+}
+
+/// Header-only check: is this image too small to possibly carry a QR code?
+/// Images whose declared dimensions are unreadable are *not* skipped — the
+/// conservative choice keeps malformed decoys on the normal scan path.
+fn is_below_qr_carrier_size(bytes: &[u8]) -> bool {
+    let Ok(reader) = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format() else {
+        return false;
+    };
+    match reader.into_dimensions() {
+        Ok((width, height)) => width.min(height) < MIN_QR_CARRIER_DIM,
+        Err(_) => false,
+    }
 }
 
 fn extension_from_filename(filename: &str) -> &str {
@@ -440,6 +481,12 @@ fn decode_embedded_qr_images_from_binary(
             continue;
         }
 
+        // 1x1 placeholder / tracking-pixel decoys cannot carry a QR code;
+        // they only exist to exhaust the embedded-image budget, so skip them
+        // without charging the budget.
+        if is_below_qr_carrier_size(image_bytes) {
+            continue;
+        }
         scanned += 1;
         if let Some(qr) = decode_qr_from_image_bytes(image_bytes) {
             findings.push((format!("{label_prefix}_{kind}_{}", scanned), qr));
@@ -499,6 +546,10 @@ fn decode_embedded_qr_images_from_zip(
         if !is_raster_qr_candidate("application/octet-stream", detect_file_type(&bytes)) {
             continue;
         }
+        // Skip placeholder-sized decoys without charging the budget.
+        if is_below_qr_carrier_size(&bytes) {
+            continue;
+        }
         scanned += 1;
         if let Some(qr) = decode_qr_from_image_bytes(&bytes) {
             findings.push((name, qr));
@@ -527,7 +578,7 @@ fn decode_data_uri_qr_images_from_text(
     let image_limit = max_images.min(MAX_EMBEDDED_QR_IMAGES_PER_ATTACHMENT);
     let mut limited = text.len() > scan_text.len();
     for (idx, caps) in RE_DATA_IMAGE_URI.captures_iter(scan_text).enumerate() {
-        if idx >= image_limit {
+        if scanned >= image_limit {
             limited = true;
             break;
         }
@@ -539,6 +590,10 @@ fn decode_data_uri_qr_images_from_text(
             continue;
         };
         if !is_raster_qr_candidate(&format!("image/{image_type}"), detect_file_type(&bytes)) {
+            continue;
+        }
+        // Skip placeholder-sized decoys without charging the budget.
+        if is_below_qr_carrier_size(&bytes) {
             continue;
         }
         scanned += 1;
@@ -906,6 +961,35 @@ fn binarize_at_threshold(image: &GrayscaleImage, threshold: u8) -> GrayscaleImag
 /// Attempt QR decoding from a grayscale image using `rqrr`.
 /// Returns `(grid_count, decoded_payloads)`.
 fn try_rqrr_decode(grayscale: &GrayscaleImage) -> (usize, Vec<String>) {
+    run_rqrr_guarded(grayscale, || try_rqrr_decode_inner(grayscale))
+}
+
+fn run_rqrr_guarded<F>(grayscale: &GrayscaleImage, decoder: F) -> (usize, Vec<String>)
+where
+    F: FnOnce() -> (usize, Vec<String>),
+{
+    match catch_unwind(AssertUnwindSafe(decoder)) {
+        Ok(result) => result,
+        Err(payload) => {
+            let panic_message = payload
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("unknown panic");
+            warn!(
+                width = grayscale.width,
+                height = grayscale.height,
+                panic = panic_message,
+                "attach_qr_scan: rqrr rejected a malformed QR candidate; skipping it"
+            );
+
+            let grid_count = usize::from(has_qr_finder_patterns(grayscale));
+            (grid_count, Vec::new())
+        }
+    }
+}
+
+fn try_rqrr_decode_inner(grayscale: &GrayscaleImage) -> (usize, Vec<String>) {
     let mut prepared =
         rqrr::PreparedImage::prepare_from_greyscale(grayscale.width, grayscale.height, |x, y| {
             grayscale.pixels[y * grayscale.width + x]
@@ -1172,7 +1256,7 @@ fn decode_ascii_qr_from_text(text: &str) -> Vec<QrImageFinding> {
 fn score_qr_payloads(
     finding: &QrImageFinding,
     source_label: &str,
-    keyword_context: bool,
+    qr_lure_context: bool,
     rcpt_to: &[String],
     phishing_keywords: &[String],
 ) -> (f64, Vec<String>, Vec<Evidence>) {
@@ -1181,8 +1265,10 @@ fn score_qr_payloads(
     let mut categories = Vec::new();
     let mut evidence = Vec::new();
 
-    // Base score for QR detection.
-    score += 0.20 + (finding.grid_count.min(2) as f64 * 0.03);
+    // QR presence is a carrier observation, not a threat conviction. QR codes
+    // are routine in invoices, property reports, signatures and mobile-app
+    // onboarding. Risk begins only when the surrounding lure or decoded
+    // destination supplies an actionable phishing fact.
     categories.push("attachment_qr_code".to_string());
     evidence.push(Evidence {
         description: format!(
@@ -1193,8 +1279,8 @@ fn score_qr_payloads(
         snippet: None,
     });
 
-    if keyword_context {
-        score += 0.10;
+    if qr_lure_context {
+        score += 0.18;
         categories.push("attachment_qr_lure".to_string());
     }
 
@@ -1202,7 +1288,6 @@ fn score_qr_payloads(
         return (score, categories, evidence);
     }
 
-    score += 0.20;
     categories.push("attachment_qr_decoded".to_string());
 
     for payload in finding.decoded_payloads.iter().take(3) {
@@ -1213,15 +1298,17 @@ fn score_qr_payloads(
                 || payload_lower.contains(&rcpt_lower.replace('@', "%40"))
         });
         if has_recipient {
-            score += 0.15;
+            // Personalised QR payloads are common in legitimate ticketing and
+            // payment systems. Keep this weak unless URL/content checks agree.
+            score += 0.05;
             categories.push("attachment_qr_targeted".to_string());
         }
         if contains_any(&payload_lower, STRUCTURAL_QR_PAYLOAD_TERMS) {
-            score += 0.10;
+            score += 0.12;
             categories.push("attachment_qr_login_lure".to_string());
         }
-        if keyword_context && payload_lower.contains("microsoft.com/devicelogin") {
-            score += 0.15;
+        if qr_lure_context && payload_lower.contains("microsoft.com/devicelogin") {
+            score += 0.25;
             categories.push("device_code_phishing".to_string());
         }
 
@@ -1264,7 +1351,7 @@ impl SecurityModule for AttachmentQrScanModule {
     async fn analyze(&self, ctx: &SecurityContext) -> Result<ModuleResult, EngineError> {
         let start = Instant::now();
         let email_context = build_email_context(ctx);
-        let keyword_context = has_keyword_context(&email_context, &self.phishing_keywords);
+        let qr_lure_context = has_explicit_qr_lure_context(&email_context);
 
         let mut total_score = 0.0_f64;
         let mut evidence = Vec::new();
@@ -1302,6 +1389,13 @@ impl SecurityModule for AttachmentQrScanModule {
             let file_type = detect_file_type(&bytes);
 
             if is_raster_qr_candidate(&attachment.content_type, file_type) {
+                // Placeholder-sized images (1x1 trackers, spacer pixels)
+                // cannot carry a QR code; attackers spray them to exhaust the
+                // per-message image budget before the real QR image. Skip
+                // them without charging the budget.
+                if is_below_qr_carrier_size(&bytes) {
+                    continue;
+                }
                 scanned_images += 1;
                 let Some(qr) = decode_qr_from_image_bytes(&bytes) else {
                     continue;
@@ -1311,7 +1405,7 @@ impl SecurityModule for AttachmentQrScanModule {
                 let (s, cats, evs) = score_qr_payloads(
                     &qr,
                     &format!("attachment:{}", attachment.filename),
-                    keyword_context,
+                    qr_lure_context,
                     &ctx.session.rcpt_to,
                     &self.phishing_keywords,
                 );
@@ -1335,7 +1429,7 @@ impl SecurityModule for AttachmentQrScanModule {
                     let (s, cats, evs) = score_qr_payloads(
                         &qr,
                         &format!("attachment:{}:{}", attachment.filename, label),
-                        keyword_context,
+                        qr_lure_context,
                         &ctx.session.rcpt_to,
                         &self.phishing_keywords,
                     );
@@ -1360,7 +1454,7 @@ impl SecurityModule for AttachmentQrScanModule {
                     let (s, cats, evs) = score_qr_payloads(
                         &qr,
                         &format!("attachment:{}:{}", attachment.filename, path),
-                        keyword_context,
+                        qr_lure_context,
                         &ctx.session.rcpt_to,
                         &self.phishing_keywords,
                     );
@@ -1388,7 +1482,7 @@ impl SecurityModule for AttachmentQrScanModule {
                     let (s, cats, evs) = score_qr_payloads(
                         &qr,
                         &format!("attachment:{}:{}", attachment.filename, label),
-                        keyword_context,
+                        qr_lure_context,
                         &ctx.session.rcpt_to,
                         &self.phishing_keywords,
                     );
@@ -1424,7 +1518,7 @@ impl SecurityModule for AttachmentQrScanModule {
                 let (s, cats, evs) = score_qr_payloads(
                     finding,
                     "body:ascii_qr",
-                    keyword_context,
+                    qr_lure_context,
                     &ctx.session.rcpt_to,
                     &self.phishing_keywords,
                 );
@@ -1438,7 +1532,7 @@ impl SecurityModule for AttachmentQrScanModule {
         }
 
         if inspection_limited {
-            total_score += 0.15;
+            // Coverage loss is operational state, not malicious evidence.
             categories.push("attachment_qr_inspection_limited".to_string());
             evidence.push(Evidence {
                 description: "QR inspection reached its per-message image, byte, or archive-entry budget; remaining content requires deferred sandbox scanning"
@@ -1467,7 +1561,8 @@ impl SecurityModule for AttachmentQrScanModule {
         let duration_ms = start.elapsed().as_millis() as u64;
         let threat_level = ThreatLevel::from_score(total_score);
         if threat_level == ThreatLevel::Safe {
-            return Ok(ModuleResult::safe_analyzed(
+            let observed_categories = categories.clone();
+            let mut result = ModuleResult::safe_analyzed(
                 &self.meta.id,
                 &self.meta.name,
                 self.meta.pillar,
@@ -1477,7 +1572,19 @@ impl SecurityModule for AttachmentQrScanModule {
                     if ascii_qr_scanned { " + body text" } else { "" }
                 ),
                 duration_ms,
-            ));
+            );
+            result.evidence = evidence;
+            result.categories = observed_categories.clone();
+            result.details = serde_json::json!({
+                "score": total_score,
+                "scanned_images": scanned_images,
+                "source_bytes_scanned": source_bytes_scanned,
+                "inspection_budget_exhausted": inspection_limited,
+                "ascii_qr_detected": ascii_qr_scanned,
+                "decoded_payloads": payloads,
+                "observed_categories": observed_categories,
+            });
+            return Ok(result);
         }
 
         Ok(ModuleResult {
@@ -2147,6 +2254,19 @@ mod tests {
     }
 
     #[test]
+    fn test_rqrr_panic_is_contained() {
+        let image = GrayscaleImage {
+            width: 64,
+            height: 64,
+            pixels: vec![255; 64 * 64],
+        };
+
+        let result = run_rqrr_guarded(&image, || panic!("assertion failed: scan >= 1"));
+
+        assert_eq!(result, (0, Vec::new()));
+    }
+
+    #[test]
     fn test_ascii_qr_block_extraction() {
         // Build a fake ASCII QR block: 15 rows of 15 block characters each.
         let dark = '\u{2588}'; // █
@@ -2292,6 +2412,64 @@ mod tests {
     }
 
     #[test]
+    fn routine_decoded_qr_is_observable_but_not_threat_evidence() {
+        let finding = QrImageFinding {
+            width: 285,
+            height: 285,
+            grid_count: 1,
+            decoded_payloads: vec![
+                "https://gjb.yungujia.com/vr2/xaty/87F49F27-AB8D-440B-B39F-5496B61804B6"
+                    .to_string(),
+            ],
+        };
+
+        let (score, categories, evidence) =
+            score_qr_payloads(&finding, "attachment:property.pdf", false, &[], &[]);
+
+        assert_eq!(score, 0.0);
+        assert!(categories.contains(&"attachment_qr_code".to_string()));
+        assert!(categories.contains(&"attachment_qr_decoded".to_string()));
+        assert_eq!(evidence.len(), 2);
+    }
+
+    #[test]
+    fn generic_notice_text_does_not_create_qr_lure_context() {
+        assert!(!has_explicit_qr_lure_context(
+            "请查收，若对邮件内容有异议，请在三个工作日内及时回复。"
+        ));
+    }
+
+    #[test]
+    fn explicit_qr_instruction_creates_qr_lure_context() {
+        assert!(has_explicit_qr_lure_context("请扫描二维码登录系统"));
+    }
+
+    #[test]
+    fn qr_credential_lure_remains_actionable() {
+        let finding = QrImageFinding {
+            width: 300,
+            height: 300,
+            grid_count: 1,
+            decoded_payloads: vec![
+                "https://login-example.evil/login?token=0123456789abcdef"
+                    .to_string(),
+            ],
+        };
+
+        let (score, categories, _) = score_qr_payloads(
+            &finding,
+            "attachment:secure-message.png",
+            true,
+            &["victim@example.com".to_string()],
+            &["scan the qr code".to_string()],
+        );
+
+        assert!(score >= 0.30, "credential QR score={score}");
+        assert!(categories.contains(&"attachment_qr_lure".to_string()));
+        assert!(categories.contains(&"attachment_qr_login_lure".to_string()));
+    }
+
+    #[test]
     fn test_ascii_qr_too_few_rows_rejected() {
         // Only 5 rows of block characters — below the minimum threshold.
         let dark = '\u{2588}';
@@ -2396,11 +2574,9 @@ mod tests {
         let result = AttachmentQrScanModule::new().analyze(&ctx).await.unwrap();
 
         assert!(
-            result
-                .categories
-                .contains(&"attachment_qr_inspection_limited".to_string())
+            result.details["inspection_budget_exhausted"] == serde_json::json!(true)
         );
-        assert_eq!(result.threat_level, ThreatLevel::Low);
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
         assert_eq!(result.details["inspection_budget_exhausted"], true);
     }
 
@@ -2423,7 +2599,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_per_message_image_budget_stops_additional_decoders() {
-        let png = encode_grayscale_png(1, 1, &[255]);
+        // 64x64 white images are plausible QR carriers, so each one charges
+        // the per-message budget (placeholder-sized decoys no longer do).
+        let png = encode_grayscale_png(64, 64, &vec![255u8; 64 * 64]);
         let encoded = base64::engine::general_purpose::STANDARD.encode(&png);
         let attachments = (0..MAX_QR_IMAGES_PER_MESSAGE + 3)
             .map(|index| EmailAttachment {
@@ -2443,6 +2621,58 @@ mod tests {
             serde_json::json!(MAX_QR_IMAGES_PER_MESSAGE)
         );
         assert_eq!(result.details["inspection_budget_exhausted"], true);
-        assert_eq!(result.threat_level, ThreatLevel::Low);
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+    }
+
+    #[tokio::test]
+    async fn test_placeholder_decoys_do_not_exhaust_qr_budget() {
+        // PoC bypass: MAX_QR_IMAGES_PER_MESSAGE 1x1 placeholder images used to
+        // consume the entire per-message budget, so the real QR image appended
+        // after them was never scanned. Tiny images must be skipped for free.
+        let placeholder = encode_grayscale_png(1, 1, &[255u8]);
+        let placeholder_b64 = base64::engine::general_purpose::STANDARD.encode(&placeholder);
+        let qr_png = build_qr_like_png(8);
+        let qr_b64 = base64::engine::general_purpose::STANDARD.encode(&qr_png);
+
+        let mut attachments: Vec<EmailAttachment> = (0..MAX_QR_IMAGES_PER_MESSAGE)
+            .map(|index| EmailAttachment {
+                filename: format!("pixel_{index}.png"),
+                content_type: "image/png".to_string(),
+                size: placeholder.len(),
+                hash: format!("hash_{index}"),
+                content_base64: Some(placeholder_b64.clone()),
+            })
+            .collect();
+        attachments.push(EmailAttachment {
+            filename: "secure-voicemail.png".to_string(),
+            content_type: "image/png".to_string(),
+            size: qr_png.len(),
+            hash: "hash_qr".to_string(),
+            content_base64: Some(qr_b64),
+        });
+        let ctx = make_ctx(
+            attachments,
+            Some("Secure voice message"),
+            Some("Scan the QR code to review your Microsoft 365 voicemail"),
+        );
+
+        let result = make_module_with_keywords(&["scan the qr code", "secure voicemail"])
+            .analyze(&ctx)
+            .await
+            .unwrap();
+
+        assert!(
+            result
+                .categories
+                .contains(&"attachment_qr_code".to_string()),
+            "QR image behind placeholder decoys must still be scanned: {:?}",
+            result.categories
+        );
+        assert_eq!(
+            result.details["inspection_budget_exhausted"],
+            serde_json::json!(false),
+            "placeholder decoys must not exhaust the budget"
+        );
+        assert_eq!(result.details["scanned_images"], serde_json::json!(1));
     }
 }

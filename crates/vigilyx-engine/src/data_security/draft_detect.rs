@@ -96,7 +96,7 @@ impl DataSecurityDetector for DraftBoxDetector {
         }
 
         // DLP scan on request body (Coremail: extract attrs.content to avoid raw JSON metadata)
-        let dlp_text = dlp::extract_dlp_text(body, &session.uri);
+        let dlp_text = dlp::extract_dlp_text(body, &session.uri, session.content_type.as_deref());
         let mut dlp_result = dlp::scan_text(&dlp_text);
         if dlp_result.is_empty() {
             return None;

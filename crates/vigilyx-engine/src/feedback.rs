@@ -7,7 +7,7 @@
 //! - legitimate Feedback: downgradeLow IOC, Check Name
 //! - FeedbackStatistics
 
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -21,6 +21,13 @@ const MAX_TRAINING_BODY_CHARS: usize = 20_000;
 const MAX_TRAINING_COMMENT_CHARS: usize = 2_000;
 const MAX_TRAINING_ADDRESS_CHARS: usize = 320;
 const MAX_TRAINING_RECIPIENTS: usize = 100;
+const MAX_FEEDBACK_COMMENT_CHARS: usize = 2_000;
+const MAX_FEEDBACK_MODULE_ID_CHARS: usize = 128;
+const MAX_FEEDBACK_PER_WINDOW: u64 = 30;
+const FEEDBACK_WINDOW_MINUTES: i64 = 10;
+
+pub const FEEDBACK_RATE_LIMIT_ERROR: &str = "Feedback submission rate limit exceeded";
+pub const FEEDBACK_DUPLICATE_ERROR: &str = "Feedback already submitted for this session";
 
 /// FeedbackManagementhandler
 #[derive(Clone)]
@@ -61,7 +68,9 @@ impl FeedbackManager {
         &self,
         session_id: Uuid,
         req: &SubmitFeedbackRequest,
+        submitted_by: &str,
         save_training_sample: bool,
+        can_adjust_ioc: bool,
     ) -> anyhow::Result<FeedbackResult> {
         // Verify feedback_type Valid
         let (label, label_name) = feedback_type_to_label(&req.feedback_type).ok_or_else(|| {
@@ -70,30 +79,66 @@ impl FeedbackManager {
                 req.feedback_type
             )
         })?;
+        validate_feedback_request(req)?;
+        if submitted_by.trim().is_empty() {
+            anyhow::bail!("Feedback submitter identity is missing");
+        }
 
-        // GetWhenfirst verdict
-        let verdict = self.db.get_verdict_by_session(session_id).await?;
+        let now = Utc::now();
+        let window_start = now - Duration::minutes(FEEDBACK_WINDOW_MINUTES);
+        let recent_feedback = self
+            .db
+            .count_recent_feedback(submitted_by, window_start)
+            .await?;
+        if recent_feedback >= MAX_FEEDBACK_PER_WINDOW {
+            anyhow::bail!(FEEDBACK_RATE_LIMIT_ERROR);
+        }
+
+        // Feedback must refer to an analyzed session. This also prevents an
+        // authenticated caller from filling the table with arbitrary UUIDs.
+        let verdict = self
+            .db
+            .get_verdict_by_session(session_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Session verdict not found"))?;
 
         let fb = FeedbackEntry {
             id: Uuid::new_v4(),
             session_id,
-            verdict_id: verdict.as_ref().map(|v| v.id),
+            verdict_id: Some(verdict.id),
+            submitted_by: submitted_by.to_string(),
             feedback_type: req.feedback_type.clone(),
             module_id: req.module_id.clone(),
-            original_threat_level: verdict
-                .as_ref()
-                .map(|v| v.threat_level.to_string())
-                .unwrap_or_else(|| "unknown".to_string()),
+            original_threat_level: verdict.threat_level.to_string(),
             user_comment: req.comment.clone(),
             status: "pending".to_string(),
-            created_at: Utc::now(),
+            created_at: now,
         };
 
-        // 1. write table
-        self.db.insert_feedback(&fb).await?;
+        // 1. write table. The database performs the same-actor/session dedupe in
+        // the INSERT predicate, closing the concurrent-request race.
+        if !self
+            .db
+            .insert_feedback(&fb, window_start, MAX_FEEDBACK_PER_WINDOW)
+            .await?
+        {
+            // The database applies the same limit while holding the actor
+            // lock. Re-check only to return a useful status when a concurrent
+            // request consumed the final slot; the safety gate is the SQL
+            // predicate above, not this diagnostic query.
+            let current_count = self
+                .db
+                .count_recent_feedback(submitted_by, window_start)
+                .await?;
+            if current_count >= MAX_FEEDBACK_PER_WINDOW {
+                anyhow::bail!(FEEDBACK_RATE_LIMIT_ERROR);
+            }
+            anyhow::bail!(FEEDBACK_DUPLICATE_ERROR);
+        }
         info!(
             feedback_id = %fb.id,
             session_id = %session_id,
+            submitted_by = %submitted_by,
             feedback_type = %req.feedback_type,
             label = label,
             "Feedback submitted"
@@ -102,8 +147,10 @@ impl FeedbackManager {
         let mut ioc_adjusted = 0u32;
         let mut whitelist_suggested = false;
 
-        // 2. legitimate Feedback: downgradeLow IOC + Name
-        if req.feedback_type == "legitimate" {
+        // 2. Only the IOC-management permission may turn analyst feedback
+        // into a global IOC confidence change. Other permitted analysts leave
+        // the record pending for review and cannot poison detection state.
+        if req.feedback_type == "legitimate" && can_adjust_ioc {
             ioc_adjusted = self.process_false_positive(session_id).await;
             whitelist_suggested = self.check_whitelist_suggestion(session_id).await;
         }
@@ -256,6 +303,28 @@ impl FeedbackManager {
     }
 }
 
+fn validate_feedback_request(req: &SubmitFeedbackRequest) -> anyhow::Result<()> {
+    if req
+        .module_id
+        .as_deref()
+        .is_some_and(|value| value.chars().count() > MAX_FEEDBACK_MODULE_ID_CHARS)
+    {
+        anyhow::bail!(
+            "Feedback module_id exceeds {MAX_FEEDBACK_MODULE_ID_CHARS} characters"
+        );
+    }
+    if req
+        .comment
+        .as_deref()
+        .is_some_and(|value| value.chars().count() > MAX_FEEDBACK_COMMENT_CHARS)
+    {
+        anyhow::bail!(
+            "Feedback comment exceeds {MAX_FEEDBACK_COMMENT_CHARS} characters"
+        );
+    }
+    Ok(())
+}
+
 fn limit_optional_text(value: Option<&str>, max_chars: usize) -> Option<String> {
     value.map(|text| limit_text(text, max_chars))
 }
@@ -301,5 +370,22 @@ mod tests {
                 .iter()
                 .all(|item| item.chars().count() <= MAX_TRAINING_ADDRESS_CHARS)
         );
+    }
+
+    #[test]
+    fn feedback_request_rejects_oversized_user_controlled_fields() {
+        let oversized_comment = SubmitFeedbackRequest {
+            feedback_type: "legitimate".to_string(),
+            module_id: None,
+            comment: Some("x".repeat(MAX_FEEDBACK_COMMENT_CHARS + 1)),
+        };
+        assert!(validate_feedback_request(&oversized_comment).is_err());
+
+        let oversized_module = SubmitFeedbackRequest {
+            feedback_type: "legitimate".to_string(),
+            module_id: Some("x".repeat(MAX_FEEDBACK_MODULE_ID_CHARS + 1)),
+            comment: None,
+        };
+        assert!(validate_feedback_request(&oversized_module).is_err());
     }
 }

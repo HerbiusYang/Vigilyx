@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use vigilyx_core::models::EmailSession;
+use vigilyx_core::models::{EmailSession, SessionSource};
 use vigilyx_core::security::{ModuleResult, ThreatLevel};
 
 // Re-export for backward compatibility
@@ -41,7 +41,7 @@ pub fn aggregate_verdict_with_session(
     results: &HashMap<String, ModuleResult>,
     config: &VerdictConfig,
 ) -> SecurityVerdict {
-    match config.aggregation.as_str() {
+    let mut verdict = match config.aggregation.as_str() {
         "tbm_v5" => tbm::aggregate_tbm_v5(session_id, results, config),
         "weighted_max" => weighted_max::aggregate_weighted_max(session_id, results, config),
         "noisy_or" => noisy_or::aggregate_noisy_or(session_id, results, config),
@@ -50,7 +50,202 @@ pub fn aggregate_verdict_with_session(
             clustered_ds_v1::aggregate_clustered_ds_v1(session, session_id, results, config)
         }
         _ => clustered_ds_v1::aggregate_clustered_ds_v1(session, session_id, results, config),
+    };
+
+    // Inspection coverage and threat evidence are different dimensions. A
+    // normal capture/parse gap lowers confidence but is not malicious evidence
+    // and must never inflate the threat level. Content that was actually
+    // omitted from inspection is different: it is an operational quarantine
+    // condition because a clean result cannot account for those bytes.
+    if let Some(session) = session
+        && session.has_analyzable_content()
+        && !session.content.is_complete
+    {
+        apply_incomplete_inspection_policy(
+            &mut verdict,
+            session.source,
+            "inspection_incomplete",
+            "message capture or parsing was incomplete",
+        );
     }
+
+    // Detector-controlled resource limits and transient scanner failures are
+    // also inspection completeness failures. These modules intentionally emit
+    // vacuous/low-confidence evidence; fusion alone may dilute it below the
+    // MTA quarantine threshold, so enforce the same invariant here.
+    const INCOMPLETE_COVERAGE_CATEGORIES: &[&str] = &[
+        "scan_incomplete",
+        "scan_skipped_size_limit",
+        "attachment_inspection_limited",
+        "attachment_qr_inspection_limited",
+        "semantic_ai_inspection_limited",
+        "encrypted_attachment",
+        "recipient_metadata_incomplete",
+        "missing_content_type",
+        "missing_from",
+        "missing_to",
+        "ocr_unavailable",
+    ];
+    const QUARANTINE_REQUIRED_CATEGORIES: &[&str] = &[
+        "scan_incomplete",
+        "scan_skipped_size_limit",
+        "attachment_inspection_limited",
+        "attachment_qr_inspection_limited",
+        "semantic_ai_inspection_limited",
+        "encrypted_attachment",
+    ];
+    let mut incomplete_modules = results
+        .values()
+        .filter(|result| {
+            result
+                .categories
+                .iter()
+                .any(|category| INCOMPLETE_COVERAGE_CATEGORIES.contains(&category.as_str()))
+        })
+        .map(|result| result.module_id.as_str())
+        .collect::<Vec<_>>();
+    incomplete_modules.sort_unstable();
+    incomplete_modules.dedup();
+
+    let mut quarantine_modules = results
+        .values()
+        .filter(|result| {
+            result
+                .categories
+                .iter()
+                .any(|category| QUARANTINE_REQUIRED_CATEGORIES.contains(&category.as_str()))
+        })
+        .map(|result| result.module_id.as_str())
+        .collect::<Vec<_>>();
+    quarantine_modules.sort_unstable();
+    quarantine_modules.dedup();
+
+    if !incomplete_modules.is_empty() {
+        let reason = format!(
+            "detector coverage incomplete: {}",
+            incomplete_modules.join(", ")
+        );
+        if let Some(session) = session {
+            apply_incomplete_inspection_policy(
+                &mut verdict,
+                session.source,
+                "inspection_coverage_incomplete",
+                &reason,
+            );
+        } else {
+            annotate_incomplete_inspection(&mut verdict, "inspection_coverage_incomplete", &reason);
+        }
+    }
+
+    let parser_content_gap = session.map(|session| {
+        session.content.truncated
+            || session.content.dropped_attachments > 0
+            || session.content.links_truncated
+    }) == Some(true);
+    if parser_content_gap || !quarantine_modules.is_empty() {
+        let mut reasons = Vec::new();
+        if parser_content_gap {
+            reasons.push("parser truncated or dropped message content/attachments".to_string());
+        }
+        if !quarantine_modules.is_empty() {
+            reasons.push(format!(
+                "mandatory attachment/content scan incomplete: {}",
+                quarantine_modules.join(", ")
+            ));
+        }
+        let reason = reasons.join("; ");
+        // A passive mirror observes mail after delivery. Missing capture bytes
+        // are an explicit coverage defect, but they are not threat evidence
+        // and must not rewrite the displayed classification. The inline MTA
+        // still needs the operational floor because it controls delivery. A
+        // missing session keeps the conservative legacy behavior because its
+        // source cannot be proven.
+        if session.is_none_or(|session| session.source == SessionSource::MtaProxy) {
+            enforce_quarantine_required_inspection(&mut verdict, &reason);
+        } else {
+            annotate_incomplete_inspection(&mut verdict, "inspection_coverage_incomplete", &reason);
+        }
+    }
+
+    verdict
+}
+
+/// Record incomplete coverage without manufacturing a threat finding. This is
+/// the behavior for every ingestion source: retain the evidence-based threat
+/// level, cap confidence, and surface a dedicated coverage category to
+/// callers/UI. An inline MTA may independently tempfail delivery, but that
+/// policy decision must not be represented as malicious evidence.
+pub(crate) fn annotate_incomplete_inspection(
+    verdict: &mut SecurityVerdict,
+    category: &str,
+    reason: &str,
+) {
+    verdict.confidence = verdict.confidence.min(0.50);
+    if !verdict
+        .categories
+        .iter()
+        .any(|existing| existing == category)
+    {
+        verdict.categories.push(category.to_string());
+        verdict.summary = format!(
+            "Inspection incomplete ({reason}); threat level reflects captured evidence only. {}",
+            verdict.summary
+        );
+    }
+}
+
+/// Apply inspection coverage metadata without changing the evidence-based
+/// classification. The source remains part of the signature so callers make
+/// their ingestion context explicit; it never changes threat severity.
+pub(crate) fn apply_incomplete_inspection_policy(
+    verdict: &mut SecurityVerdict,
+    _source: SessionSource,
+    category: &str,
+    reason: &str,
+) {
+    annotate_incomplete_inspection(verdict, category, reason);
+}
+
+/// Mark a verdict as requiring quarantine when bytes or mandatory attachment
+/// coverage were not inspected. This is an operational safety floor, not a
+/// claim that the omitted content is malicious: preserve Medium-or-higher
+/// evidence and only raise Safe/Low findings to Medium.
+pub(crate) fn enforce_quarantine_required_inspection(
+    verdict: &mut SecurityVerdict,
+    reason: &str,
+) {
+    let evidence_threat = verdict.threat_level;
+    let evidence_confidence = verdict.confidence;
+    annotate_incomplete_inspection(verdict, "inspection_quarantine_required", reason);
+
+    if evidence_threat < ThreatLevel::Medium {
+        verdict.threat_level = ThreatLevel::Medium;
+        verdict.confidence = evidence_confidence.min(0.35);
+    } else {
+        // A genuine Medium/High/Critical finding remains authoritative; the
+        // coverage marker must not dilute its evidence confidence.
+        verdict.confidence = evidence_confidence;
+    }
+    verdict.summary = format!(
+        "Quarantine required: inspection coverage omitted content ({reason}). {}",
+        verdict.summary
+    );
+}
+
+/// Whether a verdict carries incomplete-inspection metadata that an inline
+/// delivery path must handle separately from threat severity.
+pub(crate) fn has_incomplete_inspection(verdict: &SecurityVerdict) -> bool {
+    const CATEGORIES: &[&str] = &[
+        "inspection_incomplete",
+        "inspection_coverage_incomplete",
+        "inspection_execution_incomplete",
+        "inspection_quarantine_required",
+    ];
+
+    verdict
+        .categories
+        .iter()
+        .any(|category| CATEGORIES.contains(&category.as_str()))
 }
 
 // Shared helpers
@@ -87,7 +282,7 @@ mod tests {
     use crate::modules::content_scan::{
         KeywordCategoryOverride, KeywordOverrides, build_effective_keyword_lists,
     };
-    use vigilyx_core::models::{EmailContent, EmailSession, Protocol};
+    use vigilyx_core::models::{EmailContent, EmailSession, Protocol, SessionSource};
     use vigilyx_core::security::Pillar;
 
     static SCENARIO_PATTERNS_INIT: Once = Once::new();
@@ -101,6 +296,7 @@ mod tests {
                         "[外部邮件]".to_string(),
                         "风险邮件".to_string(),
                         "外部邮件".to_string(),
+                        "该邮件可能存在恶意内容".to_string(),
                         "this email may".to_string(),
                         "potentially malicious".to_string(),
                         "external email".to_string(),
@@ -125,6 +321,7 @@ mod tests {
                         "delivery status notification".to_string(),
                         "delivery failed".to_string(),
                         "undeliverable".to_string(),
+                        "undelivered mail".to_string(),
                         "returned mail".to_string(),
                         "mail delivery subsystem".to_string(),
                         "failure notice".to_string(),
@@ -187,6 +384,373 @@ mod tests {
         let mut result = make_result(module_id, pillar, score, categories);
         result.confidence = confidence;
         result
+    }
+
+    #[test]
+    fn incomplete_passive_capture_does_not_inflate_threat_level() {
+        init_test_scenario_patterns();
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session
+            .content
+            .headers
+            .push(("Subject".to_string(), "Partial capture".to_string()));
+        session.content.is_complete = false;
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            session.id,
+            &HashMap::new(),
+            &VerdictConfig::default(),
+        );
+
+        assert_eq!(verdict.threat_level, ThreatLevel::Safe);
+        assert!(
+            verdict
+                .categories
+                .iter()
+                .any(|category| category == "inspection_incomplete")
+        );
+        assert!(verdict.confidence <= 0.50);
+        assert!(verdict.summary.contains("captured evidence only"));
+    }
+
+    #[test]
+    fn incomplete_mta_capture_does_not_manufacture_threat() {
+        init_test_scenario_patterns();
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.source = SessionSource::MtaProxy;
+        session
+            .content
+            .headers
+            .push(("Subject".to_string(), "Partial inline message".to_string()));
+        session.content.is_complete = false;
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            session.id,
+            &HashMap::new(),
+            &VerdictConfig::default(),
+        );
+
+        assert_eq!(verdict.threat_level, ThreatLevel::Safe);
+        assert!(verdict.summary.contains("captured evidence only"));
+        assert!(has_incomplete_inspection(&verdict));
+    }
+
+    #[test]
+    fn incomplete_detector_execution_is_coverage_metadata_for_passive_analysis() {
+        init_test_scenario_patterns();
+        let session_id = Uuid::new_v4();
+        let mut verdict = empty_verdict(session_id, Utc::now());
+
+        annotate_incomplete_inspection(
+            &mut verdict,
+            "inspection_execution_incomplete",
+            "module timeout: content_scan",
+        );
+
+        assert_eq!(verdict.threat_level, ThreatLevel::Safe);
+        assert!(
+            verdict
+                .categories
+                .iter()
+                .any(|category| category == "inspection_execution_incomplete")
+        );
+        assert!(verdict.summary.contains("module timeout: content_scan"));
+        assert!(verdict.confidence <= 0.50);
+    }
+
+    #[test]
+    fn scanner_coverage_gap_requires_conservative_unscoped_floor() {
+        init_test_scenario_patterns();
+        let session_id = Uuid::new_v4();
+        let mut results = HashMap::new();
+        results.insert(
+            "av_eml_scan".to_string(),
+            make_result(
+                "av_eml_scan",
+                Pillar::Attachment,
+                0.08,
+                vec!["scan_incomplete"],
+            ),
+        );
+
+        let verdict =
+            aggregate_verdict_with_session(None, session_id, &results, &VerdictConfig::default());
+
+        assert_eq!(verdict.threat_level, ThreatLevel::Medium);
+        assert!(
+            verdict
+                .categories
+                .iter()
+                .any(|category| category == "inspection_coverage_incomplete")
+        );
+        assert!(verdict.summary.contains("av_eml_scan"));
+        assert!(verdict.confidence <= 0.35);
+        assert!(verdict.summary.contains("Quarantine required"));
+    }
+
+    #[test]
+    fn skipped_attachment_scan_requires_quarantine_floor() {
+        init_test_scenario_patterns();
+        let session_id = Uuid::new_v4();
+        let mut results = HashMap::new();
+        results.insert(
+            "av_attach_scan".to_string(),
+            make_result(
+                "av_attach_scan",
+                Pillar::Attachment,
+                0.08,
+                vec!["scan_skipped_size_limit"],
+            ),
+        );
+
+        let verdict =
+            aggregate_verdict_with_session(None, session_id, &results, &VerdictConfig::default());
+
+        assert_eq!(verdict.threat_level, ThreatLevel::Medium);
+        assert!(has_incomplete_inspection(&verdict));
+        assert!(verdict.summary.contains("Quarantine required"));
+    }
+
+    #[test]
+    fn scanner_coverage_gap_requires_mta_quarantine_floor() {
+        init_test_scenario_patterns();
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.source = SessionSource::MtaProxy;
+        session
+            .content
+            .headers
+            .push(("Subject".to_string(), "Inline scan".to_string()));
+        session.content.is_complete = true;
+        let mut results = HashMap::new();
+        results.insert(
+            "av_eml_scan".to_string(),
+            make_result(
+                "av_eml_scan",
+                Pillar::Attachment,
+                0.08,
+                vec!["scan_incomplete"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            session.id,
+            &results,
+            &VerdictConfig::default(),
+        );
+
+        assert_eq!(verdict.threat_level, ThreatLevel::Medium);
+        assert!(has_incomplete_inspection(&verdict));
+        assert!(verdict.confidence <= 0.35);
+        assert!(verdict.summary.contains("Quarantine required"));
+    }
+
+    #[test]
+    fn semantic_ai_coverage_gap_requires_mta_quarantine_floor() {
+        init_test_scenario_patterns();
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.source = SessionSource::MtaProxy;
+        session.content.is_complete = true;
+        let mut results = HashMap::new();
+        results.insert(
+            "semantic_scan".to_string(),
+            make_result(
+                "semantic_scan",
+                Pillar::Content,
+                0.0,
+                vec!["semantic_ai_inspection_limited"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            session.id,
+            &results,
+            &VerdictConfig::default(),
+        );
+
+        assert_eq!(verdict.threat_level, ThreatLevel::Medium);
+        assert!(has_incomplete_inspection(&verdict));
+        assert!(verdict.summary.contains("Quarantine required"));
+    }
+
+    #[test]
+    fn semantic_ai_coverage_gap_is_not_passive_threat_evidence() {
+        init_test_scenario_patterns();
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.content.is_complete = true;
+        let mut results = HashMap::new();
+        results.insert(
+            "semantic_scan".to_string(),
+            make_result(
+                "semantic_scan",
+                Pillar::Content,
+                0.0,
+                vec!["semantic_ai_inspection_limited"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            session.id,
+            &results,
+            &VerdictConfig::default(),
+        );
+
+        assert_eq!(verdict.threat_level, ThreatLevel::Safe);
+        assert!(has_incomplete_inspection(&verdict));
+        assert!(!verdict.summary.contains("Quarantine required"));
+    }
+
+    #[test]
+    fn scanner_coverage_gap_in_passive_mirror_preserves_evidence_threat() {
+        init_test_scenario_patterns();
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session
+            .content
+            .headers
+            .push(("Subject".to_string(), "Incomplete PDF capture".to_string()));
+        session.content.is_complete = false;
+        let mut results = HashMap::new();
+        results.insert(
+            "yara_scan".to_string(),
+            make_result(
+                "yara_scan",
+                Pillar::Attachment,
+                0.10,
+                vec!["attachment_inspection_limited"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            session.id,
+            &results,
+            &VerdictConfig::default(),
+        );
+
+        assert_eq!(verdict.threat_level, ThreatLevel::Safe);
+        assert!(
+            verdict
+                .categories
+                .iter()
+                .any(|category| category == "inspection_coverage_incomplete")
+        );
+        assert!(
+            !verdict
+                .categories
+                .iter()
+                .any(|category| category == "inspection_quarantine_required")
+        );
+        assert!(verdict.confidence <= 0.50);
+        assert!(!verdict.summary.contains("Quarantine required"));
+    }
+
+    #[test]
+    fn passive_parser_truncation_is_coverage_not_threat() {
+        init_test_scenario_patterns();
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session
+            .content
+            .headers
+            .push(("Subject".to_string(), "Partial mirror capture".to_string()));
+        session.content.is_complete = false;
+        session.content.truncated = true;
+        session.content.dropped_attachments = 1;
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            session.id,
+            &HashMap::new(),
+            &VerdictConfig::default(),
+        );
+
+        assert_eq!(verdict.threat_level, ThreatLevel::Safe);
+        assert!(has_incomplete_inspection(&verdict));
+        assert!(
+            !verdict
+                .categories
+                .iter()
+                .any(|category| category == "inspection_quarantine_required")
+        );
+        assert!(!verdict.summary.contains("Quarantine required"));
+    }
+
+    #[test]
+    fn truncated_mta_attachment_requires_quarantine_even_with_no_detector_finding() {
+        init_test_scenario_patterns();
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.source = SessionSource::MtaProxy;
+        session.content.truncated = true;
+        session.content.dropped_attachments = 1;
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            session.id,
+            &HashMap::new(),
+            &VerdictConfig::default(),
+        );
+
+        assert_eq!(verdict.threat_level, ThreatLevel::Medium);
+        assert!(has_incomplete_inspection(&verdict));
+        assert!(
+            verdict
+                .categories
+                .iter()
+                .any(|category| category == "inspection_quarantine_required")
+        );
+        assert!(verdict.confidence <= 0.35);
+        assert!(verdict.summary.contains("Quarantine required"));
     }
 
     // Noisy-OR tests (preserved)
@@ -560,6 +1124,10 @@ mod tests {
             raw_size: body.len(),
             is_complete: true,
             is_encrypted: false,
+            truncated: false,
+            dropped_attachments: 0,
+            links_truncated: false,
+            link_index: std::collections::HashSet::new(),
             smtp_dialog: vec![],
         };
         session
@@ -739,9 +1307,13 @@ mod tests {
     #[test]
     fn test_clustered_notice_banner_nlp_only_drops_to_safe() {
         init_test_scenario_patterns();
+        // Round-4 change: notice-banner pollution now requires the banner in
+        // the BODY (a subject-only tag is a one-line forgery and no longer
+        // suppresses). This genuine notice scenario therefore carries the
+        // banner line in the body as a real gateway-injected notice would.
         let session = make_session(
             "[警告：无法扫描邮件附件 - 请确认邮件来源以及真实性 / 或联系科技部网络安全管理员处置]5c2c3f14d027a237283ad8d35936ca5b",
-            "发自我的iPhone",
+            "发自我的iPhone\n\n警告：无法扫描邮件附件 - 请确认邮件来源以及真实性，或联系科技部网络安全管理员处置",
             "1738338551@qq.com",
         );
         let mut results = HashMap::new();
@@ -778,9 +1350,110 @@ mod tests {
         );
     }
 
+    // ─── Round-4 PoC: forged notice tag must not flatten payment-change BEC ─
+
     #[test]
-    fn test_clustered_auto_reply_nlp_only_drops_to_safe() {
+    fn test_clustered_subject_only_notice_tag_cannot_cap_payment_change_bec() {
+        // Attack PoC (round 4): a pure-text payment-change BEC mail whose
+        // subject carries a forged gateway notice tag, plus an NLP echo.
+        // Before the fix the subject-only tag marked notice_banner_polluted
+        // and Phase 4 (semantic_notice_only → min(0.12)) pushed the mail back
+        // to Safe, erasing the Phase-1 0.40 payment-change floor.
         init_test_scenario_patterns();
+        let session = make_session(
+            "[警告：无法扫描邮件附件 - 请确认邮件来源以及真实性]付款账户变更通知",
+            "王总要求今天内把货款打到新账户，原收款账户已停用，请勿声张。",
+            "cfo@supplier-example.com",
+        );
+        let mut results = HashMap::new();
+        results.insert(
+            "content_scan".into(),
+            make_result(
+                "content_scan",
+                Pillar::Content,
+                0.78,
+                vec!["bec_payment_change"],
+            ),
+        );
+        results.insert(
+            "semantic_scan".into(),
+            make_result("semantic_scan", Pillar::Semantic, 0.60, vec!["nlp_bec"]),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert!(
+            verdict.threat_level >= ThreatLevel::Medium,
+            "Forged subject-only notice tag must not suppress payment-change BEC: {:?}",
+            verdict.threat_level
+        );
+        assert!(
+            verdict.fusion_details.as_ref().unwrap().risk_single >= 0.40,
+            "Payment-change floor (0.40) must survive a forged subject notice tag, risk={}",
+            verdict.fusion_details.as_ref().unwrap().risk_single
+        );
+        assert!(
+            !verdict.summary.contains("notice_banner_polluted"),
+            "Subject-only notice tag must not mark notice_banner_polluted: {}",
+            verdict.summary
+        );
+    }
+
+    #[test]
+    fn test_clustered_body_notice_banner_cannot_cap_payment_change_bec() {
+        // Defense in depth: even when the notice banner genuinely pollutes the
+        // body (notice_banner_polluted = true), a payment-change business
+        // signal must exempt the verdict from the semantic_notice_only cap.
+        init_test_scenario_patterns();
+        let session = make_session(
+            "付款账户变更通知",
+            "王总要求今天内把货款打到新账户，原收款账户已停用，请勿声张。\n\n警告：无法扫描邮件附件 - 请确认邮件来源以及真实性，或联系科技部网络安全管理员处置",
+            "cfo@supplier-example.com",
+        );
+        let mut results = HashMap::new();
+        results.insert(
+            "content_scan".into(),
+            make_result(
+                "content_scan",
+                Pillar::Content,
+                0.78,
+                vec!["bec_payment_change"],
+            ),
+        );
+        results.insert(
+            "semantic_scan".into(),
+            make_result("semantic_scan", Pillar::Semantic, 0.60, vec!["nlp_bec"]),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert!(
+            verdict.summary.contains("notice_banner_polluted"),
+            "Body-carried notice banner should still mark notice_banner_polluted: {}",
+            verdict.summary
+        );
+        assert!(
+            verdict.threat_level >= ThreatLevel::Medium,
+            "Payment-change signal must exempt the semantic_notice_only cap: {:?}",
+            verdict.threat_level
+        );
+        assert!(
+            verdict.fusion_details.as_ref().unwrap().risk_single >= 0.40,
+            "Payment-change floor (0.40) must survive body notice pollution, risk={}",
+            verdict.fusion_details.as_ref().unwrap().risk_single
+        );
+    }
+
+    #[test]
+    fn test_clustered_auto_reply_nlp_only_drops_to_safe() {        init_test_scenario_patterns();
         let mut session = make_session(
             "CFP 自动回复: 西安经开区支行关于2026年一季度110报警测试专项检查的通报",
             "谢谢来信，我已收到。",
@@ -1003,6 +1676,139 @@ mod tests {
     }
 
     #[test]
+    fn test_new_device_login_lure_with_recipient_url_reaches_medium() {
+        init_test_scenario_patterns();
+        let session = make_session(
+            "[注意风险邮件]新设备登录提醒",
+            "新设备登录提醒，请查看登录详情。",
+            "center.lin@cqfengqing1.com",
+        );
+        let mut results = HashMap::new();
+        results.insert(
+            "content_scan".into(),
+            make_result_with_confidence(
+                "content_scan",
+                Pillar::Content,
+                0.73,
+                0.85,
+                vec![
+                    "gateway_pre_classified",
+                    "phishing",
+                    "phishing_subject",
+                    "account_security_phishing",
+                ],
+            ),
+        );
+        results.insert(
+            "link_content".into(),
+            make_result_with_confidence(
+                "link_content",
+                Pillar::Link,
+                0.35,
+                0.75,
+                vec!["recipient_in_url"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+
+        assert!(
+            verdict.threat_level >= ThreatLevel::Medium,
+            "new-device login lure plus personalized untrusted URL must not remain Low: {:?}",
+            verdict.threat_level
+        );
+        assert!(verdict.fusion_details.as_ref().unwrap().risk_single >= 0.40);
+    }
+
+    #[test]
+    fn test_recipient_url_without_account_lure_stays_below_medium() {
+        init_test_scenario_patterns();
+        let session = make_session(
+            "August newsletter",
+            "Read this month's product newsletter.",
+            "newsletter@example.com",
+        );
+        let mut results = HashMap::new();
+        results.insert(
+            "content_scan".into(),
+            make_result_with_confidence(
+                "content_scan",
+                Pillar::Content,
+                0.05,
+                0.85,
+                vec!["gateway_pre_classified"],
+            ),
+        );
+        results.insert(
+            "link_content".into(),
+            make_result_with_confidence(
+                "link_content",
+                Pillar::Link,
+                0.35,
+                0.75,
+                vec!["recipient_in_url"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+
+        assert!(verdict.threat_level < ThreatLevel::Medium);
+    }
+
+    #[test]
+    fn test_acams_style_marketing_residuals_stay_low_without_breaker() {
+        init_test_scenario_patterns();
+        let session = make_session(
+            "这个8月，聚焦制裁",
+            "本月聚焦反洗钱合规与监管要求，欢迎报名课程并管理通讯偏好。",
+            "info@contact.acams.org",
+        );
+        let mut results = HashMap::new();
+        results.insert("domain_verify".into(), make_domain_verify_result(0.75));
+        results.insert(
+            "link_scan".into(),
+            make_result_with_confidence(
+                "link_scan",
+                Pillar::Link,
+                0.08,
+                0.85,
+                vec!["excessive_links"],
+            ),
+        );
+        results.insert(
+            "link_content".into(),
+            make_result_with_confidence("link_content", Pillar::Link, 0.10, 0.75, vec!["long_url"]),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        let details = verdict.fusion_details.as_ref().expect("fusion details");
+
+        assert!(
+            verdict.threat_level <= ThreatLevel::Low,
+            "marketing-only residual heuristics must not become actionable: {:?} / {}",
+            verdict.threat_level,
+            details.risk_single
+        );
+        assert!(details.circuit_breaker.is_none());
+        assert!(!verdict.summary.contains("credential_link_signal"));
+    }
+
+    #[test]
     fn test_clustered_aligned_credential_phish_with_ioc_reaches_high() {
         init_test_scenario_patterns();
         let session = make_session(
@@ -1038,13 +1844,13 @@ mod tests {
             ),
         );
         results.insert(
-            "link_scan".into(),
+            "link_content".into(),
             make_result_with_confidence(
-                "link_scan",
+                "link_content",
                 Pillar::Link,
-                0.15,
+                0.35,
                 0.85,
-                vec!["suspicious_params"],
+                vec!["targeted_credential_phishing"],
             ),
         );
 
@@ -1133,13 +1939,13 @@ mod tests {
             ),
         );
         results.insert(
-            "link_scan".into(),
+            "link_content".into(),
             make_result_with_confidence(
-                "link_scan",
+                "link_content",
                 Pillar::Link,
-                0.15,
+                0.35,
                 0.85,
-                vec!["suspicious_params"],
+                vec!["targeted_credential_phishing"],
             ),
         );
 
@@ -1202,13 +2008,13 @@ mod tests {
             ),
         );
         results.insert(
-            "link_scan".into(),
+            "link_content".into(),
             make_result_with_confidence(
-                "link_scan",
+                "link_content",
                 Pillar::Link,
-                0.15,
+                0.35,
                 0.85,
-                vec!["suspicious_params"],
+                vec!["targeted_credential_phishing"],
             ),
         );
 

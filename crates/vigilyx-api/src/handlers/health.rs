@@ -84,14 +84,54 @@ pub async fn readiness(State(state): State<Arc<AppState>>) -> impl IntoResponse 
 ///
 /// Public callers only need the overall readiness status. Detailed dependency
 /// information is available on the internal-token protected route.
+///
+/// SEC-09: the aggregate is cached for a few seconds so that frequent
+/// load-balancer / K8s probes do not hammer DB and Redis on every request.
 pub async fn public_readiness(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    if let Some(cached) = cached_public_readiness().await {
+        return (
+            cached.http_status,
+            Json(PublicReadinessResponse {
+                status: cached.status,
+            }),
+        );
+    }
+
     let (http_status, response) = build_readiness_response(&state).await;
+    let cached = CachedPublicReadiness {
+        http_status,
+        status: response.status,
+    };
+    *PUBLIC_READINESS_CACHE.lock().await = Some((Instant::now(), cached));
+
     (
         http_status,
         Json(PublicReadinessResponse {
             status: response.status,
         }),
     )
+}
+
+/// Cloneable snapshot of the public readiness aggregate.
+#[derive(Debug, Clone, Copy)]
+struct CachedPublicReadiness {
+    http_status: StatusCode,
+    status: &'static str,
+}
+
+/// SEC-09: short in-process cache for the public readiness aggregate.
+const PUBLIC_READINESS_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(3);
+
+static PUBLIC_READINESS_CACHE: tokio::sync::Mutex<Option<(Instant, CachedPublicReadiness)>> =
+    tokio::sync::Mutex::const_new(None);
+
+/// Return the cached aggregate while it is still fresh.
+async fn cached_public_readiness() -> Option<CachedPublicReadiness> {
+    let cache = PUBLIC_READINESS_CACHE.lock().await;
+    cache
+        .as_ref()
+        .filter(|(cached_at, _)| cached_at.elapsed() < PUBLIC_READINESS_CACHE_TTL)
+        .map(|(_, cached)| *cached)
 }
 
 async fn build_readiness_response(state: &Arc<AppState>) -> (StatusCode, ReadinessResponse) {
@@ -319,5 +359,39 @@ mod tests {
         let json = serde_json::to_value(&resp).expect("serialize");
         assert_eq!(json["status"], "ready");
         assert!(json.get("checks").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_public_readiness_cache_respects_ttl() {
+        // Fresh entry is returned.
+        {
+            let mut cache = PUBLIC_READINESS_CACHE.lock().await;
+            *cache = Some((
+                Instant::now(),
+                CachedPublicReadiness {
+                    http_status: StatusCode::OK,
+                    status: "ready",
+                },
+            ));
+        }
+        let cached = cached_public_readiness().await;
+        assert!(cached.is_some());
+        assert_eq!(cached.unwrap().status, "ready");
+
+        // Expired entry is rejected.
+        {
+            let mut cache = PUBLIC_READINESS_CACHE.lock().await;
+            *cache = Some((
+                Instant::now() - PUBLIC_READINESS_CACHE_TTL - std::time::Duration::from_secs(1),
+                CachedPublicReadiness {
+                    http_status: StatusCode::SERVICE_UNAVAILABLE,
+                    status: "not_ready",
+                },
+            ));
+        }
+        assert!(cached_public_readiness().await.is_none());
+
+        // Leave the shared static empty for other tests.
+        *PUBLIC_READINESS_CACHE.lock().await = None;
     }
 }

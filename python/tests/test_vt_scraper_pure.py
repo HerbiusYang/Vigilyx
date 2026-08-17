@@ -6,13 +6,33 @@ import hashlib
 
 import pytest
 
-from vigilyx_ai.scraper import VtScraper
+from vigilyx_ai.scraper import VtScraper, validate_vt_indicator
 from tests.conftest import make_vt_api_response
 
 
 @pytest.fixture()
 def scraper():
     return VtScraper()
+
+
+@pytest.mark.parametrize(
+    ("indicator", "indicator_type"),
+    [
+        ("evil.com\nforged-log=true", "domain"),
+        ("999.1.1.1", "ip"),
+        ("file:///etc/passwd", "url"),
+        ("not-a-hash", "hash"),
+    ],
+)
+def test_vt_indicator_validation_rejects_untrusted_values(indicator, indicator_type):
+    with pytest.raises(ValueError):
+        validate_vt_indicator(indicator, indicator_type)
+
+
+def test_vt_indicator_validation_normalizes_values():
+    assert validate_vt_indicator("ExAmPle.COM.", "domain") == "example.com"
+    assert validate_vt_indicator("2001:0db8::1", "ip") == "2001:db8::1"
+    assert validate_vt_indicator("A" * 64, "hash") == "a" * 64
 
 
 # =====================================================================

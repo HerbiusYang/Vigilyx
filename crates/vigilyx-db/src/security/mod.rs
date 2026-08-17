@@ -14,3 +14,5 @@ pub(crate) mod training;
 pub(crate) mod verdict;
 pub(crate) mod whitelist;
 pub(crate) mod yara;
+
+pub use alert::ALERT_DEDUP_WINDOW_MINUTES;

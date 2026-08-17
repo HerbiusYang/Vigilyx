@@ -197,8 +197,32 @@ impl DataPublisher {
                 let api_url = api_url.clone();
                 handle.spawn(async move {
                     let url = format!("{}/api/import/sessions", api_url);
-                    if let Err(e) = client.post(&url).json(&sessions).send().await {
-                        debug!("HTTP PublishSessionFailed: {}", e);
+                    let mut last_error = None;
+                    for attempt in 1..=XADD_MAX_RETRIES {
+                        match client.post(&url).json(&sessions).send().await {
+                            Ok(response) if response.status().is_success() => {
+                                last_error = None;
+                                break;
+                            }
+                            Ok(response) => {
+                                last_error = Some(format!("HTTP {}", response.status()));
+                            }
+                            Err(error) => {
+                                last_error = Some(error.to_string());
+                            }
+                        }
+                        if attempt < XADD_MAX_RETRIES {
+                            let backoff_ms = XADD_BASE_BACKOFF_MS * (1 << (attempt - 1));
+                            tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
+                        }
+                    }
+                    if let Some(error) = last_error {
+                        error!(
+                            count = sessions.len(),
+                            attempts = XADD_MAX_RETRIES,
+                            "HTTP email session publish failed after retries; sessions not acknowledged: {}",
+                            error
+                        );
                     }
                     // Publishcomplete, WaitPublishcount
                     let _ =

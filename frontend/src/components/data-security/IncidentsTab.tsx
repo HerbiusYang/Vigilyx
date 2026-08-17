@@ -95,7 +95,7 @@ export function IncidentsTab({ selectedId, onSelect, privacyMode }: { selectedId
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
               {t('dataSecurity.type')}
             </span>
-            {[{ v: '', l: t('dataSecurity.all') }, { v: 'draft_box_abuse', l: t('dataSecurity.incidentType_draft_box_abuse') }, { v: 'file_transit_abuse', l: t('dataSecurity.incidentType_file_transit_abuse') }, { v: 'self_sending', l: t('dataSecurity.incidentType_self_sending') }, { v: 'jrt_compliance_violation', l: t('dataSecurity.incidentType_jrt_compliance_violation') }].map(f => (
+            {[{ v: '', l: t('dataSecurity.all') }, { v: 'draft_box_abuse', l: t('dataSecurity.incidentType_draft_box_abuse') }, { v: 'file_transit_abuse', l: t('dataSecurity.incidentType_file_transit_abuse') }, { v: 'self_sending', l: t('dataSecurity.incidentType_self_sending') }, { v: 'volume_anomaly', l: t('dataSecurity.incidentType_volume_anomaly') }, { v: 'jrt_compliance_violation', l: t('dataSecurity.incidentType_jrt_compliance_violation') }].map(f => (
               <button key={f.v}
                 className={`ds3-filter-pill ${filterType === f.v ? 'ds3-filter-pill--active' : ''}`}
                 style={f.v && filterType === f.v ? { borderColor: INCIDENT_TYPE_COLOR[f.v], color: INCIDENT_TYPE_COLOR[f.v], background: INCIDENT_TYPE_COLOR[f.v] + '10' } : undefined}

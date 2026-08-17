@@ -4,6 +4,41 @@ All notable changes to Vigilyx are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+## [0.9.3] - 2026-08-16
+
+### Added
+
+- **Alert center (P0–P3 pipeline now end-to-end)**: `security_alerts` records are finally exposed — new `GET /api/security/alerts` (with `acknowledged`/`alert_level` filters) and `POST /api/security/alerts/{id}/acknowledge` endpoints, the `Alert` WebSocket message is forwarded by the frontend, and a new Alert Center page (`/alerts`) lists, filters and acknowledges alerts. SOAR disposition `alert`/`log` actions now also persist into `security_alerts` instead of only logging a line
+- **Verdict threshold UI**: the pipeline settings tab now edits the DS-fusion thresholds (`alert_floor_factor`, `convergence_base_floor`, `convergence_belief_threshold`, etc.) through the existing `PUT /api/security/pipeline` endpoint — the psql manual-edit workflow is no longer needed for these values
+- **MTA verdict metrics**: `vigilyx-mta` now counts accepted/quarantined/rejected/timeout decisions and reports them to the API every 5 s (`POST /api/system/mta`, new `MTA_API_HOST`/`MTA_API_PORT` env vars); the deployment settings page shows the decision distribution instead of only online/connection state
+- **LLM second opinion**: when the local NLP model's malicious probability falls in the uncertain band (0.3–0.7), the AI service optionally asks the configured Claude/OpenAI-compatible LLM for a second opinion (20 s hard timeout, fail-open to the local result); the security analysis view shows the LLM card alongside the NLP probability bars. The LLM provider/key/model configured in the AI settings tab are now actually consumed by the engine
+- **NLP probability visualisation**: the reserved `.sa-nlp-*` styles are now backed by a real probability-bar component reading `details.nlp_details.probabilities`
+
+### Removed
+
+- NTP settings UI (was decorative — no backend consumer existed)
+- Dead code on both sides of the AI boundary: Rust `analyze_attachment`/`analyze_link` client methods and the Python `update-base-model` endpoint (neither had callers)
+
+### Changed
+
+- Upgraded the Rust toolchain from 1.95.0 to 1.97.1 across `rust-toolchain.toml`, all Dockerfiles (digest-pinned `rust:1.97.1-bookworm`), the persistent builder container (`setup-builder.sh`), and CI
+
+### Security
+
+- **Engine crash via single crafted email (Critical)**: removed `panic = "abort"` from the release profiles and fixed 5 untrusted-string byte-slice panic sites (`link_scan` redirect/token evidence truncation, `link_content` URL truncation, `domain_verify` private RFC2047 decoder — the decoder was deleted in favour of `vigilyx_parser::mime::decode_rfc2047`); module execution in the pipeline orchestrator is now wrapped in `catch_unwind` so a panicking module produces a `MODULE_EXECUTION_FAILED` result instead of hanging the pipeline for 90 s or aborting the process
+- **Sniffer silent-disable via malformed IMAP (High)**: `STATUS`/`FETCH` commands without arguments panicked the capture worker, permanently dropping every 5-tuple hashed to it; all catch_unwind sites in the capture path now log and `exit(1)` so Docker restarts the process instead of leaving it "alive but blind"
+- **Unauthenticated memory DoS via Prometheus labels**: metrics middleware now labels by axum `MatchedPath` route template; unmatched paths are recorded as `:unmatched` instead of attacker-controlled path segments
+- **Unauthenticated login lockout via spoofed `X-Forwarded-For`**: ambiguous XFF chains now resolve to the rightmost untrusted hop (the peer the trusted proxy actually saw), and the generated Caddyfile overwrites inbound XFF with `header_up X-Forwarded-For {remote_host}`
+- **IOC false-positive amplification**: `auto_record_impersonation_domain` now requires a verdict of High or above before writing auto IOCs (domain/email/IP), matching the project's IOC gating rule
+- **AI model tampering boundary**: AI model directory moved to a dedicated `vigilyx_models` volume instead of the shared `vigilyx_data` volume; base-model downloads support `HF_BASE_MODEL_REVISION` pinning; inference and VT-scrape concurrency are now bounded (`AI_MAX_CONCURRENCY`, `AI_VT_MAX_CONCURRENCY`); `/health` `last_error` output is path-sanitised and truncated
+- **Kubernetes sandbox manifest**: pinned the third-party sandbox image by digest, removed the invalid `volumeClaimTemplates`, and added the missing `storage` volume
+- **Zero-auth pcap stream**: `email-capture.sh` now refuses to bind a non-loopback address unless `ALLOW_REMOTE_CAPTURE=1` is set, with warnings recommending an SSH tunnel/stunnel for remote capture
+- Redis password no longer appears on the container command line (generated `/tmp/valkey.conf` via `valkey-entrypoint.sh`); control-plane command tokens use constant-time comparison; MTA downstream error text is sanitised before being echoed into SMTP replies; `MTA_FAIL_OPEN` defaults are consistently fail-closed (`false`) across code, Dockerfiles, and compose
+- Public readiness endpoint caches its DB/Redis fan-out for 3 s; gateway-wrapped URLs only skip structural checks when the inner target was successfully unwrapped; IDN homograph detection now covers pure-Cyrillic and fullwidth-Latin brand spoofs; YARA scanning enforces a per-email total time budget (15 s) in addition to the per-file timeout
+- Supply chain: base images and service images pinned by digest (`rust`, `node`, `postgres`, `valkey`, `caddy`), `cargo-chef` pinned to 0.1.77, TLS self-signed certs reduced to 397 days, CI workflow granted `contents: read` only, frontend `react-router-dom` upgraded to 7.18.2 plus non-major `npm audit fix` (postcss/undici/@babel); the inline theme bootstrap script moved to an external file and `'unsafe-inline'` removed from the meta CSP
+
 ## [0.9.2] - 2026-04-29
 
 ### Added

@@ -17,9 +17,55 @@ pub mod reload_protocol;
 mod stream;
 
 pub use channels::*;
-pub use client::{MqClient, MqConfig, verify_cmd_payload};
+pub use client::{DataPayloadAuth, MqClient, MqConfig, verify_cmd_payload, verify_data_payload};
 pub use error::{MqError, MqResult};
-pub use stream::{PendingSummary, StreamClient};
+pub use stream::{PendingSummary, PoisonedStreamMessage, StreamClient, StreamRead};
+
+/// Bounded persistent reference used by bulk historical rescans.
+///
+/// The complete email remains in PostgreSQL. Keeping only its canonical UUID
+/// in Valkey prevents attachment/body duplication from exhausting the message
+/// bus while retaining Stream retry and dead-letter semantics.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RescanSessionReference {
+    pub session_id: uuid::Uuid,
+    /// When set, the rescan must load the stored raw_eml from this quarantine
+    /// entry and re-parse it, instead of trusting the persisted session row.
+    /// Release-time rescans must analyze the exact bytes that would be relayed:
+    /// the persisted session went through parser degradation paths (attachment
+    /// caps, size truncation) that can hide a payload the raw message carries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quarantine_id: Option<String>,
+    /// Submitting client IP captured at quarantine time (A5). The pre-release
+    /// rescan rebuilds a synthetic session; without the real client IP every
+    /// IP-reputation / behavior-baseline signal is lost and an inline High
+    /// verdict can degrade below the release-gate threshold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_ip: Option<String>,
+}
+
+impl RescanSessionReference {
+    pub fn new(session_id: uuid::Uuid) -> Self {
+        Self {
+            session_id,
+            quarantine_id: None,
+            client_ip: None,
+        }
+    }
+
+    /// Reference a quarantine-backed rescan (pre-release gate).
+    pub fn for_quarantine(
+        session_id: uuid::Uuid,
+        quarantine_id: String,
+        client_ip: Option<String>,
+    ) -> Self {
+        Self {
+            session_id,
+            quarantine_id: Some(quarantine_id),
+            client_ip,
+        }
+    }
+}
 
 /// Message queue topic names (Pub/Sub channels)
 pub mod topics {
@@ -69,16 +115,77 @@ pub mod streams {
     pub const HTTP_SESSIONS: &str = "vigilyx:stream:http_sessions";
     /// AI tasks stream
     pub const AI_TASKS: &str = "vigilyx:stream:ai_tasks";
+    /// Historical rescan session references (API -> Engine)
+    pub const RESCAN_REQUESTS: &str = "vigilyx:stream:rescan_requests";
 
     // ── Dead-letter queues ──
     /// Email sessions DLQ (messages that failed processing after N attempts)
     pub const EMAIL_SESSIONS_DLQ: &str = "vigilyx:stream:sessions:dlq";
     /// HTTP sessions DLQ
     pub const HTTP_SESSIONS_DLQ: &str = "vigilyx:stream:http_sessions:dlq";
+    /// Malformed historical rescan references
+    pub const RESCAN_REQUESTS_DLQ: &str = "vigilyx:stream:rescan_requests:dlq";
 }
 
 /// Consumer group names
 pub mod consumer_groups {
     /// Engine consumer group
     pub const ENGINE: &str = "vigilyx-engine";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rescan_reference_serialization_is_bounded_and_round_trips() {
+        let reference = RescanSessionReference::new(uuid::Uuid::new_v4());
+        let encoded = serde_json::to_vec(&reference).unwrap();
+        assert!(encoded.len() < 80, "reference unexpectedly large");
+        let decoded: RescanSessionReference = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded, reference);
+        assert_eq!(decoded.quarantine_id, None);
+    }
+
+    #[test]
+    fn rescan_reference_legacy_payload_without_optional_fields_still_parses() {
+        // Messages enqueued before the quarantine_id / client_ip fields existed
+        // (or by the generic admin rescan API) must keep deserializing after
+        // the upgrade.
+        let session_id = uuid::Uuid::new_v4();
+        let legacy = format!("{{\"session_id\":\"{session_id}\"}}");
+        let decoded: RescanSessionReference = serde_json::from_str(&legacy).unwrap();
+        assert_eq!(decoded.session_id, session_id);
+        assert_eq!(decoded.quarantine_id, None);
+        assert_eq!(decoded.client_ip, None);
+    }
+
+    #[test]
+    fn quarantine_rescan_reference_round_trips() {
+        // A5: the real submitting client IP must survive the bus so the
+        // pre-release rescan keeps IP-reputation signals.
+        let reference = RescanSessionReference::for_quarantine(
+            uuid::Uuid::new_v4(),
+            "quar-123".to_string(),
+            Some("198.51.100.23".to_string()),
+        );
+        let encoded = serde_json::to_vec(&reference).unwrap();
+        let decoded: RescanSessionReference = serde_json::from_slice(&encoded).unwrap();
+        assert_eq!(decoded, reference);
+        assert_eq!(decoded.quarantine_id.as_deref(), Some("quar-123"));
+        assert_eq!(decoded.client_ip.as_deref(), Some("198.51.100.23"));
+    }
+
+    #[test]
+    fn quarantine_rescan_reference_without_client_ip_still_parses() {
+        // Rolling-upgrade window: references enqueued by an older API carry
+        // no client_ip and must still deserialize.
+        let session_id = uuid::Uuid::new_v4();
+        let legacy = format!(
+            "{{\"session_id\":\"{session_id}\",\"quarantine_id\":\"quar-9\"}}"
+        );
+        let decoded: RescanSessionReference = serde_json::from_str(&legacy).unwrap();
+        assert_eq!(decoded.quarantine_id.as_deref(), Some("quar-9"));
+        assert_eq!(decoded.client_ip, None);
+    }
 }

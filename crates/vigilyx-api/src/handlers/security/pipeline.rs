@@ -33,16 +33,20 @@ async fn load_keyword_system_seed(
 pub async fn get_pipeline_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match state.engine_db.get_pipeline_config().await {
         Ok(Some(json)) => {
-            let value: serde_json::Value =
-                serde_json::from_str(&json).unwrap_or(serde_json::Value::Null);
-            ApiResponse::ok(value)
+            let mut config = serde_json::from_str::<vigilyx_engine::config::PipelineConfig>(&json)
+                .unwrap_or_default();
+            config.merge_default_modules();
+            ApiResponse::ok(config)
         }
         Ok(None) => {
             // DefaultConfiguration
             let default = vigilyx_engine::config::PipelineConfig::default();
-            ApiResponse::ok(serde_json::to_value(default).unwrap_or_default())
+            ApiResponse::ok(default)
         }
-        Err(e) => ApiResponse::<serde_json::Value>::internal_err(&e, "Operation failed"),
+        Err(e) => ApiResponse::<vigilyx_engine::config::PipelineConfig>::internal_err(
+            &e,
+            "Operation failed",
+        ),
     }
 }
 
@@ -53,7 +57,7 @@ pub async fn update_pipeline_config(
     Json(config): Json<serde_json::Value>,
 ) -> axum::response::Response {
     // verifyConfigurationformat
-    let parsed: vigilyx_engine::config::PipelineConfig =
+    let mut parsed: vigilyx_engine::config::PipelineConfig =
         match serde_json::from_value(config.clone()) {
             Ok(c) => c,
             Err(e) => {
@@ -64,6 +68,8 @@ pub async fn update_pipeline_config(
                 .into_response();
             }
         };
+
+    parsed.merge_default_modules();
 
     // Validate security-critical VerdictConfig ranges (A03 hardening)
     if let Err(violations) = parsed.verdict_config.validate() {
@@ -78,7 +84,7 @@ pub async fn update_pipeline_config(
         .into_response();
     }
 
-    let json_str = match serde_json::to_string(&config) {
+    let json_str = match serde_json::to_string(&parsed) {
         Ok(s) => s,
         Err(e) => {
             return ApiResponse::<serde_json::Value>::bad_request(format!(
@@ -100,7 +106,7 @@ pub async fn update_pipeline_config(
                 Some("security_pipeline".to_string()),
                 None,
             );
-            ApiResponse::ok(config).into_response()
+            ApiResponse::ok(parsed).into_response()
         }
         Err(e) => {
             ApiResponse::<serde_json::Value>::server_error(&e, "Operation failed").into_response()
@@ -108,78 +114,263 @@ pub async fn update_pipeline_config(
     }
 }
 
-/// Get Modulemetadata
-pub async fn get_modules_metadata(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
-    // Module metadata
-    let modules = serde_json::json!([
-        {
-            "id": "content_scan", "name": "内容detect", "pillar": "content",
-            "description": "Phishing关键词、BEC 话术、DLP Sensitive datadetect",
-            "supports_ai": true, "depends_on": []
-        },
-        {
-            "id": "html_scan", "name": "HTML detect", "pillar": "content",
-            "description": "Malicious HTML Yuan素、脚本注入、事件Process器detect",
-            "supports_ai": false, "depends_on": []
-        },
-        {
-            "id": "attach_scan", "name": "AttachmentTypedetect", "pillar": "attachment",
-            "description": "危险FileType、双extension、MIME 不匹配、宏文档detect",
-            "supports_ai": false, "depends_on": []
-        },
-        {
-            "id": "attach_content", "name": "Attachment内容detect", "pillar": "attachment",
-            "description": "文档文本Extract + 关键词/AI 内容analyze",
-            "supports_ai": true, "depends_on": ["attach_scan"]
-        },
-        {
-            "id": "attach_hash", "name": "Attachment哈希信誉", "pillar": "attachment",
-            "description": "SHA256 local黑名单 + external情报Source比对",
-            "supports_ai": false, "depends_on": []
-        },
-        {
-            "id": "mime_scan", "name": "MIME 结构detect", "pillar": "package",
-            "description": "嵌套深度、边界冲突、Content-Type 不符detect",
-            "supports_ai": false, "depends_on": []
-        },
-        {
-            "id": "header_scan", "name": "邮件头detect", "pillar": "package",
-            "description": "Received 链、From/Reply-To 不匹配、Header 注入detect",
-            "supports_ai": false, "depends_on": []
-        },
-        {
-            "id": "link_scan", "name": "URL Modedetect", "pillar": "link",
-            "description": "IP Address链接、同形字/Punycode、短链、href/文本不匹配detect",
-            "supports_ai": false, "depends_on": []
-        },
-        {
-            "id": "link_reputation", "name": "URL 信誉Query", "pillar": "link",
-            "description": "localDomain黑名单 + external情报SourceQuery",
-            "supports_ai": false, "depends_on": []
-        },
-        {
-            "id": "link_content", "name": "URL 内容detect", "pillar": "link",
-            "description": "抓取页面 → table单detect + AI 页面analyze",
-            "supports_ai": true, "depends_on": ["link_scan"]
-        },
-        {
-            "id": "anomaly_detect", "name": "异常行为detect", "pillar": "package",
-            "description": "Sender基线偏离、frequency/收件人/time/Attachment行为异常",
-            "supports_ai": false, "depends_on": []
-        },
-        {
-            "id": "semantic_scan", "name": "语义detect", "pillar": "semantic",
-            "description": "无语义乱码/生僻字/熵异常detect，识别垃圾混淆邮件",
-            "supports_ai": false, "depends_on": []
-        },
-        {
-            "id": "verdict", "name": "综合判定", "pillar": "verdict",
-            "description": "收集全部Module结果 → 加权聚合 → 最终判定",
-            "supports_ai": false, "depends_on": ["*"]
-        }
-    ]);
+#[derive(Debug, Clone, serde::Serialize)]
+struct ModuleMetadataResponse {
+    id: String,
+    name: String,
+    pillar: String,
+    description: String,
+    supports_ai: bool,
+    depends_on: Vec<String>,
+    engine_id: Option<String>,
+}
 
-    ApiResponse::ok(modules)
+/// Get module metadata for every configured module.
+///
+/// Inclusion is derived from `PipelineConfig`, so adding a default module can no longer
+/// silently hide it from the frontend. Display metadata has a safe generic fallback.
+pub async fn get_modules_metadata(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let mut config = match state.engine_db.get_pipeline_config().await {
+        Ok(Some(json)) => serde_json::from_str::<vigilyx_engine::config::PipelineConfig>(&json)
+            .unwrap_or_default(),
+        Ok(None) => vigilyx_engine::config::PipelineConfig::default(),
+        Err(error) => {
+            tracing::warn!(%error, "Failed to load pipeline config for module metadata");
+            vigilyx_engine::config::PipelineConfig::default()
+        }
+    };
+    config.merge_default_modules();
+
+    ApiResponse::ok(build_modules_metadata(&config))
+}
+
+fn build_modules_metadata(
+    config: &vigilyx_engine::config::PipelineConfig,
+) -> Vec<ModuleMetadataResponse> {
+    config
+        .modules
+        .iter()
+        .map(|module| {
+            let mut metadata = module_metadata(&module.id);
+            metadata.depends_on = module
+                .condition
+                .as_ref()
+                .and_then(|condition| condition.depends_module.clone())
+                .into_iter()
+                .collect();
+            metadata
+        })
+        .collect()
+}
+
+fn module_metadata(id: &str) -> ModuleMetadataResponse {
+    let (name, pillar, description, supports_ai, depends_on): (&str, &str, &str, bool, &[&str]) =
+        match id {
+            "content_scan" => (
+                "Content scan",
+                "content",
+                "Phishing, BEC, and DLP content analysis",
+                true,
+                &[],
+            ),
+            "html_scan" => (
+                "HTML scan",
+                "content",
+                "Malicious HTML and active-content analysis",
+                false,
+                &[],
+            ),
+            "html_pixel_art" => (
+                "HTML pixel-art scan",
+                "content",
+                "Visual phishing and pixel-art text analysis",
+                false,
+                &[],
+            ),
+            "attach_scan" => (
+                "Attachment type scan",
+                "attachment",
+                "Dangerous file type and MIME mismatch analysis",
+                false,
+                &[],
+            ),
+            "attach_content" => (
+                "Attachment content scan",
+                "attachment",
+                "Extracted attachment content analysis",
+                true,
+                &["attach_scan"],
+            ),
+            "attach_qr_scan" => (
+                "Attachment QR scan",
+                "attachment",
+                "QR-code extraction and target analysis",
+                false,
+                &["attach_scan"],
+            ),
+            "attach_hash" => (
+                "Attachment hash reputation",
+                "attachment",
+                "Local and external hash reputation checks",
+                false,
+                &["attach_scan"],
+            ),
+            "mime_scan" => (
+                "MIME structure scan",
+                "package",
+                "MIME boundary, nesting, and type validation",
+                false,
+                &[],
+            ),
+            "header_scan" => (
+                "Mail header scan",
+                "package",
+                "Sender identity and transport-header validation",
+                false,
+                &[],
+            ),
+            "link_scan" => (
+                "URL pattern scan",
+                "link",
+                "Suspicious URL pattern and homograph analysis",
+                false,
+                &[],
+            ),
+            "link_reputation" => (
+                "URL reputation",
+                "link",
+                "Local and external URL reputation checks",
+                false,
+                &[],
+            ),
+            "link_content" => (
+                "URL content scan",
+                "link",
+                "Remote landing-content analysis",
+                true,
+                &["link_scan"],
+            ),
+            "landing_page_scan" => (
+                "Landing page scan",
+                "link",
+                "Phishing landing-page structure analysis",
+                false,
+                &["link_scan"],
+            ),
+            "aitm_detect" => (
+                "Adversary-in-the-middle detection",
+                "link",
+                "AiTM proxy and authentication-flow analysis",
+                false,
+                &["link_scan"],
+            ),
+            "anomaly_detect" => (
+                "Behavior anomaly detection",
+                "package",
+                "Sender baseline and delivery-pattern analysis",
+                false,
+                &[],
+            ),
+            "rmm_detect" => (
+                "Remote-management lure detection",
+                "content",
+                "Remote management software lure analysis",
+                false,
+                &[],
+            ),
+            "prompt_injection_scan" => (
+                "Prompt injection scan",
+                "content",
+                "Prompt-injection and model-manipulation analysis",
+                false,
+                &[],
+            ),
+            "toad_detect" => (
+                "Telephone-oriented attack detection",
+                "content",
+                "Callback phishing and telephone lure analysis",
+                false,
+                &[],
+            ),
+            "semantic_scan" => (
+                "Semantic scan",
+                "semantic",
+                "NLP phishing intent and semantic anomaly analysis",
+                true,
+                &[],
+            ),
+            "domain_verify" => (
+                "Domain verification",
+                "package",
+                "SPF, DKIM, DMARC, and sender-domain validation",
+                false,
+                &[],
+            ),
+            "identity_anomaly" => (
+                "Identity anomaly",
+                "package",
+                "Identity impersonation and first-contact analysis",
+                false,
+                &[],
+            ),
+            "transaction_correlation" => (
+                "Transaction correlation",
+                "package",
+                "Cross-message transaction pattern correlation",
+                false,
+                &[],
+            ),
+            "av_eml_scan" => (
+                "EML antivirus scan",
+                "attachment",
+                "Whole-message ClamAV analysis",
+                false,
+                &[],
+            ),
+            "av_attach_scan" => (
+                "Attachment antivirus scan",
+                "attachment",
+                "Attachment-level ClamAV analysis",
+                false,
+                &["attach_scan"],
+            ),
+            "sandbox_scan" => (
+                "Sandbox scan",
+                "attachment",
+                "Dynamic attachment behavior analysis",
+                false,
+                &["attach_scan"],
+            ),
+            "yara_scan" => (
+                "YARA scan",
+                "attachment",
+                "YARA rule analysis for messages and attachments",
+                false,
+                &[],
+            ),
+            "verdict" => (
+                "Final verdict",
+                "verdict",
+                "Aggregate module results into the final verdict",
+                false,
+                &["*"],
+            ),
+            _ => (id, "unknown", "Configured detection module", false, &[]),
+        };
+
+    ModuleMetadataResponse {
+        id: id.to_string(),
+        name: name.to_string(),
+        pillar: pillar.to_string(),
+        description: description.to_string(),
+        supports_ai,
+        depends_on: depends_on
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect(),
+        engine_id: vigilyx_engine::engine_map::module_to_engine(id)
+            .map(|engine| engine.label().to_string()),
+    }
 }
 
 // detect
@@ -362,5 +553,43 @@ pub async fn update_module_data_overrides(
         }
         Err(e) => ApiResponse::<serde_json::Value>::server_error(&e, "保存模块数据覆盖配置失败")
             .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::build_modules_metadata;
+
+    #[test]
+    fn module_metadata_covers_every_default_pipeline_module() {
+        let config = vigilyx_engine::config::PipelineConfig::default();
+        let expected: HashSet<_> = config
+            .modules
+            .iter()
+            .map(|module| module.id.as_str())
+            .collect();
+        let metadata = build_modules_metadata(&config);
+        let actual: HashSet<_> = metadata.iter().map(|module| module.id.as_str()).collect();
+
+        assert_eq!(actual, expected);
+        for (module, item) in config.modules.iter().zip(metadata.iter()) {
+            let configured_dependency = module
+                .condition
+                .as_ref()
+                .and_then(|condition| condition.depends_module.as_deref());
+            assert_eq!(
+                item.depends_on.first().map(String::as_str),
+                configured_dependency
+            );
+        }
+        assert!(
+            metadata
+                .iter()
+                .filter(|module| module.id != "verdict")
+                .all(|module| module.engine_id.is_some()),
+            "every default detector must be assigned to a frontend engine"
+        );
     }
 }

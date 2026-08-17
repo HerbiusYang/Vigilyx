@@ -64,6 +64,51 @@ impl VigilDb {
         .execute(&self.pool)
         .await?;
 
+        // Concurrent analyses of one session (live stream, catch-up rescan,
+        // release rescan) used to stack two rows per module. Keep the newest
+        // row (highest SERIAL id) per (session_id, module_id) before enforcing
+        // uniqueness; the unique index then makes the UPSERT in
+        // `insert_module_results` race-safe.
+        sqlx::query(
+            r#"
+            DELETE FROM security_module_results older
+            USING security_module_results newer
+            WHERE older.session_id = newer.session_id
+              AND older.module_id = newer.module_id
+              AND older.id < newer.id
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_module_results_session_module \
+             ON security_module_results(session_id, module_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // At-least-once Stream replay may analyze one session concurrently.
+        // Keep the newest historical row before enforcing one current verdict
+        // per session; the unique index makes subsequent writes race-safe.
+        sqlx::query(
+            r#"
+            DELETE FROM security_verdicts older
+            USING security_verdicts newer
+            WHERE older.session_id = newer.session_id
+              AND (
+                    older.created_at < newer.created_at
+                 OR (older.created_at = newer.created_at AND older.id < newer.id)
+              )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_security_verdicts_session ON security_verdicts(session_id)",
+        )
+        .execute(&self.pool)
+        .await?;
+
         record_migration(
             &self.pool,
             "100_security_verdicts",
@@ -130,6 +175,7 @@ impl VigilDb {
                 id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
                 verdict_id TEXT,
+                submitted_by TEXT NOT NULL DEFAULT '',
                 feedback_type TEXT NOT NULL,
                 module_id TEXT,
                 original_threat_level TEXT NOT NULL,
@@ -441,12 +487,19 @@ impl VigilDb {
                 created_at      TEXT NOT NULL,
                 released_at     TEXT,
                 released_by     TEXT,
-                ttl_days        INTEGER NOT NULL DEFAULT 30
+                ttl_days        INTEGER NOT NULL DEFAULT 30,
+                client_ip       TEXT
             )
             "#,
         )
         .execute(&self.pool)
         .await?;
+
+        // Incremental upgrade for existing deployments (CREATE TABLE IF NOT
+        // EXISTS does not add columns to pre-existing tables).
+        sqlx::query("ALTER TABLE quarantine ADD COLUMN IF NOT EXISTS client_ip TEXT")
+            .execute(&self.pool)
+            .await?;
 
         sqlx::query(
             "CREATE INDEX IF NOT EXISTS idx_quarantine_status_created
@@ -659,6 +712,101 @@ impl VigilDb {
             &self.pool,
             "117_engine_module_data_seed_v1",
             "seed all engine detection module data lists (58 lists) from JSON into config table",
+        )
+        .await?;
+
+        // Migration #118: Refresh every keyword category with the canonical
+        // multilingual seed (at least 2,000 entries per category).  The
+        // separate keyword_overrides config is deliberately left untouched so
+        // administrator additions/removals survive the refresh.
+        let seed_v5 = serde_json::to_string(&serde_json::from_str::<serde_json::Value>(
+            KEYWORD_SYSTEM_SEED_JSON,
+        )?)?;
+        sqlx::query(
+            "INSERT INTO config (key, value) VALUES ($1, $2) \
+             ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value",
+        )
+        .bind("keyword_system_seed")
+        .bind(seed_v5)
+        .execute(&self.pool)
+        .await?;
+
+        record_migration(
+            &self.pool,
+            "118_keyword_system_seed_v5",
+            "refresh all keyword categories to 2000+ deterministic multilingual entries",
+        )
+        .await?;
+
+        // Migration #119: Re-apply the canonical seed after normalizing
+        // full-width/confusable characters with the same rules as the engine.
+        // This keeps persisted counts and runtime effective counts identical
+        // on databases that already applied migration 118.
+        let seed_v6 = serde_json::to_string(&serde_json::from_str::<serde_json::Value>(
+            KEYWORD_SYSTEM_SEED_JSON,
+        )?)?;
+        sqlx::query(
+            "INSERT INTO config (key, value) VALUES ($1, $2) \
+             ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value",
+        )
+        .bind("keyword_system_seed")
+        .bind(seed_v6)
+        .execute(&self.pool)
+        .await?;
+
+        record_migration(
+            &self.pool,
+            "119_keyword_system_seed_v6",
+            "re-apply Unicode-normalized keyword seed without duplicate effective entries",
+        )
+        .await?;
+
+        // Migration #120: Older versions persisted a minimal built-in YARA
+        // snapshot with `condition: true`. These rows are metadata only; the
+        // runtime now loads executable extras exclusively from source=custom.
+        // Neutralize existing snapshots as a defense in depth and preserve
+        // the rows for audit/UI visibility.
+        sqlx::query(
+            r#"
+            UPDATE security_yara_rules
+            SET rule_source = regexp_replace(
+                    rule_source,
+                    'condition:[[:space:]]*true',
+                    'condition: false',
+                    'g'
+                ),
+                updated_at = NOW()::TEXT
+            WHERE source = 'builtin'
+              AND rule_source ~ 'condition:[[:space:]]*true'
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        record_migration(
+            &self.pool,
+            "120_yara_builtin_rule_source_safe",
+            "neutralize persisted built-in YARA universal-match snapshots",
+        )
+        .await?;
+
+        // Migration #121: retain the submitting platform identity so feedback
+        // throttling and same-user idempotency remain effective across API
+        // restarts and multiple API replicas. Existing feedback is preserved.
+        sqlx::query(
+            "ALTER TABLE security_feedback ADD COLUMN IF NOT EXISTS submitted_by TEXT NOT NULL DEFAULT ''",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_feedback_actor_created ON security_feedback(submitted_by, created_at)",
+        )
+        .execute(&self.pool)
+        .await?;
+        record_migration(
+            &self.pool,
+            "121_feedback_integrity",
+            "persist feedback actor for authorization, throttling, and idempotency",
         )
         .await?;
 

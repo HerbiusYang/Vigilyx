@@ -10,6 +10,9 @@ use async_trait::async_trait;
 use chrono::Utc;
 use rayon::prelude::*;
 use regex::Regex;
+use sha1::Sha1;
+use sha2::Digest;
+use sha2::Sha256;
 
 use crate::context::SecurityContext;
 use crate::error::EngineError;
@@ -21,6 +24,7 @@ use crate::modules::common::{
     is_probable_static_asset_path,
 };
 use crate::modules::content_scan::{EffectiveKeywordLists, normalize_text};
+use unicode_normalization::UnicodeNormalization;
 
 /// Long random hex string detection (DGA indicators) - static to avoid recompilation
 static RE_HEX_DGA: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[0-9a-f]{8,}").unwrap());
@@ -290,12 +294,13 @@ fn url_looks_like_device_code_flow(url_lower: &str) -> bool {
 
 fn url_looks_like_oauth_flow(url_lower: &str) -> bool {
     let md = crate::module_data::module_data();
-    for term in md.get_list("oauth_flow_terms") {
-        if url_lower.contains(term) {
-            return true;
-        }
-    }
-    false
+    // `profile`, `email`, and `openid` are common path/query words on
+    // ordinary business-card and mail pages. They only become OAuth evidence
+    // when paired with a flow marker such as /authorize, client_id, or scope.
+    const CONTEXT_ONLY_TERMS: &[&str] = &["profile", "email", "openid", "saml"];
+    md.get_list("oauth_flow_terms")
+        .iter()
+        .any(|term| !CONTEXT_ONLY_TERMS.contains(&term.as_str()) && url_lower.contains(term))
 }
 
 fn url_looks_like_auth_barrier(url_lower: &str) -> bool {
@@ -308,11 +313,149 @@ fn url_looks_like_auth_barrier(url_lower: &str) -> bool {
     false
 }
 
+/// Fullwidth Latin letters (U+FF21-FF3A / U+FF41-FF5A) are visually identical
+/// to ASCII Latin and collapse to it under NFKC.
+fn is_fullwidth_latin(c: char) -> bool {
+    ('\u{ff21}'..='\u{ff3a}').contains(&c) || ('\u{ff41}'..='\u{ff5a}').contains(&c)
+}
+
+/// Match the homoglyph skeleton of a non-ASCII domain against known brand
+/// domains (`official_login_suffixes`). NFKC first folds fullwidth/compatibility
+/// characters to ASCII, then header_scan's look-alike map folds Cyrillic/digit
+/// substitutions to Latin. Returns the matched brand domain, if any.
+fn match_idn_skeleton_brand(domain_part: &str) -> Option<String> {
+    let folded: String = domain_part.nfkc().collect();
+    let skeleton =
+        crate::modules::header_scan::checks::normalize_homoglyph_simple(&folded).to_lowercase();
+    // No folding happened -> nothing visually confusable with Latin brands.
+    if skeleton == domain_part.to_lowercase() {
+        return None;
+    }
+    let md = crate::module_data::module_data();
+    md.get_list("official_login_suffixes")
+        .iter()
+        .find(|brand| skeleton == **brand || skeleton.ends_with(&format!(".{}", brand)))
+        .cloned()
+}
+
+fn hex_digest<D>(value: &str) -> String
+where
+    D: Digest + Default,
+{
+    let mut hasher = D::default();
+    hasher.update(value.as_bytes());
+    let digest = hasher.finalize();
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Recipient identifiers are normal metadata on unsubscribe, preference,
+/// open-tracking, and delivery callback endpoints. Without an authentication
+/// context they must not be promoted to credential-phishing evidence.
+fn is_recipient_metadata_url(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    let path = normalize_text(&parsed.path().to_ascii_lowercase());
+    const METADATA_PATH_MARKERS: &[&str] = &[
+        "unsubscribe",
+        "opt-out",
+        "optout",
+        "preference",
+        "subscription",
+        "email-settings",
+        "email_settings",
+        "/trace/",
+        "/tracking/",
+        "/track/",
+        "/open/",
+        "/pixel/",
+        "/webhook",
+        "/callback",
+    ];
+    METADATA_PATH_MARKERS
+        .iter()
+        .any(|marker| path.contains(marker))
+        || path.ends_with("/track")
+        || path.ends_with("/open")
+        || path.ends_with("/report")
+}
+
+fn detect_external_brand_host(host: &str) -> Option<(String, String, f64)> {
+    let decoded = idna::domain_to_unicode(host).0.to_ascii_lowercase();
+    let labels: Vec<&str> = decoded.split('.').collect();
+    if labels.len() < 2 {
+        return None;
+    }
+    let base = labels[labels.len() - 2];
+    let md = crate::module_data::module_data();
+    let anchors = md.get_structured("brand_anchor_domains")?.as_array()?;
+    for entry in anchors {
+        let brand = entry.get("keyword")?.as_str()?;
+        let anchor = entry.get("domain")?.as_str()?;
+        let anchor_base = anchor.split('.').next()?;
+        if base == anchor_base || decoded == anchor || decoded.ends_with(&format!(".{anchor}")) {
+            continue;
+        }
+        let normalized_base = crate::modules::header_scan::checks::normalize_homoglyph_simple(base);
+        let normalized_anchor =
+            crate::modules::header_scan::checks::normalize_homoglyph_simple(anchor_base);
+        if normalized_base != base && normalized_base == normalized_anchor {
+            return Some((brand.to_string(), anchor.to_string(), 0.45));
+        }
+        let distance = edit_distance(base, anchor_base);
+        let max_len = base.len().max(anchor_base.len());
+        if distance > 0 && distance <= 2 && max_len >= 6 {
+            return Some((brand.to_string(), anchor.to_string(), 0.35));
+        }
+    }
+    None
+}
+
+/// Object-storage / CDN "content override" query parameters
+/// (`?response-content-type=text/html`, `?response-content-disposition=...`)
+/// rewrite the served response headers of a stored object. Attackers abuse
+/// them to make an exempt `.../malware.jpg` URL return an HTML phishing page,
+/// so any URL carrying them must lose the static-asset exemption.
+pub(crate) fn has_content_override_params(url: &str) -> bool {
+    let Some((_, query)) = url.split_once('?') else {
+        return false;
+    };
+    let query = query.split('#').next().unwrap_or(query);
+    query.split('&').any(|pair| {
+        let name = crate::modules::common::percent_decode(pair.split('=').next().unwrap_or(""))
+            .to_ascii_lowercase();
+        matches!(
+            name.as_str(),
+            "response-content-type"
+                | "response-content-disposition"
+                | "response-content-language"
+                | "response-content-encoding"
+                | "response-cache-control"
+                | "response-expires"
+        )
+    })
+}
+
 /// URL heuristic analysis (includes fragment and typosquatting detection)
 pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
+    analyze_url_with_anchor_context(url, false)
+}
+
+/// `has_anchor_text` marks a user-clickable `<a>` link carrying visible
+/// anchor text. The static-asset exemption only applies to chrome-less
+/// render resources (`<img>`/`<link>`/`<script>` src without anchor text);
+/// a clickable link pointing at "static" content is a landing-page
+/// candidate and must go through structural analysis.
+fn analyze_url_with_anchor_context(
+    url: &str,
+    has_anchor_text: bool,
+) -> (f64, Vec<(String, String)>) {
     let mut score: f64 = 0.0;
     let mut findings: Vec<(String, String)> = Vec::new();
-    if is_probable_schema_reference_url(url) || is_probable_opaque_mail_callback_url(url) {
+    if is_probable_schema_reference_url(url)
+        || is_probable_opaque_mail_callback_url(url)
+        || crate::modules::link_scan::is_known_safe_tokenized_resource_url(url)
+    {
         return (score, findings);
     }
     // Decode HTML entities (URLs in email body may contain &amp; etc.)
@@ -325,31 +468,33 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
         crate::modules::link_scan::unwrap_mail_security_gateway_target(&url_decoded)
             .unwrap_or_else(|| url_decoded.clone());
     let url_lower = effective_url.to_lowercase();
-    let used_gateway_target = effective_url != url_decoded;
 
-    // Parse URL: scheme://host/path?query#fragment
-    let after_scheme = url_lower
-        .strip_prefix("https://")
-        .or_else(|| url_lower.strip_prefix("http://"))
-        .unwrap_or(&url_lower);
-
-    // fragment
-    let (url_without_fragment, fragment) = match after_scheme.split_once('#') {
-        Some((main, frag)) => (main, Some(frag)),
-        None => (after_scheme, None),
+    // Parse URL with the WHATWG parser. The old hand-rolled splitter was
+    // blind in two ways:
+    // - userinfo (`http://mail.qq.com:443@evil.tk/login`): the userinfo
+    //   segment was mistaken for the host, so the fake "trusted" prefix hit
+    //   safe-domain exemptions while the real host after `@` was never
+    //   checked;
+    // - backslash separators (`http:/\evil.com/login`): `strip_prefix` failed
+    //   and the "host" collapsed to the literal string "http".
+    // The WHATWG parser normalizes both (`\` becomes `/` in special schemes)
+    // and always exposes the real host via `host_str()`.
+    let Ok(parsed_url) = url::Url::parse(&effective_url) else {
+        // Unparsable hrefs are preserved at extraction time and scored by
+        // link_scan's unparseable_url category; no reliable host/path signal
+        // can be derived here.
+        return (score, findings);
     };
-
-    let (host_path, query) = match url_without_fragment.split_once('?') {
-        Some((hp, q)) => (hp, Some(q)),
-        None => (url_without_fragment, None),
-    };
-
-    let path = host_path.find('/').map(|i| &host_path[i..]).unwrap_or("/");
-    let host_for_check = host_path
-        .split('/')
-        .next()
-        .and_then(|h| h.split(':').next())
-        .unwrap_or("");
+    let host_for_check = parsed_url.host_str().unwrap_or("");
+    let path = parsed_url.path();
+    let query = parsed_url.query();
+    let fragment = parsed_url.fragment();
+    // Operator/system-whitelisted roots are first-party infrastructure.  A
+    // subdomain such as `ebank.ccabchina.com` must not be compared against an
+    // unrelated external brand merely because its second-level label is close
+    // to that brand's anchor (ccabchina vs. abchina/ABC).
+    let domain_trusted = crate::modules::link_scan::is_trusted_url_domain(host_for_check);
+    let hosted_platform = crate::modules::link_scan::is_shared_hosting_platform(host_for_check);
     let host_under_safe_domain =
         crate::modules::link_scan::is_well_known_safe_domain(host_for_check);
 
@@ -358,22 +503,53 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
     // should not trigger login-path/DGA heuristics on their own. The same
     // treatment applies to static assets hosted under curated well-known safe
     // domains such as provider CDN roots (for example *.127.net).
-    if is_probable_safe_static_asset_url(&effective_url)
+    //
+    // The exemption is deliberately narrow:
+    // - it never applies to clickable links carrying anchor text (an
+    //   attacker-lured <a> "static" URL is a landing-page candidate);
+    // - it never applies when the query rewrites the served response headers
+    //   (`response-content-type=text/html` turns a stored ".jpg" into an
+    //   HTML phishing page).
+    let looks_like_static_asset = is_probable_safe_static_asset_url(&effective_url)
         || ((is_probable_cloud_asset_host(host_for_check) || host_under_safe_domain)
-            && is_probable_static_asset_path(path))
-    {
+            && is_probable_static_asset_path(path));
+    if looks_like_static_asset && !has_anchor_text && !has_content_override_params(&effective_url) {
         return (score, findings);
     }
+    if looks_like_static_asset && has_content_override_params(&effective_url) {
+        score += 0.30;
+        findings.push((
+            "Static-asset URL carries object-storage content-override parameters (response-content-type/disposition) — served Content-Type can be rewritten to HTML".to_string(),
+            "oss_content_override".to_string(),
+        ));
+    }
 
-    // Skip structural checks for trusted domains and mail security gateways.
-    // Trusted domains (e.g., QQ mail download URLs) naturally have long params.
-    // Security gateways (e.g., Trend Micro DDEI, Proofpoint) rewrite URLs with
-    // redirect/auth params that would otherwise trigger false positives.
-    if crate::modules::link_scan::is_trusted_url_domain(host_for_check)
-        || (!used_gateway_target
-            && crate::modules::link_scan::is_mail_security_gateway_pub(&url_lower))
+    if !domain_trusted
+        && !host_under_safe_domain
+        && let Some((brand, anchor, brand_score)) = detect_external_brand_host(host_for_check)
     {
-        return (score, findings);
+        score += brand_score;
+        findings.push((
+            format!(
+                "External brand typosquatting: host '{}' resembles {} ({})",
+                host_for_check, brand, anchor
+            ),
+            "brand_typosquatting".to_string(),
+        ));
+    }
+
+    // The wrapper has already been removed. Score the real destination's TLD
+    // from the JSON-managed policy list; the trusted DDEI hostname never
+    // contributes to this finding.
+    let md = crate::module_data::module_data();
+    if md.get_list("suspicious_tlds").iter().any(|suffix| {
+        host_for_check == suffix.as_str() || host_for_check.ends_with(&format!(".{suffix}"))
+    }) {
+        score += 0.12;
+        findings.push((
+            format!("Destination uses high-risk TLD: {host_for_check}"),
+            "suspicious_tld".to_string(),
+        ));
     }
 
     // 1. Suspicious path keywords (check both path and fragment)
@@ -384,21 +560,27 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
     };
 
     // Trusted domains (IOC verdict=clean) get reduced structural check weight
-    let url_domain = host_path.split('/').next().unwrap_or("");
-    let domain_trusted = crate::modules::link_scan::is_trusted_url_domain(url_domain);
+    // A trusted first-party asset may bypass noisy token/URL checks, but a
+    // shared tenant platform (Forms/Notion/Workers/Functions) is attacker
+    // controlled and must retain normal phishing weights.
+    let structural_trusted = domain_trusted && !hosted_platform;
 
-    let md = crate::module_data::module_data();
+    // Percent-encoding must not hide keywords (e.g. %6c%6f%67%69%6e = login):
+    // decode one layer before the Aho-Corasick scan. The %25 double-encoding
+    // check below still inspects the raw path.
+    let combined_path_decoded =
+        crate::modules::common::percent_decode(&combined_path).to_lowercase();
     let path_hits: Vec<String> = crate::matcher::suspicious_path_keywords()
-        .scan(&combined_path)
+        .scan(&combined_path_decoded)
         .distinct_patterns();
     if !path_hits.is_empty() {
-        let weight = if domain_trusted { 0.02 } else { 0.10 };
+        let weight = if structural_trusted { 0.02 } else { 0.10 };
         score += (path_hits.len() as f64 * weight).min(0.30);
         findings.push((
             format!(
                 "URL path contains suspicious keywords: {}{}",
                 path_hits.join(", "),
-                if domain_trusted {
+                if structural_trusted {
                     " (trusted domain, reduced weight)"
                 } else {
                     ""
@@ -411,32 +593,94 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
     // 2. Suspicious query parameters (parameter name matching)
     if let Some(q) = query {
         let mut param_hits: Vec<String> = Vec::new();
-        let param_names: Vec<&str> = q
+        // Decode each parameter name before matching so that encoded names
+        // (e.g. tok%65n = token) cannot bypass the suspicious-params list.
+        let param_names: Vec<String> = q
             .split('&')
             .filter_map(|pair| {
                 let name = pair.split('=').next()?;
-                if name.is_empty() { None } else { Some(name) }
+                if name.is_empty() {
+                    None
+                } else {
+                    Some(crate::modules::common::percent_decode(name).to_lowercase())
+                }
             })
             .collect();
         for suspicious in md.get_list("suspicious_query_params") {
-            if param_names.contains(&suspicious.as_str()) {
+            if param_names.contains(suspicious) {
                 param_hits.push(suspicious.to_string());
             }
         }
         if !param_hits.is_empty() {
-            let pw = if domain_trusted { 0.02 } else { 0.08 };
+            let pw = if structural_trusted { 0.02 } else { 0.08 };
             score += (param_hits.len() as f64 * pw).min(0.25);
             findings.push((
                 format!(
                     "URL query parameters suspicious: {}{}",
                     param_hits.join(", "),
-                    if domain_trusted {
+                    if structural_trusted {
                         " (trusted domain, reduced weight)"
                     } else {
                         ""
                     }
                 ),
                 "suspicious_params".to_string(),
+            ));
+        }
+
+        // Parameter *values* are scanned as well: phishing kits hide protocol
+        // handlers and keywords behind percent-encoding in redirect
+        // parameters (e.g. ?next=%6A%61%76%61%73%63%72%69%70%74%3A... =
+        // javascript:). Decoded values that are themselves plain http(s) URLs
+        // or bare paths are skipped for the keyword scan — legitimate
+        // SSO/redirect targets routinely contain words like "login".
+        let mut value_protocol_hit = false;
+        let mut value_keyword_hits: Vec<String> = Vec::new();
+        for pair in q.split('&') {
+            let Some((_, value)) = pair.split_once('=') else {
+                continue;
+            };
+            if value.len() < 4 {
+                continue;
+            }
+            let decoded_value = crate::modules::common::percent_decode(value).to_lowercase();
+            if decoded_value.contains("javascript:")
+                || decoded_value.contains("vbscript:")
+                || decoded_value.contains("data:text/html")
+            {
+                value_protocol_hit = true;
+            }
+            let was_encoded = value.contains('%');
+            if was_encoded
+                && !decoded_value.starts_with("http://")
+                && !decoded_value.starts_with("https://")
+                && !decoded_value.starts_with('/')
+            {
+                value_keyword_hits.extend(
+                    crate::matcher::suspicious_path_keywords()
+                        .scan(&decoded_value)
+                        .distinct_patterns(),
+                );
+            }
+        }
+        if value_protocol_hit {
+            score += 0.30;
+            findings.push((
+                "Percent-encoded query parameter value resolves to a dangerous protocol (javascript:/vbscript:/data:)".to_string(),
+                "encoded_protocol_param".to_string(),
+            ));
+        }
+        if !value_keyword_hits.is_empty() {
+            value_keyword_hits.sort();
+            value_keyword_hits.dedup();
+            let vw = if structural_trusted { 0.02 } else { 0.08 };
+            score += (value_keyword_hits.len() as f64 * vw).min(0.25);
+            findings.push((
+                format!(
+                    "URL query parameter values contain suspicious keywords: {}",
+                    value_keyword_hits.join(", ")
+                ),
+                "suspicious_param_value".to_string(),
             ));
         }
     }
@@ -450,14 +694,68 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
         ));
     }
 
-    // 4. Encoding anomalies (check path and query for abnormal URL encoding)
+    // 4. Encoding anomalies (check path, query and fragment for abnormal URL
+    // encoding). Browsers never decode the fragment — phishing pages decode
+    // #%25xx themselves in JS — so %25 double-encoding must be checked on
+    // every component, not just the path.
     let path_lower = path.to_lowercase();
+    let mut double_encoded_parts: Vec<&str> = Vec::new();
     if path_lower.contains("%25") {
+        double_encoded_parts.push("path");
+    }
+    if query.is_some_and(|q| q.to_lowercase().contains("%25")) {
+        double_encoded_parts.push("query");
+    }
+    if fragment.is_some_and(|f| f.to_lowercase().contains("%25")) {
+        double_encoded_parts.push("fragment");
+    }
+    if !double_encoded_parts.is_empty() {
         score += 0.25;
         findings.push((
-            "URL path contains double percent-encoding (%25)".to_string(),
+            format!(
+                "URL {} contains double percent-encoding (%25)",
+                double_encoded_parts.join("/")
+            ),
             "double_encoding".to_string(),
         ));
+
+        // Decode a second layer (bounded at exactly two layers, no exponential
+        // fan-out) so payloads like %253A%252F%252F (%3A%2F%2F -> ://) or
+        // double-encoded javascript:/login keywords do not stop at the
+        // double_encoding label without their content ever being inspected.
+        let raw_components = format!(
+            "{} {} {}",
+            path,
+            query.unwrap_or(""),
+            fragment.unwrap_or("")
+        );
+        let second_decoded = crate::modules::common::percent_decode(
+            &crate::modules::common::percent_decode(&raw_components),
+        )
+        .to_lowercase();
+        let mut second_layer_reasons: Vec<String> = Vec::new();
+        if second_decoded.contains("javascript:")
+            || second_decoded.contains("vbscript:")
+            || second_decoded.contains("data:text/html")
+        {
+            second_layer_reasons.push("dangerous protocol".to_string());
+        }
+        let second_keyword_hits: Vec<String> = crate::matcher::suspicious_path_keywords()
+            .scan(&second_decoded)
+            .distinct_patterns();
+        if !second_keyword_hits.is_empty() {
+            second_layer_reasons.push(format!("keywords: {}", second_keyword_hits.join(", ")));
+        }
+        if !second_layer_reasons.is_empty() {
+            score += 0.20;
+            findings.push((
+                format!(
+                    "Second-layer percent-decoding reveals {}",
+                    second_layer_reasons.join("; ")
+                ),
+                "double_encoded_payload".to_string(),
+            ));
+        }
     }
     if path_lower.contains("%2f") || path_lower.contains("%5c") {
         score += 0.15;
@@ -468,25 +766,14 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
     }
 
     // 5. @ sign in URL (domain obfuscation)
-    // Only flag @ in the authority section (before first / ? #), not in query strings
+    // Only userinfo in the authority is flagged, not @ in query strings
     // e.g. http://user@evil.com is suspicious, but ?wght@700 (Google Fonts) is benign
-    {
-        let authority_part = if let Some(slash_pos) = after_scheme.find('/') {
-            &after_scheme[..slash_pos]
-        } else if let Some(q_pos) = after_scheme.find('?') {
-            &after_scheme[..q_pos]
-        } else if let Some(h_pos) = after_scheme.find('#') {
-            &after_scheme[..h_pos]
-        } else {
-            after_scheme
-        };
-        if authority_part.contains('@') {
-            score += 0.35;
-            findings.push((
-                "URL contains @ sign in authority (potentially hiding real domain)".to_string(),
-                "at_sign_obfuscation".to_string(),
-            ));
-        }
+    if !parsed_url.username().is_empty() || parsed_url.password().is_some() {
+        score += 0.35;
+        findings.push((
+            "URL contains @ sign in authority (potentially hiding real domain)".to_string(),
+            "at_sign_obfuscation".to_string(),
+        ));
     }
 
     // 5b. DGA/random domain detection (consonant clustering analysis)
@@ -549,7 +836,7 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
                 if max_consonant_run >= 4
                     || (max_consonant_run >= 3 && consonant_ratio > 0.80 && alpha_bytes.len() >= 8)
                 {
-                    let dga_weight = if domain_trusted { 0.05 } else { 0.30 };
+                    let dga_weight = if structural_trusted { 0.05 } else { 0.30 };
                     score += dga_weight;
                     findings.push((
                         format!(
@@ -574,11 +861,17 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
     // 5c. IDN homograph attack detection (Cyrillic/Greek characters in domain)
     // e.g., аpple.com (Cyrillic U+0430) vs apple.com (Latin a U+0061)
     {
-        let host = host_path.split('/').next().unwrap_or("");
-        let domain_part = host.split(':').next().unwrap_or(host);
-        let has_latin = domain_part.chars().any(|c| c.is_ascii_alphabetic());
+        // Stored links are normalized to punycode by the WHATWG parser; decode
+        // back to Unicode before script analysis.
+        let domain_part = idna::domain_to_unicode(host_for_check).0.to_lowercase();
+        // Fullwidth Latin (U+FF21+) counts as Latin script: it is visually
+        // identical to ASCII Latin and folds to it under NFKC.
+        let has_latin = domain_part
+            .chars()
+            .any(|c| c.is_ascii_alphabetic() || is_fullwidth_latin(c));
         let has_non_latin_script = domain_part.chars().any(|c| {
             !c.is_ascii() && c.is_alphabetic()
+                && !is_fullwidth_latin(c)
                 && !('\u{4e00}'..='\u{9fff}').contains(&c) // Exclude CJK (normal in Chinese domains)
                 && !('\u{3040}'..='\u{30ff}').contains(&c) // Exclude Japanese kana
                 && !('\u{ac00}'..='\u{d7af}').contains(&c) // Exclude Korean
@@ -589,6 +882,22 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
                 format!(
                     "Mixed-script domain (IDN homograph attack): {} — potentially impersonating legitimate domain",
                     domain_part
+                ),
+                "idn_homograph".to_string(),
+            ));
+        } else if !domain_part.is_ascii()
+            && let Some(brand) = match_idn_skeleton_brand(&domain_part)
+        {
+            // Pure non-Latin letter-script (e.g. all-Cyrillic "аррӏе.com") and
+            // fullwidth-Latin ("ａｐｐｌｅ.com") domains produce no mixed-script
+            // signal; flag them only when their homoglyph skeleton matches a
+            // known brand domain. CJK-only domains never match - CJK ideographs
+            // have no Latin skeleton mapping.
+            score += 0.40;
+            findings.push((
+                format!(
+                    "Non-Latin lookalike domain (IDN homograph attack): {} — homoglyph skeleton matches brand \"{}\"",
+                    domain_part, brand
                 ),
                 "idn_homograph".to_string(),
             ));
@@ -611,12 +920,9 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
         ));
     }
 
-    // 7. Non-standard port
-    let host = url_without_fragment.split('/').next().unwrap_or("");
-    if let Some(port_str) = host.split(':').nth(1)
-        && let Ok(port) = port_str.parse::<u16>()
-        && port != 80
-        && port != 443
+    // 7. Non-standard port (`Url::port()` is None for scheme-default ports
+    // 80/443, so any value returned here is already non-default)
+    if let Some(port) = parsed_url.port()
         && port != 8080
         && port != 8443
     {
@@ -633,7 +939,7 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
     {
         // Fragment contains multi-level path (common in SPA-based phishing)
         let frag_depth = frag.matches('/').count();
-        if frag_depth >= 2 {
+        if frag_depth >= 2 && !structural_trusted {
             score += 0.10;
             findings.push((
                 format!(
@@ -644,9 +950,10 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
             ));
         }
 
-        // Suspicious keywords in fragment
+        // Suspicious keywords in fragment (decoded so %-encoding cannot hide them)
+        let frag_decoded = crate::modules::common::percent_decode(frag).to_lowercase();
         let frag_hits: Vec<String> = crate::matcher::suspicious_path_keywords()
-            .scan(frag)
+            .scan(&frag_decoded)
             .distinct_patterns();
         if !frag_hits.is_empty() {
             score += (frag_hits.len() as f64 * 0.10).min(0.25);
@@ -660,19 +967,25 @@ pub(crate) fn analyze_url(url: &str) -> (f64, Vec<(String, String)>) {
             ));
         }
 
-        // Fragment typosquatting detection
-        let (typo_score, typo_findings) = detect_typos(frag);
-        if typo_score > 0.0 {
-            score += typo_score;
-            findings.extend(typo_findings);
+        // Fragment typosquatting is useful on untrusted hosts, but normal
+        // first-party SPAs frequently use internal route/component names that
+        // are not dictionary words (and may contain harmless spelling drift).
+        if !structural_trusted {
+            let (typo_score, typo_findings) = detect_typos(frag);
+            if typo_score > 0.0 {
+                score += typo_score;
+                findings.extend(typo_findings);
+            }
         }
     }
 
     // 9. Path typosquatting detection (check URL path)
-    let (path_typo_score, path_typo_findings) = detect_typos(path);
-    if path_typo_score > 0.0 {
-        score += path_typo_score;
-        findings.extend(path_typo_findings);
+    if !structural_trusted {
+        let (path_typo_score, path_typo_findings) = detect_typos(path);
+        if path_typo_score > 0.0 {
+            score += path_typo_score;
+            findings.extend(path_typo_findings);
+        }
     }
 
     (score, findings)
@@ -720,11 +1033,13 @@ impl SecurityModule for LinkContentModule {
             if link_text_empty
                 && (is_probable_non_clickable_render_asset_url(&effective_url)
                     || is_probable_opaque_mail_callback_url(&effective_url))
+                && !has_content_override_params(&effective_url)
             {
                 continue;
             }
 
-            let (url_score, findings) = analyze_url(&link.url);
+            let (url_score, findings) =
+                analyze_url_with_anchor_context(&link.url, !link_text_empty);
             if url_score > 0.0 {
                 total_score += url_score;
                 suspicious_urls.push(link.url.clone());
@@ -734,7 +1049,8 @@ impl SecurityModule for LinkContentModule {
                         description: desc,
                         location: Some("links".to_string()),
                         snippet: Some(if link.url.len() > 120 {
-                            format!("{}...", &link.url[..120])
+                            // UTF-8 safe truncation: never split a multi-byte character
+                            format!("{}...", link.url.get(..120).unwrap_or(&link.url))
                         } else {
                             link.url.clone()
                         }),
@@ -752,28 +1068,45 @@ impl SecurityModule for LinkContentModule {
                 crate::modules::link_scan::unwrap_mail_security_gateway_target(&link.url)
                     .unwrap_or_else(|| link.url.clone());
             let effective_url_lower = effective_url.to_lowercase();
+            if is_recipient_metadata_url(&effective_url_lower) {
+                continue;
+            }
             let link_domain = extract_domain_from_url(&effective_url_lower);
             let is_trusted = link_domain
                 .as_ref()
                 .is_some_and(|d| crate::modules::link_scan::is_trusted_url_domain(d));
-            if is_trusted {
+            if is_trusted
+                && !link_domain
+                    .as_deref()
+                    .is_some_and(crate::modules::link_scan::is_shared_hosting_platform)
+            {
                 continue;
             }
             let has_recipient = ctx.session.rcpt_to.iter().any(|rcpt| {
                 let rcpt_lower = rcpt.to_lowercase();
-                effective_url_lower.contains(&rcpt_lower)
-                    || effective_url_lower.contains(&rcpt_lower.replace('@', "%40"))
+                let decoded_url = crate::modules::common::percent_decode(&effective_url_lower);
+                if decoded_url.contains(&rcpt_lower)
+                    || decoded_url.contains(&rcpt_lower.replace('@', "%40"))
+                {
+                    return true;
+                }
+
+                // Targeted campaigns increasingly embed a digest rather than
+                // the clear-text mailbox.  Check both common cryptographic
+                // encodings against the URL after percent decoding.
+                let sha1_hex = hex_digest::<Sha1>(&rcpt_lower);
+                let sha256_hex = hex_digest::<Sha256>(&rcpt_lower);
+                decoded_url.contains(&sha1_hex) || decoded_url.contains(&sha256_hex)
             });
             if has_recipient {
                 total_score += 0.35;
                 categories.push("recipient_in_url".to_string());
                 evidence.push(Evidence {
-                    description:
-                        "URL contains recipient email address (targeted credential phishing)"
-                            .to_string(),
+                    description: "URL contains recipient email or a SHA-1/SHA-256 mailbox digest (targeted credential phishing)".to_string(),
                     location: Some("links".to_string()),
                     snippet: Some(if effective_url.len() > 120 {
-                        format!("{}...", &effective_url[..120])
+                        // UTF-8 safe truncation: never split a multi-byte character
+                        format!("{}...", effective_url.get(..120).unwrap_or(&effective_url))
                     } else {
                         effective_url
                     }),
@@ -893,6 +1226,9 @@ impl SecurityModule for LinkContentModule {
                 let effective_url =
                     crate::modules::link_scan::unwrap_mail_security_gateway_target(&link.url)
                         .unwrap_or_else(|| link.url.clone());
+                if crate::modules::link_scan::is_known_safe_tokenized_resource_url(&effective_url) {
+                    continue;
+                }
                 let effective_lower = effective_url.to_lowercase();
                 let link_domain = extract_domain_from_url(&effective_lower);
 
@@ -936,10 +1272,17 @@ impl SecurityModule for LinkContentModule {
                 if is_probable_schema_reference_url(&effective_url) {
                     continue;
                 }
+                if crate::modules::link_scan::is_known_safe_tokenized_resource_url(&effective_url) {
+                    continue;
+                }
                 let effective_lower = effective_url.to_lowercase();
-                if contains_any_suspicious_path_keywords(&effective_lower)
-                    || url_looks_like_oauth_flow(&effective_lower)
-                    || url_looks_like_device_code_flow(&effective_lower)
+                // Decode one percent-encoding layer so obfuscated login/oauth
+                // URLs cannot slip past the structure checks.
+                let effective_decoded =
+                    crate::modules::common::percent_decode(&effective_lower).to_lowercase();
+                if contains_any_suspicious_path_keywords(&effective_decoded)
+                    || url_looks_like_oauth_flow(&effective_decoded)
+                    || url_looks_like_device_code_flow(&effective_decoded)
                 {
                     total_score += 0.20;
                     categories.push("qr_to_login_chain".to_string());
@@ -960,11 +1303,18 @@ impl SecurityModule for LinkContentModule {
                 let effective_url =
                     crate::modules::link_scan::unwrap_mail_security_gateway_target(&link.url)
                         .unwrap_or_else(|| link.url.clone());
+                if crate::modules::link_scan::is_known_safe_tokenized_resource_url(&effective_url) {
+                    continue;
+                }
                 let effective_lower = effective_url.to_lowercase();
-                if url_looks_like_auth_barrier(&effective_lower)
-                    && (contains_any_suspicious_path_keywords(&effective_lower)
-                        || url_looks_like_oauth_flow(&effective_lower)
-                        || url_looks_like_device_code_flow(&effective_lower))
+                // Decode one percent-encoding layer so obfuscated barrier/login
+                // URLs cannot slip past the structure checks.
+                let effective_decoded =
+                    crate::modules::common::percent_decode(&effective_lower).to_lowercase();
+                if url_looks_like_auth_barrier(&effective_decoded)
+                    && (contains_any_suspicious_path_keywords(&effective_decoded)
+                        || url_looks_like_oauth_flow(&effective_decoded)
+                        || url_looks_like_device_code_flow(&effective_decoded))
                 {
                     total_score += 0.18;
                     categories.push("auth_barrier_url".to_string());
@@ -1104,6 +1454,39 @@ mod tests {
     }
 
     #[test]
+    fn test_preference_url_recipient_digest_is_marketing_metadata() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let digest = hex_digest::<Sha256>("victim@example.com");
+        let url =
+            format!("https://connect.acams.org/set-user-preferences-SC?hea={digest}&elq=campaign");
+
+        let result = analyze_with_runtime(&LinkContentModule::new(), &make_ctx(&url));
+
+        assert!(
+            !result.categories.contains(&"recipient_in_url".to_string()),
+            "preference metadata must not become credential evidence: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_login_url_recipient_digest_remains_targeting_evidence() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let digest = hex_digest::<Sha256>("victim@example.com");
+        let url = format!("https://evil.example/login?hea={digest}");
+
+        let result = analyze_with_runtime(&LinkContentModule::new(), &make_ctx(&url));
+
+        assert!(
+            result.categories.contains(&"recipient_in_url".to_string()),
+            "recipient digest on a login endpoint must remain targeting evidence: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
     fn test_legitimate_brand_label_is_not_marked_as_dga() {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
@@ -1115,6 +1498,23 @@ mod tests {
         assert!(
             !result.categories.contains(&"dga_random_domain".to_string()),
             "Known brand labels should not be marked as DGA: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_bootcdn_service_label_is_not_marked_as_dga() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = LinkContentModule::new();
+        let ctx = make_ctx("https://cdn.bootcdn.net/ajax/libs/normalize/8.0.1/normalize.min.css");
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe, "{result:?}");
+        assert!(
+            !result.categories.contains(&"dga_random_domain".to_string()),
+            "BootCDN is a consonant-heavy service label, not a DGA: {:?}",
             result.categories
         );
     }
@@ -1344,6 +1744,36 @@ mod tests {
     }
 
     #[test]
+    fn test_business_card_profile_path_is_not_oauth_flow() {
+        assert!(!url_looks_like_oauth_flow(
+            "https://work.weixin.qq.com/wework_admin/user/h5/qqmail_user_card/vc123?from=myprofile"
+        ));
+        assert!(url_looks_like_oauth_flow(
+            "https://login.example.com/oauth2/authorize?client_id=abc&scope=openid"
+        ));
+    }
+
+    #[test]
+    fn qq_ftn_download_url_is_clean_in_link_content_analysis() {
+        let (score, findings) = analyze_url(
+            "https://wx.mail.qq.com/ftn/download?func=3&k=opaque-download-token&key=opaque-download-token&code=opaque-code&from=",
+        );
+
+        assert_eq!(score, 0.0);
+        assert!(findings.is_empty(), "findings={findings:?}");
+    }
+
+    #[test]
+    fn aliyun_directmail_trace_url_is_clean_in_link_content_analysis() {
+        let (score, findings) = analyze_url(
+            "https://dm-cn.aliyuncs.com/trace/v1/report?bid=1&mf=sender%40mail.example&msgid=id&to=recipient%40example.com&tag=opentag&tid=&sign=opaque-sign",
+        );
+
+        assert_eq!(score, 0.0);
+        assert!(findings.is_empty(), "findings={findings:?}");
+    }
+
+    #[test]
     fn test_auth_barrier_url_uses_dynamic_keyword_context() {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
@@ -1359,6 +1789,606 @@ mod tests {
         assert!(
             result.categories.contains(&"auth_barrier_url".to_string()),
             "auth-barrier URL should use runtime keywords instead of hardcoded lure text: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_gateway_without_extractable_target_still_runs_structural_checks() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+
+        // Mail security gateway domain whose query carries no valid embedded
+        // target URL: unwrapping fails, so structural checks must still run.
+        let (_, findings) =
+            analyze_url("https://ddei3-0-ctp.asiainfo-sec.com/wis/clicktime/v1/query?token=abc123");
+
+        assert!(
+            findings
+                .iter()
+                .any(|(_, category)| category == "suspicious_params"),
+            "gateway URL without a valid embedded target must not be exempted: {:?}",
+            findings
+        );
+        assert!(
+            !findings
+                .iter()
+                .any(|(_, category)| category == "suspicious_tld"),
+            "a gateway URL without an embedded target must not invent a destination TLD: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn test_unwrapped_gateway_target_is_exempt_from_wrapper_checks() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+
+        // Successful unwrap: the wrapper's own params must not be flagged.
+        let (_, findings) = analyze_url(
+            "https://safelinks.protection.outlook.com/?url=https%3A%2F%2Fportal.example.com%2Fhome",
+        );
+
+        assert!(
+            !findings
+                .iter()
+                .any(|(_, category)| category == "suspicious_params"),
+            "unwrapped gateway target should not inherit wrapper params: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn test_userinfo_url_analyzes_real_host_after_at() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+
+        // PoC (B1-1): the hand-rolled splitter treated the userinfo segment
+        // "mail.qq.com:443" as the host, so the fake trusted prefix hit
+        // safe-domain logic and the real destination (evil.tk) was never
+        // checked. WHATWG parsing exposes the host after `@`.
+        let (_, findings) = analyze_url("http://mail.qq.com:443@evil.tk/login");
+
+        assert!(
+            findings
+                .iter()
+                .any(|(_, category)| category == "at_sign_obfuscation"),
+            "userinfo authority must be flagged: {:?}",
+            findings
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|(_, category)| category == "suspicious_tld"),
+            "the real host evil.tk must drive host-based checks: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn test_backslash_url_host_is_visible_to_checks() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+
+        // PoC (B1-2): for `http:/\evil.tk/login` the old splitter failed
+        // `strip_prefix("http://")` and collapsed the host to the literal
+        // string "http", blinding every host-based check. WHATWG parsing
+        // normalizes `\` to `/` in special schemes, exposing evil.tk.
+        let (_, findings) = analyze_url("http:/\\xkqzvwp.tk/login");
+
+        assert!(
+            findings
+                .iter()
+                .any(|(_, category)| category == "suspicious_tld"),
+            "backslash URL host must participate in TLD checks: {:?}",
+            findings
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|(_, category)| category == "suspicious_path"),
+            "backslash URL path must still be scanned: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn test_unwrapped_gateway_target_itself_is_still_analyzed() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+
+        let (score, findings) = analyze_url(
+            "https://ddei3-0-ctp.asiainfo-sec.com/wis/clicktime/v1/query?url=https%3A%2F%2Fwww.cy1109.top%2F%3Ftoken%3DIPx02BJ5syULgAJjwyJngqP5wDKnhEb&auth=gateway-signature",
+        );
+
+        assert!(
+            score >= 0.20,
+            "target findings should be visible at low risk"
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|(_, category)| category == "suspicious_params"),
+            "the embedded destination token must be analyzed: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn test_idn_pure_cyrillic_brand_spoof_detected() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+
+        // All-Cyrillic "аррӏе.сом" (incl. Cyrillic TLD) has no ASCII Latin at
+        // all, so the mixed-script check cannot fire; the homoglyph skeleton
+        // still matches the brand "apple.com".
+        let (_, findings) = analyze_url("https://аррӏе.сом/login");
+
+        assert!(
+            findings
+                .iter()
+                .any(|(_, category)| category == "idn_homograph"),
+            "pure Cyrillic brand spoof should be detected: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn test_external_brand_host_typosquatting_detected_realtime() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let (score, findings) = analyze_url("https://microsft.com/login");
+        assert!(score > 0.0);
+        assert!(
+            findings
+                .iter()
+                .any(|(_, category)| { category == "brand_typosquatting" })
+        );
+    }
+
+    #[test]
+    fn test_trusted_org_subdomain_is_not_external_brand_typosquatting() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        crate::modules::link_scan::set_trusted_url_domains(Arc::new(HashSet::from([
+            "*.ccabchina.com".to_string(),
+        ])));
+        crate::modules::link_scan::set_well_known_safe_domains(Arc::new(HashSet::new()));
+
+        let (score, findings) = analyze_url(
+            "https://ebank.ccabchina.com/mbank/wap/index.html?filuqeid=2087405200113799168#InvoiveDown/Index/Index",
+        );
+        assert!(
+            !findings
+                .iter()
+                .any(|(_, category)| category == "brand_typosquatting"),
+            "trusted organization subdomains must not be compared to external brands: {findings:?}"
+        );
+        assert!(
+            !findings
+                .iter()
+                .any(|(_, category)| category == "deep_fragment_route"),
+            "trusted first-party SPA routes must not be flagged as deep fragments: {findings:?}"
+        );
+        assert_eq!(
+            score, 0.0,
+            "trusted invoice route should have no structural score: {findings:?}"
+        );
+
+        reset_url_domain_sets();
+    }
+
+    #[test]
+    fn test_trusted_cmb_newsletter_routes_are_not_typosquatting() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        crate::modules::link_scan::set_trusted_url_domains(Arc::new(HashSet::from([
+            "*.cmbchina.com".to_string(),
+            "*.cmbimg.com".to_string(),
+            "*.cmbt.cn".to_string(),
+        ])));
+        crate::modules::link_scan::set_well_known_safe_domains(Arc::new(HashSet::new()));
+
+        for url in [
+            "https://weclub.ccc.cmbchina.com/weclub/url-link?lc=AweKqgWwO9&f=mrxjgj",
+            "https://cmbt.cn/c/fg2?z=3",
+            "https://site.cc.cmbimg.com/Router/invoke.html?url=cmblife%3A%2F%2Fcfp%2FExchange8",
+            "https://xyk.cmbchina.com/kf/MRXYGJQXDY",
+        ] {
+            let (score, findings) = analyze_url(url);
+            assert!(
+                !findings.iter().any(|(_, category)| {
+                    matches!(
+                        category.as_str(),
+                        "brand_typosquatting" | "url_typo" | "redirect_url" | "deep_fragment_route"
+                    )
+                }),
+                "trusted CMB URL must not produce structural false positives: {url}: {findings:?}"
+            );
+            assert_eq!(
+                score, 0.0,
+                "trusted CMB URL should have no structural score: {url}"
+            );
+        }
+
+        reset_url_domain_sets();
+    }
+
+    #[test]
+    fn test_fullwidth_latin_folds_to_canonical_domain_not_flagged() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+
+        // Fullwidth Latin (U+FF41+) is mapped to ASCII by UTS-46 host
+        // processing — the browser also navigates to plain "apple.com", so
+        // this is the canonical domain, NOT an IDN spoof. Guard against
+        // false positives: idn_homograph must not fire.
+        let (_, findings) = analyze_url("https://ａｐｐｌｅ.ｃｏｍ/login");
+
+        assert!(
+            !findings
+                .iter()
+                .any(|(_, category)| category == "idn_homograph"),
+            "fullwidth Latin folds to the canonical domain and must not be flagged: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn test_idn_mixed_script_still_detected() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+
+        // Cyrillic 'а' (U+0430) mixed into an ASCII domain - pre-existing behavior.
+        let (_, findings) = analyze_url("https://аpple.com/login");
+
+        assert!(
+            findings
+                .iter()
+                .any(|(_, category)| category == "idn_homograph"),
+            "mixed-script domain should still be detected: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn test_idn_pure_cjk_domain_is_not_flagged() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+
+        // CJK ideographs are not letter-script lookalikes and are exempt.
+        let (_, findings) = analyze_url("https://清华大学.cn/");
+
+        assert!(
+            !findings
+                .iter()
+                .any(|(_, category)| category == "idn_homograph"),
+            "pure CJK domain must not be flagged as IDN homograph: {:?}",
+            findings
+        );
+    }
+
+    #[test]
+    fn test_qq_qlogo_render_endpoint_is_not_flagged_as_dga() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+
+        let (score, findings) =
+            analyze_url("http://thirdqq.qlogo.cn/g?b=oidb&k=avatar-token&s=100&t=1700000000");
+
+        assert_eq!(
+            score, 0.0,
+            "qlogo render asset should be exempt: {findings:?}"
+        );
+        assert!(
+            !findings
+                .iter()
+                .any(|(_, category)| category == "dga_random_domain"),
+            "QQ avatar host is provider infrastructure, not DGA: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn test_percent_encoded_path_keyword_is_detected() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+
+        // %6c%6f%67%69%6e decodes to "login": before the fix the raw path
+        // carried no literal keyword and the Aho-Corasick scan never fired.
+        let (score, findings) = analyze_url("https://evil.example/%6c%6f%67%69%6e");
+
+        assert!(score > 0.0);
+        assert!(
+            findings
+                .iter()
+                .any(|(_, category)| category == "suspicious_path"),
+            "percent-encoded login path must not bypass the keyword scan: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn test_percent_encoded_query_param_name_is_detected() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+
+        // tok%65n decodes to "token": encoded parameter names previously
+        // bypassed the suspicious_query_params list entirely.
+        let (_, findings) = analyze_url("https://evil.example/page?tok%65n=abc123");
+
+        assert!(
+            findings
+                .iter()
+                .any(|(_, category)| category == "suspicious_params"),
+            "percent-encoded query parameter name must not bypass the param scan: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn test_observed_huawei_telemetry_callbacks_have_no_content_score() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+
+        for url in [
+            "https://svc-drcn.developer.huawei.com/partnermessage/dadian/v2/clicknum?localMsgID=afef48094a5f43d6bc18ff838fe3615a&msgType=1&urlPageIndex=f7cf6546-809b-4359-b402-b04ae180817a&urlIndex=d5431c23-7909-41fa-8c8b-0541cfd1ff17&key=92e3d69690d94e58685eec9ecaf3e3e93d5d63f6716ad3543aa4caa6869b9de6",
+            "https://svc-drcn.developer.huawei.com/partnermessage/dadian/v2/opennum?localMsgID=afef48094a5f43d6bc18ff838fe3615a&msgType=1&key=f0f19cf0e507a9fb1fb0bfeae2419ad3debdebaab1189e956a674303ca27af82",
+        ] {
+            let (score, findings) = analyze_url(url);
+            assert_eq!(
+                score, 0.0,
+                "validated callback must not score: {findings:?}"
+            );
+            assert!(
+                findings.is_empty(),
+                "validated callback must not emit findings: {findings:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_huawei_lookalike_with_redirect_target_remains_detected() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let url = "https://svc-drcn.developer.huawei.com.evil.example/partnermessage/dadian/v2/opennum?localMsgID=afef48094a5f43d6bc18ff838fe3615a&msgType=1&key=f0f19cf0e507a9fb1fb0bfeae2419ad3debdebaab1189e956a674303ca27af82&url=https%3A%2F%2Fevil.example%2Flogin";
+
+        let (score, findings) = analyze_url(url);
+        assert!(score > 0.0, "lookalike redirect must remain scored");
+        assert!(
+            findings.iter().any(|(_, category)| {
+                matches!(category.as_str(), "suspicious_params" | "redirect_url")
+            }),
+            "lookalike redirect must remain analyzable: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn test_percent_encoded_fragment_keyword_is_detected() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+
+        // Encoded SPA route: #%6c%6f%67%69%6e decodes to #login.
+        let (_, findings) = analyze_url("https://evil.example/app#%6c%6f%67%69%6e");
+
+        assert!(
+            findings
+                .iter()
+                .any(|(_, category)| category == "suspicious_path"),
+            "percent-encoded login fragment must not bypass the keyword scan: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn test_qr_to_login_chain_detects_percent_encoded_login_url() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = LinkContentModule::new();
+        let ctx = make_ctx_with_body(
+            "https://evil.example/%6c%6f%67%69%6e",
+            Some("您的账户存在异常，请扫码登录完成验证"),
+            Some("账户安全通知"),
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            result.categories.contains(&"qr_to_login_chain".to_string()),
+            "QR lure + percent-encoded login URL must be detected: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_auth_barrier_detects_percent_encoded_barrier_term() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = make_module_with_keywords(&["mailbox alert"]);
+        // %63%61%70%74%63%68%61 decodes to "captcha" (an auth-barrier term);
+        // only the decoded form satisfies url_looks_like_auth_barrier, so this
+        // URL slipped through before the fix.
+        let ctx = make_ctx_with_body(
+            "https://evil.example/%63%61%70%74%63%68%61/login",
+            Some("Mailbox alert"),
+            Some("Mailbox alert"),
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            result.categories.contains(&"auth_barrier_url".to_string()),
+            "auth-barrier URL with percent-encoded barrier term must be detected: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_double_encoded_fragment_is_detected() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+
+        // PoC ①: browsers never decode the fragment — the phishing page's own
+        // JS decodes #%256c%256f... (%6c%6f%67%69%6e -> "login"). Before the
+        // fix the %25 check only inspected the path, so the fragment payload
+        // was completely invisible.
+        let (score, findings) = analyze_url("https://evil.example/app#%256c%256f%2567%2569%256e");
+
+        assert!(score >= 0.15, "score must reach Low: {score}");
+        assert!(
+            findings
+                .iter()
+                .any(|(_, category)| category == "double_encoding"),
+            "fragment %25 double-encoding must be flagged: {findings:?}"
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|(_, category)| category == "double_encoded_payload"),
+            "second-layer decode must reveal the login keyword: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn test_percent_encoded_query_value_protocol_is_detected() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+
+        // PoC ②: query parameter *values* were never scanned, so
+        // ?next=%6A%61%76%61%73%63%72%69%70%74%3A... (= javascript:alert(1))
+        // escaped every protocol check.
+        let (score, findings) = analyze_url(
+            "https://evil.example/landing?next=%6A%61%76%61%73%63%72%69%70%74%3A%61%6C%65%72%74%28%31%29",
+        );
+
+        assert!(score >= 0.15, "score must reach Low: {score}");
+        assert!(
+            findings
+                .iter()
+                .any(|(_, category)| category == "encoded_protocol_param"),
+            "encoded javascript: in a query value must be flagged: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn test_double_encoded_path_payload_is_unwrapped() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+
+        // PoC ③: %256a%2561... double-encodes "javascript:". Before the fix
+        // the first-layer decode produced still-encoded %6a%61... which no
+        // keyword/protocol scan ever inspected.
+        let (score, findings) = analyze_url(
+            "https://evil.example/r/%256a%2561%2576%2561%2573%2563%2572%2569%2570%2574%253a",
+        );
+
+        assert!(score >= 0.15, "score must reach Low: {score}");
+        assert!(
+            findings
+                .iter()
+                .any(|(_, category)| category == "double_encoding"),
+            "path %25 double-encoding must be flagged: {findings:?}"
+        );
+        assert!(
+            findings.iter().any(|(desc, category)| {
+                category == "double_encoded_payload" && desc.contains("dangerous protocol")
+            }),
+            "second-layer decode must reveal the javascript: protocol: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn test_oss_content_override_cancels_static_asset_exemption() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = LinkContentModule::new();
+
+        // PoC ④: ?response-content-type=text/html rewrites the served
+        // Content-Type of the stored object — the "static" .jpg URL actually
+        // returns an HTML phishing page, so the static-asset exemption must
+        // not apply even without anchor text. "login" in the path is the
+        // second signal.
+        let ctx = make_ctx(
+            "https://qfk-files.oss-cn-hangzhou.aliyuncs.com/assets/login.jpg?response-content-type=text/html",
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            result.threat_level >= ThreatLevel::Low,
+            "override-param asset must score: {:?}",
+            result
+        );
+        assert!(
+            result
+                .categories
+                .contains(&"oss_content_override".to_string()),
+            "content-override parameters must cancel the exemption: {:?}",
+            result.categories
+        );
+        assert!(
+            result.categories.contains(&"suspicious_path".to_string()),
+            "structural checks must run once the exemption is gone: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_anchor_texted_oss_static_asset_loses_exemption() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = LinkContentModule::new();
+
+        // PoC ④b: the exemption exists for chrome-less render resources
+        // (<img>/<link>/<script> src). A clickable <a> with anchor text
+        // pointing at OSS "static" content is a landing-page candidate and
+        // must go through structural analysis.
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.rcpt_to.push("victim@example.com".to_string());
+        session.content = EmailContent {
+            links: vec![EmailLink {
+                url: "https://evil-bucket.oss-cn-hangzhou.aliyuncs.com/login/verify.jpg"
+                    .to_string(),
+                text: Some("点击验证您的账户".to_string()),
+                suspicious: false,
+            }],
+            ..Default::default()
+        };
+        let ctx = SecurityContext::new(Arc::new(session));
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            result.threat_level >= ThreatLevel::Low,
+            "anchor-texted asset must score: {:?}",
+            result
+        );
+        assert!(
+            result.categories.contains(&"suspicious_path".to_string()),
+            "login/verify path keywords must be scored on a clickable link: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_render_asset_without_anchor_or_override_stays_exempt() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = LinkContentModule::new();
+
+        // Guard: the legitimate exemption case (no anchor text, no override
+        // params) must keep working — x-oss-process is an image-processing
+        // parameter, not a response-header override.
+        let ctx = make_ctx(
+            "https://qfk-files.oss-cn-hangzhou.aliyuncs.com/assets/banner.jpg?x-oss-process=image/resize,w_600",
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert!(
+            result.categories.is_empty(),
+            "plain render asset must stay exempt: {:?}",
             result.categories
         );
     }

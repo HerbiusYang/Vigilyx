@@ -11,6 +11,7 @@ Core behavior mirrors the validated strategy in `scripts/virus_total.py`:
 
 import asyncio
 import hashlib
+import ipaddress
 import logging
 import os
 import re
@@ -48,6 +49,9 @@ PAGE_TIMEOUT_MS = 8000    # Page navigation timeout (usually 3-5s through a prox
 POLL_INTERVAL_S = 0.5     # Polling interval
 POLL_MAX_ROUNDS = 8       # At most 8 rounds = 4s
 
+# SEC-22: cap concurrent browser pages; Chromium instances are memory-heavy.
+_MAX_SCRAPE_CONCURRENCY = max(1, int(os.environ.get("AI_VT_MAX_CONCURRENCY", "2")))
+
 # Anti-detection initialization script
 ANTI_DETECT_SCRIPT = """
 Object.defineProperty(navigator, 'webdriver', { get: () => false });
@@ -55,6 +59,102 @@ Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
 Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
 window.chrome = { runtime: {} };
 """
+
+
+def validate_vt_indicator(indicator: str, indicator_type: str) -> str:
+    """Validate and normalize an untrusted VT lookup value."""
+    value = indicator.strip()
+    if not value or len(value) > 2048 or any(ord(ch) < 32 for ch in value):
+        raise ValueError("invalid indicator length or control character")
+
+    if indicator_type == "domain":
+        try:
+            ascii_domain = value.rstrip(".").encode("idna").decode("ascii").lower()
+        except UnicodeError as exc:
+            raise ValueError("invalid domain") from exc
+        if len(ascii_domain) > 253 or not re.fullmatch(
+            r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+            r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?",
+            ascii_domain,
+        ):
+            raise ValueError("invalid domain")
+        if is_non_public_host(ascii_domain):
+            raise ValueError("non-public domain is not eligible for third-party lookup")
+        return ascii_domain
+
+    if indicator_type == "ip":
+        try:
+            address = ipaddress.ip_address(value)
+        except ValueError as exc:
+            raise ValueError("invalid IP address") from exc
+        if is_non_public_host(str(address)):
+            raise ValueError("non-public IP is not eligible for third-party lookup")
+        return str(address)
+
+    if indicator_type == "url":
+        parsed = urlparse(value)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError("invalid URL")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("URL credentials are not allowed")
+        if is_non_public_host(parsed.hostname):
+            raise ValueError("URL targets a non-public host")
+        return value
+
+    if indicator_type == "hash":
+        if len(value) not in (32, 40, 64) or not re.fullmatch(r"[0-9a-fA-F]+", value):
+            raise ValueError("invalid file hash")
+        return value.lower()
+
+    raise ValueError("unsupported indicator type")
+
+
+def is_non_public_host(host: str | None) -> bool:
+    """Block internal/reserved indicators before a third-party VT request."""
+    if not host:
+        return False
+    normalized = host.rstrip(".").lower()
+    try:
+        address = ipaddress.ip_address(normalized)
+    except ValueError:
+        address = None
+    if address is not None:
+        private = (
+            address.is_private
+            if isinstance(address, ipaddress.IPv4Address)
+            else address in ipaddress.ip_network("fc00::/7")
+        )
+        return (
+            private
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_unspecified
+            or address.is_multicast
+        )
+    configured = {
+        item.strip().rstrip(".").lower()
+        for item in os.environ.get("VIGILYX_INTERNAL_DOMAINS", "").split(",")
+        if item.strip()
+    }
+    return normalized == "localhost" or any(
+        normalized == suffix
+        or normalized.endswith("." + suffix)
+        or normalized == "." + suffix
+        for suffix in configured
+    ) or any(
+        normalized == suffix or normalized.endswith("." + suffix)
+        for suffix in (
+            "local",
+            "internal",
+            "intranet",
+            "lan",
+            "corp",
+            "home",
+            "test",
+            "example",
+            "invalid",
+        )
+    )
 
 
 def _parse_proxy_from_env() -> Optional[dict]:
@@ -85,6 +185,9 @@ class VtScraper:
         self._browser = None
         self._context = None
         self._lock = asyncio.Lock()
+        # SEC-22: bound concurrent pages (binds to the running loop lazily on
+        # first await, like `_lock` above).
+        self._scrape_semaphore = asyncio.Semaphore(_MAX_SCRAPE_CONCURRENCY)
         self._playwright = None
 
     async def _ensure_browser(self):
@@ -177,23 +280,29 @@ class VtScraper:
     async def scrape(self, indicator: str, indicator_type: str) -> VtScrapeResponse:
         """Scrape VT detection data, with browser crash recovery."""
         try:
-            await self._ensure_browser()
-            return await self._do_scrape(indicator, indicator_type)
-        except Exception as e:
-            err_str = str(e).lower()
-            if any(kw in err_str for kw in ("browser has been closed", "target closed",
-                                             "connection refused", "not connected")):
-                logger.warning("Browser crashed, restarting: %s", e)
-                await self._cleanup_browser()
-                try:
-                    await self._ensure_browser()
-                    return await self._do_scrape(indicator, indicator_type)
-                except Exception as retry_err:
-                    logger.error("VT scrape retry failed for %s: %s", indicator, retry_err)
-                    return VtScrapeResponse(success=False, error="SCRAPE_FAILED")
+            indicator = validate_vt_indicator(indicator, indicator_type)
+        except ValueError:
+            return VtScrapeResponse(success=False, error="INVALID_INDICATOR")
+        # SEC-22: bound concurrent pages to cap Chromium memory usage.
+        async with self._scrape_semaphore:
+            try:
+                await self._ensure_browser()
+                return await self._do_scrape(indicator, indicator_type)
+            except Exception as e:
+                err_str = str(e).lower()
+                if any(kw in err_str for kw in ("browser has been closed", "target closed",
+                                                 "connection refused", "not connected")):
+                    logger.warning("Browser crashed, restarting: %s", e)
+                    await self._cleanup_browser()
+                    try:
+                        await self._ensure_browser()
+                        return await self._do_scrape(indicator, indicator_type)
+                    except Exception as retry_err:
+                        logger.error("VT scrape retry failed for %s: %s", indicator, retry_err)
+                        return VtScrapeResponse(success=False, error="SCRAPE_FAILED")
 
-            logger.error("VT scrape failed for %s (%s): %s", indicator, indicator_type, e)
-            return VtScrapeResponse(success=False, error="SCRAPE_FAILED")
+                logger.error("VT scrape failed for %s (%s): %s", indicator, indicator_type, e)
+                return VtScrapeResponse(success=False, error="SCRAPE_FAILED")
 
     # Core scraping flow
 

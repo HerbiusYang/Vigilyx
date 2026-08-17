@@ -2,6 +2,7 @@
 name = "vigilyx-mta"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Vigilyx MTA 代理 — SMTP 中继 + 内嵌安全引擎"
@@ -59,7 +60,7 @@ chrono.workspace = true
 uuid.workspace = true
 
 # Zero-copy byte buffers
-bytes = "1.11.1"
+bytes = "1.12.1"
 
 # CLI arguments
 clap = { version = "4", features = ["derive"] }
@@ -76,8 +77,14 @@ lettre.workspace = true
 # Async stream (Redis PubSub subscription)
 futures = "0.3"
 
+# HTTP client (MTA status reporting to the API)
+reqwest = { version = "0.13", features = ["json"] }
+
+# DNS resolver for the MTA-owned SPF/DMARC boundary
+hickory-resolver = { version = "0.26.1", features = ["tokio"] }
+
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 
 [lints]
 workspace = true

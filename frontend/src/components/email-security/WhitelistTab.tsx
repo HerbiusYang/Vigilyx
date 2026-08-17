@@ -13,11 +13,13 @@ interface WhitelistEntry {
   created_by: string
 }
 
+type WhitelistType = 'domain' | 'email' | 'ip' | 'hash'
+
 export default function WhitelistTab() {
   const { t } = useTranslation()
   const [wlEntries, setWlEntries] = useState<WhitelistEntry[]>([])
   const [wlSaving, setWlSaving] = useState(false)
-  const [wlNewType, setWlNewType] = useState<'domain' | 'ip'>('domain')
+  const [wlNewType, setWlNewType] = useState<WhitelistType>('domain')
   const [wlNewValue, setWlNewValue] = useState('')
   const [wlNewDesc, setWlNewDesc] = useState('')
 
@@ -96,18 +98,26 @@ export default function WhitelistTab() {
             <select
               className="sec-form-input"
               value={wlNewType}
-              onChange={e => setWlNewType(e.target.value as 'domain' | 'ip')}
+              onChange={e => setWlNewType(e.target.value as WhitelistType)}
               style={{ width: '100px' }}
             >
               <option value="domain">{t('emailSecurity.typeDomain')}</option>
+              <option value="email">{t('emailSecurity.typeEmail')}</option>
               <option value="ip">IP</option>
+              <option value="hash">{t('emailSecurity.typeHash')}</option>
             </select>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
             <label style={{ fontSize: '12px', color: 'var(--text-tertiary)' }}>{t('emailSecurity.value')}</label>
             <input
               className="sec-form-input"
-              placeholder={wlNewType === 'domain' ? 'example.com' : '192.168.1.1'}
+              placeholder={wlNewType === 'domain'
+                ? 'example.com'
+                : wlNewType === 'email'
+                  ? 'sender@example.com'
+                  : wlNewType === 'hash'
+                    ? 'SHA-256'
+                    : '192.168.1.1'}
               value={wlNewValue}
               onChange={e => setWlNewValue(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && addWhitelistEntry()}
@@ -155,12 +165,28 @@ export default function WhitelistTab() {
                       className="sec-ioc-type-badge"
                       style={{
                         background: entry.entry_type === 'domain'
-                          ? 'rgba(59,130,246,0.15)' : 'rgba(168,85,247,0.15)',
+                          ? 'rgba(59,130,246,0.15)'
+                          : entry.entry_type === 'email'
+                            ? 'rgba(34,211,238,0.15)'
+                            : entry.entry_type === 'hash'
+                              ? 'rgba(245,158,11,0.15)'
+                            : 'rgba(168,85,247,0.15)',
                         color: entry.entry_type === 'domain'
-                          ? 'var(--accent-blue)' : 'var(--accent-purple)',
+                          ? 'var(--accent-blue)'
+                          : entry.entry_type === 'email'
+                            ? 'var(--accent-primary)'
+                            : entry.entry_type === 'hash'
+                              ? 'var(--accent-warning, #f59e0b)'
+                            : 'var(--accent-purple)',
                       }}
                     >
-                      {entry.entry_type === 'domain' ? t('emailSecurity.typeDomain') : 'IP'}
+                      {entry.entry_type === 'domain'
+                        ? t('emailSecurity.typeDomain')
+                        : entry.entry_type === 'email'
+                          ? t('emailSecurity.typeEmail')
+                          : entry.entry_type === 'hash'
+                            ? t('emailSecurity.typeHash')
+                          : 'IP'}
                     </span>
                   </td>
                   <td style={{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}>{entry.value}</td>

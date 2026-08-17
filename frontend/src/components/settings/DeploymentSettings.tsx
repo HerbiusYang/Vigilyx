@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { apiFetch } from '../../utils/api'
 import { EVENTS } from '../../utils/events'
+import { getSensitiveSetting, setSensitiveSetting } from '../../utils/sensitiveStorage'
 
 type DeployMode = 'mirror' | 'mta'
 
@@ -11,32 +12,35 @@ export default function DeploymentSettings() {
     () => (localStorage.getItem('vigilyx-deploy-mode') as DeployMode) || 'mirror'
   )
   const [snifferInterface] = useState(
-    () => localStorage.getItem('vigilyx-sniffer-iface') || 'eth0'
+    () => getSensitiveSetting('vigilyx-sniffer-iface') || 'eth0'
   )
   const [deploySaving, setDeploySaving] = useState(false)
   const [deploySaved, setDeploySaved] = useState(false)
   const [mtaDownstreamHost, setMtaDownstreamHost] = useState(
-    () => localStorage.getItem('vigilyx-mta-downstream-host') || ''
+    () => getSensitiveSetting('vigilyx-mta-downstream-host') || ''
   )
   const [mtaDownstreamPort, setMtaDownstreamPort] = useState(
-    () => localStorage.getItem('vigilyx-mta-downstream-port') || '25'
+    () => getSensitiveSetting('vigilyx-mta-downstream-port') || '25'
   )
   const [mtaTimeout, setMtaTimeout] = useState(
     () => localStorage.getItem('vigilyx-mta-timeout') || '8'
   )
   const [deployModeSource, setDeployModeSource] = useState<string>('default')
   const [deployModeLocked, setDeployModeLocked] = useState(false)
-  const [mtaLocalDomains, setMtaLocalDomains] = useState(() => localStorage.getItem('vigilyx-mta-local-domains') || '')
-  const [mtaTrustedUpstreamCidrs, setMtaTrustedUpstreamCidrs] = useState(() => localStorage.getItem('vigilyx-mta-trusted-upstream-cidrs') || '')
+  const [mtaLocalDomains, setMtaLocalDomains] = useState(() => getSensitiveSetting('vigilyx-mta-local-domains') || '')
+  const [mtaTrustedUpstreamCidrs, setMtaTrustedUpstreamCidrs] = useState(() => getSensitiveSetting('vigilyx-mta-trusted-upstream-cidrs') || '')
   const [mtaStarttls, setMtaStarttls] = useState(() => localStorage.getItem('vigilyx-mta-starttls') !== 'false')
   const [mtaFailOpen, setMtaFailOpen] = useState(false)
-  const [mtaHostname, setMtaHostname] = useState(() => localStorage.getItem('vigilyx-mta-hostname') || 'vigilyx-mta')
+  const [mtaHostname, setMtaHostname] = useState(() => getSensitiveSetting('vigilyx-mta-hostname') || 'vigilyx-mta')
   const [mtaMaxConn, setMtaMaxConn] = useState(() => localStorage.getItem('vigilyx-mta-max-conn') || '100')
+  const [mtaMaxRecipients, setMtaMaxRecipients] = useState(() => localStorage.getItem('vigilyx-mta-max-recipients') || '50')
   const [mtaDlpEnabled, setMtaDlpEnabled] = useState(() => localStorage.getItem('vigilyx-mta-dlp-enabled') !== 'false')
   const [mtaDlpAction, setMtaDlpAction] = useState(() => localStorage.getItem('vigilyx-mta-dlp-action') || 'quarantine')
 
   // Detected services status
   const [detectedServices, setDetectedServices] = useState<{ sniffer_online: boolean; mta_online: boolean }>({ sniffer_online: false, mta_online: false })
+  // MTA inline verdict distribution (from /api/system/status)
+  const [mtaMetrics, setMtaMetrics] = useState<{ accepted: number; quarantined: number; rejected: number; timeout_failopen: number } | null>(null)
   const deployModeInitDone = useRef(false)
 
   // Mode-switch notice
@@ -68,6 +72,7 @@ export default function DeploymentSettings() {
                 if (mc.mta_inline_timeout_secs) setMtaTimeout(String(mc.mta_inline_timeout_secs))
                 if (mc.mta_hostname) setMtaHostname(mc.mta_hostname)
                 if (mc.mta_max_connections) setMtaMaxConn(String(mc.mta_max_connections))
+                if (mc.mta_max_recipients) setMtaMaxRecipients(String(mc.mta_max_recipients))
                 if (mc.mta_starttls !== undefined) setMtaStarttls(mc.mta_starttls)
                 if (mc.mta_local_domains) setMtaLocalDomains(mc.mta_local_domains)
                 if (mc.mta_trusted_upstream_cidrs !== undefined) setMtaTrustedUpstreamCidrs(mc.mta_trusted_upstream_cidrs || '')
@@ -78,6 +83,23 @@ export default function DeploymentSettings() {
             }
             // Always keep service online/offline state updated
             if (data.data.detected_services) setDetectedServices(data.data.detected_services)
+          }
+        })
+        .catch(() => {})
+      // MTA inline verdict distribution (polled alongside service status)
+      apiFetch('/api/system/status')
+        .then(res => res.json())
+        .then(data => {
+          const mta = data?.data?.mta
+          if (mta && mta.online) {
+            setMtaMetrics({
+              accepted: mta.accepted ?? 0,
+              quarantined: mta.quarantined ?? 0,
+              rejected: mta.rejected ?? 0,
+              timeout_failopen: mta.timeout_failopen ?? 0,
+            })
+          } else {
+            setMtaMetrics(null)
           }
         })
         .catch(() => {})
@@ -141,6 +163,7 @@ export default function DeploymentSettings() {
             mta_inline_timeout_secs: mtaTimeout ? Number(mtaTimeout) : undefined,
             mta_hostname: mtaHostname || undefined,
             mta_max_connections: mtaMaxConn ? Number(mtaMaxConn) : undefined,
+            mta_max_recipients: mtaMaxRecipients ? Number(mtaMaxRecipients) : undefined,
             mta_starttls: mtaStarttls,
             mta_fail_open: mtaFailOpen,
             mta_local_domains: mtaLocalDomains || undefined,
@@ -155,7 +178,7 @@ export default function DeploymentSettings() {
     }, 1500)
     return () => { if (deployAutoSaveTimer.current) clearTimeout(deployAutoSaveTimer.current) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mtaDownstreamHost, mtaDownstreamPort, mtaTimeout, mtaHostname, mtaMaxConn, mtaStarttls, mtaFailOpen, mtaLocalDomains, mtaTrustedUpstreamCidrs, mtaDlpEnabled, mtaDlpAction])
+  }, [mtaDownstreamHost, mtaDownstreamPort, mtaTimeout, mtaHostname, mtaMaxConn, mtaMaxRecipients, mtaStarttls, mtaFailOpen, mtaLocalDomains, mtaTrustedUpstreamCidrs, mtaDlpEnabled, mtaDlpAction])
 
   // Suppress unused variable warning — state is used for display logic
   void deployModeSource
@@ -301,22 +324,42 @@ export default function DeploymentSettings() {
           {detectedServices.mta_online && <span style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: 'rgba(249,115,22,0.12)', color: '#f97316', fontWeight: 700 }}>{t('settings.deployment.running')}</span>}
         </div>
 
+        {/* Inline verdict distribution (only while the MTA is online) */}
+        {detectedServices.mta_online && mtaMetrics && (
+          <div style={{ padding: '0 12px 12px' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 6 }}>{t('settings.deployment.verdictMetrics')}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 1, background: 'var(--border-muted)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+              {([
+                { label: t('settings.deployment.metricAccepted'), value: mtaMetrics.accepted, color: '#22c55e' },
+                { label: t('settings.deployment.metricQuarantined'), value: mtaMetrics.quarantined, color: '#f97316' },
+                { label: t('settings.deployment.metricRejected'), value: mtaMetrics.rejected, color: '#ef4444' },
+                { label: t('settings.deployment.metricTimeoutFailopen'), value: mtaMetrics.timeout_failopen, color: '#eab308' },
+              ]).map(m => (
+                <div key={m.label} className="db-stats-cell">
+                  <span className="db-stats-num" style={{ color: m.color }}>{m.value.toLocaleString()}</span>
+                  <span className="db-stats-label">{m.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0', padding: '0' }}>
           <div className="s-setting-row">
             <div className="s-setting-info"><span className="s-setting-label">{t('settings.deployment.downstreamMta')}</span></div>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <input className="s-input" style={{ width: 140, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 12 }}
-                value={mtaDownstreamHost} onChange={e => { setMtaDownstreamHost(e.target.value); localStorage.setItem('vigilyx-mta-downstream-host', e.target.value) }}
+                value={mtaDownstreamHost} onChange={e => { setMtaDownstreamHost(e.target.value); setSensitiveSetting('vigilyx-mta-downstream-host', e.target.value) }}
                 placeholder="10.1.246.33" />
               <span style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>:</span>
               <input className="s-input" style={{ width: 55, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 12 }}
-                type="number" value={mtaDownstreamPort} onChange={e => { setMtaDownstreamPort(e.target.value); localStorage.setItem('vigilyx-mta-downstream-port', e.target.value) }} />
+                type="number" value={mtaDownstreamPort} onChange={e => { setMtaDownstreamPort(e.target.value); setSensitiveSetting('vigilyx-mta-downstream-port', e.target.value) }} />
             </div>
           </div>
           <div className="s-setting-row">
             <div className="s-setting-info"><span className="s-setting-label">{t('settings.deployment.localDomains')}</span></div>
             <input className="s-input" style={{ width: 200, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 11 }}
-              value={mtaLocalDomains} onChange={e => { setMtaLocalDomains(e.target.value); localStorage.setItem('vigilyx-mta-local-domains', e.target.value) }}
+              value={mtaLocalDomains} onChange={e => { setMtaLocalDomains(e.target.value); setSensitiveSetting('vigilyx-mta-local-domains', e.target.value) }}
               placeholder="example.com" />
           </div>
         </div>
@@ -332,7 +375,7 @@ export default function DeploymentSettings() {
             value={mtaTrustedUpstreamCidrs}
             onChange={e => {
               setMtaTrustedUpstreamCidrs(e.target.value)
-              localStorage.setItem('vigilyx-mta-trusted-upstream-cidrs', e.target.value)
+              setSensitiveSetting('vigilyx-mta-trusted-upstream-cidrs', e.target.value)
             }}
             placeholder={t('settings.deployment.trustedUpstreamsPlaceholder')}
           />
@@ -391,9 +434,36 @@ export default function DeploymentSettings() {
           <div className="s-setting-row">
             <div className="s-setting-info"><span className="s-setting-label">{t('settings.deployment.hostname')}</span></div>
             <input className="s-input" style={{ width: 140, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 12 }}
-              value={mtaHostname} onChange={e => { setMtaHostname(e.target.value); localStorage.setItem('vigilyx-mta-hostname', e.target.value) }}
+              value={mtaHostname} onChange={e => { setMtaHostname(e.target.value); setSensitiveSetting('vigilyx-mta-hostname', e.target.value) }}
               placeholder="vigilyx-mta" />
           </div>
+        </div>
+
+        <div className="s-setting-row">
+          <div className="s-setting-info">
+            <span className="s-setting-label">{t('settings.deployment.maxRecipients')}</span>
+            <span className="s-setting-desc" id="mta-max-recipients-desc">{t('settings.deployment.maxRecipientsDesc')}</span>
+          </div>
+          <input
+            className="s-input"
+            style={{ width: 90, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 12 }}
+            type="number"
+            min={1}
+            max={10000}
+            step={1}
+            value={mtaMaxRecipients}
+            aria-describedby="mta-max-recipients-desc"
+            onChange={e => {
+              setMtaMaxRecipients(e.target.value)
+              localStorage.setItem('vigilyx-mta-max-recipients', e.target.value)
+            }}
+            onBlur={() => {
+              const parsed = Number(mtaMaxRecipients)
+              const normalized = Number.isFinite(parsed) ? Math.min(10000, Math.max(1, Math.trunc(parsed))) : 50
+              setMtaMaxRecipients(String(normalized))
+              localStorage.setItem('vigilyx-mta-max-recipients', String(normalized))
+            }}
+          />
         </div>
       </div>
       </>)}

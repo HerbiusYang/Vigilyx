@@ -309,7 +309,7 @@ export default function Quarantine() {
 
       {/* Filters */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-        {['quarantined', 'releasing', 'released', ''].map(s => (
+        {['quarantined', 'releasing', 'release_blocked', 'released', ''].map(s => (
           <button
             key={s || 'all'}
             onClick={() => { setStatusFilter(s); setPage(0) }}
@@ -324,9 +324,11 @@ export default function Quarantine() {
               ? t('quarantine.pending')
               : s === 'releasing'
                 ? t('quarantine.releasing')
-                : s === 'released'
-                  ? t('quarantine.released')
-                  : t('quarantine.all')}
+                : s === 'release_blocked'
+                  ? t('quarantine.statusReleaseBlocked')
+                  : s === 'released'
+                    ? t('quarantine.released')
+                    : t('quarantine.all')}
           </button>
         ))}
       </div>
@@ -406,22 +408,39 @@ export default function Quarantine() {
                       const statusColor =
                         entry.status === 'released'
                           ? 'var(--accent-emerald)'
-                          : entry.status === 'releasing'
-                            ? 'var(--accent-orange, #f97316)'
-                            : 'var(--accent-yellow)'
+                          : entry.status === 'release_blocked'
+                            ? 'var(--accent-red, #ef4444)'
+                            : entry.status === 'releasing'
+                              ? 'var(--accent-orange, #f97316)'
+                              : 'var(--accent-yellow)'
                       const statusLabel =
                         entry.status === 'released'
                           ? t('quarantine.statusReleased')
-                          : entry.status === 'releasing'
-                            ? t('quarantine.statusReleasing')
-                            : t('quarantine.statusQuarantined')
+                          : entry.status === 'release_blocked'
+                            ? t('quarantine.statusReleaseBlocked')
+                            : entry.status === 'releasing'
+                              ? t('quarantine.statusReleasing')
+                              : t('quarantine.statusQuarantined')
 
                       return (
-                        <span style={{ fontSize: 11, fontWeight: 500, color: statusColor }}>
+                        <span
+                          style={{ fontSize: 11, fontWeight: 500, color: statusColor }}
+                          title={entry.status === 'release_blocked'
+                            ? t('quarantine.releaseBlockedHint')
+                            : undefined}
+                        >
                           {statusLabel}
                         </span>
                       )
                     })()}
+                    {entry.status === 'release_blocked' && (
+                      <div style={{
+                        marginTop: 4, fontSize: 11, lineHeight: 1.4,
+                        color: 'var(--text-secondary)', whiteSpace: 'normal', maxWidth: 220,
+                      }}>
+                        {t('quarantine.releaseBlockedHint')}
+                      </div>
+                    )}
                     {entry.released_by && (
                       <span style={{ fontSize: 11, color: 'var(--text-secondary)', marginLeft: 4 }}>
                         ({entry.released_by})
@@ -461,6 +480,23 @@ export default function Quarantine() {
                             : t('quarantine.delete')}
                         </button>
                       </>
+                    )}
+                    {entry.status === 'release_blocked' && (
+                      <button
+                        onClick={() => handleDelete(entry)}
+                        disabled={pendingAction !== null}
+                        aria-busy={pendingAction?.id === entry.id && pendingAction.kind === 'delete'}
+                        title={t('quarantine.releaseBlockedHint')}
+                        style={{
+                          padding: '3px 10px', borderRadius: 4, fontSize: 12, cursor: 'pointer',
+                          border: '1px solid var(--accent-red, #ef4444)', background: 'transparent',
+                          color: 'var(--accent-red, #ef4444)',
+                        }}
+                      >
+                        {pendingAction?.id === entry.id && pendingAction.kind === 'delete'
+                          ? t('quarantine.deletingAction')
+                          : t('quarantine.delete')}
+                      </button>
                     )}
                   </td>
                 </tr>

@@ -260,7 +260,7 @@ impl VigilDb {
             "SELECT COUNT(*) FROM data_security_http_sessions {}",
             where_sql
         );
-        let mut count_query = sqlx::query_as::<_, (i64,)>(&count_sql);
+        let mut count_query = sqlx::query_as::<_, (i64,)>(sqlx::AssertSqlSafe(count_sql.as_str()));
         for v in &bind_values {
             count_query = count_query.bind(v);
         }
@@ -282,7 +282,7 @@ impl VigilDb {
                ORDER BY timestamp DESC LIMIT ${} OFFSET ${}"#,
             where_sql, limit_idx, offset_idx
         );
-        let mut list_query = sqlx::query_as::<_, HttpSessionListRow>(&list_sql);
+        let mut list_query = sqlx::query_as::<_, HttpSessionListRow>(sqlx::AssertSqlSafe(list_sql.as_str()));
         for v in &bind_values {
             list_query = list_query.bind(v);
         }
@@ -443,7 +443,7 @@ impl VigilDb {
         let user_pattern = user.map(|v| format!("%{}%", v));
         let keyword_pattern = keyword.map(|v| format!("%{}%", v));
 
-        let mut count_query = sqlx::query_as::<_, (i64,)>(&count_sql);
+        let mut count_query = sqlx::query_as::<_, (i64,)>(sqlx::AssertSqlSafe(count_sql.as_str()));
         if let Some(it) = incident_type {
             count_query = count_query.bind(it);
         }
@@ -461,7 +461,7 @@ impl VigilDb {
         }
         let count_row = count_query.fetch_one(&self.pool).await?;
 
-        let mut list_query = sqlx::query_as::<_, IncidentRow>(&list_sql);
+        let mut list_query = sqlx::query_as::<_, IncidentRow>(sqlx::AssertSqlSafe(list_sql.as_str()));
         if let Some(it) = incident_type {
             list_query = list_query.bind(it);
         }

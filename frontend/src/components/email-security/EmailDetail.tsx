@@ -6,7 +6,7 @@ import { decodeMimeWord } from '../../utils/mime'
 import { formatBytes, formatClockTime, formatDateFull, getFileIcon, isEncryptedPort } from '../../utils/format'
 import { apiFetch } from '../../utils/api'
 import { buildEmailPreviewDoc } from '../../utils/emailHtml'
-import SecurityAnalysisView, { RadarChart } from './SecurityAnalysisView'
+import SecurityAnalysisView, { RadarChart, isModuleUnavailable } from './SecurityAnalysisView'
 
 const MAX_ATTACHMENT_DOWNLOAD_BYTES = 25 * 1024 * 1024
 
@@ -26,6 +26,7 @@ export default function EmailDetail() {
   const [feedbackDone, setFeedbackDone] = useState(false)
   const [feedbackType, setFeedbackType] = useState<'legitimate' | 'phishing' | 'spoofing' | 'social_engineering' | 'other_threat' | null>(null)
   const [feedbackComment, setFeedbackComment] = useState('')
+  const [rescanStatus, setRescanStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
   const [whitelistStatus, setWhitelistStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
   const [copiedLinkIndex, setCopiedLinkIndex] = useState<number | null>(null)
   const fromSearch = new URLSearchParams(location.search).get('from') || ''
@@ -107,7 +108,7 @@ export default function EmailDetail() {
     if (moduleResults.length > 0 && expandedModules === null) {
       const flagged = new Set<string>()
       moduleResults.forEach(m => {
-        if (m.threat_level !== 'safe') flagged.add(m.module_id)
+        if (m.threat_level !== 'safe' || isModuleUnavailable(m)) flagged.add(m.module_id)
       })
       setExpandedModules(flagged)
     }
@@ -151,6 +152,22 @@ export default function EmailDetail() {
     if (!window.confirm(t('emailSecurity.confirmOpenOriginalLink'))) return
     const opened = window.open(url, '_blank', 'noopener,noreferrer')
     if (opened) opened.opener = null
+  }
+
+  const handleRescan = async () => {
+    if (!id || rescanStatus === 'loading') return
+    setRescanStatus('loading')
+    try {
+      const res = await apiFetch(`/api/sessions/${id}/rescan`, { method: 'POST' })
+      const data: ApiResponse<{ status?: string }> = await res.json()
+      if (!data.success) throw new Error(data.error || 'Rescan rejected')
+      setRescanStatus('done')
+    } catch (err) {
+      console.error('Rescan failed:', err)
+      setRescanStatus('error')
+    } finally {
+      window.setTimeout(() => setRescanStatus('idle'), 2500)
+    }
   }
 
   const downloadAttachment = async (index: number, filename: string) => {
@@ -209,8 +226,16 @@ export default function EmailDetail() {
   const headerCount = session.content?.headers?.length || 0
   const linkCount = displayContent?.links?.length || 0
   const suspiciousLinkCount = displayContent?.links?.filter(l => l.suspicious).length || 0
+  const inspectionIncomplete = session.status === 'completed' && displayContent?.is_complete === false
+  const fallbackRiskByThreat: Record<string, number> = {
+    safe: 0,
+    low: 0.2,
+    medium: 0.5,
+    high: 0.75,
+    critical: 0.95,
+  }
   const riskPct = verdict
-    ? Math.round((verdict.fusion_details?.risk_single ?? verdict.confidence) * 100)
+    ? Math.round((verdict.fusion_details?.risk_single ?? fallbackRiskByThreat[verdict.threat_level] ?? 0) * 100)
     : 0
   const safeHtmlPreview = displayContent?.body_html
     ? buildEmailPreviewDoc(displayContent.body_html)
@@ -333,6 +358,12 @@ export default function EmailDetail() {
           {!isEncrypted && session.protocol === 'SMTP' && !session.server_ip.startsWith('10.') && !session.server_ip.startsWith('192.168.') && (
             <div className="ed-banner ed-banner--warn">{t('emailSecurity.plaintextBanner')}</div>
           )}
+          {inspectionIncomplete && (
+            <div className="ed-banner ed-banner--warn" role="status">
+              <strong>{t('emailSecurity.inspectionIncompleteTitle')}</strong>
+              <div>{t('emailSecurity.inspectionIncompleteMessage')}</div>
+            </div>
+          )}
 
           {/* Content navigation */}
           <nav className="ed-nav">
@@ -454,41 +485,38 @@ export default function EmailDetail() {
             </div>
           )}
           {feedbackDone && <span className="ed-fb-done">{t('emailSecurity.feedbackDone')}: {feedbackType === 'legitimate' ? t('emailSecurity.feedbackLegitimate') : feedbackType === 'phishing' ? t('emailSecurity.feedbackPhishing') : feedbackType === 'spoofing' ? t('emailSecurity.feedbackSpoofing') : feedbackType === 'social_engineering' ? t('emailSecurity.feedbackSocialEng') : t('emailSecurity.feedbackOther')}</span>}
+          <button
+            className={`ed-rescan-btn ed-rescan-btn--${rescanStatus}`}
+            disabled={rescanStatus === 'loading'}
+            onClick={handleRescan}
+            title={t('emailSecurity.rescanTitle')}
+          >
+            {rescanStatus === 'idle' && t('emailSecurity.rescanIdle')}
+            {rescanStatus === 'loading' && '...'}
+            {rescanStatus === 'done' && t('emailSecurity.rescanDone')}
+            {rescanStatus === 'error' && t('emailSecurity.rescanError')}
+          </button>
           {/* Whitelist false-positive button */}
           {session && session.mail_from && (
             <button
-              className={`ed-wl-btn ${whitelistStatus === 'done' ? 'ed-wl-btn--done' : ''}`}
+              className={`ed-wl-btn ed-wl-btn--${whitelistStatus}`}
               disabled={whitelistStatus === 'loading' || whitelistStatus === 'done'}
-              title={t('emailSecurity.whitelistTitle', { domain: session.mail_from?.split('@')[1], ip: session.client_ip })}
+              title={t('emailSecurity.whitelistTitle', { email: session.mail_from, ip: session.client_ip })}
               onClick={async () => {
                 setWhitelistStatus('loading')
-                const domain = session.mail_from?.split('@')[1]
-                const ip = session.client_ip
                 try {
-                  const promises: Promise<Response>[] = []
-                  if (domain) {
-                    promises.push(apiFetch('/api/security/whitelist', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ entry_type: 'domain', value: domain, description: t('emailSecurity.whitelistDesc', { id }) }),
-                    }))
-                  }
-                  if (ip) {
-                    promises.push(apiFetch('/api/security/whitelist', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ entry_type: 'ip', value: ip, description: t('emailSecurity.whitelistDesc', { id }) }),
-                    }))
-                  }
-                  await Promise.all(promises)
+                  const res = await apiFetch(`/api/sessions/${id}/whitelist`, { method: 'POST' })
+                  const data: ApiResponse<{ session_id: string }> = await res.json()
+                  if (!data.success) throw new Error(data.error || 'Whitelist rejected')
                   setWhitelistStatus('done')
                 } catch (e) {
                   console.error('Whitelist failed:', e)
                   setWhitelistStatus('error')
+                  window.setTimeout(() => setWhitelistStatus('idle'), 2500)
                 }
               }}
             >
-              {whitelistStatus === 'loading' ? '...' : whitelistStatus === 'done' ? t('emailSecurity.whitelistDone') : t('emailSecurity.whitelistAction')}
+              {whitelistStatus === 'loading' ? '...' : whitelistStatus === 'done' ? t('emailSecurity.whitelistDone') : whitelistStatus === 'error' ? t('emailSecurity.whitelistError') : t('emailSecurity.whitelistAction')}
             </button>
           )}
           <button

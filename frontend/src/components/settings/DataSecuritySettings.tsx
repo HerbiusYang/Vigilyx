@@ -100,6 +100,15 @@ export default function DataSecuritySettings() {
         <p style={{ fontSize: 12, color: 'var(--text-tertiary)', margin: '0 0 12px 0', lineHeight: 1.5 }}>
           {t('settings.dataSecurity.webmailServersDesc')}
         </p>
+        {dsLoaded && dsWebmailServers.length === 0 && (
+          <div role="alert" style={{
+            margin: '0 0 12px', padding: '9px 11px', borderRadius: 6,
+            color: '#fbbf24', background: 'rgba(245,158,11,0.10)',
+            border: '1px solid rgba(245,158,11,0.25)', fontSize: 12, lineHeight: 1.5,
+          }}>
+            {t('settings.dataSecurity.webmailServersWarning')}
+          </div>
+        )}
 
         {dsWebmailServers.length > 0 && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>

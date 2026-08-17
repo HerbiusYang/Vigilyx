@@ -1,22 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { apiFetch } from '../../utils/api'
-
-function isMaskedSecretValue(value: string): boolean {
-  return value.includes('...') || value === '****'
-}
+import { buildIntelConfigPayload, normalizeIntelSourceConfig } from '../../utils/intelConfig'
 
 export default function ThreatIntelSettings() {
   const { t } = useTranslation()
-  const [intelConfig, setIntelConfig] = useState({
-    otx_enabled: true,
-    vt_scrape_enabled: true,
-    virustotal_api_key: '',
-    virustotal_api_key_set: false,
-    abuseipdb_enabled: false,
-    abuseipdb_api_key: '',
-    abuseipdb_api_key_set: false,
-  })
+  const [intelConfig, setIntelConfig] = useState(() => normalizeIntelSourceConfig(null))
   const [intelSaving, setIntelSaving] = useState(false)
   const [intelMsg, setIntelMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const [intelLoaded, setIntelLoaded] = useState(false)
@@ -26,16 +15,7 @@ export default function ThreatIntelSettings() {
     if (!intelLoaded) {
       apiFetch('/api/security/intel-config').then(r => r.json()).then(d => {
         if (d.success && d.data) {
-          setIntelConfig(prev => ({
-            ...prev,
-            otx_enabled: d.data.otx_enabled ?? true,
-            vt_scrape_enabled: d.data.vt_scrape_enabled ?? true,
-            virustotal_api_key: d.data.virustotal_api_key || '',
-            virustotal_api_key_set: d.data.virustotal_api_key_set ?? false,
-            abuseipdb_enabled: d.data.abuseipdb_enabled ?? false,
-            abuseipdb_api_key: d.data.abuseipdb_api_key || '',
-            abuseipdb_api_key_set: d.data.abuseipdb_api_key_set ?? false,
-          }))
+          setIntelConfig(normalizeIntelSourceConfig(d.data))
           setIntelLoaded(true)
         }
       }).catch(() => {})
@@ -46,21 +26,7 @@ export default function ThreatIntelSettings() {
     setIntelSaving(true)
     setIntelMsg(null)
     try {
-      const payload: Record<string, unknown> = {
-        otx_enabled: intelConfig.otx_enabled,
-        vt_scrape_enabled: intelConfig.vt_scrape_enabled,
-        abuseipdb_enabled: intelConfig.abuseipdb_enabled,
-      }
-      if (intelConfig.virustotal_api_key === '') {
-        payload.virustotal_api_key = null
-      } else if (!isMaskedSecretValue(intelConfig.virustotal_api_key)) {
-        payload.virustotal_api_key = intelConfig.virustotal_api_key
-      }
-      if (intelConfig.abuseipdb_api_key === '') {
-        payload.abuseipdb_api_key = null
-      } else if (!isMaskedSecretValue(intelConfig.abuseipdb_api_key)) {
-        payload.abuseipdb_api_key = intelConfig.abuseipdb_api_key
-      }
+      const payload = buildIntelConfigPayload(intelConfig)
       const res = await apiFetch('/api/security/intel-config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -68,7 +34,12 @@ export default function ThreatIntelSettings() {
       })
       const data = await res.json()
       if (data.success) {
-        setIntelMsg({ ok: true, text: t('settings.threatIntel.saveSuccess') })
+        setIntelMsg({
+          ok: true,
+          text: data.data?.requires_restart
+            ? t('settings.threatIntel.restartRequired')
+            : t('settings.threatIntel.saveSuccess'),
+        })
         setIntelLoaded(false) // reload on next visit
       } else {
         setIntelMsg({ ok: false, text: data.error || t('settings.threatIntel.saveFailed') })
@@ -88,7 +59,7 @@ export default function ThreatIntelSettings() {
     title: string; description: string; quota: string; icon: React.ReactNode
     enabled: boolean; onToggle: (v: boolean) => void
     apiKeyLabel?: string; apiKeyPlaceholder?: string; apiKeySet?: boolean
-    apiKeyValue?: string; onKeyChange?: (v: string) => void
+    apiKeyValue?: string | null; onKeyChange?: (v: string) => void
     children?: React.ReactNode
   }) => (
     <div style={{
@@ -193,7 +164,7 @@ export default function ThreatIntelSettings() {
           title="VirusTotal"
           description={t('settings.threatIntel.vtDescription')}
           quota={t('settings.threatIntel.vtQuota')}
-          enabled={intelConfig.virustotal_api_key_set || intelConfig.virustotal_api_key.length > 0}
+          enabled={intelConfig.virustotal_api_key_set || (intelConfig.virustotal_api_key?.length ?? 0) > 0}
           onToggle={v => {
             if (!v) setIntelConfig(prev => ({ ...prev, virustotal_api_key: '', virustotal_api_key_set: false }))
           }}

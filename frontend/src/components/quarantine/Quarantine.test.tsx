@@ -206,4 +206,34 @@ describe('Quarantine', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('database unavailable')
     expect(screen.getByRole('button', { name: 'quarantine.retry' })).toBeInTheDocument()
   })
+
+  it('labels a release-blocked entry with the block reason and no release action', async () => {
+    // PoC: before the fix a release_blocked entry fell into the default branch
+    // and rendered as plain "quarantined" with zero explanation and no action
+    // entry point, leaving operators staring at a stuck message.
+    apiFetchMock.mockImplementation((url: string) => {
+      if (url === '/api/config/deployment-mode') return response({ success: true, data: { mode: 'mta' } })
+      if (url === '/api/security/quarantine/stats') {
+        return response({ success: true, data: { quarantined: 0, releasing: 0, released: 0, total: 1 } })
+      }
+      if (url.startsWith('/api/security/quarantine?')) {
+        return response({ success: true, data: { items: [{ ...entry('q-9'), status: 'release_blocked' }] } })
+      }
+      throw new Error(`unexpected request: ${url}`)
+    })
+
+    render(<Quarantine />)
+
+    // Wait for the blocked entry row to load before counting labels.
+    expect(await screen.findByText('Quarterly report q-9')).toBeInTheDocument()
+    // Status cell + filter button both carry the blocked label.
+    expect(screen.getAllByText('quarantine.statusReleaseBlocked').length).toBeGreaterThanOrEqual(2)
+    // The block reason is visible as explanation text, not only as a tooltip.
+    expect(screen.getAllByText('quarantine.releaseBlockedHint').length).toBeGreaterThan(0)
+    // No release affordance, but the entry can still be deleted after review.
+    expect(screen.queryByRole('button', { name: 'quarantine.release' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'quarantine.delete' })).toBeEnabled()
+    // It must not masquerade as a normally quarantined entry.
+    expect(screen.queryByText('quarantine.statusQuarantined')).not.toBeInTheDocument()
+  })
 })

@@ -24,6 +24,7 @@ mod disposition;
 mod pipeline;
 pub mod quarantine;
 mod rescan;
+mod security_alerts;
 mod sniffer_config;
 pub mod threat_scene;
 mod verdict;
@@ -46,6 +47,7 @@ pub use pipeline::{
     update_pipeline_config,
 };
 pub use rescan::{rescan_session, trigger_rescan};
+pub use security_alerts::{acknowledge_security_alert, list_security_alerts};
 pub use sniffer_config::{
     get_sniffer_config, get_sniffer_config_internal, get_time_policy_config, update_sniffer_config,
     update_time_policy_config,
@@ -58,7 +60,9 @@ pub use verdict::{
     get_engine_status, get_feedback_stats, get_security_stats, get_session_security_results,
     get_session_verdict, list_recent_verdicts, submit_feedback,
 };
-pub use whitelist::{add_whitelist_entry, delete_whitelist_entry, get_whitelist, update_whitelist};
+pub use whitelist::{
+    add_whitelist_entry, delete_whitelist_entry, get_whitelist, update_whitelist, whitelist_session,
+};
 
 use vigilyx_db::mq::topics;
 
@@ -107,6 +111,11 @@ pub(crate) fn engine_status_from_snapshot(
 
 pub(crate) fn normalize_engine_status_payload(status: serde_json::Value) -> serde_json::Value {
     let mut normalized = default_engine_status_payload();
+    let has_explicit_reason = status.get("reason").is_some()
+        || status
+            .get("engine_status")
+            .and_then(|nested| nested.get("reason"))
+            .is_some();
 
     if let Some(nested) = status.get("engine_status").cloned() {
         merge_json(&mut normalized, &nested);
@@ -115,6 +124,11 @@ pub(crate) fn normalize_engine_status_payload(status: serde_json::Value) -> serd
     merge_json(&mut normalized, &status);
     if let Some(obj) = normalized.as_object_mut() {
         obj.remove("engine_status");
+        if obj.get("running").and_then(serde_json::Value::as_bool) == Some(true)
+            && !has_explicit_reason
+        {
+            obj.remove("reason");
+        }
     }
 
     normalized
@@ -204,11 +218,13 @@ pub(super) fn mask_api_key(value: &mut serde_json::Value) {
     if let Some(obj) = value.as_object_mut() {
         let (masked, has_key) = match obj.get("api_key").and_then(|k| k.as_str()) {
             Some(key) if key.len() > 4 => {
-                let masked = format!(
-                    "{}...{}",
-                    "*".repeat(key.len().min(8) - 4),
-                    &key[key.len() - 4..]
-                );
+                // SEC: char-based tail — a byte slice like &key[key.len()-4..]
+                // panics when a multi-byte character straddles the boundary.
+                let tail: String = {
+                    let reversed: String = key.chars().rev().take(4).collect();
+                    reversed.chars().rev().collect()
+                };
+                let masked = format!("{}...{}", "*".repeat(key.len().min(8) - 4), tail);
                 (masked, true)
             }
             Some(key) if !key.is_empty() => ("****".to_string(), true),
@@ -239,5 +255,61 @@ mod tests {
         let parsed = parse_engine_status_snapshot(snapshot).expect("snapshot should parse");
         assert_eq!(parsed.status["running"], true);
         assert!(parsed.heartbeat_secs <= 1);
+    }
+
+    #[test]
+    fn running_engine_status_does_not_keep_disconnected_placeholder() {
+        let normalized = normalize_engine_status_payload(json!({
+            "running": true,
+            "email_engine_active": true,
+        }));
+
+        assert_eq!(normalized["running"], true);
+        assert!(normalized.get("reason").is_none());
+    }
+
+    #[test]
+    fn running_engine_status_preserves_explicit_degraded_reason() {
+        let normalized = normalize_engine_status_payload(json!({
+            "running": true,
+            "reason": "external intelligence degraded",
+        }));
+
+        assert_eq!(normalized["reason"], "external intelligence degraded");
+    }
+
+    #[test]
+    fn mask_api_key_handles_multibyte_chars_near_the_tail() {
+        // PoC: &key[key.len()-4..] panics when the last 4 *bytes* cut through
+        // a multi-byte UTF-8 character (e.g. "sk-测ab": 9 bytes, the byte
+        // offset 5 lands inside 测). The char-based tail must not panic and
+        // must keep the last 4 *characters*.
+        let mut value = json!({"api_key": "sk-测ab"});
+        mask_api_key(&mut value);
+        let masked = value["api_key"].as_str().expect("masked string");
+        assert!(masked.ends_with("-测ab"), "unexpected mask: {masked}");
+        assert!(!masked.contains("sk"), "mask must not leak the key prefix");
+        assert_eq!(value["api_key_set"], true);
+    }
+
+    #[test]
+    fn mask_api_key_masks_ascii_keys_unchanged() {
+        // Regression: ordinary ASCII keys keep the previous masking shape.
+        let mut value = json!({"api_key": "sk-antb3d5f7g9"});
+        mask_api_key(&mut value);
+        assert_eq!(value["api_key"].as_str(), Some("****...f7g9"));
+    }
+
+    #[test]
+    fn mask_api_key_short_and_missing_keys() {
+        let mut short = json!({"api_key": "abc"});
+        mask_api_key(&mut short);
+        assert_eq!(short["api_key"].as_str(), Some("****"));
+        assert_eq!(short["api_key_set"], true);
+
+        let mut missing = json!({});
+        mask_api_key(&mut missing);
+        assert_eq!(missing["api_key"].as_str(), Some(""));
+        assert_eq!(missing["api_key_set"], false);
     }
 }

@@ -1,0 +1,9 @@
+From: =?utf-8?B?6YCa6L+H6KGM5oOz? <it-support@partner-external.com>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev05@partner-external.com>
+Subject: 域密码即将过期
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>IT 服务中心：您的域密码即将过期，请登录统一认证平台修改密码。</p><p><a href='https://sso.corp.internal@attacker-mail.example/login?sso=1'>https://sso.corp.internal/login</a></p></body></html>

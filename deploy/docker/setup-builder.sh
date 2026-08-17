@@ -4,7 +4,7 @@
 # ═══════════════════════════════════════════════════
 #
 # Purpose:
-#   Create a long-lived Rust 1.95.0 container with the source tree and persistent target/cargo caches mounted in.
+#   Create a long-lived Rust 1.97.1 container with the source tree and persistent target/cargo caches mounted in.
 #   Later builds run via docker exec inside the container, enabling true incremental compilation.
 #
 # Usage:
@@ -18,8 +18,16 @@
 set -euo pipefail
 
 BUILDER_NAME="vigilyx-rust-builder"
-RUST_TOOLCHAIN_VERSION="1.95.0"
-BUILDER_IMAGE="rust:${RUST_TOOLCHAIN_VERSION}-bookworm"
+RUST_TOOLCHAIN_VERSION="1.97.1"
+BUILDER_IMAGE="rust:${RUST_TOOLCHAIN_VERSION}-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97"
+# Pin the active toolchain inside the container so rust-toolchain.toml's
+# `components` list does not force a channel-manifest download on every cargo
+# invocation (the builder environment may have no direct internet access).
+case "$(uname -m)" in
+    x86_64)        RUSTUP_TARGET_TRIPLE="x86_64-unknown-linux-gnu" ;;
+    aarch64|arm64) RUSTUP_TARGET_TRIPLE="aarch64-unknown-linux-gnu" ;;
+    *) echo "[x] Unsupported host arch: $(uname -m)" >&2; exit 1 ;;
+esac
 # Auto-detect the project root (setup-builder.sh lives under deploy/docker/)
 PROJECT_DIR="${VIGILYX_PROJECT_DIR:-$(cd "$(dirname "$0")/../.." && pwd)}"
 CARGO_REGISTRY_VOL="vigilyx_cargo_registry"
@@ -29,7 +37,7 @@ BUILD_OUTPUT_DIR="${PROJECT_DIR}/.build-output"
 HTTP_PROXY_VALUE="${HTTP_PROXY:-${http_proxy:-}}"
 HTTPS_PROXY_VALUE="${HTTPS_PROXY:-${https_proxy:-}}"
 ALL_PROXY_VALUE="${ALL_PROXY:-${all_proxy:-}}"
-NO_PROXY_VALUE="${NO_PROXY:-${no_proxy:-localhost,127.0.0.1,redis}}"
+NO_PROXY_VALUE="${NO_PROXY:-${no_proxy:-localhost,127.0.0.1,redis,ai,postgres,clamav,sandbox}}"
 
 run_apt_install() {
     local sources_mode="$1"
@@ -137,6 +145,7 @@ docker run -d \
     -e "HTTPS_PROXY=${HTTPS_PROXY_VALUE}" \
     -e "ALL_PROXY=${ALL_PROXY_VALUE}" \
     -e "NO_PROXY=${NO_PROXY_VALUE}" \
+    -e "RUSTUP_TOOLCHAIN=${RUST_TOOLCHAIN_VERSION}-${RUSTUP_TARGET_TRIPLE}" \
     -w /app \
     "$BUILDER_IMAGE" \
     sleep infinity

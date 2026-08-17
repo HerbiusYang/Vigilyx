@@ -3,6 +3,7 @@
 use axum::{
     Json,
     extract::{Path, Query, State},
+    http::StatusCode,
     response::IntoResponse,
 };
 use serde::Deserialize;
@@ -11,7 +12,46 @@ use uuid::Uuid;
 
 use super::super::ApiResponse;
 use crate::AppState;
-use crate::auth::{AuthenticatedUser, is_admin_role};
+use crate::auth::AuthenticatedUser;
+use crate::error_codes;
+
+fn feedback_error_response(error: &anyhow::Error) -> axum::response::Response {
+    let message = error.to_string();
+    if message == vigilyx_engine::feedback::FEEDBACK_RATE_LIMIT_ERROR {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(ApiResponse::<serde_json::Value> {
+                success: false,
+                data: None,
+                error: Some("Too many feedback submissions; try again later".to_string()),
+                error_code: Some(error_codes::AUTH_RATE_LIMITED.to_string()),
+            }),
+        )
+            .into_response();
+    }
+    if message == vigilyx_engine::feedback::FEEDBACK_DUPLICATE_ERROR {
+        return (
+            StatusCode::CONFLICT,
+            Json(ApiResponse::<serde_json::Value> {
+                success: false,
+                data: None,
+                error: Some("Feedback already submitted for this session".to_string()),
+                error_code: Some(error_codes::RESOURCE_CONFLICT.to_string()),
+            }),
+        )
+            .into_response();
+    }
+    if message == "Session verdict not found"
+        || message.starts_with("Invalid feedback_type:")
+        || message.starts_with("Feedback module_id exceeds")
+        || message.starts_with("Feedback comment exceeds")
+    {
+        return ApiResponse::<serde_json::Value>::bad_request(message).into_response();
+    }
+
+    ApiResponse::<serde_json::Value>::server_error(error, "Feedback operation failed")
+        .into_response()
+}
 
 // Security Query
 
@@ -147,9 +187,16 @@ pub async fn submit_feedback(
         state.managers.ioc_manager.clone(),
     );
 
-    let can_save_training_sample = is_admin_role(&user.role);
+    let can_save_training_sample = user.has_permission("ai.training");
+    let can_adjust_ioc = user.has_permission("security.ioc.manage");
     match feedback_mgr
-        .submit(session_id, &req, can_save_training_sample)
+        .submit(
+            session_id,
+            &req,
+            &user.username,
+            can_save_training_sample,
+            can_adjust_ioc,
+        )
         .await
     {
         Ok(result) => {
@@ -175,7 +222,7 @@ pub async fn submit_feedback(
             ApiResponse::ok(serde_json::to_value(result).unwrap_or_default()).into_response()
         }
         Err(e) => {
-            ApiResponse::<serde_json::Value>::server_error(&e, "Operation failed").into_response()
+            feedback_error_response(&e)
         }
     }
 }

@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import type { SecurityStats, EngineStatus, ModuleMetadata } from '../../types'
+import { MODULE_NAME_KEYS } from './moduleI18n'
 
 const THREAT_LEVEL_KEYS = ['safe', 'low', 'medium', 'high', 'critical'] as const
 const THREAT_LEVEL_COLORS: Record<string, string> = {
@@ -8,28 +9,6 @@ const THREAT_LEVEL_COLORS: Record<string, string> = {
   medium: '#eab308',
   high: '#f97316',
   critical: '#ef4444',
-}
-
-const MODULE_CN_KEYS: Record<string, string> = {
-  content_scan: 'emailSecurity.moduleContentScan',
-  html_scan: 'emailSecurity.moduleHtmlScan',
-  attach_scan: 'emailSecurity.moduleAttachScan',
-  attach_content: 'emailSecurity.moduleAttachContent',
-  attach_hash: 'emailSecurity.moduleAttachHash',
-  mime_scan: 'emailSecurity.moduleMimeScan',
-  header_scan: 'emailSecurity.moduleHeaderScan',
-  link_scan: 'emailSecurity.moduleLinkScan',
-  link_reputation: 'emailSecurity.moduleLinkReputation',
-  link_content: 'emailSecurity.moduleLinkContent',
-  anomaly_detect: 'emailSecurity.moduleAnomalyDetect',
-  semantic_scan: 'emailSecurity.moduleSemanticScan',
-  domain_verify: 'emailSecurity.moduleDomainVerify',
-  identity_anomaly: 'emailSecurity.moduleIdentityAnomaly',
-  transaction_correlation: 'emailSecurity.moduleTransactionCorrelation',
-  av_eml_scan: 'emailSecurity.moduleAvEmlScan',
-  av_attach_scan: 'emailSecurity.moduleAvAttachScan',
-  yara_scan: 'emailSecurity.moduleYaraScan',
-  verdict: 'emailSecurity.moduleVerdict',
 }
 
 interface OverviewTabProps {
@@ -47,9 +26,15 @@ export default function OverviewTab({ stats, engineStatus }: OverviewTabProps) {
     color: THREAT_LEVEL_COLORS[key],
   }))
 
-  function getModuleCN(id: string): string {
-    const tKey = MODULE_CN_KEYS[id]
+  function getModuleName(id: string): string {
+    const tKey = MODULE_NAME_KEYS[id]
     return tKey ? t(tKey) : id
+  }
+
+  function formatSuccessRate(rate: number): string {
+    if (rate === 100) return '100%'
+    if (rate >= 99) return `${rate.toFixed(2)}%`
+    return `${rate.toFixed(1)}%`
   }
 
   const threatTotal = stats
@@ -149,8 +134,7 @@ export default function OverviewTab({ stats, engineStatus }: OverviewTabProps) {
                   return (
                     <tr key={m.module_id}>
                       <td>
-                        <span className="sec-module-name">{getModuleCN(m.module_id)}</span>
-                        <span style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginLeft: 6 }}>{m.module_id}</span>
+                        <span className="sec-module-name" title={m.module_id}>{getModuleName(m.module_id)}</span>
                       </td>
                       <td className="sec-td-r sec-mono">{m.total_runs.toLocaleString()}</td>
                       <td className="sec-td-r sec-mono">{m.avg_duration_ms.toFixed(1)}ms</td>
@@ -166,7 +150,7 @@ export default function OverviewTab({ stats, engineStatus }: OverviewTabProps) {
                             />
                           </div>
                           <span className="sec-mono" style={{ color: rate >= 95 ? 'var(--accent-green)' : rate >= 80 ? 'var(--accent-yellow)' : 'var(--accent-red)' }}>
-                            {rate.toFixed(0)}%
+                            {formatSuccessRate(rate)}
                           </span>
                         </div>
                       </td>

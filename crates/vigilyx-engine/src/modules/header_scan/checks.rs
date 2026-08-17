@@ -5,9 +5,10 @@ use std::collections::HashSet;
 
 use crate::context::SecurityContext;
 use crate::module::Evidence;
+use crate::module_data::module_data;
+use crate::modules::common::domains_share_organizational_domain;
 
 use super::parsed::{PROTECTED_DOMAINS, ParsedHeaders, extract_domain};
-use crate::module_data::module_data;
 
 // ---------------------------------------------------------------------------
 // 1. From / Reply-To domain mismatch
@@ -23,7 +24,7 @@ pub(super) fn check_domain_mismatch(
         let from_domain = extract_domain(from);
         let reply_domain = extract_domain(reply_to);
         if let (Some(fd), Some(rd)) = (from_domain, reply_domain)
-            && fd != rd
+            && !domains_share_organizational_domain(&fd, &rd)
         {
             // Domain mismatch detected
             *total_score += 0.25;
@@ -109,7 +110,7 @@ pub(super) fn check_envelope_spoofing(
         let from_domain = extract_domain(from);
         let envelope_domain = ctx.session.mail_from.as_deref().and_then(extract_domain);
         if let (Some(fd), Some(ed)) = (&from_domain, &envelope_domain)
-            && fd != ed
+            && !domains_share_organizational_domain(fd, ed)
         {
             // Base score for any envelope mismatch
             *total_score += 0.30;
@@ -155,6 +156,22 @@ pub(super) fn check_auth_results(
     // Detects "legitimate-looking phishing" even when IPs appear clean, if SPF/DMARC fail.
     let mut spf_fail = false;
     let mut dmarc_fail = false;
+    // Microsoft account-security notifications can carry an ARC result from
+    // an earlier hop that reports SPF/DMARC=fail while the message itself is
+    // DKIM-signed and traversed Exchange Online as an internal notification.
+    // Keep this exception narrow to the exact Microsoft notification domain
+    // and require all three independent header signals. The EOP signal must
+    // come from a trusted Authentication-Results authserv-id; a Received
+    // header or a deep AR header mentioning protection.outlook.com is not
+    // enough.
+    let microsoft_internal_notification = parsed
+        .from_value
+        .as_deref()
+        .and_then(extract_domain)
+        .is_some_and(|domain| domain == "accountprotection.microsoft.com")
+        && parsed.auth_results.iter().any(|ar| ar.from_eop)
+        && parsed.auth_results.iter().any(|ar| ar.dkim_pass)
+        && parsed.microsoft_cross_tenant_internal;
 
     for ar in &parsed.auth_results {
         if ar.spf_fail {
@@ -165,7 +182,7 @@ pub(super) fn check_auth_results(
         }
     }
 
-    if spf_fail && dmarc_fail {
+    if spf_fail && dmarc_fail && !microsoft_internal_notification {
         // Both authentication mechanisms failed: strong spoofing signal
         *total_score += 0.35;
         categories.push("auth_spf_dmarc_fail".to_string());
@@ -175,7 +192,7 @@ pub(super) fn check_auth_results(
             location: Some("headers:Authentication-Results".to_string()),
             snippet: None,
         });
-    } else if spf_fail {
+    } else if spf_fail && !microsoft_internal_notification {
         *total_score += 0.20;
         categories.push("auth_spf_fail".to_string());
         evidence.push(Evidence {
@@ -184,12 +201,35 @@ pub(super) fn check_auth_results(
             location: Some("headers:Authentication-Results".to_string()),
             snippet: None,
         });
-    } else if dmarc_fail {
+    } else if dmarc_fail && !microsoft_internal_notification {
         *total_score += 0.20;
         categories.push("auth_dmarc_fail".to_string());
         evidence.push(Evidence {
             description: "DMARC failed — domain policy verification failed".to_string(),
             location: Some("headers:Authentication-Results".to_string()),
+            snippet: None,
+        });
+    }
+
+    if parsed.untrusted_auth_results {
+        *total_score += 0.15;
+        categories.push("untrusted_auth_results".to_string());
+        evidence.push(Evidence {
+            description: "Authentication-Results present without a trusted authserv-id; upstream claims were ignored"
+                .to_string(),
+            location: Some("headers:Authentication-Results".to_string()),
+            snippet: None,
+        });
+    }
+
+    if parsed.has_dkim_signature && !parsed.auth_results.iter().any(|ar| ar.dkim_pass) {
+        *total_score += 0.08;
+        categories.push("dkim_unverified".to_string());
+        evidence.push(Evidence {
+            description:
+                "DKIM-Signature header is present, but no trusted cryptographic DKIM pass was recorded"
+                    .to_string(),
+            location: Some("headers:DKIM-Signature".to_string()),
             snippet: None,
         });
     }
@@ -427,6 +467,24 @@ pub(super) fn check_suspicious_mailer(
 ) {
     if let Some(ref mailer) = parsed.x_mailer_value {
         let mailer_lower = mailer.to_lowercase();
+        // NetEase/Coremail's official mobile and desktop clients emit a
+        // composite X-Mailer such as "Coremail Webmail Server ...
+        // MailMasterIOS". The generic "mailmaster" seed is useful for bulk
+        // tools, but this vendor-qualified value is a normal first-party
+        // client. This suppresses only the weak X-Mailer signal; every other
+        // header/content/authentication check still runs.
+        let official_coremail_client = mailer_lower.contains("coremail webmail server")
+            && [
+                "mailmasterios",
+                "mailmasterandroid",
+                "mailmasterpc",
+                "mailmastermac",
+            ]
+            .iter()
+            .any(|client| mailer_lower.contains(client));
+        if official_coremail_client {
+            return;
+        }
         for pattern in module_data().get_list("suspicious_mailers") {
             if mailer_lower.contains(pattern.as_str()) {
                 *total_score += 0.15;
@@ -490,7 +548,8 @@ pub(super) fn check_received_chain(
 /// Only maps the most impactful Cyrillic look-alikes and digit substitutions.
 /// The full version (with Greek, extended digit mapping, and `rn→m` collapse)
 /// lives in `threat_scene.rs` and runs in the 5-minute batch scan.
-fn normalize_homoglyph_simple(s: &str) -> String {
+/// Also reused by link_content's IDN homograph skeleton matching.
+pub(crate) fn normalize_homoglyph_simple(s: &str) -> String {
     s.chars()
         .map(|c| match c {
             // Cyrillic visually identical to Latin
@@ -502,6 +561,19 @@ fn normalize_homoglyph_simple(s: &str) -> String {
             '\u{0443}' => 'y', // у → y
             '\u{0445}' => 'x', // х → x
             '\u{0456}' => 'i', // і → i
+            '\u{04CF}' => 'l', // ӏ (Cyrillic palochka) → l (classic аррӏе.com PoC)
+            '\u{043C}' => 'm', // м → m (needed for all-Cyrillic TLD spoofs: аррӏе.сом)
+            '\u{03BF}' => 'o', // Greek omicron
+            '\u{03B1}' => 'a', // Greek alpha
+            '\u{03B5}' => 'e', // Greek epsilon
+            '\u{03C1}' => 'p', // Greek rho
+            '\u{03C4}' => 't', // Greek tau
+            '\u{03BA}' => 'k', // Greek kappa
+            '\u{03B9}' => 'i', // Greek iota
+            '\u{03B7}' => 'n', // Greek eta
+            '\u{03C9}' => 'w', // Greek omega
+            '\u{0251}' => 'a', // Latin alpha
+            '\u{026A}' => 'i', // Latin small capital I
             // Digit substitutions
             '0' => 'o',
             '1' => 'l',
@@ -544,7 +616,8 @@ fn split_domain_parts(domain: &str) -> (String, String) {
 
 /// Result of a domain impersonation check.
 pub(super) struct ImpersonationHit {
-    /// Type of similarity: `"homoglyph"` or `"tld_swap"`.
+    /// Type of similarity: `"homoglyph"`, `"tld_swap"`, or
+    /// `"brand_typosquatting"`.
     pub(super) similarity_type: &'static str,
     /// Risk score contribution (0.0–1.0).
     pub(super) score: f64,
@@ -563,7 +636,13 @@ fn check_impersonation_quick(
     sender_domain: &str,
     internal_domains: &HashSet<String>,
 ) -> Option<ImpersonationHit> {
-    let sender_lower = sender_domain.to_lowercase();
+    let sender_lower = decode_idna_domain(sender_domain);
+    if internal_domains
+        .iter()
+        .any(|internal| decode_idna_domain(internal) == sender_lower)
+    {
+        return None;
+    }
     let (sender_base, sender_tld) = split_domain_parts(&sender_lower);
 
     // Skip very short base names — too many false positives
@@ -572,13 +651,14 @@ fn check_impersonation_quick(
     }
 
     for internal in internal_domains {
-        let (int_base, int_tld) = split_domain_parts(internal);
+        let internal_lower = decode_idna_domain(internal);
+        let (int_base, int_tld) = split_domain_parts(&internal_lower);
         if int_base.len() < 3 {
             continue;
         }
 
         // Skip exact match — that's legitimate traffic, not impersonation
-        if sender_lower == *internal {
+        if sender_lower == internal_lower {
             continue;
         }
 
@@ -619,19 +699,126 @@ fn check_impersonation_quick(
                 sender_domain: sender_lower.clone(),
             });
         }
+
+        if let Some(score) = typo_similarity_score(&sender_base, &int_base) {
+            return Some(ImpersonationHit {
+                similarity_type: "brand_typosquatting",
+                score,
+                target_domain: internal.clone(),
+                sender_domain: sender_lower.clone(),
+            });
+        }
+    }
+
+    // Real-time checks must also cover externally impersonated brands.  The
+    // periodic threat-scene scanner only compares against internal domains,
+    // which left `micr0soft.com`/`microsft.com` invisible until the batch run.
+    // Brand anchors are runtime data so administrators can extend the set.
+    let brand_entries: Vec<(String, String)> = module_data()
+        .get_structured("brand_anchor_domains")
+        .and_then(|value| value.as_array())
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| {
+                    Some((
+                        entry.get("keyword")?.as_str()?.to_string(),
+                        entry.get("domain")?.as_str()?.to_string(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    for (_brand, anchor) in brand_entries {
+        let anchor_lower = decode_idna_domain(&anchor);
+        let (anchor_base, _anchor_tld) = split_domain_parts(&anchor_lower);
+        if anchor_base.len() < 3 || sender_lower == anchor_lower {
+            continue;
+        }
+        // Official brand subdomains are legitimate.  Compare only the
+        // registrable domain so `login.microsoft.com` does not self-trigger.
+        if sender_lower.ends_with(&format!(".{anchor_lower}")) {
+            continue;
+        }
+        let normalized_sender = normalize_homoglyph_simple(&sender_base);
+        let normalized_anchor = normalize_homoglyph_simple(&anchor_base);
+        if sender_base != anchor_base && normalized_sender == normalized_anchor {
+            return Some(ImpersonationHit {
+                similarity_type: "brand_homoglyph",
+                score: 0.70,
+                target_domain: anchor,
+                sender_domain: sender_lower.clone(),
+            });
+        }
+        if let Some(score) = typo_similarity_score(&sender_base, &anchor_base) {
+            return Some(ImpersonationHit {
+                similarity_type: "brand_typosquatting",
+                score: score.max(0.55),
+                target_domain: anchor,
+                sender_domain: sender_lower.clone(),
+            });
+        }
     }
 
     None
 }
 
+fn decode_idna_domain(domain: &str) -> String {
+    let lower = domain.trim_end_matches('.').to_ascii_lowercase();
+    if lower.contains("xn--") || !lower.is_ascii() {
+        let (decoded, result) = idna::domain_to_unicode(&lower);
+        if result.is_ok() {
+            return decoded.to_ascii_lowercase();
+        }
+    }
+    lower
+}
+
+fn typo_similarity_score(a: &str, b: &str) -> Option<f64> {
+    if a == b || a.len() < 4 || b.len() < 4 {
+        return None;
+    }
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let mut previous: Vec<usize> = (0..=b_chars.len()).collect();
+    let mut current = vec![0usize; b_chars.len() + 1];
+    for (i, left) in a_chars.iter().enumerate() {
+        current[0] = i + 1;
+        for (j, right) in b_chars.iter().enumerate() {
+            let cost = usize::from(left != right);
+            current[j + 1] = (previous[j + 1] + 1)
+                .min(current[j] + 1)
+                .min(previous[j] + cost);
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    let distance = previous[b_chars.len()];
+    let max_len = a.len().max(b.len());
+    let max_distance = if max_len <= 6 {
+        1
+    } else if max_len <= 12 {
+        2
+    } else {
+        3
+    };
+    if distance == 0 || distance > max_distance {
+        return None;
+    }
+    Some(match distance {
+        1 => 0.62,
+        2 => 0.56,
+        _ => 0.50,
+    })
+}
+
 /// Real-time domain impersonation detection.
 ///
 /// Called for every inbound email in the header_scan pipeline.
-/// Compares the sender's domain against the organization's internal domain
-/// list using only fast, high-confidence algorithms (homoglyph normalization
-/// and TLD swap). Deliberately skips Levenshtein-based typosquatting and
-/// subdomain-prefix checks to avoid O(n²) cost and false positives — those
-/// are handled by the 5-minute batch `threat_scene` scan.
+/// Compares the sender's domain against internal domains and runtime brand
+/// anchors using bounded, high-confidence checks.  This is intentionally
+/// synchronous so external brand typosquatting and Punycode homographs are
+/// visible on the first pass rather than waiting for the five-minute batch.
 pub(super) fn check_domain_impersonation(
     ctx: &SecurityContext,
     total_score: &mut f64,
@@ -643,11 +830,6 @@ pub(super) fn check_domain_impersonation(
 
     // Skip if sender IS an internal domain (legitimate traffic)
     if ctx.is_internal_domain(&sender_domain) {
-        return None;
-    }
-
-    // Skip if internal domain list is empty (nothing to compare against)
-    if ctx.internal_domains.is_empty() {
         return None;
     }
 
@@ -678,6 +860,115 @@ pub(super) fn check_domain_impersonation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parsed_with_mailer(mailer: &str) -> ParsedHeaders {
+        ParsedHeaders::extract(
+            &[("X-Mailer".to_string(), mailer.to_string())],
+            "203.0.113.10",
+            Some("sender@example.com"),
+            true,
+            &|_| false,
+        )
+    }
+
+    #[test]
+    fn official_coremail_mailmaster_client_is_not_suspicious() {
+        let parsed = parsed_with_mailer(
+            "Coremail Webmail Server Version XT5.0.14 build 20250730 MailMasterIOS",
+        );
+        let mut score = 0.0;
+        let mut categories = vec![];
+        let mut evidence = vec![];
+
+        check_suspicious_mailer(&parsed, &mut score, &mut categories, &mut evidence);
+
+        assert_eq!(score, 0.0);
+        assert!(categories.is_empty());
+        assert!(evidence.is_empty());
+    }
+
+    #[test]
+    fn generic_mailmaster_and_phpmailer_remain_suspicious() {
+        for mailer in ["MailMasterIOS", "PHPMailer 6.9"] {
+            let parsed = parsed_with_mailer(mailer);
+            let mut score = 0.0;
+            let mut categories = vec![];
+            let mut evidence = vec![];
+
+            check_suspicious_mailer(&parsed, &mut score, &mut categories, &mut evidence);
+
+            assert!(score > 0.0, "{mailer} must retain the weak signal");
+            assert!(
+                categories
+                    .iter()
+                    .any(|category| category == "suspicious_mailer")
+            );
+        }
+    }
+
+    #[test]
+    fn parent_and_subdomain_sender_alignment_is_not_spoofing() {
+        use std::sync::Arc;
+        use vigilyx_core::models::{EmailSession, Protocol};
+
+        let headers = vec![("From".to_string(), "ACAMS <noreply@acams.org>".to_string())];
+        let parsed = ParsedHeaders::extract(
+            &headers,
+            "203.0.113.10",
+            Some("info@contact.acams.org"),
+            true,
+            &|_| false,
+        );
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "203.0.113.10".to_string(),
+            2525,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.mail_from = Some("info@contact.acams.org".to_string());
+        let ctx = SecurityContext::new(Arc::new(session));
+        let mut score = 0.0;
+        let mut categories = vec![];
+        let mut evidence = vec![];
+
+        check_envelope_spoofing(&parsed, &ctx, &mut score, &mut categories, &mut evidence);
+
+        assert_eq!(score, 0.0);
+        assert!(!categories.iter().any(|item| item == "envelope_spoofing"));
+    }
+
+    #[test]
+    fn cross_organizational_sender_mismatch_remains_spoofing() {
+        use std::sync::Arc;
+        use vigilyx_core::models::{EmailSession, Protocol};
+
+        let headers = vec![("From".to_string(), "ACAMS <noreply@acams.org>".to_string())];
+        let parsed = ParsedHeaders::extract(
+            &headers,
+            "203.0.113.10",
+            Some("bounce@evil.example"),
+            true,
+            &|_| false,
+        );
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "203.0.113.10".to_string(),
+            2525,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.mail_from = Some("bounce@evil.example".to_string());
+        let ctx = SecurityContext::new(Arc::new(session));
+        let mut score = 0.0;
+        let mut categories = vec![];
+        let mut evidence = vec![];
+
+        check_envelope_spoofing(&parsed, &ctx, &mut score, &mut categories, &mut evidence);
+
+        assert!(score > 0.0);
+        assert!(categories.iter().any(|item| item == "envelope_spoofing"));
+    }
 
     #[test]
     fn test_normalize_homoglyph_simple_cyrillic() {
@@ -805,6 +1096,18 @@ mod tests {
     }
 
     #[test]
+    fn test_external_brand_typosquatting_is_realtime() {
+        let internals = HashSet::new();
+        let hit = check_impersonation_quick("microsft.com", &internals);
+        assert!(hit.is_some());
+        assert_eq!(hit.unwrap().similarity_type, "brand_typosquatting");
+
+        let hit = check_impersonation_quick("micr0soft.com", &internals);
+        assert!(hit.is_some());
+        assert_eq!(hit.unwrap().similarity_type, "brand_homoglyph");
+    }
+
+    #[test]
     fn test_impersonation_digit_substitution() {
         let mut internals = HashSet::new();
         internals.insert("google.com".to_string());
@@ -851,6 +1154,79 @@ mod tests {
             ctx.session.content.is_complete,
             &|_| false, // no internal domains for these tests
         )
+    }
+
+    #[test]
+    fn microsoft_account_notification_without_verified_dkim_remains_flagged() {
+        let parsed = ParsedHeaders::extract(
+            &[
+                (
+                    "From".to_string(),
+                    "Microsoft <account-security-noreply@accountprotection.microsoft.com>"
+                        .to_string(),
+                ),
+                (
+                    "Authentication-Results".to_string(),
+                    "mail.protection.outlook.com; spf=fail; dkim=none; dmarc=fail".to_string(),
+                ),
+                (
+                    "DKIM-Signature".to_string(),
+                    "v=1; d=accountprotection.microsoft.com; s=selector".to_string(),
+                ),
+                (
+                    "X-MS-Exchange-CrossTenant-AuthAs".to_string(),
+                    "Internal".to_string(),
+                ),
+            ],
+            "203.0.113.10",
+            Some("account-security-noreply@accountprotection.microsoft.com"),
+            true,
+            &|_| false,
+        );
+        let mut score = 0.0;
+        let mut categories = vec![];
+        let mut evidence = vec![];
+
+        check_auth_results(&parsed, &mut score, &mut categories, &mut evidence);
+
+        assert!(score >= 0.35, "score={score}, categories={categories:?}");
+        assert!(
+            categories.iter().any(|c| c == "auth_spf_dmarc_fail"),
+            "unverified DKIM must not exempt SPF/DMARC failures: {categories:?}"
+        );
+        assert!(
+            categories.iter().any(|c| c == "dkim_unverified"),
+            "a DKIM header without a trusted dkim=pass must be flagged: {categories:?}"
+        );
+    }
+
+    #[test]
+    fn microsoft_auth_failure_without_internal_marker_remains_detected() {
+        let parsed = ParsedHeaders::extract(
+            &[
+                (
+                    "From".to_string(),
+                    "Microsoft <account-security-noreply@accountprotection.microsoft.com>"
+                        .to_string(),
+                ),
+                (
+                    "Authentication-Results".to_string(),
+                    "mail.protection.outlook.com; spf=fail; dkim=none; dmarc=fail".to_string(),
+                ),
+            ],
+            "203.0.113.10",
+            Some("account-security-noreply@accountprotection.microsoft.com"),
+            true,
+            &|_| false,
+        );
+        let mut score = 0.0;
+        let mut categories = vec![];
+        let mut evidence = vec![];
+
+        check_auth_results(&parsed, &mut score, &mut categories, &mut evidence);
+
+        assert!(score >= 0.35);
+        assert!(categories.iter().any(|c| c == "auth_spf_dmarc_fail"));
     }
 
     #[test]
@@ -996,6 +1372,133 @@ mod tests {
         assert!(
             cats.is_empty(),
             "From != rcpt domain must not trigger, got {:?}",
+            cats
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Forged Authentication-Results suppression (R4 hardening)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn forged_deep_ar_pass_does_not_clear_spf_dmarc_fail() {
+        // Attacker appends a forged AR claiming spf=pass/dmarc=pass below the
+        // genuine gateway AR. The forgery must not neutralize the failures.
+        let parsed = ParsedHeaders::extract(
+            &[
+                (
+                    "From".to_string(),
+                    "Attacker <boss@evil.tld>".to_string(),
+                ),
+                (
+                    "Authentication-Results".to_string(),
+                    "mx.example.org; spf=fail smtp.mailfrom=evil.tld; dkim=none; dmarc=fail"
+                        .to_string(),
+                ),
+                (
+                    "Authentication-Results".to_string(),
+                    "attacker.tld; spf=pass; dkim=pass; dmarc=pass".to_string(),
+                ),
+            ],
+            "203.0.113.10",
+            Some("boss@evil.tld"),
+            true,
+            &|_| false,
+        );
+        let mut score = 0.0;
+        let mut categories = vec![];
+        let mut evidence = vec![];
+
+        check_auth_results(&parsed, &mut score, &mut categories, &mut evidence);
+
+        assert!(
+            categories.iter().any(|c| c == "auth_spf_dmarc_fail"),
+            "forged deep AR must not clear auth failures, categories={categories:?}"
+        );
+        assert!(score >= 0.35);
+    }
+
+    #[test]
+    fn microsoft_exemption_requires_eop_evidence_at_trusted_hop() {
+        // All four Microsoft-exemption signals are forgeable. The EOP evidence
+        // must come from the trusted (topmost) AR hop; a forged deep AR plus
+        // a forged Received mentioning protection.outlook.com must not exempt.
+        let parsed = ParsedHeaders::extract(
+            &[
+                (
+                    "From".to_string(),
+                    "Microsoft <account-security-noreply@accountprotection.microsoft.com>"
+                        .to_string(),
+                ),
+                (
+                    "Received".to_string(),
+                    "from attacker.tld ([203.0.113.10]) by fake.protection.outlook.com".to_string(),
+                ),
+                (
+                    "Authentication-Results".to_string(),
+                    "mx.example.org; spf=fail; dkim=none; dmarc=fail".to_string(),
+                ),
+                (
+                    "Authentication-Results".to_string(),
+                    "contoso-com.mail.protection.outlook.com; spf=pass; dkim=pass; dmarc=pass"
+                        .to_string(),
+                ),
+                (
+                    "DKIM-Signature".to_string(),
+                    "v=1; d=accountprotection.microsoft.com; s=forged".to_string(),
+                ),
+                (
+                    "X-MS-Exchange-CrossTenant-AuthAs".to_string(),
+                    "Internal".to_string(),
+                ),
+            ],
+            "203.0.113.10",
+            Some("account-security-noreply@accountprotection.microsoft.com"),
+            true,
+            &|_| false,
+        );
+        let mut score = 0.0;
+        let mut categories = vec![];
+        let mut evidence = vec![];
+
+        check_auth_results(&parsed, &mut score, &mut categories, &mut evidence);
+
+        assert!(
+            categories.iter().any(|c| c == "auth_spf_dmarc_fail"),
+            "forged EOP evidence must not exempt auth failures, categories={categories:?}"
+        );
+    }
+
+    #[test]
+    fn direct_send_forged_deep_arc_pass_does_not_suppress() {
+        // Same Direct Send scenario as the positive test, plus a forged deep
+        // AR claiming arc=pass. Must still fire.
+        let ctx = ds_ctx(
+            "contoso.com",
+            vec![
+                ("From", "CEO <ceo@contoso.com>"),
+                (
+                    "Received",
+                    "from mail.attacker.tld (203.0.113.5) by contoso-com.mail.protection.outlook.com",
+                ),
+                (
+                    "Authentication-Results",
+                    "contoso-com.mail.protection.outlook.com; spf=none; dkim=none; dmarc=none",
+                ),
+                (
+                    "Authentication-Results",
+                    "forged.attacker.tld; arc=pass; spf=pass; dkim=pass; dmarc=pass",
+                ),
+            ],
+        );
+        let parsed = parse_for_ctx(&ctx);
+        let mut score = 0.0;
+        let mut cats = vec![];
+        let mut ev = vec![];
+        check_direct_send_abuse(&parsed, &ctx, &mut score, &mut cats, &mut ev);
+        assert!(
+            cats.iter().any(|c| c == "direct_send_abuse"),
+            "forged deep arc=pass must not suppress direct_send_abuse, cats={:?}",
             cats
         );
     }

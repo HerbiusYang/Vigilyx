@@ -42,7 +42,14 @@ pub fn module_data_epoch() -> u64 {
 const EMBEDDED_SEED_JSON: &str =
     include_str!("../../../shared/schemas/engine_module_data_seed.json");
 
-static MODULE_DATA: OnceLock<Arc<RwLock<ModuleDataRegistry>>> = OnceLock::new();
+// Keep an immutable registry behind the lock and hand callers an `Arc`
+// snapshot. Returning a live `RwLockReadGuard` here used to make seemingly
+// harmless code such as `let data = module_data(); matcher.is_match(...)`
+// vulnerable to a writer-priority deadlock: a hot-reload writer could queue
+// between the outer read and the matcher's nested registry read. The snapshot
+// releases the lock before callers inspect the registry, so replacements are
+// atomic and existing scans can safely finish against the previous version.
+static MODULE_DATA: OnceLock<RwLock<Arc<ModuleDataRegistry>>> = OnceLock::new();
 
 /// Initialize (or replace) the global module data registry.
 ///
@@ -50,31 +57,30 @@ static MODULE_DATA: OnceLock<Arc<RwLock<ModuleDataRegistry>>> = OnceLock::new();
 /// (e.g. `crate::matcher::PhraseMatcher`) can detect the hot-reload and
 /// rebuild on next access.
 pub fn set_module_data(registry: ModuleDataRegistry) {
-    let shared = MODULE_DATA.get_or_init(|| Arc::new(RwLock::new(ModuleDataRegistry::default())));
-    *shared.write().expect("module data lock poisoned") = registry;
+    let shared = MODULE_DATA.get_or_init(|| RwLock::new(Arc::new(ModuleDataRegistry::default())));
+    *shared.write().expect("module data lock poisoned") = Arc::new(registry);
     REGISTRY_EPOCH.fetch_add(1, Ordering::Release);
 }
 
-/// Access the global module data registry (read lock).
+/// Access an immutable snapshot of the global module data registry.
 ///
 /// If `set_module_data` was never called, the registry is lazily initialized
 /// from the embedded seed JSON (no DB overrides). This keeps unit tests and
 /// early call sites working without an explicit init step.
-pub fn module_data() -> std::sync::RwLockReadGuard<'static, ModuleDataRegistry> {
-    MODULE_DATA
-        .get_or_init(|| {
-            let registry = ModuleDataRegistry::from_seed_and_overrides(
-                EMBEDDED_SEED_JSON,
-                &ModuleDataOverrides::default(),
-            )
-            .unwrap_or_else(|e| {
-                warn!("Failed to parse embedded seed JSON: {e} — using empty registry");
-                ModuleDataRegistry::default()
-            });
-            Arc::new(RwLock::new(registry))
-        })
-        .read()
-        .expect("module data lock poisoned")
+pub fn module_data() -> Arc<ModuleDataRegistry> {
+    let shared = MODULE_DATA.get_or_init(|| {
+        let registry = ModuleDataRegistry::from_seed_and_overrides(
+            EMBEDDED_SEED_JSON,
+            &ModuleDataOverrides::default(),
+        )
+        .unwrap_or_else(|e| {
+            warn!("Failed to parse embedded seed JSON: {e} — using empty registry");
+            ModuleDataRegistry::default()
+        });
+        RwLock::new(Arc::new(registry))
+    });
+
+    Arc::clone(&shared.read().expect("module data lock poisoned"))
 }
 
 // ── Registry ────────────────────────────────────────────────────────

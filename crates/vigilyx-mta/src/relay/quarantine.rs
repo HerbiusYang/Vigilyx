@@ -13,6 +13,7 @@ pub async fn store_quarantine(
     raw_eml: &[u8],
     threat_level: &str,
     reason: &str,
+    client_ip: Option<&str>,
 ) -> bool {
     let req = QuarantineStoreRequest {
         session_id,
@@ -23,6 +24,7 @@ pub async fn store_quarantine(
         raw_eml,
         threat_level,
         reason: Some(reason),
+        client_ip,
     };
 
     match db.quarantine_store(&req).await {

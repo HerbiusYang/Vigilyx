@@ -13,7 +13,7 @@ function usePrevious<T>(value: T): T | undefined {
 }
 
 /** Lazy import with auto-reload on chunk load failure (deployment cache mismatch) */
-function lazyRetry<T extends { default: React.ComponentType }>(
+function lazyRetry<T extends { default: React.ComponentType<any> }>(
   factory: () => Promise<T>,
 ): React.LazyExoticComponent<T['default']> {
   return lazy(() =>
@@ -82,11 +82,12 @@ const DataSecurity = lazyRetry(() => import('./components/data-security/DataSecu
 const AutomationDisposition = lazyRetry(() => import('./components/automation/AutomationDisposition'))
 const OpenSourceCommunity = lazyRetry(() => import('./components/community/OpenSourceCommunity'))
 const Quarantine = lazyRetry(() => import('./components/quarantine/Quarantine'))
+const AlertCenter = lazyRetry(() => import('./components/automation/AlertCenter'))
 import { useWebSocket } from './hooks/useWebSocket'
 import { useTheme } from './hooks/useTheme'
 import { apiFetch, resetLogoutFlag } from './utils/api'
 import { syncServerClock } from './utils/format'
-import { notifySecurityVerdict, notifyNewSession, notifyDataSecurityAlert } from './utils/notify'
+import { notifySecurityVerdict, notifyNewSession, notifyDataSecurityAlert, notifyAlert } from './utils/notify'
 import { resolveSetupStatus } from './utils/setupStatus'
 import { syncUiPreferencesFromServer } from './utils/uiPreferences'
 import './App.css'
@@ -109,6 +110,16 @@ function NavLink({ to, icon, children, activeMatch }: { to: string; icon: React.
 
 interface AppContentProps {
   onLogout: () => void
+  authUser: AuthUser
+}
+
+export interface AuthUser {
+  id: string
+  username: string
+  display_name: string
+  role: string
+  permissions: string[]
+  must_change_password: boolean
 }
 
 interface RealtimeConnection {
@@ -218,6 +229,10 @@ function RealtimeBridge({
       if (parsed.type === 'SecurityVerdict') {
         notifySecurityVerdict(parsed)
         window.dispatchEvent(new Event(EVENTS.DASHBOARD_REFRESH))
+      } else if (parsed.type === 'Alert') {
+        // High-frequency WS payloads must not be passed as props; notify via window event
+        notifyAlert(parsed)
+        window.dispatchEvent(new Event(EVENTS.ALERT))
       } else if (parsed.type === 'NewSession') {
         notifyNewSession()
         window.dispatchEvent(new Event(EVENTS.DASHBOARD_REFRESH))
@@ -232,7 +247,7 @@ function RealtimeBridge({
   return null
 }
 
-function AppContent({ onLogout }: AppContentProps) {
+function AppContent({ onLogout, authUser }: AppContentProps) {
   const { t } = useTranslation()
   const { theme, toggleTheme } = useTheme()
   const [realtimeConnection, setRealtimeConnection] = useState<RealtimeConnection>(INITIAL_REALTIME_CONNECTION)
@@ -326,6 +341,7 @@ function AppContent({ onLogout }: AppContentProps) {
             <NavLink to="/security" icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>}>{t('nav.emailSecurity')}</NavLink>
             <NavLink to="/data-security" icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>}>{t('nav.dataSecurity')}</NavLink>
             <NavLink to="/automation" icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>}>{t('nav.automation')}</NavLink>
+            <NavLink to="/alerts" icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>}>{t('nav.alerts')}</NavLink>
             <span className="hd-nav-sep" />
             {/* Supporting features */}
             <NavLink to="/knowledge" icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>}>{t('nav.knowledge')}</NavLink>
@@ -361,12 +377,13 @@ function AppContent({ onLogout }: AppContentProps) {
             <Route path="/security/:tab" element={<EmailSecurity />} />
             <Route path="/data-security/*" element={<DataSecurity />} />
             <Route path="/automation" element={<AutomationDisposition />} />
+            <Route path="/alerts" element={<AlertCenter />} />
             <Route path="/quarantine" element={<Quarantine />} />
             <Route path="/knowledge" element={<SecurityKnowledge />} />
             <Route path="/knowledge/:topicId" element={<SecurityKnowledge />} />
             <Route path="/community" element={<OpenSourceCommunity />} />
             <Route path="/logs" element={<EncryptedLogs />} />
-            <Route path="/settings" element={<Settings />} />
+            <Route path="/settings" element={<Settings authUser={authUser} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense></ChunkErrorBoundary>
@@ -422,8 +439,7 @@ function PortalContent({ onLogout }: AppContentProps) {
           </Link>
 
           <nav className="hd-nav">
-            <NavLink to="/portal" activeMatch={p => p.startsWith('/portal') && !p.startsWith('/portal/settings')} icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>}>{t('nav.dataSecurity')}</NavLink>
-            <NavLink to="/portal/settings" icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>}>{t('nav.settings')}</NavLink>
+            <NavLink to="/portal" activeMatch={p => p.startsWith('/portal')} icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>}>{t('nav.dataSecurity')}</NavLink>
           </nav>
 
           <div className="hd-actions">
@@ -441,7 +457,7 @@ function PortalContent({ onLogout }: AppContentProps) {
       <main className="main">
         <ChunkErrorBoundary><Suspense fallback={<div className="page-loading">{t('app.loading')}</div>}>
           <Routes>
-            <Route path="/portal/settings" element={<Settings />} />
+            <Route path="/portal/settings" element={<Navigate to="/portal" replace />} />
             <Route path="/portal/*" element={<DataSecurity />} />
           </Routes>
         </Suspense></ChunkErrorBoundary>
@@ -456,6 +472,7 @@ function PortalContent({ onLogout }: AppContentProps) {
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null)
   const [needsSetup, setNeedsSetup] = useState(false)
   const [authReady, setAuthReady] = useState(false)
   const [authUnavailable, setAuthUnavailable] = useState(false)
@@ -482,10 +499,12 @@ function App() {
           return
         }
 
+        const user = await res.json() as AuthUser
         resetLogoutFlag()
         if (!cancelled) {
           setAuthUnavailable(false)
           setIsAuthenticated(true)
+          setAuthUser(user)
         }
 
         const completed = await resolveSetupStatus()
@@ -510,6 +529,9 @@ function App() {
         if (res.status === 401 || res.status === 403) {
           setIsAuthenticated(false)
           setNeedsSetup(false)
+          setAuthUser(null)
+        } else if (res.ok) {
+          setAuthUser(await res.json() as AuthUser)
         }
       } catch {
         // Do not log out on network errors; wait for the next retry
@@ -523,6 +545,7 @@ function App() {
       // Server-side cookie clearing is handled by /api/auth/logout; only update frontend state here
       setIsAuthenticated(false)
       setNeedsSetup(false)
+      setAuthUser(null)
       setAuthUnavailable(false)
       setAuthReady(true)
     }
@@ -547,6 +570,12 @@ function App() {
     resetLogoutFlag()
     setAuthUnavailable(false)
     setIsAuthenticated(true)
+    try {
+      const response = await fetch('/api/auth/me', { credentials: 'same-origin' })
+      if (response.ok) setAuthUser(await response.json() as AuthUser)
+    } catch {
+      setAuthUser(null)
+    }
     setNeedsSetup(false)
     setAuthReady(false)
 
@@ -570,6 +599,7 @@ function App() {
     }
     setIsAuthenticated(false)
     setNeedsSetup(false)
+    setAuthUser(null)
     setAuthReady(true)
   }
 
@@ -599,24 +629,28 @@ function App() {
     return <SetupWizard onComplete={() => setNeedsSetup(false)} />
   }
 
+  if (!authUser) {
+    return <div className="page-loading">{i18n.t('app.loading')}</div>
+  }
+
   return (
     <BrowserRouter>
-      <PortalOrApp onLogout={handleLogout} portalMode={portalMode} />
+      <PortalOrApp onLogout={handleLogout} authUser={authUser} portalMode={portalMode} />
     </BrowserRouter>
   )
 }
 
 // Choose the layout from the backend portal_mode flag or the URL prefix
 // When portal_mode=true, redirect every non-/portal route to /portal
-function PortalOrApp({ onLogout, portalMode }: AppContentProps & { portalMode: boolean }) {
+function PortalOrApp({ onLogout, authUser, portalMode }: AppContentProps & { portalMode: boolean }) {
   const location = useLocation()
   if (portalMode && !location.pathname.startsWith('/portal')) {
     return <Navigate to="/portal" replace />
   }
   if (location.pathname.startsWith('/portal')) {
-    return <PortalContent onLogout={onLogout} />
+    return <PortalContent onLogout={onLogout} authUser={authUser} />
   }
-  return <AppContent onLogout={onLogout} />
+  return <AppContent onLogout={onLogout} authUser={authUser} />
 }
 
 export default App

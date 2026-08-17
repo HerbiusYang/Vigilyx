@@ -43,8 +43,10 @@ use std::{
 use crate::AppState;
 use crate::auth::{
     ChangePasswordRequest, ChangePasswordResponse, LoginRequest, build_token_cookie,
-    handle_change_password, handle_login, handle_logout, handle_me, require_admin, require_auth,
-    require_internal_token, sanitize_login_username,
+    handle_logout, handle_me, handle_platform_change_password, handle_platform_login,
+    require_admin, require_auth, require_platform_roles_access,
+    require_platform_users_manage,
+    require_internal_token, require_session_feedback, sanitize_login_username,
 };
 use crate::handlers;
 use crate::handlers::data_security as data_security_handlers;
@@ -53,8 +55,6 @@ use crate::handlers::security as security_handlers;
 use crate::handlers::syslog_config as syslog_handlers;
 use crate::handlers::training as training_handlers;
 use crate::handlers::yara as yara_handlers;
-use vigilyx_core::is_sensitive_ip;
-
 /// Extract client IP from direct connection.
 
 /// SEC-H02: X-Forwarded-For is NOT trusted unless the direct connection comes from
@@ -183,6 +183,18 @@ fn extract_client_ip_with_trusted(
     direct_addr.ip()
 }
 
+/// Resolve the real client IP from an X-Forwarded-For chain.
+///
+/// Proxies append the address they observed to the *right* of the chain, so
+/// the rightmost untrusted hop is the address the closest trusted proxy
+/// actually connected from. Everything further left is client-controlled and
+/// must never be trusted (CWE-348). Taking the *leftmost* untrusted hop would
+/// be wrong: an attacker can prepend arbitrary XFF entries to pin a victim's
+/// IP and trigger their login lockout / consume their rate-limit budget
+/// (SEC-08).
+///
+/// Returns `None` when there is no usable untrusted hop (missing header or a
+/// fully-trusted chain); callers then fall back to the direct peer address.
 fn extract_forwarded_client_ip(
     headers: &axum::http::HeaderMap,
     trusted_proxies: &HashSet<IpAddr>,
@@ -197,19 +209,25 @@ fn extract_forwarded_client_ip(
         .filter_map(|value| value.parse::<IpAddr>().ok())
         .collect();
 
-    let mut non_trusted = forwarded_ips
-        .into_iter()
-        .filter(|ip| !trusted_proxies.contains(ip));
-    let client_ip = non_trusted.next()?;
+    let untrusted_count = forwarded_ips
+        .iter()
+        .filter(|ip| !trusted_proxies.contains(ip))
+        .count();
 
-    if let Some(extra_hop) = non_trusted.next() {
+    let client_ip = *forwarded_ips
+        .iter()
+        .rev()
+        .find(|ip| !trusted_proxies.contains(ip))?;
+
+    // Multiple untrusted hops are expected when the client sits behind its own
+    // proxies, but can also indicate header forgery; log for visibility.
+    if untrusted_count > 1 {
         tracing::warn!(
             x_forwarded_for = xff,
-            candidate_client_ip = %client_ip,
-            extra_untrusted_hop = %extra_hop,
-            "Ignoring ambiguous X-Forwarded-For chain from trusted proxy"
+            client_ip = %client_ip,
+            untrusted_hops = untrusted_count,
+            "X-Forwarded-For chain has multiple untrusted hops; using rightmost"
         );
-        return None;
     }
 
     Some(client_ip)
@@ -226,6 +244,16 @@ pub(crate) fn request_originates_from_internal_network(
     headers: &axum::http::HeaderMap,
     direct_addr: SocketAddr,
 ) -> bool {
+    let configured_cidrs = std::env::var("INTERNAL_API_SOURCE_CIDRS")
+        .unwrap_or_else(|_| "127.0.0.1/32,::1/128".to_string());
+    request_originates_from_configured_networks(headers, direct_addr, &configured_cidrs)
+}
+
+fn request_originates_from_configured_networks(
+    headers: &axum::http::HeaderMap,
+    direct_addr: SocketAddr,
+    configured_cidrs: &str,
+) -> bool {
     let trusted_proxies = trusted_proxy_ips();
     let client_ip = if trusted_proxies.contains(&direct_addr.ip()) {
         extract_forwarded_client_ip(headers, trusted_proxies)
@@ -233,7 +261,48 @@ pub(crate) fn request_originates_from_internal_network(
         Some(direct_addr.ip())
     };
 
-    client_ip.is_some_and(is_sensitive_ip)
+    client_ip.is_some_and(|ip| {
+        configured_cidrs
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+            .any(|cidr| ip_matches_cidr(ip, cidr))
+    })
+}
+
+fn ip_matches_cidr(ip: IpAddr, cidr: &str) -> bool {
+    let (network, prefix) = match cidr.split_once('/') {
+        Some((network, prefix)) => {
+            let Ok(network) = network.parse::<IpAddr>() else {
+                return false;
+            };
+            let Ok(prefix) = prefix.parse::<u8>() else {
+                return false;
+            };
+            (network, prefix)
+        }
+        None => return cidr.parse::<IpAddr>().is_ok_and(|allowed| allowed == ip),
+    };
+
+    match (ip, network) {
+        (IpAddr::V4(ip), IpAddr::V4(network)) if prefix <= 32 => {
+            let mask = if prefix == 0 {
+                0
+            } else {
+                u32::MAX << (32 - prefix)
+            };
+            u32::from(ip) & mask == u32::from(network) & mask
+        }
+        (IpAddr::V6(ip), IpAddr::V6(network)) if prefix <= 128 => {
+            let mask = if prefix == 0 {
+                0
+            } else {
+                u128::MAX << (128 - prefix)
+            };
+            u128::from(ip) & mask == u128::from(network) & mask
+        }
+        _ => false,
+    }
 }
 
 fn forwarded_proto(headers: &axum::http::HeaderMap) -> Option<&str> {
@@ -298,8 +367,9 @@ async fn login(
     let client_ip = extract_client_ip(&headers, addr);
     let ip = client_ip.to_string();
     let secure_cookie = request_is_secure(&headers, addr, state.secure_cookie);
-    let response = handle_login(
+    let response = handle_platform_login(
         &state.auth.config,
+        &state.engine_db,
         &state.auth.login_rate_limiter,
         client_ip,
         &request,
@@ -388,24 +458,24 @@ async fn logout(
 ) -> axum::response::Response {
     // JWTs are also accepted via Authorization headers, so logout must revoke
     // the current token generation, not just clear the browser cookie.
-    let new_token_version = match state.engine_db.bump_auth_token_version().await {
-        Ok(version) => version,
-        Err(e) => {
-            return crate::handlers::ApiResponse::<serde_json::Value>::server_error(
-                &e,
-                "Failed to revoke auth tokens during logout",
-            )
-            .into_response();
-        }
-    };
+    // SEC M-1: revocation is per user — bumping a global counter here let any
+    // single logout invalidate every operator's session platform-wide.
+    if let Err(e) = state
+        .engine_db
+        .bump_platform_user_token_version(&user.id)
+        .await
+    {
+        return crate::handlers::ApiResponse::<serde_json::Value>::server_error(
+            &e,
+            "Failed to revoke auth tokens during logout",
+        )
+        .into_response();
+    }
 
-    state
-        .auth
-        .config
-        .token_version
-        .store(new_token_version, std::sync::atomic::Ordering::Relaxed);
     state.ws_tickets.clear();
-    crate::websocket::invalidate_websocket_sessions(&state);
+    // SEC (round-5): revoke only this user's live dashboard sockets; the
+    // global epoch previously broke every operator's WebSocket on any logout.
+    crate::websocket::invalidate_websocket_sessions_for_user(&state, &user.username);
 
     let db = state.engine_db.clone();
     let username = user.username;
@@ -427,9 +497,33 @@ async fn logout(
 async fn change_password(
     State(state): State<Arc<AppState>>,
     user: crate::auth::AuthenticatedUser,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    headers: axum::http::HeaderMap,
     Json(request): Json<ChangePasswordRequest>,
 ) -> Json<ChangePasswordResponse> {
-    let response = handle_change_password(&state.auth.config, &state.engine_db, &request).await;
+    let client_ip = extract_client_ip(&headers, addr);
+    let response = match state.engine_db.get_platform_auth_user_by_id(&user.id).await {
+        Ok(Some(platform_user)) => handle_platform_change_password(
+            &state.auth.config,
+            &state.engine_db,
+            &platform_user,
+            &state.auth.login_rate_limiter,
+            client_ip,
+            &request,
+        )
+        .await,
+        Ok(None) => ChangePasswordResponse {
+            success: false,
+            error: Some("用户不存在或已失效".into()),
+        },
+        Err(error) => {
+            tracing::error!(error = %error, "Platform user lookup failed during password change");
+            ChangePasswordResponse {
+                success: false,
+                error: Some("密码保存失败，请重试".into()),
+            }
+        }
+    };
 
     if response.success {
         state.ws_tickets.clear();
@@ -500,10 +594,15 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/sessions/{id}/rescan",
             admin_only(post(security_handlers::rescan_session)),
         )
+        .route(
+            "/sessions/{id}/whitelist",
+            admin_only(post(security_handlers::whitelist_session)),
+        )
         // Session feedback
         .route(
             "/sessions/{id}/feedback",
-            post(security_handlers::submit_feedback),
+            post(security_handlers::submit_feedback)
+                .route_layer(middleware::from_fn(require_session_feedback)),
         )
         // Statistics
         .route("/stats", get(handlers::get_stats))
@@ -670,6 +769,15 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/security/quarantine/{id}",
             admin_only(delete(security_handlers::quarantine::delete_quarantine)),
+        )
+        // Security alerts (P0-P3)
+        .route(
+            "/security/alerts",
+            admin_only(get(security_handlers::list_security_alerts)),
+        )
+        .route(
+            "/security/alerts/{id}/acknowledge",
+            admin_only(post(security_handlers::acknowledge_security_alert)),
         )
         // YARA
         .route(
@@ -838,6 +946,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             post(training_handlers::trigger_nlp_training),
         )
         .route(
+            "/admin/nlp/approve",
+            post(training_handlers::approve_nlp_model),
+        )
+        .route(
             "/admin/nlp/status",
             get(training_handlers::get_nlp_training_status),
         )
@@ -859,6 +971,35 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             get(training_handlers::get_training_stats),
         )
         .layer(middleware::from_fn(require_admin));
+
+    // Persistent platform identity and RBAC management.  These routes are
+    // narrower than the legacy admin surface and are authorized by the
+    // persisted permission catalog rather than the JWT role claim.
+    let platform_user_routes = Router::new()
+        .route(
+            "/admin/users",
+            get(handlers::platform::list_users).post(handlers::platform::create_user),
+        )
+        .route(
+            "/admin/users/{id}",
+            put(handlers::platform::update_user).delete(handlers::platform::disable_user),
+        )
+        .layer(middleware::from_fn(require_platform_users_manage));
+
+    let platform_role_routes = Router::new()
+        .route(
+            "/admin/roles",
+            get(handlers::platform::list_roles).post(handlers::platform::create_role),
+        )
+        .route(
+            "/admin/roles/{id}",
+            put(handlers::platform::update_role).delete(handlers::platform::delete_role),
+        )
+        .route(
+            "/admin/permissions",
+            get(handlers::platform::list_permissions),
+        )
+        .layer(middleware::from_fn(require_platform_roles_access));
 
     // Data security API (HTTP session analysis)
     let data_security_routes = Router::new()
@@ -923,6 +1064,8 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
     let authed = protected_routes
         .merge(security_routes)
         .merge(admin_routes)
+        .merge(platform_user_routes)
+        .merge(platform_role_routes)
         .merge(data_security_routes)
         .layer(middleware::from_fn_with_state(state, require_auth));
 
@@ -957,18 +1100,78 @@ mod tests {
     }
 
     #[test]
-    fn trusted_proxy_rejects_ambiguous_xff_chain() {
+    fn trusted_proxy_uses_rightmost_untrusted_hop() {
+        // Spoofed victim IP prepended by the client + real client IP appended
+        // by the trusted proxy: must use the rightmost untrusted hop (SEC-08),
+        // otherwise an attacker can pin a victim's login lockout / rate limit.
         let mut headers = HeaderMap::new();
         headers.insert(
             "x-forwarded-for",
-            HeaderValue::from_static("1.2.3.4, 198.51.100.24"),
+            HeaderValue::from_static("203.0.113.66, 198.51.100.24"),
         );
 
         let direct_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8088));
         let trusted = HashSet::from([IpAddr::V4(Ipv4Addr::LOCALHOST)]);
 
         let client_ip = extract_client_ip_with_trusted(&headers, direct_addr, &trusted);
+        assert_eq!(client_ip, "198.51.100.24".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn no_xff_falls_back_to_direct_addr() {
+        let headers = HeaderMap::new();
+
+        let direct_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8088));
+        let trusted = HashSet::from([IpAddr::V4(Ipv4Addr::LOCALHOST)]);
+
+        let client_ip = extract_client_ip_with_trusted(&headers, direct_addr, &trusted);
         assert_eq!(client_ip, IpAddr::V4(Ipv4Addr::LOCALHOST));
+    }
+
+    #[test]
+    fn single_trusted_hop_falls_back_to_direct_addr() {
+        // Chain contains only a trusted hop: no usable client address.
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("127.0.0.1"));
+
+        let direct_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8088));
+        let trusted = HashSet::from([IpAddr::V4(Ipv4Addr::LOCALHOST)]);
+
+        let client_ip = extract_client_ip_with_trusted(&headers, direct_addr, &trusted);
+        assert_eq!(client_ip, IpAddr::V4(Ipv4Addr::LOCALHOST));
+    }
+
+    #[test]
+    fn fully_trusted_chain_falls_back_to_direct_addr() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("127.0.0.1, ::1"),
+        );
+
+        let direct_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8088));
+        let trusted = HashSet::from([
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+        ]);
+
+        let client_ip = extract_client_ip_with_trusted(&headers, direct_addr, &trusted);
+        assert_eq!(client_ip, IpAddr::V4(Ipv4Addr::LOCALHOST));
+    }
+
+    #[test]
+    fn fully_untrusted_chain_uses_rightmost_hop() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("203.0.113.1, 203.0.113.2"),
+        );
+
+        let direct_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8088));
+        let trusted = HashSet::from([IpAddr::V4(Ipv4Addr::LOCALHOST)]);
+
+        let client_ip = extract_client_ip_with_trusted(&headers, direct_addr, &trusted);
+        assert_eq!(client_ip, "203.0.113.2".parse::<IpAddr>().unwrap());
     }
 
     #[test]
@@ -1022,22 +1225,42 @@ mod tests {
     }
 
     #[test]
-    fn internal_route_accepts_direct_private_client() {
+    fn internal_route_rejects_arbitrary_private_client() {
         let headers = HeaderMap::new();
         let direct_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 9), 8088));
 
-        assert!(request_originates_from_internal_network(
+        assert!(!request_originates_from_configured_networks(
             &headers,
-            direct_addr
+            direct_addr,
+            "127.0.0.1/32,172.30.250.0/24",
         ));
     }
 
     #[test]
-    fn internal_route_rejects_ambiguous_xff_chain_with_private_spoof() {
+    fn internal_route_accepts_explicit_service_subnet() {
+        let headers = HeaderMap::new();
+        let direct_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(172, 30, 250, 9), 8088));
+
+        assert!(request_originates_from_configured_networks(
+            &headers,
+            direct_addr,
+            "127.0.0.1/32,172.30.250.0/24",
+        ));
+        assert!(ip_matches_cidr(
+            "2001:db8::5".parse().unwrap(),
+            "2001:db8::/64"
+        ));
+    }
+
+    #[test]
+    fn internal_route_ignores_leftmost_private_spoof() {
+        // Client prepends a private IP to look internal; the rightmost
+        // untrusted hop (the address the trusted proxy actually observed)
+        // is public, so the request must NOT be treated as internal (SEC-08).
         let mut headers = HeaderMap::new();
         headers.insert(
             "x-forwarded-for",
-            HeaderValue::from_static("198.51.100.24, 10.0.0.9"),
+            HeaderValue::from_static("10.0.0.9, 198.51.100.24"),
         );
 
         let direct_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 8088));

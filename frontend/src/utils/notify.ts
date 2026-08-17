@@ -187,3 +187,18 @@ export function notifyDataSecurityAlert(parsed: Record<string, unknown>) {
     'data-security'
   )
 }
+
+/**
+ * Security alert (P0-P3) notification - triggered by Alert WebSocket messages.
+ * The payload is a plain alert text string (WsMessage::Alert(String)).
+ */
+export function notifyAlert(parsed: Record<string, unknown>) {
+  const text = typeof parsed.data === 'string' ? parsed.data : ''
+
+  playThreatSound('critical')
+  sendDesktopNotification(
+    i18n.t('alerts.notifyTitle'),
+    text || i18n.t('alerts.notifyBody'),
+    'security-alert'
+  )
+}

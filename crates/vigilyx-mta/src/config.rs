@@ -12,6 +12,15 @@ pub const MTA_INLINE_TIMEOUT_MIN_SECS: u32 = 1;
 pub const MTA_INLINE_TIMEOUT_MAX_SECS: u32 = 60;
 pub const MTA_MAX_CONNECTIONS_MIN: usize = 1;
 pub const MTA_MAX_CONNECTIONS_MAX: usize = 1000;
+pub const MTA_MAX_RECIPIENTS_MIN: usize = 1;
+pub const MTA_MAX_RECIPIENTS_MAX: usize = 10_000;
+pub const MTA_MAX_RECIPIENTS_DEFAULT: usize = 50;
+
+fn normalize_optional_outbound_host(value: Option<String>) -> Option<String> {
+    value
+        .map(|host| host.trim().to_string())
+        .filter(|host| !host.is_empty())
+}
 
 /// MTA
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +52,10 @@ pub struct MtaConfig {
     pub inline_timeout_secs: u32,
 
     pub fail_open: bool,
+
+    /// SEC: MTA_REQUIRE_STARTTLS (F-4) — when true, plaintext sessions are
+    /// refused MAIL FROM with 530 5.7.0 until STARTTLS completes.
+    pub require_starttls: bool,
 
     pub quarantine_threshold: ThreatLevel,
 
@@ -137,6 +150,9 @@ impl MtaConfig {
             if let Some(m) = val.get("mta_max_connections").and_then(|v| v.as_u64()) {
                 let max_connections = usize::try_from(m).unwrap_or(MTA_MAX_CONNECTIONS_MAX);
                 self.max_connections = clamp_max_connections(max_connections);
+            }
+            if let Some(max_recipients) = max_recipients_db_override(&val) {
+                self.max_recipients = max_recipients;
             }
             if let Some(s) = val.get("mta_starttls").and_then(|v| v.as_bool()) {
                 self.downstream.starttls = s;
@@ -257,22 +273,23 @@ impl MtaConfig {
                     .parse()?,
                 timeout_secs: 30,
             },
-            outbound: std::env::var("MTA_OUTBOUND_HOST").ok().map(|host| {
-                let port = std::env::var("MTA_OUTBOUND_PORT")
-                    .ok()
-                    .and_then(|p| p.parse().ok())
-                    .unwrap_or(25);
-                let starttls = std::env::var("MTA_OUTBOUND_STARTTLS")
-                    .ok()
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(true);
-                DownstreamConfig {
-                    host,
-                    port,
-                    starttls,
-                    timeout_secs: 30,
-                }
-            }),
+            outbound: normalize_optional_outbound_host(std::env::var("MTA_OUTBOUND_HOST").ok())
+                .map(|host| {
+                    let port = std::env::var("MTA_OUTBOUND_PORT")
+                        .ok()
+                        .and_then(|p| p.parse().ok())
+                        .unwrap_or(25);
+                    let starttls = std::env::var("MTA_OUTBOUND_STARTTLS")
+                        .ok()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(true);
+                    DownstreamConfig {
+                        host,
+                        port,
+                        starttls,
+                        timeout_secs: 30,
+                    }
+                }),
             local_domains,
             trusted_upstream_cidrs,
             inline_timeout_secs: clamp_inline_timeout_secs(
@@ -285,10 +302,20 @@ impl MtaConfig {
             fail_open: std::env::var("MTA_FAIL_OPEN")
                 .unwrap_or_else(|_| "false".into())
                 .parse()?,
+            // SEC: require TLS by default for inbound SMTP. Deployments that
+            // intentionally accept plaintext must opt out explicitly with
+            // MTA_REQUIRE_STARTTLS=false.
+            require_starttls: std::env::var("MTA_REQUIRE_STARTTLS")
+                .unwrap_or_else(|_| "true".into())
+                .parse()?,
             quarantine_threshold: ThreatLevel::Medium,
             reject_threshold: ThreatLevel::Critical,
             max_message_size: 25 * 1024 * 1024, // 25MB (OOM)
-            max_recipients: 100,
+            max_recipients: clamp_max_recipients(
+                std::env::var("MTA_MAX_RECIPIENTS")
+                    .unwrap_or_else(|_| MTA_MAX_RECIPIENTS_DEFAULT.to_string())
+                    .parse()?,
+            ),
             database_url: std::env::var("DATABASE_URL")?,
             redis_url: std::env::var("REDIS_URL").ok(),
             hostname: validate_mta_hostname(
@@ -306,6 +333,19 @@ pub fn clamp_inline_timeout_secs(value: u32) -> u32 {
 
 pub fn clamp_max_connections(value: usize) -> usize {
     value.clamp(MTA_MAX_CONNECTIONS_MIN, MTA_MAX_CONNECTIONS_MAX)
+}
+
+pub fn clamp_max_recipients(value: usize) -> usize {
+    value.clamp(MTA_MAX_RECIPIENTS_MIN, MTA_MAX_RECIPIENTS_MAX)
+}
+
+fn max_recipients_db_override(value: &serde_json::Value) -> Option<usize> {
+    value
+        .get("mta_max_recipients")
+        .and_then(serde_json::Value::as_u64)
+        .map(|value| {
+            clamp_max_recipients(usize::try_from(value).unwrap_or(MTA_MAX_RECIPIENTS_MAX))
+        })
 }
 
 fn valid_mta_port(value: u64) -> Option<u16> {
@@ -396,6 +436,20 @@ mod tests {
     }
 
     #[test]
+    fn empty_outbound_host_is_treated_as_unconfigured() {
+        assert_eq!(normalize_optional_outbound_host(None), None);
+        assert_eq!(normalize_optional_outbound_host(Some(String::new())), None);
+        assert_eq!(
+            normalize_optional_outbound_host(Some("   ".to_string())),
+            None
+        );
+        assert_eq!(
+            normalize_optional_outbound_host(Some(" relay.example ".to_string())),
+            Some("relay.example".to_string())
+        );
+    }
+
+    #[test]
     fn test_normalize_trusted_upstream_cidrs_filters_invalid_and_dedups() {
         let entries = normalize_trusted_upstream_cidrs(
             "10.0.0.1, 10.0.0.0/24, garbage, 10.0.0.1, 2001:db8::/32, 10.0.0.0/33",
@@ -482,6 +536,21 @@ mod tests {
         assert_eq!(clamp_max_connections(0), MTA_MAX_CONNECTIONS_MIN);
         assert_eq!(clamp_max_connections(100), 100);
         assert_eq!(clamp_max_connections(10_000), MTA_MAX_CONNECTIONS_MAX);
+
+        assert_eq!(MTA_MAX_RECIPIENTS_DEFAULT, 50);
+        assert_eq!(clamp_max_recipients(0), MTA_MAX_RECIPIENTS_MIN);
+        assert_eq!(clamp_max_recipients(50), 50);
+        assert_eq!(clamp_max_recipients(50_000), MTA_MAX_RECIPIENTS_MAX);
+        assert_eq!(
+            max_recipients_db_override(&serde_json::json!({ "mta_max_recipients": 0 })),
+            Some(MTA_MAX_RECIPIENTS_MIN)
+        );
+        assert_eq!(
+            max_recipients_db_override(
+                &serde_json::json!({ "mta_max_recipients": 50_000 })
+            ),
+            Some(MTA_MAX_RECIPIENTS_MAX)
+        );
     }
 
     #[test]

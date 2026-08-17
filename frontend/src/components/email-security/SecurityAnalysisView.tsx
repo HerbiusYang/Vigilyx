@@ -1,6 +1,8 @@
 import { useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { SecurityVerdict, ModuleResult } from '../../types'
+import { MODULE_NAME_KEYS } from './moduleI18n'
+import { categoryLabel } from './categoryLabels'
 
 // ════════════════════════════════════════════════════════════════
 // Props
@@ -71,29 +73,6 @@ const THREAT_CN_KEYS: Record<string, string> = {
   critical: 'emailSecurity.threatCritical',
 }
 
-const MODULE_CN_KEYS: Record<string, string> = {
-  content_scan: 'emailSecurity.moduleContentScan',
-  html_scan: 'emailSecurity.moduleHtmlScan',
-  html_pixel_art: 'emailSecurity.modulePixelArt',
-  attach_scan: 'emailSecurity.moduleAttachScan',
-  attach_content: 'emailSecurity.moduleAttachContent',
-  attach_hash: 'emailSecurity.moduleAttachHash',
-  mime_scan: 'emailSecurity.moduleMimeScan',
-  header_scan: 'emailSecurity.moduleHeaderScan',
-  link_scan: 'emailSecurity.moduleLinkScan',
-  link_reputation: 'emailSecurity.moduleLinkReputation',
-  link_content: 'emailSecurity.moduleLinkContent',
-  anomaly_detect: 'emailSecurity.moduleAnomalyDetect',
-  semantic_scan: 'emailSecurity.moduleSemanticScan',
-  domain_verify: 'emailSecurity.moduleDomainVerify',
-  identity_anomaly: 'emailSecurity.moduleIdentityAnomaly',
-  transaction_correlation: 'emailSecurity.moduleTransactionCorrelation',
-  av_eml_scan: 'emailSecurity.moduleAvEmlScan',
-  av_attach_scan: 'emailSecurity.moduleAvAttachScan',
-  yara_scan: 'emailSecurity.moduleYaraScan',
-  verdict: 'emailSecurity.moduleVerdict',
-}
-
 const PILLAR_CN_KEYS: Record<string, string> = {
   content: 'emailSecurity.pillarContent',
   attachment: 'emailSecurity.pillarAttachment',
@@ -157,6 +136,36 @@ function readString(value: unknown): string | null {
 
 function readNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function readBoolean(value: unknown): boolean {
+  return value === true
+}
+
+export type ModuleExecutionState = 'timeout' | 'failed'
+
+export function getModuleExecutionState(mr: ModuleResult): ModuleExecutionState | null {
+  const details = asRecord(mr.details)
+  const status = readString(details?.execution_status)
+  if (status === 'timeout' || mr.categories.includes('inspection_module_timeout')) return 'timeout'
+  if (status === 'failed' || mr.categories.includes('inspection_module_failed')) return 'failed'
+  return null
+}
+
+export function isModuleUnavailable(mr: ModuleResult): boolean {
+  return getModuleExecutionState(mr) !== null
+}
+
+function moduleExecutionColor(state: ModuleExecutionState | null, threatLevel: string): string {
+  if (state === 'timeout') return '#f59e0b'
+  if (state === 'failed') return '#ef4444'
+  return threatColor(threatLevel)
+}
+
+function moduleExecutionLabelKey(state: ModuleExecutionState): string {
+  return state === 'timeout'
+    ? 'emailSecurity.moduleStatusTimeout'
+    : 'emailSecurity.moduleStatusFailed'
 }
 
 function getSemanticAiState(mr: ModuleResult): {
@@ -277,6 +286,88 @@ function getSemanticAiState(mr: ModuleResult): {
         retryAfterSecs,
         timeoutSecs,
       }
+  }
+}
+
+interface NlpVisualData {
+  modelType: string | null
+  topLabel: string | null
+  maliciousProbability: number | null
+  probabilities: Array<[string, number]>
+}
+
+const NLP_LABEL_COLORS: Record<string, string> = {
+  legitimate: '#16a34a',
+  spam: '#ca8a04',
+  phishing: '#dc2626',
+  scam: '#dc2626',
+  bec: '#dc2626',
+  spoofing: '#dc2626',
+  social_engineering: '#ea580c',
+  other_threat: '#ea580c',
+}
+
+function nlpLabelColor(label: string): string {
+  return NLP_LABEL_COLORS[label] ?? '#6b7280'
+}
+
+function nlpGaugeColor(probability: number): string {
+  if (probability >= 0.65) return '#dc2626'
+  if (probability >= 0.4) return '#ea580c'
+  return '#16a34a'
+}
+
+/** Extract NLP label probabilities from semantic_scan details.nlp_details (AI /analyze/content response). */
+function getNlpVisualData(mr: ModuleResult): NlpVisualData | null {
+  if (mr.module_id !== 'semantic_scan') return null
+  const nlpDetails = asRecord(asRecord(mr.details)?.nlp_details)
+  if (!nlpDetails) return null
+  const rawProbabilities = asRecord(nlpDetails.probabilities)
+  if (!rawProbabilities) return null
+  const probabilities = Object.entries(rawProbabilities)
+    .filter((entry): entry is [string, number] => typeof entry[1] === 'number' && Number.isFinite(entry[1]))
+    .sort((a, b) => b[1] - a[1])
+  if (probabilities.length === 0) return null
+  return {
+    modelType: readString(nlpDetails.model_type),
+    topLabel: readString(nlpDetails.top_label),
+    maliciousProbability: readNumber(nlpDetails.malicious_probability),
+    probabilities,
+  }
+}
+
+interface LlmAnalysisData {
+  provider: string | null
+  model: string | null
+  verdict: string | null
+  confidence: number | null
+  reasoning: string | null
+  injectionSuspected: boolean
+}
+
+/** Extract the advisory LLM second opinion from semantic_scan details.nlp_details.llm_analysis. */
+function getLlmAnalysis(mr: ModuleResult): LlmAnalysisData | null {
+  if (mr.module_id !== 'semantic_scan') return null
+  const llm = asRecord(asRecord(asRecord(mr.details)?.nlp_details)?.llm_analysis)
+  if (!llm) return null
+  return {
+    provider: readString(llm.provider),
+    model: readString(llm.model),
+    verdict: readString(llm.verdict),
+    confidence: readNumber(llm.confidence),
+    reasoning: readString(llm.reasoning),
+    injectionSuspected: readBoolean(llm.injection_suspected),
+  }
+}
+
+function llmVerdictColor(verdict: string | null): string {
+  switch (verdict) {
+    case 'safe': return '#16a34a'
+    case 'low': return '#65a30d'
+    case 'medium': return '#ea580c'
+    case 'high':
+    case 'critical': return '#dc2626'
+    default: return '#6b7280'
   }
 }
 
@@ -470,6 +561,10 @@ export default function SecurityAnalysisView({
     return m
   }, [moduleResults])
 
+  const linkReputationUnavailable = moduleResults.find(
+    mr => mr.module_id === 'link_reputation' && isModuleUnavailable(mr),
+  )
+
   if (!verdict) {
     return (
       <div style={{ ...S.card, textAlign: 'center', padding: 40, color: 'rgba(255,255,255,0.3)' }}>
@@ -480,6 +575,31 @@ export default function SecurityAnalysisView({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {linkReputationUnavailable && (
+        <div role="status" style={{
+          ...S.card,
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 10,
+          padding: '12px 14px',
+          color: 'rgba(255,255,255,0.78)',
+          background: 'rgba(245,158,11,0.08)',
+          border: '1px solid rgba(245,158,11,0.3)',
+        }}>
+          <span aria-hidden="true" style={{ color: '#f59e0b', fontSize: 16, lineHeight: 1 }}>!</span>
+          <div>
+            <div style={{ color: '#fbbf24', fontSize: 12, fontWeight: 700, marginBottom: 3 }}>
+              {t('emailSecurity.linkReputationUnavailableTitle')}
+            </div>
+            <div style={{ color: 'rgba(255,255,255,0.58)', fontSize: 11, lineHeight: 1.5 }}>
+              {t('emailSecurity.linkReputationUnavailableMessage', {
+                status: t(moduleExecutionLabelKey(getModuleExecutionState(linkReputationUnavailable)!)),
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* -- Section 1: AnalysisFlow (compact single row) -- */}
       <div style={{
         ...S.card,
@@ -579,7 +699,25 @@ export default function SecurityAnalysisView({
 
       {/* -- Section 2: detection-module results -- */}
       <div style={S.card}>
-        <div style={S.cardTitle}>{t('emailSecurity.detectionModules')}</div>
+        <div style={{
+          ...S.cardTitle,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+          whiteSpace: 'nowrap',
+        }}>
+          <span>{t('emailSecurity.detectionModules')}</span>
+          <span style={{
+            fontSize: 12,
+            fontWeight: 500,
+            letterSpacing: 0,
+            textTransform: 'none',
+            color: 'rgba(255,255,255,0.42)',
+          }}>
+            {t('emailSecurity.detectionModulesCount', { count: moduleResults.length })}
+          </span>
+        </div>
         {selectedEngine ? (
           <EngineDetail
             engineId={selectedEngine}
@@ -829,7 +967,9 @@ function EngineDetail({ engineId, bpa, modules, expandedModules, toggleModuleExp
         {t('emailSecurity.subModulesCount', { count: modules.length })}
       </div>
       {modules.map(mr => {
-        const isSafe = mr.threat_level === 'safe'
+        const executionState = getModuleExecutionState(mr)
+        const displayColor = moduleExecutionColor(executionState, mr.threat_level)
+        const isSafe = mr.threat_level === 'safe' && executionState === null
         const isOpen = expandedModules?.has(mr.module_id) ?? !isSafe
         const semanticAiState = getSemanticAiState(mr)
         return (
@@ -845,10 +985,10 @@ function EngineDetail({ engineId, bpa, modules, expandedModules, toggleModuleExp
               <div style={S.moduleRowLeft}>
                 <span style={{
                   width: 6, height: 6, borderRadius: 3, flexShrink: 0,
-                  background: threatColor(mr.threat_level),
+                  background: displayColor,
                 }} />
                 <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {MODULE_CN_KEYS[mr.module_id] ? t(MODULE_CN_KEYS[mr.module_id]) : mr.module_name}
+                  {MODULE_NAME_KEYS[mr.module_id] ? t(MODULE_NAME_KEYS[mr.module_id]) : mr.module_name}
                 </span>
                 {semanticAiState && (
                   <span style={{
@@ -865,8 +1005,10 @@ function EngineDetail({ engineId, bpa, modules, expandedModules, toggleModuleExp
                 )}
               </div>
               <div style={S.moduleRowRight}>
-                <span style={{ fontSize: 10, color: threatColor(mr.threat_level), fontWeight: 500 }}>
-                  {THREAT_CN_KEYS[mr.threat_level] ? t(THREAT_CN_KEYS[mr.threat_level]) : mr.threat_level}
+                <span style={{ fontSize: 10, color: displayColor, fontWeight: 500 }}>
+                  {executionState
+                    ? t(moduleExecutionLabelKey(executionState))
+                    : (THREAT_CN_KEYS[mr.threat_level] ? t(THREAT_CN_KEYS[mr.threat_level]) : mr.threat_level)}
                 </span>
                 <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', fontFamily: MONO }}>
                   {mr.duration_ms}ms
@@ -905,11 +1047,10 @@ function ModuleList({ moduleResults, expandedModules, toggleModuleExpand }: {
 
   return (
     <div>
-      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginBottom: 8 }}>
-        {t('emailSecurity.detectionModulesCount', { count: moduleResults.length })}
-      </div>
       {moduleResults.map(mr => {
-        const isSafe = mr.threat_level === 'safe'
+        const executionState = getModuleExecutionState(mr)
+        const displayColor = moduleExecutionColor(executionState, mr.threat_level)
+        const isSafe = mr.threat_level === 'safe' && executionState === null
         const isOpen = expandedModules?.has(mr.module_id) ?? !isSafe
         const semanticAiState = getSemanticAiState(mr)
         return (
@@ -925,11 +1066,11 @@ function ModuleList({ moduleResults, expandedModules, toggleModuleExpand }: {
               <div style={S.moduleRowLeft}>
                 <span style={{
                   width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-                  background: threatColor(mr.threat_level),
-                  boxShadow: !isSafe ? `0 0 6px ${threatColor(mr.threat_level)}60` : 'none',
+                  background: displayColor,
+                  boxShadow: !isSafe ? `0 0 6px ${displayColor}60` : 'none',
                 }} />
                 <span style={{ fontSize: 13, fontWeight: 500, color: isSafe ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.85)' }}>
-                  {MODULE_CN_KEYS[mr.module_id] ? t(MODULE_CN_KEYS[mr.module_id]) : mr.module_name}
+                  {MODULE_NAME_KEYS[mr.module_id] ? t(MODULE_NAME_KEYS[mr.module_id]) : mr.module_name}
                 </span>
                 {semanticAiState && (
                   <span style={{
@@ -954,11 +1095,13 @@ function ModuleList({ moduleResults, expandedModules, toggleModuleExpand }: {
               </div>
               <div style={S.moduleRowRight}>
                 <span style={{
-                  fontSize: 11, fontWeight: 600, color: threatColor(mr.threat_level),
+                  fontSize: 11, fontWeight: 600, color: displayColor,
                   padding: '1px 6px', borderRadius: 4,
-                  background: !isSafe ? `${threatColor(mr.threat_level)}15` : 'transparent',
+                  background: !isSafe ? `${displayColor}15` : 'transparent',
                 }}>
-                  {THREAT_CN_KEYS[mr.threat_level] ? t(THREAT_CN_KEYS[mr.threat_level]) : mr.threat_level}
+                  {executionState
+                    ? t(moduleExecutionLabelKey(executionState))
+                    : (THREAT_CN_KEYS[mr.threat_level] ? t(THREAT_CN_KEYS[mr.threat_level]) : mr.threat_level)}
                 </span>
                 <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', fontFamily: MONO }}>
                   {mr.duration_ms > 999 ? `${(mr.duration_ms / 1000).toFixed(1)}s` : `${mr.duration_ms}ms`}
@@ -987,6 +1130,8 @@ function ModuleList({ moduleResults, expandedModules, toggleModuleExpand }: {
 function ModuleExpandedContent({ mr }: { mr: ModuleResult }) {
   const { t } = useTranslation()
   const semanticAiState = getSemanticAiState(mr)
+  const nlpVisualData = getNlpVisualData(mr)
+  const llmAnalysis = getLlmAnalysis(mr)
 
   return (
     <div style={{ padding: '4px 12px 10px 26px' }}>
@@ -1053,6 +1198,137 @@ function ModuleExpandedContent({ mr }: { mr: ModuleResult }) {
               {t(semanticAiState.messageKey, semanticAiState.messageParams)}
             </div>
           )}
+        </div>
+      )}
+
+      {/* NLP label probabilities */}
+      {nlpVisualData && (
+        <div className="sa-nlp-visual" style={{ marginBottom: mr.evidence.length > 0 ? 6 : 0 }}>
+          <div className="sa-nlp-header">
+            <span className="sa-nlp-title">{t('email.nlpProbabilities')}</span>
+            {nlpVisualData.modelType && <span className="sa-nlp-model">{nlpVisualData.modelType}</span>}
+          </div>
+          {nlpVisualData.maliciousProbability != null && (
+            <div className="sa-nlp-gauge">
+              <div className="sa-nlp-gauge-label">
+                <span>{t('email.nlpMaliciousProbability')}</span>
+                <span className="sa-nlp-gauge-val" style={{ color: nlpGaugeColor(nlpVisualData.maliciousProbability) }}>
+                  {(nlpVisualData.maliciousProbability * 100).toFixed(1)}%
+                </span>
+              </div>
+              <div className="sa-nlp-gauge-bar">
+                <div
+                  className="sa-nlp-gauge-fill"
+                  style={{
+                    width: `${Math.min(100, Math.max(0, nlpVisualData.maliciousProbability * 100))}%`,
+                    background: nlpGaugeColor(nlpVisualData.maliciousProbability),
+                  }}
+                />
+              </div>
+            </div>
+          )}
+          <div className="sa-nlp-probs">
+            {nlpVisualData.probabilities.map(([label, probability]) => (
+              <div key={label} className="sa-nlp-prob-row">
+                <span className="sa-nlp-prob-label">
+                  {label}
+                  {label === nlpVisualData.topLabel && (
+                    <span className="sa-nlp-top-badge">{t('email.nlpTopLabel')}</span>
+                  )}
+                </span>
+                <span className="sa-nlp-prob-bar-wrap">
+                  <span
+                    className="sa-nlp-prob-bar"
+                    style={{
+                      width: `${Math.min(100, Math.max(0, probability * 100))}%`,
+                      background: nlpLabelColor(label),
+                    }}
+                  />
+                </span>
+                <span className="sa-nlp-prob-val">{(probability * 100).toFixed(1)}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* LLM second opinion (advisory, only when local NLP result was uncertain) */}
+      {llmAnalysis && (
+        <div style={{
+          ...S.evidenceItem,
+          marginBottom: mr.evidence.length > 0 ? 6 : 0,
+          border: `1px solid ${llmVerdictColor(llmAnalysis.verdict)}44`,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>
+              {t('email.llmAnalysis', 'LLM 二次研判')}
+            </span>
+            {llmAnalysis.provider && (
+              <span style={{
+                fontSize: 10, color: 'rgba(255,255,255,0.45)', fontFamily: MONO,
+                background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.08)',
+                padding: '1px 6px', borderRadius: 999,
+              }}>
+                {llmAnalysis.provider}{llmAnalysis.model ? ` / ${llmAnalysis.model}` : ''}
+              </span>
+            )}
+            {llmAnalysis.verdict && (
+              <span style={{
+                fontSize: 10, color: llmVerdictColor(llmAnalysis.verdict),
+                background: 'rgba(255,255,255,0.02)',
+                border: `1px solid ${llmVerdictColor(llmAnalysis.verdict)}`,
+                padding: '1px 6px', borderRadius: 999,
+              }}>
+                {llmAnalysis.verdict}
+              </span>
+            )}
+            {llmAnalysis.confidence != null && (
+              <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontFamily: MONO }}>
+                {t('email.llmConfidence', '置信度')} {(llmAnalysis.confidence * 100).toFixed(0)}%
+              </span>
+            )}
+            {llmAnalysis.injectionSuspected && (
+              <span style={{
+                fontSize: 10, fontWeight: 600, color: '#dc2626',
+                background: 'rgba(220,38,38,0.08)',
+                border: '1px solid #dc2626',
+                padding: '1px 6px', borderRadius: 999,
+              }}>
+                {t('email.llmInjectionSuspected', '疑似提示注入')}
+              </span>
+            )}
+          </div>
+          {llmAnalysis.reasoning && (
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.65)', marginTop: 6, lineHeight: 1.5 }}>
+              {llmAnalysis.reasoning}
+            </div>
+          )}
+          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 6, lineHeight: 1.5 }}>
+            {t('email.llmAdvisoryHint', 'LLM 研判可能受邮件内容影响，仅供参考')}
+          </div>
+        </div>
+      )}
+
+      {/* Detection categories */}
+      {mr.categories.length > 0 && (
+        <div style={{
+          display: 'flex', flexWrap: 'wrap', gap: 4,
+          marginBottom: mr.evidence.length > 0 ? 6 : 0,
+        }}>
+          {mr.categories.map(category => (
+            <span
+              key={category}
+              title={category}
+              style={{
+                fontSize: 10, color: 'rgba(255,255,255,0.6)', fontFamily: MONO,
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                padding: '1px 6px', borderRadius: 999,
+              }}
+            >
+              {categoryLabel(category)}
+            </span>
+          ))}
         </div>
       )}
 
@@ -1191,7 +1467,7 @@ function FusionPanel({ fusion }: { fusion: NonNullable<SecurityVerdict['fusion_d
           <span style={{ fontSize: 14, flexShrink: 0 }}>&#9889;</span>
           <div style={{ color: 'rgba(255,255,255,0.6)' }}>
             <strong style={{ color: '#dc2626' }}>{t('emailSecurity.circuitBreakerActivated')}</strong>
-            : {t('emailSecurity.circuitBreakerModule')} <strong>{MODULE_CN_KEYS[fusion.circuit_breaker.trigger_module_id] ? t(MODULE_CN_KEYS[fusion.circuit_breaker.trigger_module_id]) : fusion.circuit_breaker.trigger_module_id}</strong>
+            : {t('emailSecurity.circuitBreakerModule')} <strong>{MODULE_NAME_KEYS[fusion.circuit_breaker.trigger_module_id] ? t(MODULE_NAME_KEYS[fusion.circuit_breaker.trigger_module_id]) : fusion.circuit_breaker.trigger_module_id}</strong>
             {' '}{t('emailSecurity.circuitBreakerBelief')} <span style={{ fontFamily: MONO }}>{fusion.circuit_breaker.trigger_belief.toFixed(2)}</span>
             {' '}{t('emailSecurity.circuitBreakerSuppressed')} (<span style={{ fontFamily: MONO }}>{fusion.circuit_breaker.original_risk.toFixed(4)}</span>)
             {t('emailSecurity.circuitBreakerRaisedTo')} <span style={{ fontFamily: MONO, color: '#dc2626' }}>{fusion.circuit_breaker.floor_value.toFixed(2)}</span>
@@ -1216,7 +1492,7 @@ function FusionPanel({ fusion }: { fusion: NonNullable<SecurityVerdict['fusion_d
                   fontSize: 10, padding: '1px 6px', borderRadius: 4,
                   background: 'rgba(234,179,8,0.12)', color: '#ca8a04',
                 }}>
-                  {MODULE_CN_KEYS[mid] ? t(MODULE_CN_KEYS[mid]) : mid}
+                  {MODULE_NAME_KEYS[mid] ? t(MODULE_NAME_KEYS[mid]) : mid}
                 </span>
               ))}
             </div>
@@ -1300,8 +1576,8 @@ function FeedbackSection({
     legitimate: 'emailSecurity.feedbackLegitimate',
     phishing: 'emailSecurity.feedbackPhishing',
     spoofing: 'emailSecurity.feedbackSpoofing',
-    social_engineering: 'emailSecurity.feedbackSocialEngineering',
-    other_threat: 'emailSecurity.feedbackOtherThreat',
+    social_engineering: 'emailSecurity.feedbackSocialEng',
+    other_threat: 'emailSecurity.feedbackOther',
   }
 
   return (

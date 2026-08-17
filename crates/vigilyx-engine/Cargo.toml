@@ -2,6 +2,7 @@
 name = "vigilyx-engine"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 
@@ -32,21 +33,24 @@ uuid.workspace = true
 
 async-trait = "0.1"
 aho-corasick = "1"
-dashmap = "6.1"
+dashmap = "6.2"
 petgraph.workspace = true
-reqwest = { version = "0.12", features = ["json", "multipart", "gzip"] }
+reqwest = { version = "0.13", features = ["json", "multipart", "gzip"] }
 regex = "1"
-sha2 = "0.10"
-aes-gcm = "0.10"
-base64 = "0.22"
-scraper = "0.22"
-rqrr = "0.8"
+sha2 = "0.11"
+hex = "0.4"
+sha1 = "0.11"
+aes-gcm = "0.11"
+base64 = "0.23"
+scraper = "0.27"
+html-escape = "0.2.15"
+rqrr = "0.10"
 image.workspace = true
 crc32fast = "1"
 flate2 = "1"
 futures = "0.3"
 url = "2"
-hickory-resolver = { version = "0.24", features = ["tokio-runtime"] }
+hickory-resolver = { version = "0.26.1", features = ["tokio"] }
 num_cpus.workspace = true
 rayon.workspace = true
 rustc-hash.workspace = true
@@ -54,12 +58,40 @@ clap = { version = "4", features = ["derive", "env"] }
 dotenvy.workspace = true
 unicode-normalization = "0.1"
 idna = "1"
-yara-x = "1.14"
+# Keep YARA-X's pure pattern-matching modules, but do not enable its
+# `crypto`-backed PE/CRX/Mach-O modules. Those modules pull in `rsa` 0.9,
+# which has no constant-time fix for RUSTSEC-2023-0071. Built-in Vigilyx
+# rules use byte/string signatures and do not depend on the disabled modules.
+yara-x = { version = "1.19.0", default-features = false, features = [
+    "constant-folding",
+    "elf-module",
+    "exact-atoms",
+    "fast-regexp",
+    "hash-module",
+    "lnk-module",
+    "math-module",
+    "string-module",
+    "time-module",
+    "zip-module",
+] }
+# Compatibility verifier for governed third-party rules. The C library is
+# pinned and built from source so runtime behavior does not depend on a host
+# libyara installation. Community packs remain shadow-only until promoted by
+# corpus-backed validation.
+yara = { version = "0.32.0", default-features = false, features = [
+    "vendored",
+    "bundled-4_5_5",
+    "module-dotnet",
+    "module-dex",
+    "module-macho",
+    "module-hash",
+    "ndebug",
+] }
 zip = "8"
 
 [dev-dependencies]
 tempfile = "3"
-proptest = "1.4"
+proptest = "1.11"
 rand.workspace = true  # RUSTSEC-2026-0097: pin minimum safe version
 
 [lints]

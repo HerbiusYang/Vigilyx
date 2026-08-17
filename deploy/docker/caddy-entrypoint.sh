@@ -86,6 +86,36 @@ write_access_log() {
     esac
 }
 
+# -- Generate the reverse_proxy block --
+# header_up overrides any client-supplied X-Forwarded-For so the backend only
+# ever sees the real peer IP (Caddy v2 already sets X-Forwarded-Proto itself).
+write_reverse_proxy() {
+    echo "    reverse_proxy vigilyx:8088 {"
+    echo "        header_up X-Forwarded-For {remote_host}"
+    echo "    }"
+}
+
+# Never reflect the request Host header in an HTTP-to-HTTPS redirect.  A
+# client can supply an arbitrary Host value, so using `{host}` here turns the
+# redirect into an open redirect (CWE-601).  The canonical host is selected
+# from the deployment configuration above and is the only host allowed into
+# the generated redirect target.
+write_http_redirect() {
+    redirect_host="$domain"
+    case "$redirect_host" in
+        *:*)
+            case "$redirect_host" in
+                \[*\]) ;;
+                *) redirect_host="[$redirect_host]" ;;
+            esac
+            ;;
+    esac
+    echo ":80 {"
+    write_access_log
+    printf "    redir https://%s{uri} permanent\n" "$redirect_host"
+    echo "}"
+}
+
 # -- Generate the Caddyfile --
 case "$tls_mode" in
     auto)
@@ -98,38 +128,39 @@ case "$tls_mode" in
             echo
             printf "%s {\n" "$domain"
             write_access_log
-            echo "    reverse_proxy vigilyx:8088"
+            write_reverse_proxy
             echo
             write_security_headers
             echo "}"
+            echo
+            write_http_redirect
         } > "$target_caddyfile"
         ;;
     internal)
         # Caddy's "tls internal" CA has compatibility issues on some kernels.
-        # Expect pre-generated certs at /data/self-signed/ (mounted from host).
-        # generate-secrets.sh or deploy.sh creates them automatically.
+        # Prefer pre-generated certs at /data/self-signed/ (mounted from host).
+        # Older installations may not have the certificate files yet; fall back
+        # to Caddy's internal CA so a restart cannot take the proxy offline.
         cert_dir="/etc/caddy/certs"
-        if [ ! -f "$cert_dir/cert.pem" ] || [ ! -f "$cert_dir/key.pem" ]; then
-            echo "ERROR: Self-signed certificate not found at $cert_dir/" >&2
-            echo "  Run on host: bash scripts/generate-tls-cert.sh" >&2
-            exit 1
+        tls_directive="tls internal"
+        if [ -f "$cert_dir/cert.pem" ] && [ -f "$cert_dir/key.pem" ]; then
+            tls_directive="tls $cert_dir/cert.pem $cert_dir/key.pem"
+            echo "Using self-signed certificate from $cert_dir/"
+        else
+            echo "WARNING: Self-signed certificate not found at $cert_dir/; using Caddy internal CA"
         fi
-        echo "Using self-signed certificate from $cert_dir/"
         {
             # Use :443 catch-all instead of IP-based site address.
             # IP addresses don't use TLS SNI, so Caddy can't match by IP.
             echo ":443 {"
-            printf "    tls %s/cert.pem %s/key.pem\n" "$cert_dir" "$cert_dir"
+            printf "    %s\n" "$tls_directive"
             write_access_log
-            echo "    reverse_proxy vigilyx:8088"
+            write_reverse_proxy
             echo
             write_security_headers
             echo "}"
             echo
-            echo ":80 {"
-            write_access_log
-            echo "    redir https://{host}{uri} permanent"
-            echo "}"
+            write_http_redirect
         } > "$target_caddyfile"
         ;;
     files)
@@ -141,10 +172,12 @@ case "$tls_mode" in
             printf "%s {\n" "$domain"
             printf "    tls %s %s\n" "$cert_file" "$key_file"
             write_access_log
-            echo "    reverse_proxy vigilyx:8088"
+            write_reverse_proxy
             echo
             write_security_headers
             echo "}"
+            echo
+            write_http_redirect
         } > "$target_caddyfile"
         ;;
     *)

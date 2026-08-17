@@ -58,7 +58,7 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
 
     // 1. Suspicious TLD
     if module_data().contains("suspicious_tlds", tld) {
-        score += 0.15;
+        score += 0.05;
         findings.push((
             format!("Suspicious顶levelDomain .{}", tld),
             "suspicious_tld".to_string(),
@@ -101,7 +101,7 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
 
     // 4. longDomain (Used for)
     if domain.len() > 40 {
-        score += 0.15;
+        score += 0.05;
         findings.push((
             format!("Domainlong: {} characters", domain.len()),
             "long_domain".to_string(),
@@ -110,7 +110,7 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
 
     // 5. Domain level (if a.b.c.d.evil.com)
     if parts.len() > 4 {
-        score += 0.15;
+        score += 0.05;
         findings.push((
             format!("子Domain层level深: {} 层", parts.len()),
             "deep_subdomain".to_string(),
@@ -133,7 +133,7 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
         && RE_RANDOM_DOMAIN.is_match(main_part)
         && !crate::modules::identity_anomaly::is_human_readable_domain_label(main_part)
     {
-        score += 0.20;
+        score += 0.10;
         findings.push((
             format!("Domain contains random character sequence: {}", main_part),
             "random_domain".to_string(),
@@ -151,7 +151,7 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
             .count();
         let ratio = consonants as f64 / main_part.len() as f64;
         if ratio >= 0.70 {
-            score += 0.20;
+            score += 0.10;
             findings.push((
                 format!(
                     "Domain has high consonant ratio ({:.0}%): {}",
@@ -168,7 +168,7 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
         && main_part.len() > 3
         && !module_data().contains("known_numeric_domains", &reg_domain)
     {
-        score += 0.15;
+        score += 0.08;
         findings.push((
             format!("纯数字Domain: {}", reg_domain),
             "numeric_domain".to_string(),

@@ -7,9 +7,8 @@ use axum::{
 };
 use std::sync::Arc;
 use uuid::Uuid;
-use vigilyx_core::EmailSession;
 
-use vigilyx_db::mq::topics;
+use vigilyx_db::mq::{RescanSessionReference, StreamClient, streams};
 
 use super::super::ApiResponse;
 use crate::AppState;
@@ -33,6 +32,10 @@ pub async fn trigger_rescan(
     if let Err(message) = validate_rescan_request(&req) {
         return ApiResponse::<serde_json::Value>::bad_request(message).into_response();
     }
+    // Freeze an unbounded request at acceptance time. Without this cutoff,
+    // live SMTP inserts can move the OFFSET window and make an "all" task
+    // chase newly arriving sessions indefinitely.
+    let req = snapshot_rescan_request(req);
 
     if !rescan_channel_available(&state) {
         return ApiResponse::<serde_json::Value>::server_error(
@@ -130,7 +133,7 @@ pub async fn rescan_session(
         }
     };
 
-    match submit_rescan_session(&state, &session).await {
+    match submit_rescan_session(&state, session.id).await {
         Ok(path) => ApiResponse::ok(serde_json::json!({
             "status": "accepted",
             "session_id": session_id.to_string(),
@@ -179,32 +182,17 @@ async fn run_rescan_task(
         }
 
         let batch_size = ids.len();
-        let sessions = match state.db.get_sessions_batch(&ids).await {
-            Ok(sessions) => sessions,
+        match submit_rescan_batch(&state, &ids).await {
+            Ok(count) => submitted += count as u64,
             Err(e) => {
                 failed += batch_size as u64;
-                tracing::error!(task_id = %task_id, offset, "回溯扫描批量加载session failed: {}", e);
-                offset += batch_size;
-                continue;
-            }
-        };
-
-        for session in sessions {
-            if !session.has_analyzable_content() {
-                continue;
-            }
-
-            match submit_rescan_session(&state, &session).await {
-                Ok(_) => submitted += 1,
-                Err(e) => {
-                    failed += 1;
-                    tracing::warn!(
-                        task_id = %task_id,
-                        session_id = %session.id,
-                        "回溯扫描提交failed: {}",
-                        e
-                    );
-                }
+                tracing::warn!(
+                    task_id = %task_id,
+                    offset,
+                    batch_size,
+                    "回溯扫描批量提交failed: {}",
+                    e
+                );
             }
         }
 
@@ -240,6 +228,15 @@ fn validate_rescan_request(req: &vigilyx_engine::rescan::RescanRequest) -> Resul
     Ok(())
 }
 
+fn snapshot_rescan_request(
+    mut req: vigilyx_engine::rescan::RescanRequest,
+) -> vigilyx_engine::rescan::RescanRequest {
+    if req.until.is_none() {
+        req.until = Some(chrono::Utc::now().to_rfc3339());
+    }
+    req
+}
+
 fn parse_rfc3339(value: &str) -> Result<chrono::DateTime<chrono::FixedOffset>, String> {
     chrono::DateTime::parse_from_rfc3339(value)
         .map_err(|_| format!("Invalid RFC3339 timestamp: {value}"))
@@ -249,20 +246,37 @@ fn rescan_channel_available(state: &AppState) -> bool {
     state.messaging.mq.is_some()
 }
 
-async fn submit_rescan_session(
-    state: &AppState,
-    session: &EmailSession,
-) -> Result<&'static str, String> {
+async fn submit_rescan_session(state: &AppState, session_id: Uuid) -> Result<&'static str, String> {
     if let Some(ref mq) = state.messaging.mq {
-        match mq.publish_cmd(topics::ENGINE_CMD_RESCAN, session).await {
-            Ok(()) => return Ok("Redis"),
+        let reference = RescanSessionReference::new(session_id);
+        match mq.xadd(streams::RESCAN_REQUESTS, &reference).await {
+            Ok(_) => return Ok("Redis Stream"),
             Err(e) => {
-                tracing::warn!(session_id = %session.id, "Redis rescan failed: {}", e);
+                tracing::warn!(session_id = %session_id, "Redis Stream rescan failed: {}", e);
             }
         }
     }
 
-    Err("Redis not available for rescan".to_string())
+    Err("Redis Stream not available for rescan".to_string())
+}
+
+async fn submit_rescan_batch(state: &AppState, session_ids: &[Uuid]) -> Result<usize, String> {
+    if session_ids.is_empty() {
+        return Ok(0);
+    }
+    let Some(mq) = state.messaging.mq.as_ref() else {
+        return Err("Redis Stream not available for rescan".to_string());
+    };
+    let references = session_ids
+        .iter()
+        .copied()
+        .map(RescanSessionReference::new)
+        .collect::<Vec<_>>();
+    let producer = StreamClient::new(mq.clone(), "vigilyx-api-rescan", "producer");
+    producer
+        .xadd_batch(streams::RESCAN_REQUESTS, &references)
+        .await
+        .map_err(|error| format!("Redis Stream rescan batch failed: {error}"))
 }
 
 async fn count_rescan_candidates(
@@ -270,7 +284,7 @@ async fn count_rescan_candidates(
     req: &vigilyx_engine::rescan::RescanRequest,
 ) -> anyhow::Result<u64> {
     let (sql, params) = build_rescan_candidate_sql(req, RescanQueryMode::Count, None, None);
-    let mut query = sqlx::query_as::<_, (i64,)>(&sql);
+    let mut query = sqlx::query_as::<_, (i64,)>(sqlx::AssertSqlSafe(sql.as_str()));
     for param in &params {
         query = query.bind(param);
     }
@@ -286,7 +300,7 @@ async fn fetch_rescan_candidate_ids(
 ) -> anyhow::Result<Vec<Uuid>> {
     let (sql, params) =
         build_rescan_candidate_sql(req, RescanQueryMode::Ids, Some(limit), Some(offset));
-    let mut query = sqlx::query_as::<_, SessionIdRow>(&sql);
+    let mut query = sqlx::query_as::<_, SessionIdRow>(sqlx::AssertSqlSafe(sql.as_str()));
     for param in &params {
         query = query.bind(param);
     }
@@ -313,11 +327,12 @@ fn build_rescan_candidate_sql(
     let mut params = Vec::new();
     let mut conditions = vec![
         "status = 'Completed'".to_string(),
-        "(COALESCE(mail_from, '') <> '' \
+        "(COALESCE(jsonb_array_length(content->'headers'), 0) > 0 \
           OR content->>'body_text' IS NOT NULL \
           OR content->>'body_html' IS NOT NULL \
           OR COALESCE(jsonb_array_length(content->'attachments'), 0) > 0 \
-          OR COALESCE(jsonb_array_length(content->'headers'), 0) > 0)"
+          OR COALESCE(jsonb_array_length(content->'links'), 0) > 0 \
+          OR COALESCE(error_reason, '') LIKE 'inspection:%')"
             .to_string(),
     ];
     let mut next_idx = 1usize;
@@ -366,4 +381,48 @@ fn build_rescan_candidate_sql(
     }
 
     (sql, params)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rescan_reference_does_not_duplicate_email_content() {
+        let reference = RescanSessionReference::new(Uuid::new_v4());
+        let encoded = serde_json::to_vec(&reference).unwrap();
+        assert!(encoded.len() < 80);
+        assert!(!String::from_utf8_lossy(&encoded).contains("body"));
+    }
+
+    #[test]
+    fn unbounded_rescan_is_frozen_to_an_acceptance_snapshot() {
+        let req = vigilyx_engine::rescan::RescanRequest {
+            since: None,
+            until: None,
+            session_ids: None,
+        };
+
+        let snapshot = snapshot_rescan_request(req);
+
+        let until = snapshot.until.expect("snapshot cutoff must be populated");
+        assert!(chrono::DateTime::parse_from_rfc3339(&until).is_ok());
+    }
+
+    #[test]
+    fn rescan_query_matches_email_session_analyzable_content_contract() {
+        let req = vigilyx_engine::rescan::RescanRequest {
+            since: None,
+            until: None,
+            session_ids: None,
+        };
+
+        let (sql, _) = build_rescan_candidate_sql(&req, RescanQueryMode::Count, None, None);
+
+        assert!(!sql.contains("mail_from"));
+        assert!(sql.contains("content->'headers'"));
+        assert!(sql.contains("content->'attachments'"));
+        assert!(sql.contains("content->'links'"));
+        assert!(sql.contains("error_reason, '') LIKE 'inspection:%'"));
+    }
 }

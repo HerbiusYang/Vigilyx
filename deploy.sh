@@ -159,6 +159,8 @@ RSYNC_EXCLUDES=(
     ".build-output"
     ".env"
     "deploy.conf"
+    # Deployment-local TLS private material must survive rsync --delete.
+    "deploy/docker/certs/"
     ".git/"
     ".DS_Store"
     "Thumbs.db"
@@ -186,6 +188,27 @@ compose_up_with_retry() {
     echo "  ${label} deployment hit a transient Docker Compose conflict; retrying once..."
     sleep 3
     ssh "$SERVER" "$remote_cmd"
+}
+
+compose_build_with_retry() {
+    local label="$1"
+    local remote_cmd="$2"
+    local attempt
+
+    for attempt in 1 2 3; do
+        if ssh "$SERVER" "$remote_cmd"; then
+            return 0
+        fi
+
+        if [ "$attempt" -eq 3 ]; then
+            echo "  ${label} build failed after ${attempt} attempts." >&2
+            return 1
+        fi
+
+        local delay=$((attempt * 3))
+        echo "  ${label} build hit a transient registry/package error; retrying in ${delay}s (attempt $((attempt + 1))/3)..."
+        sleep "$delay"
+    done
 }
 
 is_truthy() {
@@ -240,10 +263,15 @@ run_remote_frontend_toolchain() {
 
     ssh "$SERVER" "cd '${REMOTE_DIR}' && \
         docker run --rm \
+            -e HTTP_PROXY -e HTTPS_PROXY -e NO_PROXY \
+            -e http_proxy -e https_proxy -e no_proxy \
+            -v vigilyx_npm_cache:/root/.npm \
             -v '${REMOTE_DIR}:/workspace' \
             -w /workspace/frontend \
             ${FRONTEND_NODE_IMAGE} \
-            bash -lc 'npm install -g npm@${FRONTEND_NPM_VERSION} >/dev/null 2>&1 && \
+            bash -lc 'if [ \"\$(npm --version)\" != \"${FRONTEND_NPM_VERSION}\" ]; then \
+                    npm install -g npm@${FRONTEND_NPM_VERSION}; \
+                fi && \
                 bash ../scripts/check-frontend-toolchain.sh && \
                 ${task}'"
 }
@@ -435,14 +463,14 @@ if ! $DO_CONFIG_ONLY; then
 
     if [ -n "$BUILD_TARGETS" ]; then
         if $DO_PRODUCTION; then
-            ssh "$SERVER" "cd ${REMOTE_DIR} && \
+            compose_build_with_retry "Runtime image" "cd ${REMOTE_DIR} && \
                 set -a && \
                 [ -f deploy/docker/.env ] && . deploy/docker/.env >/dev/null 2>&1 || true && \
                 set +a && \
                 docker compose -f ${COMPOSE_FILE} build $BUILD_TARGETS"
         else
             # Use the fast override: Dockerfile.api.fast only COPYs prebuilt binaries (~5s packaging)
-            ssh "$SERVER" "cd ${REMOTE_DIR} && \
+            compose_build_with_retry "Runtime image" "cd ${REMOTE_DIR} && \
                 docker compose -f ${COMPOSE_FILE} -f ${FAST_OVERRIDE} build $BUILD_TARGETS"
         fi
     fi
@@ -467,10 +495,10 @@ if $DO_TLS; then
         if [ ! -f \$CERT_DIR/vigilyx.crt ]; then
             echo 'Generating self-signed TLS certificate (IP: ${REMOTE_IP})...'
             openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
-                -nodes -days 3650 -subj '/CN=Vigilyx' \
+                -nodes -days 397 -subj '/CN=Vigilyx' \
                 -addext 'subjectAltName=IP:${REMOTE_IP},IP:127.0.0.1,DNS:localhost' \
                 -keyout \$CERT_DIR/vigilyx.key -out \$CERT_DIR/vigilyx.crt 2>/dev/null
-            echo 'TLS certificate generated (valid for 10 years)'
+            echo 'TLS certificate generated (valid for 397 days)'
         else
             echo 'TLS certificate already exists; skipping generation'
         fi
@@ -499,7 +527,7 @@ if is_truthy "$CLAMAV_ENABLED_RAW"; then
     ANTIVIRUS_PROFILE="--profile antivirus"
     echo "  Antivirus: enabled (ClamAV profile)"
 else
-    echo "  Antivirus: disabled"
+    echo "  Antivirus: disabled (known-malware signatures are not scanned; use ./deploy.sh --antivirus to enable ClamAV)"
 fi
 
 # -- Auto-compile supplement for MTA mode: ensure the MTA binary does not stay stale when --mta is omitted --
@@ -537,7 +565,7 @@ fi
 # Start non-sniffer/non-mta services first to ensure Redis/API are ready
 if [ -n "$UP_TARGETS" ]; then
     compose_up_with_retry "Main service" "cd ${REMOTE_DIR} && \
-        docker compose -f ${COMPOSE_FILE} ${MODE_PROFILE} --profile ai ${ANTIVIRUS_PROFILE} ${TLS_PROFILE} up -d $UP_TARGETS"
+        docker compose -f ${COMPOSE_FILE} ${MODE_PROFILE} --profile ai ${ANTIVIRUS_PROFILE} ${TLS_PROFILE} up -d --no-deps $UP_TARGETS"
 fi
 
 if [ -n "$ANTIVIRUS_PROFILE" ]; then
@@ -554,7 +582,7 @@ fi
 if $DO_SNIFFER && [ "$DEPLOY_MODE" = "mirror" ]; then
     echo "  Restarting sniffer (capture gap ~3s)..."
     compose_up_with_retry "Sniffer" "cd ${REMOTE_DIR} && \
-        docker compose -f ${COMPOSE_FILE} --profile mirror up -d sniffer"
+        docker compose -f ${COMPOSE_FILE} --profile mirror up -d --no-deps sniffer"
 fi
 
 # MTA proxy deployment (explicit --mta or DB mode = mta)
@@ -579,7 +607,7 @@ if ! $DO_PRODUCTION && ! $DO_CONFIG_ONLY && { $DO_BACKEND || $DO_FRONTEND; }; th
         run_remote_frontend_toolchain "npm ci && npx vite build"
         ssh "$SERVER" "cd '${REMOTE_DIR}' && \
             docker compose -f ${COMPOSE_FILE} -f ${FAST_OVERRIDE} build vigilyx && \
-            docker compose -f ${COMPOSE_FILE} ${MODE_PROFILE} --profile ai ${ANTIVIRUS_PROFILE} ${TLS_PROFILE} up -d vigilyx"
+            docker compose -f ${COMPOSE_FILE} ${MODE_PROFILE} --profile ai ${ANTIVIRUS_PROFILE} ${TLS_PROFILE} up -d --no-deps vigilyx"
     fi
 fi
 

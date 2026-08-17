@@ -14,6 +14,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use chrono::Utc;
 use regex::Regex;
+use vigilyx_parser::mime::decode_rfc2047;
 
 use std::sync::Arc;
 
@@ -22,7 +23,7 @@ use crate::context::SecurityContext;
 use crate::db_service::DbQueryService;
 use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
-use crate::modules::common::extract_domain_from_email;
+use crate::modules::common::{domains_share_organizational_domain, extract_domain_from_email};
 
 /// Maximum score from all checks combined.
 const MAX_RAW_SCORE: f64 = 1.0;
@@ -34,6 +35,10 @@ const W_REPLY_CHAIN_ANOMALY: f64 = 0.30;
 const W_CLIENT_FINGERPRINT: f64 = 0.15;
 const W_ENVELOPE_MISMATCH: f64 = 0.20;
 const W_LOCAL_PART_BRAND_SPOOF: f64 = 0.30;
+/// Lexical local-part randomness is deliberately weaker than a first-class
+/// identity anomaly. It only contributes after an independent identity fact
+/// corroborates it.
+const W_CORROBORATED_RANDOM_SENDER: f64 = 0.12;
 
 /// Chinese pinyin initials (initial consonants). Used to support pinyin-initial abbreviations like
 /// "sxyhxh", where each character is a valid pinyin initial.
@@ -88,6 +93,54 @@ pub fn is_pinyin_english_name(name: &str) -> bool {
     can_cover[n]
 }
 
+/// Check for a common Chinese username shape that mixes pinyin initials with
+/// one full pinyin syllable, for example `zxzhao` (`zx` + `zhao`). These names
+/// can contain four consecutive consonants while remaining human-readable.
+/// Keep the initials prefix short and require the suffix to be an exact known
+/// syllable so this does not turn arbitrary consonant strings into exemptions.
+fn is_probable_pinyin_username(name: &str) -> bool {
+    let normalized = name.to_ascii_lowercase();
+    if !(5..=12).contains(&normalized.len()) || !normalized.bytes().all(|b| b.is_ascii_alphabetic())
+    {
+        return false;
+    }
+
+    let md = crate::module_data::module_data();
+    (2..=4).any(|prefix_len| {
+        let (prefix, suffix) = normalized.split_at(prefix_len);
+        is_pinyin_initial_abbreviation(prefix)
+            && suffix.len() >= 3
+            && md.contains("pinyin_syllables", suffix)
+    })
+}
+
+/// Return the suspicious consonant-run length for a username, if it should
+/// contribute the random-sender signal. Keeping this policy in one pure helper
+/// makes the benign-name exceptions and random-name regressions testable.
+fn random_username_consonant_run(username: &str) -> Option<u32> {
+    let normalized = username.to_ascii_lowercase();
+    if normalized.len() < 5
+        || !normalized.bytes().all(|b| b.is_ascii_alphabetic())
+        || is_pinyin_english_name(&normalized)
+        || is_probable_pinyin_username(&normalized)
+    {
+        return None;
+    }
+
+    let mut max_run = 0u32;
+    let mut run = 0u32;
+    for ch in normalized.chars() {
+        if "bcdfghjklmnpqrstvwxyz".contains(ch) {
+            run += 1;
+            max_run = max_run.max(run);
+        } else {
+            run = 0;
+        }
+    }
+
+    (max_run >= 4).then_some(max_run)
+}
+
 pub fn is_human_readable_domain_label(name: &str) -> bool {
     let normalized = name.to_ascii_lowercase();
     is_pinyin_english_name(&normalized)
@@ -114,6 +167,35 @@ fn sender_domain_has_established_brand_identity(domain: &str) -> bool {
         .unwrap_or(normalized.as_str());
 
     brand_label.len() >= 3 && is_human_readable_domain_label(brand_label)
+}
+
+/// Match a decoded display name against an impersonation target.
+///
+/// Single-character brands such as "X" must match the complete display name;
+/// substring matching them would flag ordinary names and RFC 2047 payload text.
+fn display_name_matches_impersonation_target(display_name: &str, target: &str) -> bool {
+    let normalized_name = display_name.trim().to_ascii_lowercase();
+    let normalized_target = target.trim().to_ascii_lowercase();
+
+    if normalized_target.is_empty() {
+        return false;
+    }
+
+    if normalized_target.chars().count() == 1 {
+        return normalized_name == normalized_target;
+    }
+
+    // Short brand identifiers are especially prone to accidental matches in
+    // mailbox-like display names (`wjsjdin` contains `jd`).  Match the target
+    // as a delimited token: `JD`, `JD 客服`, and `JD-support` remain valid, but
+    // `wjsjdin` and `myjdmail` do not.  The same boundary rule also avoids
+    // treating words such as `banking` as a standalone `bank` brand.
+    normalized_name.match_indices(&normalized_target).any(|(index, _)| {
+        let before = normalized_name[..index].chars().next_back();
+        let after = normalized_name[index + normalized_target.len()..].chars().next();
+        !before.is_some_and(|ch| ch.is_ascii_alphanumeric())
+            && !after.is_some_and(|ch| ch.is_ascii_alphanumeric())
+    })
 }
 
 pub struct IdentityAnomalyModule {
@@ -157,9 +239,16 @@ impl IdentityAnomalyModule {
 
         // Extract display name and email address from "Display Name <email@domain>" format
         if let Some(angle_start) = from_value.rfind('<') {
-            let display_name = from_value[..angle_start].trim().trim_matches('"');
+            let raw_display_name = from_value[..angle_start].trim().trim_matches('"');
             let email_part = from_value[angle_start..].trim_matches(|c| c == '<' || c == '>');
 
+            if raw_display_name.is_empty() {
+                return None;
+            }
+
+            // RFC 2047 encoded words are transport syntax, not identity text. Decode before
+            // matching so Base64/QP bytes cannot accidentally look like a protected brand.
+            let display_name = decode_rfc2047(raw_display_name).trim().to_string();
             if display_name.is_empty() {
                 return None;
             }
@@ -194,7 +283,7 @@ impl IdentityAnomalyModule {
             for target in
                 crate::module_data::module_data().get_list("display_name_impersonation_targets")
             {
-                if dn_lower.contains(target.as_str())
+                if display_name_matches_impersonation_target(&display_name, target)
                     && !email_domain.to_ascii_lowercase().contains(target.as_str())
                 {
                     return Some((
@@ -488,7 +577,7 @@ impl IdentityAnomalyModule {
         let env_domain = extract_domain_from_email(envelope_from)?;
         let hdr_domain = extract_domain_from_email(header_from)?;
 
-        if env_domain != hdr_domain {
+        if !domains_share_organizational_domain(&env_domain, &hdr_domain) {
             return Some((
                 W_ENVELOPE_MISMATCH,
                 Evidence {
@@ -522,6 +611,8 @@ impl SecurityModule for IdentityAnomalyModule {
         let mut evidence = Vec::new();
         let mut categories = Vec::new();
         let mut total_score: f64 = 0.0;
+        let mut sender_address_seen: Option<bool> = None;
+        let mut weak_observations: Vec<serde_json::Value> = Vec::new();
 
         // 1. Display name mismatch / impersonation
         if let Some((score, ev)) = self.check_display_name_mismatch(headers) {
@@ -596,35 +687,17 @@ impl SecurityModule for IdentityAnomalyModule {
             let is_public_provider =
                 crate::pipeline::internal_domains::is_public_mail_domain(&sender_domain_lower);
 
-            // Heuristic fallback: if the domain has many distinct senders in our
-            // history, it's likely a shared/public domain we didn't know about.
-            // Threshold: 10+ unique senders → treat as shared domain.
-            let is_shared_domain = if !is_internal && !is_public_provider {
-                match db
-                    .count_distinct_senders_for_domain(&sender_domain_lower)
-                    .await
-                {
-                    Ok(count) if count >= 10 => {
-                        tracing::debug!(
-                            domain = %sender_domain_lower,
-                            distinct_senders = count,
-                            "Skipping first-contact: domain has high sender diversity"
-                        );
-                        true
-                    }
-                    _ => false,
-                }
-            } else {
-                false
-            };
-
-            if !is_internal && !is_public_provider && !is_shared_domain {
+            if !is_internal && !is_public_provider {
                 let session_id = ctx.session.id.to_string();
-                match db
+                let domain_seen = db
                     .count_sender_domain_history(&sender_domain_lower, &session_id)
-                    .await
-                {
-                    Ok(0) => {
+                    .await;
+                let sender_seen = db
+                    .count_sender_address_history(&mail_from.to_ascii_lowercase(), &session_id)
+                    .await;
+                match (domain_seen, sender_seen) {
+                    (Ok(0), Ok(0)) => {
+                        sender_address_seen = Some(false);
                         total_score += W_FIRST_CONTACT;
                         categories.push("first_contact".to_string());
                         evidence.push(Evidence {
@@ -636,9 +709,29 @@ impl SecurityModule for IdentityAnomalyModule {
                             snippet: Some(mail_from.clone()),
                         });
                     }
-                    Ok(_) => {} // Known sender domain, no additional risk
-                    Err(e) => {
-                        tracing::warn!("First-contact DB query failed: {}", e);
+                    (Ok(_), Ok(0)) => {
+                        sender_address_seen = Some(false);
+                        // The domain is known, but this mailbox is new.  This
+                        // catches rotating user1@/user2@ BEC addresses without
+                        // treating every shared-domain sender as first contact.
+                        total_score += W_FIRST_CONTACT * 0.70;
+                        categories.push("new_sender_on_known_domain".to_string());
+                        evidence.push(Evidence {
+                            description: format!(
+                                "New sender mailbox on known domain {} — domain history is not a trust exemption",
+                                sender_domain_lower
+                            ),
+                            location: Some("envelope:MAIL_FROM".to_string()),
+                            snippet: Some(mail_from.clone()),
+                        });
+                    }
+                    (Ok(_), Ok(_)) => {
+                        sender_address_seen = Some(true);
+                    }
+                    (domain_result, sender_result) => {
+                        tracing::warn!(
+                            "First-contact DB query failed: domain={domain_result:?}, sender={sender_result:?}"
+                        );
                     }
                 }
             }
@@ -730,6 +823,7 @@ impl SecurityModule for IdentityAnomalyModule {
         // Skips internal domains: Chinese pinyin usernames (yybdyy, wnssh) look random but aren't
         // Skips pinyin+English decomposable usernames (e.g., weixinmphelper, alipaynotify)
         // Skips public mail providers (qq.com, 163.com, gmail.com...): free-form usernames are normal
+        let mut random_local_part: Option<(String, u32, String)> = None;
         if let Some(ref mail_from) = ctx.session.mail_from
             && let Some(username) = mail_from.split('@').next()
             && let Some(domain) = mail_from.split('@').nth(1)
@@ -738,38 +832,58 @@ impl SecurityModule for IdentityAnomalyModule {
             && !crate::modules::link_scan::is_well_known_safe_domain(&domain.to_lowercase())
             && !sender_domain_has_established_brand_identity(domain)
         {
-            // Pure alpha username, 5+ chars, 4+ consecutive consonants -> likely randomly generated
-            if username.len() >= 5
-                && username.chars().all(|c| c.is_ascii_alphabetic())
-                && !is_pinyin_english_name(&username.to_ascii_lowercase())
-            {
-                let max_consonant_run = {
-                    let mut max_run = 0u32;
-                    let mut run = 0u32;
-                    for ch in username.chars() {
-                        if "bcdfghjklmnpqrstvwxyz".contains(ch.to_ascii_lowercase()) {
-                            run += 1;
-                            if run > max_run {
-                                max_run = run;
-                            }
-                        } else {
-                            run = 0;
-                        }
-                    }
-                    max_run
-                };
-                if max_consonant_run >= 4 {
-                    total_score += 0.20;
-                    categories.push("random_sender".to_string());
-                    evidence.push(Evidence {
-                        description: format!(
-                            "Sender username {} contains {} consecutive consonants, likely randomly generated address",
-                            username, max_consonant_run
-                        ),
-                        location: Some("envelope:MAIL_FROM".to_string()),
-                        snippet: Some(mail_from.clone()),
-                    });
-                }
+            // A consonant run is a lexical observation only. Service-generated
+            // mailboxes and abbreviations routinely have this shape, so it is
+            // promoted later only when an independent identity fact agrees.
+            if let Some(max_consonant_run) = random_username_consonant_run(username) {
+                random_local_part = Some((
+                    username.to_string(),
+                    max_consonant_run,
+                    mail_from.clone(),
+                ));
+            }
+        }
+
+        if let Some((username, max_consonant_run, mail_from)) = random_local_part {
+            let corroborators: Vec<&str> = [
+                "first_contact",
+                "new_sender_on_known_domain",
+                "envelope_mismatch",
+                "random_domain",
+                "display_name_spoof",
+                "local_part_brand_spoof",
+            ]
+            .into_iter()
+            .filter(|candidate| categories.iter().any(|item| item == candidate))
+            .collect();
+
+            if sender_address_seen == Some(true) {
+                weak_observations.push(serde_json::json!({
+                    "kind": "random_local_part",
+                    "local_part": username,
+                    "max_consonant_run": max_consonant_run,
+                    "disposition": "suppressed_known_sender",
+                }));
+            } else if corroborators.is_empty() {
+                weak_observations.push(serde_json::json!({
+                    "kind": "random_local_part",
+                    "local_part": username,
+                    "max_consonant_run": max_consonant_run,
+                    "disposition": "observed_uncorroborated",
+                }));
+            } else {
+                total_score += W_CORROBORATED_RANDOM_SENDER;
+                categories.push("random_sender".to_string());
+                evidence.push(Evidence {
+                    description: format!(
+                        "Sender username {} contains {} consecutive consonants and is corroborated by {}",
+                        username,
+                        max_consonant_run,
+                        corroborators.join(", ")
+                    ),
+                    location: Some("envelope:MAIL_FROM".to_string()),
+                    snippet: Some(mail_from),
+                });
             }
         }
 
@@ -802,13 +916,19 @@ impl SecurityModule for IdentityAnomalyModule {
         let threat_level = ThreatLevel::from_score(total_score);
 
         if threat_level == ThreatLevel::Safe {
-            return Ok(ModuleResult::safe_analyzed(
+            let mut result = ModuleResult::safe_analyzed(
                 &self.meta.id,
                 &self.meta.name,
                 self.meta.pillar,
-                "No identity behavior anomalies found",
+                "No actionable identity behavior anomalies found",
                 duration_ms,
-            ));
+            );
+            result.details = serde_json::json!({
+                "score": total_score,
+                "weak_observations": weak_observations,
+            });
+            result.engine_id = Some("identity_anomaly".to_string());
+            return Ok(result);
         }
 
         categories.dedup();
@@ -832,6 +952,7 @@ impl SecurityModule for IdentityAnomalyModule {
             evidence,
             details: serde_json::json!({
                 "score": total_score,
+                "weak_observations": weak_observations,
             }),
             duration_ms,
             analyzed_at: Utc::now(),
@@ -844,6 +965,139 @@ impl SecurityModule for IdentityAnomalyModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vigilyx_core::models::{EmailContent, EmailSession, Protocol};
+    use vigilyx_core::IocEntry;
+
+    struct HistoryDb {
+        domain_count: i64,
+        sender_count: i64,
+    }
+
+    #[async_trait]
+    impl DbQueryService for HistoryDb {
+        async fn find_ioc(
+            &self,
+            _ioc_type: &str,
+            _indicator: &str,
+        ) -> anyhow::Result<Option<IocEntry>> {
+            Ok(None)
+        }
+
+        async fn count_sender_domain_history(
+            &self,
+            _sender_domain: &str,
+            _exclude_session_id: &str,
+        ) -> anyhow::Result<i64> {
+            Ok(self.domain_count)
+        }
+
+        async fn count_sender_address_history(
+            &self,
+            _sender_address: &str,
+            _exclude_session_id: &str,
+        ) -> anyhow::Result<i64> {
+            Ok(self.sender_count)
+        }
+
+        async fn count_distinct_senders_for_domain(
+            &self,
+            _sender_domain: &str,
+        ) -> anyhow::Result<i64> {
+            Ok(0)
+        }
+    }
+
+    fn identity_context(mail_from: &str, header_from: &str) -> SecurityContext {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "203.0.113.10".to_string(),
+            2525,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.mail_from = Some(mail_from.to_string());
+        session.rcpt_to = vec!["recipient@ccabchina.com".to_string()];
+        session.content = EmailContent {
+            headers: vec![
+                ("From".to_string(), header_from.to_string()),
+                ("MIME-Version".to_string(), "1.0".to_string()),
+                ("Content-Type".to_string(), "text/plain; charset=utf-8".to_string()),
+            ],
+            body_text: Some("Routine business message".to_string()),
+            is_complete: true,
+            ..Default::default()
+        };
+        SecurityContext::new(Arc::new(session))
+    }
+
+    #[tokio::test]
+    async fn random_looking_local_part_alone_is_only_a_weak_observation() {
+        let module = IdentityAnomalyModule::new(None);
+        let ctx = identity_context("fjlmodtf@diic.com", "FJL <fjlmodtf@diic.com>");
+
+        let result = module.analyze(&ctx).await.expect("identity analysis");
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert!(!result.categories.iter().any(|item| item == "random_sender"));
+        assert_eq!(
+            result.details["weak_observations"][0]["kind"],
+            "random_local_part"
+        );
+    }
+
+    #[tokio::test]
+    async fn exact_sender_history_suppresses_random_local_part() {
+        let db = Arc::new(HistoryDb {
+            domain_count: 12,
+            sender_count: 4,
+        });
+        let module = IdentityAnomalyModule::new(Some(db));
+        let ctx = identity_context("fjlmodtf@diic.com", "FJL <fjlmodtf@diic.com>");
+
+        let result = module.analyze(&ctx).await.expect("identity analysis");
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert_eq!(
+            result.details["weak_observations"][0]["disposition"],
+            "suppressed_known_sender"
+        );
+    }
+
+    #[tokio::test]
+    async fn first_contact_corroborates_random_local_part() {
+        let db = Arc::new(HistoryDb {
+            domain_count: 0,
+            sender_count: 0,
+        });
+        let module = IdentityAnomalyModule::new(Some(db));
+        let ctx = identity_context("fjlmodtf@diic.com", "FJL <fjlmodtf@diic.com>");
+
+        let result = module.analyze(&ctx).await.expect("identity analysis");
+
+        assert!(result.threat_level >= ThreatLevel::Low);
+        assert!(result.categories.iter().any(|item| item == "first_contact"));
+        assert!(result.categories.iter().any(|item| item == "random_sender"));
+    }
+
+    #[tokio::test]
+    async fn envelope_mismatch_corroborates_random_local_part() {
+        let module = IdentityAnomalyModule::new(None);
+        let ctx = identity_context(
+            "fjlmodtf@diic.com",
+            "Trusted Operations <notice@other.example>",
+        );
+
+        let result = module.analyze(&ctx).await.expect("identity analysis");
+
+        assert!(result.threat_level >= ThreatLevel::Low);
+        assert!(
+            result
+                .categories
+                .iter()
+                .any(|item| item == "envelope_mismatch")
+        );
+        assert!(result.categories.iter().any(|item| item == "random_sender"));
+    }
 
     #[test]
     fn test_pinyin_english_names_not_random() {
@@ -885,6 +1139,17 @@ mod tests {
         assert!(!is_pinyin_english_name("ktipfnl"), "ktipfnl is random");
         assert!(!is_pinyin_english_name("xhjqwzk"), "xhjqwzk is random");
         assert!(!is_pinyin_english_name("bdfghjk"), "bdfghjk is random");
+    }
+
+    #[test]
+    fn test_pinyin_initial_plus_syllable_username_not_random() {
+        assert!(
+            is_probable_pinyin_username("zxzhao"),
+            "zxzhao = pinyin initials zx + full syllable zhao"
+        );
+        assert_eq!(random_username_consonant_run("zxzhao"), None);
+        assert!(!is_probable_pinyin_username("pvzpfvq"));
+        assert_eq!(random_username_consonant_run("ktipfnl"), Some(4));
     }
 
     #[test]
@@ -997,6 +1262,73 @@ mod tests {
         let result = module.check_envelope_mismatch(Some("bounce@mailer.other.com"), &headers);
 
         assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_envelope_mismatch_accepts_same_organizational_domain() {
+        let module = IdentityAnomalyModule::new(None);
+        let headers = vec![("From".to_string(), "ACAMS <noreply@acams.org>".to_string())];
+
+        let result = module.check_envelope_mismatch(Some("info@contact.acams.org"), &headers);
+
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_encoded_personal_display_name_does_not_trigger_brand_spoof() {
+        let module = IdentityAnomalyModule::new(None);
+        let headers = vec![(
+            "From".to_string(),
+            "\"=?gb18030?B?xaPH7A==?=\" <542750348@qq.com>".to_string(),
+        )];
+
+        assert_eq!(decode_rfc2047("=?gb18030?B?xaPH7A==?="), "牛庆");
+        assert!(module.check_display_name_mismatch(&headers).is_none());
+    }
+
+    #[test]
+    fn test_single_character_x_target_requires_exact_display_name() {
+        let module = IdentityAnomalyModule::new(None);
+        let ordinary_name = vec![("From".to_string(), "Xavier <sender@qq.com>".to_string())];
+        let exact_brand = vec![("From".to_string(), "X <sender@qq.com>".to_string())];
+
+        assert!(module.check_display_name_mismatch(&ordinary_name).is_none());
+        assert!(module.check_display_name_mismatch(&exact_brand).is_some());
+    }
+
+    #[test]
+    fn test_short_brand_target_does_not_match_incidental_mailbox_substring() {
+        let module = IdentityAnomalyModule::new(None);
+        let ordinary_mailbox_name = vec![(
+            "From".to_string(),
+            "wjsjdin <wjsjdin@qq.com>".to_string(),
+        )];
+        let delimited_brand_name = vec![(
+            "From".to_string(),
+            "JD 客服 <sender@qq.com>".to_string(),
+        )];
+
+        assert!(module
+            .check_display_name_mismatch(&ordinary_mailbox_name)
+            .is_none());
+        assert!(module
+            .check_display_name_mismatch(&delimited_brand_name)
+            .is_some());
+    }
+
+    #[test]
+    fn test_decoded_known_service_display_name_still_triggers_brand_spoof() {
+        let module = IdentityAnomalyModule::new(None);
+        let headers = vec![(
+            "From".to_string(),
+            "=?utf-8?B?TWljcm9zb2Z0IEFjY291bnQgVGVhbQ==?= <sender@qq.com>".to_string(),
+        )];
+
+        let (_, evidence) = module
+            .check_display_name_mismatch(&headers)
+            .expect("decoded Microsoft display name should still be detected");
+
+        assert!(evidence.description.contains("Microsoft Account Team"));
     }
 
     // ─── P0-3: DGA detection tuning regression tests ───

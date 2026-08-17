@@ -9,13 +9,16 @@ mod email_alert;
 mod webhook;
 mod wechat_alert;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
-use vigilyx_core::security::SecurityVerdict;
+use vigilyx_core::security::{AlertLevel, AlertRecord, SecurityVerdict};
 use vigilyx_core::{
     is_sensitive_ip,
     models::{EmailSession, MailDirection},
@@ -88,11 +91,51 @@ pub struct DispositionRule {
 
 // Engine
 
+/// Cooldown window per (session, rule): a release rescan and the periodic
+/// catch-up rescan can evaluate the same session minutes apart; without a
+/// cooldown both runs would re-fire every matched rule (duplicate SOAR email
+/// / webhook / alert-row side effects).
+const DISPOSITION_RULE_COOLDOWN: Duration = Duration::from_secs(300);
+
+/// In-memory per-(session, rule) cooldown tracker for disposition actions.
+#[derive(Debug, Default)]
+struct DispositionCooldown {
+    last_fired: HashMap<(Uuid, String), Instant>,
+}
+
+/// Hard size trigger for lazy eviction. Without eviction the map only ever
+/// grew: every evaluated (session, rule) pair inserted an entry that was
+/// never removed, so a broad-match rule leaked memory linearly forever.
+/// When the map reaches this size, expired entries are swept on the spot.
+const DISPOSITION_COOLDOWN_EVICTION_TRIGGER: usize = 10_000;
+
+impl DispositionCooldown {
+    /// Return `true` (and record the firing) when this (session, rule) pair
+    /// has not fired within `window`; `false` while still cooling down.
+    fn should_fire(&mut self, key: (Uuid, String), now: Instant, window: Duration) -> bool {
+        // Lazy eviction: once the map grows past the trigger, drop entries
+        // whose cooldown already expired. Steady-state size is then bounded
+        // by the number of distinct (session, rule) firings per window.
+        if self.last_fired.len() >= DISPOSITION_COOLDOWN_EVICTION_TRIGGER {
+            self.last_fired
+                .retain(|_, fired| now.duration_since(*fired) < window);
+        }
+        if let Some(last) = self.last_fired.get(&key)
+            && now.duration_since(*last) < window
+        {
+            return false;
+        }
+        self.last_fired.insert(key, now);
+        true
+    }
+}
+
 /// Disposition engine
 #[derive(Clone)]
 pub struct DispositionEngine {
     db: VigilDb,
     http: reqwest::Client,
+    cooldown: Arc<Mutex<DispositionCooldown>>,
 }
 
 impl DispositionEngine {
@@ -105,6 +148,7 @@ impl DispositionEngine {
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .unwrap_or_default(),
+            cooldown: Arc::new(Mutex::new(DispositionCooldown::default())),
         }
     }
 
@@ -150,6 +194,24 @@ impl DispositionEngine {
                 &internal_domains,
                 &inbound_mail_servers,
             ) {
+                // Idempotency: the same session can be evaluated more than
+                // once (release rescan racing the periodic catch-up rescan).
+                // Suppress re-firing a rule for a session inside the cooldown
+                // window so SOAR emails/webhooks/alerts are not duplicated.
+                let cooldown_key = (verdict.session_id, rule_row.id.clone());
+                let allowed = self
+                    .cooldown
+                    .lock()
+                    .expect("disposition cooldown lock poisoned")
+                    .should_fire(cooldown_key, Instant::now(), DISPOSITION_RULE_COOLDOWN);
+                if !allowed {
+                    debug!(
+                        rule = rule_row.name,
+                        session_id = %verdict.session_id,
+                        "Disposition rule suppressed by per-session cooldown"
+                    );
+                    continue;
+                }
                 info!(
                     rule = rule_row.name,
                     session_id = %verdict.session_id,
@@ -282,6 +344,8 @@ impl DispositionEngine {
                     summary = %verdict.summary,
                     "Disposition action: log"
                 );
+                self.persist_disposition_alert(verdict, "log", &verdict.summary)
+                    .await;
             }
             "email" | "email_alert" => {
                 self.execute_email_action(
@@ -304,6 +368,7 @@ impl DispositionEngine {
                     message = msg,
                     "Disposition action: alert"
                 );
+                self.persist_disposition_alert(verdict, "alert", msg).await;
             }
             "wechat" | "wechat_alert" => {
                 self.execute_wechat_action(
@@ -317,6 +382,48 @@ impl DispositionEngine {
             }
             other => {
                 warn!(action_type = other, "Unknown disposition action type");
+            }
+        }
+    }
+
+    /// Persist a security_alerts record for disposition log/alert actions (P2 level).
+    async fn persist_disposition_alert(
+        &self,
+        verdict: &SecurityVerdict,
+        action_type: &str,
+        message: &str,
+    ) {
+        let record = AlertRecord {
+            id: Uuid::new_v4(),
+            verdict_id: verdict.id,
+            session_id: verdict.session_id,
+            alert_level: AlertLevel::P2,
+            expected_loss: 0.0,
+            return_period: 0.0,
+            cvar: 0.0,
+            risk_final: verdict.confidence,
+            k_conflict: 0.0,
+            cusum_alarm: false,
+            rationale: format!("Disposition rule action '{action_type}': {message}"),
+            acknowledged: false,
+            acknowledged_by: None,
+            acknowledged_at: None,
+            created_at: Utc::now(),
+        };
+        match self.db.insert_alert(&record).await {
+            Ok(true) => {}
+            Ok(false) => {
+                debug!(
+                    session_id = %verdict.session_id,
+                    "Disposition alert suppressed as duplicate within dedup window"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    session_id = %verdict.session_id,
+                    "Failed to store disposition alert: {}",
+                    e
+                );
             }
         }
     }
@@ -369,8 +476,8 @@ fn decrypt_stored_action_secret(stored: &str) -> Option<String> {
     }
 
     let cipher = Aes256Gcm::new_from_slice(&key_bytes).ok()?;
-    let nonce = Nonce::from_slice(&combined[..12]);
-    let plaintext = cipher.decrypt(nonce, &combined[12..]).ok()?;
+    let nonce = Nonce::try_from(&combined[..12]).ok()?;
+    let plaintext = cipher.decrypt(&nonce, &combined[12..]).ok()?;
     String::from_utf8(plaintext).ok()
 }
 
@@ -734,6 +841,7 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use std::collections::HashMap;
+    use std::time::{Duration, Instant};
     use uuid::Uuid;
     use vigilyx_core::models::Protocol;
     use vigilyx_core::security::ThreatLevel;
@@ -1245,5 +1353,124 @@ mod tests {
         let parsed = parse_rule_actions(raw).expect("double-encoded actions should parse");
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].action_type, "wechat_alert");
+    }
+
+    // ─── Round-4 PoC: per-(session, rule) disposition cooldown ────────────
+
+    #[test]
+    fn test_disposition_cooldown_blocks_second_fire_within_window() {
+        // Attack/bug (round 4): a release rescan and the periodic catch-up
+        // rescan both run post-verdict for the same session minutes apart.
+        // Before the fix every matched rule fired twice (duplicate SOAR email).
+        let mut cooldown = DispositionCooldown::default();
+        let session_id = Uuid::new_v4();
+        let key = (session_id, "rule-critical-alert".to_string());
+        let now = Instant::now();
+
+        assert!(
+            cooldown.should_fire(key.clone(), now, DISPOSITION_RULE_COOLDOWN),
+            "first evaluation must fire"
+        );
+        assert!(
+            !cooldown.should_fire(
+                key.clone(),
+                now + Duration::from_secs(120),
+                DISPOSITION_RULE_COOLDOWN,
+            ),
+            "rescan 2 minutes later must be suppressed"
+        );
+        assert!(
+            cooldown.should_fire(
+                key,
+                now + DISPOSITION_RULE_COOLDOWN + Duration::from_secs(1),
+                DISPOSITION_RULE_COOLDOWN,
+            ),
+            "firing after the cooldown window must be allowed again"
+        );
+    }
+
+    #[test]
+    fn test_disposition_cooldown_is_scoped_per_session_and_rule() {
+        let mut cooldown = DispositionCooldown::default();
+        let session_a = Uuid::new_v4();
+        let session_b = Uuid::new_v4();
+        let now = Instant::now();
+
+        assert!(cooldown.should_fire(
+            (session_a, "rule-1".to_string()),
+            now,
+            DISPOSITION_RULE_COOLDOWN,
+        ));
+        // A different rule on the same session is independent.
+        assert!(cooldown.should_fire(
+            (session_a, "rule-2".to_string()),
+            now,
+            DISPOSITION_RULE_COOLDOWN,
+        ));
+        // The same rule on a different session is independent.
+        assert!(cooldown.should_fire(
+            (session_b, "rule-1".to_string()),
+            now,
+            DISPOSITION_RULE_COOLDOWN,
+        ));
+        // But the exact (session, rule) pair cools down.
+        assert!(!cooldown.should_fire(
+            (session_a, "rule-1".to_string()),
+            now,
+            DISPOSITION_RULE_COOLDOWN,
+        ));
+    }
+
+    #[test]
+    fn test_disposition_cooldown_evicts_expired_entries_lazily() {
+        // PoC (round 5, D2): before the fix, `last_fired` only ever grew —
+        // every (session, rule) pair inserted an entry that was never
+        // removed, so a broad-match rule leaked memory linearly with traffic.
+        // Now a size trigger sweeps expired entries in place.
+        let mut cooldown = DispositionCooldown::default();
+        let now = Instant::now();
+        let stale_instant = now - DISPOSITION_RULE_COOLDOWN - Duration::from_secs(60);
+
+        // Fill the map up to the eviction trigger with long-expired entries,
+        // as a busy deployment would accumulate over time.
+        for i in 0..DISPOSITION_COOLDOWN_EVICTION_TRIGGER {
+            cooldown
+                .last_fired
+                .insert((Uuid::new_v4(), format!("rule-{}", i % 8)), stale_instant);
+        }
+        assert_eq!(cooldown.last_fired.len(), DISPOSITION_COOLDOWN_EVICTION_TRIGGER);
+
+        // The next should_fire call sweeps the expired entries...
+        let fresh_key = (Uuid::new_v4(), "rule-critical-alert".to_string());
+        assert!(
+            cooldown.should_fire(fresh_key.clone(), now, DISPOSITION_RULE_COOLDOWN),
+            "a fresh (session, rule) pair must still fire"
+        );
+
+        // ...leaving only the freshly inserted entry.
+        assert_eq!(
+            cooldown.last_fired.len(),
+            1,
+            "expired cooldown entries must be evicted lazily, not kept forever"
+        );
+
+        // Entries still inside the window must survive eviction.
+        let mut cooldown = DispositionCooldown::default();
+        let fresh_pair = (Uuid::new_v4(), "rule-fresh".to_string());
+        cooldown.last_fired.insert(fresh_pair.clone(), now);
+        for i in 1..DISPOSITION_COOLDOWN_EVICTION_TRIGGER {
+            cooldown
+                .last_fired
+                .insert((Uuid::new_v4(), format!("rule-stale-{i}")), stale_instant);
+        }
+        assert!(cooldown.should_fire(
+            (Uuid::new_v4(), "trigger".to_string()),
+            now,
+            DISPOSITION_RULE_COOLDOWN
+        ));
+        assert!(
+            cooldown.last_fired.contains_key(&fresh_pair),
+            "in-window entries must survive the lazy sweep"
+        );
     }
 }

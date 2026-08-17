@@ -2,7 +2,8 @@
 
 use super::http_helpers::{
     extract_coremail_account_from_body, extract_form_credentials, extract_sid_from_uri,
-    extract_socketio_auth_user, extract_user_from_cookie, write_body_temp_file,
+    extract_socketio_auth_user, extract_user_from_cookie, users_probably_same,
+    write_body_temp_file,
 };
 use super::*;
 use crate::capture::RawpacketInfo;
@@ -73,7 +74,10 @@ impl ShardedSessionManager {
             timestamp: Instant::now(),
         };
 
-        if session_data.client_stream.add_segment(segment).is_err() {
+        if let Err(stream_err) = session_data.client_stream.add_segment(segment) {
+            if matches!(stream_err, crate::stream::StreamError::GlobalBudgetExceeded) {
+                self.note_budget_pressure();
+            }
             // HTTP pipeline: Stream buffer overflow - data loss!
             self.stats
                 .http_pipeline
@@ -104,6 +108,30 @@ impl ShardedSessionManager {
         };
 
         let requests = http_state.process_stream(reassembled);
+
+        // A4: malformed chunked framing permanently desyncs the splitter for
+        // this connection. Surface it as an inspection-limited signal instead
+        // of silently scanning garbage (or nothing) from here on.
+        if http_state.is_desynced() && !session_data.http_desynced {
+            session_data.http_desynced = true;
+            self.stats
+                .security
+                .http_desynced_connection_total
+                .fetch_add(1, Ordering::Relaxed);
+            Self::merge_inspection_reason(
+                &mut session_data.session.error_reason,
+                "http_stream_desynced",
+            );
+            self.mark_session_dirty(&mut session_data.dirty, &session_data.key);
+            warn!(
+                session_id = %session_data.session.id,
+                client_ip = %session_data.session.client_ip,
+                server_ip = %session_data.session.server_ip,
+                server_port = session_data.session.server_port,
+                "HTTP framing desynced (malformed chunked body); no further requests split on this connection"
+            );
+        }
+
         if requests.is_empty() {
             return;
         }
@@ -139,19 +167,34 @@ impl ShardedSessionManager {
             http_session.host = req.host.clone();
             http_session.content_type = req.content_type.clone();
             http_session.network_session_id = Some(session_data.session.id);
-            http_session.has_gaps = stream_has_gaps;
+            // Gap/eviction/desync all mean the content below may be
+            // incomplete; downstream must not treat it as fully scanned.
+            http_session.has_gaps = stream_has_gaps
+                || session_data.stream_buffers_evicted
+                || session_data.http_desynced;
 
             // ExtractRequest (Fromreassemble ofStreamMediumAccording to)
             if req.body_length > 0 {
-                let body_end = req.body_offset + req.body_length;
-                if body_end <= reassembled.len() {
-                    let body = &reassembled[req.body_offset..body_end];
+                // Chunked-decoded bodies are owned by the parsed request; plain
+                // Content-Length bodies point into the reassembled stream buffer.
+                let body_opt: Option<&[u8]> = if let Some(owned) = req.body_owned.as_deref() {
+                    Some(owned)
+                } else {
+                    let body_end = req.body_offset + req.body_length;
+                    (body_end <= reassembled.len())
+                        .then(|| &reassembled[req.body_offset..body_end])
+                };
+                if let Some(body) = body_opt {
                     http_session.request_body_size = body.len();
 
                     // Body storage strategy:
-                    // <= 256KB -> Memory (request_body)
-                    // > 256KB -> writedisktempFile (body_temp_file)
-                    const BODY_MEMORY_THRESHOLD: usize = 256 * 1024;
+                    // <= 16KB -> Memory (request_body, DLP scans the full body)
+                    // > 16KB -> writedisktempFile (body_temp_file)
+                    // Bodies between 16KB and 256KB used to be kept in memory but
+                    // truncated to 16KB, which created a DLP dead zone: content
+                    // past byte 16384 was never scanned. Spill them to a temp
+                    // file like larger bodies so get_scan_body sees everything.
+                    const BODY_MEMORY_THRESHOLD: usize = 16 * 1024;
 
                     if body.len() > BODY_MEMORY_THRESHOLD {
                         // large body -> writetempFile
@@ -268,6 +311,41 @@ impl ShardedSessionManager {
                 http_session.detected_user = Some(user);
             }
 
+            // F3②: Cookie/body-extracted identities are fully
+            // client-controlled and can be forged. When this connection has an
+            // observed login binding (HTTP form auth), a conflicting
+            // extraction is an `attribution_mismatch` signal and the login
+            // binding wins.
+            if let (Some(extracted), Some(bound)) = (
+                http_session.detected_user.clone(),
+                session_data
+                    .session
+                    .auth_info
+                    .as_ref()
+                    .and_then(|a| a.username.clone()),
+            ) && !users_probably_same(&extracted, &bound)
+            {
+                self.stats
+                    .security
+                    .attribution_mismatch_total
+                    .fetch_add(1, Ordering::Relaxed);
+                warn!(
+                    session_id = %http_session.id,
+                    client_ip = %session_data.session.client_ip,
+                    extracted_user = %extracted,
+                    login_bound_user = %bound,
+                    uri = %req.uri,
+                    "attribution_mismatch: client-supplied identity conflicts with login binding; using login binding"
+                );
+                http_session.detected_user = Some(bound);
+            }
+
+            // F3③: the same client IP reporting multiple distinct users is an
+            // anomaly signal (sid/cookie spoofing shows up here).
+            if let Some(ref user) = http_session.detected_user {
+                self.note_client_ip_user(session_data.client_compact_ip, user);
+            }
+
             // LRU eviction (keep recent 40K items, delete oldest)
             self.sid_user_evict_lru();
 
@@ -346,9 +424,13 @@ impl ShardedSessionManager {
                         session_data.session.auth_info = Some(SmtpAuthInfo {
                             auth_method: "HTTP_FORM".to_string(),
                             username: Some(username),
-                            password: Some(password),
+                            // Never retain or serialize an observed login password.
+                            // The username and response status are sufficient for
+                            // session-level authentication telemetry.
+                            password: None,
                             auth_success: None, // waitResponsedetermine
                         });
+                        drop(password);
                         if !session_data.dirty {
                             session_data.dirty = true;
                             self.dirty_queue.push(session_data.key.clone());

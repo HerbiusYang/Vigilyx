@@ -3,7 +3,8 @@
 //! Domain extraction helpers used across header_scan, domain_verify,
 //! link_scan, and link_reputation modules.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::net::IpAddr;
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -66,8 +67,62 @@ pub fn extract_domain_from_email(addr: &str) -> Option<String> {
     let email = extract_email_address(addr)?;
     email
         .rsplit_once('@')
-        .map(|(_, d)| d.trim().to_ascii_lowercase())
+        // Trim trailing dots: "evil.com." (FQDN form) must normalize to the
+        // same domain as "evil.com" or IOC exact-match lookups miss.
+        .map(|(_, d)| d.trim().trim_end_matches('.').to_ascii_lowercase())
         .filter(|d| !d.is_empty())
+}
+
+/// Return the registrable/organizational domain used for relaxed sender
+/// alignment. This intentionally centralizes the existing compound-suffix
+/// policy so header, identity, and link modules cannot disagree about the
+/// same parent/subdomain relationship.
+pub fn organizational_domain(domain: &str) -> Option<String> {
+    let normalized = domain
+        .trim()
+        .trim_start_matches('.')
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    if normalized.parse::<IpAddr>().is_ok() {
+        return Some(normalized);
+    }
+
+    let labels: Vec<&str> = normalized
+        .split('.')
+        .filter(|label| !label.is_empty())
+        .collect();
+    if labels.is_empty() {
+        return None;
+    }
+
+    let public_suffix_labels = module_data()
+        .get_list("compound_tlds")
+        .iter()
+        .filter_map(|suffix| {
+            let suffix = suffix.trim_start_matches('.').to_ascii_lowercase();
+            (normalized == suffix || normalized.ends_with(&format!(".{suffix}")))
+                .then(|| suffix.split('.').count())
+        })
+        .max()
+        .unwrap_or(1);
+
+    if labels.len() <= public_suffix_labels {
+        return Some(normalized);
+    }
+
+    Some(labels[labels.len() - public_suffix_labels - 1..].join("."))
+}
+
+/// RFC 7489-style relaxed organizational-domain comparison.
+pub fn domains_share_organizational_domain(left: &str, right: &str) -> bool {
+    match (organizational_domain(left), organizational_domain(right)) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    }
 }
 
 fn sanitized_http_url_candidate(url: &str) -> Option<&str> {
@@ -109,6 +164,15 @@ fn sanitized_http_url_candidate(url: &str) -> Option<&str> {
     Some(&trimmed[..end])
 }
 
+/// Parse an HTTP(S) URL candidate with the WHATWG parser.
+///
+/// Userinfo (`http://mail.qq.com:443@evil.tk/login`) is NOT rejected: the
+/// parser keeps the real host (the segment after `@`) available via
+/// `host_str()`, so callers see the actual destination. Rejecting userinfo
+/// here previously blinded every downstream check (href/text mismatch, TLD,
+/// redirect) because the URL could not be parsed at all. Callers that grant
+/// exemptions must additionally consult [`url_has_userinfo`] — a URL carrying
+/// userinfo must never be treated as a trusted/static asset.
 fn parse_http_url(url: &str) -> Option<Url> {
     let candidate = sanitized_http_url_candidate(url)?;
     let after_scheme = candidate
@@ -117,11 +181,19 @@ fn parse_http_url(url: &str) -> Option<Url> {
     if after_scheme.is_empty() || after_scheme.starts_with(['/', '?', '#']) {
         return None;
     }
-    let parsed = Url::parse(candidate).ok()?;
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        return None;
-    }
-    Some(parsed)
+    Url::parse(candidate).ok()
+}
+
+/// Whether an HTTP(S) URL carries userinfo in its authority component
+/// (`http://user:pass@host/` or the deceptive `http://trusted.name@evil.tk/`).
+/// The mere presence of userinfo in an email link is a phishing signal: mail
+/// clients render the leading "trusted.name@" portion while the browser
+/// connects to the host after `@`.
+pub fn url_has_userinfo(url: &str) -> bool {
+    let Some(parsed) = parse_http_url(url) else {
+        return false;
+    };
+    !parsed.username().is_empty() || parsed.password().is_some()
 }
 
 pub fn host_matches_domain_or_subdomain(host: &str, candidate: &str) -> bool {
@@ -244,6 +316,10 @@ pub fn is_probable_cloud_asset_host(domain: &str) -> bool {
 
 /// Detect a URL that points to a static asset hosted on common object-storage infrastructure.
 pub fn is_probable_cloud_asset_url(url: &str) -> bool {
+    // A userinfo URL must never inherit an asset exemption.
+    if url_has_userinfo(url) {
+        return false;
+    }
     let Some(domain) = extract_domain_from_url(url) else {
         return false;
     };
@@ -266,6 +342,10 @@ fn is_probable_provider_asset_host(domain: &str) -> bool {
 }
 
 pub fn is_probable_safe_static_asset_url(url: &str) -> bool {
+    // A userinfo URL must never inherit an asset exemption.
+    if url_has_userinfo(url) {
+        return false;
+    }
     let Some(domain) = extract_domain_from_url(url) else {
         return false;
     };
@@ -279,7 +359,10 @@ pub fn is_probable_safe_static_asset_url(url: &str) -> bool {
 
     let lower_domain = domain.to_ascii_lowercase();
     if (lower_domain == "qlogo.cn" || lower_domain.ends_with(".qlogo.cn"))
-        && (path.contains("/qq_product/") || path.contains("/ek_qqapp/") || path.ends_with("/0"))
+        && (path == "/g"
+            || path.contains("/qq_product/")
+            || path.contains("/ek_qqapp/")
+            || path.ends_with("/0"))
     {
         return true;
     }
@@ -298,6 +381,10 @@ pub fn is_probable_safe_static_asset_url(url: &str) -> bool {
 /// Detect non-clickable image/render endpoints that are commonly embedded as
 /// `<img src>` resources in marketing mail rather than user-facing landing pages.
 pub fn is_probable_non_clickable_render_asset_url(url: &str) -> bool {
+    // A userinfo URL must never inherit an asset exemption.
+    if url_has_userinfo(url) {
+        return false;
+    }
     if is_probable_safe_static_asset_url(url) {
         return true;
     }
@@ -341,6 +428,10 @@ pub fn is_probable_non_clickable_render_asset_url(url: &str) -> bool {
 /// platforms. These URLs intentionally carry long encrypted tokens and should
 /// not be treated like user-facing landing pages.
 pub fn is_probable_opaque_mail_callback_url(url: &str) -> bool {
+    // A userinfo URL must never inherit an asset exemption.
+    if url_has_userinfo(url) {
+        return false;
+    }
     let Some(parsed) = parse_http_url(url) else {
         return false;
     };
@@ -349,6 +440,15 @@ pub fn is_probable_opaque_mail_callback_url(url: &str) -> bool {
     };
     let host = host.trim_end_matches('.').to_ascii_lowercase();
     let path = parsed.path().to_ascii_lowercase();
+
+    // Huawei Developer notification telemetry observed in the production
+    // corpus. Keep this exemption provider- and schema-specific: accepting a
+    // parent-domain suffix or unknown fields would let attacker-controlled
+    // lookalikes and embedded redirect targets bypass normal URL analysis.
+    if host == "svc-drcn.developer.huawei.com" {
+        return is_huawei_developer_telemetry_callback(&parsed, &path);
+    }
+
     if path != "/api/webhook" {
         return false;
     }
@@ -384,9 +484,70 @@ pub fn is_probable_opaque_mail_callback_url(url: &str) -> bool {
     saw_opaque_token
 }
 
+fn is_huawei_developer_telemetry_callback(parsed: &Url, normalized_path: &str) -> bool {
+    if parsed.scheme() != "https" || parsed.port().is_some() || parsed.fragment().is_some() {
+        return false;
+    }
+
+    let mut params = HashMap::new();
+    for (name, value) in parsed.query_pairs() {
+        if params
+            .insert(name.into_owned(), value.into_owned())
+            .is_some()
+        {
+            return false;
+        }
+    }
+
+    let has_common_fields = params.get("localMsgID").is_some_and(|value| {
+        value.len() == 32
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    }) && params.get("msgType").is_some_and(|value| value == "1")
+        && params.get("key").is_some_and(|value| {
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        });
+    if !has_common_fields {
+        return false;
+    }
+
+    match normalized_path {
+        "/partnermessage/dadian/v2/opennum" => params.len() == 3,
+        "/partnermessage/dadian/v2/clicknum" => {
+            params.len() == 5
+                && params
+                    .get("urlPageIndex")
+                    .is_some_and(|value| is_canonical_lowercase_uuid(value))
+                && params
+                    .get("urlIndex")
+                    .is_some_and(|value| is_canonical_lowercase_uuid(value))
+        }
+        _ => false,
+    }
+}
+
+fn is_canonical_lowercase_uuid(value: &str) -> bool {
+    value.len() == 36
+        && value.bytes().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                byte == b'-'
+            } else {
+                byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()
+            }
+        })
+}
+
 /// Detect non-clickable XML/HTML namespace references that frequently appear in
 /// raw MIME / Word-generated HTML but are not user-facing links.
 pub fn is_probable_schema_reference_url(url: &str) -> bool {
+    // A userinfo URL must never inherit an asset exemption.
+    if url_has_userinfo(url) {
+        return false;
+    }
     let Some(domain) = extract_domain_from_url(url) else {
         return false;
     };
@@ -399,6 +560,8 @@ pub fn is_probable_schema_reference_url(url: &str) -> bool {
             path.starts_with("/office/") || path.starts_with("/office/2004/")
         }
         "schemas.openxmlformats.org" => true,
+        "www.wps.cn" | "wps.cn" => path.starts_with("/officedocument/"),
+        "purl.org" => path.starts_with("/dc/"),
         "www.w3.org" | "w3.org" => {
             path.starts_with("/tr/")
                 || path.starts_with("/2000/")
@@ -431,8 +594,8 @@ pub fn percent_decode(input: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Extract embedded redirect target URLs from tracking/security-gateway links.
-pub fn extract_redirect_target_urls(url: &str) -> Vec<String> {
+/// Extract one layer of embedded redirect target URLs.
+fn extract_redirect_target_urls_once(url: &str) -> Vec<String> {
     let redirect_params = module_data().get_list("redirect_params").to_vec();
 
     let mut targets = Vec::new();
@@ -461,10 +624,61 @@ pub fn extract_redirect_target_urls(url: &str) -> Vec<String> {
             decoded = next;
         }
 
-        if let Some(target) = sanitized_http_url_candidate(&decoded)
-            && seen.insert(target.to_string())
+        let target = normalize_embedded_http_target(&decoded);
+        if let Some(target) = target
+            && seen.insert(target.clone())
         {
-            targets.push(target.to_string());
+            targets.push(target);
+        }
+    }
+
+    targets
+}
+
+/// Normalize redirect parameters that omit a scheme (common in enterprise
+/// mail gateways: `url=www.example.com/path`).  Only host-like values are
+/// promoted to HTTPS; arbitrary strings and non-HTTP schemes are rejected.
+fn normalize_embedded_http_target(value: &str) -> Option<String> {
+    if let Some(candidate) = sanitized_http_url_candidate(value) {
+        return Some(candidate.to_string());
+    }
+
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed
+            .chars()
+            .any(|c| matches!(c, ' ' | '\r' | '\n' | '\t' | '"' | '\'' | '<' | '>' | ':'))
+        || !trimmed.contains('.')
+    {
+        return None;
+    }
+
+    let candidate = format!("https://{trimmed}");
+    sanitized_http_url_candidate(&candidate).map(str::to_string)
+}
+
+/// Extract embedded redirect target URLs from tracking/security-gateway links.
+///
+/// Redirect wrappers are frequently nested (for example a mail gateway wraps a
+/// tracking URL which itself carries a second `next=` target).  The old helper
+/// stopped after the first wrapper, allowing the final phishing host to avoid
+/// both reputation and structural analysis.  Walk a bounded chain so malformed
+/// or cyclic URLs cannot cause unbounded work.
+pub fn extract_redirect_target_urls(url: &str) -> Vec<String> {
+    const MAX_REDIRECT_DEPTH: usize = 4;
+    let mut targets = Vec::new();
+    let mut seen = HashSet::new();
+    let mut frontier = vec![(url.to_string(), 0usize)];
+
+    while let Some((current, depth)) = frontier.pop() {
+        if depth >= MAX_REDIRECT_DEPTH {
+            continue;
+        }
+        for target in extract_redirect_target_urls_once(&current) {
+            if seen.insert(target.clone()) {
+                frontier.push((target.clone(), depth + 1));
+                targets.push(target);
+            }
         }
     }
 
@@ -558,6 +772,19 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_domain_from_email_trailing_dot_fqdn_normalised() {
+        // Trailing-dot FQDN evasion: "evil.com." must match the "evil.com" IOC.
+        assert_eq!(
+            extract_domain_from_email("Carol <carol@Evil.COM.>"),
+            Some("evil.com".to_string()),
+        );
+        assert_eq!(
+            extract_domain_from_email("dave@example.com.."),
+            Some("example.com".to_string()),
+        );
+    }
+
+    #[test]
     fn test_extract_domain_from_email_no_at_returns_none() {
         assert_eq!(extract_domain_from_email("nodomain"), None);
     }
@@ -646,11 +873,35 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_domain_from_url_rejects_userinfo() {
+    fn test_extract_domain_from_url_userinfo_returns_real_host() {
+        // PoC (B1-1): before the fix, userinfo URLs were rejected outright and
+        // every downstream check (href/text mismatch, TLD, reputation) was
+        // blind. The real destination is the host after `@`.
         assert_eq!(
             extract_domain_from_url("https://user:pass@evil.example/login"),
-            None
+            Some("evil.example".to_string()),
         );
+    }
+
+    #[test]
+    fn test_url_has_userinfo_detects_authority_obfuscation() {
+        assert!(url_has_userinfo("https://user:pass@evil.example/login"));
+        assert!(url_has_userinfo("http://mail.qq.com:443@evil.tk/login"));
+        assert!(!url_has_userinfo(
+            "https://evil.example/login?next=user@example.com"
+        ));
+        assert!(!url_has_userinfo("https://mail.qq.com/login"));
+    }
+
+    #[test]
+    fn test_userinfo_url_never_gets_static_asset_exemption() {
+        // A deceptive userinfo prefix must not ride the trusted-CDN exemption.
+        assert!(!is_probable_safe_static_asset_url(
+            "https://attacker@mail-online.nosdn.127.net/wzpmmc/b7713ee39fc6d0272a61196c395ab44e.jpg"
+        ));
+        assert!(!is_probable_schema_reference_url(
+            "http://user@schemas.openxmlformats.org/officeDocument"
+        ));
     }
 
     #[test]
@@ -679,10 +930,13 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_domain_from_url_rejects_port_before_userinfo_bypass() {
+    fn test_extract_domain_from_url_port_before_userinfo_returns_real_host() {
+        // PoC (B1-1): `https://12306.com:443@evil.example/login` displays the
+        // trusted name but connects to evil.example — the parser must expose
+        // the real host, not reject the URL.
         assert_eq!(
             extract_domain_from_url("https://12306.com:443@evil.example/login"),
-            None
+            Some("evil.example".to_string()),
         );
     }
 
@@ -690,6 +944,16 @@ mod tests {
     fn test_qlogo_asset_url_is_treated_as_safe_static_asset() {
         assert!(is_probable_safe_static_asset_url(
             "http://thirdqq.qlogo.cn/ek_qqapp/AQImdrqed/example/0"
+        ));
+        assert!(is_probable_safe_static_asset_url(
+            "http://thirdqq.qlogo.cn/g?b=oidb&k=avatar-token&s=100&t=1700000000"
+        ));
+    }
+
+    #[test]
+    fn test_wps_document_namespace_is_not_a_clickable_url() {
+        assert!(is_probable_schema_reference_url(
+            "http://www.wps.cn/officeDocument/2013/wpsCustomData"
         ));
     }
 
@@ -723,6 +987,46 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_redirect_target_urls_walks_nested_wrappers() {
+        let targets = extract_redirect_target_urls(
+            "https://gateway.example/track?url=https%3A%2F%2Fjump.example%2Fgo%3Fnext%3Dhttps%253A%252F%252Fevil.example%252Flogin",
+        );
+        assert!(
+            targets
+                .contains(&"https://jump.example/go?next=https://evil.example/login".to_string())
+        );
+        assert!(targets.contains(&"https://evil.example/login".to_string()));
+    }
+
+    #[test]
+    fn test_organizational_domain_relaxed_alignment() {
+        assert_eq!(
+            organizational_domain("mail.contact.acams.org"),
+            Some("acams.org".to_string())
+        );
+        assert!(domains_share_organizational_domain(
+            "acams.org",
+            "contact.acams.org"
+        ));
+        assert!(domains_share_organizational_domain(
+            "example.co.uk",
+            "mailer.example.co.uk"
+        ));
+        assert!(!domains_share_organizational_domain(
+            "acams.org",
+            "acams-login.example"
+        ));
+        assert!(domains_share_organizational_domain(
+            "192.0.2.1",
+            "192.0.2.1"
+        ));
+        assert!(!domains_share_organizational_domain(
+            "192.0.2.1",
+            "192.0.2.2"
+        ));
+    }
+
+    #[test]
     fn test_non_clickable_render_asset_url_recognizes_showimg_endpoint() {
         assert!(is_probable_non_clickable_render_asset_url(
             "http://home.sumscope.com:8050/portal/sendcloud/showImg?id=74916bf1ba5d4f7f9731941883c1ffc0"
@@ -734,6 +1038,34 @@ mod tests {
         assert!(is_probable_opaque_mail_callback_url(
             "https://1254335589-hk.callback.cloudses.com/api/webhook?upn=eb4ffc552935405db76234bb95083795f5831773d61927b5570fc6a831840ab1e14a24f90146ee0acaa8686e500ef2d"
         ));
+    }
+
+    #[test]
+    fn test_opaque_mail_callback_url_recognizes_observed_huawei_telemetry_schema() {
+        assert!(is_probable_opaque_mail_callback_url(
+            "https://svc-drcn.developer.huawei.com/partnermessage/dadian/v2/clicknum?localMsgID=afef48094a5f43d6bc18ff838fe3615a&msgType=1&urlPageIndex=f7cf6546-809b-4359-b402-b04ae180817a&urlIndex=d5431c23-7909-41fa-8c8b-0541cfd1ff17&key=92e3d69690d94e58685eec9ecaf3e3e93d5d63f6716ad3543aa4caa6869b9de6"
+        ));
+        assert!(is_probable_opaque_mail_callback_url(
+            "https://svc-drcn.developer.huawei.com/partnermessage/dadian/v2/opennum?localMsgID=afef48094a5f43d6bc18ff838fe3615a&msgType=1&key=f0f19cf0e507a9fb1fb0bfeae2419ad3debdebaab1189e956a674303ca27af82"
+        ));
+    }
+
+    #[test]
+    fn test_huawei_telemetry_exemption_rejects_lookalikes_and_schema_deviations() {
+        let valid = "localMsgID=afef48094a5f43d6bc18ff838fe3615a&msgType=1&key=f0f19cf0e507a9fb1fb0bfeae2419ad3debdebaab1189e956a674303ca27af82";
+        for url in [
+            format!("https://svc-drcn.developer.huawei.com.evil.example/partnermessage/dadian/v2/opennum?{valid}"),
+            format!("https://evil.example@svc-drcn.developer.huawei.com/partnermessage/dadian/v2/opennum?{valid}"),
+            format!("http://svc-drcn.developer.huawei.com/partnermessage/dadian/v2/opennum?{valid}"),
+            format!("https://svc-drcn.developer.huawei.com/partnermessage/dadian/v2/opennum?{valid}&url=https%3A%2F%2Fevil.example%2Flogin"),
+            "https://svc-drcn.developer.huawei.com/partnermessage/dadian/v2/opennum?localMsgID=short&msgType=1&key=f0f19cf0e507a9fb1fb0bfeae2419ad3debdebaab1189e956a674303ca27af82".to_string(),
+            "https://svc-drcn.developer.huawei.com/partnermessage/dadian/v2/opennum?localMsgID=afef48094a5f43d6bc18ff838fe3615a&msgType=2&key=f0f19cf0e507a9fb1fb0bfeae2419ad3debdebaab1189e956a674303ca27af82".to_string(),
+        ] {
+            assert!(
+                !is_probable_opaque_mail_callback_url(&url),
+                "schema deviation must remain analyzable: {url}"
+            );
+        }
     }
 
     #[test]

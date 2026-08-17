@@ -49,8 +49,8 @@ fn decrypt_smtp_password(stored: &str) -> Option<String> {
     }
 
     let cipher = Aes256Gcm::new_from_slice(&key_bytes).ok()?;
-    let nonce = Nonce::from_slice(&combined[..12]);
-    let plaintext = cipher.decrypt(nonce, &combined[12..]).ok()?;
+    let nonce = Nonce::try_from(&combined[..12]).ok()?;
+    let plaintext = cipher.decrypt(&nonce, &combined[12..]).ok()?;
     String::from_utf8(plaintext).ok()
 }
 
@@ -244,11 +244,24 @@ fn should_notify_original_recipient(recipient: &str, internal_domains: &HashSet<
     super::extract_email_domain(recipient).is_some_and(|domain| internal_domains.contains(&domain))
 }
 
+/// Hard cap on alert-email recipients per session. A 200-RCPT transaction
+/// used to fan out into one alert email per recipient (times every matched
+/// rule); beyond this cap the remaining recipients are summarized in the
+/// alert body instead of being emailed individually.
+const MAX_ALERT_RECIPIENTS_PER_SESSION: usize = 5;
+
+/// Body note appended when the recipient fan-out cap truncates the list.
+fn alert_recipient_cap_notice(total: usize, omitted: usize) -> String {
+    format!(
+        "告警通知已限流：本封邮件共涉及 {total} 位收件人，仅向前 {MAX_ALERT_RECIPIENTS_PER_SESSION} 位发送告警，等 {omitted} 人未逐一通知。"
+    )
+}
+
 fn collect_alert_recipients(
     config: &EmailAlertConfig,
     session: &EmailSession,
     internal_domains: &HashSet<String>,
-) -> Vec<String> {
+) -> (Vec<String>, usize) {
     let mut recipients = Vec::new();
     let mut seen = HashSet::new();
 
@@ -276,7 +289,11 @@ fn collect_alert_recipients(
         }
     }
 
-    recipients
+    let omitted = recipients
+        .len()
+        .saturating_sub(MAX_ALERT_RECIPIENTS_PER_SESSION);
+    recipients.truncate(MAX_ALERT_RECIPIENTS_PER_SESSION);
+    (recipients, omitted)
 }
 
 // HTML email builder
@@ -481,10 +498,20 @@ impl DispositionEngine {
         internal_domains: &HashSet<String>,
         inbound_mail_servers: &HashSet<String>,
     ) {
-        let recipients = collect_alert_recipients(config, session, internal_domains);
+        let (recipients, omitted_recipients) =
+            collect_alert_recipients(config, session, internal_domains);
 
         if recipients.is_empty() {
             return;
+        }
+
+        if omitted_recipients > 0 {
+            warn!(
+                omitted = omitted_recipients,
+                session_id = %verdict.session_id,
+                "Alert recipient fan-out capped at {} per session",
+                MAX_ALERT_RECIPIENTS_PER_SESSION
+            );
         }
 
         // BuildAlert
@@ -494,6 +521,22 @@ impl DispositionEngine {
             threat_level_label(&verdict.threat_level),
             subject_text
         );
+        // Surface the fan-out cap in the alert body so recipients know the
+        // notification was rate-limited instead of assuming full coverage.
+        let cap_notice;
+        let custom_message = if omitted_recipients > 0 {
+            let notice = alert_recipient_cap_notice(
+                recipients.len() + omitted_recipients,
+                omitted_recipients,
+            );
+            cap_notice = match custom_message {
+                Some(message) => format!("{message}\n{notice}"),
+                None => notice,
+            };
+            Some(cap_notice.as_str())
+        } else {
+            custom_message
+        };
         let html_body = build_alert_html(
             verdict,
             session,
@@ -1053,9 +1096,10 @@ mod tests {
         );
         let internal_domains = HashSet::from([String::from("corp.com")]);
 
-        let recipients = collect_alert_recipients(&config, &session, &internal_domains);
+        let (recipients, omitted) = collect_alert_recipients(&config, &session, &internal_domains);
 
         assert_eq!(recipients, vec!["soc@corp.com", "user@corp.com"]);
+        assert_eq!(omitted, 0);
     }
 
     #[test]
@@ -1065,9 +1109,43 @@ mod tests {
         config.notify_recipient = true;
         let session = make_session(Some("sender@evil.com"), vec!["user@corp.com"], Some("test"));
 
-        let recipients = collect_alert_recipients(&config, &session, &HashSet::new());
+        let (recipients, omitted) = collect_alert_recipients(&config, &session, &HashSet::new());
 
         assert!(recipients.is_empty());
+        assert_eq!(omitted, 0);
+    }
+
+    #[test]
+    fn test_collect_alert_recipients_caps_fan_out_per_session() {
+        // PoC (round 5, D7): before the fix, every internal RCPT of a
+        // transaction got its own alert email — a 200-recipient spam run
+        // meant 200 alert emails per matched rule. Now the fan-out is hard
+        // capped and the remainder is only summarized in the body.
+        let mut config = make_smtp_config("starttls");
+        config.notify_admin = true;
+        config.notify_recipient = true;
+        let rcpts: Vec<String> = (0..8).map(|i| format!("user{i}@corp.com")).collect();
+        let mut session = make_session(Some("attacker@evil.com"), vec![], Some("test"));
+        session.rcpt_to = rcpts;
+        let internal_domains = HashSet::from([String::from("corp.com")]);
+
+        let (recipients, omitted) = collect_alert_recipients(&config, &session, &internal_domains);
+
+        assert_eq!(
+            recipients.len(),
+            MAX_ALERT_RECIPIENTS_PER_SESSION,
+            "recipients must be hard-capped (admin + first internal recipients)"
+        );
+        assert!(recipients.contains(&config.admin_email));
+        assert_eq!(omitted, 8 + 1 - MAX_ALERT_RECIPIENTS_PER_SESSION);
+    }
+
+    #[test]
+    fn test_alert_recipient_cap_notice_summarizes_omitted_recipients() {
+        let notice = alert_recipient_cap_notice(9, 4);
+        assert!(notice.contains("等 4 人"));
+        assert!(notice.contains('9'));
+        assert!(notice.contains("5"));
     }
 
     // build_alert_html

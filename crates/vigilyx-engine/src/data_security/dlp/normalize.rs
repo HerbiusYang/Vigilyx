@@ -1,5 +1,7 @@
 //! DLP TextNormalize (Anti-Evasion Normalization)
 
+use unicode_normalization::UnicodeNormalization;
+
 /// DLP firstofTextNormalize
 
 /// preventAttack Use Segment match:
@@ -11,9 +13,9 @@
 
 /// Performance: O(n) (Decode + charactersNormalize).
 pub(super) fn normalize_for_dlp(text: &str) -> String {
-    // After1: HTML Decode (WhenpacketContains &# Executeline)
-    let text = if text.contains("&#") {
-        decode_html_numeric_entities(text)
+    // After1: HTML Decode (WhenpacketContains & Executeline, 数字 + 命名)
+    let text = if text.contains('&') {
+        decode_html_entities(text)
     } else {
         text.to_string()
     };
@@ -25,7 +27,20 @@ pub(super) fn normalize_for_dlp(text: &str) -> String {
             // characters -
             '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{200E}' | '\u{200F}' | '\u{FEFF}'
             | '\u{00AD}' | '\u{2060}' | '\u{2061}' | '\u{2062}' | '\u{2063}' | '\u{2064}'
-            | '\u{180E}' | '\u{034F}' => {}
+            | '\u{180E}' | '\u{034F}'
+            // bidi 控制字符 (LRE/RLE/PDF/LRO/RLO + LRI/RLI/FSI/PDI + ALM)
+            | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{061C}'
+            // tag 字符 (U+E0001, U+E0020-E007F)
+            | '\u{E0001}' | '\u{E0020}'..='\u{E007F}'
+            // 变体选择符 (U+FE00-FE0F + 补充平面 U+E0100-E01EF)
+            | '\u{FE00}'..='\u{FE0F}' | '\u{E0100}'..='\u{E01EF}'
+            // Hangul 填充符 (谚文字母填充, 视觉空白但可拆散关键词)
+            | '\u{115F}' | '\u{1160}' | '\u{3164}' | '\u{FFA0}'
+            // 盲文空白 (U+2800, 视觉空白)
+            | '\u{2800}'
+            // C0 控制字符 (\x00-\x08, \x0B, \x0C, \x0E-\x1F; 保留 \t \n \r)
+            // 攻击者在敏感词中夹带控制符 (如 "身份\x07证") 拆散关键词绕过匹配
+            | '\u{0000}'..='\u{0008}' | '\u{000B}' | '\u{000C}' | '\u{000E}'..='\u{001F}' => {}
 
             '\u{FF10}'..='\u{FF19}' => {
                 result.push((b'0' + (ch as u8 - 0x10)) as char);
@@ -102,16 +117,31 @@ pub(super) fn normalize_for_dlp(text: &str) -> String {
             '₈' => result.push('8'), // U+2088
             '₉' => result.push('9'), // U+2089
 
+            // --- NFKC compatibility fold (D1-1) ---
+            // 攻击者用数学字母数字 (𝟏𝟐𝟑/𝐩𝐚𝐬𝐬)、带圈字母数字 (①②③/ⓟⓐⓢⓢ)、
+            // 装饰数字 (❶❷❸) 打散卡号/身份证正则与 credential 关键词,
+            // 手工折叠表无法覆盖这些区块, NFKC 将其折叠回 ASCII。
+            // 只折叠攻击常用的兼容性区块, 不做全串 NFKC: 全串 NFKC 会把
+            // 全角标点 (，等) 一并改写, 超出 DLP 归一化所需范围。
+            _ if ('\u{1D400}'..='\u{1D7FF}').contains(&ch)      // 数学字母数字
+                || ('\u{2460}'..='\u{24FF}').contains(&ch)      // 带圈/括号字母数字
+                || ('\u{2700}'..='\u{27BF}').contains(&ch)      // 装饰符号 (含 ❶-❿)
+                || ('\u{1F100}'..='\u{1F1FF}').contains(&ch)    // 补充带圈字母数字
+            =>
+            {
+                result.extend(ch.nfkc());
+            }
+
             _ => result.push(ch),
         }
     }
     result
 }
 
-/// Decode HTML: `&#49;` (Base/Radix) And `&#x31;` (6Base/Radix)
+/// Decode HTML: `&#49;` (Base/Radix), `&#x31;` (6Base/Radix) And最小命名(如 `&colon;`)
 
 /// Decode characters,Avoid Dangercharacters.
-fn decode_html_numeric_entities(text: &str) -> String {
+fn decode_html_entities(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut chars = text.char_indices().peekable();
 
@@ -127,6 +157,7 @@ fn decode_html_numeric_entities(text: &str) -> String {
 
                 let mut num_str = String::new();
                 let mut found_semi = false;
+                let mut overflow = false;
                 while let Some(&(_, c)) = chars.peek() {
                     if c == ';' {
                         chars.next();
@@ -134,6 +165,7 @@ fn decode_html_numeric_entities(text: &str) -> String {
                         break;
                     }
                     if num_str.len() > 8 {
+                        overflow = true;
                         break;
                     } // Prevent DoS
                     if is_hex && c.is_ascii_hexdigit() || !is_hex && c.is_ascii_digit() {
@@ -143,7 +175,9 @@ fn decode_html_numeric_entities(text: &str) -> String {
                         break;
                     }
                 }
-                if found_semi && !num_str.is_empty() {
+                // 浏览器对无分号形式 (&#49) 同样解码, 此处对齐:
+                // 只要数字串有效且未超长, 无论是否以 ';' 结尾都解码
+                if !overflow && !num_str.is_empty() {
                     let code_point = if is_hex {
                         u32::from_str_radix(&num_str, 16).ok()
                     } else {
@@ -167,6 +201,10 @@ fn decode_html_numeric_entities(text: &str) -> String {
                 if found_semi {
                     result.push(';');
                 }
+            } else if let Some(decoded) = decode_named_entity(&mut chars) {
+                // 命名实体 (&colon; &equals; &Tab; &NewLine; &amp; &lt; &gt; &quot;)
+                // 攻击者用 password&colon; 等形式拆散 credential 关键词与分隔符
+                result.push_str(decoded);
             } else {
                 result.push('&');
             }
@@ -175,4 +213,45 @@ fn decode_html_numeric_entities(text: &str) -> String {
         }
     }
     result
+}
+
+/// 最小命名实体表: 只覆盖可拆散关键词/分隔符语义的条目
+fn named_entity_value(name: &str) -> Option<&'static str> {
+    match name {
+        "colon" => Some(":"),
+        "equals" => Some("="),
+        "Tab" => Some("\t"),
+        "NewLine" => Some("\n"),
+        "amp" | "AMP" => Some("&"),
+        "lt" | "LT" => Some("<"),
+        "gt" | "GT" => Some(">"),
+        "quot" | "QUOT" => Some("\""),
+        _ => None,
+    }
+}
+
+/// 尝试从 `&` 之后解析命名实体 (如 `colon;`), 成功则消费并返回替换文本,
+/// 失败不消费任何字符 (调用方原样输出 `&`)
+fn decode_named_entity(
+    chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>,
+) -> Option<&'static str> {
+    let mut probe = chars.clone();
+    let mut name = String::new();
+    while let Some(&(_, c)) = probe.peek() {
+        if c.is_ascii_alphanumeric() && name.len() < 10 {
+            name.push(c);
+            probe.next();
+        } else {
+            break;
+        }
+    }
+    if !name.is_empty()
+        && matches!(probe.peek(), Some(&(_, ';')))
+        && let Some(decoded) = named_entity_value(&name)
+    {
+        probe.next(); // consume ';'
+        *chars = probe;
+        return Some(decoded);
+    }
+    None
 }

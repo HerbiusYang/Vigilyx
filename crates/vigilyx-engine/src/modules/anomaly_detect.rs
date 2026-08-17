@@ -149,7 +149,9 @@ impl SecurityModule for AnomalyDetectModule {
         let mut total_score: f64 = 0.0;
 
         let recipient_count = ctx.session.rcpt_to.len();
-        let subject = ctx.session.subject.as_deref().unwrap_or("");
+        let subject_raw = ctx.session.subject.as_deref().unwrap_or("");
+        let subject_decoded = decode_rfc2047(subject_raw);
+        let subject = subject_decoded.as_str();
         let has_attachments = !ctx.session.content.attachments.is_empty();
 
         // --- 1. Mass mailing: recipient count> 10 ---
@@ -322,10 +324,11 @@ impl SecurityModule for AnomalyDetectModule {
 
         // --- 4. Unusual recipient patterns (all BCC-like: empty rcpt_to is suspicious) ---
         if recipient_count == 0 {
-            total_score += 0.10;
-            categories.push("no_recipients".to_string());
+            // Mirror captures and BCC-only messages commonly have no visible
+            // RCPT TO.  Keep this as a metadata note, never threat evidence.
+            categories.push("recipient_metadata_incomplete".to_string());
             evidence.push(Evidence {
-                description: "RCPT TO list is empty (possibly all BCC)".to_string(),
+                description: "RCPT TO list is empty (possibly all BCC or capture metadata unavailable)".to_string(),
                 location: Some("rcpt_to".to_string()),
                 snippet: None,
             });

@@ -1,0 +1,9 @@
+From: =?utf-8?B?6YCa6L+H6KGM5oOz? <it-support@partner-external.com>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ctrl01@partner-external.com>
+Subject: 邮箱安全验证提醒
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>尊敬的用户：系统检测到您的账户存在异常登录，为保障您的资金安全，请立即点击下方链接验证身份，24小时内未验证将冻结账户。</p><p><a href='http://203.0.113.50/verify/login'>http://203.0.113.50/verify/login</a></p><p>客服电话 400-123-4567</p></body></html>

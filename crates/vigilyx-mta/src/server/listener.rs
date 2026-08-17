@@ -13,7 +13,9 @@ use tracing::{error, info, warn};
 
 use crate::config::MtaConfig;
 use crate::config::is_trusted_upstream_ip;
+use crate::authentication::AuthenticationVerifier;
 use crate::dlp::{DlpAction, detect_direction, format_dlp_reason, run_dlp_scan};
+use crate::metrics::VerdictMetrics;
 use crate::relay::downstream::{DownstreamRelay, RelayResult};
 use crate::relay::quarantine::store_quarantine;
 use crate::server::connection::{HandleResult, SmtpConnection};
@@ -30,10 +32,12 @@ enum ConnectionOutcome {
 
 struct SmtpRuntime<'a> {
     config: &'a MtaConfig,
+    authentication: &'a AuthenticationVerifier,
     engine: &'a SecurityEngine,
     relay: &'a DownstreamRelay,
     outbound_relay: &'a DownstreamRelay,
     db: &'a VigilDb,
+    metrics: &'a VerdictMetrics,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,32 +109,52 @@ fn relay_for_direction<'a>(
     }
 }
 
+/// SEC-13: downstream error text is server-controlled and may contain CRLF
+/// (SMTP reply injection). Strip CR/LF and cap the length before echoing it
+/// in an SMTP reply.
+fn sanitize_downstream_reply_text(msg: &str) -> String {
+    msg.chars()
+        .filter(|c| *c != '\r' && *c != '\n')
+        .take(200)
+        .collect()
+}
+
+/// Relay the message downstream and write the SMTP reply.
+/// Returns `true` when the downstream accepted the message (250 path).
 async fn relay_and_reply<S, I>(
     stream: &mut S,
     relay: &DownstreamRelay,
     mail_from: Option<&str>,
     rcpt_to: &[String],
     raw_eml: &[u8],
+    client_ip: Option<&str>,
     session_id: I,
-) where
+) -> bool
+where
     S: tokio::io::AsyncWrite + Unpin,
     I: Copy + std::fmt::Display,
 {
-    match relay.relay(mail_from, rcpt_to, raw_eml).await {
+    match relay.relay_from(mail_from, rcpt_to, raw_eml, client_ip).await {
         RelayResult::Accepted => {
             write_reply(stream, b"250 2.0.0 OK\r\n").await;
+            true
         }
         RelayResult::TempFail(msg) => {
+            let msg = sanitize_downstream_reply_text(&msg);
             let reply = format!("451 4.7.1 Downstream temporary failure: {msg}\r\n");
             write_reply(stream, reply.as_bytes()).await;
+            false
         }
         RelayResult::PermFail(msg) => {
+            let msg = sanitize_downstream_reply_text(&msg);
             let reply = format!("550 5.7.1 Downstream rejected: {msg}\r\n");
             write_reply(stream, reply.as_bytes()).await;
+            false
         }
         RelayResult::ConnError(msg) => {
             warn!(session_id = %session_id, "Downstream unreachable: {msg}");
             write_reply(stream, b"421 4.7.0 Downstream unavailable, try later\r\n").await;
+            false
         }
     }
 }
@@ -149,14 +173,27 @@ where
     }
 
     let dlp_result = run_dlp_scan(session);
-    if dlp_result.is_empty() || dlp_result.count_items_at_level(runtime.config.dlp.min_level) == 0 {
+    let has_policy_match =
+        !dlp_result.is_empty() && dlp_result.count_items_at_level(runtime.config.dlp.min_level) > 0;
+    if !has_policy_match && dlp_result.complete {
         return false;
     }
 
-    let reason = format_dlp_reason(&dlp_result);
+    let reason = if dlp_result.complete {
+        format_dlp_reason(&dlp_result)
+    } else if has_policy_match {
+        format!(
+            "{}; attachment inspection incomplete",
+            format_dlp_reason(&dlp_result)
+        )
+    } else {
+        "DLP: attachment inspection incomplete — safe release prohibited".to_string()
+    };
     info!(
         session_id = %session.id,
         matches = ?dlp_result.matches,
+        inspection_complete = dlp_result.complete,
+        attachments_scanned = dlp_result.attachments_scanned,
         "DLP hit on outbound email: {reason}"
     );
 
@@ -179,6 +216,7 @@ where
                 raw_eml,
                 "high",
                 &reason,
+                Some(session.client_ip.as_str()),
             )
             .await;
             if stored {
@@ -202,6 +240,42 @@ where
 /// SEC: Maximum concurrent connections from a single IP address (CWE-400).
 /// Prevents a single source from exhausting all connection slots.
 const MAX_CONN_PER_IP: usize = 10;
+
+/// SEC: TLS handshake hard deadline (F-3, CWE-400). An idle pre-handshake
+/// client otherwise holds a connection slot (and its per-IP slot) forever.
+const TLS_HANDSHAKE_TIMEOUT_SECS: u64 = 15;
+
+/// Accept a TLS handshake with a hard deadline. Returns `None` on handshake
+/// failure or timeout; the caller drops the connection either way.
+async fn accept_tls_with_timeout<S>(
+    acceptor: &TlsAcceptor,
+    stream: S,
+    client_ip: &str,
+) -> Option<tokio_rustls::server::TlsStream<S>>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(TLS_HANDSHAKE_TIMEOUT_SECS),
+        acceptor.accept(stream),
+    )
+    .await
+    {
+        Ok(Ok(tls_stream)) => Some(tls_stream),
+        Ok(Err(e)) => {
+            warn!(client_ip = %client_ip, "TLS handshake failed: {e}");
+            None
+        }
+        Err(_) => {
+            warn!(
+                client_ip = %client_ip,
+                timeout_secs = TLS_HANDSHAKE_TIMEOUT_SECS,
+                "TLS handshake timed out"
+            );
+            None
+        }
+    }
+}
 
 /// Per-IP concurrent connection limiter.
 ///
@@ -274,6 +348,8 @@ pub async fn run_smtp_listener(
     active_connections: Arc<AtomicUsize>,
     per_ip_limiter: Arc<PerIpLimiter>,
     tls_acceptor: Option<TlsAcceptor>,
+    metrics: Arc<VerdictMetrics>,
+    authentication: Arc<AuthenticationVerifier>,
 ) -> anyhow::Result<()> {
     let listener = TcpListener::bind(&config.listen_smtp).await?;
     info!(addr = %config.listen_smtp, "SMTP listener started");
@@ -312,15 +388,28 @@ pub async fn run_smtp_listener(
         let tls = tls_acceptor.clone();
         let conn_counter = Arc::clone(&active_connections);
         let ip_limiter = Arc::clone(&per_ip_limiter);
+        let met = Arc::clone(&metrics);
+        let auth = Arc::clone(&authentication);
 
         tokio::spawn(async move {
             let client_ip = addr.ip().to_string();
             let client_port = addr.port();
             info!(client_ip = %client_ip, "New SMTP connection");
 
-            let result =
-                handle_smtp_connection(stream, client_ip, client_port, cfg, eng, rl, orl, d, tls)
-                    .await;
+            let result = handle_smtp_connection(
+                stream,
+                client_ip,
+                client_port,
+                cfg,
+                eng,
+                rl,
+                orl,
+                d,
+                tls,
+                met,
+                auth,
+            )
+            .await;
 
             if let Err(e) = result {
                 error!(error = %e, "SMTP connection error");
@@ -343,6 +432,8 @@ pub async fn run_smtps_listener(
     active_connections: Arc<AtomicUsize>,
     per_ip_limiter: Arc<PerIpLimiter>,
     tls_acceptor: TlsAcceptor,
+    metrics: Arc<VerdictMetrics>,
+    authentication: Arc<AuthenticationVerifier>,
 ) -> anyhow::Result<()> {
     let addr = config
         .listen_smtps
@@ -383,6 +474,8 @@ pub async fn run_smtps_listener(
         let acceptor = tls_acceptor.clone();
         let conn_counter = Arc::clone(&active_connections);
         let ip_limiter = Arc::clone(&per_ip_limiter);
+        let met = Arc::clone(&metrics);
+        let auth = Arc::clone(&authentication);
 
         tokio::spawn(async move {
             let client_ip = peer_addr.ip().to_string();
@@ -394,29 +487,26 @@ pub async fn run_smtps_listener(
                 .map(|a| a.ip().to_string())
                 .unwrap_or_else(|_| "0.0.0.0".into());
             let server_port = stream.local_addr().map(|a| a.port()).unwrap_or(465);
-            match acceptor.accept(stream).await {
-                Ok(tls_stream) => {
-                    let mut tls_stream = tokio::io::BufStream::new(tls_stream);
-                    let runtime = SmtpRuntime {
-                        config: cfg.as_ref(),
-                        engine: eng.as_ref(),
-                        relay: rl.as_ref(),
-                        outbound_relay: orl.as_ref(),
-                        db: d.as_ref(),
-                    };
-                    let mut conn = SmtpConnection::new(
-                        client_ip,
-                        client_port,
-                        server_ip,
-                        server_port,
-                        cfg.clone(),
-                        true,
-                    );
-                    let _ = drive_connection(&mut tls_stream, &mut conn, false, &runtime).await;
-                }
-                Err(e) => {
-                    warn!(client_ip = %client_ip, "TLS handshake failed: {e}");
-                }
+            if let Some(tls_stream) = accept_tls_with_timeout(&acceptor, stream, &client_ip).await {
+                let mut tls_stream = tokio::io::BufStream::new(tls_stream);
+                let runtime = SmtpRuntime {
+                    config: cfg.as_ref(),
+                    authentication: auth.as_ref(),
+                    engine: eng.as_ref(),
+                    relay: rl.as_ref(),
+                    outbound_relay: orl.as_ref(),
+                    db: d.as_ref(),
+                    metrics: met.as_ref(),
+                };
+                let mut conn = SmtpConnection::new(
+                    client_ip,
+                    client_port,
+                    server_ip,
+                    server_port,
+                    cfg.clone(),
+                    true,
+                );
+                let _ = drive_connection(&mut tls_stream, &mut conn, false, &runtime).await;
             }
 
             release_global_connection_slot(&conn_counter);
@@ -437,6 +527,8 @@ async fn handle_smtp_connection(
     outbound_relay: Arc<DownstreamRelay>,
     db: Arc<VigilDb>,
     tls_acceptor: Option<TlsAcceptor>,
+    metrics: Arc<VerdictMetrics>,
+    authentication: Arc<AuthenticationVerifier>,
 ) -> anyhow::Result<()> {
     let mut stream = tokio::io::BufStream::new(stream);
     let server_ip = stream
@@ -451,10 +543,12 @@ async fn handle_smtp_connection(
         .unwrap_or(25);
     let runtime = SmtpRuntime {
         config: config.as_ref(),
+        authentication: authentication.as_ref(),
         engine: engine.as_ref(),
         relay: relay.as_ref(),
         outbound_relay: outbound_relay.as_ref(),
         db: db.as_ref(),
+        metrics: metrics.as_ref(),
     };
 
     let mut conn = SmtpConnection::new(
@@ -471,24 +565,20 @@ async fn handle_smtp_connection(
         ConnectionOutcome::StartTls => {
             if let Some(acceptor) = tls_acceptor {
                 let inner = stream.into_inner();
-                match acceptor.accept(inner).await {
-                    Ok(tls_stream) => {
-                        let mut tls_stream = tokio::io::BufStream::new(tls_stream);
-                        // After TLS upgrade: skip banner (client already saw 220 before STARTTLS)
-                        let mut tls_conn = SmtpConnection::new(
-                            client_ip,
-                            client_port,
-                            server_ip,
-                            server_port,
-                            config.clone(),
-                            true,
-                        );
-                        let _ =
-                            drive_connection(&mut tls_stream, &mut tls_conn, true, &runtime).await;
-                    }
-                    Err(e) => {
-                        warn!(client_ip = %client_ip, "STARTTLS handshake failed: {e}");
-                    }
+                if let Some(tls_stream) = accept_tls_with_timeout(&acceptor, inner, &client_ip).await
+                {
+                    let mut tls_stream = tokio::io::BufStream::new(tls_stream);
+                    // After TLS upgrade: skip banner (client already saw 220 before STARTTLS)
+                    let mut tls_conn = SmtpConnection::new(
+                        client_ip,
+                        client_port,
+                        server_ip,
+                        server_port,
+                        config.clone(),
+                        true,
+                    );
+                    let _ =
+                        drive_connection(&mut tls_stream, &mut tls_conn, true, &runtime).await;
                 }
             } else {
                 warn!(client_ip = %client_ip, "STARTTLS requested but no TLS acceptor is configured");
@@ -544,11 +634,20 @@ where
     for result in results {
         match result {
             HandleResult::Email(session, raw_eml) => {
-                let session = *session; // unbox
+                let mut session = *session; // unbox
+                // Establish the identity boundary before any engine module or
+                // relay sees the message. Incoming Authentication-Results,
+                // ARC variants, and their folded continuations are removed;
+                // the engine receives only this MTA-owned result.
+                let raw_eml = runtime
+                    .authentication
+                    .stamp(&mut session, raw_eml, &runtime.config.hostname)
+                    .await;
                 let session_id = session.id;
                 let mail_from = session.mail_from.clone();
                 let rcpt_to = session.rcpt_to.clone();
                 let subject = session.subject.clone();
+                let client_ip = session.client_ip.clone();
 
                 // Trusted submitter = authenticated submission (future AUTH path)
                 // or an explicitly trusted upstream relay IP/CIDR.
@@ -609,7 +708,9 @@ where
                         relay_direction,
                         enforce_outbound_dlp: should_enforce_outbound_dlp,
                     } => {
-                        if matches!(response.disposition, VerdictDisposition::Tempfail) {
+                        let fail_open_relay =
+                            matches!(response.disposition, VerdictDisposition::Tempfail);
+                        if fail_open_relay {
                             warn!(
                                 session_id = %session_id,
                                 "Inline verdict unavailable and MTA_FAIL_OPEN=true, relaying downstream"
@@ -623,15 +724,21 @@ where
                             continue;
                         }
 
-                        relay_and_reply(
+                        let relayed = relay_and_reply(
                             stream,
                             relay_for_direction(runtime, relay_direction),
                             mail_from.as_deref(),
                             &rcpt_to,
                             &raw_eml,
+                            Some(client_ip.as_str()),
                             session_id,
                         )
                         .await;
+                        if fail_open_relay {
+                            runtime.metrics.inc_timeout_failopen();
+                        } else if relayed {
+                            runtime.metrics.inc_accepted();
+                        }
                     }
                     DeliveryPlan::TempfailReply => {
                         warn!(
@@ -653,9 +760,11 @@ where
                             &raw_eml,
                             &response.threat_level.to_string(),
                             &response.summary,
+                            Some(client_ip.as_str()),
                         )
                         .await;
                         if stored {
+                            runtime.metrics.inc_quarantined();
                             write_reply(stream, b"250 2.0.0 OK\r\n").await;
                         } else {
                             warn!(
@@ -672,6 +781,7 @@ where
                             VerdictDisposition::Reject { reason } => reason,
                             _ => unreachable!("delivery plan guaranteed reject disposition"),
                         };
+                        runtime.metrics.inc_rejected();
                         let reply = format!("550 5.7.1 {reason}\r\n");
                         write_reply(stream, reply.as_bytes()).await;
                     }
@@ -708,6 +818,28 @@ mod tests {
             !reply.starts_with("550"),
             "parse failures should remain retryable"
         );
+    }
+
+    #[test]
+    fn test_sanitize_downstream_reply_text_strips_crlf() {
+        let malicious = "mailbox full\r\n250 2.0.0 OK injected\nnext line";
+        let sanitized = sanitize_downstream_reply_text(malicious);
+        assert!(!sanitized.contains('\r'));
+        assert!(!sanitized.contains('\n'));
+        assert_eq!(sanitized, "mailbox full250 2.0.0 OK injectednext line");
+    }
+
+    #[test]
+    fn test_sanitize_downstream_reply_text_caps_length() {
+        let long = "x".repeat(500);
+        let sanitized = sanitize_downstream_reply_text(&long);
+        assert_eq!(sanitized.len(), 200);
+    }
+
+    #[test]
+    fn test_sanitize_downstream_reply_text_keeps_normal_text() {
+        let normal = "5.7.1 Mailbox unavailable";
+        assert_eq!(sanitize_downstream_reply_text(normal), normal);
     }
 
     #[test]
@@ -1215,5 +1347,108 @@ mod tests {
         });
         let trusted = vec!["10.10.10.0/24".to_string()];
         assert!(session_trusted_submitter(&session, &trusted));
+    }
+
+    // ── F-3: TLS handshake timeout ────────────────────────────────────────
+
+    // Test-only self-signed certificate for CN=vigilyx-mta-test (no SAN,
+    // never used for real TLS termination, generated for these tests).
+    const TEST_CERT_PEM: &str = "-----BEGIN CERTIFICATE-----\n\
+MIIDFzCCAf+gAwIBAgIUXN/LFLYWhMYNAbta+InDVJnKsp8wDQYJKoZIhvcNAQEL\n\
+BQAwGzEZMBcGA1UEAwwQdmlnaWx5eC1tdGEtdGVzdDAeFw0yNjA4MTQwMTE5MDda\n\
+Fw0zNjA4MTEwMTE5MDdaMBsxGTAXBgNVBAMMEHZpZ2lseXgtbXRhLXRlc3QwggEi\n\
+MA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDXawCL8gM+MBsOWfZ2p/XcrpIN\n\
++MQLHclk2SSzj5hUUDfZreHNtiyhZteleJEVh7yCoVYXz0h74spsl3QsfGgDu8zL\n\
+gpKpSCgrk+AbgFbyF08ewT6BjBmEOfv5K4HzGt0m9SNSSDJyf8pA+ykluK85bNE/\n\
+hJfs8NORKRNQM9I5g6iX2n2MCCP75Oh5BHrRpHlMES5kBAc+JZWAKJKJiC9dqgSa\n\
+OtG8LZIeJCoOduEcA4YOKC0bOppEh5oVTbGXBbr6bzTQ9yvu6J2E2/w6r9+qn0fF\n\
+ugq2ClYJ/DD0l1CejC1M+l9LYMB50w3XDFzlFCwX8wplm9yht7MK0i0mS+UTAgMB\n\
+AAGjUzBRMB0GA1UdDgQWBBS2D7RjNQiCD4WSGLWaW1nQcia12zAfBgNVHSMEGDAW\n\
+gBS2D7RjNQiCD4WSGLWaW1nQcia12zAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3\n\
+DQEBCwUAA4IBAQCC2gbo/HQS1b6j9QZAg69Hvqj8CPwj1nKAoZX1GOih0ZVCATmN\n\
+T5uotAlrsFkL90Crbs2m9iTxZZi6isP+OupEifVyvOIawUNGfm+j5PFi0fDbxpO8\n\
+8uSbYDLjCsJYlAicna/ZYAWn+9KnR5PYPpGZDfsB03DpK+wEv1ouLqWjDH05j0rQ\n\
+OpzXs0gEGPodcTE7oDyJHoNZNkcILjfPb7csFL9MtWf5ZWYaJ47ouT0lokzbbUUY\n\
+dFqFBhMf5TVSEpV5dDGw/F2Ake8osambLCB2XuO5d72WJDmlXY9Gz8kCi8BmVShC\n\
+GhXcojlaCBZbOKgaS7E3BNijTzsYAHAGjO4U\n\
+-----END CERTIFICATE-----\n";
+
+    const TEST_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----\n\
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDXawCL8gM+MBsO\n\
+WfZ2p/XcrpIN+MQLHclk2SSzj5hUUDfZreHNtiyhZteleJEVh7yCoVYXz0h74sps\n\
+l3QsfGgDu8zLgpKpSCgrk+AbgFbyF08ewT6BjBmEOfv5K4HzGt0m9SNSSDJyf8pA\n\
++ykluK85bNE/hJfs8NORKRNQM9I5g6iX2n2MCCP75Oh5BHrRpHlMES5kBAc+JZWA\n\
+KJKJiC9dqgSaOtG8LZIeJCoOduEcA4YOKC0bOppEh5oVTbGXBbr6bzTQ9yvu6J2E\n\
+2/w6r9+qn0fFugq2ClYJ/DD0l1CejC1M+l9LYMB50w3XDFzlFCwX8wplm9yht7MK\n\
+0i0mS+UTAgMBAAECggEAOCvFo7hCkje3BmH8+2nGmXnHye7hJ8jnl+1rPYsm/G1C\n\
+cvd9Vse3EYsglhw/MK8JP8LUETdSvkMf53sCpwr1kGuq9jIhDhUrrFlN6b3obg4X\n\
+6nwXUW53xNvd0VY/92U834iyYiVDSkn6MkGLtDNZNY8jbP2lI/qUIFjmmVY57hbl\n\
+FNmoW50HIldL2WmPhIe7SMwaUzzAyCM8qp9VmP9QNvewU7IylS+vKah6vOJsYhCA\n\
+mkrpP3JKlG2OhNTVRDc5rQVMc0oir4MTvdhCgHTgLND5eJRdqXIGszAdSwLdjsz3\n\
+7dxP+5O1g79uQR0MI2kb3V/GhVAl3PCLIvFcp/zmgQKBgQDzqKw9zrr7rRfB7TJi\n\
+93MwpvPC3YX8pzHeFhgSjbXIsis6GRhAJy+2f3/jXJ+p4PeulWiGkVJsMsGbz3U1\n\
+voSrAdCTTSw1r/CW2SGU+QfvDyaDE7B5m/dzIqfPfKN47S1BWUbSmvnuuc7bNyO5\n\
+/OAyn4Hd/n74cjapK6Y0rYoxQQKBgQDiVCcGevZhOlEUf8kH9O3FGB0Wr6/w1wmy\n\
+FVmtBlbmRMqHCryyo1LpToB/PYAhdPJ8H9E6vAIgKCbupHi2bu4PtntI/KGC8nev\n\
+aUKVvrEVW9zc8L9s2iRhmshWN2ZMmtjtE/sCJuqKZD9PdClVOhEzbCIyyHm1DlD+\n\
+y0FeXPWtUwKBgQDVvbcqmPjp4hOfKIY0zsEbgrj+zfjFg515JoSDchBvN+w3kN/3\n\
+FukB/KKhPhVJnnFnkuUYds6I35V7Kue096XFpVfkf6QyjF5O1bZhynstOGsePN1o\n\
+MGtHcrUmjD2SzOwQEVLRWOW6hwBwyNPsSWoavlXb+W5EX1yX1hR8zWcWgQKBgQDR\n\
+vebEjKNTCzYkZx+n7gWDB4u9gGbuLHnhvQNz41IY51tAtmSUr+KgL43JXPcnCjfF\n\
+a778TUsy/cLGmUj81+RqT1QFGYmbzpO3zTZVi3iUMKOHZNwhRi88/LH3pDN7fmzV\n\
+mBSfs+za/3fka+P6BWv3WZh/s2WGspPA7B/SERfj3QKBgHSOdCJJFH6gy0GkVq3y\n\
+VKav/G7QcaAMAiSB7o7KigZYUWN3LzpejxNi887xuSb4WN7Mwxwb2sLlqTfqMfdK\n\
+uI1z59S9RiHd0LMf//ma55dJ8kEKpsDIMqZ0ps9A9RHIM+pPB/thBtC4DjriC8Dm\n\
+tXOsY15IIfKL93pMXxy6cYL+\n\
+-----END PRIVATE KEY-----\n";
+
+    fn test_tls_acceptor() -> TlsAcceptor {
+        let certs: Vec<_> = rustls_pemfile::certs(&mut TEST_CERT_PEM.as_bytes())
+            .collect::<Result<Vec<_>, _>>()
+            .expect("test cert PEM should parse");
+        let key = rustls_pemfile::private_key(&mut TEST_KEY_PEM.as_bytes())
+            .expect("test key PEM should parse")
+            .expect("test key PEM should contain a private key");
+        let server_config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, key)
+            .expect("test cert/key should build a ServerConfig");
+        TlsAcceptor::from(Arc::new(server_config))
+    }
+
+    /// PoC (F-3): a client that connects and never sends a ClientHello used
+    /// to hold the acceptor (and its connection slot) forever; the handshake
+    /// is now bounded by TLS_HANDSHAKE_TIMEOUT_SECS. `start_paused` lets the
+    /// 15s deadline elapse instantly.
+    #[tokio::test(start_paused = true)]
+    async fn test_tls_handshake_times_out_when_client_never_speaks() {
+        let acceptor = test_tls_acceptor();
+        let (_silent_client, server_side) = tokio::io::duplex(1024);
+
+        let result = accept_tls_with_timeout(&acceptor, server_side, "127.0.0.1").await;
+
+        assert!(
+            result.is_none(),
+            "a silent client must fail the timed TLS handshake"
+        );
+    }
+
+    /// Regression protection: a client that speaks garbage fails the
+    /// handshake immediately (no timeout stall).
+    #[tokio::test]
+    async fn test_tls_handshake_garbage_client_fails_fast() {
+        use tokio::io::AsyncWriteExt;
+
+        let acceptor = test_tls_acceptor();
+        let (mut client, server_side) = tokio::io::duplex(1024);
+        client
+            .write_all(b"NOT A TLS CLIENT HELLO\r\n")
+            .await
+            .expect("write garbage");
+        drop(client);
+
+        let result = accept_tls_with_timeout(&acceptor, server_side, "127.0.0.1").await;
+
+        assert!(result.is_none(), "garbage bytes must fail the handshake");
     }
 }

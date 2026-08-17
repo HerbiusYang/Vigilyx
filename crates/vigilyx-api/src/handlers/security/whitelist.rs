@@ -211,6 +211,119 @@ pub async fn add_whitelist_entry(
     }
 }
 
+/// Add the authenticated sender identity and the observed source IP for one email session.
+///
+/// Keeping this derivation server-side prevents the detail page from choosing a different
+/// indicator than the session the administrator is looking at. The engine's whole-session
+/// whitelist bypass requires both values (plus successful SMTP authentication).
+pub async fn whitelist_session(
+    State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
+    Path(id): Path<String>,
+) -> Response {
+    let session_id = match Uuid::parse_str(&id) {
+        Ok(id) => id,
+        Err(_) => {
+            return ApiResponse::<serde_json::Value>::bad_request("Invalid session ID")
+                .into_response();
+        }
+    };
+
+    let session = match state.db.get_session(session_id).await {
+        Ok(Some(session)) => session,
+        Ok(None) => {
+            return ApiResponse::<serde_json::Value>::not_found("Session not found")
+                .into_response();
+        }
+        Err(e) => {
+            return ApiResponse::<serde_json::Value>::internal_err(&e, "Operation failed")
+                .into_response();
+        }
+    };
+
+    let Some(mail_from) = session
+        .mail_from
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return ApiResponse::<serde_json::Value>::bad_request(
+            "Session has no sender identity to whitelist",
+        )
+        .into_response();
+    };
+
+    let email = match normalize_whitelist_value("email", mail_from) {
+        Ok(value) => value,
+        Err(message) => {
+            return ApiResponse::<serde_json::Value>::bad_request(&message).into_response();
+        }
+    };
+    let ip = session.client_ip.to_string();
+    let description = Some(format!("Added from email session {session_id}"));
+    let targets = [("email", email.clone()), ("ip", ip.clone())];
+    let mut changed = false;
+
+    for (entry_type, value) in targets {
+        if state
+            .managers
+            .whitelist_manager
+            .is_whitelisted(entry_type, &value)
+            .await
+        {
+            continue;
+        }
+
+        if let Err(e) = state
+            .managers
+            .whitelist_manager
+            .add_with_creator(
+                entry_type.to_string(),
+                value,
+                description.clone(),
+                &user.username,
+            )
+            .await
+        {
+            return ApiResponse::<serde_json::Value>::internal_err(&e, "Operation failed")
+                .into_response();
+        }
+        changed = true;
+    }
+
+    if changed {
+        publish_engine_reload(&state, "whitelist").await;
+    }
+
+    let entries = match state.managers.whitelist_manager.list().await {
+        Ok(entries) => entries
+            .into_iter()
+            .filter(|entry| {
+                (entry.entry_type == "email" && entry.value == email)
+                    || (entry.entry_type == "ip" && entry.value == ip)
+            })
+            .collect::<Vec<_>>(),
+        Err(e) => {
+            return ApiResponse::<serde_json::Value>::internal_err(&e, "Operation failed")
+                .into_response();
+        }
+    };
+
+    crate::handlers::spawn_audit_log(
+        state.engine_db.clone(),
+        user.username,
+        "whitelist_session",
+        Some("security"),
+        Some(session_id.to_string()),
+        Some("sender email and source IP".to_string()),
+    );
+
+    ApiResponse::ok(serde_json::json!({
+        "session_id": session_id,
+        "entries": entries,
+    }))
+    .into_response()
+}
+
 /// delete
 pub async fn delete_whitelist_entry(
     State(state): State<Arc<AppState>>,
@@ -243,5 +356,28 @@ pub async fn delete_whitelist_entry(
         Err(e) => {
             ApiResponse::<serde_json::Value>::internal_err(&e, "Operation failed").into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_whitelist_type, normalize_whitelist_value};
+
+    #[test]
+    fn session_identity_values_use_engine_compatible_normalization() {
+        assert_eq!(
+            normalize_whitelist_value("email", " Sender@Example.COM ").unwrap(),
+            "sender@example.com"
+        );
+        assert_eq!(
+            normalize_whitelist_value("ip", " 192.0.2.10 ").unwrap(),
+            "192.0.2.10"
+        );
+    }
+
+    #[test]
+    fn unsupported_or_empty_whitelist_values_are_rejected() {
+        assert!(normalize_whitelist_type("url").is_err());
+        assert!(normalize_whitelist_value("email", " ").is_err());
     }
 }

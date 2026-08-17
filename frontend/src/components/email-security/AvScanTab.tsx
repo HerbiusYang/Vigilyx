@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ModuleMetadata, PipelineConfig, EngineStatus, ApiResponse } from '../../types'
 import { apiFetch } from '../../utils/api'

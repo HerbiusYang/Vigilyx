@@ -121,25 +121,18 @@ all_error_projects() {
 }
 
 validate_session_id() {
-  case "$1" in
-    ses_[A-Za-z0-9]*)
-      ;;
-    *)
-      echo "Refusing unexpected session id: $1" >&2
-      exit 1
-      ;;
-  esac
+  if ! printf '%s\n' "$1" | LC_ALL=C grep -Eq '^ses_[A-Za-z0-9_-]+$'; then
+    echo "Refusing unexpected session id: $1" >&2
+    exit 1
+  fi
 }
 
 validate_project_id() {
-  case "$1" in
-    global|[A-Za-z0-9_-]*)
-      ;;
-    *)
-      echo "Refusing unexpected project id: $1" >&2
-      exit 1
-      ;;
-  esac
+  if [ "$1" != "global" ] \
+    && ! printf '%s\n' "$1" | LC_ALL=C grep -Eq '^[A-Za-z0-9_-]+$'; then
+    echo "Refusing unexpected project id: $1" >&2
+    exit 1
+  fi
 }
 
 backup_db() {
@@ -156,14 +149,17 @@ ensure_backup() {
 }
 
 session_exists() {
+  validate_session_id "$1"
   sqlite3 "$DB_PATH" "select count(*) from session where id = '$1';"
 }
 
 project_exists() {
+  validate_project_id "$1"
   sqlite3 "$DB_PATH" "select count(*) from session where project_id = '$1';"
 }
 
 project_for_session() {
+  validate_session_id "$1"
   sqlite3 "$DB_PATH" "select project_id from session where id = '$1' limit 1;"
 }
 
@@ -195,6 +191,7 @@ resolve_project_id() {
 
 sessions_with_non_text_in_project() {
   project_id="$1"
+  validate_project_id "$project_id"
 
   sqlite3 "$DB_PATH" "
     select id

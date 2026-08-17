@@ -1,5 +1,5 @@
 // Protocol types
-export type Protocol = 'SMTP' | 'POP3' | 'IMAP' | 'UNKNOWN'
+export type Protocol = 'SMTP' | 'POP3' | 'IMAP' | 'HTTP' | 'UNKNOWN'
 
 // Session status
 export type SessionStatus = 'active' | 'completed' | 'timeout' | 'error'
@@ -39,9 +39,8 @@ export interface EmailLink {
 // SMTP authentication info
 export interface SmtpAuthInfo {
   auth_method: string
-  username: string | null
-  password: string | null
-  auth_success: boolean | null
+  username?: string | null
+  auth_success?: boolean | null
 }
 
 // SMTP dialog entry
@@ -84,10 +83,11 @@ export interface EmailSession {
   // Email content
   content: EmailContent
   email_count: number
-  error_reason: string | null
-  message_id: string | null
-  auth_info: SmtpAuthInfo | null
-  threat_level: string | null
+  error_reason?: string | null
+  message_id?: string | null
+  auth_info?: SmtpAuthInfo | null
+  threat_level?: string | null
+  source: 'sniffer' | 'mta_proxy' | 'import'
 }
 
 // Email packet
@@ -108,8 +108,8 @@ export interface EmailPacket {
 
 // WebSocket message
 export interface WsMessage {
-  type: 'NewSession' | 'SessionUpdate' | 'StatsUpdate' | 'SecurityVerdict' | 'DataSecurityAlert' | 'Ping' | 'Pong'
-  data: TrafficStats | WsSessionSignal | SecurityVerdictSummary | DataSecurityIncident | null
+  type: 'NewSession' | 'SessionUpdate' | 'StatsUpdate' | 'SecurityVerdict' | 'DataSecurityAlert' | 'Alert' | 'SessionInvalidated' | 'RefreshNeeded' | 'Ping' | 'Pong'
+  data?: TrafficStats | WsSessionSignal | SecurityVerdictSummary | DataSecurityIncident | string | { skipped: number } | null
 }
 
 export interface WsSessionSignal {
@@ -153,10 +153,10 @@ export interface Bpa {
 // Engine BPA detail
 export interface EngineBpaDetail {
   engine_id: string
-  engine_label: string
+  engine_name: string
   bpa: Bpa
-  module_count: number
-  source_modules: string[]
+  modules: string[]
+  key_factors?: string[]
 }
 
 // D-S fusion details
@@ -335,6 +335,7 @@ export interface ModuleMetadata {
   description: string
   supports_ai: boolean
   depends_on: string[]
+  engine_id: string | null
 }
 
 // Pipeline module configuration
@@ -357,6 +358,12 @@ export interface VerdictConfig {
   eta: number
   correlation_matrix?: number[]
   engine_weights: Record<string, number>
+  default_epsilon: number
+  alert_belief_threshold: number
+  alert_floor_factor: number
+  convergence_min_modules: number
+  convergence_base_floor: number
+  convergence_belief_threshold: number
 }
 
 // Pipeline configuration
@@ -432,6 +439,17 @@ export interface AiServiceConfig {
   temperature: number
   max_tokens: number
   timeout_secs: number
+}
+
+export interface IntelSourceConfig {
+  otx_enabled: boolean
+  vt_scrape_enabled: boolean
+  vt_scrape_url: string | null
+  virustotal_api_key: string | null
+  virustotal_api_key_set: boolean
+  abuseipdb_enabled: boolean
+  abuseipdb_api_key: string | null
+  abuseipdb_api_key_set: boolean
 }
 
 // Mail alert configuration
@@ -549,7 +567,7 @@ export interface ContentRules {
 // ============================================
 
 // Data security event type
-export type DataSecurityIncidentType = 'draft_box_abuse' | 'file_transit_abuse' | 'self_sending' | 'jrt_compliance_violation'
+export type DataSecurityIncidentType = 'draft_box_abuse' | 'file_transit_abuse' | 'self_sending' | 'volume_anomaly' | 'jrt_compliance_violation'
 
 // Data security severity
 export type DataSecuritySeverity = 'info' | 'low' | 'medium' | 'high' | 'critical'
@@ -585,6 +603,7 @@ export interface DataSecurityStats {
   draft_abuse_count: number
   file_transit_count: number
   self_send_count: number
+  volume_anomaly_count: number
   jrt_compliance_count?: number
   high_severity_24h: number
   incidents_by_severity: Record<string, number>

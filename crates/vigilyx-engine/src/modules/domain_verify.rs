@@ -10,12 +10,13 @@ use chrono::Utc;
 use regex::Regex;
 use std::sync::LazyLock;
 
-use super::common::extract_domain_from_email;
+use super::common::{domains_share_organizational_domain, extract_domain_from_email};
 use crate::context::SecurityContext;
 use crate::error::EngineError;
 use crate::module::{
     Bpa, Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel,
 };
+use vigilyx_parser::mime::decode_rfc2047;
 
 pub struct DomainVerifyModule {
     meta: ModuleMetadata,
@@ -76,82 +77,10 @@ fn extract_display_name(from_value: &str) -> Option<String> {
             decoded = decoded[1..decoded.len() - 1].to_string();
         }
         // Decode RFC 2047 =?utf-8?B?...?= encoded words
+        // (shared decoder from vigilyx-parser: handles multi-byte UTF-8 in
+        // Q-encoding safely, unlike a raw byte-slice hex parser)
         if decoded.contains("=?") && decoded.contains("?=") {
-            let mut result = String::new();
-            let mut remaining = decoded.as_str();
-            while let Some(start) = remaining.find("=?") {
-                result.push_str(&remaining[..start]);
-                remaining = &remaining[start + 2..];
-                // charset?encoding?text?=
-                let parts: Vec<&str> = remaining.splitn(4, '?').collect();
-                if parts.len() >= 3 && parts[2].ends_with("?=")
-                    || (parts.len() >= 4 && parts[3].starts_with("="))
-                {
-                    let encoding = parts[1].to_uppercase();
-                    let text = if parts.len() >= 4 {
-                        remaining = if parts[3].starts_with("=") {
-                            &parts[3][1..]
-                        } else {
-                            parts[3]
-                        };
-
-                        if let Some(end_idx) = remaining.find("?=") {
-                            let t = &parts[2];
-                            remaining = &remaining[end_idx.saturating_sub(parts[2].len())..];
-                            t
-                        } else {
-                            parts[2]
-                        }
-                    } else {
-                        let t = parts[2].trim_end_matches("?=");
-                        remaining = "";
-                        t
-                    };
-                    if encoding == "B" {
-                        use base64::Engine as _;
-                        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(text)
-                            && let Ok(s) = String::from_utf8(bytes)
-                        {
-                            result.push_str(&s);
-                        }
-                    } else if encoding == "Q" {
-                        // Q-encoding: _ = space, =XX = hex byte
-                        let q_decoded: String = text
-                            .replace('_', " ")
-                            .split('=')
-                            .enumerate()
-                            .flat_map(|(i, part)| {
-                                if i == 0 {
-                                    part.to_string()
-                                } else if part.len() >= 2 {
-                                    let hex = &part[..2];
-                                    let rest = &part[2..];
-                                    if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                                        format!("{}{}", byte as char, rest)
-                                    } else {
-                                        format!("={}", part)
-                                    }
-                                } else {
-                                    format!("={}", part)
-                                }
-                                .chars()
-                                .collect::<Vec<_>>()
-                            })
-                            .collect();
-                        result.push_str(&q_decoded);
-                    }
-
-                    if let Some(end_pos) = remaining.find("?=") {
-                        remaining = &remaining[end_pos + 2..];
-                    } else {
-                        remaining = "";
-                    }
-                } else {
-                    break;
-                }
-            }
-            result.push_str(remaining);
-            let final_name = result.trim().to_string();
+            let final_name = decode_rfc2047(&decoded).trim().to_string();
             if final_name.is_empty() {
                 return None;
             }
@@ -284,7 +213,7 @@ impl SecurityModule for DomainVerifyModule {
             .and_then(|(_, v)| extract_domain_from_email(v));
 
         let envelope_mismatch = if let Some(ref fd) = from_header_domain {
-            fd != &sender_domain
+            !domains_share_organizational_domain(fd, &sender_domain)
         } else {
             false
         };
@@ -437,6 +366,10 @@ mod tests {
             raw_size: 128,
             is_complete: true,
             is_encrypted: false,
+            truncated: false,
+            dropped_attachments: 0,
+            links_truncated: false,
+            link_index: std::collections::HashSet::new(),
             smtp_dialog: vec![],
         };
         SecurityContext::new(Arc::new(session))
@@ -509,5 +442,75 @@ mod tests {
             (alignment - 0.25).abs() < f64::EPSILON,
             "Brand impersonation should suppress the alignment score even when Received/DKIM align"
         );
+    }
+
+    #[tokio::test]
+    async fn test_domain_verify_keeps_parent_subdomain_alignment() {
+        let ctx = make_context(
+            "info@contact.acams.org",
+            vec![
+                (
+                    "Received".to_string(),
+                    "from mail.contact.acams.org (mail.contact.acams.org [203.0.113.20])"
+                        .to_string(),
+                ),
+                (
+                    "DKIM-Signature".to_string(),
+                    "v=1; a=rsa-sha256; d=acams.org; s=mail;".to_string(),
+                ),
+                ("From".to_string(), "ACAMS <noreply@acams.org>".to_string()),
+            ],
+            vec![],
+        );
+
+        let result = DomainVerifyModule::new().analyze(&ctx).await.unwrap();
+        let alignment = result.details["alignment_score"]
+            .as_f64()
+            .expect("alignment score");
+
+        assert!(alignment > 0.0, "relaxed alignment must not be suppressed");
+        assert!(!result.summary.contains("does not match envelope"));
+    }
+
+    #[tokio::test]
+    async fn test_domain_verify_suppresses_cross_organizational_alignment() {
+        let ctx = make_context(
+            "bounce@evil.example",
+            vec![
+                (
+                    "DKIM-Signature".to_string(),
+                    "v=1; a=rsa-sha256; d=evil.example; s=mail;".to_string(),
+                ),
+                ("From".to_string(), "ACAMS <noreply@acams.org>".to_string()),
+            ],
+            vec![],
+        );
+
+        let result = DomainVerifyModule::new().analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.details["alignment_score"].as_f64(), Some(0.0));
+        assert!(result.summary.contains("does not match envelope"));
+    }
+
+    #[test]
+    fn test_extract_display_name_rfc2047_q_multibyte_boundary_no_panic() {
+        // The removed private Q-decoder panicked on `&part[..2]` when a
+        // multi-byte UTF-8 character straddled the 2-byte hex window.
+        // The shared vigilyx-parser decoder must handle this safely.
+        let name = extract_display_name("=?utf-8?Q?abc=中文?= <user@example.com>")
+            .expect("display name should still decode");
+        assert!(name.contains("abc"), "decoded name: {name}");
+    }
+
+    #[test]
+    fn test_extract_display_name_rfc2047_q_valid_utf8() {
+        let name = extract_display_name("=?utf-8?Q?=E4=B8=AD=E6=96=87?= <user@example.com>");
+        assert_eq!(name.as_deref(), Some("中文"));
+    }
+
+    #[test]
+    fn test_extract_display_name_rfc2047_b_valid_utf8() {
+        let name = extract_display_name("=?utf-8?B?5Lit5paH?= <user@example.com>");
+        assert_eq!(name.as_deref(), Some("中文"));
     }
 }

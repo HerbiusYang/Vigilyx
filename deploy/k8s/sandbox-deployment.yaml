@@ -44,7 +44,10 @@ spec:
           effect: "NoSchedule"
       containers:
         - name: cape
-          image: celyrin/cape:latest
+          # SECURITY: Pinned to an immutable digest (resolved from the `latest`
+          # tag on 2026-08-03; `latest` itself is mutable and must not be
+          # deployed unpinned). Re-resolve the digest when upgrading.
+          image: celyrin/cape@sha256:29c1395e7344d617136351e2569d7ce69d427f799a4b413282570cf247625cd7
           ports:
             - containerPort: 8000
               name: api
@@ -69,6 +72,11 @@ spec:
               memory: "8Gi"
               cpu: "4"
           securityContext:
+            # ACCEPTED RISK: privileged is required for KVM/libvirt-based malware
+            # analysis and grants the container full host access. Isolation depends
+            # on the nodeSelector/tolerations above: sandbox pods MUST stay on
+            # dedicated `sandbox-capable=true` nodes that run no other workloads.
+            # Do not schedule this deployment on shared nodes.
             privileged: true  # Required by KVM
           volumeMounts:
             - name: storage
@@ -91,11 +99,15 @@ spec:
             timeoutSeconds: 15
             failureThreshold: 3
       volumes:
+        # Ephemeral analysis storage. Production deployments that need
+        # persistent results should switch to a PVC (see the StatefulSet
+        # alternative below) instead of emptyDir.
+        - name: storage
+          emptyDir: {}
         - name: kvm-device
           hostPath:
             path: /dev/kvm
             type: CharDevice
-  volumeClaimTemplates: []  # Use a PVC template (see the StatefulSet alternative below)
 
 ---
 # If you need persistent storage, replace the Deployment with a StatefulSet:

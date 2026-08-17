@@ -20,8 +20,8 @@
 #     vigilyx:latest
 
 # -- Stage 1: cargo-chef - extract the dependency recipe --
-FROM rust:1.95.0-bookworm AS chef
-RUN cargo install cargo-chef --locked
+FROM rust:1.97.1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 AS chef
+RUN cargo install cargo-chef --locked --version 0.1.78
 WORKDIR /app
 
 # -- Stage 2: generate the dependency recipe (no source files, only Cargo.toml/Cargo.lock) --
@@ -50,15 +50,15 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cp /app/target/release/vigilyx-engine /app/vigilyx-engine
 
 # -- Stage 5: build the frontend --
-FROM node:24.15.0-bookworm AS frontend-builder
+FROM node:24.19.0-bookworm@sha256:934240a162082fd8b8a2f90cd5114446443f1eba1c5378f6687167ca405e6584 AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm install -g npm@11.12.1 && npm ci --prefer-offline
+RUN npm install -g npm@12.0.2 && npm ci --prefer-offline
 COPY frontend ./
 RUN npm run build
 
 # -- Stage 6: final runtime image --
-FROM debian:bookworm-slim@sha256:4724b8cc51e33e398f0e2e15e18d5ec2851ff0c2280647e1310bc1642182655d
+FROM debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
 
 # Runtime dependencies (ca-certificates: HTTPS; tini: PID 1 signal forwarding; curl: health checks)
 RUN apt-get update && apt-get install -y --no-install-recommends \

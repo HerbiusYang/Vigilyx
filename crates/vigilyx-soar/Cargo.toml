@@ -3,6 +3,7 @@ name = "vigilyx-soar"
 description = "Vigilyx SOAR - Security Orchestration, Automation and Response"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 
@@ -17,14 +18,14 @@ chrono.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.13", features = ["json"] }
 url = "2"
-lettre = { version = "0.11", features = ["tokio1-native-tls", "builder", "smtp-transport"] }
+lettre.workspace = true
 
 # SEC-REMAINING-001: decrypt encrypted config values stored in the DB
-aes-gcm = "0.10"
-sha2 = "0.10"
-base64 = "0.22"
+aes-gcm = "0.11"
+sha2 = "0.11"
+base64 = "0.23"
 
 [lints]
 workspace = true

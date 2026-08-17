@@ -5,6 +5,7 @@
 //! - PUT /admin/nlp/samples/{id} - Update a training sample label
 //! - GET /admin/nlp/stats - Training data statistics
 //! - POST /admin/nlp/train - Trigger NLP model fine-tuning
+//! - POST /admin/nlp/approve - Approve a staged (pending) trained model
 //! - GET /admin/nlp/status - NLP training status
 //! - GET /admin/nlp/progress - Training progress
 
@@ -150,10 +151,10 @@ pub async fn trigger_nlp_training(State(state): State<Arc<AppState>>) -> impl In
     let total_samples = match state.engine_db.count_training_samples().await {
         Ok(n) => n,
         Err(e) => {
-            return ApiResponse::<serde_json::Value>::err(format!(
-                "Failed to count training samples: {}",
-                e
-            ));
+            return ApiResponse::<serde_json::Value>::internal_err(
+                &e,
+                "Failed to count training samples",
+            );
         }
     };
 
@@ -179,10 +180,10 @@ pub async fn trigger_nlp_training(State(state): State<Arc<AppState>>) -> impl In
     {
         Ok(s) => s,
         Err(e) => {
-            return ApiResponse::<serde_json::Value>::err(format!(
-                "Failed to load training samples: {}",
-                e
-            ));
+            return ApiResponse::<serde_json::Value>::internal_err(
+                &e,
+                "Failed to load training samples",
+            );
         }
     };
 
@@ -223,16 +224,74 @@ pub async fn trigger_nlp_training(State(state): State<Arc<AppState>>) -> impl In
     {
         Ok(Ok(resp)) => match resp.json::<serde_json::Value>().await {
             Ok(body) => ApiResponse::ok(body),
-            Err(e) => ApiResponse::<serde_json::Value>::err(format!(
-                "Failed to parse training response: {}",
-                e
-            )),
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to parse AI training response");
+                ApiResponse::<serde_json::Value>::err("AI service returned an invalid response")
+            }
         },
-        Ok(Err(e)) => ApiResponse::<serde_json::Value>::err(format!(
-            "AI service connection failed ({}): {}",
-            ai_url, e
-        )),
+        Ok(Err(e)) => {
+            tracing::error!(error = %e, "AI training service connection failed");
+            ApiResponse::<serde_json::Value>::err("AI service is unavailable")
+        }
         Err(_) => ApiResponse::<serde_json::Value>::err("Training timed out"),
+    }
+}
+
+/// Approve a staged (pending) trained model via the Python AI service.
+///
+/// Proxies POST /model/approve. A successful training run only STAGES the
+/// model; it goes live solely through this explicit operator approval.
+/// Python rejects with 404 (nothing staged), 409 (staged record changed
+/// between review and approval), or 410 (staged model directory missing) —
+/// those statuses are forwarded so the UI can react accordingly.
+pub async fn approve_nlp_model(State(state): State<Arc<AppState>>) -> axum::response::Response {
+    let ai_url = get_ai_service_url(&state).await;
+    let url = match build_ai_service_endpoint(&ai_url, "model/approve") {
+        Ok(url) => url,
+        Err(error) => {
+            return ApiResponse::<serde_json::Value>::internal_err(&error, "Operation failed")
+                .into_response();
+        }
+    };
+
+    let client = &state.http_client;
+    // Hot-swapping reloads model weights; allow a generous timeout.
+    match tokio::time::timeout(std::time::Duration::from_secs(120), client.post(&url).send()).await
+    {
+        Ok(Ok(resp)) => {
+            let status = resp.status();
+            match resp.json::<serde_json::Value>().await {
+                Ok(body) if status.is_success() => ApiResponse::ok(body).into_response(),
+                Ok(body) => {
+                    let detail = body
+                        .get("detail")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("AI service rejected the approval");
+                    tracing::warn!(%status, detail, "AI model approval rejected");
+                    (
+                        status,
+                        Json(ApiResponse::<serde_json::Value> {
+                            success: false,
+                            data: None,
+                            error: Some(detail.to_string()),
+                            error_code: None,
+                        }),
+                    )
+                        .into_response()
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to parse AI approval response");
+                    ApiResponse::<serde_json::Value>::err("AI service returned an invalid response")
+                        .into_response()
+                }
+            }
+        }
+        Ok(Err(e)) => {
+            tracing::error!(error = %e, "AI approval service connection failed");
+            ApiResponse::<serde_json::Value>::err("AI service is unavailable").into_response()
+        }
+        Err(_) => ApiResponse::<serde_json::Value>::err("AI service not responding")
+            .into_response(),
     }
 }
 
@@ -277,13 +336,14 @@ pub async fn get_nlp_training_status(State(state): State<Arc<AppState>>) -> impl
     match tokio::time::timeout(std::time::Duration::from_secs(5), client.get(&url).send()).await {
         Ok(Ok(resp)) => match resp.json::<serde_json::Value>().await {
             Ok(body) => ApiResponse::ok(body),
-            Err(e) => ApiResponse::<serde_json::Value>::err(format!(
-                "Failed to parse status response: {}",
-                e
-            )),
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to parse AI training status response");
+                ApiResponse::<serde_json::Value>::err("AI service returned an invalid response")
+            }
         },
         Ok(Err(e)) => {
-            ApiResponse::<serde_json::Value>::err(format!("AI service connection failed: {}", e))
+            tracing::error!(error = %e, "AI training status connection failed");
+            ApiResponse::<serde_json::Value>::err("AI service is unavailable")
         }
         Err(_) => ApiResponse::<serde_json::Value>::err("AI service not responding"),
     }
@@ -303,13 +363,14 @@ pub async fn get_training_progress(State(state): State<Arc<AppState>>) -> impl I
     match tokio::time::timeout(std::time::Duration::from_secs(3), client.get(&url).send()).await {
         Ok(Ok(resp)) => match resp.json::<serde_json::Value>().await {
             Ok(body) => ApiResponse::ok(body),
-            Err(e) => ApiResponse::<serde_json::Value>::err(format!(
-                "Failed to parse progress response: {}",
-                e
-            )),
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to parse AI training progress response");
+                ApiResponse::<serde_json::Value>::err("AI service returned an invalid response")
+            }
         },
         Ok(Err(e)) => {
-            ApiResponse::<serde_json::Value>::err(format!("AI service connection failed: {}", e))
+            tracing::error!(error = %e, "AI training progress connection failed");
+            ApiResponse::<serde_json::Value>::err("AI service is unavailable")
         }
         Err(_) => ApiResponse::<serde_json::Value>::err("AI service not responding"),
     }

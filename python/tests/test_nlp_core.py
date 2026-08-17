@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
 from vigilyx_ai.nlp_phishing import _clean_html, _detect_language, preprocess_email
-
 
 # =====================================================================
 # _detect_language
@@ -176,7 +173,73 @@ class TestPreprocessEmail:
         assert result == ""
 
     def test_body_pretrimmed_before_html_clean(self):
-        # body[:max_chars*3] happens before _clean_html
+        # The raw body is trimmed to the cap BEFORE _clean_html.
         large_body = "<b>" + "X" * 20000 + "</b>"
         result = preprocess_email(None, large_body, None, max_chars=3000)
         assert len(result) <= 3000
+
+
+class TestPreprocessEmailNoBlindBands:
+    """Long input uses bounded windows distributed across the full body.
+
+    The result remains partial above the inference budget, but it no longer
+    discards the entire suffix at one predictable offset.
+    """
+
+    def test_payload_anywhere_survives_within_cap(self):
+        # Payload placed inside the OLD blind band (offset ~4000 of a
+        # ~12000-char body) must not be dropped by preprocessing.
+        filler = "这是一条正常的业务往来邮件内容。" * 250  # 4000 chars
+        payload = (
+            "张总临时有事，请立即将合同款50万元转至新账户6228480012345678901，务必今天下班前完成。"
+        )
+        body = filler + payload + filler + filler
+        result = preprocess_email(
+            "对账提醒",
+            body,
+            "finance@example.com",
+            max_chars=3000,
+            max_segments=8,
+        )
+        assert payload in result
+        assert len(result) <= 3000 * 8
+
+    def test_long_input_includes_head_and_tail_windows(self):
+        body = "".join(chr(ord("a") + (i % 26)) for i in range(30000))
+        result = preprocess_email(None, body, None, max_chars=3000, max_segments=8)
+        assert result.startswith(body[:100])
+        assert result.endswith(body[-100:])
+        assert "[... omitted ...]" in result
+        assert len(result) <= 3000 * 8
+
+    def test_rt010_payload_beyond_old_24k_prefix_is_sampled(self):
+        payload = "mailbox deactivation: send password and OTP to admin@evil.example"
+        body = "A" * 25_000 + payload + "B" * 4_000
+
+        result = preprocess_email(
+            "Q3 digest",
+            body,
+            "reports@ops.example",
+            max_chars=3000,
+            max_segments=8,
+        )
+
+        assert payload in result
+        assert len(result) <= 3000 * 8
+
+    def test_default_single_segment_prefix_cut(self):
+        # Default (trainer) behavior: cap is max_chars, plain prefix cut.
+        body = "A" * 4000 + "B" * 4000
+        result = preprocess_email(None, body, None)
+        assert len(result) == 3000
+        assert "B" not in result
+
+    def test_headers_kept_intact_with_huge_body(self):
+        body = "正常内容" * 3000
+        result = preprocess_email("重要：年度审计通知", body, "cfo@example.com")
+        assert result.startswith("From: cfo@example.com\nSubject: 重要：年度审计通知\n")
+
+    def test_short_email_unchanged(self):
+        result = preprocess_email("Hi", "short body", "a@b.com")
+        assert "short body" in result
+        assert "chars omitted" not in result

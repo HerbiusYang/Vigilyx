@@ -22,4 +22,6 @@ export const EVENTS = {
   NAVIGATE_SETTINGS: 'vigilyx:navigate-settings',
   /** Fired after database stats/data is cleared */
   STATS_CLEARED: 'vigilyx:stats-cleared',
+  /** Triggers alert-center list refresh when a P0-P3 alert arrives */
+  ALERT: 'vigilyx:alert',
 } as const;

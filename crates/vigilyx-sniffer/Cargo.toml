@@ -2,6 +2,7 @@
 name = "vigilyx-sniffer"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Vigilyx 高性能流量监听引擎"
@@ -24,20 +25,20 @@ pcap = "2.4.0"                          # High-performance capture (via libpcap)
 
 # Concurrent data structures
 crossbeam = "0.8.4"                     # Lock-free queue
-dashmap = "6.1.0"                       # Lock-free HashMap
+dashmap = "6.2.1"                       # Lock-free HashMap
 
 # Memory optimization
-smallvec = { version = "1.15.1", features = ["union"] }  # Small stack-allocated arrays
-bytes = "1.11.1"                         # Zero-copy byte buffers (CVE-2026-25541: >=1.11.1)
+smallvec = { version = "1.15.2", features = ["union"] }  # Small stack-allocated arrays
+bytes = "1.12.1"                         # Zero-copy byte buffers (CVE-2026-25541: >=1.11.1)
 
 # High-performance hashing (FxHash - 2-4x faster than SipHash)
-rustc-hash = "2.1.1"
+rustc-hash = "2.1.3"
 
 # SIMD-accelerated byte search (10x+ faster than handwritten loops)
-memchr = "2.7.6"
+memchr = "2.8.3"
 
 # Hashing (for attachment fingerprints)
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 hex = "0.4.3"
 
 # URL decoding (for MIME filename parsing)
@@ -67,10 +68,10 @@ uuid.workspace = true
 num_cpus = "1.17.0"                     # Detect CPU core count
 
 # TCP socket configuration (Keepalive, etc.)
-socket2 = { version = "0.5.10", features = ["all"] }
+socket2 = { version = "0.6.5", features = ["all"] }
 
 # CLI arguments
-clap = { version = "4.5.56", features = ["derive"] }
+clap = { version = "4.6.6", features = ["derive"] }
 
 # .env loading (must be explicit under sudo)
 dotenvy = "0.15"
@@ -79,7 +80,7 @@ dotenvy = "0.15"
 httparse = "1"
 
 # HTTP client (used to send data directly to the API)
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.13", features = ["json"] }
 
 # Async streams (used for Redis Pub/Sub subscriptions)
 futures = "0.3"
@@ -99,3 +100,7 @@ perf = []
 
 [lints]
 workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# SEC M-3: privilege drop (setgroups/setgid/setuid) for the root-opened capture process.
+libc = "0.2"

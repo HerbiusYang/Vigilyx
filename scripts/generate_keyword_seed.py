@@ -1,252 +1,363 @@
+"""Extend the canonical keyword seed with deterministic multilingual phrases.
+
+The JSON file is the runtime artifact.  This script is intentionally additive:
+it preserves the existing seed and user-visible category ordering, then fills
+each category to the configured minimum with language-specific phrase
+matrices.  Re-running it is idempotent.
+"""
+
 from __future__ import annotations
 
 import json
+import unicodedata
 from pathlib import Path
 from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT = ROOT / 'shared' / 'schemas' / 'keyword_overrides_seed.json'
-TARGET_PER_CATEGORY = 1280
+OUT = ROOT / "shared" / "schemas" / "keyword_overrides_seed.json"
+TARGET_PER_CATEGORY = 2100
+MIN_PER_LANGUAGE = 60
+CONFUSABLES = str.maketrans(
+    {
+        "А": "A",
+        "Α": "A",
+        "В": "B",
+        "Β": "B",
+        "Е": "E",
+        "Ε": "E",
+        "З": "Z",
+        "Ζ": "Z",
+        "Н": "H",
+        "Η": "H",
+        "І": "I",
+        "Ι": "I",
+        "К": "K",
+        "Κ": "K",
+        "М": "M",
+        "Μ": "M",
+        "О": "O",
+        "Ο": "O",
+        "Р": "P",
+        "Ρ": "P",
+        "С": "C",
+        "Т": "T",
+        "Τ": "T",
+        "У": "Y",
+        "Υ": "Y",
+        "Х": "X",
+        "Χ": "X",
+        "а": "a",
+        "α": "a",
+        "е": "e",
+        "є": "e",
+        "і": "i",
+        "ι": "i",
+        "ј": "j",
+        "к": "k",
+        "κ": "k",
+        "о": "o",
+        "ο": "o",
+        "р": "p",
+        "ρ": "p",
+        "с": "c",
+        "т": "t",
+        "τ": "t",
+        "у": "y",
+        "υ": "y",
+        "х": "x",
+        "χ": "x",
+        "ѕ": "s",
+        "ӏ": "l",
+    }
+)
+IGNORED_CHARS = set(
+    "\u200b\u200c\u200d\u200e\u200f\u2060\ufeff\u00ad\u034f\u061c\u2028\u2029"
+)
 
 
 def normalize(phrase: str) -> str:
-    return ' '.join(phrase.strip().lower().split())
+    value = unicodedata.normalize("NFKC", phrase.lower()).translate(CONFUSABLES)
+    value = "".join(char for char in value if char not in IGNORED_CHARS)
+    return " ".join(value.strip().split())
 
 
-def take_unique(candidates: Iterable[str], target: int, excluded: set[str]) -> list[str]:
-    result: list[str] = []
-    seen = set(excluded)
-    for candidate in candidates:
-        normalized = normalize(candidate)
-        if not normalized or normalized in seen:
-            continue
-        seen.add(normalized)
-        result.append(normalized)
-        if len(result) >= target:
-            return result
-    raise RuntimeError(f'only generated {len(result)} items, need {target}')
+def words(value: str) -> list[str]:
+    return value.split("|")
 
 
-def phishing_candidates() -> Iterable[str]:
-    brands_en = [
-        'microsoft 365', 'outlook web access', 'exchange online', 'sharepoint online',
-        'onedrive business', 'docusign secure', 'adobe sign', 'google workspace',
-        'dropbox business', 'okta verify', 'vpn portal', 'payroll portal',
-        'benefits center', 'banking portal', 'vendor portal', 'shipping desk',
-        'tax filing center', 'customs clearance desk', 'procurement portal', 'secure mail gateway',
-    ]
-    actions_en = [
-        'password reset required', 'mailbox verification required', 'secure login validation',
-        'unusual sign in review', 'account recovery confirmation', 'beneficiary validation request',
-        'invoice release pending', 'document review pending', 'payment exception alert',
-        'session unlock required', 'security hold removal', 'two factor sync required',
-        'direct deposit update review', 'identity proof recheck',
-    ]
-    urgencies_en = [
-        'immediate action required', 'expires today', 'final reminder', 'within 2 hours',
-        'before account suspension', 'to avoid payment delay',
-    ]
-    for brand in brands_en:
-        for action in actions_en:
-            yield f'{brand} {action}'
-            for urgency in urgencies_en:
-                yield f'{brand} {action} {urgency}'
-                yield f'{urgency} {brand} {action}'
-
-    services_zh = [
-        '微软365', '邮箱中心', '企业邮箱', '财务共享平台', '薪资系统', '报销平台',
-        '税务服务', '海关平台', '采购门户', '供应商平台', '快递中心', '安全网关',
-        '文档签署中心', '账号服务中心', '网银服务', '人事系统',
-    ]
-    actions_zh = [
-        '密码重置通知', '邮箱验证失败', '登录状态异常复核', '账户恢复确认', '受益人信息复核',
-        '付款异常处理', '发票下载待确认', '签署文件待查收', '双因子同步通知',
-        '账号冻结解除申请', '安全策略更新确认', '身份核验复审',
-    ]
-    urgencies_zh = ['请立即处理', '今日到期', '最终提醒', '两小时内完成', '否则暂停访问', '避免付款延迟']
-    for service in services_zh:
-        for action in actions_zh:
-            yield f'{service}{action}'
-            for urgency in urgencies_zh:
-                yield f'{service}{action}{urgency}'
-                yield f'{urgency}{service}{action}'
+def matrix(left: str, right: str, joiner: str = " ") -> Iterable[str]:
+    for first in words(left):
+        for second in words(right):
+            yield f"{first}{joiner}{second}"
 
 
-def weak_phishing_candidates() -> Iterable[str]:
-    objects_en = [
-        'invoice copy', 'payment summary', 'vendor statement', 'shared file', 'project brief',
-        'meeting minutes', 'policy acknowledgement', 'expense report', 'direct deposit form',
-        'benefit enrollment', 'security questionnaire', 'access request', 'purchase order',
-        'delivery notice', 'compliance packet', 'account profile', 'mailbox quota report',
-        'device enrollment', 'service ticket', 'contract amendment',
-    ]
-    verbs_en = [
-        'please review', 'please confirm', 'reply with approval', 'signature requested',
-        'acknowledgement needed', 'updated copy attached', 'shared for validation',
-        'waiting for confirmation', 'reconciliation needed', 'resubmission requested',
-        'secure view available', 'follow up pending',
-    ]
-    contexts_en = [
-        'before cutoff', 'for today processing', 'for finance reconciliation',
-        'for payroll cycle', 'for month end close', 'through the secure portal',
-        'in the attached document', 'to avoid delay',
-    ]
-    for obj in objects_en:
-        for verb in verbs_en:
-            yield f'{obj} {verb}'
-            for context in contexts_en:
-                yield f'{obj} {verb} {context}'
+# 20 common email languages.  Each bank intentionally uses 12 x 12 semantic
+# fragments, producing enough combinations to guarantee broad coverage before
+# the category is filled to its global minimum.
+PHISHING = {
+    "en": ("verify|confirm|validate|update|secure|unlock|restore|activate|review|re-authenticate|protect|recover", "your account|your identity|your password|your email address|your login|your security settings|your payment profile|your billing details|your mailbox|your cloud storage|your access rights|your user profile"),
+    "zh": ("验证|确认|核实|更新|保护|解锁|恢复|激活|检查|重新认证|加固|找回", "你的账户|你的身份信息|你的密码|你的电子邮件地址|你的登录状态|你的安全设置|你的付款资料|你的账单信息|你的邮箱|你的云存储|你的访问权限|你的用户资料"),
+    "es": ("verifique|confirme|valide|actualice|proteja|desbloquee|recupere|active|revise|reautentique|asegure|restaure", "su cuenta|su identidad|su contraseña|su dirección de correo|su inicio de sesión|sus ajustes de seguridad|su perfil de pagos|sus datos de facturación|su buzón|su almacenamiento en la nube|sus permisos de acceso|su perfil de usuario"),
+    "pt": ("verifique|confirme|valide|atualize|proteja|desbloqueie|recupere|ative|revise|reautentique|assegure|restaure", "sua conta|sua identidade|sua senha|seu endereço de email|seu login|suas configurações de segurança|seu perfil de pagamentos|seus dados de cobrança|sua caixa de correio|seu armazenamento em nuvem|suas permissões de acesso|seu perfil de usuário"),
+    "fr": ("vérifiez|confirmez|validez|mettez à jour|sécurisez|déverrouillez|récupérez|activez|réexaminez|réauthentifiez|protégez|restaurez", "votre compte|votre identité|votre mot de passe|votre adresse e-mail|votre connexion|vos paramètres de sécurité|votre profil de paiement|vos informations de facturation|votre boîte aux lettres|votre stockage cloud|vos droits d'accès|votre profil utilisateur"),
+    "de": ("bestätigen|verifizieren|validieren|aktualisieren|sichern|entsperren|wiederherstellen|aktivieren|prüfen|erneut authentifizieren|schützen|zurücksetzen", "Ihr Konto|Ihre Identität|Ihr Passwort|Ihre E-Mail-Adresse|Ihre Anmeldung|Ihre Sicherheitseinstellungen|Ihr Zahlungsprofil|Ihre Rechnungsdaten|Ihr Postfach|Ihr Cloud-Speicher|Ihre Zugriffsrechte|Ihr Benutzerprofil"),
+    "it": ("verifica|conferma|valida|aggiorna|proteggi|sblocca|recupera|attiva|controlla|riautentica|metti in sicurezza|ripristina", "il tuo account|la tua identità|la tua password|il tuo indirizzo email|il tuo accesso|le tue impostazioni di sicurezza|il tuo profilo pagamenti|i tuoi dati di fatturazione|la tua casella|il tuo spazio cloud|i tuoi diritti di accesso|il tuo profilo utente"),
+    "nl": ("verifieer|bevestig|valideer|werk bij|beveilig|ontgrendel|herstel|activeer|controleer|authenticeer opnieuw|bescherm|zet terug", "uw account|uw identiteit|uw wachtwoord|uw e-mailadres|uw aanmelding|uw beveiligingsinstellingen|uw betaalprofiel|uw factuurgegevens|uw mailbox|uw cloudopslag|uw toegangsrechten|uw gebruikersprofiel"),
+    "pl": ("zweryfikuj|potwierdź|zatwierdź|zaktualizuj|zabezpiecz|odblokuj|przywróć|aktywuj|sprawdź|uwierzytelnij ponownie|ochroń|zresetuj", "swoje konto|swoją tożsamość|swoje hasło|swój adres e-mail|swoje logowanie|swoje ustawienia bezpieczeństwa|swój profil płatności|swoje dane rozliczeniowe|swoją skrzynkę|swoją pamięć w chmurze|swoje uprawnienia dostępu|swój profil użytkownika"),
+    "tr": ("doğrulayın|onaylayın|geçerli kılın|güncelleyin|güvenceye alın|kilidi açın|kurtarın|etkinleştirin|inceleyin|yeniden doğrulayın|koruyun|sıfırlayın", "hesabınızı|kimliğinizi|şifrenizi|e-posta adresinizi|girişinizi|güvenlik ayarlarınızı|ödeme profilinizi|fatura bilgilerinizi|posta kutunuzu|bulut depolamanızı|erişim izinlerinizi|kullanıcı profilinizi"),
+    "ru": ("проверьте|подтвердите|валидируйте|обновите|защитите|разблокируйте|восстановите|активируйте|пересмотрите|повторно подтвердите|обезопасьте|сбросьте", "свою учетную запись|свою личность|свой пароль|свой адрес электронной почты|свой вход|свои настройки безопасности|свой платежный профиль|свои платежные данные|свой почтовый ящик|свое облачное хранилище|свои права доступа|свой профиль пользователя"),
+    "uk": ("перевірте|підтвердьте|провалідуйте|оновіть|захистіть|розблокуйте|відновіть|активуйте|перегляньте|повторно автентифікуйте|убезпечте|скиньте", "свій обліковий запис|свою особу|свій пароль|свою електронну адресу|свій вхід|свої налаштування безпеки|свій платіжний профіль|свої платіжні дані|свою поштову скриньку|своє хмарне сховище|свої права доступу|свій профіль користувача"),
+    "ar": ("تحقق من|أكد|تحقق من صحة|حدّث|أمّن|افتح|استعد|فعّل|راجع|أعد المصادقة على|احمِ|أعد تعيين", "حسابك|هويتك|كلمة مرورك|عنوان بريدك الإلكتروني|تسجيل دخولك|إعدادات الأمان لديك|ملف الدفع لديك|بيانات الفوترة لديك|صندوق بريدك|تخزينك السحابي|صلاحيات الوصول لديك|ملف المستخدم لديك"),
+    "he": ("אמת|אשר|תקף|עדכן|אבטח|פתח|שחזר|הפעל|בדוק|אמת מחדש|הגן על|אפס", "את החשבון שלך|את הזהות שלך|את הסיסמה שלך|את כתובת הדוא״ל שלך|את הכניסה שלך|את הגדרות האבטחה שלך|את פרופיל התשלומים שלך|את פרטי החיוב שלך|את תיבת הדואר שלך|את האחסון בענן שלך|את הרשאות הגישה שלך|את פרופיל המשתמש שלך"),
+    "hi": ("सत्यापित करें|पुष्टि करें|मान्य करें|अपडेट करें|सुरक्षित करें|अनलॉक करें|पुनर्प्राप्त करें|सक्रिय करें|समीक्षा करें|फिर से प्रमाणित करें|रक्षा करें|रीसेट करें", "अपना खाता|अपनी पहचान|अपना पासवर्ड|अपना ईमेल पता|अपना लॉगिन|अपनी सुरक्षा सेटिंग|अपनी भुगतान प्रोफ़ाइल|अपने बिलिंग विवरण|अपना मेलबॉक्स|अपना क्लाउड स्टोरेज|अपनी पहुंच अनुमतियां|अपनी उपयोगकर्ता प्रोफ़ाइल"),
+    "id": ("verifikasi|konfirmasi|validasi|perbarui|amankan|buka kunci|pulihkan|aktifkan|tinjau|autentikasi ulang|lindungi|atur ulang", "akun Anda|identitas Anda|kata sandi Anda|alamat email Anda|login Anda|pengaturan keamanan Anda|profil pembayaran Anda|data penagihan Anda|kotak surat Anda|penyimpanan cloud Anda|izin akses Anda|profil pengguna Anda"),
+    "vi": ("xác minh|xác nhận|kiểm tra hợp lệ|cập nhật|bảo mật|mở khóa|khôi phục|kích hoạt|xem xét|xác thực lại|bảo vệ|đặt lại", "tài khoản của bạn|danh tính của bạn|mật khẩu của bạn|địa chỉ email của bạn|lần đăng nhập của bạn|cài đặt bảo mật của bạn|hồ sơ thanh toán của bạn|thông tin lập hóa đơn của bạn|hộp thư của bạn|bộ nhớ đám mây của bạn|quyền truy cập của bạn|hồ sơ người dùng của bạn"),
+    "th": ("ยืนยัน|ยืนยันตัวตน|ตรวจสอบ|อัปเดต|รักษาความปลอดภัย|ปลดล็อก|กู้คืน|เปิดใช้งาน|ตรวจทาน|ยืนยันใหม่|ปกป้อง|รีเซ็ต", "บัญชีของคุณ|ตัวตนของคุณ|รหัสผ่านของคุณ|ที่อยู่อีเมลของคุณ|การเข้าสู่ระบบของคุณ|การตั้งค่าความปลอดภัยของคุณ|โปรไฟล์การชำระเงินของคุณ|ข้อมูลการเรียกเก็บเงินของคุณ|กล่องจดหมายของคุณ|พื้นที่เก็บข้อมูลคลาวด์ของคุณ|สิทธิ์การเข้าถึงของคุณ|โปรไฟล์ผู้ใช้ของคุณ"),
+    "ja": ("確認|認証|検証|更新|保護|ロック解除|復元|有効化|再確認|再認証|安全確認|リセット", "アカウント|本人確認情報|パスワード|メールアドレス|ログイン|セキュリティ設定|支払いプロフィール|請求情報|メールボックス|クラウドストレージ|アクセス権|ユーザープロフィール"),
+    "ko": ("확인|인증|검증|업데이트|보호|잠금 해제|복구|활성화|검토|재인증|보안 설정|재설정", "계정|신원 정보|비밀번호|이메일 주소|로그인|보안 설정|결제 프로필|청구 정보|메일함|클라우드 저장소|접근 권한|사용자 프로필"),
+}
 
-    objects_zh = [
-        '付款摘要', '供应商对账单', '共享文件', '项目简报', '会议纪要', '制度确认单',
-        '报销单据', '工资卡变更表', '福利登记表', '安全问卷', '访问申请', '采购订单',
-        '交付通知', '合规资料包', '账户资料', '邮箱容量报告', '设备登记单', '服务工单',
-    ]
-    verbs_zh = [
-        '请查收', '请确认', '请审批', '需要签收', '需要回执', '附件已更新',
-        '等待核对', '请重新提交', '请及时回复', '请补充资料',
-    ]
-    contexts_zh = ['用于财务核对', '用于月末结账', '用于本周处理', '通过安全门户查看', '避免流程延误', '请在附件中核验']
-    for obj in objects_zh:
-        for verb in verbs_zh:
-            yield f'{obj}{verb}'
-            for context in contexts_zh:
-                yield f'{obj}{verb}{context}'
+WEAK = {
+    "en": ("please review|kindly confirm|please check|please respond|your attention is required|urgent request|follow up needed|action requested|reply requested|please acknowledge|review requested|response needed", "the invoice|the payment summary|the shared file|the project document|the meeting minutes|the policy update|the access request|the delivery notice|the account profile|the compliance form|the service ticket|the attached report"),
+    "zh": ("请查收|请确认|请核对|请回复|需要您关注|紧急请求|需要跟进|请采取行动|请回执|请知悉|请求审阅|需要回复", "付款发票|付款摘要|共享文件|项目文档|会议纪要|制度更新|访问申请|交付通知|账户资料|合规表单|服务工单|附件报告"),
+    "es": ("revise por favor|confirme por favor|compruebe por favor|responda por favor|requiere su atención|solicitud urgente|se necesita seguimiento|acción solicitada|se solicita respuesta|confirme la recepción|se solicita revisión|se necesita respuesta", "la factura|el resumen de pago|el archivo compartido|el documento del proyecto|el acta de la reunión|la actualización de política|la solicitud de acceso|el aviso de entrega|el perfil de cuenta|el formulario de cumplimiento|el ticket de servicio|el informe adjunto"),
+    "pt": ("revise por favor|confirme por favor|verifique por favor|responda por favor|sua atenção é necessária|solicitação urgente|acompanhamento necessário|ação solicitada|resposta solicitada|confirme o recebimento|revisão solicitada|resposta necessária", "a fatura|o resumo de pagamento|o arquivo compartilhado|o documento do projeto|a ata da reunião|a atualização da política|a solicitação de acesso|o aviso de entrega|o perfil da conta|o formulário de conformidade|o chamado de serviço|o relatório anexado"),
+    "fr": ("veuillez examiner|veuillez confirmer|veuillez vérifier|veuillez répondre|votre attention est requise|demande urgente|suivi nécessaire|action demandée|réponse demandée|veuillez accuser réception|révision demandée|réponse nécessaire", "la facture|le récapitulatif du paiement|le fichier partagé|le document du projet|le procès-verbal|la mise à jour de la politique|la demande d'accès|l'avis de livraison|le profil du compte|le formulaire de conformité|le ticket de service|le rapport joint"),
+    "de": ("bitte prüfen|bitte bestätigen|bitte kontrollieren|bitte antworten|Ihre Aufmerksamkeit ist erforderlich|dringende Anfrage|Nachverfolgung erforderlich|Aktion angefordert|Antwort angefordert|bitte bestätigen Sie den Erhalt|Prüfung angefordert|Antwort erforderlich", "die Rechnung|die Zahlungsübersicht|die freigegebene Datei|das Projektdokument|das Sitzungsprotokoll|die Richtlinienaktualisierung|den Zugriffsantrag|die Liefermeldung|das Kontoprofil|das Compliance-Formular|das Serviceticket|den beigefügten Bericht"),
+    "it": ("si prega di esaminare|si prega di confermare|si prega di controllare|si prega di rispondere|la vostra attenzione è richiesta|richiesta urgente|follow-up necessario|azione richiesta|risposta richiesta|confermare la ricezione|revisione richiesta|risposta necessaria", "la fattura|il riepilogo del pagamento|il file condiviso|il documento del progetto|il verbale della riunione|l'aggiornamento della policy|la richiesta di accesso|l'avviso di consegna|il profilo dell'account|il modulo di conformità|il ticket di servizio|il rapporto allegato"),
+    "nl": ("bekijk alstublieft|bevestig alstublieft|controleer alstublieft|antwoord alstublieft|uw aandacht is vereist|dringend verzoek|opvolging nodig|actie gevraagd|antwoord gevraagd|bevestig de ontvangst|beoordeling gevraagd|antwoord vereist", "de factuur|het betalingsoverzicht|het gedeelde bestand|het projectdocument|de notulen|de beleidsupdate|het toegangsverzoek|de leveringsmelding|het accountprofiel|het complianceformulier|het serviceticket|het bijgevoegde rapport"),
+    "pl": ("proszę przejrzeć|proszę potwierdzić|proszę sprawdzić|proszę odpowiedzieć|wymagana jest uwaga|pilna prośba|potrzebna dalsza obsługa|wymagane działanie|wymagana odpowiedź|proszę potwierdzić odbiór|wymagany przegląd|potrzebna odpowiedź", "fakturę|podsumowanie płatności|udostępniony plik|dokument projektu|protokół spotkania|aktualizację polityki|wniosek o dostęp|powiadomienie o dostawie|profil konta|formularz zgodności|zgłoszenie serwisowe|załączony raport"),
+    "tr": ("lütfen inceleyin|lütfen onaylayın|lütfen kontrol edin|lütfen yanıtlayın|dikkatiniz gerekiyor|acil istek|takip gerekiyor|işlem istendi|yanıt istendi|alındıyı onaylayın|inceleme istendi|yanıt gerekiyor", "faturayı|ödeme özetini|paylaşılan dosyayı|proje belgesini|toplantı tutanağını|politika güncellemesini|erişim isteğini|teslim bildirimini|hesap profilini|uyum formunu|hizmet kaydını|ekli raporu"),
+    "ru": ("пожалуйста, проверьте|пожалуйста, подтвердите|пожалуйста, изучите|пожалуйста, ответьте|требуется ваше внимание|срочный запрос|требуется продолжение|требуется действие|требуется ответ|подтвердите получение|требуется проверка|нужен ответ", "счет|сводку платежа|общий файл|документ проекта|протокол встречи|обновление политики|запрос доступа|уведомление о доставке|профиль учетной записи|форму соответствия|заявку в службу поддержки|приложенный отчет"),
+    "uk": ("будь ласка, перегляньте|будь ласка, підтвердьте|будь ласка, перевірте|будь ласка, дайте відповідь|потрібна ваша увага|терміновий запит|потрібне продовження|потрібна дія|потрібна відповідь|підтвердьте отримання|потрібен перегляд|потрібна відповідь", "рахунок|підсумок платежу|спільний файл|документ проєкту|протокол зустрічі|оновлення політики|запит на доступ|повідомлення про доставку|профіль облікового запису|форма відповідності|заявка до служби підтримки|доданий звіт"),
+    "ar": ("يرجى مراجعة|يرجى تأكيد|يرجى التحقق من|يرجى الرد|اهتمامك مطلوب|طلب عاجل|المتابعة مطلوبة|الإجراء مطلوب|الرد مطلوب|يرجى تأكيد الاستلام|المراجعة مطلوبة|يلزم الرد", "الفاتورة|ملخص الدفع|الملف المشترك|وثيقة المشروع|محضر الاجتماع|تحديث السياسة|طلب الوصول|إشعار التسليم|ملف الحساب|نموذج الامتثال|تذكرة الخدمة|التقرير المرفق"),
+    "he": ("נא לבדוק|נא לאשר|נא לאמת|נא להשיב|נדרשת תשומת הלב שלך|בקשה דחופה|נדרש מעקב|נדרשת פעולה|נדרשת תשובה|נא לאשר קבלה|נדרשת סקירה|נדרשת תגובה", "את החשבונית|את סיכום התשלום|את הקובץ המשותף|את מסמך הפרויקט|את פרוטוקול הישיבה|את עדכון המדיניות|את בקשת הגישה|את הודעת המסירה|את פרופיל החשבון|את טופס הציות|את קריאת השירות|את הדוח המצורף"),
+    "hi": ("कृपया समीक्षा करें|कृपया पुष्टि करें|कृपया जांचें|कृपया उत्तर दें|आपका ध्यान आवश्यक है|तत्काल अनुरोध|अनुवर्ती कार्रवाई आवश्यक|कार्रवाई का अनुरोध|उत्तर का अनुरोध|प्राप्ति की पुष्टि करें|समीक्षा आवश्यक|उत्तर आवश्यक", "चालान|भुगतान सारांश|साझा की गई फ़ाइल|परियोजना दस्तावेज़|बैठक कार्यवृत्त|नीति अपडेट|पहुंच अनुरोध|डिलीवरी सूचना|खाता प्रोफ़ाइल|अनुपालन फ़ॉर्म|सेवा टिकट|संलग्न रिपोर्ट"),
+    "id": ("harap tinjau|harap konfirmasi|harap periksa|harap balas|perhatian Anda diperlukan|permintaan mendesak|tindak lanjut diperlukan|tindakan diminta|balasan diminta|konfirmasi penerimaan|peninjauan diminta|balasan diperlukan", "faktur|ringkasan pembayaran|file bersama|dokumen proyek|notulen rapat|pembaruan kebijakan|permintaan akses|pemberitahuan pengiriman|profil akun|formulir kepatuhan|tiket layanan|laporan terlampir"),
+    "vi": ("vui lòng xem xét|vui lòng xác nhận|vui lòng kiểm tra|vui lòng trả lời|cần sự chú ý của bạn|yêu cầu khẩn|cần theo dõi|yêu cầu hành động|yêu cầu phản hồi|vui lòng xác nhận đã nhận|yêu cầu xem xét|cần phản hồi", "hóa đơn|bản tóm tắt thanh toán|tệp được chia sẻ|tài liệu dự án|biên bản cuộc họp|bản cập nhật chính sách|yêu cầu truy cập|thông báo giao hàng|hồ sơ tài khoản|biểu mẫu tuân thủ|phiếu dịch vụ|báo cáo đính kèm"),
+    "th": ("โปรดตรวจสอบ|โปรดยืนยัน|โปรดเช็ก|โปรดตอบกลับ|ต้องการความสนใจจากคุณ|คำขอด่วน|ต้องติดตาม|ขอให้ดำเนินการ|ขอการตอบกลับ|โปรดยืนยันการรับ|ขอให้ทบทวน|ต้องการคำตอบ", "ใบแจ้งหนี้|สรุปการชำระเงิน|ไฟล์ที่แชร์|เอกสารโครงการ|รายงานการประชุม|การอัปเดตนโยบาย|คำขอเข้าถึง|แจ้งการจัดส่ง|โปรไฟล์บัญชี|แบบฟอร์มการปฏิบัติตาม|ตั๋วบริการ|รายงานที่แนบมา"),
+    "ja": ("ご確認ください|ご承認ください|ご確認をお願いします|ご返信ください|ご対応が必要です|緊急の依頼|フォローアップが必要です|対応をお願いします|返信をお願いします|受領を確認してください|レビューをお願いします|回答が必要です", "請求書|支払い概要|共有ファイル|プロジェクト文書|会議議事録|ポリシー更新|アクセス申請|配送通知|アカウント情報|コンプライアンスフォーム|サービスチケット|添付レポート"),
+    "ko": ("검토해 주세요|확인해 주세요|점검해 주세요|답변해 주세요|주의가 필요합니다|긴급 요청|후속 조치가 필요합니다|조치 요청|답변 요청|수신을 확인해 주세요|검토 요청|응답이 필요합니다", "청구서|결제 요약|공유 파일|프로젝트 문서|회의록|정책 업데이트|접근 요청|배송 알림|계정 프로필|컴플라이언스 양식|서비스 티켓|첨부 보고서"),
+}
+
+BEC = {
+    "en": ("the ceo|the chief executive|the cfo|the finance director|the managing director|the board representative|the treasury manager|the operations head|the general counsel|the founder's office|the regional controller|the country manager", "requested a same-day transfer|asked for a confidential payment|needs beneficiary details changed|asked for remittance proof|requested gift cards|needs the invoice settled|asked to bypass normal approval|requested an off-cycle payroll transfer|needs funds moved before cutoff|asked for a private reply|requested payment outside the normal chain|needs the vendor account updated"),
+    "zh": ("董事长|首席执行官|首席财务官|财务总监|总经理|董事会代表|资金主管|运营负责人|总法律顾问|老板办公室|区域负责人|国家经理", "要求当天转账|要求保密付款|要求修改收款账户|要求发送汇款回单|要求购买礼品卡|要求结清发票|要求绕过常规审批|要求处理特殊工资转账|要求在截止时间前转款|要求私下回复|要求绕过正常流程付款|要求更新供应商账户"),
+    "es": ("el director ejecutivo|el director general|el director financiero|el director de finanzas|el director gerente|el representante del consejo|el tesorero|el jefe de operaciones|el asesor jurídico|la oficina del fundador|el controlador regional|el gerente nacional", "solicitó una transferencia hoy|pidió un pago confidencial|necesita cambiar los datos del beneficiario|pidió el comprobante de remesa|solicitó tarjetas regalo|necesita liquidar la factura|pidió omitir la aprobación normal|solicitó una transferencia de nómina especial|necesita mover los fondos antes del cierre|pidió una respuesta privada|solicitó un pago fuera del proceso|necesita actualizar la cuenta del proveedor"),
+    "pt": ("o diretor executivo|o presidente|o diretor financeiro|o diretor de finanças|o diretor-gerente|o representante do conselho|o tesoureiro|o chefe de operações|o consultor jurídico|o escritório do fundador|o controlador regional|o gerente nacional", "solicitou uma transferência hoje|pediu um pagamento confidencial|precisa alterar os dados do beneficiário|pediu o comprovante de remessa|solicitou cartões-presente|precisa quitar a fatura|pediu para ignorar a aprovação normal|solicitou uma transferência especial de folha|precisa mover os fundos antes do corte|pediu uma resposta privada|solicitou pagamento fora do processo|precisa atualizar a conta do fornecedor"),
+    "fr": ("le directeur général|la direction générale|le directeur financier|le directeur des finances|le directeur général adjoint|le représentant du conseil|le trésorier|le responsable des opérations|le directeur juridique|le bureau du fondateur|le contrôleur régional|le responsable pays", "a demandé un virement le jour même|a demandé un paiement confidentiel|doit modifier les coordonnées du bénéficiaire|a demandé le justificatif de virement|a demandé des cartes cadeaux|doit régler la facture|a demandé de contourner l'approbation normale|a demandé un virement de paie exceptionnel|doit transférer les fonds avant la clôture|a demandé une réponse privée|a demandé un paiement hors procédure|doit mettre à jour le compte fournisseur"),
+    "de": ("der geschäftsführer|der vorstandsvorsitzende|der finanzvorstand|der finanzdirektor|der geschäftsleiter|der vorstandsvertreter|der treasury-manager|der leiter betrieb|der chefjustiziar|das büro des gründers|der regionale controller|der landesleiter", "hat eine taggleiche Überweisung angefordert|hat eine vertrauliche Zahlung verlangt|muss die Empfängerdaten ändern|hat den Überweisungsbeleg angefordert|hat Geschenkkarten verlangt|muss die Rechnung begleichen|hat verlangt, die normale Freigabe zu umgehen|hat eine außerplanmäßige Gehaltsüberweisung angefordert|muss das Geld vor dem Annahmeschluss bewegen|hat eine private Antwort verlangt|hat eine Zahlung außerhalb des Prozesses verlangt|muss das Lieferantenkonto aktualisieren"),
+    "it": ("l'amministratore delegato|il direttore generale|il direttore finanziario|il direttore di finanza|il direttore operativo|il rappresentante del consiglio|il tesoriere|il responsabile operativo|il consulente legale|l'ufficio del fondatore|il controller regionale|il responsabile paese", "ha richiesto un bonifico oggi|ha chiesto un pagamento riservato|deve modificare i dati del beneficiario|ha chiesto la ricevuta del bonifico|ha richiesto carte regalo|deve saldare la fattura|ha chiesto di evitare l'approvazione ordinaria|ha richiesto un bonifico paghe straordinario|deve spostare i fondi prima della chiusura|ha chiesto una risposta privata|ha richiesto un pagamento fuori processo|deve aggiornare il conto fornitore"),
+    "nl": ("de ceo|de algemeen directeur|de financieel directeur|de finance director|de managing director|de bestuursvertegenwoordiger|de treasury manager|het hoofd operations|de bedrijfsjurist|het kantoor van de oprichter|de regionale controller|de countrymanager", "vroeg om een overboeking vandaag|vroeg om een vertrouwelijke betaling|moet de begunstigdegegevens wijzigen|vroeg om het betalingsbewijs|vroeg om cadeaubonnen|moet de factuur betalen|vroeg om de normale goedkeuring over te slaan|vroeg om een extra loonbetaling|moet het geld voor de deadline verplaatsen|vroeg om een privéantwoord|vroeg om betaling buiten de normale keten|moet de leveranciersrekening bijwerken"),
+    "pl": ("dyrektor generalny|prezes|dyrektor finansowy|dyrektor działu finansów|dyrektor zarządzający|przedstawiciel zarządu|kierownik skarbu|szef operacji|radca prawny|biuro założyciela|kontroler regionalny|kierownik kraju", "zażądał przelewu tego samego dnia|poprosił o poufną płatność|musi zmienić dane odbiorcy|poprosił o potwierdzenie przelewu|zażądał kart podarunkowych|musi uregulować fakturę|poprosił o pominięcie zwykłej akceptacji|zażądał przelewu poza cyklem płac|musi przesunąć środki przed terminem|poprosił o prywatną odpowiedź|zażądał płatności poza procedurą|musi zaktualizować konto dostawcy"),
+    "tr": ("genel müdür|icra kurulu başkanı|mali işler yöneticisi|finans direktörü|yönetici direktör|yönetim kurulu temsilcisi|hazine yöneticisi|operasyon başkanı|baş hukuk müşaviri|kurucu ofisi|bölge kontrolörü|ülke müdürü", "aynı gün havale istedi|gizli ödeme istedi|lehtar bilgilerini değiştirmeli|havale dekontu istedi|hediye kartı istedi|faturanın ödenmesi gerekiyor|normal onayın atlanmasını istedi|ek bordro transferi istedi|parayı son tarihten önce aktarmalı|özel yanıt istedi|normal süreç dışında ödeme istedi|tedarikçi hesabını güncellemeli"),
+    "ru": ("генеральный директор|исполнительный директор|финансовый директор|директор по финансам|управляющий директор|представитель совета|казначей|руководитель операций|главный юрисконсульт|офис основателя|региональный контролер|руководитель страны", "попросил сделать перевод сегодня|попросил конфиденциальный платеж|должен изменить данные получателя|попросил подтверждение перевода|попросил купить подарочные карты|должен оплатить счет|попросил обойти обычное согласование|попросил внеплановый перевод зарплаты|должен перевести средства до срока|попросил ответить лично|попросил оплату вне обычного процесса|должен обновить счет поставщика"),
+    "uk": ("генеральний директор|виконавчий директор|фінансовий директор|директор з фінансів|керуючий директор|представник ради|скарбник|керівник операцій|головний юрисконсульт|офіс засновника|регіональний контролер|керівник країни", "попросив переказати кошти сьогодні|попросив конфіденційний платіж|має змінити дані отримувача|попросив підтвердження переказу|попросив подарункові картки|має сплатити рахунок|попросив оминути звичайне погодження|попросив позаплановий переказ зарплати|має перемістити кошти до дедлайну|попросив приватну відповідь|попросив платіж поза процедурою|має оновити рахунок постачальника"),
+    "ar": ("الرئيس التنفيذي|المدير العام|المدير المالي|مدير الشؤون المالية|المدير الإداري|ممثل مجلس الإدارة|مدير الخزانة|رئيس العمليات|المستشار القانوني العام|مكتب المؤسس|المراقب الإقليمي|مدير الدولة", "طلب تحويلًا في اليوم نفسه|طلب دفعة سرية|يحتاج إلى تغيير بيانات المستفيد|طلب إيصال التحويل|طلب بطاقات هدايا|يحتاج إلى تسوية الفاتورة|طلب تجاوز الموافقة المعتادة|طلب تحويل رواتب خارج الجدول|يحتاج إلى نقل الأموال قبل الموعد|طلب ردًا خاصًا|طلب دفعًا خارج المسار المعتاد|يحتاج إلى تحديث حساب المورد"),
+    "he": ("המנכ״ל|המנהל הכללי|סמנכ״ל הכספים|מנהל הכספים|המנהל המנהל|נציג הדירקטוריון|מנהל האוצר|ראש התפעול|היועץ המשפטי הראשי|משרד המייסד|הבקר האזורי|מנהל המדינה", "ביקש העברה באותו יום|ביקש תשלום סודי|צריך לשנות את פרטי המוטב|ביקש אישור העברה|ביקש כרטיסי מתנה|צריך להסדיר את החשבונית|ביקש לעקוף את האישור הרגיל|ביקש העברת שכר מחוץ למחזור|צריך להעביר כספים לפני המועד|ביקש תשובה פרטית|ביקש תשלום מחוץ לתהליך|צריך לעדכן את חשבון הספק"),
+    "hi": ("मुख्य कार्यकारी अधिकारी|मुख्य कार्यकारी|मुख्य वित्तीय अधिकारी|वित्त निदेशक|प्रबंध निदेशक|बोर्ड प्रतिनिधि|कोषाध्यक्ष|संचालन प्रमुख|मुख्य कानूनी सलाहकार|संस्थापक का कार्यालय|क्षेत्रीय नियंत्रक|देश प्रबंधक", "ने उसी दिन स्थानांतरण मांगा|ने गोपनीय भुगतान मांगा|लाभार्थी विवरण बदलना है|ने प्रेषण प्रमाण मांगा|ने उपहार कार्ड मांगे|चालान का भुगतान करना है|ने सामान्य अनुमोदन को दरकिनार करने को कहा|ने अतिरिक्त वेतन स्थानांतरण मांगा|समय सीमा से पहले धन भेजना है|ने निजी उत्तर मांगा|ने सामान्य प्रक्रिया से बाहर भुगतान मांगा|आपूर्तिकर्ता खाता अपडेट करना है"),
+    "id": ("ceo|direktur utama|direktur keuangan|kepala keuangan|direktur pelaksana|perwakilan dewan|manajer perbendaharaan|kepala operasional|penasihat hukum umum|kantor pendiri|pengendali regional|manajer negara", "meminta transfer hari ini|meminta pembayaran rahasia|perlu mengubah data penerima|meminta bukti pengiriman uang|meminta kartu hadiah|perlu melunasi faktur|meminta melewati persetujuan normal|meminta transfer gaji di luar jadwal|perlu memindahkan dana sebelum batas waktu|meminta balasan pribadi|meminta pembayaran di luar proses|perlu memperbarui rekening pemasok"),
+    "vi": ("giám đốc điều hành|tổng giám đốc|giám đốc tài chính|giám đốc khối tài chính|giám đốc điều hành|đại diện hội đồng quản trị|quản lý ngân quỹ|trưởng bộ phận vận hành|cố vấn pháp lý trưởng|văn phòng nhà sáng lập|kiểm soát viên khu vực|giám đốc quốc gia", "yêu cầu chuyển tiền trong ngày|yêu cầu thanh toán bí mật|cần thay đổi thông tin người thụ hưởng|yêu cầu biên lai chuyển tiền|yêu cầu thẻ quà tặng|cần thanh toán hóa đơn|yêu cầu bỏ qua phê duyệt thông thường|yêu cầu chuyển lương ngoài kỳ|cần chuyển tiền trước hạn|yêu cầu trả lời riêng|yêu cầu thanh toán ngoài quy trình|cần cập nhật tài khoản nhà cung cấp"),
+    "th": ("ประธานเจ้าหน้าที่บริหาร|กรรมการผู้จัดการ|ประธานเจ้าหน้าที่การเงิน|ผู้อำนวยการฝ่ายการเงิน|กรรมการบริหาร|ตัวแทนคณะกรรมการ|ผู้จัดการเงินทุน|หัวหน้าฝ่ายปฏิบัติการ|ที่ปรึกษากฎหมาย|สำนักงานผู้ก่อตั้ง|ผู้ควบคุมภูมิภาค|ผู้จัดการประเทศ", "ขอให้โอนเงินภายในวันนี้|ขอให้ชำระเงินเป็นความลับ|ต้องเปลี่ยนข้อมูลผู้รับเงิน|ขอหลักฐานการโอนเงิน|ขอบัตรของขวัญ|ต้องชำระใบแจ้งหนี้|ขอให้ข้ามการอนุมัติปกติ|ขอให้โอนเงินเดือนนอกกำหนด|ต้องย้ายเงินก่อนกำหนด|ขอให้ตอบกลับเป็นการส่วนตัว|ขอให้จ่ายเงินนอกขั้นตอน|ต้องอัปเดตบัญชีผู้ขาย"),
+    "ja": ("最高経営責任者|代表取締役|最高財務責任者|財務部長|執行役員|取締役会代表|資金管理責任者|業務責任者|法務責任者|創業者室|地域管理者|国別責任者", "当日中の送金を依頼した|秘密の支払いを依頼した|受取人情報の変更が必要だ|送金証明を求めた|ギフトカードを求めた|請求書の決済が必要だ|通常の承認を省くよう求めた|臨時給与振込を求めた|締切前に資金を移す必要がある|個別の返信を求めた|通常手順外の支払いを求めた|取引先口座の更新が必要だ"),
+    "ko": ("최고경영자|대표이사|최고재무책임자|재무이사|관리이사|이사회 대표|자금 관리자|운영 책임자|법무 책임자|창업자 사무실|지역 관리자|국가 관리자", "당일 송금을 요청했습니다|기밀 결제를 요청했습니다|수취인 정보를 변경해야 합니다|송금 증명을 요청했습니다|상품권을 요청했습니다|청구서를 결제해야 합니다|일반 승인을 건너뛰라고 했습니다|예외 급여 이체를 요청했습니다|마감 전에 자금을 옮겨야 합니다|개인 답장을 요청했습니다|정상 절차 밖의 결제를 요청했습니다|공급업체 계정을 업데이트해야 합니다"),
+}
+
+INTERNAL = {
+    "en": ("finance department|human resources|information security office|it helpdesk|procurement office|compliance office|legal affairs|executive office|audit team|administration office|network operations|board secretary office", "policy update notice|mandatory training notice|approval workflow notice|access review notice|asset inventory notice|signature standard notice|supplier onboarding notice|device upgrade notice|security review notice|expense policy notice|records retention notice|staff acknowledgement notice"),
+    "zh": ("财务部|人力资源部|信息安全部|信息技术服务台|采购管理部|合规部|法务部|总经办|审计组|行政办公室|网络运营部|董事会秘书处", "制度更新通知|强制培训通知|审批流程通知|权限复核通知|资产盘点通知|签名规范通知|供应商准入通知|终端升级通知|安全审查通知|费用政策通知|档案保留通知|员工确认通知"),
+    "es": ("departamento de finanzas|recursos humanos|oficina de seguridad informática|mesa de ayuda|oficina de compras|oficina de cumplimiento|asuntos legales|oficina ejecutiva|equipo de auditoría|oficina administrativa|operaciones de red|secretaría del consejo", "aviso de actualización de política|aviso de formación obligatoria|aviso de flujo de aprobación|aviso de revisión de acceso|aviso de inventario de activos|aviso de norma de firma|aviso de alta de proveedores|aviso de actualización de dispositivos|aviso de revisión de seguridad|aviso de política de gastos|aviso de conservación de registros|aviso de confirmación del personal"),
+    "pt": ("departamento financeiro|recursos humanos|escritório de segurança da informação|central de suporte|escritório de compras|escritório de conformidade|assuntos jurídicos|escritório executivo|equipe de auditoria|escritório administrativo|operações de rede|secretaria do conselho", "aviso de atualização de política|aviso de treinamento obrigatório|aviso de fluxo de aprovação|aviso de revisão de acesso|aviso de inventário de ativos|aviso de padrão de assinatura|aviso de cadastro de fornecedores|aviso de atualização de dispositivos|aviso de revisão de segurança|aviso de política de despesas|aviso de retenção de registros|aviso de confirmação dos funcionários"),
+    "fr": ("service financier|ressources humaines|bureau de sécurité informatique|centre de support|service achats|service conformité|affaires juridiques|direction générale|équipe d'audit|bureau administratif|opérations réseau|secrétariat du conseil", "avis de mise à jour de politique|avis de formation obligatoire|avis de circuit d'approbation|avis de revue des accès|avis d'inventaire des actifs|avis de norme de signature|avis d'intégration fournisseur|avis de mise à niveau des appareils|avis de revue de sécurité|avis de politique de dépenses|avis de conservation des dossiers|avis de confirmation du personnel"),
+    "de": ("finanzabteilung|personalabteilung|informationssicherheitsbüro|it-helpdesk|einkaufsabteilung|compliance-stelle|rechtsabteilung|geschäftsleitung|prüfungsteam|verwaltung|netzwerkbetrieb|büro des vorstandssekretariats", "richtlinienaktualisierung|pflichtschulung|genehmigungsworkflow|zugriffsprüfung|inventurmeldung|signaturstandard|lieferantenaufnahme|geräteaktualisierung|sicherheitsprüfung|ausgabenrichtlinie|aufbewahrungshinweis|mitarbeiterbestätigung"),
+    "it": ("dipartimento finanziario|risorse umane|ufficio sicurezza informatica|helpdesk it|ufficio acquisti|ufficio compliance|affari legali|direzione|team audit|ufficio amministrativo|operazioni di rete|segreteria del consiglio", "avviso di aggiornamento policy|avviso di formazione obbligatoria|avviso del flusso di approvazione|avviso di revisione accessi|avviso di inventario beni|avviso dello standard firma|avviso di onboarding fornitori|avviso di aggiornamento dispositivi|avviso di revisione sicurezza|avviso di policy spese|avviso di conservazione documenti|avviso di conferma del personale"),
+    "nl": ("financiële afdeling|personeelszaken|kantoor informatiebeveiliging|it-helpdesk|inkoopafdeling|compliancekantoor|juridische zaken|directiekantoor|auditteam|administratiekantoor|netwerkbeheer|secretariaat van het bestuur", "melding beleidsupdate|melding verplichte training|melding goedkeuringsworkflow|melding toegangscontrole|melding inventarisatie|melding handtekeningstandaard|melding leveranciersregistratie|melding apparaatupdate|melding beveiligingscontrole|melding onkostenbeleid|melding bewaarbeleid|melding personeelsbevestiging"),
+    "pl": ("dział finansowy|dział kadr|biuro bezpieczeństwa informacji|helpdesk it|dział zakupów|biuro zgodności|dział prawny|biuro zarządu|zespół audytu|biuro administracji|operacje sieciowe|sekretariat zarządu", "zawiadomienie o aktualizacji polityki|zawiadomienie o szkoleniu obowiązkowym|zawiadomienie o procesie akceptacji|zawiadomienie o przeglądzie dostępu|zawiadomienie o inwentaryzacji|zawiadomienie o standardzie podpisu|zawiadomienie o rejestracji dostawcy|zawiadomienie o aktualizacji urządzeń|zawiadomienie o przeglądzie bezpieczeństwa|zawiadomienie o polityce wydatków|zawiadomienie o retencji akt|zawiadomienie o potwierdzeniu pracowników"),
+    "tr": ("mali işler departmanı|insan kaynakları|bilgi güvenliği ofisi|bt yardım masası|satın alma ofisi|uyum ofisi|hukuk işleri|yönetim ofisi|denetim ekibi|idari ofis|ağ operasyonları|yönetim kurulu sekreterliği", "politika güncelleme bildirimi|zorunlu eğitim bildirimi|onay iş akışı bildirimi|erişim inceleme bildirimi|varlık envanteri bildirimi|imza standardı bildirimi|tedarikçi kayıt bildirimi|cihaz güncelleme bildirimi|güvenlik inceleme bildirimi|harcama politikası bildirimi|kayıt saklama bildirimi|personel onay bildirimi"),
+    "ru": ("финансовый отдел|отдел кадров|служба информационной безопасности|ит-служба поддержки|отдел закупок|служба соответствия|юридический отдел|исполнительный офис|аудиторская группа|административный офис|сетевые операции|секретариат совета", "уведомление об обновлении политики|уведомление об обязательном обучении|уведомление о процессе согласования|уведомление о проверке доступа|уведомление об инвентаризации|уведомление о стандарте подписи|уведомление о регистрации поставщика|уведомление об обновлении устройств|уведомление о проверке безопасности|уведомление о политике расходов|уведомление о хранении записей|уведомление о подтверждении сотрудника"),
+    "uk": ("фінансовий відділ|відділ кадрів|служба інформаційної безпеки|служба підтримки it|відділ закупівель|служба відповідності|юридичний відділ|виконавчий офіс|аудиторська група|адміністративний офіс|мережеві операції|секретаріат ради", "повідомлення про оновлення політики|повідомлення про обов'язкове навчання|повідомлення про процес погодження|повідомлення про перевірку доступу|повідомлення про інвентаризацію|повідомлення про стандарт підпису|повідомлення про реєстрацію постачальника|повідомлення про оновлення пристроїв|повідомлення про перевірку безпеки|повідомлення про політику витрат|повідомлення про зберігання записів|повідомлення про підтвердження працівника"),
+    "ar": ("قسم المالية|الموارد البشرية|مكتب أمن المعلومات|مكتب دعم تقنية المعلومات|مكتب المشتريات|مكتب الامتثال|الشؤون القانونية|المكتب التنفيذي|فريق التدقيق|المكتب الإداري|عمليات الشبكة|أمانة مجلس الإدارة", "إشعار تحديث السياسة|إشعار التدريب الإلزامي|إشعار سير الموافقة|إشعار مراجعة الوصول|إشعار جرد الأصول|إشعار معيار التوقيع|إشعار تسجيل المورد|إشعار تحديث الأجهزة|إشعار مراجعة الأمان|إشعار سياسة المصروفات|إشعار حفظ السجلات|إشعار تأكيد الموظفين"),
+    "he": ("מחלקת הכספים|משאבי אנוש|משרד אבטחת המידע|מוקד התמיכה|מחלקת הרכש|משרד הציות|המחלקה המשפטית|המשרד التنفيذي|צוות הביקורת|המשרד האדמיניסטרטיבי|תפעול הרשת|מזכירות הדירקטוריון", "הודעת עדכון מדיניות|הודעת הדרכה חובה|הודעת תהליך אישור|הודעת בדיקת גישה|הודעת מלאי נכסים|הודעת תקן חתימה|הודעת קליטת ספק|הודעת שדרוג מכשירים|הודעת בדיקת אבטחה|הודעת מדיניות הוצאות|הודעת שמירת רשומות|הודעת אישור עובדים"),
+    "hi": ("वित्त विभाग|मानव संसाधन|सूचना सुरक्षा कार्यालय|आईटी हेल्पडेस्क|खरीद कार्यालय|अनुपालन कार्यालय|कानूनी विभाग|कार्यकारी कार्यालय|ऑडिट टीम|प्रशासन कार्यालय|नेटवर्क संचालन|बोर्ड सचिवालय", "नीति अपडेट सूचना|अनिवार्य प्रशिक्षण सूचना|अनुमोदन कार्यप्रवाह सूचना|पहुंच समीक्षा सूचना|संपत्ति सूची सूचना|हस्ताक्षर मानक सूचना|आपूर्तिकर्ता पंजीकरण सूचना|डिवाइस अपडेट सूचना|सुरक्षा समीक्षा सूचना|व्यय नीति सूचना|रिकॉर्ड प्रतिधारण सूचना|कर्मचारी पुष्टि सूचना"),
+    "id": ("departemen keuangan|sumber daya manusia|kantor keamanan informasi|meja bantuan it|kantor pengadaan|kantor kepatuhan|urusan hukum|kantor eksekutif|tim audit|kantor administrasi|operasi jaringan|sekretariat dewan", "pemberitahuan pembaruan kebijakan|pemberitahuan pelatihan wajib|pemberitahuan alur persetujuan|pemberitahuan tinjauan akses|pemberitahuan inventaris aset|pemberitahuan standar tanda tangan|pemberitahuan pendaftaran pemasok|pemberitahuan pembaruan perangkat|pemberitahuan tinjauan keamanan|pemberitahuan kebijakan pengeluaran|pemberitahuan penyimpanan catatan|pemberitahuan konfirmasi staf"),
+    "vi": ("phòng tài chính|phòng nhân sự|văn phòng an toàn thông tin|bộ phận hỗ trợ it|phòng mua sắm|phòng tuân thủ|phòng pháp chế|văn phòng điều hành|nhóm kiểm toán|văn phòng hành chính|vận hành mạng|văn phòng thư ký hội đồng", "thông báo cập nhật chính sách|thông báo đào tạo bắt buộc|thông báo quy trình phê duyệt|thông báo rà soát quyền truy cập|thông báo kiểm kê tài sản|thông báo tiêu chuẩn chữ ký|thông báo đăng ký nhà cung cấp|thông báo cập nhật thiết bị|thông báo rà soát bảo mật|thông báo chính sách chi phí|thông báo lưu trữ hồ sơ|thông báo xác nhận nhân viên"),
+    "th": ("ฝ่ายการเงิน|ฝ่ายทรัพยากรบุคคล|สำนักงานความปลอดภัยสารสนเทศ|ฝ่ายช่วยเหลือไอที|ฝ่ายจัดซื้อ|ฝ่ายกำกับดูแล|ฝ่ายกฎหมาย|สำนักงานบริหาร|ทีมตรวจสอบ|สำนักงานธุรการ|ฝ่ายปฏิบัติการเครือข่าย|สำนักงานเลขานุการคณะกรรมการ", "ประกาศอัปเดตนโยบาย|ประกาศการอบรมภาคบังคับ|ประกาศขั้นตอนอนุมัติ|ประกาศตรวจสอบสิทธิ์|ประกาศตรวจนับทรัพย์สิน|ประกาศมาตรฐานลายเซ็น|ประกาศลงทะเบียนผู้ขาย|ประกาศอัปเดตอุปกรณ์|ประกาศตรวจสอบความปลอดภัย|ประกาศนโยบายค่าใช้จ่าย|ประกาศเก็บรักษาบันทึก|ประกาศยืนยันพนักงาน"),
+    "ja": ("財務部|人事部|情報セキュリティ室|ITヘルプデスク|購買部|コンプライアンス部|法務部|経営企画室|監査チーム|総務部|ネットワーク運用部|取締役会事務局", "ポリシー更新通知|必須研修通知|承認フロー通知|アクセス確認通知|資産棚卸し通知|署名規定通知|取引先登録通知|端末更新通知|セキュリティ確認通知|経費規定通知|記録保存通知|社員確認通知"),
+    "ko": ("재무부|인사부|정보보안실|IT 헬프데스크|구매부|컴플라이언스실|법무부|경영지원실|감사팀|총무부|네트워크 운영팀|이사회 사무국", "정책 업데이트 공지|필수 교육 공지|승인 절차 공지|접근 권한 검토 공지|자산 실사 공지|서명 기준 공지|공급업체 등록 공지|장치 업데이트 공지|보안 검토 공지|비용 정책 공지|기록 보존 공지|직원 확인 공지"),
+}
+
+GATEWAY = {
+    "en": ("warning|security warning|external message|suspicious message|caution|mail security notice|gateway alert|risk notice|fraud warning|malware warning|phishing warning|untrusted message", "external email|potentially malicious content|sender cannot be verified|message requires caution|attachment is not trusted|link should not be opened|message was flagged|security review is required|origin is unknown|content was quarantined|treat this message carefully|verify before proceeding"),
+    "zh": ("警告|安全警告|外部邮件|可疑邮件|注意|邮件安全通知|网关告警|风险提示|欺诈警告|恶意软件警告|钓鱼警告|不可信邮件", "外部邮件|可能存在恶意内容|无法验证发件人|邮件需要谨慎处理|附件不可信|请勿打开链接|邮件已被标记|需要安全复核|来源未知|内容已隔离|请谨慎处理邮件|操作前请验证"),
+    "es": ("advertencia|advertencia de seguridad|mensaje externo|mensaje sospechoso|precaución|aviso de seguridad del correo|alerta de puerta de enlace|aviso de riesgo|advertencia de fraude|advertencia de malware|advertencia de phishing|mensaje no confiable", "correo externo|contenido potencialmente malicioso|no se puede verificar el remitente|el mensaje requiere precaución|el archivo adjunto no es confiable|no abra el enlace|el mensaje fue marcado|se requiere revisión de seguridad|origen desconocido|contenido en cuarentena|trate el mensaje con cuidado|verifique antes de continuar"),
+    "pt": ("aviso|aviso de segurança|mensagem externa|mensagem suspeita|atenção|notificação de segurança do email|alerta do gateway|aviso de risco|aviso de fraude|aviso de malware|aviso de phishing|mensagem não confiável", "email externo|conteúdo potencialmente malicioso|remetente não verificado|a mensagem requer cautela|o anexo não é confiável|não abra o link|a mensagem foi sinalizada|é necessária revisão de segurança|origem desconhecida|conteúdo em quarentena|trate a mensagem com cuidado|verifique antes de continuar"),
+    "fr": ("avertissement|avertissement de sécurité|message externe|message suspect|prudence|avis de sécurité du courrier|alerte de passerelle|avis de risque|avertissement de fraude|avertissement de logiciel malveillant|avertissement d'hameçonnage|message non fiable", "e-mail externe|contenu potentiellement malveillant|expéditeur non vérifié|le message demande de la prudence|la pièce jointe n'est pas fiable|n'ouvrez pas le lien|le message a été signalé|une revue de sécurité est requise|origine inconnue|contenu en quarantaine|traitez ce message avec prudence|vérifiez avant de continuer"),
+    "de": ("warnung|sicherheitswarnung|externe nachricht|verdächtige nachricht|vorsicht|mail-sicherheitshinweis|gateway-alarm|risikohinweis|betrugswarnung|malwarewarnung|phishingwarnung|nicht vertrauenswürdige nachricht", "externe E-Mail|potenziell schädlicher Inhalt|Absender kann nicht verifiziert werden|Nachricht erfordert Vorsicht|Anhang ist nicht vertrauenswürdig|Link nicht öffnen|Nachricht wurde markiert|Sicherheitsprüfung erforderlich|unbekannte Quelle|Inhalt wurde isoliert|Nachricht vorsichtig behandeln|vor dem Fortfahren prüfen"),
+    "it": ("avviso|avviso di sicurezza|messaggio esterno|messaggio sospetto|attenzione|notifica sicurezza posta|allerta gateway|avviso di rischio|avviso frode|avviso malware|avviso phishing|messaggio non attendibile", "email esterna|contenuto potenzialmente malevolo|mittente non verificato|il messaggio richiede cautela|l'allegato non è attendibile|non aprire il collegamento|il messaggio è stato segnalato|è richiesta una revisione di sicurezza|origine sconosciuta|contenuto in quarantena|tratta il messaggio con cautela|verifica prima di procedere"),
+    "nl": ("waarschuwing|beveiligingswaarschuwing|extern bericht|verdacht bericht|let op|e-mailbeveiligingsmelding|gateway-alarm|risicomelding|fraudewaarschuwing|malwarewaarschuwing|phishingwaarschuwing|onbetrouwbaar bericht", "externe e-mail|mogelijk schadelijke inhoud|afzender kan niet worden geverifieerd|bericht vereist voorzichtigheid|bijlage is niet betrouwbaar|open de link niet|bericht is gemarkeerd|beveiligingscontrole vereist|onbekende herkomst|inhoud is geïsoleerd|behandel dit bericht voorzichtig|controleer voordat u doorgaat"),
+    "pl": ("ostrzeżenie|ostrzeżenie bezpieczeństwa|wiadomość zewnętrzna|podejrzana wiadomość|uwaga|powiadomienie bezpieczeństwa poczty|alert bramy|ostrzeżenie ryzyka|ostrzeżenie oszustwa|ostrzeżenie malware|ostrzeżenie phishingowe|niezaufana wiadomość", "zewnętrzna wiadomość|potencjalnie złośliwa treść|nie można zweryfikować nadawcy|wiadomość wymaga ostrożności|załącznik nie jest zaufany|nie otwieraj łącza|wiadomość oznaczona|wymagana kontrola bezpieczeństwa|nieznane źródło|treść poddana kwarantannie|traktuj wiadomość ostrożnie|sprawdź przed kontynuowaniem"),
+    "tr": ("uyarı|güvenlik uyarısı|harici ileti|şüpheli ileti|dikkat|posta güvenlik bildirimi|ağ geçidi uyarısı|risk bildirimi|dolandırıcılık uyarısı|kötü amaçlı yazılım uyarısı|oltalama uyarısı|güvenilmeyen ileti", "harici e-posta|potansiyel kötü amaçlı içerik|gönderen doğrulanamıyor|ileti dikkat gerektiriyor|ek güvenilir değil|bağlantıyı açmayın|ileti işaretlendi|güvenlik incelemesi gerekli|kaynak bilinmiyor|içerik karantinaya alındı|iletiyi dikkatle ele alın|devam etmeden doğrulayın"),
+    "ru": ("предупреждение|предупреждение безопасности|внешнее сообщение|подозрительное сообщение|внимание|уведомление безопасности почты|оповещение шлюза|уведомление о риске|предупреждение о мошенничестве|предупреждение о вредоносном ПО|предупреждение о фишинге|недоверенное сообщение", "внешнее письмо|потенциально вредоносное содержимое|отправителя нельзя проверить|сообщение требует осторожности|вложение ненадежно|не открывайте ссылку|сообщение отмечено|требуется проверка безопасности|источник неизвестен|содержимое изолировано|обращайтесь с письмом осторожно|проверьте перед продолжением"),
+    "uk": ("попередження|попередження безпеки|зовнішнє повідомлення|підозріле повідомлення|увага|сповіщення безпеки пошти|сповіщення шлюзу|попередження про ризик|попередження про шахрайство|попередження про шкідливе ПЗ|попередження про фішинг|ненадійне повідомлення", "зовнішній лист|потенційно шкідливий вміст|відправника неможливо перевірити|повідомлення потребує обережності|вкладення ненадійне|не відкривайте посилання|повідомлення позначено|потрібна перевірка безпеки|джерело невідоме|вміст ізольовано|обробляйте лист обережно|перевірте перед продовженням"),
+    "ar": ("تحذير|تحذير أمني|رسالة خارجية|رسالة مشبوهة|تنبيه|إشعار أمان البريد|تنبيه البوابة|إشعار مخاطر|تحذير احتيال|تحذير برمجيات خبيثة|تحذير تصيد|رسالة غير موثوقة", "بريد إلكتروني خارجي|محتوى يحتمل أن يكون ضارًا|لا يمكن التحقق من المرسل|الرسالة تتطلب الحذر|المرفق غير موثوق|لا تفتح الرابط|تم وضع علامة على الرسالة|مراجعة الأمان مطلوبة|المصدر غير معروف|تم عزل المحتوى|تعامل مع الرسالة بحذر|تحقق قبل المتابعة"),
+    "he": ("אזהרה|אזהרת אבטחה|הודעה חיצונית|הודעה חשודה|זהירות|התראת אבטחת דואר|התראת שער|התראת סיכון|אזהרת הונאה|אזהרת תוכנה זדונית|אזהרת דיוג|הודעה לא מהימנה", "דוא״ל חיצוני|תוכן שעלול להיות זדוני|לא ניתן לאמת את השולח|ההודעה דורשת זהירות|הקובץ המצורף אינו מהימן|אין לפתוח את הקישור|ההודעה סומנה|נדרשת בדיקת אבטחה|מקור לא ידוע|התוכן הועבר להסגר|טפל בהודעה בזהירות|אמת לפני המשך"),
+    "hi": ("चेतावनी|सुरक्षा चेतावनी|बाहरी संदेश|संदिग्ध संदेश|सावधान|मेल सुरक्षा सूचना|गेटवे अलर्ट|जोखिम सूचना|धोखाधड़ी चेतावनी|मैलवेयर चेतावनी|फ़िशिंग चेतावनी|अविश्वसनीय संदेश", "बाहरी ईमेल|संभावित रूप से दुर्भावनापूर्ण सामग्री|प्रेषक सत्यापित नहीं किया जा सकता|संदेश में सावधानी आवश्यक है|अटैचमेंट विश्वसनीय नहीं है|लिंक न खोलें|संदेश चिह्नित किया गया है|सुरक्षा समीक्षा आवश्यक है|स्रोत अज्ञात है|सामग्री क्वारंटीन की गई है|संदेश को सावधानी से संभालें|आगे बढ़ने से पहले सत्यापित करें"),
+    "id": ("peringatan|peringatan keamanan|pesan eksternal|pesan mencurigakan|perhatian|pemberitahuan keamanan email|peringatan gateway|pemberitahuan risiko|peringatan penipuan|peringatan malware|peringatan phishing|pesan tidak tepercaya", "email eksternal|konten yang berpotensi berbahaya|pengirim tidak dapat diverifikasi|pesan memerlukan kehati-hatian|lampiran tidak tepercaya|jangan buka tautan|pesan telah ditandai|tinjauan keamanan diperlukan|asal tidak dikenal|konten dikarantina|tangani pesan ini dengan hati-hati|verifikasi sebelum melanjutkan"),
+    "vi": ("cảnh báo|cảnh báo bảo mật|thư bên ngoài|thư đáng ngờ|chú ý|thông báo bảo mật thư|cảnh báo cổng|thông báo rủi ro|cảnh báo gian lận|cảnh báo phần mềm độc hại|cảnh báo lừa đảo|thư không đáng tin", "email bên ngoài|nội dung có khả năng độc hại|không thể xác minh người gửi|thư cần được xử lý thận trọng|tệp đính kèm không đáng tin|không mở liên kết|thư đã bị đánh dấu|cần rà soát bảo mật|nguồn không xác định|nội dung đã cách ly|xử lý thư này cẩn thận|xác minh trước khi tiếp tục"),
+    "th": ("คำเตือน|คำเตือนความปลอดภัย|ข้อความภายนอก|ข้อความน่าสงสัย|โปรดระวัง|แจ้งเตือนความปลอดภัยอีเมล|แจ้งเตือนเกตเวย์|แจ้งเตือนความเสี่ยง|คำเตือนการฉ้อโกง|คำเตือนมัลแวร์|คำเตือนฟิชชิง|ข้อความไม่น่าเชื่อถือ", "อีเมลภายนอก|เนื้อหาที่อาจเป็นอันตราย|ไม่สามารถยืนยันผู้ส่งได้|ข้อความต้องใช้ความระมัดระวัง|ไฟล์แนบไม่น่าเชื่อถือ|อย่าเปิดลิงก์|ข้อความถูกทำเครื่องหมาย|ต้องตรวจสอบความปลอดภัย|ไม่ทราบแหล่งที่มา|เนื้อหาถูกกักกัน|จัดการข้อความนี้อย่างระมัดระวัง|ยืนยันก่อนดำเนินการต่อ"),
+    "ja": ("警告|セキュリティ警告|外部メッセージ|不審なメッセージ|注意|メールセキュリティ通知|ゲートウェイ警告|リスク通知|詐欺警告|マルウェア警告|フィッシング警告|信頼できないメッセージ", "外部メール|悪意のある可能性のある内容|送信者を確認できません|このメッセージには注意が必要です|添付ファイルは信頼できません|リンクを開かないでください|メッセージが検出されました|セキュリティ確認が必要です|送信元不明|内容は隔離されました|メッセージを慎重に扱ってください|続行する前に確認してください"),
+    "ko": ("경고|보안 경고|외부 메시지|의심스러운 메시지|주의|메일 보안 알림|게이트웨이 경고|위험 알림|사기 경고|악성코드 경고|피싱 경고|신뢰할 수 없는 메시지", "외부 이메일|악성일 가능성이 있는 콘텐츠|발신자를 확인할 수 없습니다|메시지에 주의가 필요합니다|첨부 파일을 신뢰할 수 없습니다|링크를 열지 마세요|메시지가 표시되었습니다|보안 검토가 필요합니다|출처를 알 수 없습니다|콘텐츠가 격리되었습니다|메시지를 주의해서 처리하세요|계속하기 전에 확인하세요"),
+}
+
+NOTICE = {
+    "en": ("unable to scan|cannot scan|scanning failed|verification required|sender verification required|check authenticity|security review required|attachment inspection unavailable|message inspection incomplete|content could not be inspected|please verify|confirm authenticity", "the attachment|the email|the sender|the message source|the file type|the delivery origin|the security result|the link destination|the message contents|the received document|the scanned content|the sender identity"),
+    "zh": ("无法扫描|扫描失败|检测失败|需要验证|需要验证发件人|请核验真实性|需要安全复核|附件检查不可用|邮件检查不完整|无法检查内容|请确认|请核实真实性", "邮件附件|邮件|发件人|邮件来源|文件类型|投递来源|安全检测结果|链接目标|邮件内容|收到的文档|扫描内容|发件人身份"),
+    "es": ("no se puede escanear|el escaneo falló|la verificación es necesaria|se requiere verificar al remitente|compruebe la autenticidad|se requiere revisión de seguridad|inspección del adjunto no disponible|inspección incompleta|no se pudo inspeccionar el contenido|verifique por favor|confirme la autenticidad|no se pudo analizar", "el archivo adjunto|el correo|el remitente|el origen del mensaje|el tipo de archivo|el origen de entrega|el resultado de seguridad|el destino del enlace|el contenido del mensaje|el documento recibido|el contenido escaneado|la identidad del remitente"),
+    "pt": ("não foi possível verificar|a verificação falhou|é necessária verificação|é necessário verificar o remetente|confirme a autenticidade|é necessária revisão de segurança|inspeção do anexo indisponível|inspeção incompleta|não foi possível inspecionar o conteúdo|verifique por favor|confirme a autenticidade|não foi possível analisar", "o anexo|o email|o remetente|a origem da mensagem|o tipo de arquivo|a origem da entrega|o resultado de segurança|o destino do link|o conteúdo da mensagem|o documento recebido|o conteúdo verificado|a identidade do remetente"),
+    "fr": ("impossible d'analyser|l'analyse a échoué|vérification requise|vérification de l'expéditeur requise|vérifiez l'authenticité|revue de sécurité requise|inspection de la pièce jointe indisponible|inspection incomplète|le contenu n'a pas pu être inspecté|veuillez vérifier|confirmez l'authenticité|analyse impossible", "la pièce jointe|l'e-mail|l'expéditeur|la source du message|le type de fichier|l'origine de livraison|le résultat de sécurité|la destination du lien|le contenu du message|le document reçu|le contenu analysé|l'identité de l'expéditeur"),
+    "de": ("kann nicht gescannt werden|scan fehlgeschlagen|verifizierung erforderlich|absenderverifizierung erforderlich|authentizität prüfen|sicherheitsprüfung erforderlich|anhangsprüfung nicht verfügbar|prüfung unvollständig|inhalt konnte nicht geprüft werden|bitte verifizieren|authentizität bestätigen|analyse nicht möglich", "den anhang|die E-Mail|den absender|die nachrichtenquelle|den dateityp|die zustellquelle|das sicherheitsergebnis|das linkziel|den nachrichteninhalt|das empfangene dokument|den gescannten inhalt|die absenderidentität"),
+    "it": ("impossibile analizzare|scansione non riuscita|verifica richiesta|verifica mittente richiesta|controllare l'autenticità|revisione sicurezza richiesta|ispezione allegato non disponibile|ispezione incompleta|contenuto non ispezionabile|verificare per favore|confermare l'autenticità|analisi non riuscita", "l'allegato|l'email|il mittente|l'origine del messaggio|il tipo di file|l'origine della consegna|il risultato di sicurezza|la destinazione del link|il contenuto del messaggio|il documento ricevuto|il contenuto analizzato|l'identità del mittente"),
+    "nl": ("kan niet worden gescand|scan mislukt|verificatie vereist|afzenderverificatie vereist|controleer de echtheid|beveiligingscontrole vereist|bijlage-inspectie niet beschikbaar|inspectie onvolledig|inhoud kon niet worden gecontroleerd|verifieer alstublieft|bevestig de echtheid|analyse mislukt", "de bijlage|de e-mail|de afzender|de berichtbron|het bestandstype|de afleverbron|het beveiligingsresultaat|de linkbestemming|de berichtinhoud|het ontvangen document|de gescande inhoud|de identiteit van de afzender"),
+    "pl": ("nie można przeskanować|skanowanie nie powiodło się|wymagana weryfikacja|wymagana weryfikacja nadawcy|sprawdź autentyczność|wymagany przegląd bezpieczeństwa|inspekcja załącznika niedostępna|inspekcja niepełna|nie można było sprawdzić treści|proszę zweryfikować|potwierdź autentyczność|analiza nie powiodła się", "załącznik|wiadomość e-mail|nadawcę|źródło wiadomości|typ pliku|źródło dostarczenia|wynik bezpieczeństwa|miejsce docelowe łącza|treść wiadomości|otrzymany dokument|zeskanowaną treść|tożsamość nadawcy"),
+    "tr": ("taranamıyor|tarama başarısız|doğrulama gerekli|gönderen doğrulaması gerekli|özgünlüğü kontrol edin|güvenlik incelemesi gerekli|ek incelemesi kullanılamıyor|inceleme tamamlanmadı|içerik incelenemedi|lütfen doğrulayın|özgünlüğü onaylayın|analiz başarısız", "eki|e-postayı|göndereni|ileti kaynağını|dosya türünü|teslim kaynağını|güvenlik sonucunu|bağlantı hedefini|ileti içeriğini|alınan belgeyi|taranan içeriği|gönderen kimliğini"),
+    "ru": ("невозможно проверить|проверка не удалась|требуется проверка|требуется проверка отправителя|проверьте подлинность|требуется проверка безопасности|проверка вложения недоступна|проверка неполная|содержимое не удалось проверить|пожалуйста, проверьте|подтвердите подлинность|анализ не удался", "вложение|письмо|отправителя|источник сообщения|тип файла|источник доставки|результат безопасности|назначение ссылки|содержимое сообщения|полученный документ|проверенное содержимое|личность отправителя"),
+    "uk": ("неможливо просканувати|сканування не вдалося|потрібна перевірка|потрібна перевірка відправника|перевірте справжність|потрібна перевірка безпеки|перевірка вкладення недоступна|перевірка неповна|вміст не вдалося перевірити|будь ласка, перевірте|підтвердьте справжність|аналіз не вдався", "вкладення|електронний лист|відправника|джерело повідомлення|тип файлу|джерело доставки|результат безпеки|призначення посилання|вміст повідомлення|отриманий документ|просканований вміст|особу відправника"),
+    "ar": ("تعذر الفحص|فشل الفحص|التحقق مطلوب|التحقق من المرسل مطلوب|تحقق من الأصالة|مراجعة الأمان مطلوبة|فحص المرفق غير متاح|الفحص غير مكتمل|تعذر فحص المحتوى|يرجى التحقق|أكد الأصالة|فشل التحليل", "المرفق|البريد الإلكتروني|المرسل|مصدر الرسالة|نوع الملف|مصدر التسليم|نتيجة الأمان|وجهة الرابط|محتوى الرسالة|المستند المستلم|المحتوى المفحوص|هوية المرسل"),
+    "he": ("לא ניתן לסרוק|הסריקה נכשלה|נדרש אימות|נדרש אימות השולח|בדוק את האותנטיות|נדרשת בדיקת אבטחה|בדיקת הקובץ המצורף אינה זמינה|הבדיקה אינה מלאה|לא ניתן היה לבדוק את התוכן|נא לאמת|אשר את האותנטיות|הניתוח נכשל", "את הקובץ המצורף|את הדוא״ל|את השולח|את מקור ההודעה|את סוג הקובץ|את מקור המסירה|את תוצאת האבטחה|את יעד הקישור|את תוכן ההודעה|את המסמך שהתקבל|את התוכן שנסרק|את זהות השולח"),
+    "hi": ("स्कैन करने में असमर्थ|स्कैन विफल|सत्यापन आवश्यक|प्रेषक सत्यापन आवश्यक|प्रामाणिकता जांचें|सुरक्षा समीक्षा आवश्यक|अटैचमेंट निरीक्षण उपलब्ध नहीं|निरीक्षण अधूरा|सामग्री का निरीक्षण नहीं हो सका|कृपया सत्यापित करें|प्रामाणिकता की पुष्टि करें|विश्लेषण विफल", "अटैचमेंट|ईमेल|प्रेषक|संदेश स्रोत|फ़ाइल प्रकार|डिलीवरी स्रोत|सुरक्षा परिणाम|लिंक गंतव्य|संदेश सामग्री|प्राप्त दस्तावेज़|स्कैन की गई सामग्री|प्रेषक पहचान"),
+    "id": ("tidak dapat dipindai|pemindaian gagal|verifikasi diperlukan|verifikasi pengirim diperlukan|periksa keaslian|tinjauan keamanan diperlukan|pemeriksaan lampiran tidak tersedia|pemeriksaan tidak lengkap|konten tidak dapat diperiksa|harap verifikasi|konfirmasi keaslian|analisis gagal", "lampiran|email|pengirim|sumber pesan|jenis file|asal pengiriman|hasil keamanan|tujuan tautan|isi pesan|dokumen yang diterima|konten yang dipindai|identitas pengirim"),
+    "vi": ("không thể quét|quét thất bại|cần xác minh|cần xác minh người gửi|hãy kiểm tra tính xác thực|cần rà soát bảo mật|không thể kiểm tra tệp đính kèm|kiểm tra chưa hoàn tất|không thể kiểm tra nội dung|vui lòng xác minh|xác nhận tính xác thực|phân tích thất bại", "tệp đính kèm|email|người gửi|nguồn thư|loại tệp|nguồn gửi|kết quả bảo mật|đích liên kết|nội dung thư|tài liệu đã nhận|nội dung đã quét|danh tính người gửi"),
+    "th": ("ไม่สามารถสแกนได้|การสแกนล้มเหลว|ต้องยืนยัน|ต้องยืนยันผู้ส่ง|โปรดตรวจสอบความถูกต้อง|ต้องตรวจสอบความปลอดภัย|ไม่สามารถตรวจสอบไฟล์แนบ|ตรวจสอบไม่สมบูรณ์|ไม่สามารถตรวจสอบเนื้อหา|โปรดยืนยัน|ยืนยันความถูกต้อง|การวิเคราะห์ล้มเหลว", "ไฟล์แนบ|อีเมล|ผู้ส่ง|แหล่งที่มาของข้อความ|ประเภทไฟล์|แหล่งที่มาของการส่ง|ผลการตรวจสอบความปลอดภัย|ปลายทางลิงก์|เนื้อหาข้อความ|เอกสารที่ได้รับ|เนื้อหาที่สแกน|ตัวตนผู้ส่ง"),
+    "ja": ("スキャンできません|スキャンに失敗しました|確認が必要です|送信者の確認が必要です|正当性を確認してください|セキュリティ確認が必要です|添付ファイルを検査できません|検査が完了していません|内容を検査できませんでした|確認してください|正当性を確認してください|解析に失敗しました", "添付ファイル|メール|送信者|メッセージの送信元|ファイル形式|配送元|セキュリティ結果|リンク先|メッセージ内容|受信文書|スキャン内容|送信者の身元"),
+    "ko": ("검사할 수 없습니다|검사에 실패했습니다|확인이 필요합니다|발신자 확인이 필요합니다|진위를 확인하세요|보안 검토가 필요합니다|첨부 파일을 검사할 수 없습니다|검사가 완료되지 않았습니다|콘텐츠를 검사하지 못했습니다|확인해 주세요|진위를 확인하세요|분석에 실패했습니다", "첨부 파일|이메일|발신자|메시지 출처|파일 형식|전달 출처|보안 결과|링크 대상|메시지 내용|받은 문서|검사된 콘텐츠|발신자 신원"),
+}
+
+DSN = {
+    "en": ("delivery status notification|delivery failure|delivery failed|undeliverable message|undelivered mail|undelivered mail returned to sender|returned mail|mail delivery subsystem|failure notice|bounce notification|non-delivery report|message rejected|delivery error|recipient unavailable", "the email|the message|the attachment|the recipient|the mailbox|the destination address|the delivery attempt|the outgoing mail|the submitted message|the server response|the mail transaction|the delivery queue"),
+    "zh": ("投递状态通知|投递失败|邮件无法投递|退信|邮件投递系统|失败通知|退回通知|不投递报告|邮件被拒绝|投递错误|收件人不可用|投递状态报告", "邮件|消息|附件|收件人|邮箱|目标地址|投递尝试|发出邮件|提交的消息|服务器响应|邮件事务|投递队列"),
+    "es": ("notificación de estado de entrega|fallo de entrega|mensaje no entregable|correo devuelto|sistema de entrega de correo|aviso de fallo|notificación de rebote|informe de no entrega|mensaje rechazado|error de entrega|destinatario no disponible|informe de estado de entrega", "el correo|el mensaje|el archivo adjunto|el destinatario|el buzón|la dirección de destino|el intento de entrega|el correo saliente|el mensaje enviado|la respuesta del servidor|la transacción de correo|la cola de entrega"),
+    "pt": ("notificação de status de entrega|falha na entrega|mensagem não entregável|email devolvido|sistema de entrega de email|aviso de falha|notificação de retorno|relatório de não entrega|mensagem rejeitada|erro de entrega|destinatário indisponível|relatório de status de entrega", "o email|a mensagem|o anexo|o destinatário|a caixa postal|o endereço de destino|a tentativa de entrega|o email enviado|a mensagem submetida|a resposta do servidor|a transação de email|a fila de entrega"),
+    "fr": ("notification d'état de livraison|échec de livraison|message non distribuable|courrier retourné|système de livraison du courrier|avis d'échec|notification de rebond|rapport de non-livraison|message rejeté|erreur de livraison|destinataire indisponible|rapport d'état de livraison", "l'e-mail|le message|la pièce jointe|le destinataire|la boîte aux lettres|l'adresse de destination|la tentative de livraison|le courrier sortant|le message soumis|la réponse du serveur|la transaction de courrier|la file de livraison"),
+    "de": ("zustellstatusbenachrichtigung|zustellfehler|nicht zustellbare nachricht|zurückgesendete mail|mailzustellsystem|fehlerhinweis|bounce-benachrichtigung|nichtzustellbarkeitsbericht|nachricht abgewiesen|zustellfehler|empfänger nicht verfügbar|zustellstatusbericht", "die E-Mail|die Nachricht|den Anhang|den Empfänger|das Postfach|die Zieladresse|den Zustellversuch|die ausgehende Mail|die eingereichte Nachricht|die Serverantwort|die Mailtransaktion|die Zustellwarteschlange"),
+    "it": ("notifica stato consegna|errore consegna|messaggio non recapitabile|posta restituita|sistema consegna posta|avviso errore|notifica di rimbalzo|rapporto mancata consegna|messaggio rifiutato|errore di recapito|destinatario non disponibile|rapporto stato consegna", "l'email|il messaggio|l'allegato|il destinatario|la casella|l'indirizzo di destinazione|il tentativo di consegna|la posta in uscita|il messaggio inviato|la risposta del server|la transazione email|la coda di consegna"),
+    "nl": ("melding bezorgstatus|bezorgfout|niet bezorgbaar bericht|geretourneerde mail|mailbezorgingssysteem|foutmelding|bouncebericht|rapport niet bezorgd|bericht geweigerd|bezorgingsfout|ontvanger niet beschikbaar|rapport bezorgstatus", "de e-mail|het bericht|de bijlage|de ontvanger|de mailbox|het bestemmingsadres|de bezorgpoging|de uitgaande mail|het ingediende bericht|de serverreactie|de mailtransactie|de bezorgwachtrij"),
+    "pl": ("powiadomienie o stanie dostarczenia|błąd dostarczenia|wiadomość niedostarczalna|zwrócona poczta|system dostarczania poczty|powiadomienie o błędzie|powiadomienie o zwrocie|raport niedostarczenia|wiadomość odrzucona|błąd dostawy|odbiorca niedostępny|raport stanu dostarczenia", "wiadomość e-mail|wiadomość|załącznik|odbiorca|skrzynka|adres docelowy|próba dostarczenia|poczta wychodząca|wysłana wiadomość|odpowiedź serwera|transakcja pocztowa|kolejka dostarczania"),
+    "tr": ("teslim durumu bildirimi|teslim hatası|teslim edilemeyen ileti|iade posta|posta teslim sistemi|hata bildirimi|geri dönme bildirimi|teslim edilememe raporu|ileti reddedildi|teslim hatası|alıcı kullanılamıyor|teslim durumu raporu", "e-postayı|iletiyi|eki|alıcıyı|posta kutusunu|hedef adresi|teslim denemesini|giden postayı|gönderilen iletiyi|sunucu yanıtını|posta işlemini|teslim kuyruğunu"),
+    "ru": ("уведомление о статусе доставки|ошибка доставки|недоставляемое сообщение|возвращенная почта|система доставки почты|уведомление об ошибке|уведомление о возврате|отчет о недоставке|сообщение отклонено|ошибка доставки|получатель недоступен|отчет о статусе доставки", "письмо|сообщение|вложение|получателя|почтовый ящик|адрес назначения|попытку доставки|исходящую почту|отправленное сообщение|ответ сервера|почтовую операцию|очередь доставки"),
+    "uk": ("сповіщення про статус доставки|помилка доставки|недоставлене повідомлення|повернена пошта|система доставки пошти|повідомлення про помилку|сповіщення про повернення|звіт про недоставку|повідомлення відхилено|помилка доставки|отримувач недоступний|звіт про статус доставки", "електронний лист|повідомлення|вкладення|отримувача|поштову скриньку|адресу призначення|спробу доставки|вихідну пошту|надіслане повідомлення|відповідь сервера|поштову транзакцію|чергу доставки"),
+    "ar": ("إشعار حالة التسليم|فشل التسليم|رسالة غير قابلة للتسليم|بريد مرتجع|نظام تسليم البريد|إشعار فشل|إشعار ارتداد|تقرير عدم التسليم|تم رفض الرسالة|خطأ في التسليم|المستلم غير متاح|تقرير حالة التسليم", "البريد الإلكتروني|الرسالة|المرفق|المستلم|صندوق البريد|عنوان الوجهة|محاولة التسليم|البريد الصادر|الرسالة المقدمة|استجابة الخادم|معاملة البريد|قائمة انتظار التسليم"),
+    "he": ("התראת מצב מסירה|כשל במסירה|הודעה שלא ניתן למסור|דואר חוזר|מערכת מסירת דואר|התראת כשל|התראת החזרה|דוח אי-מסירה|ההודעה נדחתה|שגיאת מסירה|הנמען אינו זמין|דוח מצב מסירה", "את הדוא״ל|את ההודעה|את הקובץ המצורף|את הנמען|את תיבת הדואר|את כתובת היעד|את ניסיון המסירה|את הדואר היוצא|את ההודעה שנשלחה|את תשובת השרת|את עסקת הדואר|את תור המסירה"),
+    "hi": ("डिलीवरी स्थिति सूचना|डिलीवरी विफलता|डिलीवर न किया जा सकने वाला संदेश|वापस आया मेल|मेल डिलीवरी सिस्टम|विफलता सूचना|बाउंस सूचना|गैर-डिलीवरी रिपोर्ट|संदेश अस्वीकार|डिलीवरी त्रुटि|प्राप्तकर्ता उपलब्ध नहीं|डिलीवरी स्थिति रिपोर्ट", "ईमेल|संदेश|अटैचमेंट|प्राप्तकर्ता|मेलबॉक्स|गंतव्य पता|डिलीवरी प्रयास|आउटगोइंग मेल|भेजा गया संदेश|सर्वर प्रतिक्रिया|मेल लेनदेन|डिलीवरी कतार"),
+    "id": ("notifikasi status pengiriman|kegagalan pengiriman|pesan tidak terkirim|email yang dikembalikan|sistem pengiriman email|pemberitahuan kegagalan|notifikasi bounce|laporan tidak terkirim|pesan ditolak|kesalahan pengiriman|penerima tidak tersedia|laporan status pengiriman", "email|pesan|lampiran|penerima|kotak surat|alamat tujuan|upaya pengiriman|email keluar|pesan yang dikirim|respons server|transaksi email|antrean pengiriman"),
+    "vi": ("thông báo trạng thái gửi|gửi thất bại|thư không thể gửi|thư bị trả lại|hệ thống gửi thư|thông báo lỗi|thông báo thư trả lại|báo cáo không gửi được|thư bị từ chối|lỗi gửi thư|người nhận không khả dụng|báo cáo trạng thái gửi", "email|thư|tệp đính kèm|người nhận|hộp thư|địa chỉ đích|lần thử gửi|thư đi|thư đã gửi|phản hồi máy chủ|giao dịch thư|hàng đợi gửi"),
+    "th": ("การแจ้งสถานะการส่ง|การส่งล้มเหลว|ข้อความส่งไม่ได้|เมลตีกลับ|ระบบส่งเมล|แจ้งข้อผิดพลาด|แจ้งเมลตีกลับ|รายงานส่งไม่สำเร็จ|ข้อความถูกปฏิเสธ|ข้อผิดพลาดการส่ง|ผู้รับไม่พร้อมใช้งาน|รายงานสถานะการส่ง", "อีเมล|ข้อความ|ไฟล์แนบ|ผู้รับ|กล่องจดหมาย|ที่อยู่ปลายทาง|ความพยายามส่ง|เมลขาออก|ข้อความที่ส่ง|การตอบกลับของเซิร์ฟเวอร์|ธุรกรรมเมล|คิวการส่ง"),
+    "ja": ("配信状況通知|配信失敗|配信不能メッセージ|返送メール|メール配信システム|失敗通知|バウンス通知|不達レポート|メッセージ拒否|配信エラー|受信者が利用できません|配信状況レポート", "メール|メッセージ|添付ファイル|受信者|メールボックス|宛先アドレス|配信試行|送信メール|送信されたメッセージ|サーバー応答|メール処理|配信キュー"),
+    "ko": ("배송 상태 알림|배송 실패|전달할 수 없는 메시지|반송 메일|메일 전달 시스템|실패 알림|반송 알림|미전달 보고서|메시지가 거부되었습니다|전달 오류|수신자를 사용할 수 없습니다|배송 상태 보고서", "이메일|메시지|첨부 파일|수신자|메일함|대상 주소|전달 시도|보내는 메일|제출된 메시지|서버 응답|메일 트랜잭션|전달 대기열"),
+}
+
+AUTOREPLY = {
+    "en": ("automatic reply|auto reply|autoreply|out of office|away message|vacation reply|absence notification|currently away|on leave|office closed|unavailable response|mailbox auto response", "is enabled|is active|was generated|will respond automatically|is not monitoring mail|is away from the office|is on vacation|is on leave|is unavailable|will return later|cannot reply now|has limited access"),
+    "zh": ("自动回复|自动答复|离开办公室|外出留言|假期回复|缺席通知|当前不在|休假中|办公室关闭|暂时无法回复|邮箱自动回复|不在岗通知", "已启用|正在生效|已自动生成|将自动回复|暂未监控邮件|目前不在办公室|正在休假|正在请假|暂时无法联系|稍后返回|当前无法回复|访问受限"),
+    "es": ("respuesta automática|respuesta auto|fuera de la oficina|mensaje de ausencia|respuesta de vacaciones|notificación de ausencia|actualmente ausente|de permiso|oficina cerrada|respuesta no disponible|respuesta automática del buzón|aviso de ausencia", "está activada|está activa|fue generada|responderá automáticamente|no supervisa el correo|está fuera de la oficina|está de vacaciones|está de permiso|no está disponible|volverá más tarde|no puede responder ahora|tiene acceso limitado"),
+    "pt": ("resposta automática|resposta auto|fora do escritório|mensagem de ausência|resposta de férias|notificação de ausência|ausente no momento|em licença|escritório fechado|resposta indisponível|resposta automática da caixa postal|aviso de ausência", "está ativada|está ativa|foi gerada|responderá automaticamente|não monitora emails|está fora do escritório|está de férias|está de licença|está indisponível|retornará mais tarde|não pode responder agora|tem acesso limitado"),
+    "fr": ("réponse automatique|réponse auto|absence du bureau|message d'absence|réponse de vacances|notification d'absence|actuellement absent|en congé|bureau fermé|réponse indisponible|réponse automatique de boîte|avis d'absence", "est activée|est active|a été générée|répondra automatiquement|ne surveille pas les e-mails|est absent du bureau|est en vacances|est en congé|est indisponible|reviendra plus tard|ne peut pas répondre maintenant|a un accès limité"),
+    "de": ("automatische antwort|autoantwort|abwesenheitsnotiz|abwesenheitsmeldung|urlaubsantwort|abwesenheitsbenachrichtigung|derzeit abwesend|im urlaub|büro geschlossen|nicht verfügbar antwort|automatische postfachantwort|abwesenheitshinweis", "ist aktiviert|ist aktiv|wurde erstellt|antwortet automatisch|überwacht keine mail|ist nicht im büro|ist im urlaub|ist beurlaubt|ist nicht verfügbar|kehrt später zurück|kann jetzt nicht antworten|hat eingeschränkten zugriff"),
+    "it": ("risposta automatica|risposta auto|fuori ufficio|messaggio di assenza|risposta ferie|notifica assenza|attualmente assente|in congedo|ufficio chiuso|risposta non disponibile|risposta automatica casella|avviso di assenza", "è abilitata|è attiva|è stata generata|risponderà automaticamente|non controlla la posta|è fuori ufficio|è in vacanza|è in congedo|non è disponibile|tornerà più tardi|non può rispondere ora|ha accesso limitato"),
+    "nl": ("automatisch antwoord|autoantwoord|afwezigheidsbericht|bericht buiten kantoor|vakantieantwoord|afwezigheidsmelding|momenteel afwezig|met verlof|kantoor gesloten|niet beschikbaar antwoord|automatisch mailboxantwoord|afwezigheidsmelding", "is ingeschakeld|is actief|is gegenereerd|zal automatisch antwoorden|controleert geen mail|is niet op kantoor|is op vakantie|is met verlof|is niet beschikbaar|komt later terug|kan nu niet antwoorden|heeft beperkte toegang"),
+    "pl": ("automatyczna odpowiedź|auto odpowiedź|poza biurem|wiadomość o nieobecności|odpowiedź urlopowa|powiadomienie o nieobecności|obecnie nieobecny|na urlopie|biuro zamknięte|odpowiedź niedostępności|automatyczna odpowiedź skrzynki|komunikat o nieobecności", "jest włączona|jest aktywna|została wygenerowana|odpowie automatycznie|nie monitoruje poczty|jest poza biurem|jest na urlopie|jest na zwolnieniu|jest niedostępny|wróci później|nie może teraz odpowiedzieć|ma ograniczony dostęp"),
+    "tr": ("otomatik yanıt|otomatik cevap|ofis dışında|uzakta mesajı|tatil yanıtı|devamsızlık bildirimi|şu anda uzakta|izinli|ofis kapalı|kullanılamıyor yanıtı|posta kutusu otomatik yanıtı|devamsızlık mesajı", "etkin|aktif|oluşturuldu|otomatik yanıt verecek|postaları izlemiyor|ofis dışında|tatilde|izinli|kullanılamıyor|daha sonra dönecek|şimdi yanıt veremiyor|sınırlı erişimi var"),
+    "ru": ("автоматический ответ|автоответ|нет на месте|сообщение об отсутствии|ответ на время отпуска|уведомление об отсутствии|сейчас отсутствует|в отпуске|офис закрыт|ответ недоступности|автоответ почтового ящика|уведомление об отсутствии", "включен|активен|сформирован|ответит автоматически|не отслеживает почту|не находится в офисе|находится в отпуске|на больничном|недоступен|вернется позже|не может ответить сейчас|имеет ограниченный доступ"),
+    "uk": ("автоматична відповідь|автовідповідь|поза офісом|повідомлення про відсутність|відповідь на час відпустки|сповіщення про відсутність|зараз відсутній|у відпустці|офіс зачинено|відповідь про недоступність|автовідповідь скриньки|повідомлення про відсутність", "увімкнена|активна|сформована|відповість автоматично|не стежить за поштою|поза офісом|у відпустці|на лікарняному|недоступний|повернеться пізніше|не може відповісти зараз|має обмежений доступ"),
+    "ar": ("رد تلقائي|إجابة تلقائية|خارج المكتب|رسالة غياب|رد الإجازة|إشعار الغياب|بعيد حاليًا|في إجازة|المكتب مغلق|رد عدم التوفر|رد تلقائي لصندوق البريد|رسالة غياب", "مفعّل|نشط|تم إنشاؤه|سيرد تلقائيًا|لا يراقب البريد|خارج المكتب|في إجازة|في إجازة مرضية|غير متاح|سيعود لاحقًا|لا يستطيع الرد الآن|لديه وصول محدود"),
+    "he": ("תשובה אוטומטית|מענה אוטומטי|מחוץ למשרד|הודעת היעדרות|מענה לחופשה|התראת היעדרות|נעדר כרגע|בחופשה|המשרד סגור|מענה לא זמין|מענה אוטומטי לתיבת הדואר|הודעת היעדרות", "מופעלת|פעילה|נוצרה|ישיב אוטומטית|אינו עוקב אחר דואר|מחוץ למשרד|בחופשה|בחופשת מחלה|אינו זמין|יחזור מאוחר יותר|אינו יכול להשיב כעת|יש לו גישה מוגבלת"),
+    "hi": ("स्वचालित उत्तर|ऑटो उत्तर|कार्यालय से बाहर|अनुपस्थिति संदेश|अवकाश उत्तर|अनुपस्थिति सूचना|वर्तमान में अनुपस्थित|छुट्टी पर|कार्यालय बंद|अनुपलब्ध उत्तर|मेलबॉक्स ऑटो उत्तर|अनुपस्थिति संदेश", "सक्षम है|सक्रिय है|बनाया गया है|स्वचालित रूप से उत्तर देगा|मेल की निगरानी नहीं करता|कार्यालय से बाहर है|छुट्टी पर है|अवकाश पर है|उपलब्ध नहीं है|बाद में लौटेगा|अभी उत्तर नहीं दे सकता|सीमित पहुंच है"),
+    "id": ("balasan otomatis|jawaban otomatis|di luar kantor|pesan ketidakhadiran|balasan liburan|pemberitahuan ketidakhadiran|sedang tidak hadir|sedang cuti|kantor tutup|balasan tidak tersedia|balasan otomatis kotak surat|pesan ketidakhadiran", "diaktifkan|aktif|telah dibuat|akan membalas otomatis|tidak memantau email|berada di luar kantor|sedang berlibur|sedang cuti|tidak tersedia|akan kembali nanti|tidak dapat membalas sekarang|memiliki akses terbatas"),
+    "vi": ("trả lời tự động|phản hồi tự động|vắng mặt|tin nhắn vắng mặt|trả lời khi nghỉ phép|thông báo vắng mặt|hiện đang vắng|đang nghỉ phép|văn phòng đóng cửa|phản hồi không khả dụng|trả lời tự động hộp thư|thông báo vắng mặt", "đã bật|đang hoạt động|đã được tạo|sẽ tự động trả lời|không theo dõi thư|đang vắng mặt|đang nghỉ phép|đang nghỉ|không khả dụng|sẽ quay lại sau|không thể trả lời lúc này|có quyền truy cập hạn chế"),
+    "th": ("ตอบกลับอัตโนมัติ|คำตอบอัตโนมัติ|ไม่อยู่สำนักงาน|ข้อความไม่อยู่|ตอบกลับช่วงวันหยุด|แจ้งการลา|ไม่อยู่ในขณะนี้|อยู่ระหว่างลา|สำนักงานปิด|ตอบกลับเมื่อไม่พร้อม|ตอบกลับอัตโนมัติของกล่องจดหมาย|ข้อความแจ้งไม่อยู่", "เปิดใช้งานแล้ว|กำลังทำงาน|ถูกสร้างแล้ว|จะตอบกลับโดยอัตโนมัติ|ไม่ได้ตรวจอีเมล|ไม่อยู่สำนักงาน|อยู่ระหว่างวันหยุด|อยู่ระหว่างลา|ไม่พร้อมใช้งาน|จะกลับมาภายหลัง|ไม่สามารถตอบตอนนี้|มีสิทธิ์เข้าถึงจำกัด"),
+    "ja": ("自動返信|自動応答|不在通知|外出中メッセージ|休暇返信|不在のお知らせ|現在不在|休暇中|オフィス休業|返信できません|メールボックス自動応答|不在メッセージ", "が有効です|が動作中です|が生成されました|が自動返信します|メールを監視していません|オフィスを離れています|休暇中です|休暇を取得しています|利用できません|後ほど戻ります|現在返信できません|アクセスが制限されています"),
+    "ko": ("자동 회신|자동 응답|부재중|부재 메시지|휴가 회신|부재 알림|현재 자리를 비움|휴가 중|사무실 폐쇄|응답할 수 없음|메일함 자동 응답|부재중 안내", "이 활성화되었습니다|이 작동 중입니다|이 생성되었습니다|이 자동으로 답장합니다|메일을 확인하지 않습니다|사무실을 비웠습니다|휴가 중입니다|휴가를 사용 중입니다|사용할 수 없습니다|나중에 돌아옵니다|지금 답장할 수 없습니다|접근 권한이 제한되었습니다"),
+}
+
+CATEGORY_SPECS = {
+    "phishing_keywords": PHISHING,
+    "weak_phishing_keywords": WEAK,
+    "bec_phrases": BEC,
+    "internal_authority_phrases": INTERNAL,
+    "gateway_banner_patterns": GATEWAY,
+    "notice_banner_patterns": NOTICE,
+    "dsn_patterns": DSN,
+    "auto_reply_patterns": AUTOREPLY,
+}
 
 
-def bec_candidates() -> Iterable[str]:
-    roles_en = [
-        'chief executive', 'chief financial officer', 'finance director', 'regional controller',
-        'managing director', 'operations head', 'founder office', 'board representative',
-        'treasury manager', 'country manager', 'general counsel', 'vice president finance',
-    ]
-    actions_en = [
-        'approve a same day wire', 'keep this transfer confidential', 'change the beneficiary details',
-        'send the remittance proof only to me', 'purchase gift cards before the meeting',
-        'settle the attached invoice quietly', 'hold questions until the payment clears',
-        'process the off cycle payroll transfer', 'move the funds before bank cutoff',
-        'reply from your private mailbox only', 'clear this payment outside the normal chain',
-        'update the vendor bank account immediately',
-    ]
-    modifiers_en = [
-        'before lunch', 'without calling the requester', 'do not copy anyone else',
-        'this stays between us', 'the board is waiting', 'the seller is on standby',
-    ]
-    for role in roles_en:
-        for action in actions_en:
-            yield f'{role} asked you to {action}'
-            for modifier in modifiers_en:
-                yield f'{role} asked you to {action} {modifier}'
-
-    roles_zh = ['董事长', '总经理', '首席财务官', '财务总监', '运营负责人', '区域负责人', '老板办公室', '资金主管']
-    actions_zh = [
-        '马上安排加急转账', '不要在群里讨论这笔付款', '立即修改收款账户信息', '只把回单发给我本人',
-        '先购买礼品卡再统一报销', '绕过常规审批先付款', '今天下班前完成汇款', '不要回拨电话确认',
-        '按新账户支付尾款', '暂时不要通知财务共享中心',
-    ]
-    modifiers_zh = ['属于保密项目', '董事会正在等待', '供应商催得很急', '银行截止时间快到了', '只限你处理']
-    for role in roles_zh:
-        for action in actions_zh:
-            yield f'{role}要求你{action}'
-            for modifier in modifiers_zh:
-                yield f'{role}要求你{action}{modifier}'
+def candidates_for(spec: dict[str, tuple[str, str]]) -> dict[str, list[str]]:
+    return {language: list(matrix(left, right, "" if language == "zh" else " ")) for language, (left, right) in spec.items()}
 
 
-def internal_authority_candidates() -> Iterable[str]:
-    departments_zh = [
-        '集团办公室', '行政中心', '财务共享中心', '人力资源部', '信息安全部', '采购管理部',
-        '审计合规部', '法务部', '总经办', '运营管理部', '品牌公关部', '客户成功部',
-        '技术支持中心', '董事会秘书处', '纪检监察室',
-    ]
-    notice_types_zh = [
-        '制度更新公告', '强制培训通知', '审批流程调整通知', '资产盘点通知', '差旅报销新规',
-        '付款审批要求', '账号权限复核', '办公终端升级通知', '邮件签名规范', '文件归档要求',
-        '供应商准入通知', '绩效填报通知',
-    ]
-    actions_zh = ['请全员知悉', '请立即执行', '请主管签收', '请部门确认', '请在今日完成', '请勿外传']
-    for dept in departments_zh:
-        for notice in notice_types_zh:
-            yield f'{dept}{notice}'
-            for action in actions_zh:
-                yield f'{dept}{notice}{action}'
+def extend_category(existing: dict[str, list[str]], spec: dict[str, tuple[str, str]]) -> None:
+    current = []
+    seen = set()
+    for item in existing.get("added", []):
+        value = normalize(item)
+        if value and value not in seen:
+            current.append(value)
+            seen.add(value)
 
-    departments_en = [
-        'finance operations', 'human resources', 'information security office', 'procurement office',
-        'compliance office', 'legal affairs', 'executive office', 'board secretary office',
-    ]
-    notice_types_en = [
-        'mandatory acknowledgement notice', 'policy update bulletin', 'approval workflow change',
-        'access review notice', 'asset inventory notice', 'signature standard notice',
-        'supplier onboarding bulletin', 'device hardening notice',
-    ]
-    actions_en = ['for all staff', 'for department heads', 'effective immediately', 'reply for acknowledgement']
-    for dept in departments_en:
-        for notice in notice_types_en:
-            yield f'{dept} {notice}'
-            for action in actions_en:
-                yield f'{dept} {notice} {action}'
+    # Keep repeated invocations idempotent.  Once a category already meets
+    # the contract, do not append another language matrix on every run.
+    if len(current) >= TARGET_PER_CATEGORY:
+        existing["added"] = current
+        existing.setdefault("removed", [])
+        return
 
+    by_language = candidates_for(spec)
+    for language in spec:
+        if len(current) >= TARGET_PER_CATEGORY:
+            break
+        added_for_language = 0
+        for candidate in by_language[language]:
+            value = normalize(candidate)
+            if value in seen:
+                continue
+            current.append(value)
+            seen.add(value)
+            added_for_language += 1
+            if added_for_language >= MIN_PER_LANGUAGE:
+                break
 
-def build_seed() -> dict[str, dict[str, list[str]]]:
-    excluded = {
-        'phishing_keywords': {
-            '密码', '紧急', '汇款', 'password', 'urgent', 'wire transfer', '立即行动', '账户异常',
-            '安全验证', '点击链接', 'suspended', 'unauthorized', 'immediately', '补贴', '年终补贴',
-            '退税', '补偿金', '汇算', '不予受理', '自助申报', '办理领取', '账户冻结', '帐户冻结',
-            '账户关闭', '帐户关闭', '账户将于', '帐户将于', '异常登录', '身份过期', '重新认证',
-            '限时处理', '账号停用', '帐号停用', '安全升级', '解除限制', '非活动状态',
-            'your account will be closed', 'account will be closed', 'account closure', '包裹滞留',
-            '清关费', '快递异常', '海关扣押', '普票', '普通发票', '增值税发票', '正规发票',
-            '代开发票', '加微信', '微信号', '微信转账', 'addqq', 'update your account', 'click here',
-            'act now', 'limited time', 'verify your identity', 'account suspended', 'unusual activity',
-            'security alert', 'login attempt', 'reset your password', 'payment failed', 'billing update',
-            'deactivate', 'check out my profile', 'check my profile', 'my photos', 'getting to know you',
-            'get to know each other', 'sign up to join', 'sign up to see', 'join to see',
-            "i'm really interested", 'interested in you', 'my private photos', 'private pictures',
-            'click my profile', 'visit my profile', 'my dating profile', 'lonely and looking', "let's meet",
-            'want to meet', 'you have won', 'congratulations you', "you've been selected", 'claim your prize',
-            'lottery winner', 'million dollars', 'guaranteed returns', 'risk free investment',
-            'double your money', 'crypto opportunity', 'bitcoin investment', 'i recorded you',
-            'recorded you masturbating', 'recorded footage of you', 'i have your password',
-            'i know your password', 'infected by my malware', 'device was infected', 'camera was activated',
-            'pay in bitcoin', 'pay exactly', 'send bitcoin', 'btc wallet', 'bitcoin wallet',
-            'my bitcoin address', 'my wallet address', 'share the video', 'publish your files',
-            'days to complete the payment', '勒索', '赎金', '比特币', 'bitcoin ransom',
-            'your files are encrypted', 'pay the ransom', 'all your files', 'decrypt your files',
-        },
-        'weak_phishing_keywords': {'verify', 'confirm', 'expire', 'invoice', '发放', '申报', '核对', '逾期', '领取'},
-        'bec_phrases': {
-            'ceo', 'cfo', 'chief executive', 'chief financial', 'wire the funds', 'transfer the amount',
-            'confidential request', 'do not discuss', 'keep this between us', 'urgent payment',
-            '总经理', '财务总监', '紧急转账', '保密处理', '行政发布', '财务部通知', '人事部通知',
-            '公司通告', '勿需回复', '无需回复', '不得外泄', '核对办理', '提交申报材料',
-            '尽快处理', '立即办理', '马上转账', '今天必须完成',
-        },
-        'internal_authority_phrases': {
-            '行政发布', '财务部', '人事部', '综合部', '办公室', 'financial department', 'hr department',
-            'admin department', '本通知由', '公司通告', '集团通知',
-        },
-    }
+    if len(current) < TARGET_PER_CATEGORY:
+        while len(current) < TARGET_PER_CATEGORY:
+            made_progress = False
+            for language in spec:
+                for candidate in by_language[language]:
+                    value = normalize(candidate)
+                    if value in seen:
+                        continue
+                    current.append(value)
+                    seen.add(value)
+                    made_progress = True
+                    if len(current) >= TARGET_PER_CATEGORY:
+                        break
+                if len(current) >= TARGET_PER_CATEGORY:
+                    break
+            if not made_progress:
+                raise RuntimeError(f"cannot fill {len(current)} entries for category")
 
-    phishing_keywords = take_unique(phishing_candidates(), TARGET_PER_CATEGORY, excluded['phishing_keywords'])
-    weak_phishing_keywords = take_unique(weak_phishing_candidates(), TARGET_PER_CATEGORY, excluded['weak_phishing_keywords'])
-    bec_phrases = take_unique(bec_candidates(), TARGET_PER_CATEGORY, excluded['bec_phrases'])
-    internal_authority_phrases = take_unique(internal_authority_candidates(), TARGET_PER_CATEGORY, excluded['internal_authority_phrases'])
-
-    return {
-        'phishing_keywords': {'added': phishing_keywords, 'removed': []},
-        'weak_phishing_keywords': {'added': weak_phishing_keywords, 'removed': []},
-        'bec_phrases': {'added': bec_phrases, 'removed': []},
-        'internal_authority_phrases': {'added': internal_authority_phrases, 'removed': []},
-    }
+    existing["added"] = current
+    existing.setdefault("removed", [])
 
 
 def main() -> None:
-    seed = build_seed()
-    OUT.write_text(json.dumps(seed, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-    counts = {key: len(value['added']) for key, value in seed.items()}
-    print(json.dumps({'output': str(OUT), 'counts': counts}, ensure_ascii=False, indent=2))
+    seed = json.loads(OUT.read_text(encoding="utf-8"))
+    for category, spec in CATEGORY_SPECS.items():
+        if category not in seed:
+            seed[category] = {"added": [], "removed": []}
+        extend_category(seed[category], spec)
+
+    OUT.write_text(json.dumps(seed, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    counts = {key: len(value["added"]) for key, value in seed.items()}
+    print(json.dumps({"output": str(OUT), "counts": counts}, ensure_ascii=False, indent=2))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -6,6 +6,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
@@ -79,9 +80,62 @@ pub enum Protocol {
     Unknown,
 }
 
+/// Protocol port sets injected at startup (sniffer resolves env + DB overrides
+/// before capture begins). When unset, `Protocol::from_port` falls back to the
+/// hardcoded defaults below, so other binaries linking this crate see no change.
+static PROTOCOL_PORTS: std::sync::RwLock<Option<ProtocolPorts>> = std::sync::RwLock::new(None);
+
+#[derive(Debug, Clone, Default)]
+struct ProtocolPorts {
+    smtp: Vec<u16>,
+    pop3: Vec<u16>,
+    imap: Vec<u16>,
+    http: Vec<u16>,
+}
+
+impl ProtocolPorts {
+    fn lookup(&self, port: u16) -> Option<Protocol> {
+        if self.smtp.contains(&port) {
+            Some(Protocol::Smtp)
+        } else if self.pop3.contains(&port) {
+            Some(Protocol::Pop3)
+        } else if self.imap.contains(&port) {
+            Some(Protocol::Imap)
+        } else if self.http.contains(&port) {
+            Some(Protocol::Http)
+        } else {
+            None
+        }
+    }
+}
+
 impl Protocol {
-    /// Determine the protocol from a port number
+    /// Inject the configured protocol port sets (env `SMTP_PORTS`/`POP3_PORTS`/
+    /// `IMAP_PORTS`/`HTTP_PORTS`, possibly DB-overridden). Called once by the
+    /// sniffer during startup; replaces any previously configured sets.
+    pub fn configure_ports(smtp: &[u16], pop3: &[u16], imap: &[u16], http: &[u16]) {
+        if let Ok(mut guard) = PROTOCOL_PORTS.write() {
+            *guard = Some(ProtocolPorts {
+                smtp: smtp.to_vec(),
+                pop3: pop3.to_vec(),
+                imap: imap.to_vec(),
+                http: http.to_vec(),
+            });
+        }
+    }
+
+    /// Determine the protocol from a port number.
+    ///
+    /// Configured port sets take precedence; the hardcoded defaults remain as a
+    /// fallback so well-known ports are still classified when configuration
+    /// lists are partial or were never injected.
     pub fn from_port(port: u16) -> Self {
+        if let Ok(guard) = PROTOCOL_PORTS.read()
+            && let Some(ports) = guard.as_ref()
+            && let Some(protocol) = ports.lookup(port)
+        {
+            return protocol;
+        }
         match port {
             25 | 465 | 587 | 2525 | 2526 => Protocol::Smtp,
             110 | 995 => Protocol::Pop3,
@@ -331,6 +385,10 @@ impl EmailSession {
             || self.content.body_html.is_some()
             || !self.content.attachments.is_empty()
             || !self.content.links.is_empty()
+            || self
+                .error_reason
+                .as_deref()
+                .is_some_and(|reason| reason.starts_with("inspection:"))
     }
 
     /// Return the number of attachments.
@@ -567,6 +625,11 @@ pub struct SmtpDialogEntry {
 /// Maximum number of SMTP dialog entries retained per session.
 pub const MAX_SMTP_DIALOG_ENTRIES: usize = 200;
 
+/// Maximum number of links retained per message. A hostile 25MB HTML body can
+/// carry ~600k distinct hrefs; without a hard cap the dedup path alone is
+/// quadratic in link count and link_scan / DB persistence amplify it further.
+pub const MAX_EMAIL_LINKS: usize = 5000;
+
 /// Parsed content extracted from an email session.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EmailContent {
@@ -586,6 +649,25 @@ pub struct EmailContent {
     pub is_complete: bool,
     /// Whether the originating protocol session was encrypted.
     pub is_encrypted: bool,
+    /// Whether parsing degraded part of the message (multipart part/depth
+    /// budget exceeded, or an oversized attachment body was not retained).
+    /// Downstream attachment modules must treat this as an inspection
+    /// coverage gap, never as "fully scanned".
+    #[serde(default)]
+    pub truncated: bool,
+    /// Number of attachments dropped because the per-message attachment count
+    /// budget was exceeded. Zero means every declared attachment is present.
+    #[serde(default)]
+    pub dropped_attachments: usize,
+    /// Whether link extraction hit [`MAX_EMAIL_LINKS`] and dropped further
+    /// links. Downstream modules must treat this as an inspection coverage
+    /// gap, never as "all links scanned".
+    #[serde(default)]
+    pub links_truncated: bool,
+    /// O(1) dedup index mirroring `links` (keyed by `EmailLink::url`).
+    /// Rebuilt lazily when links were pushed externally; never serialized.
+    #[serde(skip)]
+    pub link_index: HashSet<String>,
     /// SMTP command/response transcript retained for analysis.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub smtp_dialog: Vec<SmtpDialogEntry>,
@@ -609,20 +691,156 @@ impl EmailContent {
     }
 
     fn extract_attr_value_case_insensitive(tag: &str, attr_name: &str) -> Option<String> {
-        for quote_char in ['"', '\''] {
-            let prefix = format!("{attr_name}={quote_char}");
-            if let Some(start) = tag
-                .as_bytes()
-                .windows(prefix.len())
-                .position(|w| w.eq_ignore_ascii_case(prefix.as_bytes()))
+        let bytes = tag.as_bytes();
+        let mut cursor = 0usize;
+
+        while cursor < bytes.len() {
+            while cursor < bytes.len()
+                && (bytes[cursor].is_ascii_whitespace()
+                    || matches!(bytes[cursor], b'<' | b'/' | b'>'))
             {
-                let value_start = start + prefix.len();
-                if let Some(value_end) = tag[value_start..].find(quote_char) {
-                    return Some(tag[value_start..value_start + value_end].to_string());
+                cursor += 1;
+            }
+
+            let name_start = cursor;
+            while cursor < bytes.len()
+                && !bytes[cursor].is_ascii_whitespace()
+                && !matches!(bytes[cursor], b'=' | b'<' | b'/' | b'>')
+            {
+                cursor += 1;
+            }
+            if name_start == cursor {
+                cursor += 1;
+                continue;
+            }
+
+            let name = &bytes[name_start..cursor];
+            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                cursor += 1;
+            }
+            if bytes.get(cursor) != Some(&b'=') {
+                continue;
+            }
+            cursor += 1;
+            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                cursor += 1;
+            }
+
+            let (value_start, value_end) = match bytes.get(cursor).copied() {
+                Some(quote @ (b'"' | b'\'')) => {
+                    cursor += 1;
+                    let value_start = cursor;
+                    while cursor < bytes.len() && bytes[cursor] != quote {
+                        cursor += 1;
+                    }
+                    (value_start, cursor)
                 }
+                Some(_) => {
+                    let value_start = cursor;
+                    while cursor < bytes.len()
+                        && !bytes[cursor].is_ascii_whitespace()
+                        && bytes[cursor] != b'>'
+                    {
+                        cursor += 1;
+                    }
+                    (value_start, cursor)
+                }
+                None => return None,
+            };
+
+            if name.eq_ignore_ascii_case(attr_name.as_bytes()) {
+                return Some(Self::decode_html_attribute_entities(
+                    &tag[value_start..value_end],
+                ));
             }
         }
         None
+    }
+
+    fn decode_html_attribute_entities(value: &str) -> String {
+        let mut decoded = String::with_capacity(value.len());
+        let mut cursor = 0usize;
+
+        while let Some(relative_start) = value[cursor..].find('&') {
+            let start = cursor + relative_start;
+            decoded.push_str(&value[cursor..start]);
+
+            let rest = &value[start + 1..];
+
+            // Numeric character reference (`&#58` / `&#x3A`): browsers decode
+            // these even without the terminating semicolon (HTML5 parse-error
+            // recovery), so `href="https&#58//evil.com"` renders as a working
+            // https:// link. The extractor must accept the optional ';' too,
+            // otherwise the whole URL vanishes from the link layer.
+            if let Some(after_hash) = rest.strip_prefix('#') {
+                let (digits, radix) =
+                    if let Some(hex) = after_hash.strip_prefix('x').or_else(|| after_hash.strip_prefix('X')) {
+                        (hex, 16)
+                    } else {
+                        (after_hash, 10)
+                    };
+                let prefix_len = rest.len() - digits.len(); // 1 ("#") or 2 ("#x")
+                let digit_len = digits
+                    .bytes()
+                    .take_while(|b| {
+                        if radix == 16 {
+                            b.is_ascii_hexdigit()
+                        } else {
+                            b.is_ascii_digit()
+                        }
+                    })
+                    .count();
+                let has_semi = digits[digit_len..].starts_with(';');
+                if digit_len > 0
+                    && digit_len <= 8
+                    && let Some(ch) = u32::from_str_radix(&digits[..digit_len], radix)
+                        .ok()
+                        .and_then(char::from_u32)
+                {
+                    decoded.push(ch);
+                    cursor = start + 1 + prefix_len + digit_len + usize::from(has_semi);
+                } else {
+                    decoded.push('&');
+                    cursor = start + 1;
+                }
+                continue;
+            }
+
+            // Named references still require the semicolon. The length cap
+            // (12, generous — the longest supported name is 5 chars) keeps a
+            // distant ';' from turning plain text into an entity candidate.
+            let Some(relative_end) = rest.find(';') else {
+                decoded.push_str(&value[start..]);
+                return decoded;
+            };
+            let entity = &rest[..relative_end];
+            if entity.is_empty() || entity.len() > 12 {
+                decoded.push('&');
+                cursor = start + 1;
+                continue;
+            }
+
+            let replacement = match entity.to_ascii_lowercase().as_str() {
+                "amp" => Some('&'),
+                "apos" => Some('\''),
+                "colon" => Some(':'),
+                "gt" => Some('>'),
+                "lt" => Some('<'),
+                "quot" => Some('"'),
+                "sol" => Some('/'),
+                _ => None,
+            };
+
+            if let Some(ch) = replacement {
+                decoded.push(ch);
+            } else {
+                decoded.push_str(&value[start..=start + 1 + relative_end]);
+            }
+            cursor = start + 1 + relative_end + 1;
+        }
+
+        decoded.push_str(&value[cursor..]);
+        decoded
     }
 
     fn normalize_anchor_text(raw: &str) -> Option<String> {
@@ -648,11 +866,60 @@ impl EmailContent {
         }
     }
 
-    fn push_or_update_link(&mut self, url: &str, text: Option<String>) {
-        if !(url.starts_with("http://") || url.starts_with("https://")) {
+    /// Rebuild the O(1) link dedup index when it fell out of sync with
+    /// `links` (e.g. after deserialization, where the skipped field defaults
+    /// to empty, or after external pushes that bypassed `push_or_update_link`).
+    fn ensure_link_index(&mut self) {
+        if self.link_index.len() != self.links.len() {
+            self.link_index = self.links.iter().map(|link| link.url.clone()).collect();
+        }
+    }
+
+    /// Push a link subject to the hard [`MAX_EMAIL_LINKS`] cap. Overflow sets
+    /// `links_truncated` (an inspection-coverage signal) instead of growing
+    /// the vector without bound.
+    fn push_capped_link(&mut self, link: EmailLink) {
+        if self.links.len() >= MAX_EMAIL_LINKS {
+            self.links_truncated = true;
             return;
         }
+        self.link_index.insert(link.url.clone());
+        self.links.push(link);
+    }
 
+    /// Keep an href the URL parser rejected (or that uses an active-content
+    /// scheme) as a suspicious raw link — bounded per entry, deduped through
+    /// the index, and capped by [`MAX_EMAIL_LINKS`].
+    fn push_raw_suspicious_link(&mut self, raw: String, text: Option<String>) {
+        if raw.is_empty() {
+            return;
+        }
+        self.ensure_link_index();
+        if self.link_index.contains(&raw) {
+            return;
+        }
+        self.push_capped_link(EmailLink {
+            url: raw,
+            text,
+            suspicious: true,
+        });
+    }
+
+    fn push_or_update_link(&mut self, url: &str, text: Option<String>) {
+        let candidate = url.trim_matches(|ch: char| ch.is_ascii_whitespace() || ch.is_control());
+        if candidate.is_empty() {
+            return;
+        }
+        // Scheme-relative hrefs (`//evil.tk/login`) inherit the webmail's
+        // https: origin in the browser; promote them so downstream analysis
+        // sees the real destination instead of silently dropping the link.
+        let promoted;
+        let candidate = if candidate.starts_with("//") {
+            promoted = format!("https:{candidate}");
+            promoted.as_str()
+        } else {
+            candidate
+        };
         let normalized_text = text.and_then(|value| {
             let trimmed = value.trim();
             if trimmed.is_empty() {
@@ -661,17 +928,53 @@ impl EmailContent {
                 Some(trimmed.to_string())
             }
         });
+        let parsed = match url::Url::parse(candidate) {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                // Do not silently drop an href the URL parser rejects: the
+                // browser/mail client may still resolve it (e.g. a `%40` in
+                // the host), so the raw string is kept as a link and scored
+                // by link_scan's `unparseable_url` weak signal. Bounded so a
+                // hostile href cannot stuff unbounded bytes into the session.
+                let raw: String = candidate.chars().take(512).collect();
+                self.push_raw_suspicious_link(raw, normalized_text);
+                return;
+            }
+        };
+        if !matches!(parsed.scheme(), "http" | "https") {
+            // Active-content schemes (`javascript:`, `vbscript:`, `data:`,
+            // `file:`) used to be dropped here, which made link_scan's
+            // `javascript_uri` / `data_uri` checks unreachable dead code while
+            // mail clients still execute them. Keep the raw href as a
+            // suspicious link instead — same bounded treatment as the
+            // unparseable branch above. Benign embedded resources (`img
+            // src="data:image/..."`) are filtered out by the caller.
+            let scheme = parsed.scheme();
+            if matches!(scheme, "javascript" | "vbscript" | "data" | "file") {
+                let raw: String = candidate.chars().take(512).collect();
+                self.push_raw_suspicious_link(raw, normalized_text);
+            }
+            return;
+        }
+        let normalized_url = parsed.as_str();
 
-        if let Some(existing) = self.links.iter_mut().find(|link| link.url == url) {
-            if existing.text.is_none() && normalized_text.is_some() {
+        self.ensure_link_index();
+        if self.link_index.contains(normalized_url) {
+            // Existing entry: only backfill missing anchor text. The linear
+            // find is bounded by MAX_EMAIL_LINKS and only runs on duplicates.
+            if normalized_text.is_some()
+                && let Some(existing) =
+                    self.links.iter_mut().find(|link| link.url == normalized_url)
+                && existing.text.is_none()
+            {
                 existing.text = normalized_text;
             }
             return;
         }
 
-        let suspicious = Self::is_suspicious_url(url);
-        self.links.push(EmailLink {
-            url: url.to_string(),
+        let suspicious = Self::is_suspicious_url(normalized_url);
+        self.push_capped_link(EmailLink {
+            url: normalized_url.to_string(),
             text: normalized_text,
             suspicious,
         });
@@ -704,57 +1007,51 @@ impl EmailContent {
                 }
             }
 
-            // Match remaining attribute-based links (including images and any hrefs we
-            // didn't capture via anchor parsing above).
-            let attr_prefixes: &[&str] = &["href=\"", "href='", "src=\"", "src='"];
+            // Scan every tag for browser-recognized URL-bearing attributes.
+            // The attribute parser accepts quoted/unquoted values and whitespace
+            // around '=', matching the HTML syntax that mail clients render.
+            let mut tag_pos = 0usize;
+            while let Some(tag_start_rel) = html[tag_pos..].find('<') {
+                let tag_start = tag_pos + tag_start_rel;
+                let Some(tag_end_rel) = html[tag_start..].find('>') else {
+                    break;
+                };
+                let tag_end = tag_start + tag_end_rel;
+                let tag = &html[tag_start..=tag_end];
 
-            for prefix in attr_prefixes {
-                let quote_char = prefix.as_bytes()[prefix.len() - 1]; // " or '
-                let mut pos = 0;
-                while pos < html.len() {
-                    let search_slice = &html[pos..];
-                    let found = search_slice
-                        .as_bytes()
-                        .windows(prefix.len())
-                        .position(|w| w.eq_ignore_ascii_case(prefix.as_bytes()));
-
-                    let start = match found {
-                        Some(s) => s,
-                        None => break,
-                    };
-
-                    let url_start = pos + start + prefix.len();
-                    if url_start >= html.len() {
-                        break;
-                    }
-
-                    // Stop at the closing quote and treat the enclosed text as the URL.
-                    if let Some(quote_end) = html[url_start..].find(quote_char as char) {
-                        let url = &html[url_start..url_start + quote_end];
-                        self.push_or_update_link(url, None);
-                        pos = url_start + quote_end + 1;
-                    } else {
-                        pos = url_start + 1;
+                for attr_name in ["href", "src", "action", "formaction", "poster"] {
+                    if let Some(url) = Self::extract_attr_value_case_insensitive(tag, attr_name) {
+                        // `src`/`poster` data: URLs are inline images/fonts in
+                        // legitimate mail — exempt them so the data: retention
+                        // in push_or_update_link cannot turn every newsletter
+                        // into a data_uri finding. `href`/`action` data:
+                        // payloads remain reportable (credential-phish vector).
+                        if matches!(attr_name, "src" | "poster")
+                            && url
+                                .trim_start()
+                                .get(..5)
+                                .is_some_and(|head| head.eq_ignore_ascii_case("data:"))
+                        {
+                            continue;
+                        }
+                        self.push_or_update_link(&url, None);
                     }
                 }
+
+                tag_pos = tag_end + 1;
             }
         }
     }
 
     /// Apply lightweight heuristics to flag obviously suspicious URLs.
     pub fn is_suspicious_url(url: &str) -> bool {
-        // Flag URLs that use a literal IPv4 address instead of a hostname.
-        let after_protocol = if let Some(rest) = url.strip_prefix("http://") {
-            Some(rest)
-        } else {
-            url.strip_prefix("https://")
-        };
-        if let Some(after_protocol) = after_protocol {
-            let domain = after_protocol.split('/').next().unwrap_or("");
-            let domain_part = domain.split(':').next().unwrap_or("");
-            if domain_part.parse::<std::net::Ipv4Addr>().is_ok() {
-                return true;
-            }
+        let parsed = url::Url::parse(url).ok();
+        let host = parsed.as_ref().and_then(url::Url::host_str);
+
+        // Literal IP links are uncommon in legitimate mail and evade
+        // domain-reputation controls.
+        if host.is_some_and(|value| value.parse::<std::net::IpAddr>().is_ok()) {
+            return true;
         }
 
         // Flag login-like paths on domains that are not in a short allowlist.
@@ -776,7 +1073,12 @@ impl EmailContent {
             if url_lower.contains(pattern) {
                 // Skip common major domains that frequently appear in legitimate mail.
                 let known_domains = ["google.com", "microsoft.com", "apple.com", "amazon.com"];
-                let is_known = known_domains.iter().any(|d| url_lower.contains(d));
+                let is_known = host.is_some_and(|host| {
+                    known_domains.iter().any(|domain| {
+                        host.eq_ignore_ascii_case(domain)
+                            || host.to_ascii_lowercase().ends_with(&format!(".{domain}"))
+                    })
+                });
                 if !is_known {
                     return true;
                 }
@@ -1187,7 +1489,8 @@ pub enum WsMessage {
 #[cfg(test)]
 mod tests {
     use super::{
-        EmailAttachment, EmailContent, EmailSession, Protocol, SessionStatus,
+        EmailAttachment, EmailContent, EmailLink, EmailSession, MAX_EMAIL_LINKS, Protocol,
+        SessionStatus,
         decode_base64_bytes_limited,
     };
 
@@ -1206,6 +1509,261 @@ mod tests {
             content.links[0].text.as_deref(),
             Some("https://portal.example.com")
         );
+    }
+
+    #[test]
+    fn test_extract_links_from_html_matches_browser_attribute_syntax() {
+        let mut content = EmailContent::new();
+        content.body_html = Some(
+            "<a href = \"HTTPS&#58;//evil.example/login\">Review</a>\
+             <img src=https://cdn.example/pixel.png>\
+             <form action='https://forms.example/verify'></form>"
+                .to_string(),
+        );
+
+        content.extract_links_from_html();
+
+        assert!(
+            content
+                .links
+                .iter()
+                .any(|link| link.url == "https://evil.example/login")
+        );
+        assert!(
+            content
+                .links
+                .iter()
+                .any(|link| link.url == "https://cdn.example/pixel.png")
+        );
+        assert!(
+            content
+                .links
+                .iter()
+                .any(|link| link.url == "https://forms.example/verify")
+        );
+    }
+
+    #[test]
+    fn test_extract_links_decodes_numeric_entities_without_semicolon() {
+        // PoC: browsers decode `&#58` / `&#x3A` even without the terminating
+        // semicolon, so href="https&#58//evil.com" is a working https:// link.
+        // Before the fix the extractor required ';', left `&#58` as literal
+        // text, and the whole URL vanished from the link layer (url_features /
+        // link_content / link_scan all went blind).
+        let mut content = EmailContent::new();
+        content.body_html = Some(
+            "<a href=\"https&#58//evil.example/login\">点这里处理账户异常</a>\
+             <a href=\"https&#x3A//evil2.example/verify\">立即验证</a>"
+                .to_string(),
+        );
+
+        content.extract_links_from_html();
+
+        assert!(
+            content
+                .links
+                .iter()
+                .any(|link| link.url == "https://evil.example/login"),
+            "no-semicolon decimal entity must decode into a real URL: {:?}",
+            content.links
+        );
+        assert!(
+            content
+                .links
+                .iter()
+                .any(|link| link.url == "https://evil2.example/verify"),
+            "no-semicolon hex entity must decode into a real URL: {:?}",
+            content.links
+        );
+
+        // Undecodable numeric spans stay literal and must not panic or swallow
+        // the rest of the attribute value.
+        let mut content = EmailContent::new();
+        content.body_html = Some(
+            "<a href=\"https://ok.example/a?x=1&#zz&y=2\">plain</a>".to_string(),
+        );
+        content.extract_links_from_html();
+        assert_eq!(content.links.len(), 1);
+        assert!(content.links[0].url.starts_with("https://ok.example/"));
+    }
+
+    #[test]
+    fn test_extract_links_promotes_scheme_relative_href() {
+        // PoC (B1-3): `href="//evil.tk/login"` resolves against the webmail's
+        // https: origin in the browser, but `Url::parse` rejected it as
+        // RelativeUrlWithoutBase and the link was silently dropped — every
+        // downstream module went blind. It is now promoted to https:.
+        let mut content = EmailContent::new();
+        content.body_html =
+            Some("<a href=\"//evil.tk/login\">账户异常，请立即验证</a>".to_string());
+
+        content.extract_links_from_html();
+
+        assert!(
+            content
+                .links
+                .iter()
+                .any(|link| link.url == "https://evil.tk/login"),
+            "scheme-relative href must be promoted to https: {:?}",
+            content.links
+        );
+    }
+
+    #[test]
+    fn test_extract_links_keeps_unparseable_href_as_raw_link() {
+        // PoC (B1-3): `%40` inside the host is rejected by the WHATWG parser
+        // but browsers may still resolve it; before the fix the href was
+        // silently discarded. The raw string is now kept (marked suspicious)
+        // so link_scan can score the `unparseable_url` weak signal.
+        let mut content = EmailContent::new();
+        content.body_html =
+            Some("<a href=\"http://legit.com%40evil.com/\">点击登录</a>".to_string());
+
+        content.extract_links_from_html();
+
+        let link = content
+            .links
+            .iter()
+            .find(|link| link.url == "http://legit.com%40evil.com/")
+            .expect("unparseable href must be kept as a raw link");
+        assert!(link.suspicious, "unparseable href must be marked suspicious");
+        assert_eq!(link.text.as_deref(), Some("点击登录"));
+    }
+
+    #[test]
+    fn test_extract_links_keeps_active_content_scheme_hrefs() {
+        // PoC bypass (R4C): `<a href="javascript:...">` / `data:` / `file:` /
+        // `vbscript:` hrefs used to hit the non-http(s) early return in
+        // push_or_update_link and vanished — link_scan's javascript_uri /
+        // data_uri checks were unreachable dead code while mail clients still
+        // execute the href. They must be kept as suspicious raw links.
+        let mut content = EmailContent::new();
+        content.body_html = Some(
+            "<a href=\"javascript:alert(document.cookie)\">点击验证账户</a>\
+             <a href=\"data:text/html;base64,PHNjcmlwdD5mZXRjaCgnaHR0cHM6Ly9ldmlsLmV4YW1wbGUnKTwvc2NyaXB0Pg==\">查看账单</a>\
+             <a href=\"file:///evil.example/share/loader.exe\">下载发票</a>\
+             <a href=\"vbscript:msgbox(1)\">确认</a>"
+                .to_string(),
+        );
+
+        content.extract_links_from_html();
+
+        let urls: Vec<&str> = content.links.iter().map(|link| link.url.as_str()).collect();
+        for expected in [
+            "javascript:alert(document.cookie)",
+            "data:text/html;base64,PHNjcmlwdD5mZXRjaCgnaHR0cHM6Ly9ldmlsLmV4YW1wbGUnKTwvc2NyaXB0Pg==",
+            "file:///evil.example/share/loader.exe",
+            "vbscript:msgbox(1)",
+        ] {
+            let link = content
+                .links
+                .iter()
+                .find(|link| link.url == expected)
+                .unwrap_or_else(|| panic!("{expected} href must be kept: {urls:?}"));
+            assert!(link.suspicious, "{expected} must be marked suspicious");
+        }
+    }
+
+    #[test]
+    fn test_extract_links_exempts_img_src_data_uri() {
+        // Guard: inline images (`img src="data:image/..."`) are ubiquitous in
+        // legitimate mail; the data: retention above must not surface them.
+        let mut content = EmailContent::new();
+        content.body_html = Some(
+            "<p>hi</p><img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==\">\
+             <img src='DATA:image/gif;base64,R0lGODdhAQABAIAAAP///////ywAAAAAAQABAAACAkQBADs='>"
+                .to_string(),
+        );
+
+        content.extract_links_from_html();
+
+        assert!(
+            content.links.is_empty(),
+            "img-src data: URIs must stay out of the link layer: {:?}",
+            content.links
+        );
+    }
+
+    #[test]
+    fn test_email_content_truncation_flags_default_off() {
+        // Guard: the degraded-parse flags are opt-in and must not appear on a
+        // normally parsed content struct.
+        let content = EmailContent::new();
+        assert!(!content.truncated);
+        assert_eq!(content.dropped_attachments, 0);
+        // Deserializing legacy JSON without the new fields must keep working.
+        let legacy = serde_json::json!({
+            "headers": [],
+            "attachments": [],
+            "links": [],
+            "raw_size": 0,
+            "is_complete": true,
+            "is_encrypted": false
+        });
+        let parsed: EmailContent = serde_json::from_value(legacy).expect("legacy JSON");
+        assert!(!parsed.truncated);
+        assert_eq!(parsed.dropped_attachments, 0);
+    }
+
+    #[test]
+    fn test_links_hard_cap_sets_truncated_flag() {
+        // PoC (R5-B2): a hostile 25MB HTML body can carry ~600k distinct
+        // hrefs; without a hard cap the dedup path alone is quadratic in link
+        // count and link_scan / DB persistence amplify it further. The vector
+        // must stop at MAX_EMAIL_LINKS and raise the coverage-gap flag.
+        let mut content = EmailContent::new();
+        for i in 0..(MAX_EMAIL_LINKS + 100) {
+            content.push_or_update_link(&format!("https://evil.example/{i}"), None);
+        }
+        assert_eq!(content.links.len(), MAX_EMAIL_LINKS);
+        assert!(content.links_truncated);
+        assert_eq!(content.link_index.len(), MAX_EMAIL_LINKS);
+    }
+
+    #[test]
+    fn test_link_dedup_index_backfills_anchor_text_on_duplicate() {
+        let mut content = EmailContent::new();
+        content.push_or_update_link("https://evil.example/login", None);
+        content.push_or_update_link("https://evil.example/login", Some("点击验证".to_string()));
+        content.push_or_update_link("https://evil.example/login", Some("ignored".to_string()));
+        assert_eq!(content.links.len(), 1);
+        assert_eq!(content.links[0].text.as_deref(), Some("点击验证"));
+    }
+
+    #[test]
+    fn test_link_dedup_index_recovers_after_deserialization() {
+        // #[serde(skip)] leaves the index empty after deserialization; the
+        // lazy rebuild must restore dedup so a re-extraction cannot duplicate
+        // links already present in the stored session.
+        let mut content = EmailContent::new();
+        content.links.push(EmailLink {
+            url: "https://evil.example/login".to_string(),
+            text: None,
+            suspicious: false,
+        });
+        assert!(content.link_index.is_empty());
+        content.push_or_update_link("https://evil.example/login", Some("click".to_string()));
+        assert_eq!(content.links.len(), 1);
+        assert_eq!(content.links[0].text.as_deref(), Some("click"));
+    }
+
+    #[test]
+    fn test_unparseable_links_are_deduped() {
+        let mut content = EmailContent::new();
+        content.push_or_update_link("ht tp://broken link", None);
+        content.push_or_update_link("ht tp://broken link", None);
+        assert_eq!(content.links.len(), 1);
+        assert!(content.links[0].suspicious);
+    }
+
+    #[test]
+    fn suspicious_url_allowlist_requires_a_real_domain_boundary() {
+        assert!(!EmailContent::is_suspicious_url(
+            "https://accounts.google.com/login"
+        ));
+        assert!(EmailContent::is_suspicious_url(
+            "https://accounts.google.com.attacker.example/login"
+        ));
     }
 
     #[test]
@@ -1244,6 +1802,20 @@ mod tests {
             .content
             .headers
             .push(("Subject".to_string(), "hello".to_string()));
+        assert!(session.has_analyzable_content());
+    }
+
+    #[test]
+    fn inspection_failure_session_remains_analyzable() {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.error_reason = Some("inspection:mime_parse_failed:NoBoundary".to_string());
+
         assert!(session.has_analyzable_content());
     }
 
@@ -1289,5 +1861,26 @@ mod tests {
             Some(b"ABC".to_vec())
         );
         assert!(decode_base64_bytes_limited("QUJDRA==", 3).is_none());
+    }
+
+    #[test]
+    fn from_port_uses_configured_ports_then_defaults() {
+        // PoC (R4A legacy-8): DB-configured HTTP_PORTS must drive protocol
+        // detection; hardcoded defaults stay as fallback for unlisted ports.
+        Protocol::configure_ports(&[25, 2525], &[110], &[143], &[8080, 8443]);
+        assert_eq!(Protocol::from_port(8080), Protocol::Http);
+        assert_eq!(Protocol::from_port(8443), Protocol::Http);
+        assert_eq!(Protocol::from_port(2525), Protocol::Smtp);
+        // Fallback: port 80 remains HTTP even though not in the configured set.
+        assert_eq!(Protocol::from_port(80), Protocol::Http);
+        assert_eq!(Protocol::from_port(587), Protocol::Smtp);
+        assert_eq!(Protocol::from_port(9999), Protocol::Unknown);
+
+        // Reset so no other test in this process observes the configured sets.
+        if let Ok(mut guard) = super::PROTOCOL_PORTS.write() {
+            *guard = None;
+        }
+        assert_eq!(Protocol::from_port(8080), Protocol::Unknown);
+        assert_eq!(Protocol::from_port(25), Protocol::Smtp);
     }
 }

@@ -5,6 +5,7 @@
 
 import i18n from '../../i18n'
 import type { DispositionRule } from '../../types'
+import { formatCategoryList } from '../email-security/categoryLabels'
 import type {
   RuleForm,
   DispositionConditionValue,
@@ -438,7 +439,7 @@ export function describeRuleConditions(rule: DispositionRule): string[] {
   }
 
   const categories = asStringArray(parsed.categories)
-  if (categories.length > 0) items.push(i18n.t('automation.chip.categories', { list: categories.join(' / ') }))
+  if (categories.length > 0) items.push(i18n.t('automation.chip.categories', { list: formatCategoryList(categories) }))
 
   const modules = asStringArray(parsed.flagged_modules)
   if (modules.length > 0) items.push(i18n.t('automation.chip.modules', { list: modules.join(' / ') }))

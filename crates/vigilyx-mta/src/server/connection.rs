@@ -14,9 +14,9 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt};
 use tracing::{debug, error, warn};
 
 use vigilyx_core::models::{EmailSession, Protocol, SessionSource, SessionStatus};
-use vigilyx_parser::mime::MimeParser;
+use vigilyx_parser::mime::{MimeParser, decode_rfc2047};
 
-use crate::config::MtaConfig;
+use crate::config::{MtaConfig, is_trusted_upstream_ip};
 use crate::envelope::{extract_domain, is_valid_envelope_address};
 
 /// SMTP. RFC 5321,.
@@ -63,6 +63,9 @@ pub struct SmtpConnection {
     bdat_remaining: usize,
     /// RFC 3030 BDAT: whether the current chunk has the LAST flag.
     bdat_is_last: bool,
+    /// SEC: BDAT CRLF validation state — true when the previous chunk ended
+    /// with a `\r` whose `\n` must be the first byte of the next chunk.
+    bdat_pending_cr: bool,
 }
 
 /// SMTP
@@ -126,7 +129,24 @@ impl SmtpConnection {
             data_phase_started: None,
             bdat_remaining: 0,
             bdat_is_last: false,
+            bdat_pending_cr: false,
         }
+    }
+
+    /// SEC: cumulative time-budget check shared by the outer command loop and
+    /// the BDAT inner read loop (F-2). Returns the SMTP reply bytes to send
+    /// when the session lifetime or the DATA/BDAT transaction budget has been
+    /// exhausted, `None` while both budgets still have headroom.
+    fn transaction_budget_reply(&self) -> Option<&'static [u8]> {
+        if self.session_started.elapsed() > Duration::from_secs(MAX_SESSION_SECS) {
+            return Some(b"421 4.4.2 Session lifetime exceeded\r\n");
+        }
+        if let Some(data_start) = self.data_phase_started
+            && data_start.elapsed() > Duration::from_secs(MAX_DATA_TRANSACTION_SECS)
+        {
+            return Some(b"451 4.4.2 DATA transaction timeout\r\n");
+        }
+        None
     }
 
     fn reset_transaction(&mut self) {
@@ -137,6 +157,7 @@ impl SmtpConnection {
         self.data_phase_started = None;
         self.bdat_remaining = 0;
         self.bdat_is_last = false;
+        self.bdat_pending_cr = false;
     }
 
     fn append_data_line(&mut self, line: &[u8]) -> DataLineResult {
@@ -174,6 +195,25 @@ impl SmtpConnection {
             .local_domains
             .iter()
             .any(|allowed| allowed.eq_ignore_ascii_case(domain))
+    }
+
+    fn may_relay_to_recipient(&self, addr: &str) -> bool {
+        if self.is_local_recipient(addr) {
+            return true;
+        }
+
+        let sender_is_local = self
+            .mail_from
+            .as_deref()
+            .and_then(extract_domain)
+            .is_some_and(|domain| {
+                self.config
+                    .local_domains
+                    .iter()
+                    .any(|local| local.eq_ignore_ascii_case(domain))
+            });
+        sender_is_local
+            && is_trusted_upstream_ip(&self.client_ip, &self.config.trusted_upstream_cidrs)
     }
 
     fn complete_message(&mut self, raw_email: Vec<u8>, event: &'static str) -> HandleResult {
@@ -259,7 +299,22 @@ impl SmtpConnection {
                 // Read exactly `remaining` bytes in chunks via the BufReader
                 let mut bytes_left = remaining;
                 let mut chunk_error = false;
+                // SEC: set when the chunk violated the CRLF-only rule (F-1);
+                // handled after the loop because the fill_buf borrow of the
+                // stream must end before we can write the rejection reply.
+                let mut invalid_line_endings = false;
                 while bytes_left > 0 {
+                    // SEC: cumulative budgets (F-2). A per-read timeout alone lets a
+                    // slow-drip client hold the BDAT phase open indefinitely by
+                    // sending one byte every ~300s (CWE-400).
+                    if let Some(reply) = self.transaction_budget_reply() {
+                        warn!(client_ip = %self.client_ip, "BDAT cumulative time budget exceeded");
+                        let _ = stream.write_all(reply).await;
+                        let _ = stream.flush().await;
+                        chunk_error = true;
+                        break;
+                    }
+
                     let read_result = tokio::time::timeout(bdat_timeout, stream.fill_buf()).await;
                     match read_result {
                         Ok(Ok([])) => {
@@ -269,6 +324,17 @@ impl SmtpConnection {
                         }
                         Ok(Ok(buf)) => {
                             let take = buf.len().min(bytes_left);
+                            // SEC: RFC 5321 requires CRLF line endings. BDAT chunk
+                            // bytes are relayed to the downstream MTA verbatim, where
+                            // a bare `\n.\n` sequence can act as an end-of-DATA marker
+                            // on lenient parsers and smuggle a second message past
+                            // inline inspection (CWE-444). Enforce the same strictness
+                            // as the DATA path.
+                            if !bdat_chunk_has_only_crlf(&buf[..take], &mut self.bdat_pending_cr) {
+                                invalid_line_endings = true;
+                                chunk_error = true;
+                                break;
+                            }
                             self.data_buffer.extend_from_slice(&buf[..take]);
                             stream.consume(take);
                             bytes_left -= take;
@@ -286,6 +352,21 @@ impl SmtpConnection {
                             break;
                         }
                     }
+                }
+
+                // A message whose final byte is a bare CR is rejected too: the CR
+                // would reach the downstream MTA without its LF.
+                if !chunk_error && self.bdat_is_last && self.bdat_pending_cr {
+                    invalid_line_endings = true;
+                    chunk_error = true;
+                }
+
+                if invalid_line_endings {
+                    warn!(client_ip = %self.client_ip, "BDAT chunk rejected: bare CR/LF (possible SMTP smuggling)");
+                    let _ = stream
+                        .write_all(b"554 5.6.0 BDAT chunk must use CRLF line endings\r\n")
+                        .await;
+                    let _ = stream.flush().await;
                 }
 
                 if chunk_error {
@@ -511,6 +592,14 @@ impl SmtpConnection {
                     if self.state != SmtpState::Ready {
                         return CmdResponse::Reply(503, "5.5.1 Nested MAIL command".into());
                     }
+                    // SEC: MTA_REQUIRE_STARTTLS (F-4) — when enabled, a plaintext
+                    // session may not start a mail transaction (RFC 3207, 530 reply).
+                    if self.config.require_starttls && !self.tls_active {
+                        return CmdResponse::Reply(
+                            530,
+                            "5.7.0 Must issue a STARTTLS command first".into(),
+                        );
+                    }
                     let addr = match extract_envelope_address(original, true) {
                         Ok(addr) => addr,
                         Err(_) => {
@@ -546,7 +635,11 @@ impl SmtpConnection {
                             );
                         }
                     };
-                    if !self.is_local_recipient(&addr) {
+                    // Port 25 remains closed to unauthenticated third-party
+                    // relay. Explicitly trusted submission relays may target
+                    // external recipients; this is the path that makes
+                    // outbound routing and DLP enforcement reachable.
+                    if !self.may_relay_to_recipient(&addr) {
                         return CmdResponse::Reply(554, "5.7.1 Relay access denied".into());
                     }
                     let rcpt_domain = addr.rsplit('@').next().unwrap_or("<>");
@@ -640,10 +733,46 @@ impl SmtpConnection {
         session.content.is_complete = true;
 
         // headers subject message_id
+        // Mirror the sniffer path (smtp_process.rs): RFC 2047 encoded-words
+        // must be decoded so keyword detectors see the same text the MUA
+        // renders. Without this an =?UTF-8?B?...?= phishing subject stayed
+        // opaque base64 on the MTA path only.
         for (key, value) in &session.content.headers {
             match key.to_ascii_lowercase().as_str() {
                 "subject" if session.subject.is_none() => {
-                    session.subject = Some(value.clone());
+                    let decoded = decode_rfc2047(value);
+                    let trimmed = decoded.trim();
+                    if !trimmed.is_empty() {
+                        session.subject = Some(trimmed.to_string());
+                    }
+                }
+                "from" if session.mail_from.is_none() => {
+                    let decoded = decode_rfc2047(value);
+                    let addr = if let Some(start) = decoded.rfind('<') {
+                        decoded[start + 1..]
+                            .trim_end_matches('>')
+                            .trim()
+                            .to_string()
+                    } else {
+                        decoded.trim().to_string()
+                    };
+                    if !addr.is_empty() && addr.contains('@') {
+                        session.mail_from = Some(addr);
+                    }
+                }
+                "to" if session.rcpt_to.is_empty() => {
+                    let decoded = decode_rfc2047(value);
+                    for part in decoded.split(',') {
+                        let part = part.trim();
+                        let addr = if let Some(start) = part.rfind('<') {
+                            part[start + 1..].trim_end_matches('>').trim().to_string()
+                        } else {
+                            part.to_string()
+                        };
+                        if !addr.is_empty() && addr.contains('@') {
+                            session.rcpt_to.push(addr);
+                        }
+                    }
                 }
                 "message-id" if session.message_id.is_none() => {
                     session.message_id = Some(value.clone());
@@ -654,6 +783,31 @@ impl SmtpConnection {
 
         Ok(session)
     }
+}
+
+/// SEC: RFC 5321 strict line endings for BDAT chunk bytes (CWE-444).
+/// This helper is shared by every BDAT read chunk so a CRLF split across
+/// buffer boundaries is validated exactly once.
+/// Returns false when the chunk contains a bare LF (`\n` not preceded by
+/// `\r`) or a bare CR (`\r` not followed by `\n`). A CR at the very end of a
+/// chunk is provisionally accepted via `pending_cr` and must be resolved by
+/// the first byte of the next chunk (or rejected for a LAST chunk).
+fn bdat_chunk_has_only_crlf(chunk: &[u8], pending_cr: &mut bool) -> bool {
+    for &byte in chunk {
+        if *pending_cr {
+            *pending_cr = false;
+            if byte != b'\n' {
+                return false;
+            }
+            continue;
+        }
+        match byte {
+            b'\r' => *pending_cr = true,
+            b'\n' => return false,
+            _ => {}
+        }
+    }
+    true
 }
 
 /// SMTP
@@ -923,6 +1077,7 @@ mod tests {
             trusted_upstream_cidrs: Vec::new(),
             inline_timeout_secs: 8,
             fail_open: true,
+            require_starttls: false,
             quarantine_threshold: vigilyx_core::security::ThreatLevel::Medium,
             reject_threshold: vigilyx_core::security::ThreatLevel::Critical,
             max_message_size: 1024 * 1024,
@@ -1197,6 +1352,7 @@ mod tests {
         }
         let r = cmd(&mut conn, "RCPT TO:<overflow@test.com>");
         assert!(r.contains("452"), "Should reject excess recipients: {r}");
+        assert_eq!(conn.rcpt_to.len(), 10, "rejected recipient must not be retained");
     }
 
     #[test]
@@ -1390,6 +1546,49 @@ mod tests {
     }
 
     #[test]
+    fn test_trusted_submission_relay_accepts_external_recipient_for_outbound_dlp() {
+        let mut config = (*test_config()).clone();
+        config.trusted_upstream_cidrs = vec!["10.20.30.0/24".to_string()];
+        let mut conn = SmtpConnection::new(
+            "10.20.30.40".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            Arc::new(config),
+            false,
+        );
+        cmd(&mut conn, "EHLO test");
+        cmd(&mut conn, "MAIL FROM:<sender@test.com>");
+
+        let response = cmd(&mut conn, "RCPT TO:<user@external.net>");
+
+        assert!(
+            response.contains("250"),
+            "Trusted submission relay must reach outbound DLP path: {response}"
+        );
+    }
+
+    #[test]
+    fn test_trusted_relay_cannot_forward_external_sender_to_external_recipient() {
+        let mut config = (*test_config()).clone();
+        config.trusted_upstream_cidrs = vec!["10.20.30.0/24".to_string()];
+        let mut conn = SmtpConnection::new(
+            "10.20.30.40".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            Arc::new(config),
+            false,
+        );
+        cmd(&mut conn, "EHLO test");
+        cmd(&mut conn, "MAIL FROM:<sender@external.example>");
+
+        let response = cmd(&mut conn, "RCPT TO:<user@other.example>");
+
+        assert!(response.contains("554"));
+    }
+
+    #[test]
     fn test_smtp_accepts_empty_bounce_sender() {
         let config = test_config();
         let mut conn = SmtpConnection::new(
@@ -1511,7 +1710,6 @@ mod tests {
 
         let raw = b"From: test@example.com\r\nTo: admin@corp.com\r\nSubject: Hello\r\nMessage-ID: <mta-test@example.com>\r\n\r\nBody text";
         let session = conn.build_email_session(raw).expect("valid raw email");
-
         assert_eq!(session.client_ip, "10.0.0.1");
         assert_eq!(session.mail_from, Some("test@example.com".into()));
         assert_eq!(session.rcpt_to, vec!["admin@corp.com"]);
@@ -1520,6 +1718,91 @@ mod tests {
         assert!(session.content.body_text.is_some());
         assert_eq!(session.source, SessionSource::MtaProxy);
         assert_eq!(session.status, SessionStatus::Completed);
+    }
+
+    #[tokio::test]
+    async fn test_build_email_session_decodes_rfc2047_subject() {
+        // PoC bypass: an RFC 2047 encoded-word subject previously stayed
+        // opaque base64 on the MTA path while the sniffer path decoded it,
+        // so MTA-mode keyword detection missed the phishing subject.
+        let config = test_config();
+        let mut conn =
+            SmtpConnection::new("10.0.0.1".into(), 4321, "0.0.0.0".into(), 25, config, false);
+        conn.mail_from = Some("test@example.com".into());
+        conn.rcpt_to = vec!["admin@corp.com".into()];
+
+        // Subject: =?UTF-8?B?...?= encodes 您的账户存在异常登录
+        let raw = b"From: test@example.com\r\nTo: admin@corp.com\r\nSubject: =?UTF-8?B?5oKo55qE6LSm5oi35a2Y5Zyo5byC5bi455m75b2V?=\r\n\r\nBody text";
+        let session = conn.build_email_session(raw).expect("valid raw email");
+
+        assert_eq!(
+            session.subject.as_deref(),
+            Some("您的账户存在异常登录"),
+            "MTA session subject must be RFC 2047 decoded"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_build_email_session_preserves_html_image_and_button_links() {
+        // Regression for the image-only phishing drift found in the red-team
+        // exercise: the inline MTA session must expose the same HTML body and
+        // image/button URLs as the shared parser used by the offline pipeline.
+        let config = test_config();
+        let mut conn =
+            SmtpConnection::new("10.0.0.1".into(), 4321, "0.0.0.0".into(), 25, config, false);
+        conn.mail_from = Some("test@example.com".into());
+        conn.rcpt_to = vec!["admin@corp.com".into()];
+
+        let raw = concat!(
+            "From: test@example.com\r\n",
+            "To: admin@corp.com\r\n",
+            "Subject: image notice\r\n",
+            "MIME-Version: 1.0\r\n",
+            "Content-Type: multipart/alternative; boundary=\"IMG\"\r\n",
+            "\r\n",
+            "--IMG\r\n",
+            "Content-Type: text/html; charset=utf-8\r\n",
+            "\r\n",
+            "<a href=\"http://198.51.100.7/login\"><img src=\"http://198.51.100.7/banner.png\"></a>\r\n",
+            "--IMG--\r\n",
+        );
+        let direct = MimeParser::new()
+            .parse(raw.as_bytes())
+            .expect("shared parser accepts html email");
+        let session = conn
+            .build_email_session(raw.as_bytes())
+            .expect("valid raw email");
+
+        assert_eq!(session.content.body_html, direct.body_html);
+        let session_urls: Vec<&str> = session
+            .content
+            .links
+            .iter()
+            .map(|link| link.url.as_str())
+            .collect();
+        let direct_urls: Vec<&str> = direct
+            .links
+            .iter()
+            .map(|link| link.url.as_str())
+            .collect();
+        assert_eq!(session_urls, direct_urls);
+        assert!(session_urls.contains(&"http://198.51.100.7/login"));
+        assert!(session_urls.contains(&"http://198.51.100.7/banner.png"));
+    }
+
+    #[tokio::test]
+    async fn test_build_email_session_rfc2047_from_to_fallback() {
+        // Bounce-style empty envelope: From/To headers (with RFC 2047
+        // display names) must fill the session envelope, decoded.
+        let config = test_config();
+        let conn =
+            SmtpConnection::new("10.0.0.1".into(), 4321, "0.0.0.0".into(), 25, config, false);
+
+        let raw = b"From: =?UTF-8?B?6LSm5oi35a6J5YWo?= <attacker@evil.example>\r\nTo: Victim <victim@corp.example>\r\nSubject: notice\r\n\r\nBody text";
+        let session = conn.build_email_session(raw).expect("valid raw email");
+
+        assert_eq!(session.mail_from.as_deref(), Some("attacker@evil.example"));
+        assert_eq!(session.rcpt_to, vec!["victim@corp.example"]);
     }
 
     #[tokio::test]
@@ -3188,5 +3471,292 @@ mod tests {
                 .any(|result| matches!(result, HandleResult::Closed)),
             "QUIT should close the connection after RSET recovery"
         );
+    }
+
+    // ── F-1: BDAT chunk CRLF enforcement (SMTP smuggling guard) ─────────
+
+    #[test]
+    fn test_bdat_chunk_crlf_validation_rejects_smuggle_sequence() {
+        // PoC (F-1): a BDAT chunk carrying `\n.\nMAIL FROM:...` previously
+        // passed through to the downstream MTA verbatim, where a lenient
+        // parser treats `\n.\n` as end-of-DATA — a second, uninspected
+        // message is smuggled past inline verdict (CWE-444).
+        let attack =
+            b"From: sender@test.com\r\n\r\nbody\n.\nMAIL FROM:<evil@attacker.example>\r\n";
+        let mut pending = false;
+        assert!(
+            !bdat_chunk_has_only_crlf(attack, &mut pending),
+            "bare-LF smuggling sequence must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_bdat_chunk_crlf_validation_rejects_bare_cr() {
+        let mut pending = false;
+        assert!(!bdat_chunk_has_only_crlf(b"line1\rX", &mut pending));
+
+        // A CR at the very end of a chunk is provisionally pending; for a
+        // LAST chunk the caller rejects it.
+        let mut pending = false;
+        assert!(bdat_chunk_has_only_crlf(b"line1\r", &mut pending));
+        assert!(pending, "trailing CR must be flagged as pending");
+    }
+
+    #[test]
+    fn test_bdat_chunk_crlf_validation_accepts_crlf_split_across_chunks() {
+        let mut pending = false;
+        assert!(bdat_chunk_has_only_crlf(b"Subject: hi\r", &mut pending));
+        assert!(pending);
+        assert!(bdat_chunk_has_only_crlf(b"\n\r\nbody\r\n", &mut pending));
+        assert!(!pending, "resolved split CRLF must not stay pending");
+    }
+
+    #[test]
+    fn test_bdat_chunk_crlf_validation_accepts_normal_message() {
+        let mut pending = false;
+        let msg = b"From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: Hi\r\n\r\nBody\r\n";
+        assert!(bdat_chunk_has_only_crlf(msg, &mut pending));
+        assert!(!pending);
+    }
+
+    #[tokio::test]
+    async fn test_bdat_chunk_with_bare_lf_smuggle_is_rejected() {
+        use tokio::io::AsyncWriteExt;
+
+        // PoC (F-1): end-to-end — the smuggling BDAT chunk must be rejected
+        // with 554 and must not produce an email transaction.
+        let chunk = b"From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: x\r\n\r\nbody\n.\nMAIL FROM:<evil@attacker.example>\r\n";
+        let chunk_len = chunk.len();
+
+        let mut input = Vec::new();
+        input.extend_from_slice(b"EHLO client.test\r\n");
+        input.extend_from_slice(b"MAIL FROM:<sender@test.com>\r\n");
+        input.extend_from_slice(b"RCPT TO:<rcpt@test.com>\r\n");
+        input.extend_from_slice(format!("BDAT {chunk_len} LAST\r\n").as_bytes());
+        input.extend_from_slice(chunk);
+
+        let (mut client_stream, server_stream) = tokio::io::duplex(8192);
+        client_stream.write_all(&input).await.unwrap();
+        client_stream.shutdown().await.unwrap();
+
+        let mut server_stream = tokio::io::BufStream::new(server_stream);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config(),
+            false,
+        );
+
+        let results = conn.handle(&mut server_stream, false).await;
+        assert!(
+            !results
+                .iter()
+                .any(|result| matches!(result, HandleResult::Email(_, _))),
+            "smuggling BDAT chunk must not produce an email transaction"
+        );
+
+        let replies = read_available(&mut client_stream).await;
+        assert!(
+            replies.contains("554 5.6.0 BDAT chunk must use CRLF line endings\r\n"),
+            "bare-LF BDAT chunk must be rejected: {replies}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bdat_last_chunk_ending_with_bare_cr_is_rejected() {
+        use tokio::io::AsyncWriteExt;
+
+        // PoC (F-1): a LAST chunk whose final byte is a bare CR would relay
+        // a CR without its LF downstream — reject it.
+        let chunk = b"Subject: dangling\r";
+        let chunk_len = chunk.len();
+
+        let mut input = Vec::new();
+        input.extend_from_slice(b"EHLO client.test\r\n");
+        input.extend_from_slice(b"MAIL FROM:<sender@test.com>\r\n");
+        input.extend_from_slice(b"RCPT TO:<rcpt@test.com>\r\n");
+        input.extend_from_slice(format!("BDAT {chunk_len} LAST\r\n").as_bytes());
+        input.extend_from_slice(chunk);
+
+        let (mut client_stream, server_stream) = tokio::io::duplex(8192);
+        client_stream.write_all(&input).await.unwrap();
+        client_stream.shutdown().await.unwrap();
+
+        let mut server_stream = tokio::io::BufStream::new(server_stream);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config(),
+            false,
+        );
+
+        let results = conn.handle(&mut server_stream, false).await;
+        assert!(
+            !results
+                .iter()
+                .any(|result| matches!(result, HandleResult::Email(_, _))),
+            "LAST chunk ending in bare CR must not produce an email transaction"
+        );
+
+        let replies = read_available(&mut client_stream).await;
+        assert!(
+            replies.contains("554 5.6.0 BDAT chunk must use CRLF line endings\r\n"),
+            "dangling-CR LAST chunk must be rejected: {replies}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_bdat_crlf_split_across_chunks_is_accepted() {
+        use tokio::io::AsyncWriteExt;
+
+        // Regression protection: a CRLF split across the BDAT chunk boundary
+        // is legal RFC 3030 traffic and must not be rejected.
+        let chunk1 = b"From: sender@test.com\r\nTo: rcpt@test.com\r\nSubject: Split CRLF\r";
+        let chunk2 = b"\n\r\nBody after split\r\n";
+        let chunk1_len = chunk1.len();
+        let chunk2_len = chunk2.len();
+
+        let mut input = Vec::new();
+        input.extend_from_slice(b"EHLO client.test\r\n");
+        input.extend_from_slice(b"MAIL FROM:<sender@test.com>\r\n");
+        input.extend_from_slice(b"RCPT TO:<rcpt@test.com>\r\n");
+        input.extend_from_slice(format!("BDAT {chunk1_len}\r\n").as_bytes());
+        input.extend_from_slice(chunk1);
+        input.extend_from_slice(format!("BDAT {chunk2_len} LAST\r\n").as_bytes());
+        input.extend_from_slice(chunk2);
+
+        let (mut client_stream, server_stream) = tokio::io::duplex(8192);
+        client_stream.write_all(&input).await.unwrap();
+        client_stream.shutdown().await.unwrap();
+
+        let mut server_stream = tokio::io::BufStream::new(server_stream);
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config(),
+            false,
+        );
+
+        let results = conn.handle(&mut server_stream, false).await;
+        let Some(HandleResult::Email(session, _)) = results
+            .into_iter()
+            .find(|result| matches!(result, HandleResult::Email(_, _)))
+        else {
+            panic!("split-CRLF BDAT message must be accepted");
+        };
+        assert_eq!(session.subject, Some("Split CRLF".into()));
+    }
+
+    // ── F-2: BDAT cumulative time budget ─────────────────────────────────
+
+    #[test]
+    fn test_transaction_budget_reply_reflects_cumulative_budgets() {
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config(),
+            false,
+        );
+        assert!(conn.transaction_budget_reply().is_none());
+
+        conn.data_phase_started =
+            Some(Instant::now() - Duration::from_secs(MAX_DATA_TRANSACTION_SECS + 1));
+        assert_eq!(
+            conn.transaction_budget_reply(),
+            Some(b"451 4.4.2 DATA transaction timeout\r\n".as_slice()),
+            "expired DATA/BDAT transaction budget must yield the 451 reply"
+        );
+
+        let mut session_expired = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config(),
+            false,
+        );
+        session_expired.session_started =
+            Instant::now() - Duration::from_secs(MAX_SESSION_SECS + 1);
+        assert_eq!(
+            session_expired.transaction_budget_reply(),
+            Some(b"421 4.4.2 Session lifetime exceeded\r\n".as_slice()),
+            "expired session lifetime must yield the 421 reply"
+        );
+    }
+
+    // ── F-4: MTA_REQUIRE_STARTTLS ─────────────────────────────────────────
+
+    fn test_config_with_require_starttls() -> Arc<MtaConfig> {
+        Arc::new(MtaConfig {
+            require_starttls: true,
+            ..(*test_config_with_tls()).clone()
+        })
+    }
+
+    #[test]
+    fn test_require_starttls_rejects_plaintext_mail_from() {
+        // PoC (F-4): with MTA_REQUIRE_STARTTLS=true a plaintext session must
+        // not be able to start a mail transaction.
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config_with_require_starttls(),
+            false,
+        );
+        cmd(&mut conn, "EHLO client.test");
+        let r = cmd(&mut conn, "MAIL FROM:<sender@test.com>");
+        assert!(
+            r.contains("530"),
+            "plaintext MAIL FROM must be refused when STARTTLS is required: {r}"
+        );
+        assert_eq!(conn.state, SmtpState::Ready);
+        assert!(conn.mail_from.is_none());
+    }
+
+    #[test]
+    fn test_require_starttls_allows_tls_session_mail_from() {
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config_with_require_starttls(),
+            true, // tls_active
+        );
+        cmd(&mut conn, "EHLO client.test");
+        let r = cmd(&mut conn, "MAIL FROM:<sender@test.com>");
+        assert!(
+            r.contains("250"),
+            "TLS session must be allowed to send MAIL FROM: {r}"
+        );
+        assert_eq!(conn.state, SmtpState::MailFrom);
+    }
+
+    #[test]
+    fn test_require_starttls_explicitly_disabled_allows_plaintext() {
+        // Compatibility coverage: plaintext is allowed only when the test
+        // fixture explicitly sets require_starttls=false. Production config
+        // defaults to true and must be opted out of explicitly.
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config(),
+            false,
+        );
+        cmd(&mut conn, "EHLO client.test");
+        let r = cmd(&mut conn, "MAIL FROM:<sender@test.com>");
+        assert!(r.contains("250"), "explicit opt-out must allow plaintext: {r}");
     }
 }

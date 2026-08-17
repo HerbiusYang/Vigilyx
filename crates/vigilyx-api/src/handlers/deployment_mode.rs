@@ -16,6 +16,9 @@ use std::sync::Arc;
 use vigilyx_core::{
     DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES, validate_mail_relay_host_resolved, validate_mta_hostname,
 };
+use vigilyx_mta::config::{
+    MTA_MAX_RECIPIENTS_DEFAULT, MTA_MAX_RECIPIENTS_MAX, MTA_MAX_RECIPIENTS_MIN,
+};
 
 use super::ApiResponse;
 use crate::AppState;
@@ -37,10 +40,18 @@ fn normalize_mta_config(mta_config: Option<serde_json::Value>) -> Option<serde_j
             config
                 .entry("mta_fail_open".to_string())
                 .or_insert(serde_json::Value::Bool(false));
-            Some(serde_json::Value::Object(config))
+            config
+                .entry("mta_max_recipients".to_string())
+                .or_insert(serde_json::json!(MTA_MAX_RECIPIENTS_DEFAULT));
+            let mut normalized = serde_json::Value::Object(config);
+            normalize_mta_numeric_bounds(&mut normalized);
+            Some(normalized)
         }
         Some(other) => Some(other),
-        None => Some(serde_json::json!({ "mta_fail_open": false })),
+        None => Some(serde_json::json!({
+            "mta_fail_open": false,
+            "mta_max_recipients": MTA_MAX_RECIPIENTS_DEFAULT
+        })),
     }
 }
 
@@ -80,6 +91,8 @@ pub struct UpdateDeploymentMode {
     pub mta_hostname: Option<String>,
     #[serde(default)]
     pub mta_max_connections: Option<u32>,
+    #[serde(default)]
+    pub mta_max_recipients: Option<u32>,
     #[serde(default)]
     pub mta_starttls: Option<bool>,
     #[serde(default)]
@@ -248,6 +261,12 @@ fn normalize_mta_numeric_bounds(config: &mut serde_json::Value) {
         MTA_MAX_CONNECTIONS_MIN,
         MTA_MAX_CONNECTIONS_MAX,
     );
+    clamp_json_u64(
+        config,
+        "mta_max_recipients",
+        MTA_MAX_RECIPIENTS_MIN as u64,
+        MTA_MAX_RECIPIENTS_MAX as u64,
+    );
 }
 
 /// Check if a heartbeat timestamp is within HEARTBEAT_TIMEOUT_SECS.
@@ -405,7 +424,18 @@ mod tests {
         .unwrap();
 
         assert_eq!(config["mta_fail_open"], serde_json::Value::Bool(false));
+        assert_eq!(config["mta_max_recipients"], 50);
         assert_eq!(config["mta_downstream_host"], "mail.example.com");
+    }
+
+    #[test]
+    fn test_normalize_mta_config_clamps_legacy_recipient_limit_on_read() {
+        let config = normalize_mta_config(Some(serde_json::json!({
+            "mta_max_recipients": 50_000
+        })))
+        .unwrap();
+
+        assert_eq!(config["mta_max_recipients"], 10_000);
     }
 
     #[test]
@@ -413,7 +443,8 @@ mod tests {
         let mut config = serde_json::json!({
             "mta_downstream_port": 0,
             "mta_inline_timeout_secs": 600,
-            "mta_max_connections": 50_000
+            "mta_max_connections": 50_000,
+            "mta_max_recipients": 50_000
         });
 
         normalize_mta_numeric_bounds(&mut config);
@@ -421,6 +452,14 @@ mod tests {
         assert_eq!(config["mta_downstream_port"], 1);
         assert_eq!(config["mta_inline_timeout_secs"], 60);
         assert_eq!(config["mta_max_connections"], 1000);
+        assert_eq!(config["mta_max_recipients"], 10_000);
+    }
+
+    #[test]
+    fn test_normalize_mta_numeric_bounds_raises_recipient_limit_to_minimum() {
+        let mut config = serde_json::json!({ "mta_max_recipients": 0 });
+        normalize_mta_numeric_bounds(&mut config);
+        assert_eq!(config["mta_max_recipients"], 1);
     }
 
     #[test]

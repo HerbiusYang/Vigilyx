@@ -13,6 +13,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Floating minor tags are acceptable here: these are short-lived disposable
+# containers for one-off local integration tests, removed on script exit.
+# Long-running images are digest-pinned in deploy/docker/docker-compose.yml.
 docker run --detach --rm \
   --name "$VALKEY_CONTAINER" \
   --publish 127.0.0.1::6379 \

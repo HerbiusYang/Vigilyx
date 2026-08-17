@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { DataSecurityIncident, HttpSessionItem, ApiResponse, Evidence } from '../../types'
 import { apiFetch } from '../../utils/api'

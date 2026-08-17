@@ -198,7 +198,7 @@ impl SecurityModule for HtmlPixelArtModule {
                         evidence.push(Evidence {
                             description: format!(
                                 "QR code decoded URL: {}{}",
-                                &decoded,
+                                decoded,
                                 if has_recipient {
                                     " (contains recipient email - targeted phishing)"
                                 } else {
@@ -557,13 +557,15 @@ fn extract_bg_color_from_css(css: &str) -> Option<String> {
 /// Normalize color to unified format: #000 -> #000000, rgb(0,0,0) -> #000000
 fn normalize_color(color: &str) -> String {
     let c = color.trim().to_uppercase();
-    if c.len() == 4 && c.starts_with('#') {
-        // #RGB -> #RRGGBB
-        let chars: Vec<char> = c.chars().collect();
-        return format!(
-            "#{}{}{}{}{}{}",
-            chars[1], chars[1], chars[2], chars[2], chars[3], chars[3]
-        );
+    if let Some(hex) = c.strip_prefix('#') {
+        let mut chars = hex.chars();
+        if let (Some(r), Some(g), Some(b), None) =
+            (chars.next(), chars.next(), chars.next(), chars.next())
+            && [r, g, b].into_iter().all(|ch| ch.is_ascii_hexdigit())
+        {
+            // #RGB -> #RRGGBB. Only validated ASCII hex reaches formatting.
+            return format!("#{r}{r}{g}{g}{b}{b}");
+        }
     }
     c
 }
@@ -571,10 +573,15 @@ fn normalize_color(color: &str) -> String {
 /// Determine whether a color is dark (used for QR code binary conversion)
 fn is_dark_color(color: &str) -> bool {
     let c = normalize_color(color);
-    if c.starts_with('#') && c.len() == 7 {
-        let r = u8::from_str_radix(&c[1..3], 16).unwrap_or(255);
-        let g = u8::from_str_radix(&c[3..5], 16).unwrap_or(255);
-        let b = u8::from_str_radix(&c[5..7], 16).unwrap_or(255);
+    if let Some(hex) = c.strip_prefix('#')
+        && hex.len() == 6
+        && hex.is_ascii()
+        && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        // Slicing is safe after the explicit ASCII and length checks above.
+        let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(255);
+        let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(255);
+        let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(255);
         let luminance = 0.299 * r as f64 + 0.587 * g as f64 + 0.114 * b as f64;
         return luminance < 128.0;
     }
@@ -598,6 +605,21 @@ fn extract_px_value(css: &str, property: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attacker_controlled_unicode_colors_do_not_panic() {
+        assert_eq!(normalize_color("#éa"), "#ÉA");
+        assert!(!is_dark_color("#éa"));
+        assert!(!is_dark_color("#aébcd"));
+    }
+
+    #[test]
+    fn normalizes_only_valid_short_hex_colors() {
+        assert_eq!(normalize_color("#abc"), "#AABBCC");
+        assert_eq!(normalize_color("#ggg"), "#GGG");
+        assert!(is_dark_color("#000"));
+        assert!(!is_dark_color("#fff"));
+    }
 
     /// Build an NxN QR table HTML (with finder patterns)
     fn build_qr_table_html(size: usize) -> String {

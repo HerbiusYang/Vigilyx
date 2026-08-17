@@ -13,6 +13,7 @@ import asyncio
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
@@ -24,6 +25,33 @@ logger = structlog.get_logger()
 
 # Constants
 LATEST_MODEL_DIR = "data/nlp_models/latest"
+
+# SEC-23: immutable Hugging Face revisions for every zero-shot fallback.
+# Update model id and commit together after reviewing upstream changes.
+ZEROSHOT_MODEL_REVISIONS = {
+    "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7": (
+        "b5113eb38ab63efdd7f280f8c144ea8b13f978ce"
+    ),
+    "joeddav/xlm-roberta-large-xnli": (
+        "b227ee8435ceadfa86dc1368a34254e2838bf242"
+    ),
+    "facebook/bart-large-mnli": "d7645e127eaf1aefc7862fd59a17a5aa8558b8ce",
+}
+
+# SEC-22: cap concurrent inference calls to protect CPU/memory under load.
+_MAX_INFERENCE_CONCURRENCY = max(1, int(os.environ.get("AI_MAX_CONCURRENCY", "4")))
+_INFERENCE_TIMEOUT_SECS = max(
+    1.0,
+    float(os.environ.get("AI_INFERENCE_TIMEOUT_SECS", "30")),
+)
+
+# Segmented inference for long emails: the cleaned text is split into
+# consecutive windows of NLP_SEGMENT_CHARS characters and each window is
+# inferred independently; the verdict keeps the highest malicious (lowest
+# legitimate) probability across windows. The segment cap bounds per-email
+# inference cost.
+NLP_SEGMENT_CHARS = max(500, int(os.environ.get("AI_NLP_SEGMENT_CHARS", "3000")))
+NLP_MAX_SEGMENTS = max(1, int(os.environ.get("AI_NLP_MAX_SEGMENTS", "8")))
 
 # CPU inference tuning
 # Recommended thread count is roughly 60-80% of physical cores to leave headroom.
@@ -184,34 +212,153 @@ def preprocess_email(
     body: Optional[str],
     mail_from: Optional[str],
     max_chars: int = 3000,
+    max_segments: int = 1,
 ) -> str:
     """
     Preprocess email content for NLP analysis.
 
-    Combines sender, subject, and body with a coarse character-level cap.
-    `max_chars` is intentionally character-based to limit memory use on long
-    emails, while tokenizer-level truncation still enforces the exact 512-token
-    model window.
+    Combines sender, subject, and body with a character-level cap of
+    `max_chars * max_segments`. `max_chars` is intentionally character-based
+    to limit memory use on long emails, while tokenizer-level truncation
+    still enforces the exact 512-token model window per segment.
+
+    Above the aggregate inference budget, raw-body windows are distributed
+    across the full input before HTML cleaning. The result remains partial and
+    the caller records ``coverage_limited``; distribution prevents the entire
+    suffix from becoming one predictable blind region. Within the bound,
+    `analyze_phishing_nlp` runs independent per-window inference and keeps the
+    most malicious successful result. Sender/subject headers remain intact.
     """
-    parts = []
-
+    header_parts = []
     if mail_from:
-        parts.append(f"From: {mail_from}")
+        header_parts.append(f"From: {mail_from}")
     if subject:
-        parts.append(f"Subject: {subject}")
-    if body:
-        # Trim before HTML cleaning to avoid excessive work on very large inputs.
-        raw = body[:max_chars * 3] if len(body) > max_chars * 3 else body
-        clean = _clean_html(raw)
-        if clean:
-            parts.append(clean)
+        header_parts.append(f"Subject: {subject}")
 
+    segment_count = max(1, max_segments)
+    cap = max_chars * segment_count
+    header_text = "\n".join(header_parts)
+    body_budget = max(0, cap - len(header_text) - (1 if header_text and body else 0))
+    body_text = ""
+    if body and body_budget > 0:
+        if (
+            len(body) > body_budget
+            and segment_count > 1
+            and body_budget > len("\n[... omitted ...]\n") + 2
+        ):
+            marker = "\n[... omitted ...]\n"
+            window_count = min(
+                segment_count,
+                max(2, body_budget // (len(marker) + 1)),
+            )
+            separator_budget = len(marker) * (window_count - 1)
+            sampled_budget = body_budget - separator_budget
+            base, remainder = divmod(sampled_budget, window_count)
+            windows = []
+            for index in range(window_count):
+                window_len = base + (1 if index < remainder else 0)
+                if index == window_count - 1:
+                    start = len(body) - window_len
+                else:
+                    start = round(index * (len(body) - window_len) / (window_count - 1))
+                windows.append(_clean_html(body[start : start + window_len]))
+            body_text = marker.join(windows)
+        else:
+            # The default single-window trainer path intentionally retains its
+            # prefix behavior; security analysis always passes max_segments=8.
+            body_text = _clean_html(body[:body_budget])
+
+    parts = header_parts + ([body_text] if body_text else [])
     text = "\n".join(parts)
 
-    if len(text) > max_chars:
-        text = text[:max_chars]
-
+    if len(text) > cap:
+        text = text[:cap]
     return text
+
+
+def _split_into_segments(text: str, segment_chars: int, max_segments: int) -> list[str]:
+    """Split cleaned text into consecutive non-overlapping windows.
+
+    Consecutive windows have no blind bands by construction; `max_segments`
+    bounds the per-email inference cost. `preprocess_email` already caps the
+    text at `segment_chars * max_segments`, so the slice here is a safety
+    net rather than the primary bound.
+    """
+    if not text:
+        return []
+    segments = [
+        text[i : i + segment_chars]
+        for i in range(0, len(text), segment_chars)
+    ]
+    return segments[: max(1, max_segments)]
+
+
+def _malicious_probability(result: NLPPhishingResult) -> float:
+    """Best-effort malicious probability across model types.
+
+    Zero-shot and five-class fine-tuned results carry
+    `malicious_probability`; the legacy two-class model carries
+    `phishing_probability`. Fall back to deriving it from the verdict
+    confidence so segment comparison never crashes on an unknown shape.
+    """
+    details = result.details or {}
+    for key in ("malicious_probability", "phishing_probability"):
+        value = details.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+    return result.confidence if result.is_phishing else 1.0 - result.confidence
+
+
+def _tokenizer_input_coverage(
+    tokenizer,
+    text: str,
+    hypotheses: tuple[str, ...] = (),
+    max_tokens: int = 512,
+) -> tuple[bool, int | None, int]:
+    """Report whether model tokenization will truncate an inference input.
+
+    Character windows are only a transport bound; multilingual tokenizers can
+    turn one character into one or more tokens. Count the actual tokens before
+    invoking an inference path that truncates to 512. Zero-shot classification
+    uses premise/hypothesis pairs, so reserve the longest rendered label too.
+
+    If coverage cannot be measured, return a conservative limited result. The
+    model may still run, but inline disposition must not call that inspection
+    complete.
+    """
+    if tokenizer is None:
+        return True, None, max_tokens
+    try:
+        text_tokens = tokenizer.encode(text, add_special_tokens=False)
+        hypothesis_tokens = 0
+        pair = bool(hypotheses)
+        if hypotheses:
+            hypothesis_tokens = max(
+                len(tokenizer.encode(hypothesis, add_special_tokens=False))
+                for hypothesis in hypotheses
+            )
+        special_tokens = tokenizer.num_special_tokens_to_add(pair=pair)
+        token_count = len(text_tokens) + hypothesis_tokens + special_tokens
+        return token_count > max_tokens, token_count, max_tokens
+    except Exception as exc:
+        logger.warning("Unable to measure tokenizer input coverage", error=str(exc))
+        return True, None, max_tokens
+
+
+def _sanitize_last_error(message: Optional[str]) -> Optional[str]:
+    """
+    Redact filesystem paths and truncate `last_error` for health-endpoint output.
+
+    `/health` and `/health/ready` are unauthenticated, so raw loader errors
+    (which may embed absolute paths or HuggingFace internals) must not leak.
+    The leading error text is preserved so operators can still tell which
+    step failed.
+    """
+    if not message:
+        return None
+    # Collapse absolute-path fragments (POSIX and Windows) into a placeholder.
+    sanitized = re.sub(r"(?:[A-Za-z]:)?(?:[/\\][^/\\\s'\"]+){2,}", "<path>", message)
+    return sanitized[:120]
 
 
 class ModelManager:
@@ -229,6 +376,15 @@ class ModelManager:
     def __init__(self):
         self._swap_lock = asyncio.Lock()    # Protect model hot swaps.
         self._init_lock = asyncio.Lock()    # Protect first-load initialization.
+        # SEC-22: bound concurrent inference (asyncio primitives bind to the
+        # running loop lazily on first await, like the locks above).
+        self._inference_semaphore = asyncio.Semaphore(_MAX_INFERENCE_CONCURRENCY)
+        # Use a dedicated bounded executor. Timed-out native/PyTorch calls cannot
+        # be force-killed safely, but they also cannot create unbounded workers.
+        self._inference_executor = ThreadPoolExecutor(
+            max_workers=_MAX_INFERENCE_CONCURRENCY,
+            thread_name_prefix="vigilyx-nlp",
+        )
         # Zero-shot model
         self._zeroshot_pipeline = None
         self._zeroshot_model_name: Optional[str] = None
@@ -297,7 +453,7 @@ class ModelManager:
             "zero_shot_model": self._zeroshot_model_name,
             "warmup_state": self._warmup_state,
             "retry_after_secs": retry_after_secs,
-            "last_error": self._last_error,
+            "last_error": _sanitize_last_error(self._last_error),
         }
 
     def _load_zeroshot(self):
@@ -318,18 +474,16 @@ class ModelManager:
 
         from transformers import pipeline
 
-        model_priority = [
-            "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7",
-            "joeddav/xlm-roberta-large-xnli",
-            "facebook/bart-large-mnli",
-        ]
+        model_priority = list(ZEROSHOT_MODEL_REVISIONS)
 
         for model_id in model_priority:
             try:
-                logger.info(f"Trying model: {model_id}")
+                revision = ZEROSHOT_MODEL_REVISIONS[model_id]
+                logger.info("Trying pinned model", model=model_id, revision=revision)
                 self._zeroshot_pipeline = pipeline(
                     "zero-shot-classification",
                     model=model_id,
+                    revision=revision,
                     device=_PIPELINE_DEVICE,
                 )
                 self._zeroshot_model_name = model_id
@@ -458,6 +612,9 @@ class ModelManager:
         legacy two-class variant (`num_labels=2`).
         """
         start = time.time()
+        model_input_truncated, model_input_tokens, model_input_token_limit = (
+            _tokenizer_input_coverage(self._finetuned_tokenizer, text)
+        )
 
         inputs = self._finetuned_tokenizer(
             text, truncation=True, padding=True, max_length=512, return_tensors="pt",
@@ -472,9 +629,17 @@ class ModelManager:
         inference_ms = int((time.time() - start) * 1000)
 
         if num_labels >= 5:
-            return self._interpret_5class(probs, text, inference_ms)
+            prediction = self._interpret_5class(probs, text, inference_ms)
         else:
-            return self._interpret_2class(probs, text, inference_ms)
+            prediction = self._interpret_2class(probs, text, inference_ms)
+        prediction.details.update(
+            {
+                "model_input_truncated": model_input_truncated,
+                "model_input_tokens": model_input_tokens,
+                "model_input_token_limit": model_input_token_limit,
+            }
+        )
+        return prediction
 
     def _interpret_5class(self, probs: torch.Tensor, text: str, inference_ms: int) -> NLPPhishingResult:
         """Interpret five-class model output."""
@@ -581,11 +746,21 @@ class ModelManager:
         else:
             labels = CANDIDATE_LABELS_EN
 
+        hypothesis_template = "This email is: {}" if lang != "zh" else "这封邮件是: {}"
+        hypotheses = tuple(hypothesis_template.format(label) for label in labels)
+        model_input_truncated, model_input_tokens, model_input_token_limit = (
+            _tokenizer_input_coverage(
+                getattr(classifier, "tokenizer", None),
+                text,
+                hypotheses,
+            )
+        )
+
         result = classifier(
             text,
             candidate_labels=labels,
             multi_label=False,
-            hypothesis_template="This email is: {}" if lang != "zh" else "这封邮件是: {}",
+            hypothesis_template=hypothesis_template,
         )
 
         inference_ms = int((time.time() - start) * 1000)
@@ -648,6 +823,9 @@ class ModelManager:
                 "text_length": len(text),
                 "model_type": "zero-shot",
                 "model": self._zeroshot_model_name,
+                "model_input_truncated": model_input_truncated,
+                "model_input_tokens": model_input_tokens,
+                "model_input_token_limit": model_input_token_limit,
             },
             model_name=self._zeroshot_model_name or "unknown",
             inference_ms=inference_ms,
@@ -659,27 +837,46 @@ class ModelManager:
 
         Inference is read-only, so it does not take the swap lock. The init lock
         only protects first-time lazy loading. PyTorch work runs in a thread pool
-        so the event loop stays responsive.
+        so the event loop stays responsive. Concurrent inference is bounded by
+        `_inference_semaphore` to protect CPU/memory under load (SEC-22).
         """
-        loop = asyncio.get_event_loop()
+        async with self._inference_semaphore:
+            loop = asyncio.get_event_loop()
 
-        if self._finetuned_model is not None:
-            try:
-                return await loop.run_in_executor(
-                    None, self._predict_finetuned, text,
-                )
-            except Exception as e:
-                logger.warning(f"Fine-tuned model inference failed, falling back: {e}")
+            if self._finetuned_model is not None:
+                try:
+                    return await asyncio.wait_for(
+                        loop.run_in_executor(
+                            self._inference_executor,
+                            self._predict_finetuned,
+                            text,
+                        ),
+                        timeout=_INFERENCE_TIMEOUT_SECS,
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(
+                        "Fine-tuned model inference timed out",
+                        timeout_s=_INFERENCE_TIMEOUT_SECS,
+                    )
+                    raise
+                except Exception as e:
+                    logger.warning(f"Fine-tuned model inference failed, falling back: {e}")
 
-        # Lock only around first zero-shot initialization.
-        if self._zeroshot_pipeline is None:
-            async with self._init_lock:
-                if self._zeroshot_pipeline is None:
-                    await loop.run_in_executor(None, self._load_zeroshot)
+            # Lock only around first zero-shot initialization.
+            if self._zeroshot_pipeline is None:
+                async with self._init_lock:
+                    if self._zeroshot_pipeline is None:
+                        await loop.run_in_executor(None, self._load_zeroshot)
 
-        return await loop.run_in_executor(
-            None, self._predict_zeroshot, text, lang,
-        )
+            return await asyncio.wait_for(
+                loop.run_in_executor(
+                    self._inference_executor,
+                    self._predict_zeroshot,
+                    text,
+                    lang,
+                ),
+                timeout=_INFERENCE_TIMEOUT_SECS,
+            )
 
     @property
     def model_version(self) -> str:
@@ -716,7 +913,11 @@ async def analyze_phishing_nlp(
     Analyze whether an email looks phishy via the NLP pipeline.
 
     Keeps the existing external signature and delegates internally to
-    `ModelManager`.
+    `ModelManager`. Long emails are scored per consecutive window within a
+    bounded budget (see `_split_into_segments`) and the most malicious window's
+    result is kept. If the input exceeds that budget, the returned details
+    explicitly mark the NLP view as coverage-limited; whole-message rule
+    detectors remain responsible for content outside the NLP budget.
     """
     body = body_text or body_html or ""
     if not body and not subject:
@@ -728,9 +929,83 @@ async def analyze_phishing_nlp(
             model_name="none",
         )
 
-    text = preprocess_email(subject, body, mail_from)
+    text = preprocess_email(
+        subject,
+        body,
+        mail_from,
+        max_chars=NLP_SEGMENT_CHARS,
+        max_segments=NLP_MAX_SEGMENTS,
+    )
     lang = _detect_language(text)
+
+    coverage_limit_chars = NLP_SEGMENT_CHARS * NLP_MAX_SEGMENTS
+    input_chars_before_nlp_cap = sum(len(value or "") for value in (subject, body, mail_from))
+    input_coverage_limited = input_chars_before_nlp_cap > coverage_limit_chars
+
+    def annotate_coverage_limit(
+        result: NLPPhishingResult,
+        additional_reasons: tuple[str, ...] = (),
+    ) -> NLPPhishingResult:
+        reasons = list(additional_reasons)
+        if input_coverage_limited:
+            reasons.append("character_budget")
+        reasons = sorted(set(reasons))
+        if not reasons:
+            return result
+        result.details["coverage_limited"] = True
+        result.details["coverage_reasons"] = reasons
+        result.details["coverage_limit_chars"] = coverage_limit_chars
+        result.details["input_chars_before_nlp_cap"] = input_chars_before_nlp_cap
+        result.details["coverage_note"] = (
+            "NLP model attention was incomplete or uncertain; "
+            "whole-message rule detectors remain authoritative for omitted content"
+        )
+        result.summary += (
+            f" [NLP coverage limited ({', '.join(reasons)}); "
+            "whole-message rules remain authoritative]"
+        )
+        return result
 
     manager = get_model_manager()
 
-    return await manager.predict(text, lang)
+    segments = _split_into_segments(text, NLP_SEGMENT_CHARS, NLP_MAX_SEGMENTS)
+    if len(segments) <= 1:
+        result = await manager.predict(text, lang)
+        reasons = (
+            ("model_token_limit",)
+            if result.details.get("model_input_truncated") is True
+            else ()
+        )
+        return annotate_coverage_limit(result, reasons)
+
+    # Long email: run independent inference on every window. Concatenating
+    # windows into one model input would push everything past the first
+    # ~512 tokens into the tokenizer's truncation void and recreate
+    # deterministic blind bands.
+    raw_results = await asyncio.gather(
+        *(manager.predict(segment, lang) for segment in segments),
+        return_exceptions=True,
+    )
+    results = [r for r in raw_results if isinstance(r, NLPPhishingResult)]
+    if not results:
+        # Every window failed (model unavailable or inference timeout);
+        # surface the first error so the caller keeps its 503/504 mapping.
+        raise raw_results[0]
+
+    best = max(results, key=_malicious_probability)
+    best.details["segments_analyzed"] = len(segments)
+    best.details["segments_succeeded"] = len(results)
+    best.details["best_segment_index"] = results.index(best)
+    best.details["segment_malicious_probabilities"] = [
+        round(_malicious_probability(r), 4) for r in results
+    ]
+    best.details["total_inference_ms"] = sum(r.inference_ms for r in results)
+    best.summary += (
+        f" [long email: {len(segments)} segments scored, max malicious probability kept]"
+    )
+    coverage_reasons = []
+    if len(results) < len(segments):
+        coverage_reasons.append("segment_inference_failure")
+    if any(result.details.get("model_input_truncated") is True for result in results):
+        coverage_reasons.append("model_token_limit")
+    return annotate_coverage_limit(best, tuple(coverage_reasons))

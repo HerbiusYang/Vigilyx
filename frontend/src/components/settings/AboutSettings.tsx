@@ -1,8 +1,7 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatBytes, formatCurrentServerDateTime, syncServerClock } from '../../utils/format'
 import { apiFetch } from '../../utils/api'
-import { loadCachedUiPreferences, saveUiPreferencesPatch, syncUiPreferencesFromServer } from '../../utils/uiPreferences'
 
 /** Live clock: refresh once per second. */
 function LiveClock() {
@@ -16,7 +15,6 @@ function LiveClock() {
 
 export default function AboutSettings() {
   const { t } = useTranslation()
-  const cached = loadCachedUiPreferences()
   const [dbSize, setDbSize] = useState<number>(0)
   const [systemInfo, setSystemInfo] = useState<{
     api_version: string
@@ -28,33 +26,10 @@ export default function AboutSettings() {
     server_utc_offset_minutes?: number
   } | null>(null)
 
-  // NTP
-  const [ntpServers, setNtpServers] = useState(cached.about.ntp_servers)
-  const [ntpInterval, setNtpInterval] = useState(cached.about.ntp_interval_minutes)
-  const [ntpSaved, setNtpSaved] = useState(false)
-
-  const saveNtpConfig = useCallback(() => {
-    void saveUiPreferencesPatch({
-      about: {
-        ntp_servers: ntpServers,
-        ntp_interval_minutes: ntpInterval,
-      },
-    })
-      .then(() => {
-        setNtpSaved(true)
-        setTimeout(() => setNtpSaved(false), 3000)
-      })
-      .catch(() => {})
-  }, [ntpServers, ntpInterval])
-
   // Fetch system info on mount
   useEffect(() => {
     (async () => {
       try {
-        const prefs = await syncUiPreferencesFromServer()
-        setNtpServers(prefs.about.ntp_servers)
-        setNtpInterval(prefs.about.ntp_interval_minutes)
-
         const res = await apiFetch('/api/system/status')
         const data = await res.json()
         if (data.success && data.data) {
@@ -95,7 +70,7 @@ export default function AboutSettings() {
           </svg>
         </div>
         <div className="s-about-name">Vigilyx</div>
-        <div className="s-about-ver">v{systemInfo?.api_version || '0.9.2'}</div>
+        <div className="s-about-ver">v{systemInfo?.api_version || '0.9.3'}</div>
         <div className="s-about-tagline">{t('settings.about.tagline')}</div>
       </div>
 
@@ -137,52 +112,6 @@ export default function AboutSettings() {
           <span className="s-about-item-label">{t('settings.about.serverTime')}</span>
           <span className="s-about-item-value"><LiveClock /></span>
         </div>
-      </div>
-
-      <div className="s-about-section-header">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        {t('settings.about.ntpSync')}
-      </div>
-      <div className="s-setting-group">
-        <div className="s-setting-row">
-          <div className="s-setting-info">
-            <span className="s-setting-label">{t('settings.about.ntpServers')}</span>
-            <span className="s-setting-desc">{t('settings.about.ntpServersDesc')}</span>
-          </div>
-          <input
-            className="s-input"
-            style={{ width: 280, fontSize: 12 }}
-            value={ntpServers}
-            onChange={e => setNtpServers(e.target.value)}
-            onBlur={saveNtpConfig}
-            placeholder="ntp.aliyun.com, cn.ntp.org.cn"
-          />
-        </div>
-        <div className="s-setting-row">
-          <div className="s-setting-info">
-            <span className="s-setting-label">{t('settings.about.syncInterval')}</span>
-            <span className="s-setting-desc">{t('settings.about.syncIntervalDesc')}</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <input
-              className="s-input"
-              type="number"
-              style={{ width: 80, textAlign: 'center', fontSize: 12 }}
-              value={ntpInterval}
-              min={1}
-              max={1440}
-              onChange={e => setNtpInterval(Number(e.target.value))}
-              onBlur={saveNtpConfig}
-            />
-            <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{t('settings.about.minutes')}</span>
-          </div>
-        </div>
-        {ntpSaved && (
-          <div className="s-deploy-success" style={{ marginTop: 4 }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-            {t('settings.about.ntpConfigSaved')}
-          </div>
-        )}
       </div>
 
       <div className="s-about-section-header">

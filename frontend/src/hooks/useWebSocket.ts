@@ -29,6 +29,7 @@ const RELEVANT_TYPES = new Set([
   'SecurityVerdict',
   'RefreshNeeded',
   'DataSecurityAlert',
+  'Alert',
 ])
 
 /** High-frequency message throttle interval (ms) - NewSession/SessionUpdate are emitted at most once every 5 seconds. */

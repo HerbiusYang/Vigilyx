@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import type {
   SecurityStats, EngineStatus, ModuleMetadata,
-  ApiResponse, PipelineConfig, ModuleConfig, ContentRules,
+  ApiResponse, PipelineConfig, ModuleConfig, ContentRules, VerdictConfig,
 } from '../../types'
 import { apiFetch } from '../../utils/api'
 
@@ -84,59 +84,6 @@ export const PILLAR_META: Record<string, { label: string; color: string }> = Obj
   Object.entries(PILLAR_META_KEYS).map(([id, meta]) => [id, { label: id, color: meta.color }])
 )
 
-// -- Definitions for the eight engines (matching backend EngineId values) --
-export const ENGINE_DEFS: { id: string; letter: string; nameKey: string; color: string; descKey: string; modules: string[] }[] = [
-  { id: 'sender_reputation', letter: 'A', nameKey: 'emailSecurity.engineSenderReputation', color: '#3b82f6',
-    descKey: 'emailSecurity.engineDescSenderReputation',
-    modules: ['domain_verify'] },
-  { id: 'content_analysis', letter: 'B', nameKey: 'emailSecurity.engineContentAnalysis', color: '#ef4444',
-    descKey: 'emailSecurity.engineDescContentAnalysis',
-    modules: ['content_scan', 'html_scan', 'html_pixel_art', 'attach_scan', 'attach_content', 'attach_hash'] },
-  { id: 'behavior_baseline', letter: 'C', nameKey: 'emailSecurity.engineBehaviorBaseline', color: '#eab308',
-    descKey: 'emailSecurity.engineDescBehaviorBaseline',
-    modules: ['anomaly_detect'] },
-  { id: 'url_analysis', letter: 'D', nameKey: 'emailSecurity.engineUrlAnalysis', color: '#22c55e',
-    descKey: 'emailSecurity.engineDescUrlAnalysis',
-    modules: ['link_scan', 'link_reputation', 'link_content'] },
-  { id: 'protocol_compliance', letter: 'E', nameKey: 'emailSecurity.engineProtocolCompliance', color: '#a855f7',
-    descKey: 'emailSecurity.engineDescProtocolCompliance',
-    modules: ['header_scan', 'mime_scan'] },
-  { id: 'semantic_intent', letter: 'F', nameKey: 'emailSecurity.engineSemanticIntent', color: '#f97316',
-    descKey: 'emailSecurity.engineDescSemanticIntent',
-    modules: ['semantic_scan'] },
-  { id: 'identity_anomaly', letter: 'G', nameKey: 'emailSecurity.engineIdentityAnomaly', color: '#06b6d4',
-    descKey: 'emailSecurity.engineDescIdentityAnomaly',
-    modules: ['identity_anomaly'] },
-  { id: 'transaction_correlation', letter: 'H', nameKey: 'emailSecurity.engineTransactionCorrelation', color: '#ec4899',
-    descKey: 'emailSecurity.engineDescTransactionCorrelation',
-    modules: ['transaction_correlation'] },
-]
-
-// Reverse mapping: module -> engine
-const MODULE_ENGINE: Record<string, string> = {}
-ENGINE_DEFS.forEach(e => e.modules.forEach(m => { MODULE_ENGINE[m] = e.id }))
-
-// Extra module metadata (timeout, type)
-export const MODULE_EXTRA: Record<string, { timeout: string; type: 'cpu' | 'io' | 'mixed' }> = {
-  content_scan: { timeout: '5s', type: 'cpu' },
-  html_scan: { timeout: '5s', type: 'cpu' },
-  html_pixel_art: { timeout: '3s', type: 'cpu' },
-  attach_scan: { timeout: '5s', type: 'io' },
-  attach_content: { timeout: '5s', type: 'cpu' },
-  attach_hash: { timeout: '10s', type: 'io' },
-  mime_scan: { timeout: '5s', type: 'cpu' },
-  header_scan: { timeout: '5s', type: 'io' },
-  link_scan: { timeout: '5s', type: 'cpu' },
-  link_reputation: { timeout: '10s', type: 'io' },
-  link_content: { timeout: '15s', type: 'io' },
-  anomaly_detect: { timeout: '5s', type: 'mixed' },
-  semantic_scan: { timeout: '65s', type: 'io' },
-  domain_verify: { timeout: '3s', type: 'io' },
-  identity_anomaly: { timeout: '5s', type: 'mixed' },
-  transaction_correlation: { timeout: '5s', type: 'cpu' },
-  verdict: { timeout: '1s', type: 'cpu' },
-}
-
 export const MODE_CN_KEYS: Record<string, string> = {
   builtin: 'emailSecurity.modeBuiltin',
   aionly: 'emailSecurity.modeAiOnly',
@@ -176,6 +123,7 @@ function EmailSecurity() {
   const [pipelineConfig, setPipelineConfig] = useState<PipelineConfig | null>(null)
   const [contentRules, setContentRules] = useState<ContentRules | null>(null)
   const [savingPipeline, setSavingPipeline] = useState(false)
+  const [pipelineNotice, setPipelineNotice] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState(false)
 
@@ -199,7 +147,12 @@ function EmailSecurity() {
       const engineData: ApiResponse<EngineStatus> = await engineRes.json()
       if (statsData.success && statsData.data) {
         const d = statsData.data
-        const key = `${d.total_scanned}-${d.high_threats_24h}-${d.level_counts?.safe ?? 0}-${d.level_counts?.high ?? 0}-${d.level_counts?.critical ?? 0}-${d.ioc_count ?? 0}`
+        const key = [
+          d.total_scanned,
+          d.high_threats_24h,
+          d.ioc_count,
+          ...['safe', 'low', 'medium', 'high', 'critical'].map(level => d.level_counts?.[level] ?? 0),
+        ].join('-')
         if (key !== prevStatsKeyRef.current) {
           prevStatsKeyRef.current = key
           setStats(d)
@@ -207,7 +160,17 @@ function EmailSecurity() {
       }
       if (engineData.success && engineData.data) {
         const d = engineData.data
-        const key = `${d.total_sessions_processed}-${d.total_verdicts_produced}-${d.email_engine_active}-${d.uptime_seconds}`
+        const key = [
+          d.running,
+          d.email_engine_active,
+          d.data_security_engine_active,
+          d.total_sessions_processed,
+          d.total_verdicts_produced,
+          d.uptime_seconds,
+          d.sessions_per_second,
+          d.ai_service_available,
+          d.reason ?? '',
+        ].join('-')
         if (key !== prevEngineKeyRef.current) {
           prevEngineKeyRef.current = key
           setEngineStatus(d)
@@ -254,8 +217,15 @@ function EmailSecurity() {
   useEffect(() => {
     setIsLoading(true)
     Promise.all([fetchStats(), fetchModules(), fetchPipeline()]).finally(() => setIsLoading(false))
-    const interval = setInterval(fetchStats, 15000) // 15s; fetchStats already checks page visibility internally
-    return () => clearInterval(interval)
+    const interval = window.setInterval(fetchStats, 10000) // Match the engine heartbeat cadence.
+    const handleVisibilityChange = () => {
+      if (!document.hidden) fetchStats()
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      window.clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
   }, [fetchStats, fetchModules, fetchPipeline])
 
   useEffect(() => {
@@ -288,7 +258,7 @@ function EmailSecurity() {
     savePipeline(updated)
   }
 
-  const savePipeline = async (config: PipelineConfig) => {
+  const savePipeline = async (config: PipelineConfig): Promise<{ ok: boolean; error?: string }> => {
     setSavingPipeline(true)
     try {
       const res = await apiFetch('/api/security/pipeline', {
@@ -296,16 +266,37 @@ function EmailSecurity() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
       })
-      if (!res.ok) {
-        console.error('Failed to save pipeline config:', res.status)
+      const data: ApiResponse<PipelineConfig> = await res.json()
+      if (!res.ok || !data.success) {
+        console.error('Failed to save pipeline config:', res.status, data.error)
+        setPipelineNotice(null)
         fetchPipeline() // revert to server state
+        return { ok: false, error: data.error ?? undefined }
       }
+      setPipelineNotice(t('emailSecurity.pipelineRestartRequired'))
+      return { ok: true }
     } catch (e) {
       console.error('Failed to save pipeline config:', e)
+      setPipelineNotice(null)
       fetchPipeline()
+      return { ok: false }
     } finally {
       setSavingPipeline(false)
     }
+  }
+
+  // Verdict thresholds are edited as a group in PipelineTab; the parent keeps
+  // pipelineConfig as the single source of truth so later module toggles don't
+  // revert the thresholds to stale values.
+  const saveVerdictThresholds = async (patch: Partial<VerdictConfig>) => {
+    if (!pipelineConfig) return { ok: false }
+    const updated: PipelineConfig = {
+      ...pipelineConfig,
+      verdict_config: { ...pipelineConfig.verdict_config, ...patch },
+    }
+    const result = await savePipeline(updated)
+    if (result.ok) setPipelineConfig(updated)
+    return result
   }
 
   // ─── Tab bar definitions ──────────────────────────────────────
@@ -351,7 +342,7 @@ function EmailSecurity() {
                 <span className="sec-header-metric-lbl">{t('emailSecurity.uptime')}</span>
               </div>
               <div className="sec-header-metric">
-                <span className="sec-header-metric-val">{toDisplayNumber(engineStatus?.sessions_per_second).toFixed(1)}/s</span>
+                <span className="sec-header-metric-val">{toDisplayNumber(engineStatus?.sessions_per_second).toFixed(2)}/s</span>
                 <span className="sec-header-metric-lbl">{t('emailSecurity.processingSpeed')}</span>
               </div>
               <div className="sec-header-metric">
@@ -429,8 +420,10 @@ function EmailSecurity() {
             engineStatus={engineStatus}
             pipelineConfig={pipelineConfig}
             contentRules={contentRules}
+            notice={pipelineNotice}
             onToggleModule={toggleModule}
             onChangeMode={changeModuleMode}
+            onSaveThresholds={saveVerdictThresholds}
           />
         )}
 
@@ -485,13 +478,14 @@ function isEngineRunning(status: EngineStatus | null): boolean {
 }
 
 function formatUptime(seconds: unknown): string {
-  const safeSeconds = toDisplayNumber(seconds)
+  const safeSeconds = Math.max(0, Math.floor(toDisplayNumber(seconds)))
   const d = Math.floor(safeSeconds / 86400)
   const h = Math.floor((safeSeconds % 86400) / 3600)
   const m = Math.floor((safeSeconds % 3600) / 60)
-  if (d > 0) return `${d}d ${h}h`
-  if (h > 0) return `${h}h ${m}m`
-  return `${m}m`
+  const s = safeSeconds % 60
+  if (d > 0) return `${d}d ${h}h ${m}m`
+  if (h > 0) return `${h}h ${m}m ${s}s`
+  return `${m}m ${s}s`
 }
 
 export default EmailSecurity

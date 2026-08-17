@@ -109,7 +109,11 @@ impl ReassemblyBudget {
         self.used.load(Ordering::Relaxed)
     }
 
-    fn remaining(&self) -> u64 {
+    pub(crate) fn limit(&self) -> u64 {
+        self.limit
+    }
+
+    pub(crate) fn remaining(&self) -> u64 {
         self.limit.saturating_sub(self.used())
     }
 }
@@ -724,6 +728,29 @@ impl TcpHalfStream {
     /// whetheralreadycomplete
     pub fn is_complete(&self) -> bool {
         self.is_closed && self.segments.is_empty()
+    }
+
+    /// Release every buffered byte back to the shared budget (LRU eviction under
+    /// global budget pressure). The stream restarts reassembly from the next
+    /// segment, like a mid-stream capture; the freed bytes are accounted as
+    /// skipped gap so any later restore is marked inspection-incomplete.
+    ///
+    /// Returns the number of budget bytes freed.
+    pub(crate) fn evict_buffered_data(&mut self) -> usize {
+        let freed = self.total_bytes;
+        if freed == 0 {
+            return 0;
+        }
+        self.segments.clear();
+        self.reassembled.clear();
+        self.budget.release(freed);
+        self.total_bytes = 0;
+        self.first_seq = None;
+        self.next_seq = None;
+        self.reassembled_start_seq = None;
+        self.prepend_shift = 0;
+        self.gap_bytes_skipped = self.gap_bytes_skipped.saturating_add(freed);
+        freed
     }
 }
 

@@ -17,7 +17,7 @@ const WORK_HOUR_START: u32 = 8;
 const WORK_HOUR_END: u32 = 18;
 
 /// timestampstrategy ConfigurationParameter
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TimePolicyConfig {
     /// Whether to enableNon-workingtimestampCritical
     #[serde(default = "default_enabled")]
@@ -28,9 +28,9 @@ pub struct TimePolicyConfig {
     /// timestampEndsmall (0-24, Contains), Default 18
     #[serde(default = "default_work_end")]
     pub work_hour_end: u32,
-    /// UTC District, Default 8 (Medium)
+    /// UTC offset in hours. Fractional offsets such as `5.5` are supported.
     #[serde(default = "default_utc_offset")]
-    pub utc_offset_hours: i64,
+    pub utc_offset_hours: f64,
     /// Weekday whether Non-workingtimestamp, Default true
     #[serde(default = "default_weekend")]
     pub weekend_is_off_hours: bool,
@@ -45,8 +45,8 @@ fn default_work_start() -> u32 {
 fn default_work_end() -> u32 {
     18
 }
-fn default_utc_offset() -> i64 {
-    8
+fn default_utc_offset() -> f64 {
+    8.0
 }
 fn default_weekend() -> bool {
     true
@@ -58,9 +58,38 @@ impl Default for TimePolicyConfig {
             enabled: true,
             work_hour_start: 8,
             work_hour_end: 18,
-            utc_offset_hours: 8,
+            utc_offset_hours: 8.0,
             weekend_is_off_hours: true,
         }
+    }
+}
+
+impl TimePolicyConfig {
+    /// Validate the persisted/API contract before it reaches the detection loop.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.work_hour_start > 23 {
+            return Err("work_hour_start must be between 0 and 23".to_string());
+        }
+        if !(1..=24).contains(&self.work_hour_end) {
+            return Err("work_hour_end must be between 1 and 24".to_string());
+        }
+        if self.work_hour_start >= self.work_hour_end {
+            return Err("work_hour_start must be less than work_hour_end".to_string());
+        }
+        if !self.utc_offset_hours.is_finite() || !(-12.0..=14.0).contains(&self.utc_offset_hours) {
+            return Err("utc_offset_hours must be between -12 and +14".to_string());
+        }
+
+        // All real-world UTC offsets are representable in 15-minute increments.
+        let quarter_hours = self.utc_offset_hours * 4.0;
+        if (quarter_hours - quarter_hours.round()).abs() > f64::EPSILON {
+            return Err("utc_offset_hours must use 15-minute increments".to_string());
+        }
+        Ok(())
+    }
+
+    fn utc_offset_minutes(&self) -> i64 {
+        (self.utc_offset_hours * 60.0).round() as i64
     }
 }
 
@@ -115,7 +144,7 @@ pub fn apply_time_policy(
 
 /// Use ConfigurationParameterJudgewhether Non-workingtimestamp
 pub fn is_off_hours_with_config(dt: DateTime<Utc>, config: &TimePolicyConfig) -> bool {
-    let local = dt + chrono::Duration::hours(config.utc_offset_hours);
+    let local = dt + chrono::Duration::minutes(config.utc_offset_minutes());
     let hour = local.hour();
     let weekday = local.weekday();
 
@@ -313,7 +342,7 @@ mod tests {
         let parsed: TimePolicyConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.work_hour_start, 8);
         assert_eq!(parsed.work_hour_end, 18);
-        assert_eq!(parsed.utc_offset_hours, 8);
+        assert_eq!(parsed.utc_offset_hours, 8.0);
         assert!(parsed.enabled);
         assert!(parsed.weekend_is_off_hours);
     }
@@ -325,6 +354,30 @@ mod tests {
         assert_eq!(cfg.work_hour_start, 7);
         assert_eq!(cfg.work_hour_end, 18); // default
         assert!(cfg.enabled); // default
+    }
+
+    #[test]
+    fn test_config_accepts_legacy_integer_and_half_hour_offsets() {
+        let legacy: TimePolicyConfig = serde_json::from_str(r#"{"utc_offset_hours":8}"#).unwrap();
+        let india: TimePolicyConfig = serde_json::from_str(r#"{"utc_offset_hours":5.5}"#).unwrap();
+
+        assert_eq!(legacy.utc_offset_hours, 8.0);
+        assert_eq!(india.utc_offset_hours, 5.5);
+        assert!(legacy.validate().is_ok());
+        assert!(india.validate().is_ok());
+
+        // Monday 09:00 IST = 03:30 UTC, which is within the default work window.
+        assert!(!is_off_hours_with_config(utc(2026, 3, 9, 3, 30), &india));
+    }
+
+    #[test]
+    fn test_config_rejects_unsupported_offset_precision() {
+        let cfg = TimePolicyConfig {
+            utc_offset_hours: 5.1,
+            ..Default::default()
+        };
+
+        assert!(cfg.validate().is_err());
     }
 
     // Test: Critical link

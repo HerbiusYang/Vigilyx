@@ -61,14 +61,14 @@ impl ShardedSessionManager {
             smtp_state.take_pending_email_for_close()
         };
 
-        let Some((email_data, had_terminator)) = pending_email else {
+        let Some((email_data, had_terminator, parser_complete)) = pending_email else {
             return;
         };
 
         match self.mime_parser.parse(&email_data) {
             Ok(content) => {
                 session_data.session.email_count += 1;
-                let is_complete = had_terminator
+                let is_complete = parser_complete
                     && session_data.client_stream.gap_bytes_skipped == 0
                     && session_data.server_stream.gap_bytes_skipped == 0;
                 let headers_len = content.headers.len();
@@ -95,6 +95,7 @@ impl ShardedSessionManager {
                     } else {
                         "close_salvage_truncated"
                     },
+                    true,
                 ) {
                     self.enqueue_smtp_relay_probe(session_data, message_id);
                 }
@@ -169,6 +170,18 @@ impl ShardedSessionManager {
                     .smtp_pipeline
                     .smtp_mime_parse_failed
                     .fetch_add(1, Ordering::Relaxed);
+                session_data.session.content.is_complete = false;
+                session_data.session.error_reason =
+                    Some(format!("inspection:mime_parse_failed:{e:?}"));
+                if session_data.client_stream.gap_bytes_skipped > 0
+                    || session_data.server_stream.gap_bytes_skipped > 0
+                {
+                    Self::merge_inspection_reason(
+                        &mut session_data.session.error_reason,
+                        "smtp_stream_gap",
+                    );
+                }
+                self.mark_session_dirty(&mut session_data.dirty, &session_data.key);
                 self.log_smtp_mime_parse_failure(
                     session_data,
                     &diag_snapshot,
@@ -260,22 +273,11 @@ impl ShardedSessionManager {
                 .smtp_client_gap_bytes_total
                 .fetch_add(new_gap_bytes as u64, Ordering::Relaxed);
             session_data.client_gap_logged_bytes = total_gap_bytes;
-            let client_pending_diag = session_data.client_stream.pending_segments_diag();
-            warn!(
-                session_id = %session_data.session.id,
-                created_without_syn = session_data.created_without_syn,
+            self.mark_smtp_stream_gap(
+                session_data,
+                "client_to_server_close_salvage",
                 new_gap_bytes,
                 total_gap_bytes,
-                client_pending_segments = session_data.client_stream.pending_segments(),
-                client_pending_bytes = client_pending_diag.pending_bytes,
-                client_waiting_for_seq = ?client_pending_diag.waiting_for_seq,
-                client_first_pending_seq = ?client_pending_diag.first_pending_seq,
-                client_gap_before_first_pending_bytes = client_pending_diag.first_gap_bytes,
-                client_pending_explanation = Self::smtp_pending_explanation(&client_pending_diag),
-                client_pending_summary = %client_pending_diag,
-                client_processed_offset = session_data.client_processed_offset,
-                client_reassembled_len = session_data.client_stream.reassembled_len(),
-                "SMTP close-path lossy gap skip: direction=client_to_server"
             );
         }
 

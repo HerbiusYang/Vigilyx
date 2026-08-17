@@ -6,8 +6,36 @@ use uuid::Uuid;
 use vigilyx_core::{ExternalLoginStats, HourlyLoginEntry, TrafficStats};
 
 use crate::VigilDb;
+use crate::security::alert::format_alert_timestamp;
 
 const HTTP_TEMP_DIR: &str = "data/tmp/http";
+
+/// Retention delete for security alerts. security_alerts has no other cleanup
+/// path — every Low+ email writes a P3 row — so without this the table grows
+/// unboundedly. The cutoff uses the canonical alert timestamp format because
+/// the column is TEXT and compared lexicographically.
+const CLEANUP_ALERTS_SQL: &str = "DELETE FROM security_alerts WHERE created_at < $1";
+
+/// Operational data removed by the Settings UI's "full cleanup" actions.
+/// Persistent analyst policy and system configuration are intentionally absent;
+/// deleting those belongs exclusively to `factory_reset`.
+const OPERATIONAL_DATA_DROP_STATEMENTS: &[&str] = &[
+    "DROP TABLE IF EXISTS security_module_results",
+    "DROP TABLE IF EXISTS security_verdicts",
+    "DROP TABLE IF EXISTS security_ioc",
+    "DROP TABLE IF EXISTS security_feedback",
+    "DROP TABLE IF EXISTS security_sender_baselines",
+    "DROP TABLE IF EXISTS security_temporal_cusum",
+    "DROP TABLE IF EXISTS security_temporal_ewma",
+    "DROP TABLE IF EXISTS security_entity_risk",
+    "DROP TABLE IF EXISTS security_alerts",
+    "DROP TABLE IF EXISTS quarantine",
+    "DROP TABLE IF EXISTS training_samples",
+    "DROP TABLE IF EXISTS sessions",
+    "DROP TABLE IF EXISTS data_security_incidents",
+    "DROP TABLE IF EXISTS data_security_http_sessions",
+    "DROP TABLE IF EXISTS stats_cache",
+];
 
 /// Global disk usage threshold (percentage)
 static DISK_THRESHOLD: AtomicU8 = AtomicU8::new(90);
@@ -79,29 +107,7 @@ impl VigilDb {
     /// Full cleanup with table recreation and VACUUM/ANALYZE.
     /// Removes all captured sessions and derived security data.
     pub async fn clear_safe(&self) -> Result<()> {
-        let drop_tables = [
-            "DROP TABLE IF EXISTS security_module_results",
-            "DROP TABLE IF EXISTS security_verdicts",
-            "DROP TABLE IF EXISTS security_ioc",
-            "DROP TABLE IF EXISTS security_whitelist",
-            "DROP TABLE IF EXISTS security_feedback",
-            "DROP TABLE IF EXISTS security_sender_baselines",
-            "DROP TABLE IF EXISTS security_disposition_rules",
-            "DROP TABLE IF EXISTS security_temporal_cusum",
-            "DROP TABLE IF EXISTS security_temporal_ewma",
-            "DROP TABLE IF EXISTS security_entity_risk",
-            "DROP TABLE IF EXISTS security_alerts",
-            "DROP TABLE IF EXISTS security_config",
-            "DROP TABLE IF EXISTS quarantine",
-            "DROP TABLE IF EXISTS security_threat_scenes",
-            "DROP TABLE IF EXISTS training_samples",
-            "DROP TABLE IF EXISTS sessions",
-            // Data security engine tables
-            "DROP TABLE IF EXISTS data_security_incidents",
-            "DROP TABLE IF EXISTS data_security_http_sessions",
-            "DROP TABLE IF EXISTS stats_cache",
-        ];
-        for sql in drop_tables {
+        for &sql in OPERATIONAL_DATA_DROP_STATEMENTS {
             sqlx::query(sql).execute(&self.pool).await?;
         }
 
@@ -118,29 +124,7 @@ impl VigilDb {
     /// Full cleanup with table recreation but without VACUUM.
     /// Faster than `clear_safe`, but disk space may be reclaimed later.
     pub async fn clear_quick(&self) -> Result<()> {
-        let drop_tables = [
-            "DROP TABLE IF EXISTS security_module_results",
-            "DROP TABLE IF EXISTS security_verdicts",
-            "DROP TABLE IF EXISTS security_ioc",
-            "DROP TABLE IF EXISTS security_whitelist",
-            "DROP TABLE IF EXISTS security_feedback",
-            "DROP TABLE IF EXISTS security_sender_baselines",
-            "DROP TABLE IF EXISTS security_disposition_rules",
-            "DROP TABLE IF EXISTS security_temporal_cusum",
-            "DROP TABLE IF EXISTS security_temporal_ewma",
-            "DROP TABLE IF EXISTS security_entity_risk",
-            "DROP TABLE IF EXISTS security_alerts",
-            "DROP TABLE IF EXISTS security_config",
-            "DROP TABLE IF EXISTS quarantine",
-            "DROP TABLE IF EXISTS security_threat_scenes",
-            "DROP TABLE IF EXISTS training_samples",
-            "DROP TABLE IF EXISTS sessions",
-            // Data security engine tables
-            "DROP TABLE IF EXISTS data_security_incidents",
-            "DROP TABLE IF EXISTS data_security_http_sessions",
-            "DROP TABLE IF EXISTS stats_cache",
-        ];
-        for sql in drop_tables {
+        for &sql in OPERATIONAL_DATA_DROP_STATEMENTS {
             sqlx::query(sql).execute(&self.pool).await?;
         }
 
@@ -313,7 +297,7 @@ impl VigilDb {
         })
     }
 
-    /// Delete Data(sessions + verdicts/module_results/data_security)
+    /// Delete Data(sessions + verdicts/module_results/data_security/feedback/alerts)
     ///
     /// (sessions_deleted, security_rows_deleted).
     /// Delete: (FK But) ->.
@@ -406,7 +390,16 @@ impl VigilDb {
             .rows_affected();
         security_deleted += fb;
 
-        // 6. sessions()
+        // 6. security_alerts (P3 row per Low+ email — unbounded without this)
+        let alert_cutoff = format_alert_timestamp(&cutoff);
+        let al = sqlx::query(CLEANUP_ALERTS_SQL)
+            .bind(&alert_cutoff)
+            .execute(&self.pool)
+            .await?
+            .rows_affected();
+        security_deleted += al;
+
+        // 7. sessions()
         let sessions_deleted = sqlx::query("DELETE FROM sessions WHERE started_at < $1")
             .bind(&cutoff_str)
             .execute(&self.pool)
@@ -420,6 +413,7 @@ impl VigilDb {
             ds_incidents = dsi,
             ds_http_sessions = dsh,
             feedback = fb,
+            alerts = al,
             days = days,
             "Data保留清理完成"
         );
@@ -524,10 +518,12 @@ impl VigilDb {
                 unsafe {
                     let mut stat: libc::statvfs = std::mem::zeroed();
                     if libc::statvfs(c_path.as_ptr(), &mut stat) == 0 {
-                        let block_size = stat.f_frsize;
-                        let total = stat.f_blocks * block_size;
-                        let free = stat.f_bfree * block_size;
-                        let avail = stat.f_bavail * block_size;
+                        // Field widths differ across Unix targets (Linux u64,
+                        // macOS u32), so widen everything before multiplying.
+                        let block_size = stat.f_frsize as u64;
+                        let total = stat.f_blocks as u64 * block_size;
+                        let free = stat.f_bfree as u64 * block_size;
+                        let avail = stat.f_bavail as u64 * block_size;
 
                         if total > 0 {
                             let used = total.saturating_sub(free);
@@ -633,7 +629,8 @@ impl VigilDb {
             .join(",");
 
         let sess_query = format!("DELETE FROM sessions WHERE id IN ({})", placeholders);
-        let mut q2 = sqlx::query(&sess_query);
+        // Only positional placeholders are dynamic here; all values are bound below.
+        let mut q2 = sqlx::query(sqlx::AssertSqlSafe(sess_query.as_str()));
         for id in &id_list {
             q2 = q2.bind(*id);
         }
@@ -698,6 +695,51 @@ mod tests {
     use std::path::Path;
 
     #[test]
+    fn operational_cleanup_clears_analysis_data_but_preserves_policy() {
+        let statements = OPERATIONAL_DATA_DROP_STATEMENTS.join("\n");
+
+        for required in [
+            "security_module_results",
+            "security_verdicts",
+            "security_feedback",
+            "security_sender_baselines",
+            "security_temporal_cusum",
+            "security_temporal_ewma",
+            "security_entity_risk",
+            "security_alerts",
+            "quarantine",
+            "training_samples",
+            "sessions",
+            "data_security_incidents",
+            "data_security_http_sessions",
+            "stats_cache",
+        ] {
+            assert!(
+                statements.contains(required),
+                "missing cleanup table {required}"
+            );
+        }
+
+        for preserved in [
+            "security_whitelist",
+            "security_disposition_rules",
+            "security_config",
+            "security_threat_scenes",
+            "security_scene_rules",
+            "security_yara_rules",
+            "auth_credentials",
+            "audit_logs",
+            "login_history",
+            "config_security_pipeline",
+        ] {
+            assert!(
+                !statements.contains(preserved),
+                "operational cleanup must preserve {preserved}"
+            );
+        }
+    }
+
+    #[test]
     fn http_temp_file_path_accepts_uuid_ids_only() {
         let id = "550e8400-e29b-41d4-a716-446655440000";
 
@@ -719,5 +761,16 @@ mod tests {
         ] {
             assert!(http_temp_file_path_for_id(id).is_none());
         }
+    }
+
+    #[test]
+    fn cleanup_old_data_covers_security_alerts_retention() {
+        // Regression (D1): cleanup_old_data deleted module_results, verdicts,
+        // incidents, http_sessions, feedback and sessions but NOT
+        // security_alerts — with one P3 row per Low+ email the alert table
+        // grew unboundedly. The retention delete must exist and must filter
+        // on the created_at cutoff parameter.
+        assert!(CLEANUP_ALERTS_SQL.contains("security_alerts"));
+        assert!(CLEANUP_ALERTS_SQL.contains("created_at < $1"));
     }
 }

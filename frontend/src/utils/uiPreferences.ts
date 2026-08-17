@@ -1,5 +1,6 @@
 import { apiFetch } from './api'
 import { EVENTS } from './events'
+import { getSensitiveSetting, setSensitiveSetting } from './sensitiveStorage'
 
 export type ThemeMode = 'dark' | 'light'
 export type AccentColor = 'cyan' | 'blue' | 'purple' | 'green' | 'amber' | 'rose'
@@ -176,13 +177,13 @@ function readLegacyUiPreferences(): UiPreferences {
       imap: localStorage.getItem('vigilyx-capture-imap') !== 'false',
       auto_restore: localStorage.getItem('vigilyx-auto-restore') !== 'false',
       max_packet_size: Number(localStorage.getItem('vigilyx-max-packet') || DEFAULT_UI_PREFERENCES.capture.max_packet_size),
-      inbound_src: (localStorage.getItem('vigilyx-inbound-src') || '').split(',').filter(Boolean),
-      inbound_dst: (localStorage.getItem('vigilyx-inbound-dst') || '').split(',').filter(Boolean),
-      outbound_src: (localStorage.getItem('vigilyx-outbound-src') || '').split(',').filter(Boolean),
-      outbound_dst: (localStorage.getItem('vigilyx-outbound-dst') || '').split(',').filter(Boolean),
+      inbound_src: (getSensitiveSetting('vigilyx-inbound-src') || '').split(',').filter(Boolean),
+      inbound_dst: (getSensitiveSetting('vigilyx-inbound-dst') || '').split(',').filter(Boolean),
+      outbound_src: (getSensitiveSetting('vigilyx-outbound-src') || '').split(',').filter(Boolean),
+      outbound_dst: (getSensitiveSetting('vigilyx-outbound-dst') || '').split(',').filter(Boolean),
     },
     about: {
-      ntp_servers: localStorage.getItem('vigilyx-ntp-servers') || DEFAULT_UI_PREFERENCES.about.ntp_servers,
+      ntp_servers: getSensitiveSetting('vigilyx-ntp-servers') || DEFAULT_UI_PREFERENCES.about.ntp_servers,
       ntp_interval_minutes: Number(localStorage.getItem('vigilyx-ntp-interval') || DEFAULT_UI_PREFERENCES.about.ntp_interval_minutes),
     },
   })
@@ -190,7 +191,8 @@ function readLegacyUiPreferences(): UiPreferences {
 
 export function loadCachedUiPreferences(): UiPreferences {
   try {
-    const cached = localStorage.getItem(UI_PREFERENCES_CACHE_KEY)
+    localStorage.removeItem(UI_PREFERENCES_CACHE_KEY)
+    const cached = sessionStorage.getItem(UI_PREFERENCES_CACHE_KEY)
     if (cached) return normalizeUiPreferences(JSON.parse(cached))
   } catch {
     // Ignore broken cache and fall back to legacy keys
@@ -209,13 +211,14 @@ function writeLegacyKeys(prefs: UiPreferences) {
   localStorage.setItem('vigilyx-capture-imap', String(prefs.capture.imap))
   localStorage.setItem('vigilyx-auto-restore', String(prefs.capture.auto_restore))
   localStorage.setItem('vigilyx-max-packet', String(prefs.capture.max_packet_size))
-  localStorage.setItem('vigilyx-inbound-src', prefs.capture.inbound_src.join(','))
-  localStorage.setItem('vigilyx-inbound-dst', prefs.capture.inbound_dst.join(','))
-  localStorage.setItem('vigilyx-outbound-src', prefs.capture.outbound_src.join(','))
-  localStorage.setItem('vigilyx-outbound-dst', prefs.capture.outbound_dst.join(','))
-  localStorage.setItem('vigilyx-ntp-servers', prefs.about.ntp_servers)
+  setSensitiveSetting('vigilyx-inbound-src', prefs.capture.inbound_src.join(','))
+  setSensitiveSetting('vigilyx-inbound-dst', prefs.capture.inbound_dst.join(','))
+  setSensitiveSetting('vigilyx-outbound-src', prefs.capture.outbound_src.join(','))
+  setSensitiveSetting('vigilyx-outbound-dst', prefs.capture.outbound_dst.join(','))
+  setSensitiveSetting('vigilyx-ntp-servers', prefs.about.ntp_servers)
   localStorage.setItem('vigilyx-ntp-interval', String(prefs.about.ntp_interval_minutes))
-  localStorage.setItem(UI_PREFERENCES_CACHE_KEY, JSON.stringify(prefs))
+  localStorage.removeItem(UI_PREFERENCES_CACHE_KEY)
+  sessionStorage.setItem(UI_PREFERENCES_CACHE_KEY, JSON.stringify(prefs))
 }
 
 export function applyUiPreferencesToClient(prefs: UiPreferences, emit = true) {

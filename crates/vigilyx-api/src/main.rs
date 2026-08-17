@@ -31,7 +31,7 @@ use tower_http::services::ServeDir;
 use tracing::{Level, error, info, warn};
 use vigilyx_core::{Config, DataSecurityIncident, SecurityVerdictSummary, TrafficStats, WsMessage};
 use vigilyx_db::VigilDb;
-use vigilyx_db::mq::{MqClient, MqConfig, topics};
+use vigilyx_db::mq::{DataPayloadAuth, MqClient, MqConfig, topics, verify_data_payload};
 
 use vigilyx_engine::ioc::IocManager;
 use vigilyx_engine::whitelist::WhitelistManager;
@@ -80,6 +80,13 @@ async fn spa_fallback() -> axum::response::Response {
     }
 }
 
+/// API paths must never fall through to the SPA document.  Returning the
+/// normal API envelope also keeps clients from treating an HTML success page
+/// as a valid JSON response when a route is misspelled or removed.
+async fn api_not_found() -> impl axum::response::IntoResponse {
+    handlers::ApiResponse::<serde_json::Value>::not_found("API route not found")
+}
+
 fn validate_internal_token_scope_split() -> Result<()> {
     let internal_api_token = std::env::var("INTERNAL_API_TOKEN").unwrap_or_default();
     let ai_internal_token = std::env::var("AI_INTERNAL_TOKEN").unwrap_or_default();
@@ -104,6 +111,11 @@ async fn main() -> Result<()> {
         let backtrace = std::backtrace::Backtrace::force_capture();
         eprintln!("[PANIC] {}\n\nBacktrace:\n{}", info, backtrace);
     }));
+
+    // jsonwebtoken 11: dependency feature merging can enable both crypto
+    // backends, which disables auto-selection and panics on first token
+    // operation. Pin the pure-Rust provider explicitly.
+    let _ = jsonwebtoken::crypto::rust_crypto::DEFAULT_PROVIDER.install_default();
 
     // Initialize logging (JSON format in production via LOG_FORMAT=json)
     let env_filter = tracing_subscriber::EnvFilter::from_default_env();
@@ -194,6 +206,20 @@ async fn main() -> Result<()> {
     };
     // Load saved password from database (overrides env variable defaults if user changed it)
     auth_config.load_password_from_db(&engine_db).await;
+    let bootstrap_hash = auth_config.password_hash.read().await.clone();
+    let bootstrap_must_change = !*auth_config.password_changed.read().await;
+    if let Err(error) = engine_db
+        .ensure_platform_admin(
+            &auth_config.username,
+            &bootstrap_hash,
+            bootstrap_must_change,
+        )
+        .await
+    {
+        error!(error = %error, "Platform RBAC bootstrap failed");
+        std::process::exit(1);
+    }
+    info!(username = %auth_config.username, "Platform RBAC bootstrap complete");
     let auth_state = AuthState {
         config: Arc::new(auth_config),
         // Per-IP login rate limit: Max 10 failures within 60 second window
@@ -234,6 +260,7 @@ async fn main() -> Result<()> {
         },
         ws_tickets: auth::WsTicketStore::new(),
         ws_auth_epoch: std::sync::atomic::AtomicU64::new(0),
+        ws_user_epochs: dashmap::DashMap::new(),
         // SEC: add the Secure flag to cookies under HTTPS; omit it in dev HTTP mode
         secure_cookie: std::env::var("API_SECURE_COOKIE")
             .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
@@ -352,10 +379,14 @@ async fn main() -> Result<()> {
         .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
         .unwrap_or(false);
 
-    // Build routes
-    // SPA: /assets/* serves static files via ServeDir, other routes fallback to index.html (200)
+    // Build routes.  The API has its own 404 fallback so an unknown /api/*
+    // request cannot be mistaken for a frontend route and receive index.html.
+    let api_app = routes::api_routes(state.clone()).fallback(api_not_found);
+
+    // SPA: /assets/* serves static files via ServeDir, other non-API routes
+    // fallback to index.html (200) for client-side routing.
     let mut app = Router::new()
-        .nest("/api", routes::api_routes(state.clone()))
+        .nest("/api", api_app)
         .route("/ws", axum::routing::get(websocket::ws_handler))
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"));
 
@@ -409,7 +440,7 @@ async fn main() -> Result<()> {
         ))
         .layer(cors)
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10 MB
-        // Prometheus metrics: Records request counts and latency per path (normalized to prevent high cardinality)
+        // Prometheus metrics: Records request counts and latency per route template (SEC-03: MatchedPath labels keep cardinality bounded)
         .layer(axum::middleware::from_fn(metrics::metrics_middleware))
         // Trace ID: Outermost middleware - assigns unique trace_id per request, propagated through all log lines
         // In axum, the last.layer() added is outermost and executes first
@@ -508,14 +539,48 @@ async fn subscribe_redis_messages(
 
     info!("Starting Redis Pub/Sub subscription (Stats + Engine results)...");
 
+    // SEC (C1/M-2): data-plane payloads carry a v1 HMAC envelope; read the
+    // token once at startup. With the token configured, verification fails
+    // closed; without it the data plane is unauthenticated by construction
+    // (insecure mode, flagged at error level).
+    let data_token = std::env::var("INTERNAL_API_TOKEN").unwrap_or_default();
+    if data_token.is_empty() {
+        error!("INTERNAL_API_TOKEN not set — data-plane messages are accepted unauthenticated (insecure mode)");
+    }
+
     // Process message
     let mut stream = pubsub.on_message();
     while let Some(msg) = stream.next().await {
         let channel: String = msg.get_channel_name().to_string();
-        let payload: String = match msg.get_payload() {
+        let raw_payload: String = match msg.get_payload() {
             Ok(p) => p,
             Err(e) => {
                 error!("Failed to get message content: {}", e);
+                continue;
+            }
+        };
+
+        // SEC (C1/M-2): verify and unwrap the data-plane auth envelope before
+        // touching the payload; forged messages never reach WebSocket clients.
+        let payload = match verify_data_payload(&raw_payload, &data_token) {
+            DataPayloadAuth::Verified(json) => json,
+            DataPayloadAuth::Legacy(raw) => {
+                use std::sync::atomic::{AtomicBool, Ordering};
+                static LEGACY_WARNED: AtomicBool = AtomicBool::new(false);
+                // Reachable only when INTERNAL_API_TOKEN is unset (SEC M-2).
+                if !LEGACY_WARNED.swap(true, Ordering::Relaxed) {
+                    error!(
+                        channel,
+                        "INTERNAL_API_TOKEN not set — accepted unsigned data-plane message (insecure mode)"
+                    );
+                }
+                raw.to_string()
+            }
+            DataPayloadAuth::Rejected => {
+                warn!(
+                    channel,
+                    "Rejected data-plane message with invalid auth token (possible forgery)"
+                );
                 continue;
             }
         };
@@ -543,10 +608,14 @@ async fn subscribe_redis_messages(
             // Engine Analysis Results
             topics::ENGINE_VERDICT => {
                 if let Ok(v) = serde_json::from_str::<SecurityVerdictSummary>(&payload) {
-                    // Prometheus: Record verdict distribution
+                    // Prometheus: Record verdict distribution. The threat level
+                    // arrives over the message bus as an unconstrained string;
+                    // map it through a fixed whitelist so a forged verdict
+                    // cannot mint unbounded label combinations (C2, SEC-03
+                    // class memory DoS).
                     metrics::EMAILS_PROCESSED_TOTAL.inc();
                     metrics::VERDICTS_TOTAL
-                        .with_label_values(&[&v.threat_level.to_lowercase()])
+                        .with_label_values(&[verdict_level_label(&v.threat_level)])
                         .inc();
                     Some(WsMessage::SecurityVerdict(v))
                 } else {
@@ -593,4 +662,76 @@ async fn subscribe_redis_messages(
     }
 
     Ok(())
+}
+
+/// Map a verdict threat level to a fixed Prometheus label value.
+///
+/// `SecurityVerdictSummary.threat_level` is an unconstrained String arriving
+/// over the message bus; using it directly as a label value would let every
+/// forged verdict mint a new label combination (unbounded cardinality →
+/// memory DoS, C2 / SEC-03 class). Unknown values collapse to `unknown`.
+fn verdict_level_label(threat_level: &str) -> &'static str {
+    match threat_level.to_ascii_lowercase().as_str() {
+        "safe" => "safe",
+        "low" => "low",
+        "medium" => "medium",
+        "high" => "high",
+        "critical" => "critical",
+        _ => "unknown",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{api_not_found, spa_fallback, verdict_level_label};
+
+    #[test]
+    fn verdict_level_label_accepts_known_levels_case_insensitively() {
+        assert_eq!(verdict_level_label("safe"), "safe");
+        assert_eq!(verdict_level_label("Low"), "low");
+        assert_eq!(verdict_level_label("MEDIUM"), "medium");
+        assert_eq!(verdict_level_label("High"), "high");
+        assert_eq!(verdict_level_label("CRITICAL"), "critical");
+    }
+
+    #[test]
+    fn verdict_level_label_collapses_forged_values_to_unknown() {
+        // PoC (C2): each forged verdict with a random level used to create a
+        // permanent new Prometheus label combination → unbounded memory DoS.
+        for forged in [
+            "critical-0x7f3a9b2c",
+            "../../etc/passwd",
+            "高危",
+            "",
+            "safe'; DROP TABLE--",
+        ] {
+            assert_eq!(verdict_level_label(forged), "unknown");
+        }
+    }
+
+    #[tokio::test]
+    async fn unknown_api_paths_return_404_instead_of_spa_html() {
+        use axum::{Router, body::Body, routing::get};
+        use tower::ServiceExt;
+
+        let api_app = Router::new()
+            .route("/health", get(|| async { "ok" }))
+            .fallback(api_not_found);
+        let app = Router::new()
+            .nest("/api", api_app)
+            .fallback(spa_fallback);
+
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/does-not-exist")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+        assert_eq!(response.headers()[axum::http::header::CONTENT_TYPE], "application/json");
+    }
 }

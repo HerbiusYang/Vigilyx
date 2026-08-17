@@ -21,9 +21,20 @@ pub(super) fn build_bpf_filter(config: &Config) -> String {
 
     let mail_filter: Vec<String> = mail_ports.iter().map(|p| format!("port {}", p)).collect();
 
+    // Non-first IPv4 fragments do not contain TCP ports.  Keep every IPv4
+    // fragment in the capture stream so the userspace bounded reassembler can
+    // reconstruct the TCP segment instead of silently losing the entire flow.
+    // The parser still admits only protocol=TCP and enforces its own limits.
+    const IPV4_FRAGMENT_FILTER: &str =
+        "ip and (((ip[6:2] & 0x1fff) != 0) or ((ip[6:2] & 0x2000) != 0))";
+
     if config.webmail_servers.is_empty() {
         // emailProtocol
-        return format!("tcp and ({})", mail_filter.join(" or "));
+        return format!(
+            "(tcp and ({})) or ({})",
+            mail_filter.join(" or "),
+            IPV4_FRAGMENT_FILTER
+        );
     }
 
     // HTTP Port + Target IP limit (only webmail Servicehandlerof HTTP Stream)
@@ -38,11 +49,12 @@ pub(super) fn build_bpf_filter(config: &Config) -> String {
         .map(|ip| format!("host {}", ip))
         .collect();
 
-    // BPF: tcp and (emailPort or (HTTPPort and TargetIP))
+    // BPF: (tcp and (emailPort or (HTTPPort and TargetIP))) or IPv4 fragments.
     format!(
-        "tcp and ({} or (({}) and ({})))",
+        "(tcp and ({} or (({}) and ({})))) or ({})",
         mail_filter.join(" or "),
         http_port_filter.join(" or "),
-        host_filter.join(" or ")
+        host_filter.join(" or "),
+        IPV4_FRAGMENT_FILTER
     )
 }

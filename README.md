@@ -5,7 +5,7 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License"></a>
-  <img src="https://img.shields.io/badge/Rust-1.95.0-orange.svg" alt="Rust">
+  <img src="https://img.shields.io/badge/Rust-1.97.1-orange.svg" alt="Rust">
   <img src="https://img.shields.io/badge/React-18-61DAFB.svg" alt="React">
   <img src="https://img.shields.io/badge/Python-3.12-3776AB.svg" alt="Python">
 </p>
@@ -19,6 +19,10 @@ Two deployment modes: **Mirror** (passive network capture) and **MTA Proxy** (in
 - Website: https://herbiusyang.github.io/Vigilyx/
 - Docs: https://herbiusyang.github.io/Vigilyx/docs/
 - Repository: https://github.com/HerbiusYang/Vigilyx
+
+### Friendly Links
+
+- [RelaySail](https://relaysail.com/?lang=zh-CN)
 
 ### Community
 
@@ -133,7 +137,7 @@ cp deploy.conf.example deploy.conf
 $EDITOR deploy.conf
 
 # 2. Pre-pull the pinned Rust builder image on the target host
-ssh root@<server> "docker pull rust:1.95.0-bookworm"
+ssh root@<server> "docker pull rust:1.97.1-bookworm"
 
 # 3. One-time initialization (sync source, generate remote .env if missing, create build container)
 ./deploy.sh --init
@@ -282,7 +286,7 @@ site/                   VitePress project site and public docs
 # One-time setup
 cp deploy.conf.example deploy.conf
 $EDITOR deploy.conf
-ssh root@<server> "docker pull rust:1.95.0-bookworm"
+ssh root@<server> "docker pull rust:1.97.1-bookworm"
 ./deploy.sh --init
 
 # Day-to-day deployment
@@ -333,10 +337,10 @@ cd frontend
 npm ci
 ```
 
-- Frontend development is pinned to `Node 24.15.0` via [`.nvmrc`](.nvmrc).
-- Use `npm 11.12.1` for lockfile updates. The repo declares this in [frontend/package.json](frontend/package.json) and enforces it with [frontend/.npmrc](frontend/.npmrc).
+- Frontend development is pinned to `Node 24.19.0` via [`.nvmrc`](.nvmrc).
+- Use `npm 12.0.2` for lockfile updates. The repo declares this in [frontend/package.json](frontend/package.json) and enforces it with [frontend/.npmrc](frontend/.npmrc).
 - Run [scripts/check-frontend-toolchain.sh](scripts/check-frontend-toolchain.sh) before local or remote frontend work if you need to confirm the active Node/npm pair.
-- `./deploy.sh --frontend` and the production [deploy/docker/Dockerfile.api](deploy/docker/Dockerfile.api) both build the frontend with the same pinned `Node 24.15.0 + npm 11.12.1` toolchain.
+- `./deploy.sh --frontend` and the production [deploy/docker/Dockerfile.api](deploy/docker/Dockerfile.api) both build the frontend with the same pinned `Node 24.19.0 + npm 12.0.2` toolchain.
 - For routine installs, use `npm ci`.
 - When changing dependencies, run `npm install ...` in `frontend/` and commit the updated `package-lock.json` in the same change.
 
@@ -406,7 +410,7 @@ See [Deployment Guide](docs/DEPLOYMENT.md) for production hardening.
 
 | Layer | Stack |
 |-------|-------|
-| Backend | Rust 1.95.0, tokio, axum, sqlx, redis, pnet/pcap, yara-x, petgraph, dashmap, rayon, crossbeam, tracing |
+| Backend | Rust 1.97.1, tokio, axum, sqlx, redis, pnet/pcap, yara-x, petgraph, dashmap, rayon, crossbeam, tracing |
 | Frontend | React 18, TypeScript, Vite, React Router |
 | AI | Python 3.12, FastAPI, Transformers, PyTorch |
 | Infra | Docker Compose, PostgreSQL 17, Valkey/Redis 8, Caddy 2 |

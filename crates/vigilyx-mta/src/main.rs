@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use clap::Parser;
 use futures::StreamExt;
+use serde::Serialize;
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
@@ -20,6 +21,8 @@ use vigilyx_engine::modules::registry::reload_runtime_ioc_caches;
 use vigilyx_engine::pipeline::engine::SecurityEngine;
 
 use vigilyx_mta::config::MtaConfig;
+use vigilyx_mta::authentication::AuthenticationVerifier;
+use vigilyx_mta::metrics::VerdictMetrics;
 use vigilyx_mta::relay::downstream::DownstreamRelay;
 use vigilyx_mta::server::listener::{self, PerIpLimiter};
 use vigilyx_mta::server::tls;
@@ -116,6 +119,7 @@ async fn main() -> anyhow::Result<()> {
         Arc::clone(&relay)
     };
     let db = Arc::new(quarantine_db);
+    let authentication = Arc::new(AuthenticationVerifier::new());
 
     // TLS acceptor ()
     let tls_acceptor = config
@@ -140,6 +144,8 @@ async fn main() -> anyhow::Result<()> {
 
     // (SMTP + SMTPS,)
     let active_connections = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    // Inline 判定分布计数器（随状态心跳上报到 API）
+    let verdict_metrics = Arc::new(VerdictMetrics::default());
     // SEC: per-IP connection limiter shared between all listeners (CWE-400)
     let per_ip_limiter = Arc::new(PerIpLimiter::new(10));
 
@@ -155,8 +161,14 @@ async fn main() -> anyhow::Result<()> {
         let ac = Arc::clone(&active_connections);
         let ipl = Arc::clone(&per_ip_limiter);
         let tls = tls_acceptor.clone();
+        let met = Arc::clone(&verdict_metrics);
+        let auth = Arc::clone(&authentication);
         tasks.push(tokio::spawn(async move {
-            if let Err(e) = listener::run_smtp_listener(cfg, eng, rl, orl, d, ac, ipl, tls).await {
+            if let Err(e) = listener::run_smtp_listener(
+                cfg, eng, rl, orl, d, ac, ipl, tls, met, auth,
+            )
+            .await
+            {
                 error!("SMTP listener error: {e}");
             }
         }));
@@ -174,10 +186,30 @@ async fn main() -> anyhow::Result<()> {
         let ac = Arc::clone(&active_connections);
         let ipl = Arc::clone(&per_ip_limiter);
         let tls = acceptor.clone();
+        let met = Arc::clone(&verdict_metrics);
+        let auth = Arc::clone(&authentication);
         tasks.push(tokio::spawn(async move {
-            if let Err(e) = listener::run_smtps_listener(cfg, eng, rl, orl, d, ac, ipl, tls).await {
+            if let Err(e) = listener::run_smtps_listener(
+                cfg, eng, rl, orl, d, ac, ipl, tls, met, auth,
+            )
+            .await
+            {
                 error!("SMTPS listener error: {e}");
             }
+        }));
+    }
+
+    // 状态上报：MTA 状态 + inline 判定计数推送到 API（/api/system/mta）
+    {
+        let api_host = std::env::var("MTA_API_HOST").unwrap_or_else(|_| "vigilyx".into());
+        let api_port = std::env::var("MTA_API_PORT").unwrap_or_else(|_| "8088".into());
+        let api_url = format!("http://{api_host}:{api_port}");
+        info!("Status报告任务: Target API = {}/api/system/mta", api_url);
+        let report_config = Arc::clone(&config);
+        let report_ac = Arc::clone(&active_connections);
+        let report_metrics = Arc::clone(&verdict_metrics);
+        tasks.push(tokio::spawn(async move {
+            mta_status_report_loop(api_url, report_config, report_ac, report_metrics).await;
         }));
     }
 
@@ -294,4 +326,105 @@ async fn redis_reload_loop(
     }
 
     Ok(())
+}
+
+/// 构建带内部认证 token 的 HTTP 默认头（与 sniffer 的 internal_api_headers 一致）
+fn internal_api_headers() -> reqwest::header::HeaderMap {
+    let mut h = reqwest::header::HeaderMap::new();
+    if let Ok(t) = std::env::var("INTERNAL_API_TOKEN")
+        && let Ok(v) = t.parse()
+    {
+        h.insert("X-Internal-Token", v);
+    }
+    h
+}
+
+/// MTA 状态上报（与 API 侧 MtaStatus 结构对应）
+#[derive(Serialize)]
+struct MtaStatusReport {
+    online: bool,
+    downstream_host: String,
+    downstream_port: u16,
+    active_connections: u64,
+    last_update: String,
+    accepted: u64,
+    quarantined: u64,
+    rejected: u64,
+    timeout_failopen: u64,
+}
+
+/// 周期性向 API 推送 MTA 状态与 inline 判定计数（镜像 sniffer 的状态报告任务）
+async fn mta_status_report_loop(
+    api_url: String,
+    config: Arc<MtaConfig>,
+    active_connections: Arc<std::sync::atomic::AtomicUsize>,
+    metrics: Arc<VerdictMetrics>,
+) {
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .default_headers(internal_api_headers())
+        .build()
+        .expect("internal status HTTP client should build");
+    let mut interval = tokio::time::interval(Duration::from_secs(5));
+    let mut report_count = 0u32;
+
+    loop {
+        interval.tick().await;
+        let counters = metrics.snapshot();
+        let report = MtaStatusReport {
+            online: true,
+            downstream_host: config.downstream.host.clone(),
+            downstream_port: config.downstream.port,
+            active_connections: active_connections.load(Ordering::Relaxed) as u64,
+            last_update: chrono::Utc::now().to_rfc3339(),
+            accepted: counters.accepted,
+            quarantined: counters.quarantined,
+            rejected: counters.rejected,
+            timeout_failopen: counters.timeout_failopen,
+        };
+        report_count += 1;
+
+        match client
+            .post(format!("{}/api/system/mta", api_url))
+            .json(&report)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                let status = resp.status();
+                if status.is_success() {
+                    if report_count <= 3 || report_count.is_multiple_of(60) {
+                        info!(
+                            "Status报告 #{}: connections={}, accepted={}, quarantined={}, rejected={}, timeout_failopen={} (HTTP {})",
+                            report_count,
+                            report.active_connections,
+                            report.accepted,
+                            report.quarantined,
+                            report.rejected,
+                            report.timeout_failopen,
+                            status.as_u16()
+                        );
+                    }
+                } else {
+                    let body = resp.text().await.unwrap_or_default();
+                    warn!(
+                        "Status报告 #{} HTTP Error: {} - {}",
+                        report_count,
+                        status.as_u16(),
+                        body
+                    );
+                }
+            }
+            Err(e) => {
+                if report_count <= 10 {
+                    warn!("Status报告Failed: {}", e);
+                }
+            }
+        }
+    }
 }

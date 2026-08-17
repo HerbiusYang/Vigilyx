@@ -5,5 +5,6 @@ pub(crate) mod config;
 pub(crate) mod maintenance;
 pub(crate) mod migrate;
 pub(crate) mod pool;
+pub(crate) mod platform_auth;
 pub(crate) mod session;
 pub(crate) mod typed_config;

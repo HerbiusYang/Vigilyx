@@ -14,7 +14,7 @@ fn test_scan_text_with_credit_card() {
 
 #[test]
 fn test_scan_text_with_id_number() {
-    let text = "ID cardNumberCode/Digit是 000000200001010005";
+    let text = "身份证号码是 000000200001010005";
     let result = scan_text(text);
     assert!(result.matches.contains(&"id_number".to_string()));
 }
@@ -45,7 +45,7 @@ fn test_credit_card_luhn_invalid() {
 
 #[test]
 fn test_scan_text_with_chinese_address_province_city() {
-    let text = "客户住址: 陕西省西安City雁塔District科技Road100Number";
+    let text = "客户住址: 陕西省西安市雁塔区科技路100编号";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"customer_address".to_string()),
@@ -55,7 +55,7 @@ fn test_scan_text_with_chinese_address_province_city() {
 
 #[test]
 fn test_scan_text_with_chinese_address_city_district() {
-    let text = "寄送到: 西安City雁塔Districtlong安南Road1Number";
+    let text = "寄送到: 西安市雁塔区长安南路1号";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"customer_address".to_string()),
@@ -65,7 +65,7 @@ fn test_scan_text_with_chinese_address_city_district() {
 
 #[test]
 fn test_scan_text_with_chinese_address_district_road() {
-    let text = "家庭Address: 雁塔District科技Road创业large厦";
+    let text = "家庭Address: 雁塔区科技路创业大厦";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"customer_address".to_string()),
@@ -75,7 +75,7 @@ fn test_scan_text_with_chinese_address_district_road() {
 
 #[test]
 fn test_scan_text_address_masking() {
-    let text = "陕西省西安City雁塔District科技Road100Number";
+    let text = "陕西省西安市雁塔区科技路100编号";
     let matches = find_chinese_addresses(text);
     assert!(!matches.is_empty());
     assert!(matches[0].contains("***"));
@@ -115,7 +115,7 @@ fn test_scan_text_with_email() {
 
 #[test]
 fn test_email_excludes_system_addresses() {
-    let text = "Autoemail noreply@example.com And system@example.net And postmaster@example.org";
+    let text = "Autoemail noreply@example.com 和 system@example.net 和 postmaster@example.org";
     let emails = find_emails(text);
     assert!(
         emails.is_empty(),
@@ -131,11 +131,11 @@ fn test_email_masking() {
     assert_eq!(emails[0], "u***@example.test");
 }
 
-// NumberTest
+// 编号Test
 
 #[test]
 fn test_scan_text_with_passport() {
-    let text = "护照Number E12345678 alreadyExpired";
+    let text = "护照编号 E12345678 alreadyExpired";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"passport_number".to_string()),
@@ -159,11 +159,11 @@ fn test_passport_lowercase_match() {
     );
 }
 
-// 1 Code/DigitTest
+// 1 码Test
 
 #[test]
 fn test_scan_text_with_social_credit_code() {
-    let text = "公司信用代Code/Digit A0000000000000000M";
+    let text = "公司信用代码 A0000000000000000M";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"social_credit_code".to_string()),
@@ -188,7 +188,7 @@ fn test_social_credit_code_wrong_length_rejected() {
 
 #[test]
 fn test_scan_text_with_credential_chinese() {
-    let text = "SystemPassword：abc123456";
+    let text = "系统密码：abc123456";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"credential_leak".to_string()),
@@ -214,7 +214,7 @@ fn test_credential_masking() {
     assert!(creds[0].contains("Password"), "Keyword should be preserved");
 }
 
-// SWIFT Code/DigitTest
+// SWIFT 码Test
 
 #[test]
 fn test_scan_text_with_swift_8() {
@@ -228,7 +228,7 @@ fn test_scan_text_with_swift_8() {
 
 #[test]
 fn test_scan_text_with_swift_11() {
-    let text = "SWIFT代Code/Digit BKCHCNBJ100";
+    let text = "SWIFT代码 BKCHCNBJ100";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"swift_code".to_string()),
@@ -243,11 +243,11 @@ fn test_swift_masking() {
     assert_eq!(codes[0], "BKCH****");
 }
 
-// CVV SecurityCode/DigitTest
+// CVV 安全码Test
 
 #[test]
 fn test_scan_text_with_cvv_chinese() {
-    let text = "信用卡SecurityCode/Digit: 123";
+    let text = "信用卡安全码: 123";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"cvv_code".to_string()),
@@ -267,7 +267,7 @@ fn test_scan_text_with_cvv_english() {
 
 #[test]
 fn test_cvv_no_false_positive_without_context() {
-    let text = "房间Number 123 在3楼";
+    let text = "房间编号 123 在3楼";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"cvv_code".to_string()),
@@ -278,13 +278,14 @@ fn test_cvv_no_false_positive_without_context() {
 // DLP Test
 
 #[test]
-fn test_scan_text_truncates_oversized_body() {
+fn test_scan_text_scans_beyond_old_limit() {
+    // PoC：头部填充把敏感数据推出旧单窗扫描范围；分窗扫描后仍应检出
     let padding = "A".repeat(DLP_MAX_SCAN_LEN + 100);
     let text = format!("{} 4111111111111111", padding);
     let result = scan_text(&text);
     assert!(
-        !result.matches.contains(&"credit_card".to_string()),
-        "Credit card beyond DLP_MAX_SCAN_LEN should NOT be detected"
+        result.matches.contains(&"credit_card".to_string()),
+        "Credit card beyond the old single-window limit should be detected by windowed scan"
     );
 }
 
@@ -329,11 +330,11 @@ fn test_bank_card_19_digit_not_excluded() {
     );
 }
 
-// P1.2 NumberTest
+// P1.2 编号Test
 
 #[test]
 fn test_scan_text_with_tax_id_15() {
-    let text = "纳税人识别Number 110108MA12345N9";
+    let text = "纳税人识别编号 110108MA12345N9";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"tax_id".to_string()),
@@ -408,25 +409,34 @@ fn test_iban_mod97_invalid() {
     assert!(!iban_mod97_check("XXXX"));
 }
 
-// P1.2 large AmountTest
+// P1.2 大 AmountTest
 
 #[test]
 fn test_scan_text_with_large_amounts() {
-    let text = "合SameAmount 10010k yuan, 首付 3010k yuan";
+    let text = "合同Amount 100万元, 首付 30万元";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"large_amount".to_string()),
-        "2+ large amounts should be detected"
+        "2+ 大 amounts should be detected"
     );
 }
 
 #[test]
 fn test_scan_text_single_amount_no_alert() {
-    let text = "年薪 5010k yuan";
+    let text = "年薪 50万元";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"large_amount".to_string()),
         "Single amount should NOT trigger"
+    );
+}
+
+#[test]
+fn test_repeated_identical_large_amount_stays_below_unique_threshold() {
+    let result = scan_text("合同金额 50万元，备注再次列示 50万元");
+    assert!(
+        !result.matches.contains(&"large_amount".to_string()),
+        "the threshold requires two distinct amounts, not two copies of one value"
     );
 }
 
@@ -442,20 +452,20 @@ fn test_large_amount_foreign_currency() {
 
 #[test]
 fn test_large_amount_masking() {
-    let amounts = find_large_amounts("合SameAmount 10010k yuan");
+    let amounts = find_large_amounts("合同Amount 100万元");
     assert_eq!(amounts.len(), 1);
     assert!(amounts[0].contains("***"), "Amount should be masked");
     assert!(
-        amounts[0].contains("10k yuan"),
+        amounts[0].contains("万元"),
         "Currency unit should be preserved"
     );
 }
 
-// P1.2 BankAccount number (Context) Test
+// P1.2 Bank账号 (Context) Test
 
 #[test]
 fn test_scan_text_with_bank_account_context() {
-    let text = "请转账到 Account number：1234567890123";
+    let text = "请转账到 账号：1234567890123";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"bank_account".to_string()),
@@ -465,11 +475,11 @@ fn test_scan_text_with_bank_account_context() {
 
 #[test]
 fn test_bank_account_no_context_no_alert() {
-    let text = "Serial number 12345678901234";
+    let text = "编号 12345678901234";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"bank_account".to_string()),
-        "Number without context keyword should NOT trigger bank_account"
+        "编号 without context keyword should NOT trigger bank_account"
     );
 }
 
@@ -485,16 +495,16 @@ fn test_bank_account_english_context() {
 
 #[test]
 fn test_bank_account_masking() {
-    let accounts = find_bank_accounts("Account number：1234567890123");
+    let accounts = find_bank_accounts("账号：1234567890123");
     assert_eq!(accounts.len(), 1);
     assert_eq!(accounts[0], "1234****23");
 }
 
-// P1.2 Policy number/ SameNumberTest
+// P1.2 保单号/ Same编号Test
 
 #[test]
 fn test_scan_text_with_contract_number() {
-    let text = "贷款合SameSerial number: LN20260312345678";
+    let text = "贷款合同编号: LN20260312345678";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"contract_number".to_string()),
@@ -504,7 +514,7 @@ fn test_scan_text_with_contract_number() {
 
 #[test]
 fn test_scan_text_with_policy_number() {
-    let text = "Policy number：PL12345678901234";
+    let text = "保单号：PL12345678901234";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"contract_number".to_string()),
@@ -514,17 +524,17 @@ fn test_scan_text_with_policy_number() {
 
 #[test]
 fn test_contract_number_no_context_no_alert() {
-    let text = "FileSerial number AB12345678";
+    let text = "File编号 AB12345678";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"contract_number".to_string()),
-        "Number without contract/loan keyword should NOT trigger"
+        "编号 without contract/loan keyword should NOT trigger"
     );
 }
 
 #[test]
 fn test_contract_number_masking() {
-    let contracts = find_contract_numbers("贷款合SameNumber: LN20260312345678");
+    let contracts = find_contract_numbers("贷款合同编号: LN20260312345678");
     assert_eq!(contracts.len(), 1);
     assert!(contracts[0].starts_with("LN20"));
     assert!(contracts[0].contains("****"));
@@ -551,7 +561,7 @@ fn test_regex_set_only_runs_matched_patterns() {
 
 #[test]
 fn test_biometric_data_two_keywords_hit() {
-    let text = "user提交了指纹dataAnd虹膜扫描Result Used for身份Authentication";
+    let text = "user提交了指纹data和虹膜扫描Result Used for身份Authentication";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"biometric_data".to_string()),
@@ -595,56 +605,56 @@ fn test_vehicle_info_plate() {
 
 #[test]
 fn test_income_info_hit() {
-    let text = "员工Zhang SanMonthly salary: 15000Yuan，公积金缴stored: 2400Yuan";
+    let text = "员工张三月薪: 15000元，公积金缴存: 2400元";
     let result = scan_text(text);
     assert!(result.matches.contains(&"income_info".to_string()));
 }
 
 #[test]
 fn test_geo_location_hit() {
-    let text = "user常驻bit置 116.3975, 39.9086 北BeijingCityMedium心";
+    let text = "user常驻bit置 116.3975, 39.9086 北京市Medium心";
     let result = scan_text(text);
     assert!(result.matches.contains(&"geo_location".to_string()));
 }
 
 #[test]
 fn test_otp_hit() {
-    let text = "您ofVerifyCode/Digit: 582931, 请在5minute内Use";
+    let text = "您of验证码: 582931, 请在5minute内Use";
     let result = scan_text(text);
     assert!(result.matches.contains(&"otp_verification".to_string()));
 }
 
 #[test]
 fn test_loan_credit_hit() {
-    let text = "客户贷款余额: 580,000Yuan，逾PeriodAmount: 12,000Yuan";
+    let text = "客户贷款余额: 580,000元，逾期金额: 12,000元";
     let result = scan_text(text);
     assert!(result.matches.contains(&"loan_credit_info".to_string()));
 }
 
 #[test]
 fn test_insurance_hit() {
-    let text = "Policyholder: 李明，被保险人: 王芳，保费: 3200Yuan";
+    let text = "投保人: 李明，被保险人: 王芳，保费: 3200元";
     let result = scan_text(text);
     assert!(result.matches.contains(&"insurance_policy".to_string()));
 }
 
 #[test]
 fn test_family_relation_hit() {
-    let text = "紧急联系人: Zhang San，Spouse: Li Si";
+    let text = "紧急联系人: 张三，配偶: 李四";
     let result = scan_text(text);
     assert!(result.matches.contains(&"family_relation".to_string()));
 }
 
 #[test]
 fn test_employee_info_hit() {
-    let text = "员工Serial number: EMP20230156, 部门: 风控部, 职bit: HighlevelAnalyze师";
+    let text = "员工编号: EMP20230156, 部门: 风控部, 职位: HighlevelAnalyze师";
     let result = scan_text(text);
     assert!(result.matches.contains(&"employee_info".to_string()));
 }
 
 #[test]
 fn test_judicial_record_hit() {
-    let text = "该客户stored在失信被Executeline人Recording，并有line政处罚历史";
+    let text = "该客户stored在失信被执行人记录，并有行政处罚历史";
     let result = scan_text(text);
     assert!(result.matches.contains(&"judicial_record".to_string()));
 }
@@ -661,21 +671,21 @@ fn test_judicial_record_single_no_hit() {
 
 #[test]
 fn test_education_info_hit() {
-    let text = "学历: 本科, 毕业院校: 北Beijinglarge学, 毕业SundayPeriod: 2020/06";
+    let text = "学历: 本科, 毕业院校: 北京大学, 毕业日期: 2020/06";
     let result = scan_text(text);
     assert!(result.matches.contains(&"education_info".to_string()));
 }
 
 #[test]
 fn test_business_license_hit() {
-    let text = "公司营业Execute照Number: 110105012345678";
+    let text = "公司营业执照编号: 110105012345678";
     let result = scan_text(text);
     assert!(result.matches.contains(&"business_license".to_string()));
 }
 
 #[test]
 fn test_property_info_hit() {
-    let text = "客户Name下有不动产权证Number: Beijing(2023)朝阳District不动产权After0012345Number";
+    let text = "客户名下有不动产权证编号: 京2023朝阳区不动产权第0012345号";
     let result = scan_text(text);
     assert!(result.matches.contains(&"property_info".to_string()));
 }
@@ -694,7 +704,7 @@ fn test_biometric_english_keywords() {
 
 #[test]
 fn test_biometric_three_keywords() {
-    let text = "采集了指纹、虹膜And声纹3种生物特征";
+    let text = "采集了指纹、虹膜和声纹3种生物特征";
     let result = scan_text(text);
     assert!(result.matches.contains(&"biometric_data".to_string()));
     let detail = result.details.iter().find(|(k, _)| k == "biometric_data");
@@ -715,7 +725,7 @@ fn test_biometric_no_false_positive_on_product() {
 #[test]
 fn test_medical_full_record() {
     let text =
-        "患者诊Break/Judge 2型糖尿病，处方: 2甲双胍500mg，有青霉素敏史，家族病史Medium有High血压";
+        "患者诊断 2型糖尿病，处方: 2甲双胍500mg，有青霉素敏史，家族病史Medium有High血压";
     let result = scan_text(text);
     assert!(result.matches.contains(&"medical_health".to_string()));
 }
@@ -729,14 +739,14 @@ fn test_medical_no_false_positive_on_news() {
 
 #[test]
 fn test_medical_surgery_record() {
-    let text = "手术Recording显示切除了阑尾，麻醉Method 全麻，护理RecordingNormal";
+    let text = "手术记录显示切除了阑尾，麻醉Method 全麻，护理记录Normal";
     let result = scan_text(text);
     assert!(result.matches.contains(&"medical_health".to_string()));
 }
 
 #[test]
 fn test_vehicle_plate_guangdong() {
-    let text = "车辆Info: VIN WVWZZZ3CZWE654321, 车主Zhang San";
+    let text = "车辆Info: VIN WVWZZZ3CZWE654321, 车主张三";
     let result = scan_text(text);
     assert!(result.matches.contains(&"vehicle_info".to_string()));
 }
@@ -757,7 +767,7 @@ fn test_vehicle_no_false_positive_short_text() {
 
 #[test]
 fn test_property_land_cert() {
-    let text = "土地证Number: 沪2023-0045678 登记面积120平米";
+    let text = "土地证编号: 沪2023-0045678 登记面积120平米";
     let result = scan_text(text);
     assert!(result.matches.contains(&"property_info".to_string()));
 }
@@ -771,14 +781,14 @@ fn test_property_no_false_positive() {
 
 #[test]
 fn test_income_salary_with_amount() {
-    let text = "Monthly salary: 28000Yuan，年薪: 336000Yuan";
+    let text = "月薪: 28000元，年薪: 336000元";
     let result = scan_text(text);
     assert!(result.matches.contains(&"income_info".to_string()));
 }
 
 #[test]
 fn test_income_social_security() {
-    let text = "公积金缴stored: 3600Yuan，社保缴费: 2800Yuan";
+    let text = "公积金缴存: 3600元，社保缴费: 2800元";
     let result = scan_text(text);
     assert!(result.matches.contains(&"income_info".to_string()));
 }
@@ -816,14 +826,14 @@ fn test_geo_keyword_context() {
 
 #[test]
 fn test_geo_no_false_positive_version() {
-    let text = "软件Version 3.14, UpdateSundayPeriod 2026.03";
+    let text = "软件Version 3.14, Update日期 2026.03";
     let result = scan_text(text);
     assert!(!result.matches.contains(&"geo_location".to_string()));
 }
 
 #[test]
 fn test_otp_chinese() {
-    let text = "Dynamic口令: 849261";
+    let text = "动态口令: 849261";
     let result = scan_text(text);
     assert!(result.matches.contains(&"otp_verification".to_string()));
 }
@@ -837,35 +847,35 @@ fn test_otp_english() {
 
 #[test]
 fn test_otp_sms_verification() {
-    let text = "short信VerifyCode/Digit 628419 请勿转发";
+    let text = "短信验证码 628419 请勿转发";
     let result = scan_text(text);
     assert!(result.matches.contains(&"otp_verification".to_string()));
 }
 
 #[test]
 fn test_loan_overdue() {
-    let text = "逾PeriodAmount: 35,000Yuan，欠息: 1,200Yuan";
+    let text = "逾期金额: 35,000元，欠息: 1,200元";
     let result = scan_text(text);
     assert!(result.matches.contains(&"loan_credit_info".to_string()));
 }
 
 #[test]
 fn test_loan_credit_limit() {
-    let text = "授信额度: 500000Yuan";
+    let text = "授信额度: 500000元";
     let result = scan_text(text);
     assert!(result.matches.contains(&"loan_credit_info".to_string()));
 }
 
 #[test]
 fn test_insurance_claim() {
-    let text = "理赔Amount: 50000Yuan，出险SundayPeriod: 2026-01-15";
+    let text = "理赔金额: 50000元，出险日期: 2026-01-15";
     let result = scan_text(text);
     assert!(result.matches.contains(&"insurance_policy".to_string()));
 }
 
 #[test]
 fn test_insurance_policy_number() {
-    let text = "Policy number: PL20260315001234";
+    let text = "保单号: PL20260315001234";
     let result = scan_text(text);
     assert!(result.matches.contains(&"insurance_policy".to_string()));
 }
@@ -886,63 +896,63 @@ fn test_family_no_false_positive() {
 
 #[test]
 fn test_employee_work_id() {
-    let text = "Employee ID: 20230156, 部门: Info科技部";
+    let text = "工号: 20230156, 部门: Info科技部";
     let result = scan_text(text);
     assert!(result.matches.contains(&"employee_info".to_string()));
 }
 
 #[test]
 fn test_employee_position() {
-    let text = "职bit: Highlevel经理, 入职SundayPeriod: 2020/03/15";
+    let text = "职位: Highlevel经理, 入职日期: 2020/03/15";
     let result = scan_text(text);
     assert!(result.matches.contains(&"employee_info".to_string()));
 }
 
 #[test]
 fn test_judicial_court_case() {
-    let text = "被Executeline人张某，裁定书Serial number (2026)Beijing01Execute12345Number";
+    let text = "被执行人张某，裁定书编号 (2026)京01执12345编号";
     let result = scan_text(text);
     assert!(result.matches.contains(&"judicial_record".to_string()));
 }
 
 #[test]
 fn test_judicial_blacklist() {
-    let text = "limit消费令already发出，该客户 失信被Executeline人";
+    let text = "限制消费令already发出，该客户 失信被执行人";
     let result = scan_text(text);
     assert!(result.matches.contains(&"judicial_record".to_string()));
 }
 
 #[test]
 fn test_education_degree() {
-    let text = "学bit: 硕士, 毕业院校: 清华large学";
+    let text = "学位: 硕士, 毕业院校: 清华大学";
     let result = scan_text(text);
     assert!(result.matches.contains(&"education_info".to_string()));
 }
 
 #[test]
 fn test_business_license_old_format() {
-    let text = "工商登记Number: 310115000123456";
+    let text = "工商登记编号: 310115000123456";
     let result = scan_text(text);
     assert!(result.matches.contains(&"business_license".to_string()));
 }
 
 #[test]
 fn test_business_license_no_false_positive() {
-    let text = "请下载营业Execute照模板";
+    let text = "请下载营业执照模板";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"business_license".to_string()),
-        "Keywords无Serial number不应触发"
+        "Keywords无编号不应触发"
     );
 }
 
 #[test]
 fn test_combined_c4_c3_data() {
-    let text = "客户Info: ID card 000000200001010005, Password: secret123, Monthly salary: 25000Yuan, Spouse: 李芳";
+    let text = "客户Info: 身份证 000000200001010005, Password: secret123, 月薪: 25000元, 配偶: 李芳";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
-        "应检出ID card"
+        "应检出身份证"
     );
     assert!(
         result.matches.contains(&"credential_leak".to_string()),
@@ -962,7 +972,7 @@ fn test_combined_c4_c3_data() {
 
 #[test]
 fn test_combined_financial_data() {
-    let text = "贷款余额: 500000Yuan，逾PeriodAmount: 20000Yuan，Policy number: PL123456789012，Policyholder: Zhang San";
+    let text = "贷款余额: 500000元，逾期金额: 20000元，保单号: PL123456789012，投保人: 张三";
     let result = scan_text(text);
     assert!(result.matches.contains(&"loan_credit_info".to_string()));
     assert!(result.matches.contains(&"insurance_policy".to_string()));
@@ -986,7 +996,7 @@ fn test_clean_business_text_no_false_positive() {
 
 #[test]
 fn test_credit_card_luhn_invalid_rejects() {
-    let text = "订单Number 1234567890123456";
+    let text = "订单编号 1234567890123456";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"credit_card".to_string()),
@@ -1026,7 +1036,7 @@ fn test_credit_card_masking_format() {
 
 #[test]
 fn test_id_number_with_x_suffix() {
-    let text = "ID card 000000199001010042";
+    let text = "身份证 000000199001010042";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -1036,7 +1046,7 @@ fn test_id_number_with_x_suffix() {
 
 #[test]
 fn test_id_number_lowercase_x() {
-    let text = "证件Number 000000199001010042";
+    let text = "证件编号 000000199001010042";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -1046,7 +1056,7 @@ fn test_id_number_lowercase_x() {
 
 #[test]
 fn test_id_number_17_digit_rejected() {
-    let text = "Serial number 00000020000101000";
+    let text = "编号 00000020000101000";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"id_number".to_string()),
@@ -1086,11 +1096,11 @@ fn test_phone_exact_three_trigger() {
 
 #[test]
 fn test_phone_invalid_prefix_12x() {
-    let text = "Serial number 12345678901, 12345678902, 12345678903";
+    let text = "编号 12345678901, 12345678902, 12345678903";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"phone_number".to_string()),
-        "Numbers starting with 12 should NOT be detected as phone numbers"
+        "编号s starting with 12 should NOT be detected as phone numbers"
     );
 }
 
@@ -1126,7 +1136,7 @@ fn test_phone_masking_format() {
 
 #[test]
 fn test_email_two_addresses_no_alert() {
-    let text = "Sendgiving alice@example.com And bob@example.net";
+    let text = "Sendgiving alice@example.com 和 bob@example.net";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"email_address".to_string()),
@@ -1217,9 +1227,11 @@ fn test_swift_10_digit_rejected() {
 }
 
 #[test]
-fn test_swift_lowercase_rejected() {
-    let codes = find_swift_codes("bkchcnbj");
-    assert!(codes.is_empty(), "Lowercase SWIFT should be rejected");
+fn test_swift_lowercase_detected() {
+    // 修复后：小写 SWIFT 大写归一化后应命中（PoC：攻击者用小写绕过）
+    // 小写候选需带 swift/bic 上下文, 防止英文散文单词误报
+    let codes = find_swift_codes("汇款请使用 SWIFT: bkchcnbj");
+    assert_eq!(codes.len(), 1, "Lowercase SWIFT should be detected after case normalization");
 }
 
 #[test]
@@ -1244,7 +1256,7 @@ fn test_cvv_cvc2_keyword() {
 
 #[test]
 fn test_cvv_chinese_verification_code() {
-    let text = "VerifyCode/Digit: 456";
+    let text = "验证码: 456";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"cvv_code".to_string()),
@@ -1311,7 +1323,7 @@ fn test_iban_masking_format() {
 
 #[test]
 fn test_large_amount_billion_yuan() {
-    let text = "项目总投资 3.5亿Yuan，首Period 1.2亿Yuan";
+    let text = "项目总投资 3.5亿元，首Period 1.2亿元";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"large_amount".to_string()),
@@ -1341,7 +1353,7 @@ fn test_large_amount_gbp() {
 
 #[test]
 fn test_large_amount_with_decimals() {
-    let text = "合SameAmount 85.5010k yuan，税费 4.2510k yuan";
+    let text = "合同Amount 85.50万元，税费 4.25万元";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"large_amount".to_string()),
@@ -1351,7 +1363,7 @@ fn test_large_amount_with_decimals() {
 
 #[test]
 fn test_large_amount_no_fp_plain_number() {
-    let text = "订单 100000, Serial number 200000";
+    let text = "订单 100000, 编号 200000";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"large_amount".to_string()),
@@ -1381,7 +1393,7 @@ fn test_bank_account_payment_context() {
 
 #[test]
 fn test_bank_account_too_short_rejected() {
-    let text = "Account number：123456789";
+    let text = "账号：123456789";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"bank_account".to_string()),
@@ -1391,7 +1403,7 @@ fn test_bank_account_too_short_rejected() {
 
 #[test]
 fn test_bank_account_15_digit_rejected() {
-    let text = "Account number：123456789012345";
+    let text = "账号：123456789012345";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"bank_account".to_string()),
@@ -1421,7 +1433,7 @@ fn test_contract_loan_keyword() {
 
 #[test]
 fn test_contract_short_number_rejected() {
-    let text = "Policy number: 1234567";
+    let text = "保单号: 1234567";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"contract_number".to_string()),
@@ -1435,7 +1447,7 @@ fn test_contract_short_number_rejected() {
 
 #[test]
 fn test_biometric_faceid_and_fingerprint() {
-    let text = "该设备already录入faceIDAndfingerprintInfo";
+    let text = "该设备already录入faceID和fingerprintInfo";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"biometric_data".to_string()),
@@ -1445,7 +1457,7 @@ fn test_biometric_faceid_and_fingerprint() {
 
 #[test]
 fn test_biometric_gait_and_earprint() {
-    let text = "研究报告涉及步态识别And耳纹特征data";
+    let text = "研究报告涉及步态识别和耳纹特征data";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"biometric_data".to_string()),
@@ -1465,7 +1477,7 @@ fn test_biometric_same_keyword_twice_no_trigger() {
 
 #[test]
 fn test_medical_gene_test() {
-    let text = "基due todetect报告显示BRCA1阳性，建议做体检报告复查";
+    let text = "基因检测报告显示BRCA1阳性，建议做体检报告复查";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"medical_health".to_string()),
@@ -1485,7 +1497,7 @@ fn test_medical_infectious_disease() {
 
 #[test]
 fn test_medical_pregnancy_info() {
-    let text = "生育InfoalreadyUpdate，found病史Recordingcomplete";
+    let text = "生育信息alreadyUpdate，既往病史记录complete";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"medical_health".to_string()),
@@ -1505,7 +1517,7 @@ fn test_medical_same_keyword_twice_no_trigger() {
 
 #[test]
 fn test_medical_no_fp_on_general_health_discussion() {
-    let text = "今年公司会统1安排体检，请large家Note身体健康";
+    let text = "今年公司会统1安排体检，请大家Note身体健康";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"medical_health".to_string()),
@@ -1515,7 +1527,7 @@ fn test_medical_no_fp_on_general_health_discussion() {
 
 #[test]
 fn test_vehicle_new_energy_plate() {
-    let text = "车牌Number: 京AD12345，already登记";
+    let text = "车牌编号: 京AD12345，already登记";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"vehicle_info".to_string()),
@@ -1558,7 +1570,7 @@ fn test_vehicle_vin_wrong_length_rejected() {
 
 #[test]
 fn test_property_certificate_with_id() {
-    let text = "房屋Ownership证Number: 沪房地权字AfterSH20230045Number";
+    let text = "房屋所有权证编号: 沪房地权字AfterSH20230045编号";
     let result = scan_text(text);
     assert!(result.matches.contains(&"property_info".to_string()));
 }
@@ -1572,7 +1584,7 @@ fn test_property_registration() {
 
 #[test]
 fn test_income_tax_amount() {
-    let text = "人所得税: 2,850Yuan";
+    let text = "个人所得税: 2,850元";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"income_info".to_string()),
@@ -1582,7 +1594,7 @@ fn test_income_tax_amount() {
 
 #[test]
 fn test_income_pretax() {
-    let text = "税first: 35000Yuan";
+    let text = "税前: 35000元";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"income_info".to_string()),
@@ -1662,7 +1674,7 @@ fn test_otp_confirmation_code() {
 
 #[test]
 fn test_otp_dynamic_password() {
-    let text = "DynamicPassword: 738291";
+    let text = "动态密码: 738291";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"otp_verification".to_string()),
@@ -1672,7 +1684,7 @@ fn test_otp_dynamic_password() {
 
 #[test]
 fn test_otp_no_fp_without_digits() {
-    let text = "请InputVerifyCode/Digit";
+    let text = "请Input验证码";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"otp_verification".to_string()),
@@ -1682,7 +1694,7 @@ fn test_otp_no_fp_without_digits() {
 
 #[test]
 fn test_loan_total_balance() {
-    let text = "贷款余额: 1,500,000Yuan";
+    let text = "贷款余额: 1,500,000元";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"loan_credit_info".to_string()),
@@ -1692,7 +1704,7 @@ fn test_loan_total_balance() {
 
 #[test]
 fn test_loan_total_now_in_prefilter() {
-    let text = "贷款总额: 1,500,000Yuan";
+    let text = "贷款总额: 1,500,000元";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"loan_credit_info".to_string()),
@@ -1702,7 +1714,7 @@ fn test_loan_total_now_in_prefilter() {
 
 #[test]
 fn test_loan_penalty_interest() {
-    let text = "罚息: 3,500Yuan";
+    let text = "罚息: 3,500元";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"loan_credit_info".to_string()),
@@ -1712,7 +1724,7 @@ fn test_loan_penalty_interest() {
 
 #[test]
 fn test_loan_repayment() {
-    let text = " 款Amount: 8,600Yuan";
+    let text = "还款金额: 8,600元";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"loan_credit_info".to_string()),
@@ -1742,7 +1754,7 @@ fn test_insurance_beneficiary() {
 
 #[test]
 fn test_insurance_premium() {
-    let text = "保费: 12,800Yuan/年";
+    let text = "保费: 12,800元/年";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"insurance_policy".to_string()),
@@ -1783,7 +1795,7 @@ fn test_family_siblings() {
 
 #[test]
 fn test_employee_offboarding() {
-    let text = "离职SundayPeriod: 2026/03/15";
+    let text = "离职日期: 2026/03/15";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"employee_info".to_string()),
@@ -1793,7 +1805,7 @@ fn test_employee_offboarding() {
 
 #[test]
 fn test_employee_department_role() {
-    let text = "岗bit: 客户经理";
+    let text = "岗位: 客户经理";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"employee_info".to_string()),
@@ -1813,7 +1825,7 @@ fn test_employee_department_without_colon_no_trigger() {
 
 #[test]
 fn test_employee_position_without_colon_no_trigger() {
-    let text = "公司金融部岗bit职责";
+    let text = "公司金融部岗位职责";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"employee_info".to_string()),
@@ -1833,17 +1845,17 @@ fn test_employee_dept_number_without_colon_no_trigger() {
 
 #[test]
 fn test_employee_id_without_colon_still_triggers() {
-    let text = "员工Serial number A12345";
+    let text = "员工编号 A12345";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"employee_info".to_string()),
-        "Employee ID (specific keyword) should trigger even without colon"
+        "工号 (specific keyword) should trigger even without colon"
     );
 }
 
 #[test]
 fn test_judicial_enforcement_with_prefilter_keyword() {
-    let text = "ReceivedForceExecuteline通知，判决书already下达";
+    let text = "Received强制执行通知，判决书already下达";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"judicial_record".to_string()),
@@ -1853,7 +1865,7 @@ fn test_judicial_enforcement_with_prefilter_keyword() {
 
 #[test]
 fn test_judicial_enforcement_both_in_prefilter() {
-    let text = "ReceivedForceExecuteline通知，already对其limit消费";
+    let text = "Received强制执行通知，already对其限制消费";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"judicial_record".to_string()),
@@ -1863,7 +1875,7 @@ fn test_judicial_enforcement_both_in_prefilter() {
 
 #[test]
 fn test_judicial_exit_ban_with_prefilter() {
-    let text = "limit出境令already下达，该被Executeline人Name下资产already冻Result";
+    let text = "限制出境令already下达，该被执行人Name下资产already冻Result";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"judicial_record".to_string()),
@@ -1873,7 +1885,7 @@ fn test_judicial_exit_ban_with_prefilter() {
 
 #[test]
 fn test_judicial_single_keyword_no_trigger() {
-    let text = "请查看line政处罚相关法规";
+    let text = "请查看行政处罚相关法规";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"judicial_record".to_string()),
@@ -1883,7 +1895,7 @@ fn test_judicial_single_keyword_no_trigger() {
 
 #[test]
 fn test_judicial_no_fp_legal_discussion() {
-    let text = "今Daylearn了合Same法，了解了违约责任";
+    let text = "今Daylearn了合同法，了解了违约责任";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"judicial_record".to_string()),
@@ -1893,21 +1905,21 @@ fn test_judicial_no_fp_legal_discussion() {
 
 #[test]
 fn test_education_school() {
-    let text = "就read学校: 复旦large学";
+    let text = "就读学校: 复旦大学";
     let result = scan_text(text);
     assert!(result.matches.contains(&"education_info".to_string()));
 }
 
 #[test]
 fn test_education_enrollment_date() {
-    let text = "入学SundayPeriod: 2018/09";
+    let text = "入学日期: 2018/09";
     let result = scan_text(text);
     assert!(result.matches.contains(&"education_info".to_string()));
 }
 
 #[test]
 fn test_business_license_registration_number() {
-    let text = "RegisterNumber: 110105012345678";
+    let text = "注册号: 110105012345678";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"business_license".to_string()),
@@ -1959,7 +1971,7 @@ fn test_credential_pin_with_separator() {
 
 #[test]
 fn test_credential_pin_chinese_suffix() {
-    let text = "PINCode/Digit：6528";
+    let text = "PIN码：6528";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"credential_leak".to_string()),
@@ -2021,7 +2033,7 @@ fn test_credential_real_password_still_detected() {
 
 #[test]
 fn test_items_by_jrt_level_distribution() {
-    let text = "Password：abc123, ID card 000000200001010005, Monthly salary: 25000Yuan, Employee ID: E001";
+    let text = "Password：abc123, 身份证 000000200001010005, 月薪: 25000元, 工号: E001";
     let result = scan_text(text);
     let levels = result.items_by_jrt_level();
     assert!(levels.get(&4).unwrap_or(&0) >= &1, "Should have C4 items");
@@ -2030,7 +2042,7 @@ fn test_items_by_jrt_level_distribution() {
 
 #[test]
 fn test_count_items_at_level_accumulation() {
-    let text = "ID card 000000200001010005, Monthly salary: 25000Yuan, Spouse: Li Si";
+    let text = "身份证 000000200001010005, 月薪: 25000元, 配偶: 李四";
     let result = scan_text(text);
     let c3_plus = result.count_items_at_level(3);
     assert!(
@@ -2058,11 +2070,11 @@ fn test_items_by_jrt_level_empty_on_clean_text() {
 fn test_realistic_hr_email() {
     let text = "关于New入职员工Info：\n\
         Name: 王small明\n\
-        员工Serial number: EMP20260301\n\
+        员工编号: EMP20260301\n\
         部门: RiskManagement部\n\
-        职bit: 风控专员\n\
+        职位: 风控专员\n\
         学历: 硕士\n\
-        毕业院校: Medium国人民large学";
+        毕业院校: Medium国人民大学";
     let result = scan_text(text);
     assert!(result.matches.contains(&"employee_info".to_string()));
     assert!(result.matches.contains(&"education_info".to_string()));
@@ -2071,10 +2083,10 @@ fn test_realistic_hr_email() {
 #[test]
 fn test_realistic_loan_approval() {
     let text = "贷款审批Result 通知：\n\
-        客户ID card: 000000198805150003\n\
-        授信额度: 500000Yuan\n\
-        贷款总额: 300000Yuan\n\
-         款Amount: 5,500Yuan/月";
+        客户身份证: 000000198805150003\n\
+        授信额度: 500000元\n\
+        贷款总额: 300000元\n\
+        还款金额: 5,500元/月";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -2089,11 +2101,11 @@ fn test_realistic_loan_approval() {
 #[test]
 fn test_realistic_insurance_claim() {
     let text = "理赔审核通知：\n\
-        Policyholder: 李明\n\
-        被保险人: Zhang San\n\
-        Policy number: PL20260115001234\n\
-        出险SundayPeriod: 2026-03-01\n\
-        理赔Amount: 85,000Yuan\n\
+        投保人: 李明\n\
+        被保险人: 张三\n\
+        保单号: PL20260115001234\n\
+        出险日期: 2026-03-01\n\
+        理赔金额: 85,000元\n\
         受益人: 李small红";
     let result = scan_text(text);
     assert!(
@@ -2113,12 +2125,12 @@ fn test_realistic_insurance_claim() {
 #[test]
 fn test_realistic_customer_kyc() {
     let text = "KYC 尽调报告：\n\
-        客户: Zhang San\n\
-        ID cardNumber: 000000199201010004\n\
+        客户: 张三\n\
+        身份证号: 000000199201010004\n\
         Mobile phone: 13600136000, 15100151000, 15200152000\n\
-        Address: 广东省深圳City南山District科技南Road88Number\n\
-        Spouse: Li Si\n\
-        公司统1社会信用代Code/Digit: A00000MA000000000B";
+        Address: 广东省深圳市南山区科技南路88编号\n\
+        配偶: 李四\n\
+        公司统1社会信用代码: A00000MA000000000B";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -2218,7 +2230,7 @@ fn test_tax_id_16_digit_rejected() {
 
 #[test]
 fn test_tax_id_all_digits() {
-    let text = "税Number 110108123456789";
+    let text = "税编号 110108123456789";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"tax_id".to_string()),
@@ -2228,7 +2240,7 @@ fn test_tax_id_all_digits() {
 
 #[test]
 fn test_address_autonomous_region() {
-    let text = "Address: 内蒙古自治District呼And浩特City回民District";
+    let text = "Address: 内蒙古自治区呼和浩特市回民区";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"customer_address".to_string()),
@@ -2238,17 +2250,17 @@ fn test_address_autonomous_region() {
 
 #[test]
 fn test_address_alley_format() {
-    let text = "Address: 虹口District4川北Road弄堂12Number";
+    let text = "Address: 虹口区四川北路弄堂12号";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"customer_address".to_string()),
-        "District + Road format should match"
+        "区 + 路 format should match"
     );
 }
 
 #[test]
 fn test_address_multiple_addresses() {
-    let text = "办公Address: 北BeijingCity朝阳District建国Road88Number，户籍地: 河南省郑州City金水District经3Road";
+    let text = "办公Address: 北京市朝阳区建国路88编号，户籍地: 河南省郑州市金水区经3路";
     let result = scan_text(text);
     let detail = result.details.iter().find(|(k, _)| k == "customer_address");
     assert!(detail.is_some());
@@ -2259,9 +2271,9 @@ fn test_address_multiple_addresses() {
 fn test_combined_all_jrt_levels() {
     let text = "客户Info汇总：\n\
         Password：abc123\n\
-        ID card: 000000200001010005\n\
-        Employee ID: E001\n\
-        公司信用代Code/Digit A0000000000000000M";
+        身份证: 000000200001010005\n\
+        工号: E001\n\
+        公司信用代码 A0000000000000000M";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"credential_leak".to_string()),
@@ -2288,7 +2300,7 @@ fn test_combined_all_jrt_levels() {
 
 #[test]
 fn test_combined_multiple_c4_patterns() {
-    let text = "Security事件报告: Password：admin123, CVV: 789, 患者病历显示有敏史";
+    let text = "Security事件报告: Password：admin123, CVV: 789, 患者病历显示有过敏史";
     let result = scan_text(text);
     assert!(result.matches.contains(&"credential_leak".to_string()));
     assert!(result.matches.contains(&"cvv_code".to_string()));
@@ -2317,7 +2329,7 @@ fn test_detail_item_count_matches_expected() {
 
 #[test]
 fn test_masking_all_values_masked() {
-    let text = "ID card 000000200001010005 Password：secret123";
+    let text = "身份证 000000200001010005 Password：secret123";
     let result = scan_text(text);
     for (_pattern, values) in &result.details {
         for val in values {
@@ -2393,8 +2405,8 @@ fn test_masking_tax_id_format() {
 
 #[test]
 fn test_masking_large_amount_preserves_unit() {
-    let amounts = find_large_amounts("50010k yuan");
-    assert_eq!(amounts[0], "***10k yuan");
+    let amounts = find_large_amounts("500万元");
+    assert_eq!(amounts[0], "***万元");
 }
 
 #[test]
@@ -2422,7 +2434,7 @@ fn test_extract_dlp_text_coremail_uri() {
     let body =
         r#"{"id":"17744","attrs":{"subject":"Test","content":"<p>body</p>"},"action":"deliver"}"#;
     let uri = "/coremail/common/mbox/compose.jsp?sid=abc";
-    let text = extract_dlp_text(body, uri);
+    let text = extract_dlp_text(body, uri, Some("application/json"));
     assert!(text.contains("Test"), "Should extract subject");
     assert!(text.contains("body"), "Should extract content");
     assert!(!text.contains("17744"), "Should NOT include JSON id");
@@ -2432,7 +2444,7 @@ fn test_extract_dlp_text_coremail_uri() {
 fn test_extract_dlp_text_non_coremail_uri() {
     let body = "plain body text";
     let uri = "/other/endpoint";
-    let text = extract_dlp_text(body, uri);
+    let text = extract_dlp_text(body, uri, None);
     assert_eq!(
         text, "plain body text",
         "Non-coremail URI should return raw body"
@@ -2443,7 +2455,7 @@ fn test_extract_dlp_text_non_coremail_uri() {
 fn test_extract_dlp_text_coremail_invalid_json() {
     let body = "not json at all";
     let uri = "/coremail/common/mbox/compose.jsp?sid=abc";
-    let text = extract_dlp_text(body, uri);
+    let text = extract_dlp_text(body, uri, Some("application/json"));
     assert_eq!(
         text, "not json at all",
         "Invalid JSON should fallback to raw body"
@@ -2477,15 +2489,15 @@ fn test_vehicle_plate_masking_after_fix() {
 #[test]
 fn test_judicial_all_keywords_in_prefilter() {
     let keyword_pairs = [
-        ("失信被Executeline人", "line政处罚"),
-        ("被Executeline人", "裁定书"),
+        ("失信被执行人", "行政处罚"),
+        ("被执行人", "裁定书"),
         ("开庭公告", "判决书"),
-        ("犯罪Recording", "违法违规"),
-        ("ForceExecuteline", "limit消费"),
-        ("limit出境", "立案Info"),
+        ("犯罪记录", "违法违规"),
+        ("强制执行", "限制消费"),
+        ("限制出境", "立案信息"),
     ];
     for (kw1, kw2) in keyword_pairs {
-        let text = format!("该案件涉及{}And{}", kw1, kw2);
+        let text = format!("该案件涉及{}和{}", kw1, kw2);
         let result = scan_text(&text);
         assert!(
             result.matches.contains(&"judicial_record".to_string()),
@@ -2499,14 +2511,14 @@ fn test_judicial_all_keywords_in_prefilter() {
 #[test]
 fn test_loan_all_keywords_in_prefilter() {
     let keywords_with_amount = [
-        "贷款余额: 100Yuan",
-        "贷款总额: 200Yuan",
-        "逾PeriodAmount: 300Yuan",
-        " 款Amount: 400Yuan",
-        "授信额度: 500Yuan",
-        "信用额度: 600Yuan",
-        "欠息: 700Yuan",
-        "罚息: 800Yuan",
+        "贷款余额: 100元",
+        "贷款总额: 200元",
+        "逾期金额: 300元",
+        "还款金额: 400元",
+        "授信额度: 500元",
+        "信用额度: 600元",
+        "欠息: 700元",
+        "罚息: 800元",
     ];
     for text in keywords_with_amount {
         let result = scan_text(text);
@@ -2521,10 +2533,10 @@ fn test_loan_all_keywords_in_prefilter() {
 #[test]
 fn test_credential_pin_chinese_variants() {
     let variants = [
-        "PINCode/Digit：1234",
-        "PINCode/Digit: 5678",
-        "PINCode/Digit=9012",
-        "pinCode/Digit：abcd",
+        "PIN码：1234",
+        "PIN码: 5678",
+        "PIN码=9012",
+        "pin码：abcd",
     ];
     for text in variants {
         let result = scan_text(text);
@@ -2594,7 +2606,7 @@ fn test_no_fp_it_system_notification() {
 fn test_no_fp_compliance_training() {
     let text = "反洗钱培训提醒：\n\
         请全体员工于本月底firstcomplete年度反洗钱知识Test。\n\
-        TestContent涵盖Suspicious交易识别、large额交易报告制度。";
+        TestContent涵盖Suspicious交易识别、大额交易报告制度。";
     let result = scan_text(text);
     assert!(
         result.matches.is_empty(),
@@ -2765,7 +2777,7 @@ fn test_dlp_result_is_empty_on_clean() {
 
 #[test]
 fn test_dlp_result_details_structure() {
-    let text = "ID card 000000200001010005, Password：secret123";
+    let text = "身份证 000000200001010005, Password：secret123";
     let result = scan_text(text);
     assert!(
         result.details.len() >= 2,
@@ -2779,7 +2791,7 @@ fn test_dlp_result_details_structure() {
 
 #[test]
 fn test_matches_and_details_consistent() {
-    let text = "Password：abc123 ID card 000000200001010005";
+    let text = "Password：abc123 身份证 000000200001010005";
     let result = scan_text(text);
     let detail_keys: Vec<&str> = result.details.iter().map(|(k, _)| k.as_str()).collect();
     for m in &result.matches {
@@ -2795,7 +2807,7 @@ fn test_matches_and_details_consistent() {
 
 #[test]
 fn test_bank_account_exact_10_digit() {
-    let text = "Account number：1234567890";
+    let text = "账号：1234567890";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"bank_account".to_string()),
@@ -2805,7 +2817,7 @@ fn test_bank_account_exact_10_digit() {
 
 #[test]
 fn test_bank_account_exact_14_digit() {
-    let text = "Account number：12345678901234";
+    let text = "账号：12345678901234";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"bank_account".to_string()),
@@ -2815,7 +2827,7 @@ fn test_bank_account_exact_14_digit() {
 
 #[test]
 fn test_bank_account_16_digit_rejected() {
-    let text = "Account number：1234567890123456";
+    let text = "账号：1234567890123456";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"bank_account".to_string()),
@@ -2847,7 +2859,7 @@ fn test_address_no_fp_simple_suffix() {
 
 #[test]
 fn test_address_no_fp_product_location() {
-    let text = "我们在北BeijingCity场占有率很High";
+    let text = "我们在北京市场占有率很High";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"customer_address".to_string()),
@@ -2857,7 +2869,7 @@ fn test_address_no_fp_product_location() {
 
 #[test]
 fn test_address_valid_full_address() {
-    let text = "收货Address: 北BeijingCity朝阳District建国Road88NumberSOHOlarge厦A座";
+    let text = "收货Address: 北京市朝阳区建国路88编号SOHO大厦A座";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"customer_address".to_string()),
@@ -2867,11 +2879,11 @@ fn test_address_valid_full_address() {
 
 #[test]
 fn test_address_multiple_levels() {
-    let text = "广东省深圳City南山District深南large道9000Number";
+    let text = "广东省深圳市南山区深南大道9000编号";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"customer_address".to_string()),
-        "Province+City+District+Road address should be detected"
+        "Province+市+区+路 address should be detected"
     );
 }
 
@@ -2880,9 +2892,9 @@ fn test_address_multiple_levels() {
 #[test]
 fn test_realistic_payroll_batch() {
     let text = "工资发放通知：\n\
-        Zhang San Employee ID: E001 Monthly salary: 15000Yuan\n\
-        Li Si Employee ID: E002 Monthly salary: 18000Yuan\n\
-        王5 Employee ID: E003 Monthly salary: 22000Yuan";
+        张三 工号: E001 月薪: 15000元\n\
+        李四 工号: E002 月薪: 18000元\n\
+        王5 工号: E003 月薪: 22000元";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"employee_info".to_string()),
@@ -2899,9 +2911,9 @@ fn test_realistic_payroll_batch() {
 #[test]
 fn test_realistic_customer_data_export() {
     let text = "客户dataExport（共3Item）：\n\
-        1. Name: Zhang San, ID card: 000000200001010005, Mobile phone: 13800138000\n\
-        2. Name: Li Si, ID card: 000000199201010004, Mobile phone: 13900139000\n\
-        3. Name: 王5, ID card: 000000198805150003, Mobile phone: 14700147000";
+        1. Name: 张三, 身份证: 000000200001010005, Mobile phone: 13800138000\n\
+        2. Name: 李四, 身份证: 000000199201010004, Mobile phone: 13900139000\n\
+        3. Name: 王5, 身份证: 000000198805150003, Mobile phone: 14700147000";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -2947,10 +2959,10 @@ fn test_realistic_wire_transfer() {
 #[test]
 fn test_realistic_compliance_report() {
     let text = "反洗钱Suspicious交易报告：\n\
-        客户张某（ID card: 000000198501010001）\n\
+        客户张某（身份证: 000000198501010001）\n\
         近30Sunday转入Amount: 3,500,000 USD，转出Amount: 2,800,000 USD\n\
-        涉及Account number：62220212345678\n\
-        风控标签: 失信被Executeline人、line政处罚在查";
+        涉及账号：62220212345678\n\
+        风控标签: 失信被执行人、行政处罚在查";
     let result = scan_text(text);
     assert!(result.matches.contains(&"id_number".to_string()));
     assert!(result.matches.contains(&"large_amount".to_string()));
@@ -2961,12 +2973,12 @@ fn test_realistic_compliance_report() {
 #[test]
 fn test_realistic_medical_insurance_claim() {
     let text = "理赔审核材料：\n\
-        Policyholder: 李某某\n\
-        诊Break/Judge: 2型糖尿病MergeHigh血压\n\
-        住院SundayPeriod: 2026-02-15\n\
-        手术Recording: 冠状动脉搭桥术\n\
-        理赔Amount: 85,000Yuan\n\
-        Policy number: PL20250115001234";
+        投保人: 李某某\n\
+        诊断: 2型糖尿病MergeHigh血压\n\
+        住院日期: 2026-02-15\n\
+        手术记录: 冠状动脉搭桥术\n\
+        理赔金额: 85,000元\n\
+        保单号: PL20250115001234";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"medical_health".to_string()),
@@ -3081,7 +3093,7 @@ fn test_no_fp_financial_regulation_text() {
 
 #[test]
 fn test_phone_not_matched_inside_id_number() {
-    let text = "ID cardNumberCode/Digit是 000000200001010005";
+    let text = "身份证号码是 000000200001010005";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -3132,7 +3144,7 @@ fn test_phone_in_comma_separated_list() {
 
 #[test]
 fn test_phone_mixed_with_ids_correct_count() {
-    let text = "ID card: 000000200001010005, 000000199201010004, 000000198805150003\n\
+    let text = "身份证: 000000200001010005, 000000199201010004, 000000198805150003\n\
         Mobile phone: 13800138000, 13900139000, 14700147000";
     let result = scan_text(text);
     assert!(result.matches.contains(&"id_number".to_string()));
@@ -3168,7 +3180,7 @@ fn test_id_check_digit_invalid() {
 
 #[test]
 fn test_id_random_18_digit_rejected() {
-    let text = "订单Serial number 123456789012345678";
+    let text = "订单编号 123456789012345678";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"id_number".to_string()),
@@ -3183,7 +3195,7 @@ fn test_id_check_digit_lowercase_x() {
 
 #[test]
 fn test_id_valid_ids_detected() {
-    let text = "客户ID cardNumber: 000000200001010005";
+    let text = "客户身份证号: 000000200001010005";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -3193,7 +3205,7 @@ fn test_id_valid_ids_detected() {
 
 #[test]
 fn test_id_invalid_check_digit_not_detected() {
-    let text = "Serial number 000000200001010000";
+    let text = "编号 000000200001010000";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"id_number".to_string()),
@@ -3215,7 +3227,7 @@ fn test_social_credit_check_invalid() {
 
 #[test]
 fn test_social_credit_valid_detected() {
-    let text = "公司信用代Code/Digit A0000000000000000M";
+    let text = "公司信用代码 A0000000000000000M";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"social_credit_code".to_string()),
@@ -3225,7 +3237,7 @@ fn test_social_credit_valid_detected() {
 
 #[test]
 fn test_social_credit_invalid_check_rejected() {
-    let text = "Serial number A0000000000000000A";
+    let text = "编号 A0000000000000000A";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"social_credit_code".to_string()),
@@ -3245,7 +3257,7 @@ fn test_social_credit_random_18_char_rejected() {
 
 #[test]
 fn test_social_credit_ma_prefix_valid() {
-    let text = "社会信用代Code/Digit A00000MA000000000B";
+    let text = "社会信用代码 A00000MA000000000B";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"social_credit_code".to_string()),
@@ -3257,7 +3269,7 @@ fn test_social_credit_ma_prefix_valid() {
 
 #[test]
 fn test_e2e_no_cross_contamination() {
-    let text = "only有1ID card 000000200001010005";
+    let text = "only有1身份证 000000200001010005";
     let result = scan_text(text);
     assert_eq!(
         result.matches.len(),
@@ -3301,7 +3313,7 @@ fn test_e2e_biometric_requires_two_distinct() {
 
 #[test]
 fn test_e2e_medical_requires_two_distinct() {
-    let single = ["病历", "诊Break/Judge", "处方", "住院", "手术Recording"];
+    let single = ["病历", "诊断", "处方", "住院", "手术记录"];
     for kw in single {
         let text = format!("请携with{}到门诊", kw);
         let result = scan_text(&text);
@@ -3316,10 +3328,10 @@ fn test_e2e_medical_requires_two_distinct() {
 #[test]
 fn test_e2e_judicial_requires_two_distinct() {
     let single = [
-        "失信被Executeline人",
-        "line政处罚",
+        "失信被执行人",
+        "行政处罚",
         "判决书",
-        "ForceExecuteline",
+        "强制执行",
     ];
     for kw in single {
         let text = format!("关于{}of法规解read", kw);
@@ -3350,7 +3362,7 @@ fn test_coremail_typical_body_no_fp() {
 #[test]
 fn test_coremail_signature_no_fp() {
     let text =
-        "此致\n\nZhang San\nRiskManagement部\n电话: 13800138000\nemail: zhangsan@example.com";
+        "此致\n\n张三\nRiskManagement部\n电话: 13800138000\nemail: zhangsan@example.com";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"phone_number".to_string()),
@@ -3366,11 +3378,11 @@ fn test_coremail_signature_no_fp() {
 fn test_coremail_forwarded_customer_data() {
     let text = "-------- 转发Message --------\n\
         客户Infoif下：\n\
-        Name：Zhang San\n\
-        ID card：000000200001010005\n\
+        Name：张三\n\
+        身份证：000000200001010005\n\
         Mobile phone：13800138000, 13900139000, 14700147000\n\
-        Address：北BeijingCity朝阳District建国Road88Number\n\
-        Monthly salary：25000Yuan";
+        Address：北京市朝阳区建国路88编号\n\
+        月薪：25000元";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -3393,10 +3405,10 @@ fn test_coremail_forwarded_customer_data() {
 #[test]
 fn test_no_fp_internal_system_notification() {
     let text = "【System通知】\n\
-        您有1笔Wait审批of申请（Serial number: REQ2026032600123）。\n\
+        您有1笔Wait审批of申请（编号: REQ2026032600123）。\n\
         申请人: 李经理\n\
         申请Type: 费用报销\n\
-        Amount: 3,500Yuan\n\
+        Amount: 3,500元\n\
         请在3工作Sunday内LoginOASystem审批。";
     let result = scan_text(text);
     assert!(
@@ -3409,7 +3421,7 @@ fn test_no_fp_internal_system_notification() {
 
 #[test]
 fn test_bank_account_traditional_chinese() {
-    let text = "帐Number：1234567890";
+    let text = "帐号：1234567890";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"bank_account".to_string()),
@@ -3433,33 +3445,33 @@ fn test_bank_account_acct_abbreviation() {
 fn test_scan_many_patterns_no_panic() {
     let text = "Password：abc123\n\
         CVV: 789\n\
-        ID card 000000200001010005\n\
+        身份证 000000200001010005\n\
         4111111111111111\n\
         Mobile phone 13800138000 13900139000 14700147000\n\
-        Address 北BeijingCity朝阳District建国Road88Number\n\
+        Address 北京市朝阳区建国路88编号\n\
         email a@example.test b@example.test c@example.test\n\
         护照 E12345678\n\
-        信用代Code/Digit A0000000000000000M\n\
+        信用代码 A0000000000000000M\n\
         SWIFT BKCHCNBJ\n\
         纳税 110108MA12345N9\n\
         IBAN DE89370400440532013000\n\
-        合SameAmount 10010k yuan 首付 3010k yuan\n\
-        Account number：1234567890\n\
-        Policy number PL12345678901234\n\
-        指纹And虹膜data\n\
-        诊Break/JudgeAnd处方Info\n\
-        BeijingA12345\n\
+        合同Amount 100万元 首付 30万元\n\
+        账号：1234567890\n\
+        保单号 PL12345678901234\n\
+        指纹和虹膜data\n\
+        诊断和处方Info\n\
+        京A12345\n\
         不动产权证\n\
-        Monthly salary: 25000Yuan\n\
+        月薪: 25000元\n\
         GPS坐标: 116.39750\n\
-        VerifyCode/Digit: 582931\n\
-        贷款余额: 500000Yuan\n\
-        Policyholder: Zhang San\n\
-        Spouse: Li Si\n\
-        Employee ID: E001\n\
-        失信被Executeline人Andline政处罚\n\
+        验证码: 582931\n\
+        贷款余额: 500000元\n\
+        投保人: 张三\n\
+        配偶: 李四\n\
+        工号: E001\n\
+        失信被执行人和行政处罚\n\
         学历: 本科\n\
-        营业Execute照Number: 110105012345678";
+        营业执照编号: 110105012345678";
     let result = scan_text(text);
     assert!(
         result.matches.len() >= 15,
@@ -3503,7 +3515,7 @@ fn test_credit_card_unionpay_prefix() {
 
 #[test]
 fn test_credit_card_invalid_bin_rejected() {
-    let text = "Serial number 0000000000000000";
+    let text = "编号 0000000000000000";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"credit_card".to_string()),
@@ -3610,9 +3622,9 @@ fn test_bank_account_payment_transfer_keyword() {
 #[test]
 fn test_attack_scenario_data_exfiltration_draft() {
     let text = "Batch客户data (请速查收):\n\
-        Zhang San 000000200001010005 Card number 4111111111111111 Monthly salary:35000Yuan\n\
-        Li Si 000000199201010004 Card number 5100000000000008 Monthly salary:28000Yuan\n\
-        王5 000000198501010001 Card number 6200000000000005 Monthly salary:42000Yuan";
+        张三 000000200001010005 Card number 4111111111111111 月薪:35000元\n\
+        李四 000000199201010004 Card number 5100000000000008 月薪:28000元\n\
+        王5 000000198501010001 Card number 6200000000000005 月薪:42000元";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -3640,10 +3652,10 @@ fn test_attack_scenario_wire_transfer_fraud() {
     let text = "紧急通知 - 请立immediately转账:\n\
         收款人: International Trading Co.\n\
         Bank: HSBC Hong Kong\n\
-        SWIFT代Code/Digit: HSBCHKHH\n\
+        SWIFT代码: HSBCHKHH\n\
         IBAN: GB29NWBK60161331926819\n\
         Amount: 500,000 USD, 手续费 2,000 USD\n\
-        请在下午3点firstcomplete，否则合Same失效";
+        请在下午3点firstcomplete，否则合同失效";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"swift_code".to_string()),
@@ -3655,7 +3667,7 @@ fn test_attack_scenario_wire_transfer_fraud() {
     );
     assert!(
         result.matches.contains(&"large_amount".to_string()),
-        "Should detect large amounts"
+        "Should detect 大 amounts"
     );
 }
 
@@ -3691,7 +3703,7 @@ fn test_attack_scenario_credential_phishing() {
 
 #[test]
 fn test_no_fp_random_16_digit_number() {
-    let text = "Stream水Number 7890123456789012";
+    let text = "Stream水编号 7890123456789012";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"credit_card".to_string()),
@@ -3725,8 +3737,8 @@ fn test_normalize_strips_bom() {
 
 #[test]
 fn test_normalize_strips_soft_hyphen() {
-    let result = normalize_for_dlp("密\u{00AD}Code/Digit");
-    assert_eq!(result, "密Code/Digit", "Soft hyphen should be stripped");
+    let result = normalize_for_dlp("密\u{00AD}码");
+    assert_eq!(result, "密码", "Soft hyphen should be stripped");
 }
 
 #[test]
@@ -3777,7 +3789,7 @@ fn test_normalize_empty_string() {
 
 #[test]
 fn test_evasion_zero_width_in_phone() {
-    let text = "联系 1\u{200B}3\u{200B}8\u{200B}0\u{200B}0\u{200B}1\u{200B}3\u{200B}8\u{200B}0\u{200B}0\u{200B}0 And 1\u{200B}3\u{200B}9\u{200B}0\u{200B}0\u{200B}1\u{200B}3\u{200B}9\u{200B}0\u{200B}0\u{200B}0 And 1\u{200B}4\u{200B}7\u{200B}0\u{200B}0\u{200B}1\u{200B}4\u{200B}7\u{200B}0\u{200B}0\u{200B}0";
+    let text = "联系 1\u{200B}3\u{200B}8\u{200B}0\u{200B}0\u{200B}1\u{200B}3\u{200B}8\u{200B}0\u{200B}0\u{200B}0 和 1\u{200B}3\u{200B}9\u{200B}0\u{200B}0\u{200B}1\u{200B}3\u{200B}9\u{200B}0\u{200B}0\u{200B}0 和 1\u{200B}4\u{200B}7\u{200B}0\u{200B}0\u{200B}1\u{200B}4\u{200B}7\u{200B}0\u{200B}0\u{200B}0";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"phone_number".to_string()),
@@ -3787,7 +3799,7 @@ fn test_evasion_zero_width_in_phone() {
 
 #[test]
 fn test_evasion_zero_width_in_id_number() {
-    let text = "ID card 0\u{200B}0\u{200B}0\u{200B}0\u{200B}0\u{200B}0\u{200B}2\u{200B}0\u{200B}0\u{200B}0\u{200B}0\u{200B}1\u{200B}0\u{200B}1\u{200B}0\u{200B}0\u{200B}0\u{200B}5";
+    let text = "身份证 0\u{200B}0\u{200B}0\u{200B}0\u{200B}0\u{200B}0\u{200B}2\u{200B}0\u{200B}0\u{200B}0\u{200B}0\u{200B}1\u{200B}0\u{200B}1\u{200B}0\u{200B}0\u{200B}0\u{200B}5";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -3819,7 +3831,7 @@ fn test_evasion_zero_width_in_credential() {
 
 #[test]
 fn test_evasion_fullwidth_phone() {
-    let text = "联系 \u{FF11}\u{FF13}\u{FF18}\u{FF10}\u{FF10}\u{FF11}\u{FF13}\u{FF18}\u{FF10}\u{FF10}\u{FF10} And \u{FF11}\u{FF13}\u{FF19}\u{FF10}\u{FF10}\u{FF11}\u{FF13}\u{FF19}\u{FF10}\u{FF10}\u{FF10} And \u{FF11}\u{FF14}\u{FF17}\u{FF10}\u{FF10}\u{FF11}\u{FF14}\u{FF17}\u{FF10}\u{FF10}\u{FF10}";
+    let text = "联系 \u{FF11}\u{FF13}\u{FF18}\u{FF10}\u{FF10}\u{FF11}\u{FF13}\u{FF18}\u{FF10}\u{FF10}\u{FF10} 和 \u{FF11}\u{FF13}\u{FF19}\u{FF10}\u{FF10}\u{FF11}\u{FF13}\u{FF19}\u{FF10}\u{FF10}\u{FF10} 和 \u{FF11}\u{FF14}\u{FF17}\u{FF10}\u{FF10}\u{FF11}\u{FF14}\u{FF17}\u{FF10}\u{FF10}\u{FF10}";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"phone_number".to_string()),
@@ -3859,7 +3871,7 @@ fn test_evasion_fullwidth_credential() {
 
 #[test]
 fn test_evasion_mixed_width_digits() {
-    let text = "ID card 0\u{FF10}000020000\u{FF11}010005";
+    let text = "身份证 0\u{FF10}000020000\u{FF11}010005";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -3972,12 +3984,17 @@ fn test_decode_html_entity_chinese() {
 }
 
 #[test]
-fn test_decode_html_entity_no_semicolon_preserved() {
+fn test_decode_html_entity_no_semicolon_decoded() {
+    // PoC：无分号数字实体是绕过手段，修复后应解码为对应字符
     let text = "&#49 is not decoded";
     let result = normalize_for_dlp(text);
     assert!(
-        result.contains("&#49"),
-        "Entity without semicolon should be preserved"
+        result.starts_with("1 "),
+        "Entity without semicolon should now be decoded, got: {result:?}"
+    );
+    assert!(
+        !result.contains("&#49"),
+        "Entity without semicolon should not be preserved, got: {result:?}"
     );
 }
 
@@ -3998,7 +4015,7 @@ fn test_decode_html_entity_normal_text_untouched() {
 
 #[test]
 fn test_evasion_html_entity_phone() {
-    let text = "联系 &#49;&#51;&#56;&#49;&#50;&#51;&#52;&#53;&#54;&#55;&#56; And &#49;&#53;&#57;&#56;&#55;&#54;&#53;&#52;&#51;&#50;&#49; And &#49;&#56;&#54;&#49;&#49;&#49;&#49;&#50;&#50;&#50;&#50;";
+    let text = "联系 &#49;&#51;&#56;&#49;&#50;&#51;&#52;&#53;&#54;&#55;&#56; 和 &#49;&#53;&#57;&#56;&#55;&#54;&#53;&#52;&#51;&#50;&#49; 和 &#49;&#56;&#54;&#49;&#49;&#49;&#49;&#50;&#50;&#50;&#50;";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"phone_number".to_string()),
@@ -4030,7 +4047,7 @@ fn test_evasion_html_entity_credential() {
 
 #[test]
 fn test_cvv_otp_no_double_count_4digit() {
-    let text = "VerifyCode/Digit: 4567";
+    let text = "验证码: 4567";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"cvv_code".to_string()),
@@ -4044,7 +4061,7 @@ fn test_cvv_otp_no_double_count_4digit() {
 
 #[test]
 fn test_cvv_3digit_no_otp_overlap() {
-    let text = "VerifyCode/Digit: 789";
+    let text = "验证码: 789";
     let result = scan_text(text);
     assert!(result.matches.contains(&"cvv_code".to_string()));
     assert!(
@@ -4055,7 +4072,7 @@ fn test_cvv_3digit_no_otp_overlap() {
 
 #[test]
 fn test_otp_still_works_without_jiaoyanma() {
-    let text = "VerifyCode/Digit: 582931";
+    let text = "验证码: 582931";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"otp_verification".to_string()),
@@ -4069,7 +4086,7 @@ fn test_otp_still_works_without_jiaoyanma() {
 
 #[test]
 fn test_otp_dynamic_password_still_works() {
-    let text = "Dynamic口令: 849261";
+    let text = "动态口令: 849261";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"otp_verification".to_string()),
@@ -4079,7 +4096,7 @@ fn test_otp_dynamic_password_still_works() {
 
 #[test]
 fn test_cvv_security_code_still_works() {
-    let text = "SecurityCode/Digit: 123";
+    let text = "安全码: 123";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"cvv_code".to_string()),
@@ -4091,7 +4108,7 @@ fn test_cvv_security_code_still_works() {
 
 #[test]
 fn test_evasion_combo_fullwidth_plus_zero_width() {
-    let text = "ID card \u{FF11}\u{200B}\u{FF11}\u{200B}\u{FF10}\u{200B}\u{FF11}\u{200B}\u{FF10}\u{200B}\u{FF11}\u{200B}\u{FF11}\u{200B}\u{FF19}\u{200B}\u{FF19}\u{200B}\u{FF10}\u{200B}\u{FF10}\u{200B}\u{FF11}\u{200B}\u{FF10}\u{200B}\u{FF11}\u{200B}\u{FF11}\u{200B}\u{FF12}\u{200B}\u{FF13}\u{200B}\u{FF17}";
+    let text = "身份证 \u{FF11}\u{200B}\u{FF11}\u{200B}\u{FF10}\u{200B}\u{FF11}\u{200B}\u{FF10}\u{200B}\u{FF11}\u{200B}\u{FF11}\u{200B}\u{FF19}\u{200B}\u{FF19}\u{200B}\u{FF10}\u{200B}\u{FF10}\u{200B}\u{FF11}\u{200B}\u{FF10}\u{200B}\u{FF11}\u{200B}\u{FF11}\u{200B}\u{FF12}\u{200B}\u{FF13}\u{200B}\u{FF17}";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -4123,7 +4140,7 @@ fn test_evasion_combo_all_three() {
 fn test_no_fp_marketing_email() {
     let text = "双十1促销活动！\n\
         全场full200减50，限时3Day！\n\
-        iPhone 16 Pro Max 直downgrade1000Yuan！\n\
+        iPhone 16 Pro Max 直downgrade1000元！\n\
         抢购linkConnect: shop.example.com\n\
         客服热线: 400-123-4567";
     let result = scan_text(text);
@@ -4166,9 +4183,9 @@ fn test_no_fp_log_file_content() {
 #[test]
 fn test_realistic_judicial_report() {
     let text = "信用调查报告：\n\
-        被Query人 失信被Executeline人，stored在line政处罚Recording。\n\
-        法院already下达ForceExecuteline通知，并作出limit消费令。\n\
-        裁定书Serial number: (2026)BeijingExecute字After12345Number";
+        被Query人 失信被执行人，stored在行政处罚记录。\n\
+        法院already下达强制执行通知，并作出限制消费令。\n\
+        裁定书编号: (2026)京执字After12345编号";
     let result = scan_text(text);
     assert!(result.matches.contains(&"judicial_record".to_string()));
     let detail = result.details.iter().find(|(k, _)| k == "judicial_record");
@@ -4177,4 +4194,674 @@ fn test_realistic_judicial_report() {
         detail.unwrap().1.len() >= 2,
         "Should detect >=2 distinct judicial keywords"
     );
+}
+
+
+// ============================================================
+// PoC 回归测试（绕过手段 → 修复后必须检出）
+// ============================================================
+
+#[test]
+fn test_attack_otp_verification_code() {
+    let result = scan_text("验证码：483920");
+    assert!(
+        result.matches.contains(&"otp_verification".to_string()),
+        "验证码 + 6 位数字应命中 otp_verification"
+    );
+    assert!(
+        !result.matches.contains(&"cvv_code".to_string()),
+        "6 位数字不应误判为 CVV"
+    );
+}
+
+#[test]
+fn test_attack_large_amount_wanyuan() {
+    let result = scan_text("合同金额 500万元，预付款 100万元");
+    assert!(
+        result.matches.contains(&"large_amount".to_string()),
+        "万元单位的大额金额应检出"
+    );
+}
+
+#[test]
+fn test_attack_contract_number_chinese() {
+    let contracts = find_contract_numbers("合同编号：HT20260101123456");
+    assert_eq!(contracts.len(), 1, "合同编号 + 字母数字编号应检出");
+}
+
+#[test]
+fn test_attack_lowercase_swift_scan() {
+    // 小写候选需带 swift/bic 上下文 (防英文散文单词误报)
+    let result = scan_text("请汇款至 SWIFT 代码 bkchcnbj 账户");
+    assert!(
+        result.matches.contains(&"swift_code".to_string()),
+        "小写 SWIFT 应在大写归一化后检出"
+    );
+}
+
+#[test]
+fn test_attack_lowercase_vin() {
+    let result = scan_text("vin: lsvau2180n2183294");
+    assert!(
+        result.matches.contains(&"vehicle_info".to_string()),
+        "小写 VIN 应检出"
+    );
+}
+
+#[test]
+fn test_attack_lowercase_iban() {
+    let result = scan_text("iban: de89370400440532013000");
+    assert!(
+        result.matches.contains(&"iban".to_string()),
+        "小写 IBAN 应检出"
+    );
+}
+
+#[test]
+fn test_attack_id_number_with_spaces() {
+    // 合法校验位 000000200001010005，攻击者插入空格分组绕过
+    let result = scan_text("身份证号: 000000 200001 010005");
+    assert!(
+        result.matches.contains(&"id_number".to_string()),
+        "带空格分隔的身份证号应检出"
+    );
+}
+
+#[test]
+fn test_attack_phones_with_dashes() {
+    let result = scan_text("联系人: 138-0013-8000, 139-0013-9000, 147-0014-7000");
+    assert!(
+        result.matches.contains(&"phone_number".to_string()),
+        "带横线分隔的手机号应检出"
+    );
+}
+
+#[test]
+fn test_attack_credit_card_dots() {
+    let result = scan_text("卡号 4111.1111.1111.1111");
+    assert!(
+        result.matches.contains(&"credit_card".to_string()),
+        "点号分隔的信用卡号应检出"
+    );
+}
+
+#[test]
+fn test_attack_window_straddle() {
+    // 敏感数据横跨 512KiB 窗口边界，64B 重叠区兜底
+    // 卡号前需空格: 卡号正则要求 ASCII 词边界, 字母填充直接粘连数字在任何窗口下都不构成匹配
+    let padding = "A".repeat(DLP_MAX_SCAN_LEN - 9);
+    let text = format!("{} 4111111111111111 尾部", padding);
+    let result = scan_text(&text);
+    assert!(
+        result.matches.contains(&"credit_card".to_string()),
+        "跨窗口边界的信用卡号应被重叠区覆盖并检出"
+    );
+}
+
+#[test]
+fn test_evasion_bidi_and_new_invisibles() {
+    // bidi 控制符 U+202E、韩语填充 U+3164、盲文空白 U+2800 插入关键词/数字中
+    let result = scan_text("验\u{202E}证\u{3164}码：4839\u{2800}20");
+    assert!(
+        result.matches.contains(&"otp_verification".to_string()),
+        "bidi/填充/盲文空白拆分关键词应被归一化后检出"
+    );
+}
+
+#[test]
+fn test_normalize_strips_extended_invisibles() {
+    let input = "\u{202A}\u{202E}\u{2066}\u{2069}\u{061C}\u{E0001}\u{E0020}\u{E007F}\u{FE00}\u{FE0F}\u{E0100}\u{E01EF}\u{115F}\u{1160}\u{3164}\u{FFA0}\u{2800}";
+    let result = normalize_for_dlp(input);
+    assert!(
+        result.is_empty(),
+        "扩充不可见字符集应全部剥离, got: {result:?}"
+    );
+}
+
+#[test]
+fn test_evasion_entity_no_semicolon_scan() {
+    // 无分号数字实体拼出 483920
+    let result = scan_text("验证码：&#52&#56&#51&#57&#50&#48");
+    assert!(
+        result.matches.contains(&"otp_verification".to_string()),
+        "无分号 HTML 实体编码的验证码应检出"
+    );
+}
+
+#[test]
+fn test_credential_traditional_variants() {
+    let result = scan_text("密碼：secret123");
+    assert!(
+        result.matches.contains(&"credential_leak".to_string()),
+        "繁体 密碼 应命中 credential_leak"
+    );
+    let result2 = scan_text("帳號：admin123");
+    assert!(
+        result2.matches.contains(&"credential_leak".to_string()),
+        "繁体 帳號 应命中 credential_leak"
+    );
+}
+
+#[test]
+fn test_bank_account_variants() {
+    for text in [
+        "账号：1234567890",
+        "帐户：1234567890",
+        "帐号：1234567890",
+    ] {
+        let result = scan_text(text);
+        assert!(
+            result.matches.contains(&"bank_account".to_string()),
+            "{text} 应命中 bank_account"
+        );
+    }
+}
+
+#[test]
+fn test_extract_dlp_text_html_body_stripped() {
+    let body = "<span>000000200</span><span>001010005</span>";
+    let uri = "/other/endpoint";
+    let text = extract_dlp_text(body, uri, Some("text/html"));
+    assert!(
+        text.contains("000000200001010005"),
+        "非 Coremail 的 text/html body 应剥标签后拼接文本, got: {text:?}"
+    );
+}
+
+// 第二轮红队修复 PoC (D1-D6)
+
+#[test]
+fn test_credit_card_max_separator_groups_detected() {
+    // D1: 真实卡号写法的最大分隔 (每组 4 个) 仍检出
+    let result = scan_text("卡号 4111----1111----1111----1111");
+    assert!(
+        result.matches.contains(&"credit_card".to_string()),
+        "每组 4 个分隔符的卡号写法应检出"
+    );
+}
+
+#[test]
+fn test_credit_card_excessive_separator_rejected() {
+    // D1: 超长分隔 (>4/组) 不再被正则拼成一个候选。
+    // 修复前 `[\s\-\.]*` 无上限, 攻击者用超长分隔让卡号匹配跨度超过
+    // 扫描窗口重叠区, 跨 512KiB 窗口边界时漏检; 修复后该写法不构成候选
+    let gap = "-".repeat(80);
+    let text = format!("卡号 4111{gap}1111{gap}1111{gap}1111");
+    let result = scan_text(&text);
+    assert!(
+        !result.matches.contains(&"credit_card".to_string()),
+        "超长分隔 (>4) 的卡号写法不应构成匹配"
+    );
+}
+
+#[test]
+fn test_credit_card_straddling_window_with_max_separators() {
+    // D1: 合法分组分隔 (4/组, 跨度 28B) 的卡号横跨 512KiB 窗口边界,
+    // 256B 重叠区保证覆盖 (匹配跨度上限 << 重叠区, 双保险)
+    let padding = "A".repeat(DLP_MAX_SCAN_LEN - 16);
+    let text = format!("{padding} 4111----1111----1111----1111 尾部");
+    let result = scan_text(&text);
+    assert!(
+        result.matches.contains(&"credit_card".to_string()),
+        "带分组分隔符的卡号跨窗口边界应被重叠区覆盖并检出"
+    );
+}
+
+#[test]
+fn test_evasion_c0_control_in_id_number() {
+    // D2: C0 控制符夹带进身份证号 (\x07 / \x0B), 修复前拆开数字串绕过
+    let result = scan_text("身份\x07证号: 0000002000010\x0B10005");
+    assert!(
+        result.matches.contains(&"id_number".to_string()),
+        "C0 控制符夹带的身份证号应被归一化后检出"
+    );
+}
+
+#[test]
+fn test_evasion_c0_control_in_credential() {
+    // D2: C0 控制符拆分密码关键词
+    let result = scan_text("密\x0C码：hunter2");
+    assert!(
+        result.matches.contains(&"credential_leak".to_string()),
+        "C0 控制符拆分密码关键词应被归一化后检出"
+    );
+}
+
+#[test]
+fn test_normalize_c0_stripped_but_keeps_whitespace() {
+    // D2: 剥 C0 但保留 \t \n \r
+    let input = "a\u{0007}b\u{000B}c\u{001F}d\te\nf\rg";
+    let result = normalize_for_dlp(input);
+    assert_eq!(result, "abcd\te\nf\rg");
+}
+
+#[test]
+fn test_evasion_named_entity_credential() {
+    // D3: 命名实体 &colon; 构造 password: 绕过 credential 分隔符匹配
+    let result = scan_text("password&colon; hunter2");
+    assert!(
+        result.matches.contains(&"credential_leak".to_string()),
+        "命名实体 &colon; 编码的 credential 应检出"
+    );
+}
+
+#[test]
+fn test_evasion_named_entity_equals_tab() {
+    // D3: &equals; / &Tab; 变体
+    let result = scan_text("密码&equals;&Tab;123456");
+    assert!(
+        result.matches.contains(&"credential_leak".to_string()),
+        "&equals;/&Tab; 编码的 credential 应检出"
+    );
+}
+
+#[test]
+fn test_decode_named_entities_unit() {
+    // D3: 最小命名实体表解码
+    assert_eq!(normalize_for_dlp("a&colon;b&equals;c"), "a:b=c");
+    assert_eq!(normalize_for_dlp("x&Tab;y&NewLine;z"), "x\ty\nz");
+    assert_eq!(
+        normalize_for_dlp("&lt;tag&gt;&quot;q&quot;&amp;amp"),
+        "<tag>\"q\"&amp"
+    );
+}
+
+#[test]
+fn test_named_entity_unknown_and_bare_ampersand_untouched() {
+    // D3: 未收录的实体名与裸 & 原样保留
+    assert_eq!(normalize_for_dlp("a&nbsp;b"), "a&nbsp;b");
+    assert_eq!(normalize_for_dlp("Tom & Jerry"), "Tom & Jerry");
+    assert_eq!(normalize_for_dlp("AT&T"), "AT&T");
+}
+
+#[test]
+fn test_prefilter_vin_digit_start() {
+    // D4-1: VIN 详查允许数字开头, 预筛原先只覆盖字母开头 -> 预筛拦截漏检
+    let result = scan_text("车架号 1HGBH41JXMN109186");
+    assert!(
+        result.matches.contains(&"vehicle_info".to_string()),
+        "数字开头的 VIN 应检出"
+    );
+}
+
+#[test]
+fn test_prefilter_biometric_eye_pattern_and_facial() {
+    // D4-2: 眼纹/facial recognition 预筛缺失。
+    // 两个关键词都不在旧预筛表中, 修复前预筛整体不命中 -> 漏检
+    let result = scan_text("门禁采集: 眼纹 + facial recognition");
+    assert!(
+        result.matches.contains(&"biometric_data".to_string()),
+        "眼纹 + facial recognition (预筛漏词) 应检出 biometric_data"
+    );
+}
+
+#[test]
+fn test_prefilter_medical_nursing_and_fertility() {
+    // D4-3: 护理记录/生育信息 预筛缺失 (两个关键词都不在旧预筛表中)
+    let result = scan_text("附件为患者的护理记录与生育信息");
+    assert!(
+        result.matches.contains(&"medical_health".to_string()),
+        "护理记录 + 生育信息 (预筛漏词) 应检出 medical_health"
+    );
+}
+
+#[test]
+fn test_prefilter_superset_of_detailed_patterns() {
+    // D4 一致性: 每个详查类别的触发样例必须命中同索引的预筛模式,
+    // 防止预筛词表与详查正则漂移导致静默漏检
+    let cases: &[(usize, &str)] = &[
+        (0, "4111111111111111"),
+        (1, "110101199001011234"),
+        (2, "13800138000"),
+        (3, "6222021234567890123"),
+        (4, "北京市朝阳区建国路88号"),
+        (5, "user@example.com"),
+        (6, "E12345678"),
+        (7, "A0000000000000000M"),
+        (8, "password: hunter2"),
+        (9, "BKCHCNBJ"),
+        (10, "cvv: 123"),
+        (11, "110108MA12345N9"),
+        (12, "DE89370400440532013000"),
+        (13, "100万元"),
+        (14, "账号：1234567890"),
+        (15, "合同编号：PL12345678901234"),
+        (16, "眼纹"),
+        (17, "护理记录"),
+        (18, "1HGBH41JXMN109186"),
+        (19, "不动产权证"),
+        (20, "月薪：25000元"),
+        (21, "GPS坐标：116.39750"),
+        (22, "验证码：483920"),
+        (23, "贷款余额：500000元"),
+        (24, "投保人：张三"),
+        (25, "配偶：李四"),
+        (26, "工号：E001"),
+        (27, "失信被执行人"),
+        (28, "学历：本科"),
+        (29, "营业执照编号：110105012345678"),
+    ];
+    for &(idx, sample) in cases {
+        let hits = DLP_REGEX_SET.matches(sample);
+        assert!(
+            hits.matched(idx),
+            "预筛 idx {idx} 未命中详查触发样例: {sample:?}"
+        );
+    }
+}
+
+#[test]
+fn test_credential_simplified_account_variants() {
+    // D5: 简体 账号/账户/帐号/帐户 缺口 (原先只有繁体 帳號/帳戶)
+    for text in ["账号：hunter2", "账户：hunter2", "帐号：hunter2", "帐户：hunter2"] {
+        let result = scan_text(text);
+        assert!(
+            result.matches.contains(&"credential_leak".to_string()),
+            "{text} 应命中 credential_leak"
+        );
+    }
+}
+
+#[test]
+fn test_bank_account_traditional_full_variants() {
+    // D5: 繁体 帳號/帳戶 上下文缺口
+    for text in ["帳號：1234567890", "帳戶：1234567890"] {
+        let result = scan_text(text);
+        assert!(
+            result.matches.contains(&"bank_account".to_string()),
+            "{text} 应命中 bank_account"
+        );
+    }
+}
+
+#[test]
+fn test_attack_phone_with_middle_dot_separator() {
+    // D6: 间隔号·分隔的手机号 (修复前分隔符类只有空格/连字符)
+    let result = scan_text("联系人: 138·0013·8000, 139·0013·9000, 147·0014·7000");
+    assert!(
+        result.matches.contains(&"phone_number".to_string()),
+        "间隔号分隔的手机号应检出"
+    );
+}
+
+#[test]
+fn test_attack_phone_with_two_char_separator() {
+    // D6: 两位分隔符 (量词 {0,2}, 修复前 {0,1} 不容许)
+    let result = scan_text("联系人: 138--0013--8000, 139--0013--9000, 147--0014--7000");
+    assert!(
+        result.matches.contains(&"phone_number".to_string()),
+        "双分隔符写法的手机号应检出"
+    );
+}
+
+#[test]
+fn test_attack_id_number_with_dot_middle_dot_mix() {
+    // D6: 点+间隔号混合分隔的身份证号 (合法校验位 110101199001011237)
+    let result = scan_text("身份证号: 1101.0119.9001.0112·37");
+    assert!(
+        result.matches.contains(&"id_number".to_string()),
+        "点/间隔号混合分隔的身份证号应检出"
+    );
+}
+
+// D1-1: NFKC 兼容性折叠 (数学/带圈/装饰字符打散正则与关键词)
+
+#[test]
+fn test_normalize_nfkc_math_bold_digits() {
+    // 数学数字区块 (加粗/双线/等宽) U+1D7CE+ -> ASCII
+    // (𝟏=U+1D7CF 𝟐=U+1D7D0 𝟑=U+1D7D1, 双线 𝟘=U+1D7D8 -> 0)
+    assert_eq!(normalize_for_dlp("\u{1D7CF}\u{1D7D0}\u{1D7D1}"), "123");
+    assert_eq!(normalize_for_dlp("\u{1D7D8}"), "0");
+    // 带圈数字 ①②③ -> 123
+    assert_eq!(normalize_for_dlp("\u{2460}\u{2461}\u{2462}"), "123");
+    // 带圈小写字母 ⓟⓐⓢⓢ -> pass
+    assert_eq!(
+        normalize_for_dlp("\u{24DF}\u{24D0}\u{24E2}\u{24E2}"),
+        "pass"
+    );
+}
+
+#[test]
+fn test_attack_math_bold_digits_credit_card() {
+    // D1-1 PoC: 数学加粗数字写法的卡号, 修复前 \d 正则不认 U+1D7CE 区块完全失明
+    let math_bold: String = "4111111111111111"
+        .chars()
+        .map(|c| char::from_u32(0x1D7CE + c.to_digit(10).unwrap()).unwrap())
+        .collect();
+    let text = format!("卡号 {}", math_bold);
+    let result = scan_text(&text);
+    assert!(
+        result.matches.contains(&"credit_card".to_string()),
+        "数学加粗数字写法的卡号应检出 credit_card"
+    );
+}
+
+#[test]
+fn test_attack_circled_digits_id_number() {
+    // D1-1 PoC: 圆圈数字 (①②③ + ⓪) 写法身份证 (合法校验位 110101199001011237)
+    let circled: String = "110101199001011237"
+        .chars()
+        .map(|c| {
+            let d = c.to_digit(10).unwrap();
+            // U+2460=① .. U+2468=⑨, U+24EA=⓪
+            char::from_u32(if d == 0 { 0x24EA } else { 0x2460 + d - 1 }).unwrap()
+        })
+        .collect();
+    let text = format!("身份证号: {}", circled);
+    let result = scan_text(&text);
+    assert!(
+        result.matches.contains(&"id_number".to_string()),
+        "圆圈数字写法的身份证号应检出 id_number"
+    );
+}
+
+#[test]
+fn test_attack_circled_letters_credential() {
+    // D1-1 PoC: ⓟⓐⓢⓢⓦⓞⓡⓓ 打散 credential 关键词上下文
+    let text = "\u{24DF}\u{24D0}\u{24E2}\u{24E2}\u{24E6}\u{24DE}\u{24E1}\u{24D3}: hunter2";
+    let result = scan_text(text);
+    assert!(
+        result.matches.contains(&"credential_leak".to_string()),
+        "带圈字母写法的 password 上下文应检出 credential_leak"
+    );
+}
+
+// D1-2: 编码视图二级解码重扫 (base64/hex)
+
+#[test]
+fn test_attack_base64_encoded_id_number() {
+    // D1-2 PoC: base64 编码的身份证号段, 修复前明文扫描对编码串完全失明
+    use base64::Engine as _;
+    let encoded =
+        base64::engine::general_purpose::STANDARD.encode("身份证号:110101199001011237");
+    assert!(encoded.len() >= 40, "测试样例需满足候选段下限");
+    let text = format!("附件编码段: {}", encoded);
+    let result = scan_text(&text);
+    assert!(
+        result.matches.contains(&"id_number".to_string()),
+        "base64 编码的身份证号应解码后检出 id_number"
+    );
+    assert!(
+        result.matches.contains(&"encoded_sensitive_data".to_string()),
+        "编码通道命中应附加 encoded_sensitive_data 归因标记"
+    );
+}
+
+#[test]
+fn test_attack_hex_encoded_credit_card() {
+    // D1-2 PoC: hex 编码的卡号段, 修复前明文扫描对编码串完全失明
+    let hex: String = "credit card number 4111111111111111"
+        .bytes()
+        .map(|b| format!("{:02x}", b))
+        .collect();
+    assert!(hex.len() >= 32, "测试样例需满足候选段下限");
+    let text = format!("编码负载: {}", hex);
+    let result = scan_text(&text);
+    assert!(
+        result.matches.contains(&"credit_card".to_string()),
+        "hex 编码的卡号应解码后检出 credit_card"
+    );
+    assert!(
+        result.matches.contains(&"encoded_sensitive_data".to_string()),
+        "编码通道命中应附加 encoded_sensitive_data 归因标记"
+    );
+}
+
+#[test]
+fn test_encoded_view_jwt_no_false_positive() {
+    // D1-2 反误报: 正常长 token (JWT 样例) 解码后无敏感模式, 不应误报
+    let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c";
+    let result = scan_text(jwt);
+    assert!(
+        result.matches.is_empty(),
+        "正常 JWT 不应触发任何 DLP 类别: {:?}",
+        result.matches
+    );
+}
+
+// ─── B1: 命中量上限 / 合并复杂度 / wall-clock 预算 ─────────────────────
+
+/// 按 GB 11643-1999 公开标准计算身份证校验位 (测试辅助, 生成真实合法的
+/// 攻击语料: 校验位合法的 18 位号码, 非与实现同源生成的伪 token)。
+fn gb11643_check_digit(first17: &str) -> char {
+    const WEIGHTS: [u32; 17] = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2];
+    const CHECK_CHARS: [char; 11] = ['1', '0', 'X', '9', '8', '7', '6', '5', '4', '3', '2'];
+    let sum: u32 = first17
+        .bytes()
+        .zip(WEIGHTS)
+        .map(|(b, w)| u32::from(b - b'0') * w)
+        .sum();
+    CHECK_CHARS[(sum % 11) as usize]
+}
+
+/// 生成 `count` 个互异且校验位合法的身份证号 (区域码 110101 + 不同出生日期/顺序码)。
+fn make_valid_ids(count: usize) -> Vec<String> {
+    let mut ids = Vec::with_capacity(count);
+    let mut serial: u32 = 0;
+    while ids.len() < count {
+        // 出生日期 + 顺序码都变化, 保证互异
+        let day = (serial % 28) + 1;
+        let month = (serial / 28) % 12 + 1;
+        let year = 1950 + (serial / 336) % 60;
+        let seq = serial % 1000;
+        let first17 = format!("110101{:04}{:02}{:02}{:03}", year, month, day, seq);
+        ids.push(format!("{}{}", first17, gb11643_check_digit(&first17)));
+        serial += 1;
+    }
+    ids
+}
+
+#[test]
+fn test_valid_ids_generator_produces_check_digit_valid_ids() {
+    // 生成器自检: 抽样的确是校验位合法的真实格式号码
+    let ids = make_valid_ids(8);
+    for id in &ids {
+        assert!(chinese_id_check(id), "生成器产出必须过校验: {id}");
+    }
+    let unique: std::collections::HashSet<_> = ids.iter().collect();
+    assert_eq!(unique.len(), ids.len(), "生成器产出必须互异");
+}
+
+#[test]
+fn test_dlp_hit_count_hard_cap_marks_truncated() {
+    // B1 PoC (修复前可绕过): 正文塞入远超上限的互异合法身份证号。
+    // 修复前: 全部收集进 Vec, 合并去重 O(n²), 无 truncated 概念;
+    // 修复后: 每类别最多 DLP_MAX_MATCHES_PER_CATEGORY 条且置 truncated。
+    let ids = make_valid_ids(DLP_MAX_MATCHES_PER_CATEGORY + 500);
+    let text = ids.join("\n");
+    let started = std::time::Instant::now();
+    let result = scan_text(&text);
+    let elapsed = started.elapsed();
+
+    assert!(
+        result.matches.contains(&"id_number".to_string()),
+        "超上限命中仍应检出类别: {:?}",
+        result.matches
+    );
+    let values = result
+        .details
+        .iter()
+        .find(|(n, _)| n == "id_number")
+        .map(|(_, v)| v.len())
+        .unwrap_or(0);
+    assert_eq!(
+        values, DLP_MAX_MATCHES_PER_CATEGORY,
+        "命中值必须截断到硬上限, 实际 {values}"
+    );
+    assert!(result.truncated, "超上限必须置 truncated 标记");
+    assert!(
+        elapsed.as_secs() < 30,
+        "合并耗时必须可控 (HashSet 去重), 实际 {elapsed:?}"
+    );
+}
+
+#[test]
+fn test_dlp_hit_cap_spans_multiple_windows() {
+    // B1 PoC: 命中分布跨多个 512KiB 扫描窗口, 合并路径也必须受上限约束。
+    // (修复前 merge_dlp_results 的 Vec::contains 逐值线性扫描退化为 O(n²))
+    let ids = make_valid_ids(DLP_MAX_MATCHES_PER_CATEGORY * 3);
+    let padding = "填充段落。".repeat(600_000); // ~3MB, 强制分多窗
+    let mut text = String::new();
+    for (i, chunk) in ids.chunks(DLP_MAX_MATCHES_PER_CATEGORY).enumerate() {
+        text.push_str(&chunk.join("\n"));
+        text.push('\n');
+        if i < 2 {
+            text.push_str(&padding);
+            text.push('\n');
+        }
+    }
+    let started = std::time::Instant::now();
+    let result = scan_text(&text);
+    let elapsed = started.elapsed();
+
+    let values = result
+        .details
+        .iter()
+        .find(|(n, _)| n == "id_number")
+        .map(|(_, v)| v.len())
+        .unwrap_or(0);
+    assert_eq!(values, DLP_MAX_MATCHES_PER_CATEGORY);
+    assert!(result.truncated);
+    assert!(
+        elapsed.as_secs() < 30,
+        "多窗合并耗时必须可控, 实际 {elapsed:?}"
+    );
+}
+
+#[test]
+fn test_dlp_under_cap_not_marked_truncated() {
+    // 反误报护栏: 正常量级命中不得置 truncated
+    let ids = make_valid_ids(5);
+    let text = format!("员工身份证号: {}", ids.join(", "));
+    let result = scan_text(&text);
+    assert!(result.matches.contains(&"id_number".to_string()));
+    assert!(!result.truncated, "未超上限不得置 truncated");
+}
+
+#[test]
+fn test_merge_dlp_results_caps_and_dedups() {
+    // 直接验证合并逻辑: 跨窗重叠命中去重 + 超上限截断
+    let mut target = DlpScanResult::default();
+    let mut src = DlpScanResult::default();
+    src.matches.push("id_number".to_string());
+    src.details.push((
+        "id_number".to_string(),
+        (0..1500).map(|i| format!("value_{i}")).collect(),
+    ));
+    merge_dlp_results(&mut target, src);
+    let values = &target.details[0].1;
+    assert_eq!(values.len(), DLP_MAX_MATCHES_PER_CATEGORY);
+    assert!(target.truncated);
+
+    // 同值重复合并不膨胀
+    let mut target2 = DlpScanResult::default();
+    for _ in 0..3 {
+        let mut s = DlpScanResult::default();
+        s.matches.push("id_number".to_string());
+        s.details
+            .push(("id_number".to_string(), vec!["same_value".to_string()]));
+        merge_dlp_results(&mut target2, s);
+    }
+    assert_eq!(target2.details[0].1.len(), 1, "跨窗重复命中必须去重");
+    assert!(!target2.truncated);
 }

@@ -68,6 +68,47 @@ _STALL_TIMEOUT = int(os.environ.get("VIGILYX_TRAIN_STALL_TIMEOUT", "3600"))  # S
 # Training-progress file written by the subprocess and read by the API process
 PROGRESS_FILE = os.path.join(MODEL_OUTPUT_DIR, ".training_progress.json")
 
+# SEC-23: warn-once flag for unpinned HuggingFace base-model downloads.
+_hf_revision_warned = False
+
+
+def _training_stall_duration(
+    last_update: float,
+    process_started_at: float,
+    now: Optional[float] = None,
+) -> float:
+    """Return seconds since this run's last observed activity.
+
+    A child that never writes a progress file is measured from process start;
+    stale progress left by an earlier run can never cause an immediate kill.
+    """
+    current_time = time.time() if now is None else now
+    last_activity = max(float(last_update or 0), process_started_at)
+    return max(0.0, current_time - last_activity)
+
+
+def _base_model_kwargs() -> dict:
+    """
+    Return `revision=...` when HF_BASE_MODEL_REVISION pins a commit hash.
+
+    Pinning mitigates supply-chain risk from mutable upstream model artifacts.
+    Without a pin the latest revision is downloaded (previous behavior) and a
+    one-time warning is logged.
+    """
+    global _hf_revision_warned
+    revision = os.environ.get("HF_BASE_MODEL_REVISION", "").strip()
+    if revision:
+        return {"revision": revision}
+    if not _hf_revision_warned:
+        _hf_revision_warned = True
+        logger.warning(
+            "HF_BASE_MODEL_REVISION is not set; downloading the latest base-model "
+            "revision without pinning (supply-chain risk). Set HF_BASE_MODEL_REVISION "
+            "to a commit hash to pin the download.",
+            model=BASE_MODEL_HF,
+        )
+    return {}
+
 
 def _simple_augment(text: str, rng: random.Random) -> str:
     """Structure-aware email text augmentation.
@@ -215,9 +256,9 @@ def _ensure_base_model() -> str:
 
     os.makedirs(BASE_MODEL_DIR, exist_ok=True)
 
-    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_HF)
+    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL_HF, **_base_model_kwargs())
     model = AutoModelForSequenceClassification.from_pretrained(
-        BASE_MODEL_HF, num_labels=NUM_LABELS,
+        BASE_MODEL_HF, num_labels=NUM_LABELS, **_base_model_kwargs(),
     )
 
     # Use semantic label mappings instead of the default LABEL_0/LABEL_1 names.
@@ -1157,6 +1198,7 @@ class PhishingTrainer:
                 target=_train_in_subprocess,
                 args=(samples_json, base_model_dir, result_queue),
             )
+            process_started_at = time.time()
             process.start()
 
             import asyncio
@@ -1172,8 +1214,11 @@ class PhishingTrainer:
                     last_update = (
                         progress.get("updated_at", 0) if progress else 0
                     )
-                    stall_duration = time.time() - last_update if last_update else 0
-                    if last_update and stall_duration > _STALL_TIMEOUT:
+                    stall_duration = _training_stall_duration(
+                        last_update,
+                        process_started_at,
+                    )
+                    if stall_duration > _STALL_TIMEOUT:
                         logger.error(
                             "Training subprocess stalled, killing",
                             stall_s=int(stall_duration),

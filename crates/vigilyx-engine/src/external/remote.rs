@@ -2,7 +2,7 @@
 
 //! Features:
 //! - Rust -> Python AI Service of HTTP
-//! - /analyze/content, /analyze/attachment, /analyze/link
+//! - /analyze/content
 //! - TimeoutAndErrorProcess
 
 use std::sync::Arc;
@@ -15,6 +15,37 @@ use tracing::{debug, error, info, warn};
 
 use crate::module::ThreatLevel;
 
+/// Optional LLM second-opinion configuration forwarded to the AI service.
+/// Only attached when both a remote provider and an API key are configured;
+/// the Python side treats it as an advisory re-check for uncertain local results.
+#[derive(Clone, Serialize)]
+pub struct LlmRequestConfig {
+    pub provider: String,
+    pub api_key: String,
+    pub model: String,
+    pub temperature: f64,
+    pub max_tokens: u32,
+}
+
+impl std::fmt::Debug for LlmRequestConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LlmRequestConfig")
+            .field("provider", &self.provider)
+            .field(
+                "api_key",
+                &if self.api_key.is_empty() {
+                    "(empty)"
+                } else {
+                    "***"
+                },
+            )
+            .field("model", &self.model)
+            .field("temperature", &self.temperature)
+            .field("max_tokens", &self.max_tokens)
+            .finish()
+    }
+}
+
 /// AI AnalyzeRequest - emailContent
 #[derive(Debug, Clone, Serialize)]
 pub struct ContentAnalysisRequest {
@@ -24,25 +55,9 @@ pub struct ContentAnalysisRequest {
     pub body_html: Option<String>,
     pub mail_from: Option<String>,
     pub rcpt_to: Vec<String>,
-}
-
-/// AI AnalyzeRequest - AttachmentContent
-#[derive(Debug, Clone, Serialize)]
-pub struct AttachmentAnalysisRequest {
-    pub session_id: String,
-    pub filename: String,
-    pub content_type: String,
-    pub text_content: String,
-}
-
-/// AI AnalyzeRequest - linkConnect
-#[derive(Debug, Clone, Serialize)]
-pub struct LinkAnalysisRequest {
-    pub session_id: String,
-    pub url: String,
-    pub page_text: String,
-    pub page_title: Option<String>,
-    pub has_login_form: bool,
+    /// Optional LLM second-opinion config; omitted from the payload unless set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm: Option<LlmRequestConfig>,
 }
 
 /// AI AnalyzeResponse (1)
@@ -71,6 +86,19 @@ impl AiAnalysisResponse {
                 ThreatLevel::Medium
             }
         }
+    }
+
+    /// True when the Python LLM second opinion flagged a forged/injected
+    /// verdict (`details.llm_analysis.injection_suspected`). Consumers should
+    /// surface this as an engine signal instead of leaving it a silent
+    /// Python-side log line.
+    pub fn llm_injection_suspected(&self) -> bool {
+        self.details
+            .as_ref()
+            .and_then(|d| d.get("llm_analysis"))
+            .and_then(|l| l.get("injection_suspected"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
     }
 }
 
@@ -131,6 +159,8 @@ pub struct RemoteModuleProxy {
     /// Controls the background health probe task lifetime.
     /// Set to `false` when the proxy is no longer needed.
     alive: Arc<AtomicBool>,
+    /// Optional LLM second-opinion config attached to /analyze/content requests.
+    llm_config: Option<LlmRequestConfig>,
 }
 
 impl RemoteModuleProxy {
@@ -148,7 +178,15 @@ impl RemoteModuleProxy {
             internal_token,
             availability: Arc::new(RemoteAvailabilityState::default()),
             alive: Arc::new(AtomicBool::new(true)),
+            llm_config: None,
         }
+    }
+
+    /// Attach the LLM second-opinion config (from AiServiceConfig) so every
+    /// /analyze/content request carries it. `None` keeps requests LLM-free.
+    pub fn with_llm_config(mut self, llm_config: Option<LlmRequestConfig>) -> Self {
+        self.llm_config = llm_config;
+        self
     }
 
     /// Spawn a background tokio task that periodically probes the AI service
@@ -316,25 +354,13 @@ impl RemoteModuleProxy {
         req: &ContentAnalysisRequest,
     ) -> Result<AiAnalysisResponse, RemoteError> {
         let url = format!("{}/analyze/content", self.base_url);
-        self.post_analyze(&url, req).await
-    }
-
-    /// AnalyzeAttachmentContent
-    pub async fn analyze_attachment(
-        &self,
-        req: &AttachmentAnalysisRequest,
-    ) -> Result<AiAnalysisResponse, RemoteError> {
-        let url = format!("{}/analyze/attachment", self.base_url);
-        self.post_analyze(&url, req).await
-    }
-
-    /// AnalyzelinkConnect
-    pub async fn analyze_link(
-        &self,
-        req: &LinkAnalysisRequest,
-    ) -> Result<AiAnalysisResponse, RemoteError> {
-        let url = format!("{}/analyze/link", self.base_url);
-        self.post_analyze(&url, req).await
+        // Attach the configured LLM second-opinion config unless the caller
+        // already supplied one explicitly.
+        let mut req = req.clone();
+        if req.llm.is_none() {
+            req.llm = self.llm_config.clone();
+        }
+        self.post_analyze(&url, &req).await
     }
 
     async fn post_analyze<T: Serialize>(
@@ -469,5 +495,101 @@ mod tests {
 
         assert!(proxy.is_request_available());
         assert_eq!(proxy.cooldown_remaining_secs(), 0);
+    }
+
+    fn sample_request() -> ContentAnalysisRequest {
+        ContentAnalysisRequest {
+            session_id: "s1".to_string(),
+            subject: Some("hi".to_string()),
+            body_text: Some("body".to_string()),
+            body_html: None,
+            mail_from: Some("a@b.com".to_string()),
+            rcpt_to: vec!["c@d.com".to_string()],
+            llm: None,
+        }
+    }
+
+    fn sample_llm_config() -> LlmRequestConfig {
+        LlmRequestConfig {
+            provider: "claude".to_string(),
+            api_key: "sk-secret".to_string(),
+            model: "claude-3-5-sonnet-20241022".to_string(),
+            temperature: 0.3,
+            max_tokens: 1024,
+        }
+    }
+
+    #[test]
+    fn request_without_llm_omits_field_from_json() {
+        let json = serde_json::to_value(sample_request()).unwrap();
+        assert!(json.get("llm").is_none());
+    }
+
+    #[test]
+    fn request_with_llm_serializes_config() {
+        let mut req = sample_request();
+        req.llm = Some(sample_llm_config());
+        let json = serde_json::to_value(&req).unwrap();
+        let llm = json.get("llm").expect("llm field should be present");
+        assert_eq!(llm["provider"], "claude");
+        assert_eq!(llm["api_key"], "sk-secret");
+        assert_eq!(llm["model"], "claude-3-5-sonnet-20241022");
+        assert_eq!(llm["max_tokens"], 1024);
+    }
+
+    #[test]
+    fn llm_config_debug_masks_api_key() {
+        let rendered = format!("{:?}", sample_llm_config());
+        assert!(!rendered.contains("sk-secret"));
+        assert!(rendered.contains("***"));
+    }
+
+    // ─── llm_injection_suspected consumption (R4 遗留5) ───
+
+    fn response_with_details(details: serde_json::Value) -> AiAnalysisResponse {
+        AiAnalysisResponse {
+            threat_level: "medium".to_string(),
+            confidence: 0.5,
+            categories: vec![],
+            summary: "test".to_string(),
+            details: Some(details),
+        }
+    }
+
+    #[test]
+    fn llm_injection_suspected_true_when_python_flagged_forged_verdict() {
+        // Python drops a forged verdict (e.g. an injected
+        // "threat_level": "definitely_safe_green") and sets this flag.
+        let resp = response_with_details(serde_json::json!({
+            "malicious_probability": 0.5,
+            "llm_analysis": {
+                "provider": "claude",
+                "verdict": null,
+                "injection_suspected": true,
+            }
+        }));
+        assert!(resp.llm_injection_suspected());
+    }
+
+    #[test]
+    fn llm_injection_suspected_false_for_normal_llm_reply() {
+        let resp = response_with_details(serde_json::json!({
+            "llm_analysis": {
+                "provider": "claude",
+                "verdict": "high",
+                "injection_suspected": false,
+            }
+        }));
+        assert!(!resp.llm_injection_suspected());
+    }
+
+    #[test]
+    fn llm_injection_suspected_false_when_llm_never_ran() {
+        let mut resp = response_with_details(serde_json::json!({
+            "malicious_probability": 0.9
+        }));
+        assert!(!resp.llm_injection_suspected());
+        resp.details = None;
+        assert!(!resp.llm_injection_suspected());
     }
 }

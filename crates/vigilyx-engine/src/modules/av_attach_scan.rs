@@ -8,6 +8,9 @@
 //! - If any attachment is detected as infected, the verdict is immediately Critical.
 //! - If ClamAV is unavailable, returns `scan_incomplete` with a low suspicion score
 //!   (BPA b=0.08) — NOT `not_applicable` / safe (CWE-636 fail-open prevention).
+//! - A partial failure (some scans errored or panicked while others succeeded)
+//!   also returns `scan_incomplete`: an errored attachment was never checked, so
+//!   the email must not be presented as fully AV-clean (CWE-636).
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -83,7 +86,7 @@ impl SecurityModule for AvAttachScanModule {
         let mut infected_files: Vec<String> = Vec::new();
         let mut scanned_count: u32 = 0;
         let mut skipped_count: u32 = 0;
-        let mut clamav_error = false;
+        let mut error_count: u32 = 0;
 
         // Collect decodable attachments for concurrent scanning
         let mut scan_tasks = tokio::task::JoinSet::new();
@@ -164,7 +167,7 @@ impl SecurityModule for AvAttachScanModule {
                         });
                     }
                     Err(e) => {
-                        clamav_error = true;
+                        error_count += 1;
                         let err_msg = format!("{}", e);
                         warn!(
                             module = "av_attach_scan",
@@ -183,7 +186,16 @@ impl SecurityModule for AvAttachScanModule {
                     }
                 },
                 Err(join_err) => {
+                    // A panicked task means that attachment was never checked;
+                    // count it as a scan error so the result cannot be Safe.
+                    error_count += 1;
                     warn!(module = "av_attach_scan", error = %join_err, "Scan task panicked");
+                    evidence.push(Evidence {
+                        description: "Attachment scan task panicked — scan incomplete"
+                            .to_string(),
+                        location: None,
+                        snippet: None,
+                    });
                 }
             }
         }
@@ -194,7 +206,7 @@ impl SecurityModule for AvAttachScanModule {
         // F01 fix: Return scan_incomplete with non-zero suspicion instead of
         // not_applicable (vacuous BPA), so the verdict pipeline knows the scan
         // was NOT completed — not that the attachments are safe.
-        if clamav_error && scanned_count == 0 && infected_files.is_empty() {
+        if error_count > 0 && scanned_count == 0 && infected_files.is_empty() {
             warn!(
                 module = "av_attach_scan",
                 attachment_count = attachments.len(),
@@ -293,19 +305,93 @@ impl SecurityModule for AvAttachScanModule {
             });
         }
 
+        // F04 fix: some attachments scanned cleanly but at least one scan
+        // errored (protocol/IO failure) or its task panicked. The errored
+        // attachment was never actually checked, so the overall scan is
+        // incomplete — never present a fully clean result over a coverage
+        // gap (CWE-636; an attacker can deliberately induce per-stream
+        // errors to smuggle an unscanned attachment past a clean one).
+        if error_count > 0 {
+            warn!(
+                module = "av_attach_scan",
+                error_count,
+                scanned_count,
+                "Some attachment scans failed alongside successful scans, marking scan as incomplete"
+            );
+            return Ok(ModuleResult {
+                module_id: self.meta.id.clone(),
+                module_name: self.meta.name.clone(),
+                pillar: self.meta.pillar,
+                threat_level: ThreatLevel::Low,
+                confidence: 0.10,
+                categories: vec!["scan_incomplete".to_string()],
+                summary: format!(
+                    "Scanned {} attachment(s) with no viruses found, but {} scan(s) failed — scan incomplete",
+                    scanned_count, error_count
+                ),
+                evidence,
+                details: serde_json::json!({
+                    "scan_status": "incomplete",
+                    "reason": "partial_scan_error",
+                    "scanned_count": scanned_count,
+                    "error_count": error_count,
+                    "skipped_count": skipped_count,
+                    "total_attachments": attachments.len(),
+                }),
+                duration_ms,
+                analyzed_at: Utc::now(),
+                bpa: Some(vigilyx_core::security::Bpa::new(0.08, 0.0, 0.92)),
+                engine_id: None,
+            });
+        }
+
+        // Scanned attachments are clean, but some attachments bypassed AV
+        // scanning (size limit or undecodable payload). A partially scanned
+        // email must not be presented as a fully clean scan — keep a Low
+        // scan_skipped_size_limit result so the verdict layer records the
+        // coverage gap.
+        if skipped_count > 0 {
+            info!(
+                module = "av_attach_scan",
+                scanned_count,
+                skipped_count,
+                total = attachments.len(),
+                "Some attachments exceed size limit for antivirus scanning, partial scan only"
+            );
+            return Ok(ModuleResult {
+                module_id: self.meta.id.clone(),
+                module_name: self.meta.name.clone(),
+                pillar: self.meta.pillar,
+                threat_level: ThreatLevel::Low,
+                confidence: 0.10,
+                categories: vec!["scan_skipped_size_limit".to_string()],
+                summary: format!(
+                    "Scanned {} attachment(s), no viruses found; {} attachment(s) skipped (size limit or undecodable), scan incomplete",
+                    scanned_count, skipped_count
+                ),
+                evidence,
+                details: serde_json::json!({
+                    "scan_status": "partial",
+                    "reason": "attachments_exceed_size_limit",
+                    "scanned_count": scanned_count,
+                    "skipped_count": skipped_count,
+                    "total_attachments": attachments.len(),
+                }),
+                duration_ms,
+                analyzed_at: Utc::now(),
+                bpa: Some(vigilyx_core::security::Bpa::new(0.08, 0.0, 0.92)),
+                engine_id: None,
+            });
+        }
+
         // All scanned attachments are clean
         Ok(ModuleResult::safe_analyzed(
             &self.meta.id,
             &self.meta.name,
             self.meta.pillar,
             &format!(
-                "Scanned {} attachment(s), no viruses found{}",
+                "Scanned {} attachment(s), no viruses found",
                 scanned_count,
-                if skipped_count > 0 {
-                    format!(" ({} skipped)", skipped_count)
-                } else {
-                    String::new()
-                }
             ),
             duration_ms,
         ))
@@ -341,6 +427,10 @@ mod tests {
             raw_size: 512,
             is_complete: true,
             is_encrypted: false,
+            truncated: false,
+            dropped_attachments: 0,
+            links_truncated: false,
+            link_index: std::collections::HashSet::new(),
             smtp_dialog: vec![],
         };
         Arc::new(session)
@@ -386,6 +476,188 @@ mod tests {
                 .iter()
                 .any(|e| e.description.contains("large") || e.description.contains("too large"))
         );
+    }
+
+    /// Minimal clamd INSTREAM emulator: every scanned stream answers
+    /// `stream: OK\0`. Lets tests reach the "scanned clean" code paths
+    /// without a real ClamAV daemon.
+    async fn spawn_mock_clamd() -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock clamd");
+        let port = listener.local_addr().expect("local addr").port();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    // Read the command (e.g. zINSTREAM) up to the NUL byte.
+                    let mut byte = [0u8; 1];
+                    while socket.read(&mut byte).await.unwrap_or(0) == 1 {
+                        if byte[0] == 0 {
+                            break;
+                        }
+                    }
+                    // Read length-prefixed chunks until the zero terminator.
+                    loop {
+                        let mut len_buf = [0u8; 4];
+                        if socket.read_exact(&mut len_buf).await.is_err() {
+                            return;
+                        }
+                        let mut remaining = u32::from_be_bytes(len_buf) as usize;
+                        if remaining == 0 {
+                            break;
+                        }
+                        let mut buf = [0u8; 4096];
+                        while remaining > 0 {
+                            let take = remaining.min(buf.len());
+                            match socket.read(&mut buf[..take]).await {
+                                Ok(0) => return,
+                                Ok(n) => remaining -= n,
+                                Err(_) => return,
+                            }
+                        }
+                    }
+                    let _ = socket.write_all(b"stream: OK\0").await;
+                });
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn test_partial_skip_oversized_attachment_is_not_safe() {
+        // PoC bypass: one 26MB attachment exceeds the AV scan window while a
+        // second small attachment scans clean. Previously the module
+        // returned Safe, erasing the coverage gap from the verdict layer.
+        let port = spawn_mock_clamd().await;
+        let clean_att = EmailAttachment {
+            filename: "notes.txt".to_string(),
+            content_type: "text/plain".to_string(),
+            size: 5,
+            hash: "abc".to_string(),
+            content_base64: Some("aGVsbG8=".to_string()),
+        };
+        let oversized_att = EmailAttachment {
+            filename: "window.bin".to_string(),
+            content_type: "application/octet-stream".to_string(),
+            size: 26 * 1024 * 1024,
+            hash: "def".to_string(),
+            content_base64: Some("aGVsbG8=".to_string()),
+        };
+        let client = Arc::new(ClamAvClient::new("127.0.0.1".to_string(), port));
+        let module = AvAttachScanModule::new(client);
+        let ctx = crate::context::SecurityContext::new(make_session_with_attachments(vec![
+            clean_att,
+            oversized_att,
+        ]));
+
+        let result = module.analyze(&ctx).await.unwrap();
+        assert_eq!(
+            result.threat_level,
+            ThreatLevel::Low,
+            "partial AV coverage must not be reported as Safe: {:?}",
+            result.summary
+        );
+        assert!(
+            result
+                .categories
+                .contains(&"scan_skipped_size_limit".to_string())
+        );
+        assert_eq!(result.details["scanned_count"], 1);
+        assert_eq!(result.details["skipped_count"], 1);
+    }
+
+    /// Mock clamd where the first connection answers `stream: OK` and every
+    /// later connection is dropped after reading the request (client sees an
+    /// empty response -> `ClamAvError::ProtocolError`). Used to exercise the
+    /// mixed clean+error coverage path.
+    async fn spawn_flaky_clamd() -> u16 {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind flaky clamd");
+        let port = listener.local_addr().expect("local addr").port();
+        let conn_counter = Arc::new(AtomicUsize::new(0));
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let seq = conn_counter.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    // Read the command (e.g. zINSTREAM) up to the NUL byte.
+                    let mut byte = [0u8; 1];
+                    while socket.read(&mut byte).await.unwrap_or(0) == 1 {
+                        if byte[0] == 0 {
+                            break;
+                        }
+                    }
+                    // Read length-prefixed chunks until the zero terminator.
+                    loop {
+                        let mut len_buf = [0u8; 4];
+                        if socket.read_exact(&mut len_buf).await.is_err() {
+                            return;
+                        }
+                        let mut remaining = u32::from_be_bytes(len_buf) as usize;
+                        if remaining == 0 {
+                            break;
+                        }
+                        let mut buf = [0u8; 4096];
+                        while remaining > 0 {
+                            let take = remaining.min(buf.len());
+                            match socket.read(&mut buf[..take]).await {
+                                Ok(0) => return,
+                                Ok(n) => remaining -= n,
+                                Err(_) => return,
+                            }
+                        }
+                    }
+                    if seq == 0 {
+                        let _ = socket.write_all(b"stream: OK\0").await;
+                    }
+                    // seq > 0: drop the connection without a response -> Err
+                });
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn test_mixed_scan_error_and_clean_is_not_safe() {
+        // PoC bypass: one attachment scans clean while the second induces a
+        // per-stream ClamAV error. Previously the module fell through to
+        // Safe, presenting the errored (never-checked) attachment as clean.
+        let port = spawn_flaky_clamd().await;
+        let clean_att = EmailAttachment {
+            filename: "notes.txt".to_string(),
+            content_type: "text/plain".to_string(),
+            size: 5,
+            hash: "abc".to_string(),
+            content_base64: Some("aGVsbG8=".to_string()),
+        };
+        let evil_att = EmailAttachment {
+            filename: "invoice.bin".to_string(),
+            content_type: "application/octet-stream".to_string(),
+            size: 5,
+            hash: "def".to_string(),
+            content_base64: Some("aGVsbG8=".to_string()),
+        };
+        let client = Arc::new(ClamAvClient::new("127.0.0.1".to_string(), port));
+        let module = AvAttachScanModule::new(client);
+        let ctx = crate::context::SecurityContext::new(make_session_with_attachments(vec![
+            clean_att,
+            evil_att,
+        ]));
+
+        let result = module.analyze(&ctx).await.unwrap();
+        assert_eq!(
+            result.threat_level,
+            ThreatLevel::Low,
+            "mixed clean+error AV coverage must not be reported as Safe: {:?}",
+            result.summary
+        );
+        assert!(result.categories.contains(&"scan_incomplete".to_string()));
+        assert_eq!(result.details["scan_status"], "incomplete");
+        assert_eq!(result.details["scanned_count"], 1);
+        assert_eq!(result.details["error_count"], 1);
     }
 
     #[test]

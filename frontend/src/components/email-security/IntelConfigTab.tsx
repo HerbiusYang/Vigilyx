@@ -1,14 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { apiFetch } from '../../utils/api'
+import { buildIntelConfigPayload, normalizeIntelSourceConfig } from '../../utils/intelConfig'
 import { formatTime } from '../../utils/format'
-import type { ApiResponse, IocEntry, SecurityStats } from '../../types'
+import type { ApiResponse, IntelSourceConfig, IocEntry, SecurityStats } from '../../types'
 
 const PAGE_SIZE = 30
-
-function isMaskedSecretValue(value: string): boolean {
-  return value.includes('...') || value === '****'
-}
 
 interface IntelConfigTabProps {
   stats: SecurityStats | null
@@ -19,8 +16,8 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
   const { t } = useTranslation()
 
   // Intel source config (VT/AbuseIPDB/OTX)
-  const [intelConfig, setIntelConfig] = useState<Record<string, any> | null>(null)
-  const [intelConfigDraft, setIntelConfigDraft] = useState<Record<string, any> | null>(null)
+  const [intelConfig, setIntelConfig] = useState<IntelSourceConfig | null>(null)
+  const [intelConfigDraft, setIntelConfigDraft] = useState<IntelSourceConfig | null>(null)
   const [savingIntelConfig, setSavingIntelConfig] = useState(false)
   const [intelConfigMsg, setIntelConfigMsg] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -37,10 +34,11 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
   const fetchIntelConfig = useCallback(async () => {
     try {
       const res = await apiFetch('/api/security/intel-config')
-      const data: ApiResponse<Record<string, any>> = await res.json()
+      const data: ApiResponse<IntelSourceConfig> = await res.json()
       if (data.success && data.data) {
-        setIntelConfig(data.data)
-        setIntelConfigDraft(data.data)
+        const config = normalizeIntelSourceConfig(data.data)
+        setIntelConfig(config)
+        setIntelConfigDraft(config)
       }
     } catch (e) {
       console.error('Failed to fetch intel config:', e)
@@ -71,7 +69,7 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
     fetchIntelWhitelist()
   }, [fetchIntelConfig, fetchIntelWhitelist])
 
-  const updateIntelConfigDraft = (patch: Record<string, unknown>) => {
+  const updateIntelConfigDraft = (patch: Partial<IntelSourceConfig>) => {
     setIntelConfigMsg(null)
     setIntelConfigDraft(prev => (prev ? { ...prev, ...patch } : prev))
   }
@@ -81,30 +79,19 @@ export default function IntelConfigTab({ stats, onNavigateToIoc }: IntelConfigTa
     setSavingIntelConfig(true)
     setIntelConfigMsg(null)
     try {
-      const payload: Record<string, unknown> = {
-        otx_enabled: intelConfigDraft.otx_enabled,
-        vt_scrape_enabled: intelConfigDraft.vt_scrape_enabled,
-        abuseipdb_enabled: intelConfigDraft.abuseipdb_enabled,
-      }
-      if (intelConfigDraft.virustotal_api_key === '') {
-        payload.virustotal_api_key = null
-      } else if (!isMaskedSecretValue(intelConfigDraft.virustotal_api_key)) {
-        payload.virustotal_api_key = intelConfigDraft.virustotal_api_key
-      }
-      if (intelConfigDraft.abuseipdb_api_key === '') {
-        payload.abuseipdb_api_key = null
-      } else if (!isMaskedSecretValue(intelConfigDraft.abuseipdb_api_key)) {
-        payload.abuseipdb_api_key = intelConfigDraft.abuseipdb_api_key
-      }
+      const payload = buildIntelConfigPayload(intelConfigDraft)
       const res = await apiFetch('/api/security/intel-config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
-      const data: ApiResponse<any> = await res.json()
+      const data: ApiResponse<{ saved: boolean; requires_restart?: boolean }> = await res.json()
       if (data.success) {
         await fetchIntelConfig()
-        setIntelConfigMsg({ ok: true, text: t('saveSuccess') })
+        setIntelConfigMsg({
+          ok: true,
+          text: data.data?.requires_restart ? t('emailSecurity.intelRestartRequired') : t('saveSuccess'),
+        })
       } else {
         setIntelConfigMsg({ ok: false, text: data.error || t('saveFailed') })
       }

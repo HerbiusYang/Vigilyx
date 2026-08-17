@@ -21,6 +21,15 @@
 # Usage:
 #   systemctl start email-capture
 #   Rust client: ./start.sh <IP>:5000 (can restart at any time without restarting this service)
+#
+# !! SECURITY WARNING !!
+#   The live stream on TCP 5000 has NO authentication and NO TLS: anyone on the
+#   same network segment who can reach LISTEN_ADDR:5000 can read ALL captured
+#   email plaintext. Never bind it to a non-loopback address on an untrusted
+#   network. For remote access, prefer an SSH tunnel or stunnel:
+#     ssh -L 5000:127.0.0.1:5000 user@<capture-host>
+#   Binding to a non-loopback address is refused unless ALLOW_REMOTE_CAPTURE=1
+#   is set explicitly (see below).
 ###############################################
 
 set -euo pipefail
@@ -50,6 +59,18 @@ STREAM_WRAPPER="/usr/local/bin/email-stream-worker.sh"
 info()  { echo -e "\033[32m[INFO]\033[0m  $(date '+%F %T') $*"; }
 warn()  { echo -e "\033[33m[WARN]\033[0m  $(date '+%F %T') $*"; }
 error() { echo -e "\033[31m[ERROR]\033[0m $(date '+%F %T') $*"; exit 1; }
+
+# ==== Security gate: refuse unauthenticated remote pcap streaming by default ====
+# The live stream exposes all captured mail plaintext with no auth/TLS.
+# Non-loopback binds require an explicit ALLOW_REMOTE_CAPTURE=1 opt-in.
+case "${LISTEN_ADDR}" in
+    127.*|localhost|::1) ;;
+    *)
+        if [[ "${ALLOW_REMOTE_CAPTURE:-}" != "1" ]]; then
+            error "LISTEN_ADDR=${LISTEN_ADDR} is not loopback, and the pcap stream on port ${LISTEN_PORT} has NO authentication/TLS. Refusing to start. Use an SSH tunnel (ssh -L ${LISTEN_PORT}:127.0.0.1:${LISTEN_PORT} user@host) or stunnel, or set ALLOW_REMOTE_CAPTURE=1 to override at your own risk."
+        fi
+        ;;
+esac
 
 # ==== Dependency checks ====
 command -v dumpcap &>/dev/null || error "dumpcap is not installed: yum install -y wireshark"

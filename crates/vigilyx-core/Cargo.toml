@@ -2,6 +2,7 @@
 name = "vigilyx-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Vigilyx 核心共享库"
@@ -16,7 +17,7 @@ uuid.workspace = true
 url = "2"
 
 [dev-dependencies]
-proptest = "1.4"
+proptest = "1.11"
 rand.workspace = true  # RUSTSEC-2026-0097: pin minimum safe version
 
 [lints]

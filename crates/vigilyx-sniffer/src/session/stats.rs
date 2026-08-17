@@ -174,6 +174,39 @@ pub struct SmtpPipelineStats {
     pub smtp_close_salvage_partial: CacheLineCounter,
 }
 
+// ─── Security signal statistics (cache-line-isolated per counter) ─────────
+
+/// Counters for security-relevant degradation/anomaly signals that are not
+/// tied to a single pipeline stage. Every silent-blindness fix must leave a
+/// signal; these counters make the signals observable in aggregate.
+#[derive(Default)]
+pub struct SecuritySignalStats {
+    /// sid->user insert attempted with a different user than the stored one
+    /// (mapping kept, overwrite refused).
+    pub sid_user_conflict_total: CacheLineCounter,
+    /// Distinct users reported for the same client IP across requests.
+    pub client_ip_multi_user_total: CacheLineCounter,
+    /// Cookie/body-extracted user contradicted the login-bound user; the
+    /// login binding won.
+    pub attribution_mismatch_total: CacheLineCounter,
+    /// HTTP connections desynced by malformed chunked framing.
+    pub http_desynced_connection_total: CacheLineCounter,
+    /// Active sessions whose stream buffers were evicted under budget
+    /// pressure (content captured afterwards is incomplete).
+    pub evicted_active_session_total: CacheLineCounter,
+    /// Cleartext POP3 sessions with RETR content the sniffer cannot analyze.
+    pub pop3_content_gap_total: CacheLineCounter,
+    /// Cleartext IMAP sessions with FETCH BODY[] content the sniffer cannot
+    /// analyze.
+    pub imap_content_gap_total: CacheLineCounter,
+    /// Terminal sessions whose SMTP state machine counted protocol anomalies.
+    pub protocol_anomaly_session_total: CacheLineCounter,
+    /// SMTP stream gaps that were promoted to an inspection-coverage signal.
+    pub smtp_stream_gap_alert_total: CacheLineCounter,
+    /// Bytes covered by SMTP stream-gap inspection signals.
+    pub smtp_stream_gap_alert_bytes_total: CacheLineCounter,
+}
+
 /// Complete cache-line-aligned statistics
 pub struct AlignedSessionStats {
     pub total: SessionStats,
@@ -183,6 +216,7 @@ pub struct AlignedSessionStats {
     pub protocol: SessionStatsProtocol,
     pub smtp_pipeline: SmtpPipelineStats,
     pub http_pipeline: HttpPipelineStats,
+    pub security: SecuritySignalStats,
 }
 
 impl Default for AlignedSessionStats {
@@ -212,6 +246,7 @@ impl Default for AlignedSessionStats {
             },
             smtp_pipeline: SmtpPipelineStats::default(),
             http_pipeline: HttpPipelineStats::default(),
+            security: SecuritySignalStats::default(),
         }
     }
 }

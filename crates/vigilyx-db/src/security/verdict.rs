@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 use vigilyx_core::security::{Bpa, ModuleResult, Pillar, SecurityVerdict, ThreatLevel};
@@ -29,34 +30,22 @@ pub struct VerdictWithMeta {
     pub server_ip: Option<String>,
 }
 
-impl VigilDb {
-    /// Security (DELETE + INSERT 1)
-    pub async fn insert_verdict(&self, verdict: &SecurityVerdict) -> Result<()> {
-        let categories_json = serde_json::to_string(&verdict.categories)?;
-        let pillar_scores_json = serde_json::to_string(&verdict.pillar_scores)?;
-        let fusion_details_json = verdict
-            .fusion_details
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()?;
-
-        let mut tx = self.pool.begin().await?;
-
-        // session verdict,
-        sqlx::query("DELETE FROM security_verdicts WHERE session_id = $1")
-            .bind(verdict.session_id.to_string())
-            .execute(&mut *tx)
-            .await?;
-
-        sqlx::query(
-            r#"
+/// Single-statement UPSERT guarded by the `ux_security_verdicts_session`
+/// unique index (created in the security migration after deduping).
+///
+/// Race rationale: the 180s rescan sweep and the live stream consumer may
+/// analyze the same session concurrently. A DELETE + INSERT pair (the
+/// previous implementation) serializes writers through row locks and
+/// amplifies dead-row churn; one atomic UPSERT keeps exactly one current
+/// verdict per session (newest wins) with no transaction window at all.
+const UPSERT_VERDICT_SQL: &str = r#"
             INSERT INTO security_verdicts
                 (id, session_id, threat_level, confidence, categories, summary,
                  pillar_scores, modules_run, modules_flagged, total_duration_ms,
                  created_at, fusion_details)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-            ON CONFLICT(id) DO UPDATE SET
-                session_id = EXCLUDED.session_id,
+            ON CONFLICT(session_id) DO UPDATE SET
+                id = EXCLUDED.id,
                 threat_level = EXCLUDED.threat_level,
                 confidence = EXCLUDED.confidence,
                 categories = EXCLUDED.categories,
@@ -67,24 +56,119 @@ impl VigilDb {
                 total_duration_ms = EXCLUDED.total_duration_ms,
                 created_at = EXCLUDED.created_at,
                 fusion_details = EXCLUDED.fusion_details
-            "#,
-        )
-        .bind(verdict.id.to_string())
-        .bind(verdict.session_id.to_string())
-        .bind(verdict.threat_level.to_string())
-        .bind(verdict.confidence)
-        .bind(&categories_json)
-        .bind(&verdict.summary)
-        .bind(&pillar_scores_json)
-        .bind(verdict.modules_run as i64)
-        .bind(verdict.modules_flagged as i64)
-        .bind(verdict.total_duration_ms as i64)
-        .bind(verdict.created_at.to_rfc3339())
-        .bind(&fusion_details_json)
-        .execute(&mut *tx)
-        .await?;
+            "#;
 
+/// UPSERT conflict clause for `security_module_results`, guarded by the
+/// `ux_module_results_session_module` unique index on (session_id, module_id)
+/// (created in the security migration after deduping historical double rows).
+///
+/// One current row per module per session: a rescan updates the row in place
+/// (including `verdict_id`) instead of stacking a second copy next to the one
+/// from the previous analysis.
+const MODULE_RESULT_UPSERT_CLAUSE: &str = r#"
+                ON CONFLICT (session_id, module_id) DO UPDATE SET
+                    verdict_id = EXCLUDED.verdict_id,
+                    module_name = EXCLUDED.module_name,
+                    pillar = EXCLUDED.pillar,
+                    threat_level = EXCLUDED.threat_level,
+                    confidence = EXCLUDED.confidence,
+                    categories = EXCLUDED.categories,
+                    summary = EXCLUDED.summary,
+                    evidence = EXCLUDED.evidence,
+                    details = EXCLUDED.details,
+                    duration_ms = EXCLUDED.duration_ms,
+                    analyzed_at = EXCLUDED.analyzed_at,
+                    bpa_b = EXCLUDED.bpa_b,
+                    bpa_d = EXCLUDED.bpa_d,
+                    bpa_u = EXCLUDED.bpa_u,
+                    engine_id = EXCLUDED.engine_id
+            "#;
+
+/// Remove module rows from earlier analyses of the same session whose module
+/// did not run in the current analysis (module set can shrink across engine
+/// versions). Rows for modules that did run are covered by the UPSERT above.
+const DELETE_STALE_MODULE_RESULTS_SQL: &str =
+    "DELETE FROM security_module_results WHERE session_id = $1 AND NOT (module_id = ANY($2))";
+
+impl VigilDb {
+    /// Security (session 1, UPSERT)
+    pub async fn insert_verdict(&self, verdict: &SecurityVerdict) -> Result<()> {
+        let categories_json = serde_json::to_string(&verdict.categories)?;
+        let pillar_scores_json = serde_json::to_string(&verdict.pillar_scores)?;
+        let fusion_details_json = verdict
+            .fusion_details
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?;
+
+        sqlx::query(UPSERT_VERDICT_SQL)
+            .bind(verdict.id.to_string())
+            .bind(verdict.session_id.to_string())
+            .bind(verdict.threat_level.to_string())
+            .bind(verdict.confidence)
+            .bind(&categories_json)
+            .bind(&verdict.summary)
+            .bind(&pillar_scores_json)
+            .bind(verdict.modules_run as i64)
+            .bind(verdict.modules_flagged as i64)
+            .bind(verdict.total_duration_ms as i64)
+            .bind(verdict.created_at.to_rfc3339())
+            .bind(&fusion_details_json)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Atomically store a verdict and its module results in ONE transaction.
+    ///
+    /// Race rationale: storing the verdict and the module rows in separate
+    /// transactions (the previous implementation) let concurrent analyses
+    /// (live stream, catch-up rescan, release rescan) interleave so a session
+    /// could show the verdict from analysis A with module rows from analysis
+    /// B — or keep double module rows. One transaction makes the pair
+    /// all-or-nothing per analysis; combined with the UPSERTs, concurrent
+    /// writers converge on the newest complete set.
+    pub async fn insert_verdict_with_module_results(
+        &self,
+        verdict: &SecurityVerdict,
+        results: &[&ModuleResult],
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        Self::upsert_verdict_tx(&mut tx, verdict).await?;
+        Self::upsert_module_results_tx(&mut tx, verdict.id, verdict.session_id, results).await?;
         tx.commit().await?;
+        Ok(())
+    }
+
+    async fn upsert_verdict_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        verdict: &SecurityVerdict,
+    ) -> Result<()> {
+        let categories_json = serde_json::to_string(&verdict.categories)?;
+        let pillar_scores_json = serde_json::to_string(&verdict.pillar_scores)?;
+        let fusion_details_json = verdict
+            .fusion_details
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?;
+
+        sqlx::query(UPSERT_VERDICT_SQL)
+            .bind(verdict.id.to_string())
+            .bind(verdict.session_id.to_string())
+            .bind(verdict.threat_level.to_string())
+            .bind(verdict.confidence)
+            .bind(&categories_json)
+            .bind(&verdict.summary)
+            .bind(&pillar_scores_json)
+            .bind(verdict.modules_run as i64)
+            .bind(verdict.modules_flagged as i64)
+            .bind(verdict.total_duration_ms as i64)
+            .bind(verdict.created_at.to_rfc3339())
+            .bind(&fusion_details_json)
+            .execute(&mut **tx)
+            .await?;
+
         Ok(())
     }
 
@@ -92,6 +176,10 @@ impl VigilDb {
     ///
     /// VALUES INSERT, N DB ceil(N/CHUNK).
     /// 17 x 500 = 8500,Security.
+    ///
+    /// UPSERT on (session_id, module_id) + stale-row cleanup; prefer
+    /// [`insert_verdict_with_module_results`](Self::insert_verdict_with_module_results)
+    /// so the verdict and its module rows commit atomically.
     pub async fn insert_module_results(
         &self,
         verdict_id: Uuid,
@@ -99,15 +187,26 @@ impl VigilDb {
         results: &[&ModuleResult],
     ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
+        Self::upsert_module_results_tx(&mut tx, verdict_id, session_id, results).await?;
+        tx.commit().await?;
+        Ok(())
+    }
 
-        // session Module,
-        sqlx::query("DELETE FROM security_module_results WHERE session_id = $1")
-            .bind(session_id.to_string())
-            .execute(&mut *tx)
-            .await?;
+    async fn upsert_module_results_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        verdict_id: Uuid,
+        session_id: Uuid,
+        results: &[&ModuleResult],
+    ) -> Result<()> {
+        let sid = session_id.to_string();
 
         if results.is_empty() {
-            tx.commit().await?;
+            // No module ran in this analysis: drop every previous row so a
+            // rescan cannot leave stale results behind.
+            sqlx::query("DELETE FROM security_module_results WHERE session_id = $1")
+                .bind(&sid)
+                .execute(&mut **tx)
+                .await?;
             return Ok(());
         }
 
@@ -136,7 +235,6 @@ impl VigilDb {
         }
 
         let vid = verdict_id.to_string();
-        let sid = session_id.to_string();
 
         let mut prepared: Vec<PreparedModuleResult> = Vec::with_capacity(results.len());
         for r in results {
@@ -190,8 +288,9 @@ impl VigilDb {
                 sql.push(')');
                 param_idx += COLS_PER_ROW as u32;
             }
+            sql.push_str(MODULE_RESULT_UPSERT_CLAUSE);
 
-            let mut query = sqlx::query(&sql);
+            let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
             for row in chunk {
                 query = query
                     .bind(&row.verdict_id)
@@ -212,10 +311,18 @@ impl VigilDb {
                     .bind(row.bpa_u)
                     .bind(&row.engine_id);
             }
-            query.execute(&mut *tx).await?;
+            query.execute(&mut **tx).await?;
         }
 
-        tx.commit().await?;
+        // Drop rows from earlier analyses whose module did not run this time.
+        let current_module_ids: Vec<String> =
+            prepared.iter().map(|p| p.module_id.clone()).collect();
+        sqlx::query(DELETE_STALE_MODULE_RESULTS_SQL)
+            .bind(&sid)
+            .bind(&current_module_ids)
+            .execute(&mut **tx)
+            .await?;
+
         Ok(())
     }
 
@@ -334,11 +441,11 @@ impl VigilDb {
             r#"SELECT COUNT(*) FROM security_verdicts v
                INNER JOIN sessions s ON v.session_id = s.id
                WHERE s.mail_from IS NOT NULL{}"#,
-            &threat_filter_clause,
+            threat_filter_clause,
         );
 
         let total: (i64,) = {
-            let mut q = sqlx::query_as(&count_sql);
+            let mut q = sqlx::query_as(sqlx::AssertSqlSafe(count_sql.as_str()));
             for b in &binds {
                 q = q.bind(b);
             }
@@ -352,7 +459,7 @@ impl VigilDb {
         sql.push_str(&format!(" OFFSET ${}", offset_idx));
 
         let rows: Vec<VerdictMetaRow> = {
-            let mut q = sqlx::query_as(&sql);
+            let mut q = sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()));
             for b in &binds {
                 q = q.bind(b);
             }
@@ -575,5 +682,57 @@ pub(crate) fn parse_pillar(s: &str) -> Pillar {
         "link" => Pillar::Link,
         "semantic" => Pillar::Semantic,
         _ => Pillar::Content,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn insert_verdict_sql_is_atomic_upsert_on_session_conflict() {
+        // Regression: the 180s rescan sweep and the live stream consumer can
+        // submit a verdict for the same session concurrently. The insert must
+        // rely on the ux_security_verdicts_session unique index via a single
+        // atomic UPSERT — a bare INSERT would either duplicate rows or error,
+        // and a DELETE + INSERT pair reopens a lock/visibility window.
+        assert!(UPSERT_VERDICT_SQL.contains("ON CONFLICT(session_id) DO UPDATE"));
+        assert!(!UPSERT_VERDICT_SQL.contains("DELETE FROM security_verdicts"));
+        // Newest analysis wins so re-scans (Active->Completed, explicit
+        // rescan, quarantine release gate) actually replace the stale row.
+        assert!(UPSERT_VERDICT_SQL.contains("threat_level = EXCLUDED.threat_level"));
+    }
+
+    #[test]
+    fn module_results_upsert_conflicts_on_session_and_module() {
+        // Regression (C4): without a uniqueness guard, concurrent analyses of
+        // one session (live stream vs catch-up rescan vs release rescan)
+        // stacked two rows per module. The UPSERT must conflict on the
+        // (session_id, module_id) unique index and update in place — including
+        // verdict_id, so the row always points at the newest verdict.
+        assert!(
+            MODULE_RESULT_UPSERT_CLAUSE.contains("ON CONFLICT (session_id, module_id) DO UPDATE")
+        );
+        assert!(MODULE_RESULT_UPSERT_CLAUSE.contains("verdict_id = EXCLUDED.verdict_id"));
+        assert!(MODULE_RESULT_UPSERT_CLAUSE.contains("threat_level = EXCLUDED.threat_level"));
+        // A bare DELETE+INSERT rewrite must not come back: it reopens the
+        // cross-analysis visibility window this UPSERT closes.
+        assert!(!MODULE_RESULT_UPSERT_CLAUSE.contains("DELETE"));
+    }
+
+    #[test]
+    fn stale_module_cleanup_is_scoped_to_session_and_current_modules() {
+        // The stale-row sweep must only drop rows of THIS session whose module
+        // did not run in the current analysis — never a blanket delete.
+        assert!(DELETE_STALE_MODULE_RESULTS_SQL.contains("session_id = $1"));
+        assert!(DELETE_STALE_MODULE_RESULTS_SQL.contains("NOT (module_id = ANY($2))"));
+    }
+
+    #[test]
+    fn parse_threat_level_orders_all_levels() {
+        assert!(parse_threat_level("critical") > parse_threat_level("high"));
+        assert!(parse_threat_level("high") > parse_threat_level("medium"));
+        assert!(parse_threat_level("medium") > parse_threat_level("low"));
+        assert!(parse_threat_level("low") > parse_threat_level("safe"));
     }
 }

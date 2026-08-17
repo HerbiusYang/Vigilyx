@@ -69,6 +69,7 @@ impl SecurityModule for MimeScanModule {
         // MUA while spam/anti-phishing engines only see the first.
         let mut from_count = 0usize;
         let mut to_count = 0usize;
+        let mut to_values: Vec<String> = Vec::new();
         let mut subject_count = 0usize;
         let mut date_count = 0usize;
         let mut message_id_count = 0usize;
@@ -136,6 +137,7 @@ impl SecurityModule for MimeScanModule {
                 }
                 "to" => {
                     to_count += 1;
+                    to_values.push(value.trim().to_ascii_lowercase());
                     if value.trim().is_empty() {
                         to_empty = true;
                     }
@@ -240,9 +242,24 @@ impl SecurityModule for MimeScanModule {
             && !ctx.session.content.is_complete
             && duplicate_cte_looks_like_nested_part_encoding(&content_transfer_encoding_values);
 
+        // Some mail clients/gateways emit one To header per recipient. Distinct
+        // non-empty recipient values are not header smuggling by themselves;
+        // retain the signal for repeated identical values or when another
+        // singleton header is duplicated as well.
+        let distinct_to_values = to_values.iter().collect::<HashSet<_>>().len();
+        let duplicate_to_is_suspicious = to_count > 1
+            && (distinct_to_values < to_count || to_values.iter().any(String::is_empty));
         let duplicate_headers: &[(&str, usize, f64)] = &[
             ("From", from_count, 0.35),
-            ("To", to_count, 0.20),
+            (
+                "To",
+                if duplicate_to_is_suspicious {
+                    to_count
+                } else {
+                    1
+                },
+                0.20,
+            ),
             ("Subject", subject_count, 0.20),
             ("Date", date_count, 0.10),
             ("Message-ID", message_id_count, 0.15),
@@ -617,5 +634,36 @@ mod tests {
 
         assert_eq!(result.threat_level, ThreatLevel::Low);
         assert!(result.categories.contains(&"duplicate_header".to_string()));
+    }
+
+    #[tokio::test]
+    async fn distinct_recipient_to_headers_are_not_header_smuggling() {
+        let module = MimeScanModule::new();
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.mail_from = Some("servicedesk@unionpay.com".to_string());
+        session.rcpt_to.push("recipient@example.com".to_string());
+        session.content = EmailContent {
+            headers: vec![
+                ("From".to_string(), "servicedesk@unionpay.com".to_string()),
+                ("To".to_string(), "first@example.com".to_string()),
+                ("To".to_string(), "second@example.com".to_string()),
+                ("To".to_string(), "third@example.com".to_string()),
+                ("Content-Type".to_string(), "text/plain".to_string()),
+            ],
+            is_complete: true,
+            ..Default::default()
+        };
+        let ctx = SecurityContext::new(Arc::new(session));
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert!(!result.categories.contains(&"duplicate_header".to_string()));
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
     }
 }

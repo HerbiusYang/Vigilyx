@@ -64,6 +64,7 @@ export function createEmailSession(overrides: Partial<EmailSession> = {}): Email
     message_id: '<test-msg-001@example.com>',
     auth_info: null,
     threat_level: null,
+    source: 'sniffer',
     ...overrides,
   }
 }

@@ -298,6 +298,7 @@ mod tests {
         DlpScanResult {
             matches: vec!["id_number".to_string()],
             details: vec![("id_number".to_string(), values)],
+            ..Default::default()
         }
     }
 
@@ -307,6 +308,7 @@ mod tests {
         DlpScanResult {
             matches: vec!["cvv_code".to_string()],
             details: vec![("cvv_code".to_string(), values)],
+            ..Default::default()
         }
     }
 
@@ -531,7 +533,11 @@ mod tests {
             matches.push("cvv_code".to_string());
             details.push(("cvv_code".to_string(), vals));
         }
-        DlpScanResult { matches, details }
+        DlpScanResult {
+            matches,
+            details,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -790,6 +796,7 @@ mod tests {
                 "employee_info".to_string(),
                 (0..1000).map(|i| format!("emp_{}", i)).collect(),
             )],
+            ..Default::default()
         };
         let mut tracker = JrtComplianceTracker::new();
         let incidents = tracker.record_dlp_result(

@@ -5,10 +5,12 @@
 
 use std::time::Duration;
 
+use chrono::Utc;
 use lettre::address::Envelope;
 use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::{Address, AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
 use tracing::{error, info, warn};
+use uuid::Uuid;
 #[allow(unused_imports)]
 use vigilyx_core::{
     DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES, extract_host_from_network_target,
@@ -133,6 +135,18 @@ impl DownstreamRelay {
         rcpt_to: &[String],
         raw_eml: &[u8],
     ) -> RelayResult {
+        self.relay_from(mail_from, rcpt_to, raw_eml, None).await
+    }
+
+    /// Relay with an optional client address recorded in the prepended
+    /// Received hop (None records `from unknown`).
+    pub async fn relay_from(
+        &self,
+        mail_from: Option<&str>,
+        rcpt_to: &[String],
+        raw_eml: &[u8],
+        client_ip: Option<&str>,
+    ) -> RelayResult {
         let envelope = match build_envelope(mail_from, rcpt_to) {
             Ok(envelope) => envelope,
             Err(err) => {
@@ -140,7 +154,11 @@ impl DownstreamRelay {
             }
         };
 
-        match self.transport.send_raw(&envelope, raw_eml).await {
+        // SEC: stamp a local Received hop so the top of the chain is never
+        // fully attacker-controlled (forensics + header IOC integrity).
+        let raw_eml = prepend_received_header(raw_eml, client_ip);
+
+        match self.transport.send_raw(&envelope, &raw_eml).await {
             Ok(response) => {
                 if response.is_positive() {
                     info!(
@@ -173,6 +191,45 @@ impl DownstreamRelay {
             }
         }
     }
+}
+
+/// Maximum length of the client address token embedded in the Received header.
+const RECEIVED_FROM_MAX_CHARS: usize = 64;
+
+/// Build the local `Received` hop prepended to every relayed message.
+///
+/// Without this hop the entire Received chain of a relayed message is
+/// attacker-controlled, which both poisons header-based IOC extraction and
+/// destroys forensic traceability of the hop through this MTA.
+fn build_received_header(client_ip: Option<&str>) -> String {
+    let from = client_ip
+        .map(|ip| {
+            // SEC: truncate at the first CR/LF so a hostile client address
+            // can never inject extra headers through the Received hop.
+            ip.split(['\r', '\n'])
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(RECEIVED_FROM_MAX_CHARS)
+                .collect::<String>()
+        })
+        .filter(|ip| !ip.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    format!(
+        "Received: from {from} by vigilyx-mta with ESMTP id {}; {}\r\n",
+        Uuid::new_v4(),
+        Utc::now().to_rfc2822()
+    )
+}
+
+/// Prepend the local Received hop at the top of the raw message. The original
+/// header block and the head/body separator stay untouched.
+fn prepend_received_header(raw_eml: &[u8], client_ip: Option<&str>) -> Vec<u8> {
+    let header = build_received_header(client_ip);
+    let mut out = Vec::with_capacity(raw_eml.len() + header.len());
+    out.extend_from_slice(header.as_bytes());
+    out.extend_from_slice(raw_eml);
+    out
 }
 
 fn build_envelope(mail_from: Option<&str>, rcpt_to: &[String]) -> Result<Envelope, String> {
@@ -221,6 +278,56 @@ mod tests {
         assert!(matches!(r, RelayResult::PermFail(_)));
         let r = RelayResult::ConnError("timeout".into());
         assert!(matches!(r, RelayResult::ConnError(_)));
+    }
+
+    #[test]
+    fn test_prepend_received_header_places_local_hop_first() {
+        // PoC: before this fix the topmost Received header of a relayed
+        // message was fully attacker-controlled; after the fix the first
+        // line is always this MTA's own hop.
+        let raw = b"Received: from attacker.example by evil\r\nFrom: a@b.c\r\n\r\nbody";
+        let out = prepend_received_header(raw, Some("203.0.113.9"));
+        let text = String::from_utf8(out).expect("header prepend keeps utf8");
+
+        assert!(
+            text.starts_with("Received: from 203.0.113.9 by vigilyx-mta with ESMTP id "),
+            "local hop must be the first line, got: {}",
+            text.get(..80).unwrap_or(text.as_str())
+        );
+        // The attacker-supplied hop is demoted, not removed.
+        assert!(text.contains("\r\nReceived: from attacker.example by evil\r\n"));
+        // The original head/body separator is preserved.
+        assert!(text.ends_with("\r\n\r\nbody"));
+    }
+
+    #[test]
+    fn test_prepend_received_header_unknown_client() {
+        let out = prepend_received_header(b"From: a@b.c\r\n\r\nbody", None);
+        let text = String::from_utf8(out).expect("utf8");
+
+        assert!(text.starts_with("Received: from unknown by vigilyx-mta with ESMTP id "));
+    }
+
+    #[test]
+    fn test_prepend_received_header_sanitizes_crlf_in_client_ip() {
+        // A hostile client address must not be able to inject extra headers.
+        let out = prepend_received_header(
+            b"From: a@b.c\r\n\r\nbody",
+            Some("10.0.0.1\r\nX-Injected: yes"),
+        );
+        let text = String::from_utf8(out).expect("utf8");
+
+        assert!(text.starts_with("Received: from 10.0.0.1 by vigilyx-mta"));
+        assert!(!text.contains("X-Injected"));
+    }
+
+    #[test]
+    fn test_prepend_received_header_preserves_empty_message() {
+        let out = prepend_received_header(b"", Some("10.0.0.1"));
+        let text = String::from_utf8(out).expect("utf8");
+
+        assert!(text.starts_with("Received: from 10.0.0.1 by vigilyx-mta"));
+        assert!(text.ends_with("\r\n"));
     }
 
     #[test]

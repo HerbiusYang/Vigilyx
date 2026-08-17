@@ -5,7 +5,7 @@
 //! P(X> x | X> u) = (1 + (x-u)/)^{-1/}
 
 //! Alert levels (8.3):
-//! - **P0**: Critical - EL>= 3.0 or K_conflict> 0.7 or CUSUM breach or EVT T>= 10000
+//! - **P0**: Critical - EL>= 3.0 or K_conflict> 0.7 or (CUSUM breach / Hawkes burst with risk_final >= 0.4) or EVT T>= 10000
 //! - **P1**: High - EL [1.5, 3.0) or K_conflict> 0.6 or EVT T [1000, 10000)
 //! - **P2**: Medium - EL [0.5, 1.5) or u_final> 0.6 or EVT T [100, 1000)
 //! - **P3**: Low - EL [0.2, 0.5) or Risk_final>= 0.15
@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use tokio::sync::RwLock;
+use tracing::debug;
 use uuid::Uuid;
 
 use gpd::GpdEstimator;
@@ -181,10 +182,23 @@ impl AlertEngine {
             ));
         }
 
-        // CUSUM alarm (documentation: CUSUM breach threshold -> P0)
+        // CUSUM alarm (documentation: CUSUM breach threshold -> P0, but only
+        // when the verdict itself is meaningfully risky). A CUSUM drift alarm
+        // on a low-risk verdict must not single-handedly page P0 — the alarm
+        // tracks baseline drift, which noisy-but-benign senders can also trip.
         if cusum_alarm {
-            level = AlertLevel::P0;
-            rationale.push("CUSUM breach threshold: risk continues to drift".to_string());
+            if risk_final >= 0.4 {
+                level = AlertLevel::P0;
+                rationale.push("CUSUM breach threshold: risk continues to drift".to_string());
+            } else {
+                if level > AlertLevel::P2 {
+                    level = AlertLevel::P2;
+                }
+                rationale.push(format!(
+                    "CUSUM drift detected but risk_final={:.2} < 0.4 (P2 floor, no P0 escalation)",
+                    risk_final
+                ));
+            }
         }
 
         // Uncertainty (documentation: u_final> 0.6 -> P2)
@@ -255,8 +269,16 @@ impl AlertEngine {
                 ));
             }
 
-            // Hawkes burst detection (v5.0 8.3)
-            if s.hawkes_intensity_ratio > 5.0 {
+            // Hawkes burst detection (v5.0 8.3). Same risk gate as CUSUM:
+            // a burst ratio alone (attacker-controllable send cadence) must
+            // not escalate a low-risk verdict to P0. Non-finite ratios
+            // (Inf/NaN from a degenerate baseline μ) are rejected defensively.
+            if !s.hawkes_intensity_ratio.is_finite() {
+                debug!(
+                    ratio = %s.hawkes_intensity_ratio,
+                    "Ignoring non-finite Hawkes intensity ratio"
+                );
+            } else if s.hawkes_intensity_ratio > 5.0 && risk_final >= 0.4 {
                 level = AlertLevel::P0;
                 rationale.push(format!(
                     "Hawkes burst λ/μ={:.1} > 5.0 (short-term intense high-risk)",
@@ -456,7 +478,35 @@ mod tests {
     async fn test_alert_hawkes_burst_p0() {
         let engine = AlertEngine::new();
         let signals = AlertSignals {
-            hawkes_intensity_ratio: 6.0, // > 5.0 -> P0
+            hawkes_intensity_ratio: 6.0, // > 5.0 with risk_final >= 0.4 -> P0
+            ..Default::default()
+        };
+        let decision = engine
+            .evaluate(
+                0.45,
+                0.0,
+                0.0,
+                None,
+                None,
+                Some(&signals),
+                &["user@example.com".into()],
+            )
+            .await;
+        assert!(decision.is_some());
+        let d = decision.unwrap();
+        assert_eq!(d.level, AlertLevel::P0, "Hawkes ratio > 5.0 should be P0");
+        assert!(d.rationale.iter().any(|r| r.contains("Hawkes burst")));
+    }
+
+    #[tokio::test]
+    async fn test_alert_hawkes_burst_below_risk_gate_not_p0() {
+        // PoC: before the fix, hawkes_intensity_ratio > 5.0 unconditionally
+        // escalated to P0 — an attacker controlling send cadence could page
+        // P0 for an otherwise low-risk verdict. Now the P0 path requires
+        // risk_final >= 0.4; below the gate it degrades to at most P1.
+        let engine = AlertEngine::new();
+        let signals = AlertSignals {
+            hawkes_intensity_ratio: 9.0,
             ..Default::default()
         };
         let decision = engine
@@ -470,10 +520,79 @@ mod tests {
                 &["user@example.com".into()],
             )
             .await;
-        assert!(decision.is_some());
-        let d = decision.unwrap();
-        assert_eq!(d.level, AlertLevel::P0, "Hawkes ratio > 5.0 should be P0");
-        assert!(d.rationale.iter().any(|r| r.contains("Hawkes burst")));
+        let d = decision.expect("risk 0.30 still produces an alert");
+        assert!(
+            d.level > AlertLevel::P0,
+            "Hawkes burst below the risk gate must not reach P0, got {:?}",
+            d.level
+        );
+    }
+
+    #[tokio::test]
+    async fn test_alert_hawkes_non_finite_ratio_no_escalation() {
+        // PoC: a degenerate baseline can yield ratio = Inf/NaN. Infinity used
+        // to pass `> 5.0` and force P0. Non-finite ratios must be ignored.
+        for ratio in [f64::INFINITY, f64::NAN, f64::NEG_INFINITY] {
+            let engine = AlertEngine::new();
+            let signals = AlertSignals {
+                hawkes_intensity_ratio: ratio,
+                ..Default::default()
+            };
+            let decision = engine
+                .evaluate(
+                    0.30,
+                    0.0,
+                    0.0,
+                    None,
+                    None,
+                    Some(&signals),
+                    &["user@example.com".into()],
+                )
+                .await;
+            let d = decision.expect("risk 0.30 still produces an alert");
+            assert!(
+                d.level > AlertLevel::P0,
+                "non-finite Hawkes ratio must not escalate, got {:?} for ratio {}",
+                d.level,
+                ratio
+            );
+            assert!(
+                !d.rationale.iter().any(|r| r.contains("Hawkes")),
+                "non-finite Hawkes ratio must not appear in rationale"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_alert_cusum_p0_requires_risk_gate() {
+        // PoC: before the fix, cusum_alarm alone forced P0 regardless of the
+        // verdict's risk. Now the P0 path requires risk_final >= 0.4.
+        let engine = AlertEngine::new();
+        let signals = AlertSignals {
+            cusum_alarm: true,
+            ..Default::default()
+        };
+
+        let high = engine
+            .evaluate(0.60, 0.0, 0.0, None, None, Some(&signals), &[])
+            .await
+            .expect("alert expected");
+        assert_eq!(
+            high.level,
+            AlertLevel::P0,
+            "CUSUM breach with risk_final >= 0.4 should be P0"
+        );
+
+        let low = engine
+            .evaluate(0.25, 0.0, 0.0, None, None, Some(&signals), &[])
+            .await
+            .expect("alert expected");
+        assert_eq!(
+            low.level,
+            AlertLevel::P2,
+            "CUSUM alarm below the risk gate must retain the P2 floor"
+        );
+        assert!(low.cusum_alarm, "the alarm flag itself is still reported");
     }
 
     #[tokio::test]

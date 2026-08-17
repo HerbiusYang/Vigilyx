@@ -730,7 +730,7 @@ const RecentThreatsContainer = React.memo(function RecentThreatsContainer() {
 
   const fetchRecentThreats = useCallback(async () => {
     try {
-      const res = await apiFetch('/api/security/verdicts?limit=8&threat_level=medium,high,critical')
+      const res = await apiFetch('/api/security/verdicts?limit=3&threat_level=medium,high,critical')
       if (!res.ok) throw new Error(t('dashboard.recentThreatsLoadFailed'))
       const data: ApiResponse<{ items: VerdictWithMeta[]; total: number }> = await res.json()
       if (!data.success || !data.data) throw new Error(data.error || t('dashboard.recentThreatsLoadFailed'))
@@ -764,6 +764,11 @@ const RecentThreatsContainer = React.memo(function RecentThreatsContainer() {
 })
 
 function Dashboard() {
+  useEffect(() => {
+    document.body.classList.add('dashboard-page')
+    return () => document.body.classList.remove('dashboard-page')
+  }, [])
+
   useEffect(() => {
     const onSettingsChanged = () => window.dispatchEvent(new Event(EVENTS.DASHBOARD_REFRESH))
     window.addEventListener('storage', onSettingsChanged)

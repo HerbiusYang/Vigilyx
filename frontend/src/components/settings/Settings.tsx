@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import { apiFetch } from '../../utils/api'
 import { EVENTS } from '../../utils/events'
@@ -14,8 +15,10 @@ import DeploymentSettings from './DeploymentSettings'
 import AccountSettings from './AccountSettings'
 import TrainingSettings from './TrainingSettings'
 import AboutSettings from './AboutSettings'
+import PlatformAccessSettings from './PlatformAccessSettings'
+import type { AuthUser } from '../../App'
 
-type SettingsTab = 'appearance' | 'notification' | 'capture' | 'data_security' | 'syslog' | 'threat_intel' | 'deployment' | 'database' | 'training' | 'account' | 'about'
+type SettingsTab = 'appearance' | 'notification' | 'capture' | 'data_security' | 'syslog' | 'threat_intel' | 'deployment' | 'database' | 'training' | 'account' | 'platform' | 'about'
 
 const TAB_ICONS: Record<SettingsTab, JSX.Element> = {
   appearance: (
@@ -69,6 +72,9 @@ const TAB_ICONS: Record<SettingsTab, JSX.Element> = {
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
     </svg>
   ),
+  platform: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a6 6 0 0 1 12 0v2"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M21 21v-2a6 6 0 0 0-4-5.65"/></svg>
+  ),
   about: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
@@ -76,18 +82,19 @@ const TAB_ICONS: Record<SettingsTab, JSX.Element> = {
   ),
 }
 
-const TAB_KEYS: SettingsTab[] = ['appearance', 'notification', 'capture', 'data_security', 'syslog', 'threat_intel', 'deployment', 'database', 'training', 'account', 'about']
+const TAB_KEYS: SettingsTab[] = ['appearance', 'notification', 'capture', 'data_security', 'syslog', 'threat_intel', 'deployment', 'database', 'training', 'account', 'platform', 'about']
 
-const VALID_TABS = new Set<string>(['appearance','notification','capture','data_security','syslog','threat_intel','deployment','database','training','account','about'])
+const VALID_TABS = new Set<string>(['appearance','notification','capture','data_security','syslog','threat_intel','deployment','database','training','account','platform','about'])
 
-function Settings() {
+function Settings({ authUser }: { authUser: AuthUser }) {
   const { t } = useTranslation()
+  const canManageUsers = authUser.permissions.includes('platform.users.manage')
   const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
     const h = window.location.hash.replace('#', '')
-    return VALID_TABS.has(h) ? h as SettingsTab : 'appearance'
+    return VALID_TABS.has(h) && (h !== 'platform' || canManageUsers) ? h as SettingsTab : 'appearance'
   })
 
-  const [apiVersion, setApiVersion] = useState('0.9.2')
+  const [apiVersion, setApiVersion] = useState('0.9.3')
 
   const changeTab = useCallback((tab: SettingsTab) => {
     setActiveTab(tab)
@@ -114,7 +121,7 @@ function Settings() {
 
   // Fetch API version for sidebar footer
   useEffect(() => {
-    apiFetch('/api/system/info')
+    apiFetch('/api/system/status')
       .then(r => r.json())
       .then(d => { if (d.success && d.data?.api_version) setApiVersion(d.data.api_version) })
       .catch(() => {})
@@ -132,6 +139,7 @@ function Settings() {
       case 'database': return <DatabaseSettings />
       case 'training': return <TrainingSettings />
       case 'account': return <AccountSettings />
+      case 'platform': return canManageUsers ? <PlatformAccessSettings authUser={authUser} /> : <AccountSettings />
       case 'about': return <AboutSettings />
     }
   }
@@ -146,7 +154,7 @@ function Settings() {
           <span>{t('settings.title')}</span>
         </div>
         <nav className="s-sidebar-nav">
-          {TAB_KEYS.map(key => (
+          {TAB_KEYS.filter(key => key !== 'platform' || canManageUsers).map(key => (
             <button
               key={key}
               className={`s-sidebar-item ${activeTab === key ? 'active' : ''}`}

@@ -95,19 +95,36 @@ pub fn extract_user_from_body(body: &str) -> Option<String> {
     }
 }
 
+/// ASCII case-insensitive substring search on raw bytes.
+///
+/// 直接在原文字节上搜索 ASCII needle, 避免 `to_lowercase()` 在非 ASCII
+/// 字符上改变字节长度导致的位置错位 (以及由此产生的 char boundary panic)。
+fn find_ascii_ci(haystack: &str, needle: &[u8], from: usize) -> Option<usize> {
+    let bytes = haystack.as_bytes();
+    if from > bytes.len() || needle.len() > bytes.len() {
+        return None;
+    }
+    (from..=bytes.len().saturating_sub(needle.len()))
+        .find(|&i| bytes[i..i + needle.len()].eq_ignore_ascii_case(needle))
+}
+
 /// Strip HTML tags and style blocks, extracting plain text.
-fn strip_html_tags(html: &str) -> String {
+pub(crate) fn strip_html_tags(html: &str) -> String {
     // Step 1: Remove <style>...</style> blocks (CSS class names contain phone-number-like digits)
     let mut no_style = String::with_capacity(html.len());
-    let lower = html.to_lowercase();
     let mut pos = 0;
     while pos < html.len() {
-        if let Some(start) = lower[pos..].find("<style") {
-            no_style.push_str(&html[pos..pos + start]);
-            if let Some(end) = lower[pos + start..].find("</style>") {
-                pos = pos + start + end + 8; // skip past </style>
+        if let Some(start) = find_ascii_ci(html, b"<style", pos) {
+            no_style.push_str(&html[pos..start]);
+            if let Some(end) = find_ascii_ci(html, b"</style>", start + 6) {
+                pos = end + 8; // skip past </style>
             } else {
-                break; // unclosed style tag, stop
+                // 未闭合 <style>: 只丢弃开标签本身, 保留其后文本继续扫描。
+                // 攻击者不能用悬空的 <style> 把后续敏感内容整体藏起来。
+                match find_ascii_ci(html, b">", start + 6) {
+                    Some(gt) => pos = gt + 1,
+                    None => pos = html.len(),
+                }
             }
         } else {
             no_style.push_str(&html[pos..]);
@@ -151,12 +168,22 @@ pub fn extract_body_action(body: &str) -> Option<String> {
 
     // Look for "action":" pattern
     if let Some(pos) = tail.find("\"action\"") {
-        let after_key = &tail[pos + 8..]; // skip past "action"
-        // Skip whitespace and colon
-        let after_colon = after_key.trim_start().strip_prefix(':')?;
-        let after_ws = after_colon.trim_start().strip_prefix('"')?;
-        let end_quote = after_ws.find('"')?;
-        return Some(after_ws[..end_quote].to_lowercase());
+        let candidate = (|| {
+            let after_key = &tail[pos + 8..]; // skip past "action"
+            // Skip whitespace and colon
+            let after_colon = after_key.trim_start().strip_prefix(':')?;
+            let after_ws = after_colon.trim_start().strip_prefix('"')?;
+            let end_quote = after_ws.find('"')?;
+            Some(after_ws[..end_quote].to_lowercase())
+        })();
+        // 结构校验: 快速路径只是字符串查找, 嵌套 decoy (attrs 内伪造 {"action":"deliver"})
+        // 或尾随垃圾中的伪造 action 都可骗过它。
+        // 校验命中位置必须位于顶层对象 (大括号深度 1) 且不在字符串内, 失败回退完整解析。
+        if let Some(action) = candidate
+            && is_top_level_key_position(body, start + pos)
+        {
+            return Some(action);
+        }
     }
 
     // Fallback: full JSON parse - no truncation
@@ -169,6 +196,47 @@ pub fn extract_body_action(body: &str) -> Option<String> {
         .get("action")?
         .as_str()
         .map(|s| s.to_lowercase())
+}
+
+/// 检查 `pos` 处是否位于顶层对象内 (大括号/中括号深度 1) 且不在字符串中。
+///
+/// 单趟扫描, 转义感知; 用于 extract_body_action 快速路径的嵌套 decoy 校验。
+fn is_top_level_key_position(body: &str, pos: usize) -> bool {
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut idx = 0usize;
+    for ch in body.chars() {
+        if idx >= pos {
+            break;
+        }
+        idx += ch.len_utf8();
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' | '[' => depth += 1,
+            '}' | ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    // The first top-level object closed before `pos`: the key
+                    // sits in trailing garbage (a second object), not in the
+                    // real body.
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    !in_string && depth == 1
 }
 
 #[cfg(test)]
@@ -409,8 +477,19 @@ mod tests {
 
     #[test]
     fn test_strip_html_unclosed_style() {
+        // 未闭合 <style> 只丢开标签，其后文本保留
         let result = strip_html_tags("<style>.a{}</style><div>OK</div><style>.b{}");
-        assert_eq!(result, "OK");
+        assert_eq!(result, "OK.b{}");
+    }
+
+    #[test]
+    fn test_strip_html_unclosed_style_preserves_following_text() {
+        // PoC：攻击者用未闭合 <style> 吞掉后续敏感文本；修复后敏感文本必须保留
+        let result = strip_html_tags("<style>身份证 000000200001010005");
+        assert!(
+            result.contains("000000200001010005"),
+            "未闭合 <style> 后的敏感文本不应被吞掉, got: {result:?}"
+        );
     }
 
     #[test]
@@ -466,6 +545,39 @@ mod tests {
     fn test_extract_body_action_non_string() {
         let body = r#"{"action":123}"#;
         assert_eq!(extract_body_action(body), None);
+    }
+
+    #[test]
+    fn test_extract_body_action_nested_decoy_falls_back() {
+        // PoC: attrs 内嵌套 decoy {"action":"deliver"}, 顶层真实 action 是 save。
+        // 修复前快速路径命中第一个 "action" (decoy) 返回 deliver;
+        // 修复后结构校验发现 decoy 在深度 2, 回退完整解析返回顶层 save
+        let body = r#"{"attrs":{"meta":{"action":"deliver"}},"action":"save"}"#;
+        assert_eq!(
+            extract_body_action(body),
+            Some("save".to_string()),
+            "嵌套 decoy action 不应覆盖顶层真实 action"
+        );
+    }
+
+    #[test]
+    fn test_extract_body_action_nested_decoy_without_real_action() {
+        // PoC: 只有嵌套 decoy, 顶层无 action -> 必须返回 None (修复前返回 deliver)
+        let body = r#"{"attrs":{"meta":{"action":"deliver"}}}"#;
+        assert_eq!(extract_body_action(body), None);
+    }
+
+    #[test]
+    fn test_extract_body_action_trailing_garbage_decoy() {
+        // PoC: JSON 对象闭合后的尾随 decoy {"action":"deliver"}。
+        // 修复前快速路径命中尾随 decoy 返回 deliver;
+        // 修复后 decoy 深度为 0 校验失败, 回退完整解析 (整体非法 JSON) -> None
+        let body = r#"{"attrs":{}} {"action":"deliver"}"#;
+        assert_eq!(
+            extract_body_action(body),
+            None,
+            "闭合对象后的尾随 decoy action 不应被采信"
+        );
     }
 
     #[test]

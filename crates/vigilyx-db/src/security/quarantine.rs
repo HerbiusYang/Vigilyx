@@ -9,6 +9,12 @@ use uuid::Uuid;
 
 use crate::VigilDb;
 
+/// C6: TTL enforcement for quarantined raw messages. Compares in absolute
+/// time (timestamptz) and never touches a release that is in flight.
+const QUARANTINE_CLEANUP_EXPIRED_SQL: &str = r#"DELETE FROM quarantine
+               WHERE created_at::timestamptz < NOW() - (ttl_days || ' days')::INTERVAL
+                 AND status != 'releasing'"#;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuarantineEntry {
     pub id: String,
@@ -27,6 +33,10 @@ pub struct QuarantineEntry {
     /// raw_eml (),
     #[serde(default)]
     pub raw_eml_size: i64,
+    /// Submitting client IP at quarantine time; used to stamp the Received
+    /// hop when the message is later released downstream (release audit).
+    #[serde(default)]
+    pub client_ip: Option<String>,
 }
 
 /// (raw_eml)
@@ -46,6 +56,7 @@ struct QuarantineListRow {
     released_by: Option<String>,
     ttl_days: i32,
     raw_eml_size: i64,
+    client_ip: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -64,6 +75,7 @@ struct QuarantineRawRow {
     released_by: Option<String>,
     ttl_days: i32,
     raw_eml: Vec<u8>,
+    client_ip: Option<String>,
 }
 
 fn raw_row_to_entry(row: QuarantineRawRow) -> (Vec<u8>, QuarantineEntry) {
@@ -83,6 +95,7 @@ fn raw_row_to_entry(row: QuarantineRawRow) -> (Vec<u8>, QuarantineEntry) {
         released_by: row.released_by,
         ttl_days: row.ttl_days,
         raw_eml_size: eml_size,
+        client_ip: row.client_ip,
     };
 
     (row.raw_eml, entry)
@@ -97,6 +110,9 @@ pub struct QuarantineStoreRequest<'a> {
     pub raw_eml: &'a [u8],
     pub threat_level: &'a str,
     pub reason: Option<&'a str>,
+    /// Submitting client IP (MTA proxy connection peer); preserved so a later
+    /// release can stamp an accurate Received hop instead of "from unknown".
+    pub client_ip: Option<&'a str>,
 }
 
 impl VigilDb {
@@ -109,8 +125,8 @@ impl VigilDb {
         sqlx::query(
             r#"INSERT INTO quarantine
                (id, session_id, verdict_id, mail_from, rcpt_to, subject,
-                raw_eml, threat_level, reason, status, created_at, ttl_days)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'quarantined', $10, 30)"#,
+                raw_eml, threat_level, reason, status, created_at, ttl_days, client_ip)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'quarantined', $10, 30, $11)"#,
         )
         .bind(&id)
         .bind(req.session_id.to_string())
@@ -122,6 +138,7 @@ impl VigilDb {
         .bind(req.threat_level)
         .bind(req.reason)
         .bind(&now)
+        .bind(req.client_ip)
         .execute(&self.pool)
         .await?;
 
@@ -138,7 +155,8 @@ impl VigilDb {
         let rows: Vec<QuarantineListRow> = sqlx::query_as(
             r#"SELECT id, session_id, verdict_id, mail_from, rcpt_to, subject,
                       threat_level, reason, status, created_at, released_at,
-                      released_by, ttl_days, length(raw_eml)::BIGINT as raw_eml_size
+                      released_by, ttl_days, length(raw_eml)::BIGINT as raw_eml_size,
+                      client_ip
                FROM quarantine
                WHERE ($1::TEXT IS NULL OR status = $1)
                ORDER BY created_at DESC
@@ -167,6 +185,7 @@ impl VigilDb {
                 released_by: r.released_by,
                 ttl_days: r.ttl_days,
                 raw_eml_size: r.raw_eml_size,
+                client_ip: r.client_ip,
             })
             .collect())
     }
@@ -179,7 +198,7 @@ impl VigilDb {
         let row: Option<QuarantineRawRow> = sqlx::query_as(
             "SELECT id, session_id, verdict_id, mail_from, rcpt_to, subject,
                     threat_level, reason, status, created_at, released_at,
-                    released_by, ttl_days, raw_eml
+                    released_by, ttl_days, raw_eml, client_ip
              FROM quarantine WHERE id = $1",
         )
         .bind(id)
@@ -200,7 +219,7 @@ impl VigilDb {
              WHERE id = $1 AND status = 'quarantined'
              RETURNING id, session_id, verdict_id, mail_from, rcpt_to, subject,
                        threat_level, reason, status, created_at, released_at,
-                       released_by, ttl_days, raw_eml",
+                       released_by, ttl_days, raw_eml, client_ip",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -248,25 +267,78 @@ impl VigilDb {
         Ok(result.rows_affected() > 0)
     }
 
-    pub async fn quarantine_delete(&self, id: &str) -> Result<bool> {
-        let result = sqlx::query("DELETE FROM quarantine WHERE id = $1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+    /// Mark a claimed release as blocked by the mandatory pre-release rescan.
+    pub async fn quarantine_mark_release_blocked(&self, id: &str) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE quarantine
+             SET status = 'release_blocked'
+             WHERE id = $1 AND status = 'releasing'",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
         Ok(result.rows_affected() > 0)
     }
 
-    /// (ttl_days)
-    pub async fn quarantine_cleanup_expired(&self) -> Result<u64> {
+    /// Record the pre-release rescan verdict on the quarantine entry.
+    ///
+    /// The rescan replaces the session's verdict row (one current verdict per
+    /// session), so the original `verdict_id` would dangle; pointing it at the
+    /// rescan verdict keeps the reference valid and auditable.
+    pub async fn quarantine_record_release_rescan(
+        &self,
+        id: &str,
+        verdict_id: &str,
+    ) -> Result<bool> {
         let result = sqlx::query(
-            r#"DELETE FROM quarantine
-               WHERE created_at < TO_CHAR(
-                   NOW() - (ttl_days || ' days')::INTERVAL,
-                   'YYYY-MM-DD"T"HH24:MI:SS"Z"'
-               )"#,
+            "UPDATE quarantine
+             SET verdict_id = $2
+             WHERE id = $1",
         )
+        .bind(id)
+        .bind(verdict_id)
         .execute(&self.pool)
         .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// SEC: refuse to delete an entry whose release is in flight — removing it
+    /// mid-relay would orphan the 'releasing' lock and break the release audit
+    /// trail (F2). Returns an explicit error in that case; `Ok(false)` still
+    /// means "entry not found".
+    pub async fn quarantine_delete(&self, id: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM quarantine WHERE id = $1 AND status != 'releasing'")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        if result.rows_affected() > 0 {
+            return Ok(true);
+        }
+        if let Some(status) = self.quarantine_status(id).await?
+            && status == "releasing"
+        {
+            anyhow::bail!(
+                "quarantine entry {id} is currently being released and cannot be deleted"
+            );
+        }
+        Ok(false)
+    }
+
+    /// Delete entries past their TTL (invoked by the engine's daily cleanup).
+    ///
+    /// `created_at` is stored as an RFC 3339 UTC string written by Rust
+    /// (`Utc::now().to_rfc3339()`), so the cutoff comparison must cast to
+    /// `timestamptz` — the previous TO_CHAR approach rendered the cutoff in
+    /// the PG session timezone but tagged it "Z" and compared as text,
+    /// deleting entries up to 8 hours early (container TZ=Asia/Shanghai).
+    /// Entries in `releasing` state are never deleted: a release in flight
+    /// owns the raw_eml bytes and its audit trail.
+    pub async fn quarantine_cleanup_expired(&self) -> Result<u64> {
+        let result = sqlx::query(QUARANTINE_CLEANUP_EXPIRED_SQL)
+            .execute(&self.pool)
+            .await?;
         Ok(result.rows_affected())
     }
 
@@ -282,5 +354,30 @@ impl VigilDb {
         .fetch_one(&self.pool)
         .await?;
         Ok(row.count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::QUARANTINE_CLEANUP_EXPIRED_SQL;
+
+    #[test]
+    fn cleanup_expired_sql_compares_absolute_time_and_protects_releasing() {
+        // C6 regression: TO_CHAR rendered the cutoff in the PG session
+        // timezone but tagged it "Z", then compared as text — with the
+        // container TZ=Asia/Shanghai that deleted entries up to 8 hours
+        // early, and rows being released could vanish mid-relay.
+        assert!(
+            QUARANTINE_CLEANUP_EXPIRED_SQL.contains("created_at::timestamptz"),
+            "cutoff must be compared in absolute time"
+        );
+        assert!(
+            !QUARANTINE_CLEANUP_EXPIRED_SQL.contains("TO_CHAR"),
+            "TO_CHAR text comparison reintroduces the timezone bug"
+        );
+        assert!(
+            QUARANTINE_CLEANUP_EXPIRED_SQL.contains("status != 'releasing'"),
+            "an in-flight release must never be garbage-collected"
+        );
     }
 }

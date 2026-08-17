@@ -119,6 +119,7 @@ impl ShardedSessionManager {
         content: EmailContent,
         is_complete: bool,
         restore_origin: &str,
+        enqueue_dirty: bool,
     ) -> Option<String> {
         let restored_message_id = Self::extract_message_id(&content);
         Self::populate_smtp_envelope_from_content(session, &content);
@@ -140,7 +141,9 @@ impl ShardedSessionManager {
                 .map(|s| s.len())
                 .unwrap_or(0);
 
-        self.mark_session_dirty(dirty, key);
+        if enqueue_dirty {
+            self.mark_session_dirty(dirty, key);
+        }
 
         if is_complete {
             self.stats
@@ -186,54 +189,117 @@ impl ShardedSessionManager {
         let diag_snapshot = Self::collect_smtp_restore_diag_snapshot(session_data);
         let should_log_resolution =
             Self::should_log_smtp_restore_resolution(session_data, &diag_snapshot, restore_origin);
-        session_data.session.email_count += 1;
 
-        let email_data = {
+        let emails = {
             let Some(smtp_state) = session_data.smtp_state.as_mut() else {
                 return;
             };
-            let emails = smtp_state.take_completed_emails();
+            let emails = smtp_state.take_completed_messages();
             smtp_state.clear_data_buffer();
-            emails.into_iter().last()
+            emails
         };
 
-        let Some(email_data) = email_data else {
+        if emails.is_empty() {
             return;
-        };
+        }
 
-        match self.mime_parser.parse(&email_data) {
-            Ok(content) => {
-                let is_complete = session_data.client_stream.gap_bytes_skipped == 0
-                    && session_data.server_stream.gap_bytes_skipped == 0;
-                if let Some(message_id) = self.record_smtp_restore(
-                    &mut session_data.session,
-                    &mut session_data.dirty,
-                    &session_data.key,
-                    session_data.client_stream.gap_bytes_skipped,
-                    session_data.server_stream.gap_bytes_skipped,
-                    content,
-                    is_complete,
-                    restore_origin,
-                ) {
-                    self.enqueue_smtp_relay_probe(session_data, message_id);
+        session_data.session.email_count = session_data
+            .session
+            .email_count
+            .saturating_add(emails.len() as u32);
+        let last_index = emails.len() - 1;
+
+        for (index, email_data) in emails.into_iter().enumerate() {
+            let is_last = index == last_index;
+            match self.mime_parser.parse(&email_data.data) {
+                Ok(content) => {
+                    let is_complete = email_data.is_complete
+                        && session_data.client_stream.gap_bytes_skipped == 0
+                        && session_data.server_stream.gap_bytes_skipped == 0;
+                    if is_last {
+                        if let Some(message_id) = self.record_smtp_restore(
+                            &mut session_data.session,
+                            &mut session_data.dirty,
+                            &session_data.key,
+                            session_data.client_stream.gap_bytes_skipped,
+                            session_data.server_stream.gap_bytes_skipped,
+                            content,
+                            is_complete,
+                            restore_origin,
+                            true,
+                        ) {
+                            self.enqueue_smtp_relay_probe(session_data, message_id);
+                        }
+                    } else {
+                        let mut snapshot = session_data.session.clone();
+                        snapshot.id = uuid::Uuid::new_v4();
+                        snapshot.email_count = 1;
+                        snapshot.mail_from = None;
+                        snapshot.rcpt_to.clear();
+                        snapshot.subject = None;
+                        snapshot.message_id = None;
+                        snapshot.error_reason = None;
+                        let mut ignored_dirty = false;
+                        if let Some(message_id) = self.record_smtp_restore(
+                            &mut snapshot,
+                            &mut ignored_dirty,
+                            &session_data.key,
+                            session_data.client_stream.gap_bytes_skipped,
+                            session_data.server_stream.gap_bytes_skipped,
+                            content,
+                            is_complete,
+                            restore_origin,
+                            false,
+                        ) {
+                            self.enqueue_smtp_relay_probe(session_data, message_id);
+                        }
+                        self.completed_email_queue.push(snapshot);
+                    }
                 }
-            }
-            Err(e) => {
-                self.stats
-                    .smtp_pipeline
-                    .smtp_mime_parse_failed
-                    .fetch_add(1, Ordering::Relaxed);
-                self.log_smtp_mime_parse_failure(
-                    session_data,
-                    &diag_snapshot,
-                    email_data.len(),
-                    parse_context,
-                    Some(restore_origin),
-                    None,
-                    None,
-                    diag_snapshot.buffered_email_bytes,
-                    &e,
-                );
+                Err(e) => {
+                    self.stats
+                        .smtp_pipeline
+                        .smtp_mime_parse_failed
+                        .fetch_add(1, Ordering::Relaxed);
+                    if is_last {
+                        session_data.session.content.is_complete = false;
+                        session_data.session.error_reason =
+                            Some(format!("inspection:mime_parse_failed:{e:?}"));
+                        if session_data.client_stream.gap_bytes_skipped > 0
+                            || session_data.server_stream.gap_bytes_skipped > 0
+                        {
+                            Self::merge_inspection_reason(
+                                &mut session_data.session.error_reason,
+                                "smtp_stream_gap",
+                            );
+                        }
+                        self.mark_session_dirty(&mut session_data.dirty, &session_data.key);
+                        self.log_smtp_mime_parse_failure(
+                            session_data,
+                            &diag_snapshot,
+                            email_data.data.len(),
+                            parse_context,
+                            Some(restore_origin),
+                            None,
+                            None,
+                            diag_snapshot.buffered_email_bytes,
+                            &e,
+                        );
+                    } else {
+                        let mut snapshot = session_data.session.clone();
+                        snapshot.id = uuid::Uuid::new_v4();
+                        snapshot.email_count = 1;
+                        snapshot.content = EmailContent::default();
+                        snapshot.content.is_complete = false;
+                        snapshot.error_reason = Some("inspection:mime_parse_failed".to_string());
+                        self.completed_email_queue.push(snapshot);
+                        warn!(
+                            error = ?e,
+                            message_index = index,
+                            "Pipelined SMTP message MIME parse failed; publishing incomplete snapshot"
+                        );
+                    }
+                }
             }
         }
 
@@ -327,10 +393,7 @@ impl ShardedSessionManager {
                 }
                 SmtpCommand::Quit
                     if session_data.session.status != SessionStatus::Timeout
-                        && self.complete_session_if_needed(
-                            &mut session_data.session,
-                            &mut session_data.active_counter_open,
-                        ) =>
+                        && self.complete_session_if_needed(session_data) =>
                 {
                     if !session_data.dirty {
                         session_data.dirty = true;
@@ -459,6 +522,9 @@ impl ShardedSessionManager {
                         .map(|s| s.is_encrypted())
                         .unwrap_or(false);
                     if encrypted {
+                        // STARTTLS confirmed by the server: this is real encryption,
+                        // not the revocable TLS-record magic heuristic.
+                        session_data.tls_magic_marked = false;
                         session_data.session.content.is_encrypted = true;
                         if !session_data.dirty {
                             session_data.dirty = true;
@@ -491,10 +557,7 @@ impl ShardedSessionManager {
                             session_data.server_stream.pending_segments_diag();
                         if saw_354 || buffered_email_bytes > 0 {
                             if session_data.session.status != SessionStatus::Timeout
-                                && self.complete_session_if_needed(
-                                    &mut session_data.session,
-                                    &mut session_data.active_counter_open,
-                                )
+                                && self.complete_session_if_needed(session_data)
                             {
                                 if !session_data.dirty {
                                     session_data.dirty = true;
@@ -561,10 +624,7 @@ impl ShardedSessionManager {
                     }
 
                     if session_data.session.status != SessionStatus::Timeout
-                        && self.complete_session_if_needed(
-                            &mut session_data.session,
-                            &mut session_data.active_counter_open,
-                        )
+                        && self.complete_session_if_needed(session_data)
                     {
                         if !session_data.dirty {
                             session_data.dirty = true;
@@ -635,17 +695,41 @@ impl ShardedSessionManager {
         // Midstream TLS detection: if payload starts with TLS record header (0x16 0x03 xx)
         // this is a session that entered STARTTLS before we started capturing.
         // Mark encrypted to avoid feeding TLS garbage into the SMTP parser.
+        //
+        // N1 gate: the 3-byte magic alone is too weak as a permanent kill switch —
+        // any packet whose payload happens to start with these bytes would blind the
+        // session forever. Only trust it when the session was created without SYN
+        // (capture genuinely started mid-stream) AND no legitimate SMTP command or
+        // response line has been observed yet. The mark stays revocable: heuristically
+        // marked sessions keep feeding the parser, and a later valid SMTP line
+        // reverts the mark below.
         let packet_looks_like_tls = packet.payload.len() >= 3
             && packet.payload[0] == 0x16 // TLS Handshake
             && packet.payload[1] == 0x03 // TLS version major
             && packet.payload[2] <= 0x04; // TLS version minor (SSLv3..TLS1.3)
-        if packet_looks_like_tls && !session_data.session.content.is_encrypted {
+        let smtp_dialog_observed = session_data
+            .smtp_state
+            .as_ref()
+            .map(|s| s.has_observed_dialog())
+            .unwrap_or(false);
+        if packet_looks_like_tls
+            && !session_data.session.content.is_encrypted
+            && session_data.created_without_syn
+            && !smtp_dialog_observed
+        {
             session_data.session.content.is_encrypted = true;
+            session_data.tls_magic_marked = true;
             mark_dirty!(session_data);
         }
 
-        let skip_smtp_payload_parse =
-            session_data.session.content.is_encrypted || packet_looks_like_tls || saw_rst;
+        // Heuristically marked sessions keep parsing so the mark can be revoked,
+        // and the TLS-looking packet itself is still fed to the stream/parser:
+        // dropping it would gap the TCP reassembly for everything that follows.
+        // The SMTP parser tolerates garbage (bounded 4KB partial-line buffers),
+        // while port-based or STARTTLS-confirmed encryption keeps skipping.
+        let skip_smtp_payload_parse = (session_data.session.content.is_encrypted
+            && !session_data.tls_magic_marked)
+            || saw_rst;
         if !skip_smtp_payload_parse {
             if session_data.smtp_state.is_none() {
                 return;
@@ -664,7 +748,10 @@ impl ShardedSessionManager {
             match packet.direction {
                 Direction::Outbound => {
                     // clientdata (Command emailContent)
-                    if session_data.client_stream.add_segment(segment).is_err() {
+                    if let Err(stream_err) = session_data.client_stream.add_segment(segment) {
+                        if matches!(stream_err, crate::stream::StreamError::GlobalBudgetExceeded) {
+                            self.note_budget_pressure();
+                        }
                         self.stats
                             .smtp_pipeline
                             .smtp_client_stream_overflow
@@ -689,35 +776,47 @@ impl ShardedSessionManager {
                     }
 
                     let prepend_shift = session_data.client_stream.prepend_shift;
-                    let (prepend_commands, commands, reassembled_len) = {
-                        let (reassembled, total_gap_bytes) =
-                            session_data.client_stream.get_data_and_gap_bytes();
-                        let reassembled_len = reassembled.len();
-                        if packet.protocol == Protocol::Smtp
-                            && total_gap_bytes > session_data.client_gap_logged_bytes
-                        {
+                    // Gap accounting uses its own short-lived stream borrow so
+                    // the reassembled-data borrow below can coexist with the
+                    // mutable session passes during reassembly (compile fix
+                    // for the uncommitted gap-accounting feature; ordering —
+                    // gap flagged before command processing — is preserved).
+                    if packet.protocol == Protocol::Smtp {
+                        let gap_event = {
+                            let (_, total_gap_bytes) =
+                                session_data.client_stream.get_data_and_gap_bytes();
+                            if total_gap_bytes > session_data.client_gap_logged_bytes {
+                                Some((
+                                    total_gap_bytes - session_data.client_gap_logged_bytes,
+                                    total_gap_bytes,
+                                ))
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some((new_gap_bytes, total_gap_bytes)) = gap_event {
                             self.stats
                                 .smtp_pipeline
                                 .smtp_client_gap_events
                                 .fetch_add(1, Ordering::Relaxed);
-                            let new_gap_bytes =
-                                total_gap_bytes - session_data.client_gap_logged_bytes;
                             self.stats
                                 .smtp_pipeline
                                 .smtp_client_gap_bytes_total
                                 .fetch_add(new_gap_bytes as u64, Ordering::Relaxed);
                             session_data.client_gap_logged_bytes = total_gap_bytes;
-                            warn!(
-                                "SMTP stream gap detected: session={} direction=client_to_server new_gap_bytes={} total_gap_bytes={} client={}:{} server={}:{}",
-                                session_data.session.id,
+                            self.mark_smtp_stream_gap(
+                                session_data,
+                                "client_to_server",
                                 new_gap_bytes,
                                 total_gap_bytes,
-                                session_data.session.client_ip,
-                                session_data.session.client_port,
-                                session_data.session.server_ip,
-                                session_data.session.server_port
                             );
                         }
+                    }
+                    let (prepend_commands, commands, reassembled_len) = {
+                        let (reassembled, total_gap_bytes) =
+                            session_data.client_stream.get_data_and_gap_bytes();
+                        let reassembled_len = reassembled.len();
+                        let _ = total_gap_bytes;
 
                         if prepend_shift > 0 {
                             self.stats
@@ -799,7 +898,10 @@ impl ShardedSessionManager {
                         packet.payload.len(),
                     );
 
-                    if session_data.server_stream.add_segment(segment).is_err() {
+                    if let Err(stream_err) = session_data.server_stream.add_segment(segment) {
+                        if matches!(stream_err, crate::stream::StreamError::GlobalBudgetExceeded) {
+                            self.note_budget_pressure();
+                        }
                         self.stats
                             .smtp_pipeline
                             .smtp_server_stream_overflow
@@ -824,35 +926,43 @@ impl ShardedSessionManager {
                     }
 
                     let prepend_shift = session_data.server_stream.prepend_shift;
-                    let (prepend_responses, responses, reassembled_len) = {
-                        let (reassembled, total_gap_bytes) =
-                            session_data.server_stream.get_data_and_gap_bytes();
-                        let reassembled_len = reassembled.len();
-                        if packet.protocol == Protocol::Smtp
-                            && total_gap_bytes > session_data.server_gap_logged_bytes
-                        {
+                    // Same short-lived-borrow structure as the client side.
+                    if packet.protocol == Protocol::Smtp {
+                        let gap_event = {
+                            let (_, total_gap_bytes) =
+                                session_data.server_stream.get_data_and_gap_bytes();
+                            if total_gap_bytes > session_data.server_gap_logged_bytes {
+                                Some((
+                                    total_gap_bytes - session_data.server_gap_logged_bytes,
+                                    total_gap_bytes,
+                                ))
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some((new_gap_bytes, total_gap_bytes)) = gap_event {
                             self.stats
                                 .smtp_pipeline
                                 .smtp_server_gap_events
                                 .fetch_add(1, Ordering::Relaxed);
-                            let new_gap_bytes =
-                                total_gap_bytes - session_data.server_gap_logged_bytes;
                             self.stats
                                 .smtp_pipeline
                                 .smtp_server_gap_bytes_total
                                 .fetch_add(new_gap_bytes as u64, Ordering::Relaxed);
                             session_data.server_gap_logged_bytes = total_gap_bytes;
-                            warn!(
-                                "SMTP stream gap detected: session={} direction=server_to_client new_gap_bytes={} total_gap_bytes={} client={}:{} server={}:{}",
-                                session_data.session.id,
+                            self.mark_smtp_stream_gap(
+                                session_data,
+                                "server_to_client",
                                 new_gap_bytes,
                                 total_gap_bytes,
-                                session_data.session.client_ip,
-                                session_data.session.client_port,
-                                session_data.session.server_ip,
-                                session_data.session.server_port
                             );
                         }
+                    }
+                    let (prepend_responses, responses, reassembled_len) = {
+                        let (reassembled, total_gap_bytes) =
+                            session_data.server_stream.get_data_and_gap_bytes();
+                        let reassembled_len = reassembled.len();
+                        let _ = total_gap_bytes;
 
                         if prepend_shift > 0 {
                             self.stats
@@ -959,6 +1069,24 @@ impl ShardedSessionManager {
                 }
             }
 
+            // N1 revert: a heuristically marked session that produces legitimate
+            // SMTP dialog was never really encrypted — revoke the TLS magic mark.
+            if session_data.tls_magic_marked
+                && session_data
+                    .smtp_state
+                    .as_ref()
+                    .map(|s| s.has_observed_dialog())
+                    .unwrap_or(false)
+            {
+                session_data.tls_magic_marked = false;
+                session_data.session.content.is_encrypted = false;
+                mark_dirty!(session_data);
+                warn!(
+                    session_id = %session_data.session.id,
+                    "SMTP: TLS-record magic heuristic reverted after observing plaintext SMTP dialog"
+                );
+            }
+
             // : SIMD (Used for DATA Segmentof Parse)
             if !session_data
                 .smtp_state
@@ -984,10 +1112,7 @@ impl ShardedSessionManager {
             saw_rst || (session_data.client_tcp_closed && session_data.server_tcp_closed);
         if tcp_closed
             && session_data.session.status != SessionStatus::Timeout
-            && self.complete_session_if_needed(
-                &mut session_data.session,
-                &mut session_data.active_counter_open,
-            )
+            && self.complete_session_if_needed(session_data)
         {
             mark_dirty!(session_data);
             info!(

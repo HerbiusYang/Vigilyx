@@ -929,6 +929,9 @@ pub struct FeedbackEntry {
     pub id: Uuid,
     pub session_id: Uuid,
     pub verdict_id: Option<Uuid>,
+    /// Platform username that submitted the feedback. Used for audit,
+    /// per-user throttling, and idempotency enforcement.
+    pub submitted_by: String,
     pub feedback_type: String,
     pub module_id: Option<String>,
     pub original_threat_level: String,

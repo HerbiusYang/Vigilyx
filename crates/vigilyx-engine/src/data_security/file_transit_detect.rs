@@ -343,7 +343,8 @@ impl DataSecurityDetector for FileTransitDetector {
                 if let Some(ref body) = body_text
                     && !body.is_empty()
                 {
-                    let dlp_text = dlp::extract_dlp_text(body, &session.uri);
+                    let dlp_text =
+                        dlp::extract_dlp_text(body, &session.uri, session.content_type.as_deref());
                     let dlp_result = dlp::scan_text(&dlp_text);
                     if !dlp_result.is_empty() {
                         dlp_for_jrt = Some(dlp_result.clone());

@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use uuid::Uuid;
 use vigilyx_core::{EmailSession, TrafficStats, WsMessage};
+use vigilyx_db::mq::streams;
 
 use super::ApiResponse;
 use crate::AppState;
@@ -110,6 +111,29 @@ fn default_clear_mode() -> String {
     "safe".to_string()
 }
 
+/// Data-plane queues whose retained messages can recreate sessions and verdicts
+/// immediately after a PostgreSQL cleanup. Keep this as an exact allowlist:
+/// control-plane, configuration, heartbeat, and authentication keys must survive.
+const OPERATIONAL_DATA_STREAMS: &[&str] = &[
+    streams::EMAIL_SESSIONS,
+    streams::HTTP_SESSIONS,
+    streams::AI_TASKS,
+    streams::RESCAN_REQUESTS,
+    streams::EMAIL_SESSIONS_DLQ,
+    streams::HTTP_SESSIONS_DLQ,
+    streams::RESCAN_REQUESTS_DLQ,
+];
+
+async fn purge_operational_data_streams(state: &AppState) -> anyhow::Result<(u64, u64)> {
+    let mq =
+        state.messaging.mq.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("Redis is unavailable; refusing partial full cleanup")
+        })?;
+    mq.purge_streams(OPERATIONAL_DATA_STREAMS)
+        .await
+        .map_err(|error| anyhow::anyhow!("failed to purge Redis data streams: {error}"))
+}
+
 /// Clear database (supports multiple modes)
 pub async fn clear_database(
     State(state): State<Arc<AppState>>,
@@ -119,24 +143,67 @@ pub async fn clear_database(
     let mode = body.map(|b| b.0.mode).unwrap_or_else(default_clear_mode);
     let start = std::time::Instant::now();
 
+    if !matches!(mode.as_str(), "safe" | "quick" | "high_performance") {
+        return ApiResponse::<serde_json::Value>::bad_request(format!(
+            "Unknown clear mode: {}. Options: safe, quick, high_performance",
+            mode
+        ))
+        .into_response();
+    }
+
+    // Purge before touching PostgreSQL. If Redis is unavailable or a target
+    // key has an unexpected type, fail without claiming a partial success.
+    let (pre_entries_deleted, pre_streams_deleted) =
+        match purge_operational_data_streams(&state).await {
+            Ok(result) => result,
+            Err(error) => {
+                tracing::error!(mode, error = %error, "Full cleanup blocked before DB mutation");
+                return ApiResponse::<serde_json::Value>::server_error(&error, "Operation failed")
+                    .into_response();
+            }
+        };
+
     let result = match mode.as_str() {
         "safe" => state.db.clear_safe().await,
         "quick" => state.db.clear_quick().await,
         "high_performance" => state.db.clear_high_performance().await,
-        _ => {
-            return ApiResponse::<serde_json::Value>::bad_request(format!(
-                "Unknown clear mode: {}. Options: safe, quick, high_performance",
-                mode
-            ))
-            .into_response();
-        }
+        _ => unreachable!("clear mode was validated above"),
     };
 
     let elapsed_ms = start.elapsed().as_millis();
 
     match result {
         Ok(_) => {
-            tracing::info!("Database cleared (mode={}) in {}ms", mode, elapsed_ms);
+            // Purge a second time to remove messages produced during table
+            // recreation. Messages arriving after this barrier are new live
+            // traffic and may legitimately appear after cleanup returns.
+            let (post_entries_deleted, post_streams_deleted) =
+                match purge_operational_data_streams(&state).await {
+                    Ok(result) => result,
+                    Err(error) => {
+                        tracing::error!(
+                            mode,
+                            error = %error,
+                            "Database cleared but final Redis stream purge failed"
+                        );
+                        return ApiResponse::<serde_json::Value>::server_error(
+                            &error,
+                            "Database cleared, but queue cleanup failed; retry full cleanup",
+                        )
+                        .into_response();
+                    }
+                };
+            let stream_entries_deleted = pre_entries_deleted.saturating_add(post_entries_deleted);
+            let stream_keys_deleted = pre_streams_deleted.saturating_add(post_streams_deleted);
+
+            *state.cache.traffic_stats.write().await = None;
+            tracing::info!(
+                mode,
+                elapsed_ms,
+                stream_entries_deleted,
+                stream_keys_deleted,
+                "Database and Redis operational data cleared"
+            );
 
             // Write audit log for database clear operation
             let db = state.engine_db.clone();
@@ -149,7 +216,10 @@ pub async fn clear_database(
                         "clear_database",
                         Some("database"),
                         None,
-                        Some(&format!("mode={}, elapsed={}ms", mode_clone, elapsed_ms)),
+                        Some(&format!(
+                            "mode={}, elapsed={}ms, stream_entries_deleted={}",
+                            mode_clone, elapsed_ms, stream_entries_deleted
+                        )),
                         None,
                     )
                     .await
@@ -179,7 +249,11 @@ pub async fn clear_database(
             ApiResponse::ok(serde_json::json!({
                 "message": "Database cleared",
                 "mode": mode,
-                "elapsed_ms": elapsed_ms
+                "elapsed_ms": elapsed_ms,
+                "stream_entries_deleted": stream_entries_deleted,
+                "stream_keys_deleted": stream_keys_deleted,
+                "cleanup_scope": "point_in_time",
+                "new_live_traffic_may_appear": true
             }))
             .into_response()
         }
@@ -187,6 +261,32 @@ pub async fn clear_database(
             tracing::error!("Failed to clear database (mode={}): {}", mode, e);
             ApiResponse::<serde_json::Value>::server_error(&e, "Operation failed").into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod clear_tests {
+    use super::*;
+
+    #[test]
+    fn operational_cleanup_uses_exact_data_plane_stream_allowlist() {
+        assert_eq!(
+            OPERATIONAL_DATA_STREAMS,
+            [
+                "vigilyx:stream:sessions",
+                "vigilyx:stream:http_sessions",
+                "vigilyx:stream:ai_tasks",
+                "vigilyx:stream:rescan_requests",
+                "vigilyx:stream:sessions:dlq",
+                "vigilyx:stream:http_sessions:dlq",
+                "vigilyx:stream:rescan_requests:dlq",
+            ]
+        );
+        assert!(
+            OPERATIONAL_DATA_STREAMS
+                .iter()
+                .all(|key| key.starts_with("vigilyx:stream:"))
+        );
     }
 }
 
@@ -236,6 +336,23 @@ pub async fn factory_reset(
                 }
             };
 
+            let reset_hash = state.auth.config.password_hash.read().await.clone();
+            if let Err(e) = state
+                .engine_db
+                .reset_platform_admin(&state.auth.config.username, &reset_hash)
+                .await
+            {
+                tracing::error!(
+                    "Factory reset completed, but platform admin bootstrap failed: {}",
+                    e
+                );
+                return ApiResponse::<serde_json::Value>::server_error(
+                    &e,
+                    "Factory reset completed but platform admin bootstrap failed",
+                )
+                .into_response();
+            }
+
             if let Err(e) = state
                 .engine_db
                 .set_config("auth_token_version", &new_token_version.to_string())
@@ -243,6 +360,21 @@ pub async fn factory_reset(
             {
                 tracing::error!(
                     "Factory reset completed, but auth token version persistence failed: {}",
+                    e
+                );
+                return ApiResponse::<serde_json::Value>::server_error(
+                    &e,
+                    "Factory reset completed but auth reset failed",
+                )
+                .into_response();
+            }
+
+            // SEC M-1: factory reset revokes every user's outstanding JWTs
+            // through the per-user rows (the config counter above remains as
+            // the legacy fallback only).
+            if let Err(e) = state.engine_db.bump_all_platform_user_token_versions().await {
+                tracing::error!(
+                    "Factory reset completed, but per-user token revocation failed: {}",
                     e
                 );
                 return ApiResponse::<serde_json::Value>::server_error(
@@ -652,7 +784,7 @@ async fn execute_tx(
     sql: &str,
     bind_value: Option<&str>,
 ) -> anyhow::Result<()> {
-    let mut query = sqlx::query(sql);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.to_owned()));
     if let Some(bind_value) = bind_value {
         query = query.bind(bind_value);
     }

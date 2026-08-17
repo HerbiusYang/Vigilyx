@@ -26,6 +26,8 @@ use crate::matcher::{payment_change_keywords, transaction_urgency_keywords};
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
 use crate::module_data::module_data;
 use crate::modules::common::looks_like_raw_mime_container_text;
+use crate::modules::content_scan::html_utils::strip_html_tags;
+use crate::modules::content_scan::normalize_text;
 
 /// Patterns for financial entity extraction
 static RE_IBAN: LazyLock<Regex> = LazyLock::new(|| {
@@ -42,7 +44,7 @@ static RE_BANK_ACCOUNT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:account|acct|a/c|routing|sort[\s-]?code)[:\s#]*[\d\s-]{6,20}\b").unwrap()
 });
 static RE_INVOICE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:invoice|inv|purchase[\s-]?order|po|receipt)[\s#:-]*[A-Z0-9]{3,20}\b")
+    Regex::new(r"(?i)\b(?:invoice|inv|purchase[\s-]?order|po|receipt)\b[\s#:-]*[A-Z0-9]{3,20}\b")
         .unwrap()
 });
 static RE_WIRE_INSTRUCTION: LazyLock<Regex> = LazyLock::new(|| {
@@ -82,6 +84,10 @@ fn is_valid_iban_country(matched: &str) -> bool {
     }
     let prefix = matched[..2].to_uppercase();
     module_data().contains("iban_country_codes", &prefix)
+}
+
+fn is_valid_iban_match(matched: &str) -> bool {
+    is_valid_iban_country(matched) && crate::data_security::dlp::finders::is_valid_iban(matched)
 }
 
 /// Signal weights
@@ -192,26 +198,21 @@ impl TransactionCorrelationModule {
             text.push('\n');
         }
 
-        // Also check HTML body stripped of tags (rough extraction)
+        // Also check HTML body, stripped of tags by the shared stripper:
+        // the old rough stripper left HTML entities undecoded (so "转&#36134;"
+        // never matched "转账") and swallowed text after any bare '<'.
         if let Some(ref html) = ctx.session.content.body_html {
-            // Very rough tag stripping - sufficient for regex matching
-            let stripped: String = html
-                .chars()
-                .scan(false, |in_tag, c| {
-                    if c == '<' {
-                        *in_tag = true;
-                        Some(' ')
-                    } else if c == '>' {
-                        *in_tag = false;
-                        Some(' ')
-                    } else if *in_tag {
-                        Some(' ')
-                    } else {
-                        Some(c)
-                    }
-                })
-                .collect();
+            let stripped = strip_html_tags(html);
             text.push_str(&stripped);
+            // Tag stripping inserts a space at every tag boundary, so
+            // keywords spliced by inline markup ("转<b>账</b>至新账户")
+            // still evade the matchers. Append a whitespace-free view so
+            // payment-change / urgency phrases survive splicing.
+            let squashed: String = stripped.chars().filter(|c| !c.is_whitespace()).collect();
+            if !squashed.is_empty() {
+                text.push('\n');
+                text.push_str(&squashed);
+            }
         }
 
         text
@@ -224,6 +225,40 @@ impl TransactionCorrelationModule {
         let kw = payment_change_keywords()
             .scan(&text_lower)
             .first_pattern()?;
+
+        // These phrases describe ordinary payment metadata and occur in bank
+        // notices, payroll forms and invoices. They are not evidence that the
+        // recipient is being asked to replace a previously trusted account.
+        const CONTEXT_ONLY_TERMS: &[&str] = &[
+            "direct deposit",
+            "payroll bank",
+            "payroll information",
+            "routing number",
+            "beneficiary account",
+            "remittance details",
+            "收款账户",
+            "收款账号",
+            "银行账户",
+            "银行账号",
+            "工资卡",
+            "代发账户",
+            "代发账号",
+        ];
+        if CONTEXT_ONLY_TERMS.contains(&kw.as_str()) {
+            let window = Self::find_context(text, &kw)?;
+            let window_lower = window.to_lowercase();
+            const CHANGE_MARKERS: &[&str] = &[
+                "change", "changed", "updated", "revised", "replace", "replacement",
+                "new account", "old account", "instead", "变更", "更换", "更改", "修改",
+                "更新", "新账户", "新账号", "旧账户", "原账户", "改为",
+            ];
+            if !CHANGE_MARKERS
+                .iter()
+                .any(|marker| window_lower.contains(marker))
+            {
+                return None;
+            }
+        }
         Some((
             W_PAYMENT_CHANGE,
             Evidence {
@@ -271,9 +306,19 @@ impl TransactionCorrelationModule {
 
     fn has_crypto_context(text: &str) -> bool {
         let lower = text.to_lowercase();
-        CRYPTO_CONTEXT_KEYWORDS
-            .iter()
-            .any(|keyword| lower.contains(keyword))
+        CRYPTO_CONTEXT_KEYWORDS.iter().any(|keyword| {
+            if keyword.is_ascii() {
+                lower.match_indices(keyword).any(|(start, _)| {
+                    let before = lower[..start].chars().next_back();
+                    let end = start + keyword.len();
+                    let after = lower[end..].chars().next();
+                    !before.is_some_and(|ch| ch.is_ascii_alphanumeric())
+                        && !after.is_some_and(|ch| ch.is_ascii_alphanumeric())
+                })
+            } else {
+                lower.contains(keyword)
+            }
+        })
     }
 }
 
@@ -285,7 +330,11 @@ impl SecurityModule for TransactionCorrelationModule {
 
     async fn analyze(&self, ctx: &SecurityContext) -> Result<ModuleResult, EngineError> {
         let start = Instant::now();
-        let text = Self::get_text_content(ctx);
+        // Unicode normalization (NFKC + zero-width stripping) after the
+        // rough HTML tag stripping in get_text_content: full-width
+        // letters/digits and zero-width splices must not hide payment
+        // change keywords, urgency phrases, or financial entities.
+        let text = normalize_text(&Self::get_text_content(ctx));
 
         // Quick exit: no text content -> vacuous BPA
         if text.trim().is_empty() {
@@ -321,7 +370,7 @@ impl SecurityModule for TransactionCorrelationModule {
         // 1. IBAN detection (with country code validation to reduce false positives)
         let iban_matches: Vec<_> = RE_IBAN
             .find_iter(&text)
-            .filter(|m| is_valid_iban_country(m.as_str()))
+            .filter(|m| is_valid_iban_match(m.as_str()))
             .collect();
         if !iban_matches.is_empty() {
             financial_entity_count += iban_matches.len() as u32;
@@ -512,7 +561,14 @@ impl SecurityModule for TransactionCorrelationModule {
             evidence.push(ev);
         }
 
-        let has_actionable_payment_signal = actionable_signal_count > 0;
+        // Crypto vocabulary is context for validating wallet-shaped tokens,
+        // not an actionable payment fact by itself. An account number or a
+        // bare word such as "TRON" must not arm the urgency combination.
+        let has_crypto_wallet = categories
+            .iter()
+            .any(|category| category == "crypto_wallet");
+        let has_actionable_payment_signal =
+            has_payment_change || has_wire_instruction || has_crypto_wallet;
 
         // 8. Urgency + financial entity combo
         if let Some((score, ev)) = Self::check_urgency_combo(&text, has_actionable_payment_signal) {
@@ -542,7 +598,7 @@ impl SecurityModule for TransactionCorrelationModule {
         }
 
         let routine_settlement_context = !has_payment_change
-            && !has_crypto_context
+            && !has_crypto_wallet
             && has_wire_instruction
             && has_amount_reference
             && reference_entity_count > 0
@@ -556,6 +612,18 @@ impl SecurityModule for TransactionCorrelationModule {
                 location: Some("body".to_string()),
                 snippet: None,
             });
+        }
+
+        // Amounts and invoice/order references are common in receipts and
+        // business notifications. Without an actionable payment signal they
+        // should not independently create a low-risk threat finding.
+        let passive_financial_context = !has_payment_change
+            && !has_wire_instruction
+            && !has_crypto_wallet
+            && actionable_signal_count == 0
+            && (reference_entity_count > 0 || has_amount_reference);
+        if passive_financial_context {
+            total_score = total_score.min(0.14);
         }
 
         total_score = total_score.min(1.0);
@@ -615,6 +683,7 @@ impl SecurityModule for TransactionCorrelationModule {
                 "has_payment_change": has_payment_change,
                 "has_amount_reference": has_amount_reference,
                 "has_crypto_context": has_crypto_context,
+                "has_crypto_wallet": has_crypto_wallet,
             }),
             duration_ms,
             analyzed_at: Utc::now(),
@@ -645,6 +714,46 @@ mod tests {
             ..Default::default()
         };
         SecurityContext::new(Arc::new(session))
+    }
+
+    fn make_ctx_with_html(body_html: &str) -> SecurityContext {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.content = EmailContent {
+            body_html: Some(body_html.to_string()),
+            ..Default::default()
+        };
+        SecurityContext::new(Arc::new(session))
+    }
+
+    #[tokio::test]
+    async fn test_html_spliced_payment_change_keyword_fires() {
+        // Evasion PoC: the old rough HTML stripper left entities undecoded
+        // ("转&#36134;" never became "转账") and split keywords across inline
+        // tags ("新</b><b>账户"), so the payment-change BEC signature stayed
+        // invisible. The shared stripper + whitespace-free view recovers it.
+        let module = TransactionCorrelationModule::new();
+        let html = "<p>财务部紧急通知：请将本月货款 <b>转&#36134;</b> 至 <b>新</b><b>账户</b> 收款，\
+                    金额 ¥50000，请今天内完成。</p>";
+        let ctx = make_ctx_with_html(html);
+
+        let result = module.analyze(&ctx).await.expect("analyze ok");
+
+        assert!(
+            result.categories.contains(&"payment_change".to_string()),
+            "entity/tag-spliced payment-change keyword must be detected, cats={:?}",
+            result.categories
+        );
+        assert!(
+            result.threat_level >= ThreatLevel::Low,
+            "payment_change (0.35) + amount must reach Low+, got {:?}",
+            result.threat_level
+        );
     }
 
     #[test]
@@ -683,6 +792,11 @@ mod tests {
             .filter(|m| is_valid_iban_country(m.as_str()))
             .collect();
         assert_eq!(matches_fake.len(), 0);
+
+        // A gateway token beginning with the valid country code BE is not an
+        // IBAN unless its country length and ISO 13616 checksum also match.
+        let token = "be3287575130207014d70f5c0cf67f4faa1a2d32";
+        assert!(!is_valid_iban_match(token));
     }
 
     #[tokio::test]
@@ -794,6 +908,102 @@ mod tests {
         assert_eq!(result.threat_level, ThreatLevel::Safe);
     }
 
+    #[test]
+    fn crypto_context_requires_ascii_token_boundaries() {
+        assert!(!TransactionCorrelationModule::has_crypto_context(
+            "Electronic communications may contain computer viruses."
+        ));
+        assert!(!TransactionCorrelationModule::has_crypto_context(
+            "The workflow is processed automatically."
+        ));
+        assert!(TransactionCorrelationModule::has_crypto_context(
+            "Send the payment through the TRON network."
+        ));
+    }
+
+    #[tokio::test]
+    async fn electronic_disclaimer_urgency_is_not_a_financial_signal() {
+        let module = TransactionCorrelationModule::new();
+        let ctx = make_ctx(
+            Some(
+                "If you are not the intended recipient, please immediately notify the sender and delete this message. Electronic communications may contain computer viruses. 请立即以电子邮件通知发件人并删除本邮件。",
+            ),
+            Some("OMS Push request received"),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe, "{result:?}");
+        assert!(result.categories.is_empty(), "{result:?}");
+        assert_eq!(result.bpa, Some(Bpa::vacuous()));
+    }
+
+    #[tokio::test]
+    async fn crypto_vocabulary_without_wallet_does_not_arm_urgency_combo() {
+        let module = TransactionCorrelationModule::new();
+        let ctx = make_ctx(
+            Some("Please immediately review the TRON blockchain integration architecture."),
+            Some("Architecture review"),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe, "{result:?}");
+        assert!(
+            !result
+                .categories
+                .contains(&"urgency_financial_combo".to_string()),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn receipt_amounts_and_references_are_passive_without_payment_action() {
+        let module = TransactionCorrelationModule::new();
+        let ctx = make_ctx(
+            Some("Apple receipt INV-2026-7781. Total: ¥25.00. Order number REF-1234."),
+            Some("Apple receipt"),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert!(result.categories.is_empty());
+    }
+
+    #[tokio::test]
+    async fn ordinary_bank_account_metadata_is_not_a_payment_change() {
+        let module = TransactionCorrelationModule::new();
+        let ctx = make_ctx(
+            Some("请于今日核对工资卡及代发账户信息，确认银行账号填写准确。"),
+            Some("工资信息核对通知"),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert!(!result.categories.contains(&"payment_change".to_string()));
+        assert!(
+            !result
+                .categories
+                .contains(&"urgency_financial_combo".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_bank_account_change_remains_actionable() {
+        let module = TransactionCorrelationModule::new();
+        let ctx = make_ctx(
+            Some("重要通知：收款账户已变更，原账户停用，请从今日起使用新账户付款。"),
+            Some("收款账户变更"),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert!(result.categories.contains(&"payment_change".to_string()));
+        assert_ne!(result.threat_level, ThreatLevel::Safe);
+    }
+
     #[tokio::test]
     async fn crypto_wallet_with_context_still_triggers_detection() {
         let module = TransactionCorrelationModule::new();
@@ -808,5 +1018,54 @@ mod tests {
 
         assert!(result.categories.contains(&"crypto_wallet".to_string()));
         assert_ne!(result.threat_level, ThreatLevel::Safe);
+    }
+
+    #[tokio::test]
+    async fn zero_width_payment_change_keyword_fires() {
+        // Evasion PoC: zero-width splice inside the Chinese payment-change
+        // keyword "请用新账户付款" previously broke the substring scan.
+        let module = TransactionCorrelationModule::new();
+        let ctx = make_ctx(
+            Some("尊敬的合作伙伴，因银行系统升级，请用新\u{200B}账户付款，旧账户已停用。"),
+            Some("付款信息更新"),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert!(
+            result.categories.contains(&"payment_change".to_string()),
+            "zero-width-spliced payment-change keyword must fire, cats={:?}",
+            result.categories
+        );
+    }
+
+    #[tokio::test]
+    async fn fullwidth_wire_transfer_and_amount_fire() {
+        // Evasion PoC: full-width "ＷＩＲＥ ＴＲＡＮＳＦＥＲ" and full-width
+        // digits bypass the ASCII regexes until NFKC normalization.
+        let module = TransactionCorrelationModule::new();
+        let ctx = make_ctx(
+            Some(
+                "Please process this ｗｉｒｅ ｔｒａｎｓｆｅｒ immediately. Amount: USD ２４,５００.",
+            ),
+            Some("Urgent payment update"),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert!(
+            result.categories.contains(&"wire_transfer".to_string()),
+            "full-width wire transfer keyword must fire, cats={:?}",
+            result.categories
+        );
+        assert!(
+            result
+                .details
+                .get("has_amount_reference")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            "full-width digit amount must be detected, details={:?}",
+            result.details
+        );
     }
 }

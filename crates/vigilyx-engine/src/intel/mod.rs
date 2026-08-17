@@ -5,12 +5,13 @@
 //! - Local IOC cache lookup
 //! - Parallel queries: OTX AlienVault (free) + VT Scrape (Playwright) + AbuseIPDB
 //! - Result fusion: take highest verdict, weighted-average confidence, merge details
-//! - Auto-cache query results as IOC (TTL: clean 7d, malicious 3d, suspicious 1d)
+//! - Auto-cache query results as IOC (TTL: clean 72h, malicious 30d, suspicious 1d)
 //! - Per-source rate limiting to avoid API abuse
 
 mod sources;
 
 use std::collections::HashSet;
+use std::net::IpAddr;
 use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::{Duration, Instant};
 
@@ -63,14 +64,25 @@ impl IntelResult {
 
     /// Return a numeric severity rank for a verdict string (higher = more severe).
     fn verdict_severity(verdict: &str) -> u8 {
-        match verdict {
+        match verdict.to_ascii_lowercase().as_str() {
             "malicious" => 4,
             "suspicious" => 3,
-            "clean" => 2,
+            "clean" | "safe" => 2,
             "unknown" => 1,
             _ => 0,
         }
     }
+}
+
+/// True when `source` consists solely of external intel feeds (possibly merged
+/// with `+`, e.g. "otx+vt_scrape"). Entries from any other source (auto /
+/// manual / import / admin_clean / system) must never be overwritten by an
+/// external feed result.
+fn is_external_intel_source(source: &str) -> bool {
+    !source.is_empty()
+        && source
+            .split('+')
+            .all(|s| matches!(s, "otx" | "vt_scrape" | "virustotal" | "abuseipdb"))
 }
 
 /// Check whether `domain` appears in the safe-domain set.
@@ -80,6 +92,80 @@ impl IntelResult {
 /// explicit subdomain trust. It can also be managed via the admin UI.
 fn is_domain_in_set(domain: &str, safe_set: &HashSet<String>) -> bool {
     domain_matches_policy_set(domain, safe_set)
+}
+
+/// Third-party reputation services must never receive private or internal
+/// indicators. Local IOC lookups happen before this policy gate.
+fn is_non_public_ip(value: &str) -> bool {
+    let Ok(address) = value.parse::<IpAddr>() else {
+        return false;
+    };
+    match address {
+        IpAddr::V4(ip) => {
+            let octets = ip.octets();
+            ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || octets[0] == 0
+                || (octets[0] == 198 && (octets[1] == 18 || octets[1] == 19))
+        }
+        IpAddr::V6(ip) => {
+            let first = ip.segments()[0];
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+                || (first & 0xfe00) == 0xfc00 // RFC 4193 unique-local
+                || (first & 0xffc0) == 0xfe80 // RFC 4291 link-local
+        }
+    }
+}
+
+fn is_internal_domain(domain: &str) -> bool {
+    let normalized = domain.trim().trim_end_matches('.').to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    let configured: Vec<String> = std::env::var("VIGILYX_INTERNAL_DOMAINS")
+        .unwrap_or_default()
+        .split(',')
+        .map(|value| value.trim().trim_end_matches('.').to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .collect();
+    normalized == "localhost"
+        || configured
+            .iter()
+            .any(|suffix| normalized == *suffix || normalized.ends_with(&format!(".{suffix}")))
+        || [
+            "local",
+            "internal",
+            "intranet",
+            "lan",
+            "corp",
+            "home",
+            "test",
+            "example",
+            "invalid",
+        ]
+        .iter()
+        .any(|suffix| normalized == *suffix || normalized.ends_with(&format!(".{suffix}")))
+}
+
+fn external_intel_blocked(indicator: &str, ioc_type: &str) -> bool {
+    match ioc_type {
+        "ip" => is_non_public_ip(indicator),
+        "domain" => is_internal_domain(indicator),
+        "url" => url::Url::parse(indicator)
+            .ok()
+            .and_then(|parsed| parsed.host_str().map(is_internal_domain))
+            .unwrap_or(false)
+            || url::Url::parse(indicator)
+                .ok()
+                .and_then(|parsed| parsed.host_str().map(is_non_public_ip))
+                .unwrap_or(false),
+        _ => false,
+    }
 }
 
 /// Reload the safe-domain cache into the given shared set (loaded from DB verdict='clean').
@@ -113,6 +199,18 @@ fn classify_otx_pulses(pulse_count: u64) -> (&'static str, f64) {
     }
 }
 
+/// IOC cache TTL (hours) for a cached external verdict.
+///
+/// Clean gets a short TTL: a long-lived clean cache can be pre-poisoned by an
+/// attacker who seeds benign traffic before launching the real campaign.
+fn cache_ttl_hours(verdict: &str) -> i64 {
+    match verdict.to_ascii_lowercase().as_str() {
+        "malicious" => 720,     // 30 days
+        "clean" | "safe" => 72, // 3 days (was 15 days — pre-poisoning window)
+        _ => 24,                // 1 day (suspicious / unknown)
+    }
+}
+
 /// Configuration for external threat intelligence sources.
 ///
 /// Uses `#[serde(default)]` so that legacy config JSON (containing old fields like
@@ -137,9 +235,9 @@ pub struct IntelSourceConfig {
 impl Default for IntelSourceConfig {
     fn default() -> Self {
         Self {
-            otx_enabled: true,       // Free, enabled by default
-            vt_scrape_enabled: true, // Playwright scraper, enabled by default
-            vt_scrape_url: None,     // Defaults to http://127.0.0.1:8900
+            otx_enabled: true,        // Free, enabled by default
+            vt_scrape_enabled: false, // Optional AI bridge; explicit opt-in only
+            vt_scrape_url: None,      // Defaults to http://127.0.0.1:8900 when enabled
             virustotal_api_key: None,
             abuseipdb_enabled: false,
             abuseipdb_api_key: None,
@@ -153,6 +251,30 @@ impl IntelSourceConfig {
             std::env::var("AI_SERVICE_URL").unwrap_or_else(|_| "http://127.0.0.1:8900".to_string())
         });
         base.trim().trim_end_matches('/').to_string()
+    }
+
+    fn link_reputation_query_timeout(&self) -> Duration {
+        if self.vt_scrape_enabled {
+            Duration::from_secs(15)
+        } else {
+            Duration::from_secs(6)
+        }
+    }
+
+    fn link_reputation_module_timeout_ms(&self) -> u64 {
+        if self.vt_scrape_enabled {
+            // At most one three-query domain batch and one three-query URL
+            // batch, each with a 15-second operation deadline.
+            40_000
+        } else if self.virustotal_api_key.is_some() {
+            // Official VT can be queried once at each stage through the
+            // general five-second HTTP client.
+            16_000
+        } else {
+            // OTX-only/default path performs one bounded external stage; URL
+            // lookups are local IOC cache checks when no VT source is enabled.
+            8_000
+        }
     }
 }
 
@@ -230,6 +352,31 @@ impl ApiRateLimit {
     pub(super) fn is_quota_exhausted(&self) -> bool {
         self.quota_exhausted
     }
+
+    /// Non-mutating check: would a request slot be available right now?
+    pub(super) fn would_allow(&self) -> bool {
+        let now = Instant::now();
+
+        if let Some(quota) = self.daily_quota {
+            let day_count = if now.duration_since(self.day_reset).as_secs() >= 86400 {
+                0
+            } else {
+                self.day_count
+            };
+            if self.quota_exhausted || day_count >= quota {
+                return false;
+            }
+        } else if self.quota_exhausted {
+            return false;
+        }
+
+        let minute_count = if now.duration_since(self.minute_reset).as_secs() >= 60 {
+            0
+        } else {
+            self.minute_count
+        };
+        minute_count < self.max_per_minute
+    }
 }
 
 /// Aggregated rate limiter state for all external API sources.
@@ -246,7 +393,7 @@ pub(super) struct RateLimiterState {
 pub struct IntelLayer {
     pub(super) ioc: IocManager,
     pub(super) config: IntelSourceConfig,
-    /// General HTTP client (10s timeout, used for OTX / AbuseIPDB)
+    /// General HTTP client (5s timeout, used for OTX / official VT / AbuseIPDB)
     pub(super) http: reqwest::Client,
     /// VT Scrape HTTP client (25s timeout, Playwright needs longer)
     pub(super) http_vt: reqwest::Client,
@@ -273,7 +420,7 @@ impl IntelLayer {
         }
 
         let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(5))
             .build()
             .unwrap_or_default();
 
@@ -321,9 +468,51 @@ impl IntelLayer {
         &self.safe_domains
     }
 
+    pub fn link_reputation_query_timeout(&self) -> Duration {
+        self.config.link_reputation_query_timeout()
+    }
+
+    pub fn link_reputation_timeout_ms(&self) -> u64 {
+        self.config.link_reputation_module_timeout_ms()
+    }
+
     /// Reload safe domain cache from DB.
     pub async fn reload_safe_domains(&self, db: &vigilyx_db::VigilDb) {
         reload_safe_domains_into(db, &self.safe_domains).await;
+    }
+
+    /// True when every enabled external source is currently rate-limited or
+    /// quota-exhausted (for IP queries). Callers should degrade to local IOC
+    /// lookup only and surface an `inspection_limited` signal instead of
+    /// silently treating "no external answer" as "clean".
+    pub async fn external_sources_saturated(&self) -> bool {
+        let rl = self.rate_limiter.lock().await;
+        let mut any_enabled = false;
+        let mut any_available = false;
+        if self.config.otx_enabled {
+            any_enabled = true;
+            any_available |= rl.otx.would_allow();
+        }
+        if self.config.virustotal_api_key.is_some() {
+            any_enabled = true;
+            any_available |= rl.vt_api.would_allow();
+        }
+        if self.config.vt_scrape_enabled {
+            any_enabled = true;
+            any_available |= rl.vt_scrape.would_allow();
+        }
+        if self.config.abuseipdb_enabled && self.config.abuseipdb_api_key.is_some() {
+            any_enabled = true;
+            any_available |= rl.abuseipdb.would_allow();
+        }
+        any_enabled && !any_available
+    }
+
+    /// Test helper: spend the whole OTX per-minute budget.
+    #[cfg(all(test, feature = "infra-tests"))]
+    pub(crate) async fn exhaust_otx_budget(&self) {
+        let mut rl = self.rate_limiter.lock().await;
+        while rl.otx.try_acquire() {}
     }
 
     // ============================================
@@ -332,9 +521,36 @@ impl IntelLayer {
 
     /// Query IP reputation (parallel: OTX + VT Scrape + AbuseIPDB).
     pub async fn query_ip(&self, ip: &str) -> IntelResult {
+        self.query_ip_inner(ip, false).await
+    }
+
+    /// Query IP reputation, distrusting cached *clean* external results.
+    ///
+    /// External clean cache entries can be pre-poisoned (attacker seeds a
+    /// clean verdict, then launches the real campaign within the TTL). When
+    /// the current email already produced local detection signals, callers
+    /// should use this variant so a cached clean verdict forces re-validation
+    /// against live external sources. Non-clean cached verdicts are honored.
+    pub async fn query_ip_revalidating(&self, ip: &str) -> IntelResult {
+        self.query_ip_inner(ip, true).await
+    }
+
+    async fn query_ip_inner(&self, ip: &str, revalidate_clean: bool) -> IntelResult {
         // 1. Check local IOC cache first - exclude auto source to prevent amplification loops
         if let Some(ioc) = self.ioc.check_indicator_external_only("ip", ip).await {
-            return IntelResult::from_ioc(&ioc);
+            // Only *external* clean cache entries are distrusted under
+            // revalidation; admin/system clean entries stay authoritative.
+            let cached_external_clean =
+                matches!(ioc.verdict.to_ascii_lowercase().as_str(), "clean" | "safe")
+                    && is_external_intel_source(&ioc.source);
+            if !(revalidate_clean && cached_external_clean) {
+                return IntelResult::from_ioc(&ioc);
+            }
+        }
+
+        if external_intel_blocked(ip, "ip") {
+            warn!(indicator = %ip, "SEC: blocked third-party intel lookup for non-public IP");
+            return IntelResult::not_found(ip, "ip");
         }
 
         // 2. Query all enabled external sources in parallel
@@ -351,6 +567,16 @@ impl IntelLayer {
 
     /// Query domain reputation (parallel: OTX + VT Scrape).
     pub async fn query_domain(&self, domain: &str) -> IntelResult {
+        self.query_domain_inner(domain, false).await
+    }
+
+    /// Query domain reputation, distrusting cached *clean* external results.
+    /// See [`Self::query_ip_revalidating`] for the rationale.
+    pub async fn query_domain_revalidating(&self, domain: &str) -> IntelResult {
+        self.query_domain_inner(domain, true).await
+    }
+
+    async fn query_domain_inner(&self, domain: &str, revalidate_clean: bool) -> IntelResult {
         // Safe-domain shortcut: skip external queries for known-clean domains (loaded from DB)
         {
             let safe = self
@@ -368,7 +594,19 @@ impl IntelLayer {
             .check_indicator_external_only("domain", domain)
             .await
         {
-            return IntelResult::from_ioc(&ioc);
+            // Only *external* clean cache entries are distrusted under
+            // revalidation; admin/system clean entries stay authoritative.
+            let cached_external_clean =
+                matches!(ioc.verdict.to_ascii_lowercase().as_str(), "clean" | "safe")
+                    && is_external_intel_source(&ioc.source);
+            if !(revalidate_clean && cached_external_clean) {
+                return IntelResult::from_ioc(&ioc);
+            }
+        }
+
+        if external_intel_blocked(domain, "domain") {
+            warn!(indicator = %domain, "SEC: blocked third-party intel lookup for internal domain");
+            return IntelResult::not_found(domain, "domain");
         }
 
         let (otx, vt_scrape) = tokio::join!(
@@ -386,6 +624,11 @@ impl IntelLayer {
         // Exclude auto source to prevent amplification loops
         if let Some(ioc) = self.ioc.check_indicator_external_only("url", url).await {
             return IntelResult::from_ioc(&ioc);
+        }
+
+        if external_intel_blocked(url, "url") {
+            warn!(indicator = %url, "SEC: blocked third-party intel lookup for internal URL");
+            return IntelResult::not_found(url, "url");
         }
 
         let vt_scrape = self.query_vt_scrape_if_enabled(url, "url").await;
@@ -536,7 +779,7 @@ impl IntelLayer {
         let sources: Vec<&str> = found.iter().map(|r| r.source.as_str()).collect();
         let merged_source = sources.join("+");
 
-        IntelResult {
+        let fused = IntelResult {
             indicator: indicator.to_string(),
             ioc_type: ioc_type.to_string(),
             found: true,
@@ -544,7 +787,14 @@ impl IntelLayer {
             confidence: avg_confidence,
             source: merged_source,
             details: merged_details,
-        }
+        };
+
+        // Cache the fused result exactly once. Per-source caching was removed:
+        // independent upserts raced each other, letting a weak source's "clean"
+        // overwrite a strong source's "malicious" depending on completion order.
+        self.cache_external_result(&fused).await;
+
+        fused
     }
 
     // ============================================
@@ -554,20 +804,51 @@ impl IntelLayer {
     /// Cache an external query result as an IOC entry.
     ///
     /// TTL strategy:
-    /// - clean -> 15 days (safe domains need less frequent re-query)
+    /// - clean -> 72 hours (short window: clean cache can be pre-poisoned)
     /// - malicious -> 30 days
     /// - suspicious / unknown -> 1 day
+    ///
+    /// Protection: an external feed result never overwrites an entry recorded
+    /// by a non-external source (auto/manual/import/admin_clean/system), and
+    /// never downgrades a cached verdict of higher severity (a weak "clean"
+    /// must not erase a cached "malicious"). In both cases only
+    /// last_seen/hit_count are refreshed.
     pub(super) async fn cache_external_result(&self, result: &IntelResult) {
         if !result.found {
             return;
         }
 
+        match self
+            .ioc
+            .db
+            .find_ioc(&result.ioc_type, &result.indicator)
+            .await
+        {
+            Ok(Some(existing))
+                if !is_external_intel_source(&existing.source)
+                    || IntelResult::verdict_severity(&existing.verdict)
+                        > IntelResult::verdict_severity(&result.verdict) =>
+            {
+                if let Err(e) = self
+                    .ioc
+                    .db
+                    .touch_ioc_last_seen(&result.ioc_type, &result.indicator)
+                    .await
+                {
+                    warn!("Failed to touch IOC last_seen: {}", e);
+                }
+                return;
+            }
+            Err(e) => {
+                // Cache lookup failed; fall through to the UPSERT path, whose
+                // source-protection CASEs still guard privileged entries.
+                warn!("IOC cache precheck failed: {}", e);
+            }
+            _ => {}
+        }
+
         let now = chrono::Utc::now();
-        let ttl_hours = match result.verdict.as_str() {
-            "malicious" => 720, // 30 days
-            "clean" => 360,     // 15 days
-            _ => 24,            // 1 day (suspicious / unknown)
-        };
+        let ttl_hours = cache_ttl_hours(&result.verdict);
         let expires = now + chrono::Duration::hours(ttl_hours);
 
         let ioc = IocEntry {
@@ -602,6 +883,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn external_intel_blocks_non_public_indicators() {
+        assert!(external_intel_blocked("10.0.0.5", "ip"));
+        assert!(external_intel_blocked("mail.corp", "domain"));
+        assert!(external_intel_blocked("http://127.0.0.1/admin", "url"));
+        assert!(external_intel_blocked(
+            "https://portal.bank.internal/login",
+            "url"
+        ));
+        assert!(!external_intel_blocked("198.51.100.10", "ip"));
+        assert!(!external_intel_blocked("public.example.net", "domain"));
+    }
+
+    #[test]
     fn test_verdict_severity_ordering() {
         assert!(
             IntelResult::verdict_severity("malicious")
@@ -617,7 +911,7 @@ mod tests {
     fn test_default_config_otx_enabled() {
         let config = IntelSourceConfig::default();
         assert!(config.otx_enabled);
-        assert!(config.vt_scrape_enabled);
+        assert!(!config.vt_scrape_enabled);
         assert!(!config.abuseipdb_enabled);
         assert!(config.abuseipdb_api_key.is_none());
     }
@@ -868,7 +1162,7 @@ mod tests {
         let config: IntelSourceConfig = serde_json::from_str(old_json).unwrap();
         // New fields get their default values
         assert!(config.otx_enabled); // default = true
-        assert!(config.vt_scrape_enabled); // default = true
+        assert!(!config.vt_scrape_enabled); // optional AI bridge defaults off
         assert!(config.vt_scrape_url.is_none());
         // Existing fields deserialize normally
         assert!(config.abuseipdb_enabled);
@@ -893,6 +1187,37 @@ mod tests {
             Some("http://10.0.0.5:9000")
         );
         assert_eq!(parsed.abuseipdb_api_key.as_deref(), Some("test-key"));
+    }
+
+    #[test]
+    fn test_link_reputation_deadlines_cover_bounded_provider_stages() {
+        let default_config = IntelSourceConfig::default();
+        assert_eq!(
+            default_config.link_reputation_query_timeout(),
+            Duration::from_secs(6)
+        );
+        assert!(
+            default_config.link_reputation_module_timeout_ms()
+                > default_config.link_reputation_query_timeout().as_millis() as u64
+        );
+
+        let official_vt = IntelSourceConfig {
+            virustotal_api_key: Some("test-key".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            official_vt.link_reputation_module_timeout_ms()
+                > (official_vt.link_reputation_query_timeout().as_millis() as u64 * 2)
+        );
+
+        let vt_scrape = IntelSourceConfig {
+            vt_scrape_enabled: true,
+            ..Default::default()
+        };
+        assert!(
+            vt_scrape.link_reputation_module_timeout_ms()
+                > (vt_scrape.link_reputation_query_timeout().as_millis() as u64 * 2)
+        );
     }
 
     // ================================================================
@@ -1011,5 +1336,316 @@ mod tests {
         assert!(!is_domain_in_set("evil-phishing.com", &set));
         assert!(!is_domain_in_set("hechangre.com", &set));
         assert!(!is_domain_in_set("notqq.com", &set)); // Not a subdomain of qq.com
+    }
+
+    // ================================================================
+    // Clean-cache TTL & external-source classification (R4 hardening)
+    // ================================================================
+
+    #[test]
+    fn test_clean_cache_ttl_is_short_against_pre_poisoning() {
+        assert_eq!(cache_ttl_hours("clean"), 72);
+        assert_eq!(cache_ttl_hours("safe"), 72);
+        assert_eq!(cache_ttl_hours("malicious"), 720);
+        assert_eq!(cache_ttl_hours("suspicious"), 24);
+        assert_eq!(cache_ttl_hours("unknown"), 24);
+    }
+
+    #[test]
+    fn test_external_intel_source_classification() {
+        assert!(is_external_intel_source("otx"));
+        assert!(is_external_intel_source("vt_scrape"));
+        assert!(is_external_intel_source("virustotal"));
+        assert!(is_external_intel_source("abuseipdb"));
+        assert!(is_external_intel_source("otx+vt_scrape"));
+        assert!(is_external_intel_source("otx+vt_scrape+abuseipdb"));
+        assert!(!is_external_intel_source("auto"));
+        assert!(!is_external_intel_source("manual"));
+        assert!(!is_external_intel_source("import"));
+        assert!(!is_external_intel_source("admin_clean"));
+        assert!(!is_external_intel_source("system"));
+        assert!(!is_external_intel_source(""));
+        assert!(!is_external_intel_source("otx+auto"));
+    }
+
+    #[test]
+    fn test_rate_limiter_would_allow_is_non_mutating() {
+        let mut rl = ApiRateLimit::new(2);
+        assert!(rl.would_allow());
+        assert!(rl.would_allow(), "would_allow must not consume a slot");
+        assert!(rl.try_acquire());
+        assert!(rl.try_acquire());
+        assert!(!rl.would_allow());
+        assert!(!rl.try_acquire());
+    }
+
+    #[test]
+    fn test_rate_limiter_would_allow_respects_quota_exhaustion() {
+        let mut rl = ApiRateLimit::new(10).with_daily_quota(100);
+        assert!(rl.would_allow());
+        rl.mark_exhausted();
+        assert!(!rl.would_allow());
+    }
+
+    // ================================================================
+    // Fused-result caching & clean-cache revalidation (infra-tests)
+    // ================================================================
+
+    #[cfg(feature = "infra-tests")]
+    async fn make_test_layer() -> (vigilyx_db::VigilDb, IntelLayer) {
+        let db = vigilyx_db::VigilDb::new(
+            &std::env::var("TEST_DATABASE_URL")
+                .expect("TEST_DATABASE_URL must be set to run integration tests"),
+        )
+        .await
+        .unwrap();
+        db.init_security_tables().await.unwrap();
+        let ioc_manager = IocManager::new(db.clone());
+        let config = IntelSourceConfig {
+            otx_enabled: false,
+            vt_scrape_enabled: false,
+            abuseipdb_enabled: false,
+            ..Default::default()
+        };
+        let layer = IntelLayer::new(
+            ioc_manager,
+            config,
+            Arc::new(StdRwLock::new(HashSet::new())),
+        );
+        (db, layer)
+    }
+
+    /// PoC (multi-source race): the fused verdict is cached exactly once, so a
+    /// weak source's clean can never overwrite a strong source's malicious.
+    #[tokio::test]
+    #[cfg(feature = "infra-tests")]
+    async fn test_fused_malicious_cached_despite_weak_clean_source() {
+        let (db, layer) = make_test_layer().await;
+        let indicator = format!("{}.fuse-race.example", uuid::Uuid::new_v4().simple());
+
+        let weak_clean = Some(IntelResult {
+            indicator: indicator.clone(),
+            ioc_type: "domain".into(),
+            found: true,
+            verdict: "clean".into(),
+            confidence: 0.8,
+            source: "otx".into(),
+            details: Some("OTX: 0 threat pulses linked".into()),
+        });
+        let strong_malicious = Some(IntelResult {
+            indicator: indicator.clone(),
+            ioc_type: "domain".into(),
+            found: true,
+            verdict: "malicious".into(),
+            confidence: 0.9,
+            source: "vt_scrape".into(),
+            details: Some("VT: malicious=12/94".into()),
+        });
+
+        let fused = layer
+            .fuse_and_cache(&indicator, "domain", &[weak_clean, strong_malicious])
+            .await;
+        assert_eq!(fused.verdict, "malicious");
+
+        let cached = db
+            .find_ioc("domain", &indicator)
+            .await
+            .unwrap()
+            .expect("fused result must be cached");
+        assert_eq!(cached.verdict, "malicious");
+        assert_eq!(cached.source, "otx+vt_scrape");
+    }
+
+    /// PoC (self-neutralization): an external clean result must not overwrite
+    /// an auto-recorded malicious IOC — only last_seen is refreshed.
+    #[tokio::test]
+    #[cfg(feature = "infra-tests")]
+    async fn test_cache_external_result_never_overwrites_auto_entry() {
+        let (db, layer) = make_test_layer().await;
+        let indicator = format!("{}.cache-guard.example", uuid::Uuid::new_v4().simple());
+
+        // Simulate: first email Critical -> auto malicious IOC recorded.
+        let now = chrono::Utc::now();
+        db.upsert_ioc(&IocEntry {
+            id: uuid::Uuid::new_v4(),
+            indicator: indicator.clone(),
+            ioc_type: "domain".into(),
+            source: "auto".into(),
+            verdict: "malicious".into(),
+            confidence: 0.9,
+            attack_type: "phishing".into(),
+            first_seen: now,
+            last_seen: now,
+            hit_count: 0,
+            context: None,
+            expires_at: None,
+            created_at: now,
+            updated_at: now,
+        })
+        .await
+        .unwrap();
+
+        // Attacker drives an external feed to return clean for the indicator.
+        layer
+            .cache_external_result(&IntelResult {
+                indicator: indicator.clone(),
+                ioc_type: "domain".into(),
+                found: true,
+                verdict: "clean".into(),
+                confidence: 0.8,
+                source: "otx".into(),
+                details: None,
+            })
+            .await;
+
+        let ioc = db
+            .find_ioc("domain", &indicator)
+            .await
+            .unwrap()
+            .expect("auto IOC must survive external clean");
+        assert_eq!(ioc.verdict, "malicious");
+        assert_eq!(ioc.source, "auto");
+        assert_eq!(ioc.hit_count, 1, "last_seen/hit_count still refreshed");
+    }
+
+    /// PoC (severity guard): a fresh weak clean must not downgrade a cached
+    /// external malicious verdict either.
+    #[tokio::test]
+    #[cfg(feature = "infra-tests")]
+    async fn test_cache_external_result_never_downgrades_severity() {
+        let (db, layer) = make_test_layer().await;
+        let indicator = format!("{}.severity.example", uuid::Uuid::new_v4().simple());
+
+        layer
+            .cache_external_result(&IntelResult {
+                indicator: indicator.clone(),
+                ioc_type: "domain".into(),
+                found: true,
+                verdict: "malicious".into(),
+                confidence: 0.9,
+                source: "virustotal".into(),
+                details: None,
+            })
+            .await;
+        layer
+            .cache_external_result(&IntelResult {
+                indicator: indicator.clone(),
+                ioc_type: "domain".into(),
+                found: true,
+                verdict: "clean".into(),
+                confidence: 0.8,
+                source: "otx".into(),
+                details: None,
+            })
+            .await;
+
+        let ioc = db
+            .find_ioc("domain", &indicator)
+            .await
+            .unwrap()
+            .expect("cached entry must exist");
+        assert_eq!(ioc.verdict, "malicious");
+        assert_eq!(ioc.source, "virustotal");
+    }
+
+    /// PoC (clean-cache pre-poisoning): with revalidation enabled, a cached
+    /// external clean verdict is distrusted and external sources are
+    /// re-queried (here: none enabled -> not_found instead of cached clean).
+    #[tokio::test]
+    #[cfg(feature = "infra-tests")]
+    async fn test_revalidating_query_distrusts_cached_clean() {
+        let (db, layer) = make_test_layer().await;
+        let ip = "203.0.113.77";
+        let now = chrono::Utc::now();
+        db.upsert_ioc(&IocEntry {
+            id: uuid::Uuid::new_v4(),
+            indicator: ip.to_string(),
+            ioc_type: "ip".into(),
+            source: "otx".into(),
+            verdict: "clean".into(),
+            confidence: 0.8,
+            attack_type: String::new(),
+            first_seen: now,
+            last_seen: now,
+            hit_count: 0,
+            context: None,
+            expires_at: Some(now + chrono::Duration::hours(72)),
+            created_at: now,
+            updated_at: now,
+        })
+        .await
+        .unwrap();
+
+        // Normal path: cached clean is honored.
+        let cached = layer.query_ip(ip).await;
+        assert!(cached.found);
+        assert_eq!(cached.verdict, "clean");
+
+        // Revalidating path: cached clean is distrusted; with all sources
+        // disabled the re-query finds nothing instead of blindly trusting
+        // the poisoned clean entry.
+        let revalidated = layer.query_ip_revalidating(ip).await;
+        assert!(
+            !revalidated.found,
+            "revalidating query must bypass cached clean, got {:?}",
+            revalidated
+        );
+
+        // Non-clean cached verdicts are still honored by the revalidating path.
+        db.upsert_ioc(&IocEntry {
+            id: uuid::Uuid::new_v4(),
+            indicator: ip.to_string(),
+            ioc_type: "ip".into(),
+            source: "virustotal".into(),
+            verdict: "malicious".into(),
+            confidence: 0.9,
+            attack_type: String::new(),
+            first_seen: now,
+            last_seen: now,
+            hit_count: 0,
+            context: None,
+            expires_at: Some(now + chrono::Duration::hours(720)),
+            created_at: now,
+            updated_at: now,
+        })
+        .await
+        .unwrap();
+        let revalidated = layer.query_ip_revalidating(ip).await;
+        assert!(revalidated.found);
+        assert_eq!(revalidated.verdict, "malicious");
+    }
+
+    /// Rate-budget exhaustion must be detectable so callers can degrade to
+    /// local-IOC-only plus `inspection_limited` instead of failing open.
+    #[tokio::test]
+    #[cfg(feature = "infra-tests")]
+    async fn test_external_sources_saturated_detection() {
+        // No sources enabled -> never "saturated" (nothing to degrade from).
+        let (_db, layer) = make_test_layer().await;
+        assert!(!layer.external_sources_saturated().await);
+
+        // OTX enabled: initially available, saturated after budget is spent.
+        let db2 = vigilyx_db::VigilDb::new(
+            &std::env::var("TEST_DATABASE_URL")
+                .expect("TEST_DATABASE_URL must be set to run integration tests"),
+        )
+        .await
+        .unwrap();
+        let layer2 = IntelLayer::new(
+            IocManager::new(db2),
+            IntelSourceConfig {
+                otx_enabled: true,
+                vt_scrape_enabled: false,
+                abuseipdb_enabled: false,
+                ..Default::default()
+            },
+            Arc::new(StdRwLock::new(HashSet::new())),
+        );
+        assert!(!layer2.external_sources_saturated().await);
+        {
+            let mut rl = layer2.rate_limiter.lock().await;
+            while rl.otx.try_acquire() {} // spend the whole per-minute budget
+        }
+        assert!(layer2.external_sources_saturated().await);
     }
 }

@@ -6,7 +6,20 @@ import random
 
 import pytest
 
-from vigilyx_ai.trainer import _augment_rare_classes, _simple_augment
+from vigilyx_ai.trainer import (
+    _augment_rare_classes,
+    _simple_augment,
+    _training_stall_duration,
+)
+from vigilyx_ai import trainer
+
+
+def test_stall_detection_uses_process_start_when_no_progress_written():
+    assert _training_stall_duration(0, process_started_at=100, now=161) == 61
+
+
+def test_stall_detection_ignores_progress_from_previous_run():
+    assert _training_stall_duration(50, process_started_at=100, now=130) == 30
 
 
 # =====================================================================
@@ -146,3 +159,38 @@ class TestAugmentRareClasses:
         labels = [0] + [1] * 9
         aug_texts, aug_labels = _augment_rare_classes(texts, labels, min_target=5, rng_seed=42)
         assert aug_labels.count(0) == 5
+
+
+# =====================================================================
+# _base_model_kwargs (SEC-23)
+# =====================================================================
+
+
+class TestBaseModelKwargs:
+    """SEC-23: optional HF revision pinning for base-model downloads."""
+
+    def test_pinned_revision_returned(self, monkeypatch):
+        monkeypatch.setenv("HF_BASE_MODEL_REVISION", "abc123def")
+        assert trainer._base_model_kwargs() == {"revision": "abc123def"}
+
+    def test_pinned_revision_does_not_warn(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        monkeypatch.setenv("HF_BASE_MODEL_REVISION", "abc123def")
+        mock_logger = MagicMock()
+        monkeypatch.setattr(trainer, "logger", mock_logger)
+
+        assert trainer._base_model_kwargs() == {"revision": "abc123def"}
+        mock_logger.warning.assert_not_called()
+
+    def test_unset_returns_empty_and_warns_once(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        monkeypatch.delenv("HF_BASE_MODEL_REVISION", raising=False)
+        monkeypatch.setattr(trainer, "_hf_revision_warned", False)
+        mock_logger = MagicMock()
+        monkeypatch.setattr(trainer, "logger", mock_logger)
+
+        assert trainer._base_model_kwargs() == {}
+        assert trainer._base_model_kwargs() == {}
+        assert mock_logger.warning.call_count == 1

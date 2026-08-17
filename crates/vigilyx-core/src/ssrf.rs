@@ -1,4 +1,4 @@
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs};
 
 pub const DEFAULT_BLOCKED_HOSTNAMES: &[&str] = &[
     "localhost",
@@ -96,8 +96,47 @@ pub fn is_sensitive_ip(ip: IpAddr) -> bool {
                 || v6
                     .to_ipv4_mapped()
                     .is_some_and(|v4| is_sensitive_ip(IpAddr::V4(v4)))
+                || is_transition_address_sensitive(&v6)
         }
     }
+}
+
+/// IPv6 transition/translation mechanisms embed an inner IPv4 address that the
+/// plain IPv6 checks above never see. An outbound request to e.g.
+/// `64:ff9b::a9fe:a9fe` (NAT64 for 169.254.169.254) reaches the cloud metadata
+/// service just the same, so the embedded address must be extracted and
+/// checked recursively.
+fn is_transition_address_sensitive(v6: &std::net::Ipv6Addr) -> bool {
+    let seg = v6.segments();
+    let embedded = |hi: u16, lo: u16| {
+        IpAddr::V4(Ipv4Addr::new(
+            (hi >> 8) as u8,
+            hi as u8,
+            (lo >> 8) as u8,
+            lo as u8,
+        ))
+    };
+
+    // NAT64 well-known prefix 64:ff9b::/96 (RFC 6052): IPv4 in the last 32 bits.
+    if seg[0] == 0x0064 && seg[1] == 0xff9b && seg[2..6].iter().all(|&s| s == 0) {
+        return is_sensitive_ip(embedded(seg[6], seg[7]));
+    }
+    // 6to4 2002::/16 (RFC 3056): IPv4 in bits 16..48.
+    if seg[0] == 0x2002 {
+        return is_sensitive_ip(embedded(seg[1], seg[2]));
+    }
+    // Teredo 2001::/32 (RFC 4380): client IPv4 in the last 32 bits, bit-inverted.
+    if seg[0] == 0x2001 && seg[1] == 0x0000 {
+        return is_sensitive_ip(embedded(!seg[6], !seg[7]));
+    }
+    // Deprecated IPv4-compatible ::/96 (RFC 4291 §2.5.5.1): `::` and `::1` are
+    // already covered by is_unspecified/is_loopback; anything else in this
+    // range only exists to smuggle an IPv4 literal past the IPv6 checks, so
+    // reject it outright.
+    if seg[..6].iter().all(|&s| s == 0) {
+        return true;
+    }
+    false
 }
 
 pub fn resolve_network_host(
@@ -358,6 +397,41 @@ mod tests {
             "fd00:ec2::254".parse().expect("valid ipv6")
         ));
         assert!(is_sensitive_ip("fc00::1".parse().expect("valid ipv6")));
+    }
+
+    #[test]
+    fn blocks_ipv4_in_ipv6_transition_addresses() {
+        // PoC (R5-D4): transition/translation mechanisms embed an IPv4 literal
+        // that the plain IPv6 checks never saw, opening the webhook / SMTP
+        // alert / syslog outbound paths to loopback and cloud-metadata SSRF.
+
+        // NAT64 well-known prefix 64:ff9b::/96 (RFC 6052), IPv4 in last 32 bits.
+        assert!(is_sensitive_ip("64:ff9b::7f00:1".parse().expect("valid"))); // 127.0.0.1
+        assert!(is_sensitive_ip("64:ff9b::a9fe:a9fe".parse().expect("valid"))); // 169.254.169.254
+        assert!(is_sensitive_ip("64:ff9b::ac10:1".parse().expect("valid"))); // 172.16.0.1
+        assert!(!is_sensitive_ip("64:ff9b::808:808".parse().expect("valid"))); // 8.8.8.8
+
+        // 6to4 2002::/16 (RFC 3056), IPv4 in bits 16..48.
+        assert!(is_sensitive_ip("2002:7f00:1::".parse().expect("valid"))); // 127.0.0.1
+        assert!(is_sensitive_ip("2002:a9fe:a9fe::".parse().expect("valid"))); // 169.254.169.254
+        assert!(!is_sensitive_ip("2002:808:808::".parse().expect("valid"))); // 8.8.8.8
+
+        // Teredo 2001::/32 (RFC 4380): client IPv4 bit-inverted in last 32 bits.
+        // ~127.0.0.1 = 0x80FFFFFE, ~10.0.0.5 = 0xF5FFFFFA.
+        assert!(is_sensitive_ip("2001:0::80ff:fffe".parse().expect("valid")));
+        assert!(is_sensitive_ip(
+            "2001:0:4136:e378:8000:63bf:f5ff:fffa".parse().expect("valid")
+        ));
+
+        // Deprecated IPv4-compatible ::/96: rejected outright.
+        assert!(is_sensitive_ip("::7f00:1".parse().expect("valid"))); // 127.0.0.1
+        assert!(is_sensitive_ip("::a9fe:a9fe".parse().expect("valid"))); // 169.254.169.254
+
+        // IPv4-mapped was already covered; keep it as a regression guard.
+        assert!(is_sensitive_ip("::ffff:7f00:1".parse().expect("valid")));
+
+        // Ordinary public IPv6 stays allowed.
+        assert!(!is_sensitive_ip("2606:4700:4700::1111".parse().expect("valid")));
     }
 
     #[test]

@@ -9,7 +9,7 @@
 //! - `API_JWT_SECRET`: JWT signing secret (at least 32 characters)
 //! - `API_USERNAME`: admin username (default: admin)
 //! - `API_PASSWORD`: admin password
-//! - `API_TOKEN_EXPIRE_HOURS`: token lifetime in hours (default: 24)
+//! - `API_TOKEN_EXPIRE_HOURS`: token lifetime in hours (default: 12)
 
 mod handlers;
 mod jwt;
@@ -20,14 +20,19 @@ mod ws_ticket;
 
 // Re-exports: keep the public API stable
 
+#[cfg(test)]
+pub(crate) use handlers::handle_login;
 pub(crate) use handlers::sanitize_login_username;
+pub(crate) use handlers::validate_new_password;
 pub use handlers::{
     ChangePasswordRequest, ChangePasswordResponse, LoginRequest, build_clear_cookie,
-    build_token_cookie, handle_change_password, handle_login, handle_logout, handle_me,
+    build_token_cookie, handle_logout, handle_me, handle_platform_change_password,
+    handle_platform_login,
 };
-pub(crate) use middleware::is_admin_role;
 pub use middleware::{
-    AuthenticatedUser, require_admin, require_auth, require_internal_origin, require_internal_token,
+    AuthenticatedUser, require_admin, require_auth, require_internal_origin,
+    require_internal_token, require_platform_roles_access, require_platform_users_manage,
+    require_session_feedback,
 };
 pub use password::hash_password;
 pub use rate_limit::LoginRateLimiter;
@@ -122,7 +127,7 @@ impl AuthConfig {
         let token_expire_hours: u64 = std::env::var("API_TOKEN_EXPIRE_HOURS")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(24);
+            .unwrap_or(12);
 
         Ok(Self {
             jwt_secret: SecretString::from(jwt_secret),
@@ -359,7 +364,7 @@ mod tests {
     #[test]
     fn test_token_generation_and_verification() {
         let config = AuthConfig::test_config(TEST_ADMIN_PASSWORD);
-        let token = generate_token(&config, "testuser", "admin").unwrap();
+        let token = generate_token(&config, "testuser", "admin", 0).unwrap();
         let claims = jwt::verify_token(&config, &token).unwrap();
         assert_eq!(claims.sub, "testuser");
         assert_eq!(claims.role, "admin");

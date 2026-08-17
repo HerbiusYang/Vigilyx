@@ -15,11 +15,13 @@ use uuid::Uuid;
 
 use vigilyx_core::security::IocEntry;
 use vigilyx_db::VigilDb;
-
 fn normalize_ioc_indicator(ioc_type: &str, indicator: &str) -> String {
     let trimmed = indicator.trim();
     match ioc_type {
-        "domain" | "email" | "hash" | "helo" | "x_mailer" => trimmed.to_lowercase(),
+        // Trailing-dot FQDNs (e.g. "evil.com.") must collapse to the same
+        // indicator as "evil.com" or the exact-match IOC lookup misses.
+        "domain" | "helo" => trimmed.trim_end_matches('.').to_lowercase(),
+        "email" | "hash" | "x_mailer" => trimmed.to_lowercase(),
         _ => trimmed.to_string(),
     }
 }
@@ -38,11 +40,85 @@ fn normalize_ioc_verdict(verdict: &str) -> String {
 #[derive(Clone)]
 pub struct IocManager {
     pub(crate) db: VigilDb,
+    /// Frequency gate state for auto-recorded IP IOCs: an IP harvested from
+    /// Received headers becomes eligible only after appearing in >= 2 distinct
+    /// Critical sessions within a 24h window (single-mail poisoning defense).
+    ip_ioc_candidates:
+        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, IpIocCandidate>>>,
+}
+
+/// Observation window for one candidate IP in the auto-record frequency gate.
+#[derive(Debug, Clone, Copy)]
+struct IpIocCandidate {
+    count: u32,
+    window_start: std::time::Instant,
+    last_session: Option<Uuid>,
+}
+
+/// Pure gate logic behind [`IocManager::note_auto_ip_candidate`].
+fn note_auto_ip_candidate_in(
+    map: &mut std::collections::HashMap<String, IpIocCandidate>,
+    ip: &str,
+    session_id: Uuid,
+) -> bool {
+    const WINDOW: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
+    const REQUIRED: u32 = 2;
+    const MAX_TRACKED: usize = 50_000;
+
+    // Bound memory: a flood of distinct candidate IPs must not grow the map forever.
+    if map.len() >= MAX_TRACKED {
+        map.clear();
+    }
+    let now = std::time::Instant::now();
+    let entry = map.entry(ip.to_string()).or_insert(IpIocCandidate {
+        count: 0,
+        window_start: now,
+        last_session: None,
+    });
+    if now.duration_since(entry.window_start) > WINDOW {
+        entry.count = 0;
+        entry.window_start = now;
+        entry.last_session = None;
+    }
+    // Same session re-evaluated (e.g. rescan): never double-count.
+    if entry.last_session == Some(session_id) {
+        return false;
+    }
+    entry.count += 1;
+    entry.last_session = Some(session_id);
+    if entry.count >= REQUIRED {
+        // Re-arm: eligibility is consumed so a burst does not re-write repeatedly.
+        entry.count = 0;
+        entry.window_start = now;
+        true
+    } else {
+        false
+    }
 }
 
 impl IocManager {
     pub fn new(db: VigilDb) -> Self {
-        Self { db }
+        Self {
+            db,
+            ip_ioc_candidates: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+        }
+    }
+
+    /// Frequency gate for auto-recorded IP IOCs.
+    ///
+    /// IPs harvested from email headers are attacker-influenceable (forged
+    /// Received chains), so a single Critical mail must not be enough to seed
+    /// a malicious IP IOC. The IP becomes eligible only when observed in at
+    /// least 2 distinct sessions within 24 hours. Returns true when this
+    /// observation makes the IP eligible.
+    pub(crate) fn note_auto_ip_candidate(&self, ip: &str, session_id: Uuid) -> bool {
+        let mut guard = self
+            .ip_ioc_candidates
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        note_auto_ip_candidate_in(&mut guard, ip, session_id)
     }
 
     /// Check if indicator is whitelisted (verdict=clean)
@@ -421,5 +497,45 @@ mod tests {
         assert_eq!(normalize_ioc_verdict("SUSPICIOUS"), "suspicious");
         assert_eq!(normalize_ioc_verdict("safe"), "clean");
         assert_eq!(normalize_ioc_verdict(""), "suspicious");
+    }
+
+    #[test]
+    fn normalize_ioc_indicator_trims_trailing_dot_fqdn() {
+        // Trailing-dot FQDNs must collapse to the same indicator or the
+        // exact-match IOC lookup misses (domain-splitting evasion).
+        assert_eq!(normalize_ioc_indicator("domain", "Evil.COM."), "evil.com");
+        assert_eq!(normalize_ioc_indicator("domain", "evil.com.."), "evil.com");
+        assert_eq!(normalize_ioc_indicator("helo", "Mail.Evil.COM."), "mail.evil.com");
+        // Non-domain types are untouched.
+        assert_eq!(
+            normalize_ioc_indicator("ip", "203.0.113.5"),
+            "203.0.113.5"
+        );
+        assert_eq!(
+            normalize_ioc_indicator("email", "User@Evil.COM"),
+            "user@evil.com"
+        );
+    }
+
+    #[test]
+    fn auto_ip_candidate_requires_two_distinct_sessions() {
+        let mut map = std::collections::HashMap::new();
+        let first_mail = Uuid::new_v4();
+        let second_mail = Uuid::new_v4();
+
+        // Single Critical mail must not be enough to seed an IP IOC.
+        assert!(!note_auto_ip_candidate_in(&mut map, "203.0.113.66", first_mail));
+        // Re-evaluating the same session (rescan) must not double-count.
+        assert!(!note_auto_ip_candidate_in(&mut map, "203.0.113.66", first_mail));
+        // A second, distinct Critical session makes the IP eligible.
+        assert!(note_auto_ip_candidate_in(&mut map, "203.0.113.66", second_mail));
+        // Eligibility is consumed (re-armed) after firing.
+        assert!(!note_auto_ip_candidate_in(
+            &mut map,
+            "203.0.113.66",
+            Uuid::new_v4()
+        ));
+        // A different IP tracked independently.
+        assert!(!note_auto_ip_candidate_in(&mut map, "198.51.100.9", first_mail));
     }
 }

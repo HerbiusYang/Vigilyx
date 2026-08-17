@@ -4,7 +4,12 @@
 //! ```text
 //! S_t = max(0, S_{t-1} + r_t - - k)
 //! S_t = max(0, S_{t-1} - r_t + - k)
-//! Alarm: S_t> h or S_t> h
+//! Alarm: S_t> h
+//!
+//! Only the *upward* side (S, risk rising) can alarm. S tracks risk
+//! *falling* — useful telemetry, but a sender whose risk collapses is not an
+//! emerging threat, and letting S alarm made "attacker goes quiet" (or a
+//! clean run after noise) indistinguishable from an attack shift.
 
 //! - k = allowance (half- shift we want to detect)
 //! - h = decision threshold (controls false alarm rate)
@@ -80,11 +85,30 @@ pub fn cusum_update(state: &mut CusumState, risk_score: f64, params: &CusumParam
     let k = sigma * 0.5; // Half-sigma shift detection
     let h = sigma * 4.0; // 4-sigma decision threshold
 
+    // Warm-up establishes the in-control distribution; it must not also
+    // accumulate detector state against the temporary default baseline.
+    // Otherwise an elevated-but-stable entity carries a large stale s_pos
+    // into the adaptive phase and can alarm while its risk is falling.
+    if state.sample_count <= params.min_samples {
+        state.s_pos = 0.0;
+        state.s_neg = 0.0;
+        state.alarm_active = false;
+        return CusumResult {
+            alarm: false,
+            s_pos: 0.0,
+            s_neg: 0.0,
+            mu_0,
+            sigma,
+        };
+    }
+
     // CUSUM update
     state.s_pos = (state.s_pos + risk_score - mu_0 - k).max(0.0);
     state.s_neg = (state.s_neg - risk_score + mu_0 - k).max(0.0);
 
-    let alarm = state.sample_count >= params.min_samples && (state.s_pos > h || state.s_neg > h);
+    // Only the upward accumulator (risk rising) may raise an alarm. A
+    // growing s_neg means the entity's risk is *falling* — not a threat.
+    let alarm = state.sample_count >= params.min_samples && state.s_pos > h;
 
     if alarm && !state.alarm_active {
         state.alarm_active = true;
@@ -115,6 +139,20 @@ mod tests {
             let r = cusum_update(&mut state, 0.1, &params);
             assert!(!r.alarm, "Should not alarm during warm-up");
         }
+    }
+
+    #[test]
+    fn test_cusum_warmup_does_not_accumulate_detector_state() {
+        let mut state = CusumState::new("test".to_string());
+        let params = CusumParams::default();
+
+        for _ in 0..params.min_samples {
+            let result = cusum_update(&mut state, 0.8, &params);
+            assert!(!result.alarm);
+            assert_eq!(result.s_pos, 0.0);
+            assert_eq!(result.s_neg, 0.0);
+        }
+        assert!(!state.alarm_active);
     }
 
     #[test]
@@ -173,5 +211,54 @@ mod tests {
             // Should eventually return to non-alarm
             let _ = r;
         }
+    }
+
+    /// PoC (E3 direction): a *falling* risk series used to trip the two-sided
+    /// alarm via s_neg — "sender went quiet after noise" is not an attack.
+    /// Only s_pos (risk rising) may alarm now.
+    #[test]
+    fn test_cusum_falling_risk_does_not_alarm() {
+        let mut state = CusumState::new("test".to_string());
+        let params = CusumParams::default();
+
+        // Establish an elevated-but-stable baseline (e.g. a noisy shared host).
+        for _ in 0..20 {
+            cusum_update(&mut state, 0.5, &params);
+        }
+
+        // Risk collapses back to clean: s_neg accumulates far beyond h.
+        for _ in 0..10 {
+            let r = cusum_update(&mut state, 0.0, &params);
+            assert!(
+                !r.alarm,
+                "falling risk (s_neg) must never raise an alarm: s_neg={} s_pos={}",
+                r.s_neg, r.s_pos
+            );
+        }
+        let state: &CusumState = &state;
+        assert!(
+            state.s_neg > 0.0,
+            "s_neg should still be tracked as telemetry"
+        );
+    }
+
+    /// The upward direction must still alarm: sustained risk rise is exactly
+    /// what CUSUM exists for.
+    #[test]
+    fn test_cusum_rising_risk_still_alarms() {
+        let mut state = CusumState::new("test".to_string());
+        let params = CusumParams::default();
+
+        for _ in 0..20 {
+            cusum_update(&mut state, 0.05, &params);
+        }
+        let mut alarmed = false;
+        for _ in 0..15 {
+            if cusum_update(&mut state, 0.9, &params).alarm {
+                alarmed = true;
+                break;
+            }
+        }
+        assert!(alarmed, "sustained risk rise must still alarm via s_pos");
     }
 }

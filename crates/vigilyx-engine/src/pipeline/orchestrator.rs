@@ -11,10 +11,12 @@
 //! waiting for the other 11 independent root modules.
 
 use std::collections::{HashMap, HashSet};
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use futures::FutureExt;
 use petgraph::stable_graph::{NodeIndex, StableDiGraph};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
@@ -26,9 +28,68 @@ use crate::module::{ModuleResult, SecurityModule};
 
 // DAG node
 
+pub(crate) const MODULE_EXECUTION_FAILED_CATEGORY: &str = "inspection_module_failed";
+pub(crate) const MODULE_EXECUTION_TIMEOUT_CATEGORY: &str = "inspection_module_timeout";
+
+/// Availability failures in these advisory modules remain visible in module
+/// results and metrics, but do not by themselves block a safe disposition.
+///
+/// `link_reputation` depends on external DNS/intel services. Its local result
+/// is vacuous when execution fails, so ignoring that unavailable evidence does
+/// not inject a false benign signal into fusion.
+const NON_BLOCKING_DISPOSITION_MODULES: &[&str] = &["link_reputation"];
+
 pub struct PipelineExecutionOutcome {
     pub results: HashMap<String, ModuleResult>,
     pub timed_out: bool,
+    pub failed_modules: Vec<String>,
+    pub timed_out_modules: Vec<String>,
+}
+
+impl PipelineExecutionOutcome {
+    /// True only when the configured pipeline reached a terminal result for
+    /// every scheduled module without an execution error or timeout.
+    pub fn inspection_complete(&self) -> bool {
+        !self.timed_out && self.failed_modules.is_empty() && self.timed_out_modules.is_empty()
+    }
+
+    /// Human-readable execution failures that must block a safe disposition.
+    ///
+    /// Advisory-module availability failures are deliberately omitted here,
+    /// while remaining present in `failed_modules`, `timed_out_modules`, module
+    /// results, and metrics for operator visibility.
+    pub fn disposition_incomplete_summary(&self) -> Option<String> {
+        let blocking_timed_out_modules = self
+            .timed_out_modules
+            .iter()
+            .filter(|module| !NON_BLOCKING_DISPOSITION_MODULES.contains(&module.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let blocking_failed_modules = self
+            .failed_modules
+            .iter()
+            .filter(|module| !NON_BLOCKING_DISPOSITION_MODULES.contains(&module.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let mut reasons = Vec::new();
+        if self.timed_out {
+            reasons.push("pipeline deadline exceeded".to_string());
+        }
+        if !blocking_timed_out_modules.is_empty() {
+            reasons.push(format!(
+                "module timeout: {}",
+                blocking_timed_out_modules.join(", ")
+            ));
+        }
+        if !blocking_failed_modules.is_empty() {
+            reasons.push(format!(
+                "module execution failed: {}",
+                blocking_failed_modules.join(", ")
+            ));
+        }
+        (!reasons.is_empty()).then(|| reasons.join("; "))
+    }
 }
 
 /// Metadata stored per graph node.
@@ -60,12 +121,91 @@ pub struct PipelineOrchestrator {
 }
 
 impl PipelineOrchestrator {
+    /// Build the bounded synchronous tier used by MTA inline delivery.
+    ///
+    /// The full passive pipeline remains unchanged. Only enabled modules that
+    /// explicitly (or conservatively by built-in metadata) opt into an inline
+    /// priority are copied into this DAG. Slow network/AI modules therefore
+    /// cannot consume the SMTP deadline; the caller can enqueue the same
+    /// session for the full asynchronous pipeline after returning a verdict.
+    pub fn build_inline(
+        all_modules: &HashMap<String, Arc<dyn SecurityModule>>,
+        config: &PipelineConfig,
+        max_priority: u8,
+    ) -> Result<Self, EngineError> {
+        let eligible: HashSet<String> = config
+            .modules
+            .iter()
+            .filter(|entry| entry.enabled)
+            .filter_map(|entry| {
+                all_modules.get(&entry.id).and_then(|module| {
+                    module
+                        .metadata()
+                        .effective_inline_priority()
+                        .filter(|priority| *priority <= max_priority)
+                        .map(|_| entry.id.clone())
+                })
+            })
+            .collect();
+
+        let filtered_modules = config
+            .modules
+            .iter()
+            .filter(|entry| !entry.enabled || eligible.contains(&entry.id))
+            .cloned()
+            .collect();
+        let filtered_config = PipelineConfig {
+            version: config.version,
+            modules: filtered_modules,
+            verdict_config: config.verdict_config.clone(),
+        };
+
+        let filtered_registry: HashMap<String, Arc<dyn SecurityModule>> = all_modules
+            .iter()
+            .filter(|(id, _)| eligible.contains(id.as_str()))
+            .map(|(id, module)| (id.clone(), Arc::clone(module)))
+            .collect();
+
+        info!(
+            selected = ?eligible,
+            max_priority,
+            "Built bounded MTA inline pipeline; deferred modules stay in full pipeline"
+        );
+        Self::build(&filtered_registry, &filtered_config)
+    }
+
     /// Build the orchestrator from registered modules and pipeline config.
     /// Validates no cycles exist in the dependency graph.
     pub fn build(
         all_modules: &HashMap<String, Arc<dyn SecurityModule>>,
         config: &PipelineConfig,
     ) -> Result<Self, EngineError> {
+        const OPTIONAL_EXTERNAL_MODULES: &[&str] =
+            &["av_eml_scan", "av_attach_scan", "sandbox_scan"];
+
+        let missing_enabled = config
+            .modules
+            .iter()
+            .filter(|module| module.enabled && !all_modules.contains_key(&module.id))
+            .map(|module| module.id.as_str())
+            .collect::<Vec<_>>();
+
+        if let Some(missing_builtin) = missing_enabled
+            .iter()
+            .find(|id| !OPTIONAL_EXTERNAL_MODULES.contains(id))
+        {
+            // A configured built-in disappearing from the registry is a build
+            // or wiring defect. Refuse to start instead of silently reducing
+            // the detector set and producing deceptively complete verdicts.
+            return Err(EngineError::UnknownModule((*missing_builtin).to_string()));
+        }
+        if !missing_enabled.is_empty() {
+            warn!(
+                modules = ?missing_enabled,
+                "Optional external detection controls are configured but unavailable"
+            );
+        }
+
         // 1. Determine enabled modules
         let enabled: HashSet<String> = config
             .modules
@@ -171,9 +311,14 @@ impl PipelineOrchestrator {
     /// Execute the pipeline for a given security context.
     /// Returns all module results.
     pub async fn execute(&self, ctx: &SecurityContext) -> HashMap<String, ModuleResult> {
-        self.execute_with_timeout(ctx, self.global_timeout)
-            .await
-            .results
+        self.execute_outcome(ctx).await.results
+    }
+
+    /// Execute using the configured global timeout while preserving execution
+    /// completeness. Production callers should prefer this over `execute()` so
+    /// partial results cannot accidentally be interpreted as a complete scan.
+    pub async fn execute_outcome(&self, ctx: &SecurityContext) -> PipelineExecutionOutcome {
+        self.execute_with_timeout(ctx, self.global_timeout).await
     }
 
     /// Execute the pipeline with an explicit global timeout budget.
@@ -186,6 +331,8 @@ impl PipelineOrchestrator {
             return PipelineExecutionOutcome {
                 results: HashMap::new(),
                 timed_out: false,
+                failed_modules: Vec::new(),
+                timed_out_modules: Vec::new(),
             };
         }
 
@@ -263,9 +410,33 @@ impl PipelineOrchestrator {
             }
         }
 
+        let results = ctx.module_results().await;
+        let mut failed_modules = Vec::new();
+        let mut timed_out_modules = Vec::new();
+        for (module_id, result) in &results {
+            if result
+                .categories
+                .iter()
+                .any(|category| category == MODULE_EXECUTION_FAILED_CATEGORY)
+            {
+                failed_modules.push(module_id.clone());
+            }
+            if result
+                .categories
+                .iter()
+                .any(|category| category == MODULE_EXECUTION_TIMEOUT_CATEGORY)
+            {
+                timed_out_modules.push(module_id.clone());
+            }
+        }
+        failed_modules.sort_unstable();
+        timed_out_modules.sort_unstable();
+
         PipelineExecutionOutcome {
-            results: ctx.module_results().await,
+            results,
             timed_out,
+            failed_modules,
+            timed_out_modules,
         }
     }
 
@@ -315,6 +486,8 @@ impl PipelineOrchestrator {
                 let m = module.clone();
                 let c = ctx.clone();
                 tokio::time::timeout(timeout, async {
+                    // A panicking module surfaces here as a JoinError, which is
+                    // converted into a module failure below - done_tx still fires.
                     tokio::task::spawn_blocking(move || handle.block_on(m.analyze(&c)))
                         .await
                         .unwrap_or_else(|e| {
@@ -323,31 +496,61 @@ impl PipelineOrchestrator {
                 })
                 .await
             } else {
-                tokio::time::timeout(timeout, module.analyze(&ctx)).await
+                // Catch module panics: without this, a panicking module kills the
+                // spawned task, done_tx is never signaled, and the event loop
+                // hangs until the global timeout. A caught panic is funneled into
+                // the regular failure path (MODULE_EXECUTION_FAILED result).
+                match AssertUnwindSafe(tokio::time::timeout(timeout, module.analyze(&ctx)))
+                    .catch_unwind()
+                    .await
+                {
+                    Ok(res) => res,
+                    Err(payload) => {
+                        let msg = payload
+                            .downcast_ref::<&str>()
+                            .copied()
+                            .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                            .unwrap_or("non-string panic payload");
+                        Ok(Err(EngineError::Other(format!("module panicked: {msg}"))))
+                    }
+                }
             };
 
             let module_result = match result {
                 Ok(Ok(r)) => r,
                 Ok(Err(e)) => {
                     error!(module = %module_id, error = %e, "Module failed");
-                    ModuleResult::not_applicable(
+                    let mut result = ModuleResult::not_applicable(
                         &module_id,
                         &module.metadata().name,
                         module.metadata().pillar,
-                        &format!("ModuleExecutelineFailed: {e}"),
+                        "Module execution failed; inspection is incomplete",
                         start.elapsed().as_millis() as u64,
-                    )
+                    );
+                    result
+                        .categories
+                        .push(MODULE_EXECUTION_FAILED_CATEGORY.to_string());
+                    result.details = serde_json::json!({ "execution_status": "failed" });
+                    result
                 }
                 Err(_) => {
                     let timeout_ms = timeout.as_millis() as u64;
                     warn!(module = %module_id, timeout_ms, "Module timed out");
-                    ModuleResult::not_applicable(
+                    let mut result = ModuleResult::not_applicable(
                         &module_id,
                         &module.metadata().name,
                         module.metadata().pillar,
-                        &format!("ModuleTimeout ({timeout_ms}ms)"),
+                        "Module timed out; inspection is incomplete",
                         timeout_ms,
-                    )
+                    );
+                    result
+                        .categories
+                        .push(MODULE_EXECUTION_TIMEOUT_CATEGORY.to_string());
+                    result.details = serde_json::json!({
+                        "execution_status": "timeout",
+                        "timeout_ms": timeout_ms,
+                    });
+                    result
                 }
             };
 
@@ -437,6 +640,8 @@ mod tests {
         meta: ModuleMetadata,
         delay: Duration,
         should_run_val: bool,
+        fails: bool,
+        panics: bool,
         /// Monotonic counter: records the order in which modules complete.
         completion_order: Arc<AtomicU64>,
     }
@@ -463,6 +668,8 @@ mod tests {
                 },
                 delay,
                 should_run_val: true,
+                fails: false,
+                panics: false,
                 completion_order,
             }
         }
@@ -476,6 +683,21 @@ mod tests {
             self.meta.timeout_ms = ms;
             self
         }
+
+        fn with_failure(mut self) -> Self {
+            self.fails = true;
+            self
+        }
+
+        fn with_panic(mut self) -> Self {
+            self.panics = true;
+            self
+        }
+
+        fn with_cpu_bound(mut self) -> Self {
+            self.meta.cpu_bound = true;
+            self
+        }
     }
 
     #[async_trait]
@@ -487,6 +709,12 @@ mod tests {
         async fn analyze(&self, _ctx: &SecurityContext) -> Result<ModuleResult, EngineError> {
             tokio::time::sleep(self.delay).await;
             self.completion_order.fetch_add(1, Ordering::SeqCst);
+            if self.panics {
+                panic!("deliberate test panic");
+            }
+            if self.fails {
+                return Err(EngineError::Other("deliberate test failure".to_string()));
+            }
             #[allow(deprecated)]
             Ok(ModuleResult::safe(
                 &self.meta.id,
@@ -512,6 +740,26 @@ mod tests {
         let ctx = test_ctx();
         let results = orch.execute(&ctx).await;
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_missing_enabled_builtin_module_fails_closed_at_startup() {
+        let modules: HashMap<String, Arc<dyn SecurityModule>> = HashMap::new();
+        let config = make_config(vec![module_cfg("content_scan")]);
+
+        let result = PipelineOrchestrator::build(&modules, &config);
+
+        assert!(matches!(result, Err(EngineError::UnknownModule(id)) if id == "content_scan"));
+    }
+
+    #[test]
+    fn test_missing_optional_external_module_is_explicitly_degraded() {
+        let modules: HashMap<String, Arc<dyn SecurityModule>> = HashMap::new();
+        let config = make_config(vec![module_cfg("av_eml_scan")]);
+
+        let result = PipelineOrchestrator::build(&modules, &config);
+
+        assert!(result.is_ok());
     }
 
     #[tokio::test]
@@ -557,6 +805,7 @@ mod tests {
             !outcome.results.contains_key("slow"),
             "timed-out work should not continue populating results"
         );
+        assert!(!outcome.inspection_complete());
     }
 
     #[tokio::test]
@@ -800,12 +1049,187 @@ mod tests {
         let ctx = test_ctx();
 
         let start = Instant::now();
-        let results = orch.execute(&ctx).await;
+        let outcome = orch.execute_outcome(&ctx).await;
         let elapsed = start.elapsed();
 
-        assert_eq!(results.len(), 1);
-        assert!(results["slow"].summary.contains("Timeout"));
+        assert_eq!(outcome.results.len(), 1);
+        assert_eq!(outcome.timed_out_modules, vec!["slow"]);
+        assert!(!outcome.inspection_complete());
+        assert!(
+            outcome.results["slow"]
+                .categories
+                .iter()
+                .any(|category| category == MODULE_EXECUTION_TIMEOUT_CATEGORY)
+        );
         assert!(elapsed < Duration::from_millis(500));
+    }
+
+    #[test]
+    fn test_link_reputation_timeout_is_visible_but_does_not_block_disposition() {
+        let outcome = PipelineExecutionOutcome {
+            results: HashMap::new(),
+            timed_out: false,
+            failed_modules: Vec::new(),
+            timed_out_modules: vec!["link_reputation".to_string()],
+        };
+
+        assert!(
+            !outcome.inspection_complete(),
+            "the coverage gap must remain observable"
+        );
+        assert_eq!(
+            outcome.disposition_incomplete_summary(),
+            None,
+            "link reputation availability alone must not force a threat floor"
+        );
+    }
+
+    #[test]
+    fn test_link_reputation_failure_is_visible_but_does_not_block_disposition() {
+        let outcome = PipelineExecutionOutcome {
+            results: HashMap::new(),
+            timed_out: false,
+            failed_modules: vec!["link_reputation".to_string()],
+            timed_out_modules: Vec::new(),
+        };
+
+        assert!(!outcome.inspection_complete());
+        assert_eq!(outcome.disposition_incomplete_summary(), None);
+    }
+
+    #[test]
+    fn test_other_module_failure_still_blocks_disposition() {
+        let outcome = PipelineExecutionOutcome {
+            results: HashMap::new(),
+            timed_out: false,
+            failed_modules: vec!["content_scan".to_string()],
+            timed_out_modules: vec!["link_reputation".to_string()],
+        };
+
+        assert_eq!(
+            outcome.disposition_incomplete_summary().as_deref(),
+            Some("module execution failed: content_scan")
+        );
+    }
+
+    #[test]
+    fn test_global_timeout_still_blocks_disposition_with_only_link_reputation_timeout() {
+        let outcome = PipelineExecutionOutcome {
+            results: HashMap::new(),
+            timed_out: true,
+            failed_modules: Vec::new(),
+            timed_out_modules: vec!["link_reputation".to_string()],
+        };
+
+        assert_eq!(
+            outcome.disposition_incomplete_summary().as_deref(),
+            Some("pipeline deadline exceeded")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_module_panic_is_contained_and_pipeline_completes() {
+        let order = Arc::new(AtomicU64::new(0));
+        let mut modules: HashMap<String, Arc<dyn SecurityModule>> = HashMap::new();
+        modules.insert(
+            "panicky".into(),
+            Arc::new(
+                MockModule::new("panicky", vec![], Duration::ZERO, order.clone()).with_panic(),
+            ),
+        );
+        modules.insert(
+            "healthy".into(),
+            Arc::new(MockModule::new(
+                "healthy",
+                vec![],
+                Duration::from_millis(5),
+                order,
+            )),
+        );
+
+        let config = make_config(vec![module_cfg("panicky"), module_cfg("healthy")]);
+        let orch = PipelineOrchestrator::build(&modules, &config).unwrap();
+        let ctx = test_ctx();
+
+        let outcome = orch
+            .execute_with_timeout(&ctx, Duration::from_secs(5))
+            .await;
+
+        // Without panic containment the event loop would hang until the deadline.
+        assert!(
+            !outcome.timed_out,
+            "pipeline must not hang on a module panic"
+        );
+        assert_eq!(outcome.failed_modules, vec!["panicky"]);
+        assert!(
+            outcome.results["panicky"]
+                .categories
+                .iter()
+                .any(|category| category == MODULE_EXECUTION_FAILED_CATEGORY)
+        );
+        assert!(
+            outcome.results.contains_key("healthy"),
+            "sibling modules must still run after a module panic"
+        );
+        assert!(!outcome.inspection_complete());
+    }
+
+    #[tokio::test]
+    async fn test_cpu_bound_module_panic_is_contained() {
+        let order = Arc::new(AtomicU64::new(0));
+        let mut modules: HashMap<String, Arc<dyn SecurityModule>> = HashMap::new();
+        modules.insert(
+            "panicky_blocking".into(),
+            Arc::new(
+                MockModule::new("panicky_blocking", vec![], Duration::ZERO, order)
+                    .with_panic()
+                    .with_cpu_bound(),
+            ),
+        );
+
+        let config = make_config(vec![module_cfg("panicky_blocking")]);
+        let orch = PipelineOrchestrator::build(&modules, &config).unwrap();
+        let outcome = orch
+            .execute_with_timeout(&test_ctx(), Duration::from_secs(5))
+            .await;
+
+        // A panicking spawn_blocking task surfaces as a JoinError and must be
+        // reported as a module failure, not hang the pipeline.
+        assert!(!outcome.timed_out);
+        assert_eq!(outcome.failed_modules, vec!["panicky_blocking"]);
+        assert!(
+            outcome.results["panicky_blocking"]
+                .categories
+                .iter()
+                .any(|category| category == MODULE_EXECUTION_FAILED_CATEGORY)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_module_error_is_not_reported_as_not_applicable() {
+        let order = Arc::new(AtomicU64::new(0));
+        let mut modules: HashMap<String, Arc<dyn SecurityModule>> = HashMap::new();
+        modules.insert(
+            "broken".into(),
+            Arc::new(MockModule::new("broken", vec![], Duration::ZERO, order).with_failure()),
+        );
+
+        let config = make_config(vec![module_cfg("broken")]);
+        let orch = PipelineOrchestrator::build(&modules, &config).unwrap();
+        let outcome = orch.execute_outcome(&test_ctx()).await;
+
+        assert_eq!(outcome.failed_modules, vec!["broken"]);
+        assert!(!outcome.inspection_complete());
+        assert!(
+            outcome.results["broken"]
+                .categories
+                .iter()
+                .any(|category| category == MODULE_EXECUTION_FAILED_CATEGORY)
+        );
+        assert_eq!(
+            outcome.results["broken"].details["execution_status"],
+            "failed"
+        );
     }
 
     #[tokio::test]
@@ -829,12 +1253,14 @@ mod tests {
 
         let ctx = test_ctx();
         let start = Instant::now();
-        let results = orch.execute(&ctx).await;
+        let outcome = orch.execute_outcome(&ctx).await;
         let elapsed = start.elapsed();
 
         // Should return within ~200ms with 0 results (none finished).
         assert!(elapsed < Duration::from_millis(500));
-        assert!(results.is_empty());
+        assert!(outcome.results.is_empty());
+        assert!(outcome.timed_out);
+        assert!(!outcome.inspection_complete());
     }
 
     // P0: CPU-bound dispatch tests

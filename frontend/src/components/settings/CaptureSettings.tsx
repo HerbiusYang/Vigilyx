@@ -111,6 +111,8 @@ export default function CaptureSettings() {
         <p className="s-section-subtitle">{t('settings.capture.subtitle')}</p>
       </div>
 
+      <p className="setup-security-note">{t('network.captureDisplayOnlyNote')}</p>
+
       <div className="s-setting-group">
         <div className="s-setting-group-header">{t('settings.capture.protocolFilter')}</div>
 

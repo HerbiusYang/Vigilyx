@@ -1,12 +1,14 @@
 import i18n from '../../i18n'
+import type { JSX } from 'react'
 
 export const INCIDENT_TYPE_CN: Record<string, string> = new Proxy({} as Record<string, string>, { get: (_, key: string) => i18n.t(`dataSecurity.incidentType_${key}`) })
 export const INCIDENT_TYPE_DESC: Record<string, string> = new Proxy({} as Record<string, string>, { get: (_, key: string) => i18n.t(`dataSecurity.incidentTypeDesc_${key}`) })
-export const INCIDENT_TYPE_COLOR: Record<string, string> = { draft_box_abuse: '#a855f7', file_transit_abuse: '#3b82f6', self_sending: '#f97316', jrt_compliance_violation: '#ef4444' }
+export const INCIDENT_TYPE_COLOR: Record<string, string> = { draft_box_abuse: '#a855f7', file_transit_abuse: '#3b82f6', self_sending: '#f97316', volume_anomaly: '#eab308', jrt_compliance_violation: '#ef4444' }
 export const INCIDENT_TYPE_ICON: Record<string, JSX.Element> = {
   draft_box_abuse: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>,
   file_transit_abuse: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>,
   self_sending: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>,
+  volume_anomaly: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 12 7 12 10 4 14 20 17 12 21 12"/></svg>,
   jrt_compliance_violation: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
 }
 export const SEVERITY_COLOR: Record<string, string> = { info: '#6b7280', low: '#3b82f6', medium: '#eab308', high: '#f97316', critical: '#ef4444' }

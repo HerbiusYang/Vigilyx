@@ -5,12 +5,12 @@
 //! 2. External intel query: OTX + VT Scrape + AbuseIPDB (per IP)
 //! 3. Skips IPs already marked verdict=clean in IOC cache
 
-mod checks;
+pub(crate) mod checks;
 mod intel;
 mod parsed;
 
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -20,6 +20,12 @@ use crate::db_service::DbQueryService;
 use crate::error::EngineError;
 use crate::intel::IntelLayer;
 use crate::module::{Bpa, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
+use vigilyx_core::models::SessionSource;
+
+/// Hard budget for the external-intel step (Step 7). Must stay comfortably
+/// below the module timeout (12s) so local findings are always returned even
+/// when external sources hang.
+const INTEL_STEP_BUDGET: Duration = Duration::from_secs(8);
 
 pub struct HeaderScanModule {
     meta: ModuleMetadata,
@@ -68,12 +74,13 @@ impl SecurityModule for HeaderScanModule {
         let mut total_score: f64 = 0.0;
 
         // --- Step 0: Extract all header data in a single pass ---
-        let parsed = parsed::ParsedHeaders::extract(
+        let parsed = parsed::ParsedHeaders::extract_for_session(
             &ctx.session.content.headers,
             &ctx.session.client_ip,
             ctx.session.mail_from.as_deref(),
             ctx.session.content.is_complete,
             &|d| ctx.is_internal_domain(d),
+            ctx.session.source == SessionSource::MtaProxy,
         );
 
         // Fold in injection findings from the extraction pass
@@ -169,19 +176,50 @@ impl SecurityModule for HeaderScanModule {
         .await;
 
         // --- Step 7: Received IP external intel query ---
-        // Skip IPs already checked in Step 6 to prevent double scoring
+        // Skip IPs already checked in Step 6 to prevent double scoring.
+        // The intel step runs on separate accumulators under a hard time
+        // budget: a slow/hanging external source can only forfeit the intel
+        // contribution, never the local findings computed in Steps 0-6.
         if let Some(ref intel_layer) = self.intel
             && !parsed.received_ips.is_empty()
         {
-            intel::query_external_intel(
+            // When earlier steps already produced signals, distrust cached
+            // external *clean* verdicts (clean cache can be pre-poisoned).
+            let revalidate_clean = total_score >= 0.15;
+            let mut intel_score = 0.0;
+            let mut intel_categories: Vec<String> = Vec::new();
+            let mut intel_evidence: Vec<crate::module::Evidence> = Vec::new();
+            let intel_future = intel::query_external_intel(
                 &parsed.received_ips,
                 intel_layer,
                 &ioc_checked_ips,
-                &mut total_score,
-                &mut categories,
-                &mut evidence,
-            )
-            .await;
+                revalidate_clean,
+                &mut intel_score,
+                &mut intel_categories,
+                &mut intel_evidence,
+            );
+            let intel_outcome = tokio::time::timeout(INTEL_STEP_BUDGET, intel_future).await;
+            match intel_outcome {
+                Ok(()) => {
+                    total_score += intel_score;
+                    categories.extend(intel_categories);
+                    evidence.extend(intel_evidence);
+                }
+                Err(_) => {
+                    tracing::warn!(
+                        budget_ms = INTEL_STEP_BUDGET.as_millis() as u64,
+                        "header_scan intel step exceeded its time budget; returning local findings only"
+                    );
+                    categories.push("inspection_limited".to_string());
+                    evidence.push(crate::module::Evidence {
+                        description:
+                            "External intel queries exceeded the time budget; verdict is based on local header checks only"
+                                .to_string(),
+                        location: Some("headers:Received".to_string()),
+                        snippet: None,
+                    });
+                }
+            }
         }
 
         // --- Finalize ---
@@ -266,5 +304,133 @@ impl SecurityModule for HeaderScanModule {
             }),
             engine_id: None,
         })
+    }
+}
+
+#[cfg(all(test, feature = "infra-tests"))]
+mod tests {
+    use super::*;
+    use crate::intel::IntelSourceConfig;
+    use std::collections::HashSet;
+    use std::sync::RwLock as StdRwLock;
+    use vigilyx_core::models::{EmailContent, EmailSession, Protocol};
+
+    struct MockDb;
+
+    #[async_trait]
+    impl DbQueryService for MockDb {
+        async fn find_ioc(
+            &self,
+            _ioc_type: &str,
+            _indicator: &str,
+        ) -> anyhow::Result<Option<vigilyx_core::IocEntry>> {
+            Ok(None)
+        }
+        async fn count_sender_domain_history(
+            &self,
+            _sender_domain: &str,
+            _exclude_session_id: &str,
+        ) -> anyhow::Result<i64> {
+            Ok(0)
+        }
+        async fn count_sender_address_history(
+            &self,
+            _sender_address: &str,
+            _exclude_session_id: &str,
+        ) -> anyhow::Result<i64> {
+            Ok(0)
+        }
+        async fn count_distinct_senders_for_domain(
+            &self,
+            _sender_domain: &str,
+        ) -> anyhow::Result<i64> {
+            Ok(0)
+        }
+    }
+
+    /// PoC (timeout bomb): a hanging external intel source must not kill the
+    /// whole analyze() — local findings (Steps 0-6) are returned and the lost
+    /// intel coverage is surfaced as `inspection_limited`.
+    #[tokio::test]
+    async fn intel_timeout_preserves_local_findings() {
+        // TCP server that accepts connections but never responds.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((sock, _)) = listener.accept().await {
+                held.push(sock); // hold open, never answer
+            }
+        });
+
+        let db = vigilyx_db::VigilDb::new(
+            &std::env::var("TEST_DATABASE_URL")
+                .expect("TEST_DATABASE_URL must be set to run integration tests"),
+        )
+        .await
+        .unwrap();
+        db.init_security_tables().await.unwrap();
+
+        let config = IntelSourceConfig {
+            otx_enabled: false,
+            vt_scrape_enabled: true,
+            vt_scrape_url: Some(format!("http://127.0.0.1:{port}")),
+            virustotal_api_key: None,
+            abuseipdb_enabled: false,
+            abuseipdb_api_key: None,
+        };
+        let intel = IntelLayer::new(
+            crate::ioc::IocManager::new(db),
+            config,
+            Arc::new(StdRwLock::new(HashSet::new())),
+        );
+        let module = HeaderScanModule::new(Arc::new(MockDb), Some(intel));
+
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "203.0.113.10".to_string(),
+            2525,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.mail_from = Some("attacker@evil.tld".to_string());
+        session.content = EmailContent {
+            headers: vec![
+                ("From".to_string(), "Attacker <attacker@evil.tld>".to_string()),
+                ("Reply-To".to_string(), "drop@other.tld".to_string()),
+                (
+                    "Received".to_string(),
+                    "from mail.evil.tld ([203.0.113.10]) by mx.example.org".to_string(),
+                ),
+            ],
+            is_complete: true,
+            ..Default::default()
+        };
+        let ctx = SecurityContext::new(Arc::new(session));
+
+        let started = Instant::now();
+        let result = module.analyze(&ctx).await.expect("analyze must not fail");
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < Duration::from_secs(12),
+            "intel hang must not consume the whole module budget: {:?}",
+            elapsed
+        );
+        assert!(
+            result.categories.iter().any(|c| c == "domain_mismatch"),
+            "local findings must be preserved, categories={:?}",
+            result.categories
+        );
+        assert!(
+            result.categories.iter().any(|c| c == "inspection_limited"),
+            "lost intel coverage must be reported, categories={:?}",
+            result.categories
+        );
+        assert!(
+            result.threat_level >= ThreatLevel::Low,
+            "local score must survive: {:?}",
+            result.threat_level
+        );
     }
 }

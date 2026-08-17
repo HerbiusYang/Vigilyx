@@ -84,7 +84,7 @@ impl ImapParser {
                 "{} STATUS {} ({})",
                 tag,
                 args.first().unwrap_or(&"?"),
-                args[1..].join(" ")
+                args.get(1..).unwrap_or(&[]).join(" ")
             ),
             "APPEND" => format!("{} APPEND {}", tag, args.first().unwrap_or(&"?")),
             "CHECK" => format!("{} CHECK", tag),
@@ -95,7 +95,7 @@ impl ImapParser {
                 "{} FETCH {} {}",
                 tag,
                 args.first().unwrap_or(&"?"),
-                args[1..].join(" ")
+                args.get(1..).unwrap_or(&[]).join(" ")
             ),
             "STORE" => format!(
                 "{} STORE {} {} {}",
@@ -219,5 +219,128 @@ impl ImapParser {
 impl Default for ImapParser {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_status_without_args_does_not_panic() {
+        let parser = ImapParser::new();
+        let result = parser.parse(b"A1 STATUS\r\n");
+        assert_eq!(result, Some("A1 STATUS ? ()".to_string()));
+    }
+
+    #[test]
+    fn test_fetch_without_args_does_not_panic() {
+        let parser = ImapParser::new();
+        let result = parser.parse(b"A1 FETCH\r\n");
+        assert_eq!(result, Some("A1 FETCH ? ".to_string()));
+    }
+
+    #[test]
+    fn test_fetch_with_single_arg_does_not_panic() {
+        let parser = ImapParser::new();
+        let result = parser.parse(b"A1 FETCH 1\r\n");
+        assert_eq!(result, Some("A1 FETCH 1 ".to_string()));
+    }
+
+    #[test]
+    fn test_status_with_args_parses_normally() {
+        let parser = ImapParser::new();
+        let result = parser.parse(b"A1 STATUS INBOX (MESSAGES 2 RECENT 1)\r\n");
+        assert_eq!(
+            result,
+            Some("A1 STATUS INBOX ((MESSAGES 2 RECENT 1))".to_string())
+        );
+    }
+
+    #[test]
+    fn test_fetch_with_args_parses_normally() {
+        let parser = ImapParser::new();
+        let result = parser.parse(b"A1 FETCH 1 FLAGS\r\n");
+        assert_eq!(result, Some("A1 FETCH 1 FLAGS".to_string()));
+    }
+
+    #[test]
+    fn test_empty_input_returns_none() {
+        let parser = ImapParser::new();
+        assert_eq!(parser.parse(b""), None);
+        assert_eq!(parser.parse(b"\r\n"), None);
+    }
+
+    #[test]
+    fn test_tag_only_command_does_not_panic() {
+        let parser = ImapParser::new();
+        let result = parser.parse(b"A1\r\n");
+        assert_eq!(result, Some("[IMAP: A1]".to_string()));
+    }
+
+    #[test]
+    fn test_other_commands_without_args_do_not_panic() {
+        let parser = ImapParser::new();
+        // 这些命令分支都访问 args，缺参数时必须走 unwrap_or 兜底而不是 panic
+        for cmd in [
+            "A1 AUTHENTICATE",
+            "A1 LOGIN",
+            "A1 SELECT",
+            "A1 RENAME",
+            "A1 LIST",
+            "A1 STORE",
+            "A1 COPY",
+            "A1 SEARCH",
+            "A1 UID",
+        ] {
+            let input = format!("{}\r\n", cmd);
+            assert!(
+                parser.parse(input.as_bytes()).is_some(),
+                "command should parse without panic: {}",
+                cmd
+            );
+        }
+    }
+
+    #[test]
+    fn test_command_with_excessive_args_does_not_panic() {
+        let parser = ImapParser::new();
+        let args = (0..10_000)
+            .map(|i| format!("arg{}", i))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let input = format!("A1 FETCH 1:{}\r\n", args);
+        let result = parser.parse(input.as_bytes());
+        assert!(result.is_some());
+        assert!(result.unwrap().starts_with("A1 FETCH"));
+    }
+
+    #[test]
+    fn test_untagged_response_single_word_does_not_panic() {
+        let parser = ImapParser::new();
+        // "* OK" 没有后续内容，parts[1..] 必须安全返回空
+        let result = parser.parse(b"* OK\r\n");
+        assert_eq!(result, Some("* OK ".to_string()));
+    }
+
+    #[test]
+    fn test_untagged_numeric_response_without_keyword() {
+        let parser = ImapParser::new();
+        let result = parser.parse(b"* 3\r\n");
+        assert_eq!(result, Some("* 3".to_string()));
+    }
+
+    #[test]
+    fn test_tagged_response_without_message() {
+        let parser = ImapParser::new();
+        let result = parser.parse(b"A1 OK\r\n");
+        assert_eq!(result, Some("A1 OK (Success)".to_string()));
+    }
+
+    #[test]
+    fn test_normal_login_masks_password() {
+        let parser = ImapParser::new();
+        let result = parser.parse(b"A1 LOGIN user@example.com secret\r\n");
+        assert_eq!(result, Some("A1 LOGIN user@example.com ***".to_string()));
     }
 }

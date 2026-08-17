@@ -119,15 +119,17 @@ pub fn module_to_engine(module_id: &str) -> Option<EngineId> {
         // Engine A: Sender Reputation
         "domain_verify" => Some(EngineId::A),
 
-        // Engine B: Content Analysis (9 modules, incl. ClamAV + YARA)
+        // Engine B: Content and attachment analysis
         "content_scan"
         | "html_scan"
         | "html_pixel_art"
         | "attach_scan"
         | "attach_content"
+        | "attach_qr_scan"
         | "attach_hash"
         | "av_eml_scan"
         | "av_attach_scan"
+        | "sandbox_scan"
         | "yara_scan"
         | "rmm_detect"
         | "prompt_injection_scan"
@@ -136,8 +138,10 @@ pub fn module_to_engine(module_id: &str) -> Option<EngineId> {
         // Engine C: Behavior Baseline
         "anomaly_detect" => Some(EngineId::C),
 
-        // Engine D: URL/Link Analysis (3 modules)
-        "link_scan" | "link_reputation" | "link_content" => Some(EngineId::D),
+        // Engine D: URL, landing-page, and adversary-in-the-middle analysis
+        "link_scan" | "link_reputation" | "link_content" | "landing_page_scan" | "aitm_detect" => {
+            Some(EngineId::D)
+        }
 
         // Engine E: Protocol Compliance (2 modules)
         "header_scan" | "mime_scan" => Some(EngineId::E),
@@ -241,6 +245,20 @@ mod tests {
     #[test]
     fn test_toad_detect_maps_to_engine_b() {
         assert_eq!(module_to_engine("toad_detect"), Some(EngineId::B));
+    }
+
+    #[test]
+    fn every_default_detection_module_maps_to_an_engine() {
+        for module in crate::pipeline::config::PipelineConfig::default().modules {
+            if module.id == "verdict" {
+                continue;
+            }
+            assert!(
+                module_to_engine(&module.id).is_some(),
+                "default module {} is missing an engine mapping",
+                module.id
+            );
+        }
     }
 
     #[test]

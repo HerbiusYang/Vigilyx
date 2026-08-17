@@ -42,6 +42,18 @@ pub struct MtaStatus {
     pub active_connections: u64,
     /// (ISO 8601)
     pub last_update: String,
+    /// Inline 判定计数：放行并转发下游（自 MTA 进程启动累计）
+    #[serde(default)]
+    pub accepted: u64,
+    /// Inline 判定计数：进入隔离区
+    #[serde(default)]
+    pub quarantined: u64,
+    /// Inline 判定计数：拒绝（550）
+    #[serde(default)]
+    pub rejected: u64,
+    /// Inline 判定计数：引擎超时 fail-open 放行
+    #[serde(default)]
+    pub timeout_failopen: u64,
 }
 
 /// Systemstatus
@@ -175,35 +187,61 @@ pub async fn update_mta_status(
     ApiResponse::ok(serde_json::json!({"status": "ok"}))
 }
 
-/// /sys/class/net/, Sniffer Redis
+/// Read host interface counters, falling back to the Sniffer snapshot in Redis.
 pub async fn get_host_interfaces(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    // /sys/class/net/ (spawn_blocking to avoid blocking the async runtime)
-    if let Ok(Ok(interfaces)) = tokio::task::spawn_blocking(read_host_interfaces).await
-        && !interfaces.is_empty()
-    {
-        return ApiResponse::ok(interfaces);
+    // Host filesystem reads are blocking. Keep a zero-counter result as a last
+    // resort for older deployments that do not mount the host sysfs targets.
+    let detected_interfaces = tokio::task::spawn_blocking(read_host_interfaces)
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_default();
+    if interfaces_have_traffic(&detected_interfaces) {
+        return ApiResponse::ok(detected_interfaces);
     }
 
-    // : Redis Sniffer
+    // The host-networked Sniffer can still provide a valid snapshot when the
+    // API container cannot resolve the host sysfs counters.
     if let Some(ref mq) = state.messaging.mq {
         match mq
             .get_json::<Vec<serde_json::Value>>(vigilyx_db::mq::keys::SNIFFER_INTERFACES)
             .await
         {
-            Ok(Some(interfaces)) => ApiResponse::ok(interfaces),
-            Ok(None) => ApiResponse::ok(Vec::<serde_json::Value>::new()),
+            Ok(Some(interfaces)) if !interfaces.is_empty() => return ApiResponse::ok(interfaces),
+            Ok(Some(_)) | Ok(None) => {}
             Err(e) => {
                 tracing::warn!("读取网络接口列表失败: {}", e);
-                ApiResponse::ok(Vec::<serde_json::Value>::new())
             }
         }
-    } else {
-        ApiResponse::ok(Vec::<serde_json::Value>::new())
     }
+
+    ApiResponse::ok(detected_interfaces)
 }
 
-/// /host/sys/class/net/
-/// /sys/class/net, volume /host/sys/class/net
+fn interfaces_have_traffic(interfaces: &[serde_json::Value]) -> bool {
+    interfaces
+        .iter()
+        .any(|interface| interface["total_bytes"].as_u64().unwrap_or(0) > 0)
+}
+
+fn should_hide_interface(name: &str) -> bool {
+    name == "lo"
+        || name.starts_with("veth")
+        || name.starts_with("br-")
+        || name.starts_with("docker")
+        || name.starts_with("virbr")
+}
+
+fn sort_interfaces_by_traffic(interfaces: &mut [serde_json::Value]) {
+    interfaces.sort_by(|a, b| {
+        let ta = a["total_bytes"].as_u64().unwrap_or(0);
+        let tb = b["total_bytes"].as_u64().unwrap_or(0);
+        tb.cmp(&ta)
+    });
+}
+
+/// Read accumulated RX/TX counters from the host sysfs mount. The
+/// /host/sys/devices mount resolves /host/sys/class/net's relative symlinks.
 fn read_host_interfaces() -> Result<Vec<serde_json::Value>, std::io::Error> {
     use std::path::Path;
 
@@ -218,13 +256,7 @@ fn read_host_interfaces() -> Result<Vec<serde_json::Value>, std::io::Error> {
     let mut interfaces = Vec::new();
     for entry in std::fs::read_dir(net_dir)?.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
-        // , Docker
-        if name == "lo"
-            || name.starts_with("veth")
-            || name.starts_with("br-")
-            || name.starts_with("docker")
-            || name.starts_with("virbr")
-        {
+        if should_hide_interface(&name) {
             continue;
         }
 
@@ -254,11 +286,7 @@ fn read_host_interfaces() -> Result<Vec<serde_json::Value>, std::io::Error> {
         }));
     }
 
-    interfaces.sort_by(|a, b| {
-        let ta = a["total_bytes"].as_u64().unwrap_or(0);
-        let tb = b["total_bytes"].as_u64().unwrap_or(0);
-        tb.cmp(&ta)
-    });
+    sort_interfaces_by_traffic(&mut interfaces);
 
     Ok(interfaces)
 }
@@ -294,4 +322,18 @@ pub async fn get_system_metrics(State(state): State<Arc<AppState>>) -> impl Into
         uptime_secs: sysinfo::System::uptime(),
         active_sessions,
     })
+}
+
+#[cfg(test)]
+mod interface_tests {
+    use super::interfaces_have_traffic;
+
+    #[test]
+    fn distinguishes_active_and_zero_counter_snapshots() {
+        let zero = vec![serde_json::json!({"name": "ens224", "total_bytes": 0})];
+        let active = vec![serde_json::json!({"name": "ens224", "total_bytes": 1})];
+
+        assert!(!interfaces_have_traffic(&zero));
+        assert!(interfaces_have_traffic(&active));
+    }
 }

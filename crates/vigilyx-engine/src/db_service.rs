@@ -29,6 +29,13 @@ pub trait DbQueryService: Send + Sync {
         exclude_session_id: &str,
     ) -> anyhow::Result<i64>;
 
+    /// Check whether this exact envelope mailbox has appeared in history.
+    async fn count_sender_address_history(
+        &self,
+        sender_address: &str,
+        exclude_session_id: &str,
+    ) -> anyhow::Result<i64>;
+
     /// Count distinct senders (mail_from) from a given domain in completed sessions.
     /// Used as a heuristic: if a domain has many different senders, it's likely a shared/public
     /// email domain, and domain-level "first contact" is meaningless.
@@ -53,5 +60,14 @@ impl DbQueryService for vigilyx_db::VigilDb {
 
     async fn count_distinct_senders_for_domain(&self, sender_domain: &str) -> anyhow::Result<i64> {
         self.count_distinct_senders_for_domain(sender_domain).await
+    }
+
+    async fn count_sender_address_history(
+        &self,
+        sender_address: &str,
+        exclude_session_id: &str,
+    ) -> anyhow::Result<i64> {
+        self.count_sender_address_history(sender_address, exclude_session_id)
+            .await
     }
 }

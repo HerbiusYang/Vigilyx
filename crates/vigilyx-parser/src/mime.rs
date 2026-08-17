@@ -25,6 +25,7 @@ use memchr::memmem;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use tracing::{debug, warn};
+use vigilyx_core::magic_bytes::split_uuencode_frame;
 use vigilyx_core::{EmailAttachment, EmailContent, EmailLink};
 
 /// Hard upper bound for message parsing size (prevents OOM).
@@ -44,6 +45,12 @@ const MAX_ATTACHMENT_SAVE_SIZE: usize = 32 * 1024 * 1024;
 /// Cumulative decoded attachment bytes retained for one message. This bounds the peak
 /// created by keeping decoded bytes while hashing and producing a Base64 copy.
 const MAX_TOTAL_ATTACHMENT_DECODED_BYTES: usize = 32 * 1024 * 1024;
+
+/// Cumulative decoded body bytes (body_text + body_html) retained for one
+/// message (SEC M-4, 2026-08-15 red-team scan). Bounds the heap peak created
+/// by charset lossy expansion (one invalid input byte becomes a three-byte
+/// U+FFFD) and by merging every MIME alternative into the retained strings.
+const MAX_TOTAL_DECODED_BODY_BYTES: usize = 20 * 1024 * 1024;
 
 /// multipart large depth
 const MAX_MULTIPART_DEPTH: usize = 10;
@@ -87,6 +94,28 @@ pub enum TransferEncoding {
     QuotedPrintable,
     /// Binary
     Binary,
+    /// uuencode (`begin <mode> <name>` ... `end` frame)
+    Uuencode,
+}
+
+/// Decoded part body plus the signals recovered during transport decoding.
+struct DecodedContent {
+    /// Decoded payload bytes.
+    data: Vec<u8>,
+    /// Filename carried by a uuencode `begin` frame, when the body held one.
+    uuencode_filename: Option<String>,
+    /// Text surrounding a uuencode frame (preamble + trailer), when non-blank.
+    surrounding_text: Option<Vec<u8>>,
+}
+
+impl DecodedContent {
+    fn plain(data: Vec<u8>) -> Self {
+        Self {
+            data,
+            uuencode_filename: None,
+            surrounding_text: None,
+        }
+    }
 }
 
 /// MIME
@@ -113,6 +142,8 @@ struct HeaderIndex {
     content_type: Option<usize>,
     content_transfer_encoding: Option<usize>,
     content_disposition: Option<usize>,
+    content_id: Option<usize>,
+    ambiguous_security_header: bool,
 }
 
 impl HeaderIndex {
@@ -122,18 +153,38 @@ impl HeaderIndex {
             content_type: None,
             content_transfer_encoding: None,
             content_disposition: None,
+            content_id: None,
+            ambiguous_security_header: false,
         };
         for (i, (name, _)) in headers.iter().enumerate() {
-            if idx.content_type.is_none() && name.eq_ignore_ascii_case("Content-Type") {
-                idx.content_type = Some(i);
-            } else if idx.content_transfer_encoding.is_none()
-                && name.eq_ignore_ascii_case("Content-Transfer-Encoding")
-            {
-                idx.content_transfer_encoding = Some(i);
-            } else if idx.content_disposition.is_none()
-                && name.eq_ignore_ascii_case("Content-Disposition")
-            {
-                idx.content_disposition = Some(i);
+            if name.eq_ignore_ascii_case("Content-Type") {
+                // Duplicate security headers used to abort the whole parse
+                // (AmbiguousSecurityHeaders), which turned two header lines
+                // into the cheapest full-blindness primitive in mirror mode.
+                // Degrade instead: keep the FIRST occurrence like MUAs do and
+                // flag the ambiguity so it is still visible in the logs.
+                if idx.content_type.is_none() {
+                    idx.content_type = Some(i);
+                } else {
+                    idx.ambiguous_security_header = true;
+                }
+            } else if name.eq_ignore_ascii_case("Content-Transfer-Encoding") {
+                if idx.content_transfer_encoding.is_none() {
+                    idx.content_transfer_encoding = Some(i);
+                } else {
+                    idx.ambiguous_security_header = true;
+                }
+            } else if name.eq_ignore_ascii_case("Content-Disposition") {
+                if idx.content_disposition.is_none() {
+                    idx.content_disposition = Some(i);
+                } else {
+                    idx.ambiguous_security_header = true;
+                }
+            } else if name.eq_ignore_ascii_case("Content-ID") && idx.content_id.is_none() {
+                // Content-ID is not security-classification-critical; a
+                // duplicate does not create a parser differential worth
+                // rejecting the message over. Keep the first occurrence.
+                idx.content_id = Some(i);
             }
         }
         idx
@@ -155,6 +206,10 @@ impl HeaderIndex {
         self.content_disposition
             .map(|i| headers[i].1.as_str())
             .unwrap_or("")
+    }
+
+    fn content_id<'a>(&self, headers: &'a [(String, String)]) -> Option<&'a str> {
+        self.content_id.map(|i| headers[i].1.as_str())
     }
 }
 
@@ -194,6 +249,12 @@ impl MimeParser {
 
         // Time/CountIndexlookup Header
         let idx = HeaderIndex::build(&headers);
+        if idx.ambiguous_security_header {
+            // Keep parsing with the first occurrence (see HeaderIndex::build):
+            // rejecting here would drop the entire message from mirror-mode
+            // scanning while MUAs still render it.
+            warn!("重复安全头（Content-Type/CTE/Content-Disposition）— 降级取首个头继续解析");
+        }
         let content_type = idx.content_type(&headers);
         let encoding = idx.encoding(&headers);
         let missing_top_level_content_type = idx.content_type.is_none();
@@ -210,16 +271,38 @@ impl MimeParser {
             )?;
         } else {
             let decoded = self.decode_content(body_bytes, encoding)?;
+            let content_disposition = idx.disposition(&headers);
+            let content_id = idx.content_id(&headers);
+            let is_attachment =
+                Self::is_attachment_part(content_type, content_disposition, content_id);
 
-            if ascii_contains_ci(content_type, "text/plain") {
-                content.body_text = Some(decode_charset(&decoded, content_type));
-            } else if ascii_contains_ci(content_type, "text/html") {
-                content.body_html = Some(decode_charset(&decoded, content_type));
-            }
+            // A valid MIME message does not need to be multipart to carry an
+            // attachment. Route the top-level entity through the same
+            // classification path as child parts so a single-part payload
+            // cannot disappear from attachment scanning.
+            self.apply_decoded_part(
+                &mut content,
+                content_type,
+                content_disposition,
+                content_id,
+                is_attachment,
+                decoded,
+            )?;
 
-            if missing_top_level_content_type {
+            if missing_top_level_content_type && !is_attachment {
                 self.try_salvage_embedded_multipart(&mut content, body_bytes)?;
             }
+        }
+
+        // Bare-HTML sniffing: with no top-level Content-Type the entity
+        // defaults to text/plain, leaving body_html empty and html_scan
+        // not_applicable — while Outlook/Apple Mail sniff and render a bare
+        // `<html>` body. Mirror that for detection only.
+        if content.body_html.is_none()
+            && let Some(text) = &content.body_text
+            && Self::looks_like_html_document(text)
+        {
+            content.body_html = Some(text.clone());
         }
 
         // ExtractlinkConnect
@@ -273,7 +356,13 @@ impl MimeParser {
                 .collect();
             for attachment in relaxed.attachments {
                 if seen_hashes.insert(attachment.hash.clone()) {
-                    Self::ensure_attachment_budget(&salvaged, attachment.size)?;
+                    if Self::ensure_attachment_budget(&salvaged, attachment.size).is_err() {
+                        // Budget merge guard: skip the surplus attachment but
+                        // keep the salvaged body — never fail the message.
+                        salvaged.truncated = true;
+                        salvaged.dropped_attachments += 1;
+                        continue;
+                    }
                     salvaged.attachments.push(attachment);
                 }
             }
@@ -289,6 +378,8 @@ impl MimeParser {
         content.body_text = salvaged.body_text;
         content.body_html = salvaged.body_html;
         content.attachments = salvaged.attachments;
+        content.truncated |= salvaged.truncated;
+        content.dropped_attachments += salvaged.dropped_attachments;
         Ok(())
     }
 
@@ -300,7 +391,10 @@ impl MimeParser {
 
         while let Some(boundary_start) = Self::find_boundary_line_start(trimmed, cursor) {
             if total_parts >= MAX_TOTAL_PARTS {
-                return Err(MimeError::TooManyParts);
+                // Same degrade rule as the main multipart walker: keep the
+                // parts already salvaged and flag the coverage gap.
+                content.truncated = true;
+                break;
             }
             total_parts += 1;
             let boundary_line_end = Self::line_end_index(trimmed, boundary_start);
@@ -332,18 +426,22 @@ impl MimeParser {
             }
 
             let idx = HeaderIndex::build(&headers);
+            if idx.ambiguous_security_header {
+                warn!("重复安全头（嵌入 part 级）— 降级取首个头继续解析");
+            }
             let part_content_type = idx.content_type(&headers);
             let part_encoding = idx.encoding(&headers);
             let decoded = self.decode_content(part_body, part_encoding)?;
             let content_disposition = idx.disposition(&headers);
-            let is_attachment = ascii_contains_ci(content_disposition, "attachment")
-                || Self::extract_filename(content_disposition).is_some()
-                || Self::extract_filename(part_content_type).is_some();
+            let content_id = idx.content_id(&headers);
+            let is_attachment =
+                Self::is_attachment_part(part_content_type, content_disposition, content_id);
 
             self.apply_decoded_part(
                 &mut content,
                 part_content_type,
                 content_disposition,
+                content_id,
                 is_attachment,
                 decoded,
             )?;
@@ -445,20 +543,29 @@ impl MimeParser {
         // priority \r\n\r\n
         if let Some(pos) = self.header_end_finder.find(data) {
             if pos > MAX_HEADER_SIZE {
-                return Err(MimeError::HeaderTooLarge);
+                // An oversized header block (e.g. a 70KB X-Pad, still inside
+                // Postfix's 100KB header limit) used to abort the whole parse,
+                // blinding mirror mode while the MUA rendered the body.
+                // Degrade: truncate the header block, keep the real body.
+                warn!(header_bytes = pos, "邮件Header超限 — 截断头块，保留正文继续解析");
+                return Ok((&data[..MAX_HEADER_SIZE], &data[pos + 4..]));
             }
             return Ok((&data[..pos], &data[pos + 4..]));
         }
         // : \n\n (Unix, MTA Use \r)
         if let Some(pos) = self.header_end_finder_lf.find(data) {
             if pos > MAX_HEADER_SIZE {
-                return Err(MimeError::HeaderTooLarge);
+                warn!(header_bytes = pos, "邮件Header超限 — 截断头块，保留正文继续解析");
+                return Ok((&data[..MAX_HEADER_SIZE], &data[pos + 2..]));
             }
             return Ok((&data[..pos], &data[pos + 2..]));
         }
         // not find linedelimited,possiblyonly Header
         if data.len() > MAX_HEADER_SIZE {
-            Ok((&data[..MAX_HEADER_SIZE], &[]))
+            // No delimiter inside the budget: parse the first 64KB as headers
+            // and treat the remainder as body instead of dropping it.
+            warn!("未找到Header/body分隔且超过头块上限 — 截断头块，剩余字节按正文解析");
+            Ok((&data[..MAX_HEADER_SIZE], &data[MAX_HEADER_SIZE..]))
         } else {
             Ok((data, &[]))
         }
@@ -518,13 +625,21 @@ impl MimeParser {
         total_parts: &mut usize,
     ) -> Result<(), MimeError> {
         if depth >= MAX_MULTIPART_DEPTH {
-            warn!("multipart 递归depth超限 ({})", depth);
-            return Err(MimeError::MultipartTooDeep);
+            // Degrade, never bubble: a full-parse Err is mirror mode's biggest
+            // amplifier (the MUA still renders the message). Keep everything
+            // parsed so far and flag the coverage gap.
+            warn!("multipart 递归depth超限 ({}) — 降级保留已解析内容", depth);
+            content.truncated = true;
+            return Ok(());
         }
 
         if *total_parts >= MAX_TOTAL_PARTS {
-            warn!("multipart 总 part 数超限 ({})", *total_parts);
-            return Err(MimeError::TooManyParts);
+            warn!(
+                "multipart 总 part 数超限 ({}) — 降级保留已解析内容",
+                *total_parts
+            );
+            content.truncated = true;
+            return Ok(());
         }
 
         // Extract boundary
@@ -538,21 +653,45 @@ impl MimeParser {
             return Err(MimeError::BoundaryNotFound);
         };
 
-        let mut saw_closing_delimiter = false;
         loop {
             if delimiter.closing {
-                saw_closing_delimiter = true;
-                break;
+                return Ok(());
             }
 
             let Some(next_delimiter) = delimiters.next() else {
-                break;
+                // Many MUAs render an otherwise valid multipart message when
+                // the final RFC 2046 closing delimiter is omitted. SMTP DATA
+                // termination still gives us a trusted message boundary, so
+                // scan the complete final part through EOF instead of dropping
+                // every already-captured part. Fail closed if that final part
+                // cannot itself be parsed.
+                if *total_parts >= MAX_TOTAL_PARTS {
+                    warn!(
+                        "multipart 总 part 数超限 ({}) — 降级保留已解析内容",
+                        *total_parts
+                    );
+                    content.truncated = true;
+                    return Ok(());
+                }
+                *total_parts += 1;
+                let final_part = body
+                    .get(delimiter.content_start..)
+                    .filter(|part| !part.is_empty())
+                    .ok_or(MimeError::MissingClosingBoundary)?;
+                if !self.parse_multipart_part(content, final_part, depth, total_parts)? {
+                    return Err(MimeError::MissingClosingBoundary);
+                }
+                return Ok(());
             };
 
             // Check total parts budget before processing each part
             if *total_parts >= MAX_TOTAL_PARTS {
-                warn!("multipart 总 part 数超限 ({})", *total_parts);
-                return Err(MimeError::TooManyParts);
+                warn!(
+                    "multipart 总 part 数超限 ({}) — 降级保留已解析内容",
+                    *total_parts
+                );
+                content.truncated = true;
+                return Ok(());
             }
             *total_parts += 1;
 
@@ -570,51 +709,106 @@ impl MimeParser {
                 continue;
             }
 
-            // Parse ofHeaderAndContent
-            if let Ok((part_headers, part_body)) = self.split_headers_body(part_data) {
-                let headers = self.parse_headers(part_headers).unwrap_or_default();
-                let idx = HeaderIndex::build(&headers);
+            let _ = self.parse_multipart_part(content, part_data, depth, total_parts)?;
+        }
+    }
 
-                let part_content_type = idx.content_type(&headers);
-                let part_encoding = idx.encoding(&headers);
+    fn parse_multipart_part(
+        &self,
+        content: &mut EmailContent,
+        part_data: &[u8],
+        depth: usize,
+        total_parts: &mut usize,
+    ) -> Result<bool, MimeError> {
+        let Ok((part_headers, part_body)) = self.split_headers_body(part_data) else {
+            return Ok(false);
+        };
+        let headers = self.parse_headers(part_headers).unwrap_or_default();
+        if headers.is_empty() && part_body.is_empty() {
+            return Ok(false);
+        }
+        let idx = HeaderIndex::build(&headers);
+        if idx.ambiguous_security_header {
+            warn!("重复安全头（multipart part 级）— 降级取首个头继续解析");
+        }
 
-                // of multipart (depthlimit)
-                if ascii_starts_with_ci(part_content_type, "multipart/") {
-                    self.parse_multipart_inner(
-                        content,
-                        part_content_type,
-                        part_body,
-                        depth + 1,
-                        total_parts,
-                    )?;
-                    continue;
+        let part_content_type = idx.content_type(&headers);
+        let part_encoding = idx.encoding(&headers);
+
+        if ascii_starts_with_ci(part_content_type, "multipart/") {
+            match self.parse_multipart_inner(
+                content,
+                part_content_type,
+                part_body,
+                depth + 1,
+                total_parts,
+            ) {
+                Ok(()) => return Ok(true),
+                Err(MimeError::BoundaryNotFound) => {
+                    // A nested multipart reusing an ancestor boundary leaves no
+                    // inner delimiter inside this part: the ancestor scan
+                    // already consumed every `--boundary` line. MUAs still
+                    // render the inner entity, so degrade the bytes to leaf
+                    // handling below instead of failing the entire message
+                    // (a full-parse Err is mirror mode's biggest amplifier).
+                    warn!("内层 multipart 找不到声明的 boundary（疑似复用外层 boundary）— 降级为 leaf part 宽松处理");
                 }
-
-                // DecodeContent
-                let decoded = self.decode_content(part_body, part_encoding)?;
-
-                // Judge Attachment body
-                let content_disposition = idx.disposition(&headers);
-
-                let is_attachment = ascii_contains_ci(content_disposition, "attachment")
-                    || Self::extract_filename(content_disposition).is_some()
-                    || Self::extract_filename(part_content_type).is_some();
-
+                // Safety budgets (depth / total parts) now degrade inside
+                // parse_multipart_inner itself (truncated flag + Ok); any
+                // error that still reaches this arm is a structural failure
+                // and stays fail-closed.
+                Err(err) => return Err(err),
+            }
+            // multipart/* matches neither text/plain nor text/html in
+            // apply_decoded_part, so the normal body-merge would discard these
+            // bytes. Scan them as plain text instead; attachments still go
+            // through the regular attachment path.
+            let decoded = self.decode_content(part_body, part_encoding)?;
+            let content_disposition = idx.disposition(&headers);
+            let content_id = idx.content_id(&headers);
+            let is_attachment =
+                Self::is_attachment_part(part_content_type, content_disposition, content_id);
+            if is_attachment {
                 self.apply_decoded_part(
                     content,
                     part_content_type,
                     content_disposition,
-                    is_attachment,
+                    content_id,
+                    true,
                     decoded,
                 )?;
+            } else if !decoded.data.iter().all(|b| b.is_ascii_whitespace()) {
+                let (text, decode_truncated) = decode_charset(
+                    &decoded.data,
+                    part_content_type,
+                    body_budget_remaining(content),
+                );
+                Self::merge_body_part(
+                    content,
+                    BodyTarget::Text,
+                    text,
+                    decode_truncated,
+                    "plain",
+                );
             }
+            return Ok(true);
         }
 
-        if !saw_closing_delimiter {
-            return Err(MimeError::MissingClosingBoundary);
-        }
+        let decoded = self.decode_content(part_body, part_encoding)?;
+        let content_disposition = idx.disposition(&headers);
+        let content_id = idx.content_id(&headers);
+        let is_attachment =
+            Self::is_attachment_part(part_content_type, content_disposition, content_id);
 
-        Ok(())
+        self.apply_decoded_part(
+            content,
+            part_content_type,
+            content_disposition,
+            content_id,
+            is_attachment,
+            decoded,
+        )?;
+        Ok(true)
     }
 
     /// Validate one delimiter candidate without collecting every match in the message.
@@ -660,35 +854,82 @@ impl MimeParser {
         content: &mut EmailContent,
         part_content_type: &str,
         content_disposition: &str,
+        content_id: Option<&str>,
         is_attachment: bool,
-        decoded: Vec<u8>,
+        decoded: DecodedContent,
     ) -> Result<(), MimeError> {
+        // A uuencode `begin <mode> <name>` frame IS an attachment to every MUA
+        // that still supports it; the declared part classification must not be
+        // able to talk us out of registering it.
+        let is_attachment = is_attachment || decoded.uuencode_filename.is_some();
         if is_attachment {
             if content.attachments.len() >= MAX_ATTACHMENTS {
-                warn!("AttachmentCount超限");
-                return Err(MimeError::TooManyParts);
+                // Degrade instead of failing the whole message: keep the body
+                // and the attachments already collected so detectors still
+                // see them. Returning an error here turned a 101-attachment
+                // message into a parse failure whose entire content vanished
+                // from mirror-mode scanning. The drop is recorded so
+                // downstream modules surface the coverage gap.
+                content.dropped_attachments += 1;
+                warn!(
+                    limit = MAX_ATTACHMENTS,
+                    dropped = content.dropped_attachments,
+                    "AttachmentCount超限 — 停止收集新附件，保留已解析内容"
+                );
+                return Ok(());
             }
-
-            Self::ensure_attachment_budget(content, decoded.len())?;
 
             let filename = Self::extract_filename(content_disposition)
                 .or_else(|| Self::extract_filename(part_content_type))
+                .or_else(|| decoded.uuencode_filename.clone())
+                .or_else(|| {
+                    content_id.map(|cid| {
+                        Self::synthesize_filename_from_content_id(cid, part_content_type)
+                    })
+                })
                 .unwrap_or_else(|| format!("attachment_{}", content.attachments.len()));
 
-            let hash = Self::compute_hash(&decoded);
-            let size = decoded.len();
+            let hash = Self::compute_hash(&decoded.data);
+            let size = decoded.data.len();
 
-            let content_base64 = if size <= MAX_ATTACHMENT_SAVE_SIZE {
-                Some(Self::encode_base64(&decoded))
-            } else {
+            if size > MAX_ATTACHMENT_SAVE_SIZE {
+                // Oversized attachment: retain metadata + hash (hash-based
+                // detection still applies), skip the payload, and flag the
+                // coverage gap. This previously failed the WHOLE message via
+                // the cumulative budget error — one 33MB attachment must not
+                // blind every other detector.
+                content.truncated = true;
                 warn!(
                     filename = %filename,
                     size_bytes = size,
                     limit_bytes = MAX_ATTACHMENT_SAVE_SIZE,
                     "SEC: Oversized attachment — content scanning bypassed, only hash/metadata checks apply"
                 );
-                None
-            };
+                content.attachments.push(EmailAttachment {
+                    filename,
+                    content_type: Self::extract_mime_type(part_content_type).to_string(),
+                    size,
+                    hash,
+                    content_base64: None,
+                });
+                return Ok(());
+            }
+
+            if Self::ensure_attachment_budget(content, size).is_err() {
+                // Cumulative decoded-byte budget exhausted: drop this
+                // attachment but keep the message and everything parsed so
+                // far (same degrade rule as the count budget above).
+                content.dropped_attachments += 1;
+                content.truncated = true;
+                warn!(
+                    size_bytes = size,
+                    limit_bytes = MAX_TOTAL_ATTACHMENT_DECODED_BYTES,
+                    "attachment decoded-byte budget exhausted — dropping attachment, continuing parse"
+                );
+                return Ok(());
+            }
+
+            let content_base64 = Some(Self::encode_base64(&decoded.data));
 
             content.attachments.push(EmailAttachment {
                 filename,
@@ -711,15 +952,204 @@ impl MimeParser {
                 );
             }
 
+            // A uuencode frame can ride inside a text body; the prose around
+            // the frame still belongs to the body scanners.
+            if let Some(surrounding) = decoded.surrounding_text {
+                if ascii_contains_ci(part_content_type, "text/html") {
+                    let (html, decode_truncated) = decode_charset(
+                        &surrounding,
+                        part_content_type,
+                        body_budget_remaining(content),
+                    );
+                    Self::merge_body_part(
+                        content,
+                        BodyTarget::Html,
+                        html,
+                        decode_truncated,
+                        "html",
+                    );
+                } else {
+                    let (text, decode_truncated) = decode_charset(
+                        &surrounding,
+                        part_content_type,
+                        body_budget_remaining(content),
+                    );
+                    Self::merge_body_part(
+                        content,
+                        BodyTarget::Text,
+                        text,
+                        decode_truncated,
+                        "plain",
+                    );
+                }
+            }
+
             return Ok(());
         }
 
-        if ascii_contains_ci(part_content_type, "text/plain") && content.body_text.is_none() {
-            content.body_text = Some(decode_charset(&decoded, part_content_type));
-        } else if ascii_contains_ci(part_content_type, "text/html") && content.body_html.is_none() {
-            content.body_html = Some(decode_charset(&decoded, part_content_type));
+        if ascii_contains_ci(part_content_type, "text/plain") {
+            let (text, decode_truncated) = decode_charset(
+                &decoded.data,
+                part_content_type,
+                body_budget_remaining(content),
+            );
+            Self::merge_body_part(
+                content,
+                BodyTarget::Text,
+                text,
+                decode_truncated,
+                "plain",
+            );
+        } else if ascii_contains_ci(part_content_type, "text/html") {
+            let (html, decode_truncated) = decode_charset(
+                &decoded.data,
+                part_content_type,
+                body_budget_remaining(content),
+            );
+            Self::merge_body_part(
+                content,
+                BodyTarget::Html,
+                html,
+                decode_truncated,
+                "html",
+            );
         }
         Ok(())
+    }
+
+    /// Whether a plain-text body actually starts an HTML document. Used to
+    /// expose bare-HTML bodies (no declared Content-Type) to html_scan.
+    fn looks_like_html_document(text: &str) -> bool {
+        let trimmed = text.trim_start();
+        ascii_starts_with_ci(trimmed, "<html")
+            || ascii_starts_with_ci(trimmed, "<!doctype")
+            || ascii_starts_with_ci(trimmed, "<body")
+    }
+
+    fn is_attachment_part(
+        content_type: &str,
+        content_disposition: &str,
+        content_id: Option<&str>,
+    ) -> bool {
+        ascii_contains_ci(content_disposition, "attachment")
+            || Self::extract_filename(content_disposition).is_some()
+            || Self::extract_filename(content_type).is_some()
+            // RFC 2046 message/rfc822 entities are rendered as encapsulated
+            // messages even when Content-Disposition is omitted. Preserve the
+            // raw entity so nested-message scanners cannot be bypassed by
+            // removing an optional filename.
+            || Self::extract_mime_type(content_type).eq_ignore_ascii_case("message/rfc822")
+            // Inline non-text parts referenced only by Content-ID (typical:
+            // QR-code images inside multipart/related with no filename) carry
+            // the only copy of their payload bytes. Dropping them here would
+            // make attach_qr_scan / YARA / ClamAV blind to the attachment.
+            // text/plain and text/html keep merging into the body below.
+            || (content_id.is_some() && Self::is_inline_payload_type(content_type))
+    }
+
+    /// Whether a part without filename/disposition should still be preserved
+    /// as an attachment when it carries a Content-ID. Body text alternatives
+    /// (text/plain, text/html) are excluded so body merging is unchanged.
+    fn is_inline_payload_type(content_type: &str) -> bool {
+        let mime_type = Self::extract_mime_type(content_type);
+        !mime_type.eq_ignore_ascii_case("text/plain") && !mime_type.eq_ignore_ascii_case("text/html")
+    }
+
+    /// Build a stable filename for a Content-ID-only inline part. The
+    /// Content-ID value is sanitized to a conservative ASCII charset and a
+    /// type-derived extension is appended so extension-based routing in
+    /// downstream modules keeps working.
+    fn synthesize_filename_from_content_id(content_id: &str, content_type: &str) -> String {
+        let mut stem: String = content_id
+            .trim()
+            .trim_start_matches('<')
+            .trim_end_matches('>')
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+            .take(64)
+            .collect();
+        if stem.is_empty() {
+            stem.push_str("inline");
+        }
+        let ext = match Self::extract_mime_type(content_type).to_ascii_lowercase().as_str() {
+            "image/png" => ".png",
+            "image/jpeg" | "image/jpg" => ".jpg",
+            "image/gif" => ".gif",
+            "image/bmp" => ".bmp",
+            "image/webp" => ".webp",
+            "image/tiff" => ".tiff",
+            "application/pdf" => ".pdf",
+            _ => "",
+        };
+        format!("cid_{stem}{ext}")
+    }
+
+    /// Merge one decoded body alternative into the retained body strings,
+    /// enforcing the cumulative decoded-body budget (SEC M-4). Exceeding the
+    /// budget clips at a char boundary and flags the message `truncated` so
+    /// downstream coverage gaps stay visible.
+    fn merge_body_part(
+        content: &mut EmailContent,
+        target: BodyTarget,
+        decoded: String,
+        decode_truncated: bool,
+        media_kind: &str,
+    ) {
+        if decode_truncated {
+            content.truncated = true;
+        }
+        let existing_bytes = body_bytes(&content.body_text) + body_bytes(&content.body_html);
+        let remaining = MAX_TOTAL_DECODED_BODY_BYTES.saturating_sub(existing_bytes);
+        let slot = match target {
+            BodyTarget::Text => &mut content.body_text,
+            BodyTarget::Html => &mut content.body_html,
+        };
+        match slot {
+            None => {
+                let (decoded, clipped) = truncate_char_boundary(&decoded, remaining);
+                if clipped {
+                    content.truncated = true;
+                    warn!(
+                        limit_bytes = MAX_TOTAL_DECODED_BODY_BYTES,
+                        "decoded body byte budget exhausted — clipping MIME body alternative"
+                    );
+                }
+                *slot = Some(decoded.to_owned());
+            }
+            Some(existing) if existing == &decoded => {}
+            Some(existing) => {
+                if decoded.is_empty() {
+                    return;
+                }
+                // Scan every body alternative. Selecting only the first or last
+                // creates a parser differential because mail clients may render
+                // a different alternative than the detector. A visible-neutral
+                // separator keeps every leaf available to the existing modules.
+                // The separator itself consumes the same cumulative byte budget.
+                let separator = if media_kind == "html" {
+                    "\n<!-- vigilyx:mime-alternative -->\n"
+                } else {
+                    "\n\n--- vigilyx:mime-alternative ---\n\n"
+                };
+                let payload_budget = remaining.saturating_sub(separator.len());
+                let (decoded, clipped) = truncate_char_boundary(&decoded, payload_budget);
+                if clipped || remaining < separator.len() {
+                    content.truncated = true;
+                    warn!(
+                        limit_bytes = MAX_TOTAL_DECODED_BODY_BYTES,
+                        "decoded body byte budget exhausted — clipping MIME body alternative"
+                    );
+                }
+                // Never consume the last bytes with a separator that carries no
+                // decoded content. This keeps the retained body useful while
+                // preserving the hard byte invariant.
+                if decoded.is_empty() {
+                    return;
+                }
+                existing.push_str(separator);
+                existing.push_str(decoded);
+            }
+        }
     }
 
     fn ensure_attachment_budget(
@@ -750,27 +1180,16 @@ impl MimeParser {
 
     /// Extract boundary Parameter
     fn extract_boundary(content_type: &str) -> Option<String> {
-        // sizewrite "boundary=" (Avoid to_lowercase Allocate)
-        let bytes = content_type.as_bytes();
-        let needle = b"boundary=";
-        let pos = bytes.windows(needle.len()).position(|w| {
-            w.iter()
-                .zip(needle.iter())
-                .all(|(a, b)| a.to_ascii_lowercase() == *b)
-        })?;
-
-        let rest = &content_type[pos + 9..];
-        let (boundary, quoted) = if let Some(stripped) = rest.strip_prefix('"') {
-            (stripped.split_once('"')?.0, true)
-        } else {
-            (rest.split(';').next()?.trim(), false)
-        };
-        if !Self::is_valid_boundary(boundary)
-            || (!quoted && boundary.bytes().any(|byte| byte.is_ascii_whitespace()))
-        {
+        let boundary = Self::extract_mime_parameter(content_type, "boundary")?;
+        // RFC 2046 allows trailing WSP inside a quoted boundary parameter;
+        // the delimiter line itself carries any real transport padding.
+        // Rejecting the trailing space here turned `boundary="abc "` into a
+        // NoBoundary full-parse failure, so trim before validating.
+        let boundary = boundary.trim_end().to_string();
+        if !Self::is_valid_boundary(&boundary) {
             return None;
         }
-        Some(boundary.to_string())
+        Some(boundary)
     }
 
     /// RFC 2046 boundary values are 1-70 ASCII `bchars`, with no trailing space.
@@ -801,49 +1220,167 @@ impl MimeParser {
 
     /// ExtractFileName (Performance notes: 1ofsizewrite)
     fn extract_filename(s: &str) -> Option<String> {
-        let bytes = s.as_bytes();
-
-        // filename="xxx"
-        if let Some(pos) = ascii_find_ci(bytes, b"filename=") {
-            // Exclude filename*= (1 Process)
-            if pos + 9 < bytes.len() && bytes[pos + 9] != b'*' {
-                let rest = &s[pos + 9..];
-                let filename = if let Some(stripped) = rest.strip_prefix('"') {
-                    stripped.split('"').next()?
-                } else {
-                    rest.split(';').next()?.split_whitespace().next()?
-                };
-                if !filename.is_empty() {
-                    return Some(filename.to_string());
-                }
+        // RFC 2231 continuation segments (`filename*0*=` / `filename*1*=`)
+        // take precedence over every other form — MUAs honor them, so an
+        // executable name split across segments must not hide behind a benign
+        // legacy `filename=` or a single-section `filename*=`.
+        for base in ["filename", "name"] {
+            if let Some(value) = Self::extract_continued_parameter(s, base)
+                && !value.is_empty()
+            {
+                return Some(value);
             }
         }
 
-        // filename*=utf-8''xxx
-        if let Some(pos) = ascii_find_ci(bytes, b"filename*=") {
-            let rest = &s[pos + 10..];
-            if let Some(quote_pos) = rest.find("''") {
-                let encoded = rest[quote_pos + 2..].split(';').next()?;
-                if let Ok(decoded) = urlencoding::decode(encoded) {
-                    return Some(decoded.to_string());
-                }
+        // RFC 2231 extended parameters take precedence over their legacy
+        // counterparts. MUAs follow this rule, so selecting `filename=` first
+        // would let a benign legacy name hide an executable `filename*=`.
+        for extended_name in ["filename*", "name*"] {
+            if let Some(value) = Self::extract_mime_parameter(s, extended_name)
+                && let Some(decoded) = Self::decode_extended_parameter(&value)
+                && !decoded.is_empty()
+            {
+                return Some(decoded);
             }
         }
 
-        // name="xxx"
-        if let Some(pos) = ascii_find_ci(bytes, b"name=") {
-            let rest = &s[pos + 5..];
-            let name = if let Some(stripped) = rest.strip_prefix('"') {
-                stripped.split('"').next()?
-            } else {
-                rest.split(';').next()?.split_whitespace().next()?
-            };
-            if !name.is_empty() {
-                return Some(name.to_string());
+        for legacy_name in ["filename", "name"] {
+            if let Some(value) = Self::extract_mime_parameter(s, legacy_name)
+                && !value.is_empty()
+            {
+                return Some(decode_rfc2047(&value));
             }
         }
 
         None
+    }
+
+    /// Reassemble an RFC 2231 continuation series: `base*0[*]=`, `base*1[*]=`,
+    /// ... in index order. Returns None when no `base*0` segment exists.
+    /// When the first segment is starred it carries the `charset'lang'`
+    /// prefix and the encoded octets of ALL segments concatenate before
+    /// percent-decoding; unstarred segments are literal text.
+    fn extract_continued_parameter(input: &str, base: &str) -> Option<String> {
+        const MAX_CONTINUATION_SEGMENTS: usize = 32;
+        let mut segments: Vec<(String, bool)> = Vec::new();
+        for index in 0..MAX_CONTINUATION_SEGMENTS {
+            let starred = Self::extract_mime_parameter(input, &format!("{base}*{index}*"));
+            let plain = Self::extract_mime_parameter(input, &format!("{base}*{index}"));
+            match (starred, plain) {
+                (Some(value), _) => segments.push((value, true)),
+                (None, Some(value)) => segments.push((value, false)),
+                (None, None) => break,
+            }
+        }
+        if segments.is_empty() {
+            return None;
+        }
+
+        if segments[0].1 {
+            let first = &segments[0].0;
+            let mut fields = first.splitn(3, '\'');
+            let charset = fields.next()?;
+            let language = fields.next()?;
+            let first_value = fields.next()?;
+            let mut combined = String::with_capacity(first_value.len() * segments.len());
+            combined.push_str(first_value);
+            for (value, _) in &segments[1..] {
+                combined.push_str(value);
+            }
+            Self::decode_extended_parameter(&format!("{charset}'{language}'{combined}"))
+        } else {
+            let mut combined = String::new();
+            for (value, _) in &segments {
+                combined.push_str(value);
+            }
+            if segments.iter().any(|(_, starred)| *starred) {
+                // Mixed plain/starred series: percent-decode the concatenation.
+                urlencoding::decode(&combined)
+                    .ok()
+                    .map(|decoded| decoded.into_owned())
+            } else {
+                Some(decode_rfc2047(&combined))
+            }
+        }
+    }
+
+    /// Parse a MIME parameter using browser/MUA-compatible whitespace and
+    /// quoted-value handling. Security classification must not depend on the
+    /// exact spelling `name=value`; RFC grammar also permits `name = value`.
+    fn extract_mime_parameter(input: &str, wanted_name: &str) -> Option<String> {
+        let bytes = input.as_bytes();
+        let mut cursor = 0usize;
+
+        while cursor < bytes.len() {
+            while cursor < bytes.len()
+                && (bytes[cursor] == b';' || bytes[cursor].is_ascii_whitespace())
+            {
+                cursor += 1;
+            }
+            let name_start = cursor;
+            while cursor < bytes.len() && !matches!(bytes[cursor], b'=' | b';') {
+                cursor += 1;
+            }
+            if cursor >= bytes.len() {
+                break;
+            }
+            if bytes[cursor] == b';' {
+                cursor += 1;
+                continue;
+            }
+
+            let parameter_name = input[name_start..cursor].trim();
+            cursor += 1;
+            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+                cursor += 1;
+            }
+
+            let value = if matches!(bytes.get(cursor), Some(b'"' | b'\'')) {
+                let quote = bytes[cursor];
+                cursor += 1;
+                let mut value = Vec::new();
+                while cursor < bytes.len() {
+                    match bytes[cursor] {
+                        byte if byte == quote => {
+                            cursor += 1;
+                            break;
+                        }
+                        b'\\' if cursor + 1 < bytes.len() => {
+                            cursor += 1;
+                            value.push(bytes[cursor]);
+                            cursor += 1;
+                        }
+                        byte => {
+                            value.push(byte);
+                            cursor += 1;
+                        }
+                    }
+                }
+                String::from_utf8_lossy(&value).into_owned()
+            } else {
+                let value_start = cursor;
+                while cursor < bytes.len() && bytes[cursor] != b';' {
+                    cursor += 1;
+                }
+                input[value_start..cursor].trim().to_string()
+            };
+
+            if parameter_name.eq_ignore_ascii_case(wanted_name) {
+                return Some(value);
+            }
+        }
+
+        None
+    }
+
+    fn decode_extended_parameter(value: &str) -> Option<String> {
+        let mut fields = value.splitn(3, '\'');
+        let _charset = fields.next()?;
+        let _language = fields.next()?;
+        let encoded = fields.next()?;
+        urlencoding::decode(encoded)
+            .ok()
+            .map(|decoded| decoded.into_owned())
     }
 
     /// Extract MIME Type (ContainsParameter)
@@ -857,15 +1394,28 @@ impl MimeParser {
 
     /// ParseTransmissionEncode (Use eq_ignore_ascii_case Avoid to_lowercase Allocate)
     fn parse_encoding(s: &str) -> TransferEncoding {
-        let trimmed = s.trim();
-        if trimmed.eq_ignore_ascii_case("base64") {
+        // Some MUAs accept obsolete comments or stray parameters after the
+        // transfer-encoding token. Parse the authoritative first token so the
+        // detector decodes the same payload instead of scanning encoded text.
+        let token = s
+            .trim()
+            .split(|ch: char| ch.is_ascii_whitespace() || matches!(ch, ';' | '('))
+            .next()
+            .unwrap_or_default();
+        if token.eq_ignore_ascii_case("base64") {
             TransferEncoding::Base64
-        } else if trimmed.eq_ignore_ascii_case("quoted-printable") {
+        } else if token.eq_ignore_ascii_case("quoted-printable") {
             TransferEncoding::QuotedPrintable
-        } else if trimmed.eq_ignore_ascii_case("8bit") {
+        } else if token.eq_ignore_ascii_case("8bit") {
             TransferEncoding::EightBit
-        } else if trimmed.eq_ignore_ascii_case("binary") {
+        } else if token.eq_ignore_ascii_case("binary") {
             TransferEncoding::Binary
+        } else if token.eq_ignore_ascii_case("uuencode")
+            || token.eq_ignore_ascii_case("x-uuencode")
+            || token.eq_ignore_ascii_case("uue")
+            || token.eq_ignore_ascii_case("x-uue")
+        {
+            TransferEncoding::Uuencode
         } else {
             TransferEncoding::SevenBit
         }
@@ -876,11 +1426,42 @@ impl MimeParser {
         &self,
         data: &[u8],
         encoding: TransferEncoding,
-    ) -> Result<Vec<u8>, MimeError> {
+    ) -> Result<DecodedContent, MimeError> {
         match encoding {
-            TransferEncoding::Base64 => Self::decode_base64(data),
-            TransferEncoding::QuotedPrintable => Self::decode_quoted_printable(data),
-            _ => Ok(data.to_vec()),
+            TransferEncoding::Base64 => Self::decode_base64(data).map(DecodedContent::plain),
+            TransferEncoding::QuotedPrintable => {
+                Self::decode_quoted_printable(data).map(DecodedContent::plain)
+            }
+            TransferEncoding::Uuencode
+            | TransferEncoding::SevenBit
+            | TransferEncoding::EightBit
+            | TransferEncoding::Binary => {
+                // Unknown/7bit CTE used to pass uuencode frames straight
+                // through: a `begin 644 evil.exe ... end` body stayed encoded
+                // text and no attachment was ever registered, while classic
+                // MUAs auto-extract it. Decode the frame when the body
+                // strictly validates as one (every data line must be
+                // well-formed — prose mentioning "begin 644 x" is untouched).
+                match split_uuencode_frame(data, MAX_ATTACHMENT_SAVE_SIZE) {
+                    Some(frame) => {
+                        let mut surrounding = frame.preamble;
+                        surrounding.extend_from_slice(&frame.trailer);
+                        Ok(DecodedContent {
+                            data: frame.payload,
+                            uuencode_filename: Some(frame.filename),
+                            surrounding_text: if surrounding
+                                .iter()
+                                .all(|b| b.is_ascii_whitespace())
+                            {
+                                None
+                            } else {
+                                Some(surrounding)
+                            },
+                        })
+                    }
+                    None => Ok(DecodedContent::plain(data.to_vec())),
+                }
+            }
         }
     }
 
@@ -1055,7 +1636,7 @@ impl MimeParser {
 
         for prefix in prefixes {
             let mut pos = 0;
-            while let Some(start) = text[pos..].find(prefix) {
+            while let Some(start) = find_ascii_case_insensitive(&text[pos..], prefix) {
                 let url_start = pos + start;
                 let rest = &text[url_start..];
                 let suffix = &rest[prefix.len()..];
@@ -1116,66 +1697,231 @@ fn ascii_contains_ci(haystack: &str, needle: &str) -> bool {
         .any(|w| w.eq_ignore_ascii_case(needle_bytes))
 }
 
-/// ByteArrayMediumsizewrite (ReturnFirstmatchbit)
-#[inline]
-fn ascii_find_ci(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.len() > haystack.len() {
-        return None;
-    }
+fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
     haystack
+        .as_bytes()
         .windows(needle.len())
-        .position(|w| w.eq_ignore_ascii_case(needle))
+        .position(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 /// From Content-Type MediumExtract charset Parameter
 /// : "text/plain; charset=GBK" -> Some("GBK")
 /// : "text/html; charset=\"UTF-8\"" -> Some("UTF-8")
-fn extract_charset(content_type: &str) -> Option<&str> {
-    // lookup "charset=" (sizewrite Sensitive)
-    let lower = content_type.as_bytes();
-    let needle = b"charset=";
-    let pos = lower
-        .windows(needle.len())
-        .position(|w| w.eq_ignore_ascii_case(needle))?;
-    let rest = &content_type[pos + needle.len()..];
-    // possiblyof Number
-    let rest = rest.trim_start_matches('"').trim_start_matches('\'');
-    // Get delimited
-    let end = rest
-        .find([';', ' ', '"', '\'', '\r', '\n'])
-        .unwrap_or(rest.len());
-    let charset = &rest[..end];
-    if charset.is_empty() {
-        None
-    } else {
-        Some(charset)
-    }
+fn extract_charset(content_type: &str) -> Option<String> {
+    MimeParser::extract_mime_parameter(content_type, "charset")
+        .filter(|charset| !charset.is_empty())
 }
 
 /// according to Content-Type Mediumof charset ByteDecode UTF-8 String
 /// GBK, GB2312, GB18030, Big5, ISO-8859-*, Shift_JIS wait Encode
-fn decode_charset(data: &[u8], content_type: &str) -> String {
+/// Which retained body string a decoded alternative merges into (SEC M-4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BodyTarget {
+    Text,
+    Html,
+}
+
+/// Retained byte length of an optional body string.
+fn body_bytes(value: &Option<String>) -> usize {
+    value.as_deref().map_or(0, str::len)
+}
+
+/// Remaining decoded-body budget for this message (SEC M-4).
+fn body_budget_remaining(content: &EmailContent) -> usize {
+    MAX_TOTAL_DECODED_BODY_BYTES
+        .saturating_sub(body_bytes(&content.body_text) + body_bytes(&content.body_html))
+}
+
+/// Truncate `value` to at most `max_bytes` on a UTF-8 char boundary.
+/// Returns the prefix and whether clipping occurred.
+fn truncate_char_boundary(value: &str, max_bytes: usize) -> (&str, bool) {
+    if value.len() <= max_bytes {
+        return (value, false);
+    }
+    let mut end = max_bytes;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    (&value[..end], true)
+}
+
+/// Stateful bounded decode through an encoding_rs decoder (SEC M-4): stops at
+/// `max_output_bytes` so a hostile charset declaration cannot expand a large
+/// part into an unbounded String before the merge-side budget ever runs.
+/// Output semantics (replacement chars for invalid sequences) match
+/// `Encoding::decode` with replacement handling.
+fn decode_with_encoding_bounded(
+    encoding: &'static encoding_rs::Encoding,
+    data: &[u8],
+    max_output_bytes: usize,
+) -> (String, bool) {
+    let mut decoder = encoding.new_decoder();
+    let mut output = String::with_capacity(data.len().min(max_output_bytes + 4));
+    let mut source = data;
+    loop {
+        if source.is_empty() {
+            return (output, false);
+        }
+        if output.len() >= max_output_bytes {
+            return (output, true);
+        }
+        // Worst-case expansion is one source byte -> one replacement char
+        // (3 UTF-8 bytes), so this chunk cannot overshoot by much; the merge
+        // side clips to the exact budget.
+        let room = max_output_bytes - output.len();
+        let mut chunk_len = (room / 3).clamp(1, source.len());
+        let mut read = 0usize;
+        while chunk_len <= source.len() {
+            let is_last = chunk_len == source.len();
+            output.reserve(4 * chunk_len + 4);
+            let (_result, consumed, _replaced) = decoder.decode_to_string(
+                &source[..chunk_len],
+                &mut output,
+                is_last,
+            );
+            read = consumed;
+            if read > 0 || is_last {
+                break;
+            }
+            // A partial multibyte sequence needs more context than the
+            // budget-derived chunk; the decoder consumed nothing, so it is
+            // safe to re-feed a larger prefix.
+            chunk_len = (chunk_len.saturating_mul(2)).clamp(chunk_len + 1, source.len());
+        }
+        if read == 0 {
+            // Defensive: the final flush consumed nothing (empty or
+            // pathological input); stop rather than loop.
+            return (output, !source.is_empty());
+        }
+        source = &source[read..];
+    }
+}
+
+/// Decode body bytes for a charset label with a bounded output (SEC M-4).
+/// Returns the decoded string and whether it was clipped at the cap.
+fn decode_charset(data: &[u8], content_type: &str, max_output_bytes: usize) -> (String, bool) {
+    if max_output_bytes == 0 {
+        return (String::new(), !data.is_empty());
+    }
+    // UTF-7 must be decoded BEFORE the UTF-8 fast path: UTF-7 is pure ASCII,
+    // so from_utf8 always succeeds and would return the `+AGE-` ciphertext
+    // verbatim, blinding every keyword layer (classic Outlook desktop render).
+    if let Some(charset_name) = extract_charset(content_type)
+        && is_utf7_label(&charset_name)
+    {
+        return decode_utf7(data, max_output_bytes);
+    }
+
     // UTF-8 (, Scenario)
     if let Ok(s) = std::str::from_utf8(data) {
-        return s.to_owned();
+        let (prefix, truncated) = truncate_char_boundary(s, max_output_bytes);
+        return (prefix.to_owned(), truncated);
     }
 
     // Extract charset Parameter
     if let Some(charset_name) = extract_charset(content_type) {
         // encoding_rs lookupEncodehandler (Name: gbk/gb2312 -> GBK, big5, shift_jis, iso-8859-1 wait)
         if let Some(encoding) = Encoding::for_label(charset_name.as_bytes()) {
-            let (decoded, _, had_errors) = encoding.decode(data);
-            if !had_errors {
-                return decoded.into_owned();
-            }
-            // immediately Error UTF-8 lossy
-            return decoded.into_owned();
+            return decode_with_encoding_bounded(encoding, data, max_output_bytes);
         }
-        warn!("Unknowncharacters集: {}, 回退到 UTF-8 lossy", charset_name);
+        warn!("Unknowncharacters集: {}, 回退到 GB18030/UTF-8 lossy", charset_name);
     }
 
-    // charset UnknownEncode: UTF-8 lossy
-    String::from_utf8_lossy(data).into_owned()
+    // charset 未声明（或标签未知）且 UTF-8 解码失败：中文 MUA 经常省略
+    // charset 直接发送 GBK/GB18030 正文，UTF-8 lossy 会把正文变成 mojibake
+    // 使关键词检测完全失效。GB18030 是 GBK/GB2312 的超集解码器，先试它再
+    // 回退 UTF-8 lossy。
+    decode_with_encoding_bounded(encoding_rs::GB18030, data, max_output_bytes)
+}
+
+/// Whether a charset label names UTF-7 (RFC 2152). encoding_rs (WHATWG)
+/// deliberately excludes UTF-7, so `Encoding::for_label` can never decode it.
+fn is_utf7_label(label: &str) -> bool {
+    let label = label.trim();
+    label.eq_ignore_ascii_case("utf-7") || label.eq_ignore_ascii_case("unicode-1-1-utf-7")
+}
+
+/// Decode UTF-7 (RFC 2152) to a Rust String.
+///
+/// Grammar: printable ASCII passes through; `+` starts a modified-base64
+/// shift sequence (no padding) carrying UTF-16BE units, terminated by `-` or
+/// by the first byte outside the base64 alphabet (which is then processed as
+/// a literal); `+-` encodes a literal `+`. Trailing partial bits are ignored.
+///
+/// Bounded output (SEC M-4): decoding stops once `max_output_bytes` is
+/// reached — the non-ASCII lossy path expands one input byte to a three-byte
+/// replacement character, which previously allowed a large part to expand to
+/// 3x before any budget check ran.
+fn decode_utf7(data: &[u8], max_output_bytes: usize) -> (String, bool) {
+    fn shift_value(byte: u8) -> Option<u32> {
+        match byte {
+            b'A'..=b'Z' => Some((byte - b'A') as u32),
+            b'a'..=b'z' => Some((byte - b'a' + 26) as u32),
+            b'0'..=b'9' => Some((byte - b'0' + 52) as u32),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+
+    let mut result = String::with_capacity(data.len().min(max_output_bytes + 4));
+    let mut i = 0usize;
+    while i < data.len() {
+        if result.len() >= max_output_bytes {
+            return (result, true);
+        }
+        let byte = data[i];
+        if byte != b'+' {
+            // Direct-printable ASCII; keep non-ASCII bytes lossy-visible
+            // rather than dropping them.
+            if byte.is_ascii() {
+                result.push(byte as char);
+            } else {
+                result.push(char::REPLACEMENT_CHARACTER);
+            }
+            i += 1;
+            continue;
+        }
+        if data.get(i + 1) == Some(&b'-') {
+            result.push('+');
+            i += 2;
+            continue;
+        }
+
+        let mut units: Vec<u16> = Vec::new();
+        let mut accumulator = 0u32;
+        let mut bits = 0u8;
+        let mut j = i + 1;
+        while j < data.len() {
+            let current = data[j];
+            if current == b'-' {
+                j += 1;
+                break;
+            }
+            match shift_value(current) {
+                Some(value) => {
+                    accumulator = (accumulator << 6) | value;
+                    bits += 6;
+                    if bits >= 16 {
+                        bits -= 16;
+                        units.push((accumulator >> bits) as u16);
+                        accumulator &= (1u32 << bits) - 1;
+                    }
+                    j += 1;
+                }
+                // The first non-alphabet byte ends the shift sequence and is
+                // processed again as a literal on the next outer iteration.
+                // EOF also ends it; collected units are decoded either way.
+                None => break,
+            }
+        }
+        match String::from_utf16(&units) {
+            Ok(decoded) => result.push_str(&decoded),
+            Err(_) => result.push_str(&String::from_utf16_lossy(&units)),
+        }
+        i = j;
+    }
+    (result, false)
 }
 
 /// Decode RFC 2047 encoded-word
@@ -1231,6 +1977,15 @@ pub fn decode_rfc2047(input: &str) -> String {
                                 || charset_name.eq_ignore_ascii_case("utf8")
                             {
                                 String::from_utf8_lossy(&raw_bytes).into_owned()
+                            } else if is_utf7_label(charset_name) {
+                                // WHATWG excludes UTF-7, so for_label can never
+                                // decode it; without this branch the encoded
+                                // subject falls back to lossy ASCII ciphertext.
+                                // Encoded words live in headers (≤64KB), so the
+                                // bounded decode cap covers the worst expansion.
+                                let (decoded, _truncated) =
+                                    decode_utf7(&raw_bytes, MAX_HEADER_SIZE);
+                                decoded
                             } else if let Some(encoding) =
                                 Encoding::for_label(charset_name.as_bytes())
                             {
@@ -1309,7 +2064,9 @@ fn decode_rfc2047_q(input: &str) -> Option<Vec<u8>> {
 pub enum MimeError {
     /// email large
     TooLarge,
-    /// Header large
+    /// Header large (retained for API compatibility: oversized headers are
+    /// now degraded to truncation + body preservation, not a parse error)
+    #[allow(dead_code)]
     HeaderTooLarge,
     /// Invalidof UTF-8
     InvalidUtf8,
@@ -1325,6 +2082,10 @@ pub enum MimeError {
     TooManyParts,
     /// Cumulative decoded attachment bytes exceeded the per-message safety limit.
     AttachmentBudgetExceeded,
+    /// Duplicate MIME security headers (retained for API compatibility: they
+    /// are now degraded to first-header-wins with a warning, not a parse error)
+    #[allow(dead_code)]
+    AmbiguousSecurityHeaders,
     /// Base64 DecodeError
     Base64DecodeError,
     /// Quoted-Printable DecodeError
@@ -1335,6 +2096,131 @@ pub enum MimeError {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    // ── SEC M-4 round-4: chunked-decoder adversarial pinning ────────────
+
+    #[test]
+    fn m4_gb18030_multibyte_survives_chunk_boundaries() {
+        // GB18030 four-byte sequences (0x81.. 0x30.. 0x81.. 0x30..) decode
+        // to supplementary-plane chars; a bounded max forces tiny chunks, so
+        // sequences necessarily straddle chunk boundaries. The stateful
+        // decoder must neither loop, nor drop, nor duplicate them.
+        let mut hostile = Vec::new();
+        for _ in 0..512 {
+            hostile.extend_from_slice(&[0x81, 0x30, 0x81, 0x30]);
+        }
+        hostile.extend_from_slice(b"tail");
+        // Small cap ⇒ chunk_len = room/3 stays small across iterations.
+        let (decoded, _truncated) = decode_charset(&hostile, "text/plain; charset=gb18030", 97);
+        assert!(
+            decoded.chars().count() >= 20,
+            "decoder made progress across chunk boundaries: {} chars",
+            decoded.chars().count()
+        );
+        assert!(decoded.len() <= 97 + 4, "overshoot bounded to one char");
+        // Unbounded decode of the same input must agree on the prefix.
+        let (full, _) = decode_charset(&hostile, "text/plain; charset=gb18030", 20 * 1024);
+        assert!(
+            full.starts_with(decoded.trim_end_matches('\u{fffd}')),
+            "bounded decode must be a prefix of the unbounded decode (ignoring the clipped partial char)"
+        );
+    }
+
+    #[test]
+    fn m4_latin1_expansion_is_capped() {
+        // ISO-8859-1 invalid-for-utf8 bytes expand 1→2 bytes per char; the
+        // cap must hold at the source, not after a full-materialize.
+        let hostile: Vec<u8> = vec![0xfe; 32 * 1024];
+        let (decoded, truncated) = decode_charset(&hostile, "text/plain; charset=iso-8859-1", 1024);
+        assert!(truncated);
+        assert!(decoded.len() <= 1024 + 4, "got {}", decoded.len());
+    }
+
+    #[test]
+    fn m4_utf7_shift_sequence_split_across_cap() {
+        // A UTF-7 shift sequence opened just before the cap: the decoder
+        // stops cleanly without panicking on the dangling '+'.
+        let mut hostile = b"prefix ".to_vec();
+        hostile.extend_from_slice(&vec![b'a'; 90]);
+        hostile.extend_from_slice(b"+AGE-");
+        let (decoded, _truncated) = decode_charset(&hostile, "text/plain; charset=utf-7", 97);
+        assert!(decoded.len() <= 97 + 4);
+        assert!(decoded.starts_with("prefix "));
+    }
+
+    // ── SEC M-4: decoded-body budget regression tests ──────────────────
+
+    #[test]
+    fn m4_charset_lossy_expansion_is_bounded_at_source() {
+        // PoC (M-4): a UTF-7 (or lossy) body expands one invalid input byte
+        // into a three-byte U+FFFD. Without the cap a ~100MB part decoded to
+        // ~300MB before any budget check ran.
+        let hostile: Vec<u8> = vec![0xff; 64 * 1024];
+        let (decoded, truncated) = decode_charset(&hostile, "text/plain; charset=utf-7", 64 * 1024);
+        assert!(truncated, "decoding must report clipping at the cap");
+        assert!(
+            decoded.len() <= 64 * 1024 + 4,
+            "output must not exceed the cap by more than one character, got {}",
+            decoded.len()
+        );
+    }
+
+    #[test]
+    fn m4_utf8_body_is_clipped_at_char_boundary() {
+        let body = "账".repeat(4096); // 3 bytes per char
+        let (prefix, truncated) = decode_charset(body.as_bytes(), "text/plain; charset=utf-8", 100);
+        assert!(truncated);
+        assert!(prefix.len() <= 100);
+        assert!(prefix.is_char_boundary(prefix.len()));
+    }
+
+    #[test]
+    fn m4_merge_body_part_enforces_cumulative_budget() {
+        let mut content = EmailContent::default();
+        let big = "a".repeat(MAX_TOTAL_DECODED_BODY_BYTES - 8);
+        content.body_text = Some(big);
+        MimeParser::merge_body_part(&mut content, BodyTarget::Text, "b".repeat(1024), false, "plain");
+        assert!(content.truncated, "budget overflow must set the truncated flag");
+        let retained = content.body_text.as_ref().map(|t| t.len()).unwrap_or(0)
+            + content.body_html.as_ref().map(|h| h.len()).unwrap_or(0);
+        assert!(
+            retained <= MAX_TOTAL_DECODED_BODY_BYTES,
+            "retained body bytes {} must stay within the budget",
+            retained
+        );
+    }
+
+    #[test]
+    fn m4_merge_body_part_does_not_append_separator_without_payload_budget() {
+        let mut content = EmailContent::default();
+        content.body_text = Some("a".repeat(MAX_TOTAL_DECODED_BODY_BYTES - 1));
+        MimeParser::merge_body_part(
+            &mut content,
+            BodyTarget::Text,
+            "账".to_string(),
+            false,
+            "plain",
+        );
+        assert!(content.truncated);
+        assert_eq!(
+            content.body_text.as_ref().map(String::len),
+            Some(MAX_TOTAL_DECODED_BODY_BYTES - 1)
+        );
+    }
+
+    #[test]
+    fn m4_decode_truncation_flags_message() {
+        let mut content = EmailContent::default();
+        MimeParser::merge_body_part(
+            &mut content,
+            BodyTarget::Text,
+            "x".repeat(16),
+            true,
+            "plain",
+        );
+        assert!(content.truncated, "decode-side clipping must flag the message");
+        assert_eq!(content.body_text.as_deref(), Some("xxxxxxxxxxxxxxxx"));
+    }
 
     fn nested_multipart_message(depth: usize) -> Vec<u8> {
         assert!(depth > 0);
@@ -1393,6 +2279,18 @@ mod tests {
     }
 
     #[test]
+    fn test_transfer_encoding_uses_first_mime_token() {
+        assert_eq!(
+            MimeParser::parse_encoding("Base64 (legacy comment)"),
+            TransferEncoding::Base64
+        );
+        assert_eq!(
+            MimeParser::parse_encoding("quoted-printable; x-legacy=yes"),
+            TransferEncoding::QuotedPrintable
+        );
+    }
+
+    #[test]
     fn test_quoted_printable() {
         let input = b"Hello=20World=21";
         let decoded = MimeParser::decode_quoted_printable(input).unwrap();
@@ -1404,6 +2302,14 @@ mod tests {
         let ct = "multipart/mixed; boundary=\"----=_Part_123\"";
         let boundary = MimeParser::extract_boundary(ct);
         assert_eq!(boundary, Some("----=_Part_123".to_string()));
+        assert_eq!(
+            MimeParser::extract_boundary("multipart/mixed; boundary = \"SPACED\""),
+            Some("SPACED".to_string())
+        );
+        assert_eq!(
+            extract_charset("text/plain; charset = \"GBK\"").as_deref(),
+            Some("GBK")
+        );
     }
 
     #[test]
@@ -1435,16 +2341,28 @@ mod tests {
 
     #[test]
     fn test_multipart_stops_at_total_part_budget() {
+        // PoC bypass (R4C): exceeding the part budget used to bubble
+        // TooManyParts and drop the ENTIRE message from mirror-mode scanning
+        // while the MUA rendered it. The parser must keep the parts already
+        // scanned and flag the truncation instead.
         let mut email = b"Content-Type: multipart/mixed; boundary=BOUND\r\n\r\n".to_vec();
         for _ in 0..=MAX_TOTAL_PARTS {
             email.extend_from_slice(b"--BOUND\r\nContent-Type: text/plain\r\n\r\nx\r\n");
         }
         email.extend_from_slice(b"--BOUND--\r\n");
 
-        let error = MimeParser::new()
+        let content = MimeParser::new()
             .parse(&email)
-            .expect_err("part budget must stop multipart parsing");
-        assert_eq!(error, MimeError::TooManyParts);
+            .expect("part budget must degrade, not fail the parse");
+        assert!(content.truncated, "part budget overflow must be flagged");
+        assert!(
+            content
+                .body_text
+                .as_deref()
+                .is_some_and(|body| body.contains('x')),
+            "already-parsed parts must survive: {:?}",
+            content.body_text
+        );
     }
 
     #[test]
@@ -1462,17 +2380,21 @@ mod tests {
 
     #[test]
     fn test_multipart_depth_limit_is_stable_and_parser_remains_reusable() {
+        // PoC bypass (R4C): nesting past MAX_MULTIPART_DEPTH used to bubble
+        // MultipartTooDeep and drop the whole message. Now it degrades: keep
+        // the outer layers, flag truncated, and the parser stays reusable.
         let parser = MimeParser::new();
-        let error = parser
+        let content = parser
             .parse(&nested_multipart_message(MAX_MULTIPART_DEPTH + 1))
-            .expect_err("nesting over the limit must fail");
-        assert_eq!(error, MimeError::MultipartTooDeep);
+            .expect("nesting over the limit must degrade, not fail the parse");
+        assert!(content.truncated, "depth overflow must be flagged");
 
         for _ in 0..100 {
             let content = parser
                 .parse(b"Content-Type: text/plain\r\n\r\nstill healthy")
-                .expect("an adversarial error must not poison parser reuse");
+                .expect("an adversarial message must not poison parser reuse");
             assert_eq!(content.body_text.as_deref(), Some("still healthy"));
+            assert!(!content.truncated);
         }
     }
 
@@ -1566,7 +2488,7 @@ not a BOUND part\r\n\
     }
 
     #[test]
-    fn test_multipart_requires_closing_delimiter() {
+    fn test_multipart_uses_message_eof_for_valid_final_part() {
         let parser = MimeParser::new();
         let email = b"Content-Type: multipart/mixed; boundary=BOUND\r\n\
 \r\n\
@@ -1575,9 +2497,24 @@ Content-Type: text/plain\r\n\
 \r\n\
 unterminated body\r\n";
 
+        let content = parser
+            .parse(email)
+            .expect("a valid final MIME part should be scanned through message EOF");
+
+        assert_eq!(content.body_text.as_deref(), Some("unterminated body\r\n"));
+    }
+
+    #[test]
+    fn test_multipart_invalid_final_part_without_close_still_fails() {
+        let parser = MimeParser::new();
+        let email = b"Content-Type: multipart/mixed; boundary=BOUND\r\n\
+\r\n\
+--BOUND\r\n\
+not-a-valid-mime-part";
+
         let err = parser
             .parse(email)
-            .expect_err("unterminated multipart content must not be marked complete");
+            .expect_err("unparseable EOF content must not become a successful inspection");
 
         assert_eq!(err, MimeError::MissingClosingBoundary);
     }
@@ -1696,6 +2633,48 @@ Body";
     }
 
     #[test]
+    fn test_conflicting_security_headers_degrade_to_first_header() {
+        // PoC bypass (R3A): duplicate security headers used to abort the whole
+        // parse (AmbiguousSecurityHeaders) — two header lines produced the
+        // cheapest full-blindness primitive in mirror mode while MUAs rendered
+        // the message. The parser must keep the FIRST header and continue.
+        let parser = MimeParser::new();
+        let top_level = b"Content-Type: text/plain\r\n\
+Content-Type: text/html\r\n\
+\r\n\
+conflicting body";
+        let content = parser
+            .parse(top_level)
+            .expect("duplicate Content-Type must degrade, not fail the parse");
+        assert_eq!(content.body_text.as_deref(), Some("conflicting body"));
+        assert!(content.body_html.is_none());
+
+        let dup_cte = b"Content-Type: text/plain\r\n\
+Content-Transfer-Encoding: 7bit\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+SGVsbG8=";
+        let content = parser
+            .parse(dup_cte)
+            .expect("duplicate CTE must degrade, not fail the parse");
+        // First CTE (7bit) wins: the body is NOT base64-decoded.
+        assert_eq!(content.body_text.as_deref(), Some("SGVsbG8="));
+
+        let multipart = b"Content-Type: multipart/mixed; boundary=X\r\n\
+\r\n\
+--X\r\n\
+Content-Type: text/plain\r\n\
+Content-Type: application/octet-stream\r\n\
+\r\n\
+payload\r\n\
+--X--\r\n";
+        let content = parser
+            .parse(multipart)
+            .expect("duplicate part Content-Type must degrade, not fail the parse");
+        assert_eq!(content.body_text.as_deref(), Some("payload\r\n"));
+    }
+
+    #[test]
     fn test_text_plain_gbk_charset_decodes_to_utf8() {
         let parser = MimeParser::new();
         let mut email = b"Content-Type: text/plain; charset=gbk\r\n\r\n".to_vec();
@@ -1704,6 +2683,66 @@ Body";
         let content = parser.parse(&email).unwrap();
 
         assert_eq!(content.body_text.as_deref(), Some("你好"));
+    }
+
+    #[test]
+    fn test_text_plain_no_charset_gbk_body_decodes_via_gb18030() {
+        // PoC bypass: a GBK body with no charset declaration previously went
+        // straight to UTF-8 lossy, turning the phishing text into mojibake
+        // that no keyword could match. GB18030 must decode it instead.
+        let parser = MimeParser::new();
+        let mut email = b"Content-Type: text/plain\r\n\r\n".to_vec();
+        // 您的账户异常 in GBK.
+        email.extend_from_slice(&[
+            0xc4, 0xfa, 0xb5, 0xc4, 0xd5, 0xcb, 0xbb, 0xa7, 0xd2, 0xec, 0xb3, 0xa3,
+        ]);
+
+        let content = parser.parse(&email).unwrap();
+
+        assert_eq!(content.body_text.as_deref(), Some("您的账户异常"));
+    }
+
+    #[test]
+    fn test_text_plain_no_charset_utf8_body_unchanged() {
+        // Guard: valid UTF-8 bodies must not be re-interpreted as GB18030.
+        let parser = MimeParser::new();
+        let email = "Content-Type: text/plain\r\n\r\n您的账户异常".as_bytes();
+
+        let content = parser.parse(email).unwrap();
+
+        assert_eq!(content.body_text.as_deref(), Some("您的账户异常"));
+    }
+
+    #[test]
+    fn test_attachment_count_overflow_degrades_instead_of_failing() {
+        // PoC bypass: more than MAX_ATTACHMENTS attachments previously made
+        // the whole parse fail, so the body and every attachment disappeared
+        // from scanning. The parser must keep the body and the first
+        // MAX_ATTACHMENTS attachments and skip the rest.
+        let parser = MimeParser::new();
+        let mut email = b"Content-Type: multipart/mixed; boundary=BOUND\r\n\r\n".to_vec();
+        email.extend_from_slice(b"--BOUND\r\nContent-Type: text/plain\r\n\r\nbody survives\r\n");
+        for index in 0..(MAX_ATTACHMENTS + 1) {
+            email.extend_from_slice(
+                format!(
+                    "--BOUND\r\nContent-Type: application/octet-stream; name=\"f{index}.bin\"\r\nContent-Disposition: attachment; filename=\"f{index}.bin\"\r\n\r\nx\r\n"
+                )
+                .as_bytes(),
+            );
+        }
+        email.extend_from_slice(b"--BOUND--\r\n");
+
+        let content = parser
+            .parse(&email)
+            .expect("attachment overflow must degrade, not fail the parse");
+
+        assert_eq!(content.body_text.as_deref(), Some("body survives\r\n"));
+        assert_eq!(content.attachments.len(), MAX_ATTACHMENTS);
+        assert_eq!(
+            content.dropped_attachments, 1,
+            "the skipped 101st attachment must be counted"
+        );
+        assert!(content.is_complete);
     }
 
     #[test]
@@ -1723,6 +2762,23 @@ Open https:// example.com/login. Then open https://example.com/login, and http:/
         assert_eq!(urls.len(), 2);
         assert!(urls.contains(&("https://example.com/login", true)));
         assert!(urls.contains(&("http://10.0.0.1/verify", true)));
+    }
+
+    #[test]
+    fn test_plain_text_link_scheme_is_case_insensitive() {
+        let parser = MimeParser::new();
+        let email = b"Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+Open HTTPS://evil.example/login";
+
+        let content = parser.parse(email).unwrap();
+
+        assert!(
+            content
+                .links
+                .iter()
+                .any(|link| link.url == "https://evil.example/login")
+        );
     }
 
     #[test]
@@ -1778,18 +2834,272 @@ SGVsbG8=\r\n\
     }
 
     #[test]
-    fn test_header_too_large_is_rejected_before_body_parse() {
+    fn test_spaced_name_parameter_cannot_hide_single_part_attachment() {
+        let parser = MimeParser::new();
+        let email = b"Content-Type: application/octet-stream; name = \"invoice.exe\"\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+SGVsbG8=";
+
+        let content = parser.parse(email).unwrap();
+
+        assert_eq!(content.attachments.len(), 1);
+        assert_eq!(content.attachments[0].filename, "invoice.exe");
+        assert!(content.body_text.is_none());
+    }
+
+    #[test]
+    fn test_extended_filename_overrides_conflicting_legacy_filename() {
+        let disposition =
+            "attachment; filename=quarterly-report.pdf; filename*=utf-8''payload%2Eexe";
+
+        assert_eq!(
+            MimeParser::extract_filename(disposition).as_deref(),
+            Some("payload.exe")
+        );
+        assert_eq!(
+            MimeParser::extract_filename("attachment; filename = \"semi;colon.exe\"").as_deref(),
+            Some("semi;colon.exe")
+        );
+    }
+
+    #[test]
+    fn test_single_part_top_level_attachment_is_not_dropped() {
+        let parser = MimeParser::new();
+        let email = b"From: sender@example.com\r\n\
+To: recipient@example.com\r\n\
+Subject: Report\r\n\
+Content-Type: application/octet-stream; name=\"report.bin\"\r\n\
+Content-Disposition: attachment; filename=\"report.bin\"\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+SGVsbG8=";
+
+        let content = parser.parse(email).unwrap();
+
+        assert!(content.body_text.is_none());
+        assert!(content.body_html.is_none());
+        assert_eq!(content.attachments.len(), 1);
+        let attachment = &content.attachments[0];
+        assert_eq!(attachment.filename, "report.bin");
+        assert_eq!(attachment.content_type, "application/octet-stream");
+        assert_eq!(attachment.size, 5);
+        assert_eq!(attachment.content_base64.as_deref(), Some("SGVsbG8="));
+    }
+
+    #[test]
+    fn test_all_same_type_mime_alternatives_remain_visible_to_detectors() {
+        let parser = MimeParser::new();
+        let email = b"Content-Type: multipart/alternative; boundary=ALT\r\n\
+\r\n\
+--ALT\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+<p>Benign preview</p>\r\n\
+--ALT\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+<a href=\"https://evil.example/login\">Reset password</a>\r\n\
+--ALT--\r\n";
+
+        let content = parser.parse(email).unwrap();
+        let html = content.body_html.as_deref().unwrap();
+
+        assert!(html.contains("Benign preview"));
+        assert!(html.contains("Reset password"));
+        assert!(
+            content
+                .links
+                .iter()
+                .any(|link| link.url == "https://evil.example/login")
+        );
+    }
+
+    #[test]
+    fn test_inline_message_rfc822_part_is_preserved_for_nested_scanning() {
+        let parser = MimeParser::new();
+        let email = b"Content-Type: multipart/mixed; boundary=OUTER\r\n\
+\r\n\
+--OUTER\r\n\
+Content-Type: text/plain\r\n\
+\r\n\
+Forwarded message attached\r\n\
+--OUTER\r\n\
+Content-Type: message/rfc822\r\n\
+\r\n\
+From: attacker@example.net\r\n\
+Subject: Reset password\r\n\
+Content-Type: text/plain\r\n\
+\r\n\
+Open https://evil.example/login\r\n\
+--OUTER--\r\n";
+
+        let content = parser.parse(email).unwrap();
+
+        assert_eq!(content.attachments.len(), 1);
+        assert_eq!(content.attachments[0].content_type, "message/rfc822");
+        assert!(content.attachments[0].content_base64.is_some());
+    }
+
+    #[test]
+    fn test_content_id_inline_image_is_preserved_as_attachment() {
+        // PoC bypass: a QR-code image inside multipart/related carries only a
+        // Content-ID (no filename, no name parameter, disposition "inline").
+        // Before the fix the part was dropped entirely, so attach_qr_scan /
+        // YARA / ClamAV never saw its bytes.
+        let parser = MimeParser::new();
+        let email = b"Content-Type: multipart/related; boundary=REL\r\n\
+\r\n\
+--REL\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+<p>Scan to login <img src=\"cid:qr0001@evil.example\"></p>\r\n\
+--REL\r\n\
+Content-Type: image/png\r\n\
+Content-Transfer-Encoding: base64\r\n\
+Content-ID: <qr0001@evil.example>\r\n\
+Content-Disposition: inline\r\n\
+\r\n\
+iVBORw0KGgo=\r\n\
+--REL--\r\n";
+
+        let content = parser.parse(email).unwrap();
+
+        assert_eq!(content.attachments.len(), 1);
+        let attachment = &content.attachments[0];
+        assert_eq!(attachment.content_type, "image/png");
+        assert!(
+            attachment.filename.starts_with("cid_"),
+            "synthetic filename should derive from Content-ID, got {}",
+            attachment.filename
+        );
+        assert!(
+            attachment.filename.ends_with(".png"),
+            "synthetic filename should carry a type-derived extension, got {}",
+            attachment.filename
+        );
+        assert_eq!(
+            attachment.content_base64.as_deref(),
+            Some("iVBORw0KGgo=")
+        );
+        // Body merging must be unaffected: the HTML part still lands in body_html.
+        let html = content.body_html.as_deref().unwrap_or("");
+        assert!(html.contains("Scan to login"));
+    }
+
+    #[test]
+    fn test_content_id_inline_image_without_disposition_is_preserved() {
+        // Many MUAs omit Content-Disposition on multipart/related images;
+        // Content-ID alone must still preserve the payload as an attachment.
+        let parser = MimeParser::new();
+        let email = b"Content-Type: multipart/related; boundary=REL\r\n\
+\r\n\
+--REL\r\n\
+Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+See the attached image.\r\n\
+--REL\r\n\
+Content-Type: image/jpeg\r\n\
+Content-Transfer-Encoding: base64\r\n\
+Content-ID: <img2>\r\n\
+\r\n\
+/9j/4AAQ\r\n\
+--REL--\r\n";
+
+        let content = parser.parse(email).unwrap();
+
+        assert_eq!(content.attachments.len(), 1);
+        let attachment = &content.attachments[0];
+        assert_eq!(attachment.filename, "cid_img2.jpg");
+        assert_eq!(attachment.content_type, "image/jpeg");
+        // text/plain body merging is unchanged.
+        assert_eq!(content.body_text.as_deref(), Some("See the attached image.\r\n"));
+    }
+
+    #[test]
+    fn test_content_id_on_text_parts_does_not_break_body_merging() {
+        // A text/html part with a Content-ID header must still merge into the
+        // body instead of becoming an attachment (existing behavior preserved).
+        let parser = MimeParser::new();
+        let email = b"Content-Type: multipart/related; boundary=REL\r\n\
+\r\n\
+--REL\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+Content-ID: <body1>\r\n\
+\r\n\
+<p>Hello</p>\r\n\
+--REL--\r\n";
+
+        let content = parser.parse(email).unwrap();
+
+        assert!(content.attachments.is_empty());
+        assert_eq!(content.body_html.as_deref(), Some("<p>Hello</p>\r\n"));
+    }
+
+    #[test]
+    fn test_content_id_filename_sanitization() {
+        // Hostile Content-ID values must not smuggle path separators or
+        // control characters into the synthesized filename.
+        assert_eq!(
+            MimeParser::synthesize_filename_from_content_id(
+                "<../../etc/passwd>\r\nX-Injected: 1",
+                "image/png"
+            ),
+            "cid_....etcpasswdX-Injected1.png"
+        );
+        assert_eq!(
+            MimeParser::synthesize_filename_from_content_id("<qr@x>", "application/pdf"),
+            "cid_qrx.pdf"
+        );
+        assert_eq!(
+            MimeParser::synthesize_filename_from_content_id("<>", "application/octet-stream"),
+            "cid_inline"
+        );
+    }
+
+    #[test]
+    fn test_oversized_header_truncates_but_keeps_body() {
+        // PoC bypass (R3A): a 70KB X-Pad header (inside Postfix's default
+        // 100KB header limit) used to fail the whole parse with
+        // HeaderTooLarge, blinding mirror mode while the MUA rendered the
+        // body. The parser must truncate the header block and keep the body.
         let parser = MimeParser::new();
         let mut email = Vec::new();
-        email.extend_from_slice(b"X-Large: ");
-        email.extend_from_slice(&vec![b'a'; MAX_HEADER_SIZE + 1]);
-        email.extend_from_slice(b"\r\n\r\nBody");
+        email.extend_from_slice(b"Content-Type: text/plain\r\nX-Pad: ");
+        email.extend_from_slice(&vec![b'a'; 70 * 1024]);
+        email.extend_from_slice(b"\r\n\r\n");
+        email.extend_from_slice("真实正文 body".as_bytes());
 
-        let err = parser
+        let content = parser
             .parse(&email)
-            .expect_err("oversized header should fail");
+            .expect("oversized header must degrade, not fail the parse");
 
-        assert_eq!(err, MimeError::HeaderTooLarge);
+        let body = content.body_text.as_deref().unwrap_or_default();
+        assert!(
+            body.contains("真实正文 body"),
+            "body must survive header truncation, got: {body:?}"
+        );
+    }
+
+    #[test]
+    fn test_missing_header_delimiter_over_budget_keeps_remainder_as_body() {
+        // No \r\n\r\n inside the 64KB header budget: the remainder must be
+        // scanned as body instead of being dropped.
+        let parser = MimeParser::new();
+        let mut email = Vec::new();
+        email.extend_from_slice(b"Content-Type: text/plain\r\nX-Pad: ");
+        email.extend_from_slice(&vec![b'a'; MAX_HEADER_SIZE]);
+        email.extend_from_slice(b"phishing payload without delimiter");
+
+        let content = parser
+            .parse(&email)
+            .expect("missing delimiter over budget must degrade, not drop the body");
+
+        let body = content.body_text.as_deref().unwrap_or_default();
+        assert!(
+            body.contains("phishing payload without delimiter"),
+            "remainder must be scanned as body, got: {body:?}"
+        );
     }
 
     #[test]
@@ -1828,9 +3138,361 @@ SGVsbG8=\r\n\
         assert!(ascii_starts_with_ci("Multipart/Mixed", "multipart/"));
         assert!(ascii_contains_ci("text/PLAIN; charset=utf-8", "text/plain"));
         assert!(!ascii_contains_ci("text/html", "text/plain"));
+    }
+
+    #[test]
+    fn test_nested_multipart_reusing_outer_boundary_degrades_to_leaf() {
+        // PoC bypass (R3A): an inner multipart declaring the SAME boundary as
+        // its ancestor leaves no inner delimiter inside the part (the outer
+        // scan consumed every `--X` line). The recursive BoundaryNotFound used
+        // to bubble up and fail the entire message while Gmail/Outlook render
+        // the inner entity. The inner base64 HTML must still be extracted.
+        let parser = MimeParser::new();
+        let email = b"Content-Type: multipart/mixed; boundary=X\r\n\
+\r\n\
+--X\r\n\
+Content-Type: multipart/mixed; boundary=X\r\n\
+\r\n\
+--X\r\n\
+Content-Type: text/html; charset=\"utf-8\"\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+PGRpdj48Yj5XZWljaTwvYj48L2Rpdj4=\r\n\
+--X--\r\n";
+
+        let content = parser
+            .parse(email)
+            .expect("same-boundary nesting must degrade, not fail the parse");
+
         assert_eq!(
-            ascii_find_ci(b"Content-Type: text", b"content-type"),
-            Some(0)
+            content.body_html.as_deref(),
+            Some("<div><b>Weici</b></div>")
+        );
+    }
+
+    #[test]
+    fn test_boundary_with_trailing_space_is_accepted() {
+        // PoC bypass (R3A): a quoted boundary carrying RFC-permitted trailing
+        // WSP used to fail validation -> NoBoundary -> whole message dropped.
+        let parser = MimeParser::new();
+        assert_eq!(
+            MimeParser::extract_boundary("multipart/mixed; boundary=\"abc \""),
+            Some("abc".to_string())
+        );
+
+        let email = b"Content-Type: multipart/mixed; boundary=\"abc \"\r\n\
+\r\n\
+--abc\r\n\
+Content-Type: text/plain\r\n\
+\r\n\
+trailing-space boundary body\r\n\
+--abc--\r\n";
+
+        let content = parser.parse(email).unwrap();
+
+        assert_eq!(
+            content.body_text.as_deref(),
+            Some("trailing-space boundary body\r\n")
+        );
+    }
+
+    #[test]
+    fn test_utf7_body_decodes_chinese_phishing_text() {
+        // PoC bypass (R3A): charset=utf-7 is pure ASCII, so the UTF-8 fast
+        // path returned the `+...-` ciphertext verbatim and every keyword
+        // layer went blind (classic Outlook desktop rendering).
+        // +YKh2hI0mYjdfAl44- is UTF-7 for 您的账户异常 (UTF-16BE, modified
+        // base64, no padding).
+        let parser = MimeParser::new();
+        let email = b"Content-Type: text/plain; charset=utf-7\r\n\r\n+YKh2hI0mYjdfAl44-";
+
+        let content = parser.parse(email).unwrap();
+
+        assert_eq!(content.body_text.as_deref(), Some("您的账户异常"));
+    }
+
+    #[test]
+    fn test_utf7_decoder_edge_cases() {
+        const TEST_MAX_OUTPUT_BYTES: usize = 1024;
+
+        assert_eq!(
+            decode_utf7(b"plain ascii", TEST_MAX_OUTPUT_BYTES).0,
+            "plain ascii"
+        );
+        assert_eq!(decode_utf7(b"+-", TEST_MAX_OUTPUT_BYTES).0, "+");
+        assert_eq!(decode_utf7(b"a+-b", TEST_MAX_OUTPUT_BYTES).0, "a+b");
+        // Shift sequence terminated by a literal (no '-'): 您 then 'x'.
+        assert_eq!(decode_utf7(b"+YKh2-x", TEST_MAX_OUTPUT_BYTES).0, "您x");
+        // Unterminated shift sequence at EOF still decodes.
+        assert_eq!(decode_utf7(b"+YKh2", TEST_MAX_OUTPUT_BYTES).0, "您");
+    }
+
+    #[test]
+    fn test_rfc2047_utf7_subject() {
+        // PoC bypass (R3A): =?UTF-7?Q?...?= subjects fell through to lossy
+        // ASCII because WHATWG excludes UTF-7 from Encoding::for_label.
+        let decoded = decode_rfc2047("=?UTF-7?Q?+YKh2hI0mYjdfAl44-?=");
+        assert_eq!(decoded, "您的账户异常");
+    }
+
+    #[test]
+    fn test_bare_html_body_without_content_type_is_exposed_as_html() {
+        // PoC bypass (R3A): with no top-level Content-Type the entity defaults
+        // to text/plain, leaving body_html empty and html_scan not_applicable
+        // — while Outlook/Apple Mail sniff and render a bare <html> body.
+        let parser = MimeParser::new();
+        let email = b"From: sender@example.com\r\n\
+Subject: verify\r\n\
+\r\n\
+<html><body><a href=\"https://evil.example/login\">verify account</a></body></html>";
+
+        let content = parser.parse(email).unwrap();
+
+        let html = content
+            .body_html
+            .as_deref()
+            .expect("bare HTML body must populate body_html");
+        assert!(html.contains("<html>"));
+        assert!(
+            content
+                .links
+                .iter()
+                .any(|link| link.url == "https://evil.example/login")
+        );
+    }
+
+    #[test]
+    fn test_plain_text_body_is_not_misclassified_as_html() {
+        // Guard: ordinary text that merely mentions HTML later must not be
+        // exposed as body_html (only leading <html>/<!doctype/<body sniff).
+        let parser = MimeParser::new();
+        let email = b"Content-Type: text/plain\r\n\
+\r\n\
+Just text mentioning <html> later in the sentence.";
+
+        let content = parser.parse(email).unwrap();
+
+        assert!(content.body_html.is_none());
+    }
+
+    // ─── R4C: uuencode frame decoding (item C-02) ───
+
+    #[test]
+    fn test_uuencode_cte_decodes_to_named_attachment() {
+        // PoC bypass (R4C): `Content-Transfer-Encoding: x-uuencode` used to
+        // fall through parse_encoding to 7bit passthrough, so the encoded
+        // `begin 644 evil.exe` payload stayed opaque text and NO attachment
+        // was ever registered — dangerous-extension / magic-bytes / YARA all
+        // went blind while classic MUAs auto-extract the file.
+        // "#35J0" is the hand-verified uuencode of the 3 bytes "MZ\x90".
+        let parser = MimeParser::new();
+        let email = b"From: sender@example.com\r\n\
+Content-Type: application/octet-stream\r\n\
+Content-Transfer-Encoding: x-uuencode\r\n\
+\r\n\
+begin 644 evil.exe\r\n\
+#35J0\r\n\
+`\r\n\
+end\r\n";
+
+        let content = parser.parse(email).unwrap();
+
+        assert_eq!(content.attachments.len(), 1, "frame must become an attachment");
+        let attachment = &content.attachments[0];
+        assert_eq!(
+            attachment.filename, "evil.exe",
+            "the frame's own filename must drive extension checks"
+        );
+        assert_eq!(
+            attachment.content_base64.as_deref(),
+            Some("TVqQ"),
+            "payload must decode to the PE prefix (base64 of MZ\\x90)"
+        );
+    }
+
+    #[test]
+    fn test_uuencode_frame_sniffed_in_7bit_body_with_preamble() {
+        // PoC bypass (R4C): no CTE at all — a text/plain body carrying a
+        // uuencode frame after a prose preamble. Old MUAs extract the file;
+        // the parser must too, and keep the prose visible to body scanners.
+        let parser = MimeParser::new();
+        let email = b"Content-Type: text/plain\r\n\
+\r\n\
+Here is the invoice you requested.\r\n\
+begin 644 invoice.exe\r\n\
+#35J0\r\n\
+`\r\n\
+end\r\n";
+
+        let content = parser.parse(email).unwrap();
+
+        assert_eq!(content.attachments.len(), 1);
+        assert_eq!(content.attachments[0].filename, "invoice.exe");
+        assert_eq!(content.attachments[0].content_base64.as_deref(), Some("TVqQ"));
+        assert!(
+            content
+                .body_text
+                .as_deref()
+                .is_some_and(|body| body.contains("Here is the invoice you requested.")),
+            "preamble text must stay in the body: {:?}",
+            content.body_text
+        );
+    }
+
+    #[test]
+    fn test_uuencode_prose_is_not_decoded() {
+        // Guard: prose that merely resembles a frame header must not be
+        // swallowed into a phantom attachment.
+        let parser = MimeParser::new();
+        let email = b"Content-Type: text/plain\r\n\
+\r\n\
+We begin 644 days of celebration next week.\r\n\
+The agenda follows.\r\n";
+
+        let content = parser.parse(email).unwrap();
+
+        assert!(content.attachments.is_empty());
+        assert!(
+            content
+                .body_text
+                .as_deref()
+                .is_some_and(|body| body.contains("The agenda follows."))
+        );
+
+        // Header-shaped line with non-uuencode following text: rejected.
+        let email = b"Content-Type: text/plain\r\n\
+\r\n\
+begin 644 notes\r\n\
+then we talked about the roadmap for next year.\r\n";
+        let content = parser.parse(email).unwrap();
+        assert!(content.attachments.is_empty());
+        assert!(
+            content
+                .body_text
+                .as_deref()
+                .is_some_and(|body| body.contains("roadmap"))
+        );
+    }
+
+    // ─── R4C: RFC 2231 continuation filenames (item C-04) ───
+
+    #[test]
+    fn test_rfc2231_continued_filename_is_reassembled() {
+        // PoC bypass (R4C): a filename split across RFC 2231 continuation
+        // segments used to be invisible (only single-section filename* was
+        // recognized), so `攻 击.exe` split mid-name escaped the dangerous
+        // extension check entirely.
+        let disposition =
+            "attachment; filename*0*=utf-8''%E6%94%BB%E5%87%BB; filename*1*=%2Eexe";
+        assert_eq!(
+            MimeParser::extract_filename(disposition).as_deref(),
+            Some("攻击.exe")
+        );
+
+        // Unstarred plain segments concatenate literally.
+        assert_eq!(
+            MimeParser::extract_filename("attachment; filename*0=pay; filename*1=load.exe")
+                .as_deref(),
+            Some("payload.exe")
+        );
+    }
+
+    #[test]
+    fn test_rfc2231_continuation_overrides_benign_legacy_filename() {
+        // MUAs honor the continuation series over `filename=`; selecting the
+        // legacy name first would let "innocent.pdf" hide "evil.exe".
+        let disposition =
+            "attachment; filename=innocent.pdf; filename*0*=utf-8''evil; filename*1*=.exe";
+        assert_eq!(
+            MimeParser::extract_filename(disposition).as_deref(),
+            Some("evil.exe")
+        );
+    }
+
+    #[test]
+    fn test_rfc2231_continued_filename_in_multipart() {
+        let parser = MimeParser::new();
+        let email = b"Content-Type: multipart/mixed; boundary=BOUND\r\n\
+\r\n\
+--BOUND\r\n\
+Content-Type: text/plain\r\n\
+\r\n\
+Body\r\n\
+--BOUND\r\n\
+Content-Type: application/octet-stream\r\n\
+Content-Disposition: attachment; filename*0*=utf-8''%E6%94%BB%E5%87%BB; filename*1*=%2Eexe\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+SGVsbG8=\r\n\
+--BOUND--\r\n";
+
+        let content = parser.parse(email).unwrap();
+
+        assert_eq!(content.attachments.len(), 1);
+        assert_eq!(content.attachments[0].filename, "攻击.exe");
+        assert_eq!(content.body_text.as_deref(), Some("Body\r\n"));
+    }
+
+    // ─── R4C: truncation / coverage-gap flags (item 6) ───
+
+    #[test]
+    fn test_oversized_attachment_keeps_metadata_and_flags_truncated() {
+        // PoC bypass (R4C): a >32MB attachment used to fail the WHOLE parse
+        // via the cumulative budget error. It must become a metadata-only
+        // attachment (hash still usable) with the truncated flag set.
+        let parser = MimeParser::new();
+        let mut content = EmailContent::new();
+        let oversized = DecodedContent::plain(vec![0u8; MAX_ATTACHMENT_SAVE_SIZE + 1]);
+        parser
+            .apply_decoded_part(
+                &mut content,
+                "application/octet-stream; name=\"big.bin\"",
+                "attachment; filename=\"big.bin\"",
+                None,
+                true,
+                oversized,
+            )
+            .expect("oversized attachment must degrade, not fail");
+
+        assert!(content.truncated);
+        assert_eq!(content.attachments.len(), 1);
+        assert!(content.attachments[0].content_base64.is_none());
+        assert_eq!(content.attachments[0].size, MAX_ATTACHMENT_SAVE_SIZE + 1);
+    }
+
+    #[test]
+    fn test_deeply_nested_message_keeps_outer_layers() {
+        // PoC bypass (R4C): content parked past depth 10 used to kill the
+        // whole parse. The outer text part must still be scanned.
+        let parser = MimeParser::new();
+        let mut email = b"Content-Type: multipart/mixed; boundary=L0\r\n\r\n".to_vec();
+        email.extend_from_slice(b"--L0\r\nContent-Type: text/plain\r\n\r\nouter body survives\r\n");
+        for level in 1..=12 {
+            email.extend_from_slice(
+                format!(
+                    "--L{}\r\nContent-Type: multipart/mixed; boundary=L{}\r\n\r\n",
+                    level - 1,
+                    level
+                )
+                .as_bytes(),
+            );
+        }
+        email.extend_from_slice(b"--L12\r\nContent-Type: text/plain\r\n\r\nhidden deep\r\n");
+        for level in (0..=12).rev() {
+            email.extend_from_slice(format!("--L{level}--\r\n").as_bytes());
+        }
+
+        let content = parser
+            .parse(&email)
+            .expect("deep nesting must degrade, not fail the parse");
+        assert!(content.truncated);
+        assert!(
+            content
+                .body_text
+                .as_deref()
+                .is_some_and(|body| body.contains("outer body survives")),
+            "outer layers must survive depth degradation: {:?}",
+            content.body_text
         );
     }
 }

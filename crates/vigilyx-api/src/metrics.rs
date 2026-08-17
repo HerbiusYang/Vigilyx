@@ -9,13 +9,15 @@
 //! `GET /api/metrics` `INTERNAL_API_TOKEN` authentication (SEC-M06).
 //! Prometheus Configuration `X-Internal-Token` request.
 
-//! **Road 1 **: UUID Road `:id`,
-//! (high cardinality) Prometheus time.
+//! **SEC-03**: path labels come from axum's `MatchedPath` route template
+//! (unmatched requests use a constant `:unmatched` label), keeping the
+//! Prometheus label cardinality bounded.
 
 use std::sync::LazyLock;
 use std::time::Instant;
 
 use axum::{
+    extract::MatchedPath,
     http::Request,
     middleware::Next,
     response::{IntoResponse, Response},
@@ -97,34 +99,44 @@ pub static ENGINE_MODULE_DURATION_SECONDS: LazyLock<HistogramVec> = LazyLock::ne
     .expect("engine_module_duration_seconds metric must register")
 });
 
-// Path normalization (prevent high-cardinality labels)
+// Path label selection (SEC-03: bounded label cardinality)
 
-/// 1 URL Road, UUID Road `:id`
+/// Label used for requests that did not match any route (SPA fallback / 404).
+///
+/// Keeping all unmatched traffic under a single constant label prevents an
+/// attacker from exhausting Prometheus memory by scanning random paths.
+const UNMATCHED_PATH_LABEL: &str = ":unmatched";
 
-/// - `/api/sessions/550e8400-e29b-41d4-a716-446655440000` -> `/api/sessions/:id`
-/// - `/api/security/rules/42` -> `/api/security/rules/:id`
-/// - `/api/sessions/abc-def/verdict` -> `/api/sessions/:id/verdict`
-fn normalize_path(path: &str) -> String {
-    path.split('/')
-        .map(|segment| {
-            if segment.is_empty() {
-                return segment;
-            }
-            // UUID: 8-4-4-4-12 hex pattern (36 chars with dashes)
-            if segment.len() == 36 && segment.chars().filter(|c| *c == '-').count() == 4 {
-                let hex_only: String = segment.chars().filter(|c| *c != '-').collect();
-                if hex_only.len() == 32 && hex_only.chars().all(|c| c.is_ascii_hexdigit()) {
-                    return ":id";
-                }
-            }
-            // Pure numeric segment
-            if segment.chars().all(|c| c.is_ascii_digit()) {
-                return ":id";
-            }
-            segment
-        })
-        .collect::<Vec<&str>>()
-        .join("/")
+/// Select the Prometheus path label for a request.
+///
+/// SEC-03: prefer axum's `MatchedPath` route template (e.g. `/api/sessions/{id}`),
+/// which is statically declared and therefore inherently bounded — the concrete
+/// path parameters inside it never become label values. Requests that match no
+/// route fall through to the SPA fallback and are labeled `:unmatched`; the raw
+/// request path must never be used as a label value.
+///
+/// This middleware is mounted with `Router::layer`, which runs *after* routing
+/// (axum >= 0.7), so `MatchedPath` is already present in the request extensions.
+fn metrics_path_label(req: &Request<axum::body::Body>) -> String {
+    req.extensions()
+        .get::<MatchedPath>()
+        .map(|matched| matched.as_str().to_owned())
+        .unwrap_or_else(|| UNMATCHED_PATH_LABEL.to_owned())
+}
+
+fn metrics_method_label(method: &axum::http::Method) -> &'static str {
+    match *method {
+        axum::http::Method::GET => "GET",
+        axum::http::Method::POST => "POST",
+        axum::http::Method::PUT => "PUT",
+        axum::http::Method::PATCH => "PATCH",
+        axum::http::Method::DELETE => "DELETE",
+        axum::http::Method::HEAD => "HEAD",
+        axum::http::Method::OPTIONS => "OPTIONS",
+        axum::http::Method::CONNECT => "CONNECT",
+        axum::http::Method::TRACE => "TRACE",
+        _ => ":other",
+    }
 }
 
 // Middleware
@@ -134,7 +146,7 @@ fn normalize_path(path: &str) -> String {
 /// record HTTP request delay.
 /// `/api/metrics`.
 pub async fn metrics_middleware(req: Request<axum::body::Body>, next: Next) -> Response {
-    let method = req.method().to_string();
+    let method = metrics_method_label(req.method());
     let raw_path = req.uri().path().to_string();
 
     // metrics (request)
@@ -142,7 +154,8 @@ pub async fn metrics_middleware(req: Request<axum::body::Body>, next: Next) -> R
         return next.run(req).await;
     }
 
-    let path = normalize_path(&raw_path);
+    // Resolve the label before `next.run` consumes the request.
+    let path = metrics_path_label(&req);
     let start = Instant::now();
 
     let response = next.run(req).await;
@@ -151,10 +164,10 @@ pub async fn metrics_middleware(req: Request<axum::body::Body>, next: Next) -> R
     let duration = start.elapsed().as_secs_f64();
 
     HTTP_REQUESTS_TOTAL
-        .with_label_values(&[&method, &path, &status])
+        .with_label_values(&[method, &path, &status])
         .inc();
     HTTP_REQUEST_DURATION_SECONDS
-        .with_label_values(&[&method, &path])
+        .with_label_values(&[method, &path])
         .observe(duration);
 
     response
@@ -188,60 +201,93 @@ pub async fn metrics_handler() -> impl IntoResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{Router, body::Body, routing::get};
+    use tower::ServiceExt;
 
     #[test]
-    fn test_normalize_path_uuid_replaced() {
-        let path = "/api/sessions/550e8400-e29b-41d4-a716-446655440000";
-        assert_eq!(normalize_path(path), "/api/sessions/:id");
+    fn test_metrics_method_label_is_bounded() {
+        let attacker_method = axum::http::Method::from_bytes(b"X-ATTACKER-123").unwrap();
+        assert_eq!(metrics_method_label(&attacker_method), ":other");
+        assert_eq!(metrics_method_label(&axum::http::Method::GET), "GET");
     }
 
-    #[test]
-    fn test_normalize_path_uuid_with_suffix() {
-        let path = "/api/sessions/550e8400-e29b-41d4-a716-446655440000/verdict";
-        assert_eq!(normalize_path(path), "/api/sessions/:id/verdict");
+    #[tokio::test]
+    async fn test_metrics_label_uses_matched_path_template() {
+        let app = Router::new()
+            .route("/api/sessions/{id}", get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn(metrics_middleware));
+
+        let before = HTTP_REQUESTS_TOTAL
+            .with_label_values(&["GET", "/api/sessions/{id}", "200"])
+            .get();
+        let request = Request::builder()
+            .uri("/api/sessions/550e8400-e29b-41d4-a716-446655440000")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), 200);
+
+        let after = HTTP_REQUESTS_TOTAL
+            .with_label_values(&["GET", "/api/sessions/{id}", "200"])
+            .get();
+        assert!((after - before - 1.0).abs() < f64::EPSILON);
     }
 
-    #[test]
-    fn test_normalize_path_numeric_id() {
-        let path = "/api/security/rules/42";
-        assert_eq!(normalize_path(path), "/api/security/rules/:id");
+    #[tokio::test]
+    async fn test_metrics_label_unmatched_for_unknown_paths() {
+        // Mirror main.rs: fallback registered before the metrics layer.
+        let app = Router::new()
+            .route("/api/health", get(|| async { "ok" }))
+            .fallback(|| async { (axum::http::StatusCode::NOT_FOUND, "not found") })
+            .layer(axum::middleware::from_fn(metrics_middleware));
+
+        let before = HTTP_REQUESTS_TOTAL
+            .with_label_values(&["GET", ":unmatched", "404"])
+            .get();
+        // Attacker-controlled garbage path must never become a label value.
+        let request = Request::builder()
+            .uri("/api/random-garbage-path-93ab71")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), 404);
+
+        let after = HTTP_REQUESTS_TOTAL
+            .with_label_values(&["GET", ":unmatched", "404"])
+            .get();
+        assert!((after - before - 1.0).abs() < f64::EPSILON);
+        // The raw garbage path must not have been recorded as a label.
+        assert_eq!(
+            HTTP_REQUESTS_TOTAL
+                .with_label_values(&["GET", "/api/random-garbage-path-93ab71", "404"])
+                .get(),
+            0.0
+        );
     }
 
-    #[test]
-    fn test_normalize_path_no_dynamic_segments() {
-        let path = "/api/security/pipeline";
-        assert_eq!(normalize_path(path), "/api/security/pipeline");
-    }
+    #[tokio::test]
+    async fn test_metrics_scrape_endpoint_not_recorded() {
+        let app = Router::new()
+            .route("/api/metrics", get(metrics_handler))
+            .layer(axum::middleware::from_fn(metrics_middleware));
 
-    #[test]
-    fn test_normalize_path_empty() {
-        assert_eq!(normalize_path("/"), "/");
-    }
+        let before = HTTP_REQUESTS_TOTAL
+            .with_label_values(&["GET", "/api/metrics", "200"])
+            .get();
+        let request = Request::builder()
+            .uri("/api/metrics")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), 200);
 
-    #[test]
-    fn test_normalize_path_root_api() {
-        assert_eq!(normalize_path("/api/health"), "/api/health");
-    }
-
-    #[test]
-    fn test_normalize_path_multiple_uuids() {
-        let path =
-            "/api/a/550e8400-e29b-41d4-a716-446655440000/b/660e8400-e29b-41d4-a716-446655440001";
-        assert_eq!(normalize_path(path), "/api/a/:id/b/:id");
-    }
-
-    #[test]
-    fn test_normalize_path_hex_but_not_uuid() {
-        // 8 hex chars, not UUID format
-        let path = "/api/sessions/abcdef12";
-        assert_eq!(normalize_path(path), "/api/sessions/abcdef12");
-    }
-
-    #[test]
-    fn test_normalize_path_preserves_query_segment_like_strings() {
-        // Path segments that look like words should not be replaced
-        let path = "/api/security/intel-whitelist";
-        assert_eq!(normalize_path(path), "/api/security/intel-whitelist");
+        let after = HTTP_REQUESTS_TOTAL
+            .with_label_values(&["GET", "/api/metrics", "200"])
+            .get();
+        assert!(
+            (after - before).abs() < f64::EPSILON,
+            "scrape traffic must not be recorded"
+        );
     }
 
     #[test]

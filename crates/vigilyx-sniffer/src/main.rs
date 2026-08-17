@@ -15,6 +15,7 @@
 
 mod capture;
 mod parser;
+mod privdrop;
 mod session;
 #[allow(dead_code)]
 mod stream;
@@ -306,6 +307,16 @@ async fn main() -> Result<()> {
         }
     }
 
+    // 协议识别消费最终生效的端口集（env + DB override）：
+    // 否则 HTTP_PORTS 配了非 80 端口时，BPF 抓到了包但 Protocol::from_port 仍判 Unknown，
+    // 数据安全功能静默失效。
+    vigilyx_core::Protocol::configure_ports(
+        &config.smtp_ports,
+        &config.pop3_ports,
+        &config.imap_ports,
+        &config.http_ports,
+    );
+
     // CommandlineParameteroverride.env Configuration
     if let Some(interface) = &args.interface {
         config.sniffer_interface = interface.clone();
@@ -433,6 +444,11 @@ async fn main() -> Result<()> {
             "  - HTTP: {:?} (webmail: {:?})",
             config.http_ports, config.webmail_servers
         );
+    } else {
+        warn!(
+            http_ports = ?config.http_ports,
+            "HTTP data security capture is DISABLED: WEBMAIL_SERVERS is empty; configure Webmail server IPs and restart Sniffer"
+        );
     }
     info!("  - CPU 核心数: {}", num_cpus::get());
 
@@ -519,6 +535,10 @@ async fn main() -> Result<()> {
         info!(
             "HTTP dataSecuritydetectalready启用, TargetServiceDevice/Handler: {:?}",
             config.webmail_servers
+        );
+    } else {
+        warn!(
+            "HTTP dataSecuritydetect未启用: WEBMAIL_SERVERS为空，当前BPF仅捕获SMTP/POP3/IMAP流量"
         );
     }
     // From Redis Load sid -> user Mapping (keep)
@@ -708,6 +728,19 @@ async fn main() -> Result<()> {
     // CreateHigh-performance capture engine
     let capturer = HighPerformanceCapturer::new(config, session_manager, mq_client);
 
+    // SEC M-3: shed root before any packet parsing begins. Local capture
+    // needs root only to open the handle + BPF filter, so that mode drops
+    // inside capture_loop right after `open()`; the remote/stdin modes never
+    // need root at all. The v3 resume file is created while root still owns
+    // the working directory writes.
+    #[cfg(unix)]
+    if !matches!(capture_mode, CaptureMode::Local { .. }) {
+        prepare_runtime_files_for_drop();
+        if let Err(error) = privdrop::drop_privileges_if_configured() {
+            anyhow::bail!("privilege drop failed (refusing to keep root): {error}");
+        }
+    }
+
     // according tomodeStartCapture
     match capture_mode {
         CaptureMode::Local { .. } => {
@@ -768,6 +801,24 @@ async fn main() -> Result<()> {
     );
 
     Ok(())
+}
+
+/// Best-effort creation of runtime files the dropped user must be able to
+/// rewrite later (v3 resume position). Runs while still root.
+#[cfg(unix)]
+fn prepare_runtime_files_for_drop() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::path::Path::new("data");
+    if std::fs::create_dir_all(dir).is_ok() {
+        let resume = dir.join("resume_position.txt");
+        // Red-team hardening: chmod applies whether or not the file already
+        // exists — a root-owned 0644 resume file from a pre-drop-era run
+        // left the dropped user unable to write v3 resume positions.
+        if !resume.exists() {
+            let _ = std::fs::File::create(&resume);
+        }
+        let _ = std::fs::set_permissions(&resume, std::fs::Permissions::from_mode(0o666));
+    }
 }
 
 /// From API Get Sniffer dataSecurityConfiguration (webmail_servers, http_ports)

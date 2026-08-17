@@ -1,7 +1,18 @@
 //! Timeout cleanup and pipeline statistics logging.
 
 use super::rate_limit::{IpRateLimitEntry, RATE_LIMIT_WINDOW_SECS};
+use super::smtp_relay::SMTP_RELAY_CORRELATION_WINDOW_SECS;
 use super::*;
+
+/// Grace period before a flushed terminal (Completed/Timeout) session entry is
+/// removed from the map. Matches the SMTP relay-hop correlation lookback so
+/// second-hop diagnostics can still find recently completed first-hop sessions.
+const TERMINATED_SESSION_GRACE: Duration =
+    Duration::from_secs(SMTP_RELAY_CORRELATION_WINDOW_SECS as u64);
+
+/// Only evict reassembly buffers of Active sessions idle for at least this
+/// long; terminal sessions are always reclaimable.
+const EVICT_ACTIVE_IDLE_SECS: u64 = 60;
 
 impl ShardedSessionManager {
     /// Output SMTP restoration pipeline statistics log.
@@ -57,6 +68,16 @@ impl ShardedSessionManager {
             .smtp_plaintext_without_restore_mime_or_empty
             .load(Ordering::Relaxed);
         let close_salvage_partial = sp.smtp_close_salvage_partial.load(Ordering::Relaxed);
+        let gap_alert_events = self
+            .stats
+            .security
+            .smtp_stream_gap_alert_total
+            .load(Ordering::Relaxed);
+        let gap_alert_bytes = self
+            .stats
+            .security
+            .smtp_stream_gap_alert_bytes_total
+            .load(Ordering::Relaxed);
         let unrestored_total =
             plaintext_tcp_close_without_restore + plaintext_timeout_without_restore;
         let total_observed = restored_ok
@@ -87,8 +108,9 @@ impl ShardedSessionManager {
         } else {
             incomplete_or_failed as f64 * 100.0 / total_observed as f64
         };
+        let stream_gap_observed = client_gap_events > 0 || server_gap_events > 0;
 
-        if incomplete_or_failed > 0 {
+        if incomplete_or_failed > 0 || stream_gap_observed {
             warn!(
                 restored_ok = restored_ok,
                 restored_with_gaps = restored_with_gaps,
@@ -115,6 +137,8 @@ impl ShardedSessionManager {
                 unrestored_missing_354 = unrestored_missing_354,
                 unrestored_mime_or_empty = unrestored_mime_or_empty,
                 close_salvage_partial = close_salvage_partial,
+                gap_alert_events = gap_alert_events,
+                gap_alert_bytes = gap_alert_bytes,
                 concurrency_side_anomalies = concurrency_side_anomalies,
                 capture_side_anomalies = capture_side_anomalies,
                 restore_diag_hint = restore_diag_hint,
@@ -122,6 +146,7 @@ impl ShardedSessionManager {
                 total_observed = total_observed,
                 "SMTP restore health degraded | restored_ok={} restored_with_gaps={} mime_parse_failed={} \
                  gap_events(client/server)={}/{} gap_bytes(client/server)={}/{} \
+                 gap_alerts(events/bytes)={}/{} \
                  created_without_syn={} worker_mismatch={} late_prepend(client/server)={}/{} bytes={}/{} \
                  stream_overflow(client/server)={}/{} timeout(total/pending_idle)={}/{} \
                  plaintext_without_restore(tcp_close/timeout)={}/{} \
@@ -134,6 +159,8 @@ impl ShardedSessionManager {
                 server_gap_events,
                 client_gap_bytes_total,
                 server_gap_bytes_total,
+                gap_alert_events,
+                gap_alert_bytes,
                 sessions_created_without_syn,
                 worker_mismatch_events,
                 client_late_prepend_events,
@@ -293,6 +320,30 @@ impl ShardedSessionManager {
 
         self.sessions.retain(|_key, data| {
             let idle = now.duration_since(data.last_activity);
+
+            // Fast removal: terminal (Completed/Timeout) sessions whose final
+            // state has been flushed no longer need a map entry. Keep them only
+            // for a short grace period (the SMTP relay-correlation window)
+            // instead of the full idle timeout.
+            if data.session.status != SessionStatus::Active
+                && !data.dirty
+                && idle >= TERMINATED_SESSION_GRACE
+            {
+               // IP rate limitingcounter
+                if let Some(entry) = self.ip_rate_limits.get(&data.client_compact_ip) {
+                   // Saturating decrement to prevent underflow
+                    let _ = entry.active_session_count.fetch_update(
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                        |v| v.checked_sub(1),
+                    );
+                }
+                if !data.slot_released {
+                    removed += 1;
+                }
+                return false;
+            }
+
             let smtp_pending_idle_timeout = self.smtp_pending_idle_timeout_applies(data, idle);
             if idle <= self.timeout && !smtp_pending_idle_timeout {
                 return true; // Period, keep
@@ -302,6 +353,10 @@ impl ShardedSessionManager {
                // After1Time/CountTimeout: Mark Timeout, NewdirtyStatus
                 data.session.status = SessionStatus::Timeout;
                 data.session.ended_at = Some(chrono::Utc::now());
+
+               // F1: surface parser-observed protocol anomalies on the
+               // terminated session instead of dropping them silently.
+                self.maybe_mark_protocol_anomaly(data);
 
                // Markdirty, worker ThreadPublish Status
                 if !data.dirty {
@@ -426,12 +481,22 @@ impl ShardedSessionManager {
                         |v| v.checked_sub(1),
                     );
                 }
-                removed += 1;
+                if !data.slot_released {
+                    removed += 1;
+                }
                 return false; // Security
             }
 
             true // dirtydata, wait worker New
         });
+
+        if removed > 0 {
+            let _ =
+                self.session_slots
+                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                        Some(current.saturating_sub(removed))
+                    });
+        }
 
         if timed_out > 0 {
             info!("TimeoutMark {} Session (waitWait刷New后移除)", timed_out);
@@ -458,5 +523,100 @@ impl ShardedSessionManager {
             let window_expired = now_ns.saturating_sub(window_start) >= window_ns;
             !(active == 0 && window_expired)
         });
+    }
+
+    /// Evict reassembly buffers of reclaimable sessions (LRU) when the shared
+    /// reassembly budget is exhausted, so new data is not globally rejected
+    /// with GlobalBudgetExceeded. Terminal sessions are evicted first (oldest
+    /// activity), then Active sessions idle for at least EVICT_ACTIVE_IDLE_SECS.
+    ///
+    /// Eviction also resets the per-session protocol state machines
+    /// (`http_state.reset()`, SMTP pending DATA buffer drop) because their
+    /// offsets/buffers reference the evicted bytes, and marks still-Active
+    /// sessions with an `inspection:stream_buffer_evicted` signal — degraded
+    /// capture must never be silent.
+    ///
+    /// MUST be called without holding any DashMap guard (worker loop context).
+    /// Returns the total number of budget bytes freed.
+    pub(crate) fn evict_reclaimable_stream_buffers(&self, min_free_bytes: u64) -> usize {
+        let now = Instant::now();
+        let mut terminal: Vec<(SessionKey, Instant)> = Vec::new();
+        let mut idle_active: Vec<(SessionKey, Instant)> = Vec::new();
+
+        for entry in self.sessions.iter() {
+            let data = entry.value();
+            if data.client_stream.total_bytes + data.server_stream.total_bytes == 0 {
+                continue;
+            }
+            if data.session.status != SessionStatus::Active {
+                terminal.push((entry.key().clone(), data.last_activity));
+            } else if now.duration_since(data.last_activity)
+                >= Duration::from_secs(EVICT_ACTIVE_IDLE_SECS)
+            {
+                idle_active.push((entry.key().clone(), data.last_activity));
+            }
+        }
+
+        // LRU: oldest activity first; terminal sessions before idle active ones.
+        terminal.sort_by_key(|(_, last_activity)| *last_activity);
+        idle_active.sort_by_key(|(_, last_activity)| *last_activity);
+
+        let mut freed_total = 0usize;
+        for (key, _) in terminal.into_iter().chain(idle_active) {
+            if self.reassembly_budget.remaining() >= min_free_bytes {
+                break;
+            }
+            if let Some(mut data) = self.sessions.get_mut(&key) {
+                let client_freed = data.client_stream.evict_buffered_data();
+                let server_freed = data.server_stream.evict_buffered_data();
+                if client_freed + server_freed > 0 {
+                    // The streams restart reassembly from the next segment, so
+                    // the processed offsets must restart too.
+                    data.client_processed_offset = 0;
+                    data.server_processed_offset = 0;
+
+                    // The HTTP state machine tracks offsets into the evicted
+                    // buffer; without a reset it would keep
+                    // `request_start_offset >= stream.len()` and silently blind
+                    // DLP on this connection forever. Resetting also drops an
+                    // in-flight chunked decoded buffer (up to 50MB).
+                    if let Some(http_state) = data.http_state.as_mut() {
+                        http_state.reset();
+                    }
+                    // A partial SMTP DATA buffer would otherwise stitch
+                    // pre-eviction and post-eviction bytes into one corrupted
+                    // email; drop it so the next message starts clean.
+                    if let Some(smtp_state) = data.smtp_state.as_mut() {
+                        smtp_state.clear_data_buffer();
+                    }
+
+                    // Degraded-inspection signal (only for sessions still in
+                    // flight; terminal sessions were already fully analyzed).
+                    if data.session.status == SessionStatus::Active {
+                        data.stream_buffers_evicted = true;
+                        self.stats
+                            .security
+                            .evicted_active_session_total
+                            .fetch_add(1, Ordering::Relaxed);
+                        Self::merge_inspection_reason(
+                            &mut data.session.error_reason,
+                            "stream_buffer_evicted",
+                        );
+                        let key = data.key.clone();
+                        self.mark_session_dirty(&mut data.dirty, &key);
+                        warn!(
+                            session_id = %data.session.id,
+                            protocol = %data.session.protocol,
+                            client_ip = %data.session.client_ip,
+                            freed_bytes = client_freed + server_freed,
+                            "evicted stream buffers of an ACTIVE session under budget pressure; \
+                             subsequent content is an inspection coverage gap"
+                        );
+                    }
+                    freed_total += client_freed + server_freed;
+                }
+            }
+        }
+        freed_total
     }
 }

@@ -12,7 +12,7 @@ use crate::external::clamav::ClamAvClient;
 use crate::intel::{IntelLayer, IntelSourceConfig, reload_safe_domains_into};
 use crate::ioc::IocManager;
 use crate::module::SecurityModule;
-use crate::remote::RemoteModuleProxy;
+use crate::remote::{LlmRequestConfig, RemoteModuleProxy};
 
 use super::aitm_detect::AitmDetectModule;
 use super::anomaly_detect::AnomalyDetectModule;
@@ -89,6 +89,20 @@ fn builtin_whitelist_seed() -> &'static BuiltinWhitelistSeed {
             url_trusted,
         }
     })
+}
+
+/// Only administrator-authored database rules are executable extras.
+///
+/// Built-in rules are seeded into the database for UI/audit visibility, but
+/// their persisted per-rule snapshots are metadata rather than the source of
+/// truth.  In particular, a built-in rule that fails to compile in the
+/// current yara-x version must not fall through into the custom-rule loader.
+fn should_load_extra_yara_rule(
+    source: &str,
+    rule_name: &str,
+    hardcoded_names: &HashSet<String>,
+) -> bool {
+    source == "custom" && !hardcoded_names.contains(rule_name)
 }
 
 /// Build the full module registry with all available modules.
@@ -242,11 +256,12 @@ pub async fn build_module_registry(
             names
         };
 
-        // Load extra rules from DB (excluding hardcoded ones, grouped by source)
-        let extra_sources: Vec<String> = match db.list_yara_rules(Some(true)).await {
+        // Load administrator-authored extra rules from DB. Built-in rows are
+        // metadata snapshots and must never become executable custom rules.
+        let mut extra_sources: Vec<String> = match db.list_yara_rules(Some(true)).await {
             Ok(rules) => rules
                 .into_iter()
-                .filter(|r| !hardcoded_names.contains(&r.rule_name))
+                .filter(|r| should_load_extra_yara_rule(&r.source, &r.rule_name, &hardcoded_names))
                 .map(|r| r.rule_source)
                 .collect(),
             Err(e) => {
@@ -255,13 +270,38 @@ pub async fn build_module_registry(
             }
         };
 
-        match crate::yara::engine::YaraEngine::new_with_custom(&extra_sources) {
+        // Optional operator-managed feeds are fetched at startup and compiled
+        // alongside DB-authored rules. A feed failure is isolated to that feed
+        // and never suppresses the built-in rule set.
+        let external_sources = crate::yara::engine::fetch_external_sources_from_env().await;
+        if !external_sources.is_empty() {
+            info!(
+                count = external_sources.len(),
+                "Loaded external YARA rule sources"
+            );
+            extra_sources.extend(external_sources);
+        }
+
+        let runtime_pack = crate::yara::pack::RulePackLoad::load_configured();
+        if !runtime_pack.rejected_sources.is_empty() {
+            warn!(
+                rejected = runtime_pack.rejected_sources.len(),
+                manifest = ?runtime_pack.manifest_path,
+                "YARA runtime pack contains quarantined sources"
+            );
+        }
+
+        match crate::yara::engine::YaraEngine::new_with_pack(&extra_sources, runtime_pack) {
             Ok(yara_engine) => {
                 let engine = Arc::new(yara_engine);
                 info!(
-                    "YARA rule engine ready: {} rules ({} custom)",
-                    engine.rule_count(),
-                    extra_sources.len()
+                    total_rules = engine.rule_count(),
+                    pack_rules = engine.pack_rule_count(),
+                    shards = engine.shard_count(),
+                    quarantined = engine.quarantined_shards().len(),
+                    generation = engine.generation().unwrap_or("builtin"),
+                    custom_sources = extra_sources.len(),
+                    "YARA rule engine ready"
                 );
                 register(&mut modules, Arc::new(YaraScanModule::new(engine)));
             }
@@ -365,7 +405,8 @@ async fn build_ai_remote(db: &VigilDb) -> Option<RemoteModuleProxy> {
         return None;
     }
 
-    let proxy = RemoteModuleProxy::new(ai_config.service_url.clone());
+    let proxy = RemoteModuleProxy::new(ai_config.service_url.clone())
+        .with_llm_config(llm_request_config(&ai_config));
 
     // Health check (5s timeout): verify Python NLP service is reachable.
     // AI model loading can take 5-10 minutes, so a startup failure is normal.
@@ -394,6 +435,48 @@ async fn build_ai_remote(db: &VigilDb) -> Option<RemoteModuleProxy> {
     Some(proxy)
 }
 
+/// Build the optional LLM second-opinion config from AiServiceConfig.
+///
+/// Only attached when a remote provider (claude/openai) and an API key are
+/// both configured; the Python AI service only uses it to re-check emails
+/// whose local NLP result is uncertain, and failures there are fail-open.
+fn llm_request_config(ai_config: &AiServiceConfig) -> Option<LlmRequestConfig> {
+    let provider = ai_config.provider.trim();
+    if provider.is_empty() || provider == "local" {
+        return None;
+    }
+
+    // api_key is stored AES-256-GCM encrypted ("ENC:" prefix); decrypt it the
+    // same way the VirusTotal key is handled below.
+    let api_key = if ai_config.api_key.starts_with("ENC:") {
+        match decrypt_enc_value(&ai_config.api_key) {
+            Some(key) => key,
+            None => {
+                warn!("LLM api_key decryption failed, LLM second-opinion analysis disabled");
+                return None;
+            }
+        }
+    } else {
+        ai_config.api_key.clone()
+    };
+    if api_key.is_empty() {
+        return None;
+    }
+
+    info!(
+        provider,
+        model = %ai_config.model,
+        "LLM second-opinion analysis enabled for uncertain NLP results"
+    );
+    Some(LlmRequestConfig {
+        provider: provider.to_string(),
+        api_key,
+        model: ai_config.model.clone(),
+        temperature: ai_config.temperature,
+        max_tokens: ai_config.max_tokens,
+    })
+}
+
 /// Load intel source config from DB and build IntelLayer.
 /// Returns the layer + safe-domains handle (for runtime reload).
 async fn build_intel_layer(db: &VigilDb) -> Option<(IntelLayer, SafeDomainsHandle)> {
@@ -402,7 +485,7 @@ async fn build_intel_layer(db: &VigilDb) -> Option<(IntelLayer, SafeDomainsHandl
             Ok(c) => c,
             Err(e) => {
                 warn!(
-                    "Intel source config parse failed: {}, using defaults (OTX + VT Scrape enabled)",
+                    "Intel source config parse failed: {}, using defaults (OTX enabled; VT Scrape disabled until explicitly configured)",
                     e
                 );
                 IntelSourceConfig::default()
@@ -525,7 +608,7 @@ async fn seed_builtin_yara_rules(db: &vigilyx_db::VigilDb) {
             // Extract a minimal YARA source for each individual rule
             // (category source contains multiple rules; we build per-rule source for DB storage)
             let single_rule_source = format!(
-                "rule {} {{\n  meta:\n    description = \"{}\"\n    category = \"{}\"\n    severity = \"{}\"\n  condition:\n    true\n}}",
+                "rule {} {{\n  meta:\n    description = \"{}\"\n    category = \"{}\"\n    severity = \"{}\"\n  condition:\n    false\n}}",
                 rule.identifier(),
                 description.replace('"', "\\\""),
                 cat_name,
@@ -671,8 +754,8 @@ fn decrypt_enc_value(stored: &str) -> Option<String> {
     }
 
     let cipher = Aes256Gcm::new_from_slice(&key_bytes).ok()?;
-    let nonce = Nonce::from_slice(&combined[..12]);
-    let plaintext = cipher.decrypt(nonce, &combined[12..]).ok()?;
+    let nonce = Nonce::try_from(&combined[..12]).ok()?;
+    let plaintext = cipher.decrypt(&nonce, &combined[12..]).ok()?;
     String::from_utf8(plaintext).ok()
 }
 
@@ -707,6 +790,39 @@ async fn build_sandbox_client() -> Option<Arc<crate::external::sandbox::SandboxC
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn builtin_yara_rows_are_never_loaded_as_custom_rules() {
+        let hardcoded_names = HashSet::new();
+
+        assert!(!should_load_extra_yara_rule(
+            "builtin",
+            "broken_builtin_rule",
+            &hardcoded_names
+        ));
+    }
+
+    #[test]
+    fn unknown_custom_yara_rows_are_loaded() {
+        let hardcoded_names = HashSet::new();
+
+        assert!(should_load_extra_yara_rule(
+            "custom",
+            "analyst_rule",
+            &hardcoded_names
+        ));
+    }
+
+    #[test]
+    fn custom_rows_cannot_duplicate_hardcoded_yara_rules() {
+        let hardcoded_names = HashSet::from(["BuiltinRule".to_string()]);
+
+        assert!(!should_load_extra_yara_rule(
+            "custom",
+            "BuiltinRule",
+            &hardcoded_names
+        ));
+    }
 
     #[test]
     fn builtin_whitelist_seed_keeps_key_runtime_domains_available() {

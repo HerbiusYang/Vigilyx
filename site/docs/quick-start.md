@@ -20,7 +20,7 @@ cp deploy.conf.example deploy.conf
 $EDITOR deploy.conf
 
 # 2. Pre-pull the pinned Rust builder image on the target host
-ssh root@<server> "docker pull rust:1.95.0-bookworm"
+ssh root@<server> "docker pull rust:1.97.1-bookworm"
 
 # 3. One-time initialization
 ./deploy.sh --init

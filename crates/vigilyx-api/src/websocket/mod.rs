@@ -55,6 +55,16 @@ pub fn invalidate_websocket_sessions(state: &crate::AppState) {
     let _ = state.messaging.ws_tx.send(WsMessage::SessionInvalidated);
 }
 
+/// SEC (round-5): revoke only `username`'s live dashboard sockets — a single
+/// logout previously broke every operator's WebSocket via the global epoch.
+pub fn invalidate_websocket_sessions_for_user(state: &crate::AppState, username: &str) {
+    state
+        .ws_user_epochs
+        .entry(username.to_string())
+        .and_modify(|epoch| *epoch += 1)
+        .or_insert(1);
+}
+
 /// WebSocket authentication query parameter
 
 /// SEC-H02: `ticket` (1, JWT)
@@ -75,19 +85,19 @@ pub async fn ws_handler(
     let client_ip = extract_client_ip(&headers, addr);
     let user_agent = extract_user_agent(&headers);
 
-    // SEC-H02: 1 authentication
-    if let Some(ticket) = query.ticket.as_deref() {
-        if !state
-            .ws_tickets
-            .consume(ticket, client_ip, user_agent.as_deref())
-        {
-            warn!("WebSocket 票据无效或已过期");
-            return Err(StatusCode::UNAUTHORIZED);
+    // SEC-H02: 1 authentication (the ticket carries the bound username)
+    let ws_username = if let Some(ticket) = query.ticket.as_deref() {
+        match state.ws_tickets.consume(ticket, client_ip, user_agent.as_deref()) {
+            Some(username) => username,
+            None => {
+                warn!("WebSocket 票据无效或已过期");
+                return Err(StatusCode::UNAUTHORIZED);
+            }
         }
     } else {
         warn!("WebSocket Connection被拒绝: 缺少有效 ticket parameter");
         return Err(StatusCode::UNAUTHORIZED);
-    }
+    };
 
     // SEC: Reject WebSocket when default password not changed (prevents email content leak)
     let password_changed = *state.auth.config.password_changed.read().await;
@@ -97,6 +107,11 @@ pub async fn ws_handler(
     }
 
     let auth_epoch = state.ws_auth_epoch.load(Ordering::Acquire);
+    let user_epoch = state
+        .ws_user_epochs
+        .get(&ws_username)
+        .map(|entry| *entry)
+        .unwrap_or(0);
 
     // SEC: per-IP connection limit (prevents fd exhaustion)
     if !try_acquire_ws_slot(client_ip) {
@@ -111,7 +126,7 @@ pub async fn ws_handler(
         .on_upgrade(move |socket| {
             let ip = client_ip;
             async move {
-                handle_socket(socket, state, auth_epoch).await;
+                handle_socket(socket, state, auth_epoch, &ws_username, user_epoch).await;
                 // Decrement the counter on disconnect
                 release_ws_slot(ip);
             }
@@ -119,7 +134,13 @@ pub async fn ws_handler(
 }
 
 /// Process WebSocket Connection
-async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_epoch: u64) {
+async fn handle_socket(
+    socket: WebSocket,
+    state: Arc<AppState>,
+    auth_epoch: u64,
+    ws_username: &str,
+    user_epoch: u64,
+) {
     let (mut sender, mut receiver) = socket.split();
 
     // Broadcast channel
@@ -138,15 +159,27 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, auth_epoch: u64)
 
     // receive message send client
     let send_state = state.clone();
+    let send_username = ws_username.to_string();
     let mut send_task = tokio::spawn(async move {
         let mut auth_check = tokio::time::interval(WS_AUTH_CHECK_INTERVAL);
         loop {
             tokio::select! {
                 _ = auth_check.tick() => {
                     let current_epoch = send_state.ws_auth_epoch.load(Ordering::Acquire);
+                    let current_user_epoch = send_state
+                        .ws_user_epochs
+                        .get(&send_username)
+                        .map(|entry| *entry)
+                        .unwrap_or(0);
                     let password_changed = *send_state.auth.config.password_changed.read().await;
-                    if current_epoch != auth_epoch || !password_changed {
-                        info!("WebSocket auth state changed, closing connection");
+                    if current_epoch != auth_epoch
+                        || current_user_epoch != user_epoch
+                        || !password_changed
+                    {
+                        info!(
+                            user = %send_username,
+                            "WebSocket auth state changed, closing connection"
+                        );
                         break;
                     }
                 }

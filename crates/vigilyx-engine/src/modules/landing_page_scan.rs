@@ -9,8 +9,11 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use futures::future::join_all;
 
-use super::common::{extract_domain_from_url, is_probable_cloud_asset_url};
+use super::common::{
+    extract_domain_from_url, is_probable_cloud_asset_url, is_probable_opaque_mail_callback_url,
+};
 use crate::context::SecurityContext;
 use crate::error::EngineError;
 use crate::external::fetcher::{FetchConfig, FetchResult, UrlFetcher};
@@ -195,7 +198,10 @@ fn collect_candidate_urls(ctx: &SecurityContext, signals: &LureSignals) -> Vec<S
         let Some(url) = unwrap_candidate_url(&link.url) else {
             continue;
         };
-        if is_probable_cloud_asset_url(&url) || !seen.insert(url.clone()) {
+        if is_probable_cloud_asset_url(&url)
+            || is_probable_opaque_mail_callback_url(&url)
+            || !seen.insert(url.clone())
+        {
             continue;
         }
         let priority = candidate_priority(&url, signals);
@@ -370,8 +376,8 @@ impl SecurityModule for LandingPageScanModule {
         let mut fetched_pages = 0usize;
         let mut fetch_errors = Vec::new();
 
-        for url in &candidates {
-            let fetch = fetcher.fetch(url).await;
+        let fetches = join_all(candidates.iter().map(|url| fetcher.fetch(url))).await;
+        for (url, fetch) in candidates.iter().zip(fetches) {
             fetched_pages += 1;
             if let Some(error) = fetch.error.as_ref() {
                 fetch_errors.push(format!("{}: {}", url, error));
@@ -436,6 +442,8 @@ impl SecurityModule for LandingPageScanModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use vigilyx_core::models::{EmailContent, EmailLink, EmailSession, Protocol};
 
     fn mock_fetch(
         original_url: &str,
@@ -540,5 +548,30 @@ mod tests {
 
         let assessment = assess_fetched_page("https://example.com/news", &fetch, &signals);
         assert_eq!(assessment.score, 0.0);
+    }
+
+    #[test]
+    fn test_huawei_telemetry_callbacks_are_not_fetched_as_landing_pages() {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.content = EmailContent {
+            links: vec![EmailLink {
+                url: "https://svc-drcn.developer.huawei.com/partnermessage/dadian/v2/clicknum?localMsgID=afef48094a5f43d6bc18ff838fe3615a&msgType=1&urlPageIndex=f7cf6546-809b-4359-b402-b04ae180817a&urlIndex=d5431c23-7909-41fa-8c8b-0541cfd1ff17&key=92e3d69690d94e58685eec9ecaf3e3e93d5d63f6716ad3543aa4caa6869b9de6".to_string(),
+                text: Some("问卷链接".to_string()),
+                suspicious: false,
+            }],
+            ..Default::default()
+        };
+        let ctx = SecurityContext::new(Arc::new(session));
+        let signals = LureSignals {
+            keyword_context: true,
+        };
+
+        assert!(collect_candidate_urls(&ctx, &signals).is_empty());
     }
 }

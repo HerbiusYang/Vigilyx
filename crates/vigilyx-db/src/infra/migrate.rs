@@ -263,7 +263,11 @@ impl VigilDb {
         ];
 
         for idx_sql in concurrent_indexes {
-            if let Err(e) = sqlx::query(&idx_sql).execute(&self.pool).await {
+            // Index DDL assembled in this function from static fragments only.
+            if let Err(e) = sqlx::query(sqlx::AssertSqlSafe(idx_sql.as_str()))
+                .execute(&self.pool)
+                .await
+            {
                 tracing::warn!(
                     "Create concurrent performance index failed (non-fatal): {}",
                     e
@@ -311,7 +315,7 @@ impl VigilDb {
                 )
                 "#,
             );
-            sqlx::query(&sql).execute(&self.pool).await?;
+            sqlx::query(sqlx::AssertSqlSafe(sql.as_str())).execute(&self.pool).await?;
         }
 
         // Auth credentials — separated from operational config
@@ -350,7 +354,7 @@ impl VigilDb {
                 ON CONFLICT (id) DO NOTHING
                 "#,
             );
-            if let Err(e) = sqlx::query(&sql).bind(config_key).execute(&self.pool).await {
+            if let Err(e) = sqlx::query(sqlx::AssertSqlSafe(sql.as_str())).bind(config_key).execute(&self.pool).await {
                 tracing::warn!(
                     config_key,
                     target_table,
@@ -392,7 +396,7 @@ impl VigilDb {
              ON sessions(started_at DESC) INCLUDE (id) WHERE status = 'Completed' AND {}",
             crate::infra::session::session_with_content_predicate("")
         );
-        if let Err(e) = sqlx::query(&completed_analyzable_index)
+        if let Err(e) = sqlx::query(sqlx::AssertSqlSafe(completed_analyzable_index.as_str()))
             .execute(&self.pool)
             .await
         {
@@ -413,7 +417,7 @@ impl VigilDb {
             "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sessions_client_started \
              ON sessions(client_ip, started_at)"
                 .to_string();
-        if let Err(e) = sqlx::query(&downstream_envelope_index)
+        if let Err(e) = sqlx::query(sqlx::AssertSqlSafe(downstream_envelope_index.as_str()))
             .execute(&self.pool)
             .await
         {
@@ -435,7 +439,7 @@ impl VigilDb {
              ON sessions(started_at ASC, id ASC) WHERE status = 'Completed' AND {}",
             crate::infra::session::session_with_content_predicate("")
         );
-        if let Err(e) = sqlx::query(&completed_analyzable_v2_index)
+        if let Err(e) = sqlx::query(sqlx::AssertSqlSafe(completed_analyzable_v2_index.as_str()))
             .execute(&self.pool)
             .await
         {
@@ -451,6 +455,10 @@ impl VigilDb {
             "concurrent partial index for completed analyzable sessions including links and cursor id",
         )
         .await?;
+
+        // Platform identity/RBAC is part of the core schema and is recreated
+        // after operational clears without touching the identity rows.
+        self.init_platform_auth().await?;
 
         Ok(())
     }

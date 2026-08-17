@@ -15,7 +15,11 @@
 
 //! Output: (t)/ = intensity ratio
 //! > 3.0 -> "burst" warning
-//! > 5.0 -> "burst" alarm (P0/P1 in alert.rs)
+//! > 5.0 -> "burst" alarm (P0/P1 in alert.rs, gated there by risk_final)
+//!
+//! Defensive bounds: event-time deltas are clamped at 0 (non-monotone input
+//! cannot explode the decay kernel), the ratio is hard-capped at 100, and μ
+//! may only inflate while recent traffic is clean (see constants below).
 
 use std::collections::VecDeque;
 
@@ -27,6 +31,19 @@ const DEFAULT_BETA: f64 = 2.0; // Decay rate (per hour) - half-life 0.35h 21min
 const DEFAULT_MU_INIT: f64 = 0.5; // Initial baseline intensity (emails/hour)
 const DEFAULT_MU_EWMA: f64 = 0.005; // EWMA smoothing factor for adaptation (slow - baseline should be stable)
 const DEFAULT_MAX_EVENTS: usize = 100; // Max history length
+/// Hard ceiling for the reported intensity ratio. A corrupted or
+/// non-monotone event stream must never produce an astronomical/Inf ratio
+/// that downstream alert grading reads as an unconditional burst.
+const MAX_INTENSITY_RATIO: f64 = 100.0;
+/// Hard ceiling for the adaptive baseline μ (emails/hour). 10/h is already
+/// generous for one sender→recipient pair; anything beyond is laundering.
+const MU_MAX: f64 = 10.0;
+/// μ may only drift *upward* while recent traffic is demonstrably clean.
+/// Otherwise a patient sender floods clean mail to inflate the baseline and
+/// hides the later malicious burst under the inflated μ.
+const MU_INFLATE_MAX_RISK: f64 = 0.15;
+/// Number of recent events (plus the current one) averaged for the μ gate.
+const MU_GATE_WINDOW: usize = 20;
 
 /// Result of Hawkes process observation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,7 +92,9 @@ impl HawkesState {
     /// Observe a new event and return the current intensity assessment.
 
     /// # Arguments
-    /// - `now_hours`: current time in hours (monotonic, can be relative)
+    /// - `now_hours`: current time in hours. MUST be monotonically increasing
+    ///   per state (callers use hours since engine start, never inter-arrival
+    ///   intervals). Out-of-order input is tolerated via a dt >= 0 clamp.
     /// - `risk_score`: risk score of the current email [0, 1]
 
     /// # Returns
@@ -85,13 +104,17 @@ impl HawkesState {
 
         // Compute conditional intensity (t)
         // Sum of excitation contributions from past events
-        // Events are always recorded with monotonically increasing timestamps,
-        // so dt = now_hours - t_j is always>= 0. No need for dt <0 guard.
+        // Callers pass monotonically increasing timestamps (hours since
+        // engine start), but we still clamp dt at 0: concurrent processing of
+        // two emails for the same pair can interleave, and historically this
+        // code was fed *inter-arrival intervals* — a decreasing interval
+        // sequence made dt < 0 and exp(-β·dt) explode (E1 PoC: a 10h gap
+        // followed by a 1min gap produced excitation ≈ 3.4×10⁷).
         let excitation: f64 = self
             .events
             .iter()
             .map(|&(t_j, r_j)| {
-                let dt = now_hours - t_j;
+                let dt = (now_hours - t_j).max(0.0);
                 self.alpha * mark_kernel(r_j) * decay_kernel(dt, self.beta)
             })
             .sum();
@@ -108,9 +131,29 @@ impl HawkesState {
                 let instantaneous_rate = 1.0 / dt; // events per hour
                 // Clamp to prevent from exploding
                 let clamped_rate = instantaneous_rate.min(100.0);
-                self.mu = self.mu * (1.0 - self.mu_ewma_alpha) + clamped_rate * self.mu_ewma_alpha;
-                // floor to prevent division by near-zero
-                self.mu = self.mu.max(0.01);
+                let adapted =
+                    self.mu * (1.0 - self.mu_ewma_alpha) + clamped_rate * self.mu_ewma_alpha;
+                // Baseline laundering guard: μ may only rise while the recent
+                // traffic is clean on average. High-risk bursts still push μ
+                // *down* (slower traffic), but never up.
+                let window = self.events.len().min(MU_GATE_WINDOW);
+                let recent_sum: f64 = self
+                    .events
+                    .iter()
+                    .rev()
+                    .take(window)
+                    .map(|&(_, r)| r)
+                    .sum::<f64>()
+                    + risk;
+                let recent_avg_risk = recent_sum / (window as f64 + 1.0);
+                let gated = if adapted > self.mu && recent_avg_risk >= MU_INFLATE_MAX_RISK {
+                    self.mu
+                } else {
+                    adapted
+                };
+                // floor to prevent division by near-zero, hard cap against
+                // laundering (clean flood can still inflate μ, but bounded).
+                self.mu = gated.clamp(0.01, MU_MAX);
             }
         }
 
@@ -134,8 +177,9 @@ impl HawkesState {
             self.events.pop_front();
         }
 
-        // Compute ratio and burst detection
-        let intensity_ratio = intensity / self.mu.max(0.01);
+        // Compute ratio and burst detection. The ratio is hard-capped so a
+        // single event can never read as an unbounded burst downstream.
+        let intensity_ratio = (intensity / self.mu.max(0.01)).clamp(0.0, MAX_INTENSITY_RATIO);
         let burst_detected = intensity_ratio > 3.0;
 
         HawkesResult {
@@ -311,5 +355,81 @@ mod tests {
             "Events should be trimmed to max: {}",
             state.events.len()
         );
+    }
+
+    /// PoC (E1): the temporal analyzer used to feed *inter-arrival intervals*
+    /// as `now_hours`. Intervals are not monotone, so a 10h gap followed by a
+    /// 1min gap produced dt < 0 and exp(-β·dt) = exp(+|β·dt|) — a single
+    /// follow-up email exploded the excitation to ~3.4×10⁷ and read as an
+    /// unconditional burst. Non-monotone input must now be clamped/bounded.
+    #[test]
+    fn non_monotone_timestamps_cannot_explode_ratio() {
+        let mut state = HawkesState::new();
+        state.observe(10.0, 0.2);
+        let r = state.observe(0.017, 0.1); // "interval" smaller than previous ts
+
+        assert!(
+            r.intensity_ratio.is_finite(),
+            "ratio must stay finite: {}",
+            r.intensity_ratio
+        );
+        assert!(
+            r.intensity_ratio <= MAX_INTENSITY_RATIO,
+            "ratio must be capped: {}",
+            r.intensity_ratio
+        );
+        assert!(
+            !r.burst_detected,
+            "a single quiet follow-up must not read as a burst: ratio={}",
+            r.intensity_ratio
+        );
+    }
+
+    /// E1 wiring check with *monotone* timestamps: the Monday-morning pattern
+    /// (weekend gap then rapid follow-up) stays bounded.
+    #[test]
+    fn weekend_gap_then_rapid_followup_stays_bounded() {
+        let mut state = HawkesState::new();
+        state.observe(0.0, 0.2); // Friday
+        state.observe(60.0, 0.2); // Monday morning, 60h later
+        let r = state.observe(60.0 + 1.0 / 60.0, 0.1); // 1 minute later
+
+        assert!(r.intensity_ratio.is_finite());
+        assert!(r.intensity_ratio <= MAX_INTENSITY_RATIO);
+    }
+
+    /// PoC (E5): baseline laundering. An attacker sends one clean-looking but
+    /// risky email per minute for hours; the pre-fix EWMA washed μ from 0.5
+    /// toward 60, so the later malicious burst stayed under ratio>3.
+    /// μ must not rise while recent events are risky.
+    #[test]
+    fn mu_inflation_blocked_for_risky_traffic() {
+        let mut state = HawkesState::new();
+        // Warmup past total_events > 3, then sustained 1/min high-risk mail.
+        for i in 0..120 {
+            let t = i as f64 / 60.0; // one per minute
+            state.observe(t, 0.8);
+        }
+        assert!(
+            state.mu <= DEFAULT_MU_INIT + 1e-9,
+            "risky traffic must not inflate the baseline: mu={}",
+            state.mu
+        );
+    }
+
+    /// E5: even genuinely clean floods may only inflate μ up to the hard cap.
+    #[test]
+    fn mu_inflation_hard_capped_for_clean_traffic() {
+        let mut state = HawkesState::new();
+        for i in 0..1440 {
+            let t = i as f64 / 60.0; // 1/min clean mail for a simulated day
+            state.observe(t, 0.05);
+        }
+        assert!(
+            state.mu <= MU_MAX + 1e-9,
+            "clean flood must hit the hard μ cap: mu={}",
+            state.mu
+        );
+        assert!(state.mu > DEFAULT_MU_INIT, "clean traffic may raise μ");
     }
 }

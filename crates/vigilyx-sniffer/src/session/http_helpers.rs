@@ -189,3 +189,17 @@ pub(super) fn extract_coremail_account_from_body(body: &str) -> Option<String> {
         None
     }
 }
+
+/// F3: loose identity comparison for attribution-mismatch detection.
+/// Treats `admin` and `admin@corp.com` as the same identity (login forms
+/// often capture the bare local part while cookies carry the full address);
+/// genuinely different local parts are a mismatch.
+pub(super) fn users_probably_same(a: &str, b: &str) -> bool {
+    if a.eq_ignore_ascii_case(b) {
+        return true;
+    }
+    fn local(s: &str) -> &str {
+        s.split('@').next().unwrap_or(s)
+    }
+    !local(a).is_empty() && local(a).eq_ignore_ascii_case(local(b))
+}

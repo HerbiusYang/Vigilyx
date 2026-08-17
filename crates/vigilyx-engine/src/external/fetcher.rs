@@ -11,9 +11,18 @@ use std::time::Duration;
 
 use reqwest::header::LOCATION;
 use scraper::{Html, Selector};
-use vigilyx_core::{DEFAULT_BLOCKED_HOSTNAMES, resolve_network_host, validate_network_host};
+use vigilyx_core::{DEFAULT_BLOCKED_HOSTNAMES, resolve_network_host};
+
+#[cfg(test)]
+use vigilyx_core::validate_network_host;
 
 use crate::module_data::module_data;
+
+/// Use a stable browser-like identity so sites cannot trivially return a
+/// benign scanner-only page while showing a different page to users. This is
+/// still an advisory fetcher, not a full browser or JavaScript runtime.
+const BROWSER_USER_AGENT: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 /// GetConfiguration
 pub struct FetchConfig {
@@ -82,7 +91,7 @@ impl UrlFetcher {
         let mut redirect_hops = 0usize;
 
         let response = loop {
-            if let Err(reason) = validate_fetch_url(&current_url, self.config.skip_private_ips) {
+            if let Err(reason) = validate_fetch_url_structure(&current_url) {
                 return FetchResult {
                     url: url.to_string(),
                     final_url: current_url,
@@ -266,16 +275,26 @@ impl UrlFetcher {
         let mut builder = reqwest::Client::builder()
             .timeout(Duration::from_secs(self.config.timeout_secs))
             .redirect(reqwest::redirect::Policy::none())
+            .user_agent(BROWSER_USER_AGENT)
             .danger_accept_invalid_certs(false);
 
         if self.config.skip_private_ips {
-            let host = url.host_str().ok_or_else(|| "No host in URL".to_string())?;
+            let host = url
+                .host_str()
+                .ok_or_else(|| "No host in URL".to_string())?
+                .to_string();
+            let port = url
+                .port_or_known_default()
+                .ok_or_else(|| "URL has no known default port".to_string())?;
+            let resolution_host = host.clone();
+            let addrs = tokio::task::spawn_blocking(move || {
+                resolve_network_host(&resolution_host, port, DEFAULT_BLOCKED_HOSTNAMES)
+            })
+            .await
+            .map_err(|error| format!("Hostname resolution task failed for {host}: {error}"))??;
+
             if host.parse::<std::net::IpAddr>().is_err() {
-                let port = url
-                    .port_or_known_default()
-                    .ok_or_else(|| "URL has no known default port".to_string())?;
-                let addrs = resolve_network_host(host, port, DEFAULT_BLOCKED_HOSTNAMES)?;
-                builder = builder.resolve_to_addrs(host, &addrs);
+                builder = builder.resolve_to_addrs(&host, &addrs);
             }
         }
 
@@ -333,7 +352,7 @@ async fn read_limited_response(
     Ok(body)
 }
 
-fn validate_fetch_url(url: &str, skip_private_ips: bool) -> Result<(), String> {
+fn validate_fetch_url_structure(url: &str) -> Result<(), String> {
     let parsed = url::Url::parse(url).map_err(|e| format!("Invalid URL: {}", e))?;
 
     match parsed.scheme() {
@@ -344,6 +363,18 @@ fn validate_fetch_url(url: &str, skip_private_ips: bool) -> Result<(), String> {
     if !parsed.username().is_empty() || parsed.password().is_some() {
         return Err("URL must not contain userinfo".to_string());
     }
+
+    if parsed.host().is_none() {
+        return Err("No host in URL".to_string());
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+fn validate_fetch_url(url: &str, skip_private_ips: bool) -> Result<(), String> {
+    validate_fetch_url_structure(url)?;
+    let parsed = url::Url::parse(url).map_err(|e| format!("Invalid URL: {}", e))?;
 
     if !skip_private_ips {
         return Ok(());
@@ -492,6 +523,26 @@ mod tests {
     fn blocks_url_userinfo() {
         let result = validate_fetch_url("https://user:pass@example.com/login", true);
         assert!(result.is_err(), "userinfo should be blocked: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn async_pinned_resolution_still_blocks_loopback() {
+        let fetcher = UrlFetcher::new(FetchConfig {
+            timeout_secs: 1,
+            max_redirects: 0,
+            max_response_bytes: 1024,
+            skip_private_ips: true,
+        });
+
+        let result = fetcher.fetch("http://127.0.0.1:9/login").await;
+
+        assert!(
+            result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("Disallowed IP address")),
+            "loopback must be rejected before any connection attempt: {result:?}"
+        );
     }
 
     #[test]

@@ -94,6 +94,28 @@ pub struct SmtpResponse {
     pub is_final: bool,
 }
 
+/// One SMTP message reconstructed from the transport stream.
+///
+/// `is_complete` is false when the capture exceeded a parser byte budget. The
+/// retained bytes may still be useful for detection, but callers must not
+/// represent the resulting verdict as a fully inspected message.
+#[derive(Debug, Clone)]
+pub struct CompletedSmtpMessage {
+    pub data: Bytes,
+    pub is_complete: bool,
+}
+
+/// Hard cap on retained envelope recipients per message in passive capture
+/// mode (SEC M-5, amended 2026-08-16). A mirrored client can otherwise push
+/// millions of RCPT TO lines and grow session memory without a live MTA being
+/// able to reject the transaction. Inline MTA policy is independently
+/// configurable up to this same 10,000-recipient safety ceiling.
+const MAX_RCPT_TO: usize = 10_000;
+
+/// Hard cap on replayable AUTH commands (SEC M-5): pending_commands grew once
+/// per multiline AUTH response with no bound; legitimate flows hold 1-2.
+const MAX_PENDING_COMMANDS: usize = 64;
+
 /// SMTP State machine
 pub struct SmtpStateMachine {
     /// WhenfirstStatus
@@ -102,12 +124,19 @@ pub struct SmtpStateMachine {
     mail_from: Option<String>,
     /// recipientList
     rcpt_to: Vec<String>,
+    /// Recipients dropped after `MAX_RCPT_TO` was reached (SEC M-5); surfaced
+    /// for diagnostics so the truncation stays observable.
+    dropped_rcpt_to: usize,
+    overflow_warned: bool,
     /// emaildatabufferDistrict
     data_buffer: Vec<u8>,
     /// emaildatawhether Receive
     in_data_mode: bool,
     /// alreadycompleteofemaildataList (1ConnectionpossiblySend email)
-    completed_emails: Vec<Bytes>,
+    completed_emails: Vec<CompletedSmtpMessage>,
+    /// Whether bytes from the message currently being reconstructed were
+    /// discarded because the bounded DATA buffer was full.
+    current_message_truncated: bool,
     /// whetherUse STARTTLS (ofdataall Encryptof)
     is_starttls_active: bool,
     /// STARTTLS CommandalreadySend,Waiting for server 220
@@ -147,6 +176,18 @@ pub struct SmtpStateMachine {
     /// Offset where the current BDAT chunk begins in the accumulated message.
     /// Late TCP prepend recovery must insert bytes here, not before prior chunks.
     bdat_chunk_start: usize,
+    /// Protocol anomalies observed (e.g. a 354 response with no pending DATA).
+    /// An injected server response must not be able to silently discard the
+    /// buffered message body, so anomalies are counted instead of applied.
+    anomaly_count: u32,
+    /// Capture started mid-connection (no SYN observed). In that mode a 354
+    /// without a seen DATA command is still honored once, otherwise mid-stream
+    /// restore would lose the whole message body.
+    midstream_capture: bool,
+    /// Structured SMTP commands / valid response codes observed so far.
+    /// Used by the capture layer to distinguish real SMTP dialog from TLS
+    /// garbage before trusting the TLS-record magic heuristic.
+    dialog_lines_observed: u32,
 }
 
 impl SmtpStateMachine {
@@ -155,9 +196,12 @@ impl SmtpStateMachine {
             state: SmtpState::Connected,
             mail_from: None,
             rcpt_to: Vec::new(),
+            dropped_rcpt_to: 0,
+            overflow_warned: false,
             data_buffer: Vec::with_capacity(64 * 1024), // 64KB Capacity
             in_data_mode: false,
             completed_emails: Vec::new(),
+            current_message_truncated: false,
             cmd_line_buf: Vec::new(),
             resp_line_buf: Vec::new(),
             is_starttls_active: false,
@@ -173,6 +217,9 @@ impl SmtpStateMachine {
             bdat_remaining: 0,
             bdat_is_last: false,
             bdat_chunk_start: 0,
+            anomaly_count: 0,
+            midstream_capture: false,
+            dialog_lines_observed: 0,
         }
     }
 
@@ -191,6 +238,29 @@ impl SmtpStateMachine {
     #[allow(dead_code)]
     pub fn rcpt_to(&self) -> &[String] {
         &self.rcpt_to
+    }
+
+    /// Recipients dropped after the cap was reached (SEC M-5).
+    pub fn dropped_rcpt_to(&self) -> usize {
+        self.dropped_rcpt_to
+    }
+
+    /// Retain a parsed recipient under the passive-parser hard ceiling.
+    /// Every command ingestion path must use this helper so packet framing or
+    /// pipelining cannot bypass the resource bound.
+    fn retain_recipient(&mut self, email: &str) {
+        if self.rcpt_to.len() >= MAX_RCPT_TO {
+            self.dropped_rcpt_to = self.dropped_rcpt_to.saturating_add(1);
+            if !self.overflow_warned {
+                self.overflow_warned = true;
+                warn!(
+                    limit = MAX_RCPT_TO,
+                    "SMTP session exceeded the passive recipient cap — further RCPT TO entries are dropped"
+                );
+            }
+        } else {
+            self.rcpt_to.push(email.to_owned());
+        }
     }
 
     /// Whether in data collection mode
@@ -218,26 +288,145 @@ impl SmtpStateMachine {
         self.data_buffer.len() + self.pipelined_data.as_ref().map_or(0, Vec::len)
     }
 
+    /// Number of protocol anomalies observed (e.g. forged/duplicate 354).
+    pub fn anomaly_count(&self) -> u32 {
+        self.anomaly_count
+    }
+
+    /// Whether any structured SMTP command or valid server response line has
+    /// been observed on this connection.
+    pub fn has_observed_dialog(&self) -> bool {
+        self.dialog_lines_observed > 0
+    }
+
+    /// Mark this connection as captured mid-stream (no SYN seen). A lone 354
+    /// is then still honored once so the in-flight message body is collected.
+    pub fn set_midstream_capture(&mut self, midstream: bool) {
+        self.midstream_capture = midstream;
+    }
+
     fn data_terminator(buffer: &[u8]) -> Option<(usize, usize)> {
         memmem::find(buffer, b"\r\n.\r\n").map(|pos| (pos, 5usize))
     }
 
-    fn append_message_bytes(&mut self, data: &[u8]) {
-        if self.data_buffer.len() + data.len() > MAX_DATA_BUFFER_SIZE {
-            warn!(
-                "SMTP: emaildata超 {}MB limit，截Break/JudgeProcess",
-                MAX_DATA_BUFFER_SIZE / 1024 / 1024
-            );
-            let remaining = MAX_DATA_BUFFER_SIZE.saturating_sub(self.data_buffer.len());
-            if remaining > 0 {
-                self.data_buffer.extend_from_slice(&data[..remaining]);
+    /// Find a suspicious bare-LF dot line in `buffer[from..]`: `\n.` where the
+    /// `\n` is NOT preceded by `\r` (a genuine CRLF message never contains
+    /// one), followed by `\r\n` or `\n`. Legacy MTAs (old Postfix, unpatched
+    /// Exchange) accept this variant as the end of DATA, so the bytes between
+    /// it and the real `\r\n.\r\n` terminator become a hidden second message
+    /// that structured analysis never sees.
+    ///
+    /// Returns `(line_start, next_segment_start)`. Only applied when a real
+    /// CRLF terminator exists later in the buffer, so bare-LF-only mail
+    /// remains untouched (still recovered on close, not terminated early).
+    fn bare_lf_dot_line(buffer: &[u8], from: usize) -> Option<(usize, usize)> {
+        let mut i = from.max(1);
+        while i + 2 < buffer.len() {
+            if buffer[i] == b'\n' && buffer[i - 1] != b'\r' && buffer[i + 1] == b'.' {
+                if buffer[i + 2..].starts_with(b"\r\n") {
+                    return Some((i, i + 4));
+                }
+                if buffer[i + 2] == b'\n' {
+                    return Some((i, i + 3));
+                }
             }
-        } else {
-            self.data_buffer.extend_from_slice(data);
+            i += 1;
+        }
+        None
+    }
+
+    fn append_message_bytes(&mut self, data: &[u8]) {
+        let remaining = MAX_DATA_BUFFER_SIZE.saturating_sub(self.data_buffer.len());
+        let retained = remaining.min(data.len());
+        if retained < data.len() {
+            let first_truncation = !self.current_message_truncated;
+            self.current_message_truncated = true;
+            if first_truncation {
+                warn!(
+                    limit_bytes = MAX_DATA_BUFFER_SIZE,
+                    dropped_bytes = data.len() - retained,
+                    "SMTP message exceeded capture budget; verdict must remain inspection-incomplete"
+                );
+            }
+        }
+        if retained > 0 {
+            self.data_buffer.extend_from_slice(&data[..retained]);
         }
     }
 
+    fn append_pipelined_bytes(&mut self, data: &[u8]) {
+        let buffer = self.pipelined_data.get_or_insert_with(Vec::new);
+        let remaining = MAX_DATA_BUFFER_SIZE.saturating_sub(buffer.len());
+        let retained = remaining.min(data.len());
+        if retained < data.len() {
+            let first_truncation = !self.current_message_truncated;
+            self.current_message_truncated = true;
+            if first_truncation {
+                warn!(
+                    limit_bytes = MAX_DATA_BUFFER_SIZE,
+                    dropped_bytes = data.len() - retained,
+                    "SMTP pipelined message exceeded capture budget; verdict must remain inspection-incomplete"
+                );
+            }
+        }
+        if retained > 0 {
+            buffer.extend_from_slice(&data[..retained]);
+        }
+    }
+
+    fn prepend_pipelined_bytes(&mut self, data: &[u8]) {
+        let existing = self.pipelined_data.take().unwrap_or_default();
+        let total_len = data.len().saturating_add(existing.len());
+        if total_len > MAX_DATA_BUFFER_SIZE {
+            self.current_message_truncated = true;
+            warn!(
+                limit_bytes = MAX_DATA_BUFFER_SIZE,
+                total_len,
+                "SMTP late-prepend pipelined message exceeded capture budget; verdict must remain inspection-incomplete"
+            );
+        }
+
+        let retained_prefix = data.len().min(MAX_DATA_BUFFER_SIZE);
+        let retained_existing = MAX_DATA_BUFFER_SIZE
+            .saturating_sub(retained_prefix)
+            .min(existing.len());
+        let mut merged = Vec::with_capacity(retained_prefix + retained_existing);
+        merged.extend_from_slice(&data[..retained_prefix]);
+        merged.extend_from_slice(&existing[..retained_existing]);
+        self.pipelined_data = Some(merged);
+    }
+
+    fn complete_message(&mut self, data: Bytes) {
+        let is_complete = !std::mem::take(&mut self.current_message_truncated);
+        self.completed_emails
+            .push(CompletedSmtpMessage { data, is_complete });
+    }
+
+    fn prepend_bounded_message_bytes(&mut self, data: &[u8]) {
+        let total_len = data.len().saturating_add(self.data_buffer.len());
+        if total_len > MAX_DATA_BUFFER_SIZE {
+            self.current_message_truncated = true;
+            warn!(
+                limit_bytes = MAX_DATA_BUFFER_SIZE,
+                total_len,
+                "SMTP late-prepend message exceeded capture budget; verdict must remain inspection-incomplete"
+            );
+        }
+
+        let retained_prefix = data.len().min(MAX_DATA_BUFFER_SIZE);
+        let retained_existing = MAX_DATA_BUFFER_SIZE
+            .saturating_sub(retained_prefix)
+            .min(self.data_buffer.len());
+        let mut new_buffer = Vec::with_capacity(retained_prefix + retained_existing);
+        new_buffer.extend_from_slice(&data[..retained_prefix]);
+        new_buffer.extend_from_slice(&self.data_buffer[..retained_existing]);
+        self.data_buffer = new_buffer;
+    }
+
     fn begin_bdat_chunk(&mut self, size: usize, is_last: bool) {
+        if self.data_buffer.is_empty() {
+            self.current_message_truncated = false;
+        }
         self.in_bdat_mode = true;
         self.bdat_remaining = size;
         self.bdat_is_last = is_last;
@@ -275,7 +464,7 @@ impl SmtpStateMachine {
                     self.mail_from,
                     self.rcpt_to
                 );
-                self.completed_emails.push(Bytes::from(raw));
+                self.complete_message(Bytes::from(raw));
                 self.state = SmtpState::DataDone;
                 commands.push(SmtpCommand::DataEnd);
             } else {
@@ -299,7 +488,7 @@ impl SmtpStateMachine {
                 self.state = SmtpState::MailFrom;
             }
             SmtpCommand::RcptTo(email) => {
-                self.rcpt_to.push(email.clone());
+                self.retain_recipient(email);
                 self.state = SmtpState::RcptTo;
             }
             SmtpCommand::Reset => {
@@ -317,20 +506,64 @@ impl SmtpStateMachine {
     fn flush_completed_data_buffer(&mut self) -> SmallVec<[SmtpCommand; 4]> {
         let mut commands = SmallVec::new();
 
-        let Some((pos, term_len)) = Self::data_terminator(&self.data_buffer) else {
+        // Empty DATA: the client sent the dot terminator immediately after 354,
+        // so the buffer starts with ".\r\n" and no preceding CRLF exists for the
+        // regular terminator search. Treat a leading bare dot-line as the
+        // terminator of an empty message, otherwise the connection would be
+        // stuck in DATA mode forever.
+        let terminator = Self::data_terminator(&self.data_buffer).or_else(|| {
+            self.data_buffer
+                .starts_with(b".\r\n")
+                .then_some((0usize, 3usize))
+        });
+        let Some((pos, term_len)) = terminator else {
             return commands;
         };
+        let is_empty_message = pos == 0 && term_len == 3;
 
         let raw = &self.data_buffer[..pos];
-        let unstuffed = Self::dot_unstuff(raw);
-        let email_data = Bytes::from(unstuffed);
-        info!(
-            "📧📧📧 SMTP: emaildataReceivecomplete! largesmall: {} Byte, mail_from={:?}, rcpt_to={:?}",
-            email_data.len(),
-            self.mail_from,
-            self.rcpt_to
-        );
-        self.completed_emails.push(email_data);
+
+        if is_empty_message {
+            debug!("📧 SMTP: 空 DATA 消息（354 后直接终结符），正常完结不产生邮件");
+        } else {
+            // SMTP smuggling split: surface every segment delimited by a bare-LF
+            // dot-line variant as its own message so a hidden second email cannot
+            // be silently absorbed into the first message's body.
+            let mut segments: SmallVec<[(usize, usize); 2]> = SmallVec::new();
+            let mut segment_start = 0usize;
+            while let Some((variant_line, next_segment)) =
+                Self::bare_lf_dot_line(raw, segment_start)
+            {
+                segments.push((segment_start, variant_line));
+                segment_start = next_segment;
+            }
+            segments.push((segment_start, raw.len()));
+
+            if segments.len() > 1 {
+                warn!(
+                    segments = segments.len(),
+                    "⚠️ SMTP: 检测到裸 LF 走私变体（<LF>.<CR><LF>）— 额外切分出多段邮件分别解析"
+                );
+            }
+
+            let messages: SmallVec<[Bytes; 2]> = segments
+                .iter()
+                // Adjacent variants can yield empty segments; skip them, but keep
+                // the single-segment path byte-identical to the pre-split behavior.
+                .filter(|&&(start, end)| end > start || segments.len() == 1)
+                .map(|&(start, end)| Bytes::from(Self::dot_unstuff(&raw[start..end])))
+                .collect();
+
+            for email_data in messages {
+                info!(
+                    "📧📧📧 SMTP: emaildataReceivecomplete! largesmall: {} Byte, mail_from={:?}, rcpt_to={:?}",
+                    email_data.len(),
+                    self.mail_from,
+                    self.rcpt_to
+                );
+                self.complete_message(email_data);
+            }
+        }
 
         let after_terminator = pos + term_len;
         let remaining = if after_terminator < self.data_buffer.len() {
@@ -372,6 +605,9 @@ impl SmtpStateMachine {
             let insert_at = self.bdat_chunk_start.min(self.data_buffer.len());
             let retained_payload_len =
                 payload_len.min(MAX_DATA_BUFFER_SIZE.saturating_sub(self.data_buffer.len()));
+            if retained_payload_len < payload_len {
+                self.current_message_truncated = true;
+            }
             let mut new_buffer = Vec::with_capacity(self.data_buffer.len() + retained_payload_len);
             new_buffer.extend_from_slice(&self.data_buffer[..insert_at]);
             new_buffer.extend_from_slice(&data[..retained_payload_len]);
@@ -380,19 +616,10 @@ impl SmtpStateMachine {
             self.bdat_remaining -= payload_len;
             commands.extend(self.process_bdat_payload(&data[payload_len..]));
         } else if self.in_data_mode {
-            let mut new_buffer = Vec::with_capacity(data.len() + self.data_buffer.len());
-            new_buffer.extend_from_slice(data);
-            new_buffer.extend_from_slice(&self.data_buffer);
-            self.data_buffer = new_buffer;
+            self.prepend_bounded_message_bytes(data);
             commands.extend(self.flush_completed_data_buffer());
         } else if self.data_cmd_pending {
-            let mut new_buffer =
-                Vec::with_capacity(data.len() + self.pipelined_data.as_ref().map_or(0, Vec::len));
-            new_buffer.extend_from_slice(data);
-            if let Some(existing) = self.pipelined_data.take() {
-                new_buffer.extend_from_slice(&existing);
-            }
-            self.pipelined_data = Some(new_buffer);
+            self.prepend_pipelined_bytes(data);
         }
 
         commands
@@ -428,7 +655,7 @@ impl SmtpStateMachine {
     /// Extract any still-buffered email payload when the SMTP session closes before the
     /// normal DATA-end path fires. This recovers sessions where the message bytes are
     /// already present in memory, but the parser never observed a clean terminator or 354.
-    pub fn take_pending_email_for_close(&mut self) -> Option<(Bytes, bool)> {
+    pub fn take_pending_email_for_close(&mut self) -> Option<(Bytes, bool, bool)> {
         let pending = if !self.data_buffer.is_empty() {
             std::mem::take(&mut self.data_buffer)
         } else {
@@ -452,10 +679,17 @@ impl SmtpStateMachine {
         self.pipelined_data = None;
 
         if raw.is_empty() {
+            self.current_message_truncated = false;
             return None;
         }
 
-        Some((Bytes::from(Self::dot_unstuff(raw)), terminator.is_some()))
+        let is_complete =
+            terminator.is_some() && !std::mem::take(&mut self.current_message_truncated);
+        Some((
+            Bytes::from(Self::dot_unstuff(raw)),
+            terminator.is_some(),
+            is_complete,
+        ))
     }
 
     /// Processclientdata (Command emailContent)
@@ -491,14 +725,7 @@ impl SmtpStateMachine {
         } else if self.data_cmd_pending {
             // DATA sent but 354 not yet received - buffer all client data as email body.
             // This handles the case where DATA and email body arrive in separate TCP packets.
-            match self.pipelined_data {
-                Some(ref mut buf) => {
-                    buf.extend_from_slice(data);
-                }
-                None => {
-                    self.pipelined_data = Some(data.to_vec());
-                }
-            }
+            self.append_pipelined_bytes(data);
             debug!(
                 "SMTP Pipeline: buffered {} bytes while waiting for 354 (total {})",
                 data.len(),
@@ -565,6 +792,7 @@ impl SmtpStateMachine {
                 && line[1].is_ascii_digit()
                 && line[2].is_ascii_digit()
             {
+                self.dialog_lines_observed = self.dialog_lines_observed.saturating_add(1);
                 let code = (line[0] - b'0') as u16 * 100
                     + (line[1] - b'0') as u16 * 10
                     + (line[2] - b'0') as u16;
@@ -577,7 +805,17 @@ impl SmtpStateMachine {
 
                 // UpdateStatus (possibly Authentication Command)
                 if let Some(cmd) = self.handle_response_code(code) {
-                    self.pending_commands.push(cmd);
+                    if self.pending_commands.len() < MAX_PENDING_COMMANDS {
+                        self.pending_commands.push(cmd);
+                    } else if !self.overflow_warned {
+                        // Reuse the one-shot warn flag: both caps signal the
+                        // same abusive-client condition for this session.
+                        self.overflow_warned = true;
+                        warn!(
+                            limit = MAX_PENDING_COMMANDS,
+                            "SMTP session exceeded the pending-command cap — further replayable commands are dropped"
+                        );
+                    }
                 }
 
                 responses.push(SmtpResponse { code, is_final });
@@ -666,7 +904,24 @@ impl SmtpStateMachine {
             }
             354 => {
                 // StartemailInput - StatusConvert!
-                if !self.is_starttls_active {
+                if self.is_starttls_active {
+                    warn!("📨 SMTP: Received 354 But STARTTLS already激活，hopsdata收集");
+                // A 354 is only meaningful as the answer to a DATA command. A
+                // forged/duplicate 354 must not enter DATA mode or clear the
+                // buffered message body (response-injection wipe). Mid-stream
+                // captures are the one exception: the DATA command was missed
+                // together with the SYN, so the first lone 354 is still honored.
+                } else if !self.data_cmd_pending
+                    && !(self.midstream_capture && !self.in_data_mode)
+                {
+                    self.anomaly_count = self.anomaly_count.saturating_add(1);
+                    warn!(
+                        in_data_mode = self.in_data_mode,
+                        buffered_bytes = self.data_buffer.len(),
+                        anomaly_count = self.anomaly_count,
+                        "⚠️ SMTP: Received 354 without pending DATA command; ignoring (possible response injection)"
+                    );
+                } else {
                     self.state = SmtpState::Data;
                     self.in_data_mode = true;
                     self.data_cmd_pending = false;
@@ -680,7 +935,7 @@ impl SmtpStateMachine {
                             self.mail_from,
                             self.rcpt_to
                         );
-                        self.data_buffer.extend_from_slice(&pipelined);
+                        self.append_message_bytes(&pipelined);
                         let completed_cmds = self.flush_completed_data_buffer();
                         if !completed_cmds.is_empty() {
                             self.pending_commands.extend(completed_cmds);
@@ -691,8 +946,6 @@ impl SmtpStateMachine {
                             self.mail_from, self.rcpt_to
                         );
                     }
-                } else {
-                    warn!("📨 SMTP: Received 354 But STARTTLS already激活，hopsdata收集");
                 }
                 None
             }
@@ -774,11 +1027,23 @@ impl SmtpStateMachine {
 
             // Partial line (no trailing \n) - save for next call.
             // Cap at 4KB to prevent unbounded growth from TLS garbage or missing newlines.
+            // An oversized line must NOT be dropped wholesale: the server is still
+            // buffering the same logical line, so the bytes that follow belong to it.
+            // Clearing the buffer let an attacker place a forged command exactly
+            // where parsing resumed (envelope sender forgery). Keep the last 4KB so
+            // the continuation stays glued to the junk tail and can never parse as
+            // a fresh command, and count the anomaly instead.
             if !has_trailing_newline && offset > effective_data.len() {
                 if line.len() <= 4096 {
                     self.cmd_line_buf = line.to_vec();
                 } else {
-                    self.cmd_line_buf.clear(); // oversized - likely TLS garbage, discard
+                    self.anomaly_count = self.anomaly_count.saturating_add(1);
+                    warn!(
+                        anomaly_count = self.anomaly_count,
+                        line_len = line.len(),
+                        "⚠️ SMTP: 命令行超过 4KB 无换行，保留尾部 4KB 继续对齐（防信封归属伪造）"
+                    );
+                    self.cmd_line_buf = line[line.len() - 4096..].to_vec();
                 }
                 break;
             }
@@ -792,6 +1057,11 @@ impl SmtpStateMachine {
             }
 
             if let Some(cmd) = self.parse_single_command(line) {
+                // Structured commands (not unrecognized "Other" lines) count as
+                // legitimate SMTP dialog for the mid-stream TLS heuristic gate.
+                if !matches!(cmd, SmtpCommand::Other(_)) {
+                    self.dialog_lines_observed = self.dialog_lines_observed.saturating_add(1);
+                }
                 // UpdateInternalStatus
                 match &cmd {
                     SmtpCommand::Auth(arg) => {
@@ -806,16 +1076,20 @@ impl SmtpStateMachine {
                     SmtpCommand::MailFrom(email) => {
                         self.mail_from = Some(email.clone());
                         self.rcpt_to.clear();
+                        self.data_buffer.clear();
+                        self.pipelined_data = None;
+                        self.current_message_truncated = false;
                         self.state = SmtpState::MailFrom;
                     }
                     SmtpCommand::RcptTo(email) => {
-                        self.rcpt_to.push(email.clone());
+                        self.retain_recipient(email);
                         self.state = SmtpState::RcptTo;
                     }
                     SmtpCommand::Data => {
                         // SMTP Pipeline: DATA ofdata emailContent, Command
                         // cacheremainingdata,wait 354 Response
                         self.data_cmd_pending = true;
+                        self.current_message_truncated = false;
                         commands.push(cmd);
                         data_cmd_seen = true;
                         break; // Parse line
@@ -837,6 +1111,8 @@ impl SmtpStateMachine {
                         self.bdat_remaining = 0;
                         self.bdat_is_last = false;
                         self.bdat_chunk_start = 0;
+                        self.data_buffer.clear();
+                        self.current_message_truncated = false;
                     }
                     SmtpCommand::Quit => {
                         self.state = SmtpState::Quit;
@@ -856,7 +1132,8 @@ impl SmtpStateMachine {
                     "📧 SMTP Pipeline: DATA 后cache {} Byteemaildata (waitWait 354)",
                     remaining.len()
                 );
-                self.pipelined_data = Some(remaining.to_vec());
+                self.pipelined_data = None;
+                self.append_pipelined_bytes(remaining);
             }
         }
 
@@ -1039,7 +1316,7 @@ impl SmtpStateMachine {
     }
 
     /// Parse Command (Allocate: Use case-insensitive Vec largewrite)
-    fn parse_single_command(&self, line: &[u8]) -> Option<SmtpCommand> {
+    fn parse_single_command(&mut self, line: &[u8]) -> Option<SmtpCommand> {
         // EHLO / HELO (5+ bytes)
         if line.len() >= 5 && line[..5].eq_ignore_ascii_case(b"EHLO ") {
             let arg = std::str::from_utf8(&line[5..]).ok()?.trim().to_string();
@@ -1108,6 +1385,41 @@ impl SmtpStateMachine {
                 }
                 if cmd_part.eq_ignore_ascii_case(b"QUIT") {
                     return Some(SmtpCommand::Quit);
+                }
+            } else {
+                // Lenient-MTA tolerance: some servers accept junk arguments or
+                // padding after DATA / RSET / QUIT and still answer 354 / 221.
+                // Rejecting such a line desyncs us from the server: the 354 is
+                // then refused (no pending DATA) and the whole message body is
+                // parsed as unknown commands — a fully delivered email with
+                // zero detection. Recognize the verb when the tail starts with
+                // whitespace and stays printable ASCII, and count the anomaly.
+                // Binary tails (TLS garbage) and glued verbs (DATAX) stay
+                // `Other`. STARTTLS intentionally remains strict: falsely
+                // marking the stream encrypted blinds capture, which is worse
+                // than mis-parsing a rejected command.
+                let printable_tail = line[4].is_ascii_whitespace()
+                    && line[4..]
+                        .iter()
+                        .all(|b| b.is_ascii_whitespace() || b.is_ascii_graphic());
+                if printable_tail {
+                    let recognized = if cmd_part.eq_ignore_ascii_case(b"DATA") {
+                        Some(SmtpCommand::Data)
+                    } else if cmd_part.eq_ignore_ascii_case(b"RSET") {
+                        Some(SmtpCommand::Reset)
+                    } else if cmd_part.eq_ignore_ascii_case(b"QUIT") {
+                        Some(SmtpCommand::Quit)
+                    } else {
+                        None
+                    };
+                    if let Some(cmd) = recognized {
+                        self.anomaly_count = self.anomaly_count.saturating_add(1);
+                        warn!(
+                            anomaly_count = self.anomaly_count,
+                            "⚠️ SMTP: 短命令携带非法参数（宽容 MTA 仍可能受理），按命令识别并计 anomaly"
+                        );
+                        return Some(cmd);
+                    }
                 }
             }
         }
@@ -1216,6 +1528,16 @@ impl SmtpStateMachine {
 
     /// Getalreadycompleteofemaildata
     pub fn take_completed_emails(&mut self) -> Vec<Bytes> {
+        self.take_completed_messages()
+            .into_iter()
+            .map(|message| message.data)
+            .collect()
+    }
+
+    /// Return completed messages together with their inspection-completeness
+    /// state. Production consumers should use this method instead of dropping
+    /// the truncation signal.
+    pub fn take_completed_messages(&mut self) -> Vec<CompletedSmtpMessage> {
         std::mem::take(&mut self.completed_emails)
     }
 
@@ -1235,6 +1557,7 @@ impl SmtpStateMachine {
         self.in_data_mode = false;
         self.data_cmd_pending = false;
         self.completed_emails.clear();
+        self.current_message_truncated = false;
         self.is_starttls_active = false;
         self.starttls_pending = false;
         self.auth_phase = AuthPhase::None;
@@ -1261,6 +1584,33 @@ impl Default for SmtpStateMachine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn m5_rcpt_to_is_capped_at_ten_thousand_and_counted() {
+        // PoC (M-5): a mirrored client floods RCPT TO to grow retained
+        // session memory unboundedly (≈280MB from ≈30MB on the wire).
+        let mut sm = SmtpStateMachine::new();
+        sm.process_client_data(b"EHLO client.example.com\r\n");
+        sm.process_server_response(b"250 OK\r\n");
+        sm.process_client_data(b"MAIL FROM:<a@example.com>\r\n");
+        for i in 0..(MAX_RCPT_TO + 25) {
+            sm.process_client_data(format!("RCPT TO:<u{i}@example.com>\r\n").as_bytes());
+        }
+        assert_eq!(sm.rcpt_to().len(), MAX_RCPT_TO, "cap must hold");
+        assert_eq!(sm.dropped_rcpt_to(), 25, "dropped entries must be counted");
+    }
+
+    #[test]
+    fn m5_direct_state_update_uses_the_same_recipient_cap() {
+        let mut sm = SmtpStateMachine::new();
+        for i in 0..(MAX_RCPT_TO + 1) {
+            sm.update_state_for_parsed_command(&SmtpCommand::RcptTo(format!(
+                "u{i}@example.com"
+            )));
+        }
+        assert_eq!(sm.rcpt_to().len(), MAX_RCPT_TO);
+        assert_eq!(sm.dropped_rcpt_to(), 1);
+    }
 
     #[test]
     fn test_smtp_flow() {
@@ -1657,11 +2007,92 @@ mod tests {
 
         assert!(sm.take_completed_emails().is_empty());
         assert!(sm.has_pending_data());
-        let (raw, complete) = sm
+        let (raw, had_terminator, complete) = sm
             .take_pending_email_for_close()
             .expect("pending DATA should be recoverable on close");
+        assert!(!had_terminator);
         assert!(!complete);
         assert!(std::str::from_utf8(&raw).unwrap().contains("\n.\nQUIT\n"));
+    }
+
+    #[test]
+    fn test_data_bare_lf_smuggling_variant_splits_hidden_second_message() {
+        // PoC bypass (R3A): legacy MTAs (old Postfix, unpatched Exchange)
+        // accept `<LF>.<CR><LF>` as the end of DATA. The bytes between that
+        // variant and the real `\r\n.\r\n` terminator form a hidden second
+        // message that used to be silently absorbed into the first message's
+        // body, losing all structured analysis. Both segments must surface.
+        let mut sm = SmtpStateMachine::new();
+
+        sm.process_client_data(b"DATA\r\n");
+        sm.process_server_response(b"354 Start mail input\r\n");
+
+        sm.process_client_data(
+            b"Subject: first\r\n\r\nfirst body\n.\r\nSubject: hidden\r\n\r\nhidden payload\r\n.\r\n",
+        );
+
+        let emails = sm.take_completed_emails();
+        assert_eq!(
+            emails.len(),
+            2,
+            "smuggling variant must split the hidden message out"
+        );
+        let first = std::str::from_utf8(&emails[0]).unwrap();
+        let second = std::str::from_utf8(&emails[1]).unwrap();
+        assert!(first.contains("Subject: first"));
+        assert!(first.contains("first body"));
+        assert!(!first.contains("hidden payload"));
+        assert!(second.contains("Subject: hidden"));
+        assert!(second.contains("hidden payload"));
+        assert!(!sm.has_pending_data());
+    }
+
+    #[test]
+    fn test_data_bare_lf_dot_lf_variant_before_real_terminator_also_splits() {
+        // `<LF>.<LF>` variant followed later by the real CRLF terminator:
+        // still a parser differential against lenient downstreams, so split.
+        let mut sm = SmtpStateMachine::new();
+
+        sm.process_client_data(b"DATA\r\n");
+        sm.process_server_response(b"354 Start mail input\r\n");
+        sm.process_client_data(b"body one\n.\nsecond segment\r\n.\r\n");
+
+        let emails = sm.take_completed_emails();
+        assert_eq!(emails.len(), 2);
+        assert_eq!(std::str::from_utf8(&emails[0]).unwrap(), "body one");
+        assert_eq!(std::str::from_utf8(&emails[1]).unwrap(), "second segment");
+    }
+
+    #[test]
+    fn test_normal_crlf_message_is_not_split() {
+        // Guard: an ordinary CRLF-only message must still produce exactly one
+        // completed email (no false-positive smuggling split).
+        let mut sm = SmtpStateMachine::new();
+
+        sm.process_client_data(b"DATA\r\n");
+        sm.process_server_response(b"354 Start mail input\r\n");
+        sm.process_client_data(b"Subject: normal\r\n\r\nline1\r\nline2\r\n.\r\n");
+
+        let emails = sm.take_completed_emails();
+        assert_eq!(emails.len(), 1);
+        let text = std::str::from_utf8(&emails[0]).unwrap();
+        assert!(text.contains("line1\r\nline2"));
+    }
+
+    #[test]
+    fn test_data_buffer_is_bounded_and_marked_incomplete() {
+        let mut sm = SmtpStateMachine::new();
+        sm.in_data_mode = true;
+        sm.append_message_bytes(&vec![b'a'; MAX_DATA_BUFFER_SIZE + 1]);
+
+        assert_eq!(sm.buffered_email_bytes(), MAX_DATA_BUFFER_SIZE);
+        let (raw, had_terminator, complete) = sm
+            .take_pending_email_for_close()
+            .expect("bounded prefix should remain available for analysis");
+
+        assert_eq!(raw.len(), MAX_DATA_BUFFER_SIZE);
+        assert!(!had_terminator);
+        assert!(!complete);
     }
 
     #[test]
@@ -1670,10 +2101,11 @@ mod tests {
 
         sm.process_client_data(b"DATA\r\nSubject: Close Recovery\r\n\r\n..leading dot\r\n.\r\n");
 
-        let (raw, complete) = sm
+        let (raw, had_terminator, complete) = sm
             .take_pending_email_for_close()
             .expect("pending DATA should be recoverable on close");
 
+        assert!(had_terminator);
         assert!(complete);
         assert_eq!(
             std::str::from_utf8(&raw).unwrap(),
@@ -1688,15 +2120,247 @@ mod tests {
 
         sm.process_client_data(b"DATA\r\nSubject: Incomplete\r\n\r\npartial body");
 
-        let (raw, complete) = sm
+        let (raw, had_terminator, complete) = sm
             .take_pending_email_for_close()
             .expect("pipelined DATA should be recoverable on close");
 
+        assert!(!had_terminator);
         assert!(!complete);
         assert_eq!(
             std::str::from_utf8(&raw).unwrap(),
             "Subject: Incomplete\r\n\r\npartial body"
         );
         assert!(!sm.has_pending_data());
+    }
+
+    /// Build a session that completed DATA handshake and entered DATA mode.
+    fn smtp_machine_in_data_mode() -> SmtpStateMachine {
+        let mut sm = SmtpStateMachine::new();
+        sm.process_server_response(b"220 smtp.example.com ESMTP\r\n");
+        sm.process_client_data(b"EHLO client.example.com\r\n");
+        sm.process_server_response(b"250 OK\r\n");
+        sm.process_client_data(b"MAIL FROM:<sender@example.com>\r\n");
+        sm.process_server_response(b"250 OK\r\n");
+        sm.process_client_data(b"RCPT TO:<recipient@example.com>\r\n");
+        sm.process_server_response(b"250 OK\r\n");
+        sm.process_client_data(b"DATA\r\n");
+        sm.process_server_response(b"354 End data with <CR><LF>.<CR><LF>\r\n");
+        assert!(sm.is_in_data_mode());
+        sm
+    }
+
+    #[test]
+    fn test_forged_second_354_does_not_wipe_buffered_body() {
+        let mut sm = smtp_machine_in_data_mode();
+
+        // 4 KB of message prefix already buffered when the forged 354 arrives.
+        let prefix = vec![b'X'; 4096];
+        let mut body = prefix.clone();
+        body.extend_from_slice(b"\r\nSubject: payment instruction\r\n\r\nfirst half\r\n");
+        sm.process_client_data(&body);
+
+        // Injected server response: previously this cleared data_buffer.
+        sm.process_server_response(b"354 injected by on-path attacker\r\n");
+        assert_eq!(sm.anomaly_count(), 1, "forged 354 must be counted");
+        assert!(sm.is_in_data_mode(), "forged 354 must not leave DATA mode");
+
+        sm.process_client_data(b"second half\r\n.\r\n");
+        let messages = sm.take_completed_messages();
+        assert_eq!(messages.len(), 1);
+        let data = &messages[0].data;
+        assert!(
+            data.len() >= 4096,
+            "buffered prefix must survive the forged 354"
+        );
+        assert_eq!(&data[..4096], &prefix[..]);
+        let text = std::str::from_utf8(data).unwrap();
+        assert!(text.contains("Subject: payment instruction"));
+        assert!(text.contains("first half"));
+        assert!(text.contains("second half"));
+    }
+
+    #[test]
+    fn test_unsolicited_354_without_data_command_is_ignored() {
+        let mut sm = SmtpStateMachine::new();
+        sm.process_server_response(b"220 smtp.example.com ESMTP\r\n");
+        sm.process_client_data(b"EHLO client.example.com\r\n");
+        sm.process_server_response(b"250 OK\r\n");
+
+        // 354 without any DATA command: must not enter DATA mode.
+        sm.process_server_response(b"354 Go ahead\r\n");
+        assert!(!sm.is_in_data_mode());
+        assert_eq!(sm.anomaly_count(), 1);
+
+        // A subsequent real DATA flow still works.
+        sm.process_client_data(b"MAIL FROM:<sender@example.com>\r\n");
+        sm.process_server_response(b"250 OK\r\n");
+        sm.process_client_data(b"RCPT TO:<recipient@example.com>\r\n");
+        sm.process_server_response(b"250 OK\r\n");
+        sm.process_client_data(b"DATA\r\n");
+        sm.process_server_response(b"354 End data with <CR><LF>.<CR><LF>\r\n");
+        assert!(sm.is_in_data_mode());
+        sm.process_client_data(b"Subject: legit\r\n\r\nbody\r\n.\r\n");
+        let messages = sm.take_completed_messages();
+        assert_eq!(messages.len(), 1);
+        assert!(String::from_utf8_lossy(&messages[0].data).contains("Subject: legit"));
+    }
+
+    #[test]
+    fn test_midstream_capture_honors_first_lone_354_but_not_second() {
+        let mut sm = SmtpStateMachine::new();
+        sm.set_midstream_capture(true);
+
+        // Capture started after DATA was sent: the lone 354 is honored once.
+        sm.process_server_response(b"354 End data with <CR><LF>.<CR><LF>\r\n");
+        assert!(sm.is_in_data_mode());
+        assert_eq!(sm.anomaly_count(), 0);
+
+        // A second 354 mid-DATA is still an anomaly and keeps the buffer.
+        sm.process_client_data(b"Subject: midstream\r\n\r\npartial");
+        sm.process_server_response(b"354 forged\r\n");
+        assert_eq!(sm.anomaly_count(), 1);
+        assert!(sm.is_in_data_mode());
+
+        sm.process_client_data(b" rest\r\n.\r\n");
+        let messages = sm.take_completed_messages();
+        assert_eq!(messages.len(), 1);
+        let text = String::from_utf8_lossy(&messages[0].data).into_owned();
+        assert!(text.contains("Subject: midstream"));
+        assert!(text.contains("partial"));
+    }
+
+    #[test]
+    fn test_empty_data_terminator_at_buffer_start_completes() {
+        let mut sm = smtp_machine_in_data_mode();
+
+        // Client immediately terminates DATA with an empty message: the buffer
+        // starts with ".\r\n" and the regular "\r\n.\r\n" search never matches.
+        let cmds = sm.process_client_data(b".\r\n");
+        assert!(
+            !sm.is_in_data_mode(),
+            "empty DATA must not stick the session in data mode"
+        );
+        assert!(cmds.iter().any(|c| matches!(c, SmtpCommand::DataEnd)));
+        assert!(
+            sm.take_completed_messages().is_empty(),
+            "empty DATA must not fabricate an empty email"
+        );
+
+        // The connection stays usable: a following message parses normally.
+        sm.process_server_response(b"250 OK\r\n");
+        sm.process_client_data(b"MAIL FROM:<second@example.com>\r\n");
+        sm.process_server_response(b"250 OK\r\n");
+        sm.process_client_data(b"RCPT TO:<recipient@example.com>\r\n");
+        sm.process_server_response(b"250 OK\r\n");
+        sm.process_client_data(b"DATA\r\n");
+        sm.process_server_response(b"354 End data with <CR><LF>.<CR><LF>\r\n");
+        sm.process_client_data(b"Subject: second message\r\n\r\nreal body\r\n.\r\n");
+        let messages = sm.take_completed_messages();
+        assert_eq!(messages.len(), 1);
+        assert!(String::from_utf8_lossy(&messages[0].data).contains("Subject: second message"));
+    }
+
+    #[test]
+    fn test_normal_data_terminator_after_empty_line_still_works() {
+        // Regression guard: a message ending with an empty line then "." must
+        // still complete via the regular "\r\n.\r\n" path.
+        let mut sm = smtp_machine_in_data_mode();
+        sm.process_client_data(b"Subject: normal\r\n\r\nbody line\r\n.\r\n");
+        let messages = sm.take_completed_messages();
+        assert_eq!(messages.len(), 1);
+        assert!(String::from_utf8_lossy(&messages[0].data).contains("body line"));
+    }
+
+    #[test]
+    fn test_data_with_trailing_whitespace_enters_data_mode() {
+        // Guard: `DATA` followed by whitespace-only padding was already
+        // accepted; keep it that way and make sure the message flows.
+        let mut sm = SmtpStateMachine::new();
+        sm.process_client_data(b"MAIL FROM:<sender@example.com>\r\n");
+        sm.process_client_data(b"RCPT TO:<rcpt@example.com>\r\n");
+        let cmds = sm.process_client_data(b"DATA \t\r\n");
+        assert!(cmds.iter().any(|c| matches!(c, SmtpCommand::Data)));
+        assert_eq!(sm.anomaly_count(), 0, "whitespace padding is not an anomaly");
+        sm.process_server_response(b"354 End data with <CR><LF>.<CR><LF>\r\n");
+        assert!(sm.is_in_data_mode());
+        sm.process_client_data(b"Subject: padded\r\n\r\nbody\r\n.\r\n");
+        let emails = sm.take_completed_emails();
+        assert_eq!(emails.len(), 1);
+        assert!(String::from_utf8_lossy(&emails[0]).contains("Subject: padded"));
+    }
+
+    #[test]
+    fn test_data_with_lenient_arguments_still_enters_data_mode_with_anomaly() {
+        // PoC bypass (R5-F1): lenient MTAs accept `DATA x` and answer 354, but
+        // the sniffer used to classify the line as `Other`, so the 354 was
+        // refused (no pending DATA) and the entire message body was parsed as
+        // unknown commands — a fully delivered phishing email with zero
+        // engine contact. The verb must be recognized and the anomaly counted.
+        let mut sm = SmtpStateMachine::new();
+        sm.process_client_data(b"MAIL FROM:<phish@evil.example>\r\n");
+        sm.process_client_data(b"RCPT TO:<victim@corp.example>\r\n");
+        let cmds = sm.process_client_data(b"DATA 1\r\n");
+        assert!(
+            cmds.iter().any(|c| matches!(c, SmtpCommand::Data)),
+            "lenient `DATA <arg>` must be recognized as DATA"
+        );
+        assert!(
+            sm.anomaly_count() >= 1,
+            "argument-bearing DATA must be counted as anomaly"
+        );
+
+        sm.process_server_response(b"354 End data with <CR><LF>.<CR><LF>\r\n");
+        assert!(sm.is_in_data_mode(), "354 after lenient DATA must be honored");
+        sm.process_client_data(
+            b"Subject: your account will be suspended\r\n\r\nverify now\r\n.\r\n",
+        );
+        let emails = sm.take_completed_emails();
+        assert_eq!(emails.len(), 1, "message must reach the engine");
+        let text = String::from_utf8_lossy(&emails[0]);
+        assert!(text.contains("your account will be suspended"));
+        assert!(text.contains("verify now"));
+    }
+
+    #[test]
+    fn test_short_command_with_binary_tail_is_not_recognized() {
+        // Guard: the lenient tail must stay printable — TLS-record bytes after
+        // a DATA-looking prefix must keep falling into `Other`.
+        let mut sm = SmtpStateMachine::new();
+        let cmds = sm.process_client_data(b"DATA \x16\x03\x01\r\nDATAX\r\n");
+        assert!(cmds.iter().all(|c| matches!(c, SmtpCommand::Other(_))));
+        assert!(!sm.has_pending_data());
+    }
+
+    #[test]
+    fn test_oversized_command_line_keeps_tail_alignment_and_blocks_forged_envelope() {
+        // PoC bypass (R5-F1): a >4KB partial command line used to be dropped
+        // wholesale while the server kept buffering the same logical line. The
+        // attacker placed a forged `MAIL FROM` exactly where the sniffer
+        // resumed, so the sniffer attributed the session to a sender the
+        // server never saw as a command. The tail must now stay glued.
+        let mut sm = SmtpStateMachine::new();
+
+        let mut junk = b"MAIL FROM:<real-sender@attacker.example> ".to_vec();
+        junk.extend_from_slice(&[b'A'; 4080]); // one logical line, >4KB, no newline yet
+        let first = sm.process_client_data(&junk);
+        assert!(first.is_empty(), "incomplete line must not emit commands");
+        assert!(
+            sm.anomaly_count() >= 1,
+            "oversized line retention must be counted as anomaly"
+        );
+
+        // Same logical line continues; the forged command must merge with the
+        // retained junk tail and never parse as a standalone envelope command.
+        let second = sm.process_client_data(b"MAIL FROM:<forged@attacker.example>\r\nQUIT\r\n");
+        assert!(
+            !second.iter().any(|c| matches!(c, SmtpCommand::MailFrom(_))),
+            "forged MAIL FROM inside the oversized line must not be parsed"
+        );
+        assert!(
+            sm.mail_from().is_none(),
+            "no envelope sender may be fabricated from mid-line bytes"
+        );
+        // The session realigns once the logical line finally terminates.
+        assert!(second.iter().any(|c| matches!(c, SmtpCommand::Quit)));
     }
 }

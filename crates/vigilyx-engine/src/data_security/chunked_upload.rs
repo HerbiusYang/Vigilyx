@@ -24,10 +24,13 @@ const CHUNK_TIMEOUT: Duration = Duration::from_secs(120);
 const ABSOLUTE_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// largeConcurrenttracing
-const MAX_PENDING_UPLOADS: usize = 200;
+const MAX_PENDING_UPLOADS: usize = 16;
 
 /// File largereassemblesize (50 MB)
 const MAX_REASSEMBLED_SIZE: usize = 50 * 1024 * 1024;
+
+/// Global in-memory budget across all active uploads (256 MiB).
+const MAX_PENDING_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Coremail ChunkedUpload URL mode
 const UPLOAD_JSP_PATTERNS: &[&str] = &["upload.jsp", "/upload?"];
@@ -73,12 +76,14 @@ pub struct CompletedUpload {
 /// Coremail ChunkedUploadtracinghandler
 pub struct ChunkedUploadTracker {
     pending: HashMap<ChunkKey, PendingUpload>,
+    pending_bytes: u64,
 }
 
 impl ChunkedUploadTracker {
     pub fn new() -> Self {
         Self {
             pending: HashMap::with_capacity(64),
+            pending_bytes: 0,
         }
     }
 
@@ -158,6 +163,25 @@ impl ChunkedUploadTracker {
             return;
         }
 
+        let replaced_len = self
+            .pending
+            .get(&key)
+            .and_then(|upload| upload.chunks.get(&params.offset))
+            .map(|chunk| chunk.len() as u64)
+            .unwrap_or(0);
+        let projected_pending_bytes = self
+            .pending_bytes
+            .saturating_sub(replaced_len)
+            .saturating_add(body_data.len() as u64);
+        if projected_pending_bytes > MAX_PENDING_BYTES {
+            warn!(
+                pending_bytes = self.pending_bytes,
+                limit_bytes = MAX_PENDING_BYTES,
+                "Chunked upload global memory budget exhausted; dropping chunk"
+            );
+            return;
+        }
+
         let now = Instant::now();
 
         let entry = self.pending.entry(key).or_insert_with(|| PendingUpload {
@@ -170,7 +194,11 @@ impl ChunkedUploadTracker {
         });
 
         // sizelimit
-        if entry.total_size + body_data.len() as u64 > MAX_REASSEMBLED_SIZE as u64 {
+        let projected_upload_size = entry
+            .total_size
+            .saturating_sub(replaced_len)
+            .saturating_add(body_data.len() as u64);
+        if projected_upload_size > MAX_REASSEMBLED_SIZE as u64 {
             warn!(
                 "Chunked upload exceeds {} MB limit, dropping subsequent chunks",
                 MAX_REASSEMBLED_SIZE / 1024 / 1024
@@ -178,8 +206,11 @@ impl ChunkedUploadTracker {
             return;
         }
 
-        entry.total_size += body_data.len() as u64;
-        entry.chunk_count += 1;
+        entry.total_size = projected_upload_size;
+        self.pending_bytes = projected_pending_bytes;
+        if replaced_len == 0 {
+            entry.chunk_count += 1;
+        }
         entry.last_chunk_at = now;
         entry.chunks.insert(params.offset, body_data);
 
@@ -210,6 +241,7 @@ impl ChunkedUploadTracker {
 
         for key in to_remove {
             if let Some(upload) = self.pending.remove(&key) {
+                self.pending_bytes = self.pending_bytes.saturating_sub(upload.total_size);
                 if upload.chunk_count == 0 {
                     continue;
                 }
@@ -385,7 +417,7 @@ mod tests {
         tracker.ingest(&s0, &p0);
 
         // SetTimeout
-        for (_, upload) in tracker.pending.iter_mut() {
+        for upload in tracker.pending.values_mut() {
             upload.last_chunk_at = Instant::now() - CHUNK_TIMEOUT - Duration::from_secs(1);
         }
 

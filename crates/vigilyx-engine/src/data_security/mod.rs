@@ -18,6 +18,7 @@ pub mod engine;
 pub mod file_transit_detect;
 pub mod jrt;
 pub mod jrt_compliance;
+pub mod redact;
 pub mod self_send_detect;
 pub mod time_policy;
 pub mod volume_anomaly;

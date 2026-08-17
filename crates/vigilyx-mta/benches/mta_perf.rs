@@ -29,6 +29,7 @@ fn test_config() -> Arc<MtaConfig> {
         trusted_upstream_cidrs: Vec::new(),
         inline_timeout_secs: 8,
         fail_open: true,
+        require_starttls: false,
         quarantine_threshold: ThreatLevel::Medium,
         reject_threshold: ThreatLevel::Critical,
         max_message_size: 1024 * 1024,

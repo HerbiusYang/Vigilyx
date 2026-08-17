@@ -5,17 +5,75 @@ use super::*;
 
 impl ShardedSessionManager {
     /// sid -> user Mapping (Update LRU timestamp + add Redis write buffer)
+    ///
+    /// F3①: the sid->user mapping is learned from client-controlled request
+    /// bodies, so a forged compose request could rewrite another user's sid
+    /// binding. An existing mapping with a *different* user is kept, the
+    /// overwrite is refused, and the conflict is counted/logged. The
+    /// conflicting pair is NOT pushed to the Redis write buffer either.
     pub(super) fn sid_user_insert(&self, sid: String, user: String) {
-        self.sid_to_user.insert(
-            sid.clone(),
-            SidUserEntry {
-                user: user.clone(),
-                last_access: std::time::Instant::now(),
-            },
-        );
+        if let Some(mut existing) = self.sid_to_user.get_mut(&sid) {
+            existing.last_access = std::time::Instant::now();
+            if !existing.user.eq_ignore_ascii_case(&user) {
+                self.stats
+                    .security
+                    .sid_user_conflict_total
+                    .fetch_add(1, Ordering::Relaxed);
+                warn!(
+                    sid = %sid,
+                    existing_user = %existing.user,
+                    attempted_user = %user,
+                    "sid->user conflict: refusing to overwrite existing mapping (possible attribution spoofing)"
+                );
+                return;
+            }
+            // Same user: fall through to re-push so the Redis copy's TTL is
+            // refreshed while the mapping stays actively used.
+        } else {
+            self.sid_to_user.insert(
+                sid.clone(),
+                SidUserEntry {
+                    user: user.clone(),
+                    last_access: std::time::Instant::now(),
+                },
+            );
+        }
         if let Ok(mut pending) = self.sid_user_pending.lock() {
             pending.push((sid, user));
         }
+    }
+
+    /// F3③: track the last user attributed to a client IP. A different user
+    /// from the same IP is counted and logged as an anomaly; the first
+    /// mapping is kept (first-seen wins, like sid mappings).
+    pub(super) fn note_client_ip_user(&self, ip: CompactIp, user: &str) {
+        const MAX_ENTRIES: usize = 50_000;
+        if let Some(mut existing) = self.client_ip_users.get_mut(&ip) {
+            existing.last_access = std::time::Instant::now();
+            if !existing.user.eq_ignore_ascii_case(user) {
+                self.stats
+                    .security
+                    .client_ip_multi_user_total
+                    .fetch_add(1, Ordering::Relaxed);
+                warn!(
+                    client_ip = %ip,
+                    bound_user = %existing.user,
+                    reported_user = %user,
+                    "client_ip_multi_user: same client IP reported a different webmail user"
+                );
+            }
+            return;
+        }
+        if self.client_ip_users.len() >= MAX_ENTRIES {
+            return;
+        }
+        self.client_ip_users.insert(
+            ip,
+            SidUserEntry {
+                user: user.to_string(),
+                last_access: std::time::Instant::now(),
+            },
+        );
     }
 
     /// lookup sid -> user Mapping (Update LRU timestamp)

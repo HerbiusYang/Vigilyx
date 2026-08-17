@@ -73,7 +73,13 @@ pub fn ewma_update(state: &mut DualEwmaState, value: f64, params: &EwmaParams) -
     let drift_score =
         (state.fast_value - state.slow_value).abs() / state.slow_value.abs().max(params.epsilon);
 
-    let drifting = drift_score > params.drift_threshold && state.observation_count > 20;
+    // Domain-level baselines aggregate mailboxes, so waiting for 20 samples
+    // per exact sender made slow BEC/rotating-address attacks effectively
+    // invisible.  Six observations is enough to establish a stable short
+    // baseline while still requiring persistence beyond a single spike.
+    const MIN_DRIFT_OBSERVATIONS: u64 = 6;
+    let drifting = drift_score > params.drift_threshold
+        && state.observation_count >= MIN_DRIFT_OBSERVATIONS;
 
     EwmaResult {
         fast: state.fast_value,

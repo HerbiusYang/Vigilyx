@@ -4,9 +4,10 @@ use axum::{Json, extract::State, response::IntoResponse};
 use std::sync::Arc;
 
 use super::super::ApiResponse;
-use super::publish_sniffer_reload;
+use super::{publish_engine_reload, publish_sniffer_reload};
 use crate::AppState;
 use crate::auth::AuthenticatedUser;
+use vigilyx_engine::data_security::time_policy::TimePolicyConfig;
 
 // Sniffer Data securityConfiguration
 
@@ -98,12 +99,12 @@ fn default_sniffer_config() -> serde_json::Value {
 /// GetData securitytime Configuration
 pub async fn get_time_policy_config(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     match state.engine_db.get_time_policy_config().await {
-        Ok(Some(json)) => match serde_json::from_str::<serde_json::Value>(&json) {
-            Ok(val) => ApiResponse::ok(val),
+        Ok(Some(json)) => match parse_time_policy_json(&json) {
+            Ok(config) => ApiResponse::ok(config),
             Err(_) => ApiResponse::ok(default_time_policy_config()),
         },
         Ok(None) => ApiResponse::ok(default_time_policy_config()),
-        Err(e) => ApiResponse::<serde_json::Value>::internal_err(&e, "Operation failed"),
+        Err(e) => ApiResponse::<TimePolicyConfig>::internal_err(&e, "Operation failed"),
     }
 }
 
@@ -113,44 +114,12 @@ pub async fn update_time_policy_config(
     user: AuthenticatedUser,
     Json(config): Json<serde_json::Value>,
 ) -> axum::response::Response {
-    // verify work_hour_start
-    if let Some(start) = config.get("work_hour_start").and_then(|v| v.as_u64())
-        && start > 23
-    {
-        return ApiResponse::<serde_json::Value>::bad_request("work_hour_start 必须在 0-23 之间")
-            .into_response();
-    }
-    // verify work_hour_end
-    if let Some(end) = config.get("work_hour_end").and_then(|v| v.as_u64())
-        && (end > 24 || end == 0)
-    {
-        return ApiResponse::<serde_json::Value>::bad_request("work_hour_end 必须在 1-24 之间")
-            .into_response();
-    }
-    // verify start <end
-    let start = config
-        .get("work_hour_start")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(8);
-    let end = config
-        .get("work_hour_end")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(18);
-    if start >= end {
-        return ApiResponse::<serde_json::Value>::bad_request(
-            "work_hour_start 必须小于 work_hour_end",
-        )
-        .into_response();
-    }
-    // verify utc_offset_hours
-    if let Some(offset) = config.get("utc_offset_hours").and_then(|v| v.as_i64())
-        && !(-12..=14).contains(&offset)
-    {
-        return ApiResponse::<serde_json::Value>::bad_request(
-            "utc_offset_hours 必须在 -12 到 +14 之间",
-        )
-        .into_response();
-    }
+    let config = match parse_time_policy_config(config) {
+        Ok(config) => config,
+        Err(error) => {
+            return ApiResponse::<serde_json::Value>::bad_request(error).into_response();
+        }
+    };
 
     let json_str = match serde_json::to_string(&config) {
         Ok(s) => s,
@@ -161,6 +130,7 @@ pub async fn update_time_policy_config(
     };
     match state.engine_db.set_time_policy_config(&json_str).await {
         Ok(()) => {
+            publish_engine_reload(&state, "time_policy").await;
             // log
             let db = state.engine_db.clone();
             let username = user.username.clone();
@@ -187,12 +157,50 @@ pub async fn update_time_policy_config(
     }
 }
 
-fn default_time_policy_config() -> serde_json::Value {
-    serde_json::json!({
-        "enabled": true,
-        "work_hour_start": 8,
-        "work_hour_end": 18,
-        "utc_offset_hours": 8,
-        "weekend_is_off_hours": true
-    })
+fn parse_time_policy_config(config: serde_json::Value) -> Result<TimePolicyConfig, String> {
+    let config: TimePolicyConfig =
+        serde_json::from_value(config).map_err(|e| format!("Invalid time policy config: {e}"))?;
+    config.validate()?;
+    Ok(config)
+}
+
+fn parse_time_policy_json(json: &str) -> Result<TimePolicyConfig, String> {
+    let config: TimePolicyConfig =
+        serde_json::from_str(json).map_err(|e| format!("Invalid time policy config: {e}"))?;
+    config.validate()?;
+    Ok(config)
+}
+
+fn default_time_policy_config() -> TimePolicyConfig {
+    TimePolicyConfig::default()
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::parse_time_policy_config;
+
+    #[test]
+    fn accepts_half_hour_utc_offset() {
+        let config = parse_time_policy_config(json!({
+            "enabled": true,
+            "work_hour_start": 8,
+            "work_hour_end": 18,
+            "utc_offset_hours": 5.5,
+            "weekend_is_off_hours": true
+        }))
+        .expect("UTC+5:30 should be accepted");
+
+        assert_eq!(config.utc_offset_hours, 5.5);
+    }
+
+    #[test]
+    fn rejects_non_quarter_hour_utc_offset() {
+        let result = parse_time_policy_config(json!({
+            "utc_offset_hours": 5.1
+        }));
+
+        assert!(result.is_err());
+    }
 }

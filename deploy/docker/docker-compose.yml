@@ -53,10 +53,9 @@ services:
 
   # -- PostgreSQL database --
   postgres:
-    # SECURITY: Pin to specific patch version to avoid silent CVE regressions.
-    # Review and bump periodically. For maximum reproducibility, pin to digest:
-    #   image: postgres@sha256:<digest>
-    image: postgres:17.9-alpine
+    # SECURITY: Pinned to an immutable digest (tag kept for readability).
+    # Review and bump periodically: re-resolve the digest when bumping the tag.
+    image: postgres:17.11-alpine@sha256:5d61573b31c206ae538c85893edeb6e320e1a9ffd838f0c9dca927fb6f765fa4
     container_name: vigilyx-postgres
     ports:
       - "127.0.0.1:${PG_PORT:-5433}:5432"
@@ -87,17 +86,21 @@ services:
 
   # -- Valkey message bus (Redis 7.4+ switched to the non-open RSALv2/SSPLv1 license, so it was replaced with BSD-3-Clause Valkey) --
   redis:
-    # SECURITY: Pin to specific patch version. Review and bump periodically.
-    image: valkey/valkey:8.0.2-alpine
+    # SECURITY: Pinned to an immutable digest (tag kept for readability).
+    # Review and bump periodically: re-resolve the digest when bumping the tag.
+    image: valkey/valkey:8.1.9-alpine@sha256:a038175878d66b9d274fbf8be73c0305e93798b83917647f167e18cef3c71eec
     container_name: vigilyx-redis
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
+      # Entrypoint renders /tmp/valkey.conf from REDIS_PASSWORD and execs the
+      # server with it, keeping the password out of the process command line
+      - ./valkey-entrypoint.sh:/usr/local/bin/valkey-entrypoint.sh:ro
     environment:
       - TZ=${SERVER_TIMEZONE:-Asia/Shanghai}
       - REDIS_PASSWORD=${REDIS_PASSWORD:?请在 .env 中设置 REDIS_PASSWORD}
-    command: valkey-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD}
+    command: ["/usr/local/bin/valkey-entrypoint.sh"]
     healthcheck:
       # Pass the password via env vars so the -a flag does not expose it in ps/docker inspect
       test: ["CMD-SHELL", "REDISCLI_AUTH=$$REDIS_PASSWORD valkey-cli ping"]
@@ -120,7 +123,10 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - vigilyx_data:/app/data
+      # Read-only host network counters. /sys/class/net entries are relative
+      # symlinks, so their /sys/devices targets must be mounted as well.
       - /sys/class/net:/host/sys/class/net:ro
+      - /sys/devices:/host/sys/devices:ro
       # Docker is accessed through the proxy instead of mounting the raw socket directly (reduces RCE risk)
     environment:
       - TZ=${SERVER_TIMEZONE:-Asia/Shanghai}
@@ -134,6 +140,8 @@ services:
       # Trusted reverse proxies (defaults already cover host Caddy/Nginx and the built-in Compose Caddy)
       - TRUSTED_PROXY_IPS=${TRUSTED_PROXY_IPS:-127.0.0.1,::1}
       - TRUSTED_PROXY_HOSTS=${TRUSTED_PROXY_HOSTS:-localhost,host.docker.internal,caddy,vigilyx-caddy}
+      # Exact internal API source networks; do not trust all RFC1918 space.
+      - INTERNAL_API_SOURCE_CIDRS=${INTERNAL_API_SOURCE_CIDRS:-127.0.0.1/32,::1/128,172.30.250.0/24}
       # Internal inter-service auth token (sniffer/engine -> API)
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?请在 .env 中设置 INTERNAL_API_TOKEN}
       # Dedicated internal auth token for the AI service (API/engine -> AI); must differ from INTERNAL_API_TOKEN
@@ -144,6 +152,10 @@ services:
       - AI_SERVICE_URL=http://ai:8900
       - AI_ENABLED=${AI_ENABLED:-false}
       - CLAMAV_ENABLED=${CLAMAV_ENABLED:-false}
+      # Immutable governed YARA generation (empty keeps built-ins only).
+      - YARA_PACK_MANIFEST=${YARA_PACK_MANIFEST:-}
+      - YARA_PACK_MIN_RULES=${YARA_PACK_MIN_RULES:-0}
+      - ENGINE_MAX_CONCURRENT_EMAILS=${ENGINE_MAX_CONCURRENT_EMAILS:-}
       # Inbound mail-server IPs (comma-separated): once configured, the engine analyzes only sessions delivered to these IPs,
       # skipping intermediate forwarding hops. If unset, it analyzes all sessions.
       - INBOUND_MAIL_SERVERS=${INBOUND_MAIL_SERVERS:-}
@@ -163,9 +175,12 @@ services:
       # 主 vigilyx 容器默认只跑 API 进程。STANDALONE_ENGINE 保留是为了向后兼容旧 .env；未设置 / 设为 false
       # 都走正式拓扑。设为 true 会激活历史双进程模式（待阶段 3 彻底移除）。
       - STANDALONE_ENGINE=${STANDALONE_ENGINE:-false}
+      # Quarantine release: wait budget for the mandatory pre-release rescan verdict
+      # (decoupled from MTA_INLINE_TIMEOUT_SECS; the full pipeline can spend ~8s on NLP alone)
+      - RELEASE_RESCAN_TIMEOUT_SECS=${RELEASE_RESCAN_TIMEOUT_SECS:-30}
       # Prevent internal service requests from going through a proxy (ai/clamav/sandbox containers connect directly over the Docker network)
       - no_proxy=localhost,127.0.0.1,redis,ai,postgres,clamav,sandbox
-      - NO_PROXY=localhost,127.0.0.1,redis,ai,postgres,clamav
+      - NO_PROXY=localhost,127.0.0.1,redis,ai,postgres,clamav,sandbox
     depends_on:
       postgres:
         condition: service_healthy
@@ -200,6 +215,8 @@ services:
       # Internal inter-service auth token (must match the vigilyx container)
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?请在 .env 中设置 INTERNAL_API_TOKEN}
       - SNIFFER_CAPTURE_BUFFER_MB=${SNIFFER_CAPTURE_BUFFER_MB:-256}
+      # Optional: token handshake for --remote-listen pcap ingestion (R5 F7)
+      - REMOTE_LISTEN_TOKEN=${REMOTE_LISTEN_TOKEN:-}
       - SNIFFER_WORKERS=${SNIFFER_WORKERS:-16}
       - SMTP_PORTS=${SMTP_PORTS:-25,465,587,2525,2526}
       - POP3_PORTS=${POP3_PORTS:-110,995}
@@ -223,8 +240,10 @@ services:
     ports:
       - "127.0.0.1:8900:8900"
     volumes:
-      # Shared data volume: fine-tuned models are stored in data/nlp_models/
       - vigilyx_data:/app/data
+      # Fine-tuned models live in a dedicated volume (not shared with other services).
+      # Mounted after vigilyx_data so the subpath mount takes precedence.
+      - vigilyx_models:/app/data/nlp_models
       # HuggingFace model cache (persisted to avoid repeated downloads)
       - hf_cache:/app/.hf_cache
     environment:
@@ -235,6 +254,11 @@ services:
       - PYTHONUNBUFFERED=1
       # SEC-H07: internal AI-service auth token (shared only with components that call AI; do not reuse INTERNAL_API_TOKEN)
       - AI_INTERNAL_TOKEN=${AI_INTERNAL_TOKEN:?请在 .env 中设置 AI_INTERNAL_TOKEN}
+      # LLM second-opinion limits (must stay under the engine's 8s NLP budget)
+      - LLM_TIMEOUT_SECS=${LLM_TIMEOUT_SECS:-5}
+      - LLM_MAX_CONCURRENCY=${LLM_MAX_CONCURRENCY:-2}
+      - LLM_RATE_LIMIT_PER_MINUTE=${LLM_RATE_LIMIT_PER_MINUTE:-2}
+      - LLM_GLOBAL_RATE_LIMIT_PER_MINUTE=${LLM_GLOBAL_RATE_LIMIT_PER_MINUTE:-20}
     depends_on:
       redis:
         condition: service_healthy
@@ -264,6 +288,10 @@ services:
       - AI_SERVICE_URL=http://ai:8900
       - AI_ENABLED=${AI_ENABLED:-false}
       - CLAMAV_ENABLED=${CLAMAV_ENABLED:-false}
+      # Immutable governed YARA generation (empty keeps built-ins only).
+      - YARA_PACK_MANIFEST=${YARA_PACK_MANIFEST:-}
+      - YARA_PACK_MIN_RULES=${YARA_PACK_MIN_RULES:-0}
+      - ENGINE_MAX_CONCURRENT_EMAILS=${ENGINE_MAX_CONCURRENT_EMAILS:-}
       # Inter-service auth tokens (must match the main vigilyx container)
       - AI_INTERNAL_TOKEN=${AI_INTERNAL_TOKEN:?请在 .env 中设置 AI_INTERNAL_TOKEN}
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?请在 .env 中设置 INTERNAL_API_TOKEN}
@@ -278,7 +306,7 @@ services:
       - SANDBOX_TIMEOUT_SECS=${SANDBOX_TIMEOUT_SECS:-300}
       # Prevent internal service requests from going through a proxy
       - no_proxy=localhost,127.0.0.1,redis,ai,postgres,clamav,sandbox
-      - NO_PROXY=localhost,127.0.0.1,redis,ai,postgres,clamav
+      - NO_PROXY=localhost,127.0.0.1,redis,ai,postgres,clamav,sandbox
     healthcheck:
       # Engine writes data/engine-status.json every 5s; check file was modified within last 30s
       test: ["CMD-SHELL", "[ -f /app/data/engine-status.json ] && [ $$(( $$(date +%s) - $$(stat -c %Y /app/data/engine-status.json) )) -lt 30 ]"]
@@ -299,8 +327,8 @@ services:
   # Enable with: docker compose --profile antivirus up -d
   # First startup needs 2-5 minutes to download virus signatures (~350MB)
   clamav:
-    # SECURITY: Pin to specific patch version. Review and bump periodically.
-    image: clamav/clamav:1.4.2
+    # SECURITY: immutable upstream base image; review and bump periodically.
+    image: clamav/clamav:1.5.4_base@sha256:a3c78b2f808ea797f842c6bca1c5f0a54a3d1182ab2efac1884510f667e44f56
     container_name: vigilyx-clamav
     ports:
       - "127.0.0.1:3310:3310"
@@ -382,9 +410,9 @@ services:
   # Note: once Caddy is enabled, access happens via 443 (HTTPS) or 80 (auto-redirect),
   #       while port 8088 can still reach the API directly for internal debugging/sniffer use.
   caddy:
-    # SECURITY: Pin to minor version. Review and bump periodically.
-    # TODO: Lock to SHA256 digest once the deployment environment can pull and verify.
-    image: caddy:2.9-alpine
+    # SECURITY: Pinned to an immutable digest (tag kept for readability).
+    # Review and bump periodically: re-resolve the digest when bumping the tag.
+    image: caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
     container_name: vigilyx-caddy
     ports:
       - "80:80"
@@ -447,17 +475,26 @@ services:
       - MTA_HOSTNAME=${MTA_HOSTNAME:-vigilyx-mta}
       - MTA_INLINE_TIMEOUT_SECS=${MTA_INLINE_TIMEOUT_SECS:-8}
       - MTA_FAIL_OPEN=${MTA_FAIL_OPEN:-false}
+      - MTA_REQUIRE_STARTTLS=${MTA_REQUIRE_STARTTLS:-true}
       - MTA_MAX_CONNECTIONS=${MTA_MAX_CONNECTIONS:-100}
+      - MTA_MAX_RECIPIENTS=${MTA_MAX_RECIPIENTS:-50}
+      # API status reporting target (inline verdict metrics heartbeat)
+      - MTA_API_HOST=${MTA_API_HOST:-vigilyx}
+      - MTA_API_PORT=${MTA_API_PORT:-8088}
       # AI service (optional)
       - AI_SERVICE_URL=${AI_SERVICE_URL:-http://ai:8900}
       - AI_ENABLED=${AI_ENABLED:-false}
+      # MTA embeds the same engine and consumes the same read-only pack path.
+      - YARA_PACK_MANIFEST=${YARA_PACK_MANIFEST:-}
+      - YARA_PACK_MIN_RULES=${YARA_PACK_MIN_RULES:-0}
+      - ENGINE_MAX_CONCURRENT_EMAILS=${ENGINE_MAX_CONCURRENT_EMAILS:-}
       # Internal inter-service auth token (must match the vigilyx container)
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?请在 .env 中设置 INTERNAL_API_TOKEN}
       # Proxy configuration (for external intel lookups)
       - HTTP_PROXY=${HTTP_PROXY:-}
       - HTTPS_PROXY=${HTTPS_PROXY:-}
-      - NO_PROXY=localhost,127.0.0.1,redis,ai,postgres
-      - no_proxy=localhost,127.0.0.1,redis,ai,postgres
+      - NO_PROXY=localhost,127.0.0.1,redis,ai,postgres,clamav,sandbox
+      - no_proxy=localhost,127.0.0.1,redis,ai,postgres,clamav,sandbox
     depends_on:
       postgres:
         condition: service_healthy
@@ -471,8 +508,15 @@ volumes:
   redis_data:       # Docker Compose manages lifecycle
   vigilyx_data:     # Docker Compose manages lifecycle
   vigilyx_pgdata:   # Docker Compose manages lifecycle
+  vigilyx_models:   # AI fine-tuned models (mounted at /app/data/nlp_models in the ai service)
   hf_cache:         # Docker Compose manages lifecycle
   clamav_db:        # Docker Compose manages lifecycle
   sandbox_data:     # Docker Compose manages lifecycle
   caddy_data:       # Caddy TLS certificates + ACME state
   caddy_config:     # Caddy runtime configuration
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.250.0/24

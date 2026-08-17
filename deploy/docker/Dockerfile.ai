@@ -24,7 +24,7 @@
 #     -e HF_HOME=/app/.hf_cache \
 #     vigilyx-ai:latest
 
-FROM python:3.12-slim-bookworm@sha256:d97792894a6a4162cae14da44542a83c75e56c77a27b92d58f3f83b7bc961292 AS base
+FROM python:3.12-slim-bookworm@sha256:a116514e19457bcb7af7efe9c3dd0b9b71e85b317694e7882a1c52aa15a78134 AS base
 
 WORKDIR /app
 
@@ -41,13 +41,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # -- Python dependencies (make use of Docker layer cache) --
-# pyproject.toml already pins top-level dependencies and the hatchling build backend precisely to avoid remote build drift.
-# Copy pyproject.toml first and create a minimal package skeleton before installing dependencies
-COPY python/pyproject.toml ./
-RUN mkdir -p vigilyx_ai && touch vigilyx_ai/__init__.py \
-    && pip install --no-cache-dir . \
-    && pip check \
-    && rm -rf vigilyx_ai
+# uv.lock pins the complete transitive graph and artifact hashes. `--frozen`
+# makes image builds fail instead of silently re-resolving dependencies.
+COPY python/pyproject.toml python/uv.lock ./
+RUN pip install --no-cache-dir uv==0.12.4 \
+    && uv sync --frozen --no-dev --no-install-project \
+    && uv pip check \
+    && uv cache clean
+
+ENV PATH="/app/.venv/bin:${PATH}"
 
 # ── Playwright Chromium ──
 ENV PLAYWRIGHT_BROWSERS_PATH=/app/.browsers

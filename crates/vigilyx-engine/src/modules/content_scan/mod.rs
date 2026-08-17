@@ -8,11 +8,11 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use rayon::prelude::*;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, Mutex};
 
+use aho_corasick::AhoCorasick;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::context::SecurityContext;
@@ -96,6 +96,178 @@ fn fold_common_confusable(ch: char) -> char {
         'х' | 'χ' => 'x',
         'ѕ' => 's',
         'ӏ' => 'l',
+        // CJK lenticular/white brackets have no NFKC decomposition; gateways
+        // wrap banner tags in them ("【外部邮件】"), so fold before stripping.
+        '\u{3010}' | '\u{3016}' => '[',
+        '\u{3011}' | '\u{3017}' => ']',
+        _ => ch,
+    }
+}
+
+/// Fold the high-frequency Traditional Chinese forms used in account,
+/// credential and payment lures to the Simplified forms used by the canonical
+/// keyword seed.  This is intentionally a one-way detector normalization: it
+/// does not rewrite displayed evidence or persisted message content.  The
+/// table covers the security vocabulary and common connective characters that
+/// appear in real Hong Kong/Taiwan phishing prose; it is kept local and
+/// deterministic so the inline path has no language-service dependency.
+fn fold_traditional_chinese(ch: char) -> char {
+    match ch {
+        '親' => '亲',
+        '愛' => '爱',
+        '帳' => '账',
+        '戶' => '户',
+        '統' => '统',
+        '偵' => '侦',
+        '測' => '测',
+        '異' => '异',
+        '請' => '请',
+        '點' => '点',
+        '擊' => '击',
+        '驗' => '验',
+        '證' => '证',
+        '認' => '认',
+        '過' => '过',
+        '號' => '号',
+        '碼' => '码',
+        '關' => '关',
+        '閉' => '闭',
+        '開' => '开',
+        '啟' => '启',
+        '動' => '动',
+        '處' => '处',
+        '訪' => '访',
+        '問' => '问',
+        '網' => '网',
+        '絡' => '络',
+        '郵' => '邮',
+        '電' => '电',
+        '對' => '对',
+        '於' => '于',
+        '當' => '当',
+        '現' => '现',
+        '時' => '时',
+        '與' => '与',
+        '為' => '为',
+        '這' => '这',
+        '個' => '个',
+        '該' => '该',
+        '狀' => '状',
+        '態' => '态',
+        '發' => '发',
+        '聯' => '联',
+        '繫' => '系',
+        '員' => '员',
+        '訂' => '订',
+        '閱' => '阅',
+        '讀' => '读',
+        '準' => '准',
+        '備' => '备',
+        '資' => '资',
+        '單' => '单',
+        '貨' => '货',
+        '轉' => '转',
+        '銀' => '银',
+        '預' => '预',
+        '領' => '领',
+        '業' => '业',
+        '務' => '务',
+        '環' => '环',
+        '檢' => '检',
+        '尋' => '寻',
+        '註' => '注',
+        '冊' => '册',
+        '設' => '设',
+        '變' => '变',
+        '復' => '复',
+        '還' => '还',
+        '門' => '门',
+        '書' => '书',
+        '報' => '报',
+        '應' => '应',
+        '詐' => '诈',
+        '騙' => '骗',
+        '釣' => '钓',
+        '魚' => '鱼',
+        '惡' => '恶',
+        '脅' => '胁',
+        '盜' => '盗',
+        '竊' => '窃',
+        '錄' => '录',
+        '識' => '识',
+        '別' => '别',
+        '級' => '级',
+        '簡' => '简',
+        '體' => '体',
+        '頁' => '页',
+        '顯' => '显',
+        '隱' => '隐',
+        '運' => '运',
+        '輸' => '输',
+        '錯' => '错',
+        '誤' => '误',
+        '許' => '许',
+        '權' => '权',
+        '並' => '并',
+        '無' => '无',
+        '從' => '从',
+        '後' => '后',
+        '將' => '将',
+        '終' => '终',
+        '結' => '结',
+        '導' => '导',
+        '廣' => '广',
+        '壓' => '压',
+        '縮' => '缩',
+        '擇' => '择',
+        '擴' => '扩',
+        '標' => '标',
+        '題' => '题',
+        '額' => '额',
+        '類' => '类',
+        '實' => '实',
+        '際' => '际',
+        '專' => '专',
+        '價' => '价',
+        '總' => '总',
+        '數' => '数',
+        '據' => '据',
+        '衛' => '卫',
+        '隊' => '队',
+        '線' => '线',
+        '則' => '则',
+        '須' => '须',
+        '訴' => '诉',
+        '訓' => '训',
+        '規' => '规',
+        '範' => '范',
+        '經' => '经',
+        '濟' => '济',
+        '營' => '营',
+        '銷' => '销',
+        '賬' => '账',
+        '賣' => '卖',
+        '買' => '买',
+        '費' => '费',
+        '稅' => '税',
+        '雜' => '杂',
+        '訊' => '讯',
+        '話' => '话',
+        '語' => '语',
+        '義' => '义',
+        '隨' => '随',
+        '獲' => '获',
+        '顧' => '顾',
+        '慮' => '虑',
+        '護' => '护',
+        '療' => '疗',
+        '藥' => '药',
+        '醫' => '医',
+        '機' => '机',
+        '構' => '构',
+        '組' => '组',
+        '織' => '织',
+        '節' => '节',
         _ => ch,
     }
 }
@@ -105,6 +277,7 @@ fn fold_common_confusable(ch: char) -> char {
 pub(crate) fn normalize_text(text: &str) -> String {
     text.nfkc()
         .map(fold_common_confusable)
+        .map(fold_traditional_chinese)
         .filter(|c| {
             !matches!(
                 c,
@@ -116,20 +289,217 @@ pub(crate) fn normalize_text(text: &str) -> String {
             '\u{2060}' | // Word Joiner
             '\u{FEFF}' | // BOM / Zero Width No-Break Space
             '\u{00AD}' | // Soft Hyphen
-            '\u{034F}' | // Combining Grapheme Joiner
             '\u{061C}' | // Arabic Letter Mark
             '\u{2028}' | // Line Separator
-            '\u{2029}' // Paragraph Separator
+            '\u{2029}' | // Paragraph Separator
+            // Combining marks: visually identical to the base character
+            // ("账\u{301}户" renders as "账户") but break every substring
+            // keyword scan. NFKC keeps them, so strip the whole blocks.
+            // U+0300..=U+036F also covers U+034F (Combining Grapheme Joiner).
+            '\u{0300}'..='\u{036F}' | // Combining Diacritical Marks
+            '\u{1AB0}'..='\u{1AFF}' | // Combining Diacritical Marks Extended
+            '\u{20D0}'..='\u{20FF}' | // Combining Diacritical Marks for Symbols
+            // The following are NOT folded by NFKC; attackers use them to
+            // break keyword contiguity.
+            '\u{115F}' | // Hangul Choseong Filler
+            '\u{1160}' | // Hangul Jungseong Filler
+            '\u{180E}' | // Mongolian Vowel Separator
+            '\u{202A}'..='\u{202E}' | // Bidi embedding / override controls
+            '\u{2066}'..='\u{2069}' | // Bidi isolate controls
+            '\u{2800}' | // Braille Pattern Blank
+            '\u{3164}' | // Hangul Filler
+            '\u{FE00}'..='\u{FE0F}' | // Variation Selectors
+            '\u{E0000}'..='\u{E007F}' | // Tags block
+            '\u{E0100}'..='\u{E01EF}' // Variation Selectors Supplement
             )
         })
         .collect::<String>()
 }
 
-/// Minimum text length to trigger parallel keyword scanning.
-const KEYWORD_PAR_THRESHOLD: usize = 50_000;
+/// body 关键词扫描的单段窗口 (B3): 头/中/尾各 512 KiB, 与 NLP 三段采样对齐。
+const BODY_SCAN_SEGMENT_LEN: usize = 512 * 1024;
+/// body 关键词扫描的总窗口上限 (三段拼接, ~1.5MB)。
+const BODY_SCAN_MAX_LEN: usize = 3 * BODY_SCAN_SEGMENT_LEN;
+
+/// scan_text wall-clock 预算自查点 (B3): 调用方在引擎 catch_unwind 路径中
+/// 不可取消, 必须代码内自查; 超预算返回已累积的 partial 分数。
+const SCAN_TIME_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
 
 static RE_PARAGRAPH_BREAK: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\r?\n\s*\r?\n+").expect("valid paragraph break regex"));
+
+/// 超长 body 的三段采样视图 (B3): 26MB body 对数千关键词逐一 contains 是
+/// 平方级 CPU 炸弹; 取头/中/尾各 512 KiB 拼接, 保留对头部诱饵、中段藏匿、
+/// 尾部 payload 的覆盖, 同时把扫描成本钉死在 ~1.5MB。UTF-8 边界安全。
+fn windowed_body_view(text: &str) -> std::borrow::Cow<'_, str> {
+    if text.len() <= BODY_SCAN_MAX_LEN {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let head_end = text.floor_char_boundary(BODY_SCAN_SEGMENT_LEN);
+    let mid_start = text.ceil_char_boundary((text.len() - BODY_SCAN_SEGMENT_LEN) / 2);
+    let mid_end = text.floor_char_boundary(mid_start + BODY_SCAN_SEGMENT_LEN);
+    let tail_start = text.ceil_char_boundary(text.len() - BODY_SCAN_SEGMENT_LEN);
+    let mut view = String::with_capacity(BODY_SCAN_MAX_LEN + 2);
+    view.push_str(&text[..head_end]);
+    view.push('\n');
+    view.push_str(&text[mid_start..mid_end]);
+    view.push('\n');
+    view.push_str(&text[tail_start..]);
+    std::borrow::Cow::Owned(view)
+}
+
+/// 关键词集合的 Aho-Corasick 自动机 (B3)。
+///
+/// 原来的 `keywords.iter().filter(|kw| text.contains(kw))` 是
+/// O(haystack × patterns × pattern_len) —— 大 body × 数千关键词是分钟级
+/// CPU 炸弹。自动机一遍扫描 O(haystack + matches)。检出语义完全不变:
+/// haystack 与 patterns 在调用前都已小写化 + normalize_text 归一化,
+/// 因此自动机用大小写敏感匹配即可。
+struct KeywordSet {
+    /// 原始模式列表 (检出结果按此列表顺序返回, 与旧实现的迭代顺序一致)
+    patterns: Vec<String>,
+    /// 非空模式的自动机; pattern id 经 `owner` 映射回 `patterns` 下标
+    automaton: Option<AhoCorasick>,
+    owner: Vec<usize>,
+    /// 空模式: `str::contains("")` 恒 true, 旧实现计为恒命中, 保持语义
+    always_hit: Vec<usize>,
+    /// CJK 关键词紧凑形式自动机 (逐字空格/隐藏分隔符二扫)
+    compact_cjk: Option<AhoCorasick>,
+    compact_cjk_owner: Vec<usize>,
+    /// 拉丁关键词 (紧凑形式 >= 6 字符) 自动机, 仅在逐字母空格形态下启用
+    compact_latin: Option<AhoCorasick>,
+    compact_latin_owner: Vec<usize>,
+}
+
+impl KeywordSet {
+    fn build(list: &[String]) -> Self {
+        let mut ac_patterns: Vec<String> = Vec::new();
+        let mut owner: Vec<usize> = Vec::new();
+        let mut always_hit: Vec<usize> = Vec::new();
+        let mut cjk_patterns: Vec<String> = Vec::new();
+        let mut cjk_owner: Vec<usize> = Vec::new();
+        let mut latin_patterns: Vec<String> = Vec::new();
+        let mut latin_owner: Vec<usize> = Vec::new();
+
+        for (idx, keyword) in list.iter().enumerate() {
+            if keyword.is_empty() {
+                always_hit.push(idx);
+                continue;
+            }
+            owner.push(idx);
+            ac_patterns.push(keyword.clone());
+
+            // 紧凑二扫的入选条件与原 compact_match 闭包完全一致:
+            // CJK 关键词 (非空紧凑形式) 始终参与; 拉丁关键词仅当紧凑形式
+            // >= 6 字符时参与 (防英文散文坍缩误报), 且运行时还需
+            // allow_latin_compact 门控。
+            let contains_cjk = keyword.chars().any(is_cjk_character);
+            let compact_kw: String = keyword.chars().filter(|ch| ch.is_alphanumeric()).collect();
+            if compact_kw.is_empty() {
+                continue;
+            }
+            if contains_cjk {
+                cjk_owner.push(idx);
+                cjk_patterns.push(compact_kw);
+            } else if compact_kw.chars().count() >= 6 {
+                latin_owner.push(idx);
+                latin_patterns.push(compact_kw);
+            }
+        }
+
+        fn build_ac(patterns: &[String]) -> Option<AhoCorasick> {
+            if patterns.is_empty() {
+                None
+            } else {
+                Some(
+                    AhoCorasick::new(patterns)
+                        .expect("aho-corasick build from valid UTF-8 patterns"),
+                )
+            }
+        }
+
+        KeywordSet {
+            patterns: list.to_vec(),
+            automaton: build_ac(&ac_patterns),
+            owner,
+            always_hit,
+            compact_cjk: build_ac(&cjk_patterns),
+            compact_cjk_owner: cjk_owner,
+            compact_latin: build_ac(&latin_patterns),
+            compact_latin_owner: latin_owner,
+        }
+    }
+
+    /// 一遍扫描返回全部命中关键词 (按列表顺序, 与旧逐词 contains 语义相同)
+    ///
+    /// 必须用 overlapping 迭代: 关键词表存在互为前缀的条目 (如 "冻结" 与
+    /// "账户冻结"), 非重叠 find_iter 的 leftmost 语义同一位置只报一个,
+    /// 会少报命中数从而改变计分 —— `str::contains` 逐词判定不存在该问题。
+    fn find_hits(&self, haystack: &str) -> Vec<String> {
+        let mut matched = vec![false; self.patterns.len()];
+        for &idx in &self.always_hit {
+            matched[idx] = true;
+        }
+        if let Some(ac) = &self.automaton {
+            for mat in ac.find_overlapping_iter(haystack.as_bytes()) {
+                matched[self.owner[mat.pattern().as_usize()]] = true;
+            }
+        }
+        self.patterns
+            .iter()
+            .zip(matched.iter())
+            .filter(|(_, matched)| **matched)
+            .map(|(pattern, _)| pattern.clone())
+            .collect()
+    }
+
+    /// 紧凑视图二扫: 返回未在 `already` 中出现且紧凑形式命中的关键词
+    /// (按列表顺序)。拉丁紧凑命中仅在 allow_latin_compact 时计入。
+    fn find_compact_hits(
+        &self,
+        compact: &str,
+        allow_latin_compact: bool,
+        already: &[String],
+    ) -> Vec<String> {
+        let mut matched = vec![false; self.patterns.len()];
+        if let Some(ac) = &self.compact_cjk {
+            for mat in ac.find_overlapping_iter(compact.as_bytes()) {
+                matched[self.compact_cjk_owner[mat.pattern().as_usize()]] = true;
+            }
+        }
+        if allow_latin_compact
+            && let Some(ac) = &self.compact_latin
+        {
+            for mat in ac.find_overlapping_iter(compact.as_bytes()) {
+                matched[self.compact_latin_owner[mat.pattern().as_usize()]] = true;
+            }
+        }
+        let already: HashSet<&str> = already.iter().map(String::as_str).collect();
+        self.patterns
+            .iter()
+            .enumerate()
+            .filter(|(idx, p)| matched[*idx] && !already.contains(p.as_str()))
+            .map(|(_, p)| p.clone())
+            .collect()
+    }
+}
+
+/// 进程内 KeywordSet 缓存 (B3): 关键词列表来自 DB 配置, 跨邮件稳定;
+/// 以列表内容相等命中缓存, 避免每封邮件重建自动机 (数千模式 ≈ 数十毫秒)。
+/// 上限 16 项防派生列表 (如良性验证码过滤变体) 无界增长。
+fn keyword_set(list: &[String]) -> Arc<KeywordSet> {
+    static CACHE: Mutex<Vec<(Vec<String>, Arc<KeywordSet>)>> = Mutex::new(Vec::new());
+    let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, set)) = guard.iter().find(|(cached, _)| cached.as_slice() == list) {
+        return Arc::clone(set);
+    }
+    let set = Arc::new(KeywordSet::build(list));
+    if guard.len() >= 16 {
+        guard.clear();
+    }
+    guard.push((list.to_vec(), Arc::clone(&set)));
+    set
+}
 
 pub struct ContentScanModule {
     meta: ModuleMetadata,
@@ -159,6 +529,12 @@ impl ContentScanModule {
     }
 
     pub fn new_with_keyword_lists(effective: EffectiveKeywordLists) -> Self {
+        // Enforce the matching invariant at the constructor boundary. Most
+        // callers already pass lists built from normalized seeds, but tests,
+        // reload adapters, and future callers may construct the public list
+        // type directly. Normalizing once here keeps the per-message hot path
+        // free of thousands of repeated Unicode transformations.
+        let effective = normalize_effective_keyword_lists(effective);
         Self {
             meta: ModuleMetadata {
                 id: "content_scan".to_string(),
@@ -224,6 +600,23 @@ fn collect_normalized_keywords<'a>(values: impl IntoIterator<Item = &'a str>) ->
     }
 
     result
+}
+
+pub(crate) fn normalize_keyword_list(values: &[String]) -> Vec<String> {
+    collect_normalized_keywords(values.iter().map(String::as_str))
+}
+
+fn normalize_effective_keyword_lists(effective: EffectiveKeywordLists) -> EffectiveKeywordLists {
+    EffectiveKeywordLists {
+        phishing_keywords: normalize_keyword_list(&effective.phishing_keywords),
+        weak_phishing_keywords: normalize_keyword_list(&effective.weak_phishing_keywords),
+        bec_phrases: normalize_keyword_list(&effective.bec_phrases),
+        internal_authority_phrases: normalize_keyword_list(&effective.internal_authority_phrases),
+        gateway_banner_patterns: normalize_keyword_list(&effective.gateway_banner_patterns),
+        notice_banner_patterns: normalize_keyword_list(&effective.notice_banner_patterns),
+        dsn_patterns: normalize_keyword_list(&effective.dsn_patterns),
+        auto_reply_patterns: normalize_keyword_list(&effective.auto_reply_patterns),
+    }
 }
 
 fn apply_overrides_to_builtin(
@@ -569,6 +962,89 @@ fn has_api_key_context(text: &str, start: usize, end: usize) -> bool {
         .any(|keyword| context.contains(keyword.as_str()))
 }
 
+#[inline]
+fn is_cjk_character(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{3400}'..='\u{4DBF}'
+            | '\u{4E00}'..='\u{9FFF}'
+            | '\u{F900}'..='\u{FAFF}'
+    )
+}
+
+/// Build the compact view used for anti-obfuscation matching.  A single
+/// hidden Latin character inserted between two CJK characters is not part of
+/// the rendered phrase (`账<span style="display:none">x</span>户`), so discard
+/// that exact shape while retaining ordinary ASCII words and digits.
+///
+/// O(n) implementation (B3): the previous per-character backward/forward
+/// `find` scan was O(n²) on inputs with long non-alphanumeric runs (e.g.
+/// hundreds of KB of whitespace), a self-contained CPU bomb. Prev/next
+/// visible characters are precomputed with one forward and one reverse pass.
+pub(super) fn compact_detection_view(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut prev_visible: Vec<Option<char>> = vec![None; chars.len()];
+    let mut last: Option<char> = None;
+    for (index, ch) in chars.iter().copied().enumerate() {
+        prev_visible[index] = last;
+        if ch.is_alphanumeric() {
+            last = Some(ch);
+        }
+    }
+    let mut next_visible: Vec<Option<char>> = vec![None; chars.len()];
+    let mut next: Option<char> = None;
+    for index in (0..chars.len()).rev() {
+        next_visible[index] = next;
+        if chars[index].is_alphanumeric() {
+            next = Some(chars[index]);
+        }
+    }
+
+    let mut compact = String::with_capacity(text.len());
+    for (index, ch) in chars.iter().copied().enumerate() {
+        if !ch.is_alphanumeric() {
+            continue;
+        }
+        let hidden_separator = ch.is_ascii_alphanumeric()
+            && prev_visible[index].is_some_and(is_cjk_character)
+            && next_visible[index].is_some_and(is_cjk_character);
+        if !hidden_separator {
+            compact.push(ch);
+        }
+    }
+    compact
+}
+
+/// Return true only for a strongly letter-spaced Latin shape such as
+/// `v e r i f y y o u r a c c o u n t`.  Compacting every English sentence
+/// would manufacture matches by joining unrelated words, so this gate is
+/// intentionally stricter than the CJK path.
+fn looks_like_letter_spaced_latin(text: &str) -> bool {
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    if tokens.len() < 6 {
+        return false;
+    }
+    let mut single_ascii_letters = 0usize;
+    let mut longest_run = 0usize;
+    let mut current_run = 0usize;
+    for token in &tokens {
+        if token.len() == 1 && token.as_bytes()[0].is_ascii_alphabetic() {
+            single_ascii_letters += 1;
+            current_run += 1;
+            longest_run = longest_run.max(current_run);
+        } else {
+            current_run = 0;
+        }
+    }
+
+    // Allow ordinary lead-in words such as “Dear User” while requiring a
+    // genuine per-letter run.  The run/ratio gates keep normal prose and
+    // acronym-heavy business mail out of the Latin compact path.
+    single_ascii_letters >= 10
+        && longest_run >= 6
+        && single_ascii_letters * 100 / tokens.len() >= 25
+}
+
 pub(super) fn scan_text(
     text: &str,
     phishing_kw: &[String],
@@ -577,24 +1053,46 @@ pub(super) fn scan_text(
     evidence: &mut Vec<Evidence>,
     categories: &mut Vec<String>,
 ) -> f64 {
+    let scan_started = Instant::now();
     let mut score: f64 = 0.0;
+    // B3: 超长 body 三段窗口采样 (头/中/尾各 512 KiB), 扫描成本钉死在 ~1.5MB
+    let windowed = windowed_body_view(text);
+    let text: &str = &windowed;
     // NFKC: ->, -> Standard, prevent Unicode
     let text_lower = normalize_text(&text.to_lowercase());
 
-    // --- PhishingKeywords (0.08/, 0.5) ---
-    let phishing_hits: Vec<String> = if text_lower.len() >= KEYWORD_PAR_THRESHOLD {
-        phishing_kw
-            .par_iter()
-            .filter(|kw| text_lower.contains(kw.as_str()))
-            .cloned()
-            .collect()
-    } else {
-        phishing_kw
-            .iter()
-            .filter(|kw| text_lower.contains(kw.as_str()))
-            .cloned()
-            .collect()
+    // Compact second-pass view: per-character spacing breaks direct substring
+    // matching, while CSS-hidden single letters can sit between CJK characters.
+    // Latin compaction is enabled only for a strongly letter-spaced shape.
+    let compact_text: Option<String> = {
+        let chars: Vec<char> = text_lower.chars().collect();
+        let has_spacing = chars.iter().any(|ch| ch.is_whitespace());
+        let has_cjk_hidden_separator = chars.windows(3).any(|window| {
+            is_cjk_character(window[0])
+                && window[1].is_ascii_alphanumeric()
+                && is_cjk_character(window[2])
+        });
+        if has_spacing || has_cjk_hidden_separator {
+            Some(compact_detection_view(&text_lower))
+        } else {
+            None
+        }
     };
+    let allow_latin_compact = looks_like_letter_spaced_latin(&text_lower);
+
+    // B3: 关键词命中用 Aho-Corasick 自动机一遍扫描 (O(haystack + matches)),
+    // 检出语义与旧的逐词 contains 完全相同; 自动机跨邮件缓存复用。
+    let phishing_set = keyword_set(phishing_kw);
+    let weak_set = keyword_set(weak_phishing_kw);
+    let bec_set = keyword_set(bec_ph);
+
+    // --- PhishingKeywords (0.08/, 0.5) ---
+    let mut phishing_hits: Vec<String> = phishing_set.find_hits(&text_lower);
+    if let Some(compact) = &compact_text {
+        let spaced_hits =
+            phishing_set.find_compact_hits(compact, allow_latin_compact, &phishing_hits);
+        phishing_hits.extend(spaced_hits);
+    }
     if !phishing_hits.is_empty() {
         let count = phishing_hits.len();
         score += (count as f64 * 0.08).min(0.5);
@@ -612,13 +1110,11 @@ pub(super) fn scan_text(
 
     // --- PhishingKeywords (0.03/,>=3, 0.15) ---
     // NormalBusinessemailMedium found, stored
-    let mut weak_hits = Vec::new();
-    for kw in weak_phishing_kw {
-        if text_lower.contains(kw.as_str()) {
-            weak_hits.push(kw.clone());
-        }
-    }
-    if weak_hits.len() >= 3 {
+    let weak_hits: Vec<String> = weak_set.find_hits(&text_lower);
+    // Weak entries come exclusively from the JSON-managed weak list and only
+    // corroborate a primary phishing match; business vocabulary alone is not
+    // malicious intent.
+    if weak_hits.len() >= 3 && !phishing_hits.is_empty() {
         score += (weak_hits.len() as f64 * 0.03).min(0.15);
         categories.push("phishing".to_string());
         evidence.push(Evidence {
@@ -637,19 +1133,15 @@ pub(super) fn scan_text(
     // "asap") are too weak on their own. Treat them as weak BEC hints and only
     // score when multiple weak hits co-occur, while keeping multi-token phrases
     // as strong BEC evidence.
-    let bec_hits: Vec<String> = if text_lower.len() >= KEYWORD_PAR_THRESHOLD {
-        bec_ph
-            .par_iter()
-            .filter(|phrase| text_lower.contains(phrase.as_str()))
-            .cloned()
-            .collect()
-    } else {
-        bec_ph
-            .iter()
-            .filter(|phrase| text_lower.contains(phrase.as_str()))
-            .cloned()
-            .collect()
-    };
+    // wall-clock 预算自查点: 超预算返回已累积 partial 分数
+    if scan_started.elapsed() > SCAN_TIME_BUDGET {
+        return score;
+    }
+    let mut bec_hits: Vec<String> = bec_set.find_hits(&text_lower);
+    if let Some(compact) = &compact_text {
+        let spaced_hits = bec_set.find_compact_hits(compact, allow_latin_compact, &bec_hits);
+        bec_hits.extend(spaced_hits);
+    }
     let (strong_bec_hits, weak_bec_hits): (Vec<String>, Vec<String>) = bec_hits
         .into_iter()
         .partition(|phrase| is_strong_bec_phrase(phrase));
@@ -680,10 +1172,16 @@ pub(super) fn scan_text(
         });
     }
 
+    // wall-clock 预算自查点: 超预算返回已累积 partial 分数
+    if scan_started.elapsed() > SCAN_TIME_BUDGET {
+        return score;
+    }
+
     // --- DLP: Credit cards ---
     let cc_matches = contains_credit_card(text);
     if !cc_matches.is_empty() {
-        score += 0.3;
+        // DLP describes data sensitivity, not malicious intent. Keep the
+        // finding for compliance visibility without inflating email threat.
         categories.push("dlp_credit_card".to_string());
         evidence.push(Evidence {
             description: format!(
@@ -712,7 +1210,6 @@ pub(super) fn scan_text(
     // --- DLP: Chinese ID ---
     let id_matches = find_chinese_ids(text);
     if !id_matches.is_empty() {
-        score += 0.25;
         categories.push("dlp_id_number".to_string());
         evidence.push(Evidence {
             description: format!("Found {} 疑似ID cardNumber", id_matches.len()),
@@ -736,7 +1233,6 @@ pub(super) fn scan_text(
     // --- DLP: API keys ---
     let api_keys = find_api_keys(text);
     if !api_keys.is_empty() {
-        score += 0.2;
         categories.push("dlp_api_key".to_string());
         evidence.push(Evidence {
             description: format!(
@@ -763,7 +1259,7 @@ pub(super) fn scan_text(
     score
 }
 
-fn is_strong_bec_phrase(phrase: &str) -> bool {
+pub(crate) fn is_strong_bec_phrase(phrase: &str) -> bool {
     let normalized = normalize_text(&phrase.to_lowercase());
     let word_count = normalized
         .split_whitespace()
@@ -780,11 +1276,14 @@ fn is_strong_bec_phrase(phrase: &str) -> bool {
     cjk_count >= 4
 }
 
+/// patterns 在列表构建期 (normalize_keyword_entry / collect_normalized_keywords)
+/// 已归一化为小写折叠形式, text_lower 同样是 normalize_text(to_lowercase)
+/// 产物 —— 此处不再逐模式重复归一化 (B3: 原实现每次调用对数千模式重新
+/// normalize, 是纯浪费的 CPU 热点)。
 fn matches_any_pattern(text_lower: &str, patterns: &[String]) -> bool {
-    patterns.iter().any(|pattern| {
-        let normalized = normalize_text(&pattern.to_lowercase());
-        text_lower.contains(normalized.as_str())
-    })
+    patterns
+        .iter()
+        .any(|pattern| text_lower.contains(pattern.as_str()))
 }
 
 fn split_first_paragraph(text: &str) -> (&str, &str) {
@@ -824,6 +1323,63 @@ fn separator_lead_len(line: &str) -> usize {
         .count()
 }
 
+/// Well-known signature / disclaimer phrasing. Only tails dominated by these
+/// markers may be truncated; anything else must stay visible to scanning.
+/// Simplified/traditional variants are paired per project convention.
+const FOOTER_DISCLAIMER_MARKERS: &[&str] = &[
+    "声明：",
+    "聲明：",
+    "声明:",
+    "免责声明",
+    "免責聲明",
+    "保密",
+    "机密",
+    "機密",
+    "指定收件人",
+    "disclaimer",
+    "confidential",
+    "intended recipient",
+    "unauthorized use",
+    "privileged",
+];
+
+/// True when the leading portion of `text` looks like a known
+/// signature/disclaimer block rather than attacker-controlled prose.
+fn contains_disclaimer_marker(text: &str) -> bool {
+    let probe: String = text.chars().take(200).collect();
+    let probe = normalize_text(&probe.to_lowercase());
+    FOOTER_DISCLAIMER_MARKERS
+        .iter()
+        .any(|marker| probe.contains(marker))
+}
+
+/// Maximum characters allowed after a disclaimer marker for a line to count
+/// as a genuine disclaimer/signature line.
+const DISCLAIMER_LINE_MAX_TRAILING: usize = 40;
+
+/// True when a single line is almost entirely disclaimer/signature phrasing:
+/// a marker must appear AND the content following it must stay short. A long
+/// phishing line merely prefixed with "声明：" must NOT qualify — otherwise
+/// an attacker can prefix every line of a forged-banner body with a marker
+/// and get the whole remainder cleared from the keyword scan.
+fn is_disclaimer_line(line: &str) -> bool {
+    let normalized = normalize_text(&line.to_lowercase());
+    FOOTER_DISCLAIMER_MARKERS.iter().any(|marker| {
+        let Some(pos) = normalized.find(marker) else {
+            return false;
+        };
+        let after = &normalized[pos + marker.len()..];
+        after.chars().count() < DISCLAIMER_LINE_MAX_TRAILING
+    })
+}
+
+/// Hard cap on how much text after a "____"-style separator line is retained
+/// for scanning when the tail does NOT look like a disclaimer. Without the
+/// cap a forged signature separator could smuggle an arbitrarily long body
+/// past the footer logic; the leading part is still scanned so quoted reply
+/// chains keep most of their coverage.
+const FOOTER_TAIL_MAX_RETAINED: usize = 800;
+
 fn strip_trailing_footer_after_separator(text: &str) -> String {
     let mut offset = 0usize;
     let trimmed = text.trim();
@@ -835,7 +1391,18 @@ fn strip_trailing_footer_after_separator(text: &str) -> String {
         let tail = &trimmed[tail_start..];
 
         if separator_len >= 4 && tail.len() >= 160 && tail_start >= 48 {
-            return trimmed[..tail_start].trim_end().to_string();
+            // Only truncate when the tail matches known signature/disclaimer
+            // patterns. Attacker-controlled text placed after a separator
+            // line must remain covered by the keyword scan.
+            if contains_disclaimer_marker(tail) {
+                return trimmed[..tail_start].trim_end().to_string();
+            }
+            // No disclaimer marker: cap the retained tail so a forged
+            // separator cannot hide an over-long body from the scan.
+            if tail.chars().count() > FOOTER_TAIL_MAX_RETAINED {
+                let kept: String = tail.chars().take(FOOTER_TAIL_MAX_RETAINED).collect();
+                return format!("{}\n{}", trimmed[..tail_start].trim_end(), kept);
+            }
         }
 
         offset += line.len();
@@ -865,7 +1432,20 @@ pub(crate) fn sanitize_body_for_keyword_scan(
     let (without_notice, removed_notice) = strip_leading_notice_sections(text, &notice_patterns);
     let trimmed = without_notice.trim_start();
     if removed_notice && separator_lead_len(trimmed.lines().next().unwrap_or_default()) >= 4 {
-        return String::new();
+        // Clear the body only when everything left after the stripped banner
+        // is itself banner/separator/disclaimer material. Otherwise fall back
+        // to scanning the remaining text, so a forged banner plus separator
+        // cannot hide the real (possibly phishing) body from the scan.
+        let remainder_is_only_banner_material = trimmed.lines().all(|line| {
+            let line = line.trim();
+            line.is_empty()
+                || separator_lead_len(line) >= 4
+                || is_disclaimer_line(line)
+                || matches_any_pattern(&normalize_text(&line.to_lowercase()), &notice_patterns)
+        });
+        if remainder_is_only_banner_material {
+            return String::new();
+        }
     }
 
     strip_trailing_footer_after_separator(without_notice)
@@ -876,12 +1456,10 @@ pub(super) fn collect_gateway_prior_hits(
     gateway_banner_patterns: &[String],
 ) -> Vec<String> {
     let prefix_lower = normalize_text(&prefix_text.to_lowercase());
+    // patterns 在列表构建期已归一化 (见 matches_any_pattern 注释), 直接匹配
     gateway_banner_patterns
         .iter()
-        .filter(|pattern| {
-            let normalized = normalize_text(&pattern.to_lowercase());
-            prefix_lower.contains(normalized.as_str())
-        })
+        .filter(|pattern| prefix_lower.contains(pattern.as_str()))
         .cloned()
         .collect()
 }
@@ -892,13 +1470,51 @@ pub(crate) fn strip_subject_banner_prefixes(
     notice_banner_patterns: &[String],
 ) -> String {
     let mut cleaned = subject.to_string();
+    // B4: 小写化从"每模式每轮一次"改为"每次实际移除后重建一次" ——
+    // 无移除时整个函数只做一次 to_lowercase (原实现 64KB subject × 数千
+    // 模式 ≈ 数百 MB 的重复分配 + replace_range O(n) 搬运)。
+    let mut lowered = cleaned.to_lowercase();
     for pattern in gateway_banner_patterns
         .iter()
         .chain(notice_banner_patterns.iter())
     {
-        cleaned = cleaned.replace(pattern, "");
+        // Patterns are stored normalized (lowercased); match the subject
+        // case-insensitively so "[External Mail]" is stripped too. Removal is
+        // guarded by a byte-aligned verification because `to_lowercase` can
+        // change byte lengths for exotic characters.
+        let pattern_lower = pattern.to_lowercase();
+        if pattern_lower.is_empty() {
+            continue;
+        }
+        while let Some(start) = lowered.find(pattern_lower.as_str()) {
+            let end = start + pattern_lower.len();
+            let Some(slice) = cleaned.get(start..end) else {
+                break;
+            };
+            if slice.to_lowercase() != pattern_lower {
+                break;
+            }
+            cleaned.replace_range(start..end, "");
+            lowered = cleaned.to_lowercase();
+        }
     }
     cleaned.trim().to_string()
+}
+
+/// Normalize the subject (NFKC + invisible/combining-mark cleanup) BEFORE
+/// stripping gateway banner prefixes. Patterns are stored normalized, so a
+/// raw subject with full-width brackets ("【外部邮件】") would otherwise keep
+/// its banner through the strip step.
+pub(crate) fn normalized_subject_for_scan(
+    subject: &str,
+    gateway_banner_patterns: &[String],
+    notice_banner_patterns: &[String],
+) -> String {
+    strip_subject_banner_prefixes(
+        &normalize_text(subject),
+        gateway_banner_patterns,
+        notice_banner_patterns,
+    )
 }
 
 #[async_trait]
@@ -928,6 +1544,14 @@ impl SecurityModule for ContentScanModule {
             &self.phishing_keywords,
             &self.gateway_banner_patterns,
             &self.notice_banner_patterns,
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+
+        // Step 2b: Subject-only off-platform contact lure
+        detectors::detect_subject_contact_lure(
+            ctx,
             &mut total_score,
             &mut categories,
             &mut evidence,
@@ -1028,7 +1652,11 @@ impl SecurityModule for ContentScanModule {
         let duration_ms = start.elapsed().as_millis() as u64;
         let threat_level = ThreatLevel::from_score(total_score);
 
-        if threat_level == ThreatLevel::Safe {
+        let dlp_only = !categories.is_empty()
+            && categories
+                .iter()
+                .all(|category| category.starts_with("dlp_"));
+        if threat_level == ThreatLevel::Safe && !dlp_only {
             return Ok(ModuleResult::safe_analyzed(
                 &self.meta.id,
                 &self.meta.name,
@@ -1045,11 +1673,18 @@ impl SecurityModule for ContentScanModule {
             threat_level,
             confidence: 0.85,
             categories,
-            summary: format!(
-                "bodyContentdetectFound {} Item证According to，综合评分 {:.2}",
-                evidence.len(),
-                total_score
-            ),
+            summary: if threat_level == ThreatLevel::Safe {
+                format!(
+                    "Body content contains {} informational sensitive-data finding(s); no threat evidence",
+                    evidence.len()
+                )
+            } else {
+                format!(
+                    "bodyContentdetectFound {} Item证According to，综合评分 {:.2}",
+                    evidence.len(),
+                    total_score
+                )
+            },
             evidence,
             details: serde_json::json!({
                 "score": total_score,

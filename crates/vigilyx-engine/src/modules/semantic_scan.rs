@@ -26,7 +26,10 @@ use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
 use crate::module_data::module_data;
 use crate::modules::common::looks_like_raw_mime_container_text;
-use crate::modules::content_scan::{sanitize_body_for_keyword_scan, strip_subject_banner_prefixes};
+use crate::modules::content_scan::html_utils::{decode_html_entities, strip_html_tags};
+use crate::modules::content_scan::{
+    normalize_text, normalized_subject_for_scan, sanitize_body_for_keyword_scan,
+};
 use crate::pipeline::verdict::runtime_scenario_patterns;
 use crate::remote::{ContentAnalysisRequest, RemoteError, RemoteModuleProxy};
 
@@ -83,6 +86,62 @@ const BIGRAM_UNIQUE_THRESHOLD: f64 = 0.92;
 /// Raised from 4s → 8s because the 55-core server under load regularly
 /// exceeds 4s, causing unnecessary backoff escalation.
 const NLP_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// Match the Python default aggregate budget (8 x 3000-character windows)
+/// without cloning a parser-sized body into the HTTP request.
+const NLP_BODY_MAX_BYTES: usize = 24_000;
+const NLP_BODY_SAMPLE_WINDOWS: usize = 8;
+const NLP_OMISSION_MARKER: &str = "\n[... omitted ...]\n";
+
+fn floor_char_boundary(text: &str, mut index: usize) -> usize {
+    index = index.min(text.len());
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn ceil_char_boundary(text: &str, mut index: usize) -> usize {
+    index = index.min(text.len());
+    while index < text.len() && !text.is_char_boundary(index) {
+        index += 1;
+    }
+    index
+}
+
+/// Build a bounded, UTF-8-safe AI request view with windows distributed over
+/// the complete body. The caller must separately surface the coverage gap.
+fn truncate_body_for_nlp(body: &str) -> String {
+    if body.len() <= NLP_BODY_MAX_BYTES {
+        return body.to_string();
+    }
+
+    let separator_budget = NLP_OMISSION_MARKER.len() * (NLP_BODY_SAMPLE_WINDOWS - 1);
+    let content_budget = NLP_BODY_MAX_BYTES - separator_budget;
+    let base_window = content_budget / NLP_BODY_SAMPLE_WINDOWS;
+    let remainder = content_budget % NLP_BODY_SAMPLE_WINDOWS;
+    let mut sampled = String::with_capacity(NLP_BODY_MAX_BYTES);
+
+    for index in 0..NLP_BODY_SAMPLE_WINDOWS {
+        if index > 0 {
+            sampled.push_str(NLP_OMISSION_MARKER);
+        }
+        let window_budget = base_window + if index < remainder { 1 } else { 0 };
+        let (start, end) = if index == NLP_BODY_SAMPLE_WINDOWS - 1 {
+            let start = ceil_char_boundary(body, body.len().saturating_sub(window_budget));
+            (start, body.len())
+        } else {
+            let span = body.len().saturating_sub(window_budget);
+            let desired_start = index * span / (NLP_BODY_SAMPLE_WINDOWS - 1);
+            let start = floor_char_boundary(body, desired_start);
+            let end = floor_char_boundary(body, (start + window_budget).min(body.len()));
+            (start, end)
+        };
+        sampled.push_str(body.get(start..end).unwrap_or_default());
+    }
+
+    sampled
+}
 
 // Unicode range detection
 
@@ -492,6 +551,9 @@ struct NlpSignalProfile {
     top_score: f64,
     malicious_probability: f64,
     legitimate_probability: f64,
+    /// Legacy 2-class fine-tuned models expose `phishing_probability`
+    /// instead of top_label/top_score.
+    phishing_probability: f64,
 }
 
 fn summarize_nlp_signal(details: &serde_json::Value) -> NlpSignalProfile {
@@ -517,6 +579,46 @@ fn summarize_nlp_signal(details: &serde_json::Value) -> NlpSignalProfile {
             .and_then(|v| v.get("legitimate"))
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0),
+        phishing_probability: details
+            .get("phishing_probability")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0),
+    }
+}
+
+/// Malicious fine-tuned 5-class labels (mirror of Python
+/// FINETUNED_LABEL_NAMES minus "legitimate").
+const FINETUNED_MALICIOUS_LABELS: &[&str] =
+    &["phishing", "spoofing", "social_engineering", "other_threat"];
+
+/// Consistency gate for fine-tuned NLP signals. Unlike zero-shot (which has
+/// its own advisory gate), a fine-tuned verdict previously contributed up to
+/// 0.22 unconditionally; an adversarially steered or inconsistent model
+/// (e.g. top label "legitimate" while the verdict claims High) could push
+/// score directly. Now a malicious fine-tuned verdict must be backed by a
+/// coherent label distribution, otherwise it degrades to advisory-only.
+fn fine_tuned_nlp_is_actionable(profile: &NlpSignalProfile, threat: ThreatLevel) -> bool {
+    let is_fine_tuned = matches!(
+        profile.model_type.as_deref(),
+        Some("fine-tuned") | Some("fine-tuned-5class")
+    );
+    if !is_fine_tuned || threat < ThreatLevel::Medium {
+        // Non-fine-tuned models use their own gates; Safe/Low verdicts never
+        // score anyway.
+        return true;
+    }
+    match profile.model_type.as_deref() {
+        Some("fine-tuned-5class") => {
+            let label_is_malicious = profile
+                .top_label
+                .as_deref()
+                .map(|label| FINETUNED_MALICIOUS_LABELS.contains(&label))
+                .unwrap_or(false);
+            label_is_malicious && profile.top_score >= 0.5
+        }
+        // Legacy 2-class: no top_label; require the phishing probability to
+        // actually sit in the malicious band the verdict claims.
+        _ => profile.phishing_probability >= 0.40,
     }
 }
 
@@ -544,29 +646,11 @@ fn zero_shot_nlp_is_actionable(profile: &NlpSignalProfile, has_rule_corroboratio
     true
 }
 
-/// Strip HTML tags from content
-fn strip_html_tags(html: &str) -> String {
-    let mut result = String::with_capacity(html.len());
-    let mut in_tag = false;
-    for ch in html.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => {
-                in_tag = false;
-                result.push(' ');
-            }
-            _ if !in_tag => result.push(ch),
-            _ => {}
-        }
-    }
-    result
-}
-
 fn sanitize_semantic_inputs(subject: Option<&str>, raw_body: &str) -> (Option<String>, String) {
     let patterns = runtime_scenario_patterns();
     let cleaned_subject = subject
         .map(|value| {
-            strip_subject_banner_prefixes(
+            normalized_subject_for_scan(
                 value,
                 &patterns.gateway_banner_patterns,
                 &patterns.notice_banner_patterns,
@@ -640,6 +724,13 @@ impl SecurityModule for SemanticScanModule {
         // Engine B: NLP phishing detection - fire request immediately (async, non-blocking)
 
         let nlp_configured = self.remote.is_some();
+        let nlp_body_original_bytes = body.len();
+        // RT-011: body length is an intrinsic bounded-inspection gap, not a
+        // property of whether the optional AI remote is enabled. Keeping this
+        // independent of `nlp_configured` ensures rules-only MTA deployments
+        // cannot accept a deep payload as if the whole body had AI coverage.
+        let nlp_body_coverage_limited = nlp_body_original_bytes > NLP_BODY_MAX_BYTES;
+        let mut nlp_body_sampled_bytes = 0usize;
         let mut nlp_skipped_temporarily = false;
         let mut nlp_status = if nlp_configured {
             "pending"
@@ -667,13 +758,19 @@ impl SecurityModule for SemanticScanModule {
                 );
                 None
             } else {
+                let nlp_body = truncate_body_for_nlp(&body);
+                nlp_body_sampled_bytes = nlp_body.len();
                 let req = ContentAnalysisRequest {
                     session_id: ctx.session.id.to_string(),
                     subject: cleaned_subject.clone(),
-                    body_text: Some(body.clone()),
+                    // RT-010: keep a bounded request but distribute its windows
+                    // across the whole body instead of dropping the suffix.
+                    body_text: Some(nlp_body),
                     body_html: None,
                     mail_from: ctx.session.mail_from.clone(),
                     rcpt_to: ctx.session.rcpt_to.clone(),
+                    // LLM second-opinion config is attached by the proxy itself.
+                    llm: None,
                 };
                 debug!("Firing NLP request first (most time-consuming)");
                 let remote = remote.clone();
@@ -696,6 +793,7 @@ impl SecurityModule for SemanticScanModule {
         let (mut score, mut evidence) = score_semantics(&body);
         let gibberish_evidence_count = evidence.len(); // P2-4: track gibberish-specific evidence
         let mut categories: Vec<String> = Vec::new();
+        let mut language_observations: Vec<serde_json::Value> = Vec::new();
 
         // Engine A.5: AI/LLM-generated phishing prose detection.
         //
@@ -719,7 +817,11 @@ impl SecurityModule for SemanticScanModule {
         // Language anomaly detection
         let total_chars: usize = body.chars().filter(|c| !c.is_whitespace()).count();
         let cjk_count: usize = body.chars().filter(|c| is_cjk_any(*c)).count();
-        let is_non_chinese = total_chars > 30 && cjk_count == 0;
+        // CJK ratio < 2% counts as foreign-language. The previous
+        // `cjk_count == 0` check let attackers disable this detector by
+        // sprinkling a single CJK token (e.g. one "的") into an otherwise
+        // pure foreign-language lure.
+        let is_non_chinese = total_chars > 30 && cjk_count * 100 < total_chars * 2;
 
         if is_non_chinese {
             // Skip known financial sender domains (legitimate foreign-language emails)
@@ -747,18 +849,25 @@ impl SecurityModule for SemanticScanModule {
                 });
 
                 if is_cn_corp {
-                    score += 0.30;
-                    categories.push("foreign_to_cn_corp".to_string());
+                    language_observations.push(serde_json::json!({
+                        "kind": "foreign_to_cn_corp",
+                        "character_count": total_chars,
+                        "disposition": "context_only",
+                    }));
                     evidence.push(Evidence {
                         description: format!(
-                            "Pure foreign-language email (no Chinese content, {} chars) sent to Chinese corporate mailbox — highly suspicious",
+                            "Foreign-language email ({} chars) sent to a Chinese corporate mailbox; recorded as context only",
                             total_chars,
                         ),
                         location: Some("body:language".to_string()),
                         snippet: Some(body.chars().take(100).collect::<String>()),
                     });
                 } else {
-                    score += 0.10;
+                    language_observations.push(serde_json::json!({
+                        "kind": "foreign_language",
+                        "character_count": total_chars,
+                        "disposition": "context_only",
+                    }));
                     evidence.push(Evidence {
                         description: format!(
                             "Pure foreign-language email (no Chinese content, {} chars)",
@@ -792,19 +901,25 @@ impl SecurityModule for SemanticScanModule {
                     .any(|d| d.ends_with(".jp") || d.ends_with(".co.jp"));
 
                 if is_cn_corp && !is_jp_corp {
-                    score += 0.35;
-                    categories.push("japanese_to_cn_corp".to_string());
+                    language_observations.push(serde_json::json!({
+                        "kind": "japanese_to_cn_corp",
+                        "kana_count": jp_kana_count,
+                        "disposition": "context_only",
+                    }));
                     evidence.push(Evidence {
                         description: format!(
-                            "Japanese email ({} kana characters) sent to Chinese corporate mailbox — suspected Japanese delivery/account phishing",
+                            "Japanese email ({} kana characters) sent to Chinese corporate mailbox; recorded as context only",
                             jp_kana_count,
                         ),
                         location: Some("body:language_mismatch".to_string()),
                         snippet: Some(body.chars().take(100).collect::<String>()),
                     });
                 } else if !is_jp_corp {
-                    score += 0.15;
-                    categories.push("japanese_unexpected".to_string());
+                    language_observations.push(serde_json::json!({
+                        "kind": "japanese_unexpected",
+                        "kana_count": jp_kana_count,
+                        "disposition": "context_only",
+                    }));
                     evidence.push(Evidence {
                         description: format!(
                             "Japanese email ({} kana characters) sent to non-Japanese region enterprise",
@@ -818,8 +933,11 @@ impl SecurityModule for SemanticScanModule {
         }
 
         // Rule-based sextortion detection (works even when NLP is unavailable)
-        // Pattern: threat language + cryptocurrency payment demand
-        let body_lower = body.to_lowercase();
+        // Pattern: threat language + cryptocurrency payment demand.
+        // HTML entities are decoded and Unicode normalized (NFKC + zero-width
+        // stripping) before keyword matching so encoded/spliced keywords
+        // cannot slip through.
+        let body_lower = normalize_text(&decode_html_entities(&body)).to_lowercase();
         let (threat_signals, payment_signals): (Vec<String>, Vec<String>) = {
             let md = module_data();
             let threats = md
@@ -883,6 +1001,7 @@ impl SecurityModule for SemanticScanModule {
         let mut nlp_used = false;
         let mut nlp_contributed = false;
         let mut nlp_contribution_score = 0.0;
+        let mut nlp_reported_coverage_limited = false;
         let mut nlp_details = serde_json::Value::Null;
 
         if let Some(handle) = nlp_handle {
@@ -891,11 +1010,21 @@ impl SecurityModule for SemanticScanModule {
                     nlp_used = true;
                     let nlp_threat = ai_resp.to_threat_level();
                     let nlp_confidence = ai_resp.confidence;
+                    // Captured before `details` is moved out below: the
+                    // Python LLM second opinion flags forged/injected
+                    // verdicts here instead of rendering them.
+                    let llm_injection_suspected = ai_resp.llm_injection_suspected();
                     nlp_details = ai_resp.details.unwrap_or(serde_json::Value::Null);
+                    nlp_reported_coverage_limited = nlp_details
+                        .get("coverage_limited")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false);
                     let signal_profile = summarize_nlp_signal(&nlp_details);
                     let zero_shot_advisory_only = signal_profile.model_type.as_deref()
                         == Some("zero-shot")
                         && !zero_shot_nlp_is_actionable(&signal_profile, has_rule_corroboration);
+                    let fine_tuned_advisory_only =
+                        !fine_tuned_nlp_is_actionable(&signal_profile, nlp_threat);
 
                     let mut nlp_evidence_description = format!(
                         "NLP model verdict: {} (confidence {:.1}%) — {}",
@@ -906,6 +1035,11 @@ impl SecurityModule for SemanticScanModule {
                     if zero_shot_advisory_only {
                         nlp_evidence_description
                             .push_str(" (zero-shot advisory only; not used for scoring)");
+                    }
+                    if fine_tuned_advisory_only {
+                        nlp_evidence_description.push_str(
+                            " (fine-tuned verdict inconsistent with its own label distribution; advisory only)",
+                        );
                     }
                     evidence.push(Evidence {
                         description: nlp_evidence_description,
@@ -923,7 +1057,7 @@ impl SecurityModule for SemanticScanModule {
                         (_, ThreatLevel::Critical) => 0.20,
                     };
 
-                    let nlp_score = if zero_shot_advisory_only {
+                    let nlp_score = if zero_shot_advisory_only || fine_tuned_advisory_only {
                         0.0
                     } else if signal_profile.model_type.as_deref() == Some("zero-shot") {
                         if nlp_confidence >= 0.80 && nlp_threat >= ThreatLevel::High {
@@ -953,6 +1087,26 @@ impl SecurityModule for SemanticScanModule {
                             "AI/NLP analysis completed but remained advisory-only; rule engine stayed primary"
                                 .to_string(),
                         );
+                    }
+
+                    if llm_injection_suspected {
+                        // The AI service dropped a forged LLM verdict (outside
+                        // the verdict whitelist, e.g. an injected
+                        // "threat_level": "green" from the email body).
+                        // Surface it as a category instead of a silent AI
+                        // service log line. The +0.15 is the *minimum* that
+                        // lifts the module result out of Safe so the category
+                        // survives; the fusion-layer cluster scale for this
+                        // category is 0.15 (evidence_clusters.rs), so a planted
+                        // injection alone can never lift the verdict past Low
+                        // (A6 — the signal is attacker-self-induced).
+                        score += 0.15;
+                        categories.push("llm_injection_suspected".to_string());
+                        evidence.push(Evidence {
+                            description: "LLM second opinion returned a verdict outside the allowed whitelist (likely injected via email content); forged verdict was dropped".to_string(),
+                            location: Some("body:llm".to_string()),
+                            snippet: None,
+                        });
                     }
                 }
                 Ok(Err(RemoteError::TemporarilyUnavailable { retry_after_secs })) => {
@@ -1046,6 +1200,28 @@ impl SecurityModule for SemanticScanModule {
             categories.push("llm_generated_prose".to_string());
         }
 
+        let semantic_ai_coverage_limited =
+            nlp_body_coverage_limited || nlp_reported_coverage_limited;
+        if semantic_ai_coverage_limited {
+            categories.push("semantic_ai_inspection_limited".to_string());
+            let coverage_description = if nlp_body_sampled_bytes == 0 {
+                format!(
+                    "AI/NLP did not receive the {}-byte body; coverage-aware disposition is required",
+                    nlp_body_original_bytes,
+                )
+            } else {
+                format!(
+                    "AI/NLP inspected a distributed {}-byte view of a {}-byte body; omitted bytes require coverage-aware disposition",
+                    nlp_body_sampled_bytes, nlp_body_original_bytes,
+                )
+            };
+            evidence.push(Evidence {
+                description: coverage_description,
+                location: Some("body:nlp_coverage".to_string()),
+                snippet: None,
+            });
+        }
+
         score = score.min(1.0);
         categories.sort();
         categories.dedup();
@@ -1054,6 +1230,11 @@ impl SecurityModule for SemanticScanModule {
         let threat_level = ThreatLevel::from_score(score);
 
         if threat_level == ThreatLevel::Safe {
+            let safe_categories = categories
+                .iter()
+                .filter(|category| category.as_str() == "semantic_ai_inspection_limited")
+                .cloned()
+                .collect();
             let summary = if nlp_contributed {
                 "Rule engine + corroborated NLP analysis: email body semantics normal".to_string()
             } else if nlp_used {
@@ -1092,7 +1273,7 @@ impl SecurityModule for SemanticScanModule {
                 pillar: self.meta.pillar,
                 threat_level: ThreatLevel::Safe,
                 confidence: if nlp_contributed { 0.62 } else { 0.70 },
-                categories: vec![],
+                categories: safe_categories,
                 summary,
                 evidence,
                 details: serde_json::json!({
@@ -1107,6 +1288,11 @@ impl SecurityModule for SemanticScanModule {
                     "nlp_skipped_temporarily": nlp_skipped_temporarily,
                     "nlp_retry_after_secs": nlp_retry_after_secs,
                     "nlp_timeout_secs": NLP_TIMEOUT.as_secs(),
+                    "nlp_body_original_bytes": nlp_body_original_bytes,
+                    "nlp_body_sampled_bytes": nlp_body_sampled_bytes,
+                    "nlp_body_coverage_limited": nlp_body_coverage_limited,
+                    "nlp_reported_coverage_limited": nlp_reported_coverage_limited,
+                    "semantic_ai_coverage_limited": semantic_ai_coverage_limited,
                     "nlp_details": nlp_details,
                     "analysis_type": if nlp_contributed {
                         "rules_plus_nlp_corroboration"
@@ -1115,6 +1301,7 @@ impl SecurityModule for SemanticScanModule {
                     } else {
                         "rules_only"
                     },
+                    "language_observations": language_observations,
                 }),
                 duration_ms,
                 analyzed_at: Utc::now(),
@@ -1195,6 +1382,11 @@ impl SecurityModule for SemanticScanModule {
                 "nlp_skipped_temporarily": nlp_skipped_temporarily,
                 "nlp_retry_after_secs": nlp_retry_after_secs,
                 "nlp_timeout_secs": NLP_TIMEOUT.as_secs(),
+                "nlp_body_original_bytes": nlp_body_original_bytes,
+                "nlp_body_sampled_bytes": nlp_body_sampled_bytes,
+                "nlp_body_coverage_limited": nlp_body_coverage_limited,
+                "nlp_reported_coverage_limited": nlp_reported_coverage_limited,
+                "semantic_ai_coverage_limited": semantic_ai_coverage_limited,
                 "nlp_details": nlp_details,
                 "analysis_type": if nlp_contributed {
                     "rules_plus_nlp_corroboration"
@@ -1203,6 +1395,7 @@ impl SecurityModule for SemanticScanModule {
                 } else {
                     "rules_only"
                 },
+                "language_observations": language_observations,
             }),
             duration_ms,
             analyzed_at: Utc::now(),
@@ -1248,6 +1441,33 @@ mod tests {
         let text = "Hi, your invoice is attached.";
         let (score, _) = detect_llm_generated_text(text);
         assert_eq!(score, 0.0, "short text must not fire LLM detector");
+    }
+
+    /// RT-010: long AI bodies must retain distributed coverage and stay on
+    /// UTF-8 boundaries instead of dropping the entire suffix.
+    #[test]
+    fn nlp_body_truncation_respects_utf8_boundary() {
+        let body = format!("{}{}", "测".repeat(12_000), "尾".repeat(4_000));
+        assert!(body.len() > NLP_BODY_MAX_BYTES);
+        let truncated = truncate_body_for_nlp(&body);
+        assert!(truncated.ends_with("尾尾"));
+        assert!(truncated.len() <= NLP_BODY_MAX_BYTES);
+    }
+
+    /// RT-010: real phishing prose past the old prefix cap is sampled; short
+    /// bodies still pass through untouched.
+    #[test]
+    fn nlp_body_truncation_real_corpus() {
+        let payload = "mailbox deactivation: send password and OTP to admin@evil.example";
+        let body = format!("{}{}{}", "A".repeat(25_000), payload, "B".repeat(4_000));
+        let truncated = truncate_body_for_nlp(&body);
+        assert!(truncated.len() <= NLP_BODY_MAX_BYTES);
+        assert!(truncated.contains(payload));
+        assert!(truncated.starts_with('A'));
+        assert!(truncated.ends_with('B'));
+
+        let short = "请于周五前提交季度报表。";
+        assert_eq!(truncate_body_for_nlp(short), short);
     }
 
     #[test]
@@ -1298,6 +1518,7 @@ mod tests {
             top_score: 0.91,
             malicious_probability: 0.96,
             legitimate_probability: 0.02,
+            phishing_probability: 0.0,
         };
 
         assert!(!zero_shot_nlp_is_actionable(&profile, false));
@@ -1311,6 +1532,7 @@ mod tests {
             top_score: 0.62,
             malicious_probability: 0.83,
             legitimate_probability: 0.58,
+            phishing_probability: 0.0,
         };
 
         assert!(!zero_shot_nlp_is_actionable(&profile, true));
@@ -1324,22 +1546,123 @@ mod tests {
             top_score: 0.72,
             malicious_probability: 0.91,
             legitimate_probability: 0.08,
+            phishing_probability: 0.0,
         };
 
         assert!(zero_shot_nlp_is_actionable(&profile, true));
     }
 
+    // ─── Fine-tuned consistency gate (R4 遗留1) ───
+    //
+    // Before the gate, a fine-tuned malicious verdict contributed up to 0.22
+    // unconditionally; an adversarially steered or self-inconsistent model
+    // (top label "legitimate" but verdict High) scored directly. Now the
+    // verdict must agree with the model's own label distribution.
+
     #[test]
-    fn fine_tuned_nlp_can_contribute_without_zero_shot_gate() {
+    fn fine_tuned_nlp_bypasses_zero_shot_gate_but_not_consistency_gate() {
+        // 语义更新说明：此测试原名 fine_tuned_nlp_can_contribute_without_zero_shot_gate。
+        // zero-shot 门控对 fine-tuned 仍然放行（保持不变），但新增的一致性门控
+        // 会拦截 top_score < 0.5 的弱信号——该 profile 现在属于 advisory-only。
         let profile = NlpSignalProfile {
             model_type: Some("fine-tuned".to_string()),
             top_label: Some("phishing".to_string()),
             top_score: 0.34,
             malicious_probability: 0.62,
             legitimate_probability: 0.28,
+            phishing_probability: 0.0,
         };
 
         assert!(zero_shot_nlp_is_actionable(&profile, false));
+        // Legacy 2-class profile without phishing_probability is treated as
+        // inconsistent (advisory-only).
+        assert!(!fine_tuned_nlp_is_actionable(&profile, ThreatLevel::High));
+    }
+
+    #[test]
+    fn fine_tuned_5class_consistent_malicious_signal_is_actionable() {
+        let profile = NlpSignalProfile {
+            model_type: Some("fine-tuned-5class".to_string()),
+            top_label: Some("phishing".to_string()),
+            top_score: 0.81,
+            malicious_probability: 0.9,
+            legitimate_probability: 0.1,
+            phishing_probability: 0.0,
+        };
+
+        assert!(fine_tuned_nlp_is_actionable(&profile, ThreatLevel::High));
+    }
+
+    #[test]
+    fn fine_tuned_5class_low_top_score_is_advisory_only() {
+        // Verdict claims High but the top class only reached 0.34 — weak,
+        // easily steered by adversarial phrasing; must not score directly.
+        let profile = NlpSignalProfile {
+            model_type: Some("fine-tuned-5class".to_string()),
+            top_label: Some("phishing".to_string()),
+            top_score: 0.34,
+            malicious_probability: 0.62,
+            legitimate_probability: 0.28,
+            phishing_probability: 0.0,
+        };
+
+        assert!(!fine_tuned_nlp_is_actionable(&profile, ThreatLevel::High));
+    }
+
+    #[test]
+    fn fine_tuned_5class_legitimate_top_label_is_advisory_only() {
+        // Adversarial inconsistency: verdict High while the model's own top
+        // label is "legitimate".
+        let profile = NlpSignalProfile {
+            model_type: Some("fine-tuned-5class".to_string()),
+            top_label: Some("legitimate".to_string()),
+            top_score: 0.55,
+            malicious_probability: 0.9,
+            legitimate_probability: 0.45,
+            phishing_probability: 0.0,
+        };
+
+        assert!(!fine_tuned_nlp_is_actionable(&profile, ThreatLevel::High));
+    }
+
+    #[test]
+    fn fine_tuned_2class_requires_malicious_band_probability() {
+        // Legacy 2-class has no top_label; the phishing probability must sit
+        // in the malicious band the verdict claims (>= 0.40 per the Python
+        // band mapping).
+        let consistent = NlpSignalProfile {
+            model_type: Some("fine-tuned".to_string()),
+            phishing_probability: 0.72,
+            ..Default::default()
+        };
+        let inconsistent = NlpSignalProfile {
+            model_type: Some("fine-tuned".to_string()),
+            phishing_probability: 0.21,
+            ..Default::default()
+        };
+
+        assert!(fine_tuned_nlp_is_actionable(&consistent, ThreatLevel::High));
+        assert!(!fine_tuned_nlp_is_actionable(&inconsistent, ThreatLevel::High));
+    }
+
+    #[test]
+    fn fine_tuned_gate_ignores_safe_verdicts_and_other_models() {
+        let safe_profile = NlpSignalProfile {
+            model_type: Some("fine-tuned-5class".to_string()),
+            top_label: Some("legitimate".to_string()),
+            top_score: 0.9,
+            ..Default::default()
+        };
+        // Safe/Low verdicts never score; gate must not interfere.
+        assert!(fine_tuned_nlp_is_actionable(&safe_profile, ThreatLevel::Safe));
+        assert!(fine_tuned_nlp_is_actionable(&safe_profile, ThreatLevel::Low));
+
+        let zero_shot_profile = NlpSignalProfile {
+            model_type: Some("zero-shot".to_string()),
+            ..Default::default()
+        };
+        // Zero-shot has its own gate; the fine-tuned gate leaves it alone.
+        assert!(fine_tuned_nlp_is_actionable(&zero_shot_profile, ThreatLevel::High));
     }
 
     fn make_ctx(body_text: Option<&str>, body_html: Option<&str>) -> SecurityContext {
@@ -1390,6 +1713,44 @@ mod tests {
             serde_json::json!("rules_only")
         );
         assert!(result.summary.contains("AI/NLP not configured"));
+        assert!(
+            !result
+                .categories
+                .iter()
+                .any(|category| category == "semantic_ai_inspection_limited"),
+            "short rules-only messages must keep the existing no-gap behavior"
+        );
+    }
+
+    /// RT-011: a long body is an intrinsic bounded-inspection gap even when
+    /// the optional AI service is disabled. Otherwise `AI_ENABLED=false`
+    /// suppresses the only signal that prevents a deep payload plus benign
+    /// cluster dilution from being accepted by the inline MTA.
+    #[tokio::test]
+    async fn test_semantic_scan_reports_long_body_coverage_when_nlp_unconfigured() {
+        let module = SemanticScanModule::new(None);
+        let body = "A".repeat(NLP_BODY_MAX_BYTES + 1);
+        let ctx = make_ctx(Some(&body), None);
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.details["nlp_configured"], serde_json::json!(false));
+        assert_eq!(result.details["nlp_status"], serde_json::json!("disabled"));
+        assert_eq!(
+            result.details["nlp_body_coverage_limited"],
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            result.details["semantic_ai_coverage_limited"],
+            serde_json::json!(true)
+        );
+        assert!(
+            result
+                .categories
+                .iter()
+                .any(|category| category == "semantic_ai_inspection_limited"),
+            "long rules-only messages must arm the existing MTA coverage gate"
+        );
     }
 
     #[test]
@@ -1511,8 +1872,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_foreign_to_cn_corp_still_triggers_for_unknown_foreign_sender() {
-        // A truly foreign sender to a .cn recipient should still trigger
+    async fn test_foreign_to_cn_corp_is_context_not_threat_for_unknown_sender() {
         let module = SemanticScanModule::new(None);
         let ctx = make_ctx_with_sender(
             "attacker@evil-domain.xyz",
@@ -1524,12 +1884,10 @@ mod tests {
 
         let result = module.analyze(&ctx).await.unwrap();
 
-        assert!(
-            result
-                .categories
-                .contains(&"foreign_to_cn_corp".to_string()),
-            "Unknown foreign sender to .cn should trigger foreign_to_cn_corp, got categories={:?}",
-            result.categories
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert_eq!(
+            result.details["language_observations"][0]["kind"],
+            "foreign_to_cn_corp"
         );
     }
 
@@ -1572,6 +1930,61 @@ mod tests {
             !result.categories.contains(&"nonsensical_spam".to_string()),
             "English email should not trigger nonsensical_spam, got categories={:?}",
             result.categories
+        );
+    }
+
+    // ─── Normalization evasion regression tests ───
+
+    #[test]
+    fn strip_html_tags_decodes_entities_like_content_scan() {
+        // The module previously carried a private strip_html_tags copy that
+        // did NOT entity-decode, unlike content_scan::html_utils. The copy
+        // is gone; the shared implementation must decode numeric entities.
+        assert_eq!(strip_html_tags("<p>b&#105;tcoin</p>"), " bitcoin ");
+        assert_eq!(strip_html_tags("<b>密&#x7801;</b>"), " 密码 ");
+    }
+
+    #[tokio::test]
+    async fn sextortion_entity_and_zero_width_evasion_fires() {
+        // Evasion PoC: zero-width splice inside "recorded you" plus an
+        // entity-encoded "bitcoin" previously defeated the raw lowercase
+        // substring matching in the sextortion rule.
+        let module = SemanticScanModule::new(None);
+        let body = "I recor\u{200B}ded you while you were browsing an adult site. \
+                    I have embarrassing footage of you. \
+                    Send b&#105;tcoin to my wallet within 24 hours or I share it.";
+        let ctx = make_ctx(Some(body), None);
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert!(
+            result.categories.contains(&"sextortion".to_string()),
+            "entity/zero-width obfuscated sextortion must fire, cats={:?}",
+            result.categories
+        );
+        assert!(result.threat_level >= ThreatLevel::Medium);
+    }
+
+    #[tokio::test]
+    async fn single_cjk_token_does_not_disable_foreign_language_observation() {
+        // Evasion PoC: sprinkling a single "的" into a pure English lure
+        // previously made cjk_count != 0 and disabled the foreign-language
+        // anomaly entirely.
+        let module = SemanticScanModule::new(None);
+        let ctx = make_ctx_with_sender(
+            "attacker@evil-domain.xyz",
+            &["victim@bank.com.cn"],
+            Some(
+                "Dear valued customer, your account has been compromised. Please click here to verify your identity immediately. 的",
+            ),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(
+            result.details["language_observations"][0]["kind"],
+            "foreign_to_cn_corp",
+            "single CJK token must not disable the contextual language observation"
         );
     }
 }

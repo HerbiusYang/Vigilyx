@@ -14,8 +14,8 @@ use vigilyx_core::{Direction, EmailSession};
 /// Session (store)
 #[derive(Clone, Hash, Eq, PartialEq)]
 pub struct SessionKey {
-    /// Use u128 store IP, Hash
-    ip_pair: u128,
+    client_ip: CompactIp,
+    server_ip: CompactIp,
     /// Port packet 1 u32
     port_pair: u32,
 }
@@ -45,11 +45,6 @@ impl CompactIp {
                 is_v6: true,
             },
         }
-    }
-
-    #[inline(always)]
-    pub fn to_u128(self) -> u128 {
-        u128::from_be_bytes(self.bytes)
     }
 }
 
@@ -85,12 +80,13 @@ impl SessionKey {
             ),
         };
 
-        // IP Composition1 u128 Used for Hash
-        // Use XOR Ensure
-        let ip_pair = client_ip.to_u128() ^ server_ip.to_u128().rotate_left(64);
         let port_pair = ((client_port as u32) << 16) | (server_port as u32);
 
-        Self { ip_pair, port_pair }
+        Self {
+            client_ip,
+            server_ip,
+            port_pair,
+        }
     }
 
     /// Getclient IP (Used forrate limiting)
@@ -157,6 +153,29 @@ pub struct Sessiondata {
     pub key: SessionKey,
     /// client IP (Used forSession IP rate limitingcounter)
     pub client_compact_ip: CompactIp,
+    /// `is_encrypted` was set by the mid-stream TLS-record magic heuristic (not
+    /// by an encrypted port or a confirmed STARTTLS). Such sessions keep
+    /// feeding the parser so a later legitimate SMTP line revokes the mark.
+    pub tls_magic_marked: bool,
+    /// The admission slot was already released when the session reached a
+    /// terminal state; cleanup must not decrement `session_slots` again.
+    pub slot_released: bool,
+    /// Stream buffers were evicted under reassembly-budget pressure while the
+    /// session was still Active. Content parsed after the eviction is
+    /// incomplete by construction: HTTP sessions must carry the gap flag and
+    /// email sessions an `inspection:` error reason.
+    pub stream_buffers_evicted: bool,
+    /// The HTTP request state machine permanently lost framing
+    /// synchronization (malformed chunked body). Subsequent requests on this
+    /// connection are no longer split; surfaced as inspection-limited.
+    pub http_desynced: bool,
+    /// A cleartext POP3 RETR / IMAP FETCH BODY[] transfer was observed. The
+    /// sniffer does not reassemble mail content for these protocols, so the
+    /// session carries an inspection coverage gap instead of a verdict.
+    pub mail_retrieval_seen: bool,
+    /// `protocol_anomaly` was already folded into `session.error_reason`;
+    /// guards against repeated dirty marking on the terminal paths.
+    pub protocol_anomaly_marked: bool,
 }
 
 /// sid -> user Mappingentry (Contains LRU timestamp)

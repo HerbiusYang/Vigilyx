@@ -79,7 +79,8 @@ fn needs_sandbox(filename: &str) -> bool {
 fn compute_sha256(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
-    format!("{:x}", hasher.finalize())
+    // sha2 0.11 output no longer implements LowerHex; encode explicitly.
+    hex::encode(hasher.finalize())
 }
 
 /// CAPEv2 score (0-10) Mapping ThreatLevel

@@ -34,6 +34,8 @@ const KW_CATEGORY_KEYS: KwCategory[] = [
   'auto_reply_patterns',
 ]
 
+const KW_PAGE_SIZE = 100
+
 export default function KeywordsTab() {
   const { t } = useTranslation()
   const [kwBuiltin, setKwBuiltin] = useState<Record<string, string[]>>({})
@@ -42,6 +44,9 @@ export default function KeywordsTab() {
   const [kwSaving, setKwSaving] = useState(false)
   const [kwNewKeyword, setKwNewKeyword] = useState('')
   const [kwActiveCategory, setKwActiveCategory] = useState<KwCategory>('phishing_keywords')
+  const [kwBuiltinPage, setKwBuiltinPage] = useState(0)
+  const [kwRemovedPage, setKwRemovedPage] = useState(0)
+  const [kwCustomPage, setKwCustomPage] = useState(0)
   const [kwMsg, setKwMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   const KW_CATEGORY_LABELS: Record<KwCategory, string> = {
@@ -69,6 +74,12 @@ export default function KeywordsTab() {
         .catch(() => setKwLoaded(true))
     }
   }, [kwLoaded])
+
+  useEffect(() => {
+    setKwBuiltinPage(0)
+    setKwRemovedPage(0)
+    setKwCustomPage(0)
+  }, [kwActiveCategory, kwNewKeyword, kwOverrides])
 
   const handleKwAdd = () => {
     if (!kwOverrides || !kwNewKeyword.trim()) return
@@ -163,6 +174,29 @@ export default function KeywordsTab() {
             return <>{text.slice(0, idx)}<span className="kw-hl">{text.slice(idx, idx + searchLower.length)}</span>{text.slice(idx + searchLower.length)}</>
           }
           const matchesSearch = (kw: string) => !searchLower || searchLower.length < 2 || kw.toLowerCase().includes(searchLower)
+          const filteredActiveBuiltin = activeBuiltin.filter(matchesSearch)
+          const filteredRemovedBuiltin = removedBuiltin.filter(matchesSearch)
+          const filteredCustomAdded = customAdded.filter(matchesSearch)
+          const pageItems = (items: string[], page: number) => items.slice(page * KW_PAGE_SIZE, (page + 1) * KW_PAGE_SIZE)
+          const pageCount = (total: number) => Math.max(1, Math.ceil(total / KW_PAGE_SIZE))
+          const renderPagination = (page: number, total: number, setPage: (next: number) => void) => {
+            const pages = pageCount(total)
+            if (pages <= 1) return null
+            return (
+              <div className="kw-pagination">
+                <button type="button" onClick={() => setPage(Math.max(0, page - 1))} disabled={page === 0} aria-label={t('emailSecurity.kwPrevious')}>
+                  ‹
+                </button>
+                <span>{t('emailSecurity.kwPage', { current: page + 1, total: pages })}</span>
+                <button type="button" onClick={() => setPage(Math.min(pages - 1, page + 1))} disabled={page >= pages - 1} aria-label={t('emailSecurity.kwNext')}>
+                  ›
+                </button>
+              </div>
+            )
+          }
+          const visibleCustomAdded = pageItems(filteredCustomAdded, kwCustomPage)
+          const visibleRemovedBuiltin = pageItems(filteredRemovedBuiltin, kwRemovedPage)
+          const visibleActiveBuiltin = pageItems(filteredActiveBuiltin, kwBuiltinPage)
 
           return <div className="kw-grid">
             {/* Left-side category navigation */}
@@ -208,12 +242,13 @@ export default function KeywordsTab() {
                 <div className="kw-section">
                   <div className="kw-section-hd">{t('emailSecurity.kwCustomAdded')}</div>
                   <div className="kw-tags">
-                    {customAdded.filter(matchesSearch).map(kw => (
+                    {visibleCustomAdded.map(kw => (
                       <span key={`c-${kw}`} className="kw-tag kw-tag--add" onClick={() => handleKwRemove(kw)} title={t('emailSecurity.kwClickToDelete')}>
                         {hl(kw)}<span className="kw-tag-x">×</span>
                       </span>
                     ))}
                   </div>
+                  {renderPagination(kwCustomPage, filteredCustomAdded.length, setKwCustomPage)}
                 </div>
               )}
 
@@ -222,12 +257,13 @@ export default function KeywordsTab() {
                 <div className="kw-section">
                   <div className="kw-section-hd">{t('emailSecurity.kwDisabledClickRestore')}</div>
                   <div className="kw-tags">
-                    {removedBuiltin.filter(matchesSearch).map(kw => (
+                    {visibleRemovedBuiltin.map(kw => (
                       <span key={`r-${kw}`} className="kw-tag kw-tag--off" onClick={() => handleKwRestore(kw)} title={t('emailSecurity.kwClickToRestore')}>
                         {hl(kw)}<span className="kw-tag-x">↩</span>
                       </span>
                     ))}
                   </div>
+                  {renderPagination(kwRemovedPage, filteredRemovedBuiltin.length, setKwRemovedPage)}
                 </div>
               )}
 
@@ -236,18 +272,19 @@ export default function KeywordsTab() {
                 <div className="kw-section-hd">{t('emailSecurity.kwBuiltinClickDisable')}</div>
                 <div className="kw-tags-scroll">
                   <div className="kw-tags">
-                    {activeBuiltin.filter(matchesSearch).map(kw => (
+                    {visibleActiveBuiltin.map(kw => (
                       <span key={`b-${kw}`} className="kw-tag kw-tag--sys" onClick={() => handleKwRemove(kw)} title={t('emailSecurity.kwClickToDisable')}>
                         {hl(kw)}
                       </span>
                     ))}
-                    {activeBuiltin.filter(matchesSearch).length === 0 && searchLower.length >= 2 && (
+                    {filteredActiveBuiltin.length === 0 && searchLower.length >= 2 && (
                       <span style={{ fontSize: 13, color: 'var(--text-tertiary)', padding: '8px 0' }}>
                         {t('emailSecurity.kwNoMatch', { keyword: kwNewKeyword.trim() })}
                       </span>
                     )}
                   </div>
                 </div>
+                {renderPagination(kwBuiltinPage, filteredActiveBuiltin.length, setKwBuiltinPage)}
               </div>
 
             </div>

@@ -239,6 +239,10 @@ mod tests {
             raw_size: 1024,
             is_complete: true,
             is_encrypted: false,
+            truncated: false,
+            dropped_attachments: 0,
+            links_truncated: false,
+            link_index: std::collections::HashSet::new(),
             smtp_dialog: vec![],
         };
         session

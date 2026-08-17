@@ -161,7 +161,8 @@ pub(super) fn aggregate_clustered_ds_v1(
     total_k = total_k.max(simple_conflict);
 
     let mut risk_single = fused.risk_score(config.eta);
-    let floor_result = apply_cluster_floors_and_caps(risk_single, &cluster_state, &normalized);
+    let floor_result =
+        apply_cluster_floors_and_caps_with_config(risk_single, &cluster_state, &normalized, config);
     risk_single = floor_result.risk;
     let final_level = ThreatLevel::from_score(risk_single);
     let confidence = active_clusters
@@ -396,10 +397,11 @@ fn apply_context_adjustments(clusters: &mut [ClusterEvidence], normalized: &Norm
     }
 }
 
-fn apply_cluster_floors_and_caps(
+fn apply_cluster_floors_and_caps_with_config(
     mut risk: f64,
     clusters: &[ClusterEvidence],
     normalized: &NormalizedEvidence,
+    config: &VerdictConfig,
 ) -> FloorCapResult {
     let score_map: HashMap<EvidenceClusterId, f64> = clusters
         .iter()
@@ -437,6 +439,10 @@ fn apply_cluster_floors_and_caps(
         payload,
         external,
     );
+    let structural_credential_lure = normalized
+        .categories
+        .iter()
+        .any(|category| category == "credential_link_lure");
 
     // ── Phase 1: Scenario-specific floors (hand-written rules) ──────────
     if payload >= 0.75 {
@@ -485,7 +491,7 @@ fn apply_cluster_floors_and_caps(
     }
     if normalized.scenario.has_account_security_signal
         && normalized.scenario.has_credential_link_signal
-        && social >= 0.24
+        && (social >= 0.24 || structural_credential_lure)
         && link >= 0.08
     {
         let account_floor = if identity >= 0.15
@@ -504,6 +510,17 @@ fn apply_cluster_floors_and_caps(
         && normalized.scenario.has_payment_change_signal
     {
         risk = risk.max(0.60);
+    }
+    // A payment-account-change signal standing on its own (single
+    // BusinessSensitivity cluster, no identity/link/IOC corroboration) is
+    // still concrete BEC evidence. D-S fusion can dilute one capped
+    // (0.45) cluster below Medium — do not let a pure-text payment-change
+    // mail fall under 0.40.
+    if normalized.scenario.has_payment_change_signal
+        && business >= 0.35
+        && !normalized.scenario.sender_alignment_verified
+    {
+        risk = risk.max(0.40);
     }
     if normalized.scenario.has_account_security_signal
         && normalized.scenario.has_payment_change_signal
@@ -595,31 +612,23 @@ fn apply_cluster_floors_and_caps(
         };
         risk = risk.max(spoofed_finance_floor);
     }
-    if normalized.scenario.has_encrypted_attachment_signal
-        && payload >= 0.12
-        && (social >= 0.28 || identity >= 0.30 || link >= 0.16 || external >= 0.18)
-        && !normalized.scenario.dsn_like_system_mail
-        && !normalized.scenario.auto_reply_like
-    {
-        risk = risk.max(0.56);
-    }
-
     // ── Phase 2: Generic cluster-level circuit breaker ──────────────────
     //
     // Safety net for scenarios not covered by hand-written floor rules.
-    // When a single cluster has a strong score (>= 0.55) with decent
-    // confidence (>= 0.70), D-S fusion should not dilute it below a
-    // minimum floor. This is the cluster-level equivalent of the legacy
-    // ds_murphy circuit breaker.
+    // When a single cluster has a strong score (>= 0.55), decent confidence
+    // (>= 0.70), and an independently strong anchor, D-S fusion should not
+    // dilute it below a minimum floor. Repeated structural URL heuristics are
+    // intentionally ineligible even if their aggregate score is high.
     //
     // Thresholds:
     //   - cluster score >= 0.55 (meaningful threat signal)
     //   - confidence >= 0.70 (not speculative)
-    //   - floor = score * 0.80, minimum 0.40 (at least Medium)
+    //   - floor = score * configured alert_floor_factor. Configuration
+    //     validation guarantees the factor never discounts evidence (< 1.0).
     let mut cb_info: Option<CircuitBreakerInfo> = None;
     for cluster in clusters {
-        if cluster.score >= 0.55 && cluster.confidence >= 0.70 {
-            let floor = (cluster.score * 0.80).max(0.40);
+        if cluster.breaker_eligible && cluster.score >= 0.55 && cluster.confidence >= 0.70 {
+            let floor = (cluster.score * config.alert_floor_factor).clamp(0.0, 1.0);
             if risk < floor {
                 cb_info = Some(CircuitBreakerInfo {
                     trigger_module_id: cluster.id.label().to_string(),
@@ -634,22 +643,26 @@ fn apply_cluster_floors_and_caps(
 
     // ── Phase 3: Cluster convergence breaker ────────────────────────────
     //
-    // When 3+ independent evidence clusters have meaningful signal
-    // (score >= 0.15), their convergence is strong evidence of a real
+    // When the configured number of independent evidence clusters have a
+    // score at or above the configured threshold, their convergence is
+    // strong evidence of a real
     // threat even if no single cluster is dominant. D-S fusion can dilute
     // many weak signals to Safe — this breaker prevents that.
     //
-    // Floor formula: 0.35 + 0.05 * (active_count - 2), capped at 0.55.
-    //   3 clusters → 0.40 (Low/Medium boundary)
-    //   4 clusters → 0.45 (Medium)
-    //   5 clusters → 0.50 (Medium)
-    //   6+ clusters → 0.55 (Medium)
+    // The base floor and minimum module count are configuration-driven; each
+    // additional independent cluster adds 0.05, capped 0.15 above the base.
     let mut conv_info: Option<ConvergenceBreakerInfo> = None;
-    let convergence_clusters: Vec<&ClusterEvidence> =
-        clusters.iter().filter(|c| c.score >= 0.15).collect();
+    let convergence_clusters: Vec<&ClusterEvidence> = clusters
+        .iter()
+        .filter(|c| c.score >= config.convergence_belief_threshold)
+        .collect();
     let active_count = convergence_clusters.len();
-    if active_count >= 3 {
-        let convergence_floor = (0.35 + 0.05 * (active_count as f64 - 2.0)).min(0.55);
+    let min_modules = config.convergence_min_modules as usize;
+    if active_count >= min_modules {
+        let additional_clusters = active_count.saturating_sub(min_modules) as f64;
+        let convergence_cap = (config.convergence_base_floor + 0.15).min(0.85);
+        let convergence_floor =
+            (config.convergence_base_floor + 0.05 * additional_clusters).min(convergence_cap);
         if risk < convergence_floor {
             let flagged_modules: Vec<String> = convergence_clusters
                 .iter()
@@ -663,6 +676,49 @@ fn apply_cluster_floors_and_caps(
             });
             risk = convergence_floor;
         }
+    }
+
+    // Two low-confidence contextual observations must not become a Medium
+    // verdict when the sender's authentication/alignment is verified. This is
+    // common for ordinary vendor questionnaires: a foreign-language body and
+    // a coverage/MIME note are useful context, but neither is actionable threat
+    // evidence. Explicit credential, payment, fraud, spoofing, IOC, and
+    // attachment-phishing signals are excluded from this cap.
+    let contextual_convergence_only = conv_info.is_some()
+        && active_count <= 2
+        && normalized.scenario.sender_alignment_verified
+        && !normalized.scenario.has_header_spoof_signal
+        && !normalized.scenario.has_account_security_signal
+        && !normalized.scenario.has_credential_link_signal
+        && !normalized.scenario.has_malicious_ioc_signal
+        && !normalized.scenario.has_payment_change_signal
+        && !normalized.scenario.has_subsidy_fraud_signal
+        && !normalized.scenario.has_invoice_spam_signal
+        && !normalized.scenario.has_attachment_phishing_signal
+        && !normalized.scenario.has_high_risk_attachment_content
+        && !normalized.scenario.has_structural_threat_signal
+        && normalized.categories.iter().all(|category| {
+            matches!(
+                category.as_str(),
+                "foreign_to_cn_corp"
+                    | "japanese_to_cn_corp"
+                    | "japanese_unexpected"
+                    | "nonsensical_spam"
+                    | "mime_mismatch"
+                    | "ocr_unavailable"
+                    | "attachment_inspection_limited"
+                    | "attachment_qr_inspection_limited"
+                    | "encrypted_attachment"
+                    | "inspection_incomplete"
+                    | "inspection_coverage_incomplete"
+                    | "inspection_execution_incomplete"
+            )
+        });
+    if contextual_convergence_only {
+        risk = risk.min(0.35);
+        // Do not report a breaker that was subsequently suppressed; the
+        // persisted fusion explanation should match the delivered severity.
+        conv_info = None;
     }
 
     // ── Phase 4: Scenario-specific caps (suppress false positives) ──────
@@ -743,8 +799,15 @@ fn apply_cluster_floors_and_caps(
         risk = risk.min(0.18);
     }
 
-    let semantic_notice_only =
-        social > 0.0 && identity < 0.25 && link < 0.25 && payload < 0.25 && external < 0.25;
+    let semantic_notice_only = social > 0.0
+        && identity < 0.25
+        && link < 0.25
+        && payload < 0.25
+        && external < 0.25
+        // A BusinessSensitivity cluster (payment-change / banking evidence)
+        // is not NLP notice noise — a body or transaction signal standing
+        // next to the NLP echo must not be flattened below its Phase-1 floor.
+        && business < 0.20;
     if (normalized.scenario.notice_banner_polluted
         || normalized.scenario.auto_reply_like
         || normalized.scenario.dsn_like_system_mail)
@@ -754,6 +817,8 @@ fn apply_cluster_floors_and_caps(
         && !normalized.scenario.has_malicious_ioc_signal
         && !normalized.scenario.has_subsidy_fraud_signal
         && !normalized.scenario.has_invoice_spam_signal
+        && !normalized.scenario.has_payment_change_signal
+        && !normalized.scenario.has_crypto_wallet_signal
     {
         risk = risk.min(0.12);
     }
@@ -782,11 +847,44 @@ fn apply_cluster_floors_and_caps(
         risk = risk.min(0.12);
     }
 
+    // A subject-only off-platform contact lure corroborated by sender
+    // identity randomness is a concrete low-risk finding. Apply this after
+    // gateway/notice caps so an upstream banner cannot erase it. Keep the
+    // floor below Medium and do not make it a hard circuit-breaker anchor.
+    if normalized
+        .categories
+        .iter()
+        .any(|category| category == "subject_contact_lure")
+        && normalized
+            .categories
+            .iter()
+            .any(|category| category == "random_sender")
+    {
+        risk = risk.max(0.15);
+    }
+
     FloorCapResult {
         risk: risk.clamp(0.0, 0.99),
         circuit_breaker: cb_info,
         convergence_breaker: conv_info,
     }
+}
+
+// Most tests below cover the established scenario floors/caps and must
+// exercise the exact production breaker semantics, so the helper delegates to
+// the production `VerdictConfig::default()` values (alert_floor_factor=1.0,
+// convergence_min_modules=2, convergence_base_floor=0.40,
+// convergence_belief_threshold=0.10 — the same values `VerdictConfig::validate`
+// enforces). Dedicated configuration tests call the production helper directly
+// so changes to persisted knobs are observable.
+#[cfg(test)]
+fn apply_cluster_floors_and_caps(
+    risk: f64,
+    clusters: &[ClusterEvidence],
+    normalized: &NormalizedEvidence,
+) -> FloorCapResult {
+    let config = VerdictConfig::default();
+    apply_cluster_floors_and_caps_with_config(risk, clusters, normalized, &config)
 }
 
 fn has_corroborated_threat_signal(
@@ -823,7 +921,6 @@ fn gateway_banner_has_independent_corroboration(
         || scenario.has_crypto_wallet_signal
         || scenario.has_attachment_phishing_signal
         || scenario.has_high_risk_attachment_content
-        || scenario.has_encrypted_attachment_signal
         || payload >= 0.45
         || external >= 0.35
         || identity >= 0.45
@@ -998,12 +1095,16 @@ mod tests {
         ClusterEvidence, EvidenceClusterId, NormalizedEvidence, ScenarioContext,
     };
     use super::*;
+    use serde_json::json;
+    use vigilyx_core::models::{EmailContent, Protocol};
+    use vigilyx_core::security::Pillar;
 
     fn make_cluster(id: EvidenceClusterId, score: f64, confidence: f64) -> ClusterEvidence {
         ClusterEvidence {
             id,
             score,
             confidence,
+            breaker_eligible: true,
             modules: vec![],
             key_factors: vec![],
         }
@@ -1023,6 +1124,53 @@ mod tests {
     // ── Phase 2: Generic cluster-level circuit breaker ──────────────────
 
     #[test]
+    fn production_breakers_consume_validated_verdict_configuration() {
+        let strong = vec![make_cluster(
+            EvidenceClusterId::SenderIdentityAuthenticity,
+            0.60,
+            0.80,
+        )];
+        let strong_normalized = make_normalized(&strong);
+        let factor_config = VerdictConfig {
+            alert_floor_factor: 1.20,
+            ..VerdictConfig::default()
+        };
+        let factor_result = apply_cluster_floors_and_caps_with_config(
+            0.10,
+            &strong,
+            &strong_normalized,
+            &factor_config,
+        );
+        assert!((factor_result.risk - 0.72).abs() < 1e-9);
+
+        let converging = vec![
+            make_cluster(EvidenceClusterId::SenderIdentityAuthenticity, 0.20, 0.30),
+            make_cluster(EvidenceClusterId::PayloadMalware, 0.20, 0.30),
+        ];
+        let converging_normalized = make_normalized(&converging);
+        let convergence_config = VerdictConfig {
+            convergence_min_modules: 2,
+            convergence_base_floor: 0.45,
+            convergence_belief_threshold: 0.19,
+            ..VerdictConfig::default()
+        };
+        let convergence_result = apply_cluster_floors_and_caps_with_config(
+            0.10,
+            &converging,
+            &converging_normalized,
+            &convergence_config,
+        );
+        assert!((convergence_result.risk - 0.45).abs() < 1e-9);
+        assert_eq!(
+            convergence_result
+                .convergence_breaker
+                .expect("configured convergence breaker should fire")
+                .modules_flagged,
+            2
+        );
+    }
+
+    #[test]
     fn test_generic_cluster_floor_fires_for_strong_identity() {
         let clusters = vec![make_cluster(
             EvidenceClusterId::SenderIdentityAuthenticity,
@@ -1031,18 +1179,57 @@ mod tests {
         )];
         let normalized = make_normalized(&clusters);
         let result = apply_cluster_floors_and_caps(0.10, &clusters, &normalized);
-        // floor = 0.65 * 0.80 = 0.52
+        // floor = 0.65 * 1.0 = 0.65 (production alert_floor_factor never discounts)
         assert!(
-            (result.risk - 0.52).abs() < 1e-9,
-            "risk should be 0.52, got {}",
+            (result.risk - 0.65).abs() < 1e-9,
+            "risk should be 0.65, got {}",
             result.risk
         );
         assert!(result.circuit_breaker.is_some());
         let cb = result.circuit_breaker.unwrap();
         assert_eq!(cb.trigger_module_id, "sender_identity_authenticity");
         assert!((cb.trigger_belief - 0.65).abs() < 1e-9);
-        assert!((cb.floor_value - 0.52).abs() < 1e-9);
+        assert!((cb.floor_value - 0.65).abs() < 1e-9);
         assert!((cb.original_risk - 0.10).abs() < 1e-9);
+    }
+
+    #[test]
+    fn subject_contact_lure_with_identity_anomaly_has_low_floor_not_medium() {
+        let clusters = vec![
+            make_cluster(EvidenceClusterId::SenderIdentityAuthenticity, 0.11, 0.80),
+            make_cluster(EvidenceClusterId::SocialEngineeringIntent, 0.05, 0.70),
+        ];
+        let mut normalized = make_normalized(&clusters);
+        normalized.categories = vec![
+            "subject_contact_lure".to_string(),
+            "random_sender".to_string(),
+        ];
+
+        let result = apply_cluster_floors_and_caps(0.10, &clusters, &normalized);
+
+        assert!(result.risk >= 0.15);
+        assert!(result.risk < 0.40);
+        assert!(result.circuit_breaker.is_none());
+    }
+
+    #[test]
+    fn test_generic_cluster_floor_rejects_weak_correlated_link_heuristics() {
+        let mut weak_link = make_cluster(EvidenceClusterId::LinkAndHtmlDeception, 0.90, 0.79);
+        weak_link.breaker_eligible = false;
+        let clusters = vec![weak_link];
+        let mut normalized = make_normalized(&clusters);
+        normalized.categories = vec![
+            "redirect_url".to_string(),
+            "recipient_in_url".to_string(),
+            "long_url".to_string(),
+            "suspicious_params".to_string(),
+        ];
+
+        let result = apply_cluster_floors_and_caps(0.48, &clusters, &normalized);
+
+        assert_eq!(result.risk, 0.48);
+        assert!(result.circuit_breaker.is_none());
+        assert!(!normalized.scenario.has_credential_link_signal);
     }
 
     #[test]
@@ -1087,11 +1274,11 @@ mod tests {
             0.80,
         )];
         let normalized = make_normalized(&clusters);
-        // floor = 0.60 * 0.80 = 0.48, but risk = 0.55 > 0.48
-        let result = apply_cluster_floors_and_caps(0.55, &clusters, &normalized);
+        // floor = 0.60 * 1.0 = 0.60, but risk = 0.70 > 0.60
+        let result = apply_cluster_floors_and_caps(0.70, &clusters, &normalized);
         assert!(
-            (result.risk - 0.55).abs() < 1e-9,
-            "risk should remain 0.55, got {}",
+            (result.risk - 0.70).abs() < 1e-9,
+            "risk should remain 0.70, got {}",
             result.risk
         );
         assert!(result.circuit_breaker.is_none());
@@ -1109,16 +1296,17 @@ mod tests {
         ];
         let normalized = make_normalized(&clusters);
         let result = apply_cluster_floors_and_caps(0.10, &clusters, &normalized);
-        // floor = 0.35 + 0.05 * (3 - 2) = 0.40
+        // production min_modules=2 → floor = 0.40 + 0.05 * (3 - 2) = 0.45
         assert!(
-            (result.risk - 0.40).abs() < 1e-9,
-            "risk should be 0.40, got {}",
+            (result.risk - 0.45).abs() < 1e-9,
+            "risk should be 0.45, got {}",
             result.risk
         );
+        assert_eq!(ThreatLevel::from_score(result.risk), ThreatLevel::Medium);
         assert!(result.convergence_breaker.is_some());
         let conv = result.convergence_breaker.unwrap();
         assert_eq!(conv.modules_flagged, 3);
-        assert!((conv.floor_value - 0.40).abs() < 1e-9);
+        assert!((conv.floor_value - 0.45).abs() < 1e-9);
         assert!((conv.original_risk - 0.10).abs() < 1e-9);
     }
 
@@ -1133,10 +1321,10 @@ mod tests {
         ];
         let normalized = make_normalized(&clusters);
         let result = apply_cluster_floors_and_caps(0.10, &clusters, &normalized);
-        // floor = 0.35 + 0.05 * (5 - 2) = 0.50
+        // production min_modules=2 → floor = 0.40 + 0.05 * (5 - 2) = 0.55
         assert!(
-            (result.risk - 0.50).abs() < 1e-9,
-            "risk should be 0.50, got {}",
+            (result.risk - 0.55).abs() < 1e-9,
+            "risk should be 0.55, got {}",
             result.risk
         );
         assert!(result.convergence_breaker.is_some());
@@ -1158,7 +1346,7 @@ mod tests {
         ];
         let normalized = make_normalized(&clusters);
         let result = apply_cluster_floors_and_caps(0.10, &clusters, &normalized);
-        // formula = 0.35 + 0.05 * (8 - 2) = 0.65, capped at 0.55
+        // production: floor = 0.40 + 0.05 * (8 - 2) = 0.70, capped at base+0.15 = 0.55
         assert!(
             (result.risk - 0.55).abs() < 1e-9,
             "risk should be 0.55 (convergence capped), got {}",
@@ -1169,11 +1357,55 @@ mod tests {
     }
 
     #[test]
-    fn test_convergence_floor_does_not_fire_below_3() {
+    fn test_convergence_floor_fires_for_2_clusters() {
+        // Production convergence_min_modules=2: two independent clusters at or
+        // above the belief threshold are already convergence evidence.
         let clusters = vec![
             make_cluster(EvidenceClusterId::SenderIdentityAuthenticity, 0.20, 0.30),
             make_cluster(EvidenceClusterId::SocialEngineeringIntent, 0.20, 0.30),
         ];
+        let normalized = make_normalized(&clusters);
+        let result = apply_cluster_floors_and_caps(0.10, &clusters, &normalized);
+        // floor = 0.40 + 0.05 * (2 - 2) = 0.40 (exactly the Medium boundary)
+        assert!(
+            (result.risk - 0.40).abs() < 1e-9,
+            "risk should be 0.40, got {}",
+            result.risk
+        );
+        assert_eq!(ThreatLevel::from_score(result.risk), ThreatLevel::Medium);
+        assert!(result.convergence_breaker.is_some());
+        assert_eq!(result.convergence_breaker.unwrap().modules_flagged, 2);
+    }
+
+    #[test]
+    fn verified_sender_context_does_not_reach_medium_convergence_floor() {
+        let clusters = vec![
+            make_cluster(EvidenceClusterId::PayloadMalware, 0.20, 0.30),
+            make_cluster(EvidenceClusterId::SocialEngineeringIntent, 0.20, 0.30),
+        ];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.sender_alignment_verified = true;
+        normalized.categories = vec![
+            "foreign_to_cn_corp".to_string(),
+            "mime_mismatch".to_string(),
+            "inspection_coverage_incomplete".to_string(),
+        ];
+
+        let result = apply_cluster_floors_and_caps(0.10, &clusters, &normalized);
+
+        assert!((result.risk - 0.35).abs() < 1e-9);
+        assert_eq!(ThreatLevel::from_score(result.risk), ThreatLevel::Low);
+        assert!(result.convergence_breaker.is_none());
+    }
+
+    #[test]
+    fn test_convergence_floor_does_not_fire_below_min_modules() {
+        // A single weak cluster is not convergence, whatever its score.
+        let clusters = vec![make_cluster(
+            EvidenceClusterId::SenderIdentityAuthenticity,
+            0.20,
+            0.30,
+        )];
         let normalized = make_normalized(&clusters);
         let result = apply_cluster_floors_and_caps(0.10, &clusters, &normalized);
         assert!(
@@ -1198,7 +1430,7 @@ mod tests {
         ];
         let normalized = make_normalized(&clusters);
         let result = apply_cluster_floors_and_caps(0.10, &clusters, &normalized);
-        // Convergence floor = 0.40, then only_contextual cap → 0.35
+        // Convergence floor = 0.40 + 0.05 * (3 - 2) = 0.45, then only_contextual cap → 0.35
         assert!(
             (result.risk - 0.35).abs() < 1e-9,
             "risk should be capped at 0.35, got {}",
@@ -1480,6 +1712,29 @@ mod tests {
     }
 
     #[test]
+    fn test_neutral_structural_credential_lure_gets_medium_floor_without_nlp_cluster() {
+        let clusters = vec![make_cluster(
+            EvidenceClusterId::LinkAndHtmlDeception,
+            0.36,
+            0.82,
+        )];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.has_account_security_signal = true;
+        normalized.scenario.has_credential_link_signal = true;
+        normalized
+            .categories
+            .push("credential_link_lure".to_string());
+
+        let result = apply_cluster_floors_and_caps(0.18, &clusters, &normalized);
+
+        assert!(
+            result.risk >= 0.48,
+            "the AI-disabled structural credential lure must not remain Safe/Low, got {}",
+            result.risk
+        );
+    }
+
+    #[test]
     fn test_cross_locale_account_lure_with_payment_signal_gets_high_floor() {
         let clusters = vec![
             make_cluster(EvidenceClusterId::SocialEngineeringIntent, 0.24, 0.84),
@@ -1562,20 +1817,273 @@ mod tests {
     }
 
     #[test]
-    fn test_encrypted_attachment_plus_social_signal_gets_medium_floor() {
+    fn test_coverage_only_encrypted_attachment_does_not_add_threat_floor() {
         let clusters = vec![
             make_cluster(EvidenceClusterId::PayloadMalware, 0.16, 0.82),
             make_cluster(EvidenceClusterId::SocialEngineeringIntent, 0.34, 0.80),
         ];
-        let mut normalized = make_normalized(&clusters);
-        normalized.scenario.has_encrypted_attachment_signal = true;
+        let normalized = make_normalized(&clusters);
 
         let result = apply_cluster_floors_and_caps(0.26, &clusters, &normalized);
 
         assert!(
-            (result.risk - 0.56).abs() < 1e-9,
-            "encrypted attachment plus social lure should be uplifted to Medium, got {}",
+            result.risk < 0.56,
+            "coverage-only encrypted attachment must not add a threat floor, got {}",
             result.risk
+        );
+    }
+
+    // ── PoC regressions: plain-text BEC + forged Auto-Submitted bypass ─────
+
+    fn make_test_session(subject: &str, body: &str, sender: &str) -> EmailSession {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            2525,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.subject = Some(subject.to_string());
+        session.mail_from = Some(sender.to_string());
+        session.content = EmailContent {
+            body_text: Some(body.to_string()),
+            ..Default::default()
+        };
+        session
+    }
+
+    fn make_test_result(
+        module_id: &str,
+        pillar: Pillar,
+        threat_level: ThreatLevel,
+        categories: &[&str],
+        score: f64,
+    ) -> ModuleResult {
+        ModuleResult {
+            module_id: module_id.to_string(),
+            module_name: module_id.to_string(),
+            pillar,
+            threat_level,
+            confidence: 0.85,
+            categories: categories.iter().map(|c| (*c).to_string()).collect(),
+            summary: "test".to_string(),
+            evidence: vec![],
+            details: json!({ "score": score }),
+            duration_ms: 5,
+            analyzed_at: Utc::now(),
+            bpa: None,
+            engine_id: None,
+        }
+    }
+
+    #[test]
+    fn test_plain_text_bec_with_forged_auto_submitted_header_is_not_safe() {
+        // Full attack PoC: a pure-text BEC email (payment account change, no
+        // links/attachments/IOCs) plus one forged `Auto-Submitted` header line.
+        // Before the fixes, content_scan's bec_payment_change /
+        // bec_no_ioc_social categories were dropped without producing any
+        // evidence cluster, and the lone forged header additionally triggered
+        // the dsn/auto-reply suppression caps — the verdict came out Safe.
+        let mut session = make_test_session(
+            "付款账户变更通知",
+            "请告知财务，原收款账户已停用，请将货款支付至新账户，此事保密。",
+            "cfo@supplier-example.com",
+        );
+        session
+            .content
+            .headers
+            .push(("Auto-Submitted".to_string(), "auto-generated".to_string()));
+
+        let mut results = HashMap::new();
+        results.insert(
+            "content_scan".to_string(),
+            make_test_result(
+                "content_scan",
+                Pillar::Content,
+                ThreatLevel::High,
+                &["bec_payment_change", "bec_no_ioc_social"],
+                0.78,
+            ),
+        );
+
+        let verdict = aggregate_clustered_ds_v1(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+
+        assert!(
+            verdict.threat_level >= ThreatLevel::Medium,
+            "plain-text BEC must not be suppressed below Medium, got {:?} (summary: {})",
+            verdict.threat_level,
+            verdict.summary
+        );
+        let cluster_ids: Vec<String> = verdict
+            .fusion_details
+            .as_ref()
+            .map(|details| {
+                details
+                    .engine_details
+                    .iter()
+                    .map(|engine| engine.engine_id.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            cluster_ids
+                .iter()
+                .any(|id| id == EvidenceClusterId::BusinessSensitivity.label()),
+            "verdict must contain a BusinessSensitivity cluster, got {cluster_ids:?}"
+        );
+        assert!(
+            !verdict.summary.contains("dsn_like_system_mail")
+                && !verdict.summary.contains("auto_reply_like"),
+            "forged Auto-Submitted header must not tag scenario suppression: {}",
+            verdict.summary
+        );
+    }
+
+    #[test]
+    fn test_genuine_dsn_with_corroborated_auto_submitted_still_suppresses() {
+        // Control: a genuine DSN (Auto-Submitted + MAILER-DAEMON sender) with
+        // only weak content signals must still be capped like before.
+        let mut session = make_test_session(
+            "Undelivered Mail Returned to Sender",
+            "This message was generated by the mail system.",
+            "MAILER-DAEMON@mail.example.com",
+        );
+        session
+            .content
+            .headers
+            .push(("Auto-Submitted".to_string(), "auto-generated".to_string()));
+
+        let mut results = HashMap::new();
+        results.insert(
+            "content_scan".to_string(),
+            make_test_result(
+                "content_scan",
+                Pillar::Content,
+                ThreatLevel::Medium,
+                &["phishing"],
+                0.50,
+            ),
+        );
+
+        let verdict = aggregate_clustered_ds_v1(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+
+        assert!(
+            verdict.threat_level <= ThreatLevel::Low,
+            "genuine DSN with weak content signal should stay capped, got {:?} (summary: {})",
+            verdict.threat_level,
+            verdict.summary
+        );
+    }
+
+    #[test]
+    fn test_payment_change_business_cluster_gets_medium_floor_without_identity() {
+        // Round-2 PoC (cluster level): a standalone payment-change
+        // BusinessSensitivity cluster (no identity/link/IOC corroboration)
+        // used to fuse below Medium. The dedicated Phase 1 floor keeps a
+        // strong payment-change signal at the Medium boundary.
+        let clusters = vec![make_cluster(
+            EvidenceClusterId::BusinessSensitivity,
+            0.40,
+            0.80,
+        )];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.has_payment_change_signal = true;
+
+        let result = apply_cluster_floors_and_caps(0.20, &clusters, &normalized);
+
+        assert!(
+            (result.risk - 0.40).abs() < 1e-9,
+            "standalone payment-change cluster should floor at 0.40, got {}",
+            result.risk
+        );
+        assert_eq!(ThreatLevel::from_score(result.risk), ThreatLevel::Medium);
+    }
+
+    #[test]
+    fn test_payment_change_business_cluster_below_floor_threshold_stays_low() {
+        // The floor must not manufacture Medium verdicts out of weak
+        // business chatter: below the 0.35 cluster threshold nothing fires.
+        let clusters = vec![make_cluster(
+            EvidenceClusterId::BusinessSensitivity,
+            0.30,
+            0.80,
+        )];
+        let mut normalized = make_normalized(&clusters);
+        normalized.scenario.has_payment_change_signal = true;
+
+        let result = apply_cluster_floors_and_caps(0.20, &clusters, &normalized);
+
+        assert!(
+            (result.risk - 0.20).abs() < 1e-9,
+            "weak payment-change cluster should keep fused risk, got {}",
+            result.risk
+        );
+    }
+
+    #[test]
+    fn test_plain_text_payment_change_bec_from_forged_mailer_daemon_is_not_safe() {
+        // Round-2 full attack PoC: a pure-text payment-account-change BEC
+        // (no links/attachments/IOCs) with a forged MAILER-DAEMON envelope.
+        // Before the fixes the lone system-sender trait triggered the
+        // dsn_like suppression caps, and without identity corroboration the
+        // single capped BusinessSensitivity cluster fused below Medium —
+        // the verdict came out Low/Safe.
+        let session = make_test_session(
+            "付款账户变更通知",
+            "请告知财务，原收款账户已停用，请将货款 58 万元紧急支付至新账户，此事保密。",
+            "MAILER-DAEMON@evil-example.com",
+        );
+
+        let mut results = HashMap::new();
+        results.insert(
+            "content_scan".to_string(),
+            make_test_result(
+                "content_scan",
+                Pillar::Content,
+                ThreatLevel::High,
+                &["bec_payment_change"],
+                0.78,
+            ),
+        );
+        results.insert(
+            "transaction_correlation".to_string(),
+            make_test_result(
+                "transaction_correlation",
+                Pillar::Semantic,
+                ThreatLevel::Medium,
+                &["payment_change"],
+                0.70,
+            ),
+        );
+
+        let verdict = aggregate_clustered_ds_v1(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+
+        assert!(
+            verdict.threat_level >= ThreatLevel::Medium,
+            "plain-text payment-change BEC with a forged MAILER-DAEMON envelope must reach Medium, got {:?} (summary: {})",
+            verdict.threat_level,
+            verdict.summary
+        );
+        assert!(
+            !verdict.summary.contains("dsn_like_system_mail")
+                && !verdict.summary.contains("auto_reply_like"),
+            "forged MAILER-DAEMON envelope must not tag scenario suppression: {}",
+            verdict.summary
         );
     }
 }

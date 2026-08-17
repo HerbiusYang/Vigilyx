@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -153,6 +153,44 @@ describe('SetupWizard', () => {
     await user.click(screen.getByRole('button', { name: '下一步' }))
     expect(await screen.findByRole('heading', { name: 'Webmail 数据采集' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '内部域名' })).not.toBeInTheDocument()
+  })
+
+  it('refreshes host interface counters while the mirror network step is visible', async () => {
+    const user = userEvent.setup()
+    const defaultImplementation = apiFetchMock.getMockImplementation()
+    let interfaceRequests = 0
+    const intervalSpy = vi.spyOn(window, 'setInterval')
+
+    apiFetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/system/interfaces') {
+        interfaceRequests += 1
+        const rxBytes = interfaceRequests * 1024
+        return response({
+          success: true,
+          data: [{ name: 'ens224', rx_bytes: rxBytes, tx_bytes: 512, total_bytes: rxBytes + 512, status: 'up' }],
+        })
+      }
+      return defaultImplementation?.(input, init)
+    })
+
+    const { unmount } = render(<SetupWizard onComplete={vi.fn()} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: '开始配置' })).toBeEnabled())
+    await user.click(screen.getByRole('button', { name: '开始配置' }))
+    await user.click(screen.getByRole('button', { name: '下一步' }))
+
+    expect(await screen.findByText('RX 1 KB')).toBeInTheDocument()
+    const refreshCall = intervalSpy.mock.calls.find(([, delay]) => delay === 5_000)
+    expect(refreshCall).toBeDefined()
+
+    await act(async () => {
+      await (refreshCall?.[0] as () => Promise<void>)()
+    })
+
+    expect(await screen.findByText('RX 2 KB')).toBeInTheDocument()
+    expect(interfaceRequests).toBe(2)
+
+    unmount()
+    intervalSpy.mockRestore()
   })
 
   it('does not advance when the backend rejects a configuration write', async () => {

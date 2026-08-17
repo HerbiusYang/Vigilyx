@@ -27,6 +27,8 @@ use crate::matcher::{
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
 use crate::module_data::module_data;
 use crate::modules::common::extract_domain_from_url;
+use crate::modules::content_scan::html_utils::strip_html_tags;
+use crate::modules::content_scan::normalize_text;
 
 // ---------------------------------------------------------------------------
 // Constants: AitM subdomain regex patterns (not data-driven)
@@ -92,6 +94,10 @@ fn is_aitm_platform_domain(domain: &str) -> bool {
     md.get_list("aitm_platform_domain_suffixes")
         .iter()
         .any(|suffix| lower.ends_with(suffix.as_str()))
+}
+
+fn is_shared_hosting_platform(domain: &str) -> bool {
+    crate::modules::link_scan::is_shared_hosting_platform(domain)
 }
 
 /// Check if a hostname has AitM-typical subdomain patterns (DGA, UUID, toolkit naming).
@@ -228,8 +234,51 @@ fn detect_aitm_domain_patterns(
             continue;
         }
 
+        // First-party provider domains can still host attacker-controlled
+        // Forms/Notion/Functions pages.  Keep a signal for auth-like paths
+        // instead of inheriting the clean-domain bypass used for static URLs.
+        if is_shared_hosting_platform(&domain) && !is_aitm_platform_domain(&domain) {
+            let path = url_path_query(&link.url).unwrap_or_default();
+            let has_auth_path = aitm_toolkit_paths().is_match(&path)
+                || [
+                    "login",
+                    "signin",
+                    "verify",
+                    "password",
+                    "account",
+                    "credential",
+                    "security",
+                    "payment",
+                    "invoice",
+                    "oauth",
+                    "session",
+                ]
+                .iter()
+                .any(|term| path.contains(term));
+            if has_auth_path {
+                score += 0.35;
+                findings.push((
+                    format!(
+                        "Attacker-controlled hosted platform URL contains authentication/lure path: {}",
+                        domain
+                    ),
+                    "aitm_hosted_platform_auth".to_string(),
+                ));
+            } else {
+                score += 0.12;
+                findings.push((
+                    format!(
+                        "Link uses a shared content-hosting platform where tenant content is untrusted: {}",
+                        domain
+                    ),
+                    "aitm_hosted_platform".to_string(),
+                ));
+            }
+            flagged_domains.insert(domain.clone());
+        }
+
         // Check known AitM platform hosting
-        if is_aitm_platform_domain(&domain) {
+        if !flagged_domains.contains(&domain) && is_aitm_platform_domain(&domain) {
             // Also check if the URL path looks like a login/auth page
             let path = url_path_query(&link.url).unwrap_or_default();
             let has_auth_path = aitm_toolkit_paths().is_match(&path);
@@ -275,6 +324,112 @@ fn detect_aitm_domain_patterns(
                 flagged_domains.insert(domain);
             }
         }
+    }
+
+    (score, findings)
+}
+
+/// Escalate a shared-hosting link only when the surrounding message supplies
+/// credential-verification context.  A Forms/Docs URL by itself is common in
+/// legitimate mail and remains the existing Low hosted-platform signal; the
+/// combination of a tenant-controlled platform, a credential lure, and an
+/// action/auth path is materially different and must cross the quarantine
+/// boundary in the inline pipeline.
+fn detect_hosted_platform_credential_lure(
+    links: &[vigilyx_core::models::EmailLink],
+    subject: Option<&str>,
+    body_text: Option<&str>,
+    body_html: Option<&str>,
+) -> (f64, Vec<(String, String)>) {
+    let mut corpus = String::new();
+    for value in [subject, body_text].into_iter().flatten() {
+        corpus.push_str(value);
+        corpus.push('\n');
+    }
+    if let Some(html) = body_html {
+        corpus.push_str(&strip_html_tags(html));
+    }
+    let corpus = normalize_text(&corpus.to_lowercase());
+    if corpus.is_empty() {
+        return (0.0, Vec::new());
+    }
+
+    let has_identity = [
+        "account",
+        "identity",
+        "credential",
+        "password",
+        "login",
+        "sign in",
+        "账户",
+        "帐户",
+        "身份",
+        "凭据",
+        "密码",
+        "登录",
+        "验证",
+        "认证",
+    ]
+    .iter()
+    .any(|term| corpus.contains(term));
+    let has_action = [
+        "click",
+        "confirm",
+        "verify",
+        "enter",
+        "complete",
+        "immediately",
+        "点击",
+        "确认",
+        "验证",
+        "输入",
+        "立即",
+        "完成",
+    ]
+    .iter()
+    .any(|term| corpus.contains(term));
+    if !has_identity || !has_action {
+        return (0.0, Vec::new());
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let mut findings = Vec::new();
+    let mut score = 0.0;
+    for link in links {
+        let Some(domain) = url_domain(&link.url) else {
+            continue;
+        };
+        if !is_shared_hosting_platform(&domain) || !seen.insert(domain.clone()) {
+            continue;
+        }
+        let path = url_path_query(&link.url).unwrap_or_default();
+        let link_text = link.text.as_deref().unwrap_or_default().to_lowercase();
+        let auth_path = [
+            "login",
+            "signin",
+            "verify",
+            "password",
+            "account",
+            "credential",
+            "security",
+            "confirm",
+            "viewform",
+            "oauth",
+        ]
+        .iter()
+        .any(|term| path.contains(term) || link_text.contains(term));
+        if !auth_path {
+            continue;
+        }
+
+        score += 0.38;
+        findings.push((
+            format!(
+                "Shared-hosting URL {} is paired with credential-verification language and an action/auth path",
+                domain
+            ),
+            "aitm_hosted_credential_lure".to_string(),
+        ));
     }
 
     (score, findings)
@@ -370,37 +525,153 @@ fn detect_mfa_bait_text(
     subject: Option<&str>,
     body_text: Option<&str>,
     body_html: Option<&str>,
+    links: &[vigilyx_core::models::EmailLink],
 ) -> (f64, Vec<(String, String)>) {
     let mut score = 0.0_f64;
     let mut findings: Vec<(String, String)> = Vec::new();
 
-    // Combine subject + body for text analysis
-    let mut combined = String::new();
-    if let Some(s) = subject {
-        combined.push_str(s);
-        combined.push(' ');
+    let mut blocks = Vec::new();
+    for source in [
+        subject.map(str::to_string),
+        body_text.map(str::to_string),
+        // Shared stripper: decodes HTML entities and handles bare '<', so
+        // "&#36134;户" / unclosed-tag tricks cannot hide bait phrases.
+        body_html.map(strip_html_tags),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        blocks.extend(
+            source
+                .split(['\n', '\r', '。', '！', '？', '!', '?', ';', '；'])
+                .map(|block| normalize_text(&block.to_lowercase()))
+                .filter(|block| !block.trim().is_empty()),
+        );
     }
-    if let Some(bt) = body_text {
-        combined.push_str(bt);
-        combined.push(' ');
+    // Tag stripping inserts a space at every tag boundary, so bait phrases
+    // spliced by inline markup ("身份验</b>证" -> "身份验 证") still evade
+    // substring matching. Push an additional whitespace-free view of each
+    // block; locality semantics are preserved because compaction happens
+    // per block, not across the whole body.
+    let original_len = blocks.len();
+    for i in 0..original_len {
+        let compact: String = blocks[i].chars().filter(|c| !c.is_whitespace()).collect();
+        if compact != blocks[i] {
+            blocks.push(compact);
+        }
     }
-    if let Some(bh) = body_html {
-        // Strip HTML tags for keyword matching
-        let stripped: String = strip_html_tags(bh);
-        combined.push_str(&stripped);
+    for link in links {
+        if let Some(text) = link.text.as_deref() {
+            let normalized = normalize_text(&text.to_lowercase());
+            if !normalized.trim().is_empty() {
+                blocks.push(normalized);
+            }
+        }
     }
-
-    let combined_lower = combined.to_lowercase();
-    if combined_lower.is_empty() {
+    if blocks.is_empty() {
         return (score, findings);
     }
 
-    // Check for MFA bait phrases — single AC pass over EN/ZH/JA/KO/RU/ES/PT/FR/DE/AR.
-    // Replaces ~10 nested `phrases.iter().any(contains)` loops; the matcher
-    // is built once and reused across the whole engine lifetime.
-    let mfa_hits: Vec<String> = mfa_bait_all_locales()
-        .scan(&combined_lower)
-        .distinct_patterns();
+    let has_auth_link = links.iter().any(|link| {
+        let effective = crate::modules::link_scan::unwrap_mail_security_gateway_target(&link.url)
+            .unwrap_or_else(|| link.url.clone());
+        let Ok(parsed) = url::Url::parse(&effective) else {
+            return false;
+        };
+        parsed.path_segments().is_some_and(|segments| {
+            segments.map(str::to_ascii_lowercase).any(|segment| {
+                matches!(
+                    segment.as_str(),
+                    "login"
+                        | "log-in"
+                        | "signin"
+                        | "sign-in"
+                        | "auth"
+                        | "authenticate"
+                        | "verify"
+                        | "verification"
+                        | "mfa"
+                        | "2fa"
+                        | "sso"
+                        | "oauth"
+                )
+            })
+        })
+    });
+
+    const ACTION_INSTRUCTION_TERMS: &[&str] = &[
+        "please verify",
+        "verify your",
+        "please confirm",
+        "click to",
+        "click here",
+        "sign in",
+        "log in",
+        "enter verification",
+        "enter the code",
+        "enter your password",
+        "请验证",
+        "请立即",
+        "请完成",
+        "点击",
+        "输入验证码",
+        "输入密码",
+        "登录",
+        "してください",
+        "入力",
+        "クリック",
+        "로그인",
+        "입력",
+        "클릭",
+        "введите",
+        "нажмите",
+        "войдите",
+        "подтвердите",
+        "inicie sesión",
+        "ingrese",
+        "clique",
+        "saisissez",
+        "connectez-vous",
+        "geben sie",
+        "anmelden",
+        "أدخل",
+        "انقر",
+    ];
+    const CREDENTIAL_ENTRY_TERMS: &[&str] = &[
+        "enter verification",
+        "enter the code",
+        "enter your password",
+        "输入验证码",
+        "输入密码",
+        "user_code",
+        "one-time code",
+        "otp",
+    ];
+
+    let mut mfa_hits = Vec::new();
+    let mut urgency_hits = Vec::new();
+    for block in &blocks {
+        let block_mfa_hits = mfa_bait_all_locales().scan(block).distinct_patterns();
+        if block_mfa_hits.is_empty() {
+            continue;
+        }
+        let has_action_instruction = ACTION_INSTRUCTION_TERMS
+            .iter()
+            .any(|term| block.contains(term));
+        let has_credential_entry = CREDENTIAL_ENTRY_TERMS
+            .iter()
+            .any(|term| block.contains(term));
+        if !has_action_instruction || (!has_auth_link && !has_credential_entry) {
+            continue;
+        }
+
+        mfa_hits.extend(block_mfa_hits);
+        urgency_hits.extend(aitm_urgency().scan(block).distinct_patterns());
+    }
+    mfa_hits.sort();
+    mfa_hits.dedup();
+    urgency_hits.sort();
+    urgency_hits.dedup();
 
     if mfa_hits.is_empty() {
         return (score, findings);
@@ -422,9 +693,8 @@ fn detect_mfa_bait_text(
         "aitm_mfa_bait".to_string(),
     ));
 
-    // Amplify if urgency language co-occurs
-    let urgency_hits: Vec<String> = aitm_urgency().scan(&combined_lower).distinct_patterns();
-
+    // Amplify only when urgency occurs in the same local block as the MFA
+    // instruction. Navigation text and an unrelated CTA cannot be joined.
     if !urgency_hits.is_empty() {
         score += 0.15;
         findings.push((
@@ -442,24 +712,6 @@ fn detect_mfa_bait_text(
     }
 
     (score, findings)
-}
-
-/// Minimal HTML tag stripper for keyword extraction.
-fn strip_html_tags(html: &str) -> String {
-    let mut out = String::with_capacity(html.len());
-    let mut in_tag = false;
-    for ch in html.chars() {
-        match ch {
-            '<' => in_tag = true,
-            '>' => {
-                in_tag = false;
-                out.push(' ');
-            }
-            _ if !in_tag => out.push(ch),
-            _ => {}
-        }
-    }
-    out
 }
 
 // ---------------------------------------------------------------------------
@@ -579,14 +831,20 @@ fn detect_brand_impersonation_login(
             // with word boundaries (avoid e.g. "line" matching microsoftonline.com).
             let brand_in_path = keyword_has_word_boundary(&path, brand_keyword);
             let brand_in_subdomain = keyword_has_word_boundary(&domain, brand_keyword);
-            let brand_in_url = brand_in_path || brand_in_subdomain;
+            let brand_in_visible_text = link.text.as_deref().is_some_and(|text| {
+                keyword_has_word_boundary(&text.to_ascii_lowercase(), brand_keyword)
+            });
+            let brand_in_url = brand_in_path || brand_in_subdomain || brand_in_visible_text;
 
             if !brand_in_url {
                 continue;
             }
 
             // Check if the domain actually belongs to the brand
-            if domain_belongs_to_brand(&domain, &legitimate_suffixes) {
+            if domain_belongs_to_brand(&domain, &legitimate_suffixes)
+                && !(is_shared_hosting_platform(&domain)
+                    && (brand_in_path || brand_in_visible_text))
+            {
                 continue; // Legitimate brand domain, skip
             }
 
@@ -619,6 +877,16 @@ fn detect_brand_impersonation_login(
                         brand_keyword, domain
                     ),
                     "aitm_brand_path_login".to_string(),
+                ));
+                flagged_brands.insert(brand_keyword.to_string());
+            } else if brand_in_visible_text && is_shared_hosting_platform(&domain) {
+                score += 0.30;
+                findings.push((
+                    format!(
+                        "Hosted-platform link uses brand lure text '{}' on tenant-controlled domain {}",
+                        brand_keyword, domain
+                    ),
+                    "aitm_hosted_brand_lure".to_string(),
                 ));
                 flagged_brands.insert(brand_keyword.to_string());
             } else if brand_in_subdomain {
@@ -761,7 +1029,11 @@ fn detect_device_code_phishing(
         let stripped: String = strip_html_tags(bh);
         combined.push_str(&stripped);
     }
-    let combined_lower = combined.to_ascii_lowercase();
+    // Unicode normalization (NFKC + zero-width stripping): full-width
+    // letters/digits and zero-width splices must not hide the device-login
+    // URL, the enter-code phrase, or the user_code itself.
+    let combined_normalized = normalize_text(&combined);
+    let combined_lower = combined_normalized.to_lowercase();
 
     // ── Signal 1: Device-login URL reference ────────────────────────────
     let device_url_in_links = links.iter().any(|link| {
@@ -785,14 +1057,16 @@ fn detect_device_code_phishing(
     }
 
     // ── Signal 2: 8-character alphanumeric user_code ────────────────────
-    // Microsoft device codes are uppercase letters + digits, 8 chars,
-    // sometimes with separators (BXFK-7QHZ). We require uppercase to
-    // avoid colliding with hexadecimal digests.
+    // Microsoft device codes are letters + digits, 8 chars, sometimes with
+    // separators (BXFK-7QHZ, "BXFK 7QHZ"). The match is case-insensitive
+    // and tolerates repeated whitespace/dash separators so attackers cannot
+    // evade by lowercasing the code or inserting extra spaces. All-digit
+    // candidates are still rejected below (order/invoice numbers).
     static RE_USER_CODE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"\b([A-Z0-9]{4}[\s\-]?[A-Z0-9]{4})\b").expect("device code regex")
+        Regex::new(r"(?i)\b([A-Z0-9]{4}[\s\-]*[A-Z0-9]{4})\b").expect("device code regex")
     });
     let mut user_codes: Vec<String> = Vec::new();
-    for caps in RE_USER_CODE.captures_iter(&combined) {
+    for caps in RE_USER_CODE.captures_iter(&combined_normalized) {
         if let Some(m) = caps.get(1) {
             // Reject if all-digits (likely an order/invoice number).
             if m.as_str().chars().any(|c| c.is_ascii_alphabetic()) {
@@ -801,21 +1075,6 @@ fn detect_device_code_phishing(
         }
     }
     let has_user_code = !user_codes.is_empty();
-    if has_user_code {
-        score += 0.20;
-        findings.push((
-            format!(
-                "Possible Device Code user_code present in body: {}",
-                user_codes
-                    .iter()
-                    .take(3)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            "device_code_user_code".to_string(),
-        ));
-    }
 
     // ── Signal 3: "enter this code" imperative phrasing ──────────────────
     // Phrase list is data-driven (seed: `device_code_enter_phrases`) so
@@ -832,7 +1091,27 @@ fn detect_device_code_phishing(
     } else {
         None
     };
-    if let Some(ref phrase) = enter_phrase_hit {
+    // A standalone eight-character identifier is common in business mail and
+    // must not be labelled as a device-code attack.  Require a device-login
+    // URL, or a code plus an explicit enter-code instruction, before emitting
+    // the user-code signal.
+    let actionable_device_context = has_device_url || (has_user_code && enter_phrase_hit.is_some());
+    if actionable_device_context && has_user_code {
+        score += 0.20;
+        findings.push((
+            format!(
+                "Possible Device Code user_code present in body: {}",
+                user_codes
+                    .iter()
+                    .take(3)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            "device_code_user_code".to_string(),
+        ));
+    }
+    if actionable_device_context && let Some(ref phrase) = enter_phrase_hit {
         score += 0.20;
         findings.push((
             format!(
@@ -984,6 +1263,27 @@ impl SecurityModule for AitmDetectModule {
             }
         }
 
+        // Dimension 1b: tenant-controlled hosted forms/pages paired with a
+        // credential lure.  This stays local and inline-safe; reputation and
+        // landing-page fetches remain deferred to the asynchronous pipeline.
+        {
+            let (s, findings) = detect_hosted_platform_credential_lure(
+                links,
+                subject,
+                body_text,
+                body_html,
+            );
+            total_score += s;
+            for (desc, category) in findings {
+                all_categories.push(category);
+                all_evidence.push(Evidence {
+                    description: desc,
+                    location: Some("body+links".to_string()),
+                    snippet: None,
+                });
+            }
+        }
+
         // Dimension 2: OAuth/SSO redirect anomalies
         if !links.is_empty() {
             let (s, findings) = detect_oauth_redirect_anomalies(links);
@@ -1000,7 +1300,7 @@ impl SecurityModule for AitmDetectModule {
 
         // Dimension 3: MFA bait text
         {
-            let (s, findings) = detect_mfa_bait_text(subject, body_text, body_html);
+            let (s, findings) = detect_mfa_bait_text(subject, body_text, body_html, links);
             total_score += s;
             for (desc, category) in findings {
                 all_categories.push(category);
@@ -1385,6 +1685,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_separated_recertification_and_registration_cta_do_not_form_aitm_bait() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        let ctx = make_ctx_with_links_and_body(
+            vec!["https://connect.acams.org/signin"],
+            Some("重新认证\n本月培训活动席位有限，立即报名。"),
+            None,
+            Some("ACAMS 八月活动通讯"),
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            !result.categories.contains(&"aitm_mfa_bait".to_string()),
+            "distant navigation and CTA text must not be combined: {:?}",
+            result.categories
+        );
+        assert!(
+            !result.categories.contains(&"aitm_mfa_urgency".to_string()),
+            "distant urgency must not amplify an MFA term: {:?}",
+            result.categories
+        );
+    }
+
     // --- Dimension D: Reverse proxy fingerprints ---
 
     #[test]
@@ -1665,6 +1991,53 @@ mod tests {
         );
     }
 
+    #[test]
+    fn hosted_form_with_credential_lure_crosses_medium_boundary() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        let ctx = make_ctx_with_links_and_body(
+            vec!["https://docs.google.com/forms/d/e/attacker/viewform"],
+            Some("请立即确认您的账户信息，输入密码完成身份验证。"),
+            None,
+            Some("账户安全验证通知"),
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            result
+                .categories
+                .contains(&"aitm_hosted_credential_lure".to_string()),
+            "hosted form credential lure should be explicit: {:?}",
+            result.categories
+        );
+        assert!(
+            result.threat_level >= ThreatLevel::Medium,
+            "hosted credential lure must not remain Low: {:?} ({})",
+            result.threat_level,
+            result.details["score"]
+        );
+    }
+
+    #[test]
+    fn ordinary_hosted_document_without_lure_remains_safe_or_low() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        let ctx = make_ctx_with_links_and_body(
+            vec!["https://docs.google.com/document/d/quarterly-report"],
+            Some("Please review the quarterly report and add comments."),
+            None,
+            Some("Q3 report"),
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(!result.categories.contains(&"aitm_hosted_credential_lure".to_string()));
+        assert!(result.threat_level <= ThreatLevel::Low);
+    }
+
     // --- Edge cases ---
 
     #[test]
@@ -1933,6 +2306,130 @@ mod tests {
                 .contains(&"device_code_user_code".to_string()),
             "all-digit order number must not be classified as user_code, got {:?}",
             result.categories
+        );
+    }
+
+    #[test]
+    fn test_device_code_standalone_alphanumeric_reference_is_not_phishing() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        let ctx = make_ctx_device_code(
+            "billing@vendor.example",
+            Some("Order reference"),
+            Some("Your order reference is 75D857C4. No action is required."),
+            vec![],
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            !result
+                .categories
+                .contains(&"device_code_user_code".to_string()),
+            "standalone order/reference code must not be classified as device-login evidence: {:?}",
+            result.categories
+        );
+    }
+
+    // ── Normalization evasion regression tests ───────────────────────────
+
+    #[test]
+    fn test_mfa_bait_fullwidth_and_zero_width_evasion_fires() {
+        // Evasion PoC: full-width Latin letters and a zero-width splice
+        // inside "authentication" previously bypassed the lowercase-only
+        // Aho-Corasick corpus. normalize_text folds/strips them.
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        let body = "Ｖｅｒｉｆｙ ｙｏｕｒ ｉｄｅｎｔｉｔｙ now. \
+                    Additional authenticati\u{200B}on required to keep your mailbox active.";
+        let ctx = make_ctx_with_links_and_body(
+            vec!["https://example.com/verify"],
+            Some(body),
+            None,
+            Some("Security notice"),
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            result.categories.contains(&"aitm_mfa_bait".to_string()),
+            "full-width / zero-width MFA bait must trigger aitm_mfa_bait: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_device_code_lowercase_and_wide_separator_fires() {
+        // Evasion PoC: lowercase user_code with a double-space separator and
+        // a zero-width splice inside the device-login URL previously slipped
+        // past the uppercase-only, single-separator regex and the raw
+        // substring URL check.
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        let body = "Hello, to finish setup please visit \
+                    microsoft.com/devicelo\u{200B}gin and enter this code: \
+                    bxfk  7qhz to complete verification. The code expires soon.";
+        let ctx = make_ctx_device_code(
+            "it-helpdesk@random-cdn-host.tld",
+            Some("Action required: complete device sign-in"),
+            Some(body),
+            vec![],
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            result
+                .categories
+                .contains(&"device_code_login_url".to_string()),
+            "zero-width-spliced device-login URL must be detected, got {:?}",
+            result.categories
+        );
+        assert!(
+            result
+                .categories
+                .contains(&"device_code_user_code".to_string()),
+            "lowercase multi-space user_code must be detected, got {:?}",
+            result.categories
+        );
+        assert!(
+            result
+                .categories
+                .contains(&"device_code_enter_phrase".to_string()),
+            "enter-phrase must be detected, got {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn test_mfa_bait_spliced_by_html_tags_and_entities_fires() {
+        // PoC: the old private HTML stripper left entities undecoded and
+        // (like any tag stripper) split keywords across inline tags, so
+        // "身份验</b>证" and "验证&#30721;" both slipped past the MFA bait
+        // scan. The shared stripper decodes entities; a per-block
+        // whitespace-free view restores tag-spliced phrases.
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        // "身份验</b>证" splices 身份验证 (mfa bait); "验证&#30721;" is an
+        // entity-encoded 验证码 (mfa bait + credential entry "输入验证码").
+        let html = "<p>安全提醒：您的登录会话需要复核，请立即完成<b>身份验</b>证并输入<b>验证&#30721;</b>以保障账户安全。</p>";
+        let ctx = make_ctx_with_links_and_body(vec![], None, Some(html), None);
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            result.categories.contains(&"aitm_mfa_bait".to_string()),
+            "tag-spliced / entity-encoded MFA bait must be detected: {:?}",
+            result.categories
+        );
+        assert!(
+            result.threat_level >= ThreatLevel::Low,
+            "two MFA bait hits must reach Low, got {:?}",
+            result.threat_level
         );
     }
 }

@@ -38,7 +38,7 @@ Vigilyx uses a remote-first workflow: edit code locally, but run Rust compilatio
 | Environment | Tool | Purpose |
 |-------------|------|---------|
 | Local machine | SSH + rsync | Sync source code to the remote build host |
-| Local machine | Node.js 24.15.0 + npm 11.12.1 | Optional frontend tooling and local Vite HMR |
+| Local machine | Node.js 24.19.0 + npm 12.0.2 | Optional frontend tooling and local Vite HMR |
 | Remote host | Docker and Docker Compose | Build container, runtime services, and containerized frontend builds |
 | Remote host | Passwordless SSH access | Required by `deploy.sh` |
 
@@ -94,9 +94,9 @@ npm run dev
 
 Toolchain rules:
 
-- Frontend development is pinned to `Node 24.15.0` via [`.nvmrc`](.nvmrc).
+- Frontend development is pinned to `Node 24.19.0` via [`.nvmrc`](.nvmrc).
 - `frontend/package.json` declares `engines` and `packageManager`, and [frontend/.npmrc](frontend/.npmrc) enforces `engine-strict=true`.
-- `./deploy.sh --frontend` and the production Docker build both use the same pinned `Node 24.15.0 + npm 11.12.1` frontend toolchain.
+- `./deploy.sh --frontend` and the production Docker build both use the same pinned `Node 24.19.0 + npm 12.0.2` frontend toolchain.
 - Use `npm ci` for routine installs.
 - When changing dependencies, update them from `frontend/` and commit the matching `package-lock.json`.
 

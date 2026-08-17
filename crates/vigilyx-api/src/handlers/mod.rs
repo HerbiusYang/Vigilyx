@@ -6,6 +6,7 @@ pub mod database;
 pub mod deployment_mode;
 pub mod health;
 pub mod ioc_handlers;
+pub mod platform;
 pub mod security;
 pub mod sessions;
 pub mod setup_status;

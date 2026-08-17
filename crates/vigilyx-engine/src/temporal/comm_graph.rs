@@ -37,9 +37,14 @@ struct SenderStats {
     total_emails: u64,
     /// Average risk across all edges
     avg_risk: f64,
-    /// When this sender was first seen (email count at graph level)
-    #[allow(dead_code)]
-    first_seen_at: u64,
+    /// When this sender was first observed (wall clock). `None` for senders
+    /// reconstructed from DB-imported edges — imported history is treated as
+    /// established (not "new").
+    ///
+    /// This must be wall-clock time, not an email count (E7): an attacker who
+    /// "ages" an account by sending a handful of one-to-one emails must still
+    /// count as a new sender for the first 24h.
+    first_seen: Option<std::time::Instant>,
 }
 
 /// Communication graph state.
@@ -55,13 +60,25 @@ pub struct CommGraph {
     freq_alpha: f64,
     /// EWMA smoothing for edge risk
     risk_alpha: f64,
+    /// Capacity bound for edges (E6): attacker-controlled pairs must not grow
+    /// the graph linearly forever. At capacity, *new* edges are refused —
+    /// existing edges keep working.
+    max_edges: usize,
+    /// Capacity bound for per-sender stats (E6).
+    max_senders: usize,
 }
+
+/// Default capacity bound for graph edges / tracked senders (E6).
+const DEFAULT_MAX_GRAPH_KEYS: usize = 100_000;
 
 /// Parameters for graph anomaly detection.
 #[derive(Debug, Clone)]
 pub struct GraphParams {
-    /// New sender threshold: sender with <N emails is "new"
-    pub new_sender_email_threshold: u64,
+    /// New-sender window in **wall-clock hours** (E7): a sender first seen
+    /// less than this long ago is "new". Previously this was an email-count
+    /// threshold (≤5 emails), which an attacker escaped by sending a handful
+    /// of one-to-one warmup emails before the mass phish.
+    pub new_sender_window_hours: f64,
     /// High out-degree threshold for new senders
     pub new_sender_high_outdegree: usize,
     /// Out-degree burst: ratio of new recipients to historical average
@@ -73,7 +90,7 @@ pub struct GraphParams {
 impl Default for GraphParams {
     fn default() -> Self {
         Self {
-            new_sender_email_threshold: 5,
+            new_sender_window_hours: 24.0,
             new_sender_high_outdegree: 10,
             outdegree_burst_ratio: 3.0,
             high_risk_edge_threshold: 0.5,
@@ -111,7 +128,18 @@ impl CommGraph {
             total_emails: 0,
             freq_alpha: 0.1,
             risk_alpha: 0.15,
+            max_edges: DEFAULT_MAX_GRAPH_KEYS,
+            max_senders: DEFAULT_MAX_GRAPH_KEYS,
         }
+    }
+
+    /// Override the capacity bounds (tests use tiny bounds to exercise the
+    /// capacity path deterministically).
+    #[cfg(test)]
+    fn with_limits(mut self, max_edges: usize, max_senders: usize) -> Self {
+        self.max_edges = max_edges;
+        self.max_senders = max_senders;
+        self
     }
 
     /// Record a communication and check for anomalies.
@@ -134,6 +162,21 @@ impl CommGraph {
         self.total_emails += 1;
         let sender_lower = sender.to_ascii_lowercase();
 
+        // E6: bound the per-sender map. A spray of unique senders at capacity
+        // is tracked statelessly (no persisted stats/edges) instead of growing
+        // the graph without bound; existing senders are unaffected.
+        if !self.sender_stats.contains_key(&sender_lower)
+            && self.sender_stats.len() >= self.max_senders
+        {
+            return GraphCheckResult {
+                is_anomalous: false,
+                pattern_label: String::new(),
+                anomaly_score: 0.0,
+                is_new_edge: false,
+                sender_out_degree: 0,
+            };
+        }
+
         // Track new edges in this observation
         let mut new_edges_count = 0;
         let mut new_edge_high_risk = false;
@@ -147,7 +190,7 @@ impl CommGraph {
                     out_degree: 0,
                     total_emails: 0,
                     avg_risk: risk_single,
-                    first_seen_at: self.total_emails,
+                    first_seen: Some(std::time::Instant::now()),
                 });
             stats.total_emails += 1;
             stats.avg_risk =
@@ -172,6 +215,13 @@ impl CommGraph {
             edge_key.push_str(&sender_lower);
             edge_key.push('→');
             edge_key.push_str(&recipient_lower);
+
+            // E6: refuse brand-new edges once the graph is at capacity —
+            // attacker-controlled pairs must not grow the map without bound.
+            // Existing edges keep updating normally.
+            if self.edges.len() >= self.max_edges && !self.edges.contains_key(&edge_key) {
+                continue;
+            }
 
             // Single entry() lookup instead of contains_key() + entry() (was 2 hashes)
             use std::collections::hash_map::Entry;
@@ -215,13 +265,16 @@ impl CommGraph {
             }
         }
 
-        // Pattern 1: New sender with high out-degree (mass phishing)
-        let sender_age = self
-            .sender_stats
-            .get(&sender_lower)
-            .map(|s| s.total_emails)
-            .unwrap_or(0);
-        if sender_age <= params.new_sender_email_threshold
+        // Pattern 1: New sender with high out-degree (mass phishing).
+        // E7: "new" is wall-clock age since first observation; senders
+        // reconstructed from DB imports (first_seen=None) are established.
+        let stats = self.sender_stats.get(&sender_lower);
+        let sender_age_hours = stats
+            .and_then(|s| s.first_seen)
+            .map(|t| t.elapsed().as_secs_f64() / 3600.0)
+            .unwrap_or(f64::INFINITY);
+        let sender_emails = stats.map(|s| s.total_emails).unwrap_or(0);
+        if sender_age_hours <= params.new_sender_window_hours
             && out_degree >= params.new_sender_high_outdegree
         {
             let score = (out_degree as f64 / params.new_sender_high_outdegree as f64).min(1.0);
@@ -229,14 +282,14 @@ impl CommGraph {
                 &mut worst,
                 format!(
                     "NewSender群发: {}封email→{}recipient",
-                    sender_age, out_degree
+                    sender_emails, out_degree
                 ),
                 score,
             );
         }
 
         // Pattern 2: Known sender, new high-risk edge (BEC lateral movement)
-        if sender_age > params.new_sender_email_threshold && new_edge_high_risk {
+        if sender_age_hours > params.new_sender_window_hours && new_edge_high_risk {
             let score = risk_single.min(1.0);
             update_worst(
                 &mut worst,
@@ -401,11 +454,20 @@ mod tests {
         }
     }
 
+    /// Mark a sender as established (first seen long ago) without sleeping:
+    /// `first_seen = None` is the "imported history" state, which the
+    /// wall-clock new-sender check treats as established.
+    fn make_established(g: &mut CommGraph, sender: &str) {
+        if let Some(stats) = g.sender_stats.get_mut(&sender.to_ascii_lowercase()) {
+            stats.first_seen = None;
+        }
+    }
+
     #[test]
     fn test_new_sender_mass_phishing_detected() {
         let mut g = CommGraph::new();
         let params = GraphParams {
-            new_sender_email_threshold: 3,
+            new_sender_window_hours: 24.0,
             new_sender_high_outdegree: 5,
             ..Default::default()
         };
@@ -425,15 +487,17 @@ mod tests {
     fn test_known_sender_new_high_risk_edge() {
         let mut g = CommGraph::new();
         let params = GraphParams {
-            new_sender_email_threshold: 3,
+            new_sender_window_hours: 24.0,
             high_risk_edge_threshold: 0.5,
             ..Default::default()
         };
 
-        // Build history: known sender
+        // Build history: established sender (wall-clock aged out of the
+        // new-sender window — email count no longer matters, E7).
         for _ in 0..10 {
             g.observe("alice@a.com", &["bob@b.com".to_string()], 0.05, &params);
         }
+        make_established(&mut g, "alice@a.com");
 
         // New high-risk edge
         let r = g.observe(
@@ -457,10 +521,12 @@ mod tests {
             ..Default::default()
         };
 
-        // Build moderate out-degree
+        // Build moderate out-degree (established sender, so the new-sender
+        // pattern does not mask the burst pattern).
         for i in 0..5 {
             g.observe("alice@a.com", &[format!("user{}@b.com", i)], 0.1, &params);
         }
+        make_established(&mut g, "alice@a.com");
 
         // Sudden burst: 15 new recipients
         let burst_recipients: Vec<String> = (10..25)
@@ -494,7 +560,7 @@ mod tests {
     fn test_anomaly_score_bounded() {
         let mut g = CommGraph::new();
         let params = GraphParams {
-            new_sender_email_threshold: 2,
+            new_sender_window_hours: 24.0,
             new_sender_high_outdegree: 3,
             ..Default::default()
         };
@@ -503,5 +569,105 @@ mod tests {
         let r = g.observe("attacker@evil.com", &recipients, 0.9, &params);
 
         assert!(r.anomaly_score >= 0.0 && r.anomaly_score <= 1.0);
+    }
+
+    /// PoC (E7): warmup evasion. The old new-sender test was an email count
+    /// (≤5): six one-to-one warmup emails aged the account out of the window
+    /// and the following mass phish escaped pattern 1. The window is now
+    /// wall-clock (24h), so warmup mail does not help.
+    #[test]
+    fn warmup_emails_do_not_age_out_new_sender_window() {
+        let mut g = CommGraph::new();
+        let params = GraphParams {
+            new_sender_window_hours: 24.0,
+            new_sender_high_outdegree: 10,
+            ..Default::default()
+        };
+
+        // Warmup: 6 one-to-one emails (old count-based window ended at 5).
+        for _ in 0..6 {
+            g.observe(
+                "attacker@evil.com",
+                &["partner@evil.com".to_string()],
+                0.1,
+                &params,
+            );
+        }
+
+        // Immediately mass-mail 12 recipients at moderate risk.
+        let recipients: Vec<String> = (0..12).map(|i| format!("victim{i}@corp.com")).collect();
+        let r = g.observe("attacker@evil.com", &recipients, 0.3, &params);
+
+        assert!(
+            r.is_anomalous,
+            "warmed-up sender inside the 24h wall-clock window must still be 'new'"
+        );
+        assert!(
+            r.pattern_label.contains("NewSender群发"),
+            "expected the new-sender pattern, got: {}",
+            r.pattern_label
+        );
+    }
+
+    /// E7 inverse guard: a genuinely established sender (aged past the
+    /// window) mass-mailing at low risk must NOT be flagged as a new sender.
+    #[test]
+    fn established_sender_mass_mail_is_not_new_sender_pattern() {
+        let mut g = CommGraph::new();
+        let params = GraphParams {
+            new_sender_window_hours: 24.0,
+            new_sender_high_outdegree: 10,
+            ..Default::default()
+        };
+
+        g.observe("alice@a.com", &["bob@b.com".to_string()], 0.1, &params);
+        make_established(&mut g, "alice@a.com");
+
+        let recipients: Vec<String> = (0..12).map(|i| format!("victim{i}@corp.com")).collect();
+        let r = g.observe("alice@a.com", &recipients, 0.3, &params);
+
+        assert!(
+            !r.pattern_label.contains("NewSender群发"),
+            "established sender must not trigger the new-sender pattern: {}",
+            r.pattern_label
+        );
+    }
+
+    /// E6: edge map is capacity-bounded; new pairs at capacity are refused
+    /// while existing edges keep updating.
+    #[test]
+    fn edges_respect_capacity_bound() {
+        let mut g = CommGraph::new().with_limits(2, 100);
+        let params = GraphParams::default();
+
+        g.observe("a@x.com", &["b@y.com".to_string()], 0.1, &params);
+        g.observe("a@x.com", &["c@y.com".to_string()], 0.1, &params);
+        assert_eq!(g.edge_count(), 2);
+
+        // Third distinct pair refused; existing edge still updates.
+        g.observe("a@x.com", &["d@y.com".to_string()], 0.1, &params);
+        assert_eq!(g.edge_count(), 2, "new edge beyond capacity refused");
+        g.observe("a@x.com", &["b@y.com".to_string()], 0.1, &params);
+        assert_eq!(
+            g.get_edge("a@x.com", "b@y.com").unwrap().total_count,
+            2,
+            "existing edge must keep updating at capacity"
+        );
+    }
+
+    /// E6: sender stats map is capacity-bounded; a spray of unique senders at
+    /// capacity is dropped statelessly instead of growing the map.
+    #[test]
+    fn sender_stats_respect_capacity_bound() {
+        let mut g = CommGraph::new().with_limits(100, 2);
+        let params = GraphParams::default();
+
+        g.observe("a@x.com", &["r@y.com".to_string()], 0.1, &params);
+        g.observe("b@x.com", &["r@y.com".to_string()], 0.1, &params);
+        assert_eq!(g.sender_count(), 2);
+
+        let r = g.observe("c@x.com", &["r@y.com".to_string()], 0.9, &params);
+        assert_eq!(g.sender_count(), 2, "new sender beyond capacity refused");
+        assert!(!r.is_anomalous);
     }
 }

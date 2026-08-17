@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use chrono::Utc;
+use vigilyx_core::models::EmailAttachment;
 
 use crate::context::SecurityContext;
 use crate::error::EngineError;
@@ -42,6 +43,15 @@ impl AttachHashModule {
     }
 }
 
+/// External hash intelligence is meaningful only for a concrete attachment
+/// digest. Parser metadata can contain an attachment-like part without a
+/// usable hash, so checking only `attachments.is_empty()` is insufficient.
+fn has_queryable_hash(attachments: &[EmailAttachment]) -> bool {
+    attachments
+        .iter()
+        .any(|attachment| !attachment.hash.trim().is_empty())
+}
+
 #[async_trait]
 impl SecurityModule for AttachHashModule {
     fn metadata(&self) -> &ModuleMetadata {
@@ -63,6 +73,17 @@ impl SecurityModule for AttachHashModule {
             ));
         }
 
+        if !has_queryable_hash(attachments) {
+            let duration_ms = start.elapsed().as_millis() as u64;
+            return Ok(ModuleResult::not_applicable(
+                &self.meta.id,
+                &self.meta.name,
+                self.meta.pillar,
+                "Attachment metadata has no usable hash; external query skipped",
+                duration_ms,
+            ));
+        }
+
         let mut evidence = Vec::new();
         let mut categories = Vec::new();
         let mut total_score: f64 = 0.0;
@@ -72,7 +93,7 @@ impl SecurityModule for AttachHashModule {
         let mut blacklisted_hashes: HashSet<String> = HashSet::new();
 
         for att in attachments {
-            let hash_lower = att.hash.to_lowercase();
+            let hash_lower = att.hash.trim().to_ascii_lowercase();
 
             // Record every hash we see (for reporting / future IOC matching)
             hashes_found.push(serde_json::json!({
@@ -104,7 +125,7 @@ impl SecurityModule for AttachHashModule {
             let mut join_set = tokio::task::JoinSet::new();
 
             for att in attachments {
-                let hash_lower = att.hash.to_lowercase();
+                let hash_lower = att.hash.trim().to_ascii_lowercase();
                 // already Medium Name of
                 if blacklisted_hashes.contains(&hash_lower) {
                     continue;
@@ -253,5 +274,36 @@ impl SecurityModule for AttachHashModule {
             bpa: None,
             engine_id: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::has_queryable_hash;
+    use vigilyx_core::models::EmailAttachment;
+
+    fn attachment(hash: &str) -> EmailAttachment {
+        EmailAttachment {
+            filename: "sample.bin".to_string(),
+            content_type: "application/octet-stream".to_string(),
+            size: 1,
+            hash: hash.to_string(),
+            content_base64: None,
+        }
+    }
+
+    #[test]
+    fn no_attachments_have_no_queryable_hash() {
+        assert!(!has_queryable_hash(&[]));
+    }
+
+    #[test]
+    fn empty_or_whitespace_hashes_are_not_queryable() {
+        assert!(!has_queryable_hash(&[attachment(""), attachment("  \t")]));
+    }
+
+    #[test]
+    fn non_empty_hash_is_queryable() {
+        assert!(has_queryable_hash(&[attachment(" AABB ")]));
     }
 }

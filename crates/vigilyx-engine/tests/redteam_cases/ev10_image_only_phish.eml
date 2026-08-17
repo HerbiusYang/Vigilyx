@@ -1,0 +1,9 @@
+From: =?utf-8?B?6YCa6L+H6KGM5oOz? <it-support@partner-external.com>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev10@partner-external.com>
+Subject: 邮箱验证
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><img src='https://attacker-cdn.example/banner.png' width='600' height='200'><a href='http://198.51.100.7/login'><img src='https://attacker-cdn.example/btn.png' width='200' height='60' alt='登录'></a></body></html>

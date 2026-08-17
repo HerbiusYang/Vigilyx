@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef, FormEvent } from 'react'
+import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import LanguageToggle from '../settings/LanguageToggle'
 import { apiFetch } from '../../utils/api'
+import { setSensitiveSetting } from '../../utils/sensitiveStorage'
 import { persistSetupStatus } from '../../utils/setupStatus'
 import { formatBytes } from '../../utils/format'
 
@@ -271,23 +273,31 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
     let cancelled = false
     setIfaceLoading(true)
     setInterfaceLoadFailed(false)
-    apiFetch('/api/system/interfaces')
-      .then(response => response.json() as Promise<ApiEnvelope<NetInterface[]>>)
-      .then(payload => {
+
+    const refreshInterfaces = async () => {
+      try {
+        const response = await apiFetch('/api/system/interfaces')
+        const payload = await response.json() as ApiEnvelope<NetInterface[]>
         if (cancelled) return
         if (!payload.success || !Array.isArray(payload.data)) {
           throw new Error(payload.error || 'Interface discovery failed')
         }
         setInterfaces(payload.data)
-      })
-      .catch(() => {
+        setInterfaceLoadFailed(false)
+      } catch {
         if (!cancelled) setInterfaceLoadFailed(true)
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setIfaceLoading(false)
-      })
+      }
+    }
 
-    return () => { cancelled = true }
+    void refreshInterfaces()
+    const refreshTimer = window.setInterval(refreshInterfaces, 5_000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(refreshTimer)
+    }
   }, [step, deployMode])
 
   const finishSetup = async () => {
@@ -346,8 +356,8 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
           },
           t('setup.saveFailed'),
         )
-        localStorage.setItem('vigilyx-mta-downstream-host', downstreamHost)
-        localStorage.setItem('vigilyx-mta-downstream-port', String(downstreamPort))
+        setSensitiveSetting('vigilyx-mta-downstream-host', downstreamHost)
+        setSensitiveSetting('vigilyx-mta-downstream-port', String(downstreamPort))
       } else if (currentStep.id === 'domains') {
         const domainList = domains
           .split(/[,\n]/)
@@ -360,7 +370,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
           { mta_local_domains: normalizedDomains },
           t('setup.saveDomainsFailed'),
         )
-        localStorage.setItem('vigilyx-mta-local-domains', normalizedDomains)
+        setSensitiveSetting('vigilyx-mta-local-domains', normalizedDomains)
       } else if (currentStep.id === 'sniffer') {
         const servers = webmailServers
           .split(/[,\n]/)
@@ -856,6 +866,11 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
                 value={webmailServers}
                 onChange={e => setWebmailServers(e.target.value)}
               />
+              {!webmailServers.trim() && (
+                <p className="setup-warning" role="alert">
+                  {t('setup.webmailServersWarning')}
+                </p>
+              )}
               <label className="setup-label" style={{ marginTop: 16 }}>
                 {t('setup.httpPorts')}
                 <span className="setup-hint">{t('setup.httpPortsHint')}</span>

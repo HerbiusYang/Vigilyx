@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' ws: wss:; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self';" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' ws: wss:; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self';" />
     <title>Vigilyx - Email Traffic Monitor</title>
     <!-- Google Fonts may be blocked in mainland China, so use the system font stack instead. -->
     <style>
@@ -41,13 +41,7 @@
         background: rgba(0, 0, 0, 0.25);
       }
     </style>
-    <script>
-      // Restore theme before first paint to avoid flash
-      (function() {
-        var t = localStorage.getItem('vigilyx-theme') || 'dark';
-        document.documentElement.setAttribute('data-theme', t);
-      })();
-    </script>
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

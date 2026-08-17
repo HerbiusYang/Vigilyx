@@ -82,7 +82,9 @@ impl IntelLayer {
 
         let details = format!("OTX: {} threat pulse associations", pulse_count);
 
-        let result = IntelResult {
+        // Caching happens once in fuse_and_cache with the fused result;
+        // per-source upserts raced and let a weak clean overwrite a strong malicious.
+        Some(IntelResult {
             indicator: indicator.to_string(),
             ioc_type: ioc_type.to_string(),
             found: true,
@@ -90,12 +92,7 @@ impl IntelLayer {
             confidence,
             source: "otx".to_string(),
             details: Some(details),
-        };
-
-        // independentcache OTX Result
-        self.cache_external_result(&result).await;
-
-        Some(result)
+        })
     }
 
     // VT Scrape Query (Python Playwright Service)
@@ -175,7 +172,8 @@ impl IntelLayer {
             .unwrap_or(0);
         let details_str = body.get("details").and_then(|v| v.as_str()).unwrap_or("");
 
-        let result = IntelResult {
+        // Caching happens once in fuse_and_cache with the fused result.
+        Some(IntelResult {
             indicator: indicator.to_string(),
             ioc_type: ioc_type.to_string(),
             found: true,
@@ -186,12 +184,7 @@ impl IntelLayer {
                 "VT: malicious={}/{} {}",
                 malicious_count, total_engines, details_str
             )),
-        };
-
-        // independentcache VT Scrape Result
-        self.cache_external_result(&result).await;
-
-        Some(result)
+        })
     }
 
     // VirusTotal Official API v3
@@ -303,7 +296,7 @@ impl IntelLayer {
             details: Some(format!("VT API: malicious={}/{} engines", malicious, total)),
         };
 
-        self.cache_external_result(&result).await;
+        // Caching happens once in fuse_and_cache with the fused result.
         Some(result)
     }
 
@@ -360,9 +353,7 @@ impl IntelLayer {
             details: Some(format!("AbuseIPDB: abuse_score={}", abuse_score)),
         };
 
-        // independentcache
-        self.cache_external_result(&result).await;
-
+        // Caching happens once in fuse_and_cache with the fused result.
         Some(result)
     }
 }

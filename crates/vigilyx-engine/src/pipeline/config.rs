@@ -601,6 +601,27 @@ fn default_modules() -> Vec<ModuleConfig> {
             condition: None,
         },
         ModuleConfig {
+            id: "rmm_detect".into(),
+            enabled: true,
+            mode: RunMode::Builtin,
+            config: serde_json::Value::Null,
+            condition: None,
+        },
+        ModuleConfig {
+            id: "prompt_injection_scan".into(),
+            enabled: true,
+            mode: RunMode::Builtin,
+            config: serde_json::Value::Null,
+            condition: None,
+        },
+        ModuleConfig {
+            id: "toad_detect".into(),
+            enabled: true,
+            mode: RunMode::Builtin,
+            config: serde_json::Value::Null,
+            condition: None,
+        },
+        ModuleConfig {
             id: "semantic_scan".into(),
             enabled: true,
             mode: RunMode::Builtin,
@@ -643,6 +664,16 @@ fn default_modules() -> Vec<ModuleConfig> {
             condition: None,
         },
         ModuleConfig {
+            id: "sandbox_scan".into(),
+            enabled: true,
+            mode: RunMode::Builtin,
+            config: serde_json::Value::Null,
+            condition: Some(ConditionConfig {
+                min_threat_level: None,
+                depends_module: Some("attach_scan".into()),
+            }),
+        },
+        ModuleConfig {
             id: "yara_scan".into(),
             enabled: true,
             mode: RunMode::Builtin,
@@ -663,8 +694,14 @@ fn default_modules() -> Vec<ModuleConfig> {
 mod tests {
     use super::*;
 
-    const MODERN_PHISHING_MODULES: &[&str] =
-        &["attach_qr_scan", "landing_page_scan", "aitm_detect"];
+    const MODERN_PHISHING_MODULES: &[&str] = &[
+        "attach_qr_scan",
+        "landing_page_scan",
+        "aitm_detect",
+        "rmm_detect",
+        "prompt_injection_scan",
+        "toad_detect",
+    ];
 
     fn module_index(config: &PipelineConfig, id: &str) -> usize {
         config

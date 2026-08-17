@@ -27,6 +27,10 @@ pub mod security;
 #[cfg(feature = "postgres")]
 pub use infra::migrate::SchemaMigration;
 #[cfg(feature = "postgres")]
+pub use infra::platform_auth::{
+    PlatformAuthUser, PlatformPermission, PlatformRole, PlatformUser, PLATFORM_PERMISSIONS,
+};
+#[cfg(feature = "postgres")]
 pub use infra::typed_config::VersionedConfig;
 #[cfg(feature = "postgres")]
 pub use security::data_security::HttpSessionFilters;
@@ -61,7 +65,8 @@ impl VigilDb {
 
     /// Execute SQL with parameters (for management operations like precise cleanup)
     pub async fn execute_sql(&self, sql: &str, params: &[&String]) -> anyhow::Result<()> {
-        let mut query = sqlx::query(sql);
+        // Caller-supplied SQL string; params are bound, the statement text is not.
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.to_owned()));
         for p in params {
             query = query.bind(*p);
         }

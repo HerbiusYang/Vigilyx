@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { EngineStatus, ModuleMetadata, PipelineConfig, ModuleConfig, ContentRules } from '../../types'
+import { MODULE_NAME_KEYS } from './moduleI18n'
 
 // ════════════════════════════════════════════════════
 // Types & Props
@@ -24,50 +25,25 @@ interface Props {
 // ════════════════════════════════════════════════════
 
 const ENGINES: EngineDef[] = [
-  { id: 'A', letter: 'A', labelKey: 'emailSecurity.engineSenderVerify', color: '#3b82f6', modules: ['domain_verify'] },
-  { id: 'B', letter: 'B', labelKey: 'emailSecurity.engineContentAnalysis', color: '#00f0ff', modules: ['content_scan', 'html_scan', 'html_pixel_art', 'attach_scan', 'attach_content', 'attach_hash'] },
-  { id: 'C', letter: 'C', labelKey: 'emailSecurity.engineBehaviorBaseline', color: '#a855f7', modules: ['anomaly_detect'] },
-  { id: 'D', letter: 'D', labelKey: 'emailSecurity.engineUrlAnalysis', color: '#f59e0b', modules: ['link_scan', 'link_reputation', 'link_content'] },
-  { id: 'E', letter: 'E', labelKey: 'emailSecurity.engineProtocolCompliance', color: '#10b981', modules: ['header_scan', 'mime_scan'] },
-  { id: 'F', letter: 'F', labelKey: 'emailSecurity.engineSemanticIntent', color: '#f43f5e', modules: ['semantic_scan'] },
-  { id: 'G', letter: 'G', labelKey: 'emailSecurity.engineIdentityAnomaly', color: '#06b6d4', modules: ['identity_anomaly'] },
-  { id: 'H', letter: 'H', labelKey: 'emailSecurity.engineTransactionCorrelation', color: '#ec4899', modules: ['transaction_correlation'] },
-  { id: 'I', letter: 'I', labelKey: 'emailSecurity.engineVirusYara', color: '#dc2626', modules: ['av_eml_scan', 'av_attach_scan', 'yara_scan'] },
+  { id: 'sender_reputation', letter: 'A', labelKey: 'emailSecurity.engineSenderReputation', color: '#3b82f6', modules: [] },
+  { id: 'content_analysis', letter: 'B', labelKey: 'emailSecurity.engineContentAnalysis', color: '#00f0ff', modules: [] },
+  { id: 'behavior_baseline', letter: 'C', labelKey: 'emailSecurity.engineBehaviorBaseline', color: '#a855f7', modules: [] },
+  { id: 'url_analysis', letter: 'D', labelKey: 'emailSecurity.engineUrlAnalysis', color: '#f59e0b', modules: [] },
+  { id: 'protocol_compliance', letter: 'E', labelKey: 'emailSecurity.engineProtocolCompliance', color: '#10b981', modules: [] },
+  { id: 'semantic_intent', letter: 'F', labelKey: 'emailSecurity.engineSemanticIntent', color: '#f43f5e', modules: [] },
+  { id: 'identity_anomaly', letter: 'G', labelKey: 'emailSecurity.engineIdentityAnomaly', color: '#06b6d4', modules: [] },
+  { id: 'transaction_correlation', letter: 'H', labelKey: 'emailSecurity.engineTransactionCorrelation', color: '#ec4899', modules: [] },
 ]
 
-const MODULE_CN_KEYS: Record<string, string> = {
-  content_scan: 'emailSecurity.modContentScan', html_scan: 'emailSecurity.modHtmlScan', html_pixel_art: 'emailSecurity.modPixelTracking',
-  attach_scan: 'emailSecurity.modAttachType', attach_content: 'emailSecurity.modAttachContent', attach_hash: 'emailSecurity.modHashReputation',
-  mime_scan: 'emailSecurity.modMimeScan', header_scan: 'emailSecurity.modHeaderScan', link_scan: 'emailSecurity.modUrlPattern',
-  link_reputation: 'emailSecurity.modUrlReputation', link_content: 'emailSecurity.modUrlContent', anomaly_detect: 'emailSecurity.modAnomalyDetect',
-  semantic_scan: 'emailSecurity.modSemanticScan', domain_verify: 'emailSecurity.modDomainVerify', identity_anomaly: 'emailSecurity.modIdentityAnomaly',
-  transaction_correlation: 'emailSecurity.modTransactionCorrelation', av_eml_scan: 'emailSecurity.modAvEmlScan', av_attach_scan: 'emailSecurity.modAvAttachScan', yara_scan: 'emailSecurity.modYaraScan',
-}
-
 const MODULE_DESC_KEYS: Record<string, string> = {
-  content_scan: 'emailSecurity.descContentScan',
-  html_scan: 'emailSecurity.descHtmlScan',
-  html_pixel_art: 'emailSecurity.descPixelTracking',
-  attach_scan: 'emailSecurity.descAttachType',
-  attach_content: 'emailSecurity.descAttachContent',
-  attach_hash: 'emailSecurity.descHashReputation',
-  mime_scan: 'emailSecurity.descMimeScan',
-  header_scan: 'emailSecurity.descHeaderScan',
-  link_scan: 'emailSecurity.descUrlPattern',
-  link_reputation: 'emailSecurity.descUrlReputation',
-  link_content: 'emailSecurity.descUrlContent',
-  anomaly_detect: 'emailSecurity.descAnomalyDetect',
-  semantic_scan: 'emailSecurity.descSemanticScan',
-  domain_verify: 'emailSecurity.descDomainVerify',
-  identity_anomaly: 'emailSecurity.descIdentityAnomaly',
-  transaction_correlation: 'emailSecurity.descTransactionCorrelation',
-  av_eml_scan: 'emailSecurity.descAvEmlScan',
-  av_attach_scan: 'emailSecurity.descAvAttachScan',
-  yara_scan: 'emailSecurity.descYaraScan',
-}
-
-const MODULE_DEPS: Record<string, string> = {
-  attach_content: 'attach_scan', attach_hash: 'attach_scan', link_content: 'link_scan',
+  content_scan: 'emailSecurity.moduleDescContentScan', html_scan: 'emailSecurity.moduleDescHtmlScan', html_pixel_art: 'emailSecurity.moduleDescHtmlPixelArt',
+  attach_scan: 'emailSecurity.moduleDescAttachScan', attach_content: 'emailSecurity.moduleDescAttachContent', attach_qr_scan: 'emailSecurity.moduleDescAttachQrScan', attach_hash: 'emailSecurity.moduleDescAttachHash',
+  mime_scan: 'emailSecurity.moduleDescMimeScan', header_scan: 'emailSecurity.moduleDescHeaderScan', link_scan: 'emailSecurity.moduleDescLinkScan',
+  link_reputation: 'emailSecurity.moduleDescLinkReputation', link_content: 'emailSecurity.moduleDescLinkContent', landing_page_scan: 'emailSecurity.moduleDescLandingPageScan', aitm_detect: 'emailSecurity.moduleDescAitmDetect',
+  anomaly_detect: 'emailSecurity.moduleDescAnomalyDetect', rmm_detect: 'emailSecurity.moduleDescRmmDetect', prompt_injection_scan: 'emailSecurity.moduleDescPromptInjectionScan', toad_detect: 'emailSecurity.moduleDescToadDetect',
+  semantic_scan: 'emailSecurity.moduleDescSemanticScan', domain_verify: 'emailSecurity.moduleDescDomainVerify', identity_anomaly: 'emailSecurity.moduleDescIdentityAnomaly',
+  transaction_correlation: 'emailSecurity.moduleDescTransactionCorrelation', av_eml_scan: 'emailSecurity.moduleDescAvEmlScan', av_attach_scan: 'emailSecurity.moduleDescAvAttachScan', yara_scan: 'emailSecurity.moduleDescYaraScan',
+  sandbox_scan: 'emailSecurity.moduleDescSandboxScan',
 }
 
 // ════════════════════════════════════════════════════
@@ -80,8 +56,8 @@ const EX = 220, EW = 680, EH = 78, EGAP = 12
 const FX = 1060, FY = H / 2
 const VX = 1260, VY = H / 2
 
-function eY(i: number) {
-  const total = ENGINES.length * EH + (ENGINES.length - 1) * EGAP
+function eY(i: number, engineCount = ENGINES.length) {
+  const total = engineCount * EH + (engineCount - 1) * EGAP
   return (H - total) / 2 + i * (EH + EGAP) + EH / 2
 }
 
@@ -133,7 +109,7 @@ function EngNode({ eng, y, enabled, total, sel, onClick }: {
         <g key={mid} transform={`translate(${220 + mi * 72},-16)`}>
           <rect width={64} height={7} rx={3} fill="rgba(255,255,255,0.06)" />
           <rect width={64} height={7} rx={3} fill={eng.color} opacity={0.4} />
-          <text y={22} fill="rgba(255,255,255,0.4)" fontSize={10} className="pg-mono">{(t(MODULE_CN_KEYS[mid]) || mid).slice(0, 5)}</text>
+          <text y={22} fill="rgba(255,255,255,0.4)" fontSize={10} className="pg-mono">{(MODULE_NAME_KEYS[mid] ? t(MODULE_NAME_KEYS[mid]) : mid).slice(0, 5)}</text>
         </g>
       ))}
       {/* Click hint */}
@@ -205,14 +181,14 @@ function Panel({ eng, modules, engineStatus, pipelineConfig, contentRules, onClo
           const enabled = cfg?.enabled ?? true
           const mode = cfg?.mode ?? 'builtin'
           const rate = metric ? metric.success_rate * 100 : -1
-          const dep = MODULE_DEPS[mod.id]
+          const dep = mod.depends_on.find(moduleId => moduleId !== '*')
           const isContentScan = mod.id === 'content_scan'
 
           return (
             <div key={mod.id} className={`pg-panel-mod ${!enabled ? 'pg-panel-mod--off' : ''}`}>
               <div className="pg-panel-mod-top">
                 <div className="pg-panel-mod-name">
-                  {t(MODULE_CN_KEYS[mod.id]) || mod.id}
+                  {MODULE_NAME_KEYS[mod.id] ? t(MODULE_NAME_KEYS[mod.id]) : (mod.name || mod.id)}
                   {mod.supports_ai && <span className="pg-ai-tag">AI</span>}
                 </div>
                 <label className="sec-toggle sec-toggle--sm">
@@ -220,8 +196,8 @@ function Panel({ eng, modules, engineStatus, pipelineConfig, contentRules, onClo
                   <span className="sec-toggle-slider" />
                 </label>
               </div>
-              <p className="pg-panel-mod-desc">{t(MODULE_DESC_KEYS[mod.id]) || mod.description}</p>
-              {dep && <div className="pg-panel-dep">{t('emailSecurity.dependsOn', { module: t(MODULE_CN_KEYS[dep]) || dep })}</div>}
+              <p className="pg-panel-mod-desc">{MODULE_DESC_KEYS[mod.id] ? t(MODULE_DESC_KEYS[mod.id]) : mod.description}</p>
+              {dep && <div className="pg-panel-dep">{t('emailSecurity.dependsOn', { module: MODULE_NAME_KEYS[dep] ? t(MODULE_NAME_KEYS[dep]) : dep })}</div>}
 
               {/* Performance stats */}
               {metric && metric.total_runs > 0 && (
@@ -310,7 +286,21 @@ function Panel({ eng, modules, engineStatus, pipelineConfig, contentRules, onClo
 
 export default function PipelineGraph({ modules, engineStatus, pipelineConfig, contentRules, onToggleModule, onChangeMode }: Props) {
   const [sel, setSel] = useState<string | null>(null)
-  const selEng = useMemo(() => ENGINES.find(e => e.id === sel), [sel])
+  const engines = useMemo(() => {
+    const knownIds = new Set(ENGINES.map(engine => engine.id))
+    const known = ENGINES.map(engine => ({
+      ...engine,
+      modules: modules.filter(module => module.engine_id === engine.id).map(module => module.id),
+    }))
+    const unassigned = modules
+      .filter(module => module.id !== 'verdict' && (!module.engine_id || !knownIds.has(module.engine_id)))
+      .map(module => module.id)
+
+    return unassigned.length > 0
+      ? [...known, { id: 'unassigned', letter: '?', labelKey: 'emailSecurity.engineUnassigned', color: '#64748b', modules: unassigned }]
+      : known
+  }, [modules])
+  const selEng = useMemo(() => engines.find(e => e.id === sel), [engines, sel])
 
   const enabledCount = useCallback((eng: EngineDef) =>
     eng.modules.filter(mid => (pipelineConfig?.modules.find(m => m.id === mid)?.enabled ?? true)).length
@@ -340,13 +330,13 @@ export default function PipelineGraph({ modules, engineStatus, pipelineConfig, c
         <circle cx={W - 100} cy={80} r={250} fill="rgba(0,240,255,0.02)" />
         <circle cx={100} cy={H - 80} r={200} fill="rgba(168,85,247,0.02)" />
 
-        {ENGINES.map((eng, i) => <Conn key={`i${eng.id}`} x1={INX + 44} y1={INY} x2={EX} y2={eY(i)} color={eng.color} />)}
-        {ENGINES.map((eng, i) => <Conn key={`e${eng.id}`} x1={EX + EW} y1={eY(i)} x2={FX - 45} y2={FY} color={eng.color} />)}
+        {engines.map((eng, i) => <Conn key={`i${eng.id}`} x1={INX + 44} y1={INY} x2={EX} y2={eY(i, engines.length)} color={eng.color} />)}
+        {engines.map((eng, i) => <Conn key={`e${eng.id}`} x1={EX + EW} y1={eY(i, engines.length)} x2={FX - 45} y2={FY} color={eng.color} />)}
         <Conn x1={FX + 45} y1={FY} x2={VX - 40} y2={VY} color="#22d3ee" />
 
         <InNode total={total} rate={rate} />
-        {ENGINES.map((eng, i) => (
-          <EngNode key={eng.id} eng={eng} y={eY(i)} enabled={enabledCount(eng)} total={eng.modules.length}
+        {engines.map((eng, i) => (
+          <EngNode key={eng.id} eng={eng} y={eY(i, engines.length)} enabled={enabledCount(eng)} total={eng.modules.length}
             sel={sel === eng.id} onClick={() => setSel(prev => prev === eng.id ? null : eng.id)} />
         ))}
         <FusNode />

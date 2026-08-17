@@ -20,7 +20,7 @@ cp deploy.conf.example deploy.conf
 $EDITOR deploy.conf
 
 # 2. 在目标主机预拉取固定的 Rust builder 镜像
-ssh root@<server> "docker pull rust:1.95.0-bookworm"
+ssh root@<server> "docker pull rust:1.97.1-bookworm"
 
 # 3. 一次性初始化
 ./deploy.sh --init

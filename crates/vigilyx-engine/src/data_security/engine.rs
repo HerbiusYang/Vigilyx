@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::{DateTime, Utc};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, watch};
 use tracing::{debug, error, info, warn};
 use vigilyx_core::{DataSecurityIncident, HttpSession, WsMessage};
 use vigilyx_db::VigilDb;
@@ -43,6 +43,7 @@ pub struct DataSecurityEngineStats {
 /// dataSecuritydetectEngine
 pub struct DataSecurityEngine {
     tx: mpsc::Sender<HttpSession>,
+    time_policy_tx: watch::Sender<time_policy::TimePolicyConfig>,
     sessions_processed: Arc<AtomicU64>,
     incidents_detected: Arc<AtomicU64>,
 }
@@ -53,6 +54,8 @@ impl DataSecurityEngine {
     /// ReturnEnginehandle, `submit()` HTTP Session lineAnalyze.
     pub fn start(db: VigilDb, ws_tx: broadcast::Sender<WsMessage>) -> Self {
         let (tx, rx) = mpsc::channel::<HttpSession>(5_000);
+        let (time_policy_tx, time_policy_rx) =
+            watch::channel(time_policy::TimePolicyConfig::default());
         let sessions_processed = Arc::new(AtomicU64::new(0));
         let incidents_detected = Arc::new(AtomicU64::new(0));
 
@@ -60,13 +63,22 @@ impl DataSecurityEngine {
         let incidents_counter = Arc::clone(&incidents_detected);
 
         tokio::spawn(async move {
-            Self::process_loop(rx, db, ws_tx, sessions_counter, incidents_counter).await;
+            Self::process_loop(
+                rx,
+                db,
+                ws_tx,
+                sessions_counter,
+                incidents_counter,
+                time_policy_rx,
+            )
+            .await;
         });
 
         info!("DataSecurityEngine started");
 
         Self {
             tx,
+            time_policy_tx,
             sessions_processed,
             incidents_detected,
         }
@@ -96,11 +108,36 @@ impl DataSecurityEngine {
         }
     }
 
+    /// Reload the time policy from persistent configuration without restarting the engine.
+    pub async fn reload_time_policy(
+        &self,
+        db: &VigilDb,
+    ) -> Result<time_policy::TimePolicyConfig, String> {
+        let config = Self::read_time_policy_config(db).await?;
+        self.time_policy_tx.send_replace(config.clone());
+        Ok(config)
+    }
+
+    async fn read_time_policy_config(
+        db: &VigilDb,
+    ) -> Result<time_policy::TimePolicyConfig, String> {
+        let config = match db.get_time_policy_config().await {
+            Ok(Some(json)) => serde_json::from_str::<time_policy::TimePolicyConfig>(&json)
+                .map_err(|e| format!("Failed to parse time_policy config: {e}"))?,
+            Ok(None) => time_policy::TimePolicyConfig::default(),
+            Err(e) => return Err(format!("Failed to load time_policy config: {e}")),
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
     /// HTTP SessionofDeduplicate
 
-    /// client_ip + method + NormalizeURI + filename generateHash.
+    /// client_ip + method + NormalizeURI + filename + body generateHash.
     /// Coremail ChunkedUploadof Same chunk(offset Same) Merge Same1,
     /// due to URI Mediumof offset/attachmentId Parameter.
+    /// body 维度 (大小 + 内容哈希) 防止 "诱饵先行" 攻击:
+    /// 先发一封同 URI/文件名的无害会话, 不能再压制后续同指纹的真实敏感文件。
     fn session_fingerprint(session: &HttpSession) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         session.client_ip.hash(&mut hasher);
@@ -112,6 +149,19 @@ impl DataSecurityEngine {
 
         if let Some(ref filename) = session.uploaded_filename {
             filename.hash(&mut hasher);
+        }
+
+        // body 维度: 大小总是可用 (含临时文件 body), 内存 body 再叠内容哈希
+        session.request_body_size.hash(&mut hasher);
+        if let Some(ref body) = session.request_body {
+            body.hash(&mut hasher);
+        } else if let Some(ref temp_path) = session.body_temp_file {
+            // temp-file body: 前 64KiB 内容哈希纳入指纹。
+            // 否则大 body 只有 size 维度, 诱饵先行攻击发同 URI/同大小无害文件后,
+            // 真实敏感文件会被会话级去重压制 (同指纹误判为重复)
+            if let Some(prefix) = super::read_temp_path_limited(temp_path, 64 * 1024) {
+                prefix.hash(&mut hasher);
+            }
         }
         hasher.finish()
     }
@@ -167,16 +217,19 @@ impl DataSecurityEngine {
 
     /// levelDeduplicate
 
-    /// (user IP, FileName, ofDLPmatchType) generateHash.
+    /// (user IP, FileName, severity, ofDLPmatchType) generateHash.
+    /// severity 维度防止低危诱饵事件压制同指纹的高危真实事件。
     /// overrideSessionlevelDeduplicate CaptureofScenario(ifChunkedreassemble ofCompositionSession, SID of Upload).
     fn incident_fingerprint(
         user_or_ip: &str,
         filename: Option<&str>,
         dlp_matches: &[String],
+        severity: &str,
     ) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         user_or_ip.hash(&mut hasher);
         filename.unwrap_or("").hash(&mut hasher);
+        severity.hash(&mut hasher);
         let mut sorted = dlp_matches.to_vec();
         sorted.sort();
         sorted.hash(&mut hasher);
@@ -195,6 +248,7 @@ impl DataSecurityEngine {
         ws_tx: broadcast::Sender<WsMessage>,
         sessions_counter: Arc<AtomicU64>,
         incidents_counter: Arc<AtomicU64>,
+        mut time_policy_rx: watch::Receiver<time_policy::TimePolicyConfig>,
     ) {
         // initializedetecthandler (Arc packet,For spawn_blocking Shared)
         let detectors: Arc<Vec<Box<dyn DataSecurityDetector>>> = Arc::new(vec![
@@ -204,18 +258,10 @@ impl DataSecurityEngine {
         ]);
 
         // LoadtimestampstrategyConfiguration (From DB, Failed Defaultvalue)
-        let time_policy_config = match db.get_time_policy_config().await {
-            Ok(Some(json)) => serde_json::from_str::<time_policy::TimePolicyConfig>(&json)
-                .unwrap_or_else(|e| {
-                    warn!("Failed to parse time_policy config, using defaults: {}", e);
-                    time_policy::TimePolicyConfig::default()
-                }),
-            Ok(None) => {
-                info!("No time_policy config in DB, using defaults (08:00-18:00 UTC+8)");
-                time_policy::TimePolicyConfig::default()
-            }
+        let mut time_policy_config = match Self::read_time_policy_config(&db).await {
+            Ok(config) => config,
             Err(e) => {
-                warn!("Failed to load time_policy config: {}, using defaults", e);
+                warn!("{}, using defaults", e);
                 time_policy::TimePolicyConfig::default()
             }
         };
@@ -304,6 +350,21 @@ impl DataSecurityEngine {
 
         loop {
             tokio::select! {
+                changed = time_policy_rx.changed() => {
+                    if changed.is_err() {
+                        warn!("Time policy update channel closed; stopping data security engine");
+                        break;
+                    }
+                    time_policy_config = time_policy_rx.borrow_and_update().clone();
+                    info!(
+                        "Time policy reloaded: enabled={}, hours={:02}:00-{:02}:00, UTC{:+}, weekend={}",
+                        time_policy_config.enabled,
+                        time_policy_config.work_hour_start,
+                        time_policy_config.work_hour_end,
+                        time_policy_config.utc_offset_hours,
+                        time_policy_config.weekend_is_off_hours,
+                    );
+                }
                 session_opt = rx.recv() => {
                     let mut session = match session_opt {
                         Some(s) => s,
@@ -355,8 +416,12 @@ impl DataSecurityEngine {
                         incident_dedup_table.retain(|_, ts| (now - *ts).num_seconds() < INCIDENT_DEDUP_WINDOW_SECS);
                     }
 
-                   // store HTTP Session
-                    if let Err(e) = db.insert_http_session(&session).await {
+                   // store HTTP Session (F4: 含敏感键的 request_body 落库前脱敏)
+                    let stored = Self::redacted_session_for_storage(&session);
+                    if let Err(e) = db
+                        .insert_http_session(stored.as_ref().unwrap_or(&session))
+                        .await
+                    {
                         engine_db_store_failed += 1;
                         error!(
                             session_id = %session.id,
@@ -452,8 +517,12 @@ impl DataSecurityEngine {
                             synthetic.uploaded_filename,
                         );
 
-                       // storeCompositionSession
-                        if let Err(e) = db.insert_http_session(&synthetic).await {
+                       // storeCompositionSession (F4: 落库副本同样脱敏)
+                        let stored_synthetic = Self::redacted_session_for_storage(&synthetic);
+                        if let Err(e) = db
+                            .insert_http_session(stored_synthetic.as_ref().unwrap_or(&synthetic))
+                            .await
+                        {
                             engine_db_store_failed += 1;
                             error!("Failed to store synthetic HTTP session: {}", e);
                         }
@@ -495,6 +564,22 @@ impl DataSecurityEngine {
                 }
             }
         }
+    }
+
+    /// F4: 落库副本脱敏 —— request_body 含登录凭据 (如 `password=明文`) 时,
+    /// 写入 http_sessions 表的副本按 redact 键表脱敏; 内存中的 session
+    /// 保持原样, 供后续检测器 (DLP credential_leak 等) 分析原文。
+    /// 返回 None 表示无敏感键, 调用方直接用原 session 落库 (零拷贝)。
+    fn redacted_session_for_storage(session: &HttpSession) -> Option<HttpSession> {
+        let body = session.request_body.as_deref()?;
+        let redacted =
+            super::redact::redact_request_body(body, session.content_type.as_deref());
+        if redacted == body {
+            return None;
+        }
+        let mut stored = session.clone();
+        stored.request_body = Some(redacted);
+        Some(stored)
     }
 
     /// Asynchronous read body tempFile (Used forChunkedUpload)
@@ -605,6 +690,7 @@ impl DataSecurityEngine {
                 user_or_ip,
                 session.uploaded_filename.as_deref(),
                 &incident.dlp_matches,
+                &incident.severity.to_string(),
             );
             let now_inc = Utc::now();
             if let Some(first_seen) = incident_dedup.get(&inc_fp)
@@ -846,6 +932,110 @@ mod tests {
     }
 
     #[test]
+    fn test_session_fingerprint_decoy_first_different_body() {
+        // 诱饵先行攻击: 同 IP/URI/文件名, 先发无害 body 再发敏感 body,
+        // 两者指纹必须不同, 否则真实敏感文件会被会话级去重压制
+        let mut decoy = make_http_session();
+        decoy.client_ip = "10.0.0.1".to_string();
+        decoy.uri = "/upload.jsp?func=directdata&composeId=c1".to_string();
+        decoy.uploaded_filename = Some("report.xlsx".to_string());
+        decoy.request_body_size = 5;
+        decoy.request_body = Some("hello".to_string());
+
+        let mut real = decoy.clone();
+        real.request_body_size = 64;
+        real.request_body = Some("客户身份证 000000200001010005 月薪 25000元 合同金额 100万元".to_string());
+
+        assert_ne!(
+            DataSecurityEngine::session_fingerprint(&decoy),
+            DataSecurityEngine::session_fingerprint(&real),
+            "Decoy session must not suppress a sensitive session with the same URI/filename"
+        );
+    }
+
+    #[test]
+    fn test_session_fingerprint_body_size_only_differs() {
+        // body 在临时文件 (request_body=None) 时, 至少大小不同也要区分指纹
+        let mut s1 = make_http_session();
+        s1.uri = "/upload".to_string();
+        s1.request_body = None;
+        s1.request_body_size = 128;
+
+        let mut s2 = make_http_session();
+        s2.uri = "/upload".to_string();
+        s2.request_body = None;
+        s2.request_body_size = 4096;
+
+        assert_ne!(
+            DataSecurityEngine::session_fingerprint(&s1),
+            DataSecurityEngine::session_fingerprint(&s2),
+            "Different body sizes should produce different fingerprints"
+        );
+    }
+
+    #[test]
+    fn test_session_fingerprint_temp_file_different_content_differs() {
+        // temp-file body 诱饵先行: 同 IP/URI/文件名/大小, 仅内容不同 -> 指纹必须不同,
+        // 否则先发无害大文件即可压制后续真实敏感文件的告警 (会话级去重误判)
+        let dir = std::path::Path::new("data/tmp/http");
+        std::fs::create_dir_all(dir).expect("create allowed temp dir");
+        let p1 = dir.join("fp_temp_a.bin");
+        let p2 = dir.join("fp_temp_b.bin");
+        std::fs::write(&p1, b"aaaaaaaaaaaaaaaaaaaaaa").expect("write temp body a");
+        std::fs::write(&p2, b"bbbbbbbbbbbbbbbbbbbbbb").expect("write temp body b");
+
+        let mut s1 = make_http_session();
+        s1.client_ip = "10.0.0.1".to_string();
+        s1.uri = "/upload.jsp?func=directdata&composeId=c1".to_string();
+        s1.uploaded_filename = Some("report.xlsx".to_string());
+        s1.request_body = None;
+        s1.request_body_size = 22;
+        s1.body_temp_file = Some(p1.to_string_lossy().to_string());
+
+        let mut s2 = s1.clone();
+        s2.body_temp_file = Some(p2.to_string_lossy().to_string());
+
+        assert_ne!(
+            DataSecurityEngine::session_fingerprint(&s1),
+            DataSecurityEngine::session_fingerprint(&s2),
+            "Temp-file bodies with different content must produce different fingerprints"
+        );
+
+        let _ = std::fs::remove_file(p1);
+        let _ = std::fs::remove_file(p2);
+    }
+
+    #[test]
+    fn test_session_fingerprint_temp_file_same_content_same_hash() {
+        // temp-file body 内容相同 -> 指纹相同 (重复上传仍被去重)
+        let dir = std::path::Path::new("data/tmp/http");
+        std::fs::create_dir_all(dir).expect("create allowed temp dir");
+        let p1 = dir.join("fp_temp_same_a.bin");
+        let p2 = dir.join("fp_temp_same_b.bin");
+        std::fs::write(&p1, b"identical-temp-body").expect("write temp body a");
+        std::fs::write(&p2, b"identical-temp-body").expect("write temp body b");
+
+        let mut s1 = make_http_session();
+        s1.client_ip = "10.0.0.1".to_string();
+        s1.uri = "/upload.jsp?func=directdata&composeId=c1".to_string();
+        s1.request_body = None;
+        s1.request_body_size = 19;
+        s1.body_temp_file = Some(p1.to_string_lossy().to_string());
+
+        let mut s2 = s1.clone();
+        s2.body_temp_file = Some(p2.to_string_lossy().to_string());
+
+        assert_eq!(
+            DataSecurityEngine::session_fingerprint(&s1),
+            DataSecurityEngine::session_fingerprint(&s2),
+            "Temp-file bodies with identical content should produce same fingerprint"
+        );
+
+        let _ = std::fs::remove_file(p1);
+        let _ = std::fs::remove_file(p2);
+    }
+
+    #[test]
     fn test_session_fingerprint_same_content_same_hash() {
         let mut s1 = make_http_session();
         s1.client_ip = "10.0.0.1".to_string();
@@ -1054,11 +1244,13 @@ mod tests {
             "user@test.com",
             Some("file.txt"),
             &["credit_card".to_string()],
+            "high",
         );
         let fp2 = DataSecurityEngine::incident_fingerprint(
             "user@test.com",
             Some("file.txt"),
             &["credit_card".to_string()],
+            "high",
         );
         assert_eq!(fp1, fp2, "Same inputs should produce same fingerprint");
     }
@@ -1069,11 +1261,13 @@ mod tests {
             "user_a@test.com",
             Some("file.txt"),
             &["credit_card".to_string()],
+            "high",
         );
         let fp2 = DataSecurityEngine::incident_fingerprint(
             "user_b@test.com",
             Some("file.txt"),
             &["credit_card".to_string()],
+            "high",
         );
         assert_ne!(
             fp1, fp2,
@@ -1087,15 +1281,38 @@ mod tests {
             "user@test.com",
             Some("file.txt"),
             &["credit_card".to_string()],
+            "high",
         );
         let fp2 = DataSecurityEngine::incident_fingerprint(
             "user@test.com",
             Some("file.txt"),
             &["phone_number".to_string()],
+            "high",
         );
         assert_ne!(
             fp1, fp2,
             "Different DLP matches should produce different fingerprints"
+        );
+    }
+
+    #[test]
+    fn test_incident_fingerprint_different_severity() {
+        // 低危诱饵事件不能压制同指纹的高危真实事件
+        let fp1 = DataSecurityEngine::incident_fingerprint(
+            "user@test.com",
+            Some("file.txt"),
+            &["credit_card".to_string()],
+            "low",
+        );
+        let fp2 = DataSecurityEngine::incident_fingerprint(
+            "user@test.com",
+            Some("file.txt"),
+            &["credit_card".to_string()],
+            "high",
+        );
+        assert_ne!(
+            fp1, fp2,
+            "Different severities should produce different fingerprints"
         );
     }
 
@@ -1105,11 +1322,13 @@ mod tests {
             "user@test.com",
             Some("file.txt"),
             &["credit_card".to_string(), "phone_number".to_string()],
+            "high",
         );
         let fp2 = DataSecurityEngine::incident_fingerprint(
             "user@test.com",
             Some("file.txt"),
             &["phone_number".to_string(), "credit_card".to_string()],
+            "high",
         );
         assert_eq!(fp1, fp2, "DLP match order should not affect fingerprint");
     }

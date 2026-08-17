@@ -20,6 +20,35 @@ pub(crate) fn session_with_content_predicate(prefix: &str) -> String {
     SESSION_WITH_CONTENT_PREDICATE_TEMPLATE.replace("{prefix}", prefix)
 }
 
+/// Trust predicate for first-contact history lookups (E2).
+///
+/// A session only counts as sender history when it was actually analyzed AND
+/// came back below High:
+/// - no verdict row → the "clean greeting" may never have been scanned (or
+///   the scan failed) — counting it let a single warm-up mail permanently
+///   disarm `first_contact` (-0.10) / `new_sender_on_known_domain` (-0.07)
+///   and the `envelope_mismatch + random_domain + first_contact` composite
+///   (+0.25) for every later attack from that domain;
+/// - verdict high/critical → obviously not trust-building history.
+///
+/// References the `s` alias; callers must alias `sessions` accordingly.
+const TRUSTED_HISTORY_VERDICT_PREDICATE: &str =
+    "EXISTS(SELECT 1 FROM security_verdicts v \
+     WHERE v.session_id = s.id AND lower(v.threat_level) NOT IN ('high', 'critical'))";
+
+/// Shared EXISTS query for sender-history lookups: `$1` is the sender match
+/// value, `$2` is the session id to exclude (the session being analyzed).
+fn sender_history_exists_sql(match_predicate: &str) -> String {
+    format!(
+        "SELECT CASE WHEN EXISTS( \
+            SELECT 1 FROM sessions s \
+            WHERE {match_predicate} AND s.status = 'Completed' AND s.id != $2 \
+              AND {TRUSTED_HISTORY_VERDICT_PREDICATE} \
+            LIMIT 1 \
+         ) THEN 1::BIGINT ELSE 0::BIGINT END"
+    )
+}
+
 fn content_without_attachment_payload_sql(column: &str) -> String {
     format!(
         "CASE \
@@ -204,7 +233,7 @@ impl VigilDb {
             .collect::<Vec<_>>()
             .join(",");
         let query_str = format!("SELECT id FROM sessions WHERE id IN ({})", placeholders);
-        let mut q = sqlx::query_as::<_, (String,)>(&query_str);
+        let mut q = sqlx::query_as::<_, (String,)>(sqlx::AssertSqlSafe(query_str.as_str()));
         for id in &ids {
             q = q.bind(id);
         }
@@ -352,7 +381,7 @@ impl VigilDb {
                     auth_info = COALESCE(excluded.auth_info, sessions.auth_info)",
             );
 
-            let mut query = sqlx::query(&sql);
+            let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
             for row in chunk {
                 query = query
                     .bind(&row.id_str)
@@ -396,7 +425,7 @@ impl VigilDb {
              FROM sessions WHERE id IN ({})",
             merged_placeholders
         );
-        let mut mq = sqlx::query_as::<_, SessionRow>(&merged_query_str);
+        let mut mq = sqlx::query_as::<_, SessionRow>(sqlx::AssertSqlSafe(merged_query_str.as_str()));
         for id in &ids {
             mq = mq.bind(id);
         }
@@ -605,7 +634,7 @@ impl VigilDb {
             0
         } else {
             let count_query = format!("SELECT COUNT(*) FROM sessions s{}", where_clause);
-            let mut cq = sqlx::query_scalar::<_, i64>(&count_query);
+            let mut cq = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_query.as_str()));
             for p in &params {
                 cq = cq.bind(p);
             }
@@ -640,7 +669,7 @@ impl VigilDb {
             where_clause, limit_ph, offset_ph
         );
 
-        let mut q = sqlx::query_as::<_, SessionListRow>(&data_query);
+        let mut q = sqlx::query_as::<_, SessionListRow>(sqlx::AssertSqlSafe(data_query.as_str()));
         for p in &params {
             q = q.bind(p);
         }
@@ -696,7 +725,7 @@ impl VigilDb {
              ORDER BY s.started_at ASC, s.id ASC \
              LIMIT $5"
         );
-        let rows: Vec<(String, String)> = sqlx::query_as(&query)
+        let rows: Vec<(String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
             .bind(since)
             .bind(until)
             .bind(cursor_started_at)
@@ -713,22 +742,43 @@ impl VigilDb {
 
     /// QuerySenderDomain (Used forFirst communication)
     /// sender_domain + EXISTS Road, LIKE '%@domain'
+    ///
+    /// Trust gate (E2): only sessions that were actually analyzed AND came
+    /// back below High count as history. Without this, one clean warm-up
+    /// greeting (or even an already-Critical email) disarmed first_contact /
+    /// new_sender_on_known_domain for every later attack from the domain.
     pub async fn count_sender_domain_history(
         &self,
         sender_domain: &str,
         exclude_session_id: &str,
     ) -> Result<i64> {
-        let exists: (i64,) = sqlx::query_as(
-            "SELECT CASE WHEN EXISTS( \
-                SELECT 1 FROM sessions \
-                WHERE sender_domain = $1 AND status = 'Completed' AND id != $2 \
-                LIMIT 1 \
-             ) THEN 1::BIGINT ELSE 0::BIGINT END",
-        )
-        .bind(sender_domain)
-        .bind(exclude_session_id)
-        .fetch_one(&self.pool)
-        .await?;
+        let query = sender_history_exists_sql("s.sender_domain = $1");
+        let exists: (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+            .bind(sender_domain)
+            .bind(exclude_session_id)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(exists.0)
+    }
+
+    /// Query whether an exact envelope mailbox has appeared in completed
+    /// sessions.  Domain history alone cannot distinguish a trusted sender
+    /// from a newly rotated attacker mailbox on a shared domain.
+    ///
+    /// Same trust gate as [`count_sender_domain_history`](Self::count_sender_domain_history):
+    /// sessions without a verdict, or with a high/critical verdict, do not
+    /// count as trust-building history.
+    pub async fn count_sender_address_history(
+        &self,
+        sender_address: &str,
+        exclude_session_id: &str,
+    ) -> Result<i64> {
+        let query = sender_history_exists_sql("lower(s.mail_from) = lower($1)");
+        let exists: (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
+            .bind(sender_address)
+            .bind(exclude_session_id)
+            .fetch_one(&self.pool)
+            .await?;
         Ok(exists.0)
     }
 
@@ -776,7 +826,7 @@ impl VigilDb {
              mail_from, rcpt_to, subject, {content_expr} as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info \
              FROM sessions WHERE id = $1"
         );
-        let row: Option<SessionRow> = sqlx::query_as(&query)
+        let row: Option<SessionRow> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
             .bind(id.to_string())
             .fetch_optional(&self.pool)
             .await?;
@@ -806,7 +856,7 @@ impl VigilDb {
             placeholders
         );
 
-        let mut q = sqlx::query_as::<_, SessionRow>(&query_str);
+        let mut q = sqlx::query_as::<_, SessionRow>(sqlx::AssertSqlSafe(query_str.as_str()));
         for id in &id_strs {
             q = q.bind(id);
         }
@@ -858,7 +908,7 @@ impl VigilDb {
              mail_from, rcpt_to, subject, {content_expr} as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info \
              FROM sessions WHERE message_id = $1 AND id != $2 ORDER BY started_at ASC"
         );
-        let rows: Vec<SessionRow> = sqlx::query_as(&query)
+        let rows: Vec<SessionRow> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
             .bind(message_id)
             .bind(exclude_id.to_string())
             .fetch_all(&self.pool)
@@ -902,7 +952,7 @@ impl VigilDb {
                AND started_at <= $6 \
              ORDER BY started_at ASC"
         );
-        let mut query = sqlx::query_as::<_, SessionRow>(&query)
+        let mut query = sqlx::query_as::<_, SessionRow>(sqlx::AssertSqlSafe(query.as_str()))
             .bind(exclude_id.to_string())
             .bind(&session.server_ip);
         if let Some(mail_from) = &session.mail_from {
@@ -1064,4 +1114,51 @@ fn list_row_to_session(row: SessionListRow) -> Result<EmailSession> {
         threat_level: row.threat_level,
         source: SessionSource::default(),
     })
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::{TRUSTED_HISTORY_VERDICT_PREDICATE, sender_history_exists_sql};
+
+    #[test]
+    fn trusted_history_predicate_requires_analyzed_non_malicious_verdict() {
+        // PoC (E2): before the fix the history lookup was a bare
+        // `status = 'Completed'` check, so one clean warm-up greeting — or
+        // even an email already judged Critical — counted as trust history
+        // and disarmed first_contact / new_sender_on_known_domain for every
+        // later attack from the same domain. The predicate must require a
+        // verdict row AND exclude high/critical verdicts.
+        assert!(TRUSTED_HISTORY_VERDICT_PREDICATE.contains("EXISTS(SELECT 1 FROM security_verdicts"));
+        assert!(TRUSTED_HISTORY_VERDICT_PREDICATE.contains("v.session_id = s.id"));
+        assert!(
+            TRUSTED_HISTORY_VERDICT_PREDICATE
+                .contains("lower(v.threat_level) NOT IN ('high', 'critical')")
+        );
+    }
+
+    #[test]
+    fn sender_history_queries_apply_trust_gate_and_completed_filter() {
+        // Query-construction verification: both history lookups (domain and
+        // exact-address) must carry the Completed filter, the current-session
+        // exclusion, and the verdict trust gate.
+        for sql in [
+            sender_history_exists_sql("s.sender_domain = $1"),
+            sender_history_exists_sql("lower(s.mail_from) = lower($1)"),
+        ] {
+            assert!(sql.contains("s.status = 'Completed'"), "missing Completed filter: {sql}");
+            assert!(sql.contains("s.id != $2"), "missing self-exclusion: {sql}");
+            assert!(
+                sql.contains(TRUSTED_HISTORY_VERDICT_PREDICATE),
+                "missing verdict trust gate: {sql}"
+            );
+        }
+
+        // The two lookups must keep their distinct match predicates.
+        assert!(sender_history_exists_sql("s.sender_domain = $1").contains("s.sender_domain = $1"));
+        assert!(
+            sender_history_exists_sql("lower(s.mail_from) = lower($1)")
+                .contains("lower(s.mail_from) = lower($1)")
+        );
+    }
 }

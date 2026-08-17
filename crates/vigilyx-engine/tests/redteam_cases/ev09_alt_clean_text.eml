@@ -1,0 +1,18 @@
+From: =?utf-8?B?6YCa6L+H6KGM5oOz? <it-support@partner-external.com>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev09@partner-external.com>
+Subject: 系统通知
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="B3"
+
+--B3
+Content-Type: text/plain; charset=utf-8
+
+您好，最新系统通知请见网页版。
+--B3
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>尊敬的用户：系统检测到您的账户存在异常登录，为保障您的资金安全，请立即点击下方链接验证身份，24小时内未验证将冻结账户。</p><p><a href='http://203.0.113.50/verify/login'>http://203.0.113.50/verify/login</a></p><p>客服电话 400-123-4567</p></body></html>
+--B3--
+

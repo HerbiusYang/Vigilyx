@@ -44,8 +44,8 @@ fn decrypt_webhook_url(stored: &str) -> Option<String> {
     }
 
     let cipher = Aes256Gcm::new_from_slice(&key_bytes).ok()?;
-    let nonce = Nonce::from_slice(&combined[..12]);
-    let plaintext = cipher.decrypt(nonce, &combined[12..]).ok()?;
+    let nonce = Nonce::try_from(&combined[..12]).ok()?;
+    let plaintext = cipher.decrypt(&nonce, &combined[12..]).ok()?;
     String::from_utf8(plaintext).ok()
 }
 

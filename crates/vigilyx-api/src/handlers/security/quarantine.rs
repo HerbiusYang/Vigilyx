@@ -8,7 +8,11 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tokio::time::{Duration, Instant};
 use tracing::warn;
+use uuid::Uuid;
+use vigilyx_core::security::ThreatLevel;
+use vigilyx_db::mq::{RescanSessionReference, streams};
 use vigilyx_db::security::quarantine::QuarantineEntry;
 use vigilyx_mta::config::MtaConfig;
 use vigilyx_mta::relay::downstream::{DownstreamRelay, RelayResult};
@@ -109,8 +113,121 @@ async fn relay_quarantine_release(
     };
 
     Ok(relay
-        .relay(entry.mail_from.as_deref(), &entry.rcpt_to, raw_eml)
+        .relay_from(
+            entry.mail_from.as_deref(),
+            &entry.rcpt_to,
+            raw_eml,
+            entry.client_ip.as_deref(),
+        )
         .await)
+}
+
+/// Default maximum time to wait for the pre-release rescan verdict before
+/// failing closed. The full pipeline can spend ~8s on NLP alone, so this must
+/// stay decoupled from the MTA inline budget. Override with
+/// `RELEASE_RESCAN_TIMEOUT_SECS`.
+const DEFAULT_RELEASE_RESCAN_TIMEOUT_SECS: u64 = 30;
+/// Poll interval while waiting for the rescan verdict to be persisted.
+const RELEASE_RESCAN_POLL_INTERVAL: Duration = Duration::from_millis(200);
+
+fn parse_release_rescan_timeout(raw: Option<&str>) -> Duration {
+    raw.and_then(|value| value.parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(DEFAULT_RELEASE_RESCAN_TIMEOUT_SECS))
+}
+
+fn release_rescan_timeout() -> Duration {
+    parse_release_rescan_timeout(std::env::var("RELEASE_RESCAN_TIMEOUT_SECS").ok().as_deref())
+}
+
+/// Outcome of the mandatory pre-release rescan of the stored raw message.
+enum ReleaseScanOutcome {
+    /// Rescan verdict is below High; carries the rescan verdict id for audit.
+    Clear(String),
+    /// Rescan verdict is High or above; the release must be blocked.
+    Blocked(String),
+}
+
+/// Decide whether a rescan verdict allows the release to proceed.
+fn release_scan_decision(verdict_id: Uuid, threat_level: ThreatLevel) -> ReleaseScanOutcome {
+    if threat_level >= ThreatLevel::High {
+        ReleaseScanOutcome::Blocked(format!("{threat_level} (verdict {verdict_id})"))
+    } else {
+        ReleaseScanOutcome::Clear(verdict_id.to_string())
+    }
+}
+
+/// Re-run the engine on the exact stored message before any delivery.
+///
+/// Without this gate the quarantined raw_eml would reach the recipient inbox
+/// with zero fresh analysis: an attacker only needs to social-engineer an
+/// analyst into clicking "release". The rescan goes through the same Redis
+/// rescan channel as the admin rescan API, but carries the quarantine id so
+/// the engine re-parses the stored raw_eml — the exact bytes the relay would
+/// deliver — instead of the persisted session row, which parser degradation
+/// paths (attachment caps, size truncation) may have stripped, plus the
+/// entry's client IP so IP-reputation signals survive the rescan (A5). The
+/// handler then polls the verdict table until the new verdict lands.
+///
+/// Fail-closed: any channel/engine error, parse failure or timeout returns
+/// `Err` and the caller must refuse the release.
+async fn rescan_before_release(
+    state: &AppState,
+    entry: &QuarantineEntry,
+) -> Result<ReleaseScanOutcome, String> {
+    let session_id = Uuid::parse_str(&entry.session_id)
+        .map_err(|_| "Quarantine entry has an invalid session id".to_string())?;
+
+    let Some(mq) = state.messaging.mq.as_ref() else {
+        return Err("Engine rescan channel is unavailable (Redis not connected)".to_string());
+    };
+
+    let previous_verdict_id = state
+        .db
+        .get_verdict_by_session(session_id)
+        .await
+        .map_err(|e| format!("Failed to load existing verdict before release rescan: {e}"))?
+        .map(|verdict| verdict.id);
+
+    mq.xadd(
+        streams::RESCAN_REQUESTS,
+        &RescanSessionReference::for_quarantine(
+            session_id,
+            entry.id.clone(),
+            // A5: carry the real client IP so the rescan verdict keeps
+            // IP-reputation signals and cannot degrade below the release gate.
+            entry.client_ip.clone(),
+        ),
+    )
+    .await
+    .map_err(|e| format!("Failed to submit release rescan to engine: {e}"))?;
+
+    // Note: if the asynchronous full-pipeline verdict of the original inline
+    // analysis lands after this snapshot but before the rescan verdict, it may
+    // be observed here first. That is safe: it analyzed the exact same stored
+    // content, so the release decision is still based on a fresh engine verdict.
+    let timeout = release_rescan_timeout();
+    let deadline = Instant::now() + timeout;
+    loop {
+        let verdict = state
+            .db
+            .get_verdict_by_session(session_id)
+            .await
+            .map_err(|e| format!("Failed to poll release rescan verdict: {e}"))?;
+        if let Some(verdict) = verdict
+            && Some(verdict.id) != previous_verdict_id
+        {
+            return Ok(release_scan_decision(verdict.id, verdict.threat_level));
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "Engine rescan did not produce a verdict within {}s",
+                timeout.as_secs()
+            ));
+        }
+        tokio::time::sleep(RELEASE_RESCAN_POLL_INTERVAL).await;
+    }
 }
 
 fn release_conflict_response(status: Option<&str>) -> Response {
@@ -126,6 +243,13 @@ fn release_conflict_response(status: Option<&str>) -> Response {
             StatusCode::CONFLICT,
             ApiResponse::<serde_json::Value>::err(
                 "Quarantine entry is already being released by another request",
+            ),
+        )
+            .into_response(),
+        Some("release_blocked") => (
+            StatusCode::CONFLICT,
+            ApiResponse::<serde_json::Value>::err(
+                "Release of this entry was blocked because the rescan verdict is High or above",
             ),
         )
             .into_response(),
@@ -298,6 +422,61 @@ pub async fn release_quarantine(
         }
     };
 
+    // SEC: the stored raw message must pass a fresh engine verdict before it
+    // is allowed anywhere near a recipient inbox — the release click is the
+    // last enforcement point against social-engineered analysts. Fail-closed:
+    // any engine/channel error or timeout returns the entry to `quarantined`
+    // and refuses the release with 503.
+    let rescan_verdict_id = match rescan_before_release(state.as_ref(), &entry).await {
+        Ok(ReleaseScanOutcome::Clear(verdict_id)) => verdict_id,
+        Ok(ReleaseScanOutcome::Blocked(reason)) => {
+            match state.db.quarantine_mark_release_blocked(&id).await {
+                Ok(true) => {}
+                Ok(false) => {
+                    return ApiResponse::<serde_json::Value>::server_error(
+                        &"Release rollback lost ownership for quarantine entry",
+                        "Failed to mark quarantine entry as release-blocked",
+                    )
+                    .into_response();
+                }
+                Err(e) => {
+                    return ApiResponse::<serde_json::Value>::server_error(
+                        &e,
+                        "Failed to mark quarantine entry as release-blocked",
+                    )
+                    .into_response();
+                }
+            }
+            crate::handlers::spawn_audit_log(
+                state.engine_db.clone(),
+                released_by.clone(),
+                "release_quarantine_blocked",
+                Some("security"),
+                Some(id.clone()),
+                Some(reason.clone()),
+            );
+            return (
+                StatusCode::CONFLICT,
+                ApiResponse::<serde_json::Value>::err(format!(
+                    "Release blocked: rescan verdict is {reason}"
+                )),
+            )
+                .into_response();
+        }
+        Err(msg) => {
+            if let Err(response) = rollback_failed_release(state.as_ref(), &id).await {
+                return response;
+            }
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                ApiResponse::<serde_json::Value>::err(format!(
+                    "Release requires a fresh engine verdict, which is unavailable: {msg}"
+                )),
+            )
+                .into_response();
+        }
+    };
+
     match relay_quarantine_release(&entry, &raw_eml).await {
         Ok(RelayResult::Accepted) => {}
         Ok(RelayResult::TempFail(msg)) | Ok(RelayResult::ConnError(msg)) => {
@@ -338,13 +517,23 @@ pub async fn release_quarantine(
 
     match state.db.quarantine_finalize_release(&id, &released_by).await {
         Ok(true) => {
+            // Best-effort: keep the entry's verdict reference pointing at the
+            // rescan verdict that authorized this release (the rescan replaced
+            // the session's verdict row, so the old id would dangle).
+            if let Err(e) = state
+                .db
+                .quarantine_record_release_rescan(&id, &rescan_verdict_id)
+                .await
+            {
+                warn!(error = %e, quarantine_id = %id, "Failed to record release rescan verdict id");
+            }
             crate::handlers::spawn_audit_log(
                 state.engine_db.clone(),
                 released_by.clone(),
                 "release_quarantine",
                 Some("security"),
                 Some(id.clone()),
-                None,
+                Some(format!("rescan_verdict_id={rescan_verdict_id}")),
             );
             (
                 StatusCode::OK,
@@ -352,6 +541,7 @@ pub async fn release_quarantine(
                     "id": id,
                     "status": "released",
                     "released_by": released_by,
+                    "rescan_verdict_id": rescan_verdict_id,
                 })),
             )
                 .into_response()
@@ -395,6 +585,13 @@ pub async fn delete_quarantine(
         }
         Ok(false) => ApiResponse::<serde_json::Value>::not_found("Quarantine entry not found")
             .into_response(),
+        Err(e) if e.to_string().contains("currently being released") => (
+            StatusCode::CONFLICT,
+            ApiResponse::<serde_json::Value>::err(
+                "Entry is currently being released and cannot be deleted",
+            ),
+        )
+            .into_response(),
         Err(e) => ApiResponse::<serde_json::Value>::server_error(&e, "Failed to delete quarantine")
             .into_response(),
     }
@@ -422,5 +619,71 @@ mod tests {
     #[test]
     fn preview_truncation_does_not_modify_short_content() {
         assert_eq!(truncate_preview("short body"), "short body");
+    }
+
+    #[test]
+    fn release_scan_decision_blocks_high_and_critical_verdicts() {
+        // PoC: before the gate the release path relayed the stored raw_eml
+        // with no verdict at all; now a High/Critical rescan verdict must
+        // block the release instead of delivering the message.
+        let verdict_id = Uuid::new_v4();
+        for level in [ThreatLevel::High, ThreatLevel::Critical] {
+            match release_scan_decision(verdict_id, level) {
+                ReleaseScanOutcome::Blocked(reason) => {
+                    assert!(reason.contains(&level.to_string()));
+                    assert!(reason.contains(&verdict_id.to_string()));
+                }
+                ReleaseScanOutcome::Clear(_) => panic!("{level} verdict must block release"),
+            }
+        }
+    }
+
+    #[test]
+    fn release_scan_decision_allows_clean_verdicts() {
+        // Clean/low/medium rescan verdicts must release normally and carry
+        // the rescan verdict id for the audit trail.
+        let verdict_id = Uuid::new_v4();
+        for level in [ThreatLevel::Safe, ThreatLevel::Low, ThreatLevel::Medium] {
+            match release_scan_decision(verdict_id, level) {
+                ReleaseScanOutcome::Clear(recorded) => {
+                    assert_eq!(recorded, verdict_id.to_string());
+                }
+                ReleaseScanOutcome::Blocked(_) => panic!("{level} verdict must not block release"),
+            }
+        }
+    }
+
+    #[test]
+    fn release_conflict_response_explains_release_blocked() {
+        // A second release attempt on a blocked entry must explain why.
+        let response = release_conflict_response(Some("release_blocked"));
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn release_rescan_timeout_defaults_to_30s() {
+        // PoC for the systematic 503: an 8s ceiling could never fit the full
+        // pipeline (NLP alone has an ~8s budget), so every release with a
+        // healthy engine failed closed on timeout. The default must cover it.
+        let timeout = parse_release_rescan_timeout(None);
+        assert_eq!(timeout, Duration::from_secs(30));
+        assert!(timeout > Duration::from_secs(8));
+    }
+
+    #[test]
+    fn release_rescan_timeout_accepts_env_override_and_rejects_garbage() {
+        assert_eq!(
+            parse_release_rescan_timeout(Some("45")),
+            Duration::from_secs(45)
+        );
+        // Invalid, zero and negative values must fall back to the default,
+        // never disable the fail-closed gate.
+        for garbage in ["abc", "0", "-5", "", "8.5"] {
+            assert_eq!(
+                parse_release_rescan_timeout(Some(garbage)),
+                Duration::from_secs(30),
+                "invalid override {garbage:?} must fall back to the default"
+            );
+        }
     }
 }

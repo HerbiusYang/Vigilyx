@@ -18,6 +18,76 @@ use super::super::ApiResponse;
 use super::alerts::encrypt_config_value;
 use crate::AppState;
 use crate::auth::AuthenticatedUser;
+use vigilyx_soar::disposition::{DispositionAction, DispositionCondition};
+
+// Write-path semantic validation
+//
+// The rule write path used to only JSON-serialize conditions/actions without
+// ever parsing them into the typed structures. A typo like
+// `min_threat_level: "hign"` was stored verbatim and the engine's
+// parse_threat_level silently defaulted it to Safe — the rule then matched
+// every email and fired its webhook/email actions on all traffic.
+
+/// Threat levels accepted in `conditions.min_threat_level`.
+const VALID_MIN_THREAT_LEVELS: &[&str] = &["safe", "low", "medium", "high", "critical"];
+
+/// Action types the disposition engine can execute (canonical names plus the
+/// legacy aliases matched by DispositionEngine::execute_action).
+const VALID_ACTION_TYPES: &[&str] = &[
+    "webhook",
+    "log",
+    "alert",
+    "email_alert",
+    "wechat_alert",
+    "email",
+    "wechat",
+];
+
+/// Parse conditions into the typed struct and whitelist min_threat_level.
+fn validate_rule_conditions(conditions: &serde_json::Value) -> Result<(), String> {
+    let parsed: DispositionCondition = serde_json::from_value(conditions.clone())
+        .map_err(|e| format!("条件格式无效: {e}"))?;
+    if let Some(level) = parsed.min_threat_level.as_deref() {
+        let normalized = level.trim().to_ascii_lowercase();
+        if !VALID_MIN_THREAT_LEVELS.contains(&normalized.as_str()) {
+            return Err(format!(
+                "无效的 min_threat_level \"{level}\"（允许: {}）",
+                VALID_MIN_THREAT_LEVELS.join("/")
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Parse actions into the typed structs, whitelist action_type, and require
+/// webhook_url for webhook actions.
+fn validate_rule_actions(actions_json: &str) -> Result<(), String> {
+    let raw_actions = parse_actions_json(actions_json)?;
+    let actions: Vec<DispositionAction> =
+        serde_json::from_value(serde_json::Value::Array(raw_actions))
+            .map_err(|e| format!("动作格式无效: {e}"))?;
+    for (index, action) in actions.iter().enumerate() {
+        let action_type = action.action_type.trim().to_ascii_lowercase();
+        if !VALID_ACTION_TYPES.contains(&action_type.as_str()) {
+            return Err(format!(
+                "第 {} 个动作的 action_type \"{}\" 无效（允许: webhook/log/alert/email_alert/wechat_alert）",
+                index + 1,
+                action.action_type
+            ));
+        }
+        if action_type == "webhook"
+            && action
+                .webhook_url
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or_default()
+                .is_empty()
+        {
+            return Err(format!("第 {} 个 webhook 动作缺少 webhook_url", index + 1));
+        }
+    }
+    Ok(())
+}
 
 // Sensitive header masking for API responses
 
@@ -378,6 +448,9 @@ pub async fn create_disposition_rule(
     Json(req): Json<CreateDispositionRuleRequest>,
 ) -> axum::response::Response {
     let now = Utc::now().to_rfc3339();
+    if let Err(e) = validate_rule_conditions(&req.conditions) {
+        return ApiResponse::<serde_json::Value>::bad_request(e).into_response();
+    }
     let actions_raw = match serde_json::to_string(&req.actions) {
         Ok(s) => s,
         Err(e) => {
@@ -388,6 +461,9 @@ pub async fn create_disposition_rule(
             .into_response();
         }
     };
+    if let Err(e) = validate_rule_actions(&actions_raw) {
+        return ApiResponse::<serde_json::Value>::bad_request(e).into_response();
+    }
     let actions =
         match encrypt_action_secrets(&actions_raw, state.auth.config.jwt_secret.expose_secret()) {
             Ok(actions) => actions,
@@ -454,6 +530,9 @@ pub async fn update_disposition_rule(
         return ApiResponse::<serde_json::Value>::not_found("Rule not found").into_response();
     };
 
+    if let Err(e) = validate_rule_conditions(&req.conditions) {
+        return ApiResponse::<serde_json::Value>::bad_request(e).into_response();
+    }
     let actions = match serde_json::to_string(&req.actions) {
         Ok(raw) => match restore_masked_action_secrets(&existing_rule.actions, &raw) {
             Ok(actions) => actions,
@@ -469,6 +548,11 @@ pub async fn update_disposition_rule(
             .into_response();
         }
     };
+    // Validate after masked-placeholder restoration so a kept-secret webhook
+    // is checked against its real stored URL, not the "***" placeholder.
+    if let Err(e) = validate_rule_actions(&actions) {
+        return ApiResponse::<serde_json::Value>::bad_request(e).into_response();
+    }
     let actions =
         match encrypt_action_secrets(&actions, state.auth.config.jwt_secret.expose_secret()) {
             Ok(actions) => actions,
@@ -1000,5 +1084,87 @@ mod tests {
 
         let error = restore_masked_action_secrets(existing, incoming).unwrap_err();
         assert!(error.contains("多个同类型候选项"));
+    }
+
+    // ─── Round-5 PoC: write-path semantic validation (D5) ─────────────────
+
+    #[test]
+    fn test_validate_rule_conditions_rejects_typo_threat_level() {
+        // Before the fix, "hign" was stored verbatim and parse_threat_level
+        // silently defaulted it to Safe — the rule then matched every email
+        // and fired its webhook/email actions on all traffic.
+        let err = validate_rule_conditions(&serde_json::json!({"min_threat_level": "hign"}))
+            .expect_err("typo threat level must be rejected at write time");
+        assert!(err.contains("min_threat_level"));
+
+        let err = validate_rule_conditions(&serde_json::json!({"min_threat_level": "高危"}))
+            .expect_err("non-whitelisted threat level must be rejected");
+        assert!(err.contains("min_threat_level"));
+    }
+
+    #[test]
+    fn test_validate_rule_conditions_accepts_valid_levels_and_empty() {
+        for level in ["safe", "low", "medium", "high", "critical", "High"] {
+            assert!(
+                validate_rule_conditions(&serde_json::json!({"min_threat_level": level})).is_ok(),
+                "level {level} must be accepted"
+            );
+        }
+        assert!(validate_rule_conditions(&serde_json::json!({})).is_ok());
+        assert!(
+            validate_rule_conditions(
+                &serde_json::json!({"categories": ["phishing"], "flagged_modules": ["url_analysis"]})
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_validate_rule_conditions_rejects_wrong_field_types() {
+        let err =
+            validate_rule_conditions(&serde_json::json!({"min_threat_level": 3, "categories": "phishing"}))
+                .expect_err("wrong-typed conditions must be rejected");
+        assert!(err.contains("条件格式无效"));
+    }
+
+    #[test]
+    fn test_validate_rule_actions_rejects_unknown_action_type() {
+        let err = validate_rule_actions(r#"[{"action_type": "shell_exec"}]"#)
+            .expect_err("unknown action_type must be rejected");
+        assert!(err.contains("action_type"));
+        assert!(err.contains("shell_exec"));
+    }
+
+    #[test]
+    fn test_validate_rule_actions_rejects_webhook_without_url() {
+        let err = validate_rule_actions(r#"[{"action_type": "webhook"}]"#)
+            .expect_err("webhook action without webhook_url must be rejected");
+        assert!(err.contains("webhook_url"));
+
+        let err = validate_rule_actions(r#"[{"action_type": "webhook", "webhook_url": "  "}]"#)
+            .expect_err("blank webhook_url must be rejected");
+        assert!(err.contains("webhook_url"));
+    }
+
+    #[test]
+    fn test_validate_rule_actions_accepts_valid_actions() {
+        let valid = r#"[
+            {"action_type": "webhook", "webhook_url": "https://example.com/hook"},
+            {"action_type": "log"},
+            {"action_type": "alert", "message_template": "hi"},
+            {"action_type": "email_alert"},
+            {"action_type": "wechat_alert"}
+        ]"#;
+        assert!(validate_rule_actions(valid).is_ok());
+        // Legacy engine aliases remain storable.
+        assert!(validate_rule_actions(r#"[{"action_type": "email"}]"#).is_ok());
+        assert!(validate_rule_actions(r#"[{"action_type": "wechat"}]"#).is_ok());
+    }
+
+    #[test]
+    fn test_validate_rule_actions_rejects_wrong_field_types() {
+        let err = validate_rule_actions(r#"[{"action_type": 42}]"#)
+            .expect_err("wrong-typed action must be rejected");
+        assert!(err.contains("动作格式无效"));
     }
 }

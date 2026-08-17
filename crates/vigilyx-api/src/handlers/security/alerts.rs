@@ -46,10 +46,10 @@ pub(super) fn encrypt_config_value(plaintext: &str, jwt_secret: &str) -> Result<
     // 96-bit random nonce
     let mut nonce_bytes = [0u8; 12];
     getrandom::fill(&mut nonce_bytes).map_err(|e| format!("rng: {e}"))?;
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    let nonce = Nonce::try_from(&nonce_bytes[..]).map_err(|_| "invalid nonce".to_string())?;
 
     let ciphertext = cipher
-        .encrypt(nonce, plaintext.as_bytes())
+        .encrypt(&nonce, plaintext.as_bytes())
         .map_err(|e| format!("encrypt: {e}"))?;
 
     // nonce (12) || ciphertext+tag
@@ -89,9 +89,9 @@ pub(super) fn decrypt_config_value(stored: &str, jwt_secret: &str) -> Result<Str
 
     let key_bytes = derive_encryption_key(jwt_secret);
     let cipher = Aes256Gcm::new_from_slice(&key_bytes).map_err(|e| format!("cipher init: {e}"))?;
-    let nonce = Nonce::from_slice(&combined[..12]);
+    let nonce = Nonce::try_from(&combined[..12]).map_err(|_| "invalid nonce".to_string())?;
     let plaintext = cipher
-        .decrypt(nonce, &combined[12..])
+        .decrypt(&nonce, &combined[12..])
         .map_err(|_| "decrypt failed (wrong key or tampered)".to_string())?;
 
     String::from_utf8(plaintext).map_err(|e| format!("utf8: {e}"))
@@ -315,8 +315,9 @@ pub async fn update_email_alert_config(
             }
         };
 
-    // SEC: Validate SMTP host on save, not just test - prevent SSRF (CWE-918)
-    if crate::handlers::syslog_config::is_blocked_address(&parsed.smtp_host) {
+    // Disabled alerting is a valid optional setup state and performs no network
+    // access. Keep SSRF validation strict whenever the feature is enabled.
+    if is_disallowed_smtp_server(parsed.enabled, &parsed.smtp_host) {
         return ApiResponse::<serde_json::Value>::bad_request("Disallowed SMTP server address")
             .into_response();
     }
@@ -392,10 +393,10 @@ pub async fn test_email_alert(
         };
 
     // Masked UI placeholders keep the stored password; an explicit empty string does not.
-    if is_masked_secret_placeholder(&config.smtp_password)
-        && let Ok(Some(existing_json)) = state.engine_db.get_email_alert_config().await
+    if let Ok(Some(existing_json)) = state.engine_db.get_email_alert_config().await
         && let Ok(existing) =
             serde_json::from_str::<vigilyx_engine::config::EmailAlertConfig>(&existing_json)
+        && is_masked_secret_placeholder(&config.smtp_password, Some(&existing.smtp_password))
     {
         config.smtp_password = existing.smtp_password;
     }
@@ -573,10 +574,10 @@ pub async fn test_wechat_alert(
             }
         };
 
-    if is_masked_secret_placeholder(&config.webhook_url)
-        && let Ok(Some(existing_json)) = state.engine_db.get_wechat_alert_config().await
+    if let Ok(Some(existing_json)) = state.engine_db.get_wechat_alert_config().await
         && let Ok(existing) =
             serde_json::from_str::<vigilyx_engine::config::WechatAlertConfig>(&existing_json)
+        && is_masked_secret_placeholder(&config.webhook_url, Some(&existing.webhook_url))
     {
         config.webhook_url = existing.webhook_url;
     }
@@ -637,7 +638,12 @@ fn restore_existing_secret(
 ) {
     let should_restore = match body.get(field) {
         None => true,
-        Some(value) => value.as_str().is_some_and(is_masked_secret_placeholder),
+        Some(value) => value.as_str().is_some_and(|incoming| {
+            is_masked_secret_placeholder(
+                incoming,
+                existing.get(field).and_then(|stored| stored.as_str()),
+            )
+        }),
     };
 
     if should_restore && let Some(real_value) = existing.get(field) {
@@ -654,8 +660,61 @@ fn normalize_empty_optional_secret_field(
     }
 }
 
-fn is_masked_secret_placeholder(value: &str) -> bool {
-    value.contains("...") || value == "****"
+fn restore_missing_intel_fields(
+    body: &mut serde_json::Map<String, serde_json::Value>,
+    existing: &serde_json::Value,
+) {
+    for field in [
+        "otx_enabled",
+        "vt_scrape_enabled",
+        "vt_scrape_url",
+        "abuseipdb_enabled",
+    ] {
+        if !body.contains_key(field)
+            && let Some(value) = existing.get(field)
+        {
+            body.insert(field.to_string(), value.clone());
+        }
+    }
+}
+
+/// Compute the exact masked placeholder a GET handler would have emitted for
+/// a stored secret. Char-based throughout: byte slicing a multi-byte UTF-8
+/// legacy key panics, and byte-based star counts desync from what the admin
+/// saw in the UI.
+fn masked_placeholder_for(stored: &str) -> Option<String> {
+    if stored.is_empty() {
+        return None;
+    }
+    if stored.starts_with("ENC:") {
+        return Some("****".to_string());
+    }
+    let char_count = stored.chars().count();
+    if char_count > 4 {
+        let tail: String = {
+            let reversed: String = stored.chars().rev().take(4).collect();
+            reversed.chars().rev().collect()
+        };
+        Some(format!("{}...{}", "*".repeat(char_count.min(8) - 4), tail))
+    } else {
+        Some("****".to_string())
+    }
+}
+
+/// A submitted value is a placeholder only when it is *exactly* the masked
+/// form of the currently stored secret (or the fixed `****` sentinel when no
+/// stored value is available to compare against). The previous heuristic
+/// (`contains("...")`) silently discarded real secrets that happened to
+/// contain "..." — the save "succeeded" but the password never changed.
+fn is_masked_secret_placeholder(value: &str, stored: Option<&str>) -> bool {
+    match stored {
+        Some(stored) => masked_placeholder_for(stored).is_some_and(|mask| mask == value),
+        None => value == "****",
+    }
+}
+
+fn is_disallowed_smtp_server(enabled: bool, smtp_host: &str) -> bool {
+    enabled && crate::handlers::syslog_config::is_blocked_address(smtp_host)
 }
 
 #[cfg(test)]
@@ -663,9 +722,20 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        is_masked_secret_placeholder, normalize_empty_optional_secret_field,
-        restore_existing_secret,
+        is_disallowed_smtp_server, is_masked_secret_placeholder, mask_intel_api_keys,
+        masked_placeholder_for, normalize_empty_optional_secret_field, restore_existing_secret,
+        restore_missing_intel_fields,
     };
+
+    #[test]
+    fn disabled_email_alerts_allow_an_empty_smtp_host() {
+        assert!(!is_disallowed_smtp_server(false, ""));
+    }
+
+    #[test]
+    fn enabled_email_alerts_still_block_sensitive_smtp_targets() {
+        assert!(is_disallowed_smtp_server(true, "127.0.0.1"));
+    }
 
     #[test]
     fn restores_missing_ai_key_from_existing_config() {
@@ -681,8 +751,8 @@ mod tests {
 
     #[test]
     fn restores_masked_ai_key_from_existing_config() {
-        let mut incoming =
-            serde_json::Map::from_iter([("api_key".to_string(), json!("****...abcd"))]);
+        // The placeholder emitted for an encrypted stored key is exactly "****".
+        let mut incoming = serde_json::Map::from_iter([("api_key".to_string(), json!("****"))]);
         let existing = json!({
             "api_key": "ENC:stored-secret"
         });
@@ -690,6 +760,54 @@ mod tests {
         restore_existing_secret(&mut incoming, "api_key", &existing);
 
         assert_eq!(incoming.get("api_key"), Some(&json!("ENC:stored-secret")));
+    }
+
+    #[test]
+    fn real_secret_containing_ellipsis_is_not_treated_as_placeholder() {
+        // PoC (round 5, D6): before the fix, `contains("...")` meant a real
+        // new key like "abc...def123" was silently replaced with the old
+        // stored value — the save "succeeded" but the secret never changed
+        // and the alert channel quietly kept failing.
+        let mut incoming =
+            serde_json::Map::from_iter([("api_key".to_string(), json!("abc...def123"))]);
+        let existing = json!({
+            "api_key": "ENC:stored-secret"
+        });
+
+        restore_existing_secret(&mut incoming, "api_key", &existing);
+
+        assert_eq!(
+            incoming.get("api_key"),
+            Some(&json!("abc...def123")),
+            "a real secret containing '...' must be kept, not silently replaced"
+        );
+    }
+
+    #[test]
+    fn placeholder_must_match_the_exact_mask_of_the_stored_secret() {
+        // Legacy plaintext key: the UI echoes back the exact mask produced by
+        // the GET handler; anything else is a real new value.
+        let existing = json!({ "api_key": "sk-live-abcdef123456" });
+        let mask = masked_placeholder_for("sk-live-abcdef123456").expect("mask");
+        assert_eq!(mask, "****...3456");
+
+        let mut incoming = serde_json::Map::from_iter([("api_key".to_string(), json!(mask))]);
+        restore_existing_secret(&mut incoming, "api_key", &existing);
+        assert_eq!(
+            incoming.get("api_key"),
+            Some(&json!("sk-live-abcdef123456")),
+            "the exact emitted mask restores the stored secret"
+        );
+
+        // A mask that does not correspond to the stored secret is a new value.
+        let mut incoming =
+            serde_json::Map::from_iter([("api_key".to_string(), json!("****...9999"))]);
+        restore_existing_secret(&mut incoming, "api_key", &existing);
+        assert_eq!(
+            incoming.get("api_key"),
+            Some(&json!("****...9999")),
+            "a non-matching mask-like value must be treated as a new secret"
+        );
     }
 
     #[test]
@@ -706,10 +824,60 @@ mod tests {
 
     #[test]
     fn placeholder_detection_does_not_treat_empty_string_as_keep() {
-        assert!(is_masked_secret_placeholder("****"));
-        assert!(is_masked_secret_placeholder("****...abcd"));
-        assert!(!is_masked_secret_placeholder(""));
-        assert!(!is_masked_secret_placeholder("real-secret"));
+        assert!(is_masked_secret_placeholder("****", Some("ENC:stored-secret")));
+        assert!(is_masked_secret_placeholder("****", None));
+        assert!(!is_masked_secret_placeholder("", Some("ENC:stored-secret")));
+        assert!(!is_masked_secret_placeholder("real-secret", Some("ENC:x")));
+        // Without a stored value to compare against, only the fixed sentinel counts.
+        assert!(!is_masked_secret_placeholder("****...abcd", None));
+    }
+
+    #[test]
+    fn mask_intel_api_keys_handles_multibyte_utf8_legacy_keys() {
+        // PoC (round 5, D3): the old byte slice &key[key.len()-4..] panicked
+        // on legacy plaintext keys whose byte boundary fell inside a
+        // multi-byte character — GET intel-config crashed on every poll.
+        let mut value = json!({
+            "abuseipdb_api_key": "ab密钥c",
+            "virustotal_api_key": "密钥abcd"
+        });
+
+        mask_intel_api_keys(&mut value);
+
+        // "ab密钥c" = 5 chars -> 1 star + last 4 chars
+        assert_eq!(
+            value["abuseipdb_api_key"].as_str().unwrap(),
+            "*...b密钥c"
+        );
+        assert_eq!(value["abuseipdb_api_key_set"], json!(true));
+        // "密钥abcd" = 6 chars -> 2 stars + last 4 chars
+        assert_eq!(
+            value["virustotal_api_key"].as_str().unwrap(),
+            "**...abcd"
+        );
+    }
+
+    #[test]
+    fn mask_intel_api_keys_preserves_existing_shapes() {
+        let mut value = json!({
+            "abuseipdb_api_key": "ENC:ciphertext",
+            "virustotal_api_key": "sk-1234567890abcdef"
+        });
+
+        mask_intel_api_keys(&mut value);
+
+        assert_eq!(value["abuseipdb_api_key"].as_str().unwrap(), "****");
+        assert_eq!(value["abuseipdb_api_key_set"], json!(true));
+        // 20 chars -> 8-star cap + last 4 chars
+        assert_eq!(
+            value["virustotal_api_key"].as_str().unwrap(),
+            "****...cdef"
+        );
+
+        let mut empty = json!({ "abuseipdb_api_key": "" });
+        mask_intel_api_keys(&mut empty);
+        assert_eq!(empty["abuseipdb_api_key"], serde_json::Value::Null);
+        assert_eq!(empty["abuseipdb_api_key_set"], json!(false));
     }
 
     #[test]
@@ -723,6 +891,26 @@ mod tests {
             incoming.get("virustotal_api_key"),
             Some(&serde_json::Value::Null)
         );
+    }
+
+    #[test]
+    fn partial_intel_update_preserves_backend_owned_fields() {
+        let mut incoming = serde_json::Map::from_iter([("otx_enabled".to_string(), json!(false))]);
+        let existing = json!({
+            "otx_enabled": true,
+            "vt_scrape_enabled": true,
+            "vt_scrape_url": "http://vigilyx-ai:8900",
+            "abuseipdb_enabled": false
+        });
+
+        restore_missing_intel_fields(&mut incoming, &existing);
+
+        assert_eq!(incoming.get("otx_enabled"), Some(&json!(false)));
+        assert_eq!(
+            incoming.get("vt_scrape_url"),
+            Some(&json!("http://vigilyx-ai:8900"))
+        );
+        assert_eq!(incoming.get("vt_scrape_enabled"), Some(&json!(true)));
     }
 }
 
@@ -909,6 +1097,10 @@ pub async fn update_intel_config(
                 None
             };
 
+        if let Some(ref existing) = existing {
+            restore_missing_intel_fields(obj, existing);
+        }
+
         for key_field in &["abuseipdb_api_key", "virustotal_api_key"] {
             if let Some(ref existing) = existing {
                 restore_existing_secret(obj, key_field, existing);
@@ -993,6 +1185,7 @@ pub async fn update_intel_config(
             );
             ApiResponse::ok(serde_json::json!({
                 "saved": true,
+                "requires_restart": true,
                 "note": "Intel configuration saved. Takes effect after engine restart.",
             }))
             .into_response()
@@ -1007,18 +1200,15 @@ pub async fn update_intel_config(
 fn mask_intel_api_keys(value: &mut serde_json::Value) {
     if let Some(obj) = value.as_object_mut() {
         for key_field in &["abuseipdb_api_key", "virustotal_api_key"] {
+            // SEC: char-based masking via masked_placeholder_for — a byte
+            // slice like &key[key.len()-4..] panics on multi-byte UTF-8
+            // legacy plaintext keys (e.g. "ab密钥c").
             let (masked, has_key) = match obj.get(*key_field).and_then(|k| k.as_str()) {
-                Some(key) if key.starts_with("ENC:") => (serde_json::json!("****"), true),
-                Some(key) if key.len() > 4 => {
-                    let masked = format!(
-                        "{}...{}",
-                        "*".repeat(key.len().min(8) - 4),
-                        &key[key.len() - 4..]
-                    );
-                    (serde_json::json!(masked), true)
-                }
-                Some(key) if !key.is_empty() => (serde_json::json!("****"), true),
-                _ => (serde_json::Value::Null, false),
+                Some(key) => match masked_placeholder_for(key) {
+                    Some(mask) => (serde_json::json!(mask), true),
+                    None => (serde_json::Value::Null, false),
+                },
+                None => (serde_json::Value::Null, false),
             };
             obj.insert(key_field.to_string(), masked);
             obj.insert(

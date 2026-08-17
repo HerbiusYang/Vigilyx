@@ -19,6 +19,7 @@ Usage:
 Applies host-side packet-capture tuning for the sniffer interface:
   - sysctl receive-path tuning
   - NIC ring sizing (when ethtool supports it)
+  - capture-hostile offload disablement (when ethtool supports it)
   - RPS/RFS steering
   - optional IRQ affinity rebalance
 
@@ -80,8 +81,19 @@ run_cmd() {
 }
 
 if [ -f "$ENV_FILE" ]; then
-    env_perms=$(stat -f '%Lp' "$ENV_FILE" 2>/dev/null || stat -c '%a' "$ENV_FILE")
-    if [ $((10#$env_perms % 100)) -gt 0 ]; then
+    if env_perms=$(stat -c '%a' "$ENV_FILE" 2>/dev/null); then
+        :
+    elif env_perms=$(stat -f '%Lp' "$ENV_FILE" 2>/dev/null); then
+        :
+    else
+        echo "Error: unable to inspect permissions for $ENV_FILE." >&2
+        exit 1
+    fi
+    if [[ ! "$env_perms" =~ ^[0-7]{3,4}$ ]]; then
+        echo "Error: invalid permission value '$env_perms' for $ENV_FILE." >&2
+        exit 1
+    fi
+    if [ $((8#$env_perms % 64)) -ne 0 ]; then
         echo "Error: $ENV_FILE must not be group/world-accessible before sourcing (chmod 600 $ENV_FILE)." >&2
         exit 1
     fi
@@ -110,6 +122,7 @@ HOST_NETDEV_BUDGET="${SNIFFER_HOST_NETDEV_BUDGET:-1200}"
 HOST_NETDEV_BUDGET_USECS="${SNIFFER_HOST_NETDEV_BUDGET_USECS:-8000}"
 HOST_RPS_FLOW_ENTRIES="${SNIFFER_HOST_RPS_FLOW_ENTRIES:-65536}"
 HOST_SET_RING_MAX="${SNIFFER_HOST_SET_RING_MAX:-true}"
+HOST_DISABLE_OFFLOADS="${SNIFFER_HOST_DISABLE_OFFLOADS:-true}"
 HOST_INSTALL_HOOK="${SNIFFER_HOST_INSTALL_HOOK:-true}"
 HOST_IRQ_REBALANCE="${SNIFFER_HOST_IRQ_REBALANCE:-true}"
 HOST_IRQ_CPU_LIST="${SNIFFER_HOST_IRQ_CPU_LIST:-}"
@@ -276,6 +289,21 @@ if is_truthy "${HOST_SET_RING_MAX}" && command -v ethtool >/dev/null 2>&1; then
         run_cmd ethtool -G "${INTERFACE}" rx "${MAX_RX}" tx "${MAX_TX:-${MAX_RX}}"
         log "NIC ring buffer: RX ${CUR_RX:-unknown} -> ${MAX_RX}, TX ${CUR_TX:-unknown} -> ${MAX_TX:-${MAX_RX}}"
     fi
+fi
+
+if is_truthy "${HOST_DISABLE_OFFLOADS}" && command -v ethtool >/dev/null 2>&1; then
+    # GRO/GSO/TSO can coalesce or synthesize frames before libpcap observes
+    # them. Disable each feature independently because virtual NICs commonly
+    # expose some features as fixed/unsupported.
+    for feature in gro lro gso tso rx-gro-hw; do
+        if $DRY_RUN; then
+            log "DRY-RUN: ethtool -K ${INTERFACE} ${feature} off"
+        elif ethtool -K "${INTERFACE}" "${feature}" off >/dev/null 2>&1; then
+            log "NIC offload disabled: ${feature}"
+        else
+            log "NIC offload unavailable or fixed (continuing): ${feature}"
+        fi
+    done
 fi
 
 SYSCTL_CONF="/etc/sysctl.d/99-vigilyx-capture.conf"

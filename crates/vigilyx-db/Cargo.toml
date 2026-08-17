@@ -2,6 +2,7 @@
 name = "vigilyx-db"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Vigilyx 统一数据层 - PostgreSQL 持久化 + Redis 消息队列"
@@ -9,7 +10,7 @@ description = "Vigilyx 统一数据层 - PostgreSQL 持久化 + Redis 消息队�
 [features]
 default = ["postgres", "redis"]
 postgres = ["dep:sqlx", "dep:sysinfo", "dep:libc"]
-redis = ["dep:redis", "dep:backoff", "dep:async-channel"]
+redis = ["dep:redis", "dep:async-channel", "dep:sha2", "dep:subtle", "dep:hmac", "dep:digest"]
 # Explicit opt-in for tests that require disposable real PostgreSQL/Valkey services.
 # Keeping this outside the default feature set prevents accidental access to a
 # developer or production database during ordinary `cargo test --workspace` runs.
@@ -40,12 +41,18 @@ thiserror.workspace = true
 
 # === postgres feature ===
 sqlx = { workspace = true, optional = true }
-sysinfo = { version = "0.32", optional = true }
+sysinfo = { version = "0.39", optional = true }
 
 # === redis feature ===
 redis = { workspace = true, optional = true }
-backoff = { workspace = true, optional = true }
 async-channel = { workspace = true, optional = true }
+# SEC-12/M-2: HMAC-SHA256 message signatures + constant-time comparison
+# (hmac 0.13 pairs with the sha2 0.11 / digest 0.11 line used here).
+sha2 = { version = "0.11", optional = true }
+subtle = { version = "2", optional = true }
+hmac = { version = "0.13", optional = true }
+# digest 0.11 traits drive the hmac 0.13 API (KeyInit/Update/FixedOutput)
+digest = { version = "0.11", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { version = "0.2", optional = true }

@@ -25,6 +25,7 @@ use crate::parser::ProtocolParser;
 use crate::parser::file_protocol::{FileProtocolReader, Frame};
 use crate::parser::pcapng::PcapngParser;
 use crate::session::{ProcessResult, SessionKey, ShardedSessionManager};
+use crate::stream::GLOBAL_REASSEMBLY_BUDGET;
 use crate::zerocopy::{AdaptiveBatcher, BatchConfig};
 use anyhow::{Result, anyhow};
 use bytes::Bytes;
@@ -65,6 +66,40 @@ const DEFAULT_CAPTURE_BUFFER_MB: usize = 256;
 const MIN_CAPTURE_BUFFER_MB: usize = 64;
 const MAX_CAPTURE_BUFFER_MB: usize = 1024;
 
+/// F7: remote-listen handshake greeting prefix (`VIGILYX1 <token>\n`).
+const REMOTE_LISTEN_GREETING_PREFIX: &str = "VIGILYX1 ";
+/// F7: how long an accepted remote-listen connection may take to present its
+/// handshake line before it is dropped.
+const REMOTE_LISTEN_HANDSHAKE_TIMEOUT_SECS: u64 = 10;
+/// Maximum silence while an authenticated remote-listen peer is delivering a
+/// pcap record.  This is deliberately long enough for a low-rate capture but
+/// prevents a half-delivered record from pinning a capture worker forever.
+const REMOTE_LISTEN_RECORD_TIMEOUT_SECS: u64 = 300;
+const MAX_PCAP_RECORD_BYTES: usize = 65_536;
+
+/// F7: validate one handshake line (without the trailing LF; a trailing CR is
+/// tolerated). Constant-time comparison so the token is not oracle-able.
+fn remote_listen_greeting_valid(line: &[u8], expected_token: &str) -> bool {
+    let line = match line.last() {
+        Some(b'\r') => &line[..line.len() - 1],
+        _ => line,
+    };
+    let expected = format!("{}{}", REMOTE_LISTEN_GREETING_PREFIX, expected_token);
+    ct_eq_bytes(line, expected.as_bytes())
+}
+
+/// Constant-time byte equality for secret comparison.
+fn ct_eq_bytes(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 /// Read worker thread count from `SNIFFER_WORKERS` env var, falling back to default.
 fn max_worker_threads() -> usize {
     std::env::var("SNIFFER_WORKERS")
@@ -102,10 +137,45 @@ fn capture_buffer_size_mb() -> usize {
 pub struct CaptureStats {
     pub packets_received: AtomicU64,
     pub packets_processed: AtomicU64,
+    /// Packets observed by libpcap before userspace delivery (`pcap_stats.ps_recv`).
+    pub libpcap_packets_received: AtomicU64,
+    /// Packets dropped by the packet-capture subsystem (`pcap_stats.ps_drop`).
+    pub libpcap_packets_dropped: AtomicU64,
+    /// Packets dropped by the capture interface/driver (`pcap_stats.ps_ifdrop`).
+    pub libpcap_interface_dropped: AtomicU64,
+    /// Packets dropped after capture because an application worker queue was full.
     pub packets_dropped: AtomicU64,
     pub worker_queue_full_drops: AtomicU64,
     pub packets_email: AtomicU64,
     pub bytes_total: AtomicU64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct PcapCounters {
+    received: u32,
+    dropped: u32,
+    interface_dropped: u32,
+}
+
+impl PcapCounters {
+    fn from_stat(stat: pcap::Stat) -> Self {
+        Self {
+            received: stat.received,
+            dropped: stat.dropped,
+            interface_dropped: stat.if_dropped,
+        }
+    }
+
+    /// libpcap exposes 32-bit cumulative counters, so wrapping subtraction is
+    /// required for long-running capture processes.
+    fn diff_since(self, previous: Self) -> (u64, u64, u64) {
+        (
+            self.received.wrapping_sub(previous.received) as u64,
+            self.dropped.wrapping_sub(previous.dropped) as u64,
+            self.interface_dropped
+                .wrapping_sub(previous.interface_dropped) as u64,
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -214,8 +284,15 @@ impl HighPerformanceCapturer {
                         error!(
                             "Worker thread {} Occur panic: {:?}",
                             worker_id,
-                            e.downcast_ref::<&str>().unwrap_or(&"UnknownError")
+                            e.downcast_ref::<&str>()
+                                .map(|s| (*s).to_string())
+                                .or_else(|| e.downcast_ref::<String>().cloned())
+                                .unwrap_or_else(|| "UnknownError".to_string())
                         );
+                        // panic 说明代码存在 bug，worker 死亡后其 channel 会填满，
+                        // 对应五元组会话将永久丢包（进程"活着但不工作"）。
+                        // 直接退出进程，由 Docker restart 策略拉起，比哑进程安全。
+                        std::process::exit(1);
                     }
                 })?;
         }
@@ -355,10 +432,18 @@ impl HighPerformanceCapturer {
                 match result {
                     Ok(Ok(())) => info!("Capture threadexited normally"),
                     Ok(Err(e)) => error!("Capture threadError: {}", e),
-                    Err(e) => error!(
-                        "Capture thread panic: {:?}",
-                        e.downcast_ref::<&str>().unwrap_or(&"UnknownError")
-                    ),
+                    Err(e) => {
+                        error!(
+                            "Capture thread panic: {:?}",
+                            e.downcast_ref::<&str>()
+                                .map(|s| (*s).to_string())
+                                .or_else(|| e.downcast_ref::<String>().cloned())
+                                .unwrap_or_else(|| "UnknownError".to_string())
+                        );
+                        // 主抓包线程 panic 后进程不再处理任何流量，属于"活着但不工作"，
+                        // 直接退出由 Docker restart 策略拉起。
+                        std::process::exit(1);
+                    }
                 }
             })?;
 
@@ -409,10 +494,17 @@ impl HighPerformanceCapturer {
                 match result {
                     Ok(Ok(())) => info!("stdin Capture threadexited normally"),
                     Ok(Err(e)) => error!("stdin Capture threadError: {}", e),
-                    Err(e) => error!(
-                        "stdin Capture thread panic: {:?}",
-                        e.downcast_ref::<&str>().unwrap_or(&"UnknownError")
-                    ),
+                    Err(e) => {
+                        error!(
+                            "stdin Capture thread panic: {:?}",
+                            e.downcast_ref::<&str>()
+                                .map(|s| (*s).to_string())
+                                .or_else(|| e.downcast_ref::<String>().cloned())
+                                .unwrap_or_else(|| "UnknownError".to_string())
+                        );
+                        // 同上：抓包线程 panic 后进程"活着但不工作"，退出让 Docker 拉起。
+                        std::process::exit(1);
+                    }
                 }
             })?;
 
@@ -432,6 +524,10 @@ impl HighPerformanceCapturer {
     /// # Remote
     /// tcpdump -i eth1 -U -s0 -w - | nc localhost 5000
     /// ```
+    ///
+    /// When the `REMOTE_LISTEN_TOKEN` env var is set, the client must send
+    /// `VIGILYX1 <token>\n` as its first line before the pcap stream; the
+    /// connection is closed otherwise (e.g. `{ echo "VIGILYX1 $TOKEN"; tcpdump ... ; } | nc`).
     pub async fn start_remote_listen(&self, port: u16) -> Result<()> {
         info!("Start TCP ListenmodeCapture，Port: {}", port);
 
@@ -451,11 +547,27 @@ impl HighPerformanceCapturer {
         // For cross-host access, use SSH tunnel forwarding (see docs)
         let bind_addr = format!("127.0.0.1:{}", port);
         let listener = TokioTcpListener::bind(&bind_addr).await?;
-        warn!(
-            "SEC: remote-listen mode started on {} — no authentication, \
-             use only via SSH tunnel, never expose to public network",
-            bind_addr
-        );
+
+        // F7: optional shared-token handshake. The loopback bind keeps remote
+        // hosts out, but any local process (or host-network container) could
+        // still inject a forged pcap stream. When REMOTE_LISTEN_TOKEN is set,
+        // the client must send `VIGILYX1 <token>\n` as its first line; a
+        // missing/wrong greeting closes the connection before any pcap byte
+        // is consumed. Unset keeps the historical open behavior.
+        let expected_token: Option<Arc<str>> = std::env::var("REMOTE_LISTEN_TOKEN")
+            .ok()
+            .filter(|token| !token.is_empty())
+            .map(Arc::from);
+        if expected_token.is_some() {
+            info!("remote-listen: REMOTE_LISTEN_TOKEN handshake enabled");
+        } else {
+            warn!(
+                "SEC: remote-listen mode started on {} — no authentication, \
+                 use only via SSH tunnel, never expose to public network \
+                 (set REMOTE_LISTEN_TOKEN to require a handshake token)",
+                bind_addr
+            );
+        }
         info!("waitWaitRemoteConnection...");
 
         // Accept each incoming stream and forward it to a blocking capture thread.
@@ -478,6 +590,7 @@ impl HighPerformanceCapturer {
                         let port_bitmap = port_bitmap.clone();
                         let stop_flag = stop_flag.clone();
                         let worker_txs = worker_txs.clone();
+                        let expected_token = expected_token.clone();
 
                         // Convert Tokio's socket into a blocking std stream for the parser loop.
                         let std_socket = match socket.into_std() {
@@ -489,9 +602,40 @@ impl HighPerformanceCapturer {
                         };
                         std_socket.set_nonblocking(false).ok();
 
+                        if let Err(e) = Self::configure_socket(&std_socket) {
+                            warn!("Set remote-listen socket parameter failed: {}", e);
+                        }
+
                         thread::Builder::new()
                             .name(format!("tcp-capture-{}", addr))
                             .spawn(move || {
+                                // F7: token handshake runs before the pcap
+                                // loop; failures close the connection.
+                                if let Some(token) = expected_token.as_deref()
+                                    && let Err(e) =
+                                        Self::remote_listen_handshake(&std_socket, token)
+                                {
+                                    warn!(
+                                        "remote-listen handshake failed from {}: {}; closing connection",
+                                        addr, e
+                                    );
+                                    return;
+                                }
+
+                                // The handshake has its own short deadline;
+                                // keep a separate, bounded deadline for pcap
+                                // records so a slow/half-closed peer cannot
+                                // hold this per-connection worker forever.
+                                if let Err(e) = std_socket.set_read_timeout(Some(
+                                    Duration::from_secs(REMOTE_LISTEN_RECORD_TIMEOUT_SECS),
+                                )) {
+                                    warn!(
+                                        "remote-listen record timeout setup failed from {}: {}",
+                                        addr, e
+                                    );
+                                    return;
+                                }
+
                                 let result =
                                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                                         Self::stream_capture_loop(
@@ -508,11 +652,19 @@ impl HighPerformanceCapturer {
                                         info!("TCP Capture threadexited normally: {}", addr)
                                     }
                                     Ok(Err(e)) => error!("TCP Capture threadError {}: {}", addr, e),
-                                    Err(e) => error!(
-                                        "TCP Capture thread panic {}: {:?}",
-                                        addr,
-                                        e.downcast_ref::<&str>().unwrap_or(&"UnknownError")
-                                    ),
+                                    Err(e) => {
+                                        error!(
+                                            "TCP Capture thread panic {}: {:?}",
+                                            addr,
+                                            e.downcast_ref::<&str>()
+                                                .map(|s| (*s).to_string())
+                                                .or_else(|| e.downcast_ref::<String>().cloned())
+                                                .unwrap_or_else(|| "UnknownError".to_string())
+                                        );
+                                        // panic 属于代码 bug，静默吞掉会让进程"活着但不工作"，
+                                        // 退出让 Docker restart 策略拉起。
+                                        std::process::exit(1);
+                                    }
                                 }
                             })
                             .ok();
@@ -639,10 +791,18 @@ impl HighPerformanceCapturer {
                                 match result {
                                     Ok(Ok(())) => info!("RemoteCapture threadexited normally"),
                                     Ok(Err(e)) => warn!("RemoteCapture threadError: {}", e),
-                                    Err(e) => error!(
-                                        "RemoteCapture thread panic: {:?}",
-                                        e.downcast_ref::<&str>().unwrap_or(&"UnknownError")
-                                    ),
+                                    Err(e) => {
+                                        error!(
+                                            "RemoteCapture thread panic: {:?}",
+                                            e.downcast_ref::<&str>()
+                                                .map(|s| (*s).to_string())
+                                                .or_else(|| e.downcast_ref::<String>().cloned())
+                                                .unwrap_or_else(|| "UnknownError".to_string())
+                                        );
+                                        // panic 属于代码 bug，重连无法修复，只会无限 panic 循环，
+                                        // 退出让 Docker restart 策略拉起。
+                                        std::process::exit(1);
+                                    }
                                 }
                             });
 
@@ -797,10 +957,18 @@ impl HighPerformanceCapturer {
                                         info!("v3 Capture threadexited normally");
                                     }
                                     Ok(Err(e)) => warn!("v3 Capture threadError: {}", e),
-                                    Err(e) => error!(
-                                        "v3 Capture thread panic: {:?}",
-                                        e.downcast_ref::<&str>().unwrap_or(&"UnknownError")
-                                    ),
+                                    Err(e) => {
+                                        error!(
+                                            "v3 Capture thread panic: {:?}",
+                                            e.downcast_ref::<&str>()
+                                                .map(|s| (*s).to_string())
+                                                .or_else(|| e.downcast_ref::<String>().cloned())
+                                                .unwrap_or_else(|| "UnknownError".to_string())
+                                        );
+                                        // panic 属于代码 bug，重连无法修复，只会无限 panic 循环，
+                                        // 退出让 Docker restart 策略拉起。
+                                        std::process::exit(1);
+                                    }
                                 }
                             });
 
@@ -876,6 +1044,49 @@ impl HighPerformanceCapturer {
 
     // Capture-loop helpers.
 
+    /// F7: verify the `VIGILYX1 <token>\n` greeting on an accepted
+    /// remote-listen socket before any pcap bytes are consumed. The read runs
+    /// under a short timeout (a stalled peer must not pin a capture thread)
+    /// which is cleared before returning so the pcap loop blocks normally.
+    fn remote_listen_handshake(socket: &std::net::TcpStream, expected_token: &str) -> Result<()> {
+        socket
+            .set_read_timeout(Some(Duration::from_secs(
+                REMOTE_LISTEN_HANDSHAKE_TIMEOUT_SECS,
+            )))
+            .map_err(|e| anyhow!("set handshake read timeout: {e}"))?;
+        let max_line = REMOTE_LISTEN_GREETING_PREFIX.len() + expected_token.len() + 2; // \r?\n
+        let result = Self::read_handshake_line(socket, max_line).and_then(|line| {
+            if remote_listen_greeting_valid(&line, expected_token) {
+                Ok(())
+            } else {
+                Err(anyhow!("invalid handshake greeting"))
+            }
+        });
+        let _ = socket.set_read_timeout(None);
+        result
+    }
+
+    /// Read one handshake line (up to and excluding LF, CR tolerated).
+    /// Byte-by-byte reads are intentional: a buffered reader could swallow
+    /// pcap bytes past the newline that the capture loop must still see.
+    fn read_handshake_line<R: Read>(mut reader: R, max_line: usize) -> Result<Vec<u8>> {
+        let mut line = Vec::with_capacity(max_line.min(1024));
+        let mut byte = [0u8; 1];
+        loop {
+            match reader.read(&mut byte) {
+                Ok(0) => return Err(anyhow!("connection closed before handshake")),
+                Ok(_) if byte[0] == b'\n' => return Ok(line),
+                Ok(_) => {
+                    line.push(byte[0]);
+                    if line.len() > max_line {
+                        return Err(anyhow!("handshake line too long"));
+                    }
+                }
+                Err(e) => return Err(anyhow!("handshake read: {e}")),
+            }
+        }
+    }
+
     /// Run the generic stream capture loop over standard input.
     fn stdin_capture_loop(
         worker_txs: Arc<Vec<Sender<RawpacketInfo>>>,
@@ -886,6 +1097,39 @@ impl HighPerformanceCapturer {
         let stdin = io::stdin();
         let handle = stdin.lock();
         Self::stream_capture_loop(handle, worker_txs, stats, port_bitmap, stop_flag)
+    }
+
+    /// Result of reading one classic-pcap record.  Keeping framing separate
+    /// from packet dispatch makes the important boundary explicit: the
+    /// caller never sees a partial payload, and a complete record does not
+    /// require an EOF marker.
+    #[allow(dead_code)]
+    fn read_pcap_record<R: Read, F: Fn(&[u8]) -> u32>(
+        reader: &mut R,
+        packet_header: &mut [u8; 16],
+        packet_buffer: &mut [u8],
+        read_u32: F,
+    ) -> io::Result<Option<usize>> {
+        match reader.read_exact(packet_header) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(error) => return Err(error),
+        }
+
+        let caplen = read_u32(&packet_header[8..12]) as usize;
+        if caplen > packet_buffer.len() {
+            // Do not drain an attacker-declared multi-gigabyte record: doing
+            // so would still pin the capture worker even though no allocation
+            // occurred. The stream must be restarted from a fresh global
+            // header after this framing error.
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("pcap capture length {caplen} exceeds {}", packet_buffer.len()),
+            ));
+        }
+
+        reader.read_exact(&mut packet_buffer[..caplen])?;
+        Ok(Some(caplen))
     }
 
     /// Read a classic pcap stream from any blocking reader.
@@ -938,13 +1182,16 @@ impl HighPerformanceCapturer {
         let mut last_stats_time = Instant::now();
         let stats_interval = Duration::from_secs(5);
         let mut packet_header = [0u8; 16];
-        let mut packet_buffer = vec![0u8; 65536]; // largepacketsize
+        let mut packet_buffer = vec![0u8; MAX_PCAP_RECORD_BYTES]; // bounded packet size
 
         // counter: Batch New Variable, per-packet Operations
         let mut local_received: u64 = 0;
         let mut local_bytes: u64 = 0;
         let mut local_email: u64 = 0;
         let mut local_dropped: u64 = 0;
+        // Keep IPv4 fragment state across packet records.  A new context per
+        // packet would make non-first fragments disappear before TCP parsing.
+        let mut fragment_reassembler = packet_parser::Ipv4FragmentReassembler::default();
 
         info!("StartFromStreamreadGet pcap data...");
 
@@ -953,43 +1200,25 @@ impl HighPerformanceCapturer {
                 break;
             }
 
-            // readGetpacketHeader (16 Byte)
-            match reader.read_exact(&mut packet_header) {
-                Ok(_) => {}
-                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+            let caplen = match Self::read_pcap_record(
+                &mut reader,
+                &mut packet_header,
+                &mut packet_buffer,
+                read_u32,
+            ) {
+                Ok(Some(caplen)) => caplen,
+                Ok(None) => {
                     info!("pcap StreamEnd");
                     break;
                 }
-                Err(e) => {
-                    error!("readGetpacketHeaderFailed: {}", e);
+                Err(error) => {
+                    warn!("pcap record incomplete or read timed out: {}", error);
                     break;
                 }
-            }
-
-            // Parse the pcap record header. Timestamps are reserved for future use.
-            let _ts_sec = read_u32(&packet_header[0..4]);
-            let _ts_usec = read_u32(&packet_header[4..8]);
-            let caplen = read_u32(&packet_header[8..12]) as usize;
-            let _origlen = read_u32(&packet_header[12..16]);
-
-            // Refuse implausibly large packet records before allocating or parsing them.
-            if caplen > 65536 {
-                warn!("packetLengthlarge: {}, hops", caplen);
-                // Drain the oversized record from the stream so parsing can continue.
-                let mut remaining = caplen;
-                while remaining > 0 {
-                    let to_read = remaining.min(packet_buffer.len());
-                    if reader.read_exact(&mut packet_buffer[..to_read]).is_err() {
-                        return Ok(());
-                    }
-                    remaining -= to_read;
-                }
+            };
+            if caplen == 0 {
+                warn!("empty pcap record skipped");
                 continue;
-            }
-
-            // Read the full frame payload for this packet record.
-            if reader.read_exact(&mut packet_buffer[..caplen]).is_err() {
-                break;
             }
 
             // Track counters locally and flush them to atomics in batches.
@@ -997,7 +1226,11 @@ impl HighPerformanceCapturer {
 
             // ONE copy of entire frame; parse_raw_packet uses O(1) slice() internally
             let frame = Bytes::copy_from_slice(&packet_buffer[..caplen]);
-            if let Some(packet_info) = packet_parser::parse_raw_packet(frame, &port_bitmap) {
+            if let Some(packet_info) = packet_parser::parse_raw_packet_with_reassembler(
+                frame,
+                &port_bitmap,
+                &mut fragment_reassembler,
+            ) {
                 local_bytes += packet_info.payload.len() as u64;
                 local_email += 1;
 
@@ -1102,8 +1335,25 @@ impl HighPerformanceCapturer {
             .buffer_size(capture_buffer_bytes)
             .timeout(CAPTURE_TIMEOUT_MS) // 100ms, And CPU
             .promisc(config.sniffer_promiscuous)
-            .immediate_mode(true) // immediatelymode,
+            // Buffered capture absorbs traffic bursts. The 100 ms timeout keeps
+            // inspection latency bounded without sacrificing capture resilience.
+            .immediate_mode(false)
             .open()?;
+
+        // SEC M-3 (RT-7): root is needed ONLY to open the capture handle —
+        // attaching the BPF filter is a setsockopt/ioctl on the already-open
+        // fd and carries no euid requirement. Drop immediately after open so
+        // the window in which attacker-controlled bytes could be parsed as
+        // root shrinks from open→filter→drop down to the open call itself.
+        // A privdrop syscall failure is fatal: silently continuing as root
+        // would defeat the hardening entirely.
+        #[cfg(unix)]
+        {
+            crate::prepare_runtime_files_for_drop();
+            if let Err(error) = crate::privdrop::drop_privileges_if_configured() {
+                anyhow::bail!("privilege drop failed (refusing to keep root): {error}");
+            }
+        }
 
         // Linux Performance notes
         #[cfg(target_os = "linux")]
@@ -1131,7 +1381,9 @@ impl HighPerformanceCapturer {
         let mut last_stats_time = Instant::now();
         let stats_interval = Duration::from_secs(5);
         let mut last_interface_counters = read_interface_counters(&config.sniffer_interface);
+        let mut last_pcap_counters: Option<PcapCounters> = None;
         let mut last_worker_queue_full_total = 0u64;
+        let mut fragment_reassembler = packet_parser::Ipv4FragmentReassembler::default();
 
         while !stop_flag.load(Ordering::Relaxed) {
             match cap.next_packet() {
@@ -1141,7 +1393,11 @@ impl HighPerformanceCapturer {
 
                     // ONE copy of entire frame here; all subsequent slicing is O(1)
                     let frame = Bytes::copy_from_slice(packet.data);
-                    if let Some(packet_info) = packet_parser::parse_packet(frame, &port_bitmap) {
+                    if let Some(packet_info) = packet_parser::parse_packet_with_reassembler(
+                        frame,
+                        &port_bitmap,
+                        &mut fragment_reassembler,
+                    ) {
                         stats
                             .bytes_total
                             .fetch_add(packet_info.payload.len() as u64, Ordering::Relaxed);
@@ -1209,6 +1465,29 @@ impl HighPerformanceCapturer {
                 let interface_delta = current_interface_counters
                     .zip(last_interface_counters)
                     .map(|(current, previous)| current.diff_since(previous));
+                let current_pcap_counters = match cap.stats() {
+                    Ok(raw) => Some(PcapCounters::from_stat(raw)),
+                    Err(error) => {
+                        debug!(%error, "libpcap capture statistics unavailable");
+                        None
+                    }
+                };
+                let pcap_delta = current_pcap_counters
+                    .zip(last_pcap_counters)
+                    .map(|(current, previous)| current.diff_since(previous));
+                let pcap_total = current_pcap_counters.unwrap_or_default();
+                let (pcap_received_delta, pcap_dropped_delta, pcap_if_dropped_delta) =
+                    pcap_delta.unwrap_or_default();
+
+                stats
+                    .libpcap_packets_received
+                    .store(u64::from(pcap_total.received), Ordering::Relaxed);
+                stats
+                    .libpcap_packets_dropped
+                    .store(u64::from(pcap_total.dropped), Ordering::Relaxed);
+                stats
+                    .libpcap_interface_dropped
+                    .store(u64::from(pcap_total.interface_dropped), Ordering::Relaxed);
 
                 if let Some(delta) = interface_delta {
                     let total = current_interface_counters.unwrap_or_default();
@@ -1216,9 +1495,15 @@ impl HighPerformanceCapturer {
                         interface = %config.sniffer_interface,
                         capture_packets_total = received,
                         processed_packets_total = processed,
-                        capture_drop_total = dropped,
+                        application_drop_total = dropped,
                         worker_queue_full_total = worker_queue_full_total,
                         worker_queue_full_interval = worker_queue_full_delta,
+                        pcap_received_total = pcap_total.received,
+                        pcap_received_interval = pcap_received_delta,
+                        pcap_dropped_total = pcap_total.dropped,
+                        pcap_dropped_interval = pcap_dropped_delta,
+                        pcap_if_dropped_total = pcap_total.interface_dropped,
+                        pcap_if_dropped_interval = pcap_if_dropped_delta,
                         iface_rx_packets_total = total.rx_packets,
                         iface_rx_packets_interval = delta.rx_packets,
                         iface_rx_dropped_total = total.rx_dropped,
@@ -1231,15 +1516,28 @@ impl HighPerformanceCapturer {
                         "Capture health snapshot"
                     );
 
-                    if delta.rx_dropped > 0 || worker_queue_full_delta > 0 {
+                    if pcap_dropped_delta > 0
+                        || pcap_if_dropped_delta > 0
+                        || worker_queue_full_delta > 0
+                    {
+                        warn!(
+                            interface = %config.sniffer_interface,
+                            pcap_dropped_interval = pcap_dropped_delta,
+                            pcap_if_dropped_interval = pcap_if_dropped_delta,
+                            worker_queue_full_interval = worker_queue_full_delta,
+                            throughput_mbps = throughput_mbps,
+                            "Confirmed local capture loss detected in current interval"
+                        );
+                    } else if delta.rx_dropped > 0
+                        || delta.rx_errors > 0
+                        || delta.rx_missed_errors > 0
+                    {
                         warn!(
                             interface = %config.sniffer_interface,
                             iface_rx_dropped_interval = delta.rx_dropped,
                             iface_rx_errors_interval = delta.rx_errors,
                             iface_rx_missed_errors_interval = delta.rx_missed_errors,
-                            worker_queue_full_interval = worker_queue_full_delta,
-                            throughput_mbps = throughput_mbps,
-                            "Capture loss detected in current interval"
+                            "NIC counters changed without a libpcap drop; this alone does not prove local packet-capture loss"
                         );
                     }
                 } else {
@@ -1247,9 +1545,15 @@ impl HighPerformanceCapturer {
                         interface = %config.sniffer_interface,
                         capture_packets_total = received,
                         processed_packets_total = processed,
-                        capture_drop_total = dropped,
+                        application_drop_total = dropped,
                         worker_queue_full_total = worker_queue_full_total,
                         worker_queue_full_interval = worker_queue_full_delta,
+                        pcap_received_total = pcap_total.received,
+                        pcap_received_interval = pcap_received_delta,
+                        pcap_dropped_total = pcap_total.dropped,
+                        pcap_dropped_interval = pcap_dropped_delta,
+                        pcap_if_dropped_total = pcap_total.interface_dropped,
+                        pcap_if_dropped_interval = pcap_if_dropped_delta,
                         throughput_mbps = throughput_mbps,
                         "Capture health snapshot (NIC counters unavailable)"
                     );
@@ -1258,6 +1562,7 @@ impl HighPerformanceCapturer {
                 // Bytecount
                 stats.bytes_total.store(0, Ordering::Relaxed);
                 last_interface_counters = current_interface_counters;
+                last_pcap_counters = current_pcap_counters;
                 last_worker_queue_full_total = worker_queue_full_total;
                 last_stats_time = Instant::now();
             }
@@ -1367,6 +1672,18 @@ impl HighPerformanceCapturer {
                     .packets_processed
                     .fetch_add(batch_count, Ordering::Relaxed);
 
+                // Reassembly budget pressure: evict reclaimable (completed/idle)
+                // session buffers now that no DashMap guard is held, instead of
+                // rejecting all new data while the shared budget is exhausted.
+                if session_manager.take_budget_pressure() {
+                    let freed = session_manager
+                        .evict_reclaimable_stream_buffers(GLOBAL_REASSEMBLY_BUDGET / 4);
+                    warn!(
+                        freed_bytes = freed,
+                        "TCP reassembly budget pressure: evicted completed/idle session buffers"
+                    );
+                }
+
                 // Dirty sessions changed enough that the API/UI should be notified again.
                 let dirty_sessions = session_manager.take_dirty_sessions();
                 if !dirty_sessions.is_empty() {
@@ -1462,6 +1779,7 @@ impl HighPerformanceCapturer {
         let mut pcapng_parser = PcapngParser::new();
         let mut last_stats_time = Instant::now();
         let stats_interval = Duration::from_secs(5);
+        let mut fragment_reassembler = packet_parser::Ipv4FragmentReassembler::default();
 
         loop {
             if stop_flag.load(Ordering::Relaxed) {
@@ -1478,9 +1796,11 @@ impl HighPerformanceCapturer {
 
                         // Zero-copy: Vec<u8> -> Bytes takes ownership, no memcpy
                         let frame = Bytes::from(pkt.data);
-                        if let Some(packet_info) =
-                            packet_parser::parse_raw_packet(frame, &port_bitmap)
-                        {
+                        if let Some(packet_info) = packet_parser::parse_raw_packet_with_reassembler(
+                            frame,
+                            &port_bitmap,
+                            &mut fragment_reassembler,
+                        ) {
                             stats
                                 .bytes_total
                                 .fetch_add(packet_info.payload.len() as u64, Ordering::Relaxed);
@@ -1567,5 +1887,160 @@ impl HighPerformanceCapturer {
                     None
                 }
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    struct ChunkedReader {
+        data: Vec<u8>,
+        offset: usize,
+        chunk_size: usize,
+    }
+
+    impl Read for ChunkedReader {
+        fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+            if self.offset == self.data.len() {
+                // A complete record must be returned without probing for EOF.
+                return Err(io::Error::new(io::ErrorKind::WouldBlock, "test reader idle"));
+            }
+            let count = (self.data.len() - self.offset)
+                .min(self.chunk_size)
+                .min(output.len());
+            output[..count].copy_from_slice(&self.data[self.offset..self.offset + count]);
+            self.offset += count;
+            Ok(count)
+        }
+    }
+
+    // ── F7: remote-listen token handshake ────────────────────────────────
+
+    #[test]
+    fn greeting_valid_exact_token() {
+        assert!(remote_listen_greeting_valid(b"VIGILYX1 s3cret-token", "s3cret-token"));
+    }
+
+    #[test]
+    fn greeting_valid_tolerates_cr() {
+        assert!(remote_listen_greeting_valid(
+            b"VIGILYX1 s3cret-token\r",
+            "s3cret-token"
+        ));
+    }
+
+    #[test]
+    fn greeting_rejects_wrong_token() {
+        assert!(!remote_listen_greeting_valid(
+            b"VIGILYX1 wrong-token",
+            "s3cret-token"
+        ));
+    }
+
+    #[test]
+    fn greeting_rejects_missing_prefix() {
+        assert!(!remote_listen_greeting_valid(b"s3cret-token", "s3cret-token"));
+        assert!(!remote_listen_greeting_valid(b"", "s3cret-token"));
+    }
+
+    #[test]
+    fn greeting_rejects_token_case_mutation() {
+        assert!(!remote_listen_greeting_valid(
+            b"VIGILYX1 S3CRET-TOKEN",
+            "s3cret-token"
+        ));
+    }
+
+    #[test]
+    fn greeting_rejects_appended_garbage() {
+        assert!(!remote_listen_greeting_valid(
+            b"VIGILYX1 s3cret-token extra",
+            "s3cret-token"
+        ));
+    }
+
+    #[test]
+    fn handshake_line_reads_until_lf() {
+        let mut cursor = Cursor::new(b"VIGILYX1 tok\r\n<pcap bytes follow>".to_vec());
+        let line = HighPerformanceCapturer::read_handshake_line(&mut cursor, 64).expect("line reads");
+        assert_eq!(line, b"VIGILYX1 tok\r");
+        assert!(remote_listen_greeting_valid(&line, "tok"));
+        // The pcap bytes after the newline must remain unread for the
+        // capture loop.
+        let mut rest = Vec::new();
+        cursor.read_to_end(&mut rest).unwrap();
+        assert_eq!(rest, b"<pcap bytes follow>");
+    }
+
+    #[test]
+    fn handshake_line_eof_without_lf_is_error() {
+        let cursor = Cursor::new(b"VIGILYX1 tok".to_vec());
+        assert!(HighPerformanceCapturer::read_handshake_line(cursor, 64).is_err());
+    }
+
+    #[test]
+    fn handshake_line_oversized_is_error() {
+        // A peer streaming an unbounded first line must be rejected, not
+        // allowed to grow memory without limit.
+        let cursor = Cursor::new(vec![b'A'; 4096]);
+        assert!(HighPerformanceCapturer::read_handshake_line(cursor, 128).is_err());
+    }
+
+    #[test]
+    fn ct_eq_bytes_constant_time_semantics() {
+        assert!(ct_eq_bytes(b"abc", b"abc"));
+        assert!(!ct_eq_bytes(b"abc", b"abd"));
+        assert!(!ct_eq_bytes(b"abc", b"abcd"));
+        assert!(ct_eq_bytes(b"", b""));
+    }
+
+    #[test]
+    fn pcap_record_reader_dispatches_complete_slow_drip_without_eof() {
+        let mut record = Vec::new();
+        record.extend_from_slice(&0u32.to_le_bytes()); // ts_sec
+        record.extend_from_slice(&0u32.to_le_bytes()); // ts_usec
+        record.extend_from_slice(&4u32.to_le_bytes()); // captured length
+        record.extend_from_slice(&4u32.to_le_bytes()); // original length
+        record.extend_from_slice(b"TEST");
+
+        let mut reader = ChunkedReader {
+            data: record,
+            offset: 0,
+            chunk_size: 1,
+        };
+        let mut header = [0u8; 16];
+        let mut payload = vec![0u8; MAX_PCAP_RECORD_BYTES];
+        let result = HighPerformanceCapturer::read_pcap_record(
+            &mut reader,
+            &mut header,
+            &mut payload,
+            |bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+        )
+        .expect("complete record should not wait for EOF");
+
+        assert_eq!(result, Some(4));
+        assert_eq!(&payload[..4], b"TEST");
+        assert_eq!(reader.offset, reader.data.len());
+    }
+
+    #[test]
+    fn pcap_record_reader_rejects_oversized_declared_record_before_payload_read() {
+        let mut header = [0u8; 16];
+        header[8..12].copy_from_slice(&((MAX_PCAP_RECORD_BYTES + 1) as u32).to_le_bytes());
+        header[12..16].copy_from_slice(&((MAX_PCAP_RECORD_BYTES + 1) as u32).to_le_bytes());
+        let mut reader = Cursor::new(header.to_vec());
+        let mut payload = vec![0u8; MAX_PCAP_RECORD_BYTES];
+
+        let error = HighPerformanceCapturer::read_pcap_record(
+            &mut reader,
+            &mut header,
+            &mut payload,
+            |bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+        )
+        .expect_err("oversized record must be rejected before draining attacker data");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 }

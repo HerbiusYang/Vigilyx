@@ -73,15 +73,29 @@ impl SelfSendDetector {
             .to_lowercase()
     }
 
+    /// 比较用归一化: 在 normalize_email 基础上剥离本地部分 `+tag` (plus addressing)。
+    /// 攻击者用 `user+tag@own.com` 变形绕过自发自送比对;
+    /// 仅用于 is_self_sending 比较路径, 展示仍用 normalize_email 保留原始值
+    fn normalize_email_for_compare(addr: &str) -> String {
+        let normalized = Self::normalize_email(addr);
+        match normalized.split_once('@') {
+            Some((local, domain)) => {
+                let local_base = local.split('+').next().unwrap_or(local);
+                format!("{}@{}", local_base, domain)
+            }
+            None => normalized,
+        }
+    }
+
     /// Check whether this is a self-sending scenario.
     fn is_self_sending(sender: &str, recipients: &[String]) -> bool {
-        let sender_norm = Self::normalize_email(sender);
+        let sender_norm = Self::normalize_email_for_compare(sender);
         if sender_norm.is_empty() {
             return false;
         }
         recipients
             .iter()
-            .any(|r| Self::normalize_email(r) == sender_norm)
+            .any(|r| Self::normalize_email_for_compare(r) == sender_norm)
     }
 }
 
@@ -152,7 +166,7 @@ impl DataSecurityDetector for SelfSendDetector {
             && !body.is_empty()
         {
             // Coremail: extract attrs.content to avoid raw JSON metadata
-            let dlp_text = dlp::extract_dlp_text(body, &session.uri);
+            let dlp_text = dlp::extract_dlp_text(body, &session.uri, session.content_type.as_deref());
             let dlp_result = dlp::scan_text(&dlp_text);
             if !dlp_result.is_empty() {
                 dlp_for_jrt = Some(dlp_result.clone());
@@ -558,6 +572,59 @@ mod tests {
         assert_eq!(SelfSendDetector::normalize_email(""), "");
         // @ Number
         assert_eq!(SelfSendDetector::normalize_email("@"), "@");
+    }
+
+    #[test]
+    fn test_normalize_email_for_compare_strips_plus_tag() {
+        // PoC: +tag (plus addressing) 变形比对必须一致
+        assert_eq!(
+            SelfSendDetector::normalize_email_for_compare("alice+archive@corp.com"),
+            "alice@corp.com"
+        );
+        assert_eq!(
+            SelfSendDetector::normalize_email_for_compare("\"Zhang\" <zhangsan+evil@corp.com>"),
+            "zhangsan@corp.com"
+        );
+        // 展示路径保留原始 +tag
+        assert_eq!(
+            SelfSendDetector::normalize_email("alice+archive@corp.com"),
+            "alice+archive@corp.com"
+        );
+    }
+
+    #[test]
+    fn test_self_send_plus_tag_bypass_detected() {
+        // PoC: 攻击者发往 alice+archive@corp.com (plus addressing 仍投递本人邮箱),
+        // 修复前地址比对不一致 -> 绕过自发自送检测; 修复后 +tag 剥离 -> 检出
+        let detector = SelfSendDetector::new();
+        let session = make_session(
+            "/compose/send",
+            Some("alice@corp.com"),
+            vec!["alice+archive@corp.com"],
+            Some("客户ID card 110101199001011237"),
+        );
+        let result = detector.analyze(&session);
+        assert!(
+            result.is_some(),
+            "Recipient with +tag variant of sender address should still be detected as self-send"
+        );
+    }
+
+    #[test]
+    fn test_self_send_plus_tag_on_sender_side_detected() {
+        // PoC 变体: 发件人一侧带 +tag, 收件人是裸地址
+        let detector = SelfSendDetector::new();
+        let session = make_session(
+            "/compose/send",
+            Some("alice+evil@corp.com"),
+            vec!["alice@corp.com"],
+            Some("客户ID card 110101199001011237"),
+        );
+        let result = detector.analyze(&session);
+        assert!(
+            result.is_some(),
+            "Sender with +tag should match bare recipient address"
+        );
     }
 
     #[test]

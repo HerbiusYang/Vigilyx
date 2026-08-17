@@ -43,11 +43,14 @@ fi
 echo "Generating self-signed TLS certificate..."
 echo "  Domain/IP: $DOMAIN"
 echo "  SAN:       $SAN"
-echo "  Validity:  3650 days (10 years)"
+echo "  Validity:  397 days (rotate yearly; re-run this script after deleting cert.pem/key.pem)"
 
 openssl ecparam -name prime256v1 -genkey -noout -out "$CERT_DIR/key.pem" 2>/dev/null
+# 397 days = the maximum validity public CAs (and Apple/Mozilla trust stores)
+# accept for TLS certs. Rotate at least once a year; shorter-lived certs limit
+# the exposure window if the key is ever compromised.
 openssl req -new -x509 -key "$CERT_DIR/key.pem" \
-    -out "$CERT_DIR/cert.pem" -days 3650 \
+    -out "$CERT_DIR/cert.pem" -days 397 \
     -subj "/CN=${DOMAIN}/O=Vigilyx" \
     -addext "subjectAltName=${SAN}" 2>/dev/null
 

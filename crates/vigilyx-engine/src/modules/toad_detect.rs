@@ -62,6 +62,8 @@ use crate::module::{
     Bpa, Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel,
 };
 use crate::module_data::module_data;
+use crate::modules::content_scan::html_utils::strip_html_tags;
+use crate::modules::content_scan::normalize_text;
 
 pub struct ToadDetectModule {
     meta: ModuleMetadata,
@@ -101,20 +103,29 @@ impl ToadDetectModule {
 // Phone-number patterns
 // ---------------------------------------------------------------------------
 
+/// Separator class shared by the phone regexes: ASCII whitespace/dot/dash
+/// plus middle dot ·, en/em dashes, and the Japanese katakana middle dot ・ —
+/// all common in obfuscated hotline numbers.
+const PHONE_SEP: &str = "[\\s\\-.\u{B7}\u{2013}\u{2014}\u{30FB}]";
+
 /// US/Canada toll-free: 1-800/833/844/855/866/877/888 plus 7 more digits.
 /// Also matches with separators: spaces, dashes, dots, parentheses.
 static RE_US_TOLLFREE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?i)(?:^|[^0-9])((?:\+?1[\s\-.]?)?\(?(?:800|833|844|855|866|877|888)\)?[\s\-.]?\d{3}[\s\-.]?\d{4})",
-    )
+    Regex::new(&format!(
+        r"(?i)(?:^|[^0-9])((?:\+?1{s}?)?\(?(?:800|833|844|855|866|877|888)\)?{s}?\d{{3}}{s}?\d{{4}})",
+        s = PHONE_SEP
+    ))
     .expect("us toll-free regex")
 });
 
 /// Generic international format: +<country>(1-3 digits) <8-12 digits with
 /// optional separators>. Catches +44 800 ..., +1 415 ..., +86 ...
 static RE_INTL_PHONE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(\+\d{1,3}[\s\-.]?\d{1,4}[\s\-.]?\d{1,4}[\s\-.]?\d{2,4})")
-        .expect("intl phone regex")
+    Regex::new(&format!(
+        r"(\+\d{{1,3}}{s}?\d{{1,4}}{s}?\d{{1,4}}{s}?\d{{2,4}})",
+        s = PHONE_SEP
+    ))
+    .expect("intl phone regex")
 });
 
 /// Chinese 400 / 950 service hotlines: 400-XXX-XXXX, 950XXXX, 95XXX.
@@ -122,8 +133,11 @@ static RE_INTL_PHONE: LazyLock<Regex> = LazyLock::new(|| {
 /// characters); instead require either start-of-string or a non-digit
 /// before the number.
 static RE_CN_HOTLINE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:^|[^0-9])(400[\s\-.]?\d{3}[\s\-.]?\d{4}|950\d{4,5}|95\d{3})")
-        .expect("cn hotline regex")
+    Regex::new(&format!(
+        r"(?:^|[^0-9])(400{s}?\d{{3}}{s}?\d{{4}}|950\d{{4,5}}|95\d{{3}})",
+        s = PHONE_SEP
+    ))
+    .expect("cn hotline regex")
 });
 
 /// Chinese mobile 11-digit (1[3-9]XXXXXXXXX) — strict 11-digit boundary.
@@ -135,9 +149,41 @@ static RE_CN_MOBILE: LazyLock<Regex> = LazyLock::new(|| {
 /// Generic 10-15 digit run with separators ("call 800-555-1234"). Used as
 /// a last-resort match; only fires when callback verb is also present.
 static RE_GENERIC_DIALABLE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:^|[^0-9])(\d{3}[\s\-.]\d{3}[\s\-.]\d{4})(?:[^0-9]|$)")
-        .expect("generic dialable regex")
+    Regex::new(&format!(
+        r"(?:^|[^0-9])(\d{{3}}{s}\d{{3}}{s}\d{{4}})(?:[^0-9]|$)",
+        s = PHONE_SEP
+    ))
+    .expect("generic dialable regex")
 });
+
+/// Digit run with embedded separators ("4 0 0 1 2 3 4 5 6 7" or
+/// "4·0·0·6·1·5·5·5·5"): seven or more digits joined by single separators.
+/// Used to build the squashed second-pass view that catches per-digit
+/// spacing evasion.
+static RE_DIGIT_RUN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(r"\d(?:{s}?\d){{6,}}", s = PHONE_SEP)).expect("digit run regex")
+});
+
+/// Map Chinese numeral characters (including both zero forms 〇/零) to ASCII
+/// digits. Scam emails write hotlines as "四零零·六一五·五五五五" or
+/// "一零八..." to evade every digit-based phone regex.
+fn map_chinese_numerals(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '〇' | '零' => '0',
+            '一' => '1',
+            '二' => '2',
+            '三' => '3',
+            '四' => '4',
+            '五' => '5',
+            '六' => '6',
+            '七' => '7',
+            '八' => '8',
+            '九' => '9',
+            _ => c,
+        })
+        .collect()
+}
 
 /// Build a `(numbers, kinds)` tuple from the body. Each number appears once.
 fn extract_phone_numbers(body: &str) -> (Vec<String>, Vec<&'static str>) {
@@ -151,36 +197,58 @@ fn extract_phone_numbers(body: &str) -> (Vec<String>, Vec<&'static str>) {
         seen: &mut std::collections::HashSet<String>,
     ) {
         let normalized = s.trim().to_string();
-        if !normalized.is_empty() && seen.insert(normalized.clone()) {
+        // Deduplicate on the digits-only form so "400-123-4567" and its
+        // squashed twin "4001234567" count once.
+        let dedup_key: String = normalized
+            .chars()
+            .filter(|c| c.is_ascii_digit())
+            .collect();
+        if !dedup_key.is_empty() && seen.insert(dedup_key) {
             found.push((normalized, kind));
         }
     }
 
+    // Squashed second-pass view: digit runs with embedded separators are
+    // collapsed to pure digits so the standard detectors above also fire
+    // on per-digit spacing evasion ("4 0 0 1 2 3 4 5 6 7" → "4001234567").
+    let squashed = RE_DIGIT_RUN
+        .find_iter(body)
+        .map(|m| {
+            m.as_str()
+                .chars()
+                .filter(|c| c.is_ascii_digit())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+
     // Use captures_iter and read group 1 (the actual phone number, without
     // the boundary char captured by the alternation).
-    for caps in RE_US_TOLLFREE.captures_iter(body) {
-        if let Some(m) = caps.get(1) {
-            push(m.as_str(), "us_tollfree", &mut found, &mut seen);
+    for haystack in [body, squashed.as_str()] {
+        for caps in RE_US_TOLLFREE.captures_iter(haystack) {
+            if let Some(m) = caps.get(1) {
+                push(m.as_str(), "us_tollfree", &mut found, &mut seen);
+            }
         }
-    }
-    for caps in RE_CN_HOTLINE.captures_iter(body) {
-        if let Some(m) = caps.get(1) {
-            push(m.as_str(), "cn_hotline", &mut found, &mut seen);
+        for caps in RE_CN_HOTLINE.captures_iter(haystack) {
+            if let Some(m) = caps.get(1) {
+                push(m.as_str(), "cn_hotline", &mut found, &mut seen);
+            }
         }
-    }
-    for caps in RE_INTL_PHONE.captures_iter(body) {
-        if let Some(m) = caps.get(1) {
-            push(m.as_str(), "intl", &mut found, &mut seen);
+        for caps in RE_INTL_PHONE.captures_iter(haystack) {
+            if let Some(m) = caps.get(1) {
+                push(m.as_str(), "intl", &mut found, &mut seen);
+            }
         }
-    }
-    for caps in RE_CN_MOBILE.captures_iter(body) {
-        if let Some(m) = caps.get(1) {
-            push(m.as_str(), "cn_mobile", &mut found, &mut seen);
+        for caps in RE_CN_MOBILE.captures_iter(haystack) {
+            if let Some(m) = caps.get(1) {
+                push(m.as_str(), "cn_mobile", &mut found, &mut seen);
+            }
         }
-    }
-    for caps in RE_GENERIC_DIALABLE.captures_iter(body) {
-        if let Some(m) = caps.get(1) {
-            push(m.as_str(), "generic", &mut found, &mut seen);
+        for caps in RE_GENERIC_DIALABLE.captures_iter(haystack) {
+            if let Some(m) = caps.get(1) {
+                push(m.as_str(), "generic", &mut found, &mut seen);
+            }
         }
     }
 
@@ -246,16 +314,23 @@ impl SecurityModule for ToadDetectModule {
     async fn analyze(&self, ctx: &SecurityContext) -> Result<ModuleResult, EngineError> {
         let start = Instant::now();
 
-        // Build the corpus: subject + plain body. We deliberately ignore
-        // body_html here because TOAD lures are almost always plain text
-        // (rendering HTML would also drag in CSS-hidden noise).
+        // Build the corpus: subject + plain body. HTML-only TOAD lures
+        // (or a body_text too short to analyze) fall back to the HTML body
+        // rendered to text — otherwise the corpus is empty and the module
+        // vacuously skips exactly the emails it exists to catch.
+        const BODY_TEXT_MIN_LEN: usize = 40;
         let mut corpus = String::new();
         if let Some(s) = ctx.session.subject.as_deref() {
             corpus.push_str(s);
             corpus.push('\n');
         }
-        if let Some(t) = ctx.session.content.body_text.as_deref() {
-            corpus.push_str(t);
+        let body_text = ctx.session.content.body_text.as_deref().unwrap_or("");
+        corpus.push_str(body_text);
+        if body_text.trim().chars().count() < BODY_TEXT_MIN_LEN
+            && let Some(html) = ctx.session.content.body_html.as_deref()
+        {
+            corpus.push('\n');
+            corpus.push_str(&strip_html_tags(html));
         }
         if corpus.trim().is_empty() {
             return Ok(ModuleResult::not_applicable(
@@ -266,6 +341,10 @@ impl SecurityModule for ToadDetectModule {
                 start.elapsed().as_millis() as u64,
             ));
         }
+        // Unicode normalization (NFKC + zero-width stripping): full-width
+        // digits/letters and zero-width splices must not hide callback
+        // verbs, urgency phrases, brands, or phone numbers.
+        let corpus = normalize_text(&corpus);
         let corpus_lower = corpus.to_ascii_lowercase();
 
         // Aho-Corasick matchers (built once, reused across calls).
@@ -307,7 +386,8 @@ impl SecurityModule for ToadDetectModule {
             corpus_lower.contains(&b_lower) && brand_mismatched(&b_lower, sender_domain.as_deref())
         });
 
-        let (phone_numbers, phone_kinds) = extract_phone_numbers(&corpus);
+        let (phone_numbers, phone_kinds) =
+            extract_phone_numbers(&map_chinese_numerals(&corpus));
         // Allow the noisy `generic` matcher only when an explicit callback
         // verb was found — signature phone numbers in legitimate emails
         // would otherwise create noise.
@@ -449,6 +529,15 @@ mod tests {
     use vigilyx_core::models::{EmailContent, EmailSession, Protocol};
 
     fn ctx_with(from: &str, subject: Option<&str>, body: Option<&str>) -> SecurityContext {
+        ctx_with_html(from, subject, body, None)
+    }
+
+    fn ctx_with_html(
+        from: &str,
+        subject: Option<&str>,
+        body: Option<&str>,
+        html: Option<&str>,
+    ) -> SecurityContext {
         let mut session = EmailSession::new(
             Protocol::Smtp,
             "203.0.113.5".to_string(),
@@ -460,6 +549,7 @@ mod tests {
         session.subject = subject.map(str::to_string);
         session.content = EmailContent {
             body_text: body.map(str::to_string),
+            body_html: html.map(str::to_string),
             ..Default::default()
         };
         SecurityContext::new(Arc::new(session))
@@ -596,6 +686,110 @@ mod tests {
         assert!(kinds.contains(&"cn_hotline"));
     }
 
+    #[tokio::test]
+    async fn html_only_toad_lure_fires() {
+        // Evasion PoC: HTML-only TOAD lure (body_text absent). Previously
+        // the corpus was empty and the module returned not_applicable.
+        let module = ToadDetectModule::new();
+        let html = "<html><body><p>Dear Customer,</p>\
+                    <p>Your subscription has been renewed for $499.99. \
+                    If you did not authorize this purchase, please call us at \
+                    <b>1-855-555-0142</b> immediately to dispute this charge.</p>\
+                    </body></html>";
+        let ctx = ctx_with_html(
+            "billing@random-cdn-host.tld",
+            Some("Subscription renewal confirmation"),
+            None,
+            Some(html),
+        );
+        let result = module.analyze(&ctx).await.expect("analyze ok");
+        assert!(
+            result.categories.iter().any(|c| c == "toad_callback_verb"),
+            "HTML-only lure must detect callback verb, cats={:?}",
+            result.categories
+        );
+        assert!(
+            result.categories.iter().any(|c| c == "toad_phone_present"),
+            "HTML-only lure must detect phone number, cats={:?}",
+            result.categories
+        );
+        assert!(
+            result.threat_level >= ThreatLevel::Medium,
+            "HTML-only TOAD lure must reach Medium+, got {:?}",
+            result.threat_level
+        );
+    }
+
+    #[tokio::test]
+    async fn per_digit_spaced_phone_number_fires() {
+        // Evasion PoC: "4 0 0 1 2 3 4 5 6 7" — per-digit spacing breaks
+        // every contiguous-digit regex; the squashed second pass catches it.
+        let module = ToadDetectModule::new();
+        let body = "尊敬的客户，您的会员服务已自动续费成功，如非本人操作，\
+                    请立即拨打客服热线 4 0 0 1 2 3 4 5 6 7 办理退款。";
+        let ctx = ctx_with(
+            "service@random-host.cn",
+            Some("会员续费提醒"),
+            Some(body),
+        );
+        let result = module.analyze(&ctx).await.expect("analyze ok");
+        assert!(
+            result.categories.iter().any(|c| c == "toad_callback_verb"),
+            "spaced-digit TOAD must detect callback verb, cats={:?}",
+            result.categories
+        );
+        assert!(
+            result.categories.iter().any(|c| c == "toad_phone_present"),
+            "per-digit spaced phone must be detected via squashed pass, cats={:?}",
+            result.categories
+        );
+        assert!(
+            result.threat_level >= ThreatLevel::Medium,
+            "spaced-digit TOAD must reach Medium+, got {:?}",
+            result.threat_level
+        );
+    }
+
+    #[tokio::test]
+    async fn fullwidth_phone_and_callback_fires() {
+        // Evasion PoC: full-width digits + full-width dash bypass the
+        // ASCII-only phone regexes until NFKC normalization folds them.
+        let module = ToadDetectModule::new();
+        let body = "尊敬的客户，您的账户存在异常扣费，如非本人操作，\
+                    请立即拨打客服热线４００－１２３－４５６７核实。";
+        let ctx = ctx_with(
+            "service@random-host.cn",
+            Some("账户安全提醒"),
+            Some(body),
+        );
+        let result = module.analyze(&ctx).await.expect("analyze ok");
+        assert!(
+            result.categories.iter().any(|c| c == "toad_phone_present"),
+            "full-width phone number must be detected after normalization, cats={:?}",
+            result.categories
+        );
+        assert!(
+            result.threat_level >= ThreatLevel::Medium,
+            "full-width TOAD must reach Medium+, got {:?}",
+            result.threat_level
+        );
+    }
+
+    #[test]
+    fn phone_extractor_squashed_digit_run() {
+        let (nums, kinds) = extract_phone_numbers("热线 4 0 0 1 2 3 4 5 6 7 办理");
+        assert!(!nums.is_empty(), "squashed pass should detect spaced digits");
+        assert!(kinds.contains(&"cn_hotline"));
+    }
+
+    #[test]
+    fn phone_extractor_dedups_squashed_twin() {
+        // "400-123-4567" matches directly and again in the squashed pass;
+        // digits-only dedup must keep it as a single number.
+        let (nums, _) = extract_phone_numbers("拨打400-123-4567办理退款");
+        assert_eq!(nums.len(), 1, "squashed twin must be deduplicated: {:?}", nums);
+    }
+
     #[test]
     fn brand_mismatch_short_token_treated_as_mismatch() {
         // "ups" is short; we conservatively treat as mismatch to avoid
@@ -607,5 +801,78 @@ mod tests {
     fn brand_match_long_token_recognized() {
         assert!(!brand_mismatched("paypal", Some("service.paypal.com")));
         assert!(brand_mismatched("paypal", Some("totally-not-paypal.tld")));
+    }
+
+    #[tokio::test]
+    async fn chinese_numeral_hotline_fires() {
+        // Evasion PoC: "四零零·六一五·五五五五" — Chinese numerals plus
+        // middle-dot separators made every digit-based phone regex blind.
+        let module = ToadDetectModule::new();
+        let body = "尊敬的客户，您的会员服务已自动续费成功，如非本人操作，\
+                    请立即拨打客服热线 四零零·六一五·五五五五 办理退款。";
+        let ctx = ctx_with(
+            "service@random-host.cn",
+            Some("会员续费提醒"),
+            Some(body),
+        );
+        let result = module.analyze(&ctx).await.expect("analyze ok");
+        assert!(
+            result.categories.iter().any(|c| c == "toad_phone_present"),
+            "Chinese-numeral hotline must be detected, cats={:?}",
+            result.categories
+        );
+        assert!(
+            result.threat_level >= ThreatLevel::Medium,
+            "callback verb + phone must reach Medium+, got {:?}",
+            result.threat_level
+        );
+    }
+
+    #[tokio::test]
+    async fn per_digit_middle_dot_phone_fires() {
+        // Evasion PoC: per-digit middle-dot separators "4·0·0·6·1·5·5·5·5·5"
+        // were not in the digit-run separator class, so the squashed second
+        // pass never saw a contiguous number.
+        let module = ToadDetectModule::new();
+        let body = "尊敬的客户，您的会员服务已自动续费成功，如非本人操作，\
+                    请立即拨打客服热线 4·0·0·6·1·5·5·5·5·5 办理退款。";
+        let ctx = ctx_with(
+            "service@random-host.cn",
+            Some("会员续费提醒"),
+            Some(body),
+        );
+        let result = module.analyze(&ctx).await.expect("analyze ok");
+        assert!(
+            result.categories.iter().any(|c| c == "toad_phone_present"),
+            "per-digit middle-dot phone must be detected via squashed pass, cats={:?}",
+            result.categories
+        );
+        assert!(
+            result.threat_level >= ThreatLevel::Medium,
+            "callback verb + phone must reach Medium+, got {:?}",
+            result.threat_level
+        );
+    }
+
+    #[test]
+    fn phone_extractor_en_dash_and_japanese_middle_dot_hotline() {
+        let (nums, kinds) = extract_phone_numbers("拨打400–615–5555");
+        assert!(
+            kinds.contains(&"cn_hotline"),
+            "en-dash separated hotline must match: {nums:?}"
+        );
+        let (nums, kinds) = extract_phone_numbers("連絡400・615・5555");
+        assert!(
+            kinds.contains(&"cn_hotline"),
+            "katakana-middle-dot separated hotline must match: {nums:?}"
+        );
+    }
+
+    #[test]
+    fn map_chinese_numerals_converts_digit_chars() {
+        assert_eq!(map_chinese_numerals("四零零六一五"), "400615");
+        assert_eq!(map_chinese_numerals("〇零一二"), "0012");
+        // Characters outside the numeral set are untouched.
+        assert_eq!(map_chinese_numerals("十年树木"), "十年树木");
     }
 }

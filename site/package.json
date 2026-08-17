@@ -5,10 +5,10 @@
   "description": "GitHub Pages site for Vigilyx",
   "license": "AGPL-3.0-only",
   "engines": {
-    "node": ">=20.20.0 <25",
-    "npm": ">=10.8.2 <12"
+    "node": ">=24.19.0 <25",
+    "npm": ">=12.0.2 <13"
   },
-  "packageManager": "npm@11.12.1",
+  "packageManager": "npm@12.0.2",
   "scripts": {
     "dev": "vitepress dev .",
     "docs:build": "vitepress build .",

@@ -1,0 +1,2951 @@
+{
+  "events": [
+    {
+      "agent_id": "019feeb0-c5a0-7931-b314-a2eba13f9a16",
+      "capsule": "/private/tmp/vigilyx-cleanup-config-boundary.json",
+      "conflicting_leases": [
+        "LSE-002"
+      ],
+      "id": "EVT-001",
+      "kind": "lease_conflict",
+      "paths": [
+        "."
+      ],
+      "recorded_at": "2026-08-11T04:11:06Z",
+      "requested_kind": "verify"
+    },
+    {
+      "agent_id": "019feeb0-c5a0-7931-b314-a2eba13f9a16",
+      "capsule": "/private/tmp/vigilyx-cleanup-attachment-fp.json",
+      "conflicting_leases": [
+        "LSE-002"
+      ],
+      "id": "EVT-002",
+      "kind": "lease_conflict",
+      "paths": [
+        "."
+      ],
+      "recorded_at": "2026-08-11T04:11:06Z",
+      "requested_kind": "verify"
+    },
+    {
+      "agent_id": "019fefa5-c6e3-70a1-b968-1bda0f4f34a7",
+      "capsule": ".lotyra/keyword-test-deploy.json",
+      "conflicting_leases": [
+        "LSE-029"
+      ],
+      "id": "EVT-003",
+      "kind": "lease_conflict",
+      "paths": [
+        "."
+      ],
+      "recorded_at": "2026-08-11T09:40:51Z",
+      "requested_kind": "verify"
+    },
+    {
+      "agent_id": "codex-yara-fix",
+      "capsule": ".lotyra/yara-builtin-isolation-fix.json",
+      "conflicting_leases": [
+        "LSE-030"
+      ],
+      "id": "EVT-004",
+      "kind": "lease_conflict",
+      "paths": [
+        "."
+      ],
+      "recorded_at": "2026-08-12T00:51:41Z",
+      "requested_kind": "verify"
+    },
+    {
+      "agent_id": "codex-yara-native-20260813",
+      "capsule": ".lotyra/yara-native-pack.json",
+      "conflicting_leases": [
+        "LSE-082"
+      ],
+      "id": "EVT-005",
+      "kind": "lease_conflict",
+      "paths": [
+        "Cargo.lock",
+        "crates/vigilyx-engine/Cargo.toml",
+        "crates/vigilyx-engine/src/yara",
+        "scripts/insert_yara_rules.py"
+      ],
+      "recorded_at": "2026-08-13T07:31:22Z",
+      "requested_kind": "write"
+    },
+    {
+      "agent_id": "codex-yara-native-v2-20260813",
+      "capsule": ".lotyra/yara-native-pack-v2.json",
+      "conflicting_leases": [
+        "LSE-082"
+      ],
+      "id": "EVT-006",
+      "kind": "lease_conflict",
+      "paths": [
+        "Cargo.lock",
+        "crates/vigilyx-engine/Cargo.toml",
+        "crates/vigilyx-engine/src/yara",
+        "scripts/insert_yara_rules.py"
+      ],
+      "recorded_at": "2026-08-13T07:54:38Z",
+      "requested_kind": "write"
+    },
+    {
+      "agent_id": "019ff4ad-02af-77a1-be2a-5e960c86be63",
+      "capsule": ".lotyra/yara-structural-hardening.json",
+      "id": "EVT-007",
+      "kind": "lease_expired",
+      "lease_id": "LSE-082",
+      "paths": [
+        "crates/vigilyx-engine/Cargo.toml",
+        "crates/vigilyx-engine/src/modules/registry.rs",
+        "crates/vigilyx-engine/src/modules/yara_scan.rs",
+        "crates/vigilyx-engine/src/yara",
+        "deploy/docker/.env.example",
+        "deploy/docker/docker-compose.yml",
+        "scripts/insert_yara_rules.py"
+      ],
+      "recorded_at": "2026-08-13T07:56:04Z"
+    },
+    {
+      "agent_id": "codex-yara-runtime-20260813",
+      "capsule": ".lotyra/yara-shadow-runtime-hardening.json",
+      "conflicting_leases": [
+        "LSE-087"
+      ],
+      "id": "EVT-008",
+      "kind": "lease_conflict",
+      "paths": [
+        "crates/vigilyx-api/src/handlers/security/rescan.rs",
+        "crates/vigilyx-engine/src/modules/yara_scan.rs",
+        "crates/vigilyx-engine/src/pipeline/engine.rs",
+        "crates/vigilyx-engine/src/yara/engine.rs",
+        "deploy/docker/.env.example",
+        "deploy/docker/docker-compose.yml"
+      ],
+      "recorded_at": "2026-08-13T08:58:09Z",
+      "requested_kind": "write"
+    },
+    {
+      "agent_id": "codex-yara-runtime-20260813",
+      "capsule": ".lotyra/yara-shadow-runtime-hardening.json",
+      "conflicting_leases": [
+        "LSE-089"
+      ],
+      "id": "EVT-009",
+      "kind": "lease_conflict",
+      "paths": [
+        "."
+      ],
+      "recorded_at": "2026-08-13T10:16:17Z",
+      "requested_kind": "verify"
+    },
+    {
+      "agent_id": "019ff4ad-02af-77a1-be2a-5e960c86be63",
+      "capsule": ".lotyra/identity-anomaly-evidence-calibration.json",
+      "id": "EVT-010",
+      "kind": "lease_expired",
+      "lease_id": "LSE-097",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/link_reputation/mod.rs"
+      ],
+      "recorded_at": "2026-08-14T00:56:18Z"
+    },
+    {
+      "agent_id": "root-yara-msdt-20260813",
+      "capsule": ".lotyra/yara-office-msdt-coverage.json",
+      "conflicting_leases": [
+        "LSE-098"
+      ],
+      "id": "EVT-011",
+      "kind": "lease_conflict",
+      "paths": [
+        "."
+      ],
+      "recorded_at": "2026-08-14T00:59:53Z",
+      "requested_kind": "verify"
+    },
+    {
+      "agent_id": "root",
+      "capsule": ".lotyra/yara-rtlo-filename-fix.json",
+      "conflicting_leases": [
+        "LSE-114"
+      ],
+      "id": "EVT-012",
+      "kind": "lease_conflict",
+      "paths": [
+        "."
+      ],
+      "recorded_at": "2026-08-14T06:23:04Z",
+      "requested_kind": "verify"
+    },
+    {
+      "agent_id": "root",
+      "capsule": ".lotyra/huawei-callback-intel-timeout.json",
+      "conflicting_leases": [
+        "LSE-126"
+      ],
+      "id": "EVT-013",
+      "kind": "lease_conflict",
+      "paths": [
+        "."
+      ],
+      "recorded_at": "2026-08-14T08:29:52Z",
+      "requested_kind": "verify"
+    },
+    {
+      "agent_id": "codex-release-093-deps-20260814",
+      "capsule": ".lotyra/release-093-dependency-security.json",
+      "conflicting_leases": [
+        "LSE-126"
+      ],
+      "id": "EVT-014",
+      "kind": "lease_conflict",
+      "paths": [
+        "Cargo.lock",
+        "Cargo.toml",
+        "crates",
+        "docs/security/rustsec-exceptions.md",
+        "scripts/cargo-audit.sh"
+      ],
+      "recorded_at": "2026-08-14T10:44:20Z",
+      "requested_kind": "write"
+    },
+    {
+      "agent_id": "root",
+      "capsule": ".lotyra/huawei-callback-intel-timeout.json",
+      "id": "EVT-015",
+      "kind": "lease_expired",
+      "lease_id": "LSE-126",
+      "paths": [
+        "crates/vigilyx-engine/src/intel/mod.rs",
+        "crates/vigilyx-engine/src/modules/common.rs",
+        "crates/vigilyx-engine/src/modules/landing_page_scan.rs",
+        "crates/vigilyx-engine/src/modules/link_content.rs",
+        "crates/vigilyx-engine/src/modules/link_reputation/mod.rs",
+        "crates/vigilyx-engine/src/modules/link_scan.rs",
+        "shared/schemas/engine_module_data_seed.json"
+      ],
+      "recorded_at": "2026-08-15T13:09:50Z"
+    },
+    {
+      "agent_id": "codex-release-093-deps-20260814",
+      "capsule": ".lotyra/release-093-dependency-security.json",
+      "id": "EVT-016",
+      "kind": "lease_expired",
+      "lease_id": "LSE-128",
+      "paths": [
+        "Cargo.lock",
+        "Cargo.toml",
+        "crates/vigilyx-api/Cargo.toml",
+        "crates/vigilyx-core/Cargo.toml",
+        "crates/vigilyx-db/Cargo.toml",
+        "crates/vigilyx-engine/Cargo.toml",
+        "crates/vigilyx-mta/Cargo.toml",
+        "crates/vigilyx-parser/Cargo.toml",
+        "crates/vigilyx-sniffer/Cargo.toml",
+        "crates/vigilyx-soar/Cargo.toml",
+        "docs/security/rustsec-exceptions.md",
+        "scripts/cargo-audit.sh"
+      ],
+      "recorded_at": "2026-08-15T13:09:50Z"
+    },
+    {
+      "agent_id": "zcode-redteam-fix-20260815",
+      "capsule": ".lotyra/platform-session-dataplane-hardening.json",
+      "id": "EVT-017",
+      "kind": "lease_expired",
+      "lease_id": "LSE-129",
+      "paths": [
+        "crates/vigilyx-api/src/auth/handlers.rs",
+        "crates/vigilyx-api/src/auth/jwt.rs",
+        "crates/vigilyx-api/src/auth/middleware.rs",
+        "crates/vigilyx-api/src/auth/mod.rs",
+        "crates/vigilyx-api/src/handlers/database.rs",
+        "crates/vigilyx-api/src/handlers/platform.rs",
+        "crates/vigilyx-api/src/main.rs",
+        "crates/vigilyx-api/src/routes.rs",
+        "crates/vigilyx-db/src/infra/config.rs",
+        "crates/vigilyx-db/src/infra/platform_auth.rs",
+        "crates/vigilyx-db/src/mq/client.rs",
+        "crates/vigilyx-db/src/mq/stream.rs",
+        "crates/vigilyx-parser/src/mime.rs",
+        "crates/vigilyx-parser/src/smtp_state.rs",
+        "crates/vigilyx-sniffer/Cargo.toml",
+        "crates/vigilyx-sniffer/src/capture/mod.rs",
+        "crates/vigilyx-sniffer/src/main.rs",
+        "crates/vigilyx-sniffer/src/privdrop.rs"
+      ],
+      "recorded_at": "2026-08-15T13:49:41Z"
+    },
+    {
+      "agent_id": "root-rt-ai-coverage-20260816",
+      "capsule": ".lotyra/rt-ai-coverage-20260816.json",
+      "conflicting_leases": [
+        "LSE-137"
+      ],
+      "id": "EVT-018",
+      "kind": "lease_conflict",
+      "paths": [
+        "."
+      ],
+      "recorded_at": "2026-08-17T02:08:33Z",
+      "requested_kind": "verify"
+    },
+    {
+      "agent_id": "root-rt-ai-coverage-20260816",
+      "capsule": ".lotyra/rt-ai-coverage-20260816.json",
+      "conflicting_leases": [
+        "LSE-141"
+      ],
+      "id": "EVT-019",
+      "kind": "lease_conflict",
+      "paths": [
+        "."
+      ],
+      "recorded_at": "2026-08-17T02:18:02Z",
+      "requested_kind": "verify"
+    },
+    {
+      "agent_id": "codex-identity-test-v8-20260817",
+      "capsule": "/private/tmp/vigilyx-identity-test-contract-v8-capsule.json",
+      "conflicting_leases": [
+        "LSE-153"
+      ],
+      "id": "EVT-020",
+      "kind": "lease_conflict",
+      "paths": [
+        "."
+      ],
+      "recorded_at": "2026-08-17T02:44:43Z",
+      "requested_kind": "verify"
+    },
+    {
+      "agent_id": "codex-mta-hickory-v9-20260817",
+      "capsule": "/private/tmp/vigilyx-mta-hickory-compat-v9-capsule.json",
+      "conflicting_leases": [
+        "LSE-156"
+      ],
+      "id": "EVT-021",
+      "kind": "lease_conflict",
+      "paths": [
+        "."
+      ],
+      "recorded_at": "2026-08-17T02:45:48Z",
+      "requested_kind": "verify"
+    }
+  ],
+  "leases": [
+    {
+      "acquired_at": "2026-08-11T04:08:56Z",
+      "agent_id": "019feeb0-c5a0-7931-b314-a2eba13f9a16",
+      "capsule": "/private/tmp/vigilyx-cleanup-attachment-fp.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T04:38:56Z",
+      "id": "LSE-001",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-11T04:09:44Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T04:11:06Z",
+      "agent_id": "019feeb0-c5a0-7931-b314-a2eba13f9a16",
+      "capsule": "/private/tmp/vigilyx-mime-eof-salvage.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T04:41:06Z",
+      "id": "LSE-002",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-11T04:11:08Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T04:11:23Z",
+      "agent_id": "019feeb0-c5a0-7931-b314-a2eba13f9a16",
+      "capsule": "/private/tmp/vigilyx-cleanup-config-boundary.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T04:41:23Z",
+      "id": "LSE-003",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-11T04:11:25Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T04:11:41Z",
+      "agent_id": "019feeb0-c5a0-7931-b314-a2eba13f9a16",
+      "capsule": "/private/tmp/vigilyx-cleanup-attachment-fp.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T04:41:41Z",
+      "id": "LSE-004",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-11T04:12:07Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T04:12:18Z",
+      "agent_id": "019feeb0-c5a0-7931-b314-a2eba13f9a16",
+      "capsule": "/private/tmp/vigilyx-targeted-credential-miss.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T04:42:18Z",
+      "id": "LSE-005",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-11T04:12:21Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T04:12:44Z",
+      "agent_id": "019feeb0-c5a0-7931-b314-a2eba13f9a16",
+      "capsule": "/private/tmp/vigilyx-targeted-credential-miss.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T04:42:44Z",
+      "id": "LSE-006",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-11T04:12:46Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T04:13:06Z",
+      "agent_id": "019feeb0-c5a0-7931-b314-a2eba13f9a16",
+      "capsule": "/private/tmp/vigilyx-targeted-credential-miss.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T04:43:06Z",
+      "id": "LSE-007",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-11T04:13:09Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T04:13:26Z",
+      "agent_id": "019feeb0-c5a0-7931-b314-a2eba13f9a16",
+      "capsule": "/private/tmp/vigilyx-targeted-credential-miss.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T04:43:26Z",
+      "id": "LSE-008",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-11T04:13:27Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T04:13:44Z",
+      "agent_id": "019feeb0-c5a0-7931-b314-a2eba13f9a16",
+      "capsule": "/private/tmp/vigilyx-targeted-credential-miss.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T04:43:44Z",
+      "id": "LSE-009",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-11T04:13:45Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T04:13:59Z",
+      "agent_id": "019feeb0-c5a0-7931-b314-a2eba13f9a16",
+      "capsule": "/private/tmp/vigilyx-mime-eof-salvage.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T04:43:59Z",
+      "id": "LSE-010",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-11T04:14:01Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T04:14:34Z",
+      "agent_id": "019feeb0-c5a0-7931-b314-a2eba13f9a16",
+      "capsule": "/private/tmp/vigilyx-cleanup-attachment-fp.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T04:44:34Z",
+      "id": "LSE-011",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-11T04:14:34Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T04:15:01Z",
+      "agent_id": "019feeb0-c5a0-7931-b314-a2eba13f9a16",
+      "capsule": "/private/tmp/vigilyx-cleanup-attachment-fp.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T04:45:01Z",
+      "id": "LSE-012",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-11T04:15:02Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T04:15:31Z",
+      "agent_id": "019feeb0-c5a0-7931-b314-a2eba13f9a16",
+      "capsule": "/private/tmp/vigilyx-cleanup-config-boundary.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T04:45:31Z",
+      "id": "LSE-013",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-11T04:15:33Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T06:18:51Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/medium-low-capture-integrity.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T06:48:51Z",
+      "id": "LSE-014",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/pipeline/verdict/mod.rs"
+      ],
+      "released_at": "2026-08-11T06:20:16Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T06:20:22Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/medium-low-capture-integrity.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T06:50:22Z",
+      "id": "LSE-015",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/pipeline/engine.rs"
+      ],
+      "released_at": "2026-08-11T06:20:50Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T06:21:55Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/medium-low-capture-integrity.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T06:51:55Z",
+      "id": "LSE-016",
+      "kind": "write",
+      "paths": [
+        "frontend/src/components/email-security/EmailDetail.tsx"
+      ],
+      "released_at": "2026-08-11T06:22:32Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T06:22:40Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/medium-low-capture-integrity.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T06:52:40Z",
+      "id": "LSE-017",
+      "kind": "write",
+      "paths": [
+        "frontend/src/i18n/locales/zh.json"
+      ],
+      "released_at": "2026-08-11T06:24:03Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T06:24:11Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/medium-low-capture-integrity.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T06:54:11Z",
+      "id": "LSE-018",
+      "kind": "write",
+      "paths": [
+        "frontend/src/i18n/locales/en.json"
+      ],
+      "released_at": "2026-08-11T06:24:32Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T06:25:26Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/medium-low-capture-integrity.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T06:55:26Z",
+      "id": "LSE-019",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/common.rs"
+      ],
+      "released_at": "2026-08-11T06:25:46Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T06:25:53Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/medium-low-capture-integrity.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T06:55:53Z",
+      "id": "LSE-020",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/header_scan/checks.rs"
+      ],
+      "released_at": "2026-08-11T06:26:42Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T06:26:49Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/medium-low-capture-integrity.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T06:56:49Z",
+      "id": "LSE-021",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/content_scan/mod.rs"
+      ],
+      "released_at": "2026-08-11T06:27:13Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T06:27:22Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/medium-low-capture-integrity.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T06:57:22Z",
+      "id": "LSE-022",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/attach_content.rs"
+      ],
+      "released_at": "2026-08-11T06:27:57Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T06:28:05Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/medium-low-capture-integrity.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T06:58:05Z",
+      "id": "LSE-023",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/link_content.rs"
+      ],
+      "released_at": "2026-08-11T06:28:29Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T06:31:21Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/medium-low-capture-integrity.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T07:01:21Z",
+      "id": "LSE-024",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-sniffer/src/capture/mod.rs"
+      ],
+      "released_at": "2026-08-11T06:34:38Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T06:34:51Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/medium-low-capture-integrity.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T07:04:51Z",
+      "id": "LSE-025",
+      "kind": "write",
+      "paths": [
+        "scripts/apply-capture-host-tuning.sh"
+      ],
+      "released_at": "2026-08-11T06:35:32Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T06:37:18Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/medium-low-capture-integrity.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T07:07:18Z",
+      "id": "LSE-026",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/pipeline/verdict/mod.rs"
+      ],
+      "released_at": "2026-08-11T06:38:00Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T06:38:06Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/medium-low-capture-integrity.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T07:08:06Z",
+      "id": "LSE-027",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/pipeline/engine.rs"
+      ],
+      "released_at": "2026-08-11T06:38:55Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T07:13:14Z",
+      "agent_id": "codex-keyword",
+      "capsule": ".lotyra/keyword-seed-expansion.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T08:13:14Z",
+      "id": "LSE-028",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-db/src/security/migrate.rs",
+        "crates/vigilyx-engine/src/modules/content_scan/tests.rs",
+        "scripts/generate_keyword_seed.py",
+        "shared/schemas/keyword_overrides_seed.json"
+      ],
+      "released_at": "2026-08-11T07:22:39Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-11T09:34:12Z",
+      "agent_id": "019fefa5-c6e3-70a1-b968-1bda0f4f34a7",
+      "capsule": ".lotyra/keyword-test-deploy.json",
+      "expired_at": null,
+      "expires_at": "2026-08-11T10:34:12Z",
+      "id": "LSE-029",
+      "kind": "write",
+      "paths": [
+        "Cargo.lock",
+        "Cargo.toml",
+        "crates",
+        "deploy",
+        "deploy.sh",
+        "frontend",
+        "python",
+        "rust-toolchain.toml",
+        "scripts",
+        "shared"
+      ],
+      "released_at": "2026-08-11T09:41:21Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-12T00:35:25Z",
+      "agent_id": "codex-yara-fix",
+      "capsule": ".lotyra/yara-builtin-isolation-fix.json",
+      "expired_at": null,
+      "expires_at": "2026-08-12T01:35:25Z",
+      "id": "LSE-030",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-db/src/security/migrate.rs",
+        "crates/vigilyx-engine/src/modules/attach_hash.rs",
+        "crates/vigilyx-engine/src/modules/registry.rs"
+      ],
+      "released_at": "2026-08-12T00:51:53Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-12T00:52:07Z",
+      "agent_id": "codex-yara-fix",
+      "capsule": ".lotyra/yara-builtin-isolation-fix.json",
+      "expired_at": null,
+      "expires_at": "2026-08-12T01:22:07Z",
+      "id": "LSE-031",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-12T00:54:08Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-12T00:55:40Z",
+      "agent_id": "codex-yara-fix",
+      "capsule": ".lotyra/yara-builtin-isolation-fix.json",
+      "expired_at": null,
+      "expires_at": "2026-08-12T01:25:40Z",
+      "id": "LSE-032",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-12T00:55:42Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-12T00:56:01Z",
+      "agent_id": "codex-yara-fix",
+      "capsule": ".lotyra/yara-builtin-isolation-fix.json",
+      "expired_at": null,
+      "expires_at": "2026-08-12T01:26:01Z",
+      "id": "LSE-033",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-12T00:56:03Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-12T00:56:55Z",
+      "agent_id": "codex-yara-fix",
+      "capsule": ".lotyra/yara-builtin-isolation-fix.json",
+      "expired_at": null,
+      "expires_at": "2026-08-12T01:26:55Z",
+      "id": "LSE-034",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-12T00:56:57Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-12T00:58:57Z",
+      "agent_id": "codex-yara-fix",
+      "capsule": ".lotyra/yara-builtin-isolation-fix.json",
+      "expired_at": null,
+      "expires_at": "2026-08-12T01:28:57Z",
+      "id": "LSE-035",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-12T01:01:59Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-12T01:02:37Z",
+      "agent_id": "codex-yara-fix",
+      "capsule": ".lotyra/yara-builtin-isolation-fix.json",
+      "expired_at": null,
+      "expires_at": "2026-08-12T01:32:37Z",
+      "id": "LSE-036",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-12T01:02:42Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-12T01:04:00Z",
+      "agent_id": "codex-yara-fix",
+      "capsule": ".lotyra/yara-builtin-isolation-fix.json",
+      "expired_at": null,
+      "expires_at": "2026-08-12T01:34:00Z",
+      "id": "LSE-037",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-12T01:04:03Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-12T01:04:40Z",
+      "agent_id": "codex-yara-fix",
+      "capsule": ".lotyra/yara-builtin-isolation-fix.json",
+      "expired_at": null,
+      "expires_at": "2026-08-12T01:34:40Z",
+      "id": "LSE-038",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-12T01:04:43Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-12T01:05:19Z",
+      "agent_id": "codex-yara-fix",
+      "capsule": ".lotyra/yara-builtin-isolation-fix.json",
+      "expired_at": null,
+      "expires_at": "2026-08-12T01:35:19Z",
+      "id": "LSE-039",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-12T01:05:21Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-12T01:06:20Z",
+      "agent_id": "codex-yara-fix",
+      "capsule": ".lotyra/yara-builtin-isolation-fix.json",
+      "expired_at": null,
+      "expires_at": "2026-08-12T01:36:20Z",
+      "id": "LSE-040",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-12T01:06:22Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-12T01:07:49Z",
+      "agent_id": "codex-yara-fix",
+      "capsule": ".lotyra/yara-builtin-isolation-fix.json",
+      "expired_at": null,
+      "expires_at": "2026-08-12T01:37:49Z",
+      "id": "LSE-041",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-12T01:07:50Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T02:33:28Z",
+      "agent_id": "codex-email-fp-20260813",
+      "capsule": ".lotyra/email-content-iframe-false-positive.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T03:33:28Z",
+      "id": "LSE-042",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/content_scan/detectors.rs",
+        "crates/vigilyx-engine/src/modules/content_scan/tests.rs",
+        "crates/vigilyx-engine/src/modules/html_scan.rs"
+      ],
+      "released_at": "2026-08-13T02:46:42Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T02:48:13Z",
+      "agent_id": "codex-email-fp-20260813",
+      "capsule": ".lotyra/email-content-iframe-false-positive.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T03:18:13Z",
+      "id": "LSE-043",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T02:48:17Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T02:48:18Z",
+      "agent_id": "codex-email-fp-20260813",
+      "capsule": ".lotyra/email-content-iframe-false-positive.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T03:18:18Z",
+      "id": "LSE-044",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T02:48:20Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T02:49:03Z",
+      "agent_id": "codex-email-fp-20260813",
+      "capsule": ".lotyra/email-content-iframe-false-positive.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T03:19:03Z",
+      "id": "LSE-045",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T02:49:06Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T02:49:08Z",
+      "agent_id": "codex-email-fp-20260813",
+      "capsule": ".lotyra/email-content-iframe-false-positive.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T03:19:08Z",
+      "id": "LSE-046",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T02:49:15Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T02:49:16Z",
+      "agent_id": "codex-email-fp-20260813",
+      "capsule": ".lotyra/email-content-iframe-false-positive.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T03:19:16Z",
+      "id": "LSE-047",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T02:49:18Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T02:49:20Z",
+      "agent_id": "codex-email-fp-20260813",
+      "capsule": ".lotyra/email-content-iframe-false-positive.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T03:19:20Z",
+      "id": "LSE-048",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T02:49:27Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T02:49:29Z",
+      "agent_id": "codex-email-fp-20260813",
+      "capsule": ".lotyra/email-content-iframe-false-positive.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T03:19:29Z",
+      "id": "LSE-049",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T02:49:31Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T02:51:22Z",
+      "agent_id": "codex-email-fp-20260813",
+      "capsule": ".lotyra/email-content-iframe-false-positive.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T03:51:22Z",
+      "id": "LSE-050",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/html_scan.rs"
+      ],
+      "released_at": "2026-08-13T02:53:47Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T02:54:08Z",
+      "agent_id": "codex-email-fp-20260813",
+      "capsule": ".lotyra/email-content-iframe-false-positive.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T03:24:08Z",
+      "id": "LSE-051",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T02:54:11Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T02:54:13Z",
+      "agent_id": "codex-email-fp-20260813",
+      "capsule": ".lotyra/email-content-iframe-false-positive.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T03:24:13Z",
+      "id": "LSE-052",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T02:54:16Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T04:30:46Z",
+      "agent_id": "codex-acams-fusion-20260813",
+      "capsule": ".lotyra/acams-cause-aware-fusion.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T08:30:46Z",
+      "id": "LSE-053",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/aitm_detect.rs",
+        "crates/vigilyx-engine/src/modules/common.rs",
+        "crates/vigilyx-engine/src/modules/content_scan/detectors.rs",
+        "crates/vigilyx-engine/src/modules/content_scan/tests.rs",
+        "crates/vigilyx-engine/src/modules/domain_verify.rs",
+        "crates/vigilyx-engine/src/modules/header_scan/checks.rs",
+        "crates/vigilyx-engine/src/modules/identity_anomaly.rs",
+        "crates/vigilyx-engine/src/modules/link_content.rs",
+        "crates/vigilyx-engine/src/modules/link_scan.rs",
+        "crates/vigilyx-engine/src/pipeline/verdict/clustered_ds_v1.rs",
+        "crates/vigilyx-engine/src/pipeline/verdict/evidence_clusters.rs",
+        "crates/vigilyx-engine/src/pipeline/verdict/mod.rs"
+      ],
+      "released_at": "2026-08-13T04:50:11Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T04:51:25Z",
+      "agent_id": "codex-acams-fusion-20260813",
+      "capsule": ".lotyra/acams-cause-aware-fusion.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T05:21:25Z",
+      "id": "LSE-054",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T04:51:28Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T04:52:08Z",
+      "agent_id": "codex-acams-fusion-20260813",
+      "capsule": ".lotyra/acams-cause-aware-fusion.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T05:22:08Z",
+      "id": "LSE-055",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T04:52:13Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T04:52:14Z",
+      "agent_id": "codex-acams-fusion-20260813",
+      "capsule": ".lotyra/acams-cause-aware-fusion.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T05:22:14Z",
+      "id": "LSE-056",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T04:52:19Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T04:52:20Z",
+      "agent_id": "codex-acams-fusion-20260813",
+      "capsule": ".lotyra/acams-cause-aware-fusion.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T05:22:20Z",
+      "id": "LSE-057",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T04:52:24Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T04:52:26Z",
+      "agent_id": "codex-acams-fusion-20260813",
+      "capsule": ".lotyra/acams-cause-aware-fusion.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T05:22:26Z",
+      "id": "LSE-058",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T04:52:30Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T04:52:31Z",
+      "agent_id": "codex-acams-fusion-20260813",
+      "capsule": ".lotyra/acams-cause-aware-fusion.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T05:22:31Z",
+      "id": "LSE-059",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T04:52:36Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T04:52:37Z",
+      "agent_id": "codex-acams-fusion-20260813",
+      "capsule": ".lotyra/acams-cause-aware-fusion.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T05:22:37Z",
+      "id": "LSE-060",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T04:52:41Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T05:24:25Z",
+      "agent_id": "codex-acams-deploy-20260813",
+      "capsule": ".lotyra/acams-fusion-backend-deploy.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T05:54:25Z",
+      "id": "LSE-061",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T05:24:29Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T05:24:48Z",
+      "agent_id": "codex-acams-deploy-20260813",
+      "capsule": ".lotyra/acams-fusion-backend-deploy.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T05:54:48Z",
+      "id": "LSE-062",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T05:24:52Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T05:25:59Z",
+      "agent_id": "codex-acams-deploy-20260813",
+      "capsule": ".lotyra/acams-fusion-backend-deploy.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T05:55:59Z",
+      "id": "LSE-063",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T05:26:04Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T05:26:40Z",
+      "agent_id": "codex-acams-deploy-20260813",
+      "capsule": ".lotyra/acams-fusion-backend-deploy.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T05:56:40Z",
+      "id": "LSE-064",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T05:26:42Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T05:27:14Z",
+      "agent_id": "codex-acams-deploy-20260813",
+      "capsule": ".lotyra/acams-fusion-backend-deploy.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T05:57:14Z",
+      "id": "LSE-065",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T05:27:17Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T05:28:03Z",
+      "agent_id": "codex-acams-deploy-20260813",
+      "capsule": ".lotyra/acams-fusion-backend-deploy.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T05:58:03Z",
+      "id": "LSE-066",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T05:28:06Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T05:28:21Z",
+      "agent_id": "codex-acams-deploy-20260813",
+      "capsule": ".lotyra/acams-fusion-backend-deploy.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T05:58:21Z",
+      "id": "LSE-067",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T05:28:23Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T05:28:39Z",
+      "agent_id": "codex-acams-deploy-20260813",
+      "capsule": ".lotyra/acams-fusion-backend-deploy.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T05:58:39Z",
+      "id": "LSE-068",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T05:28:42Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T05:29:03Z",
+      "agent_id": "codex-acams-deploy-20260813",
+      "capsule": ".lotyra/acams-fusion-backend-deploy.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T05:59:03Z",
+      "id": "LSE-069",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T05:29:06Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T05:29:45Z",
+      "agent_id": "codex-acams-deploy-20260813",
+      "capsule": ".lotyra/acams-fusion-backend-deploy.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T05:59:45Z",
+      "id": "LSE-070",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T05:29:48Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T06:22:56Z",
+      "agent_id": "019ff4ad-02af-77a1-be2a-5e960c86be63",
+      "capsule": ".lotyra/yara-structural-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T06:52:56Z",
+      "id": "LSE-071",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/yara_scan.rs",
+        "crates/vigilyx-engine/src/pipeline/verdict/evidence_clusters.rs",
+        "crates/vigilyx-engine/src/yara"
+      ],
+      "released_at": "2026-08-13T06:47:39Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T06:50:09Z",
+      "agent_id": "019ff4ad-02af-77a1-be2a-5e960c86be63",
+      "capsule": ".lotyra/yara-structural-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T07:20:09Z",
+      "id": "LSE-072",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T06:50:14Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T06:50:15Z",
+      "agent_id": "019ff4ad-02af-77a1-be2a-5e960c86be63",
+      "capsule": ".lotyra/yara-structural-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T07:20:15Z",
+      "id": "LSE-073",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T06:50:20Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T06:50:21Z",
+      "agent_id": "019ff4ad-02af-77a1-be2a-5e960c86be63",
+      "capsule": ".lotyra/yara-structural-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T07:20:21Z",
+      "id": "LSE-074",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T06:50:29Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T06:50:33Z",
+      "agent_id": "019ff4ad-02af-77a1-be2a-5e960c86be63",
+      "capsule": ".lotyra/yara-structural-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T07:20:33Z",
+      "id": "LSE-075",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T06:50:43Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T06:51:09Z",
+      "agent_id": "019ff4ad-02af-77a1-be2a-5e960c86be63",
+      "capsule": ".lotyra/yara-structural-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T07:21:09Z",
+      "id": "LSE-076",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T06:51:13Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T06:51:14Z",
+      "agent_id": "019ff4ad-02af-77a1-be2a-5e960c86be63",
+      "capsule": ".lotyra/yara-structural-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T07:21:14Z",
+      "id": "LSE-077",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T06:51:18Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T06:51:18Z",
+      "agent_id": "019ff4ad-02af-77a1-be2a-5e960c86be63",
+      "capsule": ".lotyra/yara-structural-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T07:21:18Z",
+      "id": "LSE-078",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T06:51:24Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T06:51:43Z",
+      "agent_id": "019ff4ad-02af-77a1-be2a-5e960c86be63",
+      "capsule": ".lotyra/yara-structural-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T07:21:43Z",
+      "id": "LSE-079",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T06:51:45Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T06:51:46Z",
+      "agent_id": "019ff4ad-02af-77a1-be2a-5e960c86be63",
+      "capsule": ".lotyra/yara-structural-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T07:21:46Z",
+      "id": "LSE-080",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T06:51:48Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T06:51:49Z",
+      "agent_id": "019ff4ad-02af-77a1-be2a-5e960c86be63",
+      "capsule": ".lotyra/yara-structural-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T07:21:49Z",
+      "id": "LSE-081",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T06:51:52Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T06:55:44Z",
+      "agent_id": "019ff4ad-02af-77a1-be2a-5e960c86be63",
+      "capsule": ".lotyra/yara-structural-hardening.json",
+      "expired_at": "2026-08-13T07:56:04Z",
+      "expires_at": "2026-08-13T07:55:44Z",
+      "id": "LSE-082",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/Cargo.toml",
+        "crates/vigilyx-engine/src/modules/registry.rs",
+        "crates/vigilyx-engine/src/modules/yara_scan.rs",
+        "crates/vigilyx-engine/src/yara",
+        "deploy/docker/.env.example",
+        "deploy/docker/docker-compose.yml",
+        "scripts/insert_yara_rules.py"
+      ],
+      "released_at": null,
+      "status": "expired"
+    },
+    {
+      "acquired_at": "2026-08-13T07:56:04Z",
+      "agent_id": "codex-yara-native-v2-20260813",
+      "capsule": ".lotyra/yara-native-pack-v2.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T09:56:04Z",
+      "id": "LSE-083",
+      "kind": "write",
+      "paths": [
+        "Cargo.lock",
+        "crates/vigilyx-engine/Cargo.toml",
+        "crates/vigilyx-engine/src/yara",
+        "scripts/insert_yara_rules.py"
+      ],
+      "released_at": "2026-08-13T08:31:08Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T08:32:59Z",
+      "agent_id": "codex-yara-native-v2-20260813",
+      "capsule": ".lotyra/yara-native-pack-v2.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T09:02:59Z",
+      "id": "LSE-084",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/yara/engine.rs"
+      ],
+      "released_at": "2026-08-13T08:33:57Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T08:35:14Z",
+      "agent_id": "codex-yara-native-v2-20260813",
+      "capsule": ".lotyra/yara-native-pack-v2.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T09:05:14Z",
+      "id": "LSE-085",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T08:35:16Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T08:35:30Z",
+      "agent_id": "codex-yara-native-v2-20260813",
+      "capsule": ".lotyra/yara-native-pack-v2.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T09:05:30Z",
+      "id": "LSE-086",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T08:35:32Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T08:41:49Z",
+      "agent_id": "codex-yara-deploy-20260813",
+      "capsule": ".lotyra/yara-native-deploy.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T09:11:49Z",
+      "id": "LSE-087",
+      "kind": "write",
+      "paths": [
+        "deploy/docker/.env.example",
+        "deploy/docker/docker-compose.yml"
+      ],
+      "released_at": "2026-08-13T08:58:23Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T08:58:42Z",
+      "agent_id": "codex-yara-runtime-20260813",
+      "capsule": ".lotyra/yara-shadow-runtime-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T10:58:42Z",
+      "id": "LSE-088",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-api/src/handlers/security/rescan.rs",
+        "crates/vigilyx-engine/src/modules/yara_scan.rs",
+        "crates/vigilyx-engine/src/pipeline/engine.rs",
+        "crates/vigilyx-engine/src/yara/engine.rs",
+        "deploy/docker/.env.example",
+        "deploy/docker/docker-compose.yml"
+      ],
+      "released_at": "2026-08-13T09:27:48Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T09:28:23Z",
+      "agent_id": "codex-yara-runtime-20260813",
+      "capsule": ".lotyra/yara-shadow-runtime-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T11:28:23Z",
+      "id": "LSE-089",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-api/src/handlers/database.rs",
+        "crates/vigilyx-api/src/handlers/security/rescan.rs",
+        "crates/vigilyx-db/src/mq/mod.rs",
+        "crates/vigilyx-engine/src/bin/vigilyx_engine.rs"
+      ],
+      "released_at": "2026-08-13T10:16:33Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T10:16:44Z",
+      "agent_id": "codex-yara-runtime-20260813",
+      "capsule": ".lotyra/yara-shadow-runtime-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T10:46:44Z",
+      "id": "LSE-090",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T10:16:46Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T10:17:15Z",
+      "agent_id": "codex-yara-runtime-20260813",
+      "capsule": ".lotyra/yara-shadow-runtime-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T10:47:15Z",
+      "id": "LSE-091",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T10:18:16Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T10:19:20Z",
+      "agent_id": "codex-yara-runtime-20260813",
+      "capsule": ".lotyra/yara-shadow-runtime-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T10:49:20Z",
+      "id": "LSE-092",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T10:19:22Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T10:19:23Z",
+      "agent_id": "codex-yara-runtime-20260813",
+      "capsule": ".lotyra/yara-shadow-runtime-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T10:49:23Z",
+      "id": "LSE-093",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T10:19:25Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T10:19:50Z",
+      "agent_id": "codex-yara-runtime-20260813",
+      "capsule": ".lotyra/yara-shadow-runtime-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T10:49:50Z",
+      "id": "LSE-094",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-13T10:19:53Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T11:28:58Z",
+      "agent_id": "019ff4ad-02af-77a1-be2a-5e960c86be63",
+      "capsule": ".lotyra/identity-anomaly-evidence-calibration.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T12:58:58Z",
+      "id": "LSE-095",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/identity_anomaly.rs"
+      ],
+      "released_at": "2026-08-13T11:36:17Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T11:36:34Z",
+      "agent_id": "019ff4ad-02af-77a1-be2a-5e960c86be63",
+      "capsule": ".lotyra/identity-anomaly-evidence-calibration.json",
+      "expired_at": null,
+      "expires_at": "2026-08-13T13:06:34Z",
+      "id": "LSE-096",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/attach_qr_scan.rs",
+        "crates/vigilyx-engine/src/modules/link_reputation/heuristics.rs",
+        "crates/vigilyx-engine/src/modules/link_scan.rs",
+        "crates/vigilyx-engine/src/modules/semantic_scan.rs",
+        "crates/vigilyx-engine/src/modules/transaction_correlation.rs"
+      ],
+      "released_at": "2026-08-13T11:44:09Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-13T11:44:25Z",
+      "agent_id": "019ff4ad-02af-77a1-be2a-5e960c86be63",
+      "capsule": ".lotyra/identity-anomaly-evidence-calibration.json",
+      "expired_at": "2026-08-14T00:56:18Z",
+      "expires_at": "2026-08-13T13:14:25Z",
+      "id": "LSE-097",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/link_reputation/mod.rs"
+      ],
+      "released_at": null,
+      "status": "expired"
+    },
+    {
+      "acquired_at": "2026-08-14T00:56:18Z",
+      "agent_id": "root-yara-msdt-20260813",
+      "capsule": ".lotyra/yara-office-msdt-coverage.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T02:56:18Z",
+      "id": "LSE-098",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/yara/rules.rs",
+        "crates/vigilyx-engine/src/yara/structural.rs"
+      ],
+      "released_at": "2026-08-14T01:08:13Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T01:11:54Z",
+      "agent_id": "root-yara-msdt-20260813",
+      "capsule": ".lotyra/yara-office-msdt-coverage.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T01:41:54Z",
+      "id": "LSE-099",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T01:11:56Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T01:12:16Z",
+      "agent_id": "root-yara-msdt-20260813",
+      "capsule": ".lotyra/yara-office-msdt-coverage.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T01:42:16Z",
+      "id": "LSE-100",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T01:12:18Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T01:13:59Z",
+      "agent_id": "root-yara-msdt-20260813",
+      "capsule": ".lotyra/yara-office-msdt-coverage.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T01:43:59Z",
+      "id": "LSE-101",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T01:14:01Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T01:15:15Z",
+      "agent_id": "root-yara-msdt-20260813",
+      "capsule": ".lotyra/yara-office-msdt-coverage.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T02:15:15Z",
+      "id": "LSE-102",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/yara/rules.rs"
+      ],
+      "released_at": "2026-08-14T01:17:10Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T01:17:34Z",
+      "agent_id": "root-yara-msdt-20260813",
+      "capsule": ".lotyra/yara-office-msdt-coverage.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T01:47:34Z",
+      "id": "LSE-103",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T01:18:02Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T01:18:45Z",
+      "agent_id": "root-yara-msdt-20260813",
+      "capsule": ".lotyra/yara-office-msdt-coverage.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T01:48:45Z",
+      "id": "LSE-104",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T01:20:08Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T03:24:03Z",
+      "agent_id": "codex-rbac-20260814",
+      "capsule": ".lotyra/platform-rbac.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T04:24:03Z",
+      "id": "LSE-105",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-api/src/auth",
+        "crates/vigilyx-api/src/handlers",
+        "crates/vigilyx-api/src/main.rs",
+        "crates/vigilyx-api/src/routes.rs",
+        "crates/vigilyx-api/src/state.rs",
+        "crates/vigilyx-db/src/infra",
+        "frontend/src/App.tsx",
+        "frontend/src/components/settings",
+        "frontend/src/i18n/locales/en.json",
+        "frontend/src/i18n/locales/zh.json",
+        "frontend/src/utils"
+      ],
+      "released_at": "2026-08-14T04:02:34Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T04:05:28Z",
+      "agent_id": "codex-rbac-20260814",
+      "capsule": ".lotyra/platform-rbac.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T04:35:28Z",
+      "id": "LSE-106",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T04:05:29Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T04:05:30Z",
+      "agent_id": "codex-rbac-20260814",
+      "capsule": ".lotyra/platform-rbac.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T04:35:30Z",
+      "id": "LSE-107",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T04:05:31Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T04:05:33Z",
+      "agent_id": "codex-rbac-20260814",
+      "capsule": ".lotyra/platform-rbac.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T04:35:33Z",
+      "id": "LSE-108",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T04:05:34Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T04:06:02Z",
+      "agent_id": "codex-rbac-20260814",
+      "capsule": ".lotyra/platform-rbac.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T04:36:02Z",
+      "id": "LSE-109",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T04:06:02Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T04:06:51Z",
+      "agent_id": "codex-rbac-20260814",
+      "capsule": ".lotyra/platform-rbac.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T04:36:51Z",
+      "id": "LSE-110",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T04:07:25Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T04:12:50Z",
+      "agent_id": "codex-rbac-20260814",
+      "capsule": ".lotyra/platform-rbac.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T04:42:50Z",
+      "id": "LSE-111",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T04:12:53Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T04:13:04Z",
+      "agent_id": "codex-rbac-20260814",
+      "capsule": ".lotyra/platform-rbac.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T04:43:04Z",
+      "id": "LSE-112",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T04:13:05Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T04:13:35Z",
+      "agent_id": "codex-rbac-20260814",
+      "capsule": ".lotyra/platform-rbac.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T04:43:35Z",
+      "id": "LSE-113",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T04:13:38Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T06:06:48Z",
+      "agent_id": "codex-security-hardening-20260814",
+      "capsule": ".lotyra/redteam-security-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T07:06:48Z",
+      "id": "LSE-114",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-api/src/auth/middleware.rs",
+        "crates/vigilyx-api/src/auth/mod.rs",
+        "crates/vigilyx-api/src/handlers/security/verdict.rs",
+        "crates/vigilyx-api/src/routes.rs",
+        "crates/vigilyx-core/src/security/mod.rs",
+        "crates/vigilyx-db/src/security/feedback.rs",
+        "crates/vigilyx-db/src/security/migrate.rs",
+        "crates/vigilyx-engine/src/feedback.rs",
+        "crates/vigilyx-engine/src/pipeline/engine.rs",
+        "crates/vigilyx-engine/src/pipeline/verdict/mod.rs",
+        "crates/vigilyx-mta/src/config.rs",
+        "crates/vigilyx-mta/src/server/connection.rs",
+        "deploy/docker/.env.example",
+        "deploy/docker/docker-compose.yml",
+        "docs/MODEL_TECHNICAL_FRAMEWORK.md"
+      ],
+      "released_at": "2026-08-14T06:35:21Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T06:09:30Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/yara-rtlo-filename-fix.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T07:09:30Z",
+      "id": "LSE-115",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/yara_scan.rs",
+        "crates/vigilyx-engine/src/yara/rules.rs"
+      ],
+      "released_at": "2026-08-14T06:11:53Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T06:36:13Z",
+      "agent_id": "codex-security-hardening-20260814",
+      "capsule": ".lotyra/redteam-security-hardening.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T07:06:13Z",
+      "id": "LSE-116",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T06:36:17Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T06:54:54Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/passive-coverage-threat-separation.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T07:54:54Z",
+      "id": "LSE-117",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/pipeline/verdict/mod.rs"
+      ],
+      "released_at": "2026-08-14T06:56:00Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T06:56:44Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/passive-coverage-threat-separation.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T07:56:44Z",
+      "id": "LSE-118",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/pipeline/verdict/mod.rs"
+      ],
+      "released_at": "2026-08-14T06:57:05Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T06:59:00Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/passive-coverage-threat-separation.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T07:59:00Z",
+      "id": "LSE-119",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/pipeline/verdict/mod.rs"
+      ],
+      "released_at": "2026-08-14T06:59:26Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T07:01:05Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/passive-coverage-threat-separation.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T07:31:05Z",
+      "id": "LSE-120",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T07:01:11Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T07:01:12Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/passive-coverage-threat-separation.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T07:31:12Z",
+      "id": "LSE-121",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T07:01:17Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T07:02:19Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/passive-coverage-threat-separation.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T07:32:19Z",
+      "id": "LSE-122",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T07:02:21Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T07:02:22Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/passive-coverage-threat-separation.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T07:32:22Z",
+      "id": "LSE-123",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T07:02:24Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T07:02:38Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/passive-coverage-threat-separation.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T07:32:38Z",
+      "id": "LSE-124",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T07:02:42Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T07:05:01Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/passive-coverage-threat-separation.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T07:35:01Z",
+      "id": "LSE-125",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-14T07:05:10Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T08:06:54Z",
+      "agent_id": "root",
+      "capsule": ".lotyra/huawei-callback-intel-timeout.json",
+      "expired_at": "2026-08-15T13:09:50Z",
+      "expires_at": "2026-08-14T12:06:54Z",
+      "id": "LSE-126",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/intel/mod.rs",
+        "crates/vigilyx-engine/src/modules/common.rs",
+        "crates/vigilyx-engine/src/modules/landing_page_scan.rs",
+        "crates/vigilyx-engine/src/modules/link_content.rs",
+        "crates/vigilyx-engine/src/modules/link_reputation/mod.rs",
+        "crates/vigilyx-engine/src/modules/link_scan.rs",
+        "shared/schemas/engine_module_data_seed.json"
+      ],
+      "released_at": null,
+      "status": "expired"
+    },
+    {
+      "acquired_at": "2026-08-14T10:22:51Z",
+      "agent_id": "codex-release-093-deps-20260814",
+      "capsule": ".lotyra/release-093-dependency-security.json",
+      "expired_at": null,
+      "expires_at": "2026-08-14T12:22:51Z",
+      "id": "LSE-127",
+      "kind": "write",
+      "paths": [
+        "deploy/docker/Dockerfile.ai",
+        "python/pyproject.toml",
+        "python/uv.lock"
+      ],
+      "released_at": "2026-08-14T10:27:01Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-14T10:45:30Z",
+      "agent_id": "codex-release-093-deps-20260814",
+      "capsule": ".lotyra/release-093-dependency-security.json",
+      "expired_at": "2026-08-15T13:09:50Z",
+      "expires_at": "2026-08-14T12:45:30Z",
+      "id": "LSE-128",
+      "kind": "write",
+      "paths": [
+        "Cargo.lock",
+        "Cargo.toml",
+        "crates/vigilyx-api/Cargo.toml",
+        "crates/vigilyx-core/Cargo.toml",
+        "crates/vigilyx-db/Cargo.toml",
+        "crates/vigilyx-engine/Cargo.toml",
+        "crates/vigilyx-mta/Cargo.toml",
+        "crates/vigilyx-parser/Cargo.toml",
+        "crates/vigilyx-sniffer/Cargo.toml",
+        "crates/vigilyx-soar/Cargo.toml",
+        "docs/security/rustsec-exceptions.md",
+        "scripts/cargo-audit.sh"
+      ],
+      "released_at": null,
+      "status": "expired"
+    },
+    {
+      "acquired_at": "2026-08-15T13:09:50Z",
+      "agent_id": "zcode-redteam-fix-20260815",
+      "capsule": ".lotyra/platform-session-dataplane-hardening.json",
+      "expired_at": "2026-08-15T13:49:41Z",
+      "expires_at": "2026-08-15T13:39:50Z",
+      "id": "LSE-129",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-api/src/auth/handlers.rs",
+        "crates/vigilyx-api/src/auth/jwt.rs",
+        "crates/vigilyx-api/src/auth/middleware.rs",
+        "crates/vigilyx-api/src/auth/mod.rs",
+        "crates/vigilyx-api/src/handlers/database.rs",
+        "crates/vigilyx-api/src/handlers/platform.rs",
+        "crates/vigilyx-api/src/main.rs",
+        "crates/vigilyx-api/src/routes.rs",
+        "crates/vigilyx-db/src/infra/config.rs",
+        "crates/vigilyx-db/src/infra/platform_auth.rs",
+        "crates/vigilyx-db/src/mq/client.rs",
+        "crates/vigilyx-db/src/mq/stream.rs",
+        "crates/vigilyx-parser/src/mime.rs",
+        "crates/vigilyx-parser/src/smtp_state.rs",
+        "crates/vigilyx-sniffer/Cargo.toml",
+        "crates/vigilyx-sniffer/src/capture/mod.rs",
+        "crates/vigilyx-sniffer/src/main.rs",
+        "crates/vigilyx-sniffer/src/privdrop.rs"
+      ],
+      "released_at": null,
+      "status": "expired"
+    },
+    {
+      "acquired_at": "2026-08-17T01:35:52Z",
+      "agent_id": "codex-redteam-fix-v4-20260817",
+      "capsule": "/private/tmp/vigilyx-redteam-fix-v4-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T02:05:52Z",
+      "id": "LSE-130",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T01:35:54Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T01:37:00Z",
+      "agent_id": "codex-redteam-fix-v4-20260817",
+      "capsule": "/private/tmp/vigilyx-redteam-fix-v4-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T02:07:00Z",
+      "id": "LSE-131",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T01:37:01Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T01:37:03Z",
+      "agent_id": "codex-redteam-fix-v4-20260817",
+      "capsule": "/private/tmp/vigilyx-redteam-fix-v4-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T02:07:03Z",
+      "id": "LSE-132",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T01:37:04Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T01:37:05Z",
+      "agent_id": "codex-redteam-fix-v4-20260817",
+      "capsule": "/private/tmp/vigilyx-redteam-fix-v4-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T02:07:05Z",
+      "id": "LSE-133",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T01:37:06Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T01:37:08Z",
+      "agent_id": "codex-redteam-fix-v4-20260817",
+      "capsule": "/private/tmp/vigilyx-redteam-fix-v4-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T02:07:08Z",
+      "id": "LSE-134",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T01:37:09Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T01:40:18Z",
+      "agent_id": "root-rt-ai-coverage-20260816",
+      "capsule": ".lotyra/rt-ai-coverage-20260816.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T03:40:18Z",
+      "id": "LSE-135",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/semantic_scan.rs",
+        "crates/vigilyx-engine/src/pipeline/verdict/mod.rs",
+        "python/tests/test_nlp_segmented.py",
+        "python/tests/test_prompts.py",
+        "python/vigilyx_ai/llm/prompts.py",
+        "python/vigilyx_ai/nlp_phishing.py"
+      ],
+      "released_at": "2026-08-17T01:40:44Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T01:40:45Z",
+      "agent_id": "root-rt-ai-coverage-20260816",
+      "capsule": ".lotyra/rt-ai-coverage-20260816.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T03:40:45Z",
+      "id": "LSE-136",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/semantic_scan.rs",
+        "crates/vigilyx-engine/src/pipeline/verdict/mod.rs",
+        "python/tests/test_nlp_core.py",
+        "python/tests/test_nlp_segmented.py",
+        "python/tests/test_prompts.py",
+        "python/vigilyx_ai/llm/prompts.py",
+        "python/vigilyx_ai/nlp_phishing.py"
+      ],
+      "released_at": "2026-08-17T02:07:59Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:02:13Z",
+      "agent_id": "codex-identity-trust-v6-20260817",
+      "capsule": "/private/tmp/vigilyx-identity-trust-v6-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T02:32:13Z",
+      "id": "LSE-137",
+      "kind": "write",
+      "paths": [
+        "Cargo.lock",
+        "crates/vigilyx-engine/src/external/fetcher.rs",
+        "crates/vigilyx-engine/src/modules/header_scan/checks.rs",
+        "crates/vigilyx-engine/src/modules/header_scan/mod.rs",
+        "crates/vigilyx-engine/src/modules/header_scan/parsed.rs",
+        "crates/vigilyx-mta/Cargo.toml",
+        "crates/vigilyx-mta/src/lib.rs",
+        "crates/vigilyx-mta/src/main.rs",
+        "crates/vigilyx-mta/src/server/listener.rs",
+        "deploy/docker/.env.example"
+      ],
+      "released_at": "2026-08-17T02:13:40Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:10:46Z",
+      "agent_id": "root-rt-ai-coverage-20260816",
+      "capsule": ".lotyra/rt-ai-coverage-20260816.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T02:25:46Z",
+      "id": "LSE-138",
+      "kind": "write",
+      "paths": [
+        "python/tests/test_prompts.py",
+        "python/vigilyx_ai/llm/prompts.py"
+      ],
+      "released_at": "2026-08-17T02:11:21Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:16:28Z",
+      "agent_id": "root-rt-ai-coverage-20260816",
+      "capsule": ".lotyra/rt-ai-coverage-20260816.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T02:46:28Z",
+      "id": "LSE-139",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T02:16:54Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:17:45Z",
+      "agent_id": "root-rt-ai-coverage-20260816",
+      "capsule": ".lotyra/rt-ai-coverage-20260816.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T02:47:45Z",
+      "id": "LSE-140",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T02:17:48Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:17:57Z",
+      "agent_id": "codex-data-egress-v7-20260817",
+      "capsule": "/private/tmp/vigilyx-data-egress-v7-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T02:47:57Z",
+      "id": "LSE-141",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/intel/mod.rs",
+        "deploy/docker/.env.example",
+        "python/tests/test_llm_limits.py",
+        "python/tests/test_llm_second_opinion.py",
+        "python/vigilyx_ai/api.py",
+        "python/vigilyx_ai/llm/client.py",
+        "python/vigilyx_ai/scraper.py"
+      ],
+      "released_at": "2026-08-17T02:26:20Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:19:59Z",
+      "agent_id": "root-rt-ai-coverage-20260816",
+      "capsule": ".lotyra/rt-ai-coverage-20260816.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T02:34:59Z",
+      "id": "LSE-142",
+      "kind": "write",
+      "paths": [
+        "python/tests/test_nlp_segmented.py",
+        "python/vigilyx_ai/nlp_phishing.py"
+      ],
+      "released_at": "2026-08-17T02:22:21Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:25:49Z",
+      "agent_id": "codex-identity-test-v8-20260817",
+      "capsule": "/private/tmp/vigilyx-identity-test-contract-v8-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T02:55:49Z",
+      "id": "LSE-143",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/header_scan/checks.rs"
+      ],
+      "released_at": "2026-08-17T02:26:10Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:30:51Z",
+      "agent_id": "codex-mta-hickory-v9-20260817",
+      "capsule": "/private/tmp/vigilyx-mta-hickory-compat-v9-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T03:00:51Z",
+      "id": "LSE-144",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-mta/src/lib.rs"
+      ],
+      "released_at": "2026-08-17T02:31:15Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:31:27Z",
+      "agent_id": "root-rt-ai-coverage-20260816",
+      "capsule": ".lotyra/rt-ai-coverage-20260816.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T02:46:27Z",
+      "id": "LSE-145",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/semantic_scan.rs"
+      ],
+      "released_at": "2026-08-17T02:33:50Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:37:41Z",
+      "agent_id": "codex-public-ip-v10-20260817",
+      "capsule": "/private/tmp/vigilyx-public-ip-classification-v10-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T03:07:41Z",
+      "id": "LSE-146",
+      "kind": "write",
+      "paths": [
+        "python/vigilyx_ai/llm/client.py",
+        "python/vigilyx_ai/scraper.py"
+      ],
+      "released_at": "2026-08-17T02:37:57Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:39:09Z",
+      "agent_id": "codex-mta-hickory-v9-20260817",
+      "capsule": "/private/tmp/vigilyx-mta-hickory-compat-v9-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T03:09:09Z",
+      "id": "LSE-147",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-mta/src/lib.rs"
+      ],
+      "released_at": "2026-08-17T02:39:38Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:39:57Z",
+      "agent_id": "root-rt-ai-coverage-20260816",
+      "capsule": ".lotyra/rt-ai-coverage-20260816.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T03:09:57Z",
+      "id": "LSE-148",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T02:40:37Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:41:38Z",
+      "agent_id": "root-rt-ai-coverage-20260816",
+      "capsule": ".lotyra/rt-ai-coverage-20260816.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T03:11:38Z",
+      "id": "LSE-149",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T02:41:41Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:41:55Z",
+      "agent_id": "root-rt-ai-coverage-20260816",
+      "capsule": ".lotyra/rt-ai-coverage-20260816.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T03:11:55Z",
+      "id": "LSE-150",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T02:41:58Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:43:16Z",
+      "agent_id": "root-rt-ai-coverage-20260816",
+      "capsule": ".lotyra/rt-ai-coverage-20260816.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T03:13:16Z",
+      "id": "LSE-151",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T02:43:41Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:43:56Z",
+      "agent_id": "root-rt-ai-coverage-20260816",
+      "capsule": ".lotyra/rt-ai-coverage-20260816.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T03:13:56Z",
+      "id": "LSE-152",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T02:43:59Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:44:39Z",
+      "agent_id": "root-rt-ai-coverage-20260816",
+      "capsule": ".lotyra/rt-ai-coverage-20260816.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T03:14:39Z",
+      "id": "LSE-153",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T02:45:01Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:45:04Z",
+      "agent_id": "codex-identity-test-v8-20260817",
+      "capsule": "/private/tmp/vigilyx-identity-test-contract-v8-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T03:15:04Z",
+      "id": "LSE-154",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T02:45:08Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:45:30Z",
+      "agent_id": "codex-identity-test-v8-20260817",
+      "capsule": "/private/tmp/vigilyx-identity-test-contract-v8-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T03:15:30Z",
+      "id": "LSE-155",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T02:45:34Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:45:40Z",
+      "agent_id": "root-rt-ai-coverage-20260816",
+      "capsule": ".lotyra/rt-ai-coverage-20260816.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T03:15:40Z",
+      "id": "LSE-156",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T02:46:07Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T02:55:34Z",
+      "agent_id": "root-deploy-77-20260816",
+      "capsule": ".lotyra/deploy-77-full-20260816.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T03:25:34Z",
+      "id": "LSE-157",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-db/src/mq/client.rs",
+        "crates/vigilyx-db/src/security/alert.rs"
+      ],
+      "released_at": "2026-08-17T02:59:51Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T03:05:34Z",
+      "agent_id": "root-deploy-77-20260816",
+      "capsule": ".lotyra/deploy-77-full-20260816.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T03:35:34Z",
+      "id": "LSE-158",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-db/src/mq/client.rs"
+      ],
+      "released_at": "2026-08-17T03:07:47Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T03:15:31Z",
+      "agent_id": "root-deploy-77-20260816",
+      "capsule": ".lotyra/deploy-77-full-20260816.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T03:45:31Z",
+      "id": "LSE-159",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/data_security/dlp/mod.rs",
+        "crates/vigilyx-engine/src/data_security/dlp/tests.rs",
+        "crates/vigilyx-engine/src/modules/content_scan/mod.rs",
+        "crates/vigilyx-engine/src/modules/content_scan/tests.rs",
+        "crates/vigilyx-engine/src/pipeline/verdict/evidence_clusters.rs",
+        "crates/vigilyx-engine/src/temporal/cusum.rs"
+      ],
+      "released_at": "2026-08-17T03:20:43Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T03:30:14Z",
+      "agent_id": "root-deploy-77-20260816",
+      "capsule": ".lotyra/deploy-77-full-20260816.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T04:30:14Z",
+      "id": "LSE-160",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-api/src/handlers/deployment_mode.rs",
+        "crates/vigilyx-mta/src/config.rs",
+        "crates/vigilyx-mta/src/server/connection.rs",
+        "crates/vigilyx-parser/src/mime.rs",
+        "crates/vigilyx-parser/src/smtp_state.rs",
+        "deploy/docker/.env.example",
+        "deploy/docker/Dockerfile.mta",
+        "deploy/docker/Dockerfile.mta.fast",
+        "deploy/docker/docker-compose.yml",
+        "frontend/src/components/settings/DeploymentSettings.tsx",
+        "frontend/src/i18n/locales/en.json",
+        "frontend/src/i18n/locales/zh.json"
+      ],
+      "released_at": "2026-08-17T03:35:44Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T03:46:37Z",
+      "agent_id": "root-deploy-77-20260816",
+      "capsule": ".lotyra/deploy-77-full-20260816.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T04:16:37Z",
+      "id": "LSE-161",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-sniffer/src/session/tests.rs"
+      ],
+      "released_at": "2026-08-17T03:46:55Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T05:51:00Z",
+      "agent_id": "codex-credential-pcap-v11-20260817",
+      "capsule": "/private/tmp/vigilyx-credential-pcap-v11-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T06:21:00Z",
+      "id": "LSE-162",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/content_scan/detectors.rs",
+        "crates/vigilyx-engine/src/modules/content_scan/tests.rs",
+        "crates/vigilyx-engine/src/pipeline/verdict/clustered_ds_v1.rs",
+        "crates/vigilyx-engine/src/pipeline/verdict/evidence_clusters.rs",
+        "crates/vigilyx-sniffer/src/capture/mod.rs"
+      ],
+      "released_at": "2026-08-17T06:03:51Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T06:08:21Z",
+      "agent_id": "codex-credential-pcap-v11-20260817",
+      "capsule": "/private/tmp/vigilyx-credential-pcap-v11-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T06:38:21Z",
+      "id": "LSE-163",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T06:08:26Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T06:08:49Z",
+      "agent_id": "codex-credential-pcap-v11-20260817",
+      "capsule": "/private/tmp/vigilyx-credential-pcap-v11-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T06:38:49Z",
+      "id": "LSE-164",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T06:08:52Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T06:09:37Z",
+      "agent_id": "codex-credential-pcap-v11-20260817",
+      "capsule": "/private/tmp/vigilyx-credential-pcap-v11-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T06:39:37Z",
+      "id": "LSE-165",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T06:09:42Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T06:09:44Z",
+      "agent_id": "codex-credential-pcap-v11-20260817",
+      "capsule": "/private/tmp/vigilyx-credential-pcap-v11-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T06:39:44Z",
+      "id": "LSE-166",
+      "kind": "verify",
+      "paths": [
+        "."
+      ],
+      "released_at": "2026-08-17T06:09:47Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T06:12:39Z",
+      "agent_id": "codex-credential-pcap-v11-20260817",
+      "capsule": "/private/tmp/vigilyx-credential-pcap-v11-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T07:12:39Z",
+      "id": "LSE-167",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-api/src/main.rs",
+        "deploy/docker/caddy-entrypoint.sh"
+      ],
+      "released_at": "2026-08-17T06:13:55Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T06:22:42Z",
+      "agent_id": "codex-credential-pcap-v11-20260817",
+      "capsule": "/private/tmp/vigilyx-credential-pcap-v11-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T07:22:42Z",
+      "id": "LSE-168",
+      "kind": "write",
+      "paths": [
+        "CHANGELOG.md",
+        "Cargo.lock",
+        "Cargo.toml",
+        "frontend/package-lock.json",
+        "frontend/package.json",
+        "frontend/src/components/settings/AboutSettings.tsx",
+        "frontend/src/components/settings/Settings.tsx",
+        "frontend/src/i18n/locales/en.json",
+        "frontend/src/i18n/locales/zh.json",
+        "python/pyproject.toml",
+        "python/uv.lock"
+      ],
+      "released_at": "2026-08-17T06:23:22Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T06:23:49Z",
+      "agent_id": "codex-credential-pcap-v11-20260817",
+      "capsule": "/private/tmp/vigilyx-credential-pcap-v11-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T06:53:49Z",
+      "id": "LSE-169",
+      "kind": "write",
+      "paths": [
+        "frontend/src/components/community/OpenSourceCommunity.tsx",
+        "scripts/insert_yara_rules.py"
+      ],
+      "released_at": "2026-08-17T06:24:03Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T06:35:46Z",
+      "agent_id": "codex-credential-pcap-v11-20260817",
+      "capsule": "/private/tmp/vigilyx-credential-pcap-v11-capsule.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T07:05:46Z",
+      "id": "LSE-170",
+      "kind": "write",
+      "paths": [
+        "frontend/src/App.tsx",
+        "frontend/src/components/auth/SetupWizard.tsx",
+        "frontend/src/components/community/OpenSourceCommunity.tsx",
+        "frontend/src/components/data-security/DataSecurity.tsx",
+        "frontend/src/components/data-security/IncidentDetail.tsx",
+        "frontend/src/components/data-security/constants.tsx",
+        "frontend/src/components/email-security/AvScanTab.tsx",
+        "frontend/src/components/settings/DatabaseSettings.tsx",
+        "frontend/src/components/settings/Settings.tsx",
+        "frontend/src/main.tsx",
+        "frontend/tsconfig.json"
+      ],
+      "released_at": "2026-08-17T06:36:16Z",
+      "status": "released"
+    },
+    {
+      "acquired_at": "2026-08-17T06:46:08Z",
+      "agent_id": "root-tongcheng-fp-20260817",
+      "capsule": ".lotyra/tongcheng-false-positive-20260817.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T07:46:08Z",
+      "id": "LSE-171",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/link_content.rs",
+        "crates/vigilyx-engine/src/modules/link_reputation/mod.rs",
+        "shared/schemas/engine_module_data_seed.json"
+      ],
+      "released_at": null,
+      "status": "active"
+    },
+    {
+      "acquired_at": "2026-08-17T06:58:05Z",
+      "agent_id": "root-oppo-fp-20260817",
+      "capsule": ".lotyra/oppo-oms-disclaimer-false-positive-20260817.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T07:58:05Z",
+      "id": "LSE-172",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/modules/transaction_correlation.rs"
+      ],
+      "released_at": null,
+      "status": "active"
+    },
+    {
+      "acquired_at": "2026-08-17T07:15:19Z",
+      "agent_id": "root-reply-mismatch-fp-20260817",
+      "capsule": ".lotyra/lone-reply-domain-mismatch-fusion-20260817.json",
+      "expired_at": null,
+      "expires_at": "2026-08-17T08:15:19Z",
+      "id": "LSE-173",
+      "kind": "write",
+      "paths": [
+        "crates/vigilyx-engine/src/pipeline/verdict/evidence_clusters.rs"
+      ],
+      "released_at": null,
+      "status": "active"
+    }
+  ],
+  "revision": 355,
+  "schema_version": "1.0"
+}

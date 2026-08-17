@@ -41,6 +41,8 @@ use crate::error::EngineError;
 use crate::matcher::{rmm_brand_keywords, rmm_installer_filenames, rmm_lure_action_keywords};
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
 use crate::module_data::module_data;
+use crate::modules::content_scan::html_utils::strip_html_tags;
+use crate::modules::content_scan::normalize_text;
 
 // ---------------------------------------------------------------------------
 // Module struct
@@ -82,12 +84,11 @@ impl RmmDetectModule {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Lowercase-decode an attachment filename (strips RFC 2047 encoded-word, quotes, whitespace).
+/// Lowercase-decode an attachment filename (strips RFC 2047 encoded-word,
+/// quotes, whitespace) and Unicode-normalize it so full-width / zero-width
+/// evasion in filenames cannot hide RMM brands or installer patterns.
 fn decoded_lower_filename(filename: &str) -> String {
-    decode_rfc2047(filename)
-        .trim()
-        .trim_matches('"')
-        .to_ascii_lowercase()
+    normalize_text(decode_rfc2047(filename).trim().trim_matches('"')).to_ascii_lowercase()
 }
 
 /// Strip extremely long bodies to keep regex/substring scans bounded — we only
@@ -151,11 +152,14 @@ impl SecurityModule for RmmDetectModule {
         let mut score: f64 = 0.0;
 
         // ── Build the scan corpus ─────────────────────────────────────────
+        // Unicode normalization (NFKC + zero-width stripping) happens per
+        // piece before lowercasing: full-width letters and zero-width
+        // splices must not hide RMM brands or action verbs.
         let subject_lower = ctx
             .session
             .subject
             .as_deref()
-            .map(|s| s.to_ascii_lowercase())
+            .map(|s| normalize_text(s).to_ascii_lowercase())
             .unwrap_or_default();
 
         let body_text_lower = ctx
@@ -163,7 +167,7 @@ impl SecurityModule for RmmDetectModule {
             .content
             .body_text
             .as_deref()
-            .map(|s| truncate_for_scan(s).to_ascii_lowercase())
+            .map(|s| normalize_text(truncate_for_scan(s)).to_ascii_lowercase())
             .unwrap_or_default();
 
         let body_html_lower = ctx
@@ -171,7 +175,10 @@ impl SecurityModule for RmmDetectModule {
             .content
             .body_html
             .as_deref()
-            .map(|s| truncate_for_scan(s).to_ascii_lowercase())
+            // Strip HTML tags before scanning: raw markup splices keywords
+            // ("Any<b>Desk</b>") and entity-encoded text ("Any&#68;esk")
+            // would otherwise stay invisible to the matchers.
+            .map(|s| normalize_text(&strip_html_tags(truncate_for_scan(s))).to_ascii_lowercase())
             .unwrap_or_default();
 
         // Combined "text-like" corpus for brand/action substring scans.
@@ -184,6 +191,13 @@ impl SecurityModule for RmmDetectModule {
         corpus.push_str(&body_text_lower);
         corpus.push('\n');
         corpus.push_str(&body_html_lower);
+
+        // Whitespace-free second view: tag stripping inserts a space at every
+        // tag boundary, so keywords spliced by inline markup ("Any<b>Desk</b>"
+        // -> "any desk") or per-letter spacing still evade substring scans.
+        let squashed: String = corpus.chars().filter(|c| !c.is_whitespace()).collect();
+        corpus.push('\n');
+        corpus.push_str(&squashed);
 
         // ── 1. Attachment installer match ─────────────────────────────────
         let mut installer_hits: Vec<(String, String)> = Vec::new(); // (filename, matched_pattern)
@@ -364,6 +378,46 @@ mod tests {
         SecurityContext::new(Arc::new(session))
     }
 
+    fn ctx_with_html(subject: Option<&str>, body_html: &str) -> SecurityContext {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.subject = subject.map(str::to_string);
+        session.content = EmailContent {
+            body_html: Some(body_html.to_string()),
+            ..Default::default()
+        };
+        SecurityContext::new(Arc::new(session))
+    }
+
+    #[tokio::test]
+    async fn html_tag_spliced_brand_and_action_still_flag_combo() {
+        // Evasion PoC: the HTML body used to be scanned raw, so
+        // "Any<b>Desk</b>" hid the brand keyword behind inline markup and
+        // entity-encoded text never decoded. The shared stripper plus a
+        // whitespace-free corpus view restores both.
+        let module = RmmDetectModule::new();
+        let ctx = ctx_with_html(
+            None,
+            "<p>技术支持通知：请<b>下载并运行</b> <b>Any</b><b>Desk</b> 客户端，以便工程师为您提供远程协助。</p>",
+        );
+        let result = module.analyze(&ctx).await.expect("analyze ok");
+        assert!(
+            result.categories.contains(&"rmm_lure_combo".to_string()),
+            "tag-spliced AnyDesk brand + action verb must produce the lure combo, cats={:?}",
+            result.categories
+        );
+        assert!(
+            result.threat_level >= ThreatLevel::Low,
+            "brand+action combo must reach Low, got {:?}",
+            result.threat_level
+        );
+    }
+
     #[tokio::test]
     async fn flags_rmm_installer_attached_with_action_verb() {
         let module = RmmDetectModule::new();
@@ -442,5 +496,54 @@ mod tests {
             "Chinese brand+action+lure combo should fire, got {:?}",
             result.threat_level
         );
+    }
+
+    #[tokio::test]
+    async fn zero_width_brand_splice_still_flags_combo() {
+        // Evasion PoC: "Any\u{200B}Desk" splices the brand keyword with a
+        // zero-width space; a raw lowercase corpus misses it.
+        let module = RmmDetectModule::new();
+        let ctx = ctx_with(
+            Some("Microsoft support refund"),
+            Some(
+                "Please install and run Any\u{200B}Desk, then share the connect ID to receive your refund.",
+            ),
+            vec![],
+        );
+        let result = module.analyze(&ctx).await.expect("analyze ok");
+        assert!(
+            result.categories.contains(&"rmm_lure_combo".to_string()),
+            "zero-width brand splice must still produce brand+action combo, cats={:?}",
+            result.categories
+        );
+        assert!(result.threat_level >= ThreatLevel::Low);
+    }
+
+    #[tokio::test]
+    async fn fullwidth_brand_in_subject_still_flags_combo() {
+        // Evasion PoC: full-width Latin letters in the subject bypass raw
+        // substring matching until NFKC folds them to ASCII.
+        let module = RmmDetectModule::new();
+        let ctx = ctx_with(
+            Some("Ｉｎｓｔａｌｌ ＡｎｙＤｅｓｋ for refund"),
+            Some("Please connect using the connect ID below to receive your refund."),
+            vec![],
+        );
+        let result = module.analyze(&ctx).await.expect("analyze ok");
+        assert!(
+            result.categories.contains(&"rmm_lure_combo".to_string()),
+            "full-width brand must still produce brand+action combo, cats={:?}",
+            result.categories
+        );
+        assert!(result.threat_level >= ThreatLevel::Low);
+    }
+
+    #[test]
+    fn filename_fullwidth_installer_pattern_detected() {
+        // Full-width "ａｎｙｄｅｓｋ" in an attachment filename must fold
+        // to ASCII before the brand/installer Aho-Corasick pass.
+        let lowered = decoded_lower_filename("ＡｎｙＤｅｓｋ\u{200B}Setup.zip");
+        assert!(lowered.contains("anydesk"));
+        assert!(lowered.contains("setup"));
     }
 }

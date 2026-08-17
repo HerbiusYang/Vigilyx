@@ -33,10 +33,14 @@ fn normalize_ioc_verdict_filter_values(verdicts: &[String]) -> Vec<String> {
 }
 
 impl VigilDb {
-    /// New IOC (UPSERT: New last_seen + hit_count)
+    /// New IOC (UPSERT: always refreshes last_seen + hit_count)
     ///
-    /// : admin_clean items, Source.
-    /// confidence New MAX(),.
+    /// Two-tier source protection against self-neutralization:
+    /// - Tier 1 (`admin_clean`, `system`): never overwritten by any other source.
+    /// - Tier 2 (`auto`, `manual`, `import`): never overwritten by external
+    ///   intel feeds (otx / vt_scrape / virustotal / abuseipdb). Without this an
+    ///   attacker could pre-poison the external clean cache to neutralize an
+    ///   auto-recorded malicious IOC.
     pub async fn upsert_ioc(&self, ioc: &IocEntry) -> Result<()> {
         sqlx::query(
             r#"
@@ -49,34 +53,52 @@ impl VigilDb {
                 last_seen = EXCLUDED.last_seen,
                 hit_count = security_ioc.hit_count + 1,
                 confidence = CASE
-                    WHEN security_ioc.source IN ('admin_clean', 'system')
-                        AND EXCLUDED.source NOT IN ('admin_clean', 'system') THEN security_ioc.confidence
+                    WHEN (security_ioc.source IN ('admin_clean', 'system')
+                        AND EXCLUDED.source NOT IN ('admin_clean', 'system'))
+                        OR (security_ioc.source IN ('auto', 'manual', 'import')
+                        AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import'))
+                        THEN security_ioc.confidence
                     ELSE EXCLUDED.confidence
                 END,
                 verdict = CASE
-                    WHEN security_ioc.source IN ('admin_clean', 'system')
-                        AND EXCLUDED.source NOT IN ('admin_clean', 'system') THEN security_ioc.verdict
+                    WHEN (security_ioc.source IN ('admin_clean', 'system')
+                        AND EXCLUDED.source NOT IN ('admin_clean', 'system'))
+                        OR (security_ioc.source IN ('auto', 'manual', 'import')
+                        AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import'))
+                        THEN security_ioc.verdict
                     ELSE EXCLUDED.verdict
                 END,
                 source = CASE
-                    WHEN security_ioc.source IN ('admin_clean', 'system')
-                        AND EXCLUDED.source NOT IN ('admin_clean', 'system') THEN security_ioc.source
+                    WHEN (security_ioc.source IN ('admin_clean', 'system')
+                        AND EXCLUDED.source NOT IN ('admin_clean', 'system'))
+                        OR (security_ioc.source IN ('auto', 'manual', 'import')
+                        AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import'))
+                        THEN security_ioc.source
                     ELSE EXCLUDED.source
                 END,
                 attack_type = CASE
-                    WHEN security_ioc.source IN ('admin_clean', 'system')
-                        AND EXCLUDED.source NOT IN ('admin_clean', 'system') THEN security_ioc.attack_type
+                    WHEN (security_ioc.source IN ('admin_clean', 'system')
+                        AND EXCLUDED.source NOT IN ('admin_clean', 'system'))
+                        OR (security_ioc.source IN ('auto', 'manual', 'import')
+                        AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import'))
+                        THEN security_ioc.attack_type
                     WHEN EXCLUDED.attack_type != '' THEN EXCLUDED.attack_type
                     ELSE security_ioc.attack_type
                 END,
                 context = CASE
-                    WHEN security_ioc.source IN ('admin_clean', 'system')
-                        AND EXCLUDED.source NOT IN ('admin_clean', 'system') THEN security_ioc.context
+                    WHEN (security_ioc.source IN ('admin_clean', 'system')
+                        AND EXCLUDED.source NOT IN ('admin_clean', 'system'))
+                        OR (security_ioc.source IN ('auto', 'manual', 'import')
+                        AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import'))
+                        THEN security_ioc.context
                     ELSE EXCLUDED.context
                 END,
                 expires_at = CASE
-                    WHEN security_ioc.source IN ('admin_clean', 'system')
-                        AND EXCLUDED.source NOT IN ('admin_clean', 'system') THEN security_ioc.expires_at
+                    WHEN (security_ioc.source IN ('admin_clean', 'system')
+                        AND EXCLUDED.source NOT IN ('admin_clean', 'system'))
+                        OR (security_ioc.source IN ('auto', 'manual', 'import')
+                        AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import'))
+                        THEN security_ioc.expires_at
                     ELSE EXCLUDED.expires_at
                 END,
                 updated_at = EXCLUDED.updated_at
@@ -104,7 +126,9 @@ impl VigilDb {
 
     /// upsert IOC (, VALUES)
     ///
-    /// upsert_ioc 1: admin_clean,confidence MAX.
+    /// Same two-tier source protection as `upsert_ioc`: admin/system entries are
+    /// never overwritten; auto/manual/import entries are never overwritten by
+    /// external intel feeds.
     /// VALUES INSERT, N DB ceil(N/CHUNK).
     /// 14 x 500 = 7000,Security.
     pub async fn batch_upsert_iocs(&self, iocs: &[IocEntry]) -> Result<()> {
@@ -186,40 +210,58 @@ impl VigilDb {
                     last_seen = EXCLUDED.last_seen, \
                     hit_count = security_ioc.hit_count + 1, \
                     confidence = CASE \
-                        WHEN security_ioc.source IN ('admin_clean', 'system') \
-                            AND EXCLUDED.source NOT IN ('admin_clean', 'system') THEN security_ioc.confidence \
+                        WHEN (security_ioc.source IN ('admin_clean', 'system') \
+                            AND EXCLUDED.source NOT IN ('admin_clean', 'system')) \
+                            OR (security_ioc.source IN ('auto', 'manual', 'import') \
+                            AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import')) \
+                            THEN security_ioc.confidence \
                         ELSE EXCLUDED.confidence \
                     END, \
                     verdict = CASE \
-                        WHEN security_ioc.source IN ('admin_clean', 'system') \
-                            AND EXCLUDED.source NOT IN ('admin_clean', 'system') THEN security_ioc.verdict \
+                        WHEN (security_ioc.source IN ('admin_clean', 'system') \
+                            AND EXCLUDED.source NOT IN ('admin_clean', 'system')) \
+                            OR (security_ioc.source IN ('auto', 'manual', 'import') \
+                            AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import')) \
+                            THEN security_ioc.verdict \
                         ELSE EXCLUDED.verdict \
                     END, \
                     source = CASE \
-                        WHEN security_ioc.source IN ('admin_clean', 'system') \
-                            AND EXCLUDED.source NOT IN ('admin_clean', 'system') THEN security_ioc.source \
+                        WHEN (security_ioc.source IN ('admin_clean', 'system') \
+                            AND EXCLUDED.source NOT IN ('admin_clean', 'system')) \
+                            OR (security_ioc.source IN ('auto', 'manual', 'import') \
+                            AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import')) \
+                            THEN security_ioc.source \
                         ELSE EXCLUDED.source \
                     END, \
                     attack_type = CASE \
-                        WHEN security_ioc.source IN ('admin_clean', 'system') \
-                            AND EXCLUDED.source NOT IN ('admin_clean', 'system') THEN security_ioc.attack_type \
+                        WHEN (security_ioc.source IN ('admin_clean', 'system') \
+                            AND EXCLUDED.source NOT IN ('admin_clean', 'system')) \
+                            OR (security_ioc.source IN ('auto', 'manual', 'import') \
+                            AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import')) \
+                            THEN security_ioc.attack_type \
                         WHEN EXCLUDED.attack_type != '' THEN EXCLUDED.attack_type \
                         ELSE security_ioc.attack_type \
                     END, \
                     context = CASE \
-                        WHEN security_ioc.source IN ('admin_clean', 'system') \
-                            AND EXCLUDED.source NOT IN ('admin_clean', 'system') THEN security_ioc.context \
+                        WHEN (security_ioc.source IN ('admin_clean', 'system') \
+                            AND EXCLUDED.source NOT IN ('admin_clean', 'system')) \
+                            OR (security_ioc.source IN ('auto', 'manual', 'import') \
+                            AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import')) \
+                            THEN security_ioc.context \
                         ELSE EXCLUDED.context \
                     END, \
                     expires_at = CASE \
-                        WHEN security_ioc.source IN ('admin_clean', 'system') \
-                            AND EXCLUDED.source NOT IN ('admin_clean', 'system') THEN security_ioc.expires_at \
+                        WHEN (security_ioc.source IN ('admin_clean', 'system') \
+                            AND EXCLUDED.source NOT IN ('admin_clean', 'system')) \
+                            OR (security_ioc.source IN ('auto', 'manual', 'import') \
+                            AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import')) \
+                            THEN security_ioc.expires_at \
                         ELSE EXCLUDED.expires_at \
                     END, \
                     updated_at = EXCLUDED.updated_at",
             );
 
-            let mut query = sqlx::query(&sql);
+            let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
             for row in chunk {
                 query = query
                     .bind(&row.id)
@@ -241,6 +283,38 @@ impl VigilDb {
         }
 
         tx.commit().await?;
+        Ok(())
+    }
+
+    /// Refresh `last_seen`/`hit_count` only, without touching verdict/confidence/source.
+    ///
+    /// Used when an external intel feed re-observes an indicator that already
+    /// has an entry recorded by a non-external source (auto/manual/import/
+    /// admin_clean/system): the external result must never overwrite the
+    /// stronger verdict, only prove the indicator is still active.
+    pub async fn touch_ioc_last_seen(&self, ioc_type: &str, indicator: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        if is_case_insensitive_ioc_type(ioc_type) {
+            sqlx::query(
+                "UPDATE security_ioc SET last_seen = $3, hit_count = hit_count + 1, updated_at = $3 \
+                 WHERE ioc_type = $1 AND LOWER(indicator) = LOWER($2)",
+            )
+            .bind(ioc_type)
+            .bind(indicator)
+            .bind(&now)
+            .execute(&self.pool)
+            .await?;
+        } else {
+            sqlx::query(
+                "UPDATE security_ioc SET last_seen = $3, hit_count = hit_count + 1, updated_at = $3 \
+                 WHERE ioc_type = $1 AND indicator = $2",
+            )
+            .bind(ioc_type)
+            .bind(indicator)
+            .bind(&now)
+            .execute(&self.pool)
+            .await?;
+        }
         Ok(())
     }
 
@@ -350,7 +424,7 @@ impl VigilDb {
         sql.push_str(" ORDER BY last_seen DESC");
         sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
 
-        let mut query = sqlx::query_as::<_, IocRowWithCount>(&sql);
+        let mut query = sqlx::query_as::<_, IocRowWithCount>(sqlx::AssertSqlSafe(sql.as_str()));
         for b in &binds {
             query = query.bind(b);
         }
@@ -416,7 +490,7 @@ impl VigilDb {
         sql.push_str(" ORDER BY last_seen DESC");
         sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
 
-        let mut query = sqlx::query_as::<_, IocRowWithCount>(&sql);
+        let mut query = sqlx::query_as::<_, IocRowWithCount>(sqlx::AssertSqlSafe(sql.as_str()));
         for b in &binds {
             query = query.bind(b);
         }
@@ -661,6 +735,8 @@ impl VigilDb {
                 continue;
             }
             let id = Uuid::new_v4().to_string();
+            // Never let a malicious seed overwrite an explicit admin/manual
+            // clean entry (self-neutralization via seed refresh).
             let result = sqlx::query(
                 r#"INSERT INTO security_ioc
                     (id, indicator, ioc_type, source, verdict, confidence, attack_type,
@@ -673,7 +749,8 @@ impl VigilDb {
                        attack_type = EXCLUDED.attack_type,
                        source = 'system',
                        context = EXCLUDED.context,
-                       updated_at = EXCLUDED.updated_at"#,
+                       updated_at = EXCLUDED.updated_at
+                   WHERE security_ioc.source NOT IN ('manual', 'admin_clean')"#,
             )
             .bind(&id)
             .bind(indicator)
@@ -836,5 +913,163 @@ mod tests {
             normalize_ioc_verdict_filter_values(&input),
             vec!["clean".to_string(), "safe".to_string()]
         );
+    }
+}
+
+// DB-backed regression tests for the UPSERT source-protection tiers.
+// Gated behind `infra-tests` (TEST_DATABASE_URL), matching intel/mod.rs.
+#[cfg(all(test, feature = "infra-tests"))]
+mod infra_tests {
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    use vigilyx_core::security::IocEntry;
+
+    use crate::VigilDb;
+
+    async fn make_db() -> VigilDb {
+        let db = VigilDb::new(
+            &std::env::var("TEST_DATABASE_URL")
+                .expect("TEST_DATABASE_URL must be set to run integration tests"),
+        )
+        .await
+        .unwrap();
+        db.init_security_tables().await.unwrap();
+        db
+    }
+
+    fn make_ioc(indicator: &str, source: &str, verdict: &str, confidence: f64) -> IocEntry {
+        let now = Utc::now();
+        IocEntry {
+            id: Uuid::new_v4(),
+            indicator: indicator.to_string(),
+            ioc_type: "domain".to_string(),
+            source: source.to_string(),
+            verdict: verdict.to_string(),
+            confidence,
+            attack_type: String::new(),
+            first_seen: now,
+            last_seen: now,
+            hit_count: 0,
+            context: None,
+            expires_at: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    /// PoC: attacker pre-poisons the external clean cache to neutralize an
+    /// auto-recorded malicious IOC. Before the fix the external clean upsert
+    /// overwrote verdict/source; after the fix the auto entry is protected.
+    #[tokio::test]
+    async fn external_clean_cache_does_not_overwrite_auto_malicious() {
+        let db = make_db().await;
+        let indicator = format!("selfnut-{}.example", Uuid::new_v4().simple());
+
+        // First email: Critical verdict auto-records a malicious IOC.
+        db.upsert_ioc(&make_ioc(&indicator, "auto", "malicious", 0.9))
+            .await
+            .unwrap();
+        // Attacker's follow-up traffic drives an external feed to cache "clean".
+        db.upsert_ioc(&make_ioc(&indicator, "otx", "clean", 0.8))
+            .await
+            .unwrap();
+
+        let ioc = db
+            .find_ioc("domain", &indicator)
+            .await
+            .unwrap()
+            .expect("IOC must still exist");
+        assert_eq!(ioc.verdict, "malicious", "external clean must not overwrite auto malicious");
+        assert_eq!(ioc.source, "auto");
+        assert_eq!(ioc.hit_count, 1, "last_seen/hit_count still refresh");
+    }
+
+    /// Regression guard: the opposite direction must still work — a Critical
+    /// verdict's auto malicious IOC takes over a previously cached external
+    /// clean entry.
+    #[tokio::test]
+    async fn auto_malicious_still_overwrites_external_clean_cache() {
+        let db = make_db().await;
+        let indicator = format!("takeover-{}.example", Uuid::new_v4().simple());
+
+        db.upsert_ioc(&make_ioc(&indicator, "otx", "clean", 0.8))
+            .await
+            .unwrap();
+        db.upsert_ioc(&make_ioc(&indicator, "auto", "malicious", 0.9))
+            .await
+            .unwrap();
+
+        let ioc = db
+            .find_ioc("domain", &indicator)
+            .await
+            .unwrap()
+            .expect("IOC must still exist");
+        assert_eq!(ioc.verdict, "malicious");
+        assert_eq!(ioc.source, "auto");
+    }
+
+    /// Manual admin entries must also survive external clean cache writes.
+    #[tokio::test]
+    async fn external_clean_cache_does_not_overwrite_manual_entry() {
+        let db = make_db().await;
+        let indicator = format!("manual-{}.example", Uuid::new_v4().simple());
+
+        db.upsert_ioc(&make_ioc(&indicator, "manual", "malicious", 0.95))
+            .await
+            .unwrap();
+        db.upsert_ioc(&make_ioc(&indicator, "vt_scrape", "clean", 0.8))
+            .await
+            .unwrap();
+
+        let ioc = db
+            .find_ioc("domain", &indicator)
+            .await
+            .unwrap()
+            .expect("IOC must still exist");
+        assert_eq!(ioc.verdict, "malicious");
+        assert_eq!(ioc.source, "manual");
+    }
+
+    /// touch_ioc_last_seen refreshes activity without changing the verdict.
+    #[tokio::test]
+    async fn touch_ioc_last_seen_preserves_verdict_and_source() {
+        let db = make_db().await;
+        let indicator = format!("touch-{}.example", Uuid::new_v4().simple());
+
+        db.upsert_ioc(&make_ioc(&indicator, "auto", "malicious", 0.9))
+            .await
+            .unwrap();
+        db.touch_ioc_last_seen("domain", &indicator).await.unwrap();
+
+        let ioc = db
+            .find_ioc("domain", &indicator)
+            .await
+            .unwrap()
+            .expect("IOC must still exist");
+        assert_eq!(ioc.verdict, "malicious");
+        assert_eq!(ioc.source, "auto");
+        assert_eq!(ioc.hit_count, 1);
+    }
+
+    /// PoC: the built-in malicious seed must not overwrite an explicit
+    /// admin/manual clean entry for the same domain.
+    #[tokio::test]
+    async fn malicious_seed_does_not_overwrite_admin_clean() {
+        let db = make_db().await;
+        // 'icloud.com.cn' is the current malicious_domains seed entry.
+        db.add_intel_clean("icloud.com.cn", "domain", Some("admin whitelist"))
+            .await
+            .unwrap();
+
+        db.seed_system_whitelist().await.unwrap();
+
+        let ioc = db
+            .find_ioc("domain", "icloud.com.cn")
+            .await
+            .unwrap()
+            .expect("admin entry must survive seeding");
+        assert_eq!(ioc.verdict, "clean", "malicious seed must not overwrite admin_clean");
+        assert_eq!(ioc.source, "admin_clean");
     }
 }

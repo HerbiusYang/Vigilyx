@@ -21,7 +21,7 @@
 #   - The Windows analysis VM image must be configured separately
 # ═══════════════════════════════════════════════════
 
-FROM ubuntu:22.04@sha256:eb29ed27b0821dca09c2e28b39135e185fc1302036427d5f4d70a41ce8fd7659
+FROM ubuntu:22.04@sha256:3b06811b2afd352be909dd088a004166d665dc76d38b13eada33522a9d915c6f
 
 ARG CAPEV2_REPO=https://github.com/kevoreilly/CAPEv2.git
 ARG CAPEV2_REF

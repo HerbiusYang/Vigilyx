@@ -125,10 +125,19 @@ pub(super) async fn query_ioc_ips(
 /// Query external threat intel for received IPs.
 ///
 /// Skips IPs already checked in Step 6 IOC lookup to prevent double scoring.
+///
+/// `revalidate_clean`: when the email already produced local detection
+/// signals, cached external *clean* verdicts are distrusted (clean cache can
+/// be pre-poisoned) and re-validated against live sources.
+///
+/// When the global external rate budget is exhausted, degrades to local-IOC
+/// only and reports `inspection_limited` instead of silently treating
+/// "no external answer" as "clean".
 pub(super) async fn query_external_intel(
     received_ips: &[String],
     intel: &IntelLayer,
     ioc_checked_ips: &HashSet<String>,
+    revalidate_clean: bool,
     total_score: &mut f64,
     categories: &mut Vec<String>,
     evidence: &mut Vec<Evidence>,
@@ -140,6 +149,20 @@ pub(super) async fn query_external_intel(
     unique_ips.retain(|ip| !ioc_checked_ips.contains(ip));
 
     if unique_ips.is_empty() {
+        return;
+    }
+
+    // Global rate-limit exhaustion must not fail open silently.
+    if intel.external_sources_saturated().await {
+        categories.push("inspection_limited".to_string());
+        evidence.push(Evidence {
+            description: format!(
+                "External intel rate budget exhausted; {} Received IP(s) checked against local IOC only",
+                unique_ips.len()
+            ),
+            location: Some("headers:Received".to_string()),
+            snippet: None,
+        });
         return;
     }
 
@@ -156,8 +179,14 @@ pub(super) async fn query_external_intel(
                 Ok(p) => p,
                 Err(_) => return None,
             };
-            let query_result =
-                tokio::time::timeout(Duration::from_secs(10), intel_c.query_ip(&ip)).await;
+            let query = async {
+                if revalidate_clean {
+                    intel_c.query_ip_revalidating(&ip).await
+                } else {
+                    intel_c.query_ip(&ip).await
+                }
+            };
+            let query_result = tokio::time::timeout(Duration::from_secs(10), query).await;
             match query_result {
                 Ok(result) => Some((ip, result)),
                 Err(_) => {
@@ -289,5 +318,52 @@ mod tests {
             0.40
         );
         assert_eq!(local_ioc_ip_weight("auto", "suspicious", 0.80), 0.20);
+    }
+
+    /// PoC (rate-limit fail-open): when the global external budget is
+    /// exhausted, the module must degrade to local-IOC-only and surface
+    /// `inspection_limited` — not silently treat "no answer" as "clean".
+    #[tokio::test]
+    #[cfg(feature = "infra-tests")]
+    async fn exhausted_budget_degrades_to_inspection_limited() {
+        let db = vigilyx_db::VigilDb::new(
+            &std::env::var("TEST_DATABASE_URL")
+                .expect("TEST_DATABASE_URL must be set to run integration tests"),
+        )
+        .await
+        .unwrap();
+        db.init_security_tables().await.unwrap();
+        let intel = IntelLayer::new(
+            crate::ioc::IocManager::new(db),
+            crate::intel::IntelSourceConfig {
+                otx_enabled: true,
+                vt_scrape_enabled: false,
+                abuseipdb_enabled: false,
+                ..Default::default()
+            },
+            Arc::new(std::sync::RwLock::new(HashSet::new())),
+        );
+        intel.exhaust_otx_budget().await;
+
+        let mut score = 0.0;
+        let mut categories = vec![];
+        let mut evidence = vec![];
+        query_external_intel(
+            &["198.51.100.23".to_string()],
+            &intel,
+            &HashSet::new(),
+            false,
+            &mut score,
+            &mut categories,
+            &mut evidence,
+        )
+        .await;
+
+        assert_eq!(score, 0.0);
+        assert!(
+            categories.iter().any(|c| c == "inspection_limited"),
+            "expected inspection_limited, got {:?}",
+            categories
+        );
     }
 }

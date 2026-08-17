@@ -69,6 +69,7 @@ export function OverviewTab({ stats, engineStatus, loadFailed }: {
     { key: 'self_sending', count: stats.self_send_count },
     { key: 'draft_box_abuse', count: stats.draft_abuse_count },
     { key: 'file_transit_abuse', count: stats.file_transit_count },
+    { key: 'volume_anomaly', count: stats.volume_anomaly_count },
     { key: 'jrt_compliance_violation', count: stats.jrt_compliance_count || 0 },
   ]
   const mtc = Math.max(...typeStats.map(t => t.count), 1)

@@ -329,7 +329,7 @@
         "1688.com", "8090.com", "4399.com", "7k7k.com", "17173.com",
         "17173.com.cn", "17k.com", "5566.net", "100ye.com",
         "8848.com", "5173.com", "9377.com", "37.com",
-        "3dmgame.com", "9game.cn", "h5.qq.com"
+        "3dmgame.com", "9game.cn", "h5.qq.com", "40017.cn"
       ]
     },
     "pinyin_syllables": {
@@ -411,9 +411,10 @@
         "hundsun", "smartx", "aishu", "alipay", "wechat", "weixin", "foxmail",
         "qichacha", "cmbchina", "ccabchina", "nbcb",
         "baihangcredit", "crctrust", "cjhxfund", "hzbankwealth", "psbc", "unionpay",
-        "rescdn", "bytetos", "mzstatic", "akamaihd", "kycregistry", "qqmail",
+        "rescdn", "bootcdn", "bytetos", "mzstatic", "akamaihd", "kycregistry", "qqmail",
         "sendcloud", "intsig", "qixin",
         "dingtalk", "feishu", "venustech", "sangfor", "nsfocus", "dbappsecurity",
+        "landray", "weaver", "kpmg",
         "topsec", "hillstonenet", "swift",
         "tencent", "tmall", "taobao", "jd", "pinduoduo", "douyin", "kuaishou",
         "bytedance", "bilibili", "iqiyi", "youku", "weibo", "xiaohongshu",
@@ -1418,6 +1419,7 @@
         "invoice", "download", "upload", "account", "verify", "confirm",
         "payment", "receipt", "document", "certificate", "transfer", "balance",
         "statement", "profile", "settings", "service", "banking", "finance",
+        "manager", "recovery", "card", "logic", "signature",
         "security", "password", "login", "register", "activate", "update",
         "manage", "notification", "message", "support", "customer", "portal",
         "index", "detail", "query", "result", "report",
@@ -2412,7 +2414,7 @@
         "iso", "img", "vhd", "vhdx", "wim",
         "html", "htm", "shtml", "mhtml", "mht",
         "eml", "msg",
-        "lnk", "url", "scf", "inf", "reg",
+        "lnk", "url", "scf", "inf", "reg", "desktop",
         "one", "onepkg", "onetoc2", "onecache",
         "jar", "class", "war",
         "py", "pyc", "pyz", "rb", "pl", "sh", "bash",
@@ -2466,15 +2468,19 @@
         "iso", "img", "vhd", "vhdx", "wim",
         "hta", "msi", "msp", "mst", "dll", "ocx", "cpl",
         "com", "pif", "wsf", "wsh", "ws", "ahk",
-        "lnk", "url", "scf", "inf", "reg",
+        "lnk", "url", "scf", "inf", "reg", "desktop",
         "one", "onepkg", "onetoc2", "onecache",
         "jar", "class", "war",
         "apk", "ipa", "appimage",
         "chm", "hlp",
         "xll", "xlam", "xlsm", "xlsb", "docm", "dotm", "pptm", "potm",
+        "xlm", "ppsm", "sldm", "xltm",
         "iqy", "slk", "ohi", "vsd", "vsdm",
         "ace", "arj", "lzh", "cab",
-        "py", "pyc", "pyz", "rb", "pl", "sh", "bash"
+        "py", "pyc", "pyz", "rb", "pl", "sh", "bash",
+        "msc", "sct", "wsc", "application", "appref-ms",
+        "library-ms", "searchconnector-ms", "diagcab",
+        "uue", "xxe"
       ]
     },
     "rmm_brand_keywords": {
@@ -3857,6 +3863,38 @@
         "微信支付客服",
         "京东客服",
         "顺丰客服"
+      ]
+    },
+    "benign_verification_keywords": {
+      "description": "Verification-code notification phrases that suppress standalone phishing keyword scoring when no untrusted link or attachment is present.",
+      "category": "content_scan",
+      "source_file": "modules/content_scan/detectors.rs",
+      "items": [
+        "verification code",
+        "email verification",
+        "邮箱验证码",
+        "验证码",
+        "校验码",
+        "动态码",
+        "otp",
+        "one-time code",
+        "one time code",
+        "passcode"
+      ]
+    },
+    "account_login_alert_subjects": {
+      "description": "Account-login alert subject phrases that become phishing evidence only when paired with an untrusted clickable destination.",
+      "category": "content_scan",
+      "source_file": "modules/content_scan/detectors.rs",
+      "items": [
+        "新设备登录",
+        "新设备登入",
+        "异地登录",
+        "异地登入",
+        "new device login",
+        "new device sign-in",
+        "new sign-in",
+        "new login detected"
       ]
     },
     "device_code_enter_phrases": {

@@ -6,6 +6,7 @@ import { decodeMimeWord } from '../../utils/mime'
 import { formatBytes, formatDate, getRelativeTime, getServerNowMs, isEncryptedPort } from '../../utils/format'
 import { apiFetch } from '../../utils/api'
 import { EVENTS } from '../../utils/events'
+import { getSensitiveSetting } from '../../utils/sensitiveStorage'
 
 // ========================================
 // Types
@@ -29,13 +30,34 @@ type AuthFilter = 'ALL' | 'WITH_AUTH' | 'AUTH_SUCCESS' | 'AUTH_FAILED'
 type DirectionFilter = 'ALL' | 'inbound' | 'outbound'
 type SessionDirection = 'inbound' | 'outbound' | null
 
+const TRAFFIC_LIST_STATE_KEY = 'vigilyx-email-list-state'
+
+/** Keep the list filters when navigating away and returning to the mail list. */
+function readTrafficListState(): Record<string, string | number> {
+  try {
+    const raw = localStorage.getItem(TRAFFIC_LIST_STATE_KEY)
+    if (!raw) return {}
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return Object.entries(parsed as Record<string, unknown>).reduce<Record<string, string | number>>((state, [key, value]) => {
+      if (typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value))) {
+        state[key] = value
+      }
+      return state
+    }, {})
+  } catch {
+    return {}
+  }
+}
+
 function readEnumParam<T extends string>(
   params: URLSearchParams,
   key: string,
   allowed: readonly T[],
   fallback: T,
+  storedState?: Record<string, string | number>,
 ): T {
-  const value = params.get(key)
+  const value = params.get(key) ?? (storedState?.[key] !== undefined ? String(storedState[key]) : null)
   return value && allowed.includes(value as T) ? value as T : fallback
 }
 
@@ -44,8 +66,10 @@ function readNumberParam(
   key: string,
   fallback: number,
   allowed?: readonly number[],
+  storedState?: Record<string, string | number>,
 ): number {
-  const raw = Number(params.get(key) || fallback)
+  const storedValue = storedState?.[key]
+  const raw = Number(params.get(key) ?? (storedValue !== undefined ? storedValue : fallback))
   if (!Number.isFinite(raw)) return fallback
   if (allowed && !allowed.includes(raw)) return fallback
   return raw
@@ -59,7 +83,7 @@ function readNumberParam(
  */
 function detectDirection(clientIp: string, serverIp: string): SessionDirection {
   const parse = (key: string): string[] =>
-    (localStorage.getItem(key) || '').split(',').map(s => s.trim()).filter(Boolean)
+    (getSensitiveSetting(key) || '').split(',').map(s => s.trim()).filter(Boolean)
 
   const inSrc = parse('vigilyx-inbound-src')
   const inDst = parse('vigilyx-inbound-dst')
@@ -232,6 +256,12 @@ const EmailCard = React.memo(({ session, detailHref }: { session: EmailSession; 
             </span>
           )}
           <RescanButton sessionId={session.id} disabled={isEncrypted} />
+          <WhitelistButton
+            sessionId={session.id}
+            email={session.mail_from}
+            ip={session.client_ip}
+            disabled={isEncrypted}
+          />
         </div>
       </div>
     </div>
@@ -275,6 +305,55 @@ const RescanButton = ({ sessionId, disabled }: { sessionId: string; disabled?: b
       {state === 'loading' && '...'}
       {state === 'done' && t('emailSecurity.rescanDone')}
       {state === 'error' && t('emailSecurity.rescanError')}
+    </button>
+  )
+}
+
+export const WhitelistButton = ({
+  sessionId,
+  email,
+  ip,
+  disabled,
+}: {
+  sessionId: string
+  email: string | null
+  ip: string
+  disabled?: boolean
+}) => {
+  const { t } = useTranslation()
+  const [state, setState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
+
+  const handleWhitelist = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (state === 'loading' || state === 'done' || !email) return
+    setState('loading')
+    try {
+      const res = await apiFetch(`/api/sessions/${sessionId}/whitelist`, { method: 'POST' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data: ApiResponse<unknown> = await res.json()
+      if (!data.success) throw new Error(data.error || 'Whitelist rejected')
+      setState('done')
+    } catch (error) {
+      console.error('Whitelist failed:', error)
+      setState('error')
+      window.setTimeout(() => setState('idle'), 2000)
+    }
+  }
+
+  if (disabled || !email) return null
+
+  return (
+    <button
+      className={`table-action whitelist-btn whitelist-btn--${state}`}
+      onClick={handleWhitelist}
+      disabled={state === 'loading' || state === 'done'}
+      title={t('emailSecurity.whitelistTitle', { email, ip })}
+    >
+      {state === 'idle' && t('emailSecurity.whitelistListAction')}
+      {state === 'loading' && '...'}
+      {state === 'done' && t('emailSecurity.whitelistListDone')}
+      {state === 'error' && t('emailSecurity.whitelistListError')}
     </button>
   )
 }
@@ -362,6 +441,12 @@ const EmailRow = React.memo(({ session, detailHref }: { session: EmailSession; d
             <span className="table-action disabled">{t('emailSecurity.encryptedShort')}</span>
           )}
           <RescanButton sessionId={session.id} disabled={isEncrypted} />
+          <WhitelistButton
+            sessionId={session.id}
+            email={session.mail_from}
+            ip={session.client_ip}
+            disabled={isEncrypted}
+          />
         </div>
       </td>
     </tr>
@@ -381,34 +466,36 @@ export default function TrafficList() {
   const navigate = useNavigate()
   const initialParamsRef = useRef(new URLSearchParams(location.search))
   const initialParams = initialParamsRef.current
+  const storedStateRef = useRef(readTrafficListState())
+  const storedState = storedStateRef.current
 
   // Tabs: mail list | quarantine
   const [activeTab, setActiveTab] = useState<'list' | 'quarantine'>('list')
 
   // Filter state
   const [protocolFilter, setProtocolFilter] = useState<Protocol | 'ALL'>(() =>
-    readEnumParam(initialParams, 'protocol_filter', ['ALL', 'SMTP', 'POP3', 'IMAP'], 'ALL')
+    readEnumParam(initialParams, 'protocol_filter', ['ALL', 'SMTP', 'POP3', 'IMAP'], 'ALL', storedState)
   )
   const [statusFilter, setStatusFilter] = useState<SessionStatus | 'ALL'>(() =>
-    readEnumParam(initialParams, 'status_filter', ['ALL', 'active', 'completed', 'timeout', 'error'], 'ALL')
+    readEnumParam(initialParams, 'status_filter', ['ALL', 'active', 'completed', 'timeout', 'error'], 'ALL', storedState)
   )
   const [contentFilter, setContentFilter] = useState<ContentFilter>(() =>
-    readEnumParam(initialParams, 'content_filter_mode', ['ALL', 'WITH_CONTENT'], 'WITH_CONTENT')
+    readEnumParam(initialParams, 'content_filter_mode', ['ALL', 'WITH_CONTENT'], 'WITH_CONTENT', storedState)
   )
   const [timeFilter, setTimeFilter] = useState<TimeFilter>(() =>
-    readEnumParam(initialParams, 'time_filter', ['ALL', '30m', '1h', '6h', '24h'], 'ALL')
+    readEnumParam(initialParams, 'time_filter', ['ALL', '30m', '1h', '6h', '24h'], 'ALL', storedState)
   )
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>(() =>
-    readEnumParam(initialParams, 'direction_filter', ['ALL', 'inbound', 'outbound'], 'ALL')
+    readEnumParam(initialParams, 'direction_filter', ['ALL', 'inbound', 'outbound'], 'ALL', storedState)
   )
   const [authFilter, setAuthFilter] = useState<AuthFilter>(() =>
-    readEnumParam(initialParams, 'auth_filter_mode', ['ALL', 'WITH_AUTH', 'AUTH_SUCCESS', 'AUTH_FAILED'], 'ALL')
+    readEnumParam(initialParams, 'auth_filter_mode', ['ALL', 'WITH_AUTH', 'AUTH_SUCCESS', 'AUTH_FAILED'], 'ALL', storedState)
   )
   const [viewMode, setViewMode] = useState<'table' | 'card'>(() =>
-    readEnumParam(initialParams, 'view', ['table', 'card'], 'table')
+    readEnumParam(initialParams, 'view', ['table', 'card'], 'table', storedState)
   )
   const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(() =>
-    readNumberParam(initialParams, 'refresh', 0, [0, 1000, 3000, 5000])
+    readNumberParam(initialParams, 'refresh', 0, [0, 1000, 3000, 5000], storedState)
   ) // 0=off, 1000/3000/5000
 
   // Display settings: enabled protocols (read from localStorage)
@@ -434,7 +521,11 @@ export default function TrafficList() {
   const [fetching, setFetching] = useState(false) // Loading indicator for pagination/filter changes
   const [loadError, setLoadError] = useState<string | null>(null)
   const [total, setTotal] = useState(0)
-  const [pageSize, setPageSize] = useState(() => readNumberParam(initialParams, 'page_size', 20, [10, 20, 50]))
+  // Keep the first view breathable: ten rows is enough context without crowding
+  // the screen. An explicit page_size URL parameter still overrides this.
+  const [pageSize, setPageSize] = useState(() =>
+    readNumberParam(initialParams, 'page_size', 10, [10, 20, 50], storedState)
+  )
   const [jumpInput, setJumpInput] = useState('')
 
   // Refs
@@ -459,7 +550,7 @@ export default function TrafficList() {
     if (viewMode !== 'table') params.set('view', viewMode)
     if (autoRefreshInterval > 0) params.set('refresh', String(autoRefreshInterval))
     if (page > 1) params.set('page', String(page))
-    if (pageSize !== 20) params.set('page_size', String(pageSize))
+    if (pageSize !== 10) params.set('page_size', String(pageSize))
     return params.toString()
   }, [protocolFilter, statusFilter, contentFilter, timeFilter, directionFilter, authFilter, viewMode, autoRefreshInterval, page, pageSize])
 
@@ -510,8 +601,8 @@ export default function TrafficList() {
     if (directionFilter !== 'ALL') {
       const srcKey = directionFilter === 'inbound' ? 'vigilyx-inbound-src' : 'vigilyx-outbound-src'
       const dstKey = directionFilter === 'inbound' ? 'vigilyx-inbound-dst' : 'vigilyx-outbound-dst'
-      const srcIps = localStorage.getItem(srcKey) || ''
-      const dstIps = localStorage.getItem(dstKey) || ''
+      const srcIps = getSensitiveSetting(srcKey) || ''
+      const dstIps = getSensitiveSetting(dstKey) || ''
       if (srcIps) params.set('source_ips', srcIps)
       if (dstIps) params.set('dest_ips', dstIps)
     }
@@ -611,6 +702,26 @@ export default function TrafficList() {
       navigate({ pathname: '/emails', search: nextSearch }, { replace: true })
     }
   }, [listStateSearch, location.search, navigate])
+
+  // URL parameters take precedence for shareable links; once changed, remember the
+  // user's filters so returning to /emails restores the same view automatically.
+  useEffect(() => {
+    try {
+      localStorage.setItem(TRAFFIC_LIST_STATE_KEY, JSON.stringify({
+        protocol_filter: protocolFilter,
+        status_filter: statusFilter,
+        content_filter_mode: contentFilter,
+        time_filter: timeFilter,
+        direction_filter: directionFilter,
+        auth_filter_mode: authFilter,
+        view: viewMode,
+        refresh: autoRefreshInterval,
+        page_size: pageSize,
+      }))
+    } catch {
+      // Storage may be unavailable in private browsing; the list still works normally.
+    }
+  }, [protocolFilter, statusFilter, contentFilter, timeFilter, directionFilter, authFilter, viewMode, autoRefreshInterval, pageSize])
 
   const filterSignature = useMemo(
     () => JSON.stringify({
@@ -728,9 +839,9 @@ export default function TrafficList() {
   // ========================================
 
   return (
-    <div className="traffic-list">
+    <div className={`traffic-list ${activeTab === 'list' ? 'traffic-list--fit' : ''}`}>
       {/* Tab switch: mail list | quarantine */}
-      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)', marginBottom: 16 }}>
+      <div className="traffic-list-tabs">
         <button
           onClick={() => setActiveTab('list')}
           style={{
