@@ -120,5 +120,8 @@ Thumbs.db
 ehthumbs.db
 ._*
 
+# 桌面/编辑器产生的重复副本（例如 `file 2.rs`）
+* 2.*
+
 # Lotyra 本地治理记录（含部署审计与环境线索，不上传）
 .lotyra/
