@@ -104,7 +104,7 @@ impl VigilDb {
         Ok(rows.into_iter().map(|r| r.into_record()).collect())
     }
 
-    /// Count alerts matching the same filters as [`list_alerts`].
+    /// Count alerts matching the same filters as [`Self::list_alerts`].
     pub async fn count_alerts(
         &self,
         level_filter: Option<&str>,

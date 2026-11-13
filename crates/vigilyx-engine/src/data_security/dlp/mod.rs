@@ -120,7 +120,7 @@ const ENCODED_DECODE_BUDGET: usize = 100 * 1024;
 /// Coremail compose.jsp of JSON body, Extract `attrs.content` + `attrs.subject`,
 /// Avoid JSON Yuandata(id, CSS class name) match.
 /// 非 Coremail URI 且 Content-Type 为 text/html 的 body 同样先剥标签再扫描,
-/// 防止攻击者用 <span>/<style> 标签拆散身份证等敏感串绕过检测。
+/// 防止攻击者用 `<span>`/`<style>` 标签拆散身份证等敏感串绕过检测。
 pub fn extract_dlp_text(body: &str, uri: &str, content_type: Option<&str>) -> String {
     // Checkwhether Coremail compose URI
     if super::coremail::is_coremail_compose_uri(uri)

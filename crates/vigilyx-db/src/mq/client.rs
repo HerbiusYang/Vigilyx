@@ -267,7 +267,7 @@ impl MqClient {
     /// Publish message to Pub/Sub channel (with retry)
     ///
     /// SEC (C1): the payload is wrapped in a shared-token envelope
-    /// ([`wrap_data_payload`]) so a forged PUBLISH from bare Redis access
+    /// (`wrap_data_payload`) so a forged PUBLISH from bare Redis access
     /// cannot inject fake verdicts/alerts. Receivers must pass the raw
     /// payload through [`verify_data_payload`].
     pub async fn publish<T: Serialize>(&self, topic: &str, message: &T) -> MqResult<()> {
@@ -815,11 +815,11 @@ pub(crate) fn sign_v1(key: &str, ts: i64, nonce: &str, payload: &[u8]) -> String
 /// Verify and strip the authenticated prefix from a control-plane Pub/Sub
 /// payload.
 ///
-/// Wire format: `v1:<ts>:<hmac-hex>:<payload>` — the signature covers
-/// `<ts>:<payload>`, so payloads containing colons (JSON with timestamps)
+/// Wire format: `v1:<ts>:<nonce>:<hmac-hex>:<payload>` — the signature covers
+/// `<ts>:<nonce>:<payload>`, so payloads containing colons (JSON with timestamps)
 /// verify correctly and the timestamp cannot be swapped without breaking the
-/// signature. Messages older than [`MAX_MESSAGE_AGE_SECS`] (replay) or
-/// further ahead than [`MAX_FUTURE_SKEW_SECS`] are rejected (RT-4). The
+/// signature. Messages older than `MAX_MESSAGE_AGE_SECS` (replay) or
+/// further ahead than `MAX_FUTURE_SKEW_SECS` are rejected (RT-4). The
 /// pre-v1 cleartoken format is rejected: a rolling-upgrade window may drop
 /// point-in-time reload commands once, which self-heals on the next change,
 /// while accepting cleartext would keep the "read an old entry, recover the
@@ -871,7 +871,7 @@ fn verify_v1_signature_hex(hex: &str, key: &str, ts: i64, nonce: &str, payload: 
 
 // ── Data-plane message authentication (C1) ──────────────────────────────
 
-/// JSON key carrying the shared token inside a data-plane Pub/Sub envelope.
+/// JSON key carrying the authentication signature inside a data-plane Pub/Sub envelope.
 /// The name is deliberately distinctive so legitimate business payloads never
 /// collide with it.
 pub const DATA_ENVELOPE_AUTH_KEY: &str = "__vigilyx_auth";
@@ -907,7 +907,8 @@ pub fn require_data_plane_token() -> MqResult<String> {
 }
 
 /// Wrap a serialized data-plane payload in an authenticated envelope:
-/// `{"__vigilyx_auth":"v1:<hmac-hex>","payload":<canonical-json>}`.
+/// `{"__vigilyx_auth":"v1:<hmac-hex>","__vigilyx_ts":<unix-seconds>,`
+/// `"__vigilyx_nonce":"<nonce>","payload":<canonical-json>}`.
 ///
 /// The signature covers the canonical re-serialization of the payload through
 /// `serde_json::Value` (deterministic key ordering), and that same canonical
