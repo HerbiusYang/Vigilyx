@@ -1,0 +1,10 @@
+From: =?utf-8?B?6b2/56eR6K+K5omA?= <service@clinic.example>
+To: me@personal.example
+Date: Tue, 25 Aug 2026 10:53:00 +0800
+Message-ID: <0033-b2@synth.example>
+Subject: 预约确认：周四 18:30 洗牙
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您的预约已确认。如需改期请提前一天致电前台，
+本次含抛光，约 40 分钟。

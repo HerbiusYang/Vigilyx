@@ -11,6 +11,7 @@ use std::time::Instant;
 use tokio::sync::{Mutex, RwLock, broadcast};
 use vigilyx_core::{Config, ExternalLoginStats, TrafficStats, WsMessage};
 use vigilyx_db::VigilDb;
+use vigilyx_db::cache::ReadCacheClient;
 use vigilyx_db::mq::MqClient;
 
 use vigilyx_engine::ioc::IocManager;
@@ -93,4 +94,11 @@ pub struct CacheState {
     pub login_stats: RwLock<Option<(Instant, ExternalLoginStats)>>,
     /// Traffic statistics (cached, refreshed every 4.5s via COUNT scan)
     pub traffic_stats: RwLock<Option<(Instant, TrafficStats)>>,
+    /// Coalesces cold traffic-stat refreshes without blocking login-stat
+    /// requests. These aggregates have different query costs and cadences.
+    pub traffic_stats_refresh_lock: Mutex<()>,
+    /// Coalesces cold login-stat refreshes without blocking traffic stats.
+    pub login_stats_refresh_lock: Mutex<()>,
+    /// Optional independent L2 read cache. It is never the message-bus client.
+    pub read_cache: Option<ReadCacheClient>,
 }

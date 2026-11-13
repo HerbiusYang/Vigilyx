@@ -1,0 +1,10 @@
+From: =?utf-8?B?5paH5qGj5Y2P5L2c?= <comment@doc-svc4.example>
+To: pm@corp.internal
+Date: Mon, 07 Sep 2026 09:29:00 +0800
+Message-ID: <0019-b15@synth.example>
+Subject: 3 位同事评论了《需求规格 v3》
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p><b>苏黎、王芳、李伟</b> 评论了文档：</p><ul><li>苏黎：验收口径第 2 条…</li><li>王芳：接口示例…</li></ul><p><a href='https://doc-reply4.example.net/d/r3' style='color:#1677ff'>查看并回复</a></p></body></html>

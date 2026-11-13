@@ -1,0 +1,121 @@
+From: "Domain Registry Services | Registrant Verification Office" <renewal@domain-registry-services.example>
+To: it-ops@corp.internal
+Cc: dns-admin@corp.internal, finance.ap@corp.internal
+Reply-To: verification.desk@drs-compliance.example
+Date: Tue, 06 Apr 2027 04:20:00 +0000
+Message-ID: <0800-b92@synth.example>
+Subject: [FINAL NOTICE] Registrant Data Verification + Renewal - corpbrand-example.com Expires in 15 Days - Verification Fee Settlement Prevents Zone Suspension
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+IT Operations, DNS Admin, Accounts Payable,
+
+FINAL NOTICE - REGISTRANT DATA
+VERIFICATION AND RENEWAL for
+corpbrand-example.com.
+
+The zone enters suspension processing in
+15 days. This notice combines two
+required actions: ICANN-mandated
+registrant data verification (WHOIS
+accuracy) and the renewal settlement
+that accompanies it. Earlier notices
+(November, February) appear to have
+been missed by your organization.
+
+1. DOMAIN STATUS
+
+  Domain:            corpbrand-example.com
+  Registrar of
+    record:          (your retail
+                    registrar, reseller
+                    channel)
+  Registry expiry:   2027-04-21
+                    (15 days)
+  Suspension
+    processing:      Begins at expiry
+                    under registry
+                    policy (resolve
+                    failures start
+                    day 4 past expiry)
+  Verification
+    status:          OVERDUE since
+                    2026-11-18
+                    (two reminders
+                    sent)
+
+2. WHY THE REGISTRY IS WRITING YOU
+   DIRECTLY
+
+  ICANN's WHOIS accuracy program
+  requires registrant data to be
+  verified at renewal. When the
+  registrar of record fails to
+  complete verification after two
+  reminders, the verification and
+  the associated settlement pass to
+  the registry compliance channel.
+  The combined verification and
+  renewal settlement is:
+
+    Verification processing
+    (registrant data check +
+      suspension hold lift):
+                      USD 249.00
+    Renewal, 1 year
+    (registry-level):
+                      USD 189.00
+    -----------------------------------
+    Total settlement: USD 438.00
+
+  Settlement (wire or card) to the
+  compliance processing account:
+
+    Beneficiary: Domain Registry
+                Compliance Ltd.
+    IBAN: GB94 BARC 2020 4881 9927 44
+    SWIFT: TSTBGB22
+    Reference: corpbrand-example.com
+
+3. WHAT HAPPENS WITHOUT SETTLEMENT
+
+  - Day 1 past expiry: domain enters
+    the standard suspension queue
+    (ICANN auto-renew grace does not
+    apply to unverified registrants)
+  - Day 4: DNS resolution fails
+    (email and web)
+  - Day 28: domain released to open
+    registration
+
+4. ABOUT THIS NOTICE
+
+  We are aware that unsolicited
+  domain notices are a classic fraud
+  category - expiry phishes are among
+  the oldest on the internet, and your
+  skepticism is the correct default.
+  Points to check: the domain and
+  expiry above should match what your
+  registrar's portal shows; the
+  verification-overdue status dates to
+  the November reminder; and the
+  settlement is per the registry
+  compliance fee schedule. Note,
+  however, that the 15-day clock is
+  the registry's, and your retail
+  registrar's cheaper renewal cannot
+  be applied once verification has
+  escalated to this channel.
+
+5. CONTACT
+
+  Verification desk:
+  verification.desk@drs-compliance.example
+  Reference: corpbrand-example.com /
+  VR-2027-0417
+
+Domain Registry Services |
+Registrant Verification Office
+This notice concerns
+corpbrand-example.com only.

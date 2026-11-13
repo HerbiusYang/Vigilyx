@@ -1,0 +1,105 @@
+From: "Northbridge IT Services | Service Governance" <governance@northbridgeit.example>
+To: vendor.relations@corp.internal
+Cc: finance.ap@corp.internal, it-director@corp.internal
+Date: Thu, 11 Feb 2027 08:00:00 +0000
+Message-ID: <0687-b84@synth.example>
+Subject: [SLA CREDIT] Q4 2026 Service Level Breaches - Credit Memo CM-88417 (USD 42,318.50) - Applied to Q1 Invoices
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Vendor Relations, Accounts Payable, IT Director,
+
+Q4 2026 SLA CREDIT DETERMINATION - CM-88417.
+Under the Master Services Agreement
+(MSA-2023-0441, Section 14 Service
+Credits), Northbridge's Q4 performance
+breached three availability/response
+commitments. The resulting credit of
+USD 42,318.50 has been applied against
+your Q1 invoices.
+
+1. CREDIT DETERMINATION
+
+  ERP platform
+    availability:   99.9% monthly
+                    committed; actual
+                    99.62% (Nov:
+                    214 min outage,
+                    INC-2026-1121)
+                    Credit USD 28,400.00
+  P1 response
+    time:           15 min (24x7)
+                    committed; 3 breaches
+                    over 30 min (Oct 29,
+                    Nov 14, Dec 02)
+                    Credit USD 9,860.00
+  Backup RPO
+    drift:          under 4 h committed;
+                    11.5 h drift on
+                    legacy file tier
+                    Credit USD 4,058.50
+
+  Total credit
+    CM-88417:       USD 42,318.50
+
+2. HOW CREDITS ARE APPLIED (IMPORTANT)
+
+  Under MSA Section 14, service credits
+  net against future invoices within
+  the same MSA - automatically, with
+  no action, forms, or bank details
+  required from you:
+
+    - Q1 invoices carry a "credit
+      applied" line referencing
+      CM-88417
+    - Cash refunds of credits are
+      available ONLY where the MSA
+      is terminating, and then
+      solely through a paper
+      authorization on your
+      letterhead, countersigned
+      by your MSA signatory, sent
+      to the address in the MSA
+      notices clause - never
+      through an emailed form
+
+  Northbridge will NEVER:
+  - Email a "bank authorization"
+    form collecting account
+    number, SWIFT, signature
+    specimen, and SMS code for
+    a credit refund (an account
+    + specimen + SMS combination
+    is enough to redirect
+    payments or bind mandates
+    in many banking setups)
+  - Use lookalike domains such
+    as "northbridge-msp" or
+    "nb-service-credit"
+  - Set a "quarter close" refund
+    deadline for credits that
+    MSA Section 14 says simply
+    carry forward
+  - Offer a consolidated
+    "prime" authorization
+    covering multiple
+    beneficiaries with a
+    single SMS confirmation
+
+3. VERIFY THIS DETERMINATION
+
+  - The breach table above mirrors
+    your monthly SLA reports
+    (Nov report, Dec report)
+  - Q1 invoices will show the
+    credit line - reconcile
+    against this notice
+  - Questions: your account
+    team on the regular
+    governance call, or
+    governance@northbridgeit.example
+
+Northbridge IT Services | Service
+Governance
+This notice concerns MSA-2023-0441 only.

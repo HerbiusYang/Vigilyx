@@ -9,11 +9,8 @@ authors = [
 ]
 keywords = ["email-security", "phishing-detection", "nlp", "threat-analysis"]
 dependencies = [
-    "redis==8.1.0",
     "pydantic==2.13.4",          # Current stable Pydantic 2 release
     "httpx==0.28.1",
-    "anthropic==0.122.0",        # Claude API
-    "openai==3.0.0",              # OpenAI API (可选)
     "fastapi==0.141.1",          # HTTP API 服务; resolves to fixed Starlette 1.x
     "uvicorn==0.52.3",           # ASGI 服务器
     "structlog==26.1.0",         # 结构化日志
@@ -24,8 +21,6 @@ dependencies = [
     "accelerate==1.14.0",        # HuggingFace Trainer + PEFT 依赖
     "sentencepiece==0.2.2",      # DeBERTa tokenizer 依赖
     "numpy<2.0",                 # Keep the validated NumPy 1.x ABI for existing model artifacts
-    "scikit-learn==1.7.2",       # Latest fixed release retaining Python 3.10 support
-    "psutil==7.2.2",             # 系统资源检测 (内存大小自适应训练参数)
 ]
 
 [project.urls]

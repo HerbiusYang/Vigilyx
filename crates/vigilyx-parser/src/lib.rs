@@ -6,6 +6,7 @@
 pub mod mime;
 pub mod smtp;
 pub mod smtp_state;
+pub mod text;
 
 pub use mime::MimeParser;
 pub use smtp::SmtpParser;

@@ -29,6 +29,7 @@ tower-http.workspace = true
 # Serialization
 serde.workspace = true
 serde_json.workspace = true
+html-escape = "0.2.15"
 
 # Database
 sqlx.workspace = true
@@ -48,13 +49,12 @@ uuid.workspace = true
 
 # WebSocket
 futures = "0.3.34"
-tokio-stream = "0.1.19"
 
 # Authentication
-jsonwebtoken = { version = "11.0", features = ["rust_crypto"] }
+# Use aws-lc-rs for JWT signing/verification; the rust_crypto backend pulls in
+# rsa 0.9, which has no fixed constant-time implementation for RUSTSEC-2023-0071.
+jsonwebtoken = { version = "11.0", features = ["aws_lc_rs"] }
 argon2 = "0.5"
-rand_core = { version = "0.6", features = ["getrandom"] }
-axum-extra = { version = "0.12", features = ["typed-header"] }
 
 # Security: constant-time comparison (prevents timing attacks)
 subtle = "2"
@@ -62,9 +62,6 @@ subtle = "2"
 sha2 = "0.11"
 # SEC-REMAINING-004: protect sensitive data in memory (zeroize on drop + masked Debug)
 secrecy = { version = "0.10", features = ["serde"] }
-zeroize = "1"
-# SEC-REMAINING-001: encrypted storage for config values (AES-256-GCM)
-aes-gcm = "0.11"
 base64 = "0.23"
 getrandom = "0.4"
 
@@ -82,7 +79,7 @@ prometheus = "0.14"
 
 # Match the engine's non-crypto YARA-X feature set. In particular, do not
 # re-enable the vulnerable `rsa` dependency through feature unification.
-yara-x = { version = "1.19.0", default-features = false, features = [
+yara-x = { version = "1.23.0", default-features = false, features = [
     "constant-folding",
     "elf-module",
     "exact-atoms",
@@ -99,13 +96,10 @@ yara-x = { version = "1.19.0", default-features = false, features = [
 url = "2"
 regex = "1"
 
-# Disk usage (statvfs)
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-
 [dev-dependencies]
 # ServiceExt::oneshot for in-process middleware/router tests
 tower = { version = "0.5", features = ["util"] }
+proptest = "1.11"
 
 [lints]
 workspace = true

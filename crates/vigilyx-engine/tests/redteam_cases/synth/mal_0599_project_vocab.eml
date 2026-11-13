@@ -1,0 +1,11 @@
+From: =?utf-8?B?5p625p6E57uELeWklumDqOmhvumXrg==?= <cons@arch-advisory.example>
+To: arch@corp.internal
+Date: Mon, 28 Sep 2026 08:15:00 +0800
+Message-ID: <0005-b34@synth.example>
+Subject: 关于灰度回退阈值的一点补充
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+看了你们网关的回退逻辑，建议阈值做成可配的，我画了张时序图：
+https://arch-advisory.example/diagrams/fallback
+不急，周五评审前看就行。

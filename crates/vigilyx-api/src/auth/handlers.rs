@@ -5,9 +5,9 @@ use std::net::IpAddr;
 use axum::Json;
 use axum::http::HeaderMap;
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
-
-use std::sync::atomic::Ordering;
+#[cfg(test)]
+use tracing::info;
+use tracing::warn;
 
 use super::AuthConfig;
 use super::jwt::generate_token;
@@ -278,39 +278,24 @@ pub(crate) fn validate_new_password(
 }
 
 /// Processloginrequest (per-IP Rate limiting + default password)
-#[allow(dead_code)]
+#[cfg(test)]
 pub async fn handle_login(
     config: &AuthConfig,
     rate_limiter: &LoginRateLimiter,
     client_ip: IpAddr,
     request: &LoginRequest,
 ) -> LoginResponse {
-    let audit_username = sanitize_login_username(&request.username);
-
     if let Err(message) = validate_login_request(request) {
-        warn!(
-            ip = %client_ip,
-            username = %audit_username,
-            "Login rejected: malformed request"
-        );
+        warn!(ip = %client_ip, "Login rejected: malformed request");
         return login_fail(message);
     }
 
-    // ── Per-IP Rate limiting: pre-check ──
-    // Peek without recording a failure. If already at/over the limit,
-    // reject immediately to avoid expensive password verification.
-    {
-        if let Some((count, _)) = rate_limiter.peek(&client_ip)
-            && count >= rate_limiter.max_failures
-        {
-            warn!(
-                ip = %client_ip,
-                failures = count,
-                "Login rate-limited: IP {} exceeded max failures",
-                client_ip
-            );
-            return login_fail("登录失败次数过多，请稍后再试");
-        }
+    // ── IP + account rate limiting: pre-check ──
+    // Peek without recording a failure. If either bucket is at/over the
+    // limit, reject immediately to avoid expensive password verification.
+    if rate_limiter.is_blocked_for(&client_ip, &request.username) {
+        warn!(ip = %client_ip, "Login rate-limited: IP or account exceeded max failures");
+        return login_fail("登录失败次数过多，请稍后再试");
     }
 
     let username_matches = request.username == config.username;
@@ -330,12 +315,8 @@ pub async fn handle_login(
                 "dummy password verification failed while masking login timing"
             );
         }
-        let blocked = rate_limiter.check_and_record_failure(client_ip);
-        warn!(
-            ip = %client_ip,
-            username = %audit_username,
-            "Login failed: invalid username"
-        );
+        let blocked = rate_limiter.check_and_record_failure_for(client_ip, &request.username);
+        warn!(ip = %client_ip, "Login failed: invalid username");
         if blocked {
             return login_fail("登录失败次数过多，请稍后再试");
         }
@@ -346,25 +327,23 @@ pub async fn handle_login(
     match password_result {
         Ok(true) => {
             // success: IP failed
-            rate_limiter.reset(client_ip);
+            rate_limiter.reset_for(client_ip, &request.username);
 
             // Token
-            match generate_token(config, &config.username, "admin", config.token_version.load(std::sync::atomic::Ordering::Relaxed)) {
+            match generate_token(
+                config,
+                &config.username,
+                "admin",
+                config
+                    .token_version
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ) {
                 Ok(token) => {
                     let changed = *config.password_changed.read().await;
                     if !changed {
-                        warn!(
-                            ip = %client_ip,
-                            username = %audit_username,
-                            "Security warning: user logged in with default password"
-                        );
+                        warn!(ip = %client_ip, "Security warning: user logged in with default password");
                     }
-                    info!(
-                        ip = %client_ip,
-                        username = %audit_username,
-                        password_changed = changed,
-                        "Login success"
-                    );
+                    info!(ip = %client_ip, password_changed = changed, "Login success");
                     LoginResponse {
                         success: true,
                         token: Some(token),
@@ -380,12 +359,8 @@ pub async fn handle_login(
             }
         }
         Ok(false) => {
-            let blocked = rate_limiter.check_and_record_failure(client_ip);
-            warn!(
-                ip = %client_ip,
-                username = %audit_username,
-                "Login failed: wrong password"
-            );
+            let blocked = rate_limiter.check_and_record_failure_for(client_ip, &request.username);
+            warn!(ip = %client_ip, "Login failed: wrong password");
             if blocked {
                 return login_fail("登录失败次数过多，请稍后再试");
             }
@@ -407,15 +382,12 @@ pub async fn handle_platform_login(
     client_ip: IpAddr,
     request: &LoginRequest,
 ) -> LoginResponse {
-    let audit_username = sanitize_login_username(&request.username);
     if let Err(message) = validate_login_request(request) {
-        warn!(ip = %client_ip, username = %audit_username, "Login rejected: malformed request");
+        warn!(ip = %client_ip, "Login rejected: malformed request");
         return login_fail(message);
     }
 
-    if let Some((count, _)) = rate_limiter.peek(&client_ip)
-        && count >= rate_limiter.max_failures
-    {
+    if rate_limiter.is_blocked_for(&client_ip, &request.username) {
         return login_fail("登录失败次数过多，请稍后再试");
     }
 
@@ -442,9 +414,9 @@ pub async fn handle_platform_login(
     match verified {
         Ok(true) if active => {
             let user = user.expect("active user is present after password verification");
-            rate_limiter.reset(client_ip);
+            rate_limiter.reset_for(client_ip, &request.username);
             if let Err(error) = db.touch_platform_user_login(&user.id).await {
-                warn!(error = %error, username = %audit_username, "Failed to update platform last login timestamp");
+                warn!(error = %error, "Failed to update platform last login timestamp");
             }
             match generate_token(config, &user.username, &user.role, user.token_version) {
                 Ok(token) => LoginResponse {
@@ -461,7 +433,7 @@ pub async fn handle_platform_login(
             }
         }
         Ok(true) | Ok(false) => {
-            let blocked = rate_limiter.check_and_record_failure(client_ip);
+            let blocked = rate_limiter.check_and_record_failure_for(client_ip, &request.username);
             if blocked {
                 login_fail("登录失败次数过多，请稍后再试")
             } else {
@@ -469,124 +441,9 @@ pub async fn handle_platform_login(
             }
         }
         Err(error) => {
-            warn!(error = %error, username = %audit_username, "Platform password verification failed");
+            warn!(error = %error, "Platform password verification failed");
             login_fail("认证失败，请重试")
         }
-    }
-}
-
-/// Process Passwordrequest, verify Password New + PostgreSQL
-///
-/// SEC: wrong current-password attempts are counted per source IP with the
-/// same limiter as login; without this an authenticated session (or a stolen
-/// cookie) could brute-force the current password unbounded.
-#[allow(dead_code)]
-pub async fn handle_change_password(
-    config: &AuthConfig,
-    db: &vigilyx_db::VigilDb,
-    rate_limiter: &LoginRateLimiter,
-    client_ip: IpAddr,
-    request: &ChangePasswordRequest,
-) -> ChangePasswordResponse {
-    if let Err(message) = validate_new_password(&config.username, &request.new_password) {
-        return ChangePasswordResponse {
-            success: false,
-            error: Some(message.into()),
-        };
-    }
-
-    // SEC: disallow reusing the old password to prevent bypassing the first-password-change gate by "changing" to the same password
-    if request.new_password == request.old_password {
-        return ChangePasswordResponse {
-            success: false,
-            error: Some("新密码不能与旧密码相同".into()),
-        };
-    }
-
-    let current_hash =
-        match precheck_change_password(config, rate_limiter, client_ip, request).await {
-            Ok(hash) => hash,
-            Err(response) => return response,
-        };
-
-    let new_hash = match hash_password(&request.new_password) {
-        Ok(h) => h,
-        Err(e) => {
-            warn!("新密码哈希生成失败: {}", e);
-            return ChangePasswordResponse {
-                success: false,
-                error: Some("密码处理失败".into()),
-            };
-        }
-    };
-
-    // SEC M-1: revocation is per user. The legacy admin maps to a seeded
-    // platform row (RBAC bootstrap); bumping that row revokes only the
-    // admin's outstanding JWTs. The pre-RBAC fallback (no platform row) keeps
-    // the legacy global config counter — require_auth needs the row anyway,
-    // so that state cannot serve authenticated traffic.
-    // Red-team hardening: a transient lookup failure must FAIL the password
-    // change. Treating it as "no row" silently bumped the legacy global
-    // counter, leaving the admin's still-valid platform-row tokens alive
-    // across a password change (fail-open revocation).
-    let legacy_admin = match db.get_platform_auth_user(&config.username).await {
-        Ok(admin) => admin,
-        Err(error) => {
-            warn!(
-                %error,
-                "legacy admin platform lookup failed; refusing password change (fail-closed)"
-            );
-            return ChangePasswordResponse {
-                success: false,
-                error: Some("密码保存失败，请重试".into()),
-            };
-        }
-    };
-
-    if let Err(e) = db.set_config("auth_password_hash", &new_hash).await {
-        warn!("密码持久化失败: {}", e);
-        return ChangePasswordResponse {
-            success: false,
-            error: Some("密码保存失败，请重试".into()),
-        };
-    }
-    let revocation: Result<(), String> = match &legacy_admin {
-        Some(admin) => db
-            .bump_platform_user_token_version(&admin.id)
-            .await
-            .map(|_| ())
-            .map_err(|e| e.to_string()),
-        None => {
-            let new_tv = config.token_version.load(Ordering::Relaxed) + 1;
-            db.set_config("auth_token_version", &new_tv.to_string())
-                .await
-                .map_err(|e| e.to_string())
-        }
-    };
-    if let Err(e) = revocation {
-        // If revocation persistence fails, roll back the password hash so old
-        // JWTs cannot outlive a half-applied password change.
-        warn!("Token version 持久化失败，回滚密码: {}", e);
-        let _ = db.set_config("auth_password_hash", &current_hash).await;
-        return ChangePasswordResponse {
-            success: false,
-            error: Some("密码保存失败（token version），请重试".into()),
-        };
-    }
-
-    // Update in-memory state only after both DB writes succeed
-    *config.password_hash.write().await = new_hash;
-    *config.password_changed.write().await = true;
-    if legacy_admin.is_none() {
-        config
-            .token_version
-            .store(config.token_version.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
-    }
-    info!("Admin password changed and persisted; per-user token version bumped");
-
-    ChangePasswordResponse {
-        success: true,
-        error: None,
     }
 }
 
@@ -612,18 +469,16 @@ pub async fn handle_platform_change_password(
             error: Some("新密码不能与旧密码相同".into()),
         };
     }
-    if let Some((count, _)) = rate_limiter.peek(&client_ip)
-        && count >= rate_limiter.max_failures
-    {
+    if rate_limiter.is_blocked_for(&client_ip, &user.username) {
         return ChangePasswordResponse {
             success: false,
             error: Some("失败次数过多，请稍后再试".into()),
         };
     }
     match verify_password(&request.old_password, &user.password_hash) {
-        Ok(true) => rate_limiter.reset(client_ip),
+        Ok(true) => rate_limiter.reset_for(client_ip, &user.username),
         Ok(false) => {
-            let blocked = rate_limiter.check_and_record_failure(client_ip);
+            let blocked = rate_limiter.check_and_record_failure_for(client_ip, &user.username);
             return ChangePasswordResponse {
                 success: false,
                 error: Some(
@@ -687,24 +542,18 @@ pub async fn handle_platform_change_password(
 /// session (or a stolen cookie) could brute-force the current password
 /// unbounded. Returns the current hash on success (needed for the atomic
 /// persistence rollback), or the rejection response to return to the caller.
-#[allow(dead_code)]
+#[cfg(test)]
 async fn precheck_change_password(
     config: &AuthConfig,
     rate_limiter: &LoginRateLimiter,
     client_ip: IpAddr,
     request: &ChangePasswordRequest,
 ) -> Result<String, ChangePasswordResponse> {
-    // ── Per-IP Rate limiting: pre-check (same limiter as login) ──
-    // Peek without recording a failure. If already at/over the limit,
-    // reject immediately to avoid expensive password verification.
-    if let Some((count, _)) = rate_limiter.peek(&client_ip)
-        && count >= rate_limiter.max_failures
-    {
-        warn!(
-            ip = %client_ip,
-            failures = count,
-            "Password change rate-limited: IP exceeded max failures"
-        );
+    // ── IP + account rate limiting: pre-check (same limiter as login) ──
+    // Peek without recording a failure. If either bucket is at/over the
+    // limit, reject immediately to avoid expensive password verification.
+    if rate_limiter.is_blocked_for(&client_ip, &config.username) {
+        warn!(ip = %client_ip, "Password change rate-limited: IP or account exceeded max failures");
         return Err(ChangePasswordResponse {
             success: false,
             error: Some("失败次数过多，请稍后再试".into()),
@@ -715,11 +564,11 @@ async fn precheck_change_password(
     match verify_password(&request.old_password, &current_hash) {
         Ok(true) => {
             // success: clear the IP failure counter
-            rate_limiter.reset(client_ip);
+            rate_limiter.reset_for(client_ip, &config.username);
             Ok(current_hash)
         }
         Ok(false) => {
-            let blocked = rate_limiter.check_and_record_failure(client_ip);
+            let blocked = rate_limiter.check_and_record_failure_for(client_ip, &config.username);
             warn!(
                 ip = %client_ip,
                 "Password change failed: wrong current password"
@@ -753,6 +602,7 @@ mod tests {
     };
     use crate::auth::AuthConfig;
     use crate::auth::rate_limit::LoginRateLimiter;
+    use proptest::prelude::*;
     use std::net::{IpAddr, Ipv4Addr};
 
     const TEST_ADMIN_PASSWORD: &str = "TestAdmin!2345";
@@ -844,6 +694,37 @@ mod tests {
         };
 
         assert_eq!(validate_login_request(&request), Err("登录请求无效"));
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 128, .. ProptestConfig::default() })]
+
+        #[test]
+        fn login_validation_is_total_and_accepts_only_bounded_input(
+            username_chars in prop::collection::vec(any::<char>(), 0..=320),
+            password_chars in prop::collection::vec(any::<char>(), 0..=4200),
+        ) {
+            let username: String = username_chars.into_iter().collect();
+            let password: String = password_chars.into_iter().collect();
+            let invalid = username.trim().is_empty()
+                || username.chars().count() > 256
+                || username.chars().any(char::is_control)
+                || password.chars().count() > 4096;
+            let result = validate_login_request(&LoginRequest { username, password });
+
+            prop_assert_eq!(result.is_ok(), !invalid);
+        }
+
+        #[test]
+        fn audit_username_sanitization_is_bounded_and_control_free(
+            input_chars in prop::collection::vec(any::<char>(), 0..=512),
+        ) {
+            let input: String = input_chars.into_iter().collect();
+            let sanitized = sanitize_login_username(&input);
+
+            prop_assert!(sanitized.chars().count() <= 131);
+            prop_assert!(!sanitized.chars().any(char::is_control));
+        }
     }
 
     #[tokio::test]

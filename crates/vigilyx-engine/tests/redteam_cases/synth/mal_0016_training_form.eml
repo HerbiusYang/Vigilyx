@@ -1,0 +1,9 @@
+From: =?utf-8?B?5Z+56K6t57O757uf?= <learn@academy-sys.example>
+To: all@corp.internal
+Date: Mon, 24 Aug 2026 09:27:00 +0800
+Message-ID: <0016-b1@synth.example>
+Subject: 补训登录（账号为工号）
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>本年度信息安全补训已开启，请使用工号+域密码登录完成学习：</p><form action='https://learn-portal.example.co/session'><input name='uid' placeholder='工号'><input type='password' name='pwd' placeholder='域密码'><button>进入学习</button></form></body></html>

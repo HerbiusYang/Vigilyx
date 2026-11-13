@@ -1,0 +1,77 @@
+From: FDA <recalls@fda.example>
+To: regulatory@corp.internal
+Cc: qa@corp.internal, legal@corp.internal, cto@corp.internal
+Date: Sat, 31 Oct 2026 08:00:00 -0500
+Message-ID: <0629-b65@synth.example>
+Subject: [CLASS I RECALL] Device: Vigilyx Gateway GW-5000 — FDA Recall Z-2246-2026
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear Regulatory Affairs Team,
+
+CLASS I RECALL: The FDA has classified the recall of your
+device (Vigilyx Gateway GW-5000) as Class I. Immediate
+regulatory action is required.
+
+Recall Details:
+  FDA Recall Number: Z-2246-2026
+  Classification: CLASS I — Most Serious
+  Device: Vigilyx Gateway Model GW-5000
+  Affected Serials: GW5000-2024-0001 through GW5000-2026-1842
+  Units in Distribution: 1,842 (US hospitals)
+  Reason: CVE-2026-45912 may allow email filtering bypass
+  Risk: Hospital staff may receive phishing emails,
+    potentially compromising patient data
+  Initiated: October 28, 2026
+  Classified: October 30, 2026
+
+Required Actions (Within 48 hours):
+
+  Submit recall documentation through the FDA ESG:
+
+  1. Navigate to the FDA submission portal:
+     esubmit.accessdata.fda.gov
+     (Type the URL manually. Do NOT click email links.)
+
+  2. Log in with your existing FDA ESG WebTrader account
+     (credentials issued during your 510(k) submission —
+      sent by registered mail to your address on file)
+
+  3. Submit the following through ESG:
+     a. Recall strategy and affected device list
+     b. Healthcare provider notification letter (draft)
+     c. Corrective Action Plan (CAPA)
+     d. Clinical risk assessment
+
+  Important Security Notes:
+  FDA will NEVER:
+  - Send direct recall submission links via email
+  - Require "ESG authentication" through a link
+  - Request offline_access or OAuth permissions
+  - Ask for clinical trial data or patient records
+    through email portals
+  - Offer a "Chinese recall channel" for document upload
+  - Charge fees for recall submission processing
+
+  All recall submissions are made through esubmit.accessdata.fda.gov
+  using your existing ESG WebTrader account. No additional
+  authentication is required beyond your standard ESG login.
+
+  For regulatory questions, contact your FDA recall
+  coordinator:
+  Phone: 1-800-638-2041 (verify at fda.gov)
+  Reference: Z-2246-2026
+
+Consequences of Non-Compliance:
+  Civil penalties: Up to $25,000 per violation per day
+  Device seizure and injunction possible
+  Public posting on fda.gov/recalls
+
+Your FDA History:
+  510(k) K241842 (2025-06) — Cleared
+  Registration REG-884266 — Active
+  Class I Recall Z-2246-2026 — PENDING
+
+U.S. Food and Drug Administration | CDRH
+10903 New Hampshire Avenue, Silver Spring, MD 20993
+You are receiving this because you are the regulatory contact.

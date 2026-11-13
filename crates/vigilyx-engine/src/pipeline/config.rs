@@ -32,7 +32,7 @@ impl PipelineConfig {
     /// Backfill modules added in newer binaries into DB-stored pipeline configs.
     ///
     /// Existing module entries are preserved exactly as configured; only missing
-    /// defaults are appended in default execution order.
+    /// defaults are appended in the default configuration order.
     pub fn merge_default_modules(&mut self) -> Vec<String> {
         let mut existing_ids: HashSet<String> = self
             .modules
@@ -61,6 +61,60 @@ impl PipelineConfig {
             }
         }
     }
+
+    /// Validate dependencies used by conditional module execution.
+    ///
+    /// A threat-level threshold must name the module whose result it examines;
+    /// otherwise a concurrently running DAG could make the decision depend on
+    /// which unrelated module happens to finish first.
+    pub fn validate_conditions(&self) -> Result<(), Vec<String>> {
+        let configured: HashMap<&str, &ModuleConfig> = self
+            .modules
+            .iter()
+            .map(|module| (module.id.as_str(), module))
+            .collect();
+        let mut violations = Vec::new();
+
+        for module in &self.modules {
+            if !module.enabled {
+                continue;
+            }
+            let Some(condition) = &module.condition else {
+                continue;
+            };
+
+            if condition.min_threat_level.is_some() && condition.depends_module.is_none() {
+                violations.push(format!(
+                    "module '{}' sets min_threat_level without depends_module",
+                    module.id
+                ));
+            }
+
+            if let Some(dependency) = condition.depends_module.as_deref() {
+                if dependency == module.id.as_str() {
+                    violations.push(format!("module '{}' cannot depend on itself", module.id));
+                } else if let Some(dependency_config) = configured.get(dependency) {
+                    if !dependency_config.enabled {
+                        violations.push(format!(
+                            "module '{}' depends on disabled module '{}'",
+                            module.id, dependency
+                        ));
+                    }
+                } else {
+                    violations.push(format!(
+                        "module '{}' depends on unknown module '{}'",
+                        module.id, dependency
+                    ));
+                }
+            }
+        }
+
+        if violations.is_empty() {
+            Ok(())
+        } else {
+            Err(violations)
+        }
+    }
 }
 
 /// Per-module configuration in the pipeline
@@ -84,10 +138,12 @@ fn default_true() -> bool {
 /// Condition for conditional module execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConditionConfig {
-    /// Only run if max threat level from prior modules>= this
+    /// Only run if the configured dependency's threat level is at least this.
+    /// Must be used together with `depends_module` for deterministic DAG behavior.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_threat_level: Option<ThreatLevel>,
-    /// Only run if this specific module has completed
+    /// Only run after this module completed; also selects the result inspected
+    /// by `min_threat_level` when that threshold is configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depends_module: Option<String>,
 }
@@ -95,8 +151,11 @@ pub struct ConditionConfig {
 /// Verdict aggregation configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerdictConfig {
-    /// strategy: "ds_murphy" (D-S Murphy, Default) | "noisy_or" | "weighted_max"
-    #[serde(default = "default_aggregation")]
+    /// Authoritative D-S model. Retired stored selectors migrate to V2 on load.
+    #[serde(
+        default = "default_aggregation",
+        deserialize_with = "deserialize_aggregation"
+    )]
     pub aggregation: String,
     /// Module (Default 1.0)
     #[serde(default)]
@@ -117,37 +176,41 @@ pub struct VerdictConfig {
     /// TBM v5.0: Default (Module For Useof open-world leakage)
     #[serde(default = "default_epsilon")]
     pub default_epsilon: f64,
-    /// SecurityBreak/JudgeRoadhandler: Modulelevel Alert Threshold.
-    /// When 1Moduleof BPA b>= value, Security,
-    /// prevent D-S of Signal.
-    /// 0.0 Break/JudgeRoadhandler.Default 0.20 (Mediumwait PhishingSignal).
+    /// Read/write compatibility field for historical configurations; V2 does not use it.
     #[serde(default = "default_alert_belief_threshold")]
     pub alert_belief_threshold: f64,
-    /// SecurityBreak/JudgeRoadhandler: due to.floor = max_module_belief * alert_floor_factor.
-    /// When Result risk <floor, risk level floor.
-    /// Default 0.80 (0.21 ofModule -> floor = 0.168, immediately Low level).
+    /// Multiplier for an eligible source's risk floor in `clustered_ds_v2`.
+    /// The default is 1.0; validation prevents the factor from discounting the source score.
     #[serde(default = "default_alert_floor_factor")]
     pub alert_floor_factor: f64,
-    /// SignalConvergeBreak/JudgeRoadhandler: MarkModule.
-    /// When N independentModuleSame Mark Converge.
-    /// Safe Module confidence=1.0 Engine Dempster CompositionMediumof Yuan.
-    /// 0.Default 2.
+    /// Minimum number of distinct runtime causal keys for `clustered_ds_v2` convergence.
+    /// The breaker also requires at least two evidence clusters and a native eligible anchor.
+    /// Default: 2.
     #[serde(default = "default_convergence_min_modules")]
     pub convergence_min_modules: u32,
-    /// SignalConvergeBreak/JudgeRoadhandler: Risk.
-    /// WhenConverge, risk At least value.Default 0.40 (Medium level).
+    /// Base risk floor when `clustered_ds_v2` convergence qualifies.
+    /// A contextual-only cap can later reduce the result; default: 0.40.
     #[serde(default = "default_convergence_base_floor")]
     pub convergence_base_floor: f64,
-    /// SignalConvergeBreak/JudgeRoadhandler: Module belief.
-    /// only BPA belief>= valueofModule Convergecount.
-    /// Default 0.10: But1 of ModuleSignal(if phishing+suspicious_params+NLP,
-    /// belief 0.06~0.11) Converge. value 0.20 ClassPhishingemail.
+    /// Minimum normalized source score counted by `clustered_ds_v2` convergence.
+    /// The serialized field keeps its historical name `convergence_belief_threshold`.
+    /// Default: 0.10.
     #[serde(default = "default_convergence_belief_threshold")]
     pub convergence_belief_threshold: f64,
 }
 
 fn default_aggregation() -> String {
-    "ds_murphy".to_string()
+    "clustered_ds_v2".to_string()
+}
+
+fn deserialize_aggregation<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<String, D::Error> {
+    let name = String::deserialize(deserializer)?;
+    Ok(match name.as_str() {
+        "ds_murphy" | "clustered_ds_v1" | "legacy_ds_murphy" => default_aggregation(),
+        _ => name,
+    })
 }
 
 fn default_eta() -> f64 {
@@ -159,17 +222,12 @@ fn default_epsilon() -> f64 {
 }
 
 fn default_alert_belief_threshold() -> f64 {
-    // downgradeLow 0.20: content_scan waitModuleofMediumwait Signal(b0.21) Break/JudgeRoadhandler.
-    // value 0.60 Module score>= 0.71,, Critical.
-    // : Phishingemail content_scan score0.25, conf=0.85 -> b=0.21
+    // Retained only for historical configuration compatibility.
     0.20
 }
 
 fn default_alert_floor_factor() -> f64 {
-    // High 1.0: Break/JudgeRoadhandler Risk belief.
-    // : b=0.47 -> floor=0.47 -> ThreatLevel::Medium (Ensure)
-    // value 0.80 b=0.47 -> floor=0.374 -> Low,
-    // Phishingemail(randomDomain+NLP 72%Malicious+5Module) Low.
+    // Preserve eligible source strength in clustered_ds_v2; never discount it.
     1.0
 }
 
@@ -180,17 +238,12 @@ fn default_convergence_min_modules() -> u32 {
 }
 
 fn default_convergence_base_floor() -> f64 {
-    // High 0.40: 2+ independentHigh ModuleConverge Medium (>= 0.40).
-    // value 0.25 -> Low, Module found.
+    // Base floor for qualified convergence, before any contextual-only cap.
     0.40
 }
 
 fn default_convergence_belief_threshold() -> f64 {
-    // downgradeLow 0.10: SignalModule(belief 0.06~0.11) ConvergeBreak/JudgeRoadhandler.
-    // Scenario: xiaomi@randomDomain Phishingemail,url_analysis b=0.11 + semantic b=0.09,
-    // value 0.20 Moduleall Converge -> Break/JudgeRoadhandlerDo not trigger -> Safe().
-    // downgrade 0.10,url_analysis (0.11), content_scan/transaction_correlation
-    // convergence_min_modules=2 Converge -> floor=0.40 -> Medium.
+    // Historical field name; clustered_ds_v2 compares normalized source score.
     0.10
 }
 
@@ -211,14 +264,8 @@ pub const TRUST_DISCOUNT_FACTOR: f64 = 0.40; // large
 pub const TOTAL_PILLARS: f64 = 5.0; // total
 
 /// Allowed aggregation strategy names.
-const ALLOWED_AGGREGATION_STRATEGIES: &[&str] = &[
-    "ds_murphy",
-    "clustered_ds_v1",
-    "noisy_or",
-    "weighted_max",
-    "legacy_ds_murphy",
-    "tbm_v5",
-];
+const ALLOWED_AGGREGATION_STRATEGIES: &[&str] =
+    &["clustered_ds_v2", "noisy_or", "weighted_max", "tbm_v5"];
 
 impl VerdictConfig {
     /// Get (priorityUseConfigurationvalue,downgradelevel Defaultvalue)
@@ -239,9 +286,9 @@ impl VerdictConfig {
     /// or `Err(Vec<String>)` listing every violation found.
     ///
     /// # Safety invariants (from AGENTS.md project rules)
-    /// - `alert_floor_factor` >= 1.0 — prevents high-belief modules from being discounted
-    /// - `convergence_base_floor` >= 0.40 — ensures multi-module convergence reaches Medium
-    /// - `convergence_belief_threshold` <= 0.10 — prevents weak multi-signal phishing misses
+    /// - `alert_floor_factor` >= 1.0 — the default strategy cannot discount eligible source scores
+    /// - `convergence_base_floor` >= 0.40 — base floor for qualified convergence; contextual caps may lower it
+    /// - `convergence_belief_threshold` <= 0.10 — historical name; the default compares source score
     /// - Circuit breaker thresholds must not be set to values that disable detection
     pub fn validate(&self) -> Result<(), Vec<String>> {
         let mut errors = Vec::new();
@@ -269,10 +316,8 @@ impl VerdictConfig {
             ));
         }
 
-        // ── alert_belief_threshold (circuit breaker trigger) ──
-        // Must be in [0, 1]. Value 0 means always trigger (aggressive), 1 means never trigger.
-        // Reasonable operational range: [0.0, 0.60].
-        // Values > 0.60 effectively disable the circuit breaker for all but extreme signals.
+        // ── alert_belief_threshold (legacy_ds_murphy only) ──
+        // Keep the persisted compatibility field within its supported range.
         if self.alert_belief_threshold < 0.0 || self.alert_belief_threshold > 0.60 {
             errors.push(format!(
                 "alert_belief_threshold must be in [0.0, 0.60], got {}",
@@ -280,10 +325,10 @@ impl VerdictConfig {
             ));
         }
 
-        // ── alert_floor_factor (AGENTS.md rule: MUST be >= 1.0) ──
-        // Floor = max_module_belief * factor. Below 1.0 discounts module belief,
-        // causing high-confidence detections to drop a threat level.
-        // Upper bound 3.0 prevents unreasonable amplification.
+        // ── alert_floor_factor (must be >= 1.0) ──
+        // The default clustered path applies it to an eligible source score;
+        // requiring >= 1.0 prevents discounting. The legacy path applies it to module belief.
+        // Upper bound 3.0 limits amplification.
         if self.alert_floor_factor < 1.0 || self.alert_floor_factor > 3.0 {
             errors.push(format!(
                 "alert_floor_factor must be in [1.0, 3.0], got {}",
@@ -301,9 +346,8 @@ impl VerdictConfig {
             ));
         }
 
-        // ── convergence_base_floor (AGENTS.md rule: MUST be >= 0.40) ──
-        // When convergence triggers, risk is at least this value.
-        // Below 0.40 means convergence only guarantees Low, not Medium.
+        // ── convergence_base_floor (must be >= 0.40) ──
+        // This is the base for qualified convergence, subject to contextual-only caps.
         // Upper bound 0.85 prevents convergence alone from reaching Critical.
         if self.convergence_base_floor < 0.40 || self.convergence_base_floor > 0.85 {
             errors.push(format!(
@@ -312,11 +356,10 @@ impl VerdictConfig {
             ));
         }
 
-        // ── convergence_belief_threshold (AGENTS.md rule: MUST be <= 0.10) ──
-        // Only modules with belief >= this threshold count toward convergence.
-        // Above 0.10 causes weak but consistent multi-module signals to be ignored,
-        // leading to phishing false negatives.
-        // Must be > 0 (otherwise every module counts, even no-signal ones).
+        // ── convergence_belief_threshold (serialized compatibility name) ──
+        // clustered_ds_v2 compares normalized source score, and requires independent
+        // causal keys, distinct evidence clusters, and an eligible native anchor.
+        // Must be > 0 so no-signal sources cannot count.
         if self.convergence_belief_threshold <= 0.0 || self.convergence_belief_threshold > 0.10 {
             errors.push(format!(
                 "convergence_belief_threshold must be in (0.0, 0.10], got {}",
@@ -386,7 +429,7 @@ impl VerdictConfig {
 impl Default for VerdictConfig {
     fn default() -> Self {
         Self {
-            aggregation: "ds_murphy".to_string(),
+            aggregation: default_aggregation(),
             weights: HashMap::new(),
             pillar_weights: HashMap::new(),
             eta: 0.30,
@@ -491,6 +534,30 @@ impl Default for AiServiceConfig {
     }
 }
 
+impl AiServiceConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if !matches!(self.provider.trim(), "claude" | "openai" | "local") {
+            return Err("AI provider must be claude, openai, or local".to_string());
+        }
+        if self.api_key.chars().count() > 4096 {
+            return Err("AI API key is too long".to_string());
+        }
+        if self.model.chars().count() > 128 {
+            return Err("AI model name is too long".to_string());
+        }
+        if !self.temperature.is_finite() || !(0.0..=1.0).contains(&self.temperature) {
+            return Err("AI temperature must be finite and between 0 and 1".to_string());
+        }
+        if !(1..=8192).contains(&self.max_tokens) {
+            return Err("AI max_tokens must be between 1 and 8192".to_string());
+        }
+        if !(1..=300).contains(&self.timeout_secs) {
+            return Err("AI timeout_secs must be between 1 and 300".to_string());
+        }
+        Ok(())
+    }
+}
+
 pub use vigilyx_soar::config::{EmailAlertConfig, WechatAlertConfig};
 
 fn default_modules() -> Vec<ModuleConfig> {
@@ -585,6 +652,26 @@ fn default_modules() -> Vec<ModuleConfig> {
             mode: RunMode::Builtin,
             config: serde_json::Value::Null,
             condition: None,
+        },
+        ModuleConfig {
+            id: "url_sandbox_scan".into(),
+            enabled: true,
+            mode: RunMode::Builtin,
+            config: serde_json::Value::Null,
+            condition: Some(ConditionConfig {
+                min_threat_level: None,
+                depends_module: Some("landing_page_scan".into()),
+            }),
+        },
+        ModuleConfig {
+            id: "process_sandbox_scan".into(),
+            enabled: true,
+            mode: RunMode::Builtin,
+            config: serde_json::Value::Null,
+            condition: Some(ConditionConfig {
+                min_threat_level: None,
+                depends_module: Some("landing_page_scan".into()),
+            }),
         },
         ModuleConfig {
             id: "anomaly_detect".into(),
@@ -697,6 +784,7 @@ mod tests {
     const MODERN_PHISHING_MODULES: &[&str] = &[
         "attach_qr_scan",
         "landing_page_scan",
+        "url_sandbox_scan",
         "aitm_detect",
         "rmm_detect",
         "prompt_injection_scan",
@@ -797,6 +885,22 @@ mod tests {
             config.validate().is_ok(),
             "Default VerdictConfig must pass validation"
         );
+    }
+
+    #[test]
+    fn retired_saved_selectors_migrate_to_authoritative_v2() {
+        for name in [
+            "ds_murphy",
+            "clustered_ds_v1",
+            "legacy_ds_murphy",
+            "clustered_ds_v2",
+        ] {
+            let config: VerdictConfig =
+                serde_json::from_value(serde_json::json!({"aggregation": name})).unwrap();
+            assert_eq!(config.aggregation, "clustered_ds_v2");
+            assert!(config.validate().is_ok());
+        }
+        assert_eq!(VerdictConfig::default().aggregation, "clustered_ds_v2");
     }
 
     #[test]

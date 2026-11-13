@@ -58,7 +58,7 @@ rule OLE_Embedded_Executable {
 
 rule PDF_JavaScript {
     meta:
-        description = "PDF 含可疑 JavaScript — 需同时存在 JS 入口 + 危险行为"
+        description = "PDF 含可疑 JavaScript — 需同时存在 JS 入口 + JavaScript 危险行为"
         category = "malicious_document"
         severity = "high"
     strings:
@@ -70,16 +70,15 @@ rule PDF_JavaScript {
         $js_entry4 = "/J#53" ascii
         $action1 = "eval(" ascii nocase
         $action2 = "app.alert" ascii nocase
-        $action3 = "/Launch" ascii
-        $action4 = "/OpenAction" ascii
-        $action5 = "this.exportDataObject" ascii nocase
-        $action6 = "util.printf" ascii nocase
-        $action7 = "getAnnots" ascii nocase
-        $action8 = "getURL" ascii nocase
-        // #hh name-escape spellings of the automatic-action tokens.
-        $action9 = "/L#61unch" ascii
-        $action10 = "/Op#65nAction" ascii
+        $action3 = "this.exportDataObject" ascii nocase
+        $action4 = "util.printf" ascii nocase
+        $action5 = "getAnnots" ascii nocase
+        $action6 = "getURL" ascii nocase
     condition:
+        // /OpenAction and /Launch are PDF control-flow names, not JavaScript
+        // behavior.  Treating either as the second half of this compound let
+        // a catalog-level /OpenAction combine with a chance /JS byte sequence
+        // hundreds of KiB away inside a compressed stream.
         $pdf in (0..1024) and any of ($js_entry*) and any of ($action*)
 }
 
@@ -104,15 +103,10 @@ rule PDF_JavaScript_ObjStm {
         $js_entry5 = "/J#53" ascii
         $action1 = "eval(" ascii nocase
         $action2 = "app.alert" ascii nocase
-        $action3 = "/Launch" ascii
-        $action4 = "/OpenAction" ascii
-        $action5 = "this.exportDataObject" ascii nocase
-        $action6 = "util.printf" ascii nocase
-        $action7 = "getAnnots" ascii nocase
-        $action8 = "getURL" ascii nocase
-        // #hh name-escape spellings of the automatic-action tokens.
-        $action9 = "/L#61unch" ascii
-        $action10 = "/Op#65nAction" ascii
+        $action3 = "this.exportDataObject" ascii nocase
+        $action4 = "util.printf" ascii nocase
+        $action5 = "getAnnots" ascii nocase
+        $action6 = "getURL" ascii nocase
     condition:
         $dict and any of ($js_entry*) and any of ($action*)
 }
@@ -432,6 +426,7 @@ rule PowerShell_Download_Exec {
         description = "PowerShell 下载并ExecutelineRemote载荷"
         category = "webshell"
         severity = "critical"
+        fidelity = "high"
     strings:
         $ps1 = "powershell" ascii nocase
         $ps2 = "pwsh" ascii nocase
@@ -447,6 +442,9 @@ rule PowerShell_Download_Exec {
         $hidden = "-WindowStyle Hidden" ascii nocase
         $enc = "-EncodedCommand" ascii nocase
     condition:
+        // The engine applies an additional bounded-locality validator to this
+        // match.  YARA establishes the token compound; Rust then requires the
+        // download and execution terms to occur near one PowerShell launcher.
         any of ($ps*) and (any of ($dl*) or $enc) and (any of ($exec*) or $bypass or $hidden)
 }
 
@@ -550,13 +548,15 @@ rule Doc_SVG_Base64_Smuggle {
         author = "Vigilyx YARA Foundry"
     strings:
         $svg = "<svg" ascii nocase
+        $html = "<html" ascii nocase
         $b64_1 = "base64" ascii nocase
         $b64_2 = "atob(" ascii
         $script = "<script" ascii nocase
         $embed1 = "data:application" ascii nocase
         $embed2 = "data:text/html" ascii nocase
     condition:
-        $svg and $script and (any of ($b64_*) or any of ($embed*))
+        $svg in (0..1024) and (not $html or @svg < @html) and
+        $script and (any of ($b64_*) or any of ($embed*))
 }
 
 rule Doc_Tycoon2FA_AiTM {
@@ -750,6 +750,7 @@ rule Evasion_SVG_Script_Exec {
         mitre_attack = "T1027.006"
     strings:
         $svg = "<svg" ascii nocase
+        $html = "<html" ascii nocase
         $script1 = "<script" ascii nocase
         $event1 = "onload=" ascii nocase
         $event2 = "onerror=" ascii nocase
@@ -765,7 +766,7 @@ rule Evasion_SVG_Script_Exec {
         $redir1 = "http://" ascii nocase
         $redir2 = "https://" ascii nocase
     condition:
-        $svg and
+        $svg in (0..1024) and (not $html or @svg < @html) and
         (($script1 and any of ($js*)) or
          (any of ($event*) and any of ($js*)) or
          ($script1 and any of ($redir*) and any of ($js1, $js2)))
@@ -846,7 +847,8 @@ rule Mal_Lumma_Stealer {
         $api2 = "HttpSendRequestA" ascii
         $api3 = "CryptUnprotectData" ascii
     condition:
-        (any of ($s*)) or
+        ($s1 and (any of ($browser*) or any of ($wallet*, $crypto*) or any of ($api*))) or
+        ($s2 and 2 of ($browser*, $wallet*, $crypto*, $api*)) or
         (2 of ($browser*) and any of ($wallet*, $crypto*) and any of ($api*))
 }
 
@@ -959,6 +961,7 @@ rule Mal_Vidar_Stealer {
         author = "Vigilyx YARA Foundry"
         mitre_attack = "T1555.003"
     strings:
+        $vidar_exact = "Vidar Stealer" ascii nocase
         $vidar1 = "Vidar" ascii nocase
         $steam = "SteamPath" ascii
         $tele = "Telegram" ascii
@@ -973,7 +976,8 @@ rule Mal_Vidar_Stealer {
         $ftp2 = "recentservers.xml" ascii
         $hwid = "HWID" ascii
     condition:
-        $vidar1 or
+        ($vidar_exact and 2 of ($steam, $tele, $discord, $wallet1, $wallet2, $browser1, $browser2, $browser3, $authy, $ftp1, $ftp2, $hwid)) or
+        ($vidar1 and $hwid and 2 of ($steam, $tele, $discord, $wallet1, $wallet2, $browser1, $browser2, $browser3, $authy, $ftp1, $ftp2)) or
         ($hwid and 3 of ($steam, $tele, $discord, $wallet1, $wallet2, $browser1, $browser2, $browser3, $authy, $ftp1, $ftp2))
 }
 
@@ -1894,9 +1898,7 @@ mod tests {
         let decoded_layer = b"2 0 << /S /JavaScript /JS (app.alert(1)) >>\n";
         let names = matching_rule_names(MALICIOUS_DOCUMENT_RULES, decoded_layer);
         assert!(
-            names
-                .iter()
-                .any(|name| name == "PDF_JavaScript_ObjStm"),
+            names.iter().any(|name| name == "PDF_JavaScript_ObjStm"),
             "decoded ObjStm layer must trigger PDF_JavaScript_ObjStm: {names:?}"
         );
         assert!(
@@ -1909,9 +1911,7 @@ mod tests {
         let js_blob = b"const path = \"/JS library\"; eval(1);";
         let names = matching_rule_names(MALICIOUS_DOCUMENT_RULES, js_blob);
         assert!(
-            !names
-                .iter()
-                .any(|name| name == "PDF_JavaScript_ObjStm"),
+            !names.iter().any(|name| name == "PDF_JavaScript_ObjStm"),
             "non-PDF JS blob must not trigger PDF_JavaScript_ObjStm: {names:?}"
         );
     }
@@ -1924,9 +1924,7 @@ mod tests {
         let url_file = b"\r\n\r\n\r\n[InternetShortcut]\r\nURL = http://evil.example/payload.exe\r\nIconFile=\\\\attacker\\share\\icon.ico\r\n";
         let names = matching_rule_names(EVASION_TECHNIQUE_RULES_V2, url_file);
         assert!(
-            names
-                .iter()
-                .any(|name| name == "Evasion_URL_Shortcut"),
+            names.iter().any(|name| name == "Evasion_URL_Shortcut"),
             "spaced/blank-line .url variant must trigger Evasion_URL_Shortcut: {names:?}"
         );
 
@@ -1934,9 +1932,7 @@ mod tests {
         let url_file = b"[InternetShortcut]\r\nURL=http://evil.example/x\r\n";
         let names = matching_rule_names(EVASION_TECHNIQUE_RULES_V2, url_file);
         assert!(
-            names
-                .iter()
-                .any(|name| name == "Evasion_URL_Shortcut"),
+            names.iter().any(|name| name == "Evasion_URL_Shortcut"),
             "canonical .url must still trigger Evasion_URL_Shortcut: {names:?}"
         );
     }

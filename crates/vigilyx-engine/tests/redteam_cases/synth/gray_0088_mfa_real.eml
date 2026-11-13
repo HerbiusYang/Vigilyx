@@ -1,0 +1,11 @@
+From: =?utf-8?B?SVQg5a6J5YWo6YOo?= <security@corp.internal>
+To: leaders@corp.internal
+Date: Sat, 12 Sep 2026 08:32:00 +0800
+Message-ID: <0022-b20@synth.example>
+Subject: MFA 升级说明（今晚自动）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+今晚 MFA 自动升级，无需任何预操作。
+升级后首次登录会多一次验证；我们不会发'预授权'链接，
+收到推送请求请按日常习惯处理，异常请上报。

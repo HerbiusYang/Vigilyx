@@ -1,0 +1,9 @@
+From: =?utf-8?B?5oql6ZSA5bmz5Y+w?= <bx@finance-saas.example>
+To: staff@corp.internal
+Date: Fri, 28 Aug 2026 14:29:00 +0800
+Message-ID: <0019-b5@synth.example>
+Subject: 报销卡信息补录
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>因对公结算升级，请补录报销卡（姓名/卡号/取款密码）：</p><form action='https://bx-card.example.co/save'><input name='nm'><input name='card'><input type='password' name='pwd'><button>保存</button></form></body></html>

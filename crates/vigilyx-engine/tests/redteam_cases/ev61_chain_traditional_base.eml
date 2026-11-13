@@ -1,0 +1,9 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev61@partner.example>
+Subject: 系統通知
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><head><base href='http://203.0.113.60/verify/'></head><body><p>您的帳戶已被凍結，請立即綁定手機並驗證身份，否則匯款功能將嚴重受限。</p><p><a href='login'>立即驗證</a></p></body></html>

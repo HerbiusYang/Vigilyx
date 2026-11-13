@@ -216,7 +216,7 @@ mod tests {
         let session = make_session(
             "/api/draft",
             HttpMethod::Put,
-            Some("ID cardNumber: 110101199001011237"),
+            Some("ID cardNumber: 000000200001010005"),
         );
         let result = detector.analyze(&session);
         assert!(result.is_some());
@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn test_draft_detect_coremail_compose_jsp_autosave() {
         let detector = DraftBoxDetector::new();
-        let body = r#"{"attrs":{"account":"user@corp.com","subject":"test","content":"ID card: 110101199001011237"},"action":"autosave"}"#;
+        let body = r#"{"attrs":{"account":"user@corp.example","subject":"test","content":"ID card: 000000200001010005"},"action":"autosave"}"#;
         let session = make_session(
             "/coremail/common/mbox/compose.jsp?sid=xyz",
             HttpMethod::Post,
@@ -356,7 +356,7 @@ mod tests {
     fn test_draft_detect_email_plus_other_still_alerts() {
         // email + ID card -> email But id_number
         let detector = DraftBoxDetector::new();
-        let body = r#"{"attrs":{"subject":"info","content":"联系人 a@t.com, b@t.com, c@t.com ID card 110101199001011237"},"action":"save"}"#;
+        let body = r#"{"attrs":{"subject":"info","content":"联系人 a@fixture.example, b@fixture.example, c@fixture.example ID card 000000200001010005"},"action":"save"}"#;
         let session = make_session(
             "/coremail/common/mbox/compose.jsp?sid=abc",
             HttpMethod::Post,
@@ -449,7 +449,7 @@ mod tests {
     #[test]
     fn test_draft_detect_returns_dlp_result_for_jrt() {
         let detector = DraftBoxDetector::new();
-        let body = r#"{"attrs":{"content":"ID card 110101199001011237"},"action":"save"}"#;
+        let body = r#"{"attrs":{"content":"ID card 000000200001010005"},"action":"save"}"#;
         let session = make_session(
             "/coremail/common/mbox/compose.jsp?sid=abc",
             HttpMethod::Post,

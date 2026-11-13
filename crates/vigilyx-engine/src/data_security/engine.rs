@@ -379,7 +379,7 @@ impl DataSecurityEngine {
 
                     info!(
                         session_id = %session.id,
-                        uri = %session.uri,
+                        uri = %vigilyx_core::redact_http_uri(&session.uri),
                         method = ?session.method,
                         host = ?session.host,
                         client_ip = %session.client_ip,
@@ -399,7 +399,7 @@ impl DataSecurityEngine {
                             engine_dedup_skipped += 1;
                             debug!(
                                 fingerprint = fingerprint,
-                                uri = %session.uri,
+                                uri = %vigilyx_core::redact_http_uri(&session.uri),
                                 ip = %session.client_ip,
                                 dedup_skipped_total = engine_dedup_skipped,
                                 "Duplicate HTTP session skipped (dedup)"
@@ -572,8 +572,7 @@ impl DataSecurityEngine {
     /// 返回 None 表示无敏感键, 调用方直接用原 session 落库 (零拷贝)。
     fn redacted_session_for_storage(session: &HttpSession) -> Option<HttpSession> {
         let body = session.request_body.as_deref()?;
-        let redacted =
-            super::redact::redact_request_body(body, session.content_type.as_deref());
+        let redacted = super::redact::redact_request_body(body, session.content_type.as_deref());
         if redacted == body {
             return None;
         }
@@ -944,7 +943,8 @@ mod tests {
 
         let mut real = decoy.clone();
         real.request_body_size = 64;
-        real.request_body = Some("客户身份证 000000200001010005 月薪 25000元 合同金额 100万元".to_string());
+        real.request_body =
+            Some("客户身份证 000000200001010005 月薪 25000元 合同金额 100万元".to_string());
 
         assert_ne!(
             DataSecurityEngine::session_fingerprint(&decoy),

@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use uuid::Uuid;
 use vigilyx_core::{EmailSession, TrafficStats, WsMessage};
+use vigilyx_db::cache::CacheKey;
 use vigilyx_db::mq::streams;
 
 use super::ApiResponse;
@@ -197,6 +198,17 @@ pub async fn clear_database(
             let stream_keys_deleted = pre_streams_deleted.saturating_add(post_streams_deleted);
 
             *state.cache.traffic_stats.write().await = None;
+            if let Some(read_cache) = state.cache.read_cache.as_ref() {
+                for key in [
+                    CacheKey::session_counts(),
+                    CacheKey::external_login(),
+                    CacheKey::security_overview(),
+                ] {
+                    if let Err(error) = read_cache.delete(key).await {
+                        tracing::warn!(%error, "Read-cache invalidation failed after database clear");
+                    }
+                }
+            }
             tracing::info!(
                 mode,
                 elapsed_ms,
@@ -372,7 +384,11 @@ pub async fn factory_reset(
             // SEC M-1: factory reset revokes every user's outstanding JWTs
             // through the per-user rows (the config counter above remains as
             // the legacy fallback only).
-            if let Err(e) = state.engine_db.bump_all_platform_user_token_versions().await {
+            if let Err(e) = state
+                .engine_db
+                .bump_all_platform_user_token_versions()
+                .await
+            {
                 tracing::error!(
                     "Factory reset completed, but per-user token revocation failed: {}",
                     e

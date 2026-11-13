@@ -1,0 +1,10 @@
+From: =?utf-8?B?5b+r5Lu25pyN5Yqh?= <depot@express-svc.example>
+To: user@corp.internal
+Date: Thu, 27 Aug 2026 09:20:00 +0800
+Message-ID: <0005-b4@synth.example>
+Subject: 快件滞留第3天，即将收取仓储费
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您的快件在网点滞留超过 72 小时，明日起按 2 元/天收取仓储费。
+确认改派或自取请点：https://express-arrange.example.info/reschedule

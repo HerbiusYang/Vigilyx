@@ -14,13 +14,14 @@ use std::time::Instant;
 use async_trait::async_trait;
 use chrono::Utc;
 use regex::Regex;
+use sha2::{Digest, Sha256};
 use vigilyx_parser::mime::decode_rfc2047;
 
 use std::sync::Arc;
 
 use crate::bpa::Bpa;
 use crate::context::SecurityContext;
-use crate::db_service::DbQueryService;
+use crate::db_service::{DbQueryService, SenderRelationshipHistory};
 use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
 use crate::modules::common::{domains_share_organizational_domain, extract_domain_from_email};
@@ -190,12 +191,16 @@ fn display_name_matches_impersonation_target(display_name: &str, target: &str) -
     // as a delimited token: `JD`, `JD 客服`, and `JD-support` remain valid, but
     // `wjsjdin` and `myjdmail` do not.  The same boundary rule also avoids
     // treating words such as `banking` as a standalone `bank` brand.
-    normalized_name.match_indices(&normalized_target).any(|(index, _)| {
-        let before = normalized_name[..index].chars().next_back();
-        let after = normalized_name[index + normalized_target.len()..].chars().next();
-        !before.is_some_and(|ch| ch.is_ascii_alphanumeric())
-            && !after.is_some_and(|ch| ch.is_ascii_alphanumeric())
-    })
+    normalized_name
+        .match_indices(&normalized_target)
+        .any(|(index, _)| {
+            let before = normalized_name[..index].chars().next_back();
+            let after = normalized_name[index + normalized_target.len()..]
+                .chars()
+                .next();
+            !before.is_some_and(|ch| ch.is_ascii_alphanumeric())
+                && !after.is_some_and(|ch| ch.is_ascii_alphanumeric())
+        })
 }
 
 pub struct IdentityAnomalyModule {
@@ -229,6 +234,59 @@ impl IdentityAnomalyModule {
         }
     }
 
+    /// Return whether two public mailbox domains are documented aliases in the
+    /// same provider namespace. This is deliberately an explicit mapping, not
+    /// a blanket exemption for every pair of public-mail domains: an address
+    /// such as `support@paypal.com` displayed by a Gmail sender is still an
+    /// identity mismatch.
+    fn public_mail_domains_share_provider(left: &str, right: &str) -> bool {
+        let left = left.trim().trim_end_matches('.').to_ascii_lowercase();
+        let right = right.trim().trim_end_matches('.').to_ascii_lowercase();
+
+        if left == right {
+            return true;
+        }
+
+        // Keep this list limited to stable account namespace aliases. These
+        // pairs do not authenticate either address; they only prevent a
+        // complete personal mailbox used as a display label from becoming a
+        // standalone spoof finding.
+        const PROVIDER_ALIASES: &[&[&str]] = &[
+            &["qq.com", "foxmail.com"],
+            &["gmail.com", "googlemail.com"],
+            &[
+                "outlook.com",
+                "hotmail.com",
+                "live.com",
+                "msn.com",
+                "windowslive.com",
+            ],
+            &["163.com", "126.com", "yeah.net", "188.com"],
+            &["icloud.com", "me.com", "mac.com", "mobileme.com"],
+            &["proton.me", "protonmail.com", "protonmail.ch", "pm.me"],
+            &["yahoo.com", "ymail.com", "rocketmail.com"],
+        ];
+
+        PROVIDER_ALIASES
+            .iter()
+            .any(|aliases| aliases.contains(&left.as_str()) && aliases.contains(&right.as_str()))
+    }
+
+    /// A full mailbox used as a display label is common when users forward or
+    /// identify personal mail. Suppress only the narrow, explicitly mapped
+    /// provider-alias case; this is not an authentication or allowlist check.
+    fn is_benign_mailbox_display_label(
+        display_name: &str,
+        embedded_email: &str,
+        embedded_domain: &str,
+        actual_domain: &str,
+    ) -> bool {
+        display_name.trim().eq_ignore_ascii_case(embedded_email)
+            && crate::pipeline::internal_domains::is_public_mail_domain(embedded_domain)
+            && crate::pipeline::internal_domains::is_public_mail_domain(actual_domain)
+            && Self::public_mail_domains_share_provider(embedded_domain, actual_domain)
+    }
+
     /// Check if display name looks like it's impersonating a different domain
     #[inline]
     fn check_display_name_mismatch(&self, headers: &[(String, String)]) -> Option<(f64, Evidence)> {
@@ -253,7 +311,12 @@ impl IdentityAnomalyModule {
                 return None;
             }
 
-            let email_domain = email_part.rsplit('@').next()?;
+            let email_domain = email_part
+                .rsplit('@')
+                .next()?
+                .trim()
+                .trim_end_matches('.')
+                .to_ascii_lowercase();
             let dn_lower = display_name.to_ascii_lowercase();
 
             // Check if display name contains an email-like pattern with a different domain
@@ -262,8 +325,17 @@ impl IdentityAnomalyModule {
 
             if let Some(m) = EMAIL_IN_DN.find(&dn_lower) {
                 let dn_email = m.as_str();
-                if let Some(dn_domain) = dn_email.rsplit('@').next()
-                    && dn_domain != email_domain.to_ascii_lowercase()
+                if let Some(dn_domain) = dn_email
+                    .rsplit('@')
+                    .next()
+                    .map(|domain| domain.trim_end_matches('.'))
+                    && dn_domain != email_domain
+                    && !Self::is_benign_mailbox_display_label(
+                        &display_name,
+                        dn_email,
+                        dn_domain,
+                        &email_domain,
+                    )
                 {
                     return Some((
                         W_DISPLAY_NAME_MISMATCH,
@@ -306,7 +378,7 @@ impl IdentityAnomalyModule {
 
     /// Check if the sender's local part impersonates a known brand.
     /// Pattern: {brand}{separator}{random}@{non-brand-domain}
-    /// e.g. apple-stoermoxg@fmworld.net, icloud-jpexyv@ml.nitori-net.jp
+    /// e.g. apple-random@sender.invalid, icloud-random@mailer.invalid
     fn check_local_part_brand_spoof(
         &self,
         mail_from: &str,
@@ -514,7 +586,11 @@ impl IdentityAnomalyModule {
     }
 
     /// Check for suspicious mail client fingerprints
-    fn check_client_fingerprint(&self, headers: &[(String, String)]) -> Option<(f64, Evidence)> {
+    fn check_client_fingerprint(
+        &self,
+        headers: &[(String, String)],
+        allow_missing_header_inference: bool,
+    ) -> Option<(f64, Evidence)> {
         // Check X-Mailer and User-Agent headers
         let md = crate::module_data::module_data();
         for (key, value) in headers {
@@ -547,7 +623,7 @@ impl IdentityAnomalyModule {
             .iter()
             .any(|(k, _)| k.eq_ignore_ascii_case("content-type"));
 
-        if !has_mime_version && !has_content_type {
+        if allow_missing_header_inference && !has_mime_version && !has_content_type {
             return Some((
                 W_CLIENT_FINGERPRINT * 0.5,
                 Evidence {
@@ -612,7 +688,9 @@ impl SecurityModule for IdentityAnomalyModule {
         let mut categories = Vec::new();
         let mut total_score: f64 = 0.0;
         let mut sender_address_seen: Option<bool> = None;
+        let mut relationship_history = SenderRelationshipHistory::default();
         let mut weak_observations: Vec<serde_json::Value> = Vec::new();
+        let mut ds_learning_items: Vec<serde_json::Value> = Vec::new();
 
         // 1. Display name mismatch / impersonation
         if let Some((score, ev)) = self.check_display_name_mismatch(headers) {
@@ -621,7 +699,7 @@ impl SecurityModule for IdentityAnomalyModule {
             evidence.push(ev);
         }
 
-        // 1b. Local part brand impersonation (e.g. apple-stoermoxg@fmworld.net)
+        // 1b. Local part brand impersonation (e.g. apple-random@sender.invalid)
         if let Some(mail_from) = ctx.session.mail_from.as_deref()
             && let Some(sender_domain) = mail_from.split('@').nth(1)
             && let Some((score, cats, ev)) =
@@ -653,7 +731,9 @@ impl SecurityModule for IdentityAnomalyModule {
         }
 
         // 3. Client fingerprint
-        if let Some((score, ev)) = self.check_client_fingerprint(headers) {
+        if let Some((score, ev)) =
+            self.check_client_fingerprint(headers, ctx.session.content.is_complete)
+        {
             total_score += score;
             categories.push("suspicious_client".to_string());
             evidence.push(ev);
@@ -686,6 +766,35 @@ impl SecurityModule for IdentityAnomalyModule {
             // envelope_mismatch, etc.) still apply.
             let is_public_provider =
                 crate::pipeline::internal_domains::is_public_mail_domain(&sender_domain_lower);
+
+            // The v2 shadow model needs stricter positive-history evidence
+            // than the legacy first-contact boolean.  Exact-mailbox and
+            // sender-to-recipient counts are queried for all external
+            // mailboxes, including public providers; they become normal mass
+            // only after minimum-count/day, authentication and coverage gates.
+            if !is_internal {
+                let recipients = ctx
+                    .session
+                    .rcpt_to
+                    .iter()
+                    .map(|recipient| recipient.trim().to_ascii_lowercase())
+                    .filter(|recipient| !recipient.is_empty())
+                    .collect::<Vec<_>>();
+                match db
+                    .sender_relationship_history(
+                        &mail_from.to_ascii_lowercase(),
+                        &recipients,
+                        &ctx.session.id.to_string(),
+                        &ctx.session.started_at.to_rfc3339(),
+                    )
+                    .await
+                {
+                    Ok(history) => relationship_history = history,
+                    Err(error) => {
+                        tracing::warn!("V2 sender relationship history query failed: {error:?}");
+                    }
+                }
+            }
 
             if !is_internal && !is_public_provider {
                 let session_id = ctx.session.id.to_string();
@@ -757,7 +866,7 @@ impl SecurityModule for IdentityAnomalyModule {
             // (b) Short mixed alphanumeric -> likely random (8t5om, ycgg4)
             // Excludes pinyin+English names (qingcloud = qing+cloud)
             // Excludes pinyin-initial abbreviations such as "sxyhxh".
-            // Excludes known brand domains (hundsun, cmbchina, etc.)
+            // Excludes known human-readable service labels.
             if main_part.len() >= 4
                 && !is_human_readable_domain_label(main_part)
                 && !is_internal
@@ -807,6 +916,16 @@ impl SecurityModule for IdentityAnomalyModule {
                 if is_random {
                     total_score += 0.25;
                     categories.push("random_domain".to_string());
+                    // This metadata is used only by the learned DS trace. It
+                    // binds the lexical domain check to its own contribution,
+                    // independently of first contact or random local-part scores.
+                    ds_learning_items.push(serde_json::json!({
+                        "categories": ["random_domain"],
+                        "score": 0.25,
+                        "confidence": 0.70,
+                        "causal_key": format!("envelope_sender_domain:sha256:{}",
+                            hex::encode(Sha256::digest(sender_domain_lower.trim_end_matches('.').as_bytes()))),
+                    }));
                     evidence.push(Evidence {
                         description: format!(
                             "Sender domain {} likely random/DGA-generated ({})",
@@ -819,7 +938,7 @@ impl SecurityModule for IdentityAnomalyModule {
             }
         }
 
-        // --- Random username detection (e.g., pvzpfvq@hleg.com, ktipfnl@udcoraqhs.com) ---
+        // --- Random username detection (e.g., pvzpfvq@sender.invalid) ---
         // Skips internal domains: Chinese pinyin usernames (yybdyy, wnssh) look random but aren't
         // Skips pinyin+English decomposable usernames (e.g., weixinmphelper, alipaynotify)
         // Skips public mail providers (qq.com, 163.com, gmail.com...): free-form usernames are normal
@@ -836,11 +955,8 @@ impl SecurityModule for IdentityAnomalyModule {
             // mailboxes and abbreviations routinely have this shape, so it is
             // promoted later only when an independent identity fact agrees.
             if let Some(max_consonant_run) = random_username_consonant_run(username) {
-                random_local_part = Some((
-                    username.to_string(),
-                    max_consonant_run,
-                    mail_from.clone(),
-                ));
+                random_local_part =
+                    Some((username.to_string(), max_consonant_run, mail_from.clone()));
             }
         }
 
@@ -925,7 +1041,17 @@ impl SecurityModule for IdentityAnomalyModule {
             );
             result.details = serde_json::json!({
                 "score": total_score,
+                "ds_learning_items": ds_learning_items,
                 "weak_observations": weak_observations,
+                "sender_address_seen": sender_address_seen,
+                "sender_history": {
+                    "completed_count": relationship_history.sender_completed_count,
+                    "distinct_days": relationship_history.sender_distinct_days,
+                },
+                "recipient_relationship_history": {
+                    "completed_count": relationship_history.relationship_completed_count,
+                    "distinct_days": relationship_history.relationship_distinct_days,
+                },
             });
             result.engine_id = Some("identity_anomaly".to_string());
             return Ok(result);
@@ -952,7 +1078,17 @@ impl SecurityModule for IdentityAnomalyModule {
             evidence,
             details: serde_json::json!({
                 "score": total_score,
+                "ds_learning_items": ds_learning_items,
                 "weak_observations": weak_observations,
+                "sender_address_seen": sender_address_seen,
+                "sender_history": {
+                    "completed_count": relationship_history.sender_completed_count,
+                    "distinct_days": relationship_history.sender_distinct_days,
+                },
+                "recipient_relationship_history": {
+                    "completed_count": relationship_history.relationship_completed_count,
+                    "distinct_days": relationship_history.relationship_distinct_days,
+                },
             }),
             duration_ms,
             analyzed_at: Utc::now(),
@@ -965,8 +1101,8 @@ impl SecurityModule for IdentityAnomalyModule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vigilyx_core::models::{EmailContent, EmailSession, Protocol};
     use vigilyx_core::IocEntry;
+    use vigilyx_core::models::{EmailContent, EmailSession, Protocol};
 
     struct HistoryDb {
         domain_count: i64,
@@ -999,6 +1135,21 @@ mod tests {
             Ok(self.sender_count)
         }
 
+        async fn sender_relationship_history(
+            &self,
+            _sender_address: &str,
+            _recipient_addresses: &[String],
+            _exclude_session_id: &str,
+            _before_started_at: &str,
+        ) -> anyhow::Result<SenderRelationshipHistory> {
+            Ok(SenderRelationshipHistory {
+                sender_completed_count: self.sender_count,
+                sender_distinct_days: i64::from(self.sender_count > 0) * 2,
+                relationship_completed_count: self.sender_count,
+                relationship_distinct_days: i64::from(self.sender_count > 0) * 2,
+            })
+        }
+
         async fn count_distinct_senders_for_domain(
             &self,
             _sender_domain: &str,
@@ -1016,12 +1167,15 @@ mod tests {
             25,
         );
         session.mail_from = Some(mail_from.to_string());
-        session.rcpt_to = vec!["recipient@ccabchina.com".to_string()];
+        session.rcpt_to = vec!["recipient@internal.example".to_string()];
         session.content = EmailContent {
             headers: vec![
                 ("From".to_string(), header_from.to_string()),
                 ("MIME-Version".to_string(), "1.0".to_string()),
-                ("Content-Type".to_string(), "text/plain; charset=utf-8".to_string()),
+                (
+                    "Content-Type".to_string(),
+                    "text/plain; charset=utf-8".to_string(),
+                ),
             ],
             body_text: Some("Routine business message".to_string()),
             is_complete: true,
@@ -1031,9 +1185,94 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ds_random_domain_item_preserves_module_score_and_binds_envelope_domain() {
+        let module = IdentityAnomalyModule::new(None);
+        let ctx = identity_context(
+            "notice@qnhshufpn.invalid",
+            "Sender <notice@qnhshufpn.invalid>",
+        );
+        let result = module.analyze(&ctx).await.expect("identity analysis");
+        assert!((result.details["score"].as_f64().unwrap() - 0.25).abs() < 1e-12);
+        assert_eq!(result.categories, ["random_domain"]);
+        let expected = Bpa::from_score_confidence(0.25, 0.70);
+        let actual = result.bpa.unwrap();
+        assert!((actual.b - expected.b).abs() < 1e-12);
+        assert!((actual.d - expected.d).abs() < 1e-12);
+        assert!((actual.u - expected.u).abs() < 1e-12);
+        assert!(result.details.get("evidence_items_version").is_none());
+        let items = result.details["ds_learning_items"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["categories"], serde_json::json!(["random_domain"]));
+        assert_eq!(items[0]["score"], 0.25);
+        assert_eq!(items[0]["confidence"], 0.70);
+        let key = items[0]["causal_key"].as_str().unwrap();
+        assert!(key.starts_with("envelope_sender_domain:sha256:"));
+        assert!(!key.contains("qnhshufpn.invalid"));
+        let other = module
+            .analyze(&identity_context(
+                "other@qnhshufpn.invalid",
+                "Sender <other@qnhshufpn.invalid>",
+            ))
+            .await
+            .expect("identity analysis");
+        assert_eq!(
+            items[0]["causal_key"],
+            other.details["ds_learning_items"][0]["causal_key"]
+        );
+    }
+
+    #[tokio::test]
+    async fn ds_random_domain_item_does_not_borrow_first_contact_score() {
+        let module = IdentityAnomalyModule::new(Some(Arc::new(HistoryDb {
+            domain_count: 0,
+            sender_count: 0,
+        })));
+        let ctx = identity_context(
+            "notice@qnhshufpn.invalid",
+            "Sender <notice@qnhshufpn.invalid>",
+        );
+        let result = module.analyze(&ctx).await.expect("identity analysis");
+        assert!((result.details["score"].as_f64().unwrap() - 0.35).abs() < 1e-12);
+        assert!(
+            result
+                .categories
+                .iter()
+                .any(|category| category == "first_contact")
+        );
+        assert!(
+            result
+                .categories
+                .iter()
+                .any(|category| category == "random_domain")
+        );
+        let items = result.details["ds_learning_items"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["score"], 0.25);
+        let expected = Bpa::from_score_confidence(0.35, 0.70);
+        assert!((result.bpa.unwrap().b - expected.b).abs() < 1e-12);
+    }
+
+    #[tokio::test]
+    async fn ds_random_domain_item_is_absent_for_a_normal_domain() {
+        let module = IdentityAnomalyModule::new(None);
+        let result = module
+            .analyze(&identity_context(
+                "notice@sender.invalid",
+                "Sender <notice@sender.invalid>",
+            ))
+            .await
+            .expect("identity analysis");
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert_eq!(result.details["ds_learning_items"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
     async fn random_looking_local_part_alone_is_only_a_weak_observation() {
         let module = IdentityAnomalyModule::new(None);
-        let ctx = identity_context("fjlmodtf@diic.com", "FJL <fjlmodtf@diic.com>");
+        let ctx = identity_context(
+            "xqrvptkm@sender.invalid",
+            "Synthetic Sender <xqrvptkm@sender.invalid>",
+        );
 
         let result = module.analyze(&ctx).await.expect("identity analysis");
 
@@ -1052,7 +1291,10 @@ mod tests {
             sender_count: 4,
         });
         let module = IdentityAnomalyModule::new(Some(db));
-        let ctx = identity_context("fjlmodtf@diic.com", "FJL <fjlmodtf@diic.com>");
+        let ctx = identity_context(
+            "xqrvptkm@sender.invalid",
+            "Synthetic Sender <xqrvptkm@sender.invalid>",
+        );
 
         let result = module.analyze(&ctx).await.expect("identity analysis");
 
@@ -1060,6 +1302,11 @@ mod tests {
         assert_eq!(
             result.details["weak_observations"][0]["disposition"],
             "suppressed_known_sender"
+        );
+        assert_eq!(result.details["sender_history"]["completed_count"], 4);
+        assert_eq!(
+            result.details["recipient_relationship_history"]["distinct_days"],
+            2
         );
     }
 
@@ -1070,7 +1317,10 @@ mod tests {
             sender_count: 0,
         });
         let module = IdentityAnomalyModule::new(Some(db));
-        let ctx = identity_context("fjlmodtf@diic.com", "FJL <fjlmodtf@diic.com>");
+        let ctx = identity_context(
+            "xqrvptkm@sender.invalid",
+            "Synthetic Sender <xqrvptkm@sender.invalid>",
+        );
 
         let result = module.analyze(&ctx).await.expect("identity analysis");
 
@@ -1083,7 +1333,7 @@ mod tests {
     async fn envelope_mismatch_corroborates_random_local_part() {
         let module = IdentityAnomalyModule::new(None);
         let ctx = identity_context(
-            "fjlmodtf@diic.com",
+            "xqrvptkm@sender.invalid",
             "Trusted Operations <notice@other.example>",
         );
 
@@ -1097,6 +1347,46 @@ mod tests {
                 .any(|item| item == "envelope_mismatch")
         );
         assert!(result.categories.iter().any(|item| item == "random_sender"));
+    }
+
+    #[tokio::test]
+    async fn incomplete_capture_does_not_infer_missing_mime_client_fingerprint() {
+        let module = IdentityAnomalyModule::new(None);
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "203.0.113.10".to_string(),
+            2525,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.mail_from = Some("service@mail-provider.invalid".to_string());
+        session.rcpt_to = vec!["recipient@internal.example".to_string()];
+        session.content = EmailContent {
+            headers: vec![(
+                "From".to_string(),
+                "service@mail-provider.invalid".to_string(),
+            )],
+            is_complete: false,
+            ..Default::default()
+        };
+
+        let incomplete = module
+            .analyze(&SecurityContext::new(Arc::new(session.clone())))
+            .await
+            .expect("identity analysis");
+        assert!(
+            !incomplete
+                .categories
+                .contains(&"suspicious_client".to_string()),
+            "missing headers are unknown under incomplete capture: {incomplete:?}"
+        );
+
+        assert!(
+            module
+                .check_client_fingerprint(&session.content.headers, true)
+                .is_some(),
+            "complete inspection still exposes the legacy missing-header observation before module thresholding"
+        );
     }
 
     #[test]
@@ -1154,9 +1444,9 @@ mod tests {
 
     #[test]
     fn test_human_readable_brand_labels_not_treated_as_random() {
-        assert!(is_human_readable_domain_label("hundsun"));
+        assert!(is_human_readable_domain_label("mailservice"));
         assert!(is_human_readable_domain_label("smartx"));
-        assert!(is_human_readable_domain_label("aishu"));
+        assert!(is_human_readable_domain_label("mailservice"));
         assert!(!is_human_readable_domain_label("xvkrnbstq"));
     }
 
@@ -1246,7 +1536,8 @@ mod tests {
         let module = IdentityAnomalyModule::new(None);
         let headers = vec![("From".to_string(), "\"=?utf-8?B?OTE5NzA4NzQx".to_string())];
 
-        let result = module.check_envelope_mismatch(Some("919708741@qq.com"), &headers);
+        let result =
+            module.check_envelope_mismatch(Some("malformed-fixture@sender.invalid"), &headers);
 
         assert!(result.is_none());
     }
@@ -1267,9 +1558,12 @@ mod tests {
     #[test]
     fn test_envelope_mismatch_accepts_same_organizational_domain() {
         let module = IdentityAnomalyModule::new(None);
-        let headers = vec![("From".to_string(), "ACAMS <noreply@acams.org>".to_string())];
+        let headers = vec![(
+            "From".to_string(),
+            "Fixture Association <newsletter@vendor.example>".to_string(),
+        )];
 
-        let result = module.check_envelope_mismatch(Some("info@contact.acams.org"), &headers);
+        let result = module.check_envelope_mismatch(Some("relay@mail.vendor.example"), &headers);
 
         assert!(result.is_none());
     }
@@ -1279,18 +1573,65 @@ mod tests {
         let module = IdentityAnomalyModule::new(None);
         let headers = vec![(
             "From".to_string(),
-            "\"=?gb18030?B?xaPH7A==?=\" <542750348@qq.com>".to_string(),
+            "\"=?gb18030?B?suLK1A==?=\" <encoded-name@sender.invalid>".to_string(),
         )];
 
-        assert_eq!(decode_rfc2047("=?gb18030?B?xaPH7A==?="), "牛庆");
+        assert_eq!(decode_rfc2047("=?gb18030?B?suLK1A==?="), "测试");
         assert!(module.check_display_name_mismatch(&headers).is_none());
+    }
+
+    #[test]
+    fn test_provider_alias_mailbox_display_label_is_not_spoof() {
+        let module = IdentityAnomalyModule::new(None);
+        let headers = vec![(
+            "From".to_string(),
+            "\"=?utf-8?B?Zml4dHVyZS1tYWlsYm94QHFxLmNvbQ==?=\" <fixture-sender@foxmail.com>"
+                .to_string(),
+        )];
+
+        assert_eq!(
+            decode_rfc2047("=?utf-8?B?Zml4dHVyZS1tYWlsYm94QHFxLmNvbQ==?="),
+            "fixture-mailbox@qq.com"
+        );
+        assert!(
+            module.check_display_name_mismatch(&headers).is_none(),
+            "a synthetic provider-alias mailbox used as the full display label is not standalone spoof evidence"
+        );
+    }
+
+    #[test]
+    fn test_unrelated_mailbox_display_label_still_triggers_mismatch() {
+        let module = IdentityAnomalyModule::new(None);
+        let headers = vec![(
+            "From".to_string(),
+            "\"fixture-mailbox@qq.com\" <fixture-sender@gmail.com>".to_string(),
+        )];
+
+        assert!(module.check_display_name_mismatch(&headers).is_some());
+    }
+
+    #[test]
+    fn test_provider_alias_with_extra_display_text_still_triggers_mismatch() {
+        let module = IdentityAnomalyModule::new(None);
+        let headers = vec![(
+            "From".to_string(),
+            "\"Please contact fixture-mailbox@qq.com\" <fixture-sender@foxmail.com>".to_string(),
+        )];
+
+        assert!(module.check_display_name_mismatch(&headers).is_some());
     }
 
     #[test]
     fn test_single_character_x_target_requires_exact_display_name() {
         let module = IdentityAnomalyModule::new(None);
-        let ordinary_name = vec![("From".to_string(), "Xavier <sender@qq.com>".to_string())];
-        let exact_brand = vec![("From".to_string(), "X <sender@qq.com>".to_string())];
+        let ordinary_name = vec![(
+            "From".to_string(),
+            "Xavier <fixture-display-name@qq.com>".to_string(),
+        )];
+        let exact_brand = vec![(
+            "From".to_string(),
+            "X <fixture-display-name@qq.com>".to_string(),
+        )];
 
         assert!(module.check_display_name_mismatch(&ordinary_name).is_none());
         assert!(module.check_display_name_mismatch(&exact_brand).is_some());
@@ -1301,19 +1642,23 @@ mod tests {
         let module = IdentityAnomalyModule::new(None);
         let ordinary_mailbox_name = vec![(
             "From".to_string(),
-            "wjsjdin <wjsjdin@qq.com>".to_string(),
+            "fixturebox <fixturebox@sender.invalid>".to_string(),
         )];
         let delimited_brand_name = vec![(
             "From".to_string(),
-            "JD 客服 <sender@qq.com>".to_string(),
+            "JD 客服 <sender@fixture.invalid>".to_string(),
         )];
 
-        assert!(module
-            .check_display_name_mismatch(&ordinary_mailbox_name)
-            .is_none());
-        assert!(module
-            .check_display_name_mismatch(&delimited_brand_name)
-            .is_some());
+        assert!(
+            module
+                .check_display_name_mismatch(&ordinary_mailbox_name)
+                .is_none()
+        );
+        assert!(
+            module
+                .check_display_name_mismatch(&delimited_brand_name)
+                .is_some()
+        );
     }
 
     #[test]
@@ -1321,7 +1666,7 @@ mod tests {
         let module = IdentityAnomalyModule::new(None);
         let headers = vec![(
             "From".to_string(),
-            "=?utf-8?B?TWljcm9zb2Z0IEFjY291bnQgVGVhbQ==?= <sender@qq.com>".to_string(),
+            "=?utf-8?B?TWljcm9zb2Z0IEFjY291bnQgVGVhbQ==?= <sender@fixture.invalid>".to_string(),
         )];
 
         let (_, evidence) = module
@@ -1392,12 +1737,14 @@ mod tests {
 
     #[test]
     fn test_established_brand_sender_domains_skip_random_sender_heuristic() {
-        assert!(sender_domain_has_established_brand_identity("cmbchina.com"));
         assert!(sender_domain_has_established_brand_identity(
-            "rep.hundsun.cn"
+            "bankservice.example"
+        ));
+        assert!(sender_domain_has_established_brand_identity(
+            "mailservice.example"
         ));
         assert!(!sender_domain_has_established_brand_identity(
-            "xvkrnbstq-mail.net"
+            "xvkrnbstq-mail.invalid"
         ));
     }
 }

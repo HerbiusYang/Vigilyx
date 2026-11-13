@@ -1,0 +1,119 @@
+From: "OceanBridge Fulfillment | Returns Processing" <returns@oceanbridge-3pl.example>
+To: eu-returns@corp.internal
+Cc: finance-ec@corp.internal, brand-manager@corp.internal
+Reply-To: collections.desk@ob-returns-settle.example
+Date: Tue, 02 Mar 2027 07:15:00 +0000
+Message-ID: <0785-b87@synth.example>
+Subject: [Q1 RETURNS] Liquidation Statement LS-Q1-8812 - Net Balance USD 4,218.40 Payable - Settlement Due Before Month-End Close
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+EU Returns Team, Finance, Brand Manager,
+
+Your Q1 returns liquidation statement is
+ready. This cycle closes with a NET
+BALANCE PAYABLE BY YOU of USD 4,218.40
+(disposal fees exceeded recoverable
+value - details below). Settlement is
+due before the month-end close to avoid
+suspension of returns intake at the DE
+and PL warehouses.
+
+1. LIQUIDATION SUMMARY (LS-Q1-8812)
+
+  Cycle:              Q1 2027 returns
+                     (01 Jan - 15 Mar)
+  Warehouses:        EDE-04 (Dortmund),
+                     WRO-02 (Wroclaw)
+  Units processed:   1,842
+    - Restocked:       741 (40.2%)
+    - Refurbished:     318 (17.3%)
+    - Disposed:        783 (42.5%)
+
+2. THE BALANCE, AND WHY YOU OWE IT
+
+  Recoverable value credited
+    (restock + refurb resale):
+                     USD 21,460.80
+  Disposal & compliance fees
+    (783 units x blended
+     USD 6.10 + WEEE/EPR
+     compliance charges):
+                     USD 23,812.10
+  Storage during holding
+    window (exceeded free
+    21 days on 214 units):
+                     USD 1,965.50
+  -------------------------------------
+  Net payable by you:  USD 4,218.40
+  (statement line 44;
+   full breakdown in the
+   portal PDF)
+
+3. SETTLEMENT INSTRUCTIONS
+
+  Your account is normally netted
+  against weekly disbursements, but
+  this cycle's balance is on the
+  collections ledger (fees posted
+  after your last disbursement of
+  the cycle). Please settle to the
+  regional collections account
+  before month-end:
+
+    Beneficiary: OBF Regional
+                Collections Sp. z o.o.
+    IBAN: PL61 2490 0005 0000 4600 7322 8844
+    SWIFT: TSTBPLPW
+    Reference: LS-Q1-8812 / your
+              merchant ID
+
+4. IF NOT SETTLED BY MONTH-END
+
+  - Returns intake suspended at
+    EDE-04 and WRO-02 (inbound
+    returns rejected at carrier
+    level, carriers will attempt
+    redelivery or return-to-sender
+    at your cost)
+  - Storage accrues at the
+    suspended-account rate
+    (+40%)
+  - Reinstatement requires
+    settled balance plus a
+    USD 500 reactivation fee
+
+5. ON THIS NOTICE
+
+  We know that a 3PL you have done
+  business with for three years
+  suddenly billing to a Polish
+  subsidiary account is precisely
+  what your fraud training flags -
+  and we would rather you checked
+  than not. The collections ledger
+  does sit with OBF Regional
+  Collections Sp. z o.o. (our
+  EU fee-processing entity), which
+  is why the beneficiary differs
+  from the disbursement account
+  you receive weekly. Verify with
+  your account manager if you
+  wish - the month-end close is
+  the finance calendar's, and
+  returns suspension is automatic
+  in the WMS, not a negotiation.
+
+6. CONTACT
+
+  Collections desk:
+  collections.desk@ob-returns-settle.example
+  Reference: LS-Q1-8812
+  Account manager: your usual desk
+  (number from your onboarding
+  pack)
+
+OceanBridge Fulfillment | Returns
+Processing
+This notice concerns merchant
+account EU-40771 only.

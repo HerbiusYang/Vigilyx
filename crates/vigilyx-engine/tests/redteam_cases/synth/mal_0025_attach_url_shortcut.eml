@@ -1,0 +1,19 @@
+From: =?utf-8?B?5YWx5Lqr55uY?= <share@drv-notify.example>
+To: rd@corp.internal
+Date: Tue, 25 Aug 2026 10:23:00 +0800
+Message-ID: <0003-b2@synth.example>
+Subject: 共享盘迁移通知
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+旧共享盘已迁移，请用附件快捷方式访问新版。
+--BS
+Content-Type: application/internet-shortcut
+Content-Disposition: attachment; filename="共享盘.url"
+Content-Transfer-Encoding: base64
+
+W0ludGVybmV0U2hvcnRjdXRdDQpVUkw9aHR0cDovLzIwMy4wLjExMy45OS9kcml2ZQ0K
+--BS--

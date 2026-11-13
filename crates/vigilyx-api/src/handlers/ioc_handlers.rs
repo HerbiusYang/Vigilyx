@@ -2,6 +2,8 @@
 
 //! Endpoints:
 //! - GET /security/ioc - List IOCs
+//! - GET /security/ioc/{id}/telemetry - Explain denominator and Shadow score
+//! - GET /security/ioc/calibration - Brier/reliability diagnostic
 //! - POST /security/ioc - Add IOC
 //! - DELETE /security/ioc/{id} - Delete IOC
 //! - PUT /security/ioc/{id}/extend - Extend IOC expiry
@@ -14,6 +16,7 @@ use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
 };
+use chrono::Utc;
 use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -112,6 +115,75 @@ pub async fn list_ioc(
             "offset": params.offset,
         })),
         Err(e) => ApiResponse::<serde_json::Value>::internal_err(&e, "Operation failed"),
+    }
+}
+
+/// Explain the legacy IOC row and the independent, shadow-only denominator
+/// model side by side. Shadow data is never used as a delivery decision here.
+pub async fn get_ioc_telemetry(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    let ioc_id = match Uuid::parse_str(&id) {
+        Ok(id) => id,
+        Err(_) => {
+            return ApiResponse::<serde_json::Value>::bad_request("Invalid IOC ID").into_response();
+        }
+    };
+    let ioc = match state.engine_db.find_ioc_by_id(ioc_id).await {
+        Ok(Some(ioc)) => ioc,
+        Ok(None) => {
+            return ApiResponse::<serde_json::Value>::not_found("IOC not found").into_response();
+        }
+        Err(error) => {
+            return ApiResponse::<serde_json::Value>::server_error(&error, "Operation failed")
+                .into_response();
+        }
+    };
+    match state
+        .engine_db
+        .get_ioc_shadow_telemetry(&ioc.ioc_type, &ioc.indicator, Utc::now())
+        .await
+    {
+        Ok(Some(shadow)) => ApiResponse::ok(serde_json::json!({
+            "ioc": ioc,
+            "shadow": shadow,
+        }))
+        .into_response(),
+        Ok(None) => ApiResponse::ok(serde_json::json!({
+            "ioc": ioc,
+            "shadow": null,
+        }))
+        .into_response(),
+        Err(error) => ApiResponse::<serde_json::Value>::server_error(&error, "Operation failed")
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct IocCalibrationParams {
+    #[serde(default = "default_calibration_limit")]
+    pub limit: u32,
+}
+
+fn default_calibration_limit() -> u32 {
+    200
+}
+
+/// Return a bounded Brier/reliability diagnostic. It is intentionally marked
+/// hypothesis-only by the data layer until the governed holdout is complete.
+pub async fn get_ioc_calibration(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<IocCalibrationParams>,
+) -> axum::response::Response {
+    match state
+        .engine_db
+        .get_ioc_calibration_summary(params.limit.clamp(1, 500), Utc::now())
+        .await
+    {
+        Ok(summary) => ApiResponse::ok(summary).into_response(),
+        Err(error) => ApiResponse::<serde_json::Value>::server_error(&error, "Operation failed")
+            .into_response(),
     }
 }
 

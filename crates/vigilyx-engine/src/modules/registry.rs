@@ -6,13 +6,13 @@ use tracing::{info, warn};
 use vigilyx_core::{DEFAULT_INTERNAL_SERVICE_HOSTS, validate_internal_service_url};
 use vigilyx_db::VigilDb;
 
+use crate::ai::build_ai_remote;
 use crate::config::AiServiceConfig;
 use crate::db_service::DbQueryService;
 use crate::external::clamav::ClamAvClient;
 use crate::intel::{IntelLayer, IntelSourceConfig, reload_safe_domains_into};
 use crate::ioc::IocManager;
 use crate::module::SecurityModule;
-use crate::remote::{LlmRequestConfig, RemoteModuleProxy};
 
 use super::aitm_detect::AitmDetectModule;
 use super::anomaly_detect::AnomalyDetectModule;
@@ -32,13 +32,15 @@ use super::link_content::LinkContentModule;
 use super::link_reputation::LinkReputationModule;
 use super::link_scan::LinkScanModule;
 use super::mime_scan::MimeScanModule;
+use super::process_sandbox_scan::ProcessSandboxScanModule;
 use super::prompt_injection_scan::PromptInjectionScanModule;
 use super::rmm_detect::RmmDetectModule;
-use super::semantic_scan::SemanticScanModule;
 use super::toad_detect::ToadDetectModule;
 use super::transaction_correlation::TransactionCorrelationModule;
+use super::url_sandbox_scan::UrlSandboxScanModule;
 use super::verdict_module::VerdictModule;
 use super::yara_scan::YaraScanModule;
+use crate::semantic::{IntentModel, SemanticScanModule};
 
 /// Safe-domain handle type returned alongside the module registry.
 pub type SafeDomainsHandle = Arc<std::sync::RwLock<HashSet<String>>>;
@@ -207,13 +209,35 @@ pub async fn build_module_registry(
     register(&mut modules, Arc::new(RmmDetectModule::new()));
     register(&mut modules, Arc::new(PromptInjectionScanModule::new()));
     register(&mut modules, Arc::new(ToadDetectModule::new()));
-    register(&mut modules, Arc::new(SemanticScanModule::new(nlp_remote)));
+    register(
+        &mut modules,
+        Arc::new(SemanticScanModule::new(nlp_remote).with_intent_model(IntentModel::from_env())),
+    );
     register(&mut modules, Arc::new(DomainVerifyModule::new()));
     register(
         &mut modules,
         Arc::new(IdentityAnomalyModule::new(Some(Arc::clone(&db_service)))),
     );
     register(&mut modules, Arc::new(TransactionCorrelationModule::new()));
+
+    // URL dynamic analysis is always represented in the registry so a
+    // missing/disabled CAPE service is explicit and cannot silently remove a
+    // configured module. The module itself is inert until both CAPE and the
+    // opt-in URL-analysis switch are available.
+    let sandbox_client = build_sandbox_client().await;
+    register(
+        &mut modules,
+        Arc::new(UrlSandboxScanModule::new(sandbox_client.clone())),
+    );
+
+    let (process_sandbox, process_sandbox_error) = build_process_sandbox();
+    register(
+        &mut modules,
+        Arc::new(ProcessSandboxScanModule::new(
+            process_sandbox,
+            process_sandbox_error,
+        )),
+    );
 
     // ClamAV module registration
     let clamav_client = build_clamav_client().await;
@@ -229,7 +253,7 @@ pub async fn build_module_registry(
     }
 
     // CAPEv2 sandbox module registration
-    if let Some(sandbox_client) = build_sandbox_client().await {
+    if let Some(sandbox_client) = sandbox_client {
         register(
             &mut modules,
             Arc::new(super::sandbox_scan::SandboxScanModule::new(sandbox_client)),
@@ -258,7 +282,7 @@ pub async fn build_module_registry(
 
         // Load administrator-authored extra rules from DB. Built-in rows are
         // metadata snapshots and must never become executable custom rules.
-        let mut extra_sources: Vec<String> = match db.list_yara_rules(Some(true)).await {
+        let extra_sources: Vec<String> = match db.list_yara_rules(Some(true)).await {
             Ok(rules) => rules
                 .into_iter()
                 .filter(|r| should_load_extra_yara_rule(&r.source, &r.rule_name, &hardcoded_names))
@@ -270,17 +294,10 @@ pub async fn build_module_registry(
             }
         };
 
-        // Optional operator-managed feeds are fetched at startup and compiled
-        // alongside DB-authored rules. A feed failure is isolated to that feed
-        // and never suppresses the built-in rule set.
-        let external_sources = crate::yara::engine::fetch_external_sources_from_env().await;
-        if !external_sources.is_empty() {
-            info!(
-                count = external_sources.len(),
-                "Loaded external YARA rule sources"
-            );
-            extra_sources.extend(external_sources);
-        }
+        // Remote URL rule feeds were deliberately removed. Enforced rule
+        // generations must arrive through the immutable, digest-verified pack
+        // manifest or through audited DB-authored rules; startup must never
+        // execute mutable network content as detection policy.
 
         let runtime_pack = crate::yara::pack::RulePackLoad::load_configured();
         if !runtime_pack.rejected_sources.is_empty() {
@@ -369,112 +386,6 @@ async fn load_well_known_safe_domains(db: &VigilDb) -> HashSet<String> {
             set
         }
     }
-}
-
-/// Load AI service configuration from DB and build the remote proxy.
-async fn build_ai_remote(db: &VigilDb) -> Option<RemoteModuleProxy> {
-    let ai_config: AiServiceConfig = match db.get_config("ai_service_config").await {
-        Ok(Some(json)) => match serde_json::from_str(&json) {
-            Ok(c) => c,
-            Err(e) => {
-                warn!("AI service config parse failed: {}, using defaults", e);
-                AiServiceConfig::default()
-            }
-        },
-        _ => AiServiceConfig::default(),
-    };
-
-    // Check whether AI is enabled (frontend/wizard ai_enabled toggle + AI_ENABLED env var)
-    if !ai_config.enabled {
-        info!(
-            "AI analysis service disabled (enabled=false), semantic detection will use rule-only mode"
-        );
-        return None;
-    }
-
-    // SEC: Validate URL allowlist at runtime, not just save-time (CWE-918)
-    // Protects against DB poisoning / dirty backup restore leaking email content + token
-    if let Err(err) =
-        validate_internal_service_url(&ai_config.service_url, DEFAULT_INTERNAL_SERVICE_HOSTS)
-    {
-        warn!(
-            url = %ai_config.service_url,
-            error = %err,
-            "SEC: AI service URL from DB failed allowlist check, refusing to connect"
-        );
-        return None;
-    }
-
-    let proxy = RemoteModuleProxy::new(ai_config.service_url.clone())
-        .with_llm_config(llm_request_config(&ai_config));
-
-    // Health check (5s timeout): verify Python NLP service is reachable.
-    // AI model loading can take 5-10 minutes, so a startup failure is normal.
-    // The background health probe will clear the cooldown once the service
-    // becomes available — we intentionally do NOT call note_probe_failure()
-    // here to avoid entering cooldown before the service has finished loading.
-    match tokio::time::timeout(std::time::Duration::from_millis(5000), proxy.health_check()).await {
-        Ok(true) => {
-            info!(
-                "NLP phishing detection service connected: {}",
-                ai_config.service_url
-            );
-        }
-        _ => {
-            info!(
-                "NLP phishing detection service not ready ({}), background probe will auto-recover",
-                ai_config.service_url,
-            );
-        }
-    }
-
-    // Always spawn background health probe — it will periodically check the
-    // service during cooldown and clear backoff state on success.
-    proxy.spawn_background_probe();
-
-    Some(proxy)
-}
-
-/// Build the optional LLM second-opinion config from AiServiceConfig.
-///
-/// Only attached when a remote provider (claude/openai) and an API key are
-/// both configured; the Python AI service only uses it to re-check emails
-/// whose local NLP result is uncertain, and failures there are fail-open.
-fn llm_request_config(ai_config: &AiServiceConfig) -> Option<LlmRequestConfig> {
-    let provider = ai_config.provider.trim();
-    if provider.is_empty() || provider == "local" {
-        return None;
-    }
-
-    // api_key is stored AES-256-GCM encrypted ("ENC:" prefix); decrypt it the
-    // same way the VirusTotal key is handled below.
-    let api_key = if ai_config.api_key.starts_with("ENC:") {
-        match decrypt_enc_value(&ai_config.api_key) {
-            Some(key) => key,
-            None => {
-                warn!("LLM api_key decryption failed, LLM second-opinion analysis disabled");
-                return None;
-            }
-        }
-    } else {
-        ai_config.api_key.clone()
-    };
-    if api_key.is_empty() {
-        return None;
-    }
-
-    info!(
-        provider,
-        model = %ai_config.model,
-        "LLM second-opinion analysis enabled for uncertain NLP results"
-    );
-    Some(LlmRequestConfig {
-        provider: provider.to_string(),
-        api_key,
-        model: ai_config.model.clone(),
-        temperature: ai_config.temperature,
-        max_tokens: ai_config.max_tokens,
-    })
 }
 
 /// Load intel source config from DB and build IntelLayer.
@@ -729,34 +640,10 @@ async fn load_keyword_overrides(
     }
 }
 
-/// SEC: Decrypt ENC:-prefixed config values (AES-256-GCM, shared algorithm with vigilyx-api) (CWE-312)
+/// Decrypt with the dedicated configuration-secret key. The engine must not
+/// receive the API JWT signing secret.
 fn decrypt_enc_value(stored: &str) -> Option<String> {
-    let encoded = stored.strip_prefix("ENC:")?;
-    let jwt_secret = std::env::var("API_JWT_SECRET").ok()?;
-
-    use sha2::{Digest, Sha256};
-    let key_bytes: [u8; 32] = {
-        let mut hasher = Sha256::new();
-        hasher.update(b"vigilyx-config-encryption-v1");
-        hasher.update(jwt_secret.as_bytes());
-        hasher.finalize().into()
-    };
-
-    use aes_gcm::aead::Aead;
-    use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
-    use base64::Engine;
-
-    let combined = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .ok()?;
-    if combined.len() < 13 {
-        return None;
-    }
-
-    let cipher = Aes256Gcm::new_from_slice(&key_bytes).ok()?;
-    let nonce = Nonce::try_from(&combined[..12]).ok()?;
-    let plaintext = cipher.decrypt(&nonce, &combined[12..]).ok()?;
-    String::from_utf8(plaintext).ok()
+    vigilyx_core::decrypt_config_secret(stored).ok()
 }
 
 /// Build sandbox client (only when SANDBOX_URL environment variable is set).
@@ -783,6 +670,26 @@ async fn build_sandbox_client() -> Option<Arc<crate::external::sandbox::SandboxC
         Err(_) => {
             info!("CAPEv2 sandbox service connection timed out, sandbox module disabled");
             None
+        }
+    }
+}
+
+fn build_process_sandbox() -> (
+    Option<Arc<crate::external::process_sandbox::ProcessSandbox>>,
+    Option<String>,
+) {
+    match crate::external::process_sandbox::ProcessSandbox::from_env() {
+        Ok(Some(sandbox)) => {
+            info!(
+                profile = sandbox.profile(),
+                "Process sandbox worker configured"
+            );
+            (Some(Arc::new(sandbox)), None)
+        }
+        Ok(None) => (None, None),
+        Err(error) => {
+            warn!("Process sandbox configuration rejected: {}", error);
+            (None, Some(error.to_string()))
         }
     }
 }
@@ -830,6 +737,8 @@ mod tests {
 
         assert!(seed.url_trusted.contains("aliyuncs.com"));
         assert!(seed.url_trusted.contains("email.amazonaws.cn"));
+        assert!(seed.url_trusted.contains("abchina.com"));
+        assert!(seed.url_trusted.contains("*.abchina.com.cn"));
         assert!(seed.well_known_safe.contains("aliyuncs.com"));
         assert!(seed.well_known_safe.contains("qichacha.com.cn"));
     }

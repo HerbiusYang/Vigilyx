@@ -22,6 +22,11 @@ from .vt_models import VtScrapeResponse
 
 logger = logging.getLogger(__name__)
 
+
+def indicator_log_id(indicator: str) -> str:
+    """Stable non-reversible identifier for security telemetry."""
+    return hashlib.sha256(indicator.encode("utf-8", errors="replace")).hexdigest()[:16]
+
 # VT page URL templates (without the `/detection` suffix)
 VT_DOMAIN_URL = "https://www.virustotal.com/gui/domain/{indicator}"
 VT_IP_URL = "https://www.virustotal.com/gui/ip-address/{indicator}"
@@ -292,16 +297,26 @@ class VtScraper:
                 err_str = str(e).lower()
                 if any(kw in err_str for kw in ("browser has been closed", "target closed",
                                                  "connection refused", "not connected")):
-                    logger.warning("Browser crashed, restarting: %s", e)
+                    logger.warning(
+                        "Browser crashed, restarting",
+                        extra={"indicator_id": indicator_log_id(indicator), "error_type": type(e).__name__},
+                    )
                     await self._cleanup_browser()
                     try:
                         await self._ensure_browser()
                         return await self._do_scrape(indicator, indicator_type)
                     except Exception as retry_err:
-                        logger.error("VT scrape retry failed for %s: %s", indicator, retry_err)
+                        logger.error(
+                            "VT scrape retry failed",
+                            extra={"indicator_id": indicator_log_id(indicator), "error_type": type(retry_err).__name__},
+                        )
                         return VtScrapeResponse(success=False, error="SCRAPE_FAILED")
 
-                logger.error("VT scrape failed for %s (%s): %s", indicator, indicator_type, e)
+                logger.error(
+                    "VT scrape failed",
+                    extra={"indicator_id": indicator_log_id(indicator), "indicator_type": indicator_type,
+                           "error_type": type(e).__name__},
+                )
                 return VtScrapeResponse(success=False, error="SCRAPE_FAILED")
 
     # Core scraping flow
@@ -309,7 +324,11 @@ class VtScraper:
     async def _do_scrape(self, indicator: str, indicator_type: str) -> VtScrapeResponse:
         vt_url, vt_hash = self._build_vt_url(indicator, indicator_type)
         api_keyword = API_KEYWORDS.get(indicator_type, "/ui/")
-        logger.info("Scraping VT: %s (keyword: %s)", vt_url, api_keyword)
+        logger.info(
+            "Scraping VT",
+            extra={"indicator_id": indicator_log_id(indicator), "indicator_type": indicator_type,
+                   "keyword": api_keyword},
+        )
 
         page = await self._context.new_page()
         api_responses: list[dict] = []
@@ -410,7 +429,7 @@ class VtScraper:
             """, js_path)
             if js_result.get("ok") and js_result.get("status") == 200:
                 api_responses.append({"url": "[JS fetch]", "data": js_result["data"]})
-                logger.info("JS fetch fallback succeeded for %s", indicator)
+                logger.info("JS fetch fallback succeeded", extra={"indicator_id": indicator_log_id(indicator)})
         except Exception as e:
             logger.debug("JS fetch fallback failed: %s", e)
 
@@ -485,8 +504,10 @@ class VtScraper:
             details = f"engines: {engines_str}" if engines_str else ""
 
             logger.info(
-                "VT result: %s -> %s (malicious=%d/%d, flagged_engines=%d)",
-                indicator, verdict, malicious, total, len(malicious_engines),
+                "VT result",
+                extra={"indicator_id": indicator_log_id(indicator), "verdict": verdict,
+                       "malicious": malicious, "total": total,
+                       "flagged_engines": len(malicious_engines)},
             )
 
             return VtScrapeResponse(

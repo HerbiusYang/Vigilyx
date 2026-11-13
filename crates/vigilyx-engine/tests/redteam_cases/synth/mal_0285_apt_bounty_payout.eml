@@ -1,0 +1,12 @@
+From: =?utf-8?B?QnVnIEJvdW50eQ==?= <payout@bounty-pay.example>
+To: sec-research@corp.internal
+Date: Wed, 09 Sep 2026 08:34:00 +0800
+Message-ID: <0024-b17@synth.example>
+Subject: Payout approved: SSRF-2026-8842 ($1,500)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Hi,
+
+Your report SSRF-2026-8842 is accepted. To release the payout, verify your
+account at https://bounty-pay.example/claim/8842 (SSO or email login).

@@ -22,7 +22,7 @@
 //! - /api/admin/nlp/* — NLP model management
 //! - /api/data-security/* — Data security (HTTP session analysis)
 //!
-//! Internal service routes (INTERNAL_API_TOKEN authentication):
+//! Internal service routes (endpoint-scoped service-token authentication):
 //! - /api/system/sniffer — Sniffer status update
 //! - /api/import/* — Data import
 //! - /api/internal/* — Internal component queries
@@ -42,15 +42,16 @@ use std::{
 
 use crate::AppState;
 use crate::auth::{
-    ChangePasswordRequest, ChangePasswordResponse, LoginRequest, build_token_cookie,
-    handle_logout, handle_me, handle_platform_change_password, handle_platform_login,
-    require_admin, require_auth, require_platform_roles_access,
-    require_platform_users_manage,
-    require_internal_token, require_session_feedback, sanitize_login_username,
+    ChangePasswordRequest, ChangePasswordResponse, LoginRequest, build_token_cookie, handle_logout,
+    handle_me, handle_platform_change_password, handle_platform_login, require_admin,
+    require_audit_read, require_auth, require_data_security_read, require_internal_token,
+    require_platform_roles_access, require_platform_users_manage, require_security_read,
+    require_session_feedback, require_sessions_read, require_system_read, sanitize_login_username,
 };
 use crate::handlers;
 use crate::handlers::data_security as data_security_handlers;
 use crate::handlers::ioc_handlers;
+use crate::handlers::privacy as privacy_handlers;
 use crate::handlers::security as security_handlers;
 use crate::handlers::syslog_config as syslog_handlers;
 use crate::handlers::training as training_handlers;
@@ -73,6 +74,43 @@ where
     S: Clone + Send + Sync + 'static,
 {
     router.route_layer(middleware::from_fn(require_admin))
+}
+
+fn audit_read_only<S>(router: MethodRouter<S>) -> MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    router.route_layer(middleware::from_fn(require_audit_read))
+}
+
+fn sessions_read_only<S>(router: MethodRouter<S>) -> MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    router.route_layer(middleware::from_fn(require_sessions_read))
+}
+
+fn security_read_only<S>(router: MethodRouter<S>) -> MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    router.route_layer(middleware::from_fn(require_security_read))
+}
+
+fn threat_scene_read_only<S>(router: MethodRouter<S>) -> MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    // Scene rows include subjects, recipients, and associations to individual
+    // messages. Their security permission must not bypass session access.
+    security_read_only(sessions_read_only(router))
+}
+
+fn system_read_only<S>(router: MethodRouter<S>) -> MethodRouter<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    router.route_layer(middleware::from_fn(require_system_read))
 }
 
 fn build_trusted_proxy_ips(
@@ -387,14 +425,14 @@ async fn login(
             .record_login(&username, success, Some(&ip_clone), reason.as_deref())
             .await
         {
-            tracing::error!(username = %username, error = %e, "审计: 登录记录写入失败");
+            tracing::error!(error = %e, "审计: 登录记录写入失败");
         }
         if success
             && let Err(e) = db
                 .write_audit_log(&username, "login", None, None, None, Some(&ip_clone))
                 .await
         {
-            tracing::error!(username = %username, error = %e, "审计: 登录审计日志写入失败");
+            tracing::error!(error = %e, "审计: 登录审计日志写入失败");
         }
     });
 
@@ -422,10 +460,21 @@ async fn ws_ticket(
     let client_ip = extract_client_ip(&headers, addr);
     let user_agent = extract_user_agent(&headers);
 
-    match state
-        .ws_tickets
-        .issue(&user.username, client_ip, user_agent.as_deref())
-    {
+    let platform_user = match state.engine_db.get_platform_auth_user_by_id(&user.id).await {
+        Ok(Some(platform_user)) if platform_user.is_active => platform_user,
+        Ok(_) => return axum::http::StatusCode::UNAUTHORIZED.into_response(),
+        Err(error) => {
+            tracing::error!(error = %error, "failed to load WebSocket ticket principal");
+            return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
+    match state.ws_tickets.issue_with_token_version(
+        &platform_user.username,
+        platform_user.token_version,
+        client_ip,
+        user_agent.as_deref(),
+    ) {
         Some(ticket) => (
             axum::http::StatusCode::OK,
             Json(serde_json::json!({ "ticket": ticket })),
@@ -503,15 +552,17 @@ async fn change_password(
 ) -> Json<ChangePasswordResponse> {
     let client_ip = extract_client_ip(&headers, addr);
     let response = match state.engine_db.get_platform_auth_user_by_id(&user.id).await {
-        Ok(Some(platform_user)) => handle_platform_change_password(
-            &state.auth.config,
-            &state.engine_db,
-            &platform_user,
-            &state.auth.login_rate_limiter,
-            client_ip,
-            &request,
-        )
-        .await,
+        Ok(Some(platform_user)) => {
+            handle_platform_change_password(
+                &state.auth.config,
+                &state.engine_db,
+                &platform_user,
+                &state.auth.login_rate_limiter,
+                client_ip,
+                &request,
+            )
+            .await
+        }
         Ok(None) => ChangePasswordResponse {
             success: false,
             error: Some("用户不存在或已失效".into()),
@@ -569,25 +620,38 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // SEC-H02: WebSocket ticket (authenticated)
         .route("/auth/ws-ticket", post(ws_ticket))
         // Sessions
-        .route("/sessions", get(handlers::list_sessions))
-        .route("/sessions/{id}", get(handlers::get_session))
-        .route("/sessions/{id}/eml", get(handlers::download_eml))
+        .route(
+            "/sessions",
+            sessions_read_only(get(handlers::list_sessions)),
+        )
+        .route(
+            "/sessions/count",
+            sessions_read_only(get(handlers::count_sessions)),
+        )
+        .route(
+            "/sessions/{id}",
+            sessions_read_only(get(handlers::get_session)),
+        )
+        .route(
+            "/sessions/{id}/eml",
+            sessions_read_only(get(handlers::download_eml)),
+        )
         .route(
             "/sessions/{id}/attachments/{index}",
-            get(handlers::download_attachment),
+            sessions_read_only(get(handlers::download_attachment)),
         )
         .route(
             "/sessions/{id}/related",
-            get(handlers::get_related_sessions),
+            sessions_read_only(get(handlers::get_related_sessions)),
         )
         // Session security verdict
         .route(
             "/sessions/{id}/verdict",
-            get(security_handlers::get_session_verdict),
+            sessions_read_only(get(security_handlers::get_session_verdict)),
         )
         .route(
             "/sessions/{id}/security-results",
-            get(security_handlers::get_session_security_results),
+            sessions_read_only(get(security_handlers::get_session_security_results)),
         )
         // Rescan session
         .route(
@@ -601,19 +665,80 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Session feedback
         .route(
             "/sessions/{id}/feedback",
-            post(security_handlers::submit_feedback)
-                .route_layer(middleware::from_fn(require_session_feedback)),
+            sessions_read_only(get(security_handlers::get_session_feedback)).merge(
+                post(security_handlers::submit_feedback)
+                    .route_layer(middleware::from_fn(require_session_feedback)),
+            ),
+        )
+        .route(
+            "/security/ds-learning",
+            security_read_only(get(security_handlers::get_ds_learning_state)),
+        )
+        .route(
+            "/security/ds-learning/samples",
+            get(security_handlers::get_ds_learning_samples),
+        )
+        .route(
+            "/security/ds-learning/model",
+            admin_only(post(security_handlers::install_ds_model)),
+        )
+        .route(
+            "/security/ds-learning/rollback",
+            admin_only(post(security_handlers::rollback_ds_model)),
+        )
+        .route(
+            "/privacy/access-requests",
+            get(privacy_handlers::list_access_requests)
+                .post(privacy_handlers::create_access_request),
+        )
+        .route(
+            "/privacy/access-requests/{id}/approve",
+            post(privacy_handlers::approve_access_request),
+        )
+        .route(
+            "/privacy/access-requests/{id}/reject",
+            post(privacy_handlers::reject_access_request),
+        )
+        .route(
+            "/privacy/access-requests/{id}/revoke",
+            post(privacy_handlers::revoke_access_request),
+        )
+        .route(
+            "/privacy/access-requests/{id}/lease",
+            get(privacy_handlers::acquire_privacy_lease),
+        )
+        .route(
+            "/privacy/context",
+            get(privacy_handlers::get_privacy_context),
+        )
+        .route(
+            "/privacy/factor",
+            post(privacy_handlers::set_operator_factor),
+        )
+        .route("/config/privacy", get(privacy_handlers::get_privacy_policy))
+        .route(
+            "/config/privacy",
+            admin_only(put(privacy_handlers::update_privacy_policy)),
         )
         // Statistics
-        .route("/stats", get(handlers::get_stats))
+        .route("/stats", system_read_only(get(handlers::get_stats)))
         .route(
             "/stats/external-logins",
-            get(handlers::get_external_login_stats),
+            system_read_only(get(handlers::get_external_login_stats)),
         )
         // System status
-        .route("/system/status", get(handlers::get_system_status))
-        .route("/system/metrics", get(handlers::get_system_metrics))
-        .route("/system/interfaces", get(handlers::get_host_interfaces))
+        .route(
+            "/system/status",
+            system_read_only(get(handlers::get_system_status)),
+        )
+        .route(
+            "/system/metrics",
+            system_read_only(get(handlers::get_system_metrics)),
+        )
+        .route(
+            "/system/interfaces",
+            system_read_only(get(handlers::get_host_interfaces)),
+        )
         // Database management
         .route(
             "/database/rotate-config",
@@ -632,10 +757,13 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             admin_only(post(handlers::precise_clear)),
         )
         // Audit logs and login history
-        .route("/audit/logs", admin_only(get(handlers::list_audit_logs)))
+        .route(
+            "/audit/logs",
+            audit_read_only(get(handlers::list_audit_logs)),
+        )
         .route(
             "/audit/login-history",
-            admin_only(get(handlers::list_login_history)),
+            audit_read_only(get(handlers::list_login_history)),
         )
         // Syslog Configuration
         .route(
@@ -653,7 +781,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             "/config/setup-status",
             admin_only(get(handlers::get_setup_status).put(handlers::update_setup_status)),
         )
-        .route("/config/ui-preferences", get(handlers::get_ui_preferences))
+        .route(
+            "/config/ui-preferences",
+            system_read_only(get(handlers::get_ui_preferences)),
+        )
         .route(
             "/config/ui-preferences",
             put(handlers::update_ui_preferences),
@@ -693,7 +824,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Module metadata
         .route(
             "/security/modules",
-            get(security_handlers::get_modules_metadata),
+            security_read_only(get(security_handlers::get_modules_metadata)),
         )
         // IOC
         .route(
@@ -701,8 +832,16 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
             admin_only(get(ioc_handlers::list_ioc).post(ioc_handlers::add_ioc)),
         )
         .route(
+            "/security/ioc/calibration",
+            admin_only(get(ioc_handlers::get_ioc_calibration)),
+        )
+        .route(
             "/security/ioc/{id}",
             admin_only(delete(ioc_handlers::delete_ioc)),
+        )
+        .route(
+            "/security/ioc/{id}/telemetry",
+            admin_only(get(ioc_handlers::get_ioc_telemetry)),
         )
         .route(
             "/security/ioc/{id}/extend",
@@ -752,11 +891,11 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Quarantine (MTA mode)
         .route(
             "/security/quarantine",
-            admin_only(get(security_handlers::quarantine::list_quarantine)),
+            audit_read_only(get(security_handlers::quarantine::list_quarantine)),
         )
         .route(
             "/security/quarantine/stats",
-            admin_only(get(security_handlers::quarantine::quarantine_stats)),
+            audit_read_only(get(security_handlers::quarantine::quarantine_stats)),
         )
         .route(
             "/security/quarantine/{id}/release",
@@ -764,7 +903,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         )
         .route(
             "/security/quarantine/{id}/preview",
-            admin_only(get(security_handlers::quarantine::preview_quarantine)),
+            audit_read_only(get(security_handlers::quarantine::preview_quarantine)),
         )
         .route(
             "/security/quarantine/{id}",
@@ -803,16 +942,22 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Recent verdicts (paginated)
         .route(
             "/security/verdicts",
-            get(security_handlers::list_recent_verdicts),
+            security_read_only(get(security_handlers::list_recent_verdicts)),
+        )
+        .route(
+            "/security/delivery-risk/details",
+            sessions_read_only(security_read_only(get(
+                security_handlers::list_delivery_risk_details,
+            ))),
         )
         // Security statistics and engine status
         .route(
             "/security/stats",
-            get(security_handlers::get_security_stats),
+            security_read_only(get(security_handlers::get_security_stats)),
         )
         .route(
             "/security/engine-status",
-            get(security_handlers::get_engine_status),
+            security_read_only(get(security_handlers::get_engine_status)),
         )
         // Rescan
         .route(
@@ -822,7 +967,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Feedback statistics
         .route(
             "/security/feedback/stats",
-            get(security_handlers::get_feedback_stats),
+            security_read_only(get(security_handlers::get_feedback_stats)),
         )
         // AI service configuration
         .route(
@@ -838,7 +983,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Content detection rules
         .route(
             "/security/content-rules",
-            get(security_handlers::get_content_rules),
+            security_read_only(get(security_handlers::get_content_rules)),
         )
         // Keyword override configuration
         .route(
@@ -902,15 +1047,15 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         // Threat scenes (bulk mailing + bounce harvest)
         .route(
             "/security/threat-scenes",
-            get(security_handlers::list_threat_scenes),
+            threat_scene_read_only(get(security_handlers::list_threat_scenes)),
         )
         .route(
             "/security/threat-scenes/stats",
-            get(security_handlers::threat_scene_stats),
+            security_read_only(get(security_handlers::threat_scene_stats)),
         )
         .route(
             "/security/threat-scenes/{id}",
-            get(security_handlers::get_threat_scene),
+            threat_scene_read_only(get(security_handlers::get_threat_scene)),
         )
         .route(
             "/security/threat-scenes/{id}",
@@ -918,7 +1063,7 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         )
         .route(
             "/security/threat-scenes/{id}/emails",
-            get(security_handlers::get_scene_emails),
+            threat_scene_read_only(get(security_handlers::get_scene_emails)),
         )
         .route(
             "/security/threat-scenes/{id}/acknowledge",
@@ -956,6 +1101,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/admin/nlp/samples",
             get(training_handlers::get_training_samples),
+        )
+        .route(
+            "/admin/nlp/samples/export",
+            get(training_handlers::export_training_samples),
         )
         .route(
             "/admin/nlp/samples/{id}",
@@ -1001,11 +1150,23 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         )
         .layer(middleware::from_fn(require_platform_roles_access));
 
-    // Data security API (HTTP session analysis)
+    // Data security API (HTTP sessions + unified outbound email review)
     let data_security_routes = Router::new()
         .route(
             "/data-security/stats",
             get(data_security_handlers::get_data_security_stats),
+        )
+        .route(
+            "/data-security/email-reviews/stats",
+            get(data_security_handlers::get_outbound_email_review_stats),
+        )
+        .route(
+            "/data-security/email-reviews",
+            get(data_security_handlers::list_outbound_email_reviews),
+        )
+        .route(
+            "/data-security/email-reviews/{id}",
+            get(data_security_handlers::get_outbound_email_review),
         )
         .route(
             "/data-security/incidents",
@@ -1030,9 +1191,10 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route(
             "/data-security/engine-status",
             get(data_security_handlers::get_data_security_engine_status),
-        );
+        )
+        .layer(middleware::from_fn(require_data_security_read));
 
-    // Internal service routes (sniffer/engine, INTERNAL_API_TOKEN auth)
+    // Internal service routes (sniffer/engine, endpoint-scoped token auth)
     let internal_routes = Router::new()
         // SEC-M06: Prometheus metrics (internal route, token auth, CWE-306)
         .route("/metrics", get(crate::metrics::metrics_handler))
@@ -1082,7 +1244,49 @@ pub fn api_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
 mod tests {
     use super::*;
     use axum::http::{HeaderMap, HeaderValue};
+    use proptest::prelude::*;
     use std::net::{Ipv4Addr, SocketAddrV4};
+
+    #[tokio::test]
+    async fn threat_scene_routes_require_security_and_sessions_read() {
+        use axum::{Extension, body::Body, http::Request};
+        use tower::ServiceExt;
+
+        for (permissions, expected) in [
+            (vec!["security.read"], axum::http::StatusCode::FORBIDDEN),
+            (vec!["sessions.read"], axum::http::StatusCode::FORBIDDEN),
+            (vec!["audit.read"], axum::http::StatusCode::FORBIDDEN),
+            (
+                vec!["security.read", "sessions.read"],
+                axum::http::StatusCode::OK,
+            ),
+        ] {
+            let user = crate::auth::AuthenticatedUser {
+                id: "synthetic-scene-user".into(),
+                role_id: "role-custom".into(),
+                username: "scene-reader".into(),
+                display_name: "Scene Reader".into(),
+                role: "viewer".into(),
+                permissions: permissions.into_iter().map(str::to_string).collect(),
+                must_change_password: false,
+                session_id: "synthetic-auth-session".into(),
+            };
+            for path in [
+                "/security/threat-scenes",
+                "/security/threat-scenes/00000000-0000-0000-0000-000000000001",
+                "/security/threat-scenes/00000000-0000-0000-0000-000000000001/emails",
+            ] {
+                let app = Router::new()
+                    .route(path, threat_scene_read_only(get(|| async { "ok" })))
+                    .layer(Extension(user.clone()));
+                let response = app
+                    .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), expected, "route: {path}");
+            }
+        }
+    }
 
     #[test]
     fn trusted_proxy_uses_forwarded_client_ip() {
@@ -1268,5 +1472,44 @@ mod tests {
             &headers,
             direct_addr
         ));
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 192, .. ProptestConfig::default() })]
+
+        #[test]
+        fn forwarded_ip_parser_is_total_and_never_returns_a_trusted_hop(
+            header_chars in prop::collection::vec(prop::char::range(' ', '~'), 0..=256),
+        ) {
+            let raw: String = header_chars.into_iter().collect();
+            let mut headers = HeaderMap::new();
+            if let Ok(value) = raw.parse() {
+                headers.insert("x-forwarded-for", value);
+            }
+            let trusted = HashSet::from([
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                IpAddr::V6(Ipv6Addr::LOCALHOST),
+            ]);
+
+            if let Some(client_ip) = extract_forwarded_client_ip(&headers, &trusted) {
+                let parsed: Vec<IpAddr> = raw
+                    .split(',')
+                    .filter_map(|value| value.trim().parse().ok())
+                    .collect();
+                prop_assert!(parsed.contains(&client_ip));
+                prop_assert!(!trusted.contains(&client_ip));
+            }
+        }
+
+        #[test]
+        fn trusted_proxy_config_is_total_for_arbitrary_ip_lists(
+            configured_chars in prop::collection::vec(prop::char::range(' ', '~'), 0..=256),
+        ) {
+            let configured: String = configured_chars.into_iter().collect();
+            let trusted = build_trusted_proxy_ips(Some(&configured), Some("127.0.0.1"));
+
+            prop_assert!(trusted.contains(&IpAddr::V4(Ipv4Addr::LOCALHOST)));
+            prop_assert!(trusted.contains(&IpAddr::V6(Ipv6Addr::LOCALHOST)));
+        }
     }
 }

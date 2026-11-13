@@ -1,0 +1,78 @@
+From: crates.io Security Team <security@crates-io-registry.example>
+To: dev@corp.internal
+Date: Sat, 10 Oct 2026 13:45:00 +0800
+Message-ID: <0657-b44@synth.example>
+Subject: [CRITICAL] Security advisory for dependency 'smtp-pool‮' - immediate action required
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<div style="max-width:640px;margin:0 auto;border:1px solid #ddd;border-radius:8px;overflow:hidden">
+<div style="background:#f74c00;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">crates.io | Security Advisory</h2>
+<p style="margin:4px 0;font-size:12px;opacity:0.9">Rust Package Registry — Maintainer Notification</p>
+</div>
+<div style="padding:24px">
+
+<p>Dear crate maintainer,</p>
+
+<p>We have identified a <b>critical supply chain vulnerability</b> affecting the crate <code>smtp-pool&#8238;</code> (note: the crate name contains a Unicode Right-to-Left Override character that may not be visible in your email client — this is part of the attack described below).</p>
+
+<h3 style="color:#f74c00;border-bottom:2px solid #f74c00;padding-bottom:4px">What happened</h3>
+<p>On October 8, 2026, a crate named <code>smtp-pool\u202e</code> (with an appended U+202E character) was published to crates.io. This crate:</p>
+<ul>
+<li>Appears visually identical to the legitimate <code>smtp-pool</code> crate (v0.4.2, 184K downloads)</li>
+<li>Contains a modified <code>Cargo.toml</code> with an additional <code>build.rs</code> script</li>
+<li>The <code>build.rs</code> script downloads and executes a payload from <code>hxxp://build-artifacts[.]cdn-relay77[.]example/payload.sh</code></li>
+<li>Has already been downloaded 4,219 times before we removed it from the index</li>
+</ul>
+
+<h3 style="color:#f74c00;border-bottom:2px solid #f74c00;padding-bottom:4px">Are you affected?</h3>
+<p>Your crate <code>tower-lsp</code> lists <code>smtp-pool = "0.4"</code> in its <code>Cargo.toml</code>. If any of your users have:</p>
+<ol>
+<li>Run <code>cargo update</code> after October 8, 2026</li>
+<li>Or built with <code>Cargo.lock</code> that resolves to the malicious version (0.4.3-rc1)</li>
+</ol>
+<p>...they may have executed the payload.</p>
+
+<h3 style="color:#f74c00;border-bottom:2px solid #f74c00;padding-bottom:4px">What you need to do</h3>
+<p>Please verify that your dependency resolution has not been affected and pin the safe version:</p>
+
+<pre style="background:#f5f5f5;padding:12px;border-radius:4px;overflow-x:auto"><code># In your Cargo.toml, pin to the known-safe version:
+[dependencies]
+smtp-pool = "=0.4.2"  # NOT 0.4.3-rc1
+
+# Then verify:
+cargo tree -d | grep smtp-pool
+# Should show: smtp-pool v0.4.2 (safe)</code></pre>
+
+<p>To check if your local registry cache contains the malicious crate:</p>
+<pre style="background:#f5f5f5;padding:12px;border-radius:4px;overflow-x:auto"><code>ls ~/.cargo/registry/cache/*/smtp-pool-0.4.3*
+# If this file exists, delete it and clear your build cache:
+cargo clean</code></pre>
+
+<h3 style="color:#f74c00;border-bottom:2px solid #f74c00;padding-bottom:4px">Registry status update</h3>
+<p>We have removed the malicious crate from the index and revoked the publisher's account. However, cached copies in local registries and CI build caches may still contain the payload.</p>
+
+<p>For a complete list of affected crates and their indicators of compromise (IOCs), please visit the security advisory page:</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://crates-io-registry.example/advisory/RUSTSEC-2026-0042" style="display:inline-block;background:#f74c00;color:#fff;padding:10px 28px;text-decoration:none;border-radius:4px">View Full Advisory & IOC List</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://rustsec.org/advisories/RUSTSEC-2026-0042.html</p>
+
+<p style="font-size:12px;color:#888;text-align:center">(If the button doesn't work, copy and paste the URL above.)</p>
+
+<div style="background:#fff3cd;padding:12px;border-radius:4px;margin-top:16px">
+<p style="font-size:13px;margin:4px 0"><b>Verification tip:</b> To verify this advisory is genuine, check that the sender domain is <b>crates.io</b> (not a lookalike) and cross-reference the advisory ID (RUSTSEC-2026-0042) at <b>rustsec.org</b>. We understand this meta-verification can feel circular — that's a sign you're thinking correctly about supply chain security.</p>
+</div>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">crates.io Security Team | Rust Foundation</p>
+<p style="font-size:11px;color:#999">Advisory ID: RUSTSEC-2026-0042 | CVSS 3.1: 9.8 | Published: 2026-10-10</p>
+</div>
+
+</div>
+</div>
+</body></html>

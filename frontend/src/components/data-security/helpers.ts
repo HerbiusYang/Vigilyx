@@ -19,16 +19,16 @@ export function maskIp(ip: string): string {
   if (parts.length === 4) return `${parts[0]}.${parts[1]}.*.*`
   return ip.replace(/:[\da-f]+:[\da-f]+$/i, ':*:*') // IPv6
 }
-/** User: user@domain.com -> us***@domain.com */
+/** User: user@domain.com -> u****@domain.com */
 export function maskUser(u: string): string {
   if (!u) return u
   const at = u.indexOf('@')
   if (at > 0) {
     const local = u.slice(0, at)
     const domain = u.slice(at)
-    return (local.length <= 2 ? local[0] + '***' : local.slice(0, 2) + '***') + domain
+    return local[0] + '****' + domain
   }
-  return u.length <= 2 ? u[0] + '***' : u.slice(0, 2) + '***'
+  return u[0] + '****'
 }
 /** URL: /path?token=abc123&key=xxx → /path?token=***&key=*** */
 export function maskUrl(url: string): string {
@@ -42,7 +42,7 @@ export function maskUrl(url: string): string {
 }
 
 // -- Utilities --
-export function sanitizeDownloadName(name: string): string {
+function sanitizeDownloadName(name: string): string {
   const cleaned = name.replace(/[\\/\u0000-\u001f\u007f"]/g, '').trim()
   return cleaned || 'http-request-body.redacted.txt'
 }

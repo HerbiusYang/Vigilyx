@@ -1,0 +1,9 @@
+From: =?utf-8?B?5Lqk5piT56Gu6K6k?= <qr@broker.example>
+To: fund@corp.internal
+Date: Thu, 24 Sep 2026 09:38:00 +0800
+Message-ID: <0028-b31@synth.example>
+Subject: 成交回报（组合X）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+当日成交明细见附件 CSV。

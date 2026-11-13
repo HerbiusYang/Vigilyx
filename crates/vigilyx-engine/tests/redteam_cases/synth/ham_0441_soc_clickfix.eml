@@ -1,0 +1,11 @@
+From: =?utf-8?B?5a6J5YWo6L+Q6JCl5Lit5b+D?= <soc@corp.internal>
+To: all-staff@corp.internal
+Date: Tue, 22 Sep 2026 10:40:00 +0800
+Message-ID: <0030-b29@synth.example>
+Subject: 【警惕】新型'验证码'钓鱼（ClickFix）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+近期出现'按 Win+R 粘贴命令完成人机验证'的钓鱼页面。
+任何要求在运行窗口/终端粘贴命令的'验证'都是攻击。
+真实 Cloudflare 验证只在浏览器内点击，不涉及命令行。

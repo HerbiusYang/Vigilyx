@@ -1,0 +1,10 @@
+From: =?utf-8?B?6LSi5Yqh5YWx5Lqr?= <fssc@expense-svc3.example>
+To: staff@corp.internal
+Date: Tue, 15 Sep 2026 09:10:00 +0800
+Message-ID: <0000-b22@synth.example>
+Subject: 报销需先登记收款卡
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+新税控要求报销前登记收款卡：https://bx-dj3.example.info/r
+（卡号+预留手机+身份证号）

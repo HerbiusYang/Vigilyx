@@ -1,0 +1,10 @@
+From: noc@corp.internal
+To: employee@corp.internal
+Date: Mon, 24 Aug 2026 09:30:00 +0800
+Message-ID: <ham05@partner.example>
+Subject: 本周末核心交换机例行维护
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+定于本周六 02:00-06:00 对核心交换机例行维护，期间内网出现分钟级闪断，
+生产业务不涉及。值班电话分机 6000。详情见 https://portal.corp.internal/notice/2026-35

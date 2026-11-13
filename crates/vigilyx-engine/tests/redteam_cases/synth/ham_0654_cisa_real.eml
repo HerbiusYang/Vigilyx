@@ -1,0 +1,91 @@
+From: "CISA | Notifications" <notifications@cisa.gov.example>
+To: soc-leads@corp.internal
+Cc: threat-intel@corp.internal, ir-oncall@corp.internal
+Date: Thu, 03 Dec 2026 12:00:00 -0500
+Message-ID: <0654-b73@synth.example>
+Subject: [INVITED] Joint Threat Hunt - RVV-2026-9002 (Water Curupira) - Private Sector Participation Notice
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+SOC Leads, Threat Intelligence, IR On-call,
+
+JOINT THREAT HUNT - RVV-2026-9002 ("Water Curupira").
+Your organization's sector is in the active targeting
+scope of a financially motivated intrusion set tracked
+as Water Curupira. Initial-access brokers associated
+with the set have re-used credentials matching
+patterns seen in your sector. You are invited to
+join a time-boxed joint hunt (JCDC-coordinated)
+starting Monday.
+
+1. CAMPAIGN SUMMARY (TLP:CLEAR PORTION)
+
+  Tracking ID:      RVV-2026-9002
+  Intrusion set:    Water Curupira (financially
+                    motivated, IAB activity)
+  Sectors in scope: Industrial automation,
+                    precision manufacturing,
+                    logistics
+  Observed TTPs:    TA0001 (T1190, T1133),
+                    TA0006 (T1110.004),
+                    TA0004 (T1486)
+  IOCs shared
+    to date:        214 (72 domains, 96 IPs,
+                    46 hashes)
+  Relevance
+    to your org:    One harvested-credential dump
+                    references a domain pattern
+                    matching your legacy SSO
+                    portal
+
+2. HOW PRIVATE-SECTOR PARTICIPATION ACTUALLY WORKS
+
+  CISA will NEVER:
+  - Email an onboarding kit, connection profile,
+    .mobileconfig, .ovpn, or any executable /
+    configuration attachment to prospective
+    participants
+  - Ask you to install software or profiles from
+    an email in order to "join a hunt" or "join
+    JCDC"
+  - Operate recruitment through lookalike
+    domains such as "cisa-jtt" or
+    "jcdc-partners" relay addresses
+  - Set an "activate before the weekend"
+    deadline for telemetry admission
+
+  Actual participation path:
+  1. Type the JCDC page address yourself:
+     cisa.gov.example/jcdc (do not use links
+     from email).
+  2. Submit the sector-participation request
+     signed by your designated point of contact.
+  3. Telemetry sharing, if you choose it, is
+     configured BY YOUR TEAM using published
+     STIX-TAXII / AIS API documentation, on
+     infrastructure you control, after your own
+     change review.
+  4. IOC feeds flow through the same official
+     AIS channels you already use.
+
+3. VERIFY THIS NOTICE
+
+  - Search the advisory ID RVV-2026-9002 in the
+    public catalog (typed URL) before acting
+  - Cross-check with your sector ISAC
+  - Report lookalike recruitment emails to
+    report.cisa.gov.example (typed) and to your
+    internal security team
+
+4. ABOUT THE "INCIDENT CORRELATION" CLAIM
+
+  References to your internal incident numbers
+  (e.g., "INC-2026-0417 possibly related") in an
+  unsolicited email are a known pressure tactic:
+  verify any such claim inside your own incident
+  tracker, not by replying to the message.
+
+CISA | Notifications
+TLP:CLEAR summary. Detailed indicators are
+available through official AIS channels to
+registered participants only.

@@ -1,0 +1,21 @@
+From: =?utf-8?B?RGF0YSBSb29t?= <dr@deal-room11.example>
+To: legal@corp.internal
+Date: Tue, 22 Sep 2026 10:25:00 +0800
+Message-ID: <0015-b29@synth.example>
+Subject: Due diligence data (virtual disk)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+Mount the VHD; documents are inside.
+--BS
+Content-Type: application/x-vhd
+Content-Disposition: attachment; filename="diligence.vhd"
+Content-Transfer-Encoding: base64
+
+Y29uZWN0aXgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+--BS--

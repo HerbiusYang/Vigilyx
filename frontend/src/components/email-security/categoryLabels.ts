@@ -15,3 +15,17 @@ export function categoryLabel(category: string): string {
 export function formatCategoryList(categories: string[]): string {
   return categories.map(categoryLabel).join(' / ')
 }
+
+/** Localized primary malicious-email classification label. */
+export function threatTypeLabel(threatType: string | null | undefined): string | null {
+  if (!threatType) return null
+  const key = `emailSecurity.threatType.${threatType}`
+  return i18n.exists(key) ? i18n.t(key) : threatType
+}
+
+/** Localized mail classification, separate from malicious threat family. */
+export function classificationLabel(classification: string | null | undefined): string | null {
+  if (!classification) return null
+  const key = `emailSecurity.classification.${classification}`
+  return i18n.exists(key) ? i18n.t(key) : classification
+}

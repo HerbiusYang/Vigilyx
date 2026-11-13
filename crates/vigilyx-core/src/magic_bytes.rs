@@ -566,8 +566,7 @@ pub fn find_trailing_zip_eocd(data: &[u8]) -> Option<usize> {
         if tail.get(relative..relative.saturating_add(4)) != Some(EOCD_SIGNATURE) {
             continue;
         }
-        let comment_len =
-            u16::from_le_bytes([tail[relative + 20], tail[relative + 21]]) as usize;
+        let comment_len = u16::from_le_bytes([tail[relative + 20], tail[relative + 21]]) as usize;
         if relative + EOCD_FIXED_LEN + comment_len == tail.len() {
             return Some(window_start + relative);
         }
@@ -726,7 +725,8 @@ pub fn is_encrypted_pdf(data: &[u8]) -> bool {
     }
     // Search for /Encrypt in the leading 4 KiB and the trailing 4 KiB.
     let head = normalize_pdf_name_escapes(&data[..data.len().min(PDF_ENCRYPT_SEARCH_WINDOW)]);
-    let tail = normalize_pdf_name_escapes(&data[data.len().saturating_sub(PDF_ENCRYPT_SEARCH_WINDOW)..]);
+    let tail =
+        normalize_pdf_name_escapes(&data[data.len().saturating_sub(PDF_ENCRYPT_SEARCH_WINDOW)..]);
     head.windows(8).any(|w| w == b"/Encrypt") || tail.windows(8).any(|w| w == b"/Encrypt")
 }
 
@@ -1094,7 +1094,8 @@ mod tests {
     #[test]
     fn test_prose_begin_sentence_is_not_uuencode() {
         // Guard: prose starting with "begin" must not be misclassified.
-        let data = b"begin 60 years ago the story of our company started small and grew.\nMore text here.";
+        let data =
+            b"begin 60 years ago the story of our company started small and grew.\nMore text here.";
         assert_eq!(
             detect_file_type(data),
             Some(DetectedFileType::PlainText),
@@ -1149,10 +1150,13 @@ mod tests {
             "Here is the report you asked for.\r\nbegin 644 evil.exe\r\n{}thanks\r\n",
             uuencode_body(&payload)
         );
-        let frame = split_uuencode_frame(data.as_bytes(), 1024 * 1024)
-            .expect("valid frame must decode");
+        let frame =
+            split_uuencode_frame(data.as_bytes(), 1024 * 1024).expect("valid frame must decode");
         assert_eq!(frame.filename, "evil.exe");
-        assert_eq!(frame.payload, payload, "decode must round-trip the spec encoder");
+        assert_eq!(
+            frame.payload, payload,
+            "decode must round-trip the spec encoder"
+        );
         assert!(
             String::from_utf8_lossy(&frame.preamble).contains("Here is the report"),
             "preamble must be preserved: {:?}",
@@ -1587,10 +1591,7 @@ mod tests {
     #[test]
     fn test_detect_pdf_bare_header_at_offset_zero_still_matches() {
         // Legacy behavior: bare "%PDF" (no version dash) at offset 0.
-        assert_eq!(
-            detect_file_type(b"%PDF"),
-            Some(DetectedFileType::Pdf)
-        );
+        assert_eq!(detect_file_type(b"%PDF"), Some(DetectedFileType::Pdf));
     }
 
     #[test]

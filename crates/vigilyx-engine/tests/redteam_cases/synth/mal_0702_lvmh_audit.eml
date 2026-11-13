@@ -1,0 +1,109 @@
+From: LVMH Group Anti-Counterfeit Division <compliance.audit@lvmh-anticounterfeit.example>
+To: legal@corp.internal
+Cc: brand-protection@corp.internal, cto@corp.internal
+Reply-To: audit.findings@lvmh-legal-mail.example
+Date: Sun, 25 Oct 2026 17:30:00 +0200
+Disposition-Notification-To: compliance.audit@lvmh-anticounterfeit.example
+Message-ID: <0702-b59@synth.example>
+Subject: =?utf-8?B?44CkQVVESVQgQ09NUExJQU5DRSDiiJIg4oCUMjAyNi9GSVRDSC0wODQy4oCN?=
+ =?utf-8?B?44CLIEJyYW5kIFByb3RlY3Rpb24gRmluZGluZ3MgYW5kIENvbXBsaWFuY2Ug?=
+ =?utf-8?B?UGF5bWVudCAtLSBHdWlkdGFuY2UgZGVkYXNs?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<p>Legal Department, Brand Protection Team, CTO:</p>
+
+<p>LVMH's Anti-Counterfeit Division has completed its compliance audit of your company's email security gateway product. We have identified <b style="color:#e00">three findings</b> requiring remediation and a compliance payment. This is a formal notice under the <b>EU Digital Services Act (DSA)</b> and the <b>French Consumer Code (Code de la consommation, Art. L. 331-1 et seq.)</b>.</p>
+
+<h3>一、Audit Summary</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:180px">Audit Reference</td><td><b>AUDIT-2026/FITCH-0842</b></td></tr>
+<tr><td style="background:#f5f5f5">Audited Entity</td><td>Your Company (as online intermediary)</td></tr>
+<tr><td style="background:#f5f5f5">Product Audited</td><td>Email Security Gateway (GW-1000/2000/5000)</td></tr>
+<tr><td style="background:#f5f5f5">Audit Period</td><td>2026-07-01 to 2026-09-30</td></tr>
+<tr><td style="background:#f5f5f5">Legal Basis</td><td>EU DSA Art. 22 / French Consumer Code Art. L. 331-1</td></tr>
+<tr><td style="background:#f5f5f5">Auditor</td><td>LVMH Brand Protection — Digital Investigations</td></tr>
+<tr><td style="background:#f5f5f5">Severity</td><td style="color:#e00"><b>HIGH — Compliance payment due</b></td></tr>
+<tr><td style="background:#f5f5f5">Payment Deadline</td><td style="color:#e00"><b>November 15, 2026 (21 days)</b></td></tr>
+</table>
+
+<h3>二、Findings</h3>
+
+<p><b>Finding 1 — Failure to Block Counterfeit Promotion (HIGH)</b></p>
+<p>During the audit period, your gateway processed <b>1,847 emails</b> containing promotional offers for counterfeit luxury goods (handbags, watches, perfumes) bearing LVMH trademarks. Of these:</p>
+<ul>
+<li>1,203 were delivered to end users (65.1%)</li>
+<li>644 were blocked (34.9%)</li>
+<li>Blocking rate below the 80% threshold required under your company's DSA Art. 22 obligations</li>
+</ul>
+
+<p><b>Finding 2 — Failure to Report (MEDIUM)</b></p>
+<p>Your company failed to submit quarterly anti-counterfeit performance reports as required under the DSA. Reports were due on July 30 and October 30.</p>
+
+<p><b>Finding 3 — Inadequate Content Filtering (MEDIUM)</b></p>
+<p>Testing of your gateway's content filtering found that emails containing counterfeit product images (extracted via OCR) were not reliably blocked. The audit found a 23% pass-through rate for image-based counterfeit promotions.</p>
+
+<h3>三、Compliance Payment</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Item</th><th>Amount (EUR)</th></tr>
+<tr><td>Finding 1: DSA Art. 22 violation penalty</td><td>€180,000</td></tr>
+<tr><td>Finding 2: Late reporting penalty</td><td>€25,000</td></tr>
+<tr><td>Finding 3: Content filtering deficiency</td><td>€45,000</td></tr>
+<tr><td>Legal costs (LVMH external counsel)</td><td>€38,500</td></tr>
+<tr><td colspan="2" style="text-align:right"><b>Total: €288,500</b></td></tr>
+</table>
+
+<p style="font-size:14px;background:#FFF3E0;padding:12px;border-radius:4px;border-left:4px solid #e00">
+<b style="color:#e00">⚠ PAYMENT INSTRUCTION (updated):</b> Due to the cross-border nature of this compliance action, payment must be made to LVMH's <b>international compliance settlement account</b> (not the French domestic account used for previous audits):
+<br><br>
+<b>Beneficiary:</b> LVMH International Compliance Settlement SAS<br>
+<b>Bank:</b> BNP Paribas Fortis (Brussels, Belgium)<br>
+<b>IBAN:</b> BE68 4471 8830 9921<br>
+<b>SWIFT:</b> TSTBBEBB<br>
+<b>Reference:</b> AUDIT-2026/FITCH-0842<br>
+<b>Amount:</b> EUR €288,500.00<br>
+</p>
+<p>If you need to verify the payment account, contact our <b>compliance settlement desk at +33-1-44-13-**** (extension 8842)</b> (the previous number +33-1-44-13-2244 is no longer active due to office relocation).</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文协助或分期支付，请访问 lvmh-anticounterfeit.example/cn-settlement 上传公司注册证书与法人护照（中文结算通道，5个工作日审批）。</p>
+
+<h3>四、Remediation Plan Required</h3>
+<p>In addition to payment, submit a remediation plan by November 8, 2026 addressing:</p>
+<ol>
+<li>Content filtering improvements (image-based counterfeit detection)</li>
+<li>Quarterly reporting automation</li>
+<li>Blocking rate improvement plan (from 65% to 80%+)</li>
+</ol>
+
+<p>Submit through our compliance portal:</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://lvmh-anticounterfeit.example/portal/audit/2026-FITCH-0842/remediation" style="display:inline-block;background:#B48A4C;color:#fff;padding:10px 30px;text-decoration:none;border-radius:4px">Submit Remediation Plan</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://www.lvmh.com/compliance/remediation</p>
+
+<h3>五、Right to Appeal</h3>
+<p>You have the right to appeal these findings before the Paris Commercial Court (Tribunal de commerce de Paris) within 30 days. However:</p>
+<ul>
+<li>Appeal does not stay the compliance payment obligation</li>
+<li>Appeal filing fee: €15,000 (payable to the Tribunal)</li>
+<li>Typical appeal duration: 18-24 months</li>
+<li>Successful appeal rate for DSA compliance actions: <8%</li>
+</ul>
+
+<h3>六、About This Audit</h3>
+<p>We understand that a luxury goods conglomerate conducting a compliance audit of an email security company may seem unusual. This is because under the <b>EU Digital Services Act (2022)</b>, online intermediaries (including email security providers) are considered "hosting services" with obligations to prevent the promotion of counterfeit goods through their systems. LVMH, as a rights holder, has standing to audit intermediary compliance under DSA Art. 22(4).</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">LVMH | Brand Protection — Digital Investigations</p>
+<p style="font-size:11px;color:#999">8 rue du Faubourg Saint-Honoré, 75008 Paris, France</p>
+<p style="font-size:11px;color:#999">This communication may be privileged and confidential.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://lvmh-anticounterfeit.example/api/track?recipient=legal%40corp.internal&audit=FITCH-0842&type=compliance_notice" width="1" height="1" alt="">
+</div>
+
+</body></html>

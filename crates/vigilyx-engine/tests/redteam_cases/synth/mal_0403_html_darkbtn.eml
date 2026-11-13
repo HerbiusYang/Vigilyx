@@ -1,0 +1,9 @@
+From: =?utf-8?B?5a6J5YWo5Lit5b+D?= <sec@dark-theme6.example>
+To: me@personal.example
+Date: Fri, 18 Sep 2026 09:10:00 +0800
+Message-ID: <0000-b25@synth.example>
+Subject: 账户安全提醒（深色版）
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style='background:#111;color:#eee'><p>检测到异常登录。</p><a href='https://dark-sec-check6.example.vip/v' style='color:#0ff'>立即核查</a></body></html>

@@ -23,88 +23,6 @@ import KeywordsTab from './KeywordsTab'
 
 type TabKey = 'overview' | 'risk' | 'sec-risk-scene' | 'pipeline' | 'av-clamav' | 'av-yara' | 'ioc' | 'intel' | 'ai' | 'whitelist' | 'keywords'
 
-// ─── Shared constants (exported for PipelineGraph and sub-components) ─────
-
-export const MODULE_DESC_KEYS: Record<string, string> = {
-  content_scan: 'emailSecurity.moduleDescContentScan',
-  html_scan: 'emailSecurity.moduleDescHtmlScan',
-  attach_scan: 'emailSecurity.moduleDescAttachScan',
-  attach_content: 'emailSecurity.moduleDescAttachContent',
-  attach_hash: 'emailSecurity.moduleDescAttachHash',
-  mime_scan: 'emailSecurity.moduleDescMimeScan',
-  header_scan: 'emailSecurity.moduleDescHeaderScan',
-  link_scan: 'emailSecurity.moduleDescLinkScan',
-  link_reputation: 'emailSecurity.moduleDescLinkReputation',
-  link_content: 'emailSecurity.moduleDescLinkContent',
-  anomaly_detect: 'emailSecurity.moduleDescAnomalyDetect',
-  semantic_scan: 'emailSecurity.moduleDescSemanticScan',
-  domain_verify: 'emailSecurity.moduleDescDomainVerify',
-  identity_anomaly: 'emailSecurity.moduleDescIdentityAnomaly',
-  transaction_correlation: 'emailSecurity.moduleDescTransactionCorrelation',
-  av_eml_scan: 'emailSecurity.moduleDescAvEmlScan',
-  av_attach_scan: 'emailSecurity.moduleDescAvAttachScan',
-  yara_scan: 'emailSecurity.moduleDescYaraScan',
-  verdict: 'emailSecurity.moduleDescVerdict',
-}
-
-// Legacy accessor — consumers that import MODULE_DESC can be migrated later.
-// For now this is kept as a function that requires a `t` function.
-export function getModuleDesc(t: (key: string) => string): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const [id, key] of Object.entries(MODULE_DESC_KEYS)) {
-    out[id] = t(key)
-  }
-  return out
-}
-
-// Keep MODULE_DESC export for backward compat — consumers should migrate to getModuleDesc(t)
-export const MODULE_DESC: Record<string, string> = Object.fromEntries(
-  Object.entries(MODULE_DESC_KEYS).map(([id]) => [id, id])
-)
-
-export const PILLAR_META_KEYS: Record<string, { labelKey: string; color: string }> = {
-  content: { labelKey: 'emailSecurity.pillarContent', color: 'var(--accent-blue)' },
-  attachment: { labelKey: 'emailSecurity.pillarAttachment', color: 'var(--accent-yellow)' },
-  package: { labelKey: 'emailSecurity.pillarPackage', color: 'var(--accent-purple)' },
-  link: { labelKey: 'emailSecurity.pillarLink', color: 'var(--accent-emerald)' },
-  semantic: { labelKey: 'emailSecurity.pillarSemantic', color: 'var(--accent-orange, #f97316)' },
-  verdict: { labelKey: 'emailSecurity.pillarVerdict', color: 'var(--accent-primary)' },
-}
-
-export function getPillarMeta(t: (key: string) => string): Record<string, { label: string; color: string }> {
-  const out: Record<string, { label: string; color: string }> = {}
-  for (const [id, meta] of Object.entries(PILLAR_META_KEYS)) {
-    out[id] = { label: t(meta.labelKey), color: meta.color }
-  }
-  return out
-}
-
-// Legacy export kept for backward compat
-export const PILLAR_META: Record<string, { label: string; color: string }> = Object.fromEntries(
-  Object.entries(PILLAR_META_KEYS).map(([id, meta]) => [id, { label: id, color: meta.color }])
-)
-
-export const MODE_CN_KEYS: Record<string, string> = {
-  builtin: 'emailSecurity.modeBuiltin',
-  aionly: 'emailSecurity.modeAiOnly',
-  hybrid: 'emailSecurity.modeHybrid',
-}
-
-export function getModeCN(t: (key: string) => string): Record<string, string> {
-  const out: Record<string, string> = {}
-  for (const [id, key] of Object.entries(MODE_CN_KEYS)) {
-    out[id] = t(key)
-  }
-  return out
-}
-
-// Legacy export
-export const MODE_CN: Record<string, string> = {
-  builtin: 'builtin',
-  aionly: 'aionly',
-  hybrid: 'hybrid',
-}
-
 const VALID_TABS: TabKey[] = ['overview', 'risk', 'sec-risk-scene', 'pipeline', 'av-clamav', 'av-yara', 'ioc', 'intel', 'ai', 'whitelist', 'keywords']
 
 // ─── Main shell component ────────────────────────────────────────
@@ -217,7 +135,7 @@ function EmailSecurity() {
   useEffect(() => {
     setIsLoading(true)
     Promise.all([fetchStats(), fetchModules(), fetchPipeline()]).finally(() => setIsLoading(false))
-    const interval = window.setInterval(fetchStats, 10000) // Match the engine heartbeat cadence.
+    const interval = window.setInterval(fetchStats, 15000) // Keep UI refresh below the aggregate cache cost.
     const handleVisibilityChange = () => {
       if (!document.hidden) fetchStats()
     }

@@ -1,0 +1,10 @@
+From: =?utf-8?B?SVQg5pyN5Yqh5Y+w?= <helpdesk@corp.internal>
+To: staff@corp.internal
+Date: Fri, 11 Sep 2026 08:33:00 +0800
+Message-ID: <0023-b19@synth.example>
+Subject: Zoom 客户端统一升级（自动）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Zoom 已由企业策略自动升级至 5.17.2，无需手动操作。
+如提示失败，重启客户端即可；任何'手动安装包'邮件请上报。

@@ -1,0 +1,9 @@
+From: =?utf-8?B?6YeH6LSt5Lit5b+D?= <cg@vendor-kyc9.example>
+To: vendor@corp.internal
+Date: Mon, 21 Sep 2026 09:17:00 +0800
+Message-ID: <0007-b28@synth.example>
+Subject: 供应商 KYC 年审（附件回传）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+回传：营业执照+法人身份证+对公账户至本邮箱加密包。

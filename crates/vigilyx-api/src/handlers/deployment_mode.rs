@@ -86,6 +86,12 @@ pub struct UpdateDeploymentMode {
     #[serde(default)]
     pub mta_downstream_port: Option<u16>,
     #[serde(default)]
+    pub mta_outbound_host: Option<String>,
+    #[serde(default)]
+    pub mta_outbound_port: Option<u16>,
+    #[serde(default)]
+    pub mta_outbound_starttls: Option<bool>,
+    #[serde(default)]
     pub mta_inline_timeout_secs: Option<u32>,
     #[serde(default)]
     pub mta_hostname: Option<String>,
@@ -170,6 +176,32 @@ pub async fn update_deployment_mode(
         }
     }
 
+    if let Some(host) = merged
+        .get("mta_outbound_host")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|host| !host.is_empty())
+        .map(str::to_owned)
+    {
+        let port = merged
+            .get("mta_outbound_port")
+            .and_then(|value| value.as_u64())
+            .and_then(|value| u16::try_from(value).ok())
+            .unwrap_or(25);
+        if let Err(reason) = validate_downstream_host(&host, port) {
+            return ApiResponse::<serde_json::Value>::err(format!(
+                "Outbound host blocked: {reason}"
+            ))
+            .into_response();
+        }
+        if let Some(base) = merged.as_object_mut() {
+            base.insert(
+                "mta_outbound_host".to_string(),
+                serde_json::Value::String(host),
+            );
+        }
+    }
+
     if let Some(hostname) = merged
         .get("mta_hostname")
         .and_then(|value| value.as_str())
@@ -249,6 +281,7 @@ fn clamp_json_u64(config: &mut serde_json::Value, key: &str, min: u64, max: u64)
 
 fn normalize_mta_numeric_bounds(config: &mut serde_json::Value) {
     clamp_json_u64(config, "mta_downstream_port", MTA_PORT_MIN, MTA_PORT_MAX);
+    clamp_json_u64(config, "mta_outbound_port", MTA_PORT_MIN, MTA_PORT_MAX);
     clamp_json_u64(
         config,
         "mta_inline_timeout_secs",
@@ -386,8 +419,8 @@ mod tests {
 
     #[test]
     fn test_validate_downstream_host_valid() {
-        assert!(validate_downstream_host("10.1.246.33", 25).is_ok());
-        assert!(validate_downstream_host("8.8.8.8", 25).is_ok());
+        assert!(validate_downstream_host("10.0.0.33", 25).is_ok());
+        assert!(validate_downstream_host("192.0.2.25", 25).is_ok());
     }
 
     #[test]
@@ -395,7 +428,7 @@ mod tests {
         assert!(validate_downstream_host("169.254.169.254", 25).is_err());
         assert!(validate_downstream_host("localhost", 25).is_err());
         assert!(validate_downstream_host("127.0.0.1", 25).is_err());
-        assert!(validate_downstream_host("http://evil.com", 25).is_err());
+        assert!(validate_downstream_host("http://evil.example", 25).is_err());
         assert!(validate_downstream_host("file:///etc/passwd", 25).is_err());
     }
 
@@ -442,6 +475,7 @@ mod tests {
     fn test_normalize_mta_numeric_bounds_clamps_operational_limits() {
         let mut config = serde_json::json!({
             "mta_downstream_port": 0,
+            "mta_outbound_port": 70_000,
             "mta_inline_timeout_secs": 600,
             "mta_max_connections": 50_000,
             "mta_max_recipients": 50_000
@@ -450,6 +484,7 @@ mod tests {
         normalize_mta_numeric_bounds(&mut config);
 
         assert_eq!(config["mta_downstream_port"], 1);
+        assert_eq!(config["mta_outbound_port"], 65_535);
         assert_eq!(config["mta_inline_timeout_secs"], 60);
         assert_eq!(config["mta_max_connections"], 1000);
         assert_eq!(config["mta_max_recipients"], 10_000);

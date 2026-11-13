@@ -1,0 +1,9 @@
+From: =?utf-8?B?6K+B5Lmm5beh5qOA?= <cert@corp.internal>
+To: ops@corp.internal
+Date: Tue, 15 Sep 2026 09:42:00 +0800
+Message-ID: <0032-b22@synth.example>
+Subject: 证书自动轮换成功
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+*.corp.internal 已轮换，无需操作。

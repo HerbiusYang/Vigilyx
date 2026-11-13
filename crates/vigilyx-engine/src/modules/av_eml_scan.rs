@@ -238,6 +238,7 @@ mod tests {
             links: vec![],
             raw_size: 1024,
             is_complete: true,
+            raw_mime: None,
             is_encrypted: false,
             truncated: false,
             dropped_attachments: 0,

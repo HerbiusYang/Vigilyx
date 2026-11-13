@@ -20,13 +20,16 @@
 //! - multipart: Add depthlimitprevent Overflow
 //! - from_utf8_lossy: from_utf8, Failed fallback
 
-use encoding_rs::Encoding;
+use encoding_rs::{Encoding, WINDOWS_1251};
 use memchr::memmem;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
+use std::sync::OnceLock;
 use tracing::{debug, warn};
 use vigilyx_core::magic_bytes::split_uuencode_frame;
-use vigilyx_core::{EmailAttachment, EmailContent, EmailLink};
+use vigilyx_core::{
+    EmailAttachment, EmailContent, EmailLink, MAX_EMAIL_LINKS, MAX_RETAINED_RAW_MIME_BYTES,
+};
 
 /// Hard upper bound for message parsing size (prevents OOM).
 /// Messages above this size are rejected. Normal business mail is <10MB, and large-attachment mail is usually <50MB.
@@ -57,6 +60,122 @@ const MAX_MULTIPART_DEPTH: usize = 10;
 
 /// levelProcessof MIME part total,prevent O(k^2)
 const MAX_TOTAL_PARTS: usize = 200;
+
+// A bare token such as `20260101010203.pdf` is an attachment filename, not a
+// DNS name. Keep this list limited to extensions that are not delegated DNS
+// TLDs; in particular, do not include valid TLDs such as `.zip` or `.mov`.
+const NON_DOMAIN_FILE_SUFFIXES: &[&str] = &[
+    "7z", "apk", "avi", "bin", "bmp", "csv", "dbf", "doc", "docm", "docx", "dll", "eml", "exe",
+    "gif", "gz", "htm", "html", "jpeg", "jpg", "json", "log", "m4a", "m4v", "msg", "mp3", "mp4",
+    "pdf", "png", "ppt", "pptm", "pptx", "rar", "rtf", "svg", "tar", "tif", "tiff", "txt", "wav",
+    "webm", "webp", "xls", "xlsm", "xlsx", "xml",
+];
+
+/// Characters that mail clients commonly accept inside a linkified IDN token
+/// even though an ASCII-only scanner would split the token. Keep this set to
+/// Latin look-alikes used in domain spoofing: admitting every Unicode letter
+/// would merge adjacent CJK prose into the candidate domain.
+fn is_bare_domain_candidate_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric()
+        || matches!(ch, '-' | '.')
+        || matches!(
+            ch,
+            // Cyrillic look-alikes.
+            '\u{0430}' | '\u{0435}' | '\u{043E}' | '\u{0440}' | '\u{0441}' | '\u{0445}'
+                | '\u{0456}' | '\u{0458}' | '\u{04CF}'
+                // Greek look-alikes.
+                | '\u{03B1}' | '\u{03B5}' | '\u{03B9}' | '\u{03BA}' | '\u{03BD}'
+                | '\u{03BF}' | '\u{03C1}' | '\u{03C4}' | '\u{03C5}' | '\u{03C7}'
+                // Full-width Latin letters/digits are rendered like ASCII.
+                | '\u{FF10}'..='\u{FF19}' | '\u{FF21}'..='\u{FF3A}' | '\u{FF41}'..='\u{FF5A}'
+        )
+}
+
+/// RFC 5322 atom characters, plus the separators in an unquoted addr-spec.
+/// Inspect the complete atom before trying any dotted substring as a host:
+/// `first.last+tag@example.com` must not produce `https://first.last`.
+fn is_email_addr_spec_char(ch: char) -> bool {
+    is_bare_domain_candidate_char(ch)
+        || matches!(
+            ch,
+            '@' | '!'
+                | '#'
+                | '$'
+                | '%'
+                | '&'
+                | '\''
+                | '*'
+                | '+'
+                | '/'
+                | '='
+                | '?'
+                | '^'
+                | '_'
+                | '`'
+                | '{'
+                | '|'
+                | '}'
+                | '~'
+        )
+}
+
+#[derive(serde::Deserialize)]
+struct EmailLinkSyntaxPolicy {
+    delegated_tlds: HashSet<String>,
+}
+
+fn delegated_tlds() -> Option<&'static HashSet<String>> {
+    static TLDS: OnceLock<Option<HashSet<String>>> = OnceLock::new();
+    TLDS.get_or_init(|| {
+        serde_json::from_str::<EmailLinkSyntaxPolicy>(include_str!(
+            "../../../shared/schemas/email_link_syntax_policy.json"
+        ))
+        .ok()
+        .map(|policy| policy.delegated_tlds)
+    })
+    .as_ref()
+}
+
+/// A missing space after an English sentence's period can look like a DNS
+/// label. Only suppress the ambiguous two-word shape when the next sentence
+/// starts in title case and continues with lowercase prose. Explicit URLs,
+/// paths, subdomains, hyphenated/numeric labels and IDNs remain observable.
+/// A fixed IANA root-zone snapshot preserves real mixed-case suffixes such as
+/// `example.Com`. It is syntax evidence, not a destination safety whitelist;
+/// unknown suffixes alone are never rejected. If the snapshot cannot load,
+/// retain the ambiguous observation instead of suppressing a possible URL.
+fn looks_like_joined_prose(candidate: &str, following: &str) -> bool {
+    let mut labels = candidate.split('.');
+    let (Some(left), Some(right)) = (labels.next(), labels.next()) else {
+        return false;
+    };
+    if labels.next().is_some()
+        || !left.chars().all(|ch| ch.is_ascii_lowercase())
+        || !right
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase())
+        || !right.chars().skip(1).all(|ch| ch.is_ascii_lowercase())
+        || right.len() < 2
+        || !following.chars().next().is_some_and(char::is_whitespace)
+        || delegated_tlds().is_none_or(|tlds| tlds.contains(&right.to_ascii_lowercase()))
+    {
+        return false;
+    }
+
+    let mut words = following.split_whitespace();
+    let Some(first) = words.next() else {
+        return false;
+    };
+    let Some(second) = words.next() else {
+        return false;
+    };
+    first.chars().all(|ch| ch.is_ascii_lowercase())
+        && second
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_lowercase())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MultipartDelimiter {
@@ -289,7 +408,10 @@ impl MimeParser {
                 decoded,
             )?;
 
-            if missing_top_level_content_type && !is_attachment {
+            if !is_attachment
+                && (missing_top_level_content_type
+                    || Self::looks_like_embedded_multipart_body(body_bytes))
+            {
                 self.try_salvage_embedded_multipart(&mut content, body_bytes)?;
             }
         }
@@ -313,7 +435,43 @@ impl MimeParser {
             self.extract_links_from_text(text, &mut content.links);
         }
 
-        content.is_complete = true;
+        // A successful MIME function return is not sufficient evidence that
+        // the DATA payload was inspected. If the wire body contains meaningful
+        // bytes but no text/html/attachment entity survived parsing, mark the
+        // message as a coverage gap and retain the exact bytes for replay.
+        // This prevents malformed multipart messages from becoming a vacuous
+        // "all content safe" result.
+        let has_wire_payload = body_bytes.iter().any(|byte| !byte.is_ascii_whitespace());
+        let missing_retained_entity = has_wire_payload && !content.has_retained_message_entity();
+        if missing_retained_entity {
+            content.truncated = true;
+            content.is_complete = false;
+        } else {
+            content.is_complete = true;
+        }
+
+        // U+FFFD means a decoder had to replace bytes it could not represent.
+        // The message is still structurally parseable, but its visible text
+        // is not trustworthy enough to call the inspection complete: a lost
+        // action or credential phrase could otherwise turn into a clean/Low
+        // delivery. Preserve the raw MIME for replay and let the MTA coverage
+        // policy quarantine it without inventing a threat family.
+        let lossy_text = content
+            .body_text
+            .as_deref()
+            .is_some_and(|body| body.contains('\u{FFFD}'))
+            || content
+                .body_html
+                .as_deref()
+                .is_some_and(|body| body.contains('\u{FFFD}'));
+        if lossy_text {
+            content.truncated = true;
+            content.is_complete = false;
+        }
+
+        if content.has_inspection_coverage_gap() && data.len() <= MAX_RETAINED_RAW_MIME_BYTES {
+            content.raw_mime = Some(data.to_vec());
+        }
         Ok(content)
     }
 
@@ -322,11 +480,11 @@ impl MimeParser {
         content: &mut EmailContent,
         body: &[u8],
     ) -> Result<(), MimeError> {
-        if !Self::looks_like_embedded_multipart_body(body) {
+        let Some(payload) = Self::embedded_multipart_payload(body) else {
             return Ok(());
-        }
+        };
 
-        let Some(boundary) = Self::extract_embedded_boundary(body) else {
+        let Some(boundary) = Self::extract_embedded_boundary(payload) else {
             return Ok(());
         };
 
@@ -336,12 +494,12 @@ impl MimeParser {
         self.parse_multipart_inner(
             &mut salvaged,
             &synthetic_content_type,
-            body,
+            payload,
             0,
             &mut total_parts,
         )?;
 
-        let relaxed = self.salvage_embedded_parts_relaxed(body)?;
+        let relaxed = self.salvage_embedded_parts_relaxed(payload)?;
         if salvaged.body_text.is_none() {
             salvaged.body_text = relaxed.body_text;
         }
@@ -451,7 +609,9 @@ impl MimeParser {
     }
 
     fn looks_like_embedded_multipart_body(body: &[u8]) -> bool {
-        let trimmed = Self::trim_ascii_leading_newlines(body);
+        let Some(trimmed) = Self::embedded_multipart_payload(body) else {
+            return false;
+        };
         if trimmed.len() < 32 || !trimmed.starts_with(b"--") {
             return false;
         }
@@ -477,14 +637,82 @@ impl MimeParser {
         boundary_like && marker_count >= 2
     }
 
+    /// Return the boundary payload for both standard embedded MIME fragments
+    /// and the evasion shape where a second `Content-Type: multipart/*`
+    /// header is placed inside a declared text/plain body.  Some malformed
+    /// senders put a short prose preamble before that hidden header; walk only
+    /// line starts so ordinary prose mentioning MIME does not become a parse
+    /// trigger unless a real boundary follows the header block.
+    ///
+    /// Cost is linear in the body length. Each candidate used to search the
+    /// whole remainder for the blank line, so a text/plain body made of
+    /// `Content-Type: multipart/x` lines with no blank line cost O(S²) and
+    /// stalled the capture/MTA/engine worker. The nearest blank line after a
+    /// candidate only moves forward as candidates move forward, so the search
+    /// result is cached and resumed; candidates that share one header block
+    /// are judged once; and, like the top-level split, a hidden header block
+    /// longer than MAX_HEADER_SIZE is not treated as a header block. There is
+    /// deliberately no cap on the candidate count: with linear cost a cap only
+    /// adds a decoy-padding bypass.
+    fn embedded_multipart_payload(body: &[u8]) -> Option<&[u8]> {
+        let trimmed = Self::trim_ascii_leading_newlines(body);
+        if trimmed.starts_with(b"--") {
+            return Some(trimmed);
+        }
+
+        let mut crlf_blank = BlankLineCursor::new(b"\r\n\r\n");
+        let mut lf_blank = BlankLineCursor::new(b"\n\n");
+        let mut last_header_end: Option<usize> = None;
+        let mut candidate_start = 0usize;
+        while candidate_start < trimmed.len() {
+            let line_end = Self::line_end_index(trimmed, candidate_start);
+            let line = Self::trim_line_ending(&trimmed[candidate_start..line_end]);
+            let is_content_type = line
+                .get(..13)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"content-type:"));
+            if is_content_type
+                && line[..line.len().min(1024)]
+                    .windows(b"multipart/".len())
+                    .any(|window| window.eq_ignore_ascii_case(b"multipart/"))
+            {
+                // Same preference as before (CRLF blank line first, then LF),
+                // restricted to a header-sized window after the candidate.
+                let window_end = candidate_start.saturating_add(MAX_HEADER_SIZE);
+                let header_end = crlf_blank
+                    .next_at_or_after(trimmed, candidate_start)
+                    .map(|index| index + 4)
+                    .filter(|&end| end <= window_end)
+                    .or_else(|| {
+                        lf_blank
+                            .next_at_or_after(trimmed, candidate_start)
+                            .map(|index| index + 2)
+                            .filter(|&end| end <= window_end)
+                    });
+                if let Some(header_end) = header_end
+                    && last_header_end != Some(header_end)
+                {
+                    // An earlier candidate in the same header block already
+                    // saw this exact payload and rejected it; skipping it
+                    // keeps the leading-newline trim below linear overall.
+                    last_header_end = Some(header_end);
+                    let payload = Self::trim_ascii_leading_newlines(&trimmed[header_end..]);
+                    if payload.starts_with(b"--") {
+                        return Some(payload);
+                    }
+                }
+            }
+            if line_end >= trimmed.len() {
+                break;
+            }
+            candidate_start = line_end;
+        }
+        None
+    }
+
     fn extract_embedded_boundary(body: &[u8]) -> Option<String> {
         let trimmed = Self::trim_ascii_leading_newlines(body);
-        let first_line = trimmed
-            .split(|&b| b == b'\n')
-            .next()
-            .unwrap_or(trimmed)
-            .strip_suffix(b"\r")
-            .unwrap_or(trimmed);
+        let first_line = trimmed.split(|&b| b == b'\n').next().unwrap_or(trimmed);
+        let first_line = first_line.strip_suffix(b"\r").unwrap_or(first_line);
         let boundary_line = std::str::from_utf8(first_line).ok()?.trim();
         let boundary = boundary_line.strip_prefix("--")?;
         let boundary = boundary.strip_suffix("--").unwrap_or(boundary).trim();
@@ -547,7 +775,10 @@ impl MimeParser {
                 // Postfix's 100KB header limit) used to abort the whole parse,
                 // blinding mirror mode while the MUA rendered the body.
                 // Degrade: truncate the header block, keep the real body.
-                warn!(header_bytes = pos, "邮件Header超限 — 截断头块，保留正文继续解析");
+                warn!(
+                    header_bytes = pos,
+                    "邮件Header超限 — 截断头块，保留正文继续解析"
+                );
                 return Ok((&data[..MAX_HEADER_SIZE], &data[pos + 4..]));
             }
             return Ok((&data[..pos], &data[pos + 4..]));
@@ -555,7 +786,10 @@ impl MimeParser {
         // : \n\n (Unix, MTA Use \r)
         if let Some(pos) = self.header_end_finder_lf.find(data) {
             if pos > MAX_HEADER_SIZE {
-                warn!(header_bytes = pos, "邮件Header超限 — 截断头块，保留正文继续解析");
+                warn!(
+                    header_bytes = pos,
+                    "邮件Header超限 — 截断头块，保留正文继续解析"
+                );
                 return Ok((&data[..MAX_HEADER_SIZE], &data[pos + 2..]));
             }
             return Ok((&data[..pos], &data[pos + 2..]));
@@ -646,9 +880,32 @@ impl MimeParser {
         let boundary = Self::extract_boundary(content_type).ok_or(MimeError::NoBoundary)?;
         let marker = format!("--{boundary}");
         let finder = memmem::Finder::new(marker.as_bytes());
-        let mut delimiters = finder
+        let mut saw_recovery_delimiter = false;
+        let delimiters: Vec<MultipartDelimiter> = finder
             .find_iter(body)
-            .filter_map(|start| Self::multipart_delimiter_at(body, marker.len(), start));
+            .filter_map(|start| {
+                if let Some(delimiter) = Self::multipart_delimiter_at(body, marker.len(), start) {
+                    return Some(delimiter);
+                }
+                // Some MUAs emit `body--boundary\r\n` without the required
+                // line break before the boundary. Recover only this narrow
+                // shape, and mark the message as coverage-degraded below;
+                // arbitrary boundary substrings remain rejected.
+                if Self::multipart_recovery_delimiter_at(body, marker.len(), start).is_some() {
+                    saw_recovery_delimiter = true;
+                    Self::multipart_recovery_delimiter_at(body, marker.len(), start)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if saw_recovery_delimiter {
+            content.truncated = true;
+            warn!(
+                "multipart boundary was not at a line start; recovered a bounded delimiter and marked inspection incomplete"
+            );
+        }
+        let mut delimiters = delimiters.into_iter();
         let Some(mut delimiter) = delimiters.next() else {
             return Err(MimeError::BoundaryNotFound);
         };
@@ -751,7 +1008,9 @@ impl MimeParser {
                     // render the inner entity, so degrade the bytes to leaf
                     // handling below instead of failing the entire message
                     // (a full-parse Err is mirror mode's biggest amplifier).
-                    warn!("内层 multipart 找不到声明的 boundary（疑似复用外层 boundary）— 降级为 leaf part 宽松处理");
+                    warn!(
+                        "内层 multipart 找不到声明的 boundary（疑似复用外层 boundary）— 降级为 leaf part 宽松处理"
+                    );
                 }
                 // Safety budgets (depth / total parts) now degrade inside
                 // parse_multipart_inner itself (truncated flag + Ok); any
@@ -783,13 +1042,7 @@ impl MimeParser {
                     part_content_type,
                     body_budget_remaining(content),
                 );
-                Self::merge_body_part(
-                    content,
-                    BodyTarget::Text,
-                    text,
-                    decode_truncated,
-                    "plain",
-                );
+                Self::merge_body_part(content, BodyTarget::Text, text, decode_truncated, "plain");
             }
             return Ok(true);
         }
@@ -842,6 +1095,38 @@ impl MimeParser {
             return None;
         };
 
+        Some(MultipartDelimiter {
+            start,
+            content_start,
+            closing,
+        })
+    }
+
+    /// Best-effort recovery for a malformed delimiter glued to the previous
+    /// body line. The suffix must still be a complete delimiter line; this is
+    /// intentionally stricter than accepting a boundary substring anywhere.
+    fn multipart_recovery_delimiter_at(
+        body: &[u8],
+        marker_len: usize,
+        start: usize,
+    ) -> Option<MultipartDelimiter> {
+        let mut cursor = start.checked_add(marker_len)?;
+        let closing = body.get(cursor..cursor + 2) == Some(b"--");
+        if closing {
+            cursor += 2;
+        }
+        while matches!(body.get(cursor), Some(b' ' | b'\t')) {
+            cursor += 1;
+        }
+        let content_start = if body.get(cursor..cursor + 2) == Some(b"\r\n") {
+            cursor + 2
+        } else if body.get(cursor) == Some(&b'\n') {
+            cursor + 1
+        } else if cursor == body.len() {
+            cursor
+        } else {
+            return None;
+        };
         Some(MultipartDelimiter {
             start,
             content_start,
@@ -993,26 +1278,14 @@ impl MimeParser {
                 part_content_type,
                 body_budget_remaining(content),
             );
-            Self::merge_body_part(
-                content,
-                BodyTarget::Text,
-                text,
-                decode_truncated,
-                "plain",
-            );
+            Self::merge_body_part(content, BodyTarget::Text, text, decode_truncated, "plain");
         } else if ascii_contains_ci(part_content_type, "text/html") {
             let (html, decode_truncated) = decode_charset(
                 &decoded.data,
                 part_content_type,
                 body_budget_remaining(content),
             );
-            Self::merge_body_part(
-                content,
-                BodyTarget::Html,
-                html,
-                decode_truncated,
-                "html",
-            );
+            Self::merge_body_part(content, BodyTarget::Html, html, decode_truncated, "html");
         }
         Ok(())
     }
@@ -1031,6 +1304,7 @@ impl MimeParser {
         content_disposition: &str,
         content_id: Option<&str>,
     ) -> bool {
+        let mime_type = Self::extract_mime_type(content_type);
         ascii_contains_ci(content_disposition, "attachment")
             || Self::extract_filename(content_disposition).is_some()
             || Self::extract_filename(content_type).is_some()
@@ -1043,8 +1317,13 @@ impl MimeParser {
             // QR-code images inside multipart/related with no filename) carry
             // the only copy of their payload bytes. Dropping them here would
             // make attach_qr_scan / YARA / ClamAV blind to the attachment.
-            // text/plain and text/html keep merging into the body below.
+            // text/plain and text/html keep merging into the body below. Every
+            // other leaf type is retained too: unsupported body-like types
+            // (for example application/octet-stream without disposition) must
+            // not silently vanish while coverage still reports complete.
             || (content_id.is_some() && Self::is_inline_payload_type(content_type))
+            || (!mime_type.eq_ignore_ascii_case("text/plain")
+                && !mime_type.eq_ignore_ascii_case("text/html"))
     }
 
     /// Whether a part without filename/disposition should still be preserved
@@ -1052,7 +1331,8 @@ impl MimeParser {
     /// (text/plain, text/html) are excluded so body merging is unchanged.
     fn is_inline_payload_type(content_type: &str) -> bool {
         let mime_type = Self::extract_mime_type(content_type);
-        !mime_type.eq_ignore_ascii_case("text/plain") && !mime_type.eq_ignore_ascii_case("text/html")
+        !mime_type.eq_ignore_ascii_case("text/plain")
+            && !mime_type.eq_ignore_ascii_case("text/html")
     }
 
     /// Build a stable filename for a Content-ID-only inline part. The
@@ -1071,7 +1351,10 @@ impl MimeParser {
         if stem.is_empty() {
             stem.push_str("inline");
         }
-        let ext = match Self::extract_mime_type(content_type).to_ascii_lowercase().as_str() {
+        let ext = match Self::extract_mime_type(content_type)
+            .to_ascii_lowercase()
+            .as_str()
+        {
             "image/png" => ".png",
             "image/jpeg" | "image/jpg" => ".jpg",
             "image/gif" => ".gif",
@@ -1449,9 +1732,7 @@ impl MimeParser {
                         Ok(DecodedContent {
                             data: frame.payload,
                             uuencode_filename: Some(frame.filename),
-                            surrounding_text: if surrounding
-                                .iter()
-                                .all(|b| b.is_ascii_whitespace())
+                            surrounding_text: if surrounding.iter().all(|b| b.is_ascii_whitespace())
                             {
                                 None
                             } else {
@@ -1520,8 +1801,7 @@ impl MimeParser {
             b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
         let mut output = String::with_capacity(data.len().div_ceil(3) * 4);
-        let chunks = data.chunks_exact(3);
-        let remainder = chunks.remainder();
+        let (chunks, remainder) = data.as_chunks::<3>();
 
         for chunk in chunks {
             let n = (chunk[0] as u32) << 16 | (chunk[1] as u32) << 8 | (chunk[2] as u32);
@@ -1633,8 +1913,12 @@ impl MimeParser {
         }
 
         let prefixes = ["http://", "https://"];
+        // Each scheme scan is ordered by byte offset. Keep the source spans,
+        // including duplicate URLs, so the bare-host pass cannot re-extract
+        // path/query/percent-encoded fragments from an already observed URL.
+        let mut scheme_spans: [Vec<(usize, usize)>; 2] = [Vec::new(), Vec::new()];
 
-        for prefix in prefixes {
+        for (scheme_index, prefix) in prefixes.into_iter().enumerate() {
             let mut pos = 0;
             while let Some(start) = find_ascii_case_insensitive(&text[pos..], prefix) {
                 let url_start = pos + start;
@@ -1645,14 +1929,34 @@ impl MimeParser {
 
                 let url_end = trimmed_suffix
                     .find(|c: char| {
-                        c.is_whitespace() || c == '"' || c == '\'' || c == '>' || c == '<'
+                        c.is_whitespace()
+                            || matches!(
+                                c,
+                                '"' | '\''
+                                    | '>'
+                                    | '<'
+                                    | ']'
+                                    | ')'
+                                    | '}'
+                                    | '】'
+                                    | '）'
+                                    | '》'
+                                    | '，'
+                                    | '。'
+                                    | '；'
+                            )
                     })
                     .unwrap_or(trimmed_suffix.len());
 
                 let url = format!("{prefix}{}", &trimmed_suffix[..url_end]);
                 let url = url.trim_end_matches(['.', ',', ';', ')', ']']);
+                let source_end = url_start + prefix.len() + skipped_ws + url_end;
+                scheme_spans[scheme_index].push((url_start, source_end));
 
                 if url.len() > 10 && !seen.contains(url) {
+                    if links.len() >= MAX_EMAIL_LINKS {
+                        return;
+                    }
                     let url_owned = url.to_string();
                     seen.insert(url_owned.clone());
                     let suspicious = EmailContent::is_suspicious_url(url);
@@ -1663,7 +1967,156 @@ impl MimeParser {
                     });
                 }
 
-                pos = url_start + prefix.len() + skipped_ws + url_end;
+                pos = source_end;
+            }
+        }
+
+        // Many Chinese business and phishing mails print a domain without a
+        // scheme, for example `官网:benefits.example.invalid`.  The browser still
+        // renders that as a navigable destination, but the old parser only
+        // retained http(s) URLs, so every downstream link module saw an empty
+        // link set.  Keep this extraction deliberately conservative: only
+        // DNS-looking candidates are normalized, email-address domains are
+        // excluded, and candidates that belong to an already parsed URL are
+        // ignored. A bounded set of Cyrillic/Greek/full-width Latin
+        // look-alikes is retained because MUAs linkify those IDNs and the
+        // downstream link analyser already performs mixed-script homograph
+        // detection. Threat admission remains a content/policy decision; this
+        // adds a link observation, not a standalone verdict.
+        let mut bare_seen = HashSet::new();
+        let mut cursor = 0usize;
+        let mut next_scheme_span = [0usize; 2];
+        while cursor < text.len() {
+            // Merge the two ordered scheme scans without sorting/copying all
+            // spans. This stays linear even for a large body of repeated URLs.
+            let mut candidate_limit = text.len();
+            let mut covered_until = cursor;
+            for (spans, next) in scheme_spans.iter().zip(&mut next_scheme_span) {
+                while spans.get(*next).is_some_and(|(_, end)| *end <= cursor) {
+                    *next += 1;
+                }
+                if let Some(&(start, end)) = spans.get(*next) {
+                    if start <= cursor {
+                        covered_until = covered_until.max(end);
+                    } else {
+                        candidate_limit = candidate_limit.min(start);
+                    }
+                }
+            }
+            if covered_until > cursor {
+                cursor = covered_until;
+                continue;
+            }
+            let Some(first) = text[cursor..].chars().next() else {
+                break;
+            };
+            if !is_bare_domain_candidate_char(first) || first == '-' || first == '.' {
+                cursor += first.len_utf8();
+                continue;
+            }
+
+            let candidate_start = cursor;
+            let atom_end = text[cursor..candidate_limit]
+                .char_indices()
+                .find(|(_, ch)| !is_email_addr_spec_char(*ch))
+                .map_or(candidate_limit, |(offset, _)| cursor + offset);
+            let atom = &text[cursor..atom_end];
+            if let Some(at) = atom.find('@') {
+                // An @ in a bare URL query belongs to its parameter value,
+                // rather than to the host's local-part. Plain addr-specs,
+                // including +tags and punctuation, are skipped as a whole.
+                let query_parameter = atom[..at]
+                    .split_once('?')
+                    .is_some_and(|(_, query)| query.contains('='));
+                if !query_parameter {
+                    cursor = atom_end;
+                    continue;
+                }
+            }
+            let mut candidate_end = cursor;
+            for (offset, ch) in text[cursor..candidate_limit].char_indices() {
+                if !is_bare_domain_candidate_char(ch) {
+                    break;
+                }
+                candidate_end = cursor + offset + ch.len_utf8();
+            }
+            cursor = candidate_end.max(cursor + first.len_utf8());
+
+            let raw = &text[candidate_start..candidate_end];
+            let candidate = raw.trim_matches('.');
+            let previous = text[..candidate_start].chars().next_back();
+            let following = &text[candidate_end..];
+            let compact_prefix = text[..candidate_start].trim_end_matches(char::is_whitespace);
+            // Do not lowercase the entire prefix for every candidate. A
+            // normal prose body contains thousands of candidate words, so
+            // that allocation/copy turns link extraction into O(n²) for large
+            // messages. Compare only the bounded suffix instead.
+            let is_part_of_scheme_url = ascii_ends_with_ci(compact_prefix, "http://")
+                || ascii_ends_with_ci(compact_prefix, "https://");
+
+            let labels: Vec<&str> = candidate.split('.').collect();
+            let looks_like_file_name = labels.last().is_some_and(|suffix| {
+                NON_DOMAIN_FILE_SUFFIXES
+                    .iter()
+                    .any(|known| suffix.eq_ignore_ascii_case(known))
+            });
+            let valid = candidate.len() >= 4
+                && labels.len() >= 2
+                && previous != Some('@')
+                && !previous.is_some_and(|ch| matches!(ch, '_' | '+' | '%' | '='))
+                && !following.starts_with('@')
+                && !following.starts_with(['_', '+', '%', '='])
+                && !is_part_of_scheme_url
+                && !looks_like_file_name
+                && !looks_like_joined_prose(candidate, following)
+                && labels.iter().all(|label| {
+                    !label.is_empty()
+                        && !label.starts_with('-')
+                        && !label.ends_with('-')
+                        && label.chars().count() <= 63
+                })
+                && labels.last().is_some_and(|tld| {
+                    let char_count = tld.chars().count();
+                    (2..=63).contains(&char_count)
+                        && tld.chars().all(|ch| {
+                            ch.is_ascii_alphabetic()
+                                || (!ch.is_ascii() && is_bare_domain_candidate_char(ch))
+                        })
+                });
+
+            if valid {
+                if links.len() >= MAX_EMAIL_LINKS {
+                    return;
+                }
+                let normalized = format!("https://{candidate}");
+                if bare_seen.insert(normalized.clone()) && !seen.contains(&normalized) {
+                    seen.insert(normalized.clone());
+                    links.push(EmailLink {
+                        suspicious: EmailContent::is_suspicious_url(&normalized),
+                        url: normalized,
+                        text: None,
+                    });
+                }
+            }
+
+            // The rest of a URL-shaped bare token is a path/query, not another
+            // host. Keep the same host observation as before, without inventing
+            // extra destinations from its parameters or filename segments.
+            if valid && following.starts_with(['/', '?', '#']) {
+                cursor = following
+                    .find(|ch: char| {
+                        ch.is_whitespace()
+                            || matches!(
+                                ch,
+                                '"' | '\'' | '<' | '>' | ')' | ']' | '}' | '，' | '。' | '；'
+                            )
+                    })
+                    .map_or(text.len(), |offset| candidate_end + offset);
+            } else if atom_end > candidate_end {
+                // Do not retry every dotted substring in an identifier or
+                // address atom. Besides preventing false hosts, this avoids
+                // quadratic rescans of long tokens with many +/_ separators.
+                cursor = atom_end;
             }
         }
     }
@@ -1682,6 +2135,49 @@ impl Default for MimeParser {
 fn ascii_starts_with_ci(haystack: &str, needle: &str) -> bool {
     haystack.len() >= needle.len()
         && haystack.as_bytes()[..needle.len()].eq_ignore_ascii_case(needle.as_bytes())
+}
+
+#[inline]
+fn ascii_ends_with_ci(haystack: &str, needle: &str) -> bool {
+    haystack.len() >= needle.len()
+        && haystack.as_bytes()[haystack.len() - needle.len()..]
+            .eq_ignore_ascii_case(needle.as_bytes())
+}
+
+/// Forward-only search for a blank-line pattern, resumed across calls.
+///
+/// Callers query with non-decreasing `from` offsets. The cached hit stays
+/// valid while it lies at or after `from` (nothing between the previous
+/// search start and the hit matched), and a miss stays a miss, so a scan over
+/// many candidates touches each haystack byte a constant number of times.
+struct BlankLineCursor {
+    needle: &'static [u8],
+    /// `None`: not searched yet. `Some(None)`: no match at or after the last
+    /// search start. `Some(Some(index))`: first match at or after it.
+    cached: Option<Option<usize>>,
+}
+
+impl BlankLineCursor {
+    fn new(needle: &'static [u8]) -> Self {
+        Self {
+            needle,
+            cached: None,
+        }
+    }
+
+    fn next_at_or_after(&mut self, haystack: &[u8], from: usize) -> Option<usize> {
+        match self.cached {
+            Some(None) => return None,
+            Some(Some(index)) if index >= from => return Some(index),
+            _ => {}
+        }
+        let found = haystack
+            .get(from..)
+            .and_then(|rest| memmem::find(rest, self.needle))
+            .map(|index| from + index);
+        self.cached = Some(found);
+        found
+    }
 }
 
 /// ASCII sizewrite of contains (Allocate to_lowercase().contains())
@@ -1774,11 +2270,8 @@ fn decode_with_encoding_bounded(
         while chunk_len <= source.len() {
             let is_last = chunk_len == source.len();
             output.reserve(4 * chunk_len + 4);
-            let (_result, consumed, _replaced) = decoder.decode_to_string(
-                &source[..chunk_len],
-                &mut output,
-                is_last,
-            );
+            let (_result, consumed, _replaced) =
+                decoder.decode_to_string(&source[..chunk_len], &mut output, is_last);
             read = consumed;
             if read > 0 || is_last {
                 break;
@@ -1797,41 +2290,106 @@ fn decode_with_encoding_bounded(
     }
 }
 
+fn script_count(text: &str, predicate: impl Fn(char) -> bool) -> usize {
+    text.chars().filter(|ch| predicate(*ch)).count()
+}
+
+fn likely_russian_text(text: &str) -> bool {
+    let cyrillic = script_count(text, |ch| ('\u{0400}'..='\u{04FF}').contains(&ch));
+    let common_russian = "ёийцукенгшщзхъфывапролджэячсмитьбю";
+    let common = text
+        .chars()
+        .flat_map(char::to_lowercase)
+        .filter(|ch| common_russian.contains(*ch))
+        .count();
+    cyrillic >= 8 && common >= 4 && text.split_whitespace().count() >= 3
+}
+
+/// Detect the characteristic Cyrillic lead characters produced when a valid
+/// UTF-8 Russian body is incorrectly decoded as Windows-1251. A real CP1251
+/// body decoded with its declared charset is not replaced by this projection;
+/// this helper only decides whether a second, lossless UTF-8 projection should
+/// be preferred.
+fn likely_utf8_russian_mojibake(text: &str) -> bool {
+    let lead_count = text.chars().filter(|ch| matches!(ch, 'Р' | 'С')).count();
+    lead_count >= 3 && lead_count * 8 >= text.chars().filter(|ch| !ch.is_whitespace()).count()
+}
+
 /// Decode body bytes for a charset label with a bounded output (SEC M-4).
 /// Returns the decoded string and whether it was clipped at the cap.
 fn decode_charset(data: &[u8], content_type: &str, max_output_bytes: usize) -> (String, bool) {
     if max_output_bytes == 0 {
         return (String::new(), !data.is_empty());
     }
+    let charset_name = extract_charset(content_type);
+
     // UTF-7 must be decoded BEFORE the UTF-8 fast path: UTF-7 is pure ASCII,
     // so from_utf8 always succeeds and would return the `+AGE-` ciphertext
     // verbatim, blinding every keyword layer (classic Outlook desktop render).
-    if let Some(charset_name) = extract_charset(content_type)
-        && is_utf7_label(&charset_name)
+    if let Some(charset_name) = charset_name.as_deref()
+        && is_utf7_label(charset_name)
     {
         return decode_utf7(data, max_output_bytes);
     }
 
-    // UTF-8 (, Scenario)
+    // Honor every recognized declared charset before trying the UTF-8 fast
+    // path. ISO-2022-JP is especially important here: its wire form is pure
+    // 7-bit ASCII plus ESC sequences, so from_utf8() succeeds even though the
+    // bytes are not UTF-8. Returning that raw projection blinds all downstream
+    // Japanese keyword and semantic detectors.
+    let declared_encoding = charset_name
+        .as_deref()
+        .and_then(|label| Encoding::for_label(label.as_bytes()));
+    if let Some(encoding) = declared_encoding
+        && encoding.name() != "UTF-8"
+    {
+        let (decoded, truncated) = decode_with_encoding_bounded(encoding, data, max_output_bytes);
+        // Some senders declare a legacy charset while emitting a valid UTF-8
+        // body. If the declared projection contains replacement characters,
+        // prefer the lossless UTF-8 projection so downstream security rules
+        // do not become blind to the actual recipient-facing text. This is
+        // deliberately limited to valid UTF-8 input plus a degraded declared
+        // decode; genuine legacy bytes continue to honor their declaration.
+        if (decoded.contains('\u{FFFD}') || likely_utf8_russian_mojibake(&decoded))
+            && let Ok(utf8) = std::str::from_utf8(data)
+        {
+            let (prefix, utf8_truncated) = truncate_char_boundary(utf8, max_output_bytes);
+            return (prefix.to_owned(), utf8_truncated);
+        }
+        return (decoded, truncated);
+    }
+
+    // UTF-8 fast path for an absent/unknown charset and declared UTF-8.
     if let Ok(s) = std::str::from_utf8(data) {
         let (prefix, truncated) = truncate_char_boundary(s, max_output_bytes);
         return (prefix.to_owned(), truncated);
     }
 
-    // Extract charset Parameter
-    if let Some(charset_name) = extract_charset(content_type) {
-        // encoding_rs lookupEncodehandler (Name: gbk/gb2312 -> GBK, big5, shift_jis, iso-8859-1 wait)
-        if let Some(encoding) = Encoding::for_label(charset_name.as_bytes()) {
-            return decode_with_encoding_bounded(encoding, data, max_output_bytes);
-        }
-        warn!("Unknowncharacters集: {}, 回退到 GB18030/UTF-8 lossy", charset_name);
+    // A declared UTF-8 body that contains invalid bytes still follows the
+    // encoding_rs replacement semantics. Unknown labels retain the historical
+    // fallback below.
+    if let Some(encoding) = declared_encoding {
+        return decode_with_encoding_bounded(encoding, data, max_output_bytes);
+    }
+    if let Some(charset_name) = charset_name {
+        warn!(
+            "Unknowncharacters集: {}, 回退到 GB18030/UTF-8 lossy",
+            charset_name
+        );
     }
 
     // charset 未声明（或标签未知）且 UTF-8 解码失败：中文 MUA 经常省略
-    // charset 直接发送 GBK/GB18030 正文，UTF-8 lossy 会把正文变成 mojibake
-    // 使关键词检测完全失效。GB18030 是 GBK/GB2312 的超集解码器，先试它再
-    // 回退 UTF-8 lossy。
-    decode_with_encoding_bounded(encoding_rs::GB18030, data, max_output_bytes)
+    // charset 直接发送 GBK/GB18030 正文，俄罗斯语邮件也常省略 windows-1251。
+    // 先保留 GB18030 的既有路径，再用有界脚本启发式选择明显的俄文解码，
+    // 避免把 CP1251 正文变成中文乱码而漏掉多语种规则。
+    let (gb_text, gb_truncated) =
+        decode_with_encoding_bounded(encoding_rs::GB18030, data, max_output_bytes);
+    let (ru_text, ru_truncated) =
+        decode_with_encoding_bounded(WINDOWS_1251, data, max_output_bytes);
+    if likely_russian_text(&ru_text) {
+        return (ru_text, ru_truncated);
+    }
+    (gb_text, gb_truncated)
 }
 
 /// Whether a charset label names UTF-7 (RFC 2152). encoding_rs (WHATWG)
@@ -2141,7 +2699,7 @@ mod tests {
         // A UTF-7 shift sequence opened just before the cap: the decoder
         // stops cleanly without panicking on the dangling '+'.
         let mut hostile = b"prefix ".to_vec();
-        hostile.extend_from_slice(&vec![b'a'; 90]);
+        hostile.extend_from_slice(&[b'a'; 90]);
         hostile.extend_from_slice(b"+AGE-");
         let (decoded, _truncated) = decode_charset(&hostile, "text/plain; charset=utf-7", 97);
         assert!(decoded.len() <= 97 + 4);
@@ -2179,8 +2737,17 @@ mod tests {
         let mut content = EmailContent::default();
         let big = "a".repeat(MAX_TOTAL_DECODED_BODY_BYTES - 8);
         content.body_text = Some(big);
-        MimeParser::merge_body_part(&mut content, BodyTarget::Text, "b".repeat(1024), false, "plain");
-        assert!(content.truncated, "budget overflow must set the truncated flag");
+        MimeParser::merge_body_part(
+            &mut content,
+            BodyTarget::Text,
+            "b".repeat(1024),
+            false,
+            "plain",
+        );
+        assert!(
+            content.truncated,
+            "budget overflow must set the truncated flag"
+        );
         let retained = content.body_text.as_ref().map(|t| t.len()).unwrap_or(0)
             + content.body_html.as_ref().map(|h| h.len()).unwrap_or(0);
         assert!(
@@ -2192,8 +2759,10 @@ mod tests {
 
     #[test]
     fn m4_merge_body_part_does_not_append_separator_without_payload_budget() {
-        let mut content = EmailContent::default();
-        content.body_text = Some("a".repeat(MAX_TOTAL_DECODED_BODY_BYTES - 1));
+        let mut content = EmailContent {
+            body_text: Some("a".repeat(MAX_TOTAL_DECODED_BODY_BYTES - 1)),
+            ..Default::default()
+        };
         MimeParser::merge_body_part(
             &mut content,
             BodyTarget::Text,
@@ -2218,7 +2787,10 @@ mod tests {
             true,
             "plain",
         );
-        assert!(content.truncated, "decode-side clipping must flag the message");
+        assert!(
+            content.truncated,
+            "decode-side clipping must flag the message"
+        );
         assert_eq!(content.body_text.as_deref(), Some("xxxxxxxxxxxxxxxx"));
     }
 
@@ -2505,6 +3077,30 @@ unterminated body\r\n";
     }
 
     #[test]
+    fn test_multipart_recovers_glued_boundary_but_marks_coverage_gap() {
+        let parser = MimeParser::new();
+        let email = b"Content-Type: multipart/mixed; boundary=BOUND\r\n\
+\r\n\
+--BOUND\r\n\
+Content-Type: text/plain\r\n\
+\r\n\
+notice--BOUND\r\n\
+Content-Type: text/html\r\n\
+Content-Disposition: attachment; filename=notice.html\r\n\
+\r\n\
+<html>ok</html>\r\n\
+--BOUND--\r\n";
+
+        let content = parser
+            .parse(email)
+            .expect("bounded recovery should preserve the message");
+
+        assert!(content.truncated, "recovered MIME must be fail-closed");
+        assert_eq!(content.attachments.len(), 1);
+        assert_eq!(content.attachments[0].filename, "notice.html");
+    }
+
+    #[test]
     fn test_multipart_invalid_final_part_without_close_still_fails() {
         let parser = MimeParser::new();
         let email = b"Content-Type: multipart/mixed; boundary=BOUND\r\n\
@@ -2563,6 +3159,233 @@ PGRpdj48Yj5XZWljaTwvYj48L2Rpdj4=\r\n\
             content.body_html.as_deref(),
             Some("<div><b>Weici</b></div>")
         );
+    }
+
+    #[test]
+    fn test_salvages_multipart_header_hidden_inside_declared_plain_text() {
+        let parser = MimeParser::new();
+        let email = concat!(
+            "From: sender@example.com\r\n",
+            "To: recipient@example.com\r\n",
+            "Content-Type: text/plain; charset=utf-8\r\n",
+            "\r\n",
+            "Content-Type: multipart/mixed; boundary=EMBEDDED\r\n",
+            "\r\n",
+            "--EMBEDDED\r\n",
+            "Content-Type: application/octet-stream\r\n",
+            "Content-Disposition: attachment; filename=payload.lnk\r\n",
+            "\r\n",
+            "payload\r\n",
+            "--EMBEDDED--\r\n",
+        );
+
+        let content = parser.parse(email.as_bytes()).unwrap();
+
+        assert_eq!(content.attachments.len(), 1);
+        assert_eq!(content.attachments[0].filename, "payload.lnk");
+    }
+
+    #[test]
+    fn perf_embedded_multipart_header_flood_without_blank_line_is_linear() {
+        // PoC: every `Content-Type: multipart/` line used to search the whole
+        // remainder for `\r\n\r\n` and then `\n\n`. ~1 MiB of such lines with
+        // no blank line was ~4e10 comparisons (minutes in a debug build).
+        let mut body = Vec::new();
+        while body.len() < 1024 * 1024 {
+            body.extend_from_slice(b"Content-Type: multipart/x\r\n");
+        }
+        let started = Instant::now();
+        assert!(MimeParser::embedded_multipart_payload(&body).is_none());
+        assert!(!MimeParser::looks_like_embedded_multipart_body(&body));
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "embedded multipart probe is no longer linear: {:?}",
+            started.elapsed()
+        );
+
+        // Second shape: one shared header block followed by a long newline
+        // run, so every candidate's payload trim walked the same run.
+        let mut shared = Vec::new();
+        for _ in 0..4096 {
+            shared.extend_from_slice(b"Content-Type: multipart/x\r\n");
+        }
+        shared.extend_from_slice(b"\r\n");
+        shared.extend(std::iter::repeat_n(b'\n', 1024 * 1024));
+        shared.extend_from_slice(b"not a boundary\r\n");
+        let started = Instant::now();
+        assert!(MimeParser::embedded_multipart_payload(&shared).is_none());
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "shared header block probe is no longer linear: {:?}",
+            started.elapsed()
+        );
+
+        // End to end through the sniffer/MTA/engine entry point.
+        let mut email = b"From: a@example.com\r\nContent-Type: text/plain\r\n\r\n".to_vec();
+        email.extend_from_slice(&body);
+        let started = Instant::now();
+        let content = MimeParser::new()
+            .parse(&email)
+            .expect("flood stays a text/plain body");
+        assert!(content.attachments.is_empty());
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "embedded multipart flood exceeded the generous parse ceiling: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn test_embedded_multipart_found_after_decoy_header_blocks() {
+        // No candidate cap: decoy `Content-Type: multipart/` blocks that are
+        // not followed by a boundary must not push the real hidden header
+        // out of reach.
+        let mut email = String::from(
+            "From: sender@example.com\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n",
+        );
+        for index in 0..200 {
+            email.push_str(&format!(
+                "Content-Type: multipart/mixed; boundary=D{index}\r\n\r\nprose {index}\r\n"
+            ));
+        }
+        email.push_str(concat!(
+            "Content-Type: multipart/mixed; boundary=EMBEDDED\r\n",
+            "\r\n",
+            "--EMBEDDED\r\n",
+            "Content-Type: application/octet-stream\r\n",
+            "Content-Disposition: attachment; filename=payload.lnk\r\n",
+            "\r\n",
+            "payload\r\n",
+            "--EMBEDDED--\r\n",
+        ));
+
+        let content = MimeParser::new().parse(email.as_bytes()).unwrap();
+
+        assert_eq!(content.attachments.len(), 1);
+        assert_eq!(content.attachments[0].filename, "payload.lnk");
+    }
+
+    #[test]
+    fn test_embedded_multipart_header_block_beyond_header_limit_is_ignored() {
+        // The hidden header block obeys the same MAX_HEADER_SIZE ceiling as
+        // the top-level split; the probe never searches past it.
+        let mut body = b"Content-Type: multipart/mixed; boundary=B\r\n".to_vec();
+        while body.len() <= MAX_HEADER_SIZE {
+            body.extend_from_slice(b"X-Pad: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n");
+        }
+        body.extend_from_slice(b"\r\n--B\r\nContent-Type: text/plain\r\n\r\nx\r\n--B--\r\n");
+        assert!(MimeParser::embedded_multipart_payload(&body).is_none());
+
+        let near = b"Content-Type: multipart/mixed; boundary=B\r\nX-Pad: a\r\n\r\n--B\r\n";
+        assert!(
+            MimeParser::embedded_multipart_payload(near)
+                .is_some_and(|payload| payload.starts_with(b"--B"))
+        );
+    }
+
+    #[test]
+    fn test_salvages_lf_only_embedded_multipart_with_attachment() {
+        let parser = MimeParser::new();
+        let email = concat!(
+            "From: photo@example.com\n",
+            "To: recipient@example.com\n",
+            "Subject: photo\n",
+            "MIME-Version: 1.0\n",
+            "Content-Type: text/plain; charset=utf-8\n",
+            "\n",
+            "Content-Type: multipart/mixed; boundary=BS\n",
+            "\n",
+            "--BS\n",
+            "Content-Type: text/plain; charset=utf-8\n",
+            "\n",
+            "photo attached\n",
+            "--BS\n",
+            "Content-Type: image/png\n",
+            "Content-Disposition: attachment; filename=photo.png\n",
+            "\n",
+            "iVBORw0KGgo=\n",
+            "--BS--\n",
+        );
+
+        let body = email.split_once("\n\n").unwrap().1.as_bytes();
+        assert!(MimeParser::looks_like_embedded_multipart_body(body));
+        let embedded = MimeParser::embedded_multipart_payload(body).unwrap();
+        assert_eq!(String::from_utf8_lossy(&embedded[..4]), "--BS");
+        assert_eq!(
+            MimeParser::extract_embedded_boundary(embedded).as_deref(),
+            Some("BS")
+        );
+        let content = parser.parse(email.as_bytes()).unwrap();
+
+        assert_eq!(content.attachments.len(), 1);
+        assert_eq!(content.attachments[0].filename, "photo.png");
+        assert_eq!(content.body_text.as_deref(), Some("photo attached\n"));
+    }
+
+    #[test]
+    fn test_salvages_crlf_embedded_multipart_with_quoted_boundary() {
+        let parser = MimeParser::new();
+        let email = concat!(
+            "From: photo@example.com\r\n",
+            "To: recipient@example.com\r\n",
+            "Subject: photo\r\n",
+            "MIME-Version: 1.0\r\n",
+            "Content-Type: text/plain; charset=utf-8\r\n",
+            "\r\n",
+            "Content-Type: multipart/mixed; boundary=\"BS\"\r\n",
+            "\r\n",
+            "--BS\r\n",
+            "Content-Type: image/png\r\n",
+            "Content-Disposition: attachment; filename=photo.png\r\n",
+            "\r\n",
+            "iVBORw0KGgo=\r\n",
+            "--BS--\r\n",
+        );
+
+        let content = parser.parse(email.as_bytes()).unwrap();
+
+        assert_eq!(content.attachments.len(), 1);
+        assert_eq!(content.attachments[0].filename, "photo.png");
+    }
+
+    #[test]
+    fn test_salvages_stego_png_redteam_fixture() {
+        let parser = MimeParser::new();
+        let raw = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../vigilyx-engine/tests/redteam_cases/synth/mal_0269_apt_stego_png.eml"
+        ));
+
+        let content = parser.parse(raw).unwrap();
+
+        assert_eq!(content.attachments.len(), 1);
+        assert_eq!(content.attachments[0].filename, "现场照片.png");
+    }
+
+    #[test]
+    fn test_salvages_attachment_variants_from_redteam_fixtures() {
+        let parser = MimeParser::new();
+        for name in [
+            "mal_0275_apt_review_remote_template.eml",
+            "mal_0276_apt_zero_text.eml",
+            "mal_0277_apt_xls_unc.eml",
+            "mal_0287_apt_stage2_payload.eml",
+            "mal_0296_apt_lic_payload.eml",
+            "mal_0302_apt_firmware.eml",
+            "mal_0303_apt_efax.eml",
+            "mal_0313_bill_of_lading.eml",
+            "mal_0315_ntlm_scf.eml",
+            "mal_0333_printer_fw.eml",
+        ] {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../vigilyx-engine/tests/redteam_cases/synth")
+                .join(name);
+            let raw = std::fs::read(&path).unwrap_or_else(|error| panic!("{name}: {error}"));
+            let content = parser
+                .parse(&raw)
+                .unwrap_or_else(|error| panic!("{name}: {error:?}"));
+            assert!(!content.attachments.is_empty(), "{name} had no attachment");
+        }
     }
 
     #[test]
@@ -2703,6 +3526,24 @@ payload\r\n\
     }
 
     #[test]
+    fn test_text_plain_no_charset_windows_1251_body_uses_script_fallback() {
+        // Synthetic Russian lure: an omitted charset must not be forced
+        // through GB18030 and become mojibake before rule-based scanning.
+        let parser = MimeParser::new();
+        let mut email = b"Content-Type: text/plain\r\n\r\n".to_vec();
+        let (encoded, _, _) = encoding_rs::WINDOWS_1251
+            .encode("Внимание! Подтвердите личность и войдите в систему немедленно.");
+        email.extend_from_slice(&encoded);
+
+        let content = parser.parse(&email).unwrap();
+
+        assert_eq!(
+            content.body_text.as_deref(),
+            Some("Внимание! Подтвердите личность и войдите в систему немедленно.")
+        );
+    }
+
+    #[test]
     fn test_text_plain_no_charset_utf8_body_unchanged() {
         // Guard: valid UTF-8 bodies must not be re-interpreted as GB18030.
         let parser = MimeParser::new();
@@ -2711,6 +3552,61 @@ payload\r\n\
         let content = parser.parse(email).unwrap();
 
         assert_eq!(content.body_text.as_deref(), Some("您的账户异常"));
+    }
+
+    #[test]
+    fn test_declared_windows_1251_with_valid_utf8_body_recovers_utf8() {
+        // A common interoperability failure: the MIME label says CP1251 but
+        // the producer actually writes UTF-8. Keep the visible body intact
+        // when the legacy decode is visibly degraded.
+        let body = "Внимание! Подтвердите личность и войдите в систему.";
+        let email = format!(
+            "Content-Type: text/plain; charset=windows-1251\r\n\
+             Content-Transfer-Encoding: 8bit\r\n\
+             \r\n\
+             {body}"
+        );
+
+        let content = MimeParser::new().parse(email.as_bytes()).unwrap();
+
+        assert_eq!(content.body_text.as_deref(), Some(body));
+    }
+
+    #[test]
+    fn test_declared_windows_1251_real_body_still_honors_charset() {
+        let body = "Внимание! Подтвердите личность и войдите в систему.";
+        let (encoded, _, _) = encoding_rs::WINDOWS_1251.encode(body);
+        let mut email = b"Content-Type: text/plain; charset=windows-1251\r\n\
+                          Content-Transfer-Encoding: 8bit\r\n\
+                          \r\n"
+            .to_vec();
+        email.extend_from_slice(&encoded);
+
+        let content = MimeParser::new().parse(&email).unwrap();
+
+        assert_eq!(content.body_text.as_deref(), Some(body));
+    }
+
+    #[test]
+    fn replacement_character_marks_text_inspection_incomplete() {
+        // Once an upstream decoder has replaced bytes with U+FFFD, the
+        // original security wording is unrecoverable. Keep the parsed
+        // representation for diagnostics, but retain raw MIME and expose a
+        // coverage gap so inline delivery cannot treat it as clean.
+        let email = b"Content-Type: text/plain; charset=utf-8\r\n\
+                      Content-Transfer-Encoding: 8bit\r\n\
+                      \r\n\
+                      \xef\xbf\xbd\xef\xbf\xbd https://invalid.example/update";
+
+        let content = MimeParser::new().parse(email).unwrap();
+
+        assert_eq!(
+            content.body_text.as_deref(),
+            Some("�� https://invalid.example/update")
+        );
+        assert!(!content.is_complete);
+        assert!(content.truncated);
+        assert_eq!(content.raw_mime.as_deref(), Some(email.as_slice()));
     }
 
     #[test]
@@ -2778,6 +3674,305 @@ Open HTTPS://evil.example/login";
                 .links
                 .iter()
                 .any(|link| link.url == "https://evil.example/login")
+        );
+    }
+
+    #[test]
+    fn test_plain_text_bare_domain_is_extracted_without_treating_email_domain_as_link() {
+        let parser = MimeParser::new();
+        let email = "Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+请登录官网提交申请：benefits-portal.example.invalid\n\
+联系 service@example.com 获取帮助。";
+
+        let content = parser.parse(email.as_bytes()).unwrap();
+
+        assert!(
+            content
+                .links
+                .iter()
+                .any(|link| link.url == "https://benefits-portal.example.invalid"),
+            "bare domain should be normalized for downstream link analysis: {:?}",
+            content.links
+        );
+        assert!(
+            !content
+                .links
+                .iter()
+                .any(|link| link.url == "https://example.com"),
+            "domain in an email address must not become a link: {:?}",
+            content.links
+        );
+    }
+
+    #[test]
+    fn test_plain_text_dotted_email_local_parts_are_not_bare_links() {
+        let parser = MimeParser::new();
+        let email = "Content-Type: text/plain; charset=utf-8\r\n\r\n\
+Contacts: <first.last@example.com>, first.last+alerts@example.net;\n\
+'ops.service_team@example.org' and jane.doe!mail@example.invalid.\n\
+Unusual RFC atoms: jane.doe?tag@example.invalid and jane.doe=tag@example.invalid.\n\
+Actual destination: https://first.last/login";
+
+        let content = parser.parse(email.as_bytes()).unwrap();
+
+        assert_eq!(
+            content
+                .links
+                .iter()
+                .map(|link| link.url.as_str())
+                .collect::<Vec<_>>(),
+            vec!["https://first.last/login"],
+            "both sides of an address must be excluded, including dotted local-parts and +tags"
+        );
+    }
+
+    #[test]
+    fn test_plain_text_joined_unknown_suffix_sentences_are_not_bare_links() {
+        let parser = MimeParser::new();
+        let email = "Content-Type: text/plain; charset=utf-8\r\n\r\n\
+We provide support in several ways.These should make your work easier.\n\
+We reviewed the documents.They were already filed yesterday.";
+
+        let content = parser.parse(email.as_bytes()).unwrap();
+
+        assert!(
+            content.links.is_empty(),
+            "a sentence period followed by title-case prose must not invent a destination: {:?}",
+            content.links
+        );
+    }
+
+    #[test]
+    fn test_email_link_syntax_policy_preserves_delegated_tlds() {
+        let policy: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../shared/schemas/email_link_syntax_policy.json"
+        ))
+        .expect("compiled link syntax policy must be valid JSON");
+        let tlds = delegated_tlds().expect("compiled IANA snapshot must load");
+
+        assert_eq!(policy["schema_version"], 1);
+        assert_eq!(
+            policy["iana_snapshot"]["source"],
+            "https://data.iana.org/TLD/tlds-alpha-by-domain.txt"
+        );
+        assert_eq!(
+            policy["iana_snapshot"]["tld_count"].as_u64(),
+            Some(tlds.len() as u64)
+        );
+        for tld in ["com", "cn", "it", "you", "click", "zip", "mov", "xn--p1ai"] {
+            assert!(tlds.contains(tld), "missing delegated TLD {tld}");
+        }
+        assert!(!tlds.contains("these"));
+        assert!(!tlds.contains("they"));
+        assert!(!tlds.contains("invalid"));
+    }
+
+    #[test]
+    fn test_plain_text_delegated_you_suffix_stays_observable_even_in_prose() {
+        let parser = MimeParser::new();
+        let email = "Content-Type: text/plain; charset=utf-8\r\n\r\n\
+The notice describes several ways.You should make a support request.";
+
+        let content = parser.parse(email.as_bytes()).unwrap();
+
+        assert_eq!(
+            content
+                .links
+                .iter()
+                .map(|link| link.url.as_str())
+                .collect::<Vec<_>>(),
+            vec!["https://ways.You"],
+            "IANA delegates .you; ambiguous prose must not erase a real DNS-shaped destination"
+        );
+    }
+
+    #[test]
+    fn test_plain_text_unknown_suffix_and_case_controls_remain_observable() {
+        let parser = MimeParser::new();
+        let email = "Content-Type: text/plain; charset=utf-8\r\n\r\n\
+Open workflow.arbitrarysuffix to submit your password.\n\
+查看官网：EXAMPLE.COM，还有Example.Com与www.Ways.You。\n\
+Mixed-case delegated suffix: example.Com is available now.\n\
+Delegation does not establish safety: review.Click to provide your password.\n\
+Another delegated suffix: account.It is available today.\n\
+Address-shaped controls: ways.You/login and ways.you need immediate verification.\n\
+Explicit control: HTTPS://ways.You/login";
+
+        let content = parser.parse(email.as_bytes()).unwrap();
+        let urls = content
+            .links
+            .iter()
+            .map(|link| link.url.as_str())
+            .collect::<Vec<_>>();
+
+        for expected in [
+            "https://workflow.arbitrarysuffix",
+            "https://EXAMPLE.COM",
+            "https://Example.Com",
+            "https://example.Com",
+            "https://review.Click",
+            "https://account.It",
+            "https://www.Ways.You",
+            "https://ways.You",
+            "https://ways.you",
+            "https://ways.You/login",
+        ] {
+            assert!(urls.contains(&expected), "missing {expected}: {urls:?}");
+        }
+    }
+
+    #[test]
+    fn test_plain_text_scheme_url_source_spans_exclude_encoded_fragments() {
+        let parser = MimeParser::new();
+        let gateway = "https://gateway.example/click?target=https%3A%2F%2Fwww.vnet.com%2Fopen&email=foo.bar%40example.net";
+        let email = format!(
+            "Content-Type: text/plain; charset=utf-8\r\n\r\n\
+Gateway: {gateway}\nRepeated: {gateway}\n\
+Independent website: www.independent.invalid"
+        );
+
+        let content = parser.parse(email.as_bytes()).unwrap();
+
+        assert_eq!(
+            content
+                .links
+                .iter()
+                .map(|link| link.url.as_str())
+                .collect::<Vec<_>>(),
+            vec![gateway, "https://www.independent.invalid"],
+            "encoded URL components are covered by their original URL, including duplicate source occurrences"
+        );
+    }
+
+    #[test]
+    fn test_plain_text_embedded_scheme_and_bare_query_do_not_invent_extra_hosts() {
+        let parser = MimeParser::new();
+        let email = "Content-Type: text/plain; charset=utf-8\r\n\r\n\
+SeeHTTPS://gateway.example/open?url=www.shadow.invalid\n\
+Real bare target: portal.example.invalid/login?email=first.last@example.net&return=www.shadow.invalid\n\
+Identifiers: component_name.example.invalid and first.last+not-an-address";
+
+        let content = parser.parse(email.as_bytes()).unwrap();
+
+        assert_eq!(
+            content
+                .links
+                .iter()
+                .map(|link| link.url.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "https://gateway.example/open?url=www.shadow.invalid",
+                "https://portal.example.invalid",
+            ],
+            "source boundaries preserve a real bare target without promoting its query or identifier fragments"
+        );
+    }
+
+    #[test]
+    fn test_plain_text_long_non_domain_atom_is_not_retried_as_fragments() {
+        let parser = MimeParser::new();
+        let body = "component_".repeat(32 * 1024);
+        let email = format!(
+            "Content-Type: text/plain; charset=utf-8\r\n\r\n\
+{body}module.invalid\nReal target: login.security-review.invalid"
+        );
+
+        let content = parser.parse(email.as_bytes()).unwrap();
+
+        assert_eq!(
+            content
+                .links
+                .iter()
+                .map(|link| link.url.as_str())
+                .collect::<Vec<_>>(),
+            vec!["https://login.security-review.invalid"]
+        );
+    }
+
+    #[test]
+    fn test_plain_text_mixed_script_bare_domain_is_extracted_for_homograph_analysis() {
+        let parser = MimeParser::new();
+        let email = "Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+详情见内部通告，确认入口：security-check.cοm";
+
+        let content = parser.parse(email.as_bytes()).unwrap();
+
+        assert!(
+            content
+                .links
+                .iter()
+                .any(|link| link.url == "https://security-check.cοm"),
+            "MUA-linkified mixed-script IDN must reach downstream homograph analysis: {:?}",
+            content.links
+        );
+    }
+
+    #[test]
+    fn test_plain_text_bare_domain_extraction_is_bounded() {
+        let parser = MimeParser::new();
+        let body = (0..(MAX_EMAIL_LINKS + 100))
+            .map(|index| format!("host-{index}.example.invalid"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let email = format!("Content-Type: text/plain; charset=utf-8\r\n\r\n{body}");
+
+        let content = parser.parse(email.as_bytes()).unwrap();
+
+        assert_eq!(content.links.len(), MAX_EMAIL_LINKS);
+    }
+
+    #[test]
+    fn test_plain_text_attachment_filename_is_not_extracted_as_bare_domain() {
+        let parser = MimeParser::new();
+        let email = "Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+附件：20260101010203.pdf\n";
+
+        let content = parser.parse(email.as_bytes()).unwrap();
+
+        assert!(
+            content.links.is_empty(),
+            "filename-shaped tokens must not become synthetic URLs: {:?}",
+            content.links
+        );
+    }
+
+    #[test]
+    fn test_plain_text_dbf_interface_names_are_not_bare_domains() {
+        let parser = MimeParser::new();
+        let email = "Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+Synthetic legacy interface legacyABC.dbf is retired; use CLEARING01.DBF or CLEARING02.DBF.\n\
+Synthetic guide: https://files.example.invalid/data/CLEARING01.DBF\n";
+
+        let content = parser.parse(email.as_bytes()).unwrap();
+
+        assert_eq!(
+            content
+                .links
+                .iter()
+                .map(|link| link.url.as_str())
+                .collect::<Vec<_>>(),
+            vec!["https://files.example.invalid/data/CLEARING01.DBF"],
+            "DBF interface filenames must not become synthetic hosts, while an explicit URL remains visible"
+        );
+    }
+
+    #[test]
+    fn test_plain_text_link_stops_before_closing_bracket_and_cjk_prose() {
+        let parser = MimeParser::new();
+        let email = "Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+测试站点[https://monitor.internal.example:8085/h5/review/]检测出页面模板变化。";
+
+        let content = parser.parse(email.as_bytes()).unwrap();
+
+        assert_eq!(content.links.len(), 1, "{:?}", content.links);
+        assert_eq!(
+            content.links[0].url,
+            "https://monitor.internal.example:8085/h5/review/"
         );
     }
 
@@ -2888,6 +4083,38 @@ SGVsbG8=";
     }
 
     #[test]
+    fn test_unsupported_leaf_without_disposition_is_retained_for_scanning() {
+        let parser = MimeParser::new();
+        let email = b"Content-Type: multipart/mixed; boundary=BOUND\r\n\
+\r\n\
+--BOUND\r\n\
+Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+Please review the attached data.\r\n\
+--BOUND\r\n\
+Content-Type: application/octet-stream\r\n\
+Content-Transfer-Encoding: 7bit\r\n\
+\r\n\
+X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*\r\n\
+--BOUND--\r\n";
+
+        let content = parser.parse(email).unwrap();
+
+        assert_eq!(
+            content.body_text.as_deref(),
+            Some("Please review the attached data.\r\n")
+        );
+        assert_eq!(content.attachments.len(), 1);
+        assert_eq!(
+            content.attachments[0].content_type,
+            "application/octet-stream"
+        );
+        assert!(content.attachments[0].size >= 68);
+        assert!(content.attachments[0].content_base64.is_some());
+        assert!(!content.truncated);
+    }
+
+    #[test]
     fn test_all_same_type_mime_alternatives_remain_visible_to_detectors() {
         let parser = MimeParser::new();
         let email = b"Content-Type: multipart/alternative; boundary=ALT\r\n\
@@ -2978,10 +4205,7 @@ iVBORw0KGgo=\r\n\
             "synthetic filename should carry a type-derived extension, got {}",
             attachment.filename
         );
-        assert_eq!(
-            attachment.content_base64.as_deref(),
-            Some("iVBORw0KGgo=")
-        );
+        assert_eq!(attachment.content_base64.as_deref(), Some("iVBORw0KGgo="));
         // Body merging must be unaffected: the HTML part still lands in body_html.
         let html = content.body_html.as_deref().unwrap_or("");
         assert!(html.contains("Scan to login"));
@@ -3013,7 +4237,10 @@ Content-ID: <img2>\r\n\
         assert_eq!(attachment.filename, "cid_img2.jpg");
         assert_eq!(attachment.content_type, "image/jpeg");
         // text/plain body merging is unchanged.
-        assert_eq!(content.body_text.as_deref(), Some("See the attached image.\r\n"));
+        assert_eq!(
+            content.body_text.as_deref(),
+            Some("See the attached image.\r\n")
+        );
     }
 
     #[test]
@@ -3212,6 +4439,23 @@ trailing-space boundary body\r\n\
     }
 
     #[test]
+    fn test_iso_2022_jp_body_honors_declared_charset_before_utf8_fast_path() {
+        // ISO-2022-JP is valid UTF-8 at the byte level because its wire form is
+        // 7-bit ASCII plus escape sequences. The declared charset must win so
+        // the decoded Japanese lure reaches content and semantic detectors.
+        let parser = MimeParser::new();
+        let mut email = b"Content-Type: text/plain; charset=iso-2022-jp\r\n\r\n".to_vec();
+        email.extend_from_slice(b"\x1b$B%\"%+%&%s%H$,Dd;_$5$l$^$7$?!#\x1b(B");
+
+        let content = parser.parse(&email).unwrap();
+
+        assert_eq!(
+            content.body_text.as_deref(),
+            Some("アカウントが停止されました。")
+        );
+    }
+
+    #[test]
     fn test_utf7_decoder_edge_cases() {
         const TEST_MAX_OUTPUT_BYTES: usize = 1024;
 
@@ -3297,7 +4541,11 @@ end\r\n";
 
         let content = parser.parse(email).unwrap();
 
-        assert_eq!(content.attachments.len(), 1, "frame must become an attachment");
+        assert_eq!(
+            content.attachments.len(),
+            1,
+            "frame must become an attachment"
+        );
         let attachment = &content.attachments[0];
         assert_eq!(
             attachment.filename, "evil.exe",
@@ -3328,7 +4576,10 @@ end\r\n";
 
         assert_eq!(content.attachments.len(), 1);
         assert_eq!(content.attachments[0].filename, "invoice.exe");
-        assert_eq!(content.attachments[0].content_base64.as_deref(), Some("TVqQ"));
+        assert_eq!(
+            content.attachments[0].content_base64.as_deref(),
+            Some("TVqQ")
+        );
         assert!(
             content
                 .body_text
@@ -3382,8 +4633,7 @@ then we talked about the roadmap for next year.\r\n";
         // segments used to be invisible (only single-section filename* was
         // recognized), so `攻 击.exe` split mid-name escaped the dangerous
         // extension check entirely.
-        let disposition =
-            "attachment; filename*0*=utf-8''%E6%94%BB%E5%87%BB; filename*1*=%2Eexe";
+        let disposition = "attachment; filename*0*=utf-8''%E6%94%BB%E5%87%BB; filename*1*=%2Eexe";
         assert_eq!(
             MimeParser::extract_filename(disposition).as_deref(),
             Some("攻击.exe")
@@ -3494,5 +4744,79 @@ SGVsbG8=\r\n\
             "outer layers must survive depth degradation: {:?}",
             content.body_text
         );
+    }
+
+    #[test]
+    fn malformed_multipart_with_wire_payload_is_not_complete_and_keeps_raw_mime() {
+        // Regression for the missed-detection path: the DATA payload is
+        // non-empty, but a malformed MIME part cannot be split into headers
+        // and body. The parser must not return a fully-inspected result.
+        let parser = MimeParser::new();
+        let email = concat!(
+            "From: attacker@example.test\r\n",
+            "To: victim@example.test\r\n",
+            "Subject: synthetic threat regression\r\n",
+            "Content-Type: multipart/alternative; boundary=\"BOUNDARY\"\r\n",
+            "\r\n",
+            "--BOUNDARY\r\n",
+            "this is not a MIME part; 登录验证 https://phish.example.test/login\r\n",
+            "--BOUNDARY--\r\n",
+        );
+
+        let content = parser.parse(email.as_bytes()).unwrap();
+
+        assert!(!content.is_complete);
+        assert!(content.truncated);
+        assert!(!content.has_retained_message_entity());
+        assert!(
+            content
+                .body_text
+                .as_deref()
+                .is_none_or(|body| body.trim().is_empty())
+        );
+        assert!(
+            content
+                .body_html
+                .as_deref()
+                .is_none_or(|body| body.trim().is_empty())
+        );
+        assert_eq!(content.raw_mime.as_deref(), Some(email.as_bytes()));
+    }
+
+    #[test]
+    fn sloppy_multipart_header_with_malformed_entity_is_a_coverage_gap() {
+        // Synthetic regression: the multipart header uses sloppy spacing and
+        // its entity cannot be parsed into a retained part. The wire body must
+        // not disappear into a safe/complete projection.
+        let parser = MimeParser::new();
+        let email = concat!(
+            "From: sender@example.invalid\r\n",
+            "To: recipient@example.invalid\r\n",
+            "Subject: synthetic coverage gap regression\r\n",
+            "Content-Type:  multipart/alternative;boundary=\"BOUNDARY\"\r\n",
+            "\r\n",
+            "--BOUNDARY\r\n",
+            "synthetic body coverage gap; 登录验证 https://phish.example.invalid/login\r\n",
+            "--BOUNDARY--\r\n",
+        );
+
+        let content = parser.parse(email.as_bytes()).unwrap();
+
+        assert!(!content.is_complete);
+        assert!(content.truncated);
+        assert!(!content.has_retained_message_entity());
+        assert!(
+            content
+                .body_text
+                .as_deref()
+                .is_none_or(|body| body.trim().is_empty())
+        );
+        assert!(
+            content
+                .body_html
+                .as_deref()
+                .is_none_or(|body| body.trim().is_empty())
+        );
+        assert_eq!(content.raw_mime.as_deref(), Some(email.as_bytes()));
     }
 }

@@ -1,0 +1,19 @@
+From: =?utf-8?B?5bCP5piOJuWwj+e6og==?= <invite@our-wed.example>
+To: friends@list.example
+Date: Mon, 31 Aug 2026 09:14:00 +0800
+Message-ID: <0004-b8@synth.example>
+Subject: 我们的婚礼请帖
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+诚邀您参加我们的婚礼，详情见附件电子请帖。
+--BS
+Content-Type: text/html
+Content-Disposition: attachment; filename="婚礼请帖.html"
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGhlYWQ+PG1ldGEgaHR0cC1lcXVpdj0ncmVmcmVzaCcgY29udGVudD0nMDt1cmw9aHR0cHM6Ly93ZWQtZ2lmdC1wYXkuZXhhbXBsZS52aXAvcnN2cCc+PC9oZWFkPjxib2R5PuaJk+W8gOivt+W4luKApjwvYm9keT48L2h0bWw+
+--BS--

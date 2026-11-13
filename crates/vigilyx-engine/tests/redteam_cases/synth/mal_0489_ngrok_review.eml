@@ -1,0 +1,11 @@
+From: =?utf-8?B?Q29kZSBSZXZpZXcgQm90?= <review@ci-notify-relay.example>
+To: dev@corp.internal
+Date: Tue, 22 Sep 2026 10:18:00 +0800
+Message-ID: <0008-b29@synth.example>
+Subject: PR #612 review notes (interactive)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Interactive review session running at:
+https://2f88-203-0-113-66.ngrok-example.app/review/612
+(GitHub SSO sign-in required to annotate.)

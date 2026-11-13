@@ -1,0 +1,93 @@
+From: "GitHub | Security Advisories" <noreply@github.example>
+To: platform-eng@corp.internal
+Cc: sre-oncall@corp.internal, dev-leads@corp.internal
+Date: Tue, 24 Nov 2026 03:10:00 +0000
+Message-ID: <0650-b72@synth.example>
+Subject: [ACTION REQUIRED] CVE-2026-24031 - Self-Hosted Runner Image Credential Exposure - Org Token Rotation Required
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Platform Engineering, SRE on-call, Dev Leads,
+
+CRITICAL - CVE-2026-24031.
+A credential-caching flaw has been confirmed in the
+self-hosted runner image
+ubuntu-22.04-selfhosted v2026.09.4. Runner jobs that
+used OIDC federation between 31 October and
+23 November may have persisted short-lived cloud
+credentials beyond job teardown. All
+organization-scoped tokens issued to workflows on
+the affected runners must be rotated.
+
+1. AFFECTED INFRASTRUCTURE
+
+  Runner image:      ubuntu-22.04-selfhosted
+                     v2026.09.4
+  Runner groups:     prod-build (6), mobile-ci (4),
+                     nightly-e2e (4)
+  Exposure window:   31 Oct 2026 - 23 Nov 2026
+  High-activity
+    workflows:       release-build.yml
+                     (runs #18222-#18406),
+                     mobile-deploy.yml, e2e-nightly.yml
+  Advisory
+    reference:       GHSA-2026-24031 / severity:
+                     critical (CVSS 8.2)
+
+2. HOW TO ROTATE (OFFICIAL PATH ONLY)
+
+  All rotation is performed inside GitHub, by you:
+
+    1. Type github.example in your browser and
+       log in as an organization owner.
+    2. Settings -> Developer settings ->
+       Personal access tokens -> rotate affected
+       org-scoped tokens (corp-ci-bot,
+       corp-release-bot actors).
+    3. Settings -> Integrations -> your internal
+       deployment app -> "Rotate client secret".
+    4. Rebuild the runner image to v2026.09.5,
+       which pins the OIDC cache directory per job.
+
+  GitHub will NEVER:
+  - Email you a device pairing code and ask you
+    to enter it at github.com/login/device
+  - Ask you to approve a "support verification
+    session" or "token rotation verification"
+    session of any kind
+  - Send security advisories that require
+    authenticating through a link or button in
+    the email
+  - Communicate remediation through
+    "github-support-notify" or similar domains
+
+  Device codes are entered only when YOUR
+  organization initiates a device flow login from
+  an app YOU are setting up. A security advisory
+  that supplies a ready-made code is a phishing
+  pattern known as "device code phishing": the
+  page is real, the session belongs to the
+  attacker.
+
+3. VERIFY THIS ADVISORY INDEPENDENTLY
+
+  - Open the Security advisories tab under your
+    org (typed URL) and search GHSA-2026-24031
+  - Cross-check the runner image version in your
+    own infrastructure inventory
+  - Contact your designated Enterprise support
+    manager through the support portal if the
+    advisory does not appear
+
+4. TIMELINE
+
+  - Rotate org-scoped PATs and app secrets
+    before your next release cycle
+  - Rebuild runners to v2026.09.5
+  - No GitHub-initiated maintenance window will
+    pause your Actions usage; if an email claims
+    one, treat it as phishing
+
+GitHub | Security Advisories
+You are receiving this because your organization
+is enrolled in security advisory notifications.

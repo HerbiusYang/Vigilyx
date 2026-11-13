@@ -1,0 +1,11 @@
+From: =?utf-8?B?5a6J5YWo5Lit5b+D?= <security@bank.example>
+To: me@personal.example
+Date: Sun, 30 Aug 2026 15:31:00 +0800
+Message-ID: <0021-b7@synth.example>
+Subject: 近期假冒我行钓鱼增多，请留意
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+尊敬的客户：近期发现假冒我行的"账户异常"短信与邮件。
+我行不会以邮件索要密码验证码。可疑信息请转发 security@bank.example。
+本邮件不含任何链接。

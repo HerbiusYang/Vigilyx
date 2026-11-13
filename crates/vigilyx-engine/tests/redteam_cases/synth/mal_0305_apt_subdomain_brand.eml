@@ -1,0 +1,10 @@
+From: =?utf-8?B?TWljcm9zb2Z0?= <ms@mail.microsoft.com.verify-acc.example>
+To: staff@corp.internal
+Date: Thu, 10 Sep 2026 08:29:00 +0800
+Message-ID: <0019-b18@synth.example>
+Subject: Security alert: unusual sign-in
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+A sign-in from a new location was detected for your account.
+Review: https://mail.microsoft.com.verify-acc.example/check

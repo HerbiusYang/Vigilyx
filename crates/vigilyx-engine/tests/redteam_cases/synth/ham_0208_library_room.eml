@@ -1,0 +1,10 @@
+From: =?utf-8?B?5Zu+5Lmm6aaG?= <lib@univ.example>
+To: student@univ.example
+Date: Fri, 04 Sep 2026 10:47:00 +0800
+Message-ID: <0037-b12@synth.example>
+Subject: 研修间预约规则更新
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+新学期起研修间需扫码签到（入座码在预约系统），
+15 分钟未签到自动释放。

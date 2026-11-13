@@ -1,0 +1,12 @@
+From: =?utf-8?B?RExQIOezu+e7nw==?= <dlp@corp-quarantine17.example>
+To: legal@corp.internal
+Date: Tue, 22 Sep 2026 10:33:00 +0800
+Message-ID: <0023-b29@synth.example>
+Subject: 隔离邮件放行请求：客户合同（含敏感词）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您发送的'客户合同'因包含敏感词被 DLP 拦截。
+如确认合规，请通过放行门户登录并确认：
+https://dlp-release-gw17.example/release?id=8842
+（域账号登录）

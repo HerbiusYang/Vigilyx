@@ -1,9 +1,10 @@
 //! Verdict aggregation: dispatches to one of several fusion strategies.
 
-mod clustered_ds_v1;
-mod ds_murphy;
+mod clustered_ds_v2;
 mod evidence_clusters;
 mod noisy_or;
+mod relational_v2;
+mod risk_constraints;
 mod tbm;
 mod weighted_max;
 
@@ -13,7 +14,9 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use vigilyx_core::models::{EmailSession, SessionSource};
-use vigilyx_core::security::{ModuleResult, ThreatLevel};
+use vigilyx_core::security::{
+    ModuleResult, ThreatLevel, classify_email_classification, classify_verdict_threat_type,
+};
 
 // Re-export for backward compatibility
 pub use evidence_clusters::{
@@ -22,6 +25,25 @@ pub use evidence_clusters::{
 pub use vigilyx_core::security::{EngineBpaDetail, FusionDetails, SecurityVerdict};
 
 use crate::config::VerdictConfig;
+
+/// Categories that describe the mail class without asserting an actionable
+/// malicious threat.  Fusion strategies may intentionally omit these from a
+/// Safe verdict because they are not threat evidence; retain them separately
+/// so the operator-facing classification survives persistence and API reads.
+const MAIL_CLASSIFICATION_OBSERVATION_CATEGORIES: &[&str] = &[
+    "spam",
+    "gateway_spam_classified",
+    "nlp_spam",
+    "nonsensical_spam",
+    "invoice_spam",
+    "spam_cannon",
+    "transactional_notice",
+    "delivery_report",
+    "password_reset_notice",
+    "marketing",
+    "preference_link",
+    "campaign",
+];
 
 // Aggregation dispatcher
 
@@ -41,16 +63,45 @@ pub fn aggregate_verdict_with_session(
     results: &HashMap<String, ModuleResult>,
     config: &VerdictConfig,
 ) -> SecurityVerdict {
+    // A parser/capture gap must not let safe module BPA values dilute a real
+    // threat signal. Keep threat-bearing module results, but turn safe results
+    // into vacuous evidence until the missing bytes are replayed.
+    let adjusted_results = if let Some(session) = session
+        && session.content.has_inspection_coverage_gap()
+    {
+        let mut adjusted = results.clone();
+        let reason = if !session.content.is_complete {
+            "message body or MIME entity was not retained"
+        } else {
+            "parser or detector coverage was limited"
+        };
+        for result in adjusted.values_mut() {
+            result.mark_inspection_incomplete(reason);
+        }
+        Some(adjusted)
+    } else {
+        None
+    };
+    let results = adjusted_results
+        .as_ref()
+        .map_or(results, |adjusted| adjusted);
+
     let mut verdict = match config.aggregation.as_str() {
         "tbm_v5" => tbm::aggregate_tbm_v5(session_id, results, config),
         "weighted_max" => weighted_max::aggregate_weighted_max(session_id, results, config),
         "noisy_or" => noisy_or::aggregate_noisy_or(session_id, results, config),
-        "legacy_ds_murphy" => ds_murphy::aggregate_ds_murphy(session_id, results, config),
-        "clustered_ds_v1" | "ds_murphy" => {
-            clustered_ds_v1::aggregate_clustered_ds_v1(session, session_id, results, config)
-        }
-        _ => clustered_ds_v1::aggregate_clustered_ds_v1(session, session_id, results, config),
+        _ => clustered_ds_v2::aggregate_clustered_ds_v2(session, session_id, results, config),
     };
+
+    // Coverage and disposition never change the evidence-based threat family.
+    let evidence_threat_level = verdict.threat_level;
+    if verdict.inspection_coverage == vigilyx_core::security::InspectionCoverage::Unknown {
+        verdict.inspection_coverage = if results.is_empty() {
+            vigilyx_core::security::InspectionCoverage::Unknown
+        } else {
+            vigilyx_core::security::InspectionCoverage::Complete
+        };
+    }
 
     // Inspection coverage and threat evidence are different dimensions. A
     // normal capture/parse gap lowers confidence but is not malicious evidence
@@ -74,17 +125,26 @@ pub fn aggregate_verdict_with_session(
     // vacuous/low-confidence evidence; fusion alone may dilute it below the
     // MTA quarantine threshold, so enforce the same invariant here.
     const INCOMPLETE_COVERAGE_CATEGORIES: &[&str] = &[
+        "inspection_coverage_incomplete",
         "scan_incomplete",
         "scan_skipped_size_limit",
         "attachment_inspection_limited",
         "attachment_qr_inspection_limited",
         "semantic_ai_inspection_limited",
+        "semantic_inspection_limited",
         "encrypted_attachment",
         "recipient_metadata_incomplete",
         "missing_content_type",
         "missing_from",
         "missing_to",
         "ocr_unavailable",
+        // The DOM projection can be empty while the rendered email contains
+        // text painted into an image/SVG/canvas/CSS visual carrier.  This is
+        // an inspection-coverage gap until the visual asset is rendered and
+        // OCR'd; it is not threat evidence and must not be treated as a
+        // complete clean scan.
+        "html_visual_text_uncovered",
+        "html_external_visual_unresolved",
     ];
     const QUARANTINE_REQUIRED_CATEGORIES: &[&str] = &[
         "scan_incomplete",
@@ -92,6 +152,7 @@ pub fn aggregate_verdict_with_session(
         "attachment_inspection_limited",
         "attachment_qr_inspection_limited",
         "semantic_ai_inspection_limited",
+        "semantic_inspection_limited",
         "encrypted_attachment",
     ];
     let mut incomplete_modules = results
@@ -104,16 +165,30 @@ pub fn aggregate_verdict_with_session(
         })
         .map(|result| result.module_id.as_str())
         .collect::<Vec<_>>();
+    for category in results
+        .values()
+        .flat_map(|result| &result.categories)
+        .filter(|category| INCOMPLETE_COVERAGE_CATEGORIES.contains(&category.as_str()))
+    {
+        if !verdict.coverage_reasons.contains(category) {
+            verdict.coverage_reasons.push(category.clone());
+        }
+    }
     incomplete_modules.sort_unstable();
     incomplete_modules.dedup();
 
     let mut quarantine_modules = results
         .values()
         .filter(|result| {
-            result
-                .categories
-                .iter()
-                .any(|category| QUARANTINE_REQUIRED_CATEGORIES.contains(&category.as_str()))
+            result.categories.iter().any(|category| {
+                QUARANTINE_REQUIRED_CATEGORIES.contains(&category.as_str())
+                    || (category == "ocr_unavailable"
+                        && result
+                            .details
+                            .get("ocr_fail_closed_count")
+                            .and_then(serde_json::Value::as_u64)
+                            .is_some_and(|count| count > 0))
+            })
         })
         .map(|result| result.module_id.as_str())
         .collect::<Vec<_>>();
@@ -157,7 +232,7 @@ pub fn aggregate_verdict_with_session(
         // A passive mirror observes mail after delivery. Missing capture bytes
         // are an explicit coverage defect, but they are not threat evidence
         // and must not rewrite the displayed classification. The inline MTA
-        // still needs the operational floor because it controls delivery. A
+        // still needs the independent quarantine marker because it controls delivery. A
         // missing session keeps the conservative legacy behavior because its
         // source cannot be proven.
         if session.is_none_or(|session| session.source == SessionSource::MtaProxy) {
@@ -167,7 +242,83 @@ pub fn aggregate_verdict_with_session(
         }
     }
 
+    // Keep classification-only observations in the persisted top-level
+    // category set when no actionable threat reached Medium. They do not
+    // change the fused threat level or threat family. Without this bridge a
+    // Safe spam result is reconstructed as
+    // `undetermined` by the API because the database stores the top-level
+    // categories rather than the in-memory module map.
+    // Weak mail-class observations must not label an otherwise unclassified
+    // native attack as spam or a routine notice. The module facts remain
+    // available, while persistence reconstructs the native classification.
+    if evidence_threat_level < ThreatLevel::Medium {
+        for category in results
+            .values()
+            .flat_map(|result| result.categories.iter())
+            .filter(|category| {
+                MAIL_CLASSIFICATION_OBSERVATION_CATEGORIES.contains(&category.as_str())
+            })
+        {
+            if !verdict.categories.contains(category) {
+                verdict.categories.push(category.clone());
+            }
+        }
+    }
+    verdict.categories.sort();
+    verdict.categories.dedup();
+
+    let observed_content_labels =
+        evidence_clusters::canonicalize_observed_attack_classification_categories(
+            &mut verdict.categories,
+            results,
+            config,
+        );
+    if !observed_content_labels.is_empty() {
+        verdict.summary =
+            canonicalize_content_observation_summary(&verdict.summary, &observed_content_labels);
+    }
+
+    // Classification is a separate, operator-facing axis, but malicious
+    // families are legal only when the evidence reaches the actionable
+    // Medium threshold. Observation-only identity/URL categories remain
+    // visible without producing a contradictory Safe + phishing row.
+    verdict.threat_type = classify_verdict_threat_type(evidence_threat_level, &verdict.categories);
+    verdict.classification = Some(classify_email_classification(&verdict.categories));
+
     verdict
+}
+
+fn canonicalize_content_observation_summary(
+    summary: &str,
+    observations: &std::collections::BTreeSet<String>,
+) -> String {
+    let mut canonical = summary.to_string();
+    for category in observations {
+        let mut output = String::with_capacity(canonical.len());
+        let mut copied = 0;
+        for (start, _) in canonical.match_indices(category.as_str()) {
+            let end = start + category.len();
+            let is_category_character =
+                |character: char| character.is_ascii_alphanumeric() || character == '_';
+            if canonical[..start]
+                .chars()
+                .next_back()
+                .is_some_and(is_category_character)
+                || canonical[end..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_category_character)
+            {
+                continue;
+            }
+            output.push_str(&canonical[copied..start]);
+            output.push_str("generic_lure_observed");
+            copied = end;
+        }
+        output.push_str(&canonical[copied..]);
+        canonical = output;
+    }
+    canonical
 }
 
 /// Record incomplete coverage without manufacturing a threat finding. This is
@@ -180,6 +331,14 @@ pub(crate) fn annotate_incomplete_inspection(
     category: &str,
     reason: &str,
 ) {
+    verdict.inspection_coverage = vigilyx_core::security::InspectionCoverage::Limited;
+    if !verdict
+        .coverage_reasons
+        .iter()
+        .any(|existing| existing == category)
+    {
+        verdict.coverage_reasons.push(category.to_string());
+    }
     verdict.confidence = verdict.confidence.min(0.50);
     if !verdict
         .categories
@@ -206,24 +365,12 @@ pub(crate) fn apply_incomplete_inspection_policy(
     annotate_incomplete_inspection(verdict, category, reason);
 }
 
-/// Mark a verdict as requiring quarantine when bytes or mandatory attachment
-/// coverage were not inspected. This is an operational safety floor, not a
-/// claim that the omitted content is malicious: preserve Medium-or-higher
-/// evidence and only raise Safe/Low findings to Medium.
-pub(crate) fn enforce_quarantine_required_inspection(
-    verdict: &mut SecurityVerdict,
-    reason: &str,
-) {
-    let evidence_threat = verdict.threat_level;
+/// Preserve the observed threat while asking the inline delivery policy to
+/// quarantine incomplete mandatory inspection. Coverage is not attack evidence.
+pub(crate) fn enforce_quarantine_required_inspection(verdict: &mut SecurityVerdict, reason: &str) {
     let evidence_confidence = verdict.confidence;
     annotate_incomplete_inspection(verdict, "inspection_quarantine_required", reason);
-
-    if evidence_threat < ThreatLevel::Medium {
-        verdict.threat_level = ThreatLevel::Medium;
-        verdict.confidence = evidence_confidence.min(0.35);
-    } else {
-        // A genuine Medium/High/Critical finding remains authoritative; the
-        // coverage marker must not dilute its evidence confidence.
+    if verdict.threat_level >= ThreatLevel::Medium {
         verdict.confidence = evidence_confidence;
     }
     verdict.summary = format!(
@@ -235,26 +382,20 @@ pub(crate) fn enforce_quarantine_required_inspection(
 /// Whether a verdict carries incomplete-inspection metadata that an inline
 /// delivery path must handle separately from threat severity.
 pub(crate) fn has_incomplete_inspection(verdict: &SecurityVerdict) -> bool {
-    const CATEGORIES: &[&str] = &[
-        "inspection_incomplete",
-        "inspection_coverage_incomplete",
-        "inspection_execution_incomplete",
-        "inspection_quarantine_required",
-    ];
-
-    verdict
-        .categories
-        .iter()
-        .any(|category| CATEGORIES.contains(&category.as_str()))
+    verdict.has_incomplete_inspection()
 }
 
 // Shared helpers
 
 fn empty_verdict(session_id: Uuid, now: DateTime<Utc>) -> SecurityVerdict {
     SecurityVerdict {
+        inspection_coverage: Default::default(),
+        coverage_reasons: vec![],
         id: Uuid::new_v4(),
         session_id,
         threat_level: ThreatLevel::Safe,
+        threat_type: None,
+        classification: None,
         confidence: 1.0,
         categories: vec![],
         summary: "No modules ran".to_string(),
@@ -274,7 +415,6 @@ mod tests {
     use std::sync::Once;
 
     use super::aggregate_verdict_with_session;
-    use super::ds_murphy::aggregate_ds_murphy;
     use super::noisy_or::aggregate_noisy_or;
     use super::tbm::aggregate_tbm_v5;
     use super::*;
@@ -283,7 +423,7 @@ mod tests {
         KeywordCategoryOverride, KeywordOverrides, build_effective_keyword_lists,
     };
     use vigilyx_core::models::{EmailContent, EmailSession, Protocol, SessionSource};
-    use vigilyx_core::security::Pillar;
+    use vigilyx_core::security::{EmailClassification, Pillar, ThreatType};
 
     static SCENARIO_PATTERNS_INIT: Once = Once::new();
 
@@ -387,6 +527,496 @@ mod tests {
     }
 
     #[test]
+    fn v2_is_the_authoritative_verdict_model() {
+        let results = HashMap::from([(
+            "identity_anomaly".to_string(),
+            make_result(
+                "identity_anomaly",
+                Pillar::Semantic,
+                0.25,
+                vec!["random_domain"],
+            ),
+        )]);
+        let verdict = aggregate_verdict(Uuid::new_v4(), &results, &VerdictConfig::default());
+        let fusion = verdict.fusion_details.unwrap();
+        assert_eq!(fusion.fusion_method.as_deref(), Some("clustered_ds_v2"));
+        assert!(fusion.shadow_results.is_empty());
+        let primary = fusion.primary_result.unwrap();
+        assert_eq!(primary.risk_constrained, fusion.risk_single);
+        assert_eq!(primary.fused_bpa, fusion.fused_bpa);
+        assert_eq!(verdict.threat_level, ThreatLevel::Medium);
+        assert!(primary.risk_base < 0.40);
+    }
+
+    #[test]
+    fn safe_spam_observation_survives_final_verdict_classification() {
+        init_test_scenario_patterns();
+        let session_id = Uuid::new_v4();
+        let results = HashMap::from([(
+            "content_scan".to_string(),
+            make_result(
+                "content_scan",
+                Pillar::Content,
+                0.05,
+                vec!["gateway_spam_classified"],
+            ),
+        )]);
+
+        let verdict =
+            aggregate_verdict_with_session(None, session_id, &results, &VerdictConfig::default());
+
+        assert_eq!(verdict.threat_level, ThreatLevel::Safe);
+        assert_eq!(verdict.threat_type, None);
+        assert_eq!(verdict.classification, Some(EmailClassification::Spam));
+        assert!(
+            verdict
+                .categories
+                .contains(&"gateway_spam_classified".to_string())
+        );
+    }
+
+    #[test]
+    fn native_unknown_family_is_not_reclassified_by_weak_spam_observation() {
+        init_test_scenario_patterns();
+        let session_id = Uuid::new_v4();
+        let config = VerdictConfig::default();
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "203.0.113.10".to_string(),
+            2525,
+            "203.0.113.20".to_string(),
+            25,
+        );
+        session.content.is_complete = true;
+        session.content.body_text = Some("A complete retained message.".to_string());
+        let mut native = make_result_with_confidence(
+            "header_scan",
+            Pillar::Package,
+            0.90,
+            0.99,
+            vec!["sender_ip_malicious"],
+        );
+        // A native sender-IP IOC has an admitted default mapping while its
+        // primary mail family remains unknown. The causal source is the
+        // actual SMTP client, independent of the weak body-class observation.
+        native.details["causal_findings"] = serde_json::json!([{
+            "causal_key": format!("sender_ip:{}", session.client_ip),
+            "categories": ["sender_ip_malicious"],
+        }]);
+        native.evidence = vec![vigilyx_core::security::Evidence {
+            description: "SMTP client matched a native malicious-IP IOC".to_string(),
+            location: Some("smtp:client_ip".to_string()),
+            snippet: Some(session.client_ip.clone()),
+        }];
+        let observation = make_result(
+            "semantic_scan",
+            Pillar::Semantic,
+            0.0,
+            vec!["nonsensical_spam"],
+        );
+        let without = HashMap::from([("header_scan".to_string(), native.clone())]);
+        let with = HashMap::from([
+            ("header_scan".to_string(), native),
+            ("semantic_scan".to_string(), observation.clone()),
+        ]);
+        let baseline =
+            aggregate_verdict_with_session(Some(&session), session_id, &without, &config);
+        let candidate = aggregate_verdict_with_session(Some(&session), session_id, &with, &config);
+        assert!(
+            candidate.threat_level >= ThreatLevel::Medium,
+            "{candidate:?}"
+        );
+        assert_eq!(candidate.threat_level, baseline.threat_level);
+        assert_eq!(
+            candidate.fusion_details.as_ref().unwrap().risk_single,
+            baseline.fusion_details.as_ref().unwrap().risk_single
+        );
+        assert_eq!(
+            candidate.classification,
+            Some(EmailClassification::Undetermined)
+        );
+        assert_eq!(candidate.classification, baseline.classification);
+        assert!(
+            !candidate
+                .categories
+                .contains(&"nonsensical_spam".to_string())
+        );
+        assert_eq!(
+            classify_email_classification(&candidate.categories),
+            EmailClassification::Undetermined
+        );
+        assert_eq!(
+            with["semantic_scan"].categories,
+            vec!["nonsensical_spam".to_string()]
+        );
+
+        let only_observation = HashMap::from([("semantic_scan".to_string(), observation)]);
+        let benign = aggregate_verdict_with_session(None, session_id, &only_observation, &config);
+        assert_eq!(benign.threat_level, ThreatLevel::Safe);
+        assert_eq!(benign.classification, Some(EmailClassification::Spam));
+        assert_eq!(
+            classify_email_classification(&benign.categories),
+            EmailClassification::Spam
+        );
+    }
+
+    #[test]
+    fn bank_like_generic_content_observation_does_not_persist_as_phishing() {
+        init_test_scenario_patterns();
+        for content_score in [0.08, 0.20] {
+            let results = HashMap::from([
+                (
+                    "content_scan".to_string(),
+                    make_result(
+                        "content_scan",
+                        Pillar::Content,
+                        content_score,
+                        vec!["phishing"],
+                    ),
+                ),
+                (
+                    "header_scan".to_string(),
+                    make_result("header_scan", Pillar::Package, 0.15, vec!["stale_date"]),
+                ),
+            ]);
+            let verdict = aggregate_verdict_with_session(
+                None,
+                Uuid::new_v4(),
+                &results,
+                &VerdictConfig::default(),
+            );
+            assert!(verdict.threat_level < ThreatLevel::Medium, "{verdict:?}");
+            assert_eq!(
+                verdict.classification,
+                Some(EmailClassification::Undetermined)
+            );
+            assert_eq!(verdict.threat_type, None);
+            assert!(
+                verdict
+                    .categories
+                    .contains(&"generic_lure_observed".to_string())
+            );
+            assert!(!verdict.categories.contains(&"phishing".to_string()));
+            assert!(!verdict.summary.contains("(phishing"));
+            // The database reconstructs classification from these canonical
+            // categories, while analysts still have the original module fact.
+            assert_eq!(
+                classify_email_classification(&verdict.categories),
+                EmailClassification::Undetermined
+            );
+            assert_eq!(
+                results["content_scan"].categories,
+                vec!["phishing".to_string()]
+            );
+        }
+    }
+
+    #[test]
+    fn bank_like_content_and_identity_observations_do_not_reconstruct_as_attacks() {
+        init_test_scenario_patterns();
+        let results = HashMap::from([
+            (
+                "content_scan".to_string(),
+                make_result("content_scan", Pillar::Content, 0.08, vec!["phishing"]),
+            ),
+            (
+                "header_scan".to_string(),
+                make_result("header_scan", Pillar::Package, 0.15, vec!["stale_date"]),
+            ),
+            (
+                "identity_anomaly".to_string(),
+                make_result(
+                    "identity_anomaly",
+                    Pillar::Semantic,
+                    0.20,
+                    vec!["display_name_spoof"],
+                ),
+            ),
+        ]);
+        let verdict = aggregate_verdict_with_session(
+            None,
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert!(verdict.threat_level < ThreatLevel::Medium, "{verdict:?}");
+        assert_eq!(
+            verdict.classification,
+            Some(EmailClassification::Undetermined)
+        );
+        assert_eq!(
+            classify_email_classification(&verdict.categories),
+            EmailClassification::Undetermined
+        );
+        assert!(!verdict.categories.contains(&"phishing".to_string()));
+        assert!(
+            !verdict
+                .categories
+                .contains(&"display_name_spoof".to_string())
+        );
+        assert!(
+            verdict
+                .categories
+                .contains(&"generic_lure_observed".to_string())
+        );
+        assert_eq!(
+            results["identity_anomaly"].categories,
+            vec!["display_name_spoof".to_string()]
+        );
+    }
+
+    #[test]
+    fn admitted_authority_or_known_impersonation_anchor_keeps_identity_classification() {
+        init_test_scenario_patterns();
+        for anchor in ["authority_display_name_lure", "known_impersonation_domain"] {
+            let results = HashMap::from([(
+                "header_scan".to_string(),
+                make_result(
+                    "header_scan",
+                    Pillar::Package,
+                    0.75,
+                    vec!["display_name_spoof", anchor],
+                ),
+            )]);
+            let verdict = aggregate_verdict_with_session(
+                None,
+                Uuid::new_v4(),
+                &results,
+                &VerdictConfig::default(),
+            );
+            assert_eq!(
+                verdict.classification,
+                Some(EmailClassification::Impersonation),
+                "{verdict:?}"
+            );
+            assert!(
+                verdict
+                    .categories
+                    .contains(&"display_name_spoof".to_string())
+            );
+            assert!(verdict.categories.contains(&anchor.to_string()));
+            assert_eq!(
+                classify_email_classification(&verdict.categories),
+                EmailClassification::Impersonation
+            );
+        }
+    }
+
+    #[test]
+    fn declared_link_brand_observation_does_not_create_impersonation_classification() {
+        init_test_scenario_patterns();
+        let results = HashMap::from([(
+            "link_reputation".to_string(),
+            make_result(
+                "link_reputation",
+                Pillar::Link,
+                0.30,
+                vec!["brand_impersonation"],
+            ),
+        )]);
+        let verdict = aggregate_verdict_with_session(
+            None,
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert_eq!(
+            verdict.classification,
+            Some(EmailClassification::Undetermined)
+        );
+        assert_eq!(
+            verdict.categories,
+            vec!["generic_lure_observed".to_string()]
+        );
+        assert_eq!(
+            results["link_reputation"].categories,
+            vec!["brand_impersonation".to_string()]
+        );
+    }
+
+    #[test]
+    fn subject_account_and_unqualified_content_labels_remain_observations_in_classification() {
+        init_test_scenario_patterns();
+        let mut content = make_result(
+            "content_scan",
+            Pillar::Content,
+            0.30,
+            vec!["account_security_phishing", "phishing"],
+        );
+        content.evidence.push(vigilyx_core::security::Evidence {
+            description: "Synthetic subject observation".to_string(),
+            location: Some("subject".to_string()),
+            snippet: None,
+        });
+        let weak_link = make_result("link_scan", Pillar::Link, 0.30, vec!["href_text_mismatch"]);
+        let results = HashMap::from([
+            ("content_scan".to_string(), content),
+            ("link_scan".to_string(), weak_link),
+        ]);
+        let verdict = aggregate_verdict_with_session(
+            None,
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert!(verdict.threat_level < ThreatLevel::Medium, "{verdict:?}");
+        assert_eq!(
+            verdict.classification,
+            Some(EmailClassification::Undetermined)
+        );
+        assert!(
+            !verdict
+                .categories
+                .contains(&"account_security_phishing".to_string())
+        );
+
+        let results = HashMap::from([(
+            "content_scan".to_string(),
+            make_result(
+                "content_scan",
+                Pillar::Content,
+                0.60,
+                vec![
+                    "external_action_link_lure",
+                    "pii_collection_lure",
+                    "phishing",
+                ],
+            ),
+        )]);
+        let verdict = aggregate_verdict_with_session(
+            None,
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert!(verdict.threat_level < ThreatLevel::Medium, "{verdict:?}");
+        assert_eq!(
+            verdict.classification,
+            Some(EmailClassification::Undetermined)
+        );
+        assert_eq!(
+            verdict.categories,
+            vec!["generic_lure_observed".to_string()]
+        );
+    }
+
+    #[test]
+    fn native_pii_reply_harvest_keeps_phishing_compatibility_classification() {
+        init_test_scenario_patterns();
+        for score in [0.30, 0.75] {
+            let results = HashMap::from([(
+                "content_scan".to_string(),
+                make_result(
+                    "content_scan",
+                    Pillar::Content,
+                    score,
+                    vec!["pii_reply_harvest_lure", "phishing"],
+                ),
+            )]);
+            let verdict = aggregate_verdict_with_session(
+                None,
+                Uuid::new_v4(),
+                &results,
+                &VerdictConfig::default(),
+            );
+            assert_eq!(verdict.classification, Some(EmailClassification::Phishing));
+            assert!(verdict.categories.contains(&"phishing".to_string()));
+            assert!(
+                verdict
+                    .categories
+                    .contains(&"pii_reply_harvest_lure".to_string())
+            );
+            assert_eq!(
+                classify_email_classification(&verdict.categories),
+                EmailClassification::Phishing
+            );
+        }
+    }
+
+    #[test]
+    fn spam_classification_is_preserved_when_generic_phishing_is_only_observed() {
+        init_test_scenario_patterns();
+        let results = HashMap::from([(
+            "content_scan".to_string(),
+            make_result(
+                "content_scan",
+                Pillar::Content,
+                0.08,
+                vec!["phishing", "gateway_spam_classified"],
+            ),
+        )]);
+        let verdict = aggregate_verdict_with_session(
+            None,
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert_eq!(verdict.classification, Some(EmailClassification::Spam));
+        assert!(
+            verdict
+                .categories
+                .contains(&"gateway_spam_classified".to_string())
+        );
+        assert!(
+            verdict
+                .categories
+                .contains(&"generic_lure_observed".to_string())
+        );
+    }
+
+    #[test]
+    fn disabled_or_vacuous_content_does_not_supply_an_attack_classification_alias() {
+        init_test_scenario_patterns();
+        for mode in 0..5 {
+            let mut content = make_result(
+                "content_scan",
+                Pillar::Content,
+                0.75,
+                vec!["pii_reply_harvest_lure", "phishing"],
+            );
+            let mut config = VerdictConfig::default();
+            match mode {
+                0 => content.threat_level = ThreatLevel::Safe,
+                1 => content.bpa = Some(vigilyx_core::security::Bpa::vacuous()),
+                2 => {
+                    config.weights.insert("content_scan".to_string(), 0.0);
+                }
+                3 => content.details["score"] = serde_json::json!(0.0),
+                _ => content.confidence = 0.0,
+            }
+            let results = HashMap::from([("content_scan".to_string(), content)]);
+            let verdict = aggregate_verdict_with_session(None, Uuid::new_v4(), &results, &config);
+            assert_eq!(
+                verdict.classification,
+                Some(EmailClassification::Undetermined),
+                "mode {mode}: {verdict:?}"
+            );
+            assert!(
+                !verdict.categories.contains(&"phishing".to_string()),
+                "mode {mode}"
+            );
+            assert!(
+                results["content_scan"]
+                    .categories
+                    .contains(&"phishing".to_string()),
+                "mode {mode}"
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_observation_summary_does_not_rewrite_a_named_attack_category() {
+        let summary =
+            "Low risk (phishing, targeted_credential_phishing, account_security_phishing)";
+        let observations = std::collections::BTreeSet::from(["phishing".to_string()]);
+        let canonical = canonicalize_content_observation_summary(summary, &observations);
+        assert_eq!(
+            canonical,
+            "Low risk (generic_lure_observed, targeted_credential_phishing, account_security_phishing)"
+        );
+    }
+
+    #[test]
     fn incomplete_passive_capture_does_not_inflate_threat_level() {
         init_test_scenario_patterns();
         let mut session = EmailSession::new(
@@ -450,6 +1080,57 @@ mod tests {
     }
 
     #[test]
+    fn coverage_gap_does_not_let_safe_module_bpa_dilute_threat_evidence() {
+        init_test_scenario_patterns();
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.content.headers.push((
+            "Subject".to_string(),
+            "Synthetic threat regression".to_string(),
+        ));
+        session.content.is_complete = false;
+        session.content.truncated = true;
+
+        let mut results = HashMap::new();
+        results.insert(
+            "content_scan".to_string(),
+            make_result(
+                "content_scan",
+                Pillar::Content,
+                0.65,
+                vec!["account_security_phishing"],
+            ),
+        );
+        results.insert(
+            "empty_content_scan".to_string(),
+            make_result("empty_content_scan", Pillar::Content, 0.0, vec![]),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            session.id,
+            &results,
+            &VerdictConfig::default(),
+        );
+        let fusion = verdict.fusion_details.as_ref().unwrap();
+
+        assert!(has_incomplete_inspection(&verdict));
+        assert!(
+            fusion.fused_bpa.b > 0.0,
+            "coverage gap must not erase independent threat evidence"
+        );
+        assert!(
+            verdict.summary.contains("captured evidence only")
+                || verdict.summary.contains("Inspection incomplete")
+        );
+    }
+
+    #[test]
     fn incomplete_detector_execution_is_coverage_metadata_for_passive_analysis() {
         init_test_scenario_patterns();
         let session_id = Uuid::new_v4();
@@ -473,7 +1154,7 @@ mod tests {
     }
 
     #[test]
-    fn scanner_coverage_gap_requires_conservative_unscoped_floor() {
+    fn scanner_coverage_gap_requires_review_without_threat_inflation() {
         init_test_scenario_patterns();
         let session_id = Uuid::new_v4();
         let mut results = HashMap::new();
@@ -490,7 +1171,11 @@ mod tests {
         let verdict =
             aggregate_verdict_with_session(None, session_id, &results, &VerdictConfig::default());
 
-        assert_eq!(verdict.threat_level, ThreatLevel::Medium);
+        assert_eq!(verdict.threat_level, ThreatLevel::Safe);
+        assert_eq!(
+            verdict.inspection_coverage,
+            vigilyx_core::security::InspectionCoverage::Limited
+        );
         assert!(
             verdict
                 .categories
@@ -498,12 +1183,12 @@ mod tests {
                 .any(|category| category == "inspection_coverage_incomplete")
         );
         assert!(verdict.summary.contains("av_eml_scan"));
-        assert!(verdict.confidence <= 0.35);
+        assert!(verdict.confidence <= 0.50);
         assert!(verdict.summary.contains("Quarantine required"));
     }
 
     #[test]
-    fn skipped_attachment_scan_requires_quarantine_floor() {
+    fn skipped_attachment_scan_requires_quarantine_without_threat_inflation() {
         init_test_scenario_patterns();
         let session_id = Uuid::new_v4();
         let mut results = HashMap::new();
@@ -520,13 +1205,17 @@ mod tests {
         let verdict =
             aggregate_verdict_with_session(None, session_id, &results, &VerdictConfig::default());
 
-        assert_eq!(verdict.threat_level, ThreatLevel::Medium);
+        assert_eq!(verdict.threat_level, ThreatLevel::Safe);
+        assert_eq!(
+            verdict.inspection_coverage,
+            vigilyx_core::security::InspectionCoverage::Limited
+        );
         assert!(has_incomplete_inspection(&verdict));
         assert!(verdict.summary.contains("Quarantine required"));
     }
 
     #[test]
-    fn scanner_coverage_gap_requires_mta_quarantine_floor() {
+    fn scanner_coverage_gap_requires_mta_quarantine_without_threat_inflation() {
         init_test_scenario_patterns();
         let mut session = EmailSession::new(
             Protocol::Smtp,
@@ -559,10 +1248,222 @@ mod tests {
             &VerdictConfig::default(),
         );
 
-        assert_eq!(verdict.threat_level, ThreatLevel::Medium);
+        assert_eq!(verdict.threat_level, ThreatLevel::Safe);
+        assert_eq!(
+            verdict.inspection_coverage,
+            vigilyx_core::security::InspectionCoverage::Limited
+        );
         assert!(has_incomplete_inspection(&verdict));
-        assert!(verdict.confidence <= 0.35);
+        assert!(verdict.confidence <= 0.50);
         assert!(verdict.summary.contains("Quarantine required"));
+    }
+
+    #[test]
+    fn attachment_content_coverage_is_not_mirror_threat_but_requires_mta_quarantine() {
+        init_test_scenario_patterns();
+        let results = HashMap::from([(
+            String::from("attach_content"),
+            make_result(
+                "attach_content",
+                Pillar::Attachment,
+                0.0,
+                vec!["attachment_inspection_limited"],
+            ),
+        )]);
+
+        let mirror_session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        let mirror_verdict = aggregate_verdict_with_session(
+            Some(&mirror_session),
+            mirror_session.id,
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert_eq!(mirror_verdict.threat_level, ThreatLevel::Safe);
+        assert!(has_incomplete_inspection(&mirror_verdict));
+        assert!(!mirror_verdict.summary.contains("Quarantine required"));
+
+        let mut mta_session = mirror_session.clone();
+        mta_session.source = SessionSource::MtaProxy;
+        let mta_verdict = aggregate_verdict_with_session(
+            Some(&mta_session),
+            mta_session.id,
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert_eq!(mta_verdict.threat_level, ThreatLevel::Safe);
+        assert!(has_incomplete_inspection(&mta_verdict));
+        assert!(mta_verdict.summary.contains("Quarantine required"));
+    }
+
+    #[test]
+    fn mta_quarantine_does_not_create_threat_type_from_coverage_categories() {
+        init_test_scenario_patterns();
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.source = SessionSource::MtaProxy;
+        session.content.is_complete = true;
+        session.content.truncated = true;
+
+        let mut results = HashMap::new();
+        results.insert(
+            "header_scan".to_string(),
+            make_result(
+                "header_scan",
+                Pillar::Package,
+                0.20,
+                vec!["envelope_spoofing"],
+            ),
+        );
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            session.id,
+            &results,
+            &VerdictConfig::default(),
+        );
+
+        assert_eq!(verdict.threat_level, ThreatLevel::Safe);
+        assert_eq!(
+            verdict.inspection_coverage,
+            vigilyx_core::security::InspectionCoverage::Limited
+        );
+        assert!(has_incomplete_inspection(&verdict));
+        assert_eq!(verdict.threat_type, None);
+    }
+
+    #[test]
+    fn link_extractor_gap_survives_without_semantic_scan() {
+        let mut result = make_result(
+            "link_content",
+            Pillar::Content,
+            0.0,
+            vec!["inspection_coverage_incomplete"],
+        );
+        result.bpa = Some(vigilyx_core::security::Bpa::vacuous());
+        result.confidence = 0.0;
+        let verdict = aggregate_verdict(
+            Uuid::new_v4(),
+            &HashMap::from([("link_content".to_string(), result)]),
+            &VerdictConfig::default(),
+        );
+        assert_eq!(verdict.threat_level, ThreatLevel::Safe);
+        assert_eq!(
+            verdict.inspection_coverage,
+            vigilyx_core::security::InspectionCoverage::Limited
+        );
+        assert!(
+            verdict
+                .coverage_reasons
+                .contains(&"inspection_coverage_incomplete".to_string())
+        );
+        assert!(has_incomplete_inspection(&verdict));
+        assert_eq!(verdict.threat_type, None);
+        assert_eq!(
+            vigilyx_core::security::VerdictDisposition::from_threat_and_coverage(
+                verdict.threat_level,
+                verdict.has_incomplete_inspection(),
+                ThreatLevel::Medium,
+                ThreatLevel::Critical,
+            ),
+            vigilyx_core::security::VerdictDisposition::Quarantine,
+        );
+    }
+
+    #[test]
+    fn large_image_ocr_gap_requires_quarantine_but_small_gap_does_not() {
+        init_test_scenario_patterns();
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.source = SessionSource::MtaProxy;
+        session.content.is_complete = true;
+
+        let mut large_result = make_result(
+            "attach_scan",
+            Pillar::Attachment,
+            0.0,
+            vec!["ocr_unavailable"],
+        );
+        large_result.details["ocr_fail_closed_count"] = serde_json::json!(1);
+        let large_verdict = aggregate_verdict_with_session(
+            Some(&session),
+            session.id,
+            &HashMap::from([(String::from("attach_scan"), large_result)]),
+            &VerdictConfig::default(),
+        );
+        assert_eq!(large_verdict.threat_level, ThreatLevel::Safe);
+        assert!(large_verdict.summary.contains("Quarantine required"));
+
+        let mut small_result = make_result(
+            "attach_scan",
+            Pillar::Attachment,
+            0.0,
+            vec!["ocr_unavailable"],
+        );
+        small_result.details["ocr_fail_closed_count"] = serde_json::json!(0);
+        let small_verdict = aggregate_verdict_with_session(
+            Some(&session),
+            session.id,
+            &HashMap::from([(String::from("attach_scan"), small_result)]),
+            &VerdictConfig::default(),
+        );
+        assert!(small_verdict.threat_level < ThreatLevel::Medium);
+        assert!(!small_verdict.summary.contains("Quarantine required"));
+    }
+
+    #[test]
+    fn html_visual_text_gap_is_incomplete_but_not_threat_evidence() {
+        init_test_scenario_patterns();
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.source = SessionSource::MtaProxy;
+        session.content.is_complete = true;
+
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            session.id,
+            &HashMap::from([(
+                String::from("content_scan"),
+                make_result(
+                    "content_scan",
+                    Pillar::Content,
+                    0.0,
+                    vec!["html_visual_text_uncovered"],
+                ),
+            )]),
+            &VerdictConfig::default(),
+        );
+
+        assert_eq!(verdict.threat_level, ThreatLevel::Safe);
+        assert!(has_incomplete_inspection(&verdict));
+        assert!(
+            verdict
+                .categories
+                .iter()
+                .any(|category| category == "inspection_coverage_incomplete")
+        );
+        assert!(!verdict.summary.contains("Quarantine required"));
+        assert!(verdict.confidence <= 0.50);
     }
 
     #[test]
@@ -595,7 +1496,11 @@ mod tests {
             &VerdictConfig::default(),
         );
 
-        assert_eq!(verdict.threat_level, ThreatLevel::Medium);
+        assert_eq!(verdict.threat_level, ThreatLevel::Safe);
+        assert_eq!(
+            verdict.inspection_coverage,
+            vigilyx_core::security::InspectionCoverage::Limited
+        );
         assert!(has_incomplete_inspection(&verdict));
         assert!(verdict.summary.contains("Quarantine required"));
     }
@@ -741,7 +1646,11 @@ mod tests {
             &VerdictConfig::default(),
         );
 
-        assert_eq!(verdict.threat_level, ThreatLevel::Medium);
+        assert_eq!(verdict.threat_level, ThreatLevel::Safe);
+        assert_eq!(
+            verdict.inspection_coverage,
+            vigilyx_core::security::InspectionCoverage::Limited
+        );
         assert!(has_incomplete_inspection(&verdict));
         assert!(
             verdict
@@ -749,7 +1658,7 @@ mod tests {
                 .iter()
                 .any(|category| category == "inspection_quarantine_required")
         );
-        assert!(verdict.confidence <= 0.35);
+        assert!(verdict.confidence <= 0.50);
         assert!(verdict.summary.contains("Quarantine required"));
     }
 
@@ -936,172 +1845,76 @@ mod tests {
         );
     }
 
-    // D-S Murphy tests (new)
-
-    #[test]
-    fn test_ds_murphy_basic_threat() {
-        let mut results = HashMap::new();
-        results.insert(
-            "content_scan".into(),
-            make_result("content_scan", Pillar::Content, 0.70, vec!["phishing"]),
-        );
-        results.insert(
-            "link_scan".into(),
-            make_result("link_scan", Pillar::Link, 0.60, vec!["ip_url"]),
-        );
-
-        let config = VerdictConfig::default(); // ds_murphy
-        let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
-
-        assert!(verdict.threat_level >= ThreatLevel::Medium);
-        assert!(verdict.fusion_details.is_some());
-        let fd = verdict.fusion_details.as_ref().unwrap();
-        assert!(fd.risk_single > 0.3);
-        assert!(fd.k_conflict < 0.5);
-    }
-
-    #[test]
-    fn test_ds_murphy_all_safe() {
-        let mut results = HashMap::new();
-        results.insert(
-            "content_scan".into(),
-            make_result("content_scan", Pillar::Content, 0.0, vec![]),
-        );
-        results.insert(
-            "header_scan".into(),
-            make_result("header_scan", Pillar::Package, 0.0, vec![]),
-        );
-
-        let config = VerdictConfig::default();
-        let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
-
-        assert_eq!(verdict.threat_level, ThreatLevel::Safe);
-    }
-
-    #[test]
-    fn test_ds_murphy_uncertainty_raises_risk() {
-        // Low-confidence modules -> high uncertainty -> pushes risk up
-        let mut results = HashMap::new();
-        // score=0.3 but confidence=0.2 -> b=0.06, d=0.14, u=0.8
-        // risk(=0.30) = 0.06 + 0.30*0.8 = 0.30
-        // (bare belief=0.06, so =0.30 raises risk ~5x above bare belief)
-        let mut r = make_result("content_scan", Pillar::Content, 0.30, vec!["suspicious"]);
-        r.confidence = 0.2;
-        results.insert("content_scan".into(), r);
-
-        let config = VerdictConfig::default();
-        let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
-
-        // With =0.30, high uncertainty should still raise risk above bare belief (0.06)
-        let fd = verdict.fusion_details.as_ref().unwrap();
-        assert!(
-            fd.risk_single > 0.15,
-            "High uncertainty with η=0.30 should raise risk above bare belief: got {:.3}",
-            fd.risk_single
-        );
-    }
-
-    #[test]
-    fn test_ds_murphy_engine_grouping() {
-        // Two modules in same engine (B) should be pre-fused
-        let mut results = HashMap::new();
-        results.insert(
-            "content_scan".into(),
-            make_result("content_scan", Pillar::Content, 0.5, vec!["phishing"]),
-        );
-        results.insert(
-            "html_scan".into(),
-            make_result("html_scan", Pillar::Content, 0.4, vec!["xss"]),
-        );
-
-        let config = VerdictConfig::default();
-        let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
-
-        let fd = verdict.fusion_details.as_ref().unwrap();
-        // Should have 1 engine (B) not 2
-        assert_eq!(
-            fd.engine_details.len(),
-            1,
-            "Both modules should group into engine B"
-        );
-        assert_eq!(fd.engine_details[0].engine_id, "content_analysis");
-        assert_eq!(fd.engine_details[0].modules.len(), 2);
-    }
-
-    #[test]
-    fn test_ds_murphy_multi_engine_reinforcement() {
-        // Multiple engines with clear threat signals -> should reinforce
-        let mut results = HashMap::new();
-        results.insert(
-            "content_scan".into(),
-            make_result("content_scan", Pillar::Content, 0.8, vec!["phishing"]),
-        );
-        results.insert(
-            "link_scan".into(),
-            make_result("link_scan", Pillar::Link, 0.7, vec!["suspicious_url"]),
-        );
-        results.insert(
-            "header_scan".into(),
-            make_result("header_scan", Pillar::Package, 0.6, vec!["spoofing"]),
-        );
-
-        let config = VerdictConfig::default();
-        let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
-
-        let fd = verdict.fusion_details.as_ref().unwrap();
-        assert_eq!(fd.engine_details.len(), 3); // B, D, E
-        assert!(
-            fd.risk_single > 0.5,
-            "Multi-engine threat signals should produce elevated risk: {:.3}",
-            fd.risk_single
-        );
-    }
-
-    #[test]
-    fn test_ds_murphy_credibility_weights_sum() {
-        let mut results = HashMap::new();
-        results.insert(
-            "content_scan".into(),
-            make_result("content_scan", Pillar::Content, 0.5, vec!["phishing"]),
-        );
-        results.insert(
-            "link_scan".into(),
-            make_result("link_scan", Pillar::Link, 0.3, vec![]),
-        );
-        results.insert(
-            "header_scan".into(),
-            make_result("header_scan", Pillar::Package, 0.2, vec![]),
-        );
-
-        let config = VerdictConfig::default();
-        let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
-
-        let fd = verdict.fusion_details.as_ref().unwrap();
-        let sum: f64 = fd.credibility_weights.values().sum();
-        assert!(
-            (sum - 1.0).abs() < 0.01,
-            "Credibility weights should sum to ~1.0: got {:.3}",
-            sum
-        );
-    }
+    // Authoritative D-S V2 dispatch and established behavioral regressions
 
     #[test]
     fn test_aggregate_verdict_dispatches_clustered_default() {
         let mut results = HashMap::new();
         results.insert(
             "content_scan".into(),
-            make_result("content_scan", Pillar::Content, 0.5, vec!["phishing"]),
+            make_result(
+                "content_scan",
+                Pillar::Content,
+                0.8,
+                vec!["account_security_phishing"],
+            ),
         );
 
-        let config = VerdictConfig::default(); // "ds_murphy"
+        let config = VerdictConfig::default(); // authoritative V2
         let verdict = aggregate_verdict(Uuid::new_v4(), &results, &config);
+        assert!(verdict.threat_level >= ThreatLevel::Medium, "{verdict:?}");
         assert!(verdict.fusion_details.is_some());
         assert_eq!(
             verdict
                 .fusion_details
                 .as_ref()
                 .and_then(|details| details.fusion_method.as_deref()),
-            Some("clustered_ds_v1")
+            Some("clustered_ds_v2")
+        );
+        assert_eq!(verdict.threat_type, Some(ThreatType::Phishing));
+    }
+
+    #[test]
+    fn observation_only_spoof_does_not_create_safe_phishing_classification() {
+        let results = HashMap::from([(
+            "identity_anomaly".to_string(),
+            make_result(
+                "identity_anomaly",
+                Pillar::Semantic,
+                0.30,
+                vec!["display_name_spoof", "first_contact"],
+            ),
+        )]);
+
+        let verdict = aggregate_verdict(Uuid::new_v4(), &results, &VerdictConfig::default());
+
+        assert_eq!(verdict.threat_level, ThreatLevel::Safe, "{verdict:?}");
+        assert_eq!(verdict.threat_type, None, "{verdict:?}");
+        assert_eq!(
+            verdict.classification,
+            Some(EmailClassification::Undetermined),
+            "{verdict:?}"
+        );
+        assert!(
+            verdict
+                .categories
+                .contains(&"generic_lure_observed".to_string()),
+            "canonical observation must remain analyst-visible: {verdict:?}"
+        );
+        assert!(
+            !verdict
+                .categories
+                .contains(&"display_name_spoof".to_string())
+        );
+        assert!(
+            results["identity_anomaly"]
+                .categories
+                .contains(&"display_name_spoof".to_string())
+        );
+        assert!(
+            results["identity_anomaly"]
+                .categories
+                .contains(&"first_contact".to_string())
         );
     }
 
@@ -1123,6 +1936,7 @@ mod tests {
             links: vec![],
             raw_size: body.len(),
             is_complete: true,
+            raw_mime: None,
             is_encrypted: false,
             truncated: false,
             dropped_attachments: 0,
@@ -1142,10 +1956,60 @@ mod tests {
             1,
         );
         result.details = serde_json::json!({
+            "verified": alignment_score >= 0.55,
             "alignment_score": alignment_score,
             "trust_score": alignment_score
         });
         result
+    }
+
+    /// A scored intent-model hit enters fusion: alone, next to clean modules,
+    /// it lifts the verdict to Low and no further.
+    #[test]
+    fn scored_intent_model_hit_alone_reaches_low_and_no_further() {
+        init_test_scenario_patterns();
+        let session = make_session(
+            "季度会议安排",
+            "请各位同事于周五前确认参会时间，会议室预订详情见内网。",
+            "colleague@corp-example.com",
+        );
+        let mut results = HashMap::from([(
+            "semantic_scan".to_string(),
+            make_result_with_confidence(
+                "semantic_scan",
+                Pillar::Semantic,
+                0.20,
+                0.55,
+                vec![crate::semantic::INTENT_MODEL_CATEGORY],
+            ),
+        )]);
+        for (module, pillar) in [
+            ("content_scan", Pillar::Content),
+            ("link_scan", Pillar::Link),
+            ("header_scan", Pillar::Package),
+            ("attach_scan", Pillar::Attachment),
+        ] {
+            results.insert(
+                module.to_string(),
+                ModuleResult::safe_analyzed(module, module, pillar, "clean", 1),
+            );
+        }
+        let verdict = aggregate_verdict_with_session(
+            Some(&session),
+            Uuid::new_v4(),
+            &results,
+            &VerdictConfig::default(),
+        );
+        assert_eq!(
+            verdict.threat_level,
+            ThreatLevel::Low,
+            "risk {:?}: {}",
+            verdict
+                .fusion_details
+                .as_ref()
+                .map(|details| details.risk_single),
+            verdict.summary
+        );
     }
 
     #[test]
@@ -1154,7 +2018,7 @@ mod tests {
         let session = make_session(
             "[外部邮件] Monthly report",
             "This email may be malicious. Please use caution.",
-            "alerts@qq.com",
+            "alerts@sender.invalid",
         );
         let mut results = HashMap::new();
         results.insert(
@@ -1202,9 +2066,9 @@ mod tests {
     fn test_clustered_gateway_prior_only_noise_drops_to_safe() {
         init_test_scenario_patterns();
         let session = make_session(
-            "[注意风险邮件]长盈聚金白金专属系列年定开场内电子数据20260409",
-            "该邮件可能存在恶意内容，请谨慎甄别邮件，不要在外网电脑单击任何链接。\n检测结果：垃圾邮件。\n\n本邮件及其附件含有中信建投证券股份有限公司的保密信息。",
-            "trustdata@csc.com.cn",
+            "[注意风险邮件]合成月度业务报告",
+            "该邮件可能存在恶意内容，请谨慎甄别邮件，不要在外网电脑单击任何链接。\n检测结果：垃圾邮件。\n\n本测试邮件及其附件含有示例机构的保密信息。",
+            "trust@identity.vendor.example",
         );
         let mut results = HashMap::new();
         results.insert(
@@ -1241,12 +2105,12 @@ mod tests {
     }
 
     #[test]
-    fn test_clustered_dsn_like_system_mail_capped_low() {
+    fn dsn_context_cannot_bypass_explicit_random_domain_review_minimum() {
         init_test_scenario_patterns();
         let mut session = make_session(
             "Delivery Status Notification (Failure)",
             "Returned mail: see transcript for details.",
-            "MAILER-DAEMON@ddei2.localdomain",
+            "MAILER-DAEMON@ddei2.example",
         );
         session
             .content
@@ -1289,8 +2153,8 @@ mod tests {
             &VerdictConfig::default(),
         );
         assert!(
-            verdict.threat_level <= ThreatLevel::Low,
-            "DSN/system mail should not escalate beyond Low: {:?}",
+            verdict.threat_level >= ThreatLevel::Medium,
+            "Explicit random-domain review policy must survive DSN context: {:?}",
             verdict.threat_level
         );
         assert!(
@@ -1299,8 +2163,8 @@ mod tests {
             verdict.summary
         );
         assert!(
-            verdict.fusion_details.as_ref().unwrap().risk_single <= 0.30,
-            "DSN/system mail should remain capped below Medium"
+            verdict.fusion_details.as_ref().unwrap().risk_single >= 0.40,
+            "Explicit identity review minimum supersedes the DSN contextual cap"
         );
     }
 
@@ -1314,7 +2178,7 @@ mod tests {
         let session = make_session(
             "[警告：无法扫描邮件附件 - 请确认邮件来源以及真实性 / 或联系科技部网络安全管理员处置]5c2c3f14d027a237283ad8d35936ca5b",
             "发自我的iPhone\n\n警告：无法扫描邮件附件 - 请确认邮件来源以及真实性，或联系科技部网络安全管理员处置",
-            "1738338551@qq.com",
+            "fixture-notice@sender.invalid",
         );
         let mut results = HashMap::new();
         results.insert(
@@ -1453,11 +2317,12 @@ mod tests {
     }
 
     #[test]
-    fn test_clustered_auto_reply_nlp_only_drops_to_safe() {        init_test_scenario_patterns();
+    fn test_clustered_auto_reply_nlp_only_drops_to_safe() {
+        init_test_scenario_patterns();
         let mut session = make_session(
-            "CFP 自动回复: 西安经开区支行关于2026年一季度110报警测试专项检查的通报",
+            "自动回复：季度运营检查通知",
             "谢谢来信，我已收到。",
-            "engram@yeah.net",
+            "fixture-auto-reply@qq.com",
         );
         session
             .content
@@ -1501,9 +2366,9 @@ mod tests {
     fn test_clustered_semantic_nlp_only_signal_capped_to_safe() {
         init_test_scenario_patterns();
         let session = make_session(
-            "关于陕西交控投资集团有限公司开立银行账户不可归集情况说明",
+            "关于示例集团开立银行账户不可归集情况说明",
             "请查收相关说明材料。",
-            "hao0821@vip.qq.com",
+            "fixture-semantic@sender.invalid",
         );
         let mut results = HashMap::new();
         results.insert(
@@ -1544,7 +2409,7 @@ mod tests {
         let session = make_session(
             "\"文件传输助手\"和\"坐看云舒\"的聊天记录",
             "李华 15:20\n资料发你了\n王强 15:21\n收到，谢谢\n李华 15:22\n明天再看",
-            "zuokanyunshu@qq.com",
+            "fixture-transcript@sender.invalid",
         );
         let mut results = HashMap::new();
         results.insert(
@@ -1580,7 +2445,7 @@ mod tests {
     }
 
     #[test]
-    fn test_clustered_dsn_identity_only_drops_to_safe() {
+    fn dsn_random_domain_respects_operator_medium_review_policy() {
         init_test_scenario_patterns();
         let session = make_session(
             "Undelivered Mail Returned to Sender",
@@ -1606,8 +2471,8 @@ mod tests {
         );
         assert_eq!(
             verdict.threat_level,
-            ThreatLevel::Safe,
-            "DSN identity-only signal should be suppressed to Safe: {:?}",
+            ThreatLevel::Medium,
+            "Random-domain policy requires Medium even with DSN context: {:?}",
             verdict.threat_level
         );
         assert!(
@@ -1616,15 +2481,63 @@ mod tests {
             verdict.summary
         );
         assert!(
-            verdict.fusion_details.as_ref().unwrap().risk_single <= 0.12,
-            "DSN identity-only signal should be capped to Safe"
+            verdict.fusion_details.as_ref().unwrap().risk_single >= 0.40,
+            "Random-domain policy must preserve the 0.40 minimum"
         );
+    }
+
+    // These synthetic producer results represent one observed request/URL
+    // and a separate SMTP-client IOC. Derivative body/link categories share
+    // the same cause; they do not acquire independent votes in the fixture.
+    fn qualify_credential_relation_fixture(
+        session: &mut EmailSession,
+        results: &mut HashMap<String, ModuleResult>,
+    ) {
+        let target = "https://capture.attacker.example/login";
+        let body = session.content.body_text.get_or_insert_with(String::new);
+        body.push(' ');
+        body.push_str(target);
+        let start = body.rfind('\n').map_or(0, |index| index + 1);
+        let claim = serde_json::json!({
+            "source_span_id": format!("plain_text:{start}:{}", body.len()),
+            "source_part": "plain_text", "span": {"start_byte": start, "end_byte": body.len()},
+            "actor_role": "sender", "target_role": "recipient", "speech_act": "request",
+            "polarity": "action", "quote_or_forward_status": "original",
+            "actions": ["click"], "objects": ["link"], "link_ids": ["link:credential-fixture"],
+            "counter_context_ids": [], "confidence": 0.85, "causal_key": "host:capture.attacker.example"
+        });
+        if let Some(result) = results.get_mut("link_content") {
+            result.details["qualified_link_compounds"] = serde_json::json!(result.categories.iter()
+                .filter(|category| category.as_str() == "targeted_credential_phishing")
+                .map(|category| serde_json::json!({
+                    "category": category, "claim": claim,
+                    "original_url": target, "effective_url": target, "link_extraction_source": "plain_text",
+                    "causal_key": "host:capture.attacker.example", "link_transport_status": "not_attempted",
+                    "link_content_status": "not_observed", "link_ownership_status": "unknown",
+                    "coverage_reason": "fixture retains an observed URL without a fetched landing page"
+                })).collect::<Vec<_>>());
+        }
+        if let Some(result) = results.get_mut("content_scan") {
+            result.details["causal_findings"] = serde_json::json!([{
+                "causal_key": "host:capture.attacker.example", "categories": result.categories
+            }]);
+        }
+        if let Some(result) = results.get_mut("header_scan")
+            && result
+                .categories
+                .iter()
+                .any(|category| category == "ioc_ip_hit")
+        {
+            result.details["causal_findings"] = serde_json::json!([{
+                "causal_key": format!("sender_ip:{}", session.client_ip), "categories": ["ioc_ip_hit"]
+            }]);
+        }
     }
 
     #[test]
     fn test_clustered_targeted_credential_combo_reaches_high() {
         init_test_scenario_patterns();
-        let session = make_session(
+        let mut session = make_session(
             "Apple ID security alert",
             "Please verify your account immediately.",
             "notifications@id.apple.com",
@@ -1662,6 +2575,7 @@ mod tests {
             ),
         );
 
+        qualify_credential_relation_fixture(&mut session, &mut results);
         let verdict = aggregate_verdict_with_session(
             Some(&session),
             Uuid::new_v4(),
@@ -1681,7 +2595,7 @@ mod tests {
         let session = make_session(
             "[注意风险邮件]新设备登录提醒",
             "新设备登录提醒，请查看登录详情。",
-            "center.lin@cqfengqing1.com",
+            "security-center@sender.invalid",
         );
         let mut results = HashMap::new();
         results.insert(
@@ -1766,12 +2680,12 @@ mod tests {
     }
 
     #[test]
-    fn test_acams_style_marketing_residuals_stay_low_without_breaker() {
+    fn test_marketing_residuals_stay_low_without_breaker() {
         init_test_scenario_patterns();
         let session = make_session(
-            "这个8月，聚焦制裁",
-            "本月聚焦反洗钱合规与监管要求，欢迎报名课程并管理通讯偏好。",
-            "info@contact.acams.org",
+            "八月合规资讯",
+            "本月聚焦合规与监管要求，欢迎报名示例课程并管理通讯偏好。",
+            "newsletter@campaign.vendor.example",
         );
         let mut results = HashMap::new();
         results.insert("domain_verify".into(), make_domain_verify_result(0.75));
@@ -1811,10 +2725,10 @@ mod tests {
     #[test]
     fn test_clustered_aligned_credential_phish_with_ioc_reaches_high() {
         init_test_scenario_patterns();
-        let session = make_session(
+        let mut session = make_session(
             "[注意风险邮件]请尽快更新密码以确保账户安全",
             "请点击链接更新密码以确保账户安全。",
-            "jiajia@change-meme.com",
+            "sender@mailer.vendor.example",
         );
         let mut results = HashMap::new();
         results.insert("domain_verify".into(), make_domain_verify_result(0.75));
@@ -1854,6 +2768,7 @@ mod tests {
             ),
         );
 
+        qualify_credential_relation_fixture(&mut session, &mut results);
         let verdict = aggregate_verdict_with_session(
             Some(&session),
             Uuid::new_v4(),
@@ -1894,7 +2809,7 @@ mod tests {
         assert!(
             social_cluster.key_factors.iter().any(|factor| factor
                 .to_ascii_lowercase()
-                .contains("account security phishing")),
+                .contains("account_security_phishing")),
             "Social cluster factors should reflect credential-phishing evidence, not gateway-banner noise: {:?}",
             social_cluster.key_factors
         );
@@ -1902,8 +2817,8 @@ mod tests {
             social_cluster
                 .key_factors
                 .iter()
-                .any(|factor| factor.contains("Business Email Compromise")),
-            "Acronym-style factors should be humanized for analyst readability: {:?}",
+                .any(|factor| factor == "content_scan:bec"),
+            "V2 diagnostic factors must preserve the exact registered category: {:?}",
             social_cluster.key_factors
         );
     }
@@ -1911,10 +2826,10 @@ mod tests {
     #[test]
     fn test_clustered_credential_link_and_malicious_ioc_reaches_medium_without_account_theme() {
         init_test_scenario_patterns();
-        let session = make_session(
+        let mut session = make_session(
             "[注意风险邮件]账号即将到期，立即采取行动",
             "请点击链接完成处理。",
-            "jiajia@change-meme.com",
+            "sender@mailer.vendor.example",
         );
         let mut results = HashMap::new();
         results.insert("domain_verify".into(), make_domain_verify_result(0.72));
@@ -1949,6 +2864,7 @@ mod tests {
             ),
         );
 
+        qualify_credential_relation_fixture(&mut session, &mut results);
         let verdict = aggregate_verdict_with_session(
             Some(&session),
             Uuid::new_v4(),
@@ -1970,10 +2886,10 @@ mod tests {
     #[test]
     fn test_clustered_gateway_polluted_structural_phish_stays_medium() {
         init_test_scenario_patterns();
-        let session = make_session(
+        let mut session = make_session(
             "[注意风险邮件]密码快到期，请尽快确认您的信息",
             "该邮件可能存在恶意内容，请谨慎甄别邮件，不要在外网电脑单击任何链接。\n请点击链接处理。",
-            "jiajia@fsroushi.com",
+            "sender@newsletter.vendor.example",
         );
         let mut results = HashMap::new();
         results.insert("domain_verify".into(), make_domain_verify_result(0.75));
@@ -2018,6 +2934,7 @@ mod tests {
             ),
         );
 
+        qualify_credential_relation_fixture(&mut session, &mut results);
         let verdict = aggregate_verdict_with_session(
             Some(&session),
             Uuid::new_v4(),
@@ -2047,7 +2964,7 @@ mod tests {
         let session = make_session(
             "Quarterly settlement notice",
             "Attached are account updates and payment references.",
-            "service@ccabchina.com",
+            "service@internal.example",
         );
         let mut results = HashMap::new();
         results.insert("domain_verify".into(), make_domain_verify_result(0.82));
@@ -2087,7 +3004,7 @@ mod tests {
         let session = make_session(
             "Marketing campaign",
             "View the latest offer online.",
-            "marketing@mkt.aishu.cn",
+            "marketing@campaign.vendor.example",
         );
         let mut results = HashMap::new();
         results.insert(
@@ -2231,171 +3148,6 @@ mod tests {
     // Circuit breaker tests
 
     #[test]
-    fn test_ds_murphy_circuit_breaker_lone_dissenter() {
-        // Scenario: 1 Module Critical (score=0.95, b=0.76) + 4 Safe Engine
-        // Murphy -> risk 0
-        // Break/JudgeRoadhandler: floor = 0.76 * 1.0 = 0.76 -> High
-        let mut results = HashMap::new();
-
-        // link_reputation: score=0.95, conf=0.80 -> b=0.76 (Engine D)
-        results.insert(
-            "link_reputation".into(),
-            make_result("link_reputation", Pillar::Link, 0.95, vec!["malicious_url"]),
-        );
-        // 4 SameEngineof Safe Module
-        results.insert(
-            "content_scan".into(),
-            make_result("content_scan", Pillar::Content, 0.0, vec![]),
-        );
-        results.insert(
-            "header_scan".into(),
-            make_result("header_scan", Pillar::Package, 0.0, vec![]),
-        );
-        results.insert(
-            "domain_verify".into(),
-            make_result("domain_verify", Pillar::Content, 0.0, vec![]),
-        );
-        results.insert(
-            "anomaly_detect".into(),
-            make_result("anomaly_detect", Pillar::Semantic, 0.0, vec![]),
-        );
-
-        let config = VerdictConfig::default(); // threshold=0.20, factor=1.0
-        let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
-
-        let fd = verdict.fusion_details.as_ref().unwrap();
-        // Break/JudgeRoadhandler When (b=0.76>= threshold=0.20)
-        assert!(
-            fd.circuit_breaker.is_some(),
-            "Circuit breaker should fire when lone dissenter has b=0.76"
-        );
-        let cb = fd.circuit_breaker.as_ref().unwrap();
-        assert_eq!(cb.trigger_module_id, "link_reputation");
-        assert!((cb.trigger_belief - 0.76).abs() < 0.01);
-        // floor = 0.76 * 1.0 * 0.30 (: 1 Engine Signal ->)
-        // After consensus gating floor 0.228, max(0.228, 0.15) = 0.228
-        assert!(
-            (cb.floor_value - 0.228).abs() < 0.05,
-            "Floor should be ~0.228 (b * factor * consensus=0.30), got {:.3}",
-            cb.floor_value
-        );
-        assert!(
-            cb.original_risk < cb.floor_value,
-            "Original risk ({:.3}) should be below floor ({:.3})",
-            cb.original_risk,
-            cb.floor_value
-        );
-        // After consensus gating: Signal Low District (0.15-0.40)
-        // of Target: prevent Module Critical
-        assert!(
-            fd.risk_single >= 0.15,
-            "Risk should be at least Low (0.15): got {:.3}",
-            fd.risk_single
-        );
-        assert!(
-            verdict.threat_level >= ThreatLevel::Low,
-            "Lone dissenter with consensus gating should be at least Low: got {:?}",
-            verdict.threat_level
-        );
-    }
-
-    #[test]
-    fn test_ds_murphy_circuit_breaker_not_triggered_when_fusion_agrees() {
-        // Scenario: Engineall -> Result already High -> Break/JudgeRoadhandler
-        let mut results = HashMap::new();
-        results.insert(
-            "content_scan".into(),
-            make_result("content_scan", Pillar::Content, 0.80, vec!["phishing"]),
-        );
-        results.insert(
-            "link_scan".into(),
-            make_result("link_scan", Pillar::Link, 0.70, vec!["suspicious_url"]),
-        );
-        results.insert(
-            "header_scan".into(),
-            make_result("header_scan", Pillar::Package, 0.60, vec!["spoofing"]),
-        );
-
-        let config = VerdictConfig::default();
-        let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
-
-        let fd = verdict.fusion_details.as_ref().unwrap();
-        // Result already High,Break/JudgeRoadhandler
-        assert!(
-            fd.circuit_breaker.is_none(),
-            "Circuit breaker should NOT fire when fusion already agrees: risk={:.3}",
-            fd.risk_single
-        );
-    }
-
-    #[test]
-    fn test_ds_murphy_circuit_breaker_disabled_when_threshold_zero() {
-        // lone_dissenter SameScenario,But threshold=0.0 -> Break/JudgeRoadhandler
-        let mut results = HashMap::new();
-        results.insert(
-            "link_reputation".into(),
-            make_result("link_reputation", Pillar::Link, 0.95, vec!["malicious_url"]),
-        );
-        results.insert(
-            "content_scan".into(),
-            make_result("content_scan", Pillar::Content, 0.0, vec![]),
-        );
-        results.insert(
-            "header_scan".into(),
-            make_result("header_scan", Pillar::Package, 0.0, vec![]),
-        );
-        results.insert(
-            "domain_verify".into(),
-            make_result("domain_verify", Pillar::Content, 0.0, vec![]),
-        );
-
-        let config = VerdictConfig {
-            alert_belief_threshold: 0.0, // Break/JudgeRoadhandler
-            ..VerdictConfig::default()
-        };
-        let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
-
-        let fd = verdict.fusion_details.as_ref().unwrap();
-        assert!(
-            fd.circuit_breaker.is_none(),
-            "Circuit breaker should be disabled when threshold=0.0"
-        );
-    }
-
-    #[test]
-    fn test_ds_murphy_circuit_breaker_configurable() {
-        // Threshold: threshold=0.80, factor=0.30
-        // link_reputation b=0.76 <0.80 -> Do not trigger
-        let mut results = HashMap::new();
-        results.insert(
-            "link_reputation".into(),
-            make_result("link_reputation", Pillar::Link, 0.95, vec!["malicious_url"]),
-        );
-        results.insert(
-            "content_scan".into(),
-            make_result("content_scan", Pillar::Content, 0.0, vec![]),
-        );
-        results.insert(
-            "header_scan".into(),
-            make_result("header_scan", Pillar::Package, 0.0, vec![]),
-        );
-
-        let config = VerdictConfig {
-            alert_belief_threshold: 0.80, // High Default
-            alert_floor_factor: 0.30,
-            ..VerdictConfig::default()
-        };
-        let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
-
-        let fd = verdict.fusion_details.as_ref().unwrap();
-        // b=0.76 <threshold=0.80 -> Do not trigger
-        assert!(
-            fd.circuit_breaker.is_none(),
-            "Circuit breaker should NOT fire: b=0.76 < threshold=0.80"
-        );
-    }
-
-    #[test]
     fn test_tbm_v5_cross_layer_fusion() {
         // Both tech and blind-spot modules present
         let mut results = HashMap::new();
@@ -2425,404 +3177,5 @@ mod tests {
         // BetP should be in [0, 1]
         let betp = fd.betp.unwrap();
         assert!((0.0..=1.0).contains(&betp), "BetP out of range: {}", betp);
-    }
-
-    // Multi-signal convergence breaker tests
-
-    /// 3 ModuleMark Low (belief>= 0.20) + Safe Module
-    /// -> D-S Safe -> ConvergeBreak/JudgeRoadhandler
-    /// : content_scan(0.32) + link_scan(0.28) + link_reputation(0.28) + Safe
-    /// belief: 0.32*0.80=0.256, 0.28*0.80=0.224, 0.28*0.80=0.224,>= 0.20
-    #[test]
-    fn test_convergence_breaker_3_low_modules() {
-        let mut results = HashMap::new();
-        // 3 Low Module (SameEngine),belief All>= 0.20
-        results.insert(
-            "content_scan".into(),
-            make_result("content_scan", Pillar::Content, 0.32, vec!["phishing"]),
-        );
-        results.insert(
-            "link_scan".into(),
-            make_result("link_scan", Pillar::Link, 0.28, vec!["redirect_url"]),
-        );
-        results.insert(
-            "link_reputation".into(),
-            make_result(
-                "link_reputation",
-                Pillar::Link,
-                0.28,
-                vec!["suspicious_tld"],
-            ),
-        );
-        // Safe Module Engine
-        for safe_mod in &[
-            ("html_scan", Pillar::Content),
-            ("attach_scan", Pillar::Attachment),
-            ("attach_content", Pillar::Attachment),
-            ("attach_hash", Pillar::Attachment),
-            ("link_content", Pillar::Link),
-            ("anomaly_detect", Pillar::Package),
-            ("domain_verify", Pillar::Package),
-            ("header_scan", Pillar::Package),
-            ("mime_scan", Pillar::Package),
-            ("semantic_scan", Pillar::Semantic),
-        ] {
-            results.insert(
-                safe_mod.0.into(),
-                make_result(safe_mod.0, safe_mod.1, 0.0, vec![]),
-            );
-        }
-
-        let config = VerdictConfig::default();
-        let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
-        let fd = verdict.fusion_details.as_ref().unwrap();
-
-        // ConvergeBreak/JudgeRoadhandler
-        assert!(
-            fd.convergence_breaker.is_some(),
-            "Convergence breaker should activate with 3 modules having belief >= 0.20"
-        );
-        let cb = fd.convergence_breaker.as_ref().unwrap();
-        assert_eq!(cb.modules_flagged, 3);
-        // 3 ModuleConverge + boost: 0.40 * (1 + 0.15 * (3-2)) = 0.46
-        // : 3 Module Butpossibly 1-2 Engine -> CheckEngine
-        // TestMedium 3 Module (content_scan, link_scan, link_reputation) 2 Engine
-        // (content_analysis, url_analysis) -> supporting=2 -> consensus=0.75
-        // floor = 0.46 * 0.75 = 0.345, max(0.345, 0.15) = 0.345
-        assert!(
-            cb.floor_value >= 0.15,
-            "Floor after consensus gating should be >= 0.15 (Safe threshold), got {:.4}",
-            cb.floor_value,
-        );
-        assert!(
-            cb.original_risk < cb.floor_value,
-            "Original risk {:.4} should be < floor {:.4} (D-S fusion suppressed it)",
-            cb.original_risk,
-            cb.floor_value
-        );
-
-        // After consensus gating: ConvergeSignal But waitlevel
-        assert!(
-            fd.risk_single >= 0.15,
-            "Risk should be at least Low (0.15), got {:.4}",
-            fd.risk_single
-        );
-        assert!(
-            verdict.threat_level >= ThreatLevel::Low,
-            "Convergence with consensus gating should be at least Low, got {:?}",
-            verdict.threat_level
-        );
-    }
-
-    /// 3 ModuleMark But belief AllLow -> ConvergeBreak/JudgeRoadhandler ()
-    /// : LegitimateemailMedium content_scan detectMobile phoneNumber (score=0.16, belief=0.128)
-    /// + semantic_scan verdict (score=0.20, belief=0.160)
-    /// + transaction_correlation Signal (score=0.18, belief=0.144)
-    /// All threat_level> Safe,But belief All <0.20, ConvergeBreak/JudgeRoadhandler
-    #[test]
-    fn test_convergence_breaker_skips_low_belief_modules() {
-        let mut results = HashMap::new();
-        // 3 Low belief Module (Legitimateemailof)
-        // belief All <0.10 (convergence_belief_threshold), Converge
-        results.insert(
-            "content_scan".into(),
-            make_result("content_scan", Pillar::Content, 0.06, vec!["phone_in_body"]),
-        );
-        results.insert(
-            "semantic_scan".into(),
-            make_result(
-                "semantic_scan",
-                Pillar::Semantic,
-                0.08,
-                vec!["nlp_suspicious"],
-            ),
-        );
-        results.insert(
-            "transaction_correlation".into(),
-            make_result(
-                "transaction_correlation",
-                Pillar::Semantic,
-                0.07,
-                vec!["iban_detected"],
-            ),
-        );
-        // Safe Module
-        for safe_mod in &[
-            ("html_scan", Pillar::Content),
-            ("attach_scan", Pillar::Attachment),
-            ("link_scan", Pillar::Link),
-            ("link_reputation", Pillar::Link),
-            ("link_content", Pillar::Link),
-            ("anomaly_detect", Pillar::Package),
-            ("domain_verify", Pillar::Package),
-            ("header_scan", Pillar::Package),
-            ("mime_scan", Pillar::Package),
-        ] {
-            results.insert(
-                safe_mod.0.into(),
-                make_result(safe_mod.0, safe_mod.1, 0.0, vec![]),
-            );
-        }
-
-        let config = VerdictConfig::default();
-        let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
-        let fd = verdict.fusion_details.as_ref().unwrap();
-
-        // ConvergeBreak/JudgeRoadhandler: 3 Module threat_level> Safe,
-        // But belief All <0.10 (convergence_belief_threshold)
-        assert!(
-            fd.convergence_breaker.is_none(),
-            "Convergence breaker should NOT activate when module beliefs are all below threshold. \
-             This scenario represents legitimate emails with weak false signals (phone numbers, \
-             borderline NLP classification). Risk: {:.4}",
-            fd.risk_single
-        );
-    }
-
-    /// 1 ModuleMark -> full convergence_min_modules=2 -> Do not trigger
-    #[test]
-    fn test_convergence_breaker_not_triggered_below_threshold() {
-        let mut results = HashMap::new();
-        // only 1 Low Module
-        results.insert(
-            "content_scan".into(),
-            make_result("content_scan", Pillar::Content, 0.32, vec!["phishing"]),
-        );
-        // Safe Module
-        for safe_mod in &[
-            ("html_scan", Pillar::Content),
-            ("link_scan", Pillar::Link),
-            ("attach_scan", Pillar::Attachment),
-            ("link_content", Pillar::Link),
-            ("link_reputation", Pillar::Link),
-            ("anomaly_detect", Pillar::Package),
-            ("domain_verify", Pillar::Package),
-            ("semantic_scan", Pillar::Semantic),
-        ] {
-            results.insert(
-                safe_mod.0.into(),
-                make_result(safe_mod.0, safe_mod.1, 0.0, vec![]),
-            );
-        }
-
-        let config = VerdictConfig::default();
-        let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
-        let fd = verdict.fusion_details.as_ref().unwrap();
-
-        // ConvergeBreak/JudgeRoadhandler (only 1 Module, Need/Require 2)
-        assert!(
-            fd.convergence_breaker.is_none(),
-            "Convergence breaker should NOT activate with only 1 flagged module"
-        );
-    }
-
-    /// convergence_min_modules=0
-    #[test]
-    fn test_convergence_breaker_disabled_when_zero() {
-        let mut results = HashMap::new();
-        results.insert(
-            "content_scan".into(),
-            make_result("content_scan", Pillar::Content, 0.32, vec!["phishing"]),
-        );
-        results.insert(
-            "link_scan".into(),
-            make_result("link_scan", Pillar::Link, 0.28, vec!["redirect_url"]),
-        );
-        results.insert(
-            "link_reputation".into(),
-            make_result(
-                "link_reputation",
-                Pillar::Link,
-                0.28,
-                vec!["suspicious_tld"],
-            ),
-        );
-        for safe_mod in &[
-            ("html_scan", Pillar::Content),
-            ("attach_scan", Pillar::Attachment),
-            ("link_content", Pillar::Link),
-            ("anomaly_detect", Pillar::Package),
-            ("domain_verify", Pillar::Package),
-            ("semantic_scan", Pillar::Semantic),
-        ] {
-            results.insert(
-                safe_mod.0.into(),
-                make_result(safe_mod.0, safe_mod.1, 0.0, vec![]),
-            );
-        }
-
-        let config = VerdictConfig {
-            convergence_min_modules: 0,
-            ..VerdictConfig::default()
-        };
-        let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
-        let fd = verdict.fusion_details.as_ref().unwrap();
-
-        assert!(
-            fd.convergence_breaker.is_none(),
-            "Convergence breaker should be disabled when convergence_min_modules=0"
-        );
-    }
-
-    /// ConvergeBreak/JudgeRoadhandlerRecording of flagged_modules List (belief>= ofModule)
-    #[test]
-    fn test_convergence_breaker_records_flagged_modules() {
-        let mut results = HashMap::new();
-        // belief: 0.32*0.80=0.256, 0.28*0.80=0.224, 0.28*0.80=0.224
-        results.insert(
-            "content_scan".into(),
-            make_result("content_scan", Pillar::Content, 0.32, vec!["phishing"]),
-        );
-        results.insert(
-            "link_scan".into(),
-            make_result("link_scan", Pillar::Link, 0.28, vec!["redirect_url"]),
-        );
-        results.insert(
-            "link_reputation".into(),
-            make_result(
-                "link_reputation",
-                Pillar::Link,
-                0.28,
-                vec!["suspicious_tld"],
-            ),
-        );
-        for safe_mod in &[
-            ("html_scan", Pillar::Content),
-            ("attach_scan", Pillar::Attachment),
-            ("link_content", Pillar::Link),
-            ("anomaly_detect", Pillar::Package),
-            ("domain_verify", Pillar::Package),
-            ("semantic_scan", Pillar::Semantic),
-        ] {
-            results.insert(
-                safe_mod.0.into(),
-                make_result(safe_mod.0, safe_mod.1, 0.0, vec![]),
-            );
-        }
-
-        let config = VerdictConfig::default();
-        let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
-        let fd = verdict.fusion_details.as_ref().unwrap();
-
-        let cb = fd.convergence_breaker.as_ref().unwrap();
-        let mut flagged = cb.flagged_modules.clone();
-        flagged.sort();
-        assert!(flagged.contains(&"content_scan".to_string()));
-        assert!(flagged.contains(&"link_scan".to_string()));
-        assert!(flagged.contains(&"link_reputation".to_string()));
-        assert_eq!(flagged.len(), 3);
-    }
-
-    // Break/JudgeRoadhandler: Low High belief Module
-
-    /// Scenario: Phishingemail
-    /// - link_content: score=0.70, conf=0.75 -> b=0.525 (High belief But conf <0.80)
-    /// - content_scan: score=0.55, conf=0.85 -> b=0.4675 (Low belief But conf>= 0.80)
-    /// - transaction_correlation: score=0.33, conf=0.75 -> b=0.2475
-    /// - semantic_scan (NLP): score=0.15, conf=0.60 -> b=0.09 (Exclude: nlp_ first)
-    /// - Module Safe
-
-    /// first: Break/JudgeRoadhandlerTrace link_content (b=0.525, conf=0.75),conf <0.80 -> Do not trigger.
-    /// : Break/JudgeRoadhandlerTrace content_scan (b=0.4675, conf=0.85), floor=0.4675*1.15=0.54.
-    #[test]
-    fn test_circuit_breaker_low_confidence_high_belief_does_not_shadow() {
-        let mut results = HashMap::new();
-
-        // link_content: High belief But confidence (0.75 <0.80)
-        let mut link_content = make_result(
-            "link_content",
-            Pillar::Link,
-            0.70,
-            vec!["at_sign_obfuscation"],
-        );
-        link_content.confidence = 0.75;
-        results.insert("link_content".into(), link_content);
-
-        // content_scan: Low belief But confidence (0.85>= 0.80)
-        let mut content_scan = make_result(
-            "content_scan",
-            Pillar::Content,
-            0.55,
-            vec!["account_security_phishing", "phishing_subject"],
-        );
-        content_scan.confidence = 0.85;
-        results.insert("content_scan".into(), content_scan);
-
-        // transaction_correlation: Low, confidence 0.75
-        let mut tx_corr = make_result(
-            "transaction_correlation",
-            Pillar::Semantic,
-            0.33,
-            vec!["urgency_financial_combo"],
-        );
-        tx_corr.confidence = 0.75;
-        results.insert("transaction_correlation".into(), tx_corr);
-
-        // semantic_scan (NLP): Exclude Break/JudgeRoadhandlerAndConverge (nlp_ first)
-        let mut nlp = make_result(
-            "semantic_scan",
-            Pillar::Semantic,
-            0.15,
-            vec!["nlp_phishing", "nlp_scam"],
-        );
-        nlp.confidence = 0.60;
-        results.insert("semantic_scan".into(), nlp);
-
-        // Safe Module
-        for safe_mod in &[
-            ("html_scan", Pillar::Content),
-            ("attach_scan", Pillar::Attachment),
-            ("attach_content", Pillar::Attachment),
-            ("attach_hash", Pillar::Attachment),
-            ("link_scan", Pillar::Link),
-            ("link_reputation", Pillar::Link),
-            ("anomaly_detect", Pillar::Package),
-            ("domain_verify", Pillar::Package),
-            ("header_scan", Pillar::Package),
-            ("mime_scan", Pillar::Package),
-            ("identity_anomaly", Pillar::Semantic),
-        ] {
-            results.insert(
-                safe_mod.0.into(),
-                make_result(safe_mod.0, safe_mod.1, 0.0, vec![]),
-            );
-        }
-
-        let config = VerdictConfig::default();
-        let verdict = aggregate_ds_murphy(Uuid::new_v4(), &results, &config);
-        let fd = verdict.fusion_details.as_ref().unwrap();
-
-        // Break/JudgeRoadhandler By content_scan (b=0.4675, conf=0.85), link_content
-        assert!(
-            fd.circuit_breaker.is_some(),
-            "Circuit breaker should fire via content_scan (b=0.47, conf=0.85). \
-             link_content (b=0.53, conf=0.75) must not shadow it. Risk: {:.4}",
-            fd.risk_single,
-        );
-        let cb = fd.circuit_breaker.as_ref().unwrap();
-        assert_eq!(
-            cb.trigger_module_id, "content_scan",
-            "Should be triggered by content_scan, not link_content"
-        );
-        assert!(
-            (cb.trigger_belief - 0.4675).abs() < 0.01,
-            "Trigger belief should be ~0.4675, got {:.4}",
-            cb.trigger_belief
-        );
-
-        // After consensus gating: Signal (1 Engine) -> consensus=0.30
-        // floor = 0.4675 * 1.0 * 0.30 0.14, max(0.14, 0.15) = 0.15
-        // Butif Converge large (convergence_flagged>= 3),floor High
-        // Risk At least Low
-        assert!(
-            fd.risk_single >= 0.15,
-            "Risk should be at least Low (0.15) after consensus-gated breaker: got {:.4}",
-            fd.risk_single,
-        );
-        assert!(
-            verdict.threat_level >= ThreatLevel::Low,
-            "Should be at least Low with consensus gating: got {:?}",
-            verdict.threat_level,
-        );
     }
 }

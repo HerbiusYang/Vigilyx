@@ -1,0 +1,10 @@
+From: =?utf-8?B?6aW/5LqG5LmI?= <order@eleme.example>
+To: me@personal.example
+Date: Mon, 07 Sep 2026 09:34:00 +0800
+Message-ID: <0024-b15@synth.example>
+Subject: 订单已送达：轻食沙拉
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>您的订单已送达，祝用餐愉快。</p><a href='https://h5.eleme-example.com/order/8842' style='color:#0097ff'>评价本单</a></body></html>

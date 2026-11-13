@@ -18,5 +18,9 @@
   "dependencies": {
     "qrcode": "1.5.4",
     "vitepress": "1.6.4"
+  },
+  "overrides": {
+    "vite": "6.4.3",
+    "esbuild": "0.25.10"
   }
 }

@@ -1,0 +1,10 @@
+From: =?utf-8?B?6K6i6ZiF5pyN5Yqh?= <billing@stream-svc.example>
+To: me@personal.example
+Date: Sun, 30 Aug 2026 15:10:00 +0800
+Message-ID: <0000-b7@synth.example>
+Subject: 您的订阅已续费成功 ¥258
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您的年度订阅已续费成功。如非本人操作，请立即点此取消并申请退款：
+https://sub-cancel-help.example.vip/refund

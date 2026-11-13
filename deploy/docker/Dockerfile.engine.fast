@@ -18,8 +18,11 @@ WORKDIR /app
 
 # Copy the prebuilt engine binary
 COPY .build-output/vigilyx-engine ./
+# ONNX Runtime for the optional semantic intent model (deploy/docker/fetch-onnxruntime.sh;
+# the directory may be empty, which leaves the model disabled).
+COPY .build-output/onnxruntime/ /app/lib/onnxruntime/
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data/tmp/http
 
 # SEC-C01: non-root user
 RUN groupadd -r vigilyx && useradd -r -g vigilyx -d /app vigilyx \
@@ -28,7 +31,8 @@ USER vigilyx
 
 # Default environment variables
 ENV RUST_LOG=info,vigilyx_engine=info \
-    LOG_FORMAT=json
+    LOG_FORMAT=json \
+    ORT_DYLIB_PATH=/app/lib/onnxruntime/libonnxruntime.so.1.20.1
 
 # Engine has no HTTP port — it communicates via Redis Streams and PostgreSQL.
 # Health is checked via the local heartbeat file (written every 5s by the engine process).

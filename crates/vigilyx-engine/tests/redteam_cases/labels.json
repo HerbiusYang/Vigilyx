@@ -1,0 +1,1754 @@
+{
+  "meta": {
+    "version": 1,
+    "generated": "2026-08-24",
+    "corpus": "vigilyx red-team EML corpus",
+    "engine_status_ref": "last complete redteam_harness run on remote builder, 2026-08-24 (round-7 state)",
+    "expected_semantics": {
+      "block": "恶意样本，引擎必须隔离（quarantine threshold=Medium）",
+      "deliver": "良性 ham，引擎必须放行",
+      "regression_contract": "覆盖缺口回归契约（不得给出内容安全结论）"
+    },
+    "families": {
+      "account_phishing": "账户/凭证类钓鱼（异常登录、冻结、验证话术）",
+      "bec": "商务邮件欺诈（付款变更、礼品卡、退税、权威冒充）",
+      "subsidy_fraud": "补贴/退税类欺诈",
+      "pii_harvest": "回复式个人信息收割（证件、人脸）",
+      "quishing": "二维码钓鱼",
+      "toad": "电话诱导（TOAD）",
+      "malware_attachment": "恶意/危险附件（exe、docm、iso、lnk、rtlo）",
+      "credential_harvest": "凭据收集表单（HTML 附件或正文表单）",
+      "redirect_attachment": "附件重定向（meta refresh、快捷方式）",
+      "identity_spoof": "身份伪造（显示名、同形字、伪造认证头、假线程）",
+      "social_trust": "低信号纯社工信任诱导",
+      "structure_evasion": "结构级绕过（稀释、超长窗口、嵌套、百段）",
+      "language_coverage": "语言/方言覆盖缺口",
+      "sanitizer_evasion": "横幅剥离器反转",
+      "link_obfuscation": "链接隐藏/混淆载体（实体、base、裸域、重定向）",
+      "encoding_evasion": "字符集/编码绕过",
+      "visual_lure": "像素级视觉载荷（图片文字、隐藏 CSS）",
+      "coverage_gap_contract": "采集覆盖缺口回归契约（非攻击样本）",
+      "incident_replay": "真实事件回放",
+      "ham_business": "良性商务/系统邮件",
+      "ham_personal": "良性个人邮件"
+    }
+  },
+  "cases": [
+    {
+      "file": "ctrl01_plain_cn_phishing.eml",
+      "case_id": "ctrl01",
+      "group": "control",
+      "round": 0,
+      "label": "malicious",
+      "family": "account_phishing",
+      "language": "zh",
+      "techniques": [
+        "plain_cn_lure",
+        "ip_url",
+        "hotline"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "基线中文账户钓鱼"
+    },
+    {
+      "file": "ctrl02_bec_payment_change.eml",
+      "case_id": "ctrl02",
+      "group": "control",
+      "round": 0,
+      "label": "malicious",
+      "family": "bec",
+      "language": "en",
+      "techniques": [
+        "payment_change",
+        "iban"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "基线英文付款变更 BEC"
+    },
+    {
+      "file": "ctrl03_qp_split_keyword.eml",
+      "case_id": "ctrl03",
+      "group": "control",
+      "round": 0,
+      "label": "malicious",
+      "family": "account_phishing",
+      "language": "zh",
+      "techniques": [
+        "quoted_printable_soft_break"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "QP 软换行拆关键词"
+    },
+    {
+      "file": "ctrl04_utf8_ja_control.eml",
+      "case_id": "ctrl04",
+      "group": "control",
+      "round": 1,
+      "label": "malicious",
+      "family": "account_phishing",
+      "language": "ja",
+      "techniques": [
+        "utf8_plain"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "ev16 的 UTF-8 对照组"
+    },
+    {
+      "file": "ctrl05_cp1251_ru_control.eml",
+      "case_id": "ctrl05",
+      "group": "control",
+      "round": 3,
+      "label": "malicious",
+      "family": "account_phishing",
+      "language": "ru",
+      "techniques": [
+        "declared_windows1251"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "ev19 的声明字符集对照组"
+    },
+    {
+      "file": "ctrl06_raster_qr_control.eml",
+      "case_id": "ctrl06",
+      "group": "control",
+      "round": 4,
+      "label": "malicious",
+      "family": "quishing",
+      "language": "zh",
+      "techniques": [
+        "raster_png_datauri_qr",
+        "ip_payload"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "ev20 的光栅二维码对照组"
+    },
+    {
+      "file": "ctrl07_plain_ip_href.eml",
+      "case_id": "ctrl07",
+      "group": "control",
+      "round": 5,
+      "label": "malicious",
+      "family": "link_obfuscation",
+      "language": "zh",
+      "techniques": [
+        "plain_ip_href",
+        "neutral_text"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "明文 IP 链接校准基线"
+    },
+    {
+      "file": "ev01_entity_hairsp_break.eml",
+      "case_id": "ev01",
+      "group": "evasion",
+      "round": 0,
+      "label": "malicious",
+      "family": "account_phishing",
+      "language": "zh",
+      "techniques": [
+        "html_entity_hairsp"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev02_css_hidden_char_break.eml",
+      "case_id": "ev02",
+      "group": "evasion",
+      "round": 0,
+      "label": "malicious",
+      "family": "visual_lure",
+      "language": "zh",
+      "techniques": [
+        "inline_css_hidden_char"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev03_traditional_chinese.eml",
+      "case_id": "ev03",
+      "group": "evasion",
+      "round": 0,
+      "label": "malicious",
+      "family": "account_phishing",
+      "language": "zh-hant",
+      "techniques": [
+        "common_traditional_forms"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "常用繁体折叠已覆盖"
+    },
+    {
+      "file": "ev04_trusted_platform_lure.eml",
+      "case_id": "ev04",
+      "group": "evasion",
+      "round": 0,
+      "label": "malicious",
+      "family": "account_phishing",
+      "language": "zh",
+      "techniques": [
+        "trusted_hosted_platform_lure"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev05_userinfo_url.eml",
+      "case_id": "ev05",
+      "group": "evasion",
+      "round": 0,
+      "label": "malicious",
+      "family": "link_obfuscation",
+      "language": "zh",
+      "techniques": [
+        "userinfo_url"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev06_html_attachment_phish.eml",
+      "case_id": "ev06",
+      "group": "evasion",
+      "round": 0,
+      "label": "malicious",
+      "family": "credential_harvest",
+      "language": "zh",
+      "techniques": [
+        "html_attachment_form"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev07_dilution.eml",
+      "case_id": "ev07",
+      "group": "evasion",
+      "round": 0,
+      "label": "malicious",
+      "family": "structure_evasion",
+      "language": "zh",
+      "techniques": [
+        "benign_dilution"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev08_nested_rfc822.eml",
+      "case_id": "ev08",
+      "group": "evasion",
+      "round": 0,
+      "label": "malicious",
+      "family": "structure_evasion",
+      "language": "zh",
+      "techniques": [
+        "nested_message_rfc822"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev09_alt_clean_text.eml",
+      "case_id": "ev09",
+      "group": "evasion",
+      "round": 0,
+      "label": "malicious",
+      "family": "account_phishing",
+      "language": "zh",
+      "techniques": [
+        "multipart_alternative_differential"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev10_image_only_phish.eml",
+      "case_id": "ev10",
+      "group": "evasion",
+      "round": 0,
+      "label": "malicious",
+      "family": "visual_lure",
+      "language": "zh",
+      "techniques": [
+        "image_only_body"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev11_plain_contact_lure.eml",
+      "case_id": "ev11",
+      "group": "evasion",
+      "round": 0,
+      "label": "malicious",
+      "family": "bec",
+      "language": "zh",
+      "techniques": [
+        "wechat_contact_lure"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev12_rtlo_exe.eml",
+      "case_id": "ev12",
+      "group": "evasion",
+      "round": 0,
+      "label": "malicious",
+      "family": "malware_attachment",
+      "language": "zh",
+      "techniques": [
+        "rtlo_filename_exe"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev13_english_spaced.eml",
+      "case_id": "ev13",
+      "group": "evasion",
+      "round": 0,
+      "label": "malicious",
+      "family": "account_phishing",
+      "language": "en",
+      "techniques": [
+        "letter_spaced_latin"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev14_recipient_targeted_cn_account_lure.eml",
+      "case_id": "ev14",
+      "group": "evasion",
+      "round": 0,
+      "label": "malicious",
+      "family": "account_phishing",
+      "language": "zh",
+      "techniques": [
+        "recipient_tokenized_url"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev15_body_coverage_gap_2026_procedure_notice.eml",
+      "case_id": "ev15",
+      "group": "evasion",
+      "round": 0,
+      "label": "malicious",
+      "family": "coverage_gap_contract",
+      "language": "zh",
+      "techniques": [
+        "missing_body_entity"
+      ],
+      "expected": "regression_contract",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "真实事件回放：正文实体未保留，断言不得给出内容安全结论"
+    },
+    {
+      "file": "ev16_iso2022jp_body_lure.eml",
+      "case_id": "ev16",
+      "group": "evasion",
+      "round": 1,
+      "label": "malicious",
+      "family": "encoding_evasion",
+      "language": "ja",
+      "techniques": [
+        "iso2022jp_body",
+        "declared_charset_ignored_by_utf8_fastpath"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "UTF-8 快速路径先于 charset 标签查找"
+    },
+    {
+      "file": "ev17_class_hidden_pair_break.eml",
+      "case_id": "ev17",
+      "group": "evasion",
+      "round": 2,
+      "label": "malicious",
+      "family": "visual_lure",
+      "language": "zh",
+      "techniques": [
+        "class_css_hidden",
+        "two_letter_cjk_break"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "三缺口链"
+    },
+    {
+      "file": "ev18_window_gap_lure.eml",
+      "case_id": "ev18",
+      "group": "evasion",
+      "round": 2,
+      "label": "malicious",
+      "family": "structure_evasion",
+      "language": "zh",
+      "techniques": [
+        "2mib_window_gap"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "场景检测器全文扫描 + fail-closed 兜住"
+    },
+    {
+      "file": "ev19_no_charset_ru_lure.eml",
+      "case_id": "ev19",
+      "group": "evasion",
+      "round": 3,
+      "label": "malicious",
+      "family": "encoding_evasion",
+      "language": "ru",
+      "techniques": [
+        "undeclared_charset_cp1251",
+        "gb18030_fallback_mojibake"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev20_svg_vector_qr.eml",
+      "case_id": "ev20",
+      "group": "evasion",
+      "round": 4,
+      "label": "malicious",
+      "family": "quishing",
+      "language": "zh",
+      "techniques": [
+        "svg_vector_qr"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "SVG 矢量二维码，现已被 svg_vector_qr 类别覆盖"
+    },
+    {
+      "file": "ev21_image_text_lure.eml",
+      "case_id": "ev21",
+      "group": "evasion",
+      "round": 4,
+      "label": "malicious",
+      "family": "visual_lure",
+      "language": "zh",
+      "techniques": [
+        "pixel_text_png",
+        "benign_text_over_50"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "ocr_unavailable fail-closed 兜住"
+    },
+    {
+      "file": "ev22_tab_entity_scheme.eml",
+      "case_id": "ev22",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "link_obfuscation",
+      "language": "zh",
+      "techniques": [
+        "numeric_tab_entity_scheme"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev23_named_tab_scheme.eml",
+      "case_id": "ev23",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "link_obfuscation",
+      "language": "zh",
+      "techniques": [
+        "named_tab_entity_scheme"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "实体白名单曾缺 &Tab;"
+    },
+    {
+      "file": "ev24_forged_auth_results.eml",
+      "case_id": "ev24",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "identity_spoof",
+      "language": "zh",
+      "techniques": [
+        "forged_authentication_results",
+        "forged_received"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev25_base_href_relative.eml",
+      "case_id": "ev25",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "link_obfuscation",
+      "language": "zh",
+      "techniques": [
+        "base_href_relative"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev26_form_action_button.eml",
+      "case_id": "ev26",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "link_obfuscation",
+      "language": "zh",
+      "techniques": [
+        "form_action_button"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev27_svg_xlink_anchor.eml",
+      "case_id": "ev27",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "link_obfuscation",
+      "language": "zh",
+      "techniques": [
+        "svg_xlink_href",
+        "tab_entity"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev28_attach_meta_refresh.eml",
+      "case_id": "ev28",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "redirect_attachment",
+      "language": "zh",
+      "techniques": [
+        "attachment_meta_refresh_ip"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev29_attach_js_form.eml",
+      "case_id": "ev29",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "credential_harvest",
+      "language": "zh",
+      "techniques": [
+        "js_fragment_assembled_form"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev30_url_shortcut_attach.eml",
+      "case_id": "ev30",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "redirect_attachment",
+      "language": "zh",
+      "techniques": [
+        "internet_shortcut_url"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev31_display_authority.eml",
+      "case_id": "ev31",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "identity_spoof",
+      "language": "zh",
+      "techniques": [
+        "display_name_internal_authority"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev32_latin_diacritics.eml",
+      "case_id": "ev32",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "account_phishing",
+      "language": "en",
+      "techniques": [
+        "latin1_diacritics_keywords"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev33_bec_paraphrase.eml",
+      "case_id": "ev33",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "bec",
+      "language": "en",
+      "techniques": [
+        "bec_paraphrase"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev34_folded_url_text.eml",
+      "case_id": "ev34",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "link_obfuscation",
+      "language": "zh",
+      "techniques": [
+        "folded_url_plain_text"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev35_attach_trusted_refresh.eml",
+      "case_id": "ev35",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "redirect_attachment",
+      "language": "zh",
+      "techniques": [
+        "attachment_meta_refresh_trusted"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev36_attach_hidden_pair.eml",
+      "case_id": "ev36",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "credential_harvest",
+      "language": "zh",
+      "techniques": [
+        "attachment_class_hidden_pair"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "附件管线曾缺 body 的二次扫描"
+    },
+    {
+      "file": "ev37_rfc2231_pct_filename.eml",
+      "case_id": "ev37",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "malware_attachment",
+      "language": "zh",
+      "techniques": [
+        "rfc2231_percent_filename_exe"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev38_ceo_homoglyph_lure.eml",
+      "case_id": "ev38",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "identity_spoof",
+      "language": "zh",
+      "techniques": [
+        "ceo_localpart_homoglyph",
+        "trust_lure"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev39_image_contact_card.eml",
+      "case_id": "ev39",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "social_trust",
+      "language": "zh",
+      "techniques": [
+        "image_contact_card"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "fail-closed 兜住"
+    },
+    {
+      "file": "ev40_nested_alternative.eml",
+      "case_id": "ev40",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "structure_evasion",
+      "language": "zh",
+      "techniques": [
+        "two_level_alternative_differential"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev41_subject_only_lure.eml",
+      "case_id": "ev41",
+      "group": "evasion",
+      "round": 5,
+      "label": "malicious",
+      "family": "account_phishing",
+      "language": "zh",
+      "techniques": [
+        "subject_only_lure"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev42_rare_traditional_fold.eml",
+      "case_id": "ev42",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "language_coverage",
+      "language": "zh-hant",
+      "techniques": [
+        "rare_traditional_forms"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "帳戶/綁定/匯款/嚴重/緊急"
+    },
+    {
+      "file": "ev43_cantonese_lure.eml",
+      "case_id": "ev43",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "language_coverage",
+      "language": "zh-yue",
+      "techniques": [
+        "cantonese_phrasing"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "嘅/唔係/登入/停用"
+    },
+    {
+      "file": "ev44_crlf_folded_scheme.eml",
+      "case_id": "ev44",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "link_obfuscation",
+      "language": "zh",
+      "techniques": [
+        "crlf_folded_scheme"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev45_docm_attachment.eml",
+      "case_id": "ev45",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "malware_attachment",
+      "language": "zh",
+      "techniques": [
+        "docm_macro"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev46_iso_attachment.eml",
+      "case_id": "ev46",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "malware_attachment",
+      "language": "zh",
+      "techniques": [
+        "iso_disk_image"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev47_lnk_attachment.eml",
+      "case_id": "ev47",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "malware_attachment",
+      "language": "zh",
+      "techniques": [
+        "lnk_shortcut"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev48_latin_chunk_split.eml",
+      "case_id": "ev48",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "account_phishing",
+      "language": "en",
+      "techniques": [
+        "latin_chunk_split"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "compaction 门未被绕过"
+    },
+    {
+      "file": "ev49_vcard_url_lure.eml",
+      "case_id": "ev49",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "redirect_attachment",
+      "language": "zh",
+      "techniques": [
+        "vcard_url_field"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev50_ics_invite_lure.eml",
+      "case_id": "ev50",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "redirect_attachment",
+      "language": "zh",
+      "techniques": [
+        "ics_url_summary_lure"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev51_filename_lure.eml",
+      "case_id": "ev51",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "social_trust",
+      "language": "zh",
+      "techniques": [
+        "filename_only_lure"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev52_alt_title_keywords.eml",
+      "case_id": "ev52",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "visual_lure",
+      "language": "zh",
+      "techniques": [
+        "alt_title_attribute_keywords"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev53_fake_reply_thread.eml",
+      "case_id": "ev53",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "identity_spoof",
+      "language": "zh",
+      "techniques": [
+        "fake_in_reply_to",
+        "bare_domain"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev54_greek_omicron_tld.eml",
+      "case_id": "ev54",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "link_obfuscation",
+      "language": "zh",
+      "techniques": [
+        "greek_omicron_tld_bare_domain"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev55_mailto_cred_form.eml",
+      "case_id": "ev55",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "credential_harvest",
+      "language": "zh",
+      "techniques": [
+        "mailto_form_password"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev56_chain_alt_svgqr.eml",
+      "case_id": "ev56",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "quishing",
+      "language": "zh",
+      "techniques": [
+        "alt_keywords",
+        "svg_qr",
+        "chain"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev57_chain_filename_refresh.eml",
+      "case_id": "ev57",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "redirect_attachment",
+      "language": "zh",
+      "techniques": [
+        "filename_lure",
+        "meta_refresh",
+        "chain"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev58_chain_canto_greek_form.eml",
+      "case_id": "ev58",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "account_phishing",
+      "language": "zh-yue",
+      "techniques": [
+        "cantonese",
+        "greek_tld",
+        "form_button",
+        "chain"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev59_chain_ics_ceo.eml",
+      "case_id": "ev59",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "identity_spoof",
+      "language": "zh",
+      "techniques": [
+        "ics_lure",
+        "ceo_organizer",
+        "chain"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev60_chain_attach_stack.eml",
+      "case_id": "ev60",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "credential_harvest",
+      "language": "zh",
+      "techniques": [
+        "attachment_class_hidden",
+        "named_tab_entity",
+        "chain"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev61_chain_traditional_base.eml",
+      "case_id": "ev61",
+      "group": "evasion",
+      "round": 6,
+      "label": "malicious",
+      "family": "link_obfuscation",
+      "language": "zh-hant",
+      "techniques": [
+        "rare_traditional",
+        "base_href",
+        "chain"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev62_banner_prefix_lure.eml",
+      "case_id": "ev62",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "sanitizer_evasion",
+      "language": "zh",
+      "techniques": [
+        "gateway_banner_prefix_inversion"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "被 gateway_pre_classified 反杀"
+    },
+    {
+      "file": "ev63_autoreply_prefix_lure.eml",
+      "case_id": "ev63",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "sanitizer_evasion",
+      "language": "zh",
+      "techniques": [
+        "auto_reply_prefix_inversion"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev64_vietnamese_lure.eml",
+      "case_id": "ev64",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "language_coverage",
+      "language": "vi",
+      "techniques": [
+        "vietnamese_lure"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "content 零命中，靠 ip_action_target 兜底"
+    },
+    {
+      "file": "ev65_thai_lure.eml",
+      "case_id": "ev65",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "language_coverage",
+      "language": "th",
+      "techniques": [
+        "thai_lure"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "同上"
+    },
+    {
+      "file": "ev66_indonesian_lure.eml",
+      "case_id": "ev66",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "language_coverage",
+      "language": "id",
+      "techniques": [
+        "indonesian_lure"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "同上"
+    },
+    {
+      "file": "ev67_yao_phone.eml",
+      "case_id": "ev67",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "toad",
+      "language": "zh",
+      "techniques": [
+        "yao_digit_phone"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "幺→1 映射缺失，正文关键词先命中"
+    },
+    {
+      "file": "ev68_liang_phone.eml",
+      "case_id": "ev68",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "toad",
+      "language": "zh",
+      "techniques": [
+        "liang_digit_phone"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "两→2 映射缺失"
+    },
+    {
+      "file": "ev69_giftcard_bec.eml",
+      "case_id": "ev69",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "bec",
+      "language": "zh",
+      "techniques": [
+        "giftcard_purchase_paraphrase"
+      ],
+      "expected": "block",
+      "engine_status": "delivered",
+      "open": true,
+      "note": ""
+    },
+    {
+      "file": "ev70_tax_rebate_paraphrase.eml",
+      "case_id": "ev70",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "subsidy_fraud",
+      "language": "zh",
+      "techniques": [
+        "tax_rebate_paraphrase",
+        "bare_domain"
+      ],
+      "expected": "block",
+      "engine_status": "delivered",
+      "open": true,
+      "note": ""
+    },
+    {
+      "file": "ev71_pii_harvest_reply.eml",
+      "case_id": "ev71",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "pii_harvest",
+      "language": "zh",
+      "techniques": [
+        "reply_pii_harvest_id_face"
+      ],
+      "expected": "block",
+      "engine_status": "delivered",
+      "open": true,
+      "note": ""
+    },
+    {
+      "file": "ev72_trusted_open_redirect.eml",
+      "case_id": "ev72",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "link_obfuscation",
+      "language": "zh",
+      "techniques": [
+        "trusted_host_open_redirect_param"
+      ],
+      "expected": "block",
+      "engine_status": "delivered",
+      "open": true,
+      "note": "redirect_url 仅 Low"
+    },
+    {
+      "file": "ev73_interlinear_break.eml",
+      "case_id": "ev73",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "account_phishing",
+      "language": "zh",
+      "techniques": [
+        "interlinear_annotation_chars"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev74_js_chunked_qr.eml",
+      "case_id": "ev74",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "quishing",
+      "language": "zh",
+      "techniques": [
+        "js_chunked_datauri_qr"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "html_scan data_uri+xss 兜住"
+    },
+    {
+      "file": "ev75_inverted_qr_attach.eml",
+      "case_id": "ev75",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "quishing",
+      "language": "zh",
+      "techniques": [
+        "inverted_color_qr_png"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "fail-closed 兜住"
+    },
+    {
+      "file": "ev76_paraphrase_no_keyword.eml",
+      "case_id": "ev76",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "social_trust",
+      "language": "zh",
+      "techniques": [
+        "paraphrase_no_stock_keywords"
+      ],
+      "expected": "block",
+      "engine_status": "delivered",
+      "open": true,
+      "note": ""
+    },
+    {
+      "file": "ev77_display_internal_domain.eml",
+      "case_id": "ev77",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "identity_spoof",
+      "language": "zh",
+      "techniques": [
+        "display_name_internal_domain"
+      ],
+      "expected": "block",
+      "engine_status": "delivered",
+      "open": true,
+      "note": ""
+    },
+    {
+      "file": "ev78_100part_lure_tail.eml",
+      "case_id": "ev78",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "structure_evasion",
+      "language": "zh",
+      "techniques": [
+        "hundred_part_tail_lure"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev79_rtf_attach_lure.eml",
+      "case_id": "ev79",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "credential_harvest",
+      "language": "en",
+      "techniques": [
+        "rtf_attachment_lure"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ev80_chain_banner_yao.eml",
+      "case_id": "ev80",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "sanitizer_evasion",
+      "language": "zh",
+      "techniques": [
+        "banner_inversion",
+        "yao_phone",
+        "chain"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "横幅防护反杀"
+    },
+    {
+      "file": "ev81_chain_vi_redirect.eml",
+      "case_id": "ev81",
+      "group": "evasion",
+      "round": 7,
+      "label": "malicious",
+      "family": "account_phishing",
+      "language": "vi",
+      "techniques": [
+        "vietnamese",
+        "open_redirect",
+        "fake_reply",
+        "chain"
+      ],
+      "expected": "block",
+      "engine_status": "delivered",
+      "open": true,
+      "note": ""
+    },
+    {
+      "file": "inc01_account_security_root_token.eml",
+      "case_id": "inc01",
+      "group": "incident",
+      "round": "incident",
+      "label": "malicious",
+      "family": "account_phishing",
+      "language": "zh",
+      "techniques": [
+        "real_incident_root_token"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "真实事件回放"
+    },
+    {
+      "file": "inc02_obfuscated_adult_domain.eml",
+      "case_id": "inc02",
+      "group": "incident",
+      "round": "incident",
+      "label": "malicious",
+      "family": "link_obfuscation",
+      "language": "zh",
+      "techniques": [
+        "real_incident_obfuscated_domain"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "真实事件回放"
+    },
+    {
+      "file": "inc03_invoice_wechat_homophone.eml",
+      "case_id": "inc03",
+      "group": "incident",
+      "round": "incident",
+      "label": "malicious",
+      "family": "bec",
+      "language": "zh",
+      "techniques": [
+        "real_incident_invoice_homophone"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "真实事件回放"
+    },
+    {
+      "file": "inc04_fragmented_context_invoice.eml",
+      "case_id": "inc04",
+      "group": "incident",
+      "round": "incident",
+      "label": "malicious",
+      "family": "bec",
+      "language": "zh",
+      "techniques": [
+        "fragmented_invoice_context",
+        "wechat_contact"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "事件回放补充样本"
+    },
+    {
+      "file": "inc05_japanese_apple_payment_update.eml",
+      "case_id": "inc05",
+      "group": "incident",
+      "round": "incident",
+      "label": "malicious",
+      "family": "account_phishing",
+      "language": "ja",
+      "techniques": [
+        "apple_payment_update",
+        "external_link"
+      ],
+      "expected": "block",
+      "engine_status": "blocked",
+      "open": false,
+      "note": "事件回放补充样本"
+    },
+    {
+      "file": "ham/ham01_meeting_notice.eml",
+      "case_id": "ham01",
+      "group": "ham",
+      "round": "ham",
+      "label": "benign",
+      "family": "ham_business",
+      "language": "zh",
+      "techniques": [
+        "internal_meeting"
+      ],
+      "expected": "deliver",
+      "engine_status": "not_in_harness",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ham/ham02_weekly_report.eml",
+      "case_id": "ham02",
+      "group": "ham",
+      "round": "ham",
+      "label": "benign",
+      "family": "ham_business",
+      "language": "zh",
+      "techniques": [
+        "project_report"
+      ],
+      "expected": "deliver",
+      "engine_status": "not_in_harness",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ham/ham03_hr_policy.eml",
+      "case_id": "ham03",
+      "group": "ham",
+      "round": "ham",
+      "label": "benign",
+      "family": "ham_business",
+      "language": "zh",
+      "techniques": [
+        "internal_portal_link"
+      ],
+      "expected": "deliver",
+      "engine_status": "not_in_harness",
+      "open": false,
+      "note": "内网链接负样本"
+    },
+    {
+      "file": "ham/ham04_vendor_invoice_notice.eml",
+      "case_id": "ham04",
+      "group": "ham",
+      "round": "ham",
+      "label": "benign",
+      "family": "ham_business",
+      "language": "zh",
+      "techniques": [
+        "legit_invoice_notice"
+      ],
+      "expected": "deliver",
+      "engine_status": "not_in_harness",
+      "open": false,
+      "note": "发票词汇硬负样本"
+    },
+    {
+      "file": "ham/ham05_it_maintenance.eml",
+      "case_id": "ham05",
+      "group": "ham",
+      "round": "ham",
+      "label": "benign",
+      "family": "ham_business",
+      "language": "zh",
+      "techniques": [
+        "legit_maintenance_window",
+        "internal_link"
+      ],
+      "expected": "deliver",
+      "engine_status": "not_in_harness",
+      "open": false,
+      "note": "维护词汇硬负样本"
+    },
+    {
+      "file": "ham/ham06_family_trip.eml",
+      "case_id": "ham06",
+      "group": "ham",
+      "round": "ham",
+      "label": "benign",
+      "family": "ham_personal",
+      "language": "zh",
+      "techniques": [
+        "personal_family"
+      ],
+      "expected": "deliver",
+      "engine_status": "not_in_harness",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ham/ham07_conference_cfp.eml",
+      "case_id": "ham07",
+      "group": "ham",
+      "round": "ham",
+      "label": "benign",
+      "family": "ham_business",
+      "language": "en",
+      "techniques": [
+        "external_cfp_deadline_link"
+      ],
+      "expected": "deliver",
+      "engine_status": "not_in_harness",
+      "open": false,
+      "note": "英文外部链接+截止期硬负样本"
+    },
+    {
+      "file": "ham/ham08_parcel_pickup.eml",
+      "case_id": "ham08",
+      "group": "ham",
+      "round": "ham",
+      "label": "benign",
+      "family": "ham_business",
+      "language": "zh",
+      "techniques": [
+        "pickup_code_notice"
+      ],
+      "expected": "deliver",
+      "engine_status": "not_in_harness",
+      "open": false,
+      "note": "取件码形似验证码硬负样本"
+    },
+    {
+      "file": "ham/ham09_gateway_newsletter.eml",
+      "case_id": "ham09",
+      "group": "ham",
+      "round": "ham",
+      "label": "benign",
+      "family": "ham_business",
+      "language": "zh",
+      "techniques": [
+        "banner_prefixed_newsletter",
+        "external_link"
+      ],
+      "expected": "deliver",
+      "engine_status": "not_in_harness",
+      "open": false,
+      "note": "带网关横幅+退订硬负样本"
+    },
+    {
+      "file": "ham/ham10_job_application.eml",
+      "case_id": "ham10",
+      "group": "ham",
+      "round": "ham",
+      "label": "benign",
+      "family": "ham_business",
+      "language": "zh",
+      "techniques": [
+        "resume_attachment_context"
+      ],
+      "expected": "deliver",
+      "engine_status": "not_in_harness",
+      "open": false,
+      "note": ""
+    },
+    {
+      "file": "ham/ham11_bank_statement_ready.eml",
+      "case_id": "ham11",
+      "group": "ham",
+      "round": "ham",
+      "label": "benign",
+      "family": "ham_business",
+      "language": "zh",
+      "techniques": [
+        "bank_statement_no_link"
+      ],
+      "expected": "deliver",
+      "engine_status": "not_in_harness",
+      "open": false,
+      "note": "金融词汇硬负样本，正文显式声明无链接"
+    },
+    {
+      "file": "ham/ham12_own_verification_code.eml",
+      "case_id": "ham12",
+      "group": "ham",
+      "round": "ham",
+      "label": "benign",
+      "family": "ham_business",
+      "language": "zh",
+      "techniques": [
+        "own_verification_code"
+      ],
+      "expected": "deliver",
+      "engine_status": "not_in_harness",
+      "open": false,
+      "note": "最强硬负样本：验证码词汇，含上下文线索（统一认证平台）"
+    }
+  ]
+}

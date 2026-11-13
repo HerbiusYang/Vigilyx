@@ -1,0 +1,11 @@
+From: =?utf-8?B?6K+B5Lmm5pyN5Yqh?= <ssl@cert-notify.example>
+To: webmaster@corp.internal
+Date: Tue, 01 Sep 2026 10:29:00 +0800
+Message-ID: <0019-b9@synth.example>
+Subject: SSL 证书 48 小时后过期
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+证书即将过期，续期需验证域名所有者：
+https://ssl-renew-check.example.info/r
+（邮箱账号+密码验证所有权）

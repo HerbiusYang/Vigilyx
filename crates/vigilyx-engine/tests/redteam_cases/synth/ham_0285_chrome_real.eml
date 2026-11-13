@@ -1,0 +1,10 @@
+From: =?utf-8?B?SVQg5pyN5Yqh5Y+w?= <helpdesk@corp.internal>
+To: staff@corp.internal
+Date: Fri, 11 Sep 2026 08:34:00 +0800
+Message-ID: <0024-b19@synth.example>
+Subject: Chrome 零日补丁（已推送）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Chrome 115.0.5790 补丁已通过企业策略全量推送，
+重启浏览器生效。我们从不通过邮件分发安装包。

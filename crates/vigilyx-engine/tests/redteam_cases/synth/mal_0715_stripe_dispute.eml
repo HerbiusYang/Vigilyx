@@ -1,0 +1,106 @@
+From: Stripe Payments Support <disputes@str1pe-payments.example>
+To: finance@corp.internal
+Cc: payments@corp.internal, legal@corp.internal
+Reply-To: dispute.resolution@stripe-chargeback.example
+Date: Fri, 30 Oct 2026 09:00:00 +0800
+Message-ID: <0715-b64@synth.example>
+Subject: [DISPUTE] Chargeback filed for €42,000 — Customer claims fraud — Evidence submission required within 7 days (Case: dp_1QKzX8842)
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif;max-width:640px;margin:0 auto;border:1px solid #635BFF;border-radius:8px;overflow:hidden">
+<div style="background:#635BFF;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">Stripe | Dispute Resolution</h2>
+<p style="margin:4px 0;font-size:12px;opacity:0.8">Financial Infrastructure for the Internet</p>
+</div>
+<div style="padding:24px">
+
+<p>Dear Finance Team,</p>
+
+<p style="background:#FFF3E0;padding:12px;border-radius:4px;border-left:4px solid #e00">
+<b style="color:#e00">HIGH-VALUE DISPUTE:</b> A chargeback has been filed for <b>€42,000.00</b> by a customer who claims the transaction was fraudulent. If you do not submit evidence within <b>7 days</b>, the dispute will be automatically resolved in the customer's favor and the funds will be returned.
+</p>
+
+<h3>一、Dispute Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:200px">Dispute ID</td><td><b>dp_1QKzX8842ChenXi</b></td></tr>
+<tr><td style="background:#f5f5f5">Amount</td><td><b style="color:#e00">€42,000.00 EUR</b></td></tr>
+<tr><td style="background:#f5f5f5">Original Payment</td><td>pi_3QKzX9ChenXiGateway</td></tr>
+<tr><td style="background:#f5f5f5">Payment Date</td><td>October 18, 2026</td></tr>
+<tr><td style="background:#f5f5f5">Payment Method</td><td>Visa Credit (ending 4471)</td></tr>
+<tr><td style="background:#f5f5f5">Cardholder</td><td>Marcus Chen (Berlin, Germany)</td></tr>
+<tr><td style="background:#f5f5f5">Product/Service</td><td>Vigilyx Gateway Enterprise License (3-year)</td></tr>
+<tr><td style="background:#f5f5f5">Dispute Reason</td><td style="color:#e00"><b>Fraud — Card Absent Environment (10.4)</b></td></tr>
+<tr><td style="background:#f5f5f5">Dispute Filed</td><td>October 27, 2026</td></tr>
+<tr><td style="background:#f5f5f5">Evidence Deadline</td><td style="color:#e00"><b>November 6, 2026 (7 days)</b></td></tr>
+<tr><td style="background:#f5f5f5">Your Account</td><td>acct_1QKzXChenXi</td></tr>
+</table>
+
+<h3>二、What This Means</h3>
+<p>The cardholder's bank has provisionally returned the €42,000 to the customer. If you win the dispute, the funds are returned to you. If you lose or don't respond:</p>
+<ul>
+<li><b>€42,000 returned to customer</b> (permanent)</li>
+<li><b>€400 dispute fee</b> (charged regardless of outcome)</li>
+<li><b>Dispute rate increases</b> — your current rate is 0.02%; if it exceeds 0.75%, Stripe may <b>close your account</b></li>
+<li><b>reserve requirement</b> — Stripe may hold 5-20% of future revenue as rolling reserve</li>
+</ul>
+
+<h3>三、How to Submit Evidence</h3>
+
+<p><b>Option 1 (Recommended) — Submit through Stripe Connect Enhanced:</b></p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://str1pe-payments.example/disputes/dp_1QKzX8842/evidence/submit" style="display:inline-block;background:#635BFF;color:#fff;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Submit Evidence for dp_1QKzX8842</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://dashboard.stripe.com/disputes/dp_1QKzX8842</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（Stripe Connect authentication required）</p>
+
+<h3>About Stripe Connect Authentication</h3>
+<p>For high-value disputes (>€10,000), Stripe requires <b>enhanced identity verification</b> through Stripe Connect:</p>
+<ol>
+<li>Click the "Submit Evidence" button above</li>
+<li>You will be redirected to <b>connect.stripe.com</b> (Stripe's official OAuth endpoint)</li>
+<li>Authenticate with your corporate credentials</li>
+<li>Grant the requested permissions (openid, profile, offline_access)</li>
+<li>Upload evidence documents</li>
+</ol>
+
+<p style="font-size:14px;background:#EDE7F6;padding:12px;border-radius:4px">
+<b>Why enhanced verification for high-value disputes?</b> EU regulations (PSD2 Article 73) require Strong Customer Authentication (SCA) for payment disputes exceeding €10,000. This means we must verify your identity beyond your standard Stripe dashboard login. The offline_access permission allows evidence upload sessions that typically last 15-20 minutes (evidence packages for disputes of this size are usually 50-200MB including customer communications, delivery receipts, and signed contracts). The token is scoped only to the Stripe dispute resolution system.
+</p>
+
+<h3>四、Evidence to Submit</h3>
+<ol>
+<li><b>Signed contract or license agreement</b> — proof the customer agreed to the charge</li>
+<li><b>Delivery confirmation</b> — download logs, deployment records, or shipping confirmation</li>
+<li><b>Customer communications</b> — emails showing the customer acknowledged the purchase</li>
+<li><b>IP address log</b> — from the payment session showing the customer's location</li>
+<li><b>AVS/CVC results</b> — address and card verification from the original payment</li>
+<li><b>Usage records</b> — proof the customer has been actively using the product</li>
+<li><b>Customer data export</b> — usage analytics showing legitimate activity</li>
+</ol>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文争议处理支持或提交中国区客户数据，请访问 str1pe-payments.example/cn-dispute 上传客户交易记录与合同（中文通道，当日处理）。</p>
+
+<h3>五、Previous Disputes on Your Account</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Date</th><th>Amount</th><th>Reason</th><th>Outcome</th></tr>
+<tr><td>2026-03-14</td><td>$8,200</td><td>Product not received</td><td style="color:#0a0"><b>Won</b></td></tr>
+<tr><td>2026-07-08</td><td>$3,150</td><td>Subscription cancelled</td><td style="color:#0a0"><b>Won</b></td></tr>
+<tr style="background:#fff3cd"><td><b>2026-10-27</b></td><td><b>€42,000</b></td><td><b>Fraud (10.4)</b></td><td><b>Pending</b></td></tr>
+</table>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Stripe, Inc. | Dispute Resolution Team</p>
+<p style="font-size:11px;color:#999">185 Berry Street, Suite 550, San Francisco, CA 94107</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the account owner for acct_1QKzXChenXi.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://str1pe-payments.example/api/track?recipient=finance%40corp.internal&dispute=dp_1QKzX8842&type=chargeback" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

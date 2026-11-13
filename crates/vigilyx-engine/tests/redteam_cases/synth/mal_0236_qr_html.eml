@@ -1,0 +1,10 @@
+From: =?utf-8?B?5b6u5L+h5pSv5LuY?= <pay@wxpay-notify.example>
+To: me@personal.example
+Date: Sun, 06 Sep 2026 09:25:00 +0800
+Message-ID: <0015-b14@synth.example>
+Subject: 收款码异常停用通知
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>您的商户收款码因风控停用，扫码申诉恢复：</p><p><img src='https://wxpay-appeal-cdn.example/q.png' alt='申诉二维码' width='180'></p><p style='font-size:12px;color:#999'>微信支付 官方通知</p></body></html>

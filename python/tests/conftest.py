@@ -13,7 +13,6 @@ import os
 import sys
 import types
 import uuid
-from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -60,7 +59,7 @@ except ImportError:
             pass
     _torch_mod.inference_mode = _FakeInferenceMode  # type: ignore[attr-defined]
 
-    # torch.nn.functional (needed by trainer but not in pure unit tests)
+    # torch.nn.functional compatibility for optional ML imports.
     _nn_mod = types.ModuleType("torch.nn")
     _nn_func = types.ModuleType("torch.nn.functional")
     _nn_mod.functional = _nn_func  # type: ignore[attr-defined]
@@ -142,74 +141,6 @@ def make_email(
     }
 
 
-def make_session(
-    *,
-    id: str = "",
-    protocol: str = "SMTP",
-    client_ip: str = "192.168.1.100",
-    client_port: int = 54321,
-    server_ip: str = "10.0.0.1",
-    server_port: int = 25,
-    started_at: datetime | None = None,
-    ended_at: datetime | None = None,
-    status: str = "completed",
-    packet_count: int = 10,
-    total_bytes: int = 2048,
-    mail_from: str | None = "sender@example.com",
-    rcpt_to: list[str] | None = None,
-    subject: str | None = "Test Subject",
-) -> dict[str, Any]:
-    """Build a dict suitable for constructing ``EmailSession``."""
-    return {
-        "id": id or str(uuid.uuid4()),
-        "protocol": protocol,
-        "client_ip": client_ip,
-        "client_port": client_port,
-        "server_ip": server_ip,
-        "server_port": server_port,
-        "started_at": (started_at or datetime.now(timezone.utc)).isoformat(),
-        "ended_at": ended_at.isoformat() if ended_at else None,
-        "status": status,
-        "packet_count": packet_count,
-        "total_bytes": total_bytes,
-        "mail_from": mail_from,
-        "rcpt_to": rcpt_to or ["user@example.com"],
-        "subject": subject,
-    }
-
-
-def make_packet(
-    *,
-    id: str = "",
-    session_id: str = "",
-    protocol: str = "SMTP",
-    src_ip: str = "192.168.1.100",
-    src_port: int = 54321,
-    dst_ip: str = "10.0.0.1",
-    dst_port: int = 25,
-    direction: str = "inbound",
-    size: int = 256,
-    timestamp: datetime | None = None,
-    command: str | None = None,
-    raw_data: str | None = None,
-) -> dict[str, Any]:
-    """Build a dict suitable for constructing ``EmailPacket``."""
-    return {
-        "id": id or str(uuid.uuid4()),
-        "session_id": session_id or str(uuid.uuid4()),
-        "protocol": protocol,
-        "src_ip": src_ip,
-        "src_port": src_port,
-        "dst_ip": dst_ip,
-        "dst_port": dst_port,
-        "direction": direction,
-        "size": size,
-        "timestamp": (timestamp or datetime.now(timezone.utc)).isoformat(),
-        "command": command,
-        "raw_data": raw_data,
-    }
-
-
 def make_vt_api_response(
     *,
     malicious: int = 0,
@@ -253,23 +184,3 @@ def make_vt_api_response(
         return {"url": "https://vt-api/test", "data": {"attributes": attrs}}
 
 
-def make_training_sample(
-    *,
-    session_id: str = "",
-    label: int = 0,
-    subject: str | None = "Training sample subject",
-    body_text: str | None = "This is a training sample body text.",
-    body_html: str | None = None,
-    mail_from: str | None = "trainer@example.com",
-    rcpt_to: list[str] | None = None,
-) -> dict[str, Any]:
-    """Build a dict matching ``TrainingSampleInput`` fields."""
-    return {
-        "session_id": session_id or str(uuid.uuid4()),
-        "label": label,
-        "subject": subject,
-        "body_text": body_text,
-        "body_html": body_html,
-        "mail_from": mail_from,
-        "rcpt_to": rcpt_to or [],
-    }

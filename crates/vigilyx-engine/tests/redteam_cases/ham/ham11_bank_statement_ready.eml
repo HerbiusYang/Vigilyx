@@ -1,0 +1,11 @@
+From: service@bank.example
+To: employee@corp.internal
+Date: Mon, 24 Aug 2026 09:30:00 +0800
+Message-ID: <ham11@partner.example>
+Subject: 您的8月电子对账单已生成
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+尊敬的客户：您尾号 6688 的账户 8 月电子对账单已生成，
+请登录手机银行在"我的-账户-对账单"中查看。
+本邮件不含任何链接，银行不会索要密码与验证码。

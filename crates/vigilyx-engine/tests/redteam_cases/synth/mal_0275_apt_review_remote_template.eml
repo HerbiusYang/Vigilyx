@@ -1,0 +1,24 @@
+From: =?utf-8?B?5pyf5YiK57yW6L6R6YOo?= <ms@j-systems.example>
+To: research@corp.internal
+Date: Wed, 09 Sep 2026 08:24:00 +0800
+Message-ID: <0014-b17@synth.example>
+Subject: Review invitation: JSS-2026-1147
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+Dear Dr.,
+
+Please find the manuscript for review attached.
+
+--BS
+Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+Content-Disposition: attachment; filename="manuscript.docx"
+Content-Transfer-Encoding: base64
+
+UEsDBAAAAAA=
+--BS--

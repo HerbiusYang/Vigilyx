@@ -1,0 +1,10 @@
+From: =?utf-8?B?5Y+R5biD57uE?= <release@corp.internal>
+To: dev-team@corp.internal
+Date: Fri, 28 Aug 2026 14:32:00 +0800
+Message-ID: <0022-b5@synth.example>
+Subject: 国庆前代码冻结安排
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+9/26 起代码冻结，仅允许修复级别提交（需两人批准）。
+冻结期间 CI 保持绿线，解冻 10/8。

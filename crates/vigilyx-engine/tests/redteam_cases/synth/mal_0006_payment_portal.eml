@@ -1,0 +1,14 @@
+From: =?utf-8?B?6LSi5Yqh5YWx5Lqr5Lit5b+D?= <fssc@pay-portal.example>
+To: finance@corp.internal
+Date: Mon, 24 Aug 2026 09:16:00 +0800
+Message-ID: <0005-b1@synth.example>
+Subject: 待办：供应商付款账户重新登记
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+财务同事见信好：
+
+平台升级后原登记的收款账户需要重新确认，否则本月付款批次将被挂起。
+请登录核对：https://pay-portal-uat.example.info/reconfirm
+
+（本邮件由付款平台发出，请勿转发）

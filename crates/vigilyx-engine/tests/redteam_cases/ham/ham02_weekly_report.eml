@@ -1,0 +1,11 @@
+From: colleague@partner.example
+To: employee@corp.internal
+Date: Mon, 24 Aug 2026 09:30:00 +0800
+Message-ID: <ham02@partner.example>
+Subject: 第34周项目周报
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+本周进展：网关联调完成 90%，压测数据已归档；
+风险：上游接口变更待确认；下周计划：灰度上线准备。
+详细版见共享盘目录 /projects/2026/week34。

@@ -21,8 +21,7 @@ use crate::module_data::module_data;
 /// Use a stable browser-like identity so sites cannot trivially return a
 /// benign scanner-only page while showing a different page to users. This is
 /// still an advisory fetcher, not a full browser or JavaScript runtime.
-const BROWSER_USER_AGENT: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+const BROWSER_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 /// GetConfiguration
 pub struct FetchConfig {
@@ -276,7 +275,12 @@ impl UrlFetcher {
             .timeout(Duration::from_secs(self.config.timeout_secs))
             .redirect(reqwest::redirect::Policy::none())
             .user_agent(BROWSER_USER_AGENT)
-            .danger_accept_invalid_certs(false);
+            .danger_accept_invalid_certs(false)
+            // DNS pinning is only meaningful if the HTTP client cannot route
+            // the request through an ambient proxy that resolves the hostname
+            // on its behalf. A future explicit egress broker must be wired as
+            // a deliberate policy, not inherited from the engine environment.
+            .no_proxy();
 
         if self.config.skip_private_ips {
             let host = url

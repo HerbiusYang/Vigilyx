@@ -1,0 +1,78 @@
+From: "省医保中心 | DRG 结算清单质控管理组" <drg.zhikong@yibao-drg.example>
+To: medical.records@hospital.example
+Cc: billing.dept@hospital.example, yibao.office@hospital.example
+Reply-To: 质控返修组 <fanxiu.desk@yb-drg-file.example>
+Disposition-Notification-To: drg.zhikong@yibao-drg.example
+Date: Mon, 06 Sep 2027 10:00:00 +0800
+Message-ID: <0871-b116@synth.example>
+Subject: =?utf-8?B?44CQ6LSo5o6n6L+U5L+u44CRRFJH57uT566X5riC5Y2V6LSo5o6n6Zeu6aKY6L+U5L+u77yIMjAyN+W5tDjmnIjmibnmrKHvvIkg4oCUIOi/lOS/rui+heWvvOmAmumBk+eUs+ivtyDigJQg5LiO5pyI5bqm57uT566X5oyC6ZKp?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px">
+<p>病案统计室、结算办、医保办：</p>
+
+<p style="background:#FFEBEE;border-left:4px solid #B71C1C;padding:12px">
+<b>DRG 结算清单质控返修通知（2027 年 8 月批次）。</b>
+贵院 8 月出院病例的 DRG 结算清单质控发现 <b>236 份问题清单</b>（主要诊断选择错误、手术操作
+编码遗漏、离院方式矛盾等）。<b>问题清单未返修的，对应病例按最低权重组结算</b>——测算差额
+约 <b>41.2 万元</b>。<b>返修辅导通道</b>报名截至 9 月 12 日，返修提交截止 9 月 20 日。
+</p>
+
+<h3>一、质控概况（8 月批次）</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:230px">批次</td><td>2027-08（出院结算清单，共 8,412 份）</td></tr>
+<tr><td style="background:#f5f5f5">问题清单</td><td><b>236 份</b>（占比 2.8%）</td></tr>
+<tr><td style="background:#f5f5f5">主要问题</td><td>主诊选择错误 118 · 操作编码遗漏 67 · 离院方式矛盾 31 · 费用归属异常 20</td></tr>
+<tr><td style="background:#f5f5f5">结算影响</td><td>未返修按最低权重组，测算差额 <b>41.2 万元</b></td></tr>
+<tr><td style="background:#f5f5f5">返修截止</td><td><b>9 月 20 日 17:00</b></td></tr>
+</table>
+
+<h3>二、返修辅导通道（本批次新增）</h3>
+<p>针对问题集中的主诊选择与编码问题，质控组本批次开通<b>返修辅导通道</b>：由质控专家
+逐份标注错误原因与修改建议（<b>示例清单包</b>：问题清单对应的<b>病案首页数据包</b>——
+主诊、其他诊断、手术操作、离院信息——辅导以真实数据标注），医院编码员按标注返修。
+辅导费 <b>6,800 元</b>（236 份 × 28.8 元/份），缴至：</p>
+
+<p style="background:#E8EAF6;padding:12px;border:1px solid #9FA8DA">
+户名：医保数据质控研究中心（民办非企业单位）<br>
+开户行：中国银行杭州分行<br>
+账号：6217 0188 4470 2291 884<br>
+备注：医院名 + 8 月批次
+</p>
+
+<h3>三、提交入口</h3>
+<p style="text-align:center;margin:18px 0">
+<a href="https://yb-drg-file.example/rework/2027-08/apply" style="display:inline-block;background:#B71C1C;color:#fff;padding:12px 42px;text-decoration:none;border-radius:4px;font-weight:bold">报名返修辅导并提交数据包</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">医保结算平台：https://www.ybj.example/drg（医院端编码库登录入口相同）</p>
+
+<h3>四、时间线</h3>
+<ul>
+<li>辅导报名截止：<b>9 月 12 日</b></li>
+<li>返修提交截止：<b>9 月 20 日 17:00</b></li>
+<li>未返修后果：问题清单病例按最低权重组结算（差额约 41.2 万元计入 8 月清算）</li>
+</ul>
+
+<p style="font-size:14px;background:#FFF3E0;padding:12px">"医保中心发收费通知收病案数据"应当核实
+——医保数据类诈骗确有，病案室的谨慎是对的。边界：质控问题清单在<b>医保结算平台
+（医院端登录）</b>内逐份可见；返修不参加辅导也能自行完成（按质控意见修改后平台内提交——
+辅导只是加速工具）；病案首页数据在平台内本来就传递。9 月 20 日的返修截止是清算排程，
+无法为单一医院延期。</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://yb-drg-file.example/px/drg.gif?b=2027-08&amp;r=medical.records%40hospital.example" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02;">集团通道：医联体多院区可汇总返修，凭集团编码在 yb-drg-file.example/group 提交（单次辅导覆盖全部院区）。</p>
+
+<h3>五、联系方式</h3>
+<p>质控返修组：fanxiu.desk@yb-drg-file.example<br>
+批次引用：2027-08 · 医保中心咨询：0571-87xx xxxx（官网公布号码）</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+省医保中心 · DRG 结算清单质控管理组 · 本通知发送至医院登记邮箱<br />
+DRG 结算依据 DRG 付费实施细则与结算清单质控规则执行。
+</div>
+
+</body></html>

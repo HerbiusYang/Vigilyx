@@ -1,0 +1,124 @@
+From: "Zoomish | Billing" <billing@zoomish.example>
+To: it-operations@corp.internal
+Cc: finance.ap@corp.internal, procurement@corp.internal
+Date: Wed, 30 Jun 2027 04:45:00 +0000
+Message-ID: <0750-b105@synth.example>
+Subject: [MID-CYCLE NOTICE] Seat Overage on WS-88412 - $2,432 Will Appear on the July Invoice (No Card Action Needed)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+IT Operations, Accounts Payable,
+Procurement,
+
+MID-CYCLE SEAT NOTICE - WORKSPACE
+WS-88412.
+
+Your workspace exceeded its licensed
+seat count during the June webinar
+series: peak licensed users reached
+412 against your contracted 380.
+The overage will appear as a line
+item on the July invoice - no card
+action or express settlement is
+needed.
+
+1. USAGE SUMMARY
+
+  Workspace:        WS-88412
+                   (Business, annual,
+                   renews Aug 2027)
+  Contracted seats: 380 (Order Form
+                   ZF-2026-88412)
+  Peak licensed
+    users:          412 (June 18-19
+                   product launch
+                   webinars)
+  Overage:          32 seats x
+                   $19/license/mo x
+                   4 months =
+                   $2,432.00 (July
+                   invoice line item)
+
+2. HOW SEAT ADJUSTMENTS
+   ACTUALLY WORK
+
+    1. Usage data and the
+       overage are visible
+       in your admin console
+       (Billing -> Usage) -
+       type the address
+       yourself.
+    2. The July invoice
+       (issues July 1, Net-30)
+       carries the overage
+       as a standard line,
+       paid like every other
+       invoice line.
+    3. Want the seat count
+       changed? Your admin
+       adjusts licensed
+       seats in the console
+       anytime - increases
+       prorate, decreases
+       apply at renewal.
+
+  Zoomish will NEVER:
+  - Email an "express
+    settlement session"
+    taking corporate card
+    details for an overage
+    (overages bill through
+    the invoice; card
+    payments, where used,
+    happen only inside the
+    logged-in billing
+    portal)
+  - Threaten that the
+    workspace "auto-
+    downgrades on July 2,
+    forcibly unassigning
+    32 users" ahead of an
+    unpaid invoice (seat
+    downgrades result
+    from your admin's
+    explicit console
+    action or contract
+    non-renewal - never
+    from a billing email's
+    countdown; and a
+    vendor would not
+    unassign users while
+    the invoice is not
+    even due)
+  - Quote an "express
+    rate" vs a "list rate
+    +15%" to push instant
+    card payment (the
+    overage rate is the
+    order form rate -
+    one rate, no express
+    tier)
+  - Use lookalike domains
+    such as "zoomish-pay"
+    or "zm-seatpay"
+
+3. VERIFY THIS NOTICE
+
+  - Seat usage and the
+    overage calculation
+    are in the admin
+    console (typed
+    address)
+  - The July invoice will
+    show the line - compare
+    against this email
+    only after seeing it
+    there
+  - Report lookalike
+    billing notices to
+    security@zoomish.example
+
+Zoomish | Billing
+This notice concerns workspace
+WS-88412 only. Seat terms follow
+Order Form ZF-2026-88412.

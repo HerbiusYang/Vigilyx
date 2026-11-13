@@ -1,0 +1,11 @@
+From: billing@vendor.example
+To: employee@corp.internal
+Date: Mon, 24 Aug 2026 09:30:00 +0800
+Message-ID: <ham04@partner.example>
+Subject: 8月服务费发票已开具
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您好：8月运维服务费发票已开具并寄出，抬头与税号按合同约定，
+预计 3 个工作日送达，请留意查收并对账。
+电子底联同步发送至贵司财务邮箱。

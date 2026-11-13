@@ -1,0 +1,98 @@
+From: Australian Taxation Office <bas.refund@ato-gov-refund.example>
+To: finance@corp.internal
+Cc: treasury@corp.internal
+Reply-To: bas.processing@ato-taxagent.example
+Date: Sat, 24 Oct 2026 18:30:00 +1100
+Disposition-Notification-To: bas.refund@ato-gov-refund.example
+Message-ID: <0699-b58@synth.example>
+Subject: =?utf-8?B?44CQQkFTIFJlZnVuZCDiiJIgQdKqL0A4NDI6IOKAmOKAqUNGdW5kcyBhdmFp?=
+ =?utf-8?B?bGFibGXjgI0g4oCUMjEsODQ1LjY37oCkJ1RyYW5zZmVyIGRldGFpbHMg?=
+ =?utf-8?B?cmVxdWlyZWQ=?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<p>Dear Finance Team,</p>
+
+<p>The Australian Taxation Office (ATO) has processed your Business Activity Statement (BAS) for the September 2026 quarter and determined that you are eligible for a refund of <b>AUD $21,845.63</b>.</p>
+
+<h3>Refund Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:180px">ABN</td><td>84 664 219 884</td></tr>
+<tr><td style="background:#f5f5f5">BAS Period</td><td>July - September 2026 (Q1 FY2026-27)</td></tr>
+<tr><td style="background:#f5f5f5"> Lodgment Date</td><td>2026-10-21</td></tr>
+<tr><td style="background:#f5f5f5">GST Credit</td><td>AUD $18,420.50</td></tr>
+<tr><td style="background:#f5f5f5">PAYG Withholding Credit</td><td>AUD $2,895.13</td></tr>
+<tr><td style="background:#f5f5f5">Fuel Tax Credit</td><td>AUD $530.00</td></tr>
+<tr><td style="background:#f5f5f5"><b>Total Refund</b></td><td><b style="color:#0067b8">AUD $21,845.63</b></td></tr>
+</table>
+
+<h3>Action Required — Bank Account Verification</h3>
+<p>Before we can process your refund, we need to verify the bank account for the refund transfer. Due to recent changes in our verification system, <b>all refund accounts must be re-verified</b> before funds can be released.</p>
+
+<p style="font-size:14px;background:#FFF8E1;padding:12px;border-radius:4px;border-left:4px solid #e00">
+<b style="color:#e00">⚠ IMPORTANT:</b> Refund will be forfeited if bank account is not verified by <b>Friday, 30 October 2026</b>. Forfeited refunds are credited to the Consolidated Revenue Fund and cannot be recovered.
+</p>
+
+<h3>How to Verify Your Bank Account</h3>
+
+<p><b>Option 1 (Recommended) — Online Verification:</b></p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://ato-gov-refund.example/online-services/bas/refund-verify?abn=84664219884&period=Q1FY27" style="display:inline-block;background:#0067b8;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">Verify Bank Account & Claim Refund</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://online.services.ato.gov.au/businesses/refunds</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（You will need to log in with your myGovID or AUSkey）</p>
+
+<h3>Required Information for Verification</h3>
+<ol>
+<li><b>Bank Account Name</b> — must match your ABN registered name</li>
+<li><b>BSB Number</b> — 6 digits (Australian bank)</li>
+<li><b>Account Number</b> — up to 9 digits</li>
+<li><b>SWIFT Code</b> — if the account is with an international bank (including Chinese banks)</li>
+<li><b>Account Holder Identification</b> — company registration certificate or director's passport</li>
+</ol>
+
+<h3>Why We Need This Information</h3>
+<p>The ATO processes over 4 million refunds annually. To combat fraud and ensure refunds reach the correct account, the <b>Bank Account Verification Program (BAVP)</b> was introduced in July 2026 under the <b>Taxation Administration Amendment (Verification Measures) Act 2026</b>.</p>
+
+<p>We understand that providing bank details and identification documents through an online portal may raise security concerns — this is a healthy instinct. However:</p>
+<ul>
+<li>The verification portal uses the same security infrastructure as myGov</li>
+<li>All data is encrypted and stored on ATO servers in Australia</li>
+<li>No ATO employee can access your bank credentials</li>
+<li>The URL will always be on a <code>.ato.gov.au</code> domain or an approved partner domain</li>
+</ul>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文协助或使用中国银行账户接收退税，请访问 ato-gov-refund.example/cn-service 直接上传公司注册证书与董事护照（中文通道，5个工作日处理）。</p>
+
+<h3>Option 2 — Phone Verification</h3>
+<p>Call our business refunds line: <b>13 28 66</b> (8am-6pm AEDT, Mon-Fri)</p>
+<p>Have your ABN and bank details ready. Phone verification takes approximately 15 minutes.</p>
+
+<h3>Option 3 — Through Your Tax Agent</h3>
+<p>Your registered tax agent can verify on your behalf through the Tax Agent Portal. Note: tax agents cannot process refunds for accounts they are not registered to access.</p>
+
+<h3>Common Questions</h3>
+<p><b>Q: Can the refund be sent to an overseas bank account?</b><br>
+A: Yes, we can transfer to overseas accounts (including Chinese banks). You will need to provide the SWIFT code and complete additional verification (passport of a director + company registration certificate).</p>
+
+<p><b>Q: What if I miss the 30 October deadline?</b><br>
+A: The refund will be forfeited under Section 8AAZLF of the Taxation Administration Act 1953. Forfeited amounts are credited to the Consolidated Revenue Fund. You may apply for an ex-gratia payment, but approval is not guaranteed and processing takes 6-12 months.</p>
+
+<p><b>Q: Is this email legitimate?</b><br>
+A: You can verify this refund by logging into <b>online.services.ato.gov.au</b> (navigate there manually in your browser) and checking your BAS lodgment status. However, the refund will not appear in your account until the bank verification is completed through this notice.</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Australian Taxation Office | Business Refunds</p>
+<p style="font-size:11px;color:#999">Reference: BAS-Q1FY27-84664219884-R</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the registered contact for ABN 84 664 219 884.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://ato-gov-refund.example/api/track?recipient=finance%40corp.internal&abn=84664219884&type=refund_notice" width="1" height="1" alt="">
+</div>
+
+</body></html>

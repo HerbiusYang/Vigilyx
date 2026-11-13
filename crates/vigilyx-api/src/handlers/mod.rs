@@ -7,6 +7,7 @@ pub mod deployment_mode;
 pub mod health;
 pub mod ioc_handlers;
 pub mod platform;
+pub mod privacy;
 pub mod security;
 pub mod sessions;
 pub mod setup_status;
@@ -25,7 +26,8 @@ pub use database::{
 };
 pub use deployment_mode::{get_deployment_mode, update_deployment_mode};
 pub use sessions::{
-    download_attachment, download_eml, get_related_sessions, get_session, list_sessions,
+    count_sessions, download_attachment, download_eml, get_related_sessions, get_session,
+    list_sessions,
 };
 pub use setup_status::{get_setup_status, update_setup_status};
 pub use stats::{get_external_login_stats, get_stats};
@@ -90,9 +92,11 @@ pub struct PaginationParams {
     pub dest_ips: Option<String>,
     /// : client_ip, server_ip, mail_from, rcpt_to, subject
     pub search: Option<String>,
-    /// COUNT Query (table, ~4.5s)
+    /// Fetch rows without an exact count; /sessions/count supplies it separately.
     #[serde(default)]
     pub skip_count: bool,
+    /// Opaque seek cursor supplied by the preceding session page.
+    pub after: Option<String>,
 }
 
 fn default_page() -> u32 {
@@ -166,10 +170,8 @@ impl<T: Serialize> ApiResponse<T> {
         })
     }
 
-    /// 400 Bad Request - verifyerror, formaterror, parameter
-
-    /// `bad_request_with_code` error,
-    /// Default `VAL_002` (VALIDATION_INVALID_PARAMS).
+    /// 400 Bad Request for validation or parameter errors.
+    /// Uses `VAL_002` (VALIDATION_INVALID_PARAMS) by default.
     pub fn bad_request(msg: impl Into<String>) -> (StatusCode, Json<Self>) {
         (
             StatusCode::BAD_REQUEST,
@@ -178,20 +180,6 @@ impl<T: Serialize> ApiResponse<T> {
                 data: None,
                 error: Some(msg.into()),
                 error_code: Some(error_codes::VALIDATION_INVALID_PARAMS.to_string()),
-            }),
-        )
-    }
-
-    /// 400 Bad Request - error
-    #[allow(dead_code)]
-    pub fn bad_request_with_code(msg: impl Into<String>, code: &str) -> (StatusCode, Json<Self>) {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(Self {
-                success: false,
-                data: None,
-                error: Some(msg.into()),
-                error_code: Some(code.to_string()),
             }),
         )
     }

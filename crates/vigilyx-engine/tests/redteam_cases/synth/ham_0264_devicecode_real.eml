@@ -1,0 +1,12 @@
+From: =?utf-8?B?SVQg5pyN5Yqh5Y+w?= <helpdesk@corp.internal>
+To: facilities@corp.internal
+Date: Wed, 09 Sep 2026 08:38:00 +0800
+Message-ID: <0028-b17@synth.example>
+Subject: 会议室大屏登录方式（设备授权）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+会议室大屏无法键入密码，可用设备授权登录：
+1. 在电脑打开 https://login.microsoftonline.com/devicelogin
+2. 输入屏幕显示的代码
+注意：代码由大屏生成显示，不要接受任何人通过邮件发来的代码。

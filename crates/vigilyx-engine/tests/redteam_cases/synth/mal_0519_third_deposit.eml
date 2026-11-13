@@ -1,0 +1,10 @@
+From: =?utf-8?B?6ZO26K+B5Lia5Yqh?= <yz@bank-svc21.example>
+To: investor@personal.example
+Date: Wed, 23 Sep 2026 09:19:00 +0800
+Message-ID: <0009-b30@synth.example>
+Subject: 三方存管账户变更确认
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+确认新三方存管：https://yz-qr21.example.info/c
+（原卡号+新卡号+取款密码）

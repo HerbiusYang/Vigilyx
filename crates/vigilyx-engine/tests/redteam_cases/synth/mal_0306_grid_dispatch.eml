@@ -1,0 +1,23 @@
+From: =?utf-8?B?6LCD5bqm6YCa5L+h?= <dispatch@grid-tmpl.example>
+To: grid-ops@corp.internal
+Date: Fri, 11 Sep 2026 08:10:00 +0800
+Message-ID: <0000-b19@synth.example>
+Subject: 调度指令模板修订（第3版）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+各位厂站：调度指令模板按新规修订，电子版见附件，
+纸质版以班组学习记录为准。
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+见正文。
+--BS
+Content-Type: application/zip
+Content-Disposition: attachment; filename="调度模板V3.zip"
+Content-Transfer-Encoding: base64
+
+UEsDBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+--BS--

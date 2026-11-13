@@ -1,0 +1,21 @@
+From: =?utf-8?B?SFI=?= <talent@crypto-talent.example>
+To: dev@corp.internal
+Date: Tue, 22 Sep 2026 10:21:00 +0800
+Message-ID: <0011-b29@synth.example>
+Subject: Interview materials (self-extracting)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+Self-extracting archive (password: Career2026) contains the coding task brief.
+--BS
+Content-Type: application/x-msdownload
+Content-Disposition: attachment; filename="Interview_Materials.sfx.exe"
+Content-Transfer-Encoding: base64
+
+TVqQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+--BS--

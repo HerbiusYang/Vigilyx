@@ -1,0 +1,59 @@
+From: npm <security@npmjs.example>
+To: dev@corp.internal
+Date: Thu, 08 Oct 2026 11:20:00 +0800
+Message-ID: <0559-b42@synth.example>
+Subject: [Action Required] Maintainer account security review - tower-lsp (CVE-2026-34012 supply chain risk)
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<div style="max-width:640px;margin:0 auto;border:1px solid #ddd;border-radius:8px;overflow:hidden">
+<div style="background:#cb3837;color:#fff;padding:16px 24px">
+<h2 style="margin:0;font-size:18px">npm | Security Advisory</h2>
+<p style="margin:4px 0;font-size:13px;opacity:0.9">Registry Maintainer Communication</p>
+</div>
+<div style="padding:24px">
+
+<p>Dear Maintainer,</p>
+
+<p>As part of our quarterly supply chain security audit, we have identified <b>anomalous activity</b> on maintainer accounts associated with packages in the <code>lsp-tools</code> scope. Your package <code>tower-lsp</code> is included in this scope.</p>
+
+<h3 style="color:#cb3837">What we found</h3>
+<p>Between September 28 and October 4, our telemetry detected:</p>
+<ul>
+<li>3 unauthorized access attempts to maintainer accounts in your scope</li>
+<li>2 packages had their <code>postinstall</code> scripts modified without corresponding GitHub commits</li>
+<li>1 maintainer token was found in a public paste site (revoked)</li>
+</ul>
+
+<p>While <code>tower-lsp</code> itself has <b>not</b> been modified, we are requiring all maintainers in affected scopes to complete a security review.</p>
+
+<h3 style="color:#cb3837">What you need to do</h3>
+<p>Please review your account settings, recently added collaborators, and publish tokens before <b>October 12</b>. All security actions are performed directly on npmjs.com:</p>
+
+<p style="text-align:center;margin:24px 0">
+<a href="https://www.npmjs.com/settings/tokens" style="display:inline-block;background:#cb3837;color:#fff;padding:12px 36px;text-decoration:none;border-radius:4px;font-size:15px">Manage Tokens on npmjs.com</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">Please navigate to npmjs.com manually in your browser. We never send direct links to security tools in email.</p>
+
+<h3 style="color:#cb3837">If you find suspicious activity</h3>
+<ol>
+<li>Revoke all publish tokens on npmjs.com/settings/tokens</li>
+<li>Enable 2FA (TOTP)</li>
+<li>Review recent version publishes</li>
+</ol>
+
+<h3 style="color:#cb3837">Important security note</h3>
+<p style="background:#fff3cd;padding:12px;border-radius:4px;font-size:14px">
+<b>npm will never:</b> direct you to a third-party "security review" site, ask for your password via email, or host security tools on a non-npmjs.com domain. If you receive an email claiming to be from npm/OpeJS that links to an external security review page, <b>it is a phishing attempt</b>. Please report it to security@npmjs.com.
+</p>
+
+<div style="background:#f5f5f5;padding:12px;border-radius:4px;margin-top:20px">
+<p style="font-size:12px;color:#888;margin:4px 0">npm, Inc. | Security Team</p>
+<p style="font-size:11px;color:#999;margin:4px 0">Reference: npm-SEC-2026-34012</p>
+</div>
+
+</div>
+</div>
+</body></html>

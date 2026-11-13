@@ -1,0 +1,21 @@
+From: =?utf-8?B?5oC757uP5YqeLeenmOS5pg==?= <sec@office-relay10.example>
+To: leaders@corp.internal
+Date: Thu, 10 Sep 2026 08:24:00 +0800
+Message-ID: <0014-b18@synth.example>
+Subject: FW: 明日高管闭门会材料
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+各位总：材料汇总如附件，纸质版会场发放。
+--BS
+Content-Type: application/x-hwp
+Content-Disposition: attachment; filename="闭门会材料.hwp"
+Content-Transfer-Encoding: base64
+
+SFdQIERvY3VtZW50IEZpbGUAAQIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+--BS--

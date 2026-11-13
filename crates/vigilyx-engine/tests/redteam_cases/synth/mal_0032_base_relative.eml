@@ -1,0 +1,9 @@
+From: =?utf-8?B?5ZCO5Yuk5pyN5Yqh?= <logistics@facilities.example>
+To: staff@corp.internal
+Date: Tue, 25 Aug 2026 10:30:00 +0800
+Message-ID: <0010-b2@synth.example>
+Subject: 工牌补办入口
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><head><base href='http://203.0.113.77/card/'></head><body><p>工牌补办线上化，点击提交：</p><p><a href='apply'>工牌补办</a></p></body></html>

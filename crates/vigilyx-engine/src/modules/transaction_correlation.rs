@@ -27,7 +27,7 @@ use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModu
 use crate::module_data::module_data;
 use crate::modules::common::looks_like_raw_mime_container_text;
 use crate::modules::content_scan::html_utils::strip_html_tags;
-use crate::modules::content_scan::normalize_text;
+use crate::modules::content_scan::{has_explicit_payment_change_redirect, normalize_text};
 
 /// Patterns for financial entity extraction
 static RE_IBAN: LazyLock<Regex> = LazyLock::new(|| {
@@ -41,7 +41,10 @@ static RE_AMOUNT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:[$€£¥₹]|USD|EUR|GBP|CNY|RMB)\s*[\d,]+(?:\.\d{1,2})?\b|\b[\d,]+(?:\.\d{1,2})?\s*(?:dollars?|euros?|pounds?|yuan|rmb)\b").unwrap()
 });
 static RE_BANK_ACCOUNT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:account|acct|a/c|routing|sort[\s-]?code)[:\s#]*[\d\s-]{6,20}\b").unwrap()
+    Regex::new(
+        r"(?i)\b(?:account|acct|a/c|routing|sort[ \t-]?code)[ \t:#-]{0,12}([0-9][0-9 \t-]{4,28}[0-9])\b",
+    )
+    .unwrap()
 });
 static RE_INVOICE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(?:invoice|inv|purchase[\s-]?order|po|receipt)\b[\s#:-]*[A-Z0-9]{3,20}\b")
@@ -88,6 +91,22 @@ fn is_valid_iban_country(matched: &str) -> bool {
 
 fn is_valid_iban_match(matched: &str) -> bool {
     is_valid_iban_country(matched) && crate::data_security::dlp::finders::is_valid_iban(matched)
+}
+
+fn valid_bank_account_matches(text: &str) -> Vec<regex::Match<'_>> {
+    RE_BANK_ACCOUNT
+        .captures_iter(text)
+        .filter(|captures| {
+            captures
+                .get(1)
+                .map(|account| {
+                    let digit_count = account.as_str().bytes().filter(u8::is_ascii_digit).count();
+                    (6..=20).contains(&digit_count)
+                })
+                .unwrap_or(false)
+        })
+        .filter_map(|captures| captures.get(0))
+        .collect()
 }
 
 /// Signal weights
@@ -226,38 +245,31 @@ impl TransactionCorrelationModule {
             .scan(&text_lower)
             .first_pattern()?;
 
+        // Bare "new account" phrases are ambiguous between a payment
+        // destination and ordinary login/account administration. Require a
+        // separate financial context term so strings such as `更新账号密码`
+        // cannot overlap-match `新账号` and become BEC evidence.
+        if module_data().contains("payment_change_ambiguous_account_terms", &kw) {
+            let window = Self::find_context(text, &kw)?;
+            let normalized_window = normalize_text(&window.to_lowercase());
+            let has_financial_context = module_data()
+                .get_list("payment_change_financial_context_terms")
+                .iter()
+                .any(|term| normalized_window.contains(term));
+            if !has_financial_context {
+                return None;
+            }
+        }
+
         // These phrases describe ordinary payment metadata and occur in bank
         // notices, payroll forms and invoices. They are not evidence that the
         // recipient is being asked to replace a previously trusted account.
-        const CONTEXT_ONLY_TERMS: &[&str] = &[
-            "direct deposit",
-            "payroll bank",
-            "payroll information",
-            "routing number",
-            "beneficiary account",
-            "remittance details",
-            "收款账户",
-            "收款账号",
-            "银行账户",
-            "银行账号",
-            "工资卡",
-            "代发账户",
-            "代发账号",
-        ];
-        if CONTEXT_ONLY_TERMS.contains(&kw.as_str()) {
-            let window = Self::find_context(text, &kw)?;
-            let window_lower = window.to_lowercase();
-            const CHANGE_MARKERS: &[&str] = &[
-                "change", "changed", "updated", "revised", "replace", "replacement",
-                "new account", "old account", "instead", "变更", "更换", "更改", "修改",
-                "更新", "新账户", "新账号", "旧账户", "原账户", "改为",
-            ];
-            if !CHANGE_MARKERS
-                .iter()
-                .any(|marker| window_lower.contains(marker))
-            {
-                return None;
-            }
+        // A local recipient-facing redirection is required before the
+        // context-only term can arm the payment-change signal.
+        if module_data().contains("payment_change_context_only_terms", &kw)
+            && !has_explicit_payment_change_redirect(text)
+        {
+            return None;
         }
         Some((
             W_PAYMENT_CHANGE,
@@ -384,34 +396,19 @@ impl SecurityModule for TransactionCorrelationModule {
             });
         }
 
-        // 2. SWIFT/BIC code
-        if RE_SWIFT.is_match(&text) {
+        // 2. SWIFT/BIC code: a bank identifier, routine in correspondent-banking
+        // and settlement mail. Like a bare account number it is reference data
+        // and is promoted below only alongside an actionable payment signal.
+        let swift_match = RE_SWIFT.find(&text);
+        if swift_match.is_some() {
             financial_entity_count += 1;
-            actionable_signal_count += 1;
-            total_score += W_FINANCIAL_ENTITY;
-            categories.push("swift_code_detected".to_string());
-            evidence.push(Evidence {
-                description: "Detected SWIFT/BIC bank code".to_string(),
-                location: Some("body".to_string()),
-                snippet: RE_SWIFT.find(&text).map(|m| m.as_str().to_string()),
-            });
         }
 
         // 3. Bank account numbers
-        let acct_matches: Vec<_> = RE_BANK_ACCOUNT.find_iter(&text).collect();
+        let acct_matches = valid_bank_account_matches(&text);
         if !acct_matches.is_empty() {
             financial_entity_count += acct_matches.len() as u32;
-            actionable_signal_count += acct_matches.len() as u32;
-            total_score += W_FINANCIAL_ENTITY;
-            categories.push("bank_account_detected".to_string());
-            evidence.push(Evidence {
-                description: format!(
-                    "Detected {} bank account number reference(s)",
-                    acct_matches.len()
-                ),
-                location: Some("body".to_string()),
-                snippet: Some(acct_matches[0].as_str().to_string()),
-            });
+            reference_entity_count += acct_matches.len() as u32;
         }
 
         // 4. Monetary amounts
@@ -561,6 +558,34 @@ impl SecurityModule for TransactionCorrelationModule {
             evidence.push(ev);
         }
 
+        // A bare account label/number is routine statement and policy data.
+        // Promote it only when this message also contains an actionable
+        // payment instruction or account-change request.
+        if !acct_matches.is_empty() && (has_payment_change || has_wire_instruction) {
+            actionable_signal_count += 1;
+            total_score += W_FINANCIAL_ENTITY;
+            categories.push("bank_account_detected".to_string());
+            evidence.push(Evidence {
+                description: format!(
+                    "Detected {} bank account reference(s) in actionable payment context",
+                    acct_matches.len()
+                ),
+                location: Some("body".to_string()),
+                snippet: None,
+            });
+        }
+        if let Some(swift) = swift_match.filter(|_| has_payment_change || has_wire_instruction) {
+            actionable_signal_count += 1;
+            total_score += W_FINANCIAL_ENTITY;
+            categories.push("swift_code_detected".to_string());
+            evidence.push(Evidence {
+                description: "Detected SWIFT/BIC bank code in actionable payment context"
+                    .to_string(),
+                location: Some("body".to_string()),
+                snippet: Some(swift.as_str().to_string()),
+            });
+        }
+
         // Crypto vocabulary is context for validating wallet-shaped tokens,
         // not an actionable payment fact by itself. An account number or a
         // bare word such as "TRON" must not arm the urgency combination.
@@ -642,9 +667,10 @@ impl SecurityModule for TransactionCorrelationModule {
                 evidence: vec![],
                 details: serde_json::json!({
                     "score": 0.0,
-                    "financial_entities": 0,
+                    "financial_entities": financial_entity_count,
                     "actionable_payment_signals": 0,
-                    "reference_entities": 0,
+                    "reference_entities": reference_entity_count,
+                    "bank_account_references": acct_matches.len(),
                 }),
                 duration_ms,
                 analyzed_at: Utc::now(),
@@ -679,6 +705,7 @@ impl SecurityModule for TransactionCorrelationModule {
                 "financial_entities": financial_entity_count,
                 "actionable_payment_signals": actionable_signal_count,
                 "reference_entities": reference_entity_count,
+                "bank_account_references": acct_matches.len(),
                 "has_wire_instruction": has_wire_instruction,
                 "has_payment_change": has_payment_change,
                 "has_amount_reference": has_amount_reference,
@@ -758,10 +785,10 @@ mod tests {
 
     #[test]
     fn test_valid_iban_country_codes() {
-        assert!(is_valid_iban_country("DE89370400440532013000"));
-        assert!(is_valid_iban_country("GB29NWBK60161331926819"));
-        assert!(is_valid_iban_country("FR7630006000011234567890189"));
-        assert!(is_valid_iban_country("NL91ABNA0417164300"));
+        assert!(is_valid_iban_country("DE36000000000000000000"));
+        assert!(is_valid_iban_country("GB50TSTB00000000000000"));
+        assert!(is_valid_iban_country("FR7600000000000000000000000"));
+        assert!(is_valid_iban_country("NL04TSTB0000000000"));
     }
 
     #[test]
@@ -778,7 +805,7 @@ mod tests {
     #[test]
     fn test_iban_regex_with_country_validation() {
         // Real IBAN: should match regex AND pass country validation
-        let text = "Please pay to DE89370400440532013000";
+        let text = "Please pay to DE36000000000000000000";
         let matches: Vec<_> = RE_IBAN
             .find_iter(text)
             .filter(|m| is_valid_iban_country(m.as_str()))
@@ -849,7 +876,7 @@ mod tests {
         let module = TransactionCorrelationModule::new();
         let ctx = make_ctx(
             Some(
-                "Please process this wire transfer immediately to DE89370400440532013000. SWIFT: DEUTDEFF. Amount: USD 24,500.",
+                "Please process this wire transfer immediately to DE36000000000000000000. SWIFT: TSTBUS00. Amount: USD 24,500.",
             ),
             Some("Urgent payment update"),
         );
@@ -875,8 +902,8 @@ mod tests {
         let ctx = make_ctx(
             Some(
                 "Dear customer, invoice INV-2026-7781 remains open. Amount Open: USD 50,084.70. \
-                 Beneficiary: SWIFT SC. Bank Name: JPMorgan Chase Bank. \
-                 S.W.I.F.T. BIC code: CHASUS33. ABA Routing Code: 021000021. \
+                 Beneficiary: SWIFT SC. Bank Name: Synthetic Settlement Bank. \
+                 S.W.I.F.T. BIC code: TSTBUS00. ABA Routing Code: 000000000. \
                  Please proceed to pay the overdue amount without further delay within Swift's payment terms.",
             ),
             Some("Swift Invoice Reminder"),
@@ -897,7 +924,7 @@ mod tests {
         let module = TransactionCorrelationModule::new();
         let ctx = make_ctx(
             Some(
-                "Please review invoice INV-2026-1007. Receipt REF-7781 is attached. Token: 1BoatSLRHtKNngkdXEeobR76b53LETtpyT",
+                "Please review invoice INV-2026-1007. Receipt REF-7781 is attached. Token: 1TestFixture111111111111111111111",
             ),
             Some("Invoice notice"),
         );
@@ -990,6 +1017,124 @@ mod tests {
         );
     }
 
+    /// Production false positive (2026-11-13): a correspondent-banking due
+    /// diligence reply listing the bank's SWIFT code was rated Low.
+    #[tokio::test]
+    async fn bare_swift_code_in_banking_correspondence_is_reference_data() {
+        let module = TransactionCorrelationModule::new();
+        let ctx = make_ctx(
+            Some(
+                "Please find attached our completed Wolfsberg CBDDQ. Bank name: Example Bank, SWIFT: TSTBBY2X, head office Minsk.",
+            ),
+            Some("Re: Wolfsberg CBDDQ_CC"),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe, "{result:?}");
+        assert!(
+            !result
+                .categories
+                .contains(&"swift_code_detected".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn swift_code_counts_alongside_a_wire_instruction() {
+        let module = TransactionCorrelationModule::new();
+        let ctx = make_ctx(
+            Some("Please send the wire transfer to the new beneficiary account. SWIFT: TSTBBY2X"),
+            Some("Payment details"),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert!(
+            result
+                .categories
+                .contains(&"swift_code_detected".to_string()),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn account_password_update_is_not_a_payment_change() {
+        let module = TransactionCorrelationModule::new();
+        let ctx = make_ctx(
+            Some("若确认并非本人操作，请立即停止验证，更新账号密码并联系管理员。"),
+            Some("账号安全核验请求"),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe, "{result:?}");
+        assert!(
+            !result.categories.contains(&"payment_change".to_string()),
+            "credential-password language must not become BEC payment evidence: {result:?}"
+        );
+        assert!(
+            !result
+                .categories
+                .contains(&"urgency_financial_combo".to_string()),
+            "urgency cannot borrow a false financial context: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn account_label_followed_only_by_layout_whitespace_is_not_an_account_number() {
+        let module = TransactionCorrelationModule::new();
+        let ctx = make_ctx(
+            Some("ACCOUNT   \n\t\n\t\nSTATEMENT SUMMARY"),
+            Some("Synthetic statement fixture"),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe, "{result:?}");
+        assert!(result.categories.is_empty(), "{result:?}");
+        assert_eq!(result.details["bank_account_references"].as_u64(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn bare_synthetic_account_reference_is_informational_only() {
+        let module = TransactionCorrelationModule::new();
+        let ctx = make_ctx(
+            Some("Statement account: 0000 0000 0000. No action is requested."),
+            Some("Synthetic statement fixture"),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe, "{result:?}");
+        assert!(
+            !result
+                .categories
+                .contains(&"bank_account_detected".to_string()),
+            "{result:?}"
+        );
+        assert_eq!(result.details["bank_account_references"].as_u64(), Some(1));
+        assert_eq!(result.bpa, Some(Bpa::vacuous()));
+    }
+
+    #[tokio::test]
+    async fn synthetic_account_reference_with_change_instruction_is_actionable() {
+        let module = TransactionCorrelationModule::new();
+        let ctx = make_ctx(
+            Some("The beneficiary account changed. Use account 0000 0000 0000 for payment."),
+            Some("Synthetic payment-change fixture"),
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert!(result.categories.contains(&"payment_change".to_string()));
+        assert!(
+            result
+                .categories
+                .contains(&"bank_account_detected".to_string())
+        );
+        assert_ne!(result.threat_level, ThreatLevel::Safe);
+    }
+
     #[tokio::test]
     async fn explicit_bank_account_change_remains_actionable() {
         let module = TransactionCorrelationModule::new();
@@ -1009,7 +1154,7 @@ mod tests {
         let module = TransactionCorrelationModule::new();
         let ctx = make_ctx(
             Some(
-                "Send the Bitcoin payment to wallet 1BoatSLRHtKNngkdXEeobR76b53LETtpyT immediately to restore access.",
+                "Send the Bitcoin payment to wallet 1TestFixture111111111111111111111 immediately to restore access.",
             ),
             Some("Urgent bitcoin payment"),
         );

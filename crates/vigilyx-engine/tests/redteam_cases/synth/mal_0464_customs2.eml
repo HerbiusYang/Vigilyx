@@ -1,0 +1,10 @@
+From: =?utf-8?B?5oql5YWz6KGM?= <hg@customs-relay9.example>
+To: trade@corp.internal
+Date: Mon, 21 Sep 2026 09:13:00 +0800
+Message-ID: <0003-b28@synth.example>
+Subject: 报关单退单（重新申报）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+重新申报需验证：https://hg-cs9.example.info/r
+（报关单号+对公账户）

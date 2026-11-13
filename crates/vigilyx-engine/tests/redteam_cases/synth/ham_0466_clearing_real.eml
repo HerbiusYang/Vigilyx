@@ -1,0 +1,9 @@
+From: =?utf-8?B?5riF566X?= <qs@bank.example>
+To: treasury@corp.internal
+Date: Wed, 23 Sep 2026 09:41:00 +0800
+Message-ID: <0031-b30@synth.example>
+Subject: 日终清算无异常
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+各账户头寸一致。

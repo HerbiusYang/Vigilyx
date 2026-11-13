@@ -1,0 +1,10 @@
+From: =?utf-8?B?5Lya5ZGY5L+x5LmQ6YOo?= <club@svc-mailer2.example>
+To: me@personal.example
+Date: Mon, 07 Sep 2026 09:26:00 +0800
+Message-ID: <0016-b15@synth.example>
+Subject: 感谢您的订阅（本期）
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>本期会员刊：新品 5 折、积分翻倍。</p><p style='font-size:11px'>不想再收到？<a href='https://club-unsub-now.example.vip/off'>一键退订</a> | <a href='https://club-mailer2.example/p'>偏好设置</a></p></body></html>

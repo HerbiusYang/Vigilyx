@@ -1,0 +1,10 @@
+From: =?utf-8?B?6LWE6YeR5omY566h?= <escrow@trade-secure.example>
+To: trade@corp.internal
+Date: Mon, 07 Sep 2026 09:24:00 +0800
+Message-ID: <0014-b15@synth.example>
+Subject: 买方款项已入托管，请确认收款账户
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>买方货款 86,400 元已入托管，确认后 T+1 放款：</p><table cellpadding=8 style='border:1px solid #ccc;border-collapse:collapse'><tr><td>收款户名</td><td><input name='acct-name' value='杭州某科技有限公司'></td></tr><tr><td>收款账号</td><td><input name='acct-no' placeholder='对公账号'></td></tr><tr><td>开户行</td><td><input name='bank' placeholder='开户行'></td></tr></table><p><a href='https://escrow-confirm2.example.info/ok' style='color:#fff;background:#52c41a;padding:10px 30px;text-decoration:none'>确认放款账户</a></p></body></html>

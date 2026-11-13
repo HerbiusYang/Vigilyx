@@ -1239,7 +1239,7 @@ fn http_body_between_16k_and_256k_spills_to_temp_file() {
     let manager = ShardedSessionManager::new();
 
     let mut body = vec![b'x'; 100 * 1024];
-    let marker = b"ID:110101199003077721";
+    let marker = b"ID:000000200001010005";
     body[99_000..99_000 + marker.len()].copy_from_slice(marker);
 
     let mut payload = Vec::new();
@@ -1278,11 +1278,13 @@ fn http_body_between_16k_and_256k_spills_to_temp_file() {
             .request_body
             .as_deref()
             .unwrap_or("")
-            .contains("ID:110101199003077721")
+            .contains("ID:000000200001010005")
     );
     let on_disk = std::fs::read(&temp_path).expect("temp file readable");
     assert!(
-        on_disk.windows(marker.len()).any(|window| window == &marker[..]),
+        on_disk
+            .windows(marker.len())
+            .any(|window| window == &marker[..]),
         "temp file must contain the full body including content past 16KB"
     );
     let _ = std::fs::remove_file(&temp_path);
@@ -1297,7 +1299,7 @@ fn chunked_post_reaches_data_security_decoded() {
         src_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 10)),
         dst_ip: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 20)),
         payload: Bytes::from_static(
-            b"POST /upload HTTP/1.1\r\nHost: mail.example.com\r\nTransfer-Encoding: chunked\r\n\r\n1a\r\nid_card=110101199003077721\r\n0\r\n\r\n",
+            b"POST /upload HTTP/1.1\r\nHost: mail.example.com\r\nTransfer-Encoding: chunked\r\n\r\n1a\r\nid_card=000000200001010005\r\n0\r\n\r\n",
         ),
         src_port: 41002,
         dst_port: 80,
@@ -1317,7 +1319,7 @@ fn chunked_post_reaches_data_security_decoded() {
             .request_body
             .as_deref()
             .unwrap_or("")
-            .contains("id_card=110101199003077721"),
+            .contains("id_card=000000200001010005"),
         "chunked body must be decoded before DLP delivery"
     );
 }
@@ -1446,7 +1448,7 @@ fn eviction_resets_http_state_and_marks_active_session() {
         80,
         5000,
         0x18,
-        b"POST /save HTTP/1.1\r\nHost: mail.example.com\r\nContent-Length: 26\r\n\r\nid_card=110101199003077721",
+        b"POST /save HTTP/1.1\r\nHost: mail.example.com\r\nContent-Length: 26\r\n\r\nid_card=000000200001010005",
     );
     let _ = manager.process_packet(&second, None, Instant::now());
     let sessions = manager.take_http_sessions();
@@ -1483,7 +1485,14 @@ fn eviction_clears_smtp_data_buffer_and_marks_signal() {
         b"RCPT TO:<recipient@example.com>\r\n",
     );
     let data = smtp_packet(Direction::Outbound, 42100, 25, 165, 0x18, b"DATA\r\n");
-    let ready = smtp_packet(Direction::Inbound, 42100, 25, 200, 0x18, b"354 go ahead\r\n");
+    let ready = smtp_packet(
+        Direction::Inbound,
+        42100,
+        25,
+        200,
+        0x18,
+        b"354 go ahead\r\n",
+    );
     let body = smtp_packet(
         Direction::Outbound,
         42100,
@@ -1537,6 +1546,48 @@ fn eviction_clears_smtp_data_buffer_and_marks_signal() {
 }
 
 #[test]
+fn rejected_http_headers_surface_inspection_gap_without_fake_requests() {
+    let mut many_headers = b"POST /upload HTTP/1.1\r\n".to_vec();
+    for _ in 0..65 {
+        many_headers.extend_from_slice(b"X-Fixture: value\r\n");
+    }
+    many_headers.extend_from_slice(b"\r\n");
+    for mut payload in [
+        many_headers,
+        b"POST /upload HTTP/1.1\r\nContent-Length: 52428801\r\n\r\n".to_vec(),
+        b"POST /upload HTTP/1.1\r\ninvalid header\r\n\r\n".to_vec(),
+    ] {
+        payload.extend_from_slice(
+            b"POST /fake HTTP/1.1\r\nHost: fixture.example\r\nContent-Length: 4\r\n\r\ndata",
+        );
+        let manager = ShardedSessionManager::new();
+        let mut packet = proto_packet(Protocol::Http, Direction::Outbound, 42200, 80, 1, 0x18, b"");
+        packet.payload = Bytes::from(payload);
+        let key = SessionKey::new(&packet);
+        let _ = manager.process_packet(&packet, None, Instant::now());
+        let entry = manager.sessions.get(&key).expect("session must exist");
+        assert!(entry.http_desynced);
+        assert!(
+            entry
+                .session
+                .error_reason
+                .as_deref()
+                .unwrap_or("")
+                .contains("inspection:http_stream_desynced")
+        );
+        assert!(manager.take_http_sessions().is_empty());
+        assert_eq!(
+            manager
+                .stats
+                .security
+                .http_desynced_connection_total
+                .load(Ordering::Relaxed),
+            1
+        );
+    }
+}
+
+#[test]
 fn malformed_chunked_desync_stops_splitting_and_signals() {
     // A4 (session level): a malformed chunked body must desync the connection
     // (no more request splitting) and surface an inspection-limited signal,
@@ -1549,7 +1600,7 @@ fn malformed_chunked_desync_stops_splitting_and_signals() {
         80,
         1,
         0x18,
-        b"POST /upload HTTP/1.1\r\nHost: corp.com\r\nTransfer-Encoding: chunked\r\n\r\nZZZnothex\r\nGET /fake HTTP/1.1\r\nHost: corp.com\r\n\r\n",
+        b"POST /upload HTTP/1.1\r\nHost: corp.example\r\nTransfer-Encoding: chunked\r\n\r\nZZZnothex\r\nGET /fake HTTP/1.1\r\nHost: corp.example\r\n\r\n",
     );
     let key = SessionKey::new(&bad);
     let _ = manager.process_packet(&bad, None, Instant::now());
@@ -1596,7 +1647,7 @@ fn malformed_chunked_desync_stops_splitting_and_signals() {
         80,
         5000,
         0x18,
-        b"POST /save HTTP/1.1\r\nHost: corp.com\r\nContent-Length: 4\r\n\r\ndata",
+        b"POST /save HTTP/1.1\r\nHost: corp.example\r\nContent-Length: 4\r\n\r\ndata",
     );
     let _ = manager.process_packet(&later, None, Instant::now());
     assert!(manager.take_http_sessions().is_empty());
@@ -1648,12 +1699,23 @@ fn pop3_retr_marks_coverage_gap() {
 fn pop3_non_retrieval_commands_stay_silent() {
     let manager = ShardedSessionManager::new();
     for (seq, payload) in [(100u32, &b"USER alice\r\n"[..]), (112, &b"LIST\r\n"[..])] {
-        let packet = proto_packet(Protocol::Pop3, Direction::Outbound, 42301, 110, seq, 0x18, payload);
+        let packet = proto_packet(
+            Protocol::Pop3,
+            Direction::Outbound,
+            42301,
+            110,
+            seq,
+            0x18,
+            payload,
+        );
         let _ = manager.process_packet(&packet, None, Instant::now());
     }
     let sessions: Vec<_> = manager.sessions.iter().map(|e| e.key().clone()).collect();
     assert_eq!(sessions.len(), 1);
-    let entry = manager.sessions.get(&sessions[0]).expect("session must exist");
+    let entry = manager
+        .sessions
+        .get(&sessions[0])
+        .expect("session must exist");
     assert!(entry.session.error_reason.is_none());
     assert!(!entry.mail_retrieval_seen);
     assert_eq!(
@@ -1724,12 +1786,23 @@ fn imap_metadata_fetch_stays_silent() {
         (120, &b"A2 FETCH 1 RFC822.SIZE\r\n"[..]),
         (145, &b"A3 FETCH 1 BODY[HEADER]\r\n"[..]),
     ] {
-        let packet = proto_packet(Protocol::Imap, Direction::Outbound, 42401, 143, seq, 0x18, payload);
+        let packet = proto_packet(
+            Protocol::Imap,
+            Direction::Outbound,
+            42401,
+            143,
+            seq,
+            0x18,
+            payload,
+        );
         let _ = manager.process_packet(&packet, None, Instant::now());
     }
     let sessions: Vec<_> = manager.sessions.iter().map(|e| e.key().clone()).collect();
     assert_eq!(sessions.len(), 1);
-    let entry = manager.sessions.get(&sessions[0]).expect("session must exist");
+    let entry = manager
+        .sessions
+        .get(&sessions[0])
+        .expect("session must exist");
     assert!(entry.session.error_reason.is_none());
     assert_eq!(
         manager
@@ -1758,7 +1831,14 @@ fn protocol_anomaly_marked_on_session_completion() {
     let _ = manager.process_packet(&ehlo, None, Instant::now());
 
     // Forged 354 with no pending DATA command -> anomaly_count += 1.
-    let forged = smtp_packet(Direction::Inbound, 42500, 25, 200, 0x18, b"354 go ahead\r\n");
+    let forged = smtp_packet(
+        Direction::Inbound,
+        42500,
+        25,
+        200,
+        0x18,
+        b"354 go ahead\r\n",
+    );
     let _ = manager.process_packet(&forged, None, Instant::now());
 
     // QUIT starts right after EHLO at seq 13.
@@ -1810,12 +1890,12 @@ fn sid_user_conflict_refuses_overwrite() {
     // conflicting rewrite must be refused, counted, and kept out of the
     // Redis write buffer.
     let manager = ShardedSessionManager::new();
-    manager.sid_user_insert("sid-abc".to_string(), "alice@corp.com".to_string());
-    manager.sid_user_insert("sid-abc".to_string(), "mallory@evil.com".to_string());
+    manager.sid_user_insert("sid-abc".to_string(), "alice@corp.example".to_string());
+    manager.sid_user_insert("sid-abc".to_string(), "mallory@evil.invalid".to_string());
 
     assert_eq!(
         manager.sid_user_get("sid-abc").as_deref(),
-        Some("alice@corp.com"),
+        Some("alice@corp.example"),
         "existing mapping must survive a conflicting insert"
     );
     assert_eq!(
@@ -1829,13 +1909,13 @@ fn sid_user_conflict_refuses_overwrite() {
     let pending = manager.take_sid_user_pending();
     assert_eq!(
         pending,
-        vec![("sid-abc".to_string(), "alice@corp.com".to_string())],
+        vec![("sid-abc".to_string(), "alice@corp.example".to_string())],
         "conflicting writes must not reach Redis"
     );
 
     // Same user (case variant) is a refresh, not a conflict: no conflict
     // counted, and the Redis write buffer carries the refresh (TTL renewal).
-    manager.sid_user_insert("sid-abc".to_string(), "Alice@corp.com".to_string());
+    manager.sid_user_insert("sid-abc".to_string(), "Alice@corp.example".to_string());
     assert_eq!(
         manager
             .stats
@@ -1900,7 +1980,7 @@ fn login_binding_wins_over_cookie_identity() {
         80,
         forged_seq,
         0x18,
-        b"POST /api/save HTTP/1.1\r\nHost: mail.example.com\r\nCookie: uid=mallory@evil.com\r\nContent-Length: 4\r\n\r\ndata",
+        b"POST /api/save HTTP/1.1\r\nHost: mail.example.com\r\nCookie: uid=mallory@evil.invalid\r\nContent-Length: 4\r\n\r\ndata",
     );
     let _ = manager.process_packet(&forged, None, Instant::now());
 
@@ -1935,7 +2015,7 @@ fn same_client_ip_reporting_two_users_is_anomalous() {
         80,
         1,
         0x18,
-        b"POST /api/save HTTP/1.1\r\nHost: mail.example.com\r\nCookie: uid=alice@corp.com\r\nContent-Length: 4\r\n\r\ndata",
+        b"POST /api/save HTTP/1.1\r\nHost: mail.example.com\r\nCookie: uid=alice@corp.example\r\nContent-Length: 4\r\n\r\ndata",
     );
     let second = proto_packet(
         Protocol::Http,
@@ -1944,17 +2024,20 @@ fn same_client_ip_reporting_two_users_is_anomalous() {
         80,
         1,
         0x18,
-        b"POST /api/save HTTP/1.1\r\nHost: mail.example.com\r\nCookie: uid=bob@corp.com\r\nContent-Length: 4\r\n\r\ndata",
+        b"POST /api/save HTTP/1.1\r\nHost: mail.example.com\r\nCookie: uid=bob@corp.example\r\nContent-Length: 4\r\n\r\ndata",
     );
     let _ = manager.process_packet(&first, None, Instant::now());
     let _ = manager.process_packet(&second, None, Instant::now());
 
     let sessions = manager.take_http_sessions();
     assert_eq!(sessions.len(), 2);
-    assert_eq!(sessions[0].detected_user.as_deref(), Some("alice@corp.com"));
+    assert_eq!(
+        sessions[0].detected_user.as_deref(),
+        Some("alice@corp.example")
+    );
     assert_eq!(
         sessions[1].detected_user.as_deref(),
-        Some("bob@corp.com"),
+        Some("bob@corp.example"),
         "without a login binding the extracted identity is kept as a hint"
     );
     assert_eq!(

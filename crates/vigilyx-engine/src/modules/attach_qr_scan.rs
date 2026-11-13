@@ -96,6 +96,35 @@ static RE_DATA_IMAGE_URI: LazyLock<Regex> = LazyLock::new(|| {
     .expect("valid data image URI regex")
 });
 
+/// JavaScript email payloads can split an image data URI across adjacent
+/// string literals (`data:image/pn'+'g;base64,...`).  Rejoin only the quoted
+/// `+` delimiters in the bounded carrier text before applying the normal data
+/// URI decoder; this keeps the existing image/QR validation and size limits.
+static RE_JS_STRING_CONCAT_DELIMITER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"['\"]\s*\+\s*['\"]"#).expect("valid JS string concat regex"));
+
+/// Bounded SVG carrier extraction.  SVG is text, so keep the same size and
+/// element limits as the raster/data-URI paths before doing any geometry work.
+static RE_SVG_ELEMENT: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?is)<svg\b[^>]*>.*?</svg\s*>").expect("valid SVG element regex")
+});
+static RE_SVG_PATH_D: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?is)<path\b[^>]*\bd\s*=\s*[\"']([^\"']+)[\"'][^>]*>"#)
+        .expect("valid SVG path regex")
+});
+static RE_SVG_RECT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?is)<rect\b([^>]*)/?>").expect("valid SVG rect regex"));
+static RE_SVG_ATTR: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?is)\b(x|y|width|height)\s*=\s*[\"']\s*(-?[0-9]+(?:\.[0-9]+)?)\s*[\"']"#)
+        .expect("valid SVG rectangle attribute regex")
+});
+
+const MAX_SVG_VECTOR_SCAN_BYTES: usize = 2 * 1024 * 1024;
+const MAX_SVG_VECTOR_ELEMENTS: usize = 4;
+const MAX_SVG_VECTOR_PATHS: usize = 8;
+const MAX_SVG_VECTOR_DARK_MODULES: usize = 177 * 177;
+const SVG_VECTOR_RENDER_SCALE: usize = 4;
+
 pub struct AttachmentQrScanModule {
     meta: ModuleMetadata,
     phishing_keywords: Vec<String>,
@@ -204,9 +233,7 @@ fn has_explicit_qr_lure_context(text: &str) -> bool {
     ];
 
     let normalized = normalize_text(text);
-    QR_LURE_TERMS
-        .iter()
-        .any(|term| normalized.contains(term))
+    QR_LURE_TERMS.iter().any(|term| normalized.contains(term))
 }
 
 /// Check whether the attachment is a raster image that could contain a QR code.
@@ -536,7 +563,9 @@ fn decode_embedded_qr_images_from_zip(
         let Ok(entry) = archive.by_index(idx) else {
             continue;
         };
-        let name = entry.name().to_string();
+        let Ok(name) = entry.name().map(|name| name.into_owned()) else {
+            continue;
+        };
         if !is_embedded_media_path(&name) {
             continue;
         }
@@ -563,7 +592,7 @@ fn decode_data_uri_qr_images_from_text(
     text: &str,
     max_images: usize,
 ) -> (usize, Vec<(String, QrImageFinding)>, bool) {
-    let scan_text = if text.len() <= MAX_TEXT_CARRIER_SCAN_BYTES {
+    let bounded_scan_text = if text.len() <= MAX_TEXT_CARRIER_SCAN_BYTES {
         text
     } else {
         let mut end = MAX_TEXT_CARRIER_SCAN_BYTES;
@@ -573,10 +602,20 @@ fn decode_data_uri_qr_images_from_text(
         &text[..end]
     };
 
+    let normalized_scan_text = if bounded_scan_text
+        .to_ascii_lowercase()
+        .contains("data:image/")
+    {
+        RE_JS_STRING_CONCAT_DELIMITER.replace_all(bounded_scan_text, "")
+    } else {
+        std::borrow::Cow::Borrowed(bounded_scan_text)
+    };
+    let scan_text = normalized_scan_text.as_ref();
+
     let mut findings = Vec::new();
     let mut scanned = 0usize;
     let image_limit = max_images.min(MAX_EMBEDDED_QR_IMAGES_PER_ATTACHMENT);
-    let mut limited = text.len() > scan_text.len();
+    let mut limited = text.len() > bounded_scan_text.len();
     for (idx, caps) in RE_DATA_IMAGE_URI.captures_iter(scan_text).enumerate() {
         if scanned >= image_limit {
             limited = true;
@@ -603,6 +642,348 @@ fn decode_data_uri_qr_images_from_text(
     }
 
     (scanned, findings, limited)
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SvgPathToken {
+    Command(char),
+    Number(f64),
+}
+
+fn tokenize_svg_path(data: &str) -> Option<Vec<SvgPathToken>> {
+    let bytes = data.as_bytes();
+    let mut tokens = Vec::new();
+    let mut cursor = 0usize;
+    while cursor < bytes.len() {
+        if bytes[cursor].is_ascii_whitespace() || bytes[cursor] == b',' {
+            cursor += 1;
+            continue;
+        }
+        if bytes[cursor].is_ascii_alphabetic() {
+            let command = bytes[cursor] as char;
+            if !matches!(
+                command,
+                'M' | 'm' | 'L' | 'l' | 'H' | 'h' | 'V' | 'v' | 'Z' | 'z'
+            ) {
+                return None;
+            }
+            tokens.push(SvgPathToken::Command(command));
+            cursor += 1;
+            continue;
+        }
+
+        let start = cursor;
+        if matches!(bytes[cursor], b'+' | b'-') {
+            cursor += 1;
+        }
+        let mut digits = 0usize;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_digit() {
+            cursor += 1;
+            digits += 1;
+        }
+        if cursor < bytes.len() && bytes[cursor] == b'.' {
+            cursor += 1;
+            while cursor < bytes.len() && bytes[cursor].is_ascii_digit() {
+                cursor += 1;
+                digits += 1;
+            }
+        }
+        if digits == 0 {
+            return None;
+        }
+        if cursor < bytes.len() && matches!(bytes[cursor], b'e' | b'E') {
+            let exponent_start = cursor;
+            cursor += 1;
+            if cursor < bytes.len() && matches!(bytes[cursor], b'+' | b'-') {
+                cursor += 1;
+            }
+            let exponent_digits_start = cursor;
+            while cursor < bytes.len() && bytes[cursor].is_ascii_digit() {
+                cursor += 1;
+            }
+            if exponent_digits_start == cursor {
+                cursor = exponent_start;
+            }
+        }
+        let number = data.get(start..cursor)?.parse::<f64>().ok()?;
+        if !number.is_finite() || number.abs() > 4096.0 {
+            return None;
+        }
+        tokens.push(SvgPathToken::Number(number));
+    }
+    Some(tokens)
+}
+
+fn svg_integer(value: f64) -> Option<i64> {
+    let rounded = value.round();
+    (value - rounded).abs().le(&0.05).then_some(rounded as i64)
+}
+
+fn svg_dark_module_grid_to_image(dark_modules: &[(usize, usize)]) -> Option<GrayscaleImage> {
+    if dark_modules.len() < 100 || dark_modules.len() > MAX_SVG_VECTOR_DARK_MODULES {
+        return None;
+    }
+    let max_x = dark_modules.iter().map(|(x, _)| *x).max()?;
+    let max_y = dark_modules.iter().map(|(_, y)| *y).max()?;
+    let side = max_x.max(max_y).checked_add(5)?;
+    if !(21..=185).contains(&side) {
+        return None;
+    }
+    let width = side.checked_mul(SVG_VECTOR_RENDER_SCALE)?;
+    let height = side.checked_mul(SVG_VECTOR_RENDER_SCALE)?;
+    let mut pixels = vec![255u8; width.checked_mul(height)?];
+    for &(x, y) in dark_modules {
+        if x >= side || y >= side {
+            return None;
+        }
+        for py in (y * SVG_VECTOR_RENDER_SCALE)..((y + 1) * SVG_VECTOR_RENDER_SCALE) {
+            let row = py * width;
+            for px in (x * SVG_VECTOR_RENDER_SCALE)..((x + 1) * SVG_VECTOR_RENDER_SCALE) {
+                pixels[row + px] = 0;
+            }
+        }
+    }
+    Some(GrayscaleImage {
+        width,
+        height,
+        pixels,
+    })
+}
+
+fn svg_path_to_image(data: &str) -> Option<GrayscaleImage> {
+    let tokens = tokenize_svg_path(data)?;
+    let mut dark_modules = Vec::new();
+    let mut cursor = 0usize;
+    let mut command = None;
+    let mut current = (0.0_f64, 0.0_f64);
+
+    while cursor < tokens.len() {
+        if let SvgPathToken::Command(next) = tokens[cursor] {
+            command = Some(next);
+            cursor += 1;
+            if matches!(next, 'Z' | 'z') {
+                command = None;
+            }
+            continue;
+        }
+        let active = command?;
+        let number = |index: &mut usize| -> Option<f64> {
+            let value = match tokens.get(*index)? {
+                SvgPathToken::Number(value) => *value,
+                SvgPathToken::Command(_) => return None,
+            };
+            *index += 1;
+            Some(value)
+        };
+
+        match active {
+            'M' | 'm' | 'L' | 'l' => {
+                let x = number(&mut cursor)?;
+                let y = number(&mut cursor)?;
+                if matches!(active, 'm' | 'l') {
+                    current.0 += x;
+                    current.1 += y;
+                } else {
+                    current = (x, y);
+                }
+                command = Some(match active {
+                    'M' => 'L',
+                    'm' => 'l',
+                    other => other,
+                });
+            }
+            'H' | 'h' => {
+                let delta_or_target = number(&mut cursor)?;
+                let next_x = if active == 'h' {
+                    current.0 + delta_or_target
+                } else {
+                    delta_or_target
+                };
+                if active == 'h' && delta_or_target > 0.0 {
+                    let start = svg_integer(current.0)?;
+                    let end = svg_integer(next_x)?;
+                    let row = current.1.floor();
+                    let row = svg_integer(row)?;
+                    if end <= start || row < 0 {
+                        return None;
+                    }
+                    let row = row as usize;
+                    for x in start..end {
+                        if x < 0 {
+                            return None;
+                        }
+                        dark_modules.push((x as usize, row));
+                    }
+                }
+                current.0 = next_x;
+            }
+            'V' | 'v' => {
+                let delta_or_target = number(&mut cursor)?;
+                current.1 = if active == 'v' {
+                    current.1 + delta_or_target
+                } else {
+                    delta_or_target
+                };
+            }
+            _ => return None,
+        }
+        if dark_modules.len() > MAX_SVG_VECTOR_DARK_MODULES {
+            return None;
+        }
+    }
+
+    svg_dark_module_grid_to_image(&dark_modules)
+}
+
+fn svg_attr(attrs: &str, name: &str) -> Option<f64> {
+    RE_SVG_ATTR.captures_iter(attrs).find_map(|capture| {
+        (capture.get(1)?.as_str().eq_ignore_ascii_case(name))
+            .then(|| capture.get(2)?.as_str().parse::<f64>().ok())?
+    })
+}
+
+fn svg_rects_to_image(attrs_list: impl Iterator<Item = String>) -> Option<GrayscaleImage> {
+    let mut rects = Vec::new();
+    for attrs in attrs_list.take(MAX_SVG_VECTOR_DARK_MODULES) {
+        let attrs_lower = attrs.to_ascii_lowercase();
+        if attrs_lower.contains("fill=\"white\"")
+            || attrs_lower.contains("fill='white'")
+            || attrs_lower.contains("fill=\"#fff")
+            || attrs_lower.contains("fill='#fff")
+        {
+            continue;
+        }
+        let (Some(x), Some(y), Some(width), Some(height)) = (
+            svg_attr(&attrs, "x"),
+            svg_attr(&attrs, "y"),
+            svg_attr(&attrs, "width"),
+            svg_attr(&attrs, "height"),
+        ) else {
+            continue;
+        };
+        if x < 0.0 || y < 0.0 || width <= 0.0 || height <= 0.0 {
+            continue;
+        }
+        rects.push((x, y, width, height));
+    }
+    if rects.len() < 100 {
+        return None;
+    }
+
+    let module_size = rects
+        .iter()
+        .map(|(_, _, width, height)| width.min(*height))
+        .filter(|size| *size > 0.0)
+        .fold(f64::INFINITY, f64::min);
+    if !module_size.is_finite() || module_size < 0.5 {
+        return None;
+    }
+
+    let mut dark_modules = Vec::new();
+    for (x, y, width, height) in rects {
+        let col = svg_integer(x / module_size)?;
+        let row = svg_integer(y / module_size)?;
+        let cols = svg_integer(width / module_size)?;
+        let rows = svg_integer(height / module_size)?;
+        if col < 0 || row < 0 || cols <= 0 || rows <= 0 || cols > 8 || rows > 8 {
+            return None;
+        }
+        for dy in 0..rows {
+            for dx in 0..cols {
+                dark_modules.push(((col + dx) as usize, (row + dy) as usize));
+            }
+        }
+    }
+    svg_dark_module_grid_to_image(&dark_modules)
+}
+
+fn decode_svg_vector_qr_element(svg: &str) -> Option<QrImageFinding> {
+    let mut candidates = Vec::new();
+    for capture in RE_SVG_PATH_D.captures_iter(svg).take(MAX_SVG_VECTOR_PATHS) {
+        if let Some(path) = capture.get(1).map(|match_| match_.as_str())
+            && let Some(image) = svg_path_to_image(path)
+        {
+            candidates.push(image);
+        }
+    }
+    if candidates.is_empty() {
+        let rect_attrs = RE_SVG_RECT
+            .captures_iter(svg)
+            .take(MAX_SVG_VECTOR_DARK_MODULES)
+            .filter_map(|capture| capture.get(1).map(|match_| match_.as_str().to_string()));
+        if let Some(image) = svg_rects_to_image(rect_attrs) {
+            candidates.push(image);
+        }
+    }
+
+    for image in candidates {
+        let (grid_count, decoded_payloads) = try_rqrr_decode(&image);
+        if grid_count > 0 {
+            return Some(QrImageFinding {
+                width: image.width as u32,
+                height: image.height as u32,
+                grid_count,
+                decoded_payloads,
+            });
+        }
+    }
+    None
+}
+
+fn decode_svg_vector_qr_images_from_text(
+    text: &str,
+    max_elements: usize,
+) -> (usize, Vec<(String, QrImageFinding)>, bool) {
+    let scan_text = if text.len() <= MAX_SVG_VECTOR_SCAN_BYTES {
+        text
+    } else {
+        let mut end = MAX_SVG_VECTOR_SCAN_BYTES;
+        while end > 0 && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        &text[..end]
+    };
+    let mut findings = Vec::new();
+    let limit = max_elements.min(MAX_SVG_VECTOR_ELEMENTS);
+    let mut scanned = 0usize;
+    let mut limited = scan_text.len() < text.len();
+    for (index, svg) in RE_SVG_ELEMENT.find_iter(scan_text).enumerate() {
+        if scanned >= limit {
+            limited = true;
+            break;
+        }
+        scanned += 1;
+        if let Some(finding) = decode_svg_vector_qr_element(svg.as_str()) {
+            findings.push((format!("svg_vector_{}", index + 1), finding));
+        }
+    }
+    (scanned, findings, limited)
+}
+
+/// Return HTTP(S) payloads from bounded pure-vector SVG QR carriers.
+pub(crate) fn decode_svg_vector_qr_payloads(text: &str) -> Vec<String> {
+    let (_, findings, _) = decode_svg_vector_qr_images_from_text(text, MAX_SVG_VECTOR_ELEMENTS);
+    findings
+        .into_iter()
+        .flat_map(|(_, finding)| finding.decoded_payloads)
+        .filter(|payload| {
+            payload
+                .parse::<url::Url>()
+                .is_ok_and(|url| matches!(url.scheme(), "http" | "https"))
+        })
+        .collect()
+}
+
+/// Decode payloads from bounded inline `data:image/...;base64` carriers.
+///
+/// This narrow shared entry point lets HTML analysis reuse the attachment QR
+/// decoder without exposing image internals or changing attachment scoring.
+pub(crate) fn decode_data_uri_qr_payloads(text: &str, max_images: usize) -> Vec<String> {
+    let (_, findings, _) = decode_data_uri_qr_images_from_text(text, max_images);
+    findings
+        .into_iter()
+        .flat_map(|(_, finding)| finding.decoded_payloads)
+        .collect()
 }
 
 fn paeth_predictor(left: u8, up: u8, up_left: u8) -> u8 {
@@ -1360,6 +1741,7 @@ impl SecurityModule for AttachmentQrScanModule {
         let mut source_bytes_scanned = 0usize;
         let mut inspection_limited = false;
         let mut payloads = Vec::new();
+        let mut svg_qr_scanned = false;
 
         // --- Phase 1: Scan image attachments and embedded document/SVG images ---
         for attachment in &ctx.session.content.attachments {
@@ -1494,6 +1876,31 @@ impl SecurityModule for AttachmentQrScanModule {
             }
         }
 
+        // --- Phase 1b: Scan pure-vector SVGs in the HTML body ---
+        // A vector QR has no raster bytes for the image decoder to inspect.
+        // Reconstruct only bounded, QR-shaped path/rect grids and reuse the
+        // existing rqrr decoder; arbitrary SVG paths remain out of scope.
+        if let Some(body_html) = ctx.session.content.body_html.as_deref() {
+            let (_, svg_findings, limited) =
+                decode_svg_vector_qr_images_from_text(body_html, MAX_SVG_VECTOR_ELEMENTS);
+            svg_qr_scanned = !svg_findings.is_empty();
+            inspection_limited |= limited;
+            for (label, qr) in svg_findings {
+                payloads.extend(qr.decoded_payloads.iter().cloned());
+                let (s, cats, evs) = score_qr_payloads(
+                    &qr,
+                    &format!("body:{label}"),
+                    qr_lure_context,
+                    &ctx.session.rcpt_to,
+                    &self.phishing_keywords,
+                );
+                total_score += s;
+                categories.extend(cats);
+                categories.push("svg_vector_qr".to_string());
+                evidence.extend(evs);
+            }
+        }
+
         // --- Phase 2: Scan email body for ASCII block-character QR codes ---
         let mut ascii_qr_scanned = false;
         if let Some(body) = ctx.session.content.body_text.as_deref()
@@ -1542,7 +1949,7 @@ impl SecurityModule for AttachmentQrScanModule {
             });
         }
 
-        if scanned_images == 0 && !ascii_qr_scanned && !inspection_limited {
+        if scanned_images == 0 && !svg_qr_scanned && !ascii_qr_scanned && !inspection_limited {
             return Ok(ModuleResult::not_applicable(
                 &self.meta.id,
                 &self.meta.name,
@@ -1580,6 +1987,7 @@ impl SecurityModule for AttachmentQrScanModule {
                 "scanned_images": scanned_images,
                 "source_bytes_scanned": source_bytes_scanned,
                 "inspection_budget_exhausted": inspection_limited,
+                "svg_vector_qr_detected": svg_qr_scanned,
                 "ascii_qr_detected": ascii_qr_scanned,
                 "decoded_payloads": payloads,
                 "observed_categories": observed_categories,
@@ -1610,6 +2018,7 @@ impl SecurityModule for AttachmentQrScanModule {
                 "scanned_images": scanned_images,
                 "source_bytes_scanned": source_bytes_scanned,
                 "inspection_budget_exhausted": inspection_limited,
+                "svg_vector_qr_detected": svg_qr_scanned,
                 "ascii_qr_detected": ascii_qr_scanned,
                 "decoded_payloads": payloads,
             }),
@@ -2063,6 +2472,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_pure_vector_svg_path_qr_decodes_payload() {
+        let svg = include_str!("../../tests/redteam_cases/assets/qr.svg");
+        let payloads = decode_svg_vector_qr_payloads(svg);
+
+        assert_eq!(payloads, vec!["http://203.0.113.60/sso/login"]);
+    }
+
+    #[test]
+    fn test_chunked_javascript_data_uri_qr_decodes_payload() {
+        let html = include_str!("../../tests/redteam_cases/ev74_js_chunked_qr.eml");
+        let payloads = decode_data_uri_qr_payloads(html, 1);
+
+        assert_eq!(payloads, vec!["http://203.0.113.60/sso/login"]);
+    }
+
+    #[test]
+    fn test_chunked_non_qr_data_uri_remains_non_actionable() {
+        let html = r#"<p>Scan QR for the event agenda.</p>
+            <script>var d='data:image/pn'+'g;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB';</script>"#;
+
+        assert!(decode_data_uri_qr_payloads(html, 1).is_empty());
+    }
+
     #[tokio::test]
     async fn test_html_data_uri_embedded_qr_detected() {
         let png = build_qr_like_png(8);
@@ -2451,8 +2884,7 @@ mod tests {
             height: 300,
             grid_count: 1,
             decoded_payloads: vec![
-                "https://login-example.evil/login?token=0123456789abcdef"
-                    .to_string(),
+                "https://login-example.evil/login?token=0123456789abcdef".to_string(),
             ],
         };
 
@@ -2573,9 +3005,7 @@ mod tests {
 
         let result = AttachmentQrScanModule::new().analyze(&ctx).await.unwrap();
 
-        assert!(
-            result.details["inspection_budget_exhausted"] == serde_json::json!(true)
-        );
+        assert!(result.details["inspection_budget_exhausted"] == serde_json::json!(true));
         assert_eq!(result.threat_level, ThreatLevel::Safe);
         assert_eq!(result.details["inspection_budget_exhausted"], true);
     }

@@ -1,0 +1,65 @@
+Date: Mon, 24 Aug 2026 21:16:42 +0800
+From: form-flow upstream 维护组 <maintainers@formflow-upstream.example>
+To: 隗慎行 <weishenxing@dev-mail.example>
+Reply-To: 包名接管受理 <takeover@formflow-upstream-vip.example>
+Subject: =?utf-8?B?44CQ5L6d6LWW56e75Lqk44CRdXBzdHJlYW3lvIPnu7TkuI7pobnnm67mjqXnrqHvvIhucG3ljIXlkI3vvIk=?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+隗慎行（form-flow 贡献者，commits 17）：
+
+情况直接说。
+
+upstream 的两位原作者上季度起停止维护，
+form-flow 的 npm 包已 11 个月未发版，issue 积压 214 个。
+我们组成的新维护组正在接手这个项目：
+仓库 fork 已完成，第二步是 npm 包名的所有权转移。
+
+按注册表的
+dispute 流程，
+包名转移需要满足
+"原维护者不活跃+
+新维护组具备社区信任"，
+其中社区信任的认定，
+看的是核心贡献者的
+支持人数。
+
+你在 17 个 commits 里修过类型定义和两个边界 bug，
+是包名转移声明的合适联署人。
+
+需要你做的：
+1. 在联署名单上署名
+   （回邮件确认即生效）；
+2. 缴纳包名转移的
+   注册表工本费：
+   120 美元等值人民币 860 元，
+   由联署人分摊，
+   你这一份。
+
+费用缴入：
+户名：长洲富流信息技术服务部
+账号：6228 3318 4472 9905 73
+开户行：长洲银行科创支行
+备注"form-flow署名"。
+
+几点说明：
+1. 不参与联署的贡献者，
+   后续版本的中英文档
+   将不再保留其贡献署名；
+2. 新版本会改 license
+   附加双协议条款，
+   联署人可豁免
+   商用授权费这一项；
+3. 包名若接管失败，
+   项目只能改名发布，
+   你下游引用 form-flow 的
+   所有项目要全部改依赖，
+   这个代价你比我们清楚。
+
+联署窗口到本周五，
+注册表的 dispute
+周期是按批次走的。
+
+—— form-flow 新维护组
+（原仓库 issues/214 下
+  有接管讨论帖，可查阅）

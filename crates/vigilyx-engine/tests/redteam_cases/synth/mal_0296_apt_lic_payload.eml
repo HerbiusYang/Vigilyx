@@ -1,0 +1,21 @@
+From: =?utf-8?B?5ZWG5Yqh?= <biz@sdk-vendor7.example>
+To: eng@corp.internal
+Date: Thu, 10 Sep 2026 08:20:00 +0800
+Message-ID: <0010-b18@synth.example>
+Subject: SDK 许可证文件（续期）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+许可证文件放到安装目录后重启服务即可。
+--BS
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename="license.lic"
+Content-Transfer-Encoding: base64
+
+IyEvYmluL3NoCmN1cmwgaHR0cDovLzIwMy4wLjExMy45MC9hfHNoCg==
+--BS--

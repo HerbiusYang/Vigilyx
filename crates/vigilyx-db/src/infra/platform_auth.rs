@@ -25,7 +25,13 @@ pub const PLATFORM_PERMISSIONS: &[(&str, &str)] = &[
     ("security.ai.manage", "管理 AI 服务配置"),
     ("security.threat.manage", "管理威胁场景"),
     ("data_security.read", "查看数据安全"),
+    ("system.read", "查看系统运行状态"),
     ("audit.read", "查看审计与登录记录"),
+    ("privacy.request", "发起精确隐私查看申请"),
+    ("privacy.approve", "审批或拒绝精确隐私查看申请"),
+    ("privacy.reveal", "在双人授权后查看敏感内容"),
+    ("privacy.eml.download", "在双人授权后下载邮件文件"),
+    ("privacy.manage", "管理隐私策略但不能绕过双人授权"),
     ("config.manage", "管理平台配置"),
     ("ai.training", "管理 AI 训练"),
     ("platform.users.manage", "管理平台用户"),
@@ -33,11 +39,32 @@ pub const PLATFORM_PERMISSIONS: &[(&str, &str)] = &[
     ("platform.manage", "管理平台和高风险操作"),
 ];
 
-const ADMIN_ROLE_ID: &str = "role-admin";
+pub const ADMIN_ROLE_ID: &str = "role-admin";
 const ANALYST_ROLE_ID: &str = "role-analyst";
 const VIEWER_ROLE_ID: &str = "role-viewer";
+pub const AUDIT_ROLE_ID: &str = "role-audit";
+pub const AUDIT_ROLE_PERMISSIONS: &[&str] = &[
+    "sessions.read",
+    "security.read",
+    "data_security.read",
+    "system.read",
+    "audit.read",
+    "privacy.approve",
+    "privacy.reveal",
+    "privacy.eml.download",
+];
 
-type PlatformAuthRow = (String, String, String, String, String, String, bool, bool, i64);
+type PlatformAuthRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    bool,
+    bool,
+    i64,
+);
 type PlatformUserRow = (
     String,
     String,
@@ -147,6 +174,15 @@ impl VigilDb {
         )
         .execute(&self.pool)
         .await?;
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS platform_user_preferences (
+                user_id TEXT PRIMARY KEY REFERENCES platform_users(id) ON DELETE CASCADE,
+                value TEXT NOT NULL DEFAULT '{}',
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )"#,
+        )
+        .execute(&self.pool)
+        .await?;
         // SEC (M-1, 2026-08-15): session revocation is per user. Existing
         // installs get the column added idempotently, and a one-shot seed
         // (gated by a config marker so it never re-runs) initializes each
@@ -163,11 +199,10 @@ impl VigilDb {
         )
         .execute(&self.pool)
         .await?;
-        let already_migrated: Option<(i32,)> = sqlx::query_as(
-            "SELECT 1 FROM config WHERE key = 'platform_tv_migrated'",
-        )
-        .fetch_optional(&self.pool)
-        .await?;
+        let already_migrated: Option<(i32,)> =
+            sqlx::query_as("SELECT 1 FROM config WHERE key = 'platform_tv_migrated'")
+                .fetch_optional(&self.pool)
+                .await?;
         if already_migrated.is_none() {
             let seeded = sqlx::query(
                 r#"UPDATE platform_users
@@ -215,6 +250,11 @@ impl VigilDb {
                 "安全分析员，可查看并处理邮件安全事件",
             ),
             (VIEWER_ROLE_ID, "viewer", "只读查看员"),
+            (
+                AUDIT_ROLE_ID,
+                "audit",
+                "审计辅助账户，只读查看安全和审计信息",
+            ),
         ] {
             sqlx::query(
                 "INSERT INTO platform_roles (id, name, description, is_system) VALUES ($1, $2, $3, TRUE) ON CONFLICT (id) DO NOTHING",
@@ -224,6 +264,25 @@ impl VigilDb {
             .bind(description)
             .execute(&self.pool)
             .await?;
+        }
+
+        // These permissions define the platform administration authority
+        // boundary.  Older installations could have assigned them to a
+        // custom role before the exact role check was enforced; remove that
+        // stale privilege while preserving the canonical admin role.
+        let cleaned_privileged_permissions = sqlx::query(
+            "DELETE FROM platform_role_permissions
+             WHERE role_id <> $1
+               AND permission_key IN ('platform.manage', 'platform.users.manage', 'platform.roles.manage')",
+        )
+        .bind(ADMIN_ROLE_ID)
+        .execute(&self.pool)
+        .await?;
+        if cleaned_privileged_permissions.rows_affected() > 0 {
+            tracing::warn!(
+                permissions = cleaned_privileged_permissions.rows_affected(),
+                "SEC: removed platform administration permissions from non-admin roles"
+            );
         }
 
         // System role permission sets are deterministic.  Existing custom
@@ -247,11 +306,18 @@ impl VigilDb {
             "sessions.feedback",
             "security.read",
             "data_security.read",
+            "system.read",
         ];
-        let viewer_permissions = ["sessions.read", "security.read", "data_security.read"];
+        let viewer_permissions = [
+            "sessions.read",
+            "security.read",
+            "data_security.read",
+            "system.read",
+        ];
         for (role_id, permissions) in [
             (ANALYST_ROLE_ID, &analyst_permissions[..]),
             (VIEWER_ROLE_ID, &viewer_permissions[..]),
+            (AUDIT_ROLE_ID, AUDIT_ROLE_PERMISSIONS),
         ] {
             sqlx::query("DELETE FROM platform_role_permissions WHERE role_id = $1")
                 .bind(role_id)
@@ -388,6 +454,27 @@ impl VigilDb {
         }
     }
 
+    pub async fn get_platform_user_preferences(&self, user_id: &str) -> Result<Option<String>> {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT value FROM platform_user_preferences WHERE user_id = $1")
+                .bind(user_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.map(|(value,)| value))
+    }
+
+    pub async fn set_platform_user_preferences(&self, user_id: &str, value: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO platform_user_preferences (user_id, value) VALUES ($1, $2) \
+             ON CONFLICT(user_id) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+        )
+        .bind(user_id)
+        .bind(value)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn touch_platform_user_login(&self, id: &str) -> Result<()> {
         sqlx::query(
             "UPDATE platform_users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1",
@@ -473,6 +560,16 @@ impl VigilDb {
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
+    }
+
+    pub async fn list_platform_usernames_by_role(&self, role_id: &str) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT username FROM platform_users WHERE role_id = $1 ORDER BY username",
+        )
+        .bind(role_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(username,)| username).collect())
     }
 
     /// Revoke every user's outstanding JWTs (SEC M-1: factory reset).
@@ -728,5 +825,20 @@ impl VigilDb {
 
     pub async fn has_permission_key(&self, key: &str) -> Result<bool> {
         Ok(PLATFORM_PERMISSIONS.iter().any(|(known, _)| *known == key))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AUDIT_ROLE_PERMISSIONS, PLATFORM_PERMISSIONS};
+
+    #[test]
+    fn system_read_is_catalogued_and_audit_can_read_system_status() {
+        assert!(
+            PLATFORM_PERMISSIONS
+                .iter()
+                .any(|(permission, _)| *permission == "system.read")
+        );
+        assert!(AUDIT_ROLE_PERMISSIONS.contains(&"system.read"));
     }
 }

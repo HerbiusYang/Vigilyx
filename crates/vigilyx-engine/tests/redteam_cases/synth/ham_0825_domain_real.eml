@@ -1,0 +1,118 @@
+From: "原注册商 | 域名服务" <domains@registrar.example>
+To: it.webmaster@startup.example
+Cc: founder@startup.example, finance@startup.example
+Date: Wed, 15 Dec 2027 08:20:00 +0800
+Message-ID: <0825-b130@synth.example>
+Subject: [URGENT] domain.com in Redemption Period - Renew Via Your Registrar Account (Standard Fee $85 + Redemption $120)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+WebMaster, Founder, Finance,
+
+URGENT: domain.com EXPIRED AND
+ENTERED THE REDEMPTION
+PERIOD.
+
+Your domain (company site +
+email MX records) expired
+Nov 20 (auto-renew card
+declined - card expired).
+It is now in the registrar's
+redemption grace period.
+
+1. DOMAIN STATUS
+
+  Domain:      domain.com
+  Expired:     2027-11-20
+               (auto-renew
+               declined)
+  Stage:       Redemption
+               grace period
+               (~30 days
+               from expiry)
+  Email MX:    DOWN 25 days
+               (inbound mail
+               bouncing)
+  Website:     DNS stopped
+               resolving
+
+2. HOW TO REDEEM
+   (REGISTRAR PATH)
+
+    1. Log in to your
+       registrar account
+       (typed address;
+       your account is
+       active - the card
+       on file declined,
+       the account did
+       not freeze).
+    2. Domain ->
+       domain.com ->
+       "Redeem": pay the
+       redemption fee
+       (USD 120, the
+       registry's fixed
+       fee) + renewal
+       (USD 85/yr) with
+       an updated card.
+    3. Redemption
+       submits to the
+       registry within
+       the hour; DNS/MX
+       restore within
+       24h.
+
+  Your registrar will
+  NEVER:
+  - Charge RMB 12,800
+    "赎回服务费" via a
+    "domain recovery
+    center" bank account
+    (the redemption fee
+    is a fixed registry
+    fee paid inside your
+    account - 92 batch's
+    inflated-invoice
+    pattern at its most
+    extreme: 85 yuan
+    renewal vs 12,800
+    "recovery"; the
+    "registrar account
+    frozen for arrears"
+    claim is invented -
+    a declined card
+    never freezes an
+    account)
+  - Operate lookalike
+    domains such as
+    "webreg-domain" or
+    "wr-redemption"
+  - Race you to the
+    registry ("first
+    paid, first served"
+    urgency) - redemptions
+    are exclusive to the
+    REGISTER OF RECORD
+    for the entire grace
+    period; no third
+    party can redeem
+    your domain, and
+    yours cannot be
+    "sniped" while it
+    remains in
+    redemption
+
+3. AFTER REDEMPTION
+
+  - Update the auto-
+    renew card
+  - Re-verify MX
+    records restored
+  - Enable registry-
+    lock (recommended)
+
+Your Registrar | Domain
+Services
+This notice concerns
+domain.com only.

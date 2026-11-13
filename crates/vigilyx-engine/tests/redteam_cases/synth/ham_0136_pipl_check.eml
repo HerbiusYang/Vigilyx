@@ -1,0 +1,10 @@
+From: =?utf-8?B?5ZCI6KeE6YOo?= <compliance@corp.internal>
+To: rd-leads@corp.internal
+Date: Mon, 31 Aug 2026 09:45:00 +0800
+Message-ID: <0035-b8@synth.example>
+Subject: 个保法自查清单（研发部分）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+研发侧自查三件事：埋点脱敏、日志含 PII 排查、导出审批留痕。
+表单在合规频道，下周五回收。

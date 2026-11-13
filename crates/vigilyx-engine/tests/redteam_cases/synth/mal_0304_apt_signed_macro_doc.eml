@@ -1,0 +1,21 @@
+From: =?utf-8?B?5ZCI6KeE6YOoLeWklumDqOmhvumXrg==?= <advisor@consult-relay14.example>
+To: compliance@corp.internal
+Date: Thu, 10 Sep 2026 08:28:00 +0800
+Message-ID: <0018-b18@synth.example>
+Subject: 尽调清单（启用宏后自动汇总）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+清单需要启用宏运行汇总脚本，结果自动回传顾问邮箱。
+--BS
+Content-Type: application/vnd.ms-word.document.macroEnabled.12
+Content-Disposition: attachment; filename="due_diligence.docm"
+Content-Transfer-Encoding: base64
+
+UEsDBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+--BS--

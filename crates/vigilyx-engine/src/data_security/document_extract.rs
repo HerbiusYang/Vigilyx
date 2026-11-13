@@ -11,6 +11,7 @@
 //! Output is capped at 50 MB of extracted text.
 
 use std::io::Read;
+use std::time::{Duration, Instant};
 use tracing::debug;
 use vigilyx_core::magic_bytes::DetectedFileType;
 
@@ -28,24 +29,44 @@ const STREAM_CHUNK_SIZE: usize = 64 * 1024; // 64 KB
 /// Automatically selects the extraction method based on `file_type`.
 /// Returns `None` if extraction is not supported or yields no text.
 pub fn extract_text(data: &[u8], file_type: Option<DetectedFileType>) -> Option<String> {
+    extract_text_with_coverage(data, file_type).text
+}
+
+/// Extraction coverage is separate from the text retained for detection. A
+/// partial prefix must never be mistaken for a complete DLP inspection.
+#[derive(Debug)]
+pub struct DocumentTextExtraction {
+    pub text: Option<String>,
+    pub complete: bool,
+}
+
+pub fn extract_text_with_coverage(
+    data: &[u8],
+    file_type: Option<DetectedFileType>,
+) -> DocumentTextExtraction {
     if data.is_empty() {
-        return None;
+        return DocumentTextExtraction {
+            text: None,
+            complete: true,
+        };
     }
-
-    let ft = file_type?;
-
-    let result = match ft {
-        DetectedFileType::ZipArchive => extract_ooxml_text(data),
-        DetectedFileType::Pdf => extract_pdf_text(data),
-        DetectedFileType::OleCompound => extract_ole_text(data),
-        DetectedFileType::Rtf => extract_rtf_text(data),
+    let mut complete = true;
+    let result = match file_type {
+        Some(DetectedFileType::ZipArchive) => extract_ooxml_text_with_coverage(data, &mut complete),
+        Some(DetectedFileType::Pdf) => extract_pdf_text_with_coverage(data, &mut complete),
+        Some(DetectedFileType::OleCompound) => extract_ole_text(data),
+        Some(DetectedFileType::Rtf) => extract_rtf_text(data),
         _ => None,
     };
 
     // Truncate if over limit
-    result
+    let text = result
         .map(|text| {
-            if text.len() > MAX_EXTRACT_LEN {
+            // Internal legacy extractors also stop at this boundary. An
+            // exact boundary is conservatively partial until those readers
+            // can prove EOF independently.
+            if text.len() >= MAX_EXTRACT_LEN {
+                complete = false;
                 let mut end = MAX_EXTRACT_LEN;
                 while end > 0 && !text.is_char_boundary(end) {
                     end -= 1;
@@ -55,7 +76,8 @@ pub fn extract_text(data: &[u8], file_type: Option<DetectedFileType>) -> Option<
                 text
             }
         })
-        .filter(|t| !t.trim().is_empty())
+        .filter(|t| !t.trim().is_empty());
+    DocumentTextExtraction { text, complete }
 }
 
 /// Safely read a ZIP entry: stream the contents, do not trust file.size(), and enforce dual limits.
@@ -63,6 +85,7 @@ pub fn extract_text(data: &[u8], file_type: Option<DetectedFileType>) -> Option<
 fn safe_read_zip_entry<R: Read>(
     mut entry: zip::read::ZipFile<'_, R>,
     remaining_budget: usize,
+    complete: &mut bool,
 ) -> Option<String> {
     let limit = remaining_budget.min(MAX_ENTRY_SIZE);
     let mut buf = Vec::with_capacity(STREAM_CHUNK_SIZE.min(limit));
@@ -72,6 +95,12 @@ fn safe_read_zip_entry<R: Read>(
     loop {
         let to_read = chunk.len().min(limit - total);
         if to_read == 0 {
+            // Probe one byte so exact-limit documents are not incorrectly
+            // marked partial, while bytes beyond the limit cannot disappear.
+            match entry.read(&mut chunk[..1]) {
+                Ok(0) => {}
+                _ => *complete = false,
+            }
             break;
         }
         match entry.read(&mut chunk[..to_read]) {
@@ -79,19 +108,20 @@ fn safe_read_zip_entry<R: Read>(
             Ok(n) => {
                 buf.extend_from_slice(&chunk[..n]);
                 total += n;
-                if total >= limit {
-                    debug!(entry_name = ?entry.name(), total, limit, "ZIP entry hit size limit, truncating");
-                    break;
-                }
             }
-            Err(_) => break,
+            Err(_) => {
+                *complete = false;
+                break;
+            }
         }
     }
 
     if buf.is_empty() {
         return None;
     }
-    Some(String::from_utf8_lossy(&buf).into_owned())
+    let text = String::from_utf8_lossy(&buf);
+    *complete &= !matches!(&text, std::borrow::Cow::Owned(_));
+    Some(text.into_owned())
 }
 
 /// From OOXML (DOCX/XLSX/PPTX) ExtractText
@@ -100,9 +130,20 @@ fn safe_read_zip_entry<R: Read>(
 /// - DOCX: `word/document.xml`
 /// - XLSX: `xl/sharedStrings.xml` + `xl/worksheets/sheet*.xml`
 /// - PPTX: `ppt/slides/slide*.xml`
+#[cfg(test)]
 fn extract_ooxml_text(data: &[u8]) -> Option<String> {
+    extract_ooxml_text_with_coverage(data, &mut true)
+}
+
+fn extract_ooxml_text_with_coverage(data: &[u8], complete: &mut bool) -> Option<String> {
     let cursor = std::io::Cursor::new(data);
-    let mut archive = zip::ZipArchive::new(cursor).ok()?;
+    let mut archive = match zip::ZipArchive::new(cursor) {
+        Ok(archive) => archive,
+        Err(_) => {
+            *complete = false;
+            return None;
+        }
+    };
 
     let mut all_text = String::with_capacity(8192);
 
@@ -117,9 +158,12 @@ fn extract_ooxml_text(data: &[u8]) -> Option<String> {
     for &name in &target_files {
         if let Ok(file) = archive.by_name(name) {
             if all_text.len() >= MAX_EXTRACT_LEN {
+                *complete = false;
                 break;
             }
-            if let Some(content) = safe_read_zip_entry(file, MAX_EXTRACT_LEN - all_text.len()) {
+            if let Some(content) =
+                safe_read_zip_entry(file, MAX_EXTRACT_LEN - all_text.len(), complete)
+            {
                 let text = strip_xml_tags(&content);
                 if !text.is_empty() {
                     if !all_text.is_empty() {
@@ -135,24 +179,47 @@ fn extract_ooxml_text(data: &[u8]) -> Option<String> {
     // slide 4+ must not become a blind spot. Names are collected first so
     // the archive borrow ends before entry reads.
     const MAX_OOXML_SLIDES: usize = 256;
+    const MAX_OOXML_SHEETS: usize = 256;
+    const MAX_OOXML_ENTRIES: usize = 1024;
     let mut slide_names: Vec<String> = Vec::new();
-    for index in 0..archive.len() {
+    let mut sheet_names: Vec<String> = Vec::new();
+    if archive.len() > MAX_OOXML_ENTRIES {
+        *complete = false;
+    }
+    for index in 0..archive.len().min(MAX_OOXML_ENTRIES) {
         let Ok(entry) = archive.by_index(index) else {
+            *complete = false;
             continue;
         };
-        let name = entry.name();
+        let Ok(name) = entry.name() else {
+            *complete = false;
+            continue;
+        };
         if name.starts_with("ppt/slides/slide") && name.ends_with(".xml") {
             slide_names.push(name.to_string());
         }
+        if name
+            .strip_prefix("xl/worksheets/sheet")
+            .and_then(|name| name.strip_suffix(".xml"))
+            .and_then(|number| number.parse::<usize>().ok())
+            .is_some()
+        {
+            sheet_names.push(name.to_string());
+        }
     }
     slide_names.sort();
+    if slide_names.len() > MAX_OOXML_SLIDES {
+        *complete = false;
+    }
     slide_names.truncate(MAX_OOXML_SLIDES);
     for name in &slide_names {
         if all_text.len() >= MAX_EXTRACT_LEN {
+            *complete = false;
             break;
         }
         if let Ok(file) = archive.by_name(name)
-            && let Some(content) = safe_read_zip_entry(file, MAX_EXTRACT_LEN - all_text.len())
+            && let Some(content) =
+                safe_read_zip_entry(file, MAX_EXTRACT_LEN - all_text.len(), complete)
         {
             let text = strip_xml_tags(&content);
             if !text.is_empty() {
@@ -164,13 +231,20 @@ fn extract_ooxml_text(data: &[u8]) -> Option<String> {
         }
     }
 
-    for i in 1..=10 {
-        let sheet_name = format!("xl/worksheets/sheet{}.xml", i);
-        if let Ok(file) = archive.by_name(&sheet_name) {
+    sheet_names.sort();
+    if sheet_names.len() > MAX_OOXML_SHEETS {
+        *complete = false;
+    }
+    sheet_names.truncate(MAX_OOXML_SHEETS);
+    for sheet_name in &sheet_names {
+        if let Ok(file) = archive.by_name(sheet_name) {
             if all_text.len() >= MAX_EXTRACT_LEN {
+                *complete = false;
                 break;
             }
-            if let Some(content) = safe_read_zip_entry(file, MAX_EXTRACT_LEN - all_text.len()) {
+            if let Some(content) =
+                safe_read_zip_entry(file, MAX_EXTRACT_LEN - all_text.len(), complete)
+            {
                 let text = strip_xml_tags(&content);
                 if !text.is_empty() {
                     all_text.push('\n');
@@ -178,8 +252,7 @@ fn extract_ooxml_text(data: &[u8]) -> Option<String> {
                 }
             }
         } else {
-            // A missing intermediate sheet number just means a sheet was
-            // deleted; later sheets still exist and must be scanned.
+            *complete = false;
             continue;
         }
     }
@@ -204,17 +277,25 @@ fn extract_ooxml_text(data: &[u8]) -> Option<String> {
 /// inflate each FlateDecode stream (long form `/FlateDecode` and the ISO 32000
 /// abbreviation `/Fl`; bounded count + total budget, zip-bomb safe) and run
 /// the same literal/hex string extraction on the decoded layer.
+#[cfg(test)]
 fn extract_pdf_text(data: &[u8]) -> Option<String> {
+    extract_pdf_text_with_coverage(data, &mut true)
+}
+
+fn extract_pdf_text_with_coverage(data: &[u8], complete: &mut bool) -> Option<String> {
     let mut text = String::with_capacity(4096);
+    let mut budget = PdfExtractionBudget::default();
 
-    extract_pdf_text_operators(&String::from_utf8_lossy(data), &mut text);
+    extract_pdf_text_operators(&String::from_utf8_lossy(data), &mut text, &mut budget);
 
-    for layer in inflate_pdf_flate_streams(data) {
-        extract_pdf_text_operators(&String::from_utf8_lossy(&layer), &mut text);
+    for layer in inflate_pdf_flate_streams(data, &mut budget) {
+        extract_pdf_text_operators(&String::from_utf8_lossy(&layer), &mut text, &mut budget);
         if text.len() >= MAX_EXTRACT_LEN {
+            budget.complete = false;
             break;
         }
     }
+    *complete &= budget.complete;
 
     if text.is_empty() {
         debug!("PDF: no text content extracted");
@@ -239,6 +320,60 @@ const MAX_PDF_TOTAL_INFLATE_BYTES: usize = 32 * 1024 * 1024;
 /// 从 `stream` 关键字回溯定位所属字典的范围上限 (A3: 原为固定 512B 窗口,
 /// 攻击者塞 >512B 合法无关键即可把 /Filter 推出窗口)。
 const PDF_STREAM_DICT_MAX_BACKTRACK: usize = 256 * 1024;
+
+const MAX_PDF_STREAM_CANDIDATES: usize = 2048;
+const MAX_PDF_SCAN_WORK_BYTES: usize = 128 * 1024 * 1024;
+const PDF_EXTRACTION_WALL_BUDGET: Duration = Duration::from_secs(2);
+
+/// All candidates and failed attempts consume work, not only successfully
+/// decoded streams. This budget survives the raw and inflated text passes.
+struct PdfExtractionBudget {
+    started: Instant,
+    max_duration: Duration,
+    candidates_remaining: usize,
+    scan_bytes_remaining: usize,
+    complete: bool,
+}
+
+impl Default for PdfExtractionBudget {
+    fn default() -> Self {
+        Self {
+            started: Instant::now(),
+            max_duration: PDF_EXTRACTION_WALL_BUDGET,
+            candidates_remaining: MAX_PDF_STREAM_CANDIDATES,
+            scan_bytes_remaining: MAX_PDF_SCAN_WORK_BYTES,
+            complete: true,
+        }
+    }
+}
+
+impl PdfExtractionBudget {
+    fn within_deadline(&mut self) -> bool {
+        if self.started.elapsed() >= self.max_duration {
+            self.complete = false;
+            return false;
+        }
+        true
+    }
+
+    fn charge_work(&mut self, bytes: usize) -> bool {
+        if !self.within_deadline() || bytes > self.scan_bytes_remaining {
+            self.complete = false;
+            return false;
+        }
+        self.scan_bytes_remaining -= bytes;
+        true
+    }
+
+    fn charge_candidate(&mut self) -> bool {
+        if !self.within_deadline() || self.candidates_remaining == 0 {
+            self.complete = false;
+            return false;
+        }
+        self.candidates_remaining -= 1;
+        true
+    }
+}
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.len() > haystack.len() {
@@ -320,7 +455,7 @@ fn dict_declares_flate(dict: &[u8]) -> bool {
 /// MAX_PDF_STREAM_INFLATE_BYTES and all together by
 /// MAX_PDF_TOTAL_INFLATE_BYTES. Streams failing to inflate are skipped;
 /// extraction continues on the remaining layers.
-fn inflate_pdf_flate_streams(data: &[u8]) -> Vec<Vec<u8>> {
+fn inflate_pdf_flate_streams(data: &[u8], budget: &mut PdfExtractionBudget) -> Vec<Vec<u8>> {
     use flate2::read::ZlibDecoder;
 
     let mut layers = Vec::new();
@@ -328,13 +463,36 @@ fn inflate_pdf_flate_streams(data: &[u8]) -> Vec<Vec<u8>> {
     let mut total_budget = MAX_PDF_TOTAL_INFLATE_BYTES;
 
     while layers.len() < MAX_PDF_STREAMS_TO_INFLATE && total_budget > 0 {
+        if !budget.within_deadline() {
+            break;
+        }
         let Some(relative) = find_subslice(&data[cursor..], b"stream") else {
+            budget.charge_work(data.len().saturating_sub(cursor));
             break;
         };
+        if !budget.charge_work(relative + 6) || !budget.charge_candidate() {
+            break;
+        }
         let keyword = cursor + relative;
         cursor = keyword + 6;
         // "endstream" contains "stream" — skip over it.
         if keyword >= 3 && &data[keyword - 3..keyword] == b"end" {
+            continue;
+        }
+
+        // Literal strings and names containing "stream" are not stream
+        // objects. Check token boundaries and EOL before expensive backtracking.
+        let preceding_delimiter = keyword == 0
+            || data[keyword - 1].is_ascii_whitespace()
+            || matches!(data[keyword - 1], b'<' | b'>' | b'[' | b']' | b'(' | b')');
+        let data_start = if data.get(cursor..cursor + 2) == Some(b"\r\n") {
+            cursor + 2
+        } else if matches!(data.get(cursor), Some(&c) if c == b'\n' || c == b'\r') {
+            cursor + 1
+        } else {
+            continue;
+        };
+        if !preceding_delimiter {
             continue;
         }
 
@@ -345,6 +503,9 @@ fn inflate_pdf_flate_streams(data: &[u8]) -> Vec<Vec<u8>> {
         // is checked as a union fallback so edge cases the old code caught
         // (e.g. literal `>>` inside a dict string confusing the balance scan)
         // cannot regress.
+        if !budget.charge_work(keyword.min(PDF_STREAM_DICT_MAX_BACKTRACK) + 512) {
+            break;
+        }
         let (dict_start, dict_end) = stream_dict_span(data, keyword);
         let dict =
             vigilyx_core::magic_bytes::normalize_pdf_name_escapes(&data[dict_start..dict_end]);
@@ -355,35 +516,48 @@ fn inflate_pdf_flate_streams(data: &[u8]) -> Vec<Vec<u8>> {
             continue;
         }
 
-        // Stream data starts after the EOL that follows the `stream` keyword.
-        // ISO 32000 allows CRLF, LF, or a lone CR (old Mac EOL, tolerated by
-        // readers); skipping lone CR used to blind the whole stream (A3).
-        let data_start = if data.get(cursor..cursor + 2) == Some(b"\r\n") {
-            cursor + 2
-        } else if matches!(data.get(cursor), Some(&c) if c == b'\n' || c == b'\r') {
-            cursor + 1
-        } else {
-            continue;
-        };
         let Some(relative_end) = find_subslice(&data[data_start..], b"endstream") else {
+            budget.complete = false;
             break;
         };
+        if !budget.charge_work(relative_end + 9) {
+            break;
+        }
         let data_end = data_start + relative_end;
         cursor = data_end + 9;
 
         // 按流分配预算: 单流不超过 per-stream 上限, 也不超过剩余总预算
-        let stream_budget = MAX_PDF_STREAM_INFLATE_BYTES.min(total_budget) as u64;
+        let stream_budget = MAX_PDF_STREAM_INFLATE_BYTES.min(total_budget);
         let mut layer = Vec::new();
-        let decoder = ZlibDecoder::new(&data[data_start..data_end]);
-        if decoder
-            .take(stream_budget)
-            .read_to_end(&mut layer)
-            .is_ok()
-            && !layer.is_empty()
-        {
+        let mut decoder = ZlibDecoder::new(&data[data_start..data_end]);
+        let mut chunk = [0u8; STREAM_CHUNK_SIZE];
+        while budget.within_deadline() {
+            let remaining = stream_budget.saturating_sub(layer.len());
+            if remaining == 0 {
+                if !matches!(decoder.read(&mut chunk[..1]), Ok(0)) {
+                    budget.complete = false;
+                }
+                break;
+            }
+            let to_read = remaining.min(chunk.len());
+            match decoder.read(&mut chunk[..to_read]) {
+                Ok(0) => break,
+                Ok(count) => layer.extend_from_slice(&chunk[..count]),
+                Err(_) => {
+                    budget.complete = false;
+                    break;
+                }
+            }
+        }
+        if !layer.is_empty() {
             total_budget = total_budget.saturating_sub(layer.len());
             layers.push(layer);
         }
+    }
+    if (layers.len() >= MAX_PDF_STREAMS_TO_INFLATE || total_budget == 0)
+        && find_subslice(&data[cursor..], b"stream").is_some()
+    {
+        budget.complete = false;
     }
 
     layers
@@ -391,13 +565,19 @@ fn inflate_pdf_flate_streams(data: &[u8]) -> Vec<Vec<u8>> {
 
 /// Extract text operators (`(literal) Tj`, `<hex> Tj`) from one PDF content
 /// view (raw bytes or an inflated stream layer).
-fn extract_pdf_text_operators(content: &str, text: &mut String) {
+fn extract_pdf_text_operators(content: &str, text: &mut String, budget: &mut PdfExtractionBudget) {
+    if !budget.charge_work(content.len().saturating_mul(2)) {
+        return;
+    }
     // Extract Number ofText: (Hello World) Tj
     let mut in_paren = false;
     let mut depth = 0u32;
     let mut current = String::new();
 
-    for ch in content.chars() {
+    for (index, ch) in content.chars().enumerate() {
+        if index.is_multiple_of(4096) && !budget.within_deadline() {
+            return;
+        }
         if ch == '(' && !in_paren {
             in_paren = true;
             depth = 1;
@@ -421,7 +601,8 @@ fn extract_pdf_text_operators(content: &str, text: &mut String) {
         }
 
         if text.len() >= MAX_EXTRACT_LEN {
-            break;
+            budget.complete = false;
+            return;
         }
     }
 
@@ -432,7 +613,11 @@ fn extract_pdf_text_operators(content: &str, text: &mut String) {
     let bytes = content.as_bytes();
     let mut cursor = 0usize;
     while cursor < bytes.len() {
+        if cursor.is_multiple_of(4096) && !budget.within_deadline() {
+            return;
+        }
         if text.len() >= MAX_EXTRACT_LEN {
+            budget.complete = false;
             break;
         }
         if bytes[cursor] != b'<' {
@@ -446,6 +631,9 @@ fn extract_pdf_text_operators(content: &str, text: &mut String) {
         let token_start = cursor + 1;
         let mut token_end = token_start;
         while token_end < bytes.len() && bytes[token_end] != b'>' {
+            if token_end.is_multiple_of(4096) && !budget.within_deadline() {
+                return;
+            }
             token_end += 1;
         }
         cursor = token_end + 1;
@@ -477,8 +665,10 @@ fn extract_pdf_text_operators(content: &str, text: &mut String) {
             || !utf8.chars().any(|c| c.is_alphanumeric() || c > '\u{4e00}');
         let decoded = if raw.len().is_multiple_of(2) && utf8_degraded {
             let units: Vec<u16> = raw
-                .chunks_exact(2)
-                .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| u16::from_be_bytes(*pair))
                 .collect();
             match String::from_utf16(&units) {
                 Ok(text) => text,
@@ -875,6 +1065,107 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_pdf_non_flate_candidates_consume_budget() {
+        let data = b"%PDF-1.7\nstream\nstream\nstream\nstream\n";
+        let mut budget = PdfExtractionBudget {
+            candidates_remaining: 3,
+            ..Default::default()
+        };
+        assert!(inflate_pdf_flate_streams(data, &mut budget).is_empty());
+        assert_eq!(budget.candidates_remaining, 0);
+        assert!(!budget.complete);
+    }
+
+    #[test]
+    fn test_pdf_failed_inflations_consume_budget() {
+        let data = b"<< /Filter /FlateDecode >>\nstream\ninvalid-zlib\nendstream\n".repeat(3);
+        let mut budget = PdfExtractionBudget {
+            candidates_remaining: 2,
+            ..Default::default()
+        };
+        assert!(inflate_pdf_flate_streams(&data, &mut budget).is_empty());
+        assert_eq!(budget.candidates_remaining, 0);
+        assert!(!budget.complete);
+    }
+
+    #[test]
+    fn test_pdf_dictionary_work_budget_bounds_backtracking() {
+        let data = b"<< /Length 0 >>\nstream\nendstream\n";
+        let mut budget = PdfExtractionBudget {
+            scan_bytes_remaining: 32,
+            ..Default::default()
+        };
+        assert!(inflate_pdf_flate_streams(data, &mut budget).is_empty());
+        assert!(!budget.complete);
+        assert_eq!(budget.candidates_remaining, MAX_PDF_STREAM_CANDIDATES - 1);
+    }
+
+    #[test]
+    fn test_pdf_expired_deadline_marks_coverage_partial_without_work() {
+        let mut budget = PdfExtractionBudget {
+            max_duration: Duration::ZERO,
+            ..Default::default()
+        };
+        let mut text = String::new();
+        extract_pdf_text_operators("(Routine note) Tj", &mut text, &mut budget);
+        assert!(text.is_empty());
+        assert!(!budget.complete);
+        assert_eq!(budget.scan_bytes_remaining, MAX_PDF_SCAN_WORK_BYTES);
+    }
+
+    #[test]
+    fn test_pdf_benign_flate_neighbor_retains_text_and_complete_coverage() {
+        let mut pdf = b"%PDF-1.7\n<< /Filter /FlateDecode >>\nstream\n".to_vec();
+        pdf.extend_from_slice(&zlib_compress(b"BT (Routine document marker) Tj ET"));
+        pdf.extend_from_slice(b"\nendstream\n");
+        let extracted = extract_text_with_coverage(&pdf, Some(DetectedFileType::Pdf));
+        assert!(extracted.complete);
+        assert!(extracted.text.unwrap().contains("Routine document marker"));
+    }
+
+    #[test]
+    fn test_zip_entry_exact_limit_is_complete_and_overflow_is_partial() {
+        use std::io::Write;
+        for (content, expected_complete) in [("routine", true), ("routine!", false)] {
+            let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            writer
+                .start_file(
+                    "word/document.xml",
+                    zip::write::SimpleFileOptions::default()
+                        .compression_method(zip::CompressionMethod::Stored),
+                )
+                .unwrap();
+            writer.write_all(content.as_bytes()).unwrap();
+            let data = writer.finish().unwrap().into_inner();
+            let mut archive = zip::ZipArchive::new(std::io::Cursor::new(data)).unwrap();
+            let mut complete = true;
+            let text = safe_read_zip_entry(archive.by_index(0).unwrap(), 7, &mut complete).unwrap();
+            assert_eq!(text, "routine");
+            assert_eq!(complete, expected_complete);
+        }
+    }
+
+    #[test]
+    fn test_ooxml_sheet_beyond_ten_is_scanned_with_complete_coverage() {
+        use std::io::Write;
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        writer
+            .start_file(
+                "xl/worksheets/sheet11.xml",
+                zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored),
+            )
+            .unwrap();
+        writer
+            .write_all(b"<worksheet><v>Routine sheet marker</v></worksheet>")
+            .unwrap();
+        let data = writer.finish().unwrap().into_inner();
+        let extracted = extract_text_with_coverage(&data, Some(DetectedFileType::ZipArchive));
+        assert!(extracted.complete);
+        assert!(extracted.text.unwrap().contains("Routine sheet marker"));
+    }
+
+    #[test]
     fn test_strip_xml_tags_basic() {
         let xml = "<w:t>Hello</w:t><w:t> World</w:t>";
         assert_eq!(strip_xml_tags(xml), "Hello World");
@@ -883,10 +1174,10 @@ mod tests {
     #[test]
     fn test_strip_xml_tags_nested() {
         let xml =
-            "<w:r><w:rPr><w:sz val=\"24\"/></w:rPr><w:t>ID number 110101199001011237</w:t></w:r>";
+            "<w:r><w:rPr><w:sz val=\"24\"/></w:rPr><w:t>ID number 000000200001010005</w:t></w:r>";
         let text = strip_xml_tags(xml);
         assert!(text.contains("ID number"));
-        assert!(text.contains("110101199001011237"));
+        assert!(text.contains("000000200001010005"));
     }
 
     #[test]
@@ -928,7 +1219,7 @@ mod tests {
         // ASCII and lossy-UTF-8 passes were completely blind to it, so a
         // Chinese .doc carrying sensitive terms produced zero DLP signal.
         let mut data = vec![0u8; 64];
-        let phrase = "身份证号：110101199001011237，请勿外传";
+        let phrase = "身份证号：000000200001010005，请勿外传";
         let utf16: Vec<u8> = phrase
             .encode_utf16()
             .flat_map(|unit| unit.to_le_bytes())
@@ -938,7 +1229,7 @@ mod tests {
 
         let text = extract_ole_text(&data).expect("UTF-16LE text must be extracted");
         assert!(text.contains("身份证号"), "got: {text}");
-        assert!(text.contains("110101199001011237"), "got: {text}");
+        assert!(text.contains("000000200001010005"), "got: {text}");
 
         // End-to-end: the extracted text must drive the real DLP scanner.
         let dlp_result = crate::data_security::dlp::scan_text(&text);
@@ -1025,15 +1316,16 @@ mod tests {
 
     #[test]
     fn test_extract_pdf_text_literal_strings() {
-        let pdf = "%PDF-1.4 (Customer ID: 110101199001011237) Tj (Phone: 13812345678) Tj";
+        // Region code 000000 and repeated phone digits make these visibly synthetic fixtures.
+        let pdf = "%PDF-1.4 (Customer ID: 000000200001010005) Tj (Phone: 13000000000) Tj";
         let result = extract_pdf_text(pdf.as_bytes());
         assert!(result.is_some());
         let text = result.unwrap();
         assert!(
-            text.contains("110101199001011237"),
+            text.contains("000000200001010005"),
             "should extract ID number"
         );
-        assert!(text.contains("13812345678"), "should extract phone number");
+        assert!(text.contains("13000000000"), "should extract phone number");
     }
 
     #[test]
@@ -1046,7 +1338,7 @@ mod tests {
             .compression_method(zip::CompressionMethod::Stored);
         zip_w.start_file("word/document.xml", options).unwrap();
         use std::io::Write;
-        let xml = "<?xml version=\"1.0\"?><w:document><w:body><w:r><w:t>Test ID: 110101199001011237</w:t></w:r></w:body></w:document>";
+        let xml = "<?xml version=\"1.0\"?><w:document><w:body><w:r><w:t>Test ID: 000000200001010005</w:t></w:r></w:body></w:document>";
         zip_w.write_all(xml.as_bytes()).unwrap();
 
         let result = zip_w.finish().unwrap();
@@ -1054,7 +1346,7 @@ mod tests {
 
         let text = extract_ooxml_text(&data);
         assert!(text.is_some(), "should extract text from DOCX");
-        assert!(text.unwrap().contains("110101199001011237"));
+        assert!(text.unwrap().contains("000000200001010005"));
     }
 
     #[test]
@@ -1067,7 +1359,7 @@ mod tests {
             .compression_method(zip::CompressionMethod::Stored);
         zip_w.start_file("word/document.xml", options).unwrap();
         use std::io::Write;
-        let xml = "<?xml version=\"1.0\"?><w:document><w:body><w:r><w:t>password: secret123, ID 110101199001011237</w:t></w:r></w:body></w:document>";
+        let xml = "<?xml version=\"1.0\"?><w:document><w:body><w:r><w:t>password: FixturePass!23, ID 000000200001010005</w:t></w:r></w:body></w:document>";
         zip_w.write_all(xml.as_bytes()).unwrap();
 
         let result = zip_w.finish().unwrap();
@@ -1148,7 +1440,7 @@ mod tests {
         use std::io::Write;
 
         let content_stream =
-            b"BT /F1 12 Tf 72 720 Td (Customer ID: 110101199001011237) Tj (phone 13812345678) Tj ET";
+            b"BT /F1 12 Tf 72 720 Td (Customer ID: 000000200001010005) Tj (phone 13000000000) Tj ET";
         let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
         encoder.write_all(content_stream).unwrap();
         let compressed = encoder.finish().unwrap();
@@ -1161,8 +1453,8 @@ mod tests {
         pdf.extend_from_slice(b"\nendstream\nendobj\n");
 
         let text = extract_pdf_text(&pdf).expect("FlateDecode stream text must be extracted");
-        assert!(text.contains("110101199001011237"), "got: {text}");
-        assert!(text.contains("13812345678"), "got: {text}");
+        assert!(text.contains("000000200001010005"), "got: {text}");
+        assert!(text.contains("13000000000"), "got: {text}");
 
         let dlp_result = crate::data_security::dlp::scan_text(&text);
         assert!(
@@ -1319,12 +1611,16 @@ mod tests {
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Stored);
         use std::io::Write;
-        zip_w.start_file("xl/worksheets/sheet1.xml", options).unwrap();
+        zip_w
+            .start_file("xl/worksheets/sheet1.xml", options)
+            .unwrap();
         zip_w
             .write_all(br#"<?xml version="1.0"?><worksheet><sheetData><row><c><v>1</v></c></row></sheetData></worksheet>"#)
             .unwrap();
         // sheet2 deliberately absent.
-        zip_w.start_file("xl/worksheets/sheet3.xml", options).unwrap();
+        zip_w
+            .start_file("xl/worksheets/sheet3.xml", options)
+            .unwrap();
         zip_w
             .write_all(br#"<?xml version="1.0"?><worksheet><sheetData><row><c><v>HiddenSheet3Marker</v></c></row></sheetData></worksheet>"#)
             .unwrap();
@@ -1422,7 +1718,7 @@ mod tests {
     fn test_extract_pdf_flate_abbreviated_filter_name() {
         // A3(a) PoC (修复前可绕过): ISO 32000 合法缩写 `/Fl` 不被识别,
         // 流内 Tj 文本完全不可见。流内藏真实格式身份证号。
-        let compressed = zlib_compress("BT (身份证号：110101199001011237) Tj ET".as_bytes());
+        let compressed = zlib_compress("BT (身份证号：000000200001010005) Tj ET".as_bytes());
 
         let mut pdf = Vec::new();
         pdf.extend_from_slice(b"%PDF-1.4\n1 0 obj\n<< /Length ");
@@ -1432,7 +1728,7 @@ mod tests {
         pdf.extend_from_slice(b"\nendstream\nendobj\n");
 
         let text = extract_pdf_text(&pdf).expect("/Fl abbreviated stream must inflate");
-        assert!(text.contains("110101199001011237"), "got: {text}");
+        assert!(text.contains("000000200001010005"), "got: {text}");
 
         let dlp_result = crate::data_security::dlp::scan_text(&text);
         assert!(
@@ -1473,9 +1769,12 @@ mod tests {
         pdf.extend_from_slice(&compressed);
         pdf.extend_from_slice(b"\nendstream\n");
 
-        let text = extract_pdf_text(&pdf)
-            .expect("filter pushed past 512B window must still inflate");
-        assert!(text.contains("payload account password verify"), "got: {text}");
+        let text =
+            extract_pdf_text(&pdf).expect("filter pushed past 512B window must still inflate");
+        assert!(
+            text.contains("payload account password verify"),
+            "got: {text}"
+        );
     }
 
     #[test]
@@ -1489,8 +1788,7 @@ mod tests {
         pdf.extend_from_slice(&compressed);
         pdf.extend_from_slice(b"\nendstream\n");
 
-        let text = extract_pdf_text(&pdf)
-            .expect("nested dict must not cut off /Filter");
+        let text = extract_pdf_text(&pdf).expect("nested dict must not cut off /Filter");
         assert!(text.contains("NestedDictMarker text"), "got: {text}");
     }
 
@@ -1499,7 +1797,7 @@ mod tests {
         // A3(c) PoC (修复前可绕过): 前 64 个 1 字节良性流耗尽旧上限,
         // 载荷在第 65 个流。修复后 512 流上限 + 总预算放行小流。
         let decoy = zlib_compress(b"x");
-        let payload = zlib_compress(b"BT (LateStreamPayload 110101199001011237) Tj ET");
+        let payload = zlib_compress(b"BT (LateStreamPayload 000000200001010005) Tj ET");
 
         let mut pdf = Vec::new();
         pdf.extend_from_slice(b"%PDF-1.4\n");
@@ -1512,10 +1810,10 @@ mod tests {
         pdf.extend_from_slice(&payload);
         pdf.extend_from_slice(b"\nendstream\n");
 
-        let text = extract_pdf_text(&pdf)
-            .expect("payload past the old 64-stream cap must be reached");
+        let text =
+            extract_pdf_text(&pdf).expect("payload past the old 64-stream cap must be reached");
         assert!(text.contains("LateStreamPayload"), "got: {text}");
-        assert!(text.contains("110101199001011237"), "got: {text}");
+        assert!(text.contains("000000200001010005"), "got: {text}");
     }
 
     #[test]

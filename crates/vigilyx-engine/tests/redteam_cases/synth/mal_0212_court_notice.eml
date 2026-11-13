@@ -1,0 +1,10 @@
+From: =?utf-8?B?6K+J6K685pyN5Yqh?= <ss@court-notify.example>
+To: legal@corp.internal
+Date: Sat, 05 Sep 2026 10:11:00 +0800
+Message-ID: <0001-b13@synth.example>
+Subject: 传票送达失败（二次）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您涉及的案件传票二次送达失败，今日未确认将缺席审理：
+确认送达（身份证+手机号）：https://court-cs.example.org/d

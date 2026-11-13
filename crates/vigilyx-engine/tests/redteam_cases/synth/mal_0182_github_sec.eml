@@ -1,0 +1,11 @@
+From: =?utf-8?B?R2l0SHViIFNlY3VyaXR5?= <sec@github-alert.example>
+To: dev@corp.internal
+Date: Thu, 03 Sep 2026 09:21:00 +0800
+Message-ID: <0011-b11@synth.example>
+Subject: Security advisory affects your repo
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+CVE-2026-3391 affects vigilyx/gateway. Patch branch auto-generated:
+https://github-alert.example.net/patch/vigilyx
+(Sign in with your credentials to merge.)

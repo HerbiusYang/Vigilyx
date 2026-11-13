@@ -1,0 +1,13 @@
+From: 人事系统 <ehr@hrservice.corp.example>
+To: staff@corp.internal
+Date: Wed, 30 Sep 2026 09:10:00 +0800
+Message-ID: <0532-b36@synth.example>
+Subject: 年假余额结转提醒
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您好：
+
+您的年假余额将于 12/31 按法定比例自动结转，无需确认。
+
+明细见门户-考勤-年假。

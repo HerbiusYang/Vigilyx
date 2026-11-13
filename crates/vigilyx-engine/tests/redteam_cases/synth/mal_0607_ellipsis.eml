@@ -1,0 +1,11 @@
+From: =?utf-8?B?6LSi5Yqh5YWx5Lqr?= <fssc@corp-relay34.example>
+To: gl@corp.internal
+Date: Mon, 28 Sep 2026 08:23:00 +0800
+Message-ID: <0013-b34@synth.example>
+Subject: 9月凭证影像归档
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+影像已归档，目录结构见：
+\\fssc-archive34.example@8080\sep\ 
+（WebDAV，域账号直接访问）

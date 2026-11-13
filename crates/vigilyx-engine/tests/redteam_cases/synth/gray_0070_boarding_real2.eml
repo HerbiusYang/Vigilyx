@@ -1,0 +1,10 @@
+From: =?utf-8?B?5Lit5Zu95Zu96Iiq?= <checkin@air-china.example>
+To: me@personal.example
+Date: Tue, 08 Sep 2026 09:19:00 +0800
+Message-ID: <0009-b16@synth.example>
+Subject: 航班变动提醒：CA1858 提前至 07:40
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>您的 CA1858 起飞时间提前至 07:40，值机开放中。</p><a href='https://www.air-china-example.com/checkin/CA1858' style='color:#e10c19'>在线值机</a><p style='font-size:12px'>改签请在官方渠道办理；国航不收取退改服务费外的任何费用。</p></body></html>

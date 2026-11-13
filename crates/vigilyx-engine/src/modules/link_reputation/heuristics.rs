@@ -6,6 +6,7 @@
 use super::data::RE_RANDOM_DOMAIN;
 use crate::module_data::module_data;
 use crate::modules::common::extract_redirect_target_urls;
+use std::collections::BTreeMap;
 
 /// Extract redirect target URLs from tracking/security-gateway links.
 pub(super) fn extract_redirect_target_urls_full(url: &str) -> Vec<String> {
@@ -50,15 +51,44 @@ pub(super) fn get_tld(domain: &str) -> &str {
 
 /// HeuristicAnalyze Domain (Contains detect - detect analyze MediumAsynchronousExecuteline)
 pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, String)>) {
+    analyze_domain_heuristics_with_registered_lexical(domain, true)
+}
+
+/// Analyze a host while optionally suppressing lexical findings derived only
+/// from its registrable label. The caller uses this for subsequent subdomains
+/// of the same registrable domain so one root label cannot impersonate several
+/// independent DGA observations.
+pub(super) fn analyze_domain_heuristics_with_registered_lexical(
+    domain: &str,
+    include_registered_lexical: bool,
+) -> (f64, Vec<(String, String)>) {
+    let (score, findings, _) = analyze_domain_heuristics_scored(domain, include_registered_lexical);
+    (score, findings)
+}
+
+type ScoredDomainAnalysis = (f64, Vec<(String, String)>, BTreeMap<String, f64>);
+
+pub(super) fn analyze_domain_heuristics_scored(
+    domain: &str,
+    include_registered_lexical: bool,
+) -> ScoredDomainAnalysis {
     let mut score: f64 = 0.0;
     let mut findings: Vec<(String, String)> = Vec::new();
+    let mut category_scores: BTreeMap<String, f64> = BTreeMap::new();
+    macro_rules! add_score {
+        ($category:expr, $amount:expr) => {{
+            let amount: f64 = $amount;
+            score += amount;
+            *category_scores.entry($category.to_string()).or_default() += amount;
+        }};
+    }
     let reg_domain = get_registered_domain(domain);
     let tld = get_tld(domain);
     let parts: Vec<&str> = domain.split('.').collect();
 
     // 1. Suspicious TLD
     if module_data().contains("suspicious_tlds", tld) {
-        score += 0.05;
+        add_score!("suspicious_tld", 0.05);
         findings.push((
             format!("Suspicious顶levelDomain .{}", tld),
             "suspicious_tld".to_string(),
@@ -79,7 +109,7 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
             && subdomain != "www"
             && !is_numbered_www
         {
-            score += 0.25;
+            add_score!("www_impersonation", 0.25);
             findings.push((
                 format!("www first缀伪装: \"{}\" (疑似假冒官网子Domain)", subdomain),
                 "www_impersonation".to_string(),
@@ -90,7 +120,7 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
     // 3. Free hosting / Dynamic DNS
     for host in module_data().get_list("free_hosting_domains") {
         if domain.ends_with(host) || domain == host {
-            score += 0.20;
+            add_score!("free_hosting", 0.20);
             findings.push((
                 format!("免费托管/Dynamic DNS Domain: {}", host),
                 "free_hosting".to_string(),
@@ -101,7 +131,7 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
 
     // 4. longDomain (Used for)
     if domain.len() > 40 {
-        score += 0.05;
+        add_score!("long_domain", 0.05);
         findings.push((
             format!("Domainlong: {} characters", domain.len()),
             "long_domain".to_string(),
@@ -110,7 +140,7 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
 
     // 5. Domain level (if a.b.c.d.evil.com)
     if parts.len() > 4 {
-        score += 0.05;
+        add_score!("deep_subdomain", 0.05);
         findings.push((
             format!("子Domain层level深: {} 层", parts.len()),
             "deep_subdomain".to_string(),
@@ -129,11 +159,12 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
         domain
     };
     // 6a. Consecutive consonant cluster (4+) - classic DGA pattern
-    if main_part.len() >= 6
+    if include_registered_lexical
+        && main_part.len() >= 6
         && RE_RANDOM_DOMAIN.is_match(main_part)
         && !crate::modules::identity_anomaly::is_human_readable_domain_label(main_part)
     {
-        score += 0.10;
+        add_score!("random_domain", 0.10);
         findings.push((
             format!("Domain contains random character sequence: {}", main_part),
             "random_domain".to_string(),
@@ -142,7 +173,8 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
     // 6b. High consonant ratio - catches DGA domains where a single vowel breaks
     // the consecutive run (e.g., "fdtujh" has 5/6 = 83% consonants but only 3
     // consecutive). Threshold:>=70% consonants in 5+ char domain.
-    else if main_part.len() >= 5
+    else if include_registered_lexical
+        && main_part.len() >= 5
         && !crate::modules::identity_anomaly::is_human_readable_domain_label(main_part)
     {
         let consonants = main_part
@@ -151,7 +183,7 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
             .count();
         let ratio = consonants as f64 / main_part.len() as f64;
         if ratio >= 0.70 {
-            score += 0.10;
+            add_score!("random_domain", 0.10);
             findings.push((
                 format!(
                     "Domain has high consonant ratio ({:.0}%): {}",
@@ -164,11 +196,12 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
     }
 
     // 7. Numeric domain (known exceptions like 163.com)
-    if main_part.chars().all(|c| c.is_ascii_digit())
+    if include_registered_lexical
+        && main_part.chars().all(|c| c.is_ascii_digit())
         && main_part.len() > 3
         && !module_data().contains("known_numeric_domains", &reg_domain)
     {
-        score += 0.08;
+        add_score!("numeric_domain", 0.08);
         findings.push((
             format!("纯数字Domain: {}", reg_domain),
             "numeric_domain".to_string(),
@@ -180,7 +213,7 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
         let dash_part = parts[0];
         let octets: Vec<&str> = dash_part.split('-').collect();
         if octets.len() == 4 && octets.iter().all(|o| o.parse::<u8>().is_ok()) {
-            score += 0.20;
+            add_score!("embedded_ip", 0.20);
             findings.push((
                 format!("DomainMedium嵌入 IP Address: {}", dash_part),
                 "embedded_ip".to_string(),
@@ -188,5 +221,5 @@ pub(super) fn analyze_domain_heuristics(domain: &str) -> (f64, Vec<(String, Stri
         }
     }
 
-    (score, findings)
+    (score, findings, category_scores)
 }

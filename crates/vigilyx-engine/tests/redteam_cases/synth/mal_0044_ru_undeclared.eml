@@ -1,0 +1,12 @@
+From: =?utf-8?B?0KHQu9GD0LbQsdCwINCx0LXQt9C+0L/QsNGB0L3QvtGB0YLQuA==?= <sec@bank-notice.example>
+To: ivanov@corp.internal
+Date: Wed, 26 Aug 2026 11:12:00 +0800
+Message-ID: <0002-b3@synth.example>
+Subject: Notification
+MIME-Version: 1.0
+Content-Type: text/plain
+Content-Transfer-Encoding: 8bit
+
+ќбнаружена попытка входа с нового устройства. ѕодтвердите личность
+в течение 24 часов, иначе доступ будет приостановлен:
+https://sec-confirm.example.ru/login

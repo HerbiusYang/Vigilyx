@@ -8,6 +8,7 @@ use vigilyx_core::{
 };
 
 use crate::VigilDb;
+use crate::security::threat_scene::{BounceMetadata, extract_bounce_metadata};
 
 const SESSION_WITH_CONTENT_PREDICATE_TEMPLATE: &str = "(({prefix}content->>'is_encrypted') IS DISTINCT FROM 'true' \
       AND (({prefix}content->>'body_text') IS NOT NULL \
@@ -32,8 +33,7 @@ pub(crate) fn session_with_content_predicate(prefix: &str) -> String {
 /// - verdict high/critical → obviously not trust-building history.
 ///
 /// References the `s` alias; callers must alias `sessions` accordingly.
-const TRUSTED_HISTORY_VERDICT_PREDICATE: &str =
-    "EXISTS(SELECT 1 FROM security_verdicts v \
+const TRUSTED_HISTORY_VERDICT_PREDICATE: &str = "EXISTS(SELECT 1 FROM security_verdicts v \
      WHERE v.session_id = s.id AND lower(v.threat_level) NOT IN ('high', 'critical'))";
 
 /// Shared EXISTS query for sender-history lookups: `$1` is the sender match
@@ -48,6 +48,46 @@ fn sender_history_exists_sql(match_predicate: &str) -> String {
          ) THEN 1::BIGINT ELSE 0::BIGINT END"
     )
 }
+
+/// Experimental normal-evidence history query.
+///
+/// This is deliberately stricter than the legacy first-contact lookup:
+/// imported mail is excluded, only prior sessions are eligible, only the
+/// latest Safe/Low verdict counts, and recipient relationship support is
+/// measured separately from mailbox history.
+const SENDER_RELATIONSHIP_HISTORY_SQL: &str = r#"
+    WITH eligible AS (
+        SELECT
+            s.started_at,
+            EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements_text(
+                    COALESCE(NULLIF(s.rcpt_to, ''), '[]')::jsonb
+                ) AS recipient(value)
+                WHERE lower(recipient.value) = ANY($2::text[])
+            ) AS recipient_match
+        FROM sessions s
+        WHERE lower(s.mail_from) = lower($1)
+          AND s.status = 'Completed'
+          AND s.source IN ('sniffer', 'mta_proxy')
+          AND s.id != $3
+          AND s.started_at < $4
+          AND (
+              SELECT lower(v.threat_level)
+              FROM security_verdicts v
+              WHERE v.session_id = s.id
+              ORDER BY v.created_at DESC, v.id DESC
+              LIMIT 1
+          ) IN ('safe', 'low')
+    )
+    SELECT
+        COUNT(*)::BIGINT,
+        COUNT(DISTINCT LEFT(started_at, 10))::BIGINT,
+        COUNT(*) FILTER (WHERE recipient_match)::BIGINT,
+        COUNT(DISTINCT LEFT(started_at, 10))
+            FILTER (WHERE recipient_match)::BIGINT
+    FROM eligible
+"#;
 
 fn content_without_attachment_payload_sql(column: &str) -> String {
     format!(
@@ -90,6 +130,8 @@ struct SessionRow {
     error_reason: Option<String>,
     message_id: Option<String>,
     auth_info: Option<String>,
+    #[sqlx(default)]
+    source: Option<String>,
 }
 
 /// Lightweight session row (for list queries - does not load large content field, only extracts summary)
@@ -116,6 +158,292 @@ struct SessionListRow {
     message_id: Option<String>,
     auth_info: Option<String>,
     threat_level: Option<String>,
+    threat_type: Option<String>,
+    #[sqlx(default)]
+    source: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct SessionFilterQuery {
+    where_clause: String,
+    params: Vec<String>,
+    next_param: usize,
+}
+
+/// One predicate builder keeps list rows and independent totals identical,
+/// including the legacy JSON content fallback and bound search/IP values.
+#[allow(clippy::too_many_arguments)]
+fn session_filter_query(
+    protocol: Option<&str>,
+    status: Option<&str>,
+    since: Option<&str>,
+    content_filter: Option<&str>,
+    auth_filter: Option<&str>,
+    source_ips: Option<&str>,
+    dest_ips: Option<&str>,
+    search: Option<&str>,
+    relay_ips: &[String],
+) -> SessionFilterQuery {
+    let mut conditions = Vec::new();
+    let mut params: Vec<String> = Vec::new();
+    // PostgreSQL uses $1, $2,... numbered placeholders
+    // We track the next placeholder number with a counter
+    let mut param_idx: usize = 1;
+
+    if let Some(p) = protocol {
+        if p.contains(',') {
+            let protocols: Vec<&str> = p
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !protocols.is_empty() {
+                let placeholders = (param_idx..param_idx + protocols.len())
+                    .map(|i| format!("${}", i))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                param_idx += protocols.len();
+                conditions.push(format!("s.protocol IN ({})", placeholders));
+                for proto in &protocols {
+                    params.push(proto.to_string());
+                }
+            }
+        } else {
+            conditions.push(format!("s.protocol = ${}", param_idx));
+            param_idx += 1;
+            params.push(p.to_string());
+        }
+    }
+    if let Some(s) = status {
+        let normalized = {
+            let mut c = s.chars();
+            match c.next() {
+                None => String::new(),
+                Some(first) => first.to_uppercase().to_string() + &c.as_str().to_lowercase(),
+            }
+        };
+        conditions.push(format!("s.status = ${}", param_idx));
+        param_idx += 1;
+        params.push(normalized);
+    }
+    if let Some(s) = since {
+        conditions.push(format!("s.started_at >= ${}", param_idx));
+        param_idx += 1;
+        params.push(s.to_string());
+    }
+
+    match content_filter {
+        Some("WITH_CONTENT") => {
+            // Keep the original exact predicate for every row. The
+            // server/content partial index can satisfy this condition
+            // directly, while metadata remains an output optimization
+            // for rows written after the trigger was installed.
+            conditions.push(session_with_content_predicate("s."));
+        }
+        Some("ENCRYPTED") => {
+            conditions.push(
+                "((s.content->>'is_encrypted') = 'true' \
+                 OR s.server_port IN (465, 993, 995))"
+                    .to_string(),
+            );
+        }
+        Some("NON_ENCRYPTED") => {
+            conditions.push(
+                "((s.content->>'is_encrypted') IS DISTINCT FROM 'true' \
+                 AND s.server_port NOT IN (465, 993, 995))"
+                    .to_string(),
+            );
+        }
+        _ => {}
+    }
+
+    match auth_filter {
+        Some("WITH_AUTH") => {
+            conditions.push("s.auth_info IS NOT NULL".to_string());
+        }
+        Some("AUTH_SUCCESS") => {
+            conditions.push(
+                "(s.auth_info IS NOT NULL AND (s.auth_info->>'auth_success') = 'true')".to_string(),
+            );
+        }
+        Some("AUTH_FAILED") => {
+            conditions.push(
+                "(s.auth_info IS NOT NULL AND (s.auth_info->>'auth_success') = 'false')"
+                    .to_string(),
+            );
+        }
+        _ => {}
+    }
+
+    if let Some(ips_str) = source_ips {
+        let ips: Vec<&str> = ips_str
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !ips.is_empty() {
+            let placeholders = (param_idx..param_idx + ips.len())
+                .map(|i| format!("${}", i))
+                .collect::<Vec<_>>()
+                .join(",");
+            param_idx += ips.len();
+            conditions.push(format!("s.client_ip IN ({})", placeholders));
+            for ip in &ips {
+                params.push(ip.to_string());
+            }
+        }
+    }
+
+    if let Some(ips_str) = dest_ips {
+        let ips: Vec<&str> = ips_str
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !ips.is_empty() {
+            let placeholders = (param_idx..param_idx + ips.len())
+                .map(|i| format!("${}", i))
+                .collect::<Vec<_>>()
+                .join(",");
+            param_idx += ips.len();
+            conditions.push(format!("s.server_ip IN ({})", placeholders));
+            for ip in &ips {
+                params.push(ip.to_string());
+            }
+        }
+    }
+
+    if let Some(q) = search {
+        let q = q.trim();
+        if !q.is_empty() {
+            let like = format!("%{}%", q);
+            let _search_parts_start = param_idx;
+            let mut search_parts = vec![
+                format!("s.client_ip LIKE ${}", param_idx),
+                format!("s.server_ip LIKE ${}", param_idx + 1),
+                format!("s.mail_from LIKE ${}", param_idx + 2),
+                format!("s.rcpt_to LIKE ${}", param_idx + 3),
+                format!("s.subject LIKE ${}", param_idx + 4),
+            ];
+            param_idx += 5;
+            for _ in 0..5 {
+                params.push(like.clone());
+            }
+
+            if !relay_ips.is_empty() {
+                let client_ip_ph = (param_idx..param_idx + relay_ips.len())
+                    .map(|i| format!("${}", i))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                param_idx += relay_ips.len();
+                let server_ip_ph = (param_idx..param_idx + relay_ips.len())
+                    .map(|i| format!("${}", i))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                param_idx += relay_ips.len();
+                search_parts.push(format!("s.client_ip IN ({})", client_ip_ph));
+                search_parts.push(format!("s.server_ip IN ({})", server_ip_ph));
+                for ip in relay_ips {
+                    params.push(ip.clone());
+                }
+                for ip in relay_ips {
+                    params.push(ip.clone());
+                }
+            }
+
+            conditions.push(format!("({})", search_parts.join(" OR ")));
+        }
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", conditions.join(" AND "))
+    };
+
+    SessionFilterQuery {
+        where_clause,
+        params,
+        next_param: param_idx,
+    }
+}
+
+const SESSION_COUNT_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+const SESSION_COUNT_FAILURE_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+const SESSION_COUNT_CACHE_CAPACITY: usize = 64;
+
+/// Exact database ordering key. Keep the stored timestamp text rather than
+/// reformatting it through chrono, which could change lexical comparisons.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SessionListCursor {
+    pub started_at: String,
+    pub id: Uuid,
+}
+
+pub struct SessionListEntry {
+    pub session: EmailSession,
+    pub cursor: SessionListCursor,
+}
+
+/// A count snapshot. `exact` is false when the bounded COUNT timed out and
+/// `total` is the planner's row estimate for the same filter instead.
+#[derive(Clone, Copy, Debug)]
+pub struct SessionCountSnapshot {
+    pub total: u64,
+    pub counted_at: chrono::DateTime<chrono::Utc>,
+    pub exact: bool,
+}
+
+type SessionCountEntries = std::collections::HashMap<
+    SessionFilterQuery,
+    (std::time::Instant, Option<SessionCountSnapshot>),
+>;
+
+/// Top-level `Plan Rows` of `EXPLAIN (FORMAT JSON)` output.
+fn plan_row_estimate(plan: &serde_json::Value) -> Option<u64> {
+    plan.get(0)?
+        .get("Plan")?
+        .get("Plan Rows")?
+        .as_f64()
+        .filter(|rows| rows.is_finite() && *rows >= 0.0)
+        .map(|rows| rows.round() as u64)
+}
+
+#[derive(Default)]
+pub(crate) struct SessionCountCache {
+    // Cached counts can be read while another filter is being refreshed.
+    entries: tokio::sync::Mutex<SessionCountEntries>,
+    refresh_lock: tokio::sync::Mutex<()>,
+}
+
+impl SessionCountCache {
+    async fn get(&self, filter: &SessionFilterQuery) -> Option<Result<SessionCountSnapshot>> {
+        let mut entries = self.entries.lock().await;
+        entries.retain(|_, (at, result)| {
+            at.elapsed()
+                < if result.is_some() {
+                    SESSION_COUNT_CACHE_TTL
+                } else {
+                    SESSION_COUNT_FAILURE_TTL
+                }
+        });
+        entries.get(filter).map(|(_, result)| {
+            result.ok_or_else(|| anyhow::anyhow!("Session count temporarily unavailable"))
+        })
+    }
+
+    async fn store(&self, filter: SessionFilterQuery, value: Option<SessionCountSnapshot>) {
+        let mut entries = self.entries.lock().await;
+        if entries.len() >= SESSION_COUNT_CACHE_CAPACITY
+            && let Some(oldest) = entries
+                .iter()
+                .min_by_key(|(_, (at, _))| *at)
+                .map(|(key, _)| key.clone())
+        {
+            entries.remove(&oldest);
+        }
+        entries.insert(filter, (std::time::Instant::now(), value));
+    }
 }
 
 impl VigilDb {
@@ -157,17 +485,29 @@ impl VigilDb {
             .as_deref()
             .and_then(|m| m.split('@').nth(1))
             .map(|d| d.to_lowercase());
+        let bounce_metadata = extract_bounce_metadata(
+            session.mail_from.as_deref(),
+            session.subject.as_deref(),
+            session
+                .content
+                .body_text
+                .as_deref()
+                .or(session.content.body_html.as_deref()),
+        );
 
         sqlx::query(
             r#"
             INSERT INTO sessions (
                 id, protocol, client_ip, client_port, server_ip, server_port,
-                started_at, ended_at, status, packet_count, total_bytes,
+                started_at, ended_at, started_at_ts, ended_at_ts, status, packet_count, total_bytes,
                 mail_from, rcpt_to, subject, content, email_count, error_reason, message_id, auth_info,
-                sender_domain
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                sender_domain, source, bounce_metadata_ready, bounce_candidate,
+                bounce_reported_alert, bounce_target_addresses
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz, $10::timestamptz, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
             ON CONFLICT(id) DO UPDATE SET
+                started_at_ts = COALESCE(sessions.started_at_ts, excluded.started_at_ts),
                 ended_at = excluded.ended_at,
+                ended_at_ts = excluded.ended_at_ts,
                 status = excluded.status,
                 packet_count = excluded.packet_count,
                 total_bytes = excluded.total_bytes,
@@ -176,17 +516,19 @@ impl VigilDb {
                 rcpt_to = excluded.rcpt_to,
                 subject = COALESCE(excluded.subject, sessions.subject),
                 content = CASE
-                    WHEN (sessions.content->>'body_text' IS NOT NULL
-                       OR sessions.content->>'body_html' IS NOT NULL)
-                      AND excluded.content->>'body_text' IS NULL
-                      AND excluded.content->>'body_html' IS NULL
+                    WHEN sessions.content_has_body AND NOT excluded.content_has_body
                     THEN sessions.content
                     ELSE excluded.content
                 END,
                 email_count = excluded.email_count,
                 error_reason = excluded.error_reason,
                 message_id = COALESCE(excluded.message_id, sessions.message_id),
-                auth_info = COALESCE(excluded.auth_info, sessions.auth_info)
+                auth_info = COALESCE(excluded.auth_info, sessions.auth_info),
+                source = excluded.source,
+                bounce_metadata_ready = excluded.bounce_metadata_ready,
+                bounce_candidate = sessions.bounce_candidate OR excluded.bounce_candidate,
+                bounce_reported_alert = sessions.bounce_reported_alert OR excluded.bounce_reported_alert,
+                bounce_target_addresses = COALESCE(excluded.bounce_target_addresses, sessions.bounce_target_addresses)
             "#,
         )
         .bind(&id_str)
@@ -195,6 +537,8 @@ impl VigilDb {
         .bind(session.client_port as i32)
         .bind(&session.server_ip)
         .bind(session.server_port as i32)
+        .bind(session.started_at.to_rfc3339())
+        .bind(session.ended_at.map(|t| t.to_rfc3339()))
         .bind(session.started_at.to_rfc3339())
         .bind(session.ended_at.map(|t| t.to_rfc3339()))
         .bind(format!("{:?}", session.status))
@@ -209,6 +553,11 @@ impl VigilDb {
         .bind(&message_id)
         .bind(&auth_info)
         .bind(&sender_domain)
+        .bind(session.source.to_string())
+        .bind(bounce_metadata.ready)
+        .bind(bounce_metadata.candidate)
+        .bind(bounce_metadata.reported_alert)
+        .bind(&bounce_metadata.target_addresses_json)
         .execute(&self.pool)
         .await?;
 
@@ -242,8 +591,8 @@ impl VigilDb {
             existing_rows.into_iter().map(|(id,)| id).collect();
 
         // Preprocessing: serialize all params (avoid serde errors in SQL build loop)
-        const COLS_PER_ROW: usize = 20;
-        const BATCH_CHUNK_SIZE: usize = 500; // 500 x 20 = 10000 params, well under 65535
+        const COLS_PER_ROW: usize = 27;
+        const BATCH_CHUNK_SIZE: usize = 500; // 500 x 27 = 13500 params, well under 65535
 
         struct PreparedSession {
             id_str: String,
@@ -254,6 +603,8 @@ impl VigilDb {
             server_port: i32,
             started_at: String,
             ended_at: Option<String>,
+            started_at_ts: String,
+            ended_at_ts: Option<String>,
             status: String,
             packet_count: i32,
             total_bytes: i64,
@@ -266,6 +617,8 @@ impl VigilDb {
             message_id: Option<String>,
             auth_info: Option<serde_json::Value>,
             sender_domain: Option<String>,
+            source: String,
+            bounce_metadata: BounceMetadata,
         }
 
         let mut prepared: Vec<PreparedSession> = Vec::with_capacity(sessions.len());
@@ -304,6 +657,8 @@ impl VigilDb {
                 server_port: session.server_port as i32,
                 started_at: session.started_at.to_rfc3339(),
                 ended_at: session.ended_at.map(|t| t.to_rfc3339()),
+                started_at_ts: session.started_at.to_rfc3339(),
+                ended_at_ts: session.ended_at.map(|t| t.to_rfc3339()),
                 status: format!("{:?}", session.status),
                 packet_count: session.packet_count as i32,
                 total_bytes: session.total_bytes as i64,
@@ -320,6 +675,16 @@ impl VigilDb {
                     .as_deref()
                     .and_then(|m| m.split('@').nth(1))
                     .map(|d| d.to_lowercase()),
+                source: session.source.to_string(),
+                bounce_metadata: extract_bounce_metadata(
+                    session.mail_from.as_deref(),
+                    session.subject.as_deref(),
+                    session
+                        .content
+                        .body_text
+                        .as_deref()
+                        .or(session.content.body_html.as_deref()),
+                ),
             });
         }
 
@@ -333,9 +698,10 @@ impl VigilDb {
             let mut sql = String::from(
                 "INSERT INTO sessions (\
                     id, protocol, client_ip, client_port, server_ip, server_port, \
-                    started_at, ended_at, status, packet_count, total_bytes, \
+                    started_at, ended_at, started_at_ts, ended_at_ts, status, packet_count, total_bytes, \
                     mail_from, rcpt_to, subject, content, email_count, error_reason, message_id, auth_info, \
-                    sender_domain\
+                    sender_domain, source, bounce_metadata_ready, bounce_candidate,\
+                    bounce_reported_alert, bounce_target_addresses\
                 ) VALUES ",
             );
 
@@ -352,6 +718,9 @@ impl VigilDb {
                     sql.push('$');
                     // itoa would be faster but format! is fine for build-time SQL
                     sql.push_str(&(param_idx + col as u32).to_string());
+                    if col == 8 || col == 9 {
+                        sql.push_str("::timestamptz");
+                    }
                 }
                 sql.push(')');
                 param_idx += COLS_PER_ROW as u32;
@@ -359,7 +728,9 @@ impl VigilDb {
 
             sql.push_str(
                 " ON CONFLICT(id) DO UPDATE SET \
+                    started_at_ts = COALESCE(sessions.started_at_ts, excluded.started_at_ts), \
                     ended_at = excluded.ended_at, \
+                    ended_at_ts = excluded.ended_at_ts, \
                     status = excluded.status, \
                     packet_count = excluded.packet_count, \
                     total_bytes = excluded.total_bytes, \
@@ -368,17 +739,19 @@ impl VigilDb {
                     rcpt_to = excluded.rcpt_to, \
                     subject = COALESCE(excluded.subject, sessions.subject), \
                     content = CASE \
-                        WHEN (sessions.content->>'body_text' IS NOT NULL \
-                           OR sessions.content->>'body_html' IS NOT NULL) \
-                          AND excluded.content->>'body_text' IS NULL \
-                          AND excluded.content->>'body_html' IS NULL \
+                        WHEN sessions.content_has_body AND NOT excluded.content_has_body \
                         THEN sessions.content \
                         ELSE excluded.content \
                     END, \
                     email_count = excluded.email_count, \
                     error_reason = excluded.error_reason, \
                     message_id = COALESCE(excluded.message_id, sessions.message_id), \
-                    auth_info = COALESCE(excluded.auth_info, sessions.auth_info)",
+                    auth_info = COALESCE(excluded.auth_info, sessions.auth_info), \
+                    source = excluded.source, \
+                    bounce_metadata_ready = excluded.bounce_metadata_ready, \
+                    bounce_candidate = sessions.bounce_candidate OR excluded.bounce_candidate, \
+                    bounce_reported_alert = sessions.bounce_reported_alert OR excluded.bounce_reported_alert, \
+                    bounce_target_addresses = COALESCE(excluded.bounce_target_addresses, sessions.bounce_target_addresses)",
             );
 
             let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
@@ -392,6 +765,8 @@ impl VigilDb {
                     .bind(row.server_port)
                     .bind(&row.started_at)
                     .bind(&row.ended_at)
+                    .bind(&row.started_at_ts)
+                    .bind(&row.ended_at_ts)
                     .bind(&row.status)
                     .bind(row.packet_count)
                     .bind(row.total_bytes)
@@ -403,7 +778,12 @@ impl VigilDb {
                     .bind(&row.error_reason)
                     .bind(&row.message_id)
                     .bind(&row.auth_info)
-                    .bind(&row.sender_domain);
+                    .bind(&row.sender_domain)
+                    .bind(&row.source)
+                    .bind(row.bounce_metadata.ready)
+                    .bind(row.bounce_metadata.candidate)
+                    .bind(row.bounce_metadata.reported_alert)
+                    .bind(&row.bounce_metadata.target_addresses_json);
             }
             query.execute(&mut *tx).await?;
         }
@@ -421,11 +801,12 @@ impl VigilDb {
         let merged_query_str = format!(
             "SELECT id, protocol, client_ip, client_port, server_ip, server_port, \
              started_at, ended_at, status, packet_count, total_bytes, \
-             mail_from, rcpt_to, subject, content::TEXT as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info \
+             mail_from, rcpt_to, subject, content::TEXT as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info, source \
              FROM sessions WHERE id IN ({})",
             merged_placeholders
         );
-        let mut mq = sqlx::query_as::<_, SessionRow>(sqlx::AssertSqlSafe(merged_query_str.as_str()));
+        let mut mq =
+            sqlx::query_as::<_, SessionRow>(sqlx::AssertSqlSafe(merged_query_str.as_str()));
         for id in &ids {
             mq = mq.bind(id);
         }
@@ -455,204 +836,97 @@ impl VigilDb {
         relay_ips: &[String],
         skip_count: bool,
     ) -> Result<(Vec<EmailSession>, u64)> {
-        let mut conditions = Vec::new();
-        let mut params: Vec<String> = Vec::new();
-        // PostgreSQL uses $1, $2,... numbered placeholders
-        // We track the next placeholder number with a counter
-        let mut param_idx: usize = 1;
+        let (entries, total) = self
+            .list_session_entries(
+                limit,
+                offset,
+                protocol,
+                status,
+                since,
+                content_filter,
+                auth_filter,
+                source_ips,
+                dest_ips,
+                search,
+                relay_ips,
+                skip_count,
+                None,
+            )
+            .await?;
+        Ok((
+            entries.into_iter().map(|entry| entry.session).collect(),
+            total,
+        ))
+    }
 
-        if let Some(p) = protocol {
-            if p.contains(',') {
-                let protocols: Vec<&str> = p
-                    .split(',')
-                    .map(|s| s.trim())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                if !protocols.is_empty() {
-                    let placeholders = (param_idx..param_idx + protocols.len())
-                        .map(|i| format!("${}", i))
-                        .collect::<Vec<_>>()
-                        .join(",");
-                    param_idx += protocols.len();
-                    conditions.push(format!("s.protocol IN ({})", placeholders));
-                    for proto in &protocols {
-                        params.push(proto.to_string());
-                    }
-                }
-            } else {
-                conditions.push(format!("s.protocol = ${}", param_idx));
-                param_idx += 1;
-                params.push(p.to_string());
-            }
-        }
-        if let Some(s) = status {
-            let normalized = {
-                let mut c = s.chars();
-                match c.next() {
-                    None => String::new(),
-                    Some(first) => first.to_uppercase().to_string() + &c.as_str().to_lowercase(),
-                }
-            };
-            conditions.push(format!("s.status = ${}", param_idx));
-            param_idx += 1;
-            params.push(normalized);
-        }
-        if let Some(s) = since {
-            conditions.push(format!("s.started_at >= ${}", param_idx));
-            param_idx += 1;
-            params.push(s.to_string());
-        }
-
-        match content_filter {
-            Some("WITH_CONTENT") => {
-                conditions.push(session_with_content_predicate("s."));
-            }
-            Some("ENCRYPTED") => {
-                conditions.push(
-                    "((s.content->>'is_encrypted') = 'true' \
-                     OR s.server_port IN (465, 993, 995))"
-                        .to_string(),
-                );
-            }
-            Some("NON_ENCRYPTED") => {
-                conditions.push(
-                    "((s.content->>'is_encrypted') IS DISTINCT FROM 'true' \
-                     AND s.server_port NOT IN (465, 993, 995))"
-                        .to_string(),
-                );
-            }
-            _ => {}
-        }
-
-        match auth_filter {
-            Some("WITH_AUTH") => {
-                conditions.push("s.auth_info IS NOT NULL".to_string());
-            }
-            Some("AUTH_SUCCESS") => {
-                conditions.push(
-                    "(s.auth_info IS NOT NULL AND (s.auth_info->>'auth_success') = 'true')"
-                        .to_string(),
-                );
-            }
-            Some("AUTH_FAILED") => {
-                conditions.push(
-                    "(s.auth_info IS NOT NULL AND (s.auth_info->>'auth_success') = 'false')"
-                        .to_string(),
-                );
-            }
-            _ => {}
-        }
-
-        if let Some(ips_str) = source_ips {
-            let ips: Vec<&str> = ips_str
-                .split(',')
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .collect();
-            if !ips.is_empty() {
-                let placeholders = (param_idx..param_idx + ips.len())
-                    .map(|i| format!("${}", i))
-                    .collect::<Vec<_>>()
-                    .join(",");
-                param_idx += ips.len();
-                conditions.push(format!("s.client_ip IN ({})", placeholders));
-                for ip in &ips {
-                    params.push(ip.to_string());
-                }
-            }
-        }
-
-        if let Some(ips_str) = dest_ips {
-            let ips: Vec<&str> = ips_str
-                .split(',')
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .collect();
-            if !ips.is_empty() {
-                let placeholders = (param_idx..param_idx + ips.len())
-                    .map(|i| format!("${}", i))
-                    .collect::<Vec<_>>()
-                    .join(",");
-                param_idx += ips.len();
-                conditions.push(format!("s.server_ip IN ({})", placeholders));
-                for ip in &ips {
-                    params.push(ip.to_string());
-                }
-            }
-        }
-
-        if let Some(q) = search {
-            let q = q.trim();
-            if !q.is_empty() {
-                let like = format!("%{}%", q);
-                let _search_parts_start = param_idx;
-                let mut search_parts = vec![
-                    format!("s.client_ip LIKE ${}", param_idx),
-                    format!("s.server_ip LIKE ${}", param_idx + 1),
-                    format!("s.mail_from LIKE ${}", param_idx + 2),
-                    format!("s.rcpt_to LIKE ${}", param_idx + 3),
-                    format!("s.subject LIKE ${}", param_idx + 4),
-                ];
-                param_idx += 5;
-                for _ in 0..5 {
-                    params.push(like.clone());
-                }
-
-                if !relay_ips.is_empty() {
-                    let client_ip_ph = (param_idx..param_idx + relay_ips.len())
-                        .map(|i| format!("${}", i))
-                        .collect::<Vec<_>>()
-                        .join(",");
-                    param_idx += relay_ips.len();
-                    let server_ip_ph = (param_idx..param_idx + relay_ips.len())
-                        .map(|i| format!("${}", i))
-                        .collect::<Vec<_>>()
-                        .join(",");
-                    param_idx += relay_ips.len();
-                    search_parts.push(format!("s.client_ip IN ({})", client_ip_ph));
-                    search_parts.push(format!("s.server_ip IN ({})", server_ip_ph));
-                    for ip in relay_ips {
-                        params.push(ip.clone());
-                    }
-                    for ip in relay_ips {
-                        params.push(ip.clone());
-                    }
-                }
-
-                conditions.push(format!("({})", search_parts.join(" OR ")));
-            }
-        }
-
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!(" WHERE {}", conditions.join(" AND "))
-        };
-
-        // 1. Count query (can skip: dashboard etc. dont need total count, save ~4.5s)
+    /// Limit/offset or seek pagination happens before wide projection and risk
+    /// enrichment. Skipped rows never pay a verdict lookup or JSON projection.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn list_session_entries(
+        &self,
+        limit: u32,
+        offset: u32,
+        protocol: Option<&str>,
+        status: Option<&str>,
+        since: Option<&str>,
+        content_filter: Option<&str>,
+        auth_filter: Option<&str>,
+        source_ips: Option<&str>,
+        dest_ips: Option<&str>,
+        search: Option<&str>,
+        relay_ips: &[String],
+        skip_count: bool,
+        after: Option<&SessionListCursor>,
+    ) -> Result<(Vec<SessionListEntry>, u64)> {
+        let filter = session_filter_query(
+            protocol,
+            status,
+            since,
+            content_filter,
+            auth_filter,
+            source_ips,
+            dest_ips,
+            search,
+            relay_ips,
+        );
         let total = if skip_count {
             0
         } else {
-            let count_query = format!("SELECT COUNT(*) FROM sessions s{}", where_clause);
-            let mut cq = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_query.as_str()));
-            for p in &params {
-                cq = cq.bind(p);
-            }
-            cq.fetch_one(&self.pool).await.unwrap_or(0) as u64
+            self.count_session_filter(&filter).await?.total
         };
+        let mut where_clause = filter.where_clause.clone();
+        let mut params = filter.params.clone();
+        let mut next_param = filter.next_param;
+        if let Some(cursor) = after {
+            where_clause.push_str(if where_clause.is_empty() {
+                " WHERE "
+            } else {
+                " AND "
+            });
+            where_clause.push_str(&format!(
+                "(s.started_at <= ${0} AND (s.started_at < ${0} OR s.id < ${1}))",
+                next_param,
+                next_param + 1
+            ));
+            params.push(cursor.started_at.clone());
+            params.push(cursor.id.to_string());
+            next_param += 2;
+        }
 
         // 2. PaginationDataQuery (: Load content, JSONB Extract metadata)
         // LEFT JOIN security_verdicts (threat_level)
-        let limit_ph = format!("${}", param_idx);
-        param_idx += 1;
-        let offset_ph = format!("${}", param_idx);
+        let limit_ph = format!("${}", next_param);
+        next_param += 1;
+        let offset_ph = format!("${}", next_param);
         // not needed after last use
 
-        let data_query = format!(
-            "SELECT s.id, s.protocol, s.client_ip, s.client_port, s.server_ip, s.server_port, \
-             s.started_at, s.ended_at, s.status, s.packet_count, s.total_bytes, \
-             s.mail_from, s.rcpt_to, s.subject, \
-             CASE WHEN s.content IS NOT NULL THEN \
+        let content_projection = if content_filter == Some("WITH_CONTENT") {
+            "CASE WHEN s.list_has_content THEN jsonb_build_object(\
+                 'is_encrypted', CASE WHEN s.content_is_encrypted THEN 1::BIGINT ELSE 0::BIGINT END, \
+                 'attachment_count', s.content_attachment_count, \
+                 'is_complete', CASE WHEN s.content_is_complete THEN 1::BIGINT ELSE 0::BIGINT END, \
+                 'has_body', CASE WHEN s.content_has_body THEN 1::BIGINT ELSE 0::BIGINT END\
+             )::TEXT ELSE CASE WHEN s.content IS NOT NULL THEN \
                jsonb_build_object(\
                  'is_encrypted', CASE WHEN (s.content->>'is_encrypted') = 'true' THEN 1::BIGINT ELSE 0::BIGINT END, \
                  'attachment_count', COALESCE(jsonb_array_length(s.content->'attachments'), 0), \
@@ -660,29 +934,211 @@ impl VigilDb {
                  'has_body', CASE WHEN s.content->>'body_text' IS NOT NULL \
                    OR s.content->>'body_html' IS NOT NULL THEN 1::BIGINT ELSE 0::BIGINT END \
                )::TEXT \
-             ELSE NULL END AS content_summary, \
+             ELSE NULL END END"
+        } else {
+            "CASE WHEN s.content IS NOT NULL THEN \
+               jsonb_build_object(\
+                 'is_encrypted', CASE WHEN (s.content->>'is_encrypted') = 'true' THEN 1::BIGINT ELSE 0::BIGINT END, \
+                 'attachment_count', COALESCE(jsonb_array_length(s.content->'attachments'), 0), \
+                 'is_complete', CASE WHEN (s.content->>'is_complete') = 'true' THEN 1::BIGINT ELSE 0::BIGINT END, \
+                 'has_body', CASE WHEN s.content->>'body_text' IS NOT NULL \
+                   OR s.content->>'body_html' IS NOT NULL THEN 1::BIGINT ELSE 0::BIGINT END \
+               )::TEXT \
+             ELSE NULL END"
+        };
+
+        let data_query = format!(
+            "WITH page AS MATERIALIZED ( \
+               SELECT s.id, s.started_at FROM sessions s{where_clause} \
+               ORDER BY s.started_at DESC, s.id DESC LIMIT {limit_ph} OFFSET {offset_ph} \
+             ) SELECT s.id, s.protocol, s.client_ip, s.client_port, s.server_ip, s.server_port, \
+             s.started_at, s.ended_at, s.status, s.packet_count, s.total_bytes, \
+             s.mail_from, s.rcpt_to, s.subject, {content_projection} AS content_summary, \
              s.email_count, s.error_reason, s.message_id, s.auth_info::TEXT as auth_info, \
-             v.threat_level \
-             FROM sessions s \
-             LEFT JOIN security_verdicts v ON v.session_id = s.id{} \
-             ORDER BY s.started_at DESC LIMIT {} OFFSET {}",
-            where_clause, limit_ph, offset_ph
+             v.threat_level, v.threat_type, s.source \
+             FROM page JOIN sessions s ON s.id = page.id \
+             LEFT JOIN security_verdicts v ON v.session_id = s.id \
+             ORDER BY page.started_at DESC, page.id DESC"
         );
 
         let mut q = sqlx::query_as::<_, SessionListRow>(sqlx::AssertSqlSafe(data_query.as_str()));
         for p in &params {
             q = q.bind(p);
         }
-        q = q.bind(limit as i32).bind(offset as i32);
-
-        let rows: Vec<SessionListRow> = q.fetch_all(&self.pool).await?;
-
-        let sessions: Vec<EmailSession> = rows
+        q = q.bind(i64::from(limit)).bind(if after.is_some() {
+            0
+        } else {
+            i64::from(offset)
+        });
+        // Rare filters and arbitrary deep offsets can still be expensive.
+        // Bound their execution at PostgreSQL rather than only the HTTP wait.
+        let mut tx = tokio::time::timeout(std::time::Duration::from_secs(2), self.pool.begin())
+            .await
+            .map_err(|_| anyhow::anyhow!("Session page connection timeout"))??;
+        sqlx::query("SET TRANSACTION READ ONLY")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("SET LOCAL statement_timeout = '8s'")
+            .execute(&mut *tx)
+            .await?;
+        let rows: Vec<SessionListRow> = q.fetch_all(&mut *tx).await?;
+        tx.commit().await?;
+        let entries = rows
             .into_iter()
-            .filter_map(|row| list_row_to_session(row).ok())
+            .filter_map(|row| {
+                let cursor = SessionListCursor {
+                    started_at: row.started_at.clone(),
+                    id: Uuid::parse_str(&row.id).ok()?,
+                };
+                list_row_to_session(row)
+                    .ok()
+                    .map(|session| SessionListEntry { session, cursor })
+            })
             .collect();
+        Ok((entries, total))
+    }
 
-        Ok((sessions, total))
+    /// Exact total for the same filters as list_sessions, bounded separately
+    /// from the page query so a large table cannot block the visible rows.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn count_sessions(
+        &self,
+        protocol: Option<&str>,
+        status: Option<&str>,
+        since: Option<&str>,
+        content_filter: Option<&str>,
+        auth_filter: Option<&str>,
+        source_ips: Option<&str>,
+        dest_ips: Option<&str>,
+        search: Option<&str>,
+        relay_ips: &[String],
+    ) -> Result<SessionCountSnapshot> {
+        let filter = session_filter_query(
+            protocol,
+            status,
+            since,
+            content_filter,
+            auth_filter,
+            source_ips,
+            dest_ips,
+            search,
+            relay_ips,
+        );
+        self.count_session_filter(&filter).await
+    }
+
+    async fn count_session_filter(
+        &self,
+        filter: &SessionFilterQuery,
+    ) -> Result<SessionCountSnapshot> {
+        if let Some(cached) = self.session_count_cache.get(filter).await {
+            return cached;
+        }
+        // At most one COUNT holds a database connection; identical cold
+        // requests recheck the completed snapshot instead of counting twice.
+        let _refresh = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            self.session_count_cache.refresh_lock.lock(),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Session count is busy"))?;
+        if let Some(cached) = self.session_count_cache.get(filter).await {
+            return cached;
+        }
+
+        // Acquisition has its own small budget. The database-side timeout
+        // actually cancels a costly scan instead of merely dropping HTTP work.
+        let result = async {
+            let mut tx = tokio::time::timeout(std::time::Duration::from_secs(2), self.pool.begin())
+                .await
+                .map_err(|_| anyhow::anyhow!("Session count connection timeout"))??;
+            sqlx::query("SET TRANSACTION READ ONLY")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("SET LOCAL statement_timeout = '8s'")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("SET LOCAL max_parallel_workers_per_gather = 0")
+                .execute(&mut *tx)
+                .await?;
+            // The planner estimates the whole table for partial-index counts,
+            // which triggers full JIT compilation that costs more than the scan.
+            sqlx::query("SET LOCAL jit = off").execute(&mut *tx).await?;
+            let sql = format!("SELECT COUNT(*) FROM sessions s{}", filter.where_clause);
+            let mut query = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql.as_str()));
+            for value in &filter.params {
+                query = query.bind(value);
+            }
+            let total = query.fetch_one(&mut *tx).await?;
+            tx.commit().await?;
+            Ok::<SessionCountSnapshot, anyhow::Error>(SessionCountSnapshot {
+                total: total as u64,
+                counted_at: chrono::Utc::now(),
+                exact: true,
+            })
+        }
+        .await;
+        // Unselective filters over the whole table cannot be counted within
+        // the budget; the planner estimate is labelled, never passed as exact.
+        let result = match result {
+            Ok(snapshot) => Ok(snapshot),
+            Err(error) => match self.estimate_session_filter(filter).await {
+                Ok(total) => Ok(SessionCountSnapshot {
+                    total,
+                    counted_at: chrono::Utc::now(),
+                    exact: false,
+                }),
+                Err(_) => Err(error),
+            },
+        };
+
+        self.session_count_cache
+            .store(filter.clone(), result.as_ref().ok().copied())
+            .await;
+        result
+    }
+
+    /// Planner row estimate for a session filter; milliseconds, no table scan.
+    async fn estimate_session_filter(&self, filter: &SessionFilterQuery) -> Result<u64> {
+        let mut tx = tokio::time::timeout(std::time::Duration::from_secs(2), self.pool.begin())
+            .await
+            .map_err(|_| anyhow::anyhow!("Session count estimate connection timeout"))??;
+        sqlx::query("SET TRANSACTION READ ONLY")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("SET LOCAL statement_timeout = '1s'")
+            .execute(&mut *tx)
+            .await?;
+        let sql = format!(
+            "EXPLAIN (FORMAT JSON) SELECT 1 FROM sessions s{}",
+            filter.where_clause
+        );
+        let mut query =
+            sqlx::query_scalar::<_, serde_json::Value>(sqlx::AssertSqlSafe(sql.as_str()));
+        for value in &filter.params {
+            query = query.bind(value);
+        }
+        let plan = query.fetch_one(&mut *tx).await?;
+        let mut estimate = plan_row_estimate(&plan)
+            .ok_or_else(|| anyhow::anyhow!("Session count estimate unavailable"))?;
+        // The planner has no statistics for the JSON content predicate and
+        // assumes roughly half the table (43.7M estimated vs 0.35M actual on
+        // 2026-11-13). The partial index over exactly that predicate bounds it.
+        if filter
+            .where_clause
+            .contains(&session_with_content_predicate("s."))
+        {
+            let indexed: Option<f32> = sqlx::query_scalar(
+                "SELECT reltuples FROM pg_class WHERE relname = 'idx_sessions_with_any_content'",
+            )
+            .fetch_optional(&mut *tx)
+            .await?;
+            if let Some(indexed) = indexed.filter(|rows| rows.is_finite() && *rows >= 0.0) {
+                estimate = estimate.min(indexed.round() as u64);
+            }
+        }
+        tx.commit().await?;
+        Ok(estimate)
     }
 
     /// Query Security Session(Used for)
@@ -782,6 +1238,38 @@ impl VigilDb {
         Ok(exists.0)
     }
 
+    /// Return prior Safe/Low history for an exact sender mailbox and its
+    /// relationship with at least one current envelope recipient.
+    pub async fn sender_relationship_history(
+        &self,
+        sender_address: &str,
+        recipient_addresses: &[String],
+        exclude_session_id: &str,
+        before_started_at: &str,
+    ) -> Result<(i64, i64, i64, i64)> {
+        if recipient_addresses.is_empty() {
+            return Ok((0, 0, 0, 0));
+        }
+
+        let recipients = recipient_addresses
+            .iter()
+            .map(|recipient| recipient.trim().to_ascii_lowercase())
+            .filter(|recipient| !recipient.is_empty())
+            .collect::<Vec<_>>();
+        if recipients.is_empty() {
+            return Ok((0, 0, 0, 0));
+        }
+
+        let counts = sqlx::query_as::<_, (i64, i64, i64, i64)>(SENDER_RELATIONSHIP_HISTORY_SQL)
+            .bind(sender_address)
+            .bind(recipients)
+            .bind(exclude_session_id)
+            .bind(before_started_at)
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(counts)
+    }
+
     /// Count distinct senders (mail_from addresses) for a given domain.
     /// Used for sender diversity heuristic in identity_anomaly module.
     pub async fn count_distinct_senders_for_domain(&self, sender_domain: &str) -> Result<i64> {
@@ -801,7 +1289,7 @@ impl VigilDb {
         let row: Option<SessionRow> = sqlx::query_as(
             "SELECT id, protocol, client_ip, client_port, server_ip, server_port, \
              started_at, ended_at, status, packet_count, total_bytes, \
-             mail_from, rcpt_to, subject, content::TEXT as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info \
+             mail_from, rcpt_to, subject, content::TEXT as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info, source \
              FROM sessions WHERE id = $1"
         )
         .bind(id.to_string())
@@ -823,7 +1311,7 @@ impl VigilDb {
         let query = format!(
             "SELECT id, protocol, client_ip, client_port, server_ip, server_port, \
              started_at, ended_at, status, packet_count, total_bytes, \
-             mail_from, rcpt_to, subject, {content_expr} as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info \
+             mail_from, rcpt_to, subject, {content_expr} as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info, source \
              FROM sessions WHERE id = $1"
         );
         let row: Option<SessionRow> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
@@ -851,7 +1339,7 @@ impl VigilDb {
         let query_str = format!(
             "SELECT id, protocol, client_ip, client_port, server_ip, server_port, \
              started_at, ended_at, status, packet_count, total_bytes, \
-             mail_from, rcpt_to, subject, content::TEXT as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info \
+             mail_from, rcpt_to, subject, content::TEXT as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info, source \
              FROM sessions WHERE id IN ({})",
             placeholders
         );
@@ -879,7 +1367,7 @@ impl VigilDb {
         let rows: Vec<SessionRow> = sqlx::query_as(
             "SELECT id, protocol, client_ip, client_port, server_ip, server_port, \
              started_at, ended_at, status, packet_count, total_bytes, \
-             mail_from, rcpt_to, subject, content::TEXT as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info \
+             mail_from, rcpt_to, subject, content::TEXT as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info, source \
              FROM sessions WHERE message_id = $1 AND id != $2 ORDER BY started_at ASC"
         )
         .bind(message_id)
@@ -905,7 +1393,7 @@ impl VigilDb {
         let query = format!(
             "SELECT id, protocol, client_ip, client_port, server_ip, server_port, \
              started_at, ended_at, status, packet_count, total_bytes, \
-             mail_from, rcpt_to, subject, {content_expr} as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info \
+             mail_from, rcpt_to, subject, {content_expr} as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info, source \
              FROM sessions WHERE message_id = $1 AND id != $2 ORDER BY started_at ASC"
         );
         let rows: Vec<SessionRow> = sqlx::query_as(sqlx::AssertSqlSafe(query.as_str()))
@@ -942,7 +1430,7 @@ impl VigilDb {
         let query = format!(
             "SELECT id, protocol, client_ip, client_port, server_ip, server_port, \
              started_at, ended_at, status, packet_count, total_bytes, \
-             mail_from, rcpt_to, subject, {content_expr} as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info \
+             mail_from, rcpt_to, subject, {content_expr} as content, email_count, error_reason, message_id, auth_info::TEXT as auth_info, source \
              FROM sessions \
              WHERE id != $1 \
                AND client_ip = $2 \
@@ -1031,7 +1519,10 @@ fn row_to_session(row: SessionRow) -> Result<EmailSession> {
         message_id: row.message_id,
         auth_info: row.auth_info.and_then(|s| serde_json::from_str(&s).ok()),
         threat_level: None,
-        source: SessionSource::default(),
+        threat_type: None,
+        source: parse_session_source(row.source.as_deref()),
+        smtp_helo: None,
+        release_rescan: None,
     })
 }
 
@@ -1055,7 +1546,6 @@ fn list_row_to_session(row: SessionListRow) -> Result<EmailSession> {
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0)
                 != 0;
-            // attachment,.length
             let placeholder_attachments: Vec<EmailAttachment> = (0..attachment_count)
                 .map(|_| EmailAttachment {
                     filename: String::new(),
@@ -1112,14 +1602,72 @@ fn list_row_to_session(row: SessionListRow) -> Result<EmailSession> {
         message_id: row.message_id,
         auth_info: row.auth_info.and_then(|s| serde_json::from_str(&s).ok()),
         threat_level: row.threat_level,
-        source: SessionSource::default(),
+        threat_type: row.threat_type,
+        source: parse_session_source(row.source.as_deref()),
+        smtp_helo: None,
+        release_rescan: None,
     })
 }
 
-
+fn parse_session_source(value: Option<&str>) -> SessionSource {
+    match value.unwrap_or_default().to_ascii_lowercase().as_str() {
+        "mta_proxy" | "mta" => SessionSource::MtaProxy,
+        "import" => SessionSource::Import,
+        _ => SessionSource::Sniffer,
+    }
+}
 #[cfg(test)]
 mod tests {
-    use super::{TRUSTED_HISTORY_VERDICT_PREDICATE, sender_history_exists_sql};
+    #[tokio::test]
+    async fn session_count_cache_hits_do_not_wait_for_another_filter_refresh() {
+        let cache = super::SessionCountCache::default();
+        let filter = super::session_filter_query(
+            None,
+            None,
+            None,
+            Some("WITH_CONTENT"),
+            None,
+            None,
+            None,
+            None,
+            &[],
+        );
+        let snapshot = super::SessionCountSnapshot {
+            total: 42,
+            counted_at: chrono::Utc::now(),
+            exact: true,
+        };
+        cache.store(filter.clone(), Some(snapshot)).await;
+        let _refresh = cache.refresh_lock.lock().await;
+        let cached = tokio::time::timeout(std::time::Duration::from_secs(1), cache.get(&filter))
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(cached.total, 42);
+        assert_eq!(cached.counted_at, snapshot.counted_at);
+    }
+
+    #[test]
+    fn plan_row_estimate_reads_the_top_level_plan_rows() {
+        let plan = serde_json::json!([
+            { "Plan": { "Node Type": "Index Scan", "Plan Rows": 43764888.4 } }
+        ]);
+        assert_eq!(super::plan_row_estimate(&plan), Some(43_764_888));
+        for invalid in [
+            serde_json::json!([]),
+            serde_json::json!([{ "Plan": {} }]),
+            serde_json::json!([{ "Plan": { "Plan Rows": -1.0 } }]),
+            serde_json::json!({ "Plan": { "Plan Rows": 5 } }),
+        ] {
+            assert_eq!(super::plan_row_estimate(&invalid), None, "{invalid}");
+        }
+    }
+
+    use super::{
+        SENDER_RELATIONSHIP_HISTORY_SQL, TRUSTED_HISTORY_VERDICT_PREDICATE,
+        sender_history_exists_sql,
+    };
 
     #[test]
     fn trusted_history_predicate_requires_analyzed_non_malicious_verdict() {
@@ -1129,7 +1677,9 @@ mod tests {
         // and disarmed first_contact / new_sender_on_known_domain for every
         // later attack from the same domain. The predicate must require a
         // verdict row AND exclude high/critical verdicts.
-        assert!(TRUSTED_HISTORY_VERDICT_PREDICATE.contains("EXISTS(SELECT 1 FROM security_verdicts"));
+        assert!(
+            TRUSTED_HISTORY_VERDICT_PREDICATE.contains("EXISTS(SELECT 1 FROM security_verdicts")
+        );
         assert!(TRUSTED_HISTORY_VERDICT_PREDICATE.contains("v.session_id = s.id"));
         assert!(
             TRUSTED_HISTORY_VERDICT_PREDICATE
@@ -1146,7 +1696,10 @@ mod tests {
             sender_history_exists_sql("s.sender_domain = $1"),
             sender_history_exists_sql("lower(s.mail_from) = lower($1)"),
         ] {
-            assert!(sql.contains("s.status = 'Completed'"), "missing Completed filter: {sql}");
+            assert!(
+                sql.contains("s.status = 'Completed'"),
+                "missing Completed filter: {sql}"
+            );
             assert!(sql.contains("s.id != $2"), "missing self-exclusion: {sql}");
             assert!(
                 sql.contains(TRUSTED_HISTORY_VERDICT_PREDICATE),
@@ -1160,5 +1713,17 @@ mod tests {
             sender_history_exists_sql("lower(s.mail_from) = lower($1)")
                 .contains("lower(s.mail_from) = lower($1)")
         );
+    }
+
+    #[test]
+    fn shadow_relationship_history_is_temporal_live_and_safe_low_only() {
+        let sql = SENDER_RELATIONSHIP_HISTORY_SQL;
+        assert!(sql.contains("s.source IN ('sniffer', 'mta_proxy')"));
+        assert!(sql.contains("s.started_at < $4"));
+        assert!(sql.contains("s.id != $3"));
+        assert!(sql.contains("IN ('safe', 'low')"));
+        assert!(sql.contains("ORDER BY v.created_at DESC, v.id DESC"));
+        assert!(sql.contains("lower(recipient.value) = ANY($2::text[])"));
+        assert!(sql.contains("FILTER (WHERE recipient_match)"));
     }
 }

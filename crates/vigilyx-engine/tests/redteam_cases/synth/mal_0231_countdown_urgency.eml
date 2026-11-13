@@ -1,0 +1,10 @@
+From: =?utf-8?B?6ZmQ5pe25rS75Yqo?= <flash@mall-sec.example>
+To: me@personal.example
+Date: Sun, 06 Sep 2026 09:20:00 +0800
+Message-ID: <0010-b14@synth.example>
+Subject: 余额宝体验金 8 元今日过期
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body style='text-align:center'><div style='font-size:28px;color:#d00'>仅剩 <span>05:59:12</span></div><p>您的 8 元体验金即将过期，激活后可提现：</p><a href='https://mall-activate-cash.example.vip/tiyan' style='color:#fff;background:#ff6700;padding:12px 40px;text-decoration:none;font-size:16px'>立即提现</a></body></html>

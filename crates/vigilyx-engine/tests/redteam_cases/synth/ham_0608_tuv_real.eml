@@ -1,0 +1,85 @@
+From: TÜV Rheinland <certification@tuv.example>
+To: quality@corp.internal
+Cc: rd@corp.internal, legal@corp.internal
+Date: Sat, 24 Oct 2026 14:00:00 +0800
+Message-ID: <0608-b58@synth.example>
+Subject: [Expiring] CE Certification for Gateway Product Family (Certificate No. DE-CA-2024-8842) — Renewal by 15 November
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear Quality Management Team,
+
+Your CE certification for the Gateway Product Family (Certificate No.
+DE-CA-2024-8842) will expire on 15 November 2026. Without a valid CE
+mark, your products cannot be sold in the EEA.
+
+Certificate Details:
+  Certificate Number: DE-CA-2024-8842
+  Certificate Type: CE Marking — LVD 2014/35/EU
+  Product Family: Email Security Gateway (GW-1000/2000/5000)
+  Standards: EN 62368-1:2020
+  Notified Body: TÜV Rheinland LGA Products GmbH (NB 0197)
+  Expiry: 2026-11-15 (22 days remaining)
+
+Consequences of Expiry:
+  - Immediate sales ban in 30 EEA countries
+  - Customs seizure at EU borders
+  - Recall obligation for products in market
+  - Fines up to €500,000 per violation
+  - Distributor liability
+  - Loss of EU customer contracts
+
+Renewal Process:
+
+  Step 1 — Submit Technical Documentation:
+  Navigate to our Certipedia portal manually:
+  www.certipedia.com (type URL manually)
+  → Client Login → Certificate DE-CA-2024-8842
+  → Upload Documents
+
+  Required documents:
+  1. Updated Risk Assessment (EN 62368-1 Annex B)
+  2. Technical Construction File (TCF)
+  3. Schematics & PCB layouts
+  4. Bill of Materials (BOM) with safety-critical items
+  5. Test Reports (EMC & Safety, from accredited lab)
+  6. User Manual (EU languages)
+  7. Declaration of Conformity (draft)
+  8. Factory Production Control documentation
+
+  Important Security Notes:
+  TÜV Rheinland will NEVER:
+  - Send you a direct "Upload" link via email
+  - Use Microsoft Azure AD B2B for portal authentication
+  - Request offline_access or any OAuth token
+  - Cite "large file upload session maintenance" as reason for tokens
+
+  All document submissions happen at certipedia.com when you
+  navigate there manually. If you receive an email with an
+  "Upload" button or Azure AD authentication, it is a phishing
+  attempt targeting CE certification holders.
+
+  Client portal credentials are sent by post to the registered
+  manufacturer address (not via email).
+
+Step 2 — Factory Inspection:
+  Duration: 1-2 days at Hangzhou facility
+  Cost: €2,800 (included in renewal)
+
+Step 3 — Renewal Fee:
+  Certification renewal (3 models): €6,500
+  Factory inspection: €2,800
+  Document review: €1,200
+  Total: €10,500
+
+Timeline:
+  10/24  Submit documentation
+  10/25-11/01  Document review
+  11/04-06  Factory inspection
+  11/08  Review results
+  11/12  Certificate issuance
+  11/15  Current certificate expires
+
+TÜV Rheinland Group | Product Safety & Certification
+Am Grauen Stein, 51105 Cologne, Germany
+You are receiving this because you are the certificate holder's contact.

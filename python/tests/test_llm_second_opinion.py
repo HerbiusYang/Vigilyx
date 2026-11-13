@@ -198,7 +198,7 @@ class TestLlmSecondOpinion:
     def test_prompt_uses_redacted_fields(self):
         llm_client = _make_llm_client()
         payload = _request_payload(LLM_CONFIG)
-        payload["body_text"] = "Please review john.doe@example.com at https://evil.com/login"
+        payload["body_text"] = "Please review john.doe@example.com at https://example.com/login"
         resp, _ = _post(payload, _nlp_result(0.5), llm_client)
 
         assert resp.status_code == 200

@@ -1,0 +1,10 @@
+From: =?utf-8?B?UHlQSQ==?= <noreply@pypi.example>
+To: dev@corp.internal
+Date: Sat, 05 Sep 2026 10:31:00 +0800
+Message-ID: <0021-b13@synth.example>
+Subject: Security notice: typosquat detected
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+A dependency you follow was removed for typosquatting.
+Review your lockfile at https://pypi.example/manage (existing session only).

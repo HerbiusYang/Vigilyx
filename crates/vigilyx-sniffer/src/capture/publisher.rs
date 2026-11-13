@@ -71,24 +71,6 @@ impl DataPublisher {
         self
     }
 
-    /// Getdue toQueuefull dropofemailSessiontotal (Monitor, giving Prometheus)
-    #[allow(dead_code)]
-    pub fn email_sessions_dropped(&self) -> u64 {
-        self.email_dropped.load(Ordering::Relaxed)
-    }
-
-    /// GetWhenfirstWaitPublishofemailSession (Monitor, giving Prometheus)
-    #[allow(dead_code)]
-    pub fn email_pending_count(&self) -> u64 {
-        self.email_pending.load(Ordering::Relaxed)
-    }
-
-    /// Total XADD failures after all retries exhausted (Monitor, giving Prometheus)
-    #[allow(dead_code)]
-    pub fn xadd_failure_count(&self) -> u64 {
-        self.xadd_failures.load(Ordering::Relaxed)
-    }
-
     /// BatchPublishSession
     /// Note: Methodpossibly Tokio ThreadMedium,UsestoreofRuntimehandle
     pub fn publish(&self, sessions: Vec<EmailSession>) {

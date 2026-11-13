@@ -15,41 +15,12 @@ use super::coremail;
 use super::dlp;
 use super::{DataSecurityDetector, DetectorResult, extract_snippet};
 
-/// Send email URI patterns (case-insensitive matching).
-const SEND_URI_PATTERNS: &[&str] = &[
-    "/compose/send",
-    "/sendmail",
-    "/send_mail",
-    // Coremail send email (API)
-    "func=mbox:compose&action=deliver",
-    "func=mbox:deliver",
-    "action=deliver",
-    "/coremail/xt5/proxy/compose",
-    // Exchange OWA
-    "/owa/service.svc",
-    // General API
-    "/api/mail/send",
-    "/api/compose/send",
-    "/mail/send",
-    "/webmail/send",
-];
-
-/// Coremail send email action values.
-const COREMAIL_SEND_ACTIONS: &[&str] = &["deliver"];
-
 #[derive(Default)]
 pub struct SelfSendDetector;
 
 impl SelfSendDetector {
     pub fn new() -> Self {
         Self
-    }
-
-    fn is_send_uri(uri: &str) -> bool {
-        let uri_lower = uri.to_lowercase();
-        SEND_URI_PATTERNS
-            .iter()
-            .any(|pattern| uri_lower.contains(pattern))
     }
 
     /// Normalize email address (handle display name, angle brackets, lowercase, trim).
@@ -115,18 +86,7 @@ impl DataSecurityDetector for SelfSendDetector {
         }
 
         // URI match: direct send URL or Coremail compose.jsp + action=deliver
-        let is_send = if Self::is_send_uri(&session.uri) {
-            true
-        } else if coremail::is_coremail_compose_uri(&session.uri) {
-            session
-                .request_body
-                .as_deref()
-                .and_then(coremail::extract_body_action)
-                .map(|a| COREMAIL_SEND_ACTIONS.contains(&a.as_str()))
-                .unwrap_or(false)
-        } else {
-            false
-        };
+        let is_send = coremail::is_delivery_request(&session.uri, session.request_body.as_deref());
         if !is_send {
             return None;
         }
@@ -166,7 +126,8 @@ impl DataSecurityDetector for SelfSendDetector {
             && !body.is_empty()
         {
             // Coremail: extract attrs.content to avoid raw JSON metadata
-            let dlp_text = dlp::extract_dlp_text(body, &session.uri, session.content_type.as_deref());
+            let dlp_text =
+                dlp::extract_dlp_text(body, &session.uri, session.content_type.as_deref());
             let dlp_result = dlp::scan_text(&dlp_text);
             if !dlp_result.is_empty() {
                 dlp_for_jrt = Some(dlp_result.clone());
@@ -297,7 +258,7 @@ mod tests {
             "/api/mail/send",
             Some("Alice@Example.COM"),
             vec!["alice@example.com"],
-            Some("ID card: 110101199001011237"),
+            Some("ID card: 000000200001010005"),
         );
         let result = detector.analyze(&session);
         assert!(
@@ -356,7 +317,7 @@ mod tests {
             Some("alice@example.com"),
             vec!["alice@example.com"],
             // 4532015112830366 is Luhn-valid
-            Some("信用Card number: 4532015112830366, ID card: 110101199001011237"),
+            Some("信用Card number: 4532015112830366, ID card: 000000200001010005"),
         );
         let result = detector.analyze(&session);
         assert!(result.is_some());
@@ -377,7 +338,7 @@ mod tests {
     fn test_self_send_coremail_compose_jsp_deliver_with_sensitive() {
         let detector = SelfSendDetector::new();
         // Coremail compose.jsp + action=deliver + self-send + Sensitivedata (ID cardNumber)
-        let body = r#"{"attrs":{"account":"user@corp.com","to":["user@corp.com"],"content":"客户ID card 110101199001011237"},"action":"deliver"}"#;
+        let body = r#"{"attrs":{"account":"user@corp.example","to":["user@corp.example"],"content":"客户ID card 000000200001010005"},"action":"deliver"}"#;
         let session = make_session(
             "/coremail/common/mbox/compose.jsp?sid=abc123",
             Some("user@corp.com"),
@@ -500,7 +461,7 @@ mod tests {
             "/compose/send",
             Some("alice@corp.com"),
             vec!["bob@corp.com", "charlie@corp.com", "alice@corp.com"],
-            Some("ID card 110101199001011237"),
+            Some("ID card 000000200001010005"),
         );
         let result = detector.analyze(&session);
         assert!(
@@ -601,7 +562,7 @@ mod tests {
             "/compose/send",
             Some("alice@corp.com"),
             vec!["alice+archive@corp.com"],
-            Some("客户ID card 110101199001011237"),
+            Some("客户ID card 000000200001010005"),
         );
         let result = detector.analyze(&session);
         assert!(
@@ -618,7 +579,7 @@ mod tests {
             "/compose/send",
             Some("alice+evil@corp.com"),
             vec!["alice@corp.com"],
-            Some("客户ID card 110101199001011237"),
+            Some("客户ID card 000000200001010005"),
         );
         let result = detector.analyze(&session);
         assert!(
@@ -679,10 +640,9 @@ mod tests {
 
     #[test]
     fn test_coremail_json_id_no_false_positive_phone() {
-        // found: Coremail compose JSON of id SegmentContainsClassMobile phoneNumber "1774418005615"
-        // CSS class NameContains "1774418008257", misclassified 3 Mobile phoneNumber
+        // Synthetic 13-digit JSON/CSS identifiers must not be treated as phone numbers.
         let detector = SelfSendDetector::new();
-        let coremail_body = r#"{"id":"1774418005615","attrs":{"account":"\"Testuser\" <support@example.com>","to":["\"Testuser\" <support@example.com>"],"subject":"","isHtml":true,"content":"<style>p {margin:0}.default-font-1774418008257 {font-size: 14px}</style><div class=\"default-font-1774418008257\"><span>38D3670BE3FE3409EAB10543FED9430DA27B7F02BB31FD0AFAEC29C218DD905E</span></div>"},"action":"deliver"}"#;
+        let coremail_body = r#"{"id":"1000000000001","attrs":{"account":"\"Testuser\" <support@example.com>","to":["\"Testuser\" <support@example.com>"],"subject":"","isHtml":true,"content":"<style>p {margin:0}.default-font-1000000000002 {font-size: 14px}</style><div class=\"default-font-1000000000002\"><span>0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF</span></div>"},"action":"deliver"}"#;
         let mut session = make_session(
             "/coremail/common/mbox/compose.jsp?sid=BAWhTkKKxyz",
             Some("support@example.com"),

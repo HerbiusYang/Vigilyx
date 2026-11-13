@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "policy_version": 1,
+  "enabled": true,
+  "semantic_admission_floor": 0.75,
+  "semantic_module": "semantic_scan",
+  "target_module": "link_content",
+  "scenario_list": "semantic_scenario_policy_v1",
+  "brand_profile_list": "account_action_brand_profiles_v1",
+  "relations": [
+    {
+      "id": "credential_brand_target_contradiction",
+      "scenarios": ["credential_request", "account_access_request"],
+      "deceptive_target_categories": ["idn_homograph", "at_sign_obfuscation", "org_domain_mimicry"],
+      "severity": "high"
+    }
+  ],
+  "native_sources": [
+    {
+      "id": "attachment_antivirus_detection",
+      "module_id": "av_attach_scan",
+      "category": "virus_detected",
+      "guard": "infected_attachment_scan",
+      "severity": "critical"
+    }
+  ]
+}

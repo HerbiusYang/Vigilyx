@@ -1,0 +1,10 @@
+From: =?utf-8?B?SVQg5pyN5Yqh5Y+w?= <helpdesk@corp.internal>
+To: staff@corp.internal
+Date: Fri, 11 Sep 2026 08:37:00 +0800
+Message-ID: <0027-b19@synth.example>
+Subject: 个人邮箱迁移指引（自助）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+迁移工具在门户-邮箱-迁移，全程系统内授权（OAuth 弹窗），
+任何索要'应用专用密码/授权码'的邮件都是钓鱼。

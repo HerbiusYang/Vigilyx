@@ -80,6 +80,12 @@ pub(super) async fn query_ioc_ips(
     let mut ioc_score_total = 0.0;
     for ip in received_ips {
         if let Ok(Some(ioc)) = db.find_ioc("ip", ip).await {
+            // Locally generated references are historical observations, not
+            // independent intelligence. They must not become a fresh header
+            // threat signal on a later scan (FP -> IOC -> FP feedback loop).
+            if matches!(ioc.source.as_str(), "auto_reference") {
+                continue;
+            }
             // Skip IPs with verdict=clean (already vetted as safe)
             if ioc.verdict == "clean" {
                 ioc_checked_ips.insert(ip.clone());
@@ -279,7 +285,7 @@ mod tests {
 
     fn intel_result(source: &str, confidence: f64) -> IntelResult {
         IntelResult {
-            indicator: "1.2.3.4".to_string(),
+            indicator: "198.51.100.4".to_string(),
             ioc_type: "ip".to_string(),
             found: true,
             verdict: "suspicious".to_string(),

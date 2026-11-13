@@ -53,8 +53,6 @@ const CAPTURE_TIMEOUT_MS: i32 = 100;
 const WORKER_QUEUE_CAPACITY: usize = 100_000;
 /// Batch size (512, tuned for L2 cache)
 const BATCH_SIZE: usize = 512;
-/// Batch timeout (microseconds)
-const BATCH_TIMEOUT_US: u64 = 5000;
 /// Default max worker thread count (overridable via `SNIFFER_WORKERS` env var).
 /// Email protocol traffic is typically <10K pps - dozens of threads are unnecessary.
 /// Excessive threads cause crossbeam channel contention + context switch overhead.
@@ -107,6 +105,146 @@ fn max_worker_threads() -> usize {
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(DEFAULT_MAX_WORKER_THREADS)
         .max(1)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_cpu_list(raw: &str) -> Result<Vec<usize>, String> {
+    let mut cpus = std::collections::BTreeSet::new();
+    for item in raw
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+    {
+        let (start, end) = if let Some((start, end)) = item.split_once('-') {
+            let start = start
+                .trim()
+                .parse::<usize>()
+                .map_err(|_| format!("invalid CPU in '{item}'"))?;
+            let end = end
+                .trim()
+                .parse::<usize>()
+                .map_err(|_| format!("invalid CPU range in '{item}'"))?;
+            if end < start {
+                return Err(format!("CPU range '{item}' is reversed"));
+            }
+            (start, end)
+        } else {
+            let cpu = item
+                .parse::<usize>()
+                .map_err(|_| format!("invalid CPU list item '{item}'"))?;
+            (cpu, cpu)
+        };
+
+        for cpu in start..=end {
+            cpus.insert(cpu);
+        }
+    }
+    Ok(cpus.into_iter().collect())
+}
+
+#[cfg(target_os = "linux")]
+fn configured_worker_core_ids() -> Vec<core_affinity::CoreId> {
+    let available = core_affinity::get_core_ids().unwrap_or_default();
+    let configured = std::env::var("SNIFFER_WORKER_CPU_LIST")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let Some(configured) = configured else {
+        return available;
+    };
+
+    let requested = match parse_cpu_list(&configured) {
+        Ok(cpus) => cpus,
+        Err(error) => {
+            warn!(%error, "SNIFFER_WORKER_CPU_LIST 无效，将使用系统可用 CPU");
+            return available;
+        }
+    };
+    let available_ids: std::collections::BTreeSet<usize> =
+        available.iter().map(|core| core.id).collect();
+    let selected: Vec<_> = requested
+        .iter()
+        .filter(|cpu| available_ids.contains(cpu))
+        .map(|&id| core_affinity::CoreId { id })
+        .collect();
+    if selected.is_empty() {
+        warn!(
+            requested = %configured,
+            "SNIFFER_WORKER_CPU_LIST 不包含当前进程可用 CPU，将使用系统可用 CPU"
+        );
+        return available;
+    }
+    if selected.len() != requested.len() {
+        warn!(
+            requested = %configured,
+            selected = ?selected.iter().map(|core| core.id).collect::<Vec<_>>(),
+            "SNIFFER_WORKER_CPU_LIST 中部分 CPU 不可用，已忽略"
+        );
+    }
+    selected
+}
+
+#[cfg(target_os = "linux")]
+fn configured_capture_core_id(
+    worker_cores: &[core_affinity::CoreId],
+) -> Option<core_affinity::CoreId> {
+    let available = core_affinity::get_core_ids().unwrap_or_default();
+    if available.is_empty() {
+        return None;
+    }
+    if let Ok(raw) = std::env::var("SNIFFER_CAPTURE_CPU")
+        && !raw.trim().is_empty()
+    {
+        match parse_cpu_list(&raw) {
+            Ok(cpus) if cpus.len() == 1 => {
+                if let Some(core) = available.iter().find(|core| core.id == cpus[0]) {
+                    return Some(*core);
+                }
+                warn!(requested = %raw, "SNIFFER_CAPTURE_CPU 不在当前进程可用 CPU 中，将自动选择");
+            }
+            Ok(_) => warn!(requested = %raw, "SNIFFER_CAPTURE_CPU 必须是单个 CPU，将自动选择"),
+            Err(error) => warn!(%error, "SNIFFER_CAPTURE_CPU 无效，将自动选择"),
+        }
+    }
+
+    let worker_ids: std::collections::BTreeSet<usize> =
+        worker_cores.iter().map(|core| core.id).collect();
+    available
+        .iter()
+        .find(|core| !worker_ids.contains(&core.id))
+        .copied()
+        .or_else(|| available.first().copied())
+}
+
+#[cfg(target_os = "linux")]
+fn bind_capture_thread() {
+    let worker_cores = configured_worker_core_ids();
+    let worker_count = worker_thread_count().min(worker_cores.len().max(1));
+    let selected_worker_cores: Vec<_> = worker_cores.iter().take(worker_count).copied().collect();
+    let Some(core) = configured_capture_core_id(&selected_worker_cores) else {
+        warn!("无法发现可用 CPU，capture thread 未设置 CPU 亲和性");
+        return;
+    };
+    if core_affinity::set_for_current(core) {
+        info!(cpu = core.id, "Capture thread 绑定到专用 CPU");
+    } else {
+        warn!(cpu = core.id, "Capture thread CPU 亲和性设置失败");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn bind_capture_thread() {}
+
+fn worker_thread_count() -> usize {
+    let requested = (num_cpus::get().saturating_sub(1)).clamp(1, max_worker_threads());
+    #[cfg(target_os = "linux")]
+    {
+        let available = configured_worker_core_ids().len();
+        requested.min(available.max(1))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        requested
+    }
 }
 
 fn capture_buffer_size_mb() -> usize {
@@ -238,7 +376,7 @@ impl HighPerformanceCapturer {
         let mut worker_txs = Vec::with_capacity(num_workers);
 
         #[cfg(target_os = "linux")]
-        let core_ids = core_affinity::get_core_ids().unwrap_or_default();
+        let core_ids = configured_worker_core_ids();
 
         for worker_id in 0..num_workers {
             let (tx, rx): (Sender<RawpacketInfo>, Receiver<RawpacketInfo>) =
@@ -262,10 +400,15 @@ impl HighPerformanceCapturer {
                 .name(format!("worker-{}", worker_id))
                 .spawn(move || {
                     #[cfg(target_os = "linux")]
-                    if let Some(core) = core_id
-                        && core_affinity::set_for_current(core)
-                    {
-                        info!("Worker thread {} 绑定到 CPU {}", worker_id, core.id);
+                    if let Some(core) = core_id {
+                        if core_affinity::set_for_current(core) {
+                            info!("Worker thread {} 绑定到 CPU {}", worker_id, core.id);
+                        } else {
+                            warn!(
+                                "Worker thread {} CPU 亲和性设置失败: {}",
+                                worker_id, core.id
+                            );
+                        }
                     }
 
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -410,7 +553,7 @@ impl HighPerformanceCapturer {
         };
 
         // Start worker threads (CPU count minus one, with a minimum of one).
-        let num_workers = (num_cpus::get().saturating_sub(1)).clamp(1, max_worker_threads());
+        let num_workers = worker_thread_count();
         info!("Start {} Worker thread", num_workers);
 
         let worker_txs = self.start_worker_pool(num_workers, publisher_with_handle)?;
@@ -473,7 +616,7 @@ impl HighPerformanceCapturer {
         };
 
         // Start worker threads before reading from stdin so parsed packets can flow immediately.
-        let num_workers = (num_cpus::get().saturating_sub(1)).clamp(1, max_worker_threads());
+        let num_workers = worker_thread_count();
         info!("Start {} Worker thread", num_workers);
 
         let worker_txs = self.start_worker_pool(num_workers, publisher_with_handle)?;
@@ -538,7 +681,7 @@ impl HighPerformanceCapturer {
         let publisher_with_handle = self.publisher.clone().with_runtime_handle(runtime_handle);
 
         // Start packet-processing workers before accepting connections.
-        let num_workers = (num_cpus::get().saturating_sub(1)).clamp(1, max_worker_threads());
+        let num_workers = worker_thread_count();
         info!("Start {} Worker thread", num_workers);
 
         let worker_txs = self.start_worker_pool(num_workers, publisher_with_handle)?;
@@ -709,7 +852,7 @@ impl HighPerformanceCapturer {
         let publisher_with_handle = self.publisher.clone().with_runtime_handle(runtime_handle);
 
         // Start worker threads before opening the remote stream.
-        let num_workers = (num_cpus::get().saturating_sub(1)).clamp(1, max_worker_threads());
+        let num_workers = worker_thread_count();
         info!("Start {} Worker thread", num_workers);
 
         let worker_txs = self.start_worker_pool(num_workers, publisher_with_handle)?;
@@ -866,7 +1009,7 @@ impl HighPerformanceCapturer {
         let runtime_handle = tokio::runtime::Handle::current();
         let publisher_with_handle = self.publisher.clone().with_runtime_handle(runtime_handle);
 
-        let num_workers = (num_cpus::get().saturating_sub(1)).clamp(1, max_worker_threads());
+        let num_workers = worker_thread_count();
         info!("Start {} Worker thread", num_workers);
 
         let worker_txs = self.start_worker_pool(num_workers, publisher_with_handle)?;
@@ -1124,7 +1267,10 @@ impl HighPerformanceCapturer {
             // header after this framing error.
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("pcap capture length {caplen} exceeds {}", packet_buffer.len()),
+                format!(
+                    "pcap capture length {caplen} exceeds {}",
+                    packet_buffer.len()
+                ),
             ));
         }
 
@@ -1140,6 +1286,7 @@ impl HighPerformanceCapturer {
         port_bitmap: Arc<PortBitmap>,
         stop_flag: Arc<AtomicBool>,
     ) -> Result<()> {
+        bind_capture_thread();
         // Use pcap FromFileDescription readGet (savefile)
         // pcap Stream: Header(24Byte) + [packetHeader(16Byte) + packetdata]*
         let mut reader = BufReader::with_capacity(1024 * 1024, reader); // 1MB bufferDistrict
@@ -1324,6 +1471,11 @@ impl HighPerformanceCapturer {
         port_bitmap: Arc<PortBitmap>,
         stop_flag: Arc<AtomicBool>,
     ) -> Result<()> {
+        // Keep the libpcap reader away from NIC IRQ CPUs and worker CPUs when
+        // possible. irqbalance can move IRQs, but it cannot move a thread
+        // whose affinity is explicitly set; the host tuning script reserves
+        // this CPU as well.
+        bind_capture_thread();
         let capture_buffer_mb = capture_buffer_size_mb();
         // SECURITY: Defensive i32 conversion — current MAX_CAPTURE_BUFFER_MB (1024) is
         // well within i32::MAX, but guard against future constant changes (CWE-190).
@@ -1594,7 +1746,6 @@ impl HighPerformanceCapturer {
         // Adaptive batching balances latency at low traffic and throughput at high traffic.
         let mut batcher = AdaptiveBatcher::new(BatchConfig {
             batch_size: BATCH_SIZE,
-            timeout_us: BATCH_TIMEOUT_US,
             adaptive: true,
         });
 
@@ -1905,7 +2056,10 @@ mod tests {
         fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
             if self.offset == self.data.len() {
                 // A complete record must be returned without probing for EOF.
-                return Err(io::Error::new(io::ErrorKind::WouldBlock, "test reader idle"));
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "test reader idle",
+                ));
             }
             let count = (self.data.len() - self.offset)
                 .min(self.chunk_size)
@@ -1920,7 +2074,10 @@ mod tests {
 
     #[test]
     fn greeting_valid_exact_token() {
-        assert!(remote_listen_greeting_valid(b"VIGILYX1 s3cret-token", "s3cret-token"));
+        assert!(remote_listen_greeting_valid(
+            b"VIGILYX1 s3cret-token",
+            "s3cret-token"
+        ));
     }
 
     #[test]
@@ -1941,7 +2098,10 @@ mod tests {
 
     #[test]
     fn greeting_rejects_missing_prefix() {
-        assert!(!remote_listen_greeting_valid(b"s3cret-token", "s3cret-token"));
+        assert!(!remote_listen_greeting_valid(
+            b"s3cret-token",
+            "s3cret-token"
+        ));
         assert!(!remote_listen_greeting_valid(b"", "s3cret-token"));
     }
 
@@ -1964,7 +2124,8 @@ mod tests {
     #[test]
     fn handshake_line_reads_until_lf() {
         let mut cursor = Cursor::new(b"VIGILYX1 tok\r\n<pcap bytes follow>".to_vec());
-        let line = HighPerformanceCapturer::read_handshake_line(&mut cursor, 64).expect("line reads");
+        let line =
+            HighPerformanceCapturer::read_handshake_line(&mut cursor, 64).expect("line reads");
         assert_eq!(line, b"VIGILYX1 tok\r");
         assert!(remote_listen_greeting_valid(&line, "tok"));
         // The pcap bytes after the newline must remain unread for the
@@ -1994,6 +2155,21 @@ mod tests {
         assert!(!ct_eq_bytes(b"abc", b"abd"));
         assert!(!ct_eq_bytes(b"abc", b"abcd"));
         assert!(ct_eq_bytes(b"", b""));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cpu_list_parser_sorts_and_deduplicates_ranges() {
+        assert_eq!(parse_cpu_list("4, 1-3, 3, 8"), Ok(vec![1, 2, 3, 4, 8]));
+        assert_eq!(parse_cpu_list(""), Ok(Vec::new()));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn cpu_list_parser_rejects_malformed_or_reversed_ranges() {
+        assert!(parse_cpu_list("3-1").is_err());
+        assert!(parse_cpu_list("cpu2").is_err());
+        assert!(parse_cpu_list("1-").is_err());
     }
 
     #[test]

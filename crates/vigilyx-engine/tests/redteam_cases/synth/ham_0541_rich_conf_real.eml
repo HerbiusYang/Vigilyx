@@ -1,0 +1,36 @@
+From: APSEC 2026 程序委员会 <pc@apsec2026.example>
+To: sec-research@corp.internal
+Date: Thu, 01 Oct 2026 09:32:00 +0800
+Message-ID: <0541-b37@synth.example>
+Subject: Re: 议题 #1147 终审前沟通（周四前回复）
+In-Reply-To: <cfp-1147@corp.internal>
+References: <cfp-1147@corp.internal>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+王老师您好：
+
+我是本届程序委员会秘书处联络人，负责 Systems & Supply Chain 方向的终审协调。
+
+先同步背景：您的投稿《面向邮件网关的分层超时回退实践》（议题号 1147）已通过第一轮外审，三位审稿人整体评价为 Weak Accept / Accept / Accept，主要分歧集中在第 4 节实验充分性——一位审稿人希望补灰度比例与回退触发之间的消融数据，另一位认为现有压测口径已足够。按委员会惯例，这类分歧由区域主席与作者做一次 20 分钟终审前沟通，不一定改稿，但让终审时心里有底。
+
+时间：终审窗口 10/9–10/11，希望在 10/8（周四）前完成。可选时段回复编号即可：
+
+  A. 10/7（周二）19:00–19:20
+  B. 10/7（周二）20:30–20:50
+  C. 10/8（周四）08:00–08:20
+
+带批注的评审意见汇总已推送至投稿系统（OpenReview 同步），请用您的投稿账号查看——委员会不通过邮件或第三方链接分发评审材料，若收到此类邮件请视为假冒并告知我们：
+
+    https://apsec2026.example/submission/1147/reviews
+
+若终审通过，Camera-ready 截止 10/24，出版主席会另行说明格式要求。
+
+线下场在 Hangzhou，Systems 方向 panel 定在 11/14 下午，主题是"供应链投毒与运行时防御"，期待您的网关侧视角。
+
+顺祝研究顺利。
+
+李昂
+程序委员会秘书处 · Systems & Supply Chain
+APSEC 2026
+（本邮件含评审保密信息，请勿转发至公开渠道）

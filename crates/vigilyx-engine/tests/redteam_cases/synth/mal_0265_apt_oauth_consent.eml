@@ -1,0 +1,14 @@
+From: =?utf-8?B?VGltZXNoZWV0UHJv?= <notifications@timesheetpro-sso.example>
+To: staff@corp.internal
+Date: Wed, 09 Sep 2026 08:14:00 +0800
+Message-ID: <0004-b17@synth.example>
+Subject: TimesheetPro 请求访问您的邮箱与日历
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您的组织管理员启用了 TimesheetPro 工时集成。
+
+请完成一次授权以继续使用：
+https://login.timesheetpro-sso.example/consent?client=ts&scope=mail.read calendars
+
+授权后无需重复登录。撤回可在账户安全页操作。

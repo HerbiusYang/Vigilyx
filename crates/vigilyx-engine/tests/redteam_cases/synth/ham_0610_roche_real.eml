@@ -1,0 +1,84 @@
+From: Roche Clinical Data Management <clinical.data@roche.example>
+To: rd-clinical@corp.internal
+Cc: dpo@corp.internal, legal@corp.internal
+Date: Sun, 25 Oct 2026 09:00:00 +0200
+Message-ID: <0610-b59@synth.example>
+Subject: [Protocol WA44712] Week 48 clinical data submission overdue — Safety signal in Cohort B
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear Clinical Research Team,
+
+PATIENT SAFETY ALERT: Our DMC has identified a potential safety signal
+in Cohort B. Your Week 48 data submission is OVERDUE.
+
+Protocol Details:
+  Protocol Number: WA44712
+  Study: Phase III Tiragolumab + Atezolizumab in PD-L1+ NSCLC
+  Your Role: Site 042 (Hangzhou) — PI: Dr. Wang
+  Cohort B Patients at Your Site: 5
+  Data Due: Week 48 (was due 2026-10-20)
+  Status: OVERDUE — 5 days
+
+Safety Signal (Cohort B, all sites):
+  Immune-mediated pneumonitis: 7.8% (expected 3.2%)
+  Elevated ALT/AST: 14.2% (expected 8.5%)
+
+Required Data (all cohorts, your 12 patients):
+  1. AE logs (since Week 44, CTCAE v5.0 grading)
+  2. ConMed logs
+  3. Laboratory results (CBC, CMP, LFTs)
+  4. Vital signs
+  5. ECOG Performance Status
+  6. Tumor assessment (RECIST 1.1)
+  7. Patient ID master list (de-identified)
+
+Data Upload Instructions:
+
+  Please upload through the Roche Clinical Data Portal:
+
+  1. Navigate to clinicaldata.roche.com in your browser
+     (Type the URL manually. Do NOT click links from emails.)
+
+  2. Log in with your site credentials (issued during site
+     initiation visit — sent by registered post, not email)
+
+  3. Select Protocol WA44712 → Site 042 → Week 48
+
+  4. Upload each data category (separate folders)
+
+  Important Security Notes:
+  Roche will NEVER:
+  - Send you a direct upload link via email
+  - Use CERNET or any third-party SSO for portal authentication
+  - Request offline_access or any OAuth permission
+  - Offer a "Chinese fast-track channel" for data upload
+  - Accept clinical data through non-encrypted email
+
+  All clinical data uploads happen on clinicaldata.roche.com
+  using site credentials issued during site initiation.
+  Site credentials are delivered by registered post only.
+
+  If you receive an email with an "Upload" button or SSO
+  authentication, it is a phishing attempt targeting
+  clinical trial sites.
+
+Regulatory Context:
+  ICH E6(R2) GCP Section 4.9
+  Protocol WA44712 Section 5.3
+  NMPA Drug Clinical Trial Quality Management Standard
+
+  Failure to submit may result in GCP non-compliance flagging.
+
+Contact:
+  Clinical Data Manager: Maria Schneider (Basel HQ)
+  Phone: +41 61 688 ****
+  Email: clinical.data@roche.example
+  PGP fingerprint: 4F2A 91C3 8B7D 0A5E
+
+  Asia-Pacific Study Manager: Ken Tanaka (Tokyo)
+  Phone: +81 3 5443 ****
+
+F. Hoffmann-La Roche Ltd | Clinical Data Management
+Grenzacherstrasse 124, 4070 Basel, Switzerland
+This communication contains confidential clinical trial information.

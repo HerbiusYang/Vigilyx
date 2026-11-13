@@ -1,0 +1,10 @@
+From: =?utf-8?B?5Lit5Zu95Zu96Iiq?= <service@air-china-2.example>
+To: me@personal.example
+Date: Tue, 08 Sep 2026 09:18:00 +0800
+Message-ID: <0008-b16@synth.example>
+Subject: 航班取消：CA1858（补办退改）
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>很抱歉，您的 CA1858 已取消。可免费改签或退款：</p><p><a href='https://ca-rebook-refund.example.vip/h' style='background:#e10c19;color:#fff;padding:10px 28px;text-decoration:none'>办理退改</a></p><p style='font-size:12px'>需核对银行卡信息。</p></body></html>

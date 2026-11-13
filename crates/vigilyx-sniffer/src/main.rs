@@ -30,12 +30,12 @@ use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 use vigilyx_core::{CaptureMode as ConfigCaptureMode, Config};
-use vigilyx_db::mq::{MqClient, MqConfig, verify_cmd_payload};
+use vigilyx_db::mq::{MqClient, MqConfig, require_data_plane_token, verify_cmd_payload};
 
 /// BuildpacketContainsInternalAuthentication of HTTP DefaultHeader
 pub(crate) fn internal_api_headers() -> reqwest::header::HeaderMap {
     let mut h = reqwest::header::HeaderMap::new();
-    if let Ok(t) = std::env::var("INTERNAL_API_TOKEN")
+    if let Ok(t) = std::env::var("SNIFFER_API_TOKEN")
         && let Ok(v) = t.parse()
     {
         h.insert("X-Internal-Token", v);
@@ -242,8 +242,11 @@ async fn main() -> Result<()> {
         }
     }
 
+    require_data_plane_token()
+        .map_err(|error| anyhow::anyhow!("data-plane authentication is required: {error}"))?;
+
     // LoadConfiguration (.env Defaultvalue)
-    let mut config = Config::from_env()?;
+    let mut config = Config::from_env_for_sniffer()?;
     info!("API Target: {}:{}", config.api_host, config.api_port);
 
     // From API/DB GetdataSecurityConfiguration (webmail_servers / http_ports)
@@ -267,7 +270,7 @@ async fn main() -> Result<()> {
                             .filter_map(|v| v.as_str().map(|s| s.to_string()))
                             .collect();
                         info!(
-                            "From DB ConfigurationLoad webmail_servers: {:?}",
+                            "Loaded Webmail server settings from API: {:?}",
                             config.webmail_servers
                         );
                     }
@@ -280,7 +283,7 @@ async fn main() -> Result<()> {
                         if !hp.is_empty() {
                             config.http_ports = hp;
                             info!(
-                                "From DB ConfigurationLoad http_ports: {:?}",
+                                "Loaded HTTP port settings from API: {:?}",
                                 config.http_ports
                             );
                         }
@@ -288,7 +291,9 @@ async fn main() -> Result<()> {
                     break;
                 }
                 Ok(None) => {
-                    info!("DB Medium无 sniffer Configuration，UseEnvironmentVariableDefaultvalue");
+                    info!(
+                        "Sniffer configuration API provided no usable settings; keeping loaded environment values"
+                    );
                     break;
                 }
                 Err(e) => {
@@ -447,7 +452,7 @@ async fn main() -> Result<()> {
     } else {
         warn!(
             http_ports = ?config.http_ports,
-            "HTTP data security capture is DISABLED: WEBMAIL_SERVERS is empty; configure Webmail server IPs and restart Sniffer"
+            "HTTP data security capture is DISABLED: saved Webmail server list is empty; configure Webmail server IPs in the UI/API"
         );
     }
     info!("  - CPU 核心数: {}", num_cpus::get());
@@ -490,11 +495,9 @@ async fn main() -> Result<()> {
             {
                 Ok(mut pubsub) => {
                     // SEC-P06: Read shared token once for control-plane message auth
-                    let cmd_token = std::env::var("INTERNAL_API_TOKEN").unwrap_or_default();
+                    let cmd_token = std::env::var("MQ_AUTH_TOKEN").unwrap_or_default();
                     if cmd_token.is_empty() {
-                        warn!(
-                            "INTERNAL_API_TOKEN not set — sniffer reload commands will be rejected"
-                        );
+                        warn!("MQ_AUTH_TOKEN not set — sniffer reload commands will be rejected");
                     }
                     info!("already订阅 Sniffer Configuration重载channel");
                     use futures::StreamExt;
@@ -538,7 +541,7 @@ async fn main() -> Result<()> {
         );
     } else {
         warn!(
-            "HTTP dataSecuritydetect未启用: WEBMAIL_SERVERS为空，当前BPF仅捕获SMTP/POP3/IMAP流量"
+            "HTTP dataSecurity检测未启用: API保存的Webmail服务器列表为空，当前BPF仅捕获SMTP/POP3/IMAP流量"
         );
     }
     // From Redis Load sid -> user Mapping (keep)

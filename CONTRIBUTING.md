@@ -29,7 +29,7 @@ cd Vigilyx
 git checkout -b feat/your-feature-name
 ```
 
-Vigilyx uses a remote-first workflow: edit code locally, but run Rust compilation and verification on a Linux host over SSH using the persistent `vigilyx-rust-builder` container created by `./deploy.sh --init`.
+Vigilyx uses a remote-first workflow: edit code locally, but run compilation, tests, and builds on the remote Linux host. Rust commands use the persistent `vigilyx-rust-builder` container created by `./deploy.sh --init`; frontend checks use `./deploy.sh --frontend`.
 
 ## Development Environment
 
@@ -38,7 +38,7 @@ Vigilyx uses a remote-first workflow: edit code locally, but run Rust compilatio
 | Environment | Tool | Purpose |
 |-------------|------|---------|
 | Local machine | SSH + rsync | Sync source code to the remote build host |
-| Local machine | Node.js 24.19.0 + npm 12.0.2 | Optional frontend tooling and local Vite HMR |
+| Remote host | Node.js 24.19.0 + npm 12.0.2 | Frontend dependency install, tests, and build |
 | Remote host | Docker and Docker Compose | Build container, runtime services, and containerized frontend builds |
 | Remote host | Passwordless SSH access | Required by `deploy.sh` |
 
@@ -62,47 +62,78 @@ Supported setup and verification flow:
 
 ```bash
 cp deploy.conf.example deploy.conf
+chmod 600 deploy.conf
 $EDITOR deploy.conf
 ./deploy.sh --init
 
 # Replace <server> with your SSH target if you want to run checks manually
 ssh <server> "docker exec vigilyx-rust-builder cargo clippy --workspace -- -D warnings"
-ssh <server> "docker exec vigilyx-rust-builder cargo test --workspace"
 ssh <server> "docker exec vigilyx-rust-builder cargo fmt --check"
+
+# Run the long workspace suite in the background and preserve its real status.
+ssh <server> "rm -f /tmp/vigilyx_test_output.txt /tmp/vigilyx_test_status && \
+  (nohup sh -c 'docker exec vigilyx-rust-builder cargo test --workspace -- --test-threads=8 \
+    > /tmp/vigilyx_test_output.txt 2>&1; echo \$? > /tmp/vigilyx_test_status' \
+    </dev/null >/dev/null 2>&1 &)"
+test_status=""
+while [[ ! "$test_status" =~ ^[0-9]+$ ]]; do
+  test_status=$(ssh <server> "cat /tmp/vigilyx_test_status" 2>/dev/null || true)
+  [[ "$test_status" =~ ^[0-9]+$ ]] || sleep 15
+done
+ssh <server> "tail -n 80 /tmp/vigilyx_test_output.txt"
+test "$test_status" -eq 0
 ```
 
-Do not rely on local `cargo` runs as the authoritative verification path.
+Do not run compilation, tests, or builds locally. For a full deployment, `deploy.sh` starts the workspace tests as a remote background job and records the real exit status so a dropped SSH connection cannot be mistaken for a pass.
 
 ### Frontend
 
-Preferred update path:
+Update and deployment path:
 
 ```bash
 ./deploy.sh --frontend
 ```
 
-Optional local HMR:
+For checks without deployment, synchronize the frontend into an isolated remote
+working copy and run the pinned Node/npm toolchain there:
 
 ```bash
-ssh -L 8088:127.0.0.1:8088 <server>
-nvm use
-bash scripts/check-frontend-toolchain.sh
-cd frontend
-npm ci
-npm run dev
+ssh <server> "cd <isolated-checkout>/frontend && npm ci && npm test && npm run build"
 ```
+
+`deploy.sh --frontend` is a deployment, including a brief API/data-plane pause
+for database role/schema reconciliation. Do not use it as a check-only command
+against a live installation.
+
+Optional remote Vite HMR (after source is synchronized and dependencies are installed on the remote host):
+
+```bash
+REMOTE_HOST="root@your-server"   # replace with the SSH target from deploy.conf
+REMOTE_DIR="/path/to/VIGILYX"   # replace with the remote repository path
+rsync -az --exclude='node_modules' --exclude='dist' --exclude='.env' --exclude='.env.*' \
+  frontend/ "${REMOTE_HOST}:${REMOTE_DIR}/frontend/"
+
+# Terminal 1: start Vite on the remote host
+ssh "$REMOTE_HOST" "cd '${REMOTE_DIR}/frontend' && npm ci && npm run dev -- --host 127.0.0.1"
+
+# Terminal 2: set the host again and forward the Vite port to the local browser
+REMOTE_HOST="root@your-server"
+ssh -L 3000:127.0.0.1:3000 "$REMOTE_HOST"
+```
+
+Repeat the `rsync` command after local frontend edits; remote Vite watches the synchronized files.
 
 Toolchain rules:
 
-- Frontend development is pinned to `Node 24.19.0` via [`.nvmrc`](.nvmrc).
+- Frontend development on the remote build host is pinned to `Node 24.19.0` via [`.nvmrc`](.nvmrc).
 - `frontend/package.json` declares `engines` and `packageManager`, and [frontend/.npmrc](frontend/.npmrc) enforces `engine-strict=true`.
 - `./deploy.sh --frontend` and the production Docker build both use the same pinned `Node 24.19.0 + npm 12.0.2` frontend toolchain.
-- Use `npm ci` for routine installs.
-- When changing dependencies, update them from `frontend/` and commit the matching `package-lock.json`.
+- Frontend installs, tests, and builds run on the remote host via `./deploy.sh --frontend`.
+- When changing dependencies, update `frontend/package.json` and the matching `package-lock.json`, then verify through the remote workflow.
 
 ### Docker Deployment
 
-See [Deployment Guide](docs/DEPLOYMENT.md) for full deployment instructions.
+See the [Deployment Guide](DEPLOYMENT.md) for full deployment instructions.
 
 ```bash
 # One-time remote bootstrap
@@ -162,8 +193,23 @@ Every PR must pass the supported remote verification sequence before merge:
 ```bash
 ssh <server> "docker exec vigilyx-rust-builder cargo clippy --workspace -- -D warnings"
 ssh <server> "docker exec vigilyx-rust-builder cargo fmt --check"
-ssh <server> "docker exec vigilyx-rust-builder cargo test --workspace"
+
+ssh <server> "rm -f /tmp/vigilyx_test_output.txt /tmp/vigilyx_test_status && \
+  (nohup sh -c 'docker exec vigilyx-rust-builder cargo test --workspace -- --test-threads=8 \
+    > /tmp/vigilyx_test_output.txt 2>&1; echo \$? > /tmp/vigilyx_test_status' \
+    </dev/null >/dev/null 2>&1 &)"
+test_status=""
+while [[ ! "$test_status" =~ ^[0-9]+$ ]]; do
+  test_status=$(ssh <server> "cat /tmp/vigilyx_test_status" 2>/dev/null || true)
+  [[ "$test_status" =~ ^[0-9]+$ ]] || sleep 15
+done
+ssh <server> "tail -n 80 /tmp/vigilyx_test_output.txt"
+test "$test_status" -eq 0
+
+ssh <server> "cd <isolated-checkout>/frontend && npm ci && npm test && npm run build"
 ```
+
+This validates the frontend on the remote host without packaging or restarting live services. Use the deployment helper only when deployment is intended.
 
 ### Test Writing Guidelines
 
@@ -241,6 +287,7 @@ test(engine): add DS-Murphy fusion boundary tests
 - [ ] `cargo clippy --workspace -- -D warnings` passes in `vigilyx-rust-builder`
 - [ ] `cargo fmt --check` passes in `vigilyx-rust-builder`
 - [ ] `cargo test --workspace` passes in `vigilyx-rust-builder`
+- [ ] Remote frontend `npm ci`, `npm test`, and `npm run build` pass in an isolated working copy
 - [ ] New public functions have tests
 - [ ] No hardcoded secrets or credentials
 - [ ] No `unwrap()` or `expect()` without a `// SAFETY:` comment
@@ -253,16 +300,15 @@ Use the current `deploy/docker/docker-compose.yml` runtime topology as the sourc
 
 ```text
 Default stack:
-  vigilyx (API + frontend + DB workers + standalone engine)
+  vigilyx (API + frontend control plane)
     <-> PostgreSQL
     <-> Redis / Valkey (Streams + Pub/Sub)
-    -> optional AI / ClamAV / Sandbox
-    -> SOAR / disposition logic
+    -> API-side SOAR / disposition and optional service configuration
 
 Mirror path (`--profile mirror`):
-  sniffer -> Redis Streams (primary) + Pub/Sub (shadow/control)
-          -> API subscribes sniffer + engine topics, writes PostgreSQL state, and pushes WebSocket updates
-          -> engine consumes Streams and publishes verdict / status
+  sniffer -> Redis Streams (session data)
+          -> dedicated engine consumes sessions, runs detection/SOAR, persists results
+          -> API exposes PostgreSQL state and pushes WebSocket updates
 
 MTA path (`--profile mta`):
   vigilyx-mta (SMTP proxy + embedded engine)
@@ -273,14 +319,14 @@ MTA path (`--profile mta`):
 Key design decisions:
 
 - Dual-mode deployment: passive mirror mode or inline MTA proxy mode
-- At-least-once delivery: Redis Streams with consumer groups for session data; Pub/Sub for control signals and notifications
+- Redis Streams consumer groups process messages at least once after successful publication while entries remain in the stream; exhausted publish retries and approximate MAXLEN trimming can lose messages, and poison messages can be moved to a dead-letter stream. Pub/Sub carries control signals and notifications.
 - Evidence fusion: Dempster-Shafer, Murphy, TBM, and Noisy-OR aggregation strategies
 - Circuit breakers: prevent majority-of-silent-modules from diluting genuine threat signals
 - IOC management: automatic IOC recording from verdicts with anti-amplification safeguards
 - Remote-first builds: Rust compilation happens in a persistent remote build container for repeatable incremental builds
 - SOAR placement: alerting and disposition logic runs inside engine and API flows, not as a standalone container
 - Engine-side integrations: AI, ClamAV, and Sandbox are called by the engine layer, not by the frontend
-- Current Compose default: `--profile mta` adds `vigilyx-mta`, but it does not automatically disable the standalone engine inside `vigilyx`
+- Compose profiles select services but do not stop services from another profile or persist `VIGILYX_MODE`. Use `deploy.sh --mta` or explicitly stop the old data plane when changing topology. The `mirror` profile starts the dedicated engine and sniffer; `mta` starts `vigilyx-mta` with its embedded engine. The main `vigilyx` service is API/frontend only.
 
 ## Where to Ask Questions
 
@@ -293,4 +339,4 @@ When filing an issue, include:
 - Vigilyx version or commit hash
 - Steps to reproduce
 - Expected vs. actual behavior
-- Relevant logs such as `docker exec vigilyx tail -50 /app/logs/api.log`, `docker exec vigilyx tail -50 /app/logs/engine.log`, and `docker logs vigilyx-sniffer --tail 50`
+- Relevant stdout logs, for example `docker compose -f deploy/docker/docker-compose.yml logs --tail 50 vigilyx engine sniffer` (use `mta` instead of `engine sniffer` for inline deployments)

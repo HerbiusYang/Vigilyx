@@ -1,0 +1,53 @@
+From: "Apple Developer Support | 会员续费通知" <no-reply@developer-apple.example>
+To: ios-team@corp.internal
+Cc: finance.dept@corp.internal
+Date: Mon, 05 Oct 2026 10:20:00 +0800
+Message-ID: <0955-b174@synth.example>
+Subject: =?utf-8?B?44CQ57ut6LS55o+Q6YaS44CR5byA5Y+R6ICF6LSm5Y+35Lya5ZGY6LWE5qC85LiO5pSv5LuY5pa55byP77yIVGVhbSBJRCA5WDg4NEsxMu+8iQ==?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+iOS 团队、财务部：
+
+大家好。贵司开发者账号（Team ID 9X884K12）
+的续费事项说明如下，并提示一个"代扣通道费"
+骗局。
+
+一、续费的真实路径（官方渠道，即时生效）
+1. 扣款失败原因：绑定支付卡更新后未同步，
+   系统将按账单周期自动重试扣款——为避免
+   反复失败，请 Account Holder 登录 App
+   Store Connect（或 developer 官网账户
+   设置）更新支付方式：更新后可立即手动
+   触发付款（Pay Now），通常即时完成、
+   会员资格实时延续，不存在"官方重扣排队
+   3-7 个工作日"的机制——手动付款即时
+   生效，自动重试也只是等待您更新卡；
+2. 宽限期：扣款失败后有 30 天宽限期
+   （您还有约 2 周），宽限期内 App 分发、
+   证书、TestFlight 均正常；宽限期届满
+   会员资格终止、App 下架——但随时续费
+   即可恢复（下架期间的 SKU 与评级保留），
+   重新提交审核的说法不成立；
+3. 费用：年费 USD 99 一项，经您账户的
+   Apple ID 支付方式扣取，收据在账户
+   财务页自行下载。
+
+二、重要提示（"代扣通道费"骗局）
+今天有"续费服务处"名义的邮件收取 USD 25
+代扣通道费。请注意：
+1. Apple 的付款只有账户绑定的支付方式
+   一个入口，不存在境内"收单侧代扣"
+   通道——第三方既无法替您扣款，也
+   无法同步 Apple 的结算系统；所谓
+   "官方重扣排队、180 元买确定性"
+   是把不存在的排队卖成确定性；
+2. Team ID、宽限期状态在 App Store
+   Connect 可查（信息可泄露），报得准
+   不代表发件方与 Apple 有关；
+3. 开发者账号的一切操作以 App Store
+   Connect 与 developer 官网为准，
+   疑问经官方支持页面提交（免费）。
+
+Apple Developer Support
+（账号操作以官方控制台为准，谨防仿冒）

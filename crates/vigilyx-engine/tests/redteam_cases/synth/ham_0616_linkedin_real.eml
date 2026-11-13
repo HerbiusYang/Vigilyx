@@ -1,0 +1,75 @@
+From: LinkedIn Talent Solutions <billing@linkedin.example>
+To: hr-benefits@corp.internal
+Cc: finance@corp.internal
+Date: Tue, 27 Oct 2026 08:00:00 +0800
+Message-ID: <0616-b61@synth.example>
+Subject: [Overdue Invoice] LinkedIn Recruiter Seats — $18,400 balance due
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear Customer,
+
+Your LinkedIn Recruiter subscription has an overdue balance of
+$18,400.00. If payment is not received, your seats will be
+suspended.
+
+Account Summary:
+  Contract: TS-2026-CN-8842
+  Product: LinkedIn Recruiter (Corporate) — 12 seats
+  Billing Period: July 1 - December 31, 2026
+  Overdue: 2 months (September + October)
+  Total Due: $18,400.00
+
+What Happens at Suspension:
+  - Recruiter search: suspended
+  - InMail credits (850): lost
+  - Job postings (14 active): deactivated
+  - Talent pipeline (1,247 candidates): archived
+  - Saved searches (38): lost
+  - Reactivation: 3-5 business days after payment
+
+How to Pay:
+
+  Navigate to LinkedIn Talent Solutions manually:
+
+  1. Open your browser and go to:
+     www.linkedin.com/talent-solutions
+     (Type the URL manually. Do NOT click links from emails.)
+
+  2. Log in with your LinkedIn username and password
+
+  3. Go to: Account → Billing → Pay Overdue Balance
+
+  4. Payment methods:
+     - Credit card (instant)
+     - ACH transfer (1-2 business days)
+     - Corporate invoice (for approved accounts, net 30)
+
+  Important Security Notes:
+  LinkedIn will NEVER:
+  - Send you a direct "Pay Now" link via email
+  - Offer "Corporate SSO (Google Workspace)" for billing
+  - Request offline_access or any OAuth token for payment
+  - Use a "dedicated billing domain" separate from linkedin.com
+  - Offer a "Chinese billing channel" for invoice processing
+
+  All billing transactions happen on linkedin.com when you
+  navigate there manually. LinkedIn billing uses your LinkedIn
+  account credentials, NOT Google Workspace SSO.
+
+  If you receive an email with a "Pay Now" button or Google
+  Workspace OAuth authorization, it is a phishing attempt
+  targeting enterprise LinkedIn customers.
+
+  For invoice/vat questions:
+  Contact billing through the LinkedIn Help Center
+  (navigate to linkedin.com/help manually).
+
+Recent Activity:
+  10/25  Posted job: Senior Rust Engineer (zhang.min)
+  10/24  Sent 15 InMails (chen.xi)
+  10/22  Updated pipeline "Q4 Hiring Wave" (wang.fang)
+
+LinkedIn Corporation | Talent Solutions Billing
+1000 W Maude Ave, Sunnyvale, CA 94085
+You are receiving this because you are the billing contact.

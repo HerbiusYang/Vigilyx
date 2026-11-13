@@ -1,0 +1,10 @@
+From: =?utf-8?B?5p625p6E57uE?= <arch@corp.internal>
+To: dev@corp.internal
+Date: Tue, 22 Sep 2026 10:49:00 +0800
+Message-ID: <0039-b29@synth.example>
+Subject: 本地联调隧道（自建）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+调试隧道：https://gw-dev-1a2b.ngrok-internal.example/dev
+（内网穿透自建节点，token 归属架构组）

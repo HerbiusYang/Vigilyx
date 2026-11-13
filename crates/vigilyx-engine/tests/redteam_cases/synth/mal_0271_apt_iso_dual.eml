@@ -1,0 +1,21 @@
+From: =?utf-8?B?6LSi5Yqh5YWx5Lqr?= <fssc@partner-billing5.example>
+To: finance@corp.internal
+Date: Wed, 09 Sep 2026 08:20:00 +0800
+Message-ID: <0010-b17@synth.example>
+Subject: Q3 财务包
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+Q3 报表包如附件，挂载后打开 index。
+--BS
+Content-Type: application/x-iso9660-image
+Content-Disposition: attachment; filename="Q3 financials.iso"
+Content-Transfer-Encoding: base64
+
+AENEMDAxAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+--BS--

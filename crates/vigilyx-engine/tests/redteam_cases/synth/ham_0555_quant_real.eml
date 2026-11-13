@@ -1,0 +1,37 @@
+From: 量化风控中心 <risk-notify@corp.internal>
+To: 交易部 <trading@corp.internal>
+Cc: 风控委员会 <riskcom@corp.internal>
+Date: Tue, 06 Oct 2026 14:00:00 +0800
+Message-ID: <0555-b40@synth.example>
+Subject: [风控预警] Alpha-7 策略组合保证金占用率 87.3%（距强平线 2.7%）—— 夜盘前需处理
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<h3 style="color:#c7000b">风控预警 — 保证金占用率超限</h3>
+
+<p><b>策略：</b>Alpha-7（CTA 趋势跟踪）&nbsp;&nbsp;<b>组合代码：</b>ALPHA7-2026Q4</p>
+<p><b>当前保证金占用率：</b><span style="color:#c7000b;font-size:18px"><b>87.3%</b></span>&nbsp;&nbsp;(强平线 90.0%)</p>
+
+<h3>持仓与风险明细</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc">
+<tr style="background:#f0f0f0"><th>合约</th><th>方向</th><th>手数</th><th>开仓均价</th><th>最新价</th><th>浮亏</th><th>保证金占用</th></tr>
+<tr><td>IF2612</td><td>多</td><td>12</td><td>3,842.6</td><td>3,796.4</td><td style="color:#e00">-277,440</td><td>1,370,880</td></tr>
+<tr><td>IC2612</td><td>多</td><td>6</td><td>5,432.0</td><td>5,398.8</td><td style="color:#e00">-119,520</td><td>972,000</td></tr>
+<tr><td>AG2412</td><td>空</td><td>18</td><td>7,642</td><td>7,658</td><td style="color:#e00">-31,320</td><td>414,720</td></tr>
+<tr><td>Cu2501</td><td>空</td><td>24</td><td>76,840</td><td>76,720</td><td style="color:#0a0">+144,000</td><td>921,600</td></tr>
+</table>
+
+<p><b>合计保证金占用：</b>3,679,200&nbsp;&nbsp;<b>账户权益：</b>4,217,530&nbsp;&nbsp;<b>可用资金：</b>538,330</p>
+
+<h3>风险来源分析</h3>
+<p>IF2612 今下午盘加速下跌（-1.20%），叠加夜盘外围市场走弱，预计明日开盘可能进一步下探。若 IF 跌至 3,780 以下，保证金占用率将升至 90% 触发系统自动强平。建议在夜盘开盘前（21:00）完成减仓或追加保证金操作。</p>
+
+<h3>操作方式</h3>
+<p>请在<b>交易终端（CTP/恒生 PB）</b>内直接执行减仓或转账操作。风控系统不会发送任何"重新绑定"链接。如需确认风控参数，请登录内网风控系统（portal.corp.internal/rms）。</p>
+
+<h3>历史对比</h3>
+<p>本月 Alpha-7 已触发 2 次保证金预警（9/12 占用 85.1%、9/26 占用 86.8%），均通过减仓解决。本次占用率为本季度最高，请务必在夜盘前处理。</p>
+
+<p style="font-size:12px;color:#666">--<br>量化风控中心 | 自动风控引擎 v3.2<br>此邮件由系统自动发出。<br>风控系统所有操作在内网系统内完成。紧急联系：风控值班 137****8842（24h）</p>
+</body></html>

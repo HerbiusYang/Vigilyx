@@ -1,0 +1,10 @@
+From: =?utf-8?B?QXBwbGUgU3VwcG9ydA==?= <id@verify-apple-id.example>
+To: me@personal.example
+Date: Wed, 02 Sep 2026 11:32:00 +0800
+Message-ID: <0022-b10@synth.example>
+Subject: Verify your Apple ID
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Your Apple ID was used on a new device. Confirm your password to keep access:
+https://verify-appleid.example.co/signin

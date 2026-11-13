@@ -1,0 +1,15 @@
+From: =?utf-8?B?6L+Q6JCl5pSv5oyB?= <ops@sys-support.example>
+To: zhou.lin@corp.internal
+Date: Mon, 24 Aug 2026 09:18:00 +0800
+Message-ID: <0007-b1@synth.example>
+Subject: 一项例行核验未通过
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+周琳 你好：
+
+你的一项例行核验没有通过，原因涉及账号基础信息完整性。
+为避免影响后续使用，请在工作日内完成一次补录：
+https://ops-checkin.example.org/repair
+
+本邮件由运营支持发出，超过三日未处理将自动升级。

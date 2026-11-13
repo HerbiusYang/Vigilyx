@@ -8,6 +8,7 @@ use super::publish_engine_reload;
 use crate::AppState;
 use crate::auth::AuthenticatedUser;
 
+#[allow(clippy::result_large_err)]
 async fn load_keyword_system_seed(
     state: &Arc<AppState>,
 ) -> Result<vigilyx_engine::modules::content_scan::KeywordOverrides, axum::response::Response> {
@@ -70,6 +71,14 @@ pub async fn update_pipeline_config(
         };
 
     parsed.merge_default_modules();
+
+    if let Err(violations) = validate_pipeline_dependencies(&parsed) {
+        return ApiResponse::<serde_json::Value>::bad_request(format!(
+            "Pipeline dependency validation failed: {}",
+            violations.join("; ")
+        ))
+        .into_response();
+    }
 
     // Validate security-critical VerdictConfig ranges (A03 hardening)
     if let Err(violations) = parsed.verdict_config.validate() {
@@ -152,15 +161,127 @@ fn build_modules_metadata(
         .iter()
         .map(|module| {
             let mut metadata = module_metadata(&module.id);
-            metadata.depends_on = module
+            let condition_dependency = module
                 .condition
                 .as_ref()
-                .and_then(|condition| condition.depends_module.clone())
-                .into_iter()
-                .collect();
+                .and_then(|condition| condition.depends_module.clone());
+            if let Some(dependency) = condition_dependency
+                && !metadata.depends_on.contains(&dependency)
+            {
+                metadata.depends_on.push(dependency);
+            }
             metadata
         })
         .collect()
+}
+
+fn validate_pipeline_dependencies(
+    config: &vigilyx_engine::config::PipelineConfig,
+) -> Result<(), Vec<String>> {
+    use std::collections::{HashMap, HashSet, VecDeque};
+
+    let known_ids: HashSet<String> = vigilyx_engine::config::PipelineConfig::default()
+        .modules
+        .into_iter()
+        .map(|module| module.id)
+        .collect();
+    let mut seen_ids = HashSet::new();
+    let duplicate_ids = config
+        .modules
+        .iter()
+        .filter_map(|module| (!seen_ids.insert(module.id.as_str())).then_some(module.id.as_str()))
+        .collect::<Vec<_>>();
+    let unknown_enabled = config
+        .modules
+        .iter()
+        .filter(|module| module.enabled && !known_ids.contains(&module.id))
+        .map(|module| module.id.as_str())
+        .collect::<Vec<_>>();
+    let mut violations = Vec::new();
+    if !duplicate_ids.is_empty() {
+        violations.push(format!(
+            "duplicate module IDs: {}",
+            duplicate_ids.join(", ")
+        ));
+    }
+    if !unknown_enabled.is_empty() {
+        violations.push(format!(
+            "unknown enabled modules: {}",
+            unknown_enabled.join(", ")
+        ));
+    }
+    if !violations.is_empty() {
+        return Err(violations);
+    }
+    config.validate_conditions()?;
+
+    let enabled_ids: HashSet<String> = config
+        .modules
+        .iter()
+        .filter(|module| module.enabled)
+        .map(|module| module.id.clone())
+        .collect();
+    let mut indegree: HashMap<String, usize> =
+        enabled_ids.iter().map(|id| (id.clone(), 0)).collect();
+    let mut dependents: HashMap<String, Vec<String>> = HashMap::new();
+
+    for module in config.modules.iter().filter(|module| module.enabled) {
+        let metadata = module_metadata(&module.id);
+        let mut dependencies: HashSet<String> = metadata
+            .depends_on
+            .iter()
+            .filter(|dependency| dependency.as_str() != "*" && enabled_ids.contains(*dependency))
+            .cloned()
+            .collect();
+        if let Some(dependency) = module
+            .condition
+            .as_ref()
+            .and_then(|condition| condition.depends_module.as_ref())
+            && enabled_ids.contains(dependency)
+        {
+            dependencies.insert(dependency.clone());
+        }
+
+        for dependency in dependencies {
+            dependents
+                .entry(dependency)
+                .or_default()
+                .push(module.id.clone());
+            *indegree.entry(module.id.clone()).or_default() += 1;
+        }
+    }
+
+    let mut ready: VecDeque<String> = indegree
+        .iter()
+        .filter_map(|(id, count)| (*count == 0).then_some(id.clone()))
+        .collect();
+    let mut visited = 0;
+    while let Some(id) = ready.pop_front() {
+        visited += 1;
+        for dependent in dependents.get(&id).into_iter().flatten() {
+            let count = indegree
+                .get_mut(dependent)
+                .expect("every enabled dependent has an indegree entry");
+            *count -= 1;
+            if *count == 0 {
+                ready.push_back(dependent.clone());
+            }
+        }
+    }
+
+    if visited == enabled_ids.len() {
+        Ok(())
+    } else {
+        let mut blocked_modules = indegree
+            .into_iter()
+            .filter_map(|(id, count)| (count > 0).then_some(id))
+            .collect::<Vec<_>>();
+        blocked_modules.sort_unstable();
+        Err(vec![format!(
+            "dependency graph contains a cycle affecting: {}",
+            blocked_modules.join(", ")
+        )])
+    }
 }
 
 fn module_metadata(id: &str) -> ModuleMetadataResponse {
@@ -213,7 +334,7 @@ fn module_metadata(id: &str) -> ModuleMetadataResponse {
                 "attachment",
                 "Local and external hash reputation checks",
                 false,
-                &["attach_scan"],
+                &[],
             ),
             "mime_scan" => (
                 "MIME structure scan",
@@ -248,21 +369,21 @@ fn module_metadata(id: &str) -> ModuleMetadataResponse {
                 "link",
                 "Remote landing-content analysis",
                 true,
-                &["link_scan"],
+                &[],
             ),
             "landing_page_scan" => (
                 "Landing page scan",
                 "link",
                 "Phishing landing-page structure analysis",
                 false,
-                &["link_scan"],
+                &["link_scan", "link_content"],
             ),
             "aitm_detect" => (
                 "Adversary-in-the-middle detection",
                 "link",
                 "AiTM proxy and authentication-flow analysis",
                 false,
-                &["link_scan"],
+                &[],
             ),
             "anomaly_detect" => (
                 "Behavior anomaly detection",
@@ -332,14 +453,28 @@ fn module_metadata(id: &str) -> ModuleMetadataResponse {
                 "attachment",
                 "Attachment-level ClamAV analysis",
                 false,
-                &["attach_scan"],
+                &[],
             ),
             "sandbox_scan" => (
                 "Sandbox scan",
                 "attachment",
                 "Dynamic attachment behavior analysis",
                 false,
-                &["attach_scan"],
+                &[],
+            ),
+            "url_sandbox_scan" => (
+                "URL sandbox scan",
+                "link",
+                "Deferred dynamic analysis of selected URLs",
+                false,
+                &["link_scan", "landing_page_scan"],
+            ),
+            "process_sandbox_scan" => (
+                "Process sandbox scan",
+                "attachment",
+                "Deferred process behavior analysis",
+                false,
+                &["link_scan", "landing_page_scan"],
             ),
             "yara_scan" => (
                 "YARA scan",
@@ -353,7 +488,7 @@ fn module_metadata(id: &str) -> ModuleMetadataResponse {
                 "verdict",
                 "Aggregate module results into the final verdict",
                 false,
-                &["*"],
+                vigilyx_engine::modules::verdict_module::ALL_PREREQUISITE_IDS,
             ),
             _ => (id, "unknown", "Configured detection module", false, &[]),
         };
@@ -579,9 +714,22 @@ mod tests {
                 .condition
                 .as_ref()
                 .and_then(|condition| condition.depends_module.as_deref());
+            let hard_dependencies = super::module_metadata(&module.id).depends_on;
+            for dependency in hard_dependencies {
+                assert!(item.depends_on.contains(&dependency));
+            }
+            if let Some(dependency) = configured_dependency {
+                assert!(
+                    item.depends_on
+                        .iter()
+                        .any(|item| item.as_str() == dependency)
+                );
+            }
             assert_eq!(
-                item.depends_on.first().map(String::as_str),
-                configured_dependency
+                item.depends_on.iter().collect::<HashSet<_>>().len(),
+                item.depends_on.len(),
+                "dependencies should not be duplicated for {}",
+                module.id
             );
         }
         assert!(

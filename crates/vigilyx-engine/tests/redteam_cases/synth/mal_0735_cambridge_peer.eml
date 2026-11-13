@@ -1,0 +1,111 @@
+From: Cambridge University Press | Peer Review Operations <peerreview.data@cup-journals.example>
+To: wangjian@corp.internal
+Cc: research@corp.internal, rd-clinical@corp.internal
+Reply-To: review.data@cambridge-jmail.example
+Disposition-Notification-To: peerreview.data@cup-journals.example
+Date: Thu, 05 Nov 2026 14:00:00 +0000
+Message-ID: <0735-b70@synth.example>
+Subject: =?utf-8?B?77uP4oCi4oCMQ2FtYnJpZGdlIFBlZXIgUmV2aWV3IERhdGEgU3VibWlzc2lvbiAtLSBNYW51c2NyaXB0IElE?=
+ =?utf-8?B?IE1ETy0yMDI2LTA4NDIg4oCMIENvbXB1dGF0aW9uYWwgUmV2aWV3IC0gTW9kZWwgQXJjaGk=?=
+ =?utf-8?B?dGVjdHVyZSAmIFRyYWluaW5nIERhdGEgUmVxdWlyZWQ=?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:serif">
+<p>Professor Wang, Research Team, Clinical Team:</p>
+
+<p style="background:#E8EAF6;padding:12px;border-radius:4px;border-left:4px solid #1A237E">
+<b>REVIEW DATA SUBMISSION:</b> Your manuscript <b>MDO-2026-0842</b> ("Adaptive Threat Detection for Large-Scale Email Flows: A Multi-Lingual Approach") has entered the <b>computational review phase</b>. The statistical reviewer requires your complete model architecture, training data description, and performance evaluation data to verify reproducibility of the reported results (F1=0.83).
+</p>
+
+<h3>一、Manuscript Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:220px">Manuscript ID</td><td><b>MDO-2026-0842</b></td></tr>
+<tr><td style="background:#f5f5f5">Title</td><td>Adaptive Threat Detection for Large-Scale Email Flows</td></tr>
+<tr><td style="background:#f5f5f5">Journal</td><td>Journal of Machine Learning Research (JMLR) — Cambridge UP</td></tr>
+<tr><td style="background:#f5f5f5">Corresponding Author</td><td>Prof. Wang Jian (Zhejiang University)</td></tr>
+<tr><td style="background:#f5f5f5">Co-Authors</td><td>Your Company research team</td></tr>
+<tr><td style="background:#f5f5f5">Submitted</td><td>August 28, 2026</td></tr>
+<tr><td style="background:#f5f5f5">Current Stage</td><td>Statistical Review (Reviewer 3 — computational verification)</td></tr>
+<tr><td style="background:#f5f5f5">Reported Results</td><td>F1=0.83 (phishing), 0.79 (BEC), 0.88 (quishing)</td></tr>
+<tr><td style="background:#f5f5f5">Training Data</td><td>2.1M multilingual email corpus (zh/en/ja/ru/ko)</td></tr>
+<tr><td style="background:#f5f5f5">Model</td><td>13M parameter distilled multilingual transformer</td></tr>
+<tr><td style="background:#f5f5f5">Data Submission Deadline</td><td style="color:#e00"><b>November 21, 2026 (16 days)</b></td></tr>
+</table>
+
+<h3>二. Why Computational Review Is Required</h3>
+<p>Your manuscript reports results that the statistical reviewer considers <b>"exceptionally high"</b> for the reported task. To verify reproducibility, the following are required under CUP's <b>Reproducibility Policy for Computational Papers (2026)</b>:</p>
+<ul>
+<li>Model architecture diagram and parameter count verification</li>
+<li>Training data description and evaluation methodology</li>
+<li>Source code (or reproducibility plan)</li>
+<li>Per-class metrics and confusion matrices</li>
+</ul>
+
+<h3>三、Required Data</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Item</th><th>Details</th><th>Priority</th></tr>
+<tr><td>Model architecture specification</td><td>Layer-by-layer description, attention mechanism, loss function</td><td style="color:#e00">Critical</td></tr>
+<tr><td>Training data description</td><td>Corpus composition (by language, by threat type), labeling methodology</td><td style="color:#e00">Critical</td></tr>
+<tr><td>Evaluation dataset</td><td>Sample of test corpus (minimum 10K emails from each language)</td><td style="color:#e00">Critical</td></tr>
+<tr><td>Source code (or pseudocode)</td><td>Training loop, inference pipeline, evaluation scripts</td><td>High</td></tr>
+<tr><td>Training hyperparameters</td><td>Learning rate schedule, batch size, training duration</td><td>High</td></tr>
+<tr><td>Pre-trained weights</td><td>Model checkpoint (for verification runs)</td><td>Medium</td></tr>
+</table>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文审稿数据提交支持，请访问 cup-journals.example/cn-review 上传训练数据样本与模型架构文档（中文通道，当日处理）。</p>
+
+<h3>四、Submission Method</h3>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://cup-journals.example/review/MDO-2026-0842/data" style="display:inline-block;background:#1A237E;color:#fff;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Submit Review Data — MDO-2026-0842</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://www.cambridge.org/core/journals/jmlr/review-data</p>
+
+<h3>About Cambridge Review Data Portal</h3>
+<p>When you click the submit button, you will be redirected to <b>auth.cambridge.org</b> (Cambridge University's official identity portal):</p>
+<ol>
+<li>Sign in with your institutional credentials (CUP account)</li>
+<li>Grant the requested permissions</li>
+<li>Upload review data</li>
+</ol>
+
+<p style="font-size:14px;background:#E3F2FD;padding:12px;border-radius:4px">
+<b>Why we need your training data samples:</b> Cambridge's reproducibility policy for computational papers (adopted 2026-Q2) requires independent verification of reported results. The statistical reviewer runs your model architecture against the evaluation corpus to verify the F1 scores. Your 10K sample from each language (50K total) is used for this verification. The offline_access permission maintains your session during the multi-file upload (model spec + data samples + evaluation scripts = typically 200-500MB). This is standard for all JMLR computational papers reporting F1 > 0.80.
+</p>
+
+<h3>五、What Happens If You Don't Submit</h3>
+<ul>
+<li>Manuscript <b>rejected for non-reproducibility</b> (no resubmission to JMLR)</li>
+<li>Publication delayed (cannot submit to other journals until rejected)</li>
+<li>Co-author institutional reputation affected</li>
+<li>Grant reporting (JICA project) shows "publication pending"</li>
+</ul>
+
+<h3>六、Your Publication History at CUP</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Year</th><th>Paper</th><th>Journal</th><th>Status</th></tr>
+<tr><td>2024</td><td>"Hierarchical Email Classification"</td><td>Information Processing & Management</td><td style="color:#0a0">Published</td></tr>
+<tr><td>2025</td><td>"Cross-Lingual Threat Taxonomy"</td><td>Natural Language Engineering</td><td style="color:#0a0">Published</td></tr>
+<tr style="background:#fff3cd"><td><b>2026</b></td><td><b>"Adaptive Threat Detection"</b></td><td><b>JMLR</b></td><td style="color:#e00"><b>In Review</b></td></tr>
+</table>
+
+<h3>七、Contact</h3>
+<p><b>Cambridge University Press — Peer Review Operations:</b><br>
+Editor: Dr. Sarah Whitfield<br>
+Email: review.data@cambridge-jmail.example<br>
+Phone: +44 1223 326 ***<br>
+Address: University Printing House, Shaftesbury Road, Cambridge CB2 8BS</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Cambridge University Press | Peer Review Operations</p>
+<p style="font-size:11px;color:#999">University Printing House, Shaftesbury Road, Cambridge CB2 8BS, UK</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the corresponding author for MDO-2026-0842.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://cup-journals.example/api/track?recipient=wangjian%40corp.internal&ms=0842&type=review_data" width="1" height="1" alt="">
+</div>
+
+</body></html>

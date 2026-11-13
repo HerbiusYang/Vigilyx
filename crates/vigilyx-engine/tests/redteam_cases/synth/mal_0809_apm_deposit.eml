@@ -1,0 +1,116 @@
+From: "TraceLens | Customer Success" <renewals@tracelens-ops.example>
+To: observability-team@corp.internal
+Cc: sre-leads@corp.internal, finance.ap@corp.internal
+Reply-To: renewals.desk@tl-retention.example
+Date: Tue, 27 Apr 2027 05:30:00 +0000
+Message-ID: <0809-b95@synth.example>
+Subject: [RENEWAL + RETENTION DEPOSIT] APM Contract TL-2024-88412 - Data Retention Deposit USD 12,000 Due With Renewal or Retention Drops to 7 Days on May 1
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Observability Team, SRE Leads, Accounts Payable,
+
+RENEWAL NOTICE WITH RETENTION DEPOSIT
+REQUIREMENT - CONTRACT TL-2024-88412.
+
+Your TraceLens APM contract renews May 1.
+Alongside the renewal, this cycle
+introduces a RETENTION DEPOSIT tied to
+your 13-month trace retention tier.
+Without the deposit, retention drops to
+7 days on May 1 - a change that would
+delete retained traces mid-incident
+(i.e., during an active investigation
+window).
+
+1. CONTRACT STATUS
+
+  Contract:        TL-2024-88412
+                  (APM Enterprise,
+                  3.2 TB/day ingest)
+  Renewal term:    2027-05-01 ->
+                  2028-05-01
+                  (USD 148,000, price
+                  held from 2025)
+  Retention tier:  13-month trace
+                  retention (your
+                  current setting)
+  Ingest:          3.2 TB/day average
+                  (spikes to 4.1 TB
+                  during releases)
+  Open incidents
+  referencing old
+  traces:          2 (the March
+                  payment-latency
+                  retro, closing
+                  next week)
+
+2. THE RETENTION DEPOSIT (NEW THIS
+   CYCLE)
+
+  Trace storage costs have forced a
+  deposit model for high-retention
+  tiers. The deposit is held against
+  storage overruns and is refundable
+  at contract end:
+
+    Retention deposit
+    (13-month tier):     USD 12,000
+    Renewal (annual):    USD 148,000
+
+  The deposit is remitted to the
+  retention operations account
+  (separate from the renewal invoice
+  channel):
+
+    Beneficiary: TraceLens
+                Retention
+                Operations Ltd.
+    IBAN: MT84 MALT 0110 0001 2344 8841
+    SWIFT: TSTBTMTT
+    Reference: TL-2024-88412 / RET
+
+3. WHAT HAPPENS WITHOUT THE DEPOSIT
+
+  - May 1: retention automatically
+    drops from 13 months to 7 days
+    (the free tier) - the change is
+    quota automation, not a support
+    action, so it cannot be reversed
+    once run
+  - Traces older than 7 days enter
+    deletion processing - including
+    March traces referenced by your
+    open payment-latency retro
+  - Re-upgrading later re-provisions
+    retention going forward only
+    (no backfill of deleted data)
+
+4. ABOUT THIS NOTICE
+
+  Renewal emails that add a wire step
+  deserve scrutiny - your skepticism
+  is the right instinct. Checks: the
+  contract number and ingest figures
+  above match your admin console's
+  usage page; your account manager can
+  confirm the deposit policy on the
+  renewal call; and the deposit is
+  refundable, held against overruns,
+  not a fee. The May 1 retention
+  automation, however, runs on quota
+  rules at renewal - support cannot
+  pause it for a deposit in transit.
+
+5. CONTACT
+
+  Renewals desk: renewals.desk@tl-retention.example
+  Reference: TL-2024-88412
+  Account manager: your usual desk
+  (number from prior renewals)
+
+TraceLens | Customer Success
+This notice concerns contract
+TL-2024-88412 only. Retention policies
+and pricing are documented in your
+contract schedule.

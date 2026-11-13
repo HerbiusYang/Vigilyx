@@ -1,12 +1,14 @@
-//! Per-IP login rate limiter
+//! Login rate limiter
 
-//! Tracks failed login attempts per IP address using a lock-free `DashMap`.
-//! Each IP has an independent failure counter and time window - one attacker
-//! cannot lock out all users (the flaw in the old global `AtomicU32` design).
+//! Tracks failed login attempts per source IP and normalized account name
+//! using lock-free `DashMap`s. Rotating source IPs cannot brute-force one
+//! account without hitting its account bucket, while one attacker cannot lock
+//! out every account from one address.
 
 //! ## Design
 
 //! - `DashMap<IpAddr, (u32, u64)>` - (failure_count, window_start_epoch_secs)
+//! - `DashMap<String, (u32, u64)>` - normalized account bucket
 //! - Window auto-resets: if the entry's window has expired, the counter is reset
 //! on the next access (no background timer needed for correctness).
 //! - `cleanup()` sweeps stale entries to bound memory; call it periodically.
@@ -16,12 +18,19 @@ use std::net::IpAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::warn;
 
-/// Per-IP login failure tracker.
+const MAX_ACCOUNT_BUCKETS: usize = 10_000;
+
+/// Per-IP and per-account login failure tracker.
 pub struct LoginRateLimiter {
     /// IP -> (failure_count, window_start_epoch_secs)
     failures: DashMap<IpAddr, (u32, u64)>,
+    /// Normalized username -> (failure_count, window_start_epoch_secs).
+    username_failures: DashMap<String, (u32, u64)>,
     /// Maximum allowed failures within one window before blocking.
     pub max_failures: u32,
+    /// Account buckets are deliberately less aggressive than IP buckets so a
+    /// single distributed burst cannot trivially lock out a known account.
+    max_account_failures: u32,
     /// Window duration in seconds. After expiry the counter resets.
     pub window_secs: u64,
 }
@@ -34,7 +43,9 @@ impl LoginRateLimiter {
     pub fn new(max_failures: u32, window_secs: u64) -> Self {
         Self {
             failures: DashMap::new(),
+            username_failures: DashMap::new(),
             max_failures,
+            max_account_failures: max_failures.saturating_mul(3).max(max_failures),
             window_secs,
         }
     }
@@ -68,6 +79,34 @@ impl LoginRateLimiter {
                 Some((count, window_start))
             }
         })
+    }
+
+    fn normalize_username(username: &str) -> Option<String> {
+        let normalized = username.trim().to_ascii_lowercase();
+        (!normalized.is_empty()).then_some(normalized)
+    }
+
+    /// Peek at an account's current failure state without modifying it.
+    pub fn peek_username(&self, username: &str) -> Option<(u32, u64)> {
+        let username = Self::normalize_username(username)?;
+        let now = Self::now_secs();
+        self.username_failures.get(&username).and_then(|entry| {
+            let (count, window_start) = *entry.value();
+            if now.saturating_sub(window_start) >= self.window_secs {
+                None
+            } else {
+                Some((count, window_start))
+            }
+        })
+    }
+
+    /// Return whether either the source IP or account bucket is blocked.
+    pub fn is_blocked_for(&self, ip: &IpAddr, username: &str) -> bool {
+        self.peek(ip)
+            .is_some_and(|(count, _)| count >= self.max_failures)
+            || self
+                .peek_username(username)
+                .is_some_and(|(count, _)| count >= self.max_account_failures)
     }
 
     /// Check whether `ip` is currently rate-limited, and record one more failure.
@@ -117,13 +156,58 @@ impl LoginRateLimiter {
         }
     }
 
+    /// Record a failed authentication attempt in both the IP and account
+    /// buckets. A request is blocked when either bucket reaches the limit.
+    pub fn check_and_record_failure_for(&self, ip: IpAddr, username: &str) -> bool {
+        let ip_blocked = self.check_and_record_failure(ip);
+        let account_blocked = Self::normalize_username(username).is_some_and(|username| {
+            // The source-IP bucket already limits how many new account keys a
+            // single client can create. This hard cap covers a distributed
+            // spray of unique usernames and keeps the in-memory limiter from
+            // becoming a memory-exhaustion target.
+            if !self.username_failures.contains_key(&username)
+                && self.username_failures.len() >= MAX_ACCOUNT_BUCKETS
+            {
+                return false;
+            }
+            let now = Self::now_secs();
+            let mut entry = self.username_failures.entry(username).or_insert((0, now));
+            let (count, window_start) = entry.value_mut();
+            if now.saturating_sub(*window_start) >= self.window_secs {
+                *count = 0;
+                *window_start = now;
+            }
+            if *count >= self.max_account_failures {
+                return true;
+            }
+            *count = count.saturating_add(1);
+            *count >= self.max_account_failures
+        });
+        if account_blocked {
+            warn!(
+                window_secs = self.window_secs,
+                "Per-account login rate limit triggered"
+            );
+        }
+        ip_blocked || account_blocked
+    }
+
     /// Reset the failure counter for `ip` (call on successful login).
     pub fn reset(&self, ip: IpAddr) {
         self.failures.remove(&ip);
     }
 
+    /// Reset both dimensions after a successful login/password verification.
+    pub fn reset_for(&self, ip: IpAddr, username: &str) {
+        self.reset(ip);
+        if let Some(username) = Self::normalize_username(username) {
+            self.username_failures.remove(&username);
+        }
+    }
+
     pub fn clear_all(&self) {
         self.failures.clear();
+        self.username_failures.clear();
     }
 
     /// Remove all entries whose window has expired.
@@ -135,6 +219,8 @@ impl LoginRateLimiter {
         let now = Self::now_secs();
         self.failures
             .retain(|_ip, (_, window_start)| now.saturating_sub(*window_start) < self.window_secs);
+        self.username_failures
+            .retain(|_, (_, window_start)| now.saturating_sub(*window_start) < self.window_secs);
     }
 }
 
@@ -204,6 +290,28 @@ mod tests {
 
         // Innocent user is completely unaffected.
         assert!(!limiter.check_and_record_failure(innocent));
+    }
+
+    #[test]
+    fn test_account_bucket_blocks_rotating_ips() {
+        let limiter = LoginRateLimiter::new(3, 60);
+        let username = "Admin";
+        for octet in 30..38 {
+            assert!(!limiter.check_and_record_failure_for(ip(octet), username));
+        }
+        assert!(limiter.check_and_record_failure_for(ip(38), username));
+        assert!(limiter.is_blocked_for(&ip(39), "admin"));
+        assert!(!limiter.is_blocked_for(&ip(33), "other-user"));
+    }
+
+    #[test]
+    fn test_reset_for_clears_ip_and_account_bucket() {
+        let limiter = LoginRateLimiter::new(2, 60);
+        let addr = ip(40);
+        assert!(!limiter.check_and_record_failure_for(addr, "Admin"));
+        limiter.reset_for(addr, "admin");
+        assert!(!limiter.is_blocked_for(&addr, "ADMIN"));
+        assert_eq!(limiter.peek_username("admin"), None);
     }
 
     #[test]

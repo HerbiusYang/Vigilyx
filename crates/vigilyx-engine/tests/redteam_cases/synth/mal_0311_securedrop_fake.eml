@@ -1,0 +1,13 @@
+From: =?utf-8?B?5oqV56i/6YOo?= <tips@news-desk.example>
+To: journalist@corp.internal
+Date: Fri, 11 Sep 2026 08:15:00 +0800
+Message-ID: <0005-b19@synth.example>
+Subject: 安全爆料通道使用说明（更新）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Hi,
+
+Our SecureDrop instance moved. New onion + guide:
+https://news-desk-example.securedrop.site/guide
+Verify the fingerprint before submitting.

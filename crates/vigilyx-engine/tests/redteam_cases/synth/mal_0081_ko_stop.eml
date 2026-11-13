@@ -1,0 +1,10 @@
+From: =?utf-8?B?6rOE7KCV6rSA66as?= <id@kr-svc.example>
+To: kim@corp.internal
+Date: Fri, 28 Aug 2026 14:10:00 +0800
+Message-ID: <0000-b5@synth.example>
+Subject: =?utf-8?B?6rOE7KCVIOygleyngCDslYjrgrQ=?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+비정상적인 로그인 시도가 확인되었습니다. 24시간 이내에 본인 인증을
+완료하지 않으면 계정이 정지됩니다: https://kr-verify.example.kr/check

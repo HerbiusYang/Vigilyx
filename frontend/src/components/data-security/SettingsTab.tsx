@@ -76,13 +76,46 @@ export function SettingsTab() {
     finally { setTpSaving(false) }
   }, [tp])
 
+  const captureReady = servers.length > 0 && ports.length > 0
+
   return (
     <div className="ds3-settings-page">
+      <header className="ds3-settings-hero">
+        <div className="ds3-settings-hero-copy">
+          <span className="ds3-settings-eyebrow">{t('dataSecurity.settingsEyebrow')}</span>
+          <h2>{t('dataSecurity.settingsTitle')}</h2>
+          <p>{t('dataSecurity.settingsSubtitle')}</p>
+        </div>
+        <div className={`ds3-settings-overall ${captureReady ? 'ds3-settings-overall--ready' : 'ds3-settings-overall--attention'}`}>
+          <span className="ds3-settings-status-dot" />
+          <div>
+            <strong>{captureReady ? t('dataSecurity.settingsCaptureReady') : t('dataSecurity.settingsCaptureAttention')}</strong>
+            <small>{t('dataSecurity.settingsCaptureSummary', { servers: servers.length, ports: ports.length })}</small>
+          </div>
+        </div>
+      </header>
+
+      <div className="ds3-settings-status-grid" aria-label={t('dataSecurity.settingsStatusSummary')}>
+        <div className={`ds3-settings-status-card ${captureReady ? 'is-ready' : 'is-attention'}`}>
+          <span className="ds3-settings-status-icon ds3-settings-status-icon--cyan">⌁</span>
+          <div><span>{t('dataSecurity.settingsHttpStatus')}</span><strong>{captureReady ? t('dataSecurity.settingsReady') : t('dataSecurity.settingsNeedsSetup')}</strong><small>{t('dataSecurity.settingsCaptureSummary', { servers: servers.length, ports: ports.length })}</small></div>
+        </div>
+        <div className={`ds3-settings-status-card ${tp.enabled ? 'is-ready' : 'is-muted'}`}>
+          <span className="ds3-settings-status-icon ds3-settings-status-icon--purple">◷</span>
+          <div><span>{t('dataSecurity.settingsTimeStatus')}</span><strong>{tp.enabled ? t('dataSecurity.settingsEnabled') : t('dataSecurity.settingsDisabled')}</strong><small>{String(tp.work_hour_start).padStart(2, '0')}:00 — {String(tp.work_hour_end).padStart(2, '0')}:00</small></div>
+        </div>
+        <div className={`ds3-settings-status-card ${sl.enabled ? 'is-ready' : 'is-muted'}`}>
+          <span className="ds3-settings-status-icon ds3-settings-status-icon--blue">◈</span>
+          <div><span>{t('dataSecurity.settingsSyslogStatus')}</span><strong>{sl.enabled ? t('dataSecurity.settingsEnabled') : t('dataSecurity.settingsDisabled')}</strong><small>{sl.enabled && sl.server_address ? `${sl.server_address}:${sl.port}` : t('dataSecurity.settingsSyslogOffHint')}</small></div>
+        </div>
+      </div>
+
       {/* -- Section 1: HTTP traffic capture -- */}
-      <div className="ds3-settings-card">
+      <div className="ds3-settings-card ds3-settings-card--primary">
         <div className="ds3-settings-card-head">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           <span>{t('dataSecurity.httpTrafficCapture')}</span>
+          <span className={`ds3-settings-card-badge ${captureReady ? 'is-ready' : 'is-attention'}`}>{captureReady ? t('dataSecurity.settingsReady') : t('dataSecurity.settingsNeedsSetup')}</span>
         </div>
         <p className="ds3-settings-card-desc">{t('dataSecurity.httpTrafficCaptureDesc')}</p>
 
@@ -139,6 +172,7 @@ export function SettingsTab() {
         </div>
       </div>
 
+      <div className="ds3-settings-secondary-grid">
       {/* -- Section 2: after-hours weighting -- */}
       <div className="ds3-settings-card">
         <div className="ds3-settings-card-head">
@@ -154,7 +188,7 @@ export function SettingsTab() {
 
         <div className="ds3-settings-row">
           <span className="ds3-settings-label">{t('dataSecurity.workTime')}</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div className="ds3-settings-inline-selects">
             <select value={tp.work_hour_start} onChange={e => setTp({ ...tp, work_hour_start: Number(e.target.value) })} className="ds3-settings-select" disabled={!tp.enabled}>
               {Array.from({ length: 24 }, (_, i) => <option key={i} value={i}>{String(i).padStart(2, '0')}:00</option>)}
             </select>
@@ -189,6 +223,7 @@ export function SettingsTab() {
 
       {/* -- Section 3: syslog forwarding -- */}
       <SyslogCard sl={sl} setSl={setSl} slSaving={slSaving} setSlSaving={setSlSaving} slMsg={slMsg} setSlMsg={setSlMsg} slTesting={slTesting} setSlTesting={setSlTesting} />
+      </div>
     </div>
   )
 }

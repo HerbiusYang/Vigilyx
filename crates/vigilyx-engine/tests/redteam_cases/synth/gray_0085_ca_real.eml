@@ -1,0 +1,10 @@
+From: =?utf-8?B?55S15a2Q6K6k6K+B?= <svc@cfca.example>
+To: bd@corp.internal
+Date: Sat, 12 Sep 2026 08:29:00 +0800
+Message-ID: <0019-b20@synth.example>
+Subject: 投标 CA 证书到期提醒
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+证书到期前 30 天可在业务系统内在线换发（Ukey 插入自动识别），
+我司不通过邮件链接办理换发。

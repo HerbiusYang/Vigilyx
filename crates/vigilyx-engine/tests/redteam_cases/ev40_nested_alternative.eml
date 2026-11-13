@@ -1,0 +1,26 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev40@partner.example>
+Subject: 邮箱安全验证提醒
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="B40a"
+
+--B40a
+Content-Type: text/plain; charset=utf-8
+
+您好，请查收通知。
+--B40a
+Content-Type: multipart/mixed; boundary="B40b"
+
+--B40b
+Content-Type: text/plain; charset=utf-8
+
+您好，请查收。
+--B40b
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>尊敬的用户：您的账户存在异常登录，请立即点击链接验证身份，24小时内未验证将冻结账户。<a href='http://203.0.113.60/verify/login'>立即验证</a></p></body></html>
+--B40b--
+--B40a--
+

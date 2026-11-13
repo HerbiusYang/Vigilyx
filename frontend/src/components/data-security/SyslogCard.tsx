@@ -50,33 +50,33 @@ export function SyslogCard({ sl, setSl, slSaving, setSlSaving, slMsg, setSlMsg, 
         </label>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 100px', gap: 12, marginBottom: 12 }}>
-        <div className="ds3-settings-field" style={{ margin: 0 }}>
+      <div className="ds3-settings-syslog-target-grid">
+        <div className="ds3-settings-field">
           <div className="ds3-settings-field-label">{t('dataSecurity.serverAddress')}</div>
           <input className="ds3-settings-input ds3-mono" value={sl.server_address} onChange={e => setSl({ ...sl, server_address: e.target.value })} placeholder={t('dataSecurity.ipOrHostname')} disabled={!sl.enabled} />
         </div>
-        <div className="ds3-settings-field" style={{ margin: 0 }}>
+        <div className="ds3-settings-field">
           <div className="ds3-settings-field-label">{t('dataSecurity.port')}</div>
           <input className="ds3-settings-input ds3-mono" type="number" min={1} max={65535} value={sl.port} onChange={e => setSl({ ...sl, port: Number(e.target.value) })} disabled={!sl.enabled} style={{ textAlign: 'center' }} />
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 12 }}>
-        <div className="ds3-settings-field" style={{ margin: 0 }}>
+      <div className="ds3-settings-syslog-options-grid">
+        <div className="ds3-settings-field">
           <div className="ds3-settings-field-label">{t('dataSecurity.protocol')}</div>
           <select className="ds3-settings-select" value={sl.protocol} onChange={e => setSl({ ...sl, protocol: e.target.value })} disabled={!sl.enabled} style={{ width: '100%' }}>
             <option value="udp">UDP</option>
             <option value="tcp">TCP</option>
           </select>
         </div>
-        <div className="ds3-settings-field" style={{ margin: 0 }}>
+        <div className="ds3-settings-field">
           <div className="ds3-settings-field-label">{t('dataSecurity.messageFormat')}</div>
           <select className="ds3-settings-select" value={sl.format} onChange={e => setSl({ ...sl, format: e.target.value })} disabled={!sl.enabled} style={{ width: '100%' }}>
             <option value="rfc5424">RFC 5424</option>
             <option value="rfc3164">RFC 3164</option>
           </select>
         </div>
-        <div className="ds3-settings-field" style={{ margin: 0 }}>
+        <div className="ds3-settings-field">
           <div className="ds3-settings-field-label">{t('dataSecurity.minSeverity')}</div>
           <select className="ds3-settings-select" value={sl.min_severity} onChange={e => setSl({ ...sl, min_severity: e.target.value })} disabled={!sl.enabled} style={{ width: '100%' }}>
             <option value="info">Info</option>
@@ -88,7 +88,7 @@ export function SyslogCard({ sl, setSl, slSaving, setSlSaving, slMsg, setSlMsg, 
         </div>
       </div>
 
-      <div className="ds3-settings-field" style={{ margin: '0 0 16px 0' }}>
+      <div className="ds3-settings-field ds3-settings-field--facility">
         <div className="ds3-settings-field-label">Facility</div>
         <select className="ds3-settings-select" value={sl.facility} onChange={e => setSl({ ...sl, facility: Number(e.target.value) })} disabled={!sl.enabled} style={{ width: 200 }}>
           {[[0,'kern'],[1,'user'],[4,'auth'],[10,'authpriv'],[13,'audit'],[16,'local0'],[17,'local1'],[18,'local2'],[19,'local3'],[20,'local4'],[21,'local5'],[22,'local6'],[23,'local7']].map(([v, l]) => (

@@ -1,0 +1,10 @@
+From: =?utf-8?B?5rS75Yqo6KGM?= <service@huodong.example>
+To: me@personal.example
+Date: Sun, 06 Sep 2026 09:36:00 +0800
+Message-ID: <0026-b14@synth.example>
+Subject: 报名成功：Rust 杭州线下 Meetup
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>报名成功！Rust Meetup · 9/20 14:00 · 西湖区某园区。</p><p>凭二维码入场：<img src='https://cdn.huodong.example/ticket/q_8841.png' alt='入场二维码' width='120'></p><p style='font-size:12px'>二维码当日有效，勿转发。</p></body></html>

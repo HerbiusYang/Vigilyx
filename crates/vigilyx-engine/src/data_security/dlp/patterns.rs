@@ -13,7 +13,8 @@ use std::sync::LazyLock;
 /// 跨越 512KiB 扫描窗口边界且超出重叠区 (DLP_SCAN_OVERLAP) 而漏检;
 /// 误报由 Luhn + BIN 校验兜底
 pub(super) static RE_CREDIT_CARD: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?-u:\b)\d{4}[\s\-\.]{0,4}\d{4}[\s\-\.]{0,4}\d{4}[\s\-\.]{0,4}\d{4}(?-u:\b)").unwrap()
+    Regex::new(r"(?-u:\b)\d{4}[\s\-\.]{0,4}\d{4}[\s\-\.]{0,4}\d{4}[\s\-\.]{0,4}\d{4}(?-u:\b)")
+        .unwrap()
 });
 
 /// 中国身份证号 (18 位, 最后 1 位可为 X, 容忍空格/连字符/点/间隔号分隔, 每组最多 2 个分隔符)
@@ -28,7 +29,7 @@ pub(super) static RE_CHINESE_ID: LazyLock<Regex> = LazyLock::new(|| {
 /// 使用 `(?-u:\b)` 强制 ASCII 单词边界:
 /// - ASCII `\b` 只认 `[a-zA-Z0-9_]` 为单词字符
 /// - 防止从 18 位身份证内部截出 11 位手机号
-/// - 中文字符在 ASCII 模式下不是单词字符 -> `电话13812345678` 中的边界成立
+/// - 中文字符在 ASCII 模式下不是单词字符 -> `电话13000000000` 中的边界成立
 pub(super) static RE_CHINESE_PHONE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?-u:\b)1[3-9](?:[\s\-.·]{0,2}\d){9}(?-u:\b)").unwrap());
 
@@ -88,8 +89,10 @@ pub(super) static RE_SWIFT: LazyLock<Regex> =
 
 /// CVV/CVC/安全码 (3-4 位, 需要上下文关键词避免误报)
 pub(super) static RE_CVV_CONTEXT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:cvv|cvc|cvv2|cvc2|安全码|验证码|card\s*verification)\s*[：:=]?\s*(\d{3,4})\b")
-        .unwrap()
+    Regex::new(
+        r"(?i)(?:cvv|cvc|cvv2|cvc2|安全码|验证码|card\s*verification)\s*[：:=]?\s*(\d{3,4})\b",
+    )
+    .unwrap()
 });
 
 // 银行新增模式 (P1.2)
@@ -204,11 +207,12 @@ pub(super) static RE_FAMILY: LazyLock<Regex> = LazyLock::new(|| {
 pub(super) static RE_EMPLOYEE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(concat!(
         "(?:",
-          r"(?:员工编号|工号|入职日期|离职日期)\s*[：:=]?\s*[\w\p{Han}\d\-/]+",
+        r"(?:员工编号|工号|入职日期|离职日期)\s*[：:=]?\s*[\w\p{Han}\d\-/]+",
         "|",
-          r"(?:部门|岗位|职位|在职)\s*[：:=]\s*[\w\p{Han}\d\-/]+",
+        r"(?:部门|岗位|职位|在职)\s*[：:=]\s*[\w\p{Han}\d\-/]+",
         ")",
-    )).unwrap()
+    ))
+    .unwrap()
 });
 
 /// 司法记录关键词 (C2) - 至少 2 个不同关键词才命中
@@ -218,15 +222,15 @@ pub(super) static RE_JUDICIAL: LazyLock<Regex> = LazyLock::new(|| {
 
 /// 学历/教育信息 (C2)
 pub(super) static RE_EDUCATION: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:学历|学位|毕业院校|毕业学校|毕业日期|入学日期|就读学校)\s*[：:=]?\s*[\w\p{Han}\d\-/]+").unwrap()
+    Regex::new(
+        r"(?:学历|学位|毕业院校|毕业学校|毕业日期|入学日期|就读学校)\s*[：:=]?\s*[\w\p{Han}\d\-/]+",
+    )
+    .unwrap()
 });
 
 /// 营业执照注册号 (C2) - 15 位数字
 pub(super) static RE_BIZ_LICENSE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?:营业执照|工商登记|注册号)\s*(?:编号|号)?[：:=]?\s*\d{15}",
-    )
-    .unwrap()
+    Regex::new(r"(?:营业执照|工商登记|注册号)\s*(?:编号|号)?[：:=]?\s*\d{15}").unwrap()
 });
 
 // RegexSet 预筛 (P3.1)
@@ -240,7 +244,7 @@ pub(super) static DLP_REGEX_SET: LazyLock<RegexSet> = LazyLock::new(|| {
         r"(?-u:\b)\d{4}[\s\-\.]{0,4}\d{4}[\s\-\.]{0,4}\d{4}[\s\-\.]{0,4}\d{4}(?-u:\b)", // 0: credit_card (ASCII boundary for CJK compat)
         r"(?-u:\b)\d(?:[\s\-.·]{0,2}\d){16}[\s\-.·]{0,2}[\dXx](?-u:\b)", // 1: chinese_id (ASCII boundary, separator tolerant)
         r"(?-u:\b)1[3-9](?:[\s\-.·]{0,2}\d){9}(?-u:\b)", // 2: phone (ASCII boundary prevents ID internal match)
-        r"(?-u:\b)\d(?:[\s\-]?\d){15,18}(?-u:\b)", // 3: bank_card (ASCII boundary)
+        r"(?-u:\b)\d(?:[\s\-]?\d){15,18}(?-u:\b)",       // 3: bank_card (ASCII boundary)
         r"[\p{Han}]{2,10}(?:省|自治区|市|州|区|县)[\p{Han}]{1,20}(?:市|州|盟|区|县|旗|路|街|道|巷|弄|里)|[\p{Han}]{2,20}(?:路|街|道|巷)[\p{Han}\d]{1,10}号", // 4: address
         r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", // 5: email
         r"\b[EGDSPHLegdsph]\d{8}\b",                         // 6: passport
@@ -248,8 +252,8 @@ pub(super) static DLP_REGEX_SET: LazyLock<RegexSet> = LazyLock::new(|| {
         r"(?i)(?:Password|password|pass|pwd|密码|密碼|口令|pin码|pin|passcode|secret|credential|账号|帳號|帐户|帳戶|帐号|账户)\s*[：:=]", // 8: credential
         r"(?i)\b[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b", // 9: swift (matches detailed regex exactly)
         r"(?i)(?:cvv|cvc|cvv2|cvc2|安全码|验证码|card\s*verification)", // 10: cvv
-        r"(?i)\b\d{6}[A-HJ-NP-Y0-9]{9}\b",       // 11: tax_id
-        r"(?i)\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b", // 12: iban
+        r"(?i)\b\d{6}[A-HJ-NP-Y0-9]{9}\b",                      // 11: tax_id
+        r"(?i)\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b",                // 12: iban
         r"(?i)\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\s*(?:万元|亿元|USD|CNY|RMB|美元|欧元|EUR|GBP|JPY|英镑|日元)", // 13: large_amount
         r"(?i)(?:账号|帐号|帐户|账户|帳號|帳戶|account|acct|转入|转账|汇入|汇款|收款|付款|打款)\s*[：:=]?\s*\d(?:[\s\-]?\d){9,13}", // 14: bank_account (pre-filter; boundary check in detailed regex)
         r"(?i)(?:保单|贷款|合同|contract|loan|policy)\s*(?:编号|号|no|number)?\s*[：:=]?\s*[A-Z]{0,4}\d{8,20}", // 15: contract_number
@@ -267,7 +271,7 @@ pub(super) static DLP_REGEX_SET: LazyLock<RegexSet> = LazyLock::new(|| {
         r"(?:员工编号|工号|职位|入职日期|离职|在职|部门|岗位)", // 26: employee
         r"(?:失信被执行人|被执行人|开庭公告|犯罪记录|行政处罚|违法违规|立案|判决书|裁定书|强制执行|限制消费|限制出境)", // 27: judicial
         r"(?:学历|学位|毕业院校|毕业学校|毕业日期|入学日期|就读学校)", // 28: education
-        r"(?:营业执照|工商登记|注册号)\s*(?:编号|号)?", // 29: biz_license
+        r"(?:营业执照|工商登记|注册号)\s*(?:编号|号)?",                // 29: biz_license
     ])
     .unwrap()
 });

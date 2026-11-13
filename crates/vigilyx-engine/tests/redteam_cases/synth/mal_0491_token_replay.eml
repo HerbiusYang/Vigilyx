@@ -1,0 +1,10 @@
+From: =?utf-8?B?Q2FsZW5kYXIgU3luYw==?= <sync@cal-integration.example>
+To: staff@corp.internal
+Date: Tue, 22 Sep 2026 10:20:00 +0800
+Message-ID: <0010-b29@synth.example>
+Subject: Reauthorize calendar sync (refresh token)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Sync will stop today. Reauthorize (grant refresh token):
+https://cal-integration.example/oauth/consent?scope=offline_access

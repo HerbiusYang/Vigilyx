@@ -1,0 +1,10 @@
+From: =?utf-8?B?5Lia5Yqh?= <yw@sample-svc9.example>
+To: purchase@corp.internal
+Date: Mon, 21 Sep 2026 09:10:00 +0800
+Message-ID: <0000-b28@synth.example>
+Subject: 样品已寄出（运费到付）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+样品到付运费请支付：https://yw-yf9.example.info/p
+（对公+经办人验证）

@@ -44,7 +44,9 @@ impl VigilDb {
         );
         let sql = format!("SELECT config, version FROM {table} WHERE id = 1");
         let row: Option<(serde_json::Value, i64)> =
-            sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str())).fetch_optional(&self.pool).await?;
+            sqlx::query_as(sqlx::AssertSqlSafe(sql.as_str()))
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(row)
     }
 

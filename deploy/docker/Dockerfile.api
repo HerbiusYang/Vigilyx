@@ -1,13 +1,15 @@
 # ═══════════════════════════════════════════════════
-# Vigilyx main-service Dockerfile (API + Engine + Frontend)
+# Vigilyx main-service Dockerfile (API + Frontend control plane)
 # ═══════════════════════════════════════════════════
 #
 # Architecture notes:
-#   API (vigilyx-api) and Engine (vigilyx-engine) run in the same container (default mode).
-#   They communicate via Redis (Streams for data, Pub/Sub for control) and share PostgreSQL.
-#   Engine writes a heartbeat to Redis TTL key + local file for health monitoring.
+#   The API is the control plane. Mirror deployments run the Engine in the
+#   dedicated engine service; MTA deployments embed it in the MTA container.
+#   The engine binary remains in this image only for the legacy
+#   STANDALONE_ENGINE=true compatibility path.
 #   After the frontend is built into static files, it is served directly by the API via axum ServeDir.
-#   To run the engine separately, use the engine-standalone profile in docker-compose.yml.
+#   To run the engine separately, use the mirror profile's `engine` service in
+#   docker-compose.yml.
 #
 # Build:
 #   docker build -f deploy/docker/Dockerfile.api -t vigilyx:latest .
@@ -20,7 +22,7 @@
 #     vigilyx:latest
 
 # -- Stage 1: cargo-chef - extract the dependency recipe --
-FROM rust:1.97.1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 AS chef
+FROM rust:1.98.0-bookworm@sha256:e70e2eec3d495fd5c8e0be74adda86507dfac7f51a724fbf9813ff59b2b247c7 AS chef
 RUN cargo install cargo-chef --locked --version 0.1.78
 WORKDIR /app
 
@@ -77,12 +79,15 @@ COPY --from=rust-builder /app/vigilyx-engine ./
 # Copy frontend static files (API ServeDir::new("frontend/dist") expects this path)
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
+# Copy the curated EML corpus used as offline AI training samples.
+COPY crates/vigilyx-engine/tests/redteam_cases ./test-corpus/redteam_cases
+
 # Copy the entrypoint script
 COPY deploy/docker/entrypoint.sh ./
 RUN chmod +x entrypoint.sh
 
 # Create the data directory (heartbeat files + runtime data)
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data/tmp/http
 
 # SEC-C01: run as a non-root user (CWE-250)
 RUN groupadd -r vigilyx && useradd -r -g vigilyx -d /app vigilyx \
@@ -99,10 +104,10 @@ ENV RUST_LOG=info,vigilyx_api=info,vigilyx_engine=info \
 
 EXPOSE 8088
 
-# Health check: readiness probe (checks DB + Redis + Engine heartbeat)
+# Health check: API liveness probe; aggregate readiness is exposed separately.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -sf http://127.0.0.1:8088/api/health/ready || exit 1
+    CMD curl -sf http://127.0.0.1:8088/api/health/live || exit 1
 
-# tini runs as PID 1 so signals are forwarded correctly to child processes (API + Engine)
+# tini runs as PID 1 so signals are forwarded correctly to the entrypoint.
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["./entrypoint.sh"]

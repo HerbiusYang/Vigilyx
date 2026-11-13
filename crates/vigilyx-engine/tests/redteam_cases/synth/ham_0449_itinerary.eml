@@ -1,0 +1,21 @@
+From: =?utf-8?B?6KGM5pS/LeW3ruaXhQ==?= <travel@corp.internal>
+To: leaders@corp.internal
+Date: Tue, 22 Sep 2026 10:48:00 +0800
+Message-ID: <0038-b29@synth.example>
+Subject: 下周行程（PDF）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+行程单见附件。
+--BS
+Content-Type: application/pdf
+Content-Disposition: attachment; filename="itinerary.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+--BS--

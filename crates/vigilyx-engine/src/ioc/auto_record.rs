@@ -1,24 +1,31 @@
 //! IOC auto-recording logic
 
-//! Automatically extracts IOCs from critical-threat verdicts (>= Critical only):
+//! Automatically extracts IOCs from threat-bearing verdicts:
 //! - `auto_record_from_verdict` - General extraction: IP/domain/email/attachment hash/suspicious links
 //! - `auto_record_internal_spoofing` - Internal domain spoofing detection
 //! - `auto_record_nonsensical` - Nonsensical email auto-recording
 //! - `auto_record_impersonation_domain` - Domain impersonation hits (gate: verdict >= High)
 //!
-//! IMPORTANT: All auto-record thresholds must be >= High, and most paths require
-//! >= Critical (score >= 0.85). Using Medium or lower will re-create the IOC
-//! amplification loop discovered in 2026-03-18.
+//! General extraction from Low/Medium/High verdicts creates short-lived
+//! `auto_reference`/`suspicious` observations; the general confirmed-malicious
+//! path requires Critical. The specialized domain-impersonation path has its
+//! own High threshold plus a similarity gate and records `auto`/`malicious`
+//! indicators. A reference is reused as weak evidence on the next message,
+//! never as an allowlist or as a replacement for the full analysis pipeline.
 
-use super::IocManager;
+use super::{IocManager, normalize_ioc_indicator};
 use crate::module::ThreatLevel;
 use crate::verdict::SecurityVerdict;
 use regex::Regex;
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 use tracing::{info, warn};
-use vigilyx_core::models::EmailSession;
+use vigilyx_core::models::{
+    EmailSession, email_domain, is_internal_sender, is_internal_to_external,
+};
 use vigilyx_core::security::IocEntry;
+use vigilyx_db::security::IocIndicatorObservation;
 
 /// Check if IP is a private/reserved address
 fn is_private_ip(ip: &str) -> bool {
@@ -53,7 +60,7 @@ fn extract_origin_ip(session: &EmailSession) -> Option<String> {
         .headers
         .iter()
         .find(|(name, _)| name.eq_ignore_ascii_case("received"))?;
-    // Extract IP from brackets: [185.243.242.238]
+    // Extract IP from brackets: [198.51.100.238]
     for cap in RE_BRACKET_IP.captures_iter(value) {
         if let Some(m) = cap.get(1) {
             let ip = m.as_str();
@@ -118,6 +125,116 @@ fn extract_normalized_mail_from_domain(mail_from: &str) -> Option<String> {
         .filter(|domain| !domain.is_empty())
 }
 
+fn observation_activity_key(session: &EmailSession) -> String {
+    let identity = session
+        .message_id
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| session.id.to_string());
+    format!(
+        "sha256:{}",
+        hex::encode(Sha256::digest(identity.as_bytes()))
+    )
+}
+
+pub(crate) fn observation_direction(session: &EmailSession, local_domains: &[String]) -> String {
+    if is_internal_to_external(
+        session.mail_from.as_deref(),
+        &session.rcpt_to,
+        local_domains,
+    ) {
+        return "outbound".to_string();
+    }
+
+    let sender_is_internal = is_internal_sender(session.mail_from.as_deref(), local_domains);
+    let has_internal_recipient = session.rcpt_to.iter().any(|recipient| {
+        email_domain(recipient)
+            .is_some_and(|domain| local_domains.iter().any(|local| local == &domain))
+    });
+    if has_internal_recipient && !sender_is_internal {
+        "inbound".to_string()
+    } else {
+        "unknown".to_string()
+    }
+}
+
+/// Collect local-flow facts for the denominator and future shadow scoring.
+///
+/// This intentionally records every normalized indicator in the observed
+/// message, not only indicators that the current verdict considered harmful.
+/// The database deduplicates a session/indicator pair, so rescans are safe.
+pub(crate) fn collect_ioc_observations(
+    session: &EmailSession,
+    verdict: &SecurityVerdict,
+    local_domains: &HashSet<String>,
+) -> Vec<IocIndicatorObservation> {
+    let domains = local_domains.iter().cloned().collect::<Vec<_>>();
+    let direction = observation_direction(session, &domains);
+    let activity_key = observation_activity_key(session);
+    let observed_at = session.ended_at.unwrap_or(session.started_at);
+    let coverage = if session.content.is_complete {
+        "complete"
+    } else {
+        "partial"
+    }
+    .to_string();
+    let threat_level = verdict.threat_level.to_string().to_ascii_lowercase();
+    let mut seen = HashSet::<(String, String)>::new();
+    let mut observations = Vec::new();
+
+    let mut add = |ioc_type: &str, indicator: String| {
+        let indicator = normalize_ioc_indicator(ioc_type, &indicator);
+        if indicator.is_empty() || !seen.insert((ioc_type.to_string(), indicator.clone())) {
+            return;
+        }
+        observations.push(IocIndicatorObservation {
+            session_id: session.id,
+            verdict_id: verdict.id,
+            indicator,
+            ioc_type: ioc_type.to_string(),
+            source_detector: "traffic_observation".to_string(),
+            detector_family: "traffic_observation".to_string(),
+            external_provider: "local".to_string(),
+            evidence_cluster: format!("traffic:{ioc_type}"),
+            activity_key: activity_key.clone(),
+            direction: direction.clone(),
+            threat_level: threat_level.clone(),
+            engine_confidence: verdict.confidence.clamp(0.0, 1.0),
+            observed_at,
+            capture_coverage: coverage.clone(),
+        });
+    };
+
+    for ip in extract_all_external_ips(session) {
+        add("ip", ip);
+    }
+    if let Some(mail_from) = session
+        .mail_from
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        if let Some(email) = normalize_email_indicator(mail_from) {
+            add("email", email);
+        }
+        if let Some(domain) = extract_normalized_mail_from_domain(mail_from) {
+            add("domain", domain);
+        }
+    }
+    for attachment in &session.content.attachments {
+        if !attachment.hash.is_empty() {
+            add("hash", attachment.hash.to_ascii_lowercase());
+        }
+    }
+    for link in &session.content.links {
+        if !link.url.trim().is_empty() {
+            add("url", link.url.trim().to_string());
+        }
+    }
+
+    observations
+}
+
 /// Infer attack type from verdict categories
 fn infer_attack_type(categories: &[String]) -> String {
     for cat in categories {
@@ -147,28 +264,54 @@ fn infer_attack_type(categories: &[String]) -> String {
     "unknown".to_string()
 }
 
-impl IocManager {
-    /// Auto-extract IOCs from security verdict (when threat_level>= Critical)
+fn ioc_for_verdict(
+    indicator: String,
+    ioc_type: String,
+    confidence: f64,
+    context: String,
+    attack_type: String,
+    threat_level: ThreatLevel,
+) -> IocEntry {
+    if threat_level >= ThreatLevel::Critical {
+        IocEntry::auto_from_indicator_full(
+            indicator,
+            ioc_type,
+            confidence,
+            context,
+            attack_type,
+            "malicious".to_string(),
+        )
+    } else {
+        // Keep low-risk references useful without turning a weak verdict into
+        // a confirmed-malicious IOC. The cap also bounds future IOC weighting.
+        let reference_confidence = confidence.clamp(0.25, 0.65);
+        IocEntry::auto_reference_from_indicator(
+            indicator,
+            ioc_type,
+            reference_confidence,
+            context,
+            attack_type,
+        )
+    }
+}
 
-    /// Threshold note: Must be>= Critical, cannot use High/Medium/Low.
-    /// Reason: Auto-written IOCs will be queried by intel module and add scores,
-    /// if threshold is too low it creates a positive feedback loop causing false positive amplification.
-    /// Raised from High to Critical on 2026-04-15 after discovering that many benign emails
-    /// (Google Fonts URLs, DGA false positives on service subdomains) can reach High score.
-    /// Use batch transactions to write all IOCs at once, avoiding N+1 queries
+impl IocManager {
+    /// Auto-extract indicators from Low-or-higher verdicts.
+    ///
+    /// Low/Medium/High become short-lived suspicious references. Critical keeps
+    /// the confirmed-malicious path. Safe is intentionally not persisted as an
+    /// automatic IOC: a clean observation is not a trust decision.
+    /// Use batch transactions to write all IOCs at once, avoiding N+1 queries.
     pub async fn auto_record_from_verdict(
         &self,
         session: &EmailSession,
         verdict: &SecurityVerdict,
     ) {
-        // Critical only. High/Medium/Low must never auto-write IOC or it will
-        // re-enter the scoring path and amplify false positives.
-        if verdict.threat_level < ThreatLevel::Critical {
+        if verdict.threat_level < ThreatLevel::Low {
             return;
         }
 
         let confidence = verdict.confidence;
-        let ioc_verdict = "malicious";
 
         // Infer attack type from categories
         let attack_type = infer_attack_type(&verdict.categories);
@@ -176,11 +319,12 @@ impl IocManager {
         // Context includes email subject for quick identification when exporting IOCs
         let subject_text = session.subject.as_deref().unwrap_or("(no subject)");
         let context = format!(
-            "subject={} | session={}, verdict={}, categories={}",
+            "subject={} | session={}, verdict={}, categories={}, reference_only={}",
             subject_text,
             session.id,
             verdict.threat_level,
-            verdict.categories.join(",")
+            verdict.categories.join(","),
+            verdict.threat_level < ThreatLevel::Critical,
         );
 
         let mut iocs = Vec::new();
@@ -188,21 +332,21 @@ impl IocManager {
         // Extract all external IPs -> IOC(type=ip)
         // IPs come only from the trusted topmost Received hop plus the
         // network-layer client_ip, and each IP must be observed in >= 2
-        // distinct Critical sessions before it is auto-recorded (single-mail
-        // IOC poisoning defense).
+        // distinct threat-bearing sessions before it is auto-recorded
+        // (single-mail IOC poisoning defense).
         let external_ips = extract_all_external_ips(session);
         for ip in &external_ips {
             if !self.note_auto_ip_candidate(ip, session.id) {
                 continue;
             }
             if !self.is_whitelisted("ip", ip).await {
-                iocs.push(IocEntry::auto_from_indicator_full(
+                iocs.push(ioc_for_verdict(
                     ip.clone(),
                     "ip".to_string(),
                     confidence,
                     context.clone(),
                     attack_type.clone(),
-                    ioc_verdict.to_string(),
+                    verdict.threat_level,
                 ));
             }
         }
@@ -214,26 +358,26 @@ impl IocManager {
             if let Some(normalized_mail_from) = normalize_email_indicator(mail_from)
                 && !self.is_whitelisted("email", &normalized_mail_from).await
             {
-                iocs.push(IocEntry::auto_from_indicator_full(
+                iocs.push(ioc_for_verdict(
                     normalized_mail_from.clone(),
                     "email".to_string(),
                     confidence,
                     context.clone(),
                     attack_type.clone(),
-                    ioc_verdict.to_string(),
+                    verdict.threat_level,
                 ));
             }
 
             if let Some(domain) = extract_normalized_mail_from_domain(mail_from)
                 && !self.is_whitelisted("domain", &domain).await
             {
-                iocs.push(IocEntry::auto_from_indicator_full(
+                iocs.push(ioc_for_verdict(
                     domain,
                     "domain".to_string(),
                     confidence,
                     context.clone(),
                     attack_type.clone(),
-                    ioc_verdict.to_string(),
+                    verdict.threat_level,
                 ));
             }
         }
@@ -245,13 +389,13 @@ impl IocManager {
         // Extract attachment hash -> IOC(type=hash)
         for att in &session.content.attachments {
             if !att.hash.is_empty() {
-                iocs.push(IocEntry::auto_from_indicator_full(
+                iocs.push(ioc_for_verdict(
                     att.hash.to_lowercase(),
                     "hash".to_string(),
                     confidence,
                     context.clone(),
                     attack_type.clone(),
-                    ioc_verdict.to_string(),
+                    verdict.threat_level,
                 ));
             }
         }
@@ -259,13 +403,13 @@ impl IocManager {
         // Extract suspicious links -> IOC(type=url)
         for link in &session.content.links {
             if link.suspicious {
-                iocs.push(IocEntry::auto_from_indicator_full(
+                iocs.push(ioc_for_verdict(
                     link.url.clone(),
                     "url".to_string(),
                     confidence,
                     context.clone(),
                     attack_type.clone(),
-                    ioc_verdict.to_string(),
+                    verdict.threat_level,
                 ));
             }
         }
@@ -286,7 +430,8 @@ impl IocManager {
     /// Principle: External attackers forge internal domains to send emails to internal employees
     /// Since the engine is deployed at internal mail gateways, true internal emails come from known internal mail server IPs
 
-    /// Gate: Must have threat_level>= High, otherwise Medium false positives would write IOC creating positive feedback loop
+    /// Gate: Critical only; this specialized path records a stronger malicious
+    /// spoofing IOC rather than a low-risk reference.
     pub async fn auto_record_internal_spoofing(
         &self,
         session: &EmailSession,
@@ -604,7 +749,7 @@ mod unit_tests {
                 "from mail.attacker.tld ([203.0.113.66]) by mx.corp.example with ESMTPS",
                 // Everything below is attacker-controlled.
                 "from fake-bank ([8.8.8.8]) by mail.attacker.tld",
-                "from another-forge ([1.1.1.1]) by fake-bank",
+                "from another-forge ([192.0.2.77]) by fake-bank",
             ],
         );
 
@@ -615,7 +760,10 @@ mod unit_tests {
             "network-layer client_ip always recorded"
         );
         assert!(!ips.contains(&"8.8.8.8".to_string()), "forged IP rejected");
-        assert!(!ips.contains(&"1.1.1.1".to_string()), "forged IP rejected");
+        assert!(
+            !ips.contains(&"192.0.2.77".to_string()),
+            "forged IP rejected"
+        );
         assert_eq!(ips.len(), 2);
     }
 
@@ -689,9 +837,13 @@ mod tests {
     #[cfg(feature = "infra-tests")]
     fn make_verdict(session_id: Uuid, threat_level: ThreatLevel) -> SecurityVerdict {
         SecurityVerdict {
+            inspection_coverage: Default::default(),
+            coverage_reasons: vec![],
             id: Uuid::new_v4(),
             session_id,
             threat_level,
+            threat_type: None,
+            classification: None,
             confidence: 0.9,
             categories: vec!["brand_impersonation".to_string()],
             summary: "test verdict".to_string(),
@@ -714,6 +866,109 @@ mod tests {
         .unwrap();
         db.init_security_tables().await.unwrap();
         IocManager::new(db)
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "infra-tests")]
+    async fn test_low_verdict_records_suspicious_reference_not_clean() {
+        let manager = make_ioc_manager().await;
+        let sender_domain = format!("low-ref-{}.example", Uuid::new_v4().simple());
+        let email = format!("attacker@{sender_domain}");
+        let now = Utc::now();
+
+        // An external clean observation is not an operator whitelist.
+        manager
+            .db
+            .upsert_ioc(&IocEntry {
+                id: Uuid::new_v4(),
+                indicator: sender_domain.clone(),
+                ioc_type: "domain".to_string(),
+                source: "otx".to_string(),
+                verdict: "clean".to_string(),
+                confidence: 0.8,
+                attack_type: String::new(),
+                first_seen: now,
+                last_seen: now,
+                hit_count: 0,
+                context: Some("external clean observation".to_string()),
+                expires_at: Some(now + chrono::Duration::hours(72)),
+                created_at: now,
+                updated_at: now,
+            })
+            .await
+            .unwrap();
+
+        let session = make_impersonation_session(&sender_domain);
+        let verdict = make_verdict(session.id, ThreatLevel::Low);
+        manager.auto_record_from_verdict(&session, &verdict).await;
+
+        let domain_ioc = manager
+            .db
+            .find_ioc("domain", &sender_domain)
+            .await
+            .unwrap()
+            .expect("low verdict must leave a reusable IOC reference");
+        assert_eq!(domain_ioc.source, "auto_reference");
+        assert_eq!(domain_ioc.verdict, "suspicious");
+        assert!(domain_ioc.expires_at.is_some());
+        assert!(!manager.is_whitelisted("domain", &sender_domain).await);
+
+        // A later Critical observation may strengthen the reference, but a
+        // repeated Low observation must never downgrade it back to suspicious.
+        let critical = make_verdict(session.id, ThreatLevel::Critical);
+        manager.auto_record_from_verdict(&session, &critical).await;
+        let strengthened = manager
+            .db
+            .find_ioc("domain", &sender_domain)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(strengthened.source, "auto");
+        assert_eq!(strengthened.verdict, "malicious");
+
+        manager.auto_record_from_verdict(&session, &verdict).await;
+        let after_repeat = manager
+            .db
+            .find_ioc("domain", &sender_domain)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(after_repeat.source, "auto");
+        assert_eq!(after_repeat.verdict, "malicious");
+
+        let safe_domain = format!("safe-no-ref-{}.example", Uuid::new_v4().simple());
+        let safe_session = make_impersonation_session(&safe_domain);
+        let safe_verdict = make_verdict(safe_session.id, ThreatLevel::Safe);
+        manager
+            .auto_record_from_verdict(&safe_session, &safe_verdict)
+            .await;
+        assert!(
+            manager
+                .db
+                .find_ioc("domain", &safe_domain)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            manager
+                .db
+                .find_ioc("email", &format!("attacker@{safe_domain}"))
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        // Keep the test's email indicator referenced so the intended source
+        // extraction remains covered if the domain path is refactored.
+        assert!(
+            manager
+                .db
+                .find_ioc("email", &email)
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[tokio::test]
@@ -757,7 +1012,8 @@ mod tests {
 
     #[tokio::test]
     #[cfg(feature = "infra-tests")]
-    async fn test_impersonation_ioc_recorded_at_high_and_critical() {        for level in [ThreatLevel::High, ThreatLevel::Critical] {
+    async fn test_impersonation_ioc_recorded_at_high_and_critical() {
+        for level in [ThreatLevel::High, ThreatLevel::Critical] {
             let manager = make_ioc_manager().await;
             let sender_domain = format!("imp-{}.example", Uuid::new_v4().simple());
             let session = make_impersonation_session(&sender_domain);
@@ -813,10 +1069,7 @@ mod tests {
     #[cfg(feature = "infra-tests")]
     async fn test_auto_ip_ioc_requires_two_distinct_critical_sessions() {
         let manager = make_ioc_manager().await;
-        let attacker_ip = format!(
-            "203.0.113.{}",
-            200 + (Uuid::new_v4().as_bytes()[0] % 50)
-        );
+        let attacker_ip = format!("203.0.113.{}", 200 + (Uuid::new_v4().as_bytes()[0] % 50));
 
         // Mail #1: Critical verdict, sender IP visible in the top Received hop.
         let domain1 = format!("poison1-{}.example", Uuid::new_v4().simple());

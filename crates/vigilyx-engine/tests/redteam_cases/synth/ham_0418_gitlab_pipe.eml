@@ -1,0 +1,9 @@
+From: =?utf-8?B?R2l0TGFi?= <notify@gitlab.example>
+To: dev@corp.internal
+Date: Sun, 20 Sep 2026 09:47:00 +0800
+Message-ID: <0037-b27@synth.example>
+Subject: Pipeline passed: release/1.9.6
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+All stages green.

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# RUSTSEC-2023-0071 was removed from the 0.9.4 lock graph. Fail if a future
+# RUSTSEC-2023-0071 was removed from the JWT lock graph by using jsonwebtoken's
+# aws-lc-rs backend. Fail if a future dependency change silently
 # dependency change silently reintroduces the affected RSA line.
 if grep -qE '^name = "rsa"$' Cargo.lock; then
   echo "RustSec guard failed: rsa has re-entered Cargo.lock" >&2

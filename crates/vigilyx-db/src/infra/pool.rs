@@ -46,7 +46,11 @@ impl VigilDb {
             .connect(url)
             .await?;
 
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            security_stats_cache: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+            session_count_cache: std::sync::Arc::new(Default::default()),
+        })
     }
 
     /// Check database health status

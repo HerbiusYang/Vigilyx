@@ -1,0 +1,101 @@
+From: "Maersk Line | Trade Documentation" <docs.telex@maersk.example>
+To: logistics@corp.internal
+Cc: import-team@corp.internal, finance.ap@corp.internal
+Date: Tue, 10 Nov 2026 09:12:00 +0000
+Message-ID: <0646-b71@synth.example>
+Subject: [SETTLEMENT REQUIRED] Telex Release Pending - B/L MAEU6428113080 - MSKU 7281946 - Vancouver Free Time Expires 14 Nov 17:00 PST
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear Import Team, Accounts Payable,
+
+TELEX RELEASE ON HOLD.
+The shipper has requested telex release (surrender of
+original B/L) for shipment MAEU6428113080. Release can
+only be executed once the outstanding settlement invoice
+has been paid in full. Free time at Vancouver expires
+14 November 2026, 17:00 PST - after that, demurrage
+accrues at CAD 328/day.
+
+1. SHIPMENT DETAILS
+
+  Bill of Lading:       MAEU6428113080
+  Container:            MSKU 7281946 (40' HC), seal 88410221
+  Vessel / Voyage:      MAERSK KENSINGTON, V.428E
+  Route:                Ningbo -> Busan -> Vancouver
+  ETA Vancouver:        9 November 2026, 06:40 PST
+                        (discharged, at terminal)
+  Commodity:            Precision machine tool parts,
+                        1,842 cartons, 21,470 kg / 17.6 cbm
+  Shipper:              Hangzhou Zhongjie Precision
+                        Machinery Co., Ltd.
+  Consignee:            Pacific Industrial Equipment Ltd.,
+                        Richmond BC
+  Notify Party:         Your logistics desk (this mailbox)
+  Free Time (combined): 5 days from discharge
+                        expires 14 Nov 2026 17:00 PST
+
+2. WHY THIS SETTLEMENT IS NOW DUE
+
+Under the telex release instruction filed by the shipper
+on 2 November (ref: TR-NGB-2026-04417), original B/Ls
+were recalled and the shipment moved to "surrender
+pending settlement" status. The outstanding settlement
+invoice TLX-2026-88431 (USD 28,400.00) is now due.
+
+3. SETTLEMENT INVOICE
+
+  TLX-2026-88431
+    Ocean freight + BAF / LSS surcharges     18,240.00
+    Terminal handling charge (CN + CA)        6,410.00
+    Documentation, telex release, e-filing     1,150.00
+    Pier pass / customs ancillaries            2,600.00
+                                            ----------
+    Total payable (USD)                      28,400.00
+
+4. HOW TO PAY
+
+  All Maersk settlements are paid ONLY through the
+  Maersk.com payment portal after logging in to your
+  company's Maersk account:
+
+    1. Open your browser and type maersk.com manually.
+    2. Log in with your company's Maersk account.
+    3. Go to Invoices -> Outstanding.
+    4. Select TLX-2026-88431 and pay by the funding
+       method already registered on the account.
+
+  We do NOT send remittance details (bank account,
+  SWIFT, account numbers) by email, and we will NEVER
+  ask you to change beneficiary bank details based on
+  an email notice. If you receive any message asking
+  you to pay a Maersk invoice into a new or different
+  bank account, treat it as fraud and verify by
+  calling your local Maersk office (number on your
+  booking confirmation) before acting.
+
+  If settlement is not received before free time
+  expires:
+    - Demurrage: CAD 328/day (days 1-4),
+      CAD 456/day (day 5 onward)
+    - Telex release cancelled; cargo held pending
+      settlement
+    - Storage at GCT Vanterm after lien: CAD 210/day
+
+5. NEXT STEPS
+
+  1. Pay TLX-2026-88431 via the Maersk.com portal.
+  2. Telex release is transmitted to the terminal
+     within 2 business hours of matched payment.
+  3. Delivery order is then issued to your customs
+     broker under the existing POA.
+
+6. CONTACT
+
+  Documentation (B/L, telex, delivery order):
+    docs.telex@maersk.example
+  Quote MAEU6428113080 in the subject line.
+
+Maersk Line | Trade Documentation
+Asia-North America Trade Lane
+This notice concerns B/L MAEU6428113080 only.

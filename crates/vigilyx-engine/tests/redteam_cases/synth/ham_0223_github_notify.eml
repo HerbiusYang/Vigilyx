@@ -1,0 +1,10 @@
+From: =?utf-8?B?R2l0SHVi?= <notifications@github.example>
+To: dev@corp.internal
+Date: Sun, 06 Sep 2026 09:32:00 +0800
+Message-ID: <0022-b14@synth.example>
+Subject: [vigilyx] Review requested on #529
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p><b>zhangmin</b> requested your review on:</p><p>gateway: tiered timeout fallback (#529)</p><p><a href='https://github.example/vigilyx/gateway/pull/529' style='color:#0969da'>View it on GitHub</a></p><hr><p style='font-size:11px;color:#888'>You're receiving this because you are a CODEOWNER.</p></body></html>

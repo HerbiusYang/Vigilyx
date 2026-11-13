@@ -1,0 +1,9 @@
+From: =?utf-8?B?T0E=?= <oa@flow-svc3.example>
+To: manager@corp.internal
+Date: Tue, 15 Sep 2026 09:16:00 +0800
+Message-ID: <0006-b22@synth.example>
+Subject: 待办单超时将自动驳回
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+处理入口（域账号登录）：https://oa-cl3.example.net/t

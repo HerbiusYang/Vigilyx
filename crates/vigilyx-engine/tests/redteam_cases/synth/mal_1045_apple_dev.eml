@@ -1,0 +1,71 @@
+From: "Apple Developer 续费服务处 | 代扣通道组" <daikou.ok@appdev-xu.example>
+To: ios-team@corp.internal
+Cc: finance.dept@corp.internal
+Reply-To: 通道受理组 <td.ok@apple-dk.example>
+Date: Mon, 05 Oct 2026 09:30:00 +0800
+Message-ID: <1045-b174@synth.example>
+Subject: =?utf-8?B?44CQ5omj5qy+5aSx6LSl44CR5byA5Y+R6ICF6LSm5Y+357ut6LS55Luj5omj6YCa6YGT77yIVGVhbSBJRCA5WDg4NEsxMu+8iQ==?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+iOS 团队、财务部：
+
+您好。贵司的 Apple Developer Program 账号
+（Team ID 9X884K12，名下 4 个 App 在架，
+含主力营收应用）2026 年度会员费（USD 99）
+自动扣款失败——绑定的支付卡于 9 月更新
+后未同步。扣款失败已进入 16 天宽限期，
+宽限期届满（10 月 9 日）账号会员资格
+终止。现就代扣通道恢复通知如下。
+
+一、账号终止对你们的 App 意味什么
+1. 全部下架：会员资格终止后，名下 4 个
+   App 从 App Store 下架——主力应用
+   日下载 3,100、年订阅收入折合 RMB
+   约 210 万，下架即归零；
+2. 重新上架的代价：资格恢复后重新提交
+   审核（审核队列 + 可能的拒审修改，
+   通常 2-4 周），期间竞品的买量窗口
+   白送；
+3. 证书失效连锁：分发证书与推送证书
+   随资格失效，TestFlight 全部灰度
+   停摆，企业内测同步中断。
+
+二、代扣通道恢复（宽限期内）
+1. 国内对公代扣通道费：USD 25（约 RMB
+   180 元）——Apple 官方扣款通道对
+   国内企业卡的成功率问题，本通道经
+   境内收单侧代扣并同步 Apple 结算：
+   缴至：杭州启达信息技术服务部
+   账号：6212 3311 0099 3344 008（建行杭州
+   滨江支行）
+   备注：9X884K12 代扣
+2. 到账后 24 小时内完成代扣并恢复会员
+   资格，App 与证书无感续期；
+3. 也可自行登录 App Store Connect 更新
+   支付卡并等待官方重扣——官方重扣
+   的排队周期 3-7 个工作日，宽限期
+   只剩 4 天，风险请自估。
+
+三、您可能会问的问题
+问：官方渠道更新卡不就行了？
+答：行，但官方重扣有排队周期（Apple
+   的账单重试是批处理），180 元买的是
+   确定性——宽限期只剩 4 天的确定性。
+问：USD 25 的依据？
+答：代扣通道的收单成本与汇率锁定，
+   收据注明"账户服务费"，可报销。
+问：会不会是骗局？
+答：Team ID、宽限期天数、扣款失败
+   原因——App Store Connect 的
+   Membership 页都能核对。
+
+四、给团队的话
+USD 99 的年费卡住 210 万的年订阅，
+这不合理但真实发生。180 元与 4 天
+的赛跑之间，这道题 iOS 团队都会算。
+宽限期 10 月 9 日截止。
+
+Apple Developer 续费服务处 · 代扣通道组
+联系邮箱：td.ok@apple-dk.example
+（代扣完成与资格恢复经邮件确认。）

@@ -1,0 +1,59 @@
+From: PagerDuty <notifications@pagerduty.example>
+To: 值班-SRE <duty-sre@corp.internal>
+Cc: 平台工程组 <platform@corp.internal>
+Date: Sat, 10 Oct 2026 02:34:00 +0800
+Message-ID: <0565-b44@synth.example>
+Subject: [P1] CRITICAL: gateway-prod-03 SMTP queue backlog 47min (incident #INC-2026-4471)
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<div style="border-left:4px solid #e00;background:#fff0f0;padding:16px;margin-bottom:16px">
+<h2 style="margin:0;color:#e00;font-size:16px">P1 Critical — Immediate Action Required</h2>
+<p style="margin:4px 0;font-size:14px">Incident #INC-2026-4471 | gateway-prod-03</p>
+</div>
+
+<div style="padding:16px">
+<h3>Alert Summary</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:140px">Service</td><td><b>gateway-prod-03</b> (SMTP relay, zone cn-east-1)</td></tr>
+<tr><td style="background:#f5f5f5">Alert</td><td>Queue backlog &gt; 40 minutes</td></tr>
+<tr><td style="background:#f5f5f5">Current</td><td style="color:#e00"><b>47 minutes</b></td></tr>
+<tr><td style="background:#f5f5f5">Queue depth</td><td>184,732 messages</td></tr>
+<tr><td style="background:#f5f5f5">Started</td><td>2026-10-10 01:47:23 UTC+8</td></tr>
+<tr><td style="background:#f5f5f5">Root cause (preliminary)</td><td>Upstream pool node 4 returned 451 greylisted</td></tr>
+</table>
+
+<h3>Impact</h3>
+<ul>
+<li>Outbound email delivery delayed for ~35% of corporate traffic</li>
+<li>gateway-prod-01/02 picking up overflow (load: 68%/71%)</li>
+</ul>
+
+<h3>Runbook</h3>
+<p>Follow <b>IR-2026-34 §4.2</b> for SMTP queue backlog:</p>
+<ol>
+<li>Check upstream pool status: <code>curl -s http://gateway-prod-03.corp.internal:9090/metrics | grep smtp_pool</code></li>
+<li>If mail-pool-04 is greylisted: <code>smtpctl pool remove mail-pool-04</code></li>
+<li>Flush queue: <code>smtpctl queue flush --rate 500/s</code></li>
+<li>Monitor 15 minutes; if backlog &lt; 10min, resolve</li>
+</ol>
+
+<p style="text-align:center;margin:24px 0">
+<a href="https://yourcompany.pagerduty.com/incidents/INC-2026-4471" style="display:inline-block;background:#e00;color:#fff;padding:10px 28px;text-decoration:none;border-radius:4px;font-weight:bold">Acknowledge Incident</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://yourcompany.pagerduty.com/incidents/INC-2026-4471</p>
+
+<p style="font-size:12px;color:#888;text-align:center;background:#fff3cd;padding:8px;border-radius:4px">
+<b>Security note:</b> PagerDuty incident links always go to <b>*.pagerduty.com</b>. We never ask you to reset passwords or authenticate through a PagerDuty email. If you see a "password reset" instruction in an alert, it is a phishing attempt — report to SOC.
+</p>
+
+<h3>Escalation</h3>
+<p>If not acknowledged within <b>15 minutes</b>, escalates to Senior SRE (Lin Ke) → Platform Lead (Li Wei).</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:11px;color:#999">Incident Key: INC-2026-4471 | Dedup Key: gateway-prod-03-queue-backlog | Alert ID: 8842</p>
+</div>
+</div>
+</body></html>

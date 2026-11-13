@@ -30,11 +30,12 @@ pub use handlers::{
     handle_platform_login,
 };
 pub use middleware::{
-    AuthenticatedUser, require_admin, require_auth, require_internal_origin,
-    require_internal_token, require_platform_roles_access, require_platform_users_manage,
-    require_session_feedback,
+    AuthenticatedUser, require_admin, require_audit_read, require_auth, require_data_security_read,
+    require_internal_origin, require_internal_token, require_platform_roles_access,
+    require_platform_users_manage, require_security_read, require_session_feedback,
+    require_sessions_read, require_system_read,
 };
-pub use password::hash_password;
+pub use password::{hash_password, verify_password};
 pub use rate_limit::LoginRateLimiter;
 pub use ws_ticket::WsTicketStore;
 
@@ -152,9 +153,8 @@ impl AuthConfig {
         // Generate a 64-byte random JWT secret
         let mut secret = String::with_capacity(128);
         let random_bytes: [u8; 64] = {
-            use argon2::password_hash::rand_core::RngCore;
             let mut buf = [0u8; 64];
-            argon2::password_hash::rand_core::OsRng.fill_bytes(&mut buf);
+            getrandom::fill(&mut buf).expect("OS random source should be available");
             buf
         };
         for b in &random_bytes {

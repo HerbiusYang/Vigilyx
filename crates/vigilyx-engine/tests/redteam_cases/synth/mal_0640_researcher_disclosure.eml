@@ -1,0 +1,54 @@
+From: 安全研究实验室 <disclosure@zeroday-lab.example>
+To: 产品安全团队 <psirt@corp.internal>
+Cc: CISO办公室 <ciso@corp.internal>
+Date: Mon, 05 Oct 2026 10:15:00 +0800
+Message-ID: <0640-b39@synth.example>
+Subject: Pre-disclosure: heap overflow in gateway parser (CVE pending, 72h window)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Product Security Team,
+
+I'm a security researcher at an independent lab focused on email infrastructure. We've identified a heap-based buffer overflow in the MIME boundary parsing logic of your gateway product (affects 1.7.x through 1.9.4). The vulnerability allows remote code execution in the parser worker process when processing a specially crafted multipart message with a boundary length exceeding the allocated stack buffer.
+
+Technical summary:
+- Component: MIME boundary tokenizer (mime.rs, boundary resolution path)
+- Attack vector: Inbound email with Content-Type boundary parameter > 512 bytes triggers a stack-to-heap copy without proper bounds check
+- Impact: RCE in parser worker (sandboxed, but sandbox escape via seccomp bypass is feasible — we have a working proof)
+- Reproduction: We have a minimal PoC (3-line Python script) that crashes the parser worker with a controlled RIP
+- CVSS 3.1: 9.4 (AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H)
+
+Disclosure timeline:
+- Oct 3: Discovery confirmed
+- Oct 5 (today): Pre-disclosure notification to vendor (this email)
+- Oct 12: 90-day clock starts (public disclosure on Jan 8, 2027 unless patched)
+- Oct 14: We'd like to coordinate on a joint advisory
+
+What we need from you:
+1. Confirm receipt of this notification (reply to this email)
+2. Assign a PSIRT case number
+3. Provide a technical contact for the PoC handoff
+
+PoC delivery: Given the sensitivity, we use an encrypted disclosure platform (standard practice among the labs in our circle). The PoC, crash dump, and full advisory draft are available at:
+
+    https://git.corp.internal/zeroday/gateway-heap-overflow
+
+The platform requires institutional authentication (your corporate email credentials) to access — this ensures only authorized vendor security personnel can retrieve the materials. If your organization doesn't support SAML/OIDC federation with our platform, reply and we'll arrange an alternative delivery method.
+
+To be clear: we have no intention of going public before the 90-day window closes. Our goal is coordinated disclosure. However, if we don't receive acknowledgment by Oct 12, our policy requires escalation to CERT/CC.
+
+We chose to contact you directly rather than through a broker because your gateway is deployed in several critical infrastructure environments in our region, and we believe you'll act responsibly.
+
+References:
+- Our lab's previous coordinated disclosures: https://zeroday-lab.example/advisories
+- The seccomp bypass technique we used: published at OffensiveCon 2026 (slides attached in the disclosure platform)
+
+Looking forward to working with you on this.
+
+Best regards,
+
+Viktor Kuznetsov
+Security Research Lab
+disclosure@zeroday-lab.example
+PGP: 0xA4F2 91C3 8B7D
+(Please encrypt sensitive replies)

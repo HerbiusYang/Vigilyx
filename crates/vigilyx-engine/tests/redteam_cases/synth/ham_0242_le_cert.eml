@@ -1,0 +1,10 @@
+From: =?utf-8?B?TGV0J3MgRW5jcnlwdA==?= <noreply@letsencrypt.example>
+To: webmaster@corp.internal
+Date: Mon, 07 Sep 2026 09:31:00 +0800
+Message-ID: <0021-b15@synth.example>
+Subject: Certificate expiration notice
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>Your certificate (portal.corp.internal) expires in 20 days.</p><p>Renewal is automatic; no action is needed if ACME is healthy.</p><p style='font-size:11px'>Expiry: 2026-09-27 | Series: prod-88</p></body></html>

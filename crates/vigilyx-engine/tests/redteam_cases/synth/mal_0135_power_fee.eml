@@ -1,0 +1,10 @@
+From: =?utf-8?B?54mp5Lia57y06LS5?= <pm@elec-fee.example>
+To: owner@personal.example
+Date: Mon, 31 Aug 2026 09:24:00 +0800
+Message-ID: <0014-b8@synth.example>
+Subject: 电费预存不足，明日暂停供电
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您户内预存电费余额不足 10 元，明日 9:00 起暂停供电。
+线上充值：https://elec-topup.example.info/cz

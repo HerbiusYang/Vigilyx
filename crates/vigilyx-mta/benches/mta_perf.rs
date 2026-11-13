@@ -33,6 +33,9 @@ fn test_config() -> Arc<MtaConfig> {
         quarantine_threshold: ThreatLevel::Medium,
         reject_threshold: ThreatLevel::Critical,
         max_message_size: 1024 * 1024,
+        message_memory_budget: Arc::new(tokio::sync::Semaphore::new(
+            vigilyx_mta::config::MTA_MESSAGE_MEMORY_BUDGET_DEFAULT_BYTES,
+        )),
         max_recipients: 10,
         database_url: String::new(),
         redis_url: None,

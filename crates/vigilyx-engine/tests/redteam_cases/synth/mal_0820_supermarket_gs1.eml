@@ -1,0 +1,75 @@
+From: "华联优选 | 供应商服务平台" <vendor.portal@hualian-supplier.example>
+To: sales.dept@foodcompany.example
+Cc: finance@foodcompany.example
+Reply-To: 供应商认证组 <renzheng.desk@hl-supplier-portal.example>
+Disposition-Notification-To: vendor.portal@hualian-supplier.example
+Date: Mon, 17 May 2027 10:20:00 +0800
+Message-ID: <0820-b99@synth.example>
+Subject: =?utf-8?B?44CQ57O757uf6L+B56e744CR5ZWG5ZOB5p2h56CBR1Mx57O757uf5YiH5o2iIOKAlCDkvpvlupTllYbpnIDlrozmiJDpl6jmiLfph43mlrDorqTor4Eg4oCUIOacquiupOivgVNLVeWwhuS6jjbmnIgxNeaXpeS4i+aetg==?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px">
+<p>销售部、财务部：</p>
+
+<p style="background:#FFF3E0;border-left:4px solid #E65100;padding:12px">
+<b>商品条码系统 GS1 切换：供应商门户重新认证通知。</b>
+华联优选全渠道商品数据库将于 6 月切换至 GS1 标准条码体系。贵司作为供应商（编号
+<b>SP-8842</b>，在营 SKU 47 个），需完成<b>门户重新认证</b>方可完成条码映射。
+<b>未完成认证的供应商，其 SKU 将于 6 月 15 日批量下架</b>（含线上商城与 128 家门店），
+下架期间的销量损失与重新上架排期（约 3 周）由供应商承担。
+</p>
+
+<h3>一、贵司供应概况</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:230px">供应商编号</td><td><b>SP-8842</b>（食品类 A 级供应商，2019 年起合作）</td></tr>
+<tr><td style="background:#f5f5f5">在营 SKU</td><td>47 个（休闲食品 31 + 饮品 16）</td></tr>
+<tr><td style="background:#f5f5f5">月均结算</td><td>864,000 元（T+45 账期）</td></tr>
+<tr><td style="background:#f5f5f5">条码现状</td><td>47 个 SKU 中 12 个使用店内码，需换领 GS1 码</td></tr>
+<tr><td style="background:#f5f5f5">认证截止</td><td><b>6 月 10 日 18:00</b>（下架批次锁定前 5 日）</td></tr>
+</table>
+
+<h3>二、门户重新认证需要的材料</h3>
+<p>GS1 条码与供应商主体、结算账户强绑定，重新认证即<b>主体与账户的再核验</b>：</p>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>序号</th><th>材料</th><th>用途</th></tr>
+<tr><td>1</td><td>营业执照 + 法定代表人身份证正反面照片</td><td>主体核验（GS1 换码申请要求）</td></tr>
+<tr><td>2</td><td>对公结算账户信息（开户行 + 账号 + 预留手机号 + 短信验证码）</td><td>结算账户与 GS1 码绑定（防止错结算）</td></tr>
+<tr><td>3</td><td>在营商品清单（模板见认证页）</td><td>逐 SKU 条码映射</td></tr>
+</table>
+
+<h3>三、认证入口</h3>
+<p style="text-align:center;margin:18px 0">
+<a href="https://hl-supplier-portal.example/gs1/SP-8842/recert" style="display:inline-block;background:#E65100;color:#fff;padding:12px 42px;text-decoration:none;border-radius:4px;font-weight:bold">进入供应商重新认证</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">供应商门户：https://supplier.hualianmall.example（历年合同与结算登录入口相同）</p>
+
+<h3>四、时间线</h3>
+<ul>
+<li>认证截止：<b>6 月 10 日 18:00</b></li>
+<li>下架批次：6 月 15 日（未认证供应商全部 SKU）</li>
+<li>重新上架：认证完成后排期约 3 周（含门店库存消化周期）</li>
+</ul>
+
+<p style="font-size:14px;background:#FFF3E0;padding:12px">"商超系统要营业执照和对公账户"值得核实
+——供应链类钓鱼确实在增多。边界：认证只做主体与结算账户核验，<b>不收任何密码</b>；
+短信验证码发到贵司结算预留手机（财务负责人手机）；也可以带齐材料到<b>采购部供应商服务
+窗口（总部 3 楼）现场办理</b>（约 40 分钟，效果相同）。但 6 月 15 日的下架批次是全渠道
+系统切换的统一排期，采购无法为单一供应商保留 SKU。</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://hl-supplier-portal.example/px/gs1.gif?v=SP-8842&amp;r=sales.dept%40foodcompany.example" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">代理商通道：多品牌代理商可为代理品牌批量认证，上传品牌授权书照片即可（免各品牌主体短信码，当日受理）。</p>
+
+<h3>五、联系方式</h3>
+<p>供应商认证组：renzheng.desk@hl-supplier-portal.example<br>
+供应商编号引用：SP-8842 · 供应商服务热线：400-xxx-xxxx（官网公布号码）</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+华联优选 · 供应商服务平台 · 本通知发送至供应商登记邮箱<br>
+合同、结算与条码记录可在供应商门户逐项核对。
+</div>
+
+</body></html>

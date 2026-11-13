@@ -30,6 +30,12 @@ use vigilyx_soar::disposition::{DispositionAction, DispositionCondition};
 
 /// Threat levels accepted in `conditions.min_threat_level`.
 const VALID_MIN_THREAT_LEVELS: &[&str] = &["safe", "low", "medium", "high", "critical"];
+const VALID_EVENT_SOURCES: &[&str] = &["message_verdict", "threat_scene"];
+const VALID_SCENE_TYPES: &[&str] = &[
+    "bulk_mailing",
+    "bounce_harvest",
+    "internal_domain_impersonation",
+];
 
 /// Action types the disposition engine can execute (canonical names plus the
 /// legacy aliases matched by DispositionEngine::execute_action).
@@ -45,8 +51,8 @@ const VALID_ACTION_TYPES: &[&str] = &[
 
 /// Parse conditions into the typed struct and whitelist min_threat_level.
 fn validate_rule_conditions(conditions: &serde_json::Value) -> Result<(), String> {
-    let parsed: DispositionCondition = serde_json::from_value(conditions.clone())
-        .map_err(|e| format!("条件格式无效: {e}"))?;
+    let parsed: DispositionCondition =
+        serde_json::from_value(conditions.clone()).map_err(|e| format!("条件格式无效: {e}"))?;
     if let Some(level) = parsed.min_threat_level.as_deref() {
         let normalized = level.trim().to_ascii_lowercase();
         if !VALID_MIN_THREAT_LEVELS.contains(&normalized.as_str()) {
@@ -55,6 +61,23 @@ fn validate_rule_conditions(conditions: &serde_json::Value) -> Result<(), String
                 VALID_MIN_THREAT_LEVELS.join("/")
             ));
         }
+    }
+    if let Some(source) = parsed.event_source.as_deref() {
+        let normalized = source.trim().to_ascii_lowercase();
+        if !VALID_EVENT_SOURCES.contains(&normalized.as_str()) {
+            return Err(format!(
+                "无效的 event_source \"{source}\"（允许: {}）",
+                VALID_EVENT_SOURCES.join("/")
+            ));
+        }
+    }
+    for scene_type in &parsed.scene_types {
+        if !VALID_SCENE_TYPES.contains(&scene_type.trim()) {
+            return Err(format!("无效的 scene_type \"{scene_type}\""));
+        }
+    }
+    if parsed.event_source.as_deref() == Some("message_verdict") && !parsed.scene_types.is_empty() {
+        return Err("message_verdict 规则不能包含 scene_types".to_string());
     }
     Ok(())
 }
@@ -1121,9 +1144,10 @@ mod tests {
 
     #[test]
     fn test_validate_rule_conditions_rejects_wrong_field_types() {
-        let err =
-            validate_rule_conditions(&serde_json::json!({"min_threat_level": 3, "categories": "phishing"}))
-                .expect_err("wrong-typed conditions must be rejected");
+        let err = validate_rule_conditions(
+            &serde_json::json!({"min_threat_level": 3, "categories": "phishing"}),
+        )
+        .expect_err("wrong-typed conditions must be rejected");
         assert!(err.contains("条件格式无效"));
     }
 

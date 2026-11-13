@@ -1,0 +1,19 @@
+From: =?utf-8?B?5YWx5Lqr5paH5qGj?= <docs@collab-notice.example>
+To: team@corp.internal
+Date: Fri, 28 Aug 2026 14:21:00 +0800
+Message-ID: <0011-b5@synth.example>
+Subject: 需求文档共享（在线版）
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+文档为在线版，打开附件进入。
+--BS
+Content-Type: text/html
+Content-Disposition: attachment; filename="需求文档.html"
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGhlYWQ+PG1ldGEgaHR0cC1lcXVpdj0ncmVmcmVzaCcgY29udGVudD0nMDt1cmw9aHR0cHM6Ly9kb2NzLmdvb2dsZS5jb20vZm9ybXMvZC9lL2Zha2Uvdmlld2Zvcm0nPjwvaGVhZD48Ym9keT7igKY8L2JvZHk+PC9odG1sPg==
+--BS--

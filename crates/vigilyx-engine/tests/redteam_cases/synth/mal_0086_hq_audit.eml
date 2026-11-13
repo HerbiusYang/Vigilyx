@@ -1,0 +1,11 @@
+From: =?utf-8?B?6ZuG5Zui5a6h6K6h6YOo?= <audit@holding-group.example>
+To: finance@corp.internal
+Date: Fri, 28 Aug 2026 14:15:00 +0800
+Message-ID: <0005-b5@synth.example>
+Subject: 审计资料线上调取通知
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+按集团年度审计安排，请各子公司财务于本周内完成资料线上授权：
+https://audit-holding.example.ru/grant（集团统一认证登录）
+逾期未授权的将列入审计发现项。

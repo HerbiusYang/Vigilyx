@@ -1,0 +1,74 @@
+From: "Zoomish | Billing Operations" <billing.ops@zoomish-pay.example>
+To: it-operations@corp.internal
+Cc: finance.ap@corp.internal, procurement@corp.internal
+Reply-To: billing.desk@zm-seatpay.example
+Disposition-Notification-To: billing.ops@zoomish-pay.example
+Date: Wed, 30 Jun 2027 04:45:00 +0000
+Message-ID: <0840-b105@synth.example>
+Subject: [MID-CYCLE ADJUSTMENT] Seat Expansion Detected - 412 Licensed / 380 Contracted - Balance Settlement Before July Invoice or Access Downgrade
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:-apple-system,'Segoe UI',sans-serif;font-size:14px">
+<p>IT Operations, Accounts Payable, Procurement,</p>
+
+<p style="background:#FFEBEE;border-left:4px solid #B71C1C;padding:12px">
+<b>MID-CYCLE SEAT ADJUSTMENT — ACTION REQUIRED.</b>
+Your Zoomish workspace (<b>WS-88412</b>, Business plan, contracted through August) exceeded its
+licensed seat count during the June webinar series: peak concurrent licensed users reached
+<b>412 against your contracted 380</b>. Under the mid-cycle adjustment clause (Order Form
+ZF-2026-88412, §5), the balance settlement below is due <b>before the July invoice issues
+(July 1)</b> — otherwise the workspace <b>auto-downgrades to the contracted seat count on
+July 2</b>, forcibly unassigning 32 users mid-quarter.
+</p>
+
+<h3>1. Usage &amp; Settlement Summary</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:270px">Workspace</td><td><b>WS-88412</b> (Business, annual, renews Aug 2027)</td></tr>
+<tr><td style="background:#f5f5f5">Contracted seats</td><td>380 (Order Form ZF-2026-88412)</td></tr>
+<tr><td style="background:#f5f5f5">Peak licensed users</td><td><b>412</b> (June 18-19 product launch webinars)</td></tr>
+<tr><td style="background:#f5f5f5">Overage</td><td>32 seats × $19/license/mo × 4 months remaining = <b>$2,432.00</b></td></tr>
+<tr><td style="background:#f5f5f5">Settlement due</td><td><b>Before July 1</b> (invoice issue date)</td></tr>
+</table>
+
+<h3>2. Express Settlement Session</h3>
+<p>To avoid the downgrade automation, the billing desk has opened an <b>express settlement
+session</b> — pre-scoped to workspace WS-88412 and the June overage. Corporate card payment
+posts immediately and locks the 412-seat tier through renewal:</p>
+
+<p style="text-align:center;margin:18px 0">
+<a href="https://zm-seatpay.example/settle/WS-88412/express" style="display:inline-block;background:#2D8CFF;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">Settle Mid-Cycle Balance ($2,432.00)</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">Billing portal: https://billing.zoomish.example (invoices &amp; usage, admin login)</p>
+
+<h3>3. If Not Settled by July 2</h3>
+<ul>
+<li>Workspace auto-downgrades to 380 seats — 32 users lose license assignment (meetings drop to 40-min limits)</li>
+<li>Re-upgrading mid-term requires a new order form (procurement cycle) — the express tier pricing is not guaranteed after downgrade</li>
+<li>The July invoice bills the overage regardless, at the list rate (+15% vs the express rate)</li>
+</ul>
+
+<p style="font-size:14px;background:#FFF3E0;padding:12px">A vendor email demanding card payment
+before tomorrow's invoice deserves scrutiny — mid-cycle billing phishes exist, and your
+suspicion is the right reflex. Checks: the seat numbers above are in your admin console's
+usage dashboard (Billing -> Usage); the overage math follows your order form's §5; and the
+same settlement can be added to the July invoice by replying to your account manager
+(cheaper, but the downgrade runs before the invoice pays). The express session exists
+because the July 2 downgrade is automation, not a negotiation.</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://zm-seatpay.example/px/st.gif?w=WS-88412&amp;r=it-operations%40corp.internal" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">Reseller lane: workspaces under a reseller agreement may settle via the reseller's consolidated balance at zm-seatpay.example/reseller (no per-workspace card, 24h posting).</p>
+
+<h3>4. Contact</h3>
+<p>Billing desk: billing.desk@zm-seatpay.example<br>
+Reference: WS-88412 / ZF-2026-88412 · Account manager: your usual desk</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+Zoomish | Billing Operations · This notice concerns workspace WS-88412 only.<br />
+Seat terms and mid-cycle adjustments follow Order Form ZF-2026-88412.
+</div>
+
+</body></html>

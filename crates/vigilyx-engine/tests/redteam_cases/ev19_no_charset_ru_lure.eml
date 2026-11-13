@@ -1,0 +1,19 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev19@partner.example>
+Subject: Notification
+MIME-Version: 1.0
+Content-Type: text/plain
+Content-Transfer-Encoding: 8bit
+
+Внимание! Мы обнаружили подозрительный вход в вашу учётную запись.
+
+Проверьте свои настройки безопасности и подтвердите свою учётную запись,
+иначе учётная запись будет заблокирована в течение 24 часов.
+Подтвердите личность немедленно: войдите в систему и введите пароль,
+затем проверьте свой пароль в настройках безопасности:
+
+https://account-verify.example.ru/sso/login
+
+Служба безопасности корпоративной сети

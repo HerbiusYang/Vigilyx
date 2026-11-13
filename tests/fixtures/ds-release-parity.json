@@ -1,0 +1,42 @@
+{
+  "acceptance": {
+    "baseline_brier": 0.2,
+    "baseline_passing_case_ids": [
+      "public_numeric_capability:case_1"
+    ],
+    "baseline_recall_lower_bound": 0.7566158011633325,
+    "baseline_review_cost": 0.3,
+    "brier": 0.1,
+    "candidate_passing_case_ids": [
+      "public_numeric_capability:case_1"
+    ],
+    "capability_manifest_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "decision_threshold": 0.4,
+    "false_positive_budget": 0.01,
+    "false_positive_upper_bound": 0.009282440748302413,
+    "holdout_negatives": 410,
+    "holdout_positives": 70,
+    "parameter_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "recall_lower_bound": 0.7566158011633325,
+    "release_signature": "c23e5f9246e6e8cef78e8dabc53607fb4bf8f31759a3a1568c17668bdb871439",
+    "report_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "review_cost": 0.2
+  },
+  "expected_hmac_sha256": "c23e5f9246e6e8cef78e8dabc53607fb4bf8f31759a3a1568c17668bdb871439",
+  "expected_payload_hex": "766967696c79782d64732d72656c656173652d76310a616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161610a626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262620a63636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363",
+  "expected_payload_length": 216,
+  "expected_payload_utf8": "vigilyx-ds-release-v1\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ncccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "expected_verification": true,
+  "generated_on": "77 remote Rust builder; Python stdlib hmac.sha256",
+  "invalid_trailing_newline_hmac_sha256": "8a4a38b37eb8e1eb56de25139a5dbc912f61bbb9a26f764003efa7b1a924de3d",
+  "negative_checks": [
+    "Changing report_sha256 without resigning must fail.",
+    "Using invalid_trailing_newline_hmac_sha256 with the normal payload must fail.",
+    "Using a different key must fail.",
+    "A key shorter than 32 raw bytes must fail runtime policy."
+  ],
+  "purpose": "Public numerical HMAC interoperability fixture only. No real release key, model, evaluation report, or installable production certificate.",
+  "schema_version": 1,
+  "test_key_hex": "5055424c49432d544553542d4f4e4c592d766967696c79782d64732d72656c656173652d7061726974792d6b65792d7631",
+  "test_key_utf8": "PUBLIC-TEST-ONLY-vigilyx-ds-release-parity-key-v1"
+}

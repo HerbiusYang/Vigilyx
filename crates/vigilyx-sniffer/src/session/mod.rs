@@ -123,11 +123,6 @@ pub struct ShardedSessionManager {
     pub(super) timeout: Duration,
     /// SMTP pending DATA idle timeout duration
     pub(super) smtp_pending_timeout: Duration,
-    /// SIMD handler (precompiled mode)
-    #[allow(dead_code)]
-    pub(super) mail_from_finder: memmem::Finder<'static>,
-    #[allow(dead_code)]
-    pub(super) rcpt_to_finder: memmem::Finder<'static>,
     pub(super) subject_finder: memmem::Finder<'static>,
     /// Reuseof MIME Parsehandler (Avoid email SIMD Finder)
     pub(super) mime_parser: MimeParser,
@@ -178,9 +173,6 @@ impl ShardedSessionManager {
             rejected_connections: AtomicU64::new(0),
             timeout,
             smtp_pending_timeout,
-            // Precompile SIMD search mode
-            mail_from_finder: memmem::Finder::new(b"MAIL FROM:").into_owned(),
-            rcpt_to_finder: memmem::Finder::new(b"RCPT TO:").into_owned(),
             subject_finder: memmem::Finder::new(b"Subject:").into_owned(),
             // Reuse MIME Parsehandler (Shared SIMD Finder)
             mime_parser: MimeParser::new(),
@@ -342,11 +334,11 @@ impl ShardedSessionManager {
         // The map entry itself is dropped by the next cleanup pass after flush.
         if !data.slot_released {
             data.slot_released = true;
-            let _ = self
-                .session_slots
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-                    Some(current.saturating_sub(1))
-                });
+            let _ =
+                self.session_slots
+                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                        Some(current.saturating_sub(1))
+                    });
         }
         true
     }
@@ -1015,6 +1007,6 @@ fn imap_body_fetch_observed(payload: &[u8]) -> bool {
 }
 
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod redteam_capture_tests;
+#[cfg(test)]
+mod tests;

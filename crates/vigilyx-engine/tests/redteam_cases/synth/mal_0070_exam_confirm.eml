@@ -1,0 +1,11 @@
+From: =?utf-8?B?6ICD6K+V5Lit5b+D?= <reg@exam-svc.example>
+To: student@mail.example
+Date: Thu, 27 Aug 2026 09:24:00 +0800
+Message-ID: <0009-b4@synth.example>
+Subject: 报名信息最后确认（今日 24:00 截止）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您的考试报名信息存在一项待确认项，今日 24:00 后不可修改。
+确认入口：https://exam-confirm.example.info/final
+未确认视为放弃本次报考。

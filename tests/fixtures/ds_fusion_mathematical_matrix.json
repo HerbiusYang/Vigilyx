@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "comparison_scope": "typed_item_mathematics",
+  "comparison_limitations": [
+    "Synthetic mathematical fixtures only; not detector admission tests or email detection benchmarks.",
+    "Normal-focal inputs exercise arithmetic only; they do not authorize authentication as benign email evidence.",
+    "Higher belief is not an accuracy improvement; known single-sided equivalence is expected."
+  ],
+  "cases": [
+    {
+      "case_id": "empty_unknown", "split": "development", "label": null, "data_origin": "development",
+      "items": [],
+      "mathematical_expectations": {"yager_raw": {"b": 0, "d": 0, "u": 1}, "dbf_grouped": "unsupported"}
+    },
+    {
+      "case_id": "same_cause_duplicate", "split": "development", "label": null, "data_origin": "development",
+      "items": [
+        {"source_id": "detector-a", "causal_key": "host:one.invalid", "frame": "email_threat", "bpa": {"b": 0.4, "d": 0, "u": 0.6}},
+        {"source_id": "detector-b", "causal_key": "host:one.invalid", "frame": "email_threat", "bpa": {"b": 0.4, "d": 0, "u": 0.6}}
+      ],
+      "mathematical_expectations": {
+        "yager_raw": {"b": 0.64, "d": 0, "u": 0.36},
+        "cautious_yager": {"b": 0.4, "d": 0, "u": 0.6},
+        "pcr6_grouped": {"b": 0.4, "d": 0, "u": 0.6},
+        "noisy_or_grouped": {"b": 0.4, "d": 0, "u": 0.6}
+      }
+    },
+    {
+      "case_id": "distinct_causes", "split": "development", "label": null, "data_origin": "development",
+      "items": [
+        {"source_id": "detector-a", "causal_key": "host:one.invalid", "frame": "email_threat", "bpa": {"b": 0.4386, "d": 0, "u": 0.5614}},
+        {"source_id": "detector-a", "causal_key": "host:two.invalid", "frame": "email_threat", "bpa": {"b": 0.4386, "d": 0, "u": 0.5614}}
+      ],
+      "mathematical_expectations": {
+        "yager_raw": {"b": 0.68483004, "d": 0, "u": 0.31516996},
+        "cautious_yager": {"b": 0.68483004, "d": 0, "u": 0.31516996},
+        "pcr6_grouped": {"b": 0.68483004, "d": 0, "u": 0.31516996},
+        "noisy_or_grouped": {"b": 0.68483004, "d": 0, "u": 0.31516996}
+      }
+    },
+    {
+      "case_id": "distinct_plus_duplicate_no_fallback_collapse", "split": "development", "label": null, "data_origin": "development",
+      "items": [
+        {"source_id": "detector-a", "causal_key": "host:one.invalid", "frame": "email_threat", "bpa": {"b": 0.4386, "d": 0, "u": 0.5614}},
+        {"source_id": "detector-a", "causal_key": "host:two.invalid", "frame": "email_threat", "bpa": {"b": 0.4386, "d": 0, "u": 0.5614}},
+        {"source_id": "detector-b", "causal_key": "host:two.invalid", "frame": "email_threat", "bpa": {"b": 0.4386, "d": 0, "u": 0.5614}}
+      ],
+      "mathematical_expectations": {"cautious_yager": {"b": 0.68483004, "d": 0, "u": 0.31516996}}
+    },
+    {
+      "case_id": "nary_conflict_not_binary_fold", "split": "development", "label": null, "data_origin": "development",
+      "items": [
+        {"source_id": "synthetic-a", "causal_key": "cause-a", "frame": "email_threat", "bpa": {"b": 0.8, "d": 0, "u": 0.2}},
+        {"source_id": "synthetic-b", "causal_key": "cause-b", "frame": "email_threat", "bpa": {"b": 0, "d": 0.8, "u": 0.2}},
+        {"source_id": "synthetic-c", "causal_key": "cause-c", "frame": "email_threat", "bpa": {"b": 0.8, "d": 0, "u": 0.2}}
+      ],
+      "mathematical_expectations": {"yager_raw": {"b": 0.192, "d": 0.032, "u": 0.776}, "max_grouped": "unsupported", "noisy_or_grouped": "unsupported"}
+    },
+    {
+      "case_id": "pcr6_three_dogmatic_sources", "split": "development", "label": null, "data_origin": "development",
+      "items": [
+        {"source_id": "synthetic-a", "causal_key": "cause-a", "frame": "email_threat", "bpa": {"b": 1, "d": 0, "u": 0}},
+        {"source_id": "synthetic-b", "causal_key": "cause-b", "frame": "email_threat", "bpa": {"b": 0, "d": 1, "u": 0}},
+        {"source_id": "synthetic-c", "causal_key": "cause-c", "frame": "email_threat", "bpa": {"b": 0, "d": 1, "u": 0}}
+      ],
+      "mathematical_expectations": {"yager_raw": {"b": 0, "d": 0, "u": 1}, "pcr6_grouped": {"b": 0.3333333333333333, "d": 0.6666666666666666, "u": 0}}
+    },
+    {
+      "case_id": "pcr6_theta_in_conflicting_tuple", "split": "development", "label": null, "data_origin": "development",
+      "items": [
+        {"source_id": "synthetic-a", "causal_key": "cause-a", "frame": "email_threat", "bpa": {"b": 1, "d": 0, "u": 0}},
+        {"source_id": "synthetic-b", "causal_key": "cause-b", "frame": "email_threat", "bpa": {"b": 0, "d": 1, "u": 0}},
+        {"source_id": "synthetic-c", "causal_key": "cause-c", "frame": "email_threat", "bpa": {"b": 0, "d": 0, "u": 1}}
+      ],
+      "mathematical_expectations": {"pcr6_grouped": {"b": 0.3333333333333333, "d": 0.3333333333333333, "u": 0.3333333333333333}}
+    },
+    {
+      "case_id": "dbf_balanced_conflict", "split": "development", "label": null, "data_origin": "development",
+      "items": [
+        {"source_id": "synthetic-a", "causal_key": "cause-a", "frame": "email_threat", "bpa": {"b": 0.8, "d": 0, "u": 0.2}},
+        {"source_id": "synthetic-b", "causal_key": "cause-b", "frame": "email_threat", "bpa": {"b": 0, "d": 0.8, "u": 0.2}}
+      ],
+      "mathematical_expectations": {"dbf_grouped": {"b": 0.1952, "d": 0.1952, "u": 0.6096}}
+    },
+    {
+      "case_id": "authentication_wrong_frame", "split": "development", "label": null, "data_origin": "development",
+      "items": [{"source_id": "authentication", "causal_key": "sender:one.invalid", "frame": "sender_authentication", "bpa": {"b": 0, "d": 0.63, "u": 0.37}}],
+      "mathematical_expectations": {"yager_raw": "unsupported", "cautious_yager": "unsupported", "pcr6_grouped": "unsupported", "dbf_grouped": "unsupported", "max_grouped": "unsupported", "noisy_or_grouped": "unsupported"}
+    },
+    {
+      "case_id": "same_cause_opposing_focals_unsupported", "split": "development", "label": null, "data_origin": "development",
+      "items": [
+        {"source_id": "synthetic-a", "causal_key": "same-cause", "frame": "email_threat", "bpa": {"b": 0.3, "d": 0, "u": 0.7}},
+        {"source_id": "synthetic-b", "causal_key": "same-cause", "frame": "email_threat", "bpa": {"b": 0, "d": 0.2, "u": 0.8}}
+      ],
+      "mathematical_expectations": {"yager_raw": {"b": 0.24, "d": 0.14, "u": 0.62}, "cautious_yager": "unsupported", "pcr6_grouped": "unsupported", "dbf_grouped": "unsupported"}
+    }
+  ]
+}

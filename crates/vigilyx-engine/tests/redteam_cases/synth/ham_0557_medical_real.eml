@@ -1,0 +1,43 @@
+From: 浙江大学医学院附属第一医院-体检中心 <report@zyyy.example>
+To: 张敏 <zhang.min@corp.internal>
+Date: Wed, 07 Oct 2026 09:00:00 +0800
+Message-ID: <0557-b41@synth.example>
+Subject: 您的体检报告已出具（编号 TJ-2026-8842）—— 2 项指标需随访
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif;max-width:600px;margin:0 auto">
+<div style="background:#0067b8;color:#fff;padding:12px 20px;border-radius:8px 8px 0 0">
+<h2 style="margin:0;font-size:18px">浙一健康 | 体检报告通知</h2>
+</div>
+<div style="border:1px solid #ddd;border-top:none;padding:20px;border-radius:0 0 8px 8px">
+
+<p>张敏，您好：</p>
+
+<p>您于 <b>2026年9月25日</b> 在我中心完成的年度体检，报告已出具。总体评估：<b>基本正常</b>，但有 <b>2 项指标</b> 建议随访复查。</p>
+
+<h3 style="color:#0067b8;border-bottom:2px solid #0067b8;padding-bottom:4px">需关注指标</h3>
+<table cellpadding=8 style="border-collapse:collapse;width:100%">
+<tr style="background:#f5f5f5"><th style="text-align:left">项目</th><th style="text-align:left">结果</th><th style="text-align:left">参考范围</th><th style="text-align:left">建议</th></tr>
+<tr><td>低密度脂蛋白胆固醇</td><td style="color:#e00"><b>3.89 mmol/L</b></td><td>&lt; 3.37</td><td>3 个月复查，饮食控制</td></tr>
+<tr><td>甲状腺结节（右侧）</td><td style="color:#e00"><b>TI-RADS 3 类</b></td><td>—</td><td>6 个月超声随访</td></tr>
+</table>
+
+<h3 style="color:#0067b8;border-bottom:2px solid #0067b8;padding-bottom:4px">报告查看方式</h3>
+<p>完整报告（含血常规、尿常规、肝肾功能、血脂全套、心电图、胸片、腹部超声、甲状腺超声）请登录 <b>"浙一健康" App</b>（或浙里办 App-就医-体检报告模块）查看。</p>
+<p style="font-size:13px;color:#666">如需纸质报告，请携带身份证至体检中心一楼自助打印机打印（保留 3 个月）。</p>
+
+<h3 style="color:#0067b8;border-bottom:2px solid #0067b8;padding-bottom:4px">随访预约</h3>
+<p>低密度脂蛋白复查可挂<b>内分泌科</b>普通门诊；甲状腺超声随访可挂<b>超声影像科</b>。均可通过浙一 App 或浙里办 App 预约。</p>
+
+<h3 style="color:#0067b8;border-bottom:2px solid #0067b8;padding-bottom:4px">历年对比</h3>
+<p>您的本次 LDL-C 与去年（3.42）相比上升 0.47，建议减少高脂肪饮食摄入并增加有氧运动。甲状腺结节与去年大小相仿（约 4mm），TI-RADS 分级从 2 类升至 3 类，建议按医嘱定期随访。</p>
+
+<div style="background:#f9f9f9;padding:12px;border-radius:4px;margin-top:20px">
+<p style="font-size:13px;color:#666;margin:4px 0">浙一健康管理中心 | 体检中心</p>
+<p style="font-size:12px;color:#999;margin:4px 0">地址：杭州市上城区庆春路79号 | 电话：0571-8723-6888</p>
+<p style="font-size:11px;color:#999;margin:4px 0">本邮件由体检系统自动发送。报告仅通过 App 查看，不含任何链接。医院不会以任何形式索要密码或验证码。</p>
+</div>
+
+</div>
+</body></html>

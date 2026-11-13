@@ -1,0 +1,14 @@
+From: =?utf-8?B?5byg5pWP?= <zhang.min@corp.internal>
+To: dev@corp.internal
+Date: Mon, 28 Sep 2026 08:22:00 +0800
+Message-ID: <0012-b34@synth.example>
+Subject: Fw: 供应商接口文档
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+转给你，他们 API 的鉴权说明：
+
+---------- 转发邮件 ----------
+From: dev@vendor-api.example
+鉴权 token 每周轮换，新 token 获取页：https://vendor-api.example/token
+（用你们企业邮箱注册即可）

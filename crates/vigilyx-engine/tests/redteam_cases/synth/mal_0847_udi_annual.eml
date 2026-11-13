@@ -1,0 +1,82 @@
+From: "省药品监督管理局 | 医疗器械唯一标识（UDI）推进办公室" <udi.update@yjj-udi.example>
+To: regulatory@medicaldevice.example
+Cc: qa.office@medicaldevice.example, finance.ap@medicaldevice.example
+Reply-To: UDI 受理组 <udi.desk@yjj-udi-pay.example>
+Disposition-Notification-To: udi.update@yjj-udi.example
+Date: Mon, 12 Jul 2027 09:30:00 +0800
+Message-ID: <0847-b108@synth.example>
+Subject: =?utf-8?B?44CQ5bm05bqm5qC45a+544CR5Yy755aX5Zmo5qKw5ZSv5LiA5qCH6K+G77yIVURJ77yJ5aSH5qGI5L+h5oGv5bm05bqm5pu05pawIOKAlCDnvJbnoIHnu7TmjIHotLnnvLTmrL7pgJrnn6Ug4oCUIOWkh+ahiOWkseaViOWJjTMw5pel?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px">
+<p>法规注册部、质量办公室、应付财务：</p>
+
+<p style="background:#FFF3E0;border-left:4px solid #E65100;padding:12px">
+<b>UDI 备案信息年度核对与编码维持费通知（备案失效前 30 日）。</b>
+贵司在省 UDI 系统的备案（主体备案号 <b>UDI-ZJ-2025-04417</b>，覆盖 23 个产品 DI）将于
+<b>8 月 11 日</b>进入失效程序。完成年度核对需：① 更新备案信息（产品注册证、生产许可、
+DI 编码状态）；② 缴纳<b>本年度编码维持费</b>。<b>备案失效的 DI 将从国家医保结算与省级
+采购平台摘除</b>——影响医院扫码入库与投标资格。
+</p>
+
+<h3>一、贵司备案概况</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:230px">主体备案号</td><td><b>UDI-ZJ-2025-04417</b>（2025-08 首次备案）</td></tr>
+<tr><td style="background:#f5f5f5">产品范围</td><td>23 个 DI（一次性输液器 12 + 留置针 8 + 敷贴 3）</td></tr>
+<tr><td style="background:#f5f5f5">发码机构</td><td>GS1 China（厂商识别代码 6901234）</td></tr>
+<tr><td style="background:#f5f5f5">注册证状态</td><td>2 张注册证（一张 2028 到期、一张 <b>2027-09 到期</b>需更新关联）</td></tr>
+<tr><td style="background:#f5f5f5">失效程序</td><td><b>8 月 11 日</b>（当前 30 日窗口）</td></tr>
+</table>
+
+<h3>二、年度核对两项</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>序号</th><th>事项</th><th>说明</th></tr>
+<tr><td>1</td><td>备案信息更新</td><td>上传：产品注册证正反面扫描件（含 9 月到期证的延续受理单）、生产许可证扫描件、各 DI 当前状态表（模板见提交页）</td></tr>
+<tr><td>2</td><td>编码维持费</td><td><b>2,300 元</b>（23 DI × 100 元/个/年），缴至省 UDI 编码服务中心专户（见下）</td></tr>
+</table>
+
+<p style="background:#E8EAF6;padding:12px;border:1px solid #9FA8DA">
+缴费账户：<br>
+户名：浙医标识编码服务中心（有限合伙）<br>
+开户行：工商银行杭州高新支行<br>
+账号：1202 0668 9920 4471 336<br>
+备注：UDI-04417 + 主体名称
+</p>
+
+<h3>三、提交入口</h3>
+<p style="text-align:center;margin:18px 0">
+<a href="https://yjj-udi-pay.example/annual/UDI-ZJ-2025-04417/update" style="display:inline-block;background:#E65100;color:#fff;padding:12px 42px;text-decoration:none;border-radius:4px;font-weight:bold">进入 UDI 年度核对提交</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">UDI 系统：https://udi.nmpa.example（省局入口，与国家 UDI 数据库同源）</p>
+
+<h3>四、失效后果</h3>
+<ul>
+<li>23 个 DI 从国家医保结算系统与省级集中采购平台摘除</li>
+<li>医院端扫码入库失败（产品实物无法流通至医保定点机构）</li>
+<li>投标资格冻结，恢复需重新备案（周期 4-6 周）</li>
+</ul>
+
+<p style="font-size:14px;background:#FFF3E0;padding:12px">"药监部门发缴费通知"应当核实——
+医疗器械类诈骗确实在增多，法规部的谨慎是合规体系的一部分。边界：核对事项与历年
+UDI 申报一致（信息更新 + 状态表）；也可以走官方路径——登录国家 UDI 数据库申报端
+（浏览器手动输入官网地址）完成年度核对，费用在那里查到<b>应为零</b>（如对"维持费"
+存疑，以数据库申报端的实际提示为准）。8 月 11 日的失效程序是系统规则，无法为单一
+主体延期。</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://yjj-udi-pay.example/px/udi.gif?a=UDI-ZJ-2025-04417&amp;r=regulatory%40medicaldevice.example" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02;">集团通道：多主体集团可汇总核对，上传集团授权函后在 yjj-udi-pay.example/group 提交（单笔维持费覆盖全部主体备案）。</p>
+
+<h3>五、联系方式</h3>
+<p>UDI 受理组：udi.desk@yjj-udi-pay.example<br>
+备案号引用：UDI-ZJ-2025-04417 · 省局咨询：12315 转药监（官网公布渠道）</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+省药品监督管理局 · UDI 推进办公室 · 本通知发送至备案登记邮箱<br />
+UDI 法规依据《医疗器械唯一标识系统规则》执行。
+</div>
+
+</body></html>

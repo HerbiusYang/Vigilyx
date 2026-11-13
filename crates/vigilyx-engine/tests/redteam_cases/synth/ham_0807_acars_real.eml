@@ -1,0 +1,118 @@
+From: "SkyComm Data Services | Customer Accounts" <accounts@skycomm.example>
+To: flight-ops@airline.example
+Cc: engineering@airline.example, finance@airline.example
+Date: Wed, 03 Nov 2027 06:00:00 +0000
+Message-ID: <0807-b124@synth.example>
+Subject: [ACARS RENEWAL] 2028 Service Year USD 486,000 - Renew in the Service Portal (Billing Entity Unchanged)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Flight Ops, Engineering,
+Finance,
+
+FLEET DATALINK RENEWAL - ACARS
+SERVICE YEAR 2028.
+
+Your fleet's ACARS/VDL
+datalink service renews
+January 1. Renew in the
+service portal; the billing
+entity is unchanged.
+
+1. SERVICE SUMMARY
+
+  Fleet:        42 aircraft
+                (A320 family 28 +
+                A330 14)
+  Service:      ACARS + VDL
+                Mode-2 + SATCOM
+                backup
+  2027 year:    USD 462,000
+  2028 year:    USD 486,000
+                (+5.2%, VDL-M2
+                upgrade)
+  Renewal
+  deadline:     December 1
+
+2. HOW RENEWAL WORKS
+   (PORTAL ONLY)
+
+    1. The service portal
+       (typed address, your
+       flight-ops login)
+       shows the 2028
+       renewal with the
+       VDL-M2 upgrade under
+       your fleet agreement:
+       approve, and the
+       invoice issues from
+       the same entity and
+       account as every
+       2027 quarter.
+    2. Tail lists, service
+       history, and invoice
+       records are in the
+       portal - compare
+       there.
+
+  SkyComm will NEVER:
+  - Move renewal billing
+    to a "datalink JV
+    Billing B.V." for the
+    upgrade ("Q4 still
+    bills from the
+    current entity, only
+    the renewal switches"
+    is the split-routing
+    trick - 117/121/122/
+    123 batches' family;
+    the VDL-M2 upgrade is
+    real, the JV billing
+    entity is not: upgrades
+    ship under the EXISTING
+    service agreement, and
+    if a JV ever became
+    the counterparty it
+    would be a novation
+    with notice and
+    signatures, not an
+    emailed IBAN)
+  - Threaten CPDLC
+    throttling and voice-
+    only ATC fallback to
+    push payment to a new
+    entity (the December 1
+    deadline is real; the
+    degradation applies
+    to unrenewed fleets
+    regardless of which
+    entity got paid - the
+    new IBAN changes
+    nothing about your
+    service)
+  - Use lookalike domains
+    such as
+    "skycomm-datalink" or
+    "sc-datalink-pay"
+
+3. VERIFY THIS NOTICE
+
+  - Renewal, tails, and
+    invoice history in the
+    service portal (typed
+    address)
+  - Account director on
+    your usual channel
+  - Report lookalike
+    renewal notices to
+    security@skycomm.example
+    and your ops-contract
+    review jointly
+
+SkyComm Data Services |
+Customer Accounts
+This notice concerns the
+referenced fleet agreement
+only. Service terms follow
+the datalink service
+agreement.

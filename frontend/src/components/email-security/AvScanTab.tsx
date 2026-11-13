@@ -3,6 +3,7 @@ import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { ModuleMetadata, PipelineConfig, EngineStatus, ApiResponse } from '../../types'
 import { apiFetch } from '../../utils/api'
+import { formatDurationMs } from '../../utils/format'
 
 type ActiveEngine = 'clamav' | 'yara'
 
@@ -185,7 +186,7 @@ export default function AvScanTab({
               <div style={{ display: 'flex', gap: 20, fontSize: 12, fontFamily: 'var(--font-mono)', color: 'rgba(255,255,255,0.5)' }}>
                 <span><strong style={{ color: 'rgba(255,255,255,0.85)' }}>{totalScans.toLocaleString()}</strong> {t('emailSecurity.scans')}</span>
                 <span><strong style={{ color: '#10b981' }}>{((((avEmlMetric?.success_rate ?? 1) + (avAttMetric?.success_rate ?? 1)) / 2) * 100).toFixed(0)}%</strong> {t('emailSecurity.successRate')}</span>
-                <span><strong style={{ color: 'rgba(255,255,255,0.85)' }}>{(((avEmlMetric?.avg_duration_ms ?? 0) + (avAttMetric?.avg_duration_ms ?? 0)) / 2).toFixed(0)}ms</strong> {t('emailSecurity.average')}</span>
+                <span><strong style={{ color: 'rgba(255,255,255,0.85)' }}>{formatDurationMs(((avEmlMetric?.avg_duration_ms ?? 0) + (avAttMetric?.avg_duration_ms ?? 0)) / 2)}</strong> {t('emailSecurity.average')}</span>
               </div>
             )}
           </div>
@@ -207,7 +208,7 @@ export default function AvScanTab({
                   {metric && metric.total_runs > 0 && (
                     <div style={{ display: 'flex', gap: 16, fontSize: 11, fontFamily: 'var(--font-mono)', color: 'rgba(255,255,255,0.4)', padding: '8px 10px', borderRadius: 6, background: 'rgba(255,255,255,0.02)' }}>
                       <span>{metric.total_runs.toLocaleString()} {t('emailSecurity.times')}</span>
-                      <span>{metric.avg_duration_ms.toFixed(0)}ms</span>
+                      <span>{formatDurationMs(metric.avg_duration_ms)}</span>
                       <span style={{ color: metric.success_rate >= 0.95 ? '#10b981' : '#f59e0b' }}>{(metric.success_rate * 100).toFixed(0)}%</span>
                       {metric.failure_count > 0 && <span style={{ color: '#f43f5e' }}>{metric.failure_count} fail</span>}
                     </div>
@@ -255,7 +256,7 @@ export default function AvScanTab({
             <div className="yr-status-right">
               {yaraMetric && yaraMetric.total_runs > 0 && <>
                 <span className="yr-status-metric"><strong>{yaraMetric.total_runs.toLocaleString()}</strong> scans</span>
-                <span className="yr-status-metric"><strong>{yaraMetric.avg_duration_ms.toFixed(0)}ms</strong> avg</span>
+                <span className="yr-status-metric"><strong>{formatDurationMs(yaraMetric.avg_duration_ms)}</strong> avg</span>
                 <span className="yr-status-metric"><strong style={{ color: yaraMetric.success_rate >= 0.95 ? 'var(--accent-green)' : '#f59e0b' }}>{(yaraMetric.success_rate * 100).toFixed(1)}%</strong></span>
               </>}
             </div>

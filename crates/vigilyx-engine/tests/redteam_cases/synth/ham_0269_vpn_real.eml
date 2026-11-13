@@ -1,0 +1,10 @@
+From: =?utf-8?B?572R57uc5pyN5Yqh?= <vpn@corp.internal>
+To: remote@corp.internal
+Date: Wed, 09 Sep 2026 08:43:00 +0800
+Message-ID: <0033-b17@synth.example>
+Subject: VPN 配置轮换（门户下载）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+新配置已发布，门户-VPN-配置下载（登录后自动导入客户端）。
+配置文件不会通过邮件附件分发。

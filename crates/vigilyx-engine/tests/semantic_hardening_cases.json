@@ -1,0 +1,358 @@
+{
+  "version": 1,
+  "source": "Synthetic regression seeds derived from examples in the user report; not the unavailable original 48-case corpus.",
+  "cases": [
+    {
+      "id": "negated_bank_request",
+      "body": "银行不需要您提供密码或验证码。",
+      "stage": "A",
+      "scenarios": [],
+      "forbidden_scenarios": [
+        "credential_request"
+      ],
+      "current_request": false
+    },
+    {
+      "id": "meeting_not_add_contact",
+      "body": "请参加周五的微信群会议。",
+      "stage": "A",
+      "scenarios": [],
+      "forbidden_scenarios": [
+        "off_platform_contact_request"
+      ],
+      "current_request": false
+    },
+    {
+      "id": "application_not_please",
+      "body": "您的申请已经收到。",
+      "stage": "A",
+      "scenarios": [],
+      "forbidden_scenarios": [],
+      "current_request": false
+    },
+    {
+      "id": "independent_please_before_application",
+      "body": "请发送申请附件。",
+      "stage": "A",
+      "scenarios": [],
+      "forbidden_scenarios": [],
+      "current_request": true
+    },
+    {
+      "id": "different_return_destination",
+      "body": "请发送验证码给我们。请勿向他人发送验证码。",
+      "stage": "A",
+      "scenarios": [
+        "credential_request"
+      ],
+      "forbidden_scenarios": [],
+      "current_request": true
+    },
+    {
+      "id": "pseudo_negation_not_refutation",
+      "body": "请发送验证码给我们。不要忘记输入验证码。",
+      "stage": "A",
+      "scenarios": [
+        "credential_request"
+      ],
+      "forbidden_scenarios": [],
+      "current_request": true
+    },
+    {
+      "id": "same_destination_local_warning",
+      "body": "请发送验证码给我。请勿把验证码发送给我。",
+      "stage": "A",
+      "scenarios": [],
+      "forbidden_scenarios": [
+        "credential_request"
+      ],
+      "current_request": false
+    },
+    {
+      "id": "linked_conflict_retained",
+      "body": "请点击链接 https://portal.example.invalid/login 验证账户。请勿点击链接。",
+      "stage": "A",
+      "scenarios": [
+        "account_access_request"
+      ],
+      "forbidden_scenarios": [],
+      "current_request": false,
+      "countered": true
+    },
+    {
+      "id": "training_word_is_not_quotation",
+      "body": "【安全培训】请于今日点击链接完成账户验证。",
+      "stage": "A",
+      "scenarios": [
+        "account_access_request"
+      ],
+      "forbidden_scenarios": [],
+      "current_request": true
+    },
+    {
+      "id": "structured_case_report",
+      "body": "安全培训案例：攻击者要求提交密码。",
+      "stage": "A",
+      "scenarios": [],
+      "forbidden_scenarios": [
+        "credential_request"
+      ],
+      "current_request": false
+    },
+    {
+      "id": "chinese_reply_headers",
+      "body": "这是钓鱼邮件。\n发件人: attacker@example.invalid\n发送时间: 2026-10-26\n主题: 账户核验\n请提交密码。",
+      "stage": "A",
+      "scenarios": [],
+      "forbidden_scenarios": [],
+      "current_request": false,
+      "forwarded": true
+    },
+    {
+      "id": "english_reply_headers",
+      "body": "This is phishing.\nFrom: attacker@example.invalid\nSent: Mon 26 Oct 2026\nSubject: Account verification\nPlease enter your password.",
+      "stage": "A",
+      "scenarios": [],
+      "forbidden_scenarios": [],
+      "current_request": false,
+      "forwarded": true
+    },
+    {
+      "id": "outlook_attribution",
+      "body": "On Mon, 26 Oct 2026 <sender@example.invalid> wrote:\nPlease enter your password.",
+      "stage": "A",
+      "scenarios": [],
+      "forbidden_scenarios": [],
+      "current_request": false,
+      "forwarded": true
+    },
+    {
+      "id": "chinese_attribution",
+      "body": "在 2026-10-26 sender@example.invalid 写道：\n请提交验证码。",
+      "stage": "A",
+      "scenarios": [],
+      "forbidden_scenarios": [],
+      "current_request": false,
+      "forwarded": true
+    },
+    {
+      "id": "separator_alone_is_not_quotation",
+      "body": "_________________\n请发送验证码给我。",
+      "stage": "A",
+      "scenarios": [
+        "credential_request"
+      ],
+      "forbidden_scenarios": [],
+      "current_request": true
+    },
+    {
+      "id": "incomplete_header_is_not_quotation",
+      "body": "From: sender@example.invalid\n请提交验证码。",
+      "stage": "A",
+      "scenarios": [
+        "credential_request"
+      ],
+      "forbidden_scenarios": [],
+      "current_request": true
+    },
+    {
+      "id": "cjk_latin_contact_label",
+      "body": "请添加VX联系我。",
+      "stage": "A",
+      "scenarios": [
+        "off_platform_contact_request"
+      ],
+      "forbidden_scenarios": [],
+      "current_request": true
+    },
+    {
+      "id": "bounded_separator_spelling",
+      "body": "请提供验-证-码。",
+      "stage": "A",
+      "scenarios": [
+        "credential_request"
+      ],
+      "forbidden_scenarios": [],
+      "current_request": true
+    },
+    {
+      "id": "traditional_cjk",
+      "body": "請點擊鏈接驗證賬戶。",
+      "stage": "A",
+      "scenarios": [
+        "account_access_request"
+      ],
+      "forbidden_scenarios": [],
+      "current_request": true
+    },
+    {
+      "id": "completed_account_notice",
+      "body": "已经确认账户存在风险。",
+      "stage": "A",
+      "scenarios": [],
+      "forbidden_scenarios": [],
+      "current_request": false
+    },
+    {
+      "id": "modal_recipient",
+      "body": "为保障账户安全，需您重新验证账户。",
+      "stage": "B",
+      "scenarios": [
+        "account_access_request"
+      ],
+      "forbidden_scenarios": [],
+      "current_request": true
+    },
+    {
+      "id": "permissive_request",
+      "body": "如方便，可通过以下入口完成账号验证。",
+      "stage": "B",
+      "scenarios": [
+        "account_access_request"
+      ],
+      "forbidden_scenarios": [],
+      "current_request": true
+    },
+    {
+      "id": "collective_chinese",
+      "body": "所有用户需要点击链接验证账户。",
+      "stage": "B",
+      "scenarios": [
+        "account_access_request"
+      ],
+      "forbidden_scenarios": [],
+      "current_request": true
+    },
+    {
+      "id": "collective_english",
+      "body": "All staff need to verify your account.",
+      "stage": "B",
+      "scenarios": [
+        "account_access_request"
+      ],
+      "forbidden_scenarios": [],
+      "current_request": true
+    },
+    {
+      "id": "system_directed_recipient",
+      "body": "系统需要您填写验证码。",
+      "stage": "B",
+      "scenarios": [
+        "credential_request"
+      ],
+      "forbidden_scenarios": [],
+      "current_request": true
+    },
+    {
+      "id": "reminder_chinese",
+      "body": "别忘了输入验证码。",
+      "stage": "B",
+      "scenarios": [
+        "credential_request"
+      ],
+      "forbidden_scenarios": [],
+      "current_request": true
+    },
+    {
+      "id": "reminder_english",
+      "body": "Don't forget to enter your verification code.",
+      "stage": "B",
+      "scenarios": [
+        "credential_request"
+      ],
+      "forbidden_scenarios": [],
+      "current_request": true
+    },
+    {
+      "id": "sensitive_query_chinese",
+      "body": "您刚收到的验证码是多少？",
+      "stage": "B",
+      "scenarios": [
+        "credential_request"
+      ],
+      "forbidden_scenarios": [],
+      "current_request": true
+    },
+    {
+      "id": "sensitive_phone_query",
+      "body": "您的手机号是多少？",
+      "stage": "B",
+      "scenarios": [
+        "sensitive_data_request"
+      ],
+      "forbidden_scenarios": [],
+      "current_request": true
+    },
+    {
+      "id": "query_without_recipient",
+      "body": "验证码是多少？",
+      "stage": "B",
+      "scenarios": [],
+      "forbidden_scenarios": [
+        "credential_request"
+      ],
+      "current_request": false
+    },
+    {
+      "id": "purpose_mention",
+      "body": "验证码用于登录。",
+      "stage": "B",
+      "scenarios": [],
+      "forbidden_scenarios": [
+        "credential_request"
+      ],
+      "current_request": false
+    },
+    {
+      "id": "gift_card_request_frame",
+      "body": "我需要你购买礼品卡并将卡号发送给我。",
+      "stage": "B",
+      "scenarios": [
+        "payment_account_change_request",
+        "sensitive_data_request"
+      ],
+      "forbidden_scenarios": [],
+      "current_request": true
+    },
+    {
+      "id": "first_person_self_action",
+      "body": "我需要提交我的密码。",
+      "stage": "B",
+      "scenarios": [],
+      "forbidden_scenarios": [
+        "credential_request"
+      ],
+      "current_request": false
+    },
+    {
+      "id": "quoted_query",
+      "body": "> 您刚收到的验证码是多少？",
+      "stage": "B",
+      "scenarios": [],
+      "forbidden_scenarios": [
+        "credential_request"
+      ],
+      "current_request": false
+    },
+    {
+      "id": "quoted_group_request",
+      "body": "> 所有用户需要点击链接验证账户。",
+      "stage": "B",
+      "scenarios": [],
+      "forbidden_scenarios": [
+        "account_access_request"
+      ],
+      "current_request": false
+    },
+    {
+      "id": "reported_query",
+      "body": "安全培训案例：您刚收到的验证码是多少？",
+      "stage": "B",
+      "scenarios": [],
+      "forbidden_scenarios": [
+        "credential_request"
+      ],
+      "current_request": false
+    }
+  ]
+}

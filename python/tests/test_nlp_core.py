@@ -126,7 +126,7 @@ class TestPreprocessEmail:
 
     def test_normal_email(self):
         result = preprocess_email("Test Subject", "Body text", "user@example.com")
-        assert "From: user@example.com" in result
+        assert "From: <EMAIL>" in result
         assert "Subject: Test Subject" in result
         assert "Body text" in result
 
@@ -224,7 +224,7 @@ class TestPreprocessEmailNoBlindBands:
             max_segments=8,
         )
 
-        assert payload in result
+        assert payload.replace("admin@evil.example", "<EMAIL>") in result
         assert len(result) <= 3000 * 8
 
     def test_default_single_segment_prefix_cut(self):
@@ -237,9 +237,9 @@ class TestPreprocessEmailNoBlindBands:
     def test_headers_kept_intact_with_huge_body(self):
         body = "正常内容" * 3000
         result = preprocess_email("重要：年度审计通知", body, "cfo@example.com")
-        assert result.startswith("From: cfo@example.com\nSubject: 重要：年度审计通知\n")
+        assert result.startswith("From: <EMAIL>\nSubject: 重要：年度审计通知\n")
 
     def test_short_email_unchanged(self):
-        result = preprocess_email("Hi", "short body", "a@b.com")
+        result = preprocess_email("Hi", "short body", "a@b.test")
         assert "short body" in result
         assert "chars omitted" not in result

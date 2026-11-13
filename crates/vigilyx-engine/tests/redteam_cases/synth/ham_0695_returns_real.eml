@@ -1,0 +1,127 @@
+From: "OceanBridge Fulfillment | Returns Processing" <returns@oceanbridge.example>
+To: eu-returns@corp.internal
+Cc: finance-ec@corp.internal, brand-manager@corp.internal
+Date: Tue, 02 Mar 2027 07:15:00 +0000
+Message-ID: <0695-b87@synth.example>
+Subject: [Q1 RETURNS] Liquidation Statement LS-Q1-8812 - Net Balance USD 4,218.40 Posted to Your Account - No Payment Action Required
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+EU Returns Team, Finance, Brand
+Manager,
+
+Your Q1 returns liquidation statement
+is ready. This cycle closes with a
+NET BALANCE of USD 4,218.40 posted
+against your account (disposal fees
+exceeded recoverable value). No
+payment action is required - the
+balance nets against your next weekly
+disbursement automatically.
+
+1. LIQUIDATION SUMMARY (LS-Q1-8812)
+
+  Cycle:            Q1 2027 returns
+                    (01 Jan - 15 Mar)
+  Warehouses:       EDE-04 (Dortmund),
+                    WRO-02 (Wroclaw)
+  Units processed:  1,842
+    - Restocked:      741 (40.2%)
+    - Refurbished:    318 (17.3%)
+    - Disposed:       783 (42.5%)
+
+2. THE BALANCE
+
+  Recoverable value credited
+    (restock + refurb resale):
+                    USD 21,460.80
+  Disposal & compliance fees
+    (783 units x blended
+     USD 6.10 + WEEE/EPR
+     compliance charges):
+                    USD 23,812.10
+  Storage during holding
+    window (exceeded free
+    21 days on 214 units):
+                    USD 1,965.50
+  ----------------------------------
+  Net balance
+  (posted to account,
+   nets next
+   disbursement):
+                    USD 4,218.40
+  Full breakdown: statement PDF
+  in the merchant portal
+  (portal address from your
+   onboarding pack - type it
+   yourself)
+
+3. HOW OCEANBRIDGE SETTLES
+   (IMPORTANT)
+
+  All fees, credits, and
+  liquidation balances flow
+  through the SAME merchant
+  account that generates your
+  weekly disbursements:
+
+    - Negative balances net
+      against the next weekly
+      disbursement (if a
+      disbursement is too
+      small, the balance
+      carries forward)
+    - We never invoice by
+      email, never request
+      wire transfers, and
+      have no "regional
+      collections" entity
+      that bills customers
+
+  OceanBridge will NEVER:
+  - Ask you to wire a
+    settlement to any named
+    account, including a
+    subsidiary-style
+    beneficiary such as
+    "OBF Regional Collections
+    Sp. z o.o." (3PL fraud
+    typically uses an EU
+    subsidiary name plus an
+    IBAN in a different
+    country)
+  - Use lookalike domains
+    such as "oceanbridge-3pl"
+    or "ob-returns-settle"
+  - Threaten automatic
+    returns suspension plus
+    a reactivation fee in
+    the same message that
+    first presents a
+    balance (account
+    actions follow the
+    contract's cure periods,
+    not an email deadline)
+
+4. VERIFY THIS STATEMENT
+
+  - The statement PDF and
+    line-level returns data
+    are in the merchant
+    portal under
+    Statements -> LS-Q1-8812
+  - Compare the disbursement
+    schedule in the portal,
+    not the email, before
+    concluding any balance
+    is "payable now"
+  - Suspicious settlement
+    notices: confirm with
+    your account manager
+    using the number in
+    your onboarding pack
+
+OceanBridge Fulfillment | Returns
+Processing
+This notice concerns merchant
+account EU-40771 only.

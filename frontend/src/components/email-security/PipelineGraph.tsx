@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { EngineStatus, ModuleMetadata, PipelineConfig, ModuleConfig, ContentRules } from '../../types'
+import { formatDurationMs } from '../../utils/format'
 import { MODULE_NAME_KEYS } from './moduleI18n'
 
 // ════════════════════════════════════════════════════
@@ -44,6 +45,8 @@ const MODULE_DESC_KEYS: Record<string, string> = {
   semantic_scan: 'emailSecurity.moduleDescSemanticScan', domain_verify: 'emailSecurity.moduleDescDomainVerify', identity_anomaly: 'emailSecurity.moduleDescIdentityAnomaly',
   transaction_correlation: 'emailSecurity.moduleDescTransactionCorrelation', av_eml_scan: 'emailSecurity.moduleDescAvEmlScan', av_attach_scan: 'emailSecurity.moduleDescAvAttachScan', yara_scan: 'emailSecurity.moduleDescYaraScan',
   sandbox_scan: 'emailSecurity.moduleDescSandboxScan',
+  url_sandbox_scan: 'emailSecurity.moduleDescUrlSandboxScan',
+  process_sandbox_scan: 'emailSecurity.moduleDescProcessSandboxScan',
 }
 
 // ════════════════════════════════════════════════════
@@ -118,7 +121,7 @@ function EngNode({ eng, y, enabled, total, sel, onClick }: {
   )
 }
 
-function FusNode() {
+function FusNode({ strategy }: { strategy: string }) {
   const { t } = useTranslation()
   const r = 42
   const pts = Array.from({ length: 6 }, (_, i) => {
@@ -131,12 +134,12 @@ function FusNode() {
       <polygon points={pts} className="pg-node-bg" stroke="url(#fusionGrad)" strokeWidth={1.5} />
       <circle cx={FX} cy={FY} r={22} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={1} strokeDasharray="4 3" className="pg-fusion-ring" />
       <circle cx={FX} cy={FY} r={8} fill="url(#fusionGrad)" opacity={0.6} className="pg-fusion-core" />
-      {ENGINES.slice(0, 6).map((eng, i) => {
-        const a = (Math.PI / 3) * i - Math.PI / 2, dr = r + 8
+      {ENGINES.map((eng, i) => {
+        const a = (Math.PI * 2 / ENGINES.length) * i - Math.PI / 2, dr = r + 8
         return <circle key={eng.id} cx={FX + dr * Math.cos(a)} cy={FY + dr * Math.sin(a)} r={3.5} fill={eng.color} opacity={0.7} />
       })}
       <text x={FX} y={FY - 4} textAnchor="middle" fill="rgba(255,255,255,0.85)" fontSize={10} fontWeight={600} className="pg-label">{t('emailSecurity.dsFusion')}</text>
-      <text x={FX} y={FY + 9} textAnchor="middle" fill="rgba(255,255,255,0.35)" fontSize={8} className="pg-mono">{t('emailSecurity.murphyCombination')}</text>
+      <text x={FX} y={FY + 9} textAnchor="middle" fill="rgba(255,255,255,0.35)" fontSize={8} className="pg-mono">{strategy.slice(0, 18)}</text>
     </g>
   )
 }
@@ -181,7 +184,7 @@ function Panel({ eng, modules, engineStatus, pipelineConfig, contentRules, onClo
           const enabled = cfg?.enabled ?? true
           const mode = cfg?.mode ?? 'builtin'
           const rate = metric ? metric.success_rate * 100 : -1
-          const dep = mod.depends_on.find(moduleId => moduleId !== '*')
+          const dependencies = [...new Set(mod.depends_on.filter(moduleId => moduleId !== '*'))]
           const isContentScan = mod.id === 'content_scan'
 
           return (
@@ -197,7 +200,9 @@ function Panel({ eng, modules, engineStatus, pipelineConfig, contentRules, onClo
                 </label>
               </div>
               <p className="pg-panel-mod-desc">{MODULE_DESC_KEYS[mod.id] ? t(MODULE_DESC_KEYS[mod.id]) : mod.description}</p>
-              {dep && <div className="pg-panel-dep">{t('emailSecurity.dependsOn', { module: MODULE_NAME_KEYS[dep] ? t(MODULE_NAME_KEYS[dep]) : dep })}</div>}
+              {dependencies.length > 0 && <div className="pg-panel-dep">{t('emailSecurity.dependsOn', {
+                module: dependencies.map(dep => MODULE_NAME_KEYS[dep] ? t(MODULE_NAME_KEYS[dep]) : dep).join(', '),
+              })}</div>}
 
               {/* Performance stats */}
               {metric && metric.total_runs > 0 && (
@@ -210,7 +215,7 @@ function Panel({ eng, modules, engineStatus, pipelineConfig, contentRules, onClo
                   </div>
                   <div className="pg-panel-nums">
                     <span style={{ color: rate >= 95 ? '#10b981' : rate >= 80 ? '#f59e0b' : '#f43f5e' }}>{rate.toFixed(0)}%</span>
-                    <span>{metric.avg_duration_ms.toFixed(0)}ms</span>
+                    <span>{formatDurationMs(metric.avg_duration_ms)}</span>
                     <span>{metric.total_runs.toLocaleString()} {t('emailSecurity.times')}</span>
                     {metric.failure_count > 0 && <span style={{ color: '#f43f5e' }}>{metric.failure_count} {t('emailSecurity.failures')}</span>}
                   </div>
@@ -308,6 +313,10 @@ export default function PipelineGraph({ modules, engineStatus, pipelineConfig, c
 
   const total = engineStatus?.total_sessions_processed ?? 0
   const rate = engineStatus?.sessions_per_second ?? 0
+  const configuredAggregation = pipelineConfig?.verdict_config?.aggregation
+  const fusionStrategy = !configuredAggregation || ['ds_murphy', 'clustered_ds_v1', 'legacy_ds_murphy'].includes(configuredAggregation)
+    ? 'clustered_ds_v2'
+    : configuredAggregation
 
   return (
     <div className="pg-wrap" onClick={() => setSel(null)}>
@@ -339,7 +348,7 @@ export default function PipelineGraph({ modules, engineStatus, pipelineConfig, c
           <EngNode key={eng.id} eng={eng} y={eY(i, engines.length)} enabled={enabledCount(eng)} total={eng.modules.length}
             sel={sel === eng.id} onClick={() => setSel(prev => prev === eng.id ? null : eng.id)} />
         ))}
-        <FusNode />
+        <FusNode strategy={fusionStrategy} />
         <VerdNode />
       </svg>
 

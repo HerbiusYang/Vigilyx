@@ -3,14 +3,15 @@
 mod detectors;
 pub(crate) mod html_utils;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::Utc;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, RwLock};
 
 use aho_corasick::AhoCorasick;
 use unicode_normalization::UnicodeNormalization;
@@ -18,8 +19,7 @@ use unicode_normalization::UnicodeNormalization;
 use crate::context::SecurityContext;
 use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
-use crate::module_data::module_data;
-
+use crate::module_data::{ModuleDataRegistry, module_data, module_data_epoch};
 // KeywordsoverrideType (For API Andfirst Use)
 
 /// KeywordsClassificationofoverrideConfiguration
@@ -272,48 +272,205 @@ fn fold_traditional_chinese(ch: char) -> char {
     }
 }
 
-/// Unicode NFKC + charactersCleanup + common confusable folding.
+// ── CJK 变体折叠 (形近字/特殊异体字/拆字拼接/同音词级变体) ─────────────
+//
+// 数据来自 module data 注册表的三个结构化列表 (seed: zh_confusable_char_map /
+// zh_compound_char_map / zh_variant_phrase_map), 覆盖三类关键词逃逸:
+//   1. 形近/生僻异体字替换: 荩块 → 尽快, 支付寳 → 支付宝;
+//   2. 拆字拼接:           马扁 → 骗, 钅艮 → 银, 车专帐 → 转账 (链式);
+//   3. 常用同音字换词:      威信 → 微信, 转帐 → 转账, 网袋 → 网贷。
+//
+// 种子条目经过硬性校验: 任何 `from` 不与种子关键词冲突, 因此 PhraseMatcher
+// 的原始模式侧不受影响; 关键词侧 (normalize_keyword_entry) 与正文走同一个
+// normalize_text, 双侧折叠一致。表随 module data epoch 热重建, 缓存模式与
+// crate::matcher::PhraseMatcher 相同: 快路径一次 Acquire 原子读。
+
+/// 单字映射 + 多字序列映射 (键长限定 2..=3, 覆盖现有全部种子条目)。
+#[derive(Default)]
+struct ZhVariantFold {
+    chars: HashMap<char, char>,
+    seqs2: HashMap<(char, char), String>,
+    seqs3: HashMap<(char, char, char), String>,
+}
+
+impl ZhVariantFold {
+    fn from_registry(registry: &ModuleDataRegistry) -> Self {
+        let mut fold = Self::default();
+        let mut add_entry = |from: &str, to: &str| {
+            let from_chars: Vec<char> = from.chars().collect();
+            let to_chars: Vec<char> = to.chars().collect();
+            match from_chars.as_slice() {
+                [c] if to_chars.len() == 1 => {
+                    fold.chars.insert(*c, to_chars[0]);
+                }
+                [a, b] => {
+                    fold.seqs2.insert((*a, *b), to.to_string());
+                }
+                [a, b, c] => {
+                    fold.seqs3.insert((*a, *b, *c), to.to_string());
+                }
+                _ => {
+                    tracing::warn!(from, to, "zh variant fold entry skipped: unsupported arity");
+                }
+            }
+        };
+        for list in [
+            "zh_confusable_char_map",
+            "zh_compound_char_map",
+            "zh_variant_phrase_map",
+        ] {
+            let Some(items) = registry.get_structured(list) else {
+                continue;
+            };
+            let Some(arr) = items.as_array() else {
+                continue;
+            };
+            for item in arr {
+                let (Some(from), Some(to)) = (
+                    item.get("from").and_then(serde_json::Value::as_str),
+                    item.get("to").and_then(serde_json::Value::as_str),
+                ) else {
+                    continue;
+                };
+                add_entry(from, to);
+            }
+        }
+        fold
+    }
+
+    fn is_empty(&self) -> bool {
+        self.chars.is_empty() && self.seqs2.is_empty() && self.seqs3.is_empty()
+    }
+
+    fn seq_lookup(&self, window: &[char]) -> Option<&str> {
+        match window {
+            [a, b] => self.seqs2.get(&(*a, *b)).map(String::as_str),
+            [a, b, c] => self.seqs3.get(&(*a, *b, *c)).map(String::as_str),
+            _ => None,
+        }
+    }
+}
+
+static ZH_VARIANT_FOLD: OnceLock<RwLock<Arc<ZhVariantFold>>> = OnceLock::new();
+static ZH_VARIANT_FOLD_EPOCH: AtomicU64 = AtomicU64::new(u64::MAX);
+
+fn zh_variant_fold() -> Arc<ZhVariantFold> {
+    let epoch = module_data_epoch();
+    let cell = ZH_VARIANT_FOLD.get_or_init(|| RwLock::new(Arc::new(ZhVariantFold::default())));
+    if ZH_VARIANT_FOLD_EPOCH.load(Ordering::Acquire) == epoch {
+        return Arc::clone(&cell.read().expect("zh variant fold lock poisoned"));
+    }
+    let mut guard = cell.write().expect("zh variant fold lock poisoned");
+    if ZH_VARIANT_FOLD_EPOCH.load(Ordering::Acquire) != epoch {
+        let fold = Arc::new(ZhVariantFold::from_registry(&module_data()));
+        ZH_VARIANT_FOLD_EPOCH.store(epoch, Ordering::Release);
+        *guard = Arc::clone(&fold);
+    }
+    drop(guard);
+    Arc::clone(&cell.read().expect("zh variant fold lock poisoned"))
+}
+
+/// 变体折叠: 先逐字映射, 再做多字 leftmost-longest 替换, 迭代至不动点
+/// (上限 3 轮: 覆盖 车专帐 → 转帐 → 转账 的链式折叠, 同时防御可能振荡
+/// 的坏数据)。列表缺失/为空时原样返回, 行为与未引入该机制前完全一致。
+fn apply_zh_variant_folds(text: &str, fold: &ZhVariantFold) -> String {
+    if fold.is_empty() {
+        return text.to_string();
+    }
+    let mut current: Vec<char> = text
+        .chars()
+        .map(|c| fold.chars.get(&c).copied().unwrap_or(c))
+        .collect();
+    for _ in 0..3 {
+        let mut next = String::with_capacity(current.len() * 3);
+        let mut i = 0;
+        let mut matched = false;
+        while i < current.len() {
+            let mut hit = false;
+            for len in (2..=3usize).rev() {
+                if i + len > current.len() {
+                    continue;
+                }
+                if let Some(repl) = fold.seq_lookup(&current[i..i + len]) {
+                    next.push_str(repl);
+                    i += len;
+                    hit = true;
+                    matched = true;
+                    break;
+                }
+            }
+            if !hit {
+                next.push(current[i]);
+                i += 1;
+            }
+        }
+        if !matched {
+            return next;
+        }
+        current = next.chars().collect();
+    }
+    current.into_iter().collect()
+}
+
+/// Zero-width, bidi, filler, combining and variation characters that render
+/// invisibly (or merge into the previous glyph) and break keyword contiguity.
+/// Shared with offset-preserving views that cannot run full normalization.
+pub(crate) fn is_invisible_format_char(c: char) -> bool {
+    matches!(
+        c,
+        '\u{200B}' | // Zero Width Space
+        '\u{200C}' | // Zero Width Non-Joiner
+        '\u{200D}' | // Zero Width Joiner
+        '\u{200E}' | // Left-to-Right Mark
+        '\u{200F}' | // Right-to-Left Mark
+        '\u{2060}' | // Word Joiner
+        '\u{FFF9}'..='\u{FFFB}' | // Interlinear annotation anchor, separator, and terminator
+        '\u{FEFF}' | // BOM / Zero Width No-Break Space
+        '\u{00AD}' | // Soft Hyphen
+        '\u{061C}' | // Arabic Letter Mark
+        '\u{2028}' | // Line Separator
+        '\u{2029}' | // Paragraph Separator
+        // Combining marks: visually identical to the base character
+        // ("账\u{301}户" renders as "账户") but break every substring
+        // keyword scan. NFKC keeps them, so strip the whole blocks.
+        // U+0300..=U+036F also covers U+034F (Combining Grapheme Joiner).
+        '\u{0300}'..='\u{036F}' | // Combining Diacritical Marks
+        '\u{1AB0}'..='\u{1AFF}' | // Combining Diacritical Marks Extended
+        '\u{20D0}'..='\u{20FF}' | // Combining Diacritical Marks for Symbols
+        // The following are NOT folded by NFKC; attackers use them to
+        // break keyword contiguity.
+        '\u{115F}' | // Hangul Choseong Filler
+        '\u{1160}' | // Hangul Jungseong Filler
+        '\u{180E}' | // Mongolian Vowel Separator
+        '\u{202A}'..='\u{202E}' | // Bidi embedding / override controls
+        '\u{2066}'..='\u{2069}' | // Bidi isolate controls
+        '\u{2800}' | // Braille Pattern Blank
+        '\u{3164}' | // Hangul Filler
+        '\u{FE00}'..='\u{FE0F}' | // Variation Selectors
+        '\u{E0000}'..='\u{E007F}' | // Tags block
+        '\u{E0100}'..='\u{E01EF}' // Variation Selectors Supplement
+    )
+}
+
+/// Unicode compatibility decomposition + charactersCleanup + common
+/// confusable folding. NFKD is intentional here: it turns Latin diacritics
+/// such as `vérify`/`àccount` into the ASCII security vocabulary after the
+/// combining-mark filter, while retaining the existing full-width and mixed-
+/// script behavior.
 /// Prevents zero-width, full-width, separator, and mixed-script keyword evasion.
 pub(crate) fn normalize_text(text: &str) -> String {
-    text.nfkc()
+    let stage: String = text
+        .nfkd()
         .map(fold_common_confusable)
         .map(fold_traditional_chinese)
-        .filter(|c| {
-            !matches!(
-                c,
-                '\u{200B}' | // Zero Width Space
-            '\u{200C}' | // Zero Width Non-Joiner
-            '\u{200D}' | // Zero Width Joiner
-            '\u{200E}' | // Left-to-Right Mark
-            '\u{200F}' | // Right-to-Left Mark
-            '\u{2060}' | // Word Joiner
-            '\u{FEFF}' | // BOM / Zero Width No-Break Space
-            '\u{00AD}' | // Soft Hyphen
-            '\u{061C}' | // Arabic Letter Mark
-            '\u{2028}' | // Line Separator
-            '\u{2029}' | // Paragraph Separator
-            // Combining marks: visually identical to the base character
-            // ("账\u{301}户" renders as "账户") but break every substring
-            // keyword scan. NFKC keeps them, so strip the whole blocks.
-            // U+0300..=U+036F also covers U+034F (Combining Grapheme Joiner).
-            '\u{0300}'..='\u{036F}' | // Combining Diacritical Marks
-            '\u{1AB0}'..='\u{1AFF}' | // Combining Diacritical Marks Extended
-            '\u{20D0}'..='\u{20FF}' | // Combining Diacritical Marks for Symbols
-            // The following are NOT folded by NFKC; attackers use them to
-            // break keyword contiguity.
-            '\u{115F}' | // Hangul Choseong Filler
-            '\u{1160}' | // Hangul Jungseong Filler
-            '\u{180E}' | // Mongolian Vowel Separator
-            '\u{202A}'..='\u{202E}' | // Bidi embedding / override controls
-            '\u{2066}'..='\u{2069}' | // Bidi isolate controls
-            '\u{2800}' | // Braille Pattern Blank
-            '\u{3164}' | // Hangul Filler
-            '\u{FE00}'..='\u{FE0F}' | // Variation Selectors
-            '\u{E0000}'..='\u{E007F}' | // Tags block
-            '\u{E0100}'..='\u{E01EF}' // Variation Selectors Supplement
-            )
-        })
-        .collect::<String>()
+        .filter(|c| !is_invisible_format_char(*c))
+        .collect();
+    // Recompose after filtering marks: NFKD decomposes Hangul syllables into
+    // Jamo, while NFC restores those syllables after Latin accents have been
+    // removed.  This keeps Korean keyword seeds byte/character compatible.
+    let recomposed: String = stage.nfc().collect();
+    // 不可见字符已剔除后再做变体折叠, 零宽插入的拆字 (马\u{200B}扁) 也能拼回。
+    apply_zh_variant_folds(&recomposed, &zh_variant_fold())
 }
 
 /// body 关键词扫描的单段窗口 (B3): 头/中/尾各 512 KiB, 与 NLP 三段采样对齐。
@@ -467,9 +624,7 @@ impl KeywordSet {
                 matched[self.compact_cjk_owner[mat.pattern().as_usize()]] = true;
             }
         }
-        if allow_latin_compact
-            && let Some(ac) = &self.compact_latin
-        {
+        if allow_latin_compact && let Some(ac) = &self.compact_latin {
             for mat in ac.find_overlapping_iter(compact.as_bytes()) {
                 matched[self.compact_latin_owner[mat.pattern().as_usize()]] = true;
             }
@@ -973,9 +1128,10 @@ fn is_cjk_character(ch: char) -> bool {
 }
 
 /// Build the compact view used for anti-obfuscation matching.  A single
-/// hidden Latin character inserted between two CJK characters is not part of
-/// the rendered phrase (`账<span style="display:none">x</span>户`), so discard
-/// that exact shape while retaining ordinary ASCII words and digits.
+/// A short ASCII run inserted between two CJK characters is not part of the
+/// rendered phrase (`账<span style="display:none">kq</span>户`), so discard
+/// runs of up to two characters while retaining ordinary ASCII words and
+/// digits.
 ///
 /// O(n) implementation (B3): the previous per-character backward/forward
 /// `find` scan was O(n²) on inputs with long non-alphanumeric runs (e.g.
@@ -983,36 +1139,93 @@ fn is_cjk_character(ch: char) -> bool {
 /// visible characters are precomputed with one forward and one reverse pass.
 pub(super) fn compact_detection_view(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
-    let mut prev_visible: Vec<Option<char>> = vec![None; chars.len()];
-    let mut last: Option<char> = None;
+    let mut prev_visible: Vec<Option<usize>> = vec![None; chars.len()];
+    let mut last: Option<usize> = None;
     for (index, ch) in chars.iter().copied().enumerate() {
         prev_visible[index] = last;
         if ch.is_alphanumeric() {
-            last = Some(ch);
+            last = Some(index);
         }
     }
-    let mut next_visible: Vec<Option<char>> = vec![None; chars.len()];
-    let mut next: Option<char> = None;
+    let mut next_visible: Vec<Option<usize>> = vec![None; chars.len()];
+    let mut next: Option<usize> = None;
     for index in (0..chars.len()).rev() {
         next_visible[index] = next;
         if chars[index].is_alphanumeric() {
-            next = Some(chars[index]);
+            next = Some(index);
+        }
+    }
+
+    let mut hidden_separator = vec![false; chars.len()];
+    for index in 0..chars.len() {
+        if !chars[index].is_ascii_alphanumeric()
+            || !prev_visible[index].is_some_and(|prev| is_cjk_character(chars[prev]))
+        {
+            continue;
+        }
+
+        let mut run_len = 1usize;
+        let mut cursor = next_visible[index];
+        while let Some(next_index) = cursor {
+            if !chars[next_index].is_ascii_alphanumeric() {
+                break;
+            }
+            run_len += 1;
+            cursor = next_visible[next_index];
+        }
+
+        if run_len <= 2 && cursor.is_some_and(|next_index| is_cjk_character(chars[next_index])) {
+            hidden_separator[index] = true;
+            let mut run_cursor = next_visible[index];
+            while let Some(run_index) = run_cursor {
+                if !chars[run_index].is_ascii_alphanumeric() {
+                    break;
+                }
+                hidden_separator[run_index] = true;
+                run_cursor = next_visible[run_index];
+            }
         }
     }
 
     let mut compact = String::with_capacity(text.len());
     for (index, ch) in chars.iter().copied().enumerate() {
-        if !ch.is_alphanumeric() {
+        if !ch.is_alphanumeric() || hidden_separator[index] {
             continue;
         }
-        let hidden_separator = ch.is_ascii_alphanumeric()
-            && prev_visible[index].is_some_and(is_cjk_character)
-            && next_visible[index].is_some_and(is_cjk_character);
-        if !hidden_separator {
-            compact.push(ch);
-        }
+        compact.push(ch);
     }
     compact
+}
+
+/// Return true only when an account-change reference is paired with an
+/// explicit recipient-facing payment redirection in the same semantic span.
+/// Account labels such as "收款账户" and "new account" are common in routine
+/// statements, portal instructions, and payment-status notices; they are not
+/// evidence that a recipient is being told to replace a trusted destination.
+pub(crate) fn has_explicit_payment_change_redirect(text: &str) -> bool {
+    let data = module_data();
+    let terms = data.get_list("payment_change_explicit_redirect_terms");
+    text.split(['\n', '\r', '。', '！', '？', '!', '?', ';', '；'])
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .any(|segment| {
+            let normalized = normalize_text(&segment.to_lowercase());
+            let compact = compact_detection_view(&normalized);
+            terms.iter().any(|term| {
+                let normalized_term = normalize_text(&term.to_lowercase());
+                if normalized_term.is_empty() {
+                    return false;
+                }
+                if normalized.contains(&normalized_term) {
+                    return true;
+                }
+                let compact_term: String = normalized_term
+                    .chars()
+                    .filter(|ch| ch.is_alphanumeric())
+                    .collect();
+                !compact_term.is_empty() && compact.contains(&compact_term)
+            })
+        })
 }
 
 /// Return true only for a strongly letter-spaced Latin shape such as
@@ -1062,7 +1275,7 @@ pub(super) fn scan_text(
     let text_lower = normalize_text(&text.to_lowercase());
 
     // Compact second-pass view: per-character spacing breaks direct substring
-    // matching, while CSS-hidden single letters can sit between CJK characters.
+    // matching, while CSS-hidden short ASCII runs can sit between CJK chars.
     // Latin compaction is enabled only for a strongly letter-spaced shape.
     let compact_text: Option<String> = {
         let chars: Vec<char> = text_lower.chars().collect();
@@ -1071,6 +1284,11 @@ pub(super) fn scan_text(
             is_cjk_character(window[0])
                 && window[1].is_ascii_alphanumeric()
                 && is_cjk_character(window[2])
+        }) || chars.windows(4).any(|window| {
+            is_cjk_character(window[0])
+                && window[1].is_ascii_alphanumeric()
+                && window[2].is_ascii_alphanumeric()
+                && is_cjk_character(window[3])
         });
         if has_spacing || has_cjk_hidden_separator {
             Some(compact_detection_view(&text_lower))
@@ -1093,6 +1311,17 @@ pub(super) fn scan_text(
             phishing_set.find_compact_hits(compact, allow_latin_compact, &phishing_hits);
         phishing_hits.extend(spaced_hits);
     }
+    // Verification-code nouns are common in security notices, incident
+    // reports and training material. Keep them actionable only when the same
+    // local window actually asks the recipient to reveal, forward or submit
+    // the value. This preserves the lure while preventing quoted case studies
+    // from manufacturing phishing intent.
+    phishing_hits.retain(|phrase| {
+        is_actionable_phishing_phrase(&text_lower, phrase)
+            || compact_text
+                .as_deref()
+                .is_some_and(|compact| is_actionable_phishing_phrase(compact, phrase))
+    });
     if !phishing_hits.is_empty() {
         let count = phishing_hits.len();
         score += (count as f64 * 0.08).min(0.5);
@@ -1142,9 +1371,13 @@ pub(super) fn scan_text(
         let spaced_hits = bec_set.find_compact_hits(compact, allow_latin_compact, &bec_hits);
         bec_hits.extend(spaced_hits);
     }
-    let (strong_bec_hits, weak_bec_hits): (Vec<String>, Vec<String>) = bec_hits
-        .into_iter()
-        .partition(|phrase| is_strong_bec_phrase(phrase));
+    let (strong_bec_hits, weak_bec_hits): (Vec<String>, Vec<String>) =
+        bec_hits.into_iter().partition(|phrase| {
+            is_actionable_bec_phrase(&text_lower, phrase)
+                || compact_text
+                    .as_deref()
+                    .is_some_and(|compact| is_actionable_bec_phrase(compact, phrase))
+        });
     if !strong_bec_hits.is_empty() {
         let count = strong_bec_hits.len();
         score += (count as f64 * 0.15).min(0.5);
@@ -1276,14 +1509,132 @@ pub(crate) fn is_strong_bec_phrase(phrase: &str) -> bool {
     cjk_count >= 4
 }
 
+/// Some phishing-shaped nouns are observations until a nearby recipient
+/// request turns them into behavior. The managed list intentionally contains
+/// only exact generic terms; stronger phrases such as "把验证码发给我" remain
+/// actionable without this qualifier.
+fn phishing_phrase_requires_local_context(phrase: &str) -> bool {
+    let normalized = normalize_text(&phrase.to_lowercase());
+    module_data().contains("body_context_required_phishing_keywords", &normalized)
+}
+
+fn has_local_phishing_request_context(text: &str, phrase: &str) -> bool {
+    let normalized_phrase = normalize_text(&phrase.to_lowercase());
+    let text_chars: Vec<char> = text.chars().collect();
+    let phrase_chars: Vec<char> = normalized_phrase.chars().collect();
+    if phrase_chars.is_empty() || phrase_chars.len() > text_chars.len() {
+        return false;
+    }
+
+    text_chars
+        .windows(phrase_chars.len())
+        .enumerate()
+        .filter(|(_, window)| *window == phrase_chars.as_slice())
+        .any(|(start, _)| {
+            let context_start = start.saturating_sub(32);
+            let context_end = (start + phrase_chars.len() + 32).min(text_chars.len());
+            let context: String = text_chars[context_start..context_end].iter().collect();
+            module_data()
+                .get_list("body_phishing_request_markers")
+                .iter()
+                .any(|marker| context.contains(&normalize_text(&marker.to_lowercase())))
+        })
+}
+
+fn is_actionable_phishing_phrase(text: &str, phrase: &str) -> bool {
+    !phishing_phrase_requires_local_context(phrase)
+        || has_local_phishing_request_context(text, phrase)
+}
+
+/// Transfer-action phrases can occur as neutral nouns in contracts, legal
+/// reviews and accounting policy. They remain in the managed BEC vocabulary,
+/// but need nearby pressure/authority/secrecy language before they are strong
+/// enough to create a standalone BEC category.
+fn bec_phrase_requires_local_context(phrase: &str) -> bool {
+    let normalized = normalize_text(&phrase.to_lowercase());
+    module_data().contains("bec_context_required_phrases", &normalized)
+}
+
+fn bec_phrase_is_always_weak(phrase: &str) -> bool {
+    let normalized = normalize_text(&phrase.to_lowercase());
+    module_data().contains("bec_always_weak_phrases", &normalized)
+}
+
+fn has_local_bec_pressure_context(text: &str, phrase: &str) -> bool {
+    let normalized_phrase = normalize_text(&phrase.to_lowercase());
+    let text_chars: Vec<char> = text.chars().collect();
+    let phrase_chars: Vec<char> = normalized_phrase.chars().collect();
+    if phrase_chars.is_empty() || phrase_chars.len() > text_chars.len() {
+        return false;
+    }
+
+    text_chars
+        .windows(phrase_chars.len())
+        .enumerate()
+        .filter(|(_, window)| *window == phrase_chars.as_slice())
+        .any(|(start, _)| {
+            let context_start = start.saturating_sub(24);
+            let context_end = (start + phrase_chars.len() + 24).min(text_chars.len());
+            let context: String = text_chars[context_start..context_end].iter().collect();
+            module_data()
+                .get_list("bec_local_pressure_markers")
+                .iter()
+                .any(|marker| context.contains(&normalize_text(&marker.to_lowercase())))
+        })
+}
+
+/// Apply the runtime-managed BEC strength policy to one local text window.
+/// Body and attachment scanners deliberately share this function so a phrase
+/// cannot become strong merely because it was extracted from a document.
+pub(crate) fn is_actionable_bec_phrase(text: &str, phrase: &str) -> bool {
+    is_strong_bec_phrase(phrase)
+        && !bec_phrase_is_always_weak(phrase)
+        && (!bec_phrase_requires_local_context(phrase)
+            || has_local_bec_pressure_context(text, phrase))
+}
+
 /// patterns 在列表构建期 (normalize_keyword_entry / collect_normalized_keywords)
 /// 已归一化为小写折叠形式, text_lower 同样是 normalize_text(to_lowercase)
 /// 产物 —— 此处不再逐模式重复归一化 (B3: 原实现每次调用对数千模式重新
 /// normalize, 是纯浪费的 CPU 热点)。
-fn matches_any_pattern(text_lower: &str, patterns: &[String]) -> bool {
-    patterns
+struct AnyPatternMatcher {
+    always_hit: bool,
+    automaton: Option<AhoCorasick>,
+}
+
+fn any_pattern_matcher(patterns: &[String]) -> Arc<AnyPatternMatcher> {
+    static CACHE: Mutex<Vec<(Vec<String>, Arc<AnyPatternMatcher>)>> = Mutex::new(Vec::new());
+    let mut guard = CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some((_, matcher)) = guard.iter().find(|(cached, _)| cached == patterns) {
+        return Arc::clone(matcher);
+    }
+
+    let non_empty = patterns
         .iter()
-        .any(|pattern| text_lower.contains(pattern.as_str()))
+        .filter(|pattern| !pattern.is_empty())
+        .cloned()
+        .collect::<Vec<_>>();
+    let matcher = Arc::new(AnyPatternMatcher {
+        always_hit: non_empty.len() != patterns.len(),
+        automaton: (!non_empty.is_empty())
+            .then(|| AhoCorasick::new(non_empty).expect("valid pattern list")),
+    });
+    if guard.len() >= 8 {
+        guard.clear();
+    }
+    guard.push((patterns.to_vec(), Arc::clone(&matcher)));
+    matcher
+}
+
+fn matches_any_pattern(text_lower: &str, patterns: &[String]) -> bool {
+    let matcher = any_pattern_matcher(patterns);
+    matcher.always_hit
+        || matcher
+            .automaton
+            .as_ref()
+            .is_some_and(|automaton| automaton.is_match(text_lower.as_bytes()))
 }
 
 fn split_first_paragraph(text: &str) -> (&str, &str) {
@@ -1292,6 +1643,65 @@ fn split_first_paragraph(text: &str) -> (&str, &str) {
     } else {
         (text, "")
     }
+}
+
+/// Remove a notice only when it is a genuine prefix of the visible text.
+///
+/// HTML mail commonly places a gateway banner and the attacker body in one
+/// visual paragraph (`</p><div>` becomes spaces in `strip_html_tags`).  The
+/// old paragraph-level deletion treated the whole flattened paragraph as the
+/// banner and discarded the body with it.  Find the shortest raw prefix whose
+/// normalized form contains the configured pattern, then return the original
+/// slice after that prefix so the following content remains scannable.
+fn strip_notice_prefix<'a>(text: &'a str, patterns: &[String]) -> Option<&'a str> {
+    let trimmed = text.trim_start();
+    let normalized = normalize_text(&trimmed.to_lowercase());
+    let pattern = patterns
+        .iter()
+        .filter(|pattern| !pattern.is_empty())
+        .filter(|pattern| normalized.starts_with(pattern.as_str()))
+        .max_by_key(|pattern| pattern.chars().count())?;
+
+    // The predicate is monotonic as the raw prefix grows, so a binary search
+    // avoids normalizing every O(n) prefix (which would make long banners
+    // quadratic).  Boundaries are UTF-8 safe and the final entry is `len`.
+    let mut boundaries = Vec::with_capacity(trimmed.chars().count() + 1);
+    boundaries.push(0);
+    boundaries.extend(trimmed.char_indices().skip(1).map(|(offset, _)| offset));
+    boundaries.push(trimmed.len());
+    let mut low = 0usize;
+    let mut high = boundaries.len();
+    while low < high {
+        let mid = low + (high - low) / 2;
+        let candidate = normalize_text(&trimmed[..boundaries[mid]].to_lowercase());
+        if candidate.starts_with(pattern.as_str()) {
+            high = mid;
+        } else {
+            low = mid + 1;
+        }
+    }
+    let end = (low < boundaries.len()).then_some(boundaries[low])?;
+
+    Some(trimmed[end..].trim_start_matches(|ch: char| {
+        ch.is_whitespace()
+            || matches!(
+                ch,
+                '。' | '．'
+                    | '.'
+                    | '，'
+                    | ','
+                    | '：'
+                    | ':'
+                    | '；'
+                    | ';'
+                    | '！'
+                    | '!'
+                    | '？'
+                    | '?'
+                    | '、'
+                    | '|'
+            )
+    }))
 }
 
 fn strip_leading_notice_sections<'a>(text: &'a str, patterns: &[String]) -> (&'a str, bool) {
@@ -1305,9 +1715,21 @@ fn strip_leading_notice_sections<'a>(text: &'a str, patterns: &[String]) -> (&'a
 
         let (paragraph, rest) = split_first_paragraph(remaining);
         let paragraph_lower = normalize_text(&paragraph.to_lowercase());
-        if matches_any_pattern(&paragraph_lower, patterns) {
+        if paragraph.trim_start().is_empty() || !matches_any_pattern(&paragraph_lower, patterns) {
+            break;
+        }
+
+        // A paragraph-delimited banner is a standalone notice block, so keep
+        // the established behavior of dropping the whole block (including
+        // its explanatory continuation).  Without a paragraph boundary—most
+        // notably after HTML tags have been flattened—remove only the prefix;
+        // this is the case that must not erase the attacker body.
+        if !rest.is_empty() && strip_notice_prefix(paragraph, patterns).is_some() {
             removed_any = true;
             remaining = rest.trim_start();
+        } else if let Some(after_prefix) = strip_notice_prefix(remaining, patterns) {
+            removed_any = true;
+            remaining = after_prefix;
         } else {
             break;
         }
@@ -1323,34 +1745,15 @@ fn separator_lead_len(line: &str) -> usize {
         .count()
 }
 
-/// Well-known signature / disclaimer phrasing. Only tails dominated by these
-/// markers may be truncated; anything else must stay visible to scanning.
-/// Simplified/traditional variants are paired per project convention.
-const FOOTER_DISCLAIMER_MARKERS: &[&str] = &[
-    "声明：",
-    "聲明：",
-    "声明:",
-    "免责声明",
-    "免責聲明",
-    "保密",
-    "机密",
-    "機密",
-    "指定收件人",
-    "disclaimer",
-    "confidential",
-    "intended recipient",
-    "unauthorized use",
-    "privileged",
-];
-
 /// True when the leading portion of `text` looks like a known
 /// signature/disclaimer block rather than attacker-controlled prose.
 fn contains_disclaimer_marker(text: &str) -> bool {
     let probe: String = text.chars().take(200).collect();
     let probe = normalize_text(&probe.to_lowercase());
-    FOOTER_DISCLAIMER_MARKERS
+    module_data()
+        .get_list("footer_disclaimer_markers")
         .iter()
-        .any(|marker| probe.contains(marker))
+        .any(|marker| probe.contains(&normalize_text(&marker.to_lowercase())))
 }
 
 /// Maximum characters allowed after a disclaimer marker for a line to count
@@ -1364,13 +1767,17 @@ const DISCLAIMER_LINE_MAX_TRAILING: usize = 40;
 /// and get the whole remainder cleared from the keyword scan.
 fn is_disclaimer_line(line: &str) -> bool {
     let normalized = normalize_text(&line.to_lowercase());
-    FOOTER_DISCLAIMER_MARKERS.iter().any(|marker| {
-        let Some(pos) = normalized.find(marker) else {
-            return false;
-        };
-        let after = &normalized[pos + marker.len()..];
-        after.chars().count() < DISCLAIMER_LINE_MAX_TRAILING
-    })
+    module_data()
+        .get_list("footer_disclaimer_markers")
+        .iter()
+        .any(|marker| {
+            let marker = normalize_text(&marker.to_lowercase());
+            let Some(pos) = normalized.find(&marker) else {
+                return false;
+            };
+            let after = &normalized[pos + marker.len()..];
+            after.chars().count() < DISCLAIMER_LINE_MAX_TRAILING
+        })
 }
 
 /// Hard cap on how much text after a "____"-style separator line is retained
@@ -1527,7 +1934,16 @@ impl SecurityModule for ContentScanModule {
         let start = Instant::now();
         let mut evidence = Vec::new();
         let mut categories = Vec::new();
+        let mut qualified_compounds = Vec::new();
+        let mut qualified_threat_actions = Vec::new();
         let mut total_score: f64 = 0.0;
+
+        // Keep legitimate completed password/account notices on the
+        // transactional classification axis.  The detector itself remains
+        // gated by a no-attachment/no-untrusted-link negative control.
+        if detectors::looks_like_benign_account_notice(ctx, None) {
+            categories.push("transactional_notice".to_string());
+        }
 
         // Step 1: Gateway banner detection
         detectors::detect_gateway_banner(
@@ -1570,6 +1986,7 @@ impl SecurityModule for ContentScanModule {
             &mut total_score,
             &mut categories,
             &mut evidence,
+            &mut qualified_threat_actions,
         );
 
         // Step 4: Image-only phishing detection
@@ -1579,9 +1996,85 @@ impl SecurityModule for ContentScanModule {
             &mut categories,
             &mut evidence,
         );
+        detectors::detect_image_alt_lure(ctx, &mut total_score, &mut categories, &mut evidence);
+        detectors::detect_embedded_image_qr_lure(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+        detectors::detect_embedded_iframe_auth_lure(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
 
         // Step 5: Account security phishing (body + subject fallback)
         detectors::detect_account_security_phishing(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+            &mut qualified_threat_actions,
+        );
+
+        // Text-only QR invoices and HTML command-paste pages need their own
+        // structural compound; generic QR/script observations are not enough
+        // to reach the inline quarantine boundary.
+        detectors::detect_text_qr_lure(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+        detectors::detect_clickfix_lure(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+        detectors::detect_protocol_execution_lure(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+        detectors::detect_hidden_external_link_lure(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+        detectors::detect_missing_attachment_delivery_lure(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+        detectors::detect_base_href_lure(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+        detectors::detect_social_trust_lure(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+        detectors::detect_targeted_recruitment_lure(
             ctx,
             body_for_cross.as_deref(),
             &mut total_score,
@@ -1598,8 +2091,61 @@ impl SecurityModule for ContentScanModule {
             &mut evidence,
         );
 
-        // Step 7: Invoice-spam / fake invoice solicitation detection
-        detectors::detect_invoice_spam(
+        // Step 6b: no-IOC social-engineering compounds. Each requires an
+        // external sender and multiple independent semantic dimensions;
+        // single procurement, document, reply, or biometric terms stay safe.
+        detectors::detect_gift_card_bec(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+        detectors::detect_reply_pii_harvest(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+        detectors::detect_external_pii_collection(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+            &mut qualified_compounds,
+        );
+        detectors::detect_reply_to_social_engineering_lure(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+        detectors::detect_external_identity_consent_lure(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+        detectors::detect_external_action_link_lure(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+            &mut qualified_compounds,
+        );
+        detectors::detect_external_internal_service_link_lure(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+        detectors::detect_external_sensitive_exfiltration(
             ctx,
             body_for_cross.as_deref(),
             &mut total_score,
@@ -1607,8 +2153,80 @@ impl SecurityModule for ContentScanModule {
             &mut evidence,
         );
 
+        // Step 7: Invoice-spam / fake invoice solicitation detection
+        detectors::detect_invoice_spam(
+            ctx,
+            body_for_cross.as_deref(),
+            &self.gateway_banner_patterns,
+            &self.notice_banner_patterns,
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+
+        // Step 7b: adult lure + Chinese dot-word destination bypass
+        detectors::detect_obfuscated_domain_lure(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+
+        // Step 7c: adult-content observation/lure recovery for ordinary URLs
+        // and explicit contact actions not represented by the dot-word rule.
+        detectors::detect_adult_content_lure(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+
+        // Step 7d: forged reply-thread + bare cross-domain action target.
+        // Self-asserted reply headers remain non-actionable unless every
+        // business/action/destination qualifier is present.
+        detectors::detect_reply_thread_destination_lure(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+
+        // Step 7e: explicit confirmation action + confusable common public
+        // suffix. Both body semantics and the retained bare target are
+        // required, providing an independent social-engineering signal for
+        // the link-layer homograph finding.
+        detectors::detect_confusable_suffix_action_lure(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+
+        // Step 7f: generic inducement and successfully parsed empty-body
+        // observations. These remain non-threat evidence unless another
+        // detector supplies an independent target or action.
+        detectors::detect_generic_lure_observation(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut categories,
+            &mut evidence,
+        );
+        detectors::detect_empty_body_observation(ctx, &mut categories, &mut evidence);
+
         // Step 8: Payment-account-change BEC detection
         detectors::detect_payment_change_bec(
+            ctx,
+            body_for_cross.as_deref(),
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+            &mut qualified_threat_actions,
+        );
+        detectors::detect_external_bec_compound(
             ctx,
             body_for_cross.as_deref(),
             &mut total_score,
@@ -1651,19 +2269,52 @@ impl SecurityModule for ContentScanModule {
 
         let duration_ms = start.elapsed().as_millis() as u64;
         let threat_level = ThreatLevel::from_score(total_score);
+        // Preserve bounded weak observations before the legacy Safe return
+        // drops sub-threshold categories and evidence. This snapshot is
+        // telemetry for relational V2 only; it never contributes score/BPA.
+        let observation_snapshot = vigilyx_core::security::relational::ObservationSnapshot::capture(
+            &categories,
+            evidence.len(),
+        );
 
         let dlp_only = !categories.is_empty()
             && categories
                 .iter()
                 .all(|category| category.starts_with("dlp_"));
-        if threat_level == ThreatLevel::Safe && !dlp_only {
-            return Ok(ModuleResult::safe_analyzed(
+        let has_image_layout_observation = categories
+            .iter()
+            .any(|category| category == "image_only_layout_observed");
+        let has_content_observation = categories.iter().any(|category| {
+            matches!(
+                category.as_str(),
+                "adult_content_observed"
+                    | "generic_lure_observed"
+                    | "empty_body_observed"
+                    | "html_visual_text_uncovered"
+                    | "html_external_visual_unresolved"
+                    | "transactional_notice"
+                    | "gateway_spam_classified"
+            )
+        });
+        if threat_level == ThreatLevel::Safe
+            && !dlp_only
+            && !has_image_layout_observation
+            && !has_content_observation
+        {
+            let mut result = ModuleResult::safe_analyzed(
                 &self.meta.id,
                 &self.meta.name,
                 self.meta.pillar,
-                "bodyContent未Found威胁",
+                "Body content scan found no actionable threat evidence",
                 duration_ms,
-            ));
+            );
+            result.details = serde_json::json!({
+                "score": total_score,
+                "observation_snapshot": observation_snapshot,
+                "qualified_compounds": qualified_compounds,
+                "qualified_threat_actions": qualified_threat_actions,
+            });
+            return Ok(result);
         }
 
         Ok(ModuleResult {
@@ -1675,12 +2326,12 @@ impl SecurityModule for ContentScanModule {
             categories,
             summary: if threat_level == ThreatLevel::Safe {
                 format!(
-                    "Body content contains {} informational sensitive-data finding(s); no threat evidence",
+                    "Body content contains {} observation(s); no actionable threat evidence",
                     evidence.len()
                 )
             } else {
                 format!(
-                    "bodyContentdetectFound {} Item证According to，综合评分 {:.2}",
+                    "Body content detected {} finding(s); score {:.2}",
                     evidence.len(),
                     total_score
                 )
@@ -1688,6 +2339,9 @@ impl SecurityModule for ContentScanModule {
             evidence,
             details: serde_json::json!({
                 "score": total_score,
+                "observation_snapshot": observation_snapshot,
+                "qualified_compounds": qualified_compounds,
+                "qualified_threat_actions": qualified_threat_actions,
             }),
             duration_ms,
             analyzed_at: Utc::now(),

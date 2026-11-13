@@ -130,21 +130,21 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
     hero: {
       badge: "Open source · Rust core · Mirror + Inline",
       stats: [
-        { value: "D-S + Murphy", label: "evidence fusion" },
+        { value: "Clustered D-S", label: "evidence fusion" },
         { value: "5-state HMM", label: "BEC phase tracking" },
         { value: "Hawkes", label: "self-exciting time series" },
       ],
       terminal: {
         title: "verdict.jsonl",
         lines: [
-          { kind: "muted", text: "# live verdict stream — mirror mode" },
-          { kind: "prompt", text: "vigilyx tail --stream verdicts" },
+          { kind: "muted", text: "# illustrative verdicts — mirror mode" },
+          { kind: "prompt", text: "# console/API output illustration" },
           { kind: "out", text: "[SMTP] mail-01 → alice@corp · subject: \"Invoice 2026-Q1\"" },
           { kind: "ok", text: "verdict: safe    score 0.08  modules 0/15  dlp ok" },
           { kind: "out", text: "[SMTP] mx-2 → bob@corp · subject: \"Account verification\"" },
           { kind: "warn", text: "verdict: medium  score 0.52  modules 4/15  nlp phishing=0.71" },
           { kind: "bad", text: "verdict: high    score 0.81  ioc=sender_ip content=urgency yara=phish_01" },
-          { kind: "muted", text: "# action: quarantined · session replayable · explain trail saved" },
+          { kind: "muted", text: "# action: alert/audit · mirror mode cannot quarantine" },
         ],
       },
       pipeline: {
@@ -170,7 +170,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           label: "Mirror deployment",
           title: "Passive analysis next to the mail system",
           body:
-            "Vigilyx receives a copy of the traffic from a mirror / SPAN port. It reconstructs SMTP, POP3, IMAP, and webmail sessions and produces verdicts after delivery. The mail path is never touched, so the detection stack can never block mail.",
+            "Vigilyx receives mirrored traffic and reconstructs inspectable SMTP and configured HTTP/Webmail content. POP3/IMAP currently provide metadata and coverage signals. Encrypted or incomplete payloads remain coverage gaps; mirror mode alerts and audits after delivery.",
           points: [
             "Zero-touch — no change to MX records or SMTP routing",
             "Verdicts are advisory: alert, audit, replay, tune",
@@ -182,7 +182,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           label: "MTA deployment",
           title: "Inline SMTP proxy that enforces before delivery",
           body:
-            "Vigilyx runs as an SMTP relay in front of the final mail server. Every message goes through it, is inspected synchronously, and is then accepted, quarantined, or rejected before delivery. Typical inline verdict <2s, with configurable fail-open.",
+            "Vigilyx relays SMTP through an embedded engine. Policy can relay, quarantine, reject, or return a temporary failure. The default inline timeout is 8 seconds; fail-open is optional and outbound DLP still applies to relay candidates.",
           points: [
             "Enforcing — mail actually does not reach users until Vigilyx decides",
             "Accept / quarantine / reject, with fail-open safety valve",
@@ -225,14 +225,14 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
         "The current project already covers the pieces teams usually end up stitching together manually: parsers, verdict fusion, content controls, operational workflows, and a UI that can actually be used for review.",
       cards: [
         {
-          value: "20",
+          value: "29",
           label: "default pipeline entries",
-          body: "Detection stages for content, identity, link, attachment, YARA, DLP, and verdicting.",
+          body: "Configured entries include verdict and conditional integrations; SMTP outbound DLP is a separate policy path.",
           icon: "pipeline",
         },
         {
-          value: "30",
-          label: "DLP patterns",
+          value: "DLP",
+          label: "pattern families",
           body: "Data-security inspection paths for sensitive content and suspicious transfer behavior.",
           icon: "shield",
         },
@@ -258,7 +258,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
       cards: [
         {
           title: "AI-assisted semantic review",
-          body: "Optional NLP analysis for phishing semantics, intent, and persuasion patterns — runs on pure CPU hosts with no GPU required, and can optionally call external LLMs (Claude / OpenAI) for analyst review.",
+          body: "Local rules can run beside an optional CPU ONNX intent model in shadow mode. Explicit scored mode replaces the local semantic path. Python NLP/OCR and external LLM review are separate optional integrations.",
         },
         {
           title: "Core pipeline still stands alone",
@@ -272,32 +272,32 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
     },
     highlights: {
       kicker: "Under the hood",
-      title: "Four things most email-security products do not actually have.",
+      title: "Four implementation paths you can inspect.",
       body:
-        "These are not marketing bullet points — each one is implemented in the repository and you can read it. We are only listing the detection surfaces where Vigilyx is meaningfully different from a typical mail gateway, not the table-stakes features every product in this space already ships.",
+        "Explore the source for evidence fusion, temporal diagnostics, AitM indicators, and HTML pixel analysis. Available evidence depends on capture coverage and runtime configuration.",
       cards: [
         {
           tag: "Evidence fusion",
-          title: "Murphy-corrected D-S fusion with Copula discount",
+          title: "Clustered D-S fusion with causal-source deduplication",
           body:
-            "Not weighted-sum scoring, not a black-box classifier. A proper Dempster–Shafer implementation with Murphy's weighted-average correction and Copula-based discount for correlated detectors — so same-family signals do not amplify each other, and every verdict is explainable per-engine. Built in Rust, not a wrapper around someone else's commercial library.",
-          why: "Avoids Zadeh's paradox, handles correlated evidence explicitly, and the verdict trail is explainable per-engine instead of a single mystery score.",
-          source: "crates/vigilyx-engine/src/fusion/murphy.rs",
+            "The default ds_murphy configuration dispatches to clustered_ds_v1: evidence clusters support scenario scaling and diagnostics, while stable causal keys deduplicate repeated source views. Each unique source is fused once. Copula correction belongs to the explicitly selected legacy_ds_murphy strategy.",
+          why: "Preserves evidence provenance and limits repeated votes from the same causal source; cluster summaries are diagnostic.",
+          source: "crates/vigilyx-engine/src/pipeline/verdict/clustered_ds_v1.rs",
         },
         {
           tag: "Temporal layer",
           title: "Full temporal layer on top of single-email verdicts",
           body:
             "CUSUM for shift detection, dual-speed EWMA for baseline drift, a marked Hawkes self-excitation process for attack-campaign tempo, a 5-state HMM that infers BEC / ATO phases (recon → trust-build → execute → exfil), plus a directed communication graph. Most mail-security products judge each email in isolation — this one doesn't.",
-          why: "Catches campaigns, slow-burn BEC, and exfil bursts that look fine one email at a time.",
+          why: "Provides cross-message diagnostics for analyst review; inferred phases are not proof of an attack.",
           source: "crates/vigilyx-engine/src/temporal/",
         },
         {
           tag: "AitM phishing",
           title: "Reverse-proxy MFA-bypass kit fingerprinting",
           body:
-            "Fingerprints the MFA-bypass tooling actually used in the wild from 2024 on — Tycoon2FA, EvilProxy, Evilginx3 — via DGA hosting on Cloudflare Workers / Pages, OAuth redirect_uri mismatches, Turnstile CAPTCHA toolkit fingerprints, and Latin/Cyrillic mixed-script brand homographs. This class of phishing bypasses traditional link reputation and attachment scanning entirely.",
-          why: "The reverse-proxy phishing surface is invisible to classic URL-reputation and sandbox-on-link stacks.",
+            "Analyzes AitM-related clues such as hosted-platform URLs, OAuth redirect mismatches, MFA/CAPTCHA language, and mixed-script brand domains. A hosting platform or CAPTCHA alone does not establish a phishing toolkit.",
+          why: "Adds contextual clues for reviewing reverse-proxy phishing alongside other evidence.",
           source: "crates/vigilyx-engine/src/modules/aitm_detect.rs",
         },
         {
@@ -305,7 +305,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           title: "HTML pixel art & table-cell QR detection",
           body:
             "Attackers \"draw\" QR codes with <table> bgcolor cells, or assemble phishing text from floated <div>s with background-color — specifically to bypass OCR and sandbox image scanning. Vigilyx reconstructs the bitmap from DOM structure and decodes with rqrr. Unicode block-character ASCII-art QR codes in body text are decoded through the same pipeline.",
-          why: "The usual \"scan images with OCR\" toolchain does not see these at all.",
+          why: "Complements image scanning with DOM-derived graphical evidence.",
           source: "crates/vigilyx-engine/src/modules/html_pixel_art.rs",
         },
       ],
@@ -314,10 +314,10 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
       kicker: "Layer by layer",
       title: "Open one email. Watch every layer flag it.",
       body:
-        "Pick a scenario. Scroll. Each line is a real detection Vigilyx runs against the captured email — from wire bytes to fused verdict. No stock imagery, no composite screenshot: the exact fields your engineers would see in a SOC triage.",
+        "These fictional scenarios illustrate analysis concepts. Fields, scores, and histories are illustrative, not captured output or benchmark results. Mail threat verdicts and HTTP data-security incidents use separate paths; final actions depend on mode and policy.",
       selectorLabel: "Scenario",
       captureLabel: "captured",
-      verdictLabel: "Fused verdict",
+      verdictLabel: "Illustrative result",
       actionLabelPrefix: "Action",
       hoverHint: "Hover any line to see why Vigilyx flagged it.",
       layerNames: ["Sniffer", "Parser", "Engine", "Fusion", "Temporal"],
@@ -360,8 +360,8 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           ],
           verdict: {
             level: "HIGH",
-            score: "0.87",
-            action: "Quarantine + notify finance approver via SOAR playbook",
+            score: "0.81",
+            action: "MTA: policy quarantine; mirror: alert and audit",
             className: "verdict-high",
           },
         },
@@ -374,7 +374,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
               label: "L1 · pcap",
               content: "HTTPS 104.21.48.11  ·  SNI=m1crosoft-auth.workers.dev",
               tag: "CLOUDFLARE DGA",
-              why: "Hostname matches the Tycoon2FA / EvilProxy DGA pattern on Cloudflare Workers. Registered < 72h ago.",
+              why: "A hosted-platform URL is a contextual clue; it does not establish domain age or identify a toolkit.",
             },
             {
               label: "L2 · link_scan",
@@ -390,40 +390,40 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
             },
             {
               label: "L4 · aitm_detect",
-              content: "turnstile_fingerprint=true  kit=\"Tycoon2FA\"",
+              content: "MFA/CAPTCHA context + URL observations",
               tag: "TYCOON2FA",
-              why: "Turnstile CAPTCHA toolkit fingerprint + URI shape matches published Tycoon2FA samples. Reverse-proxy MFA bypass.",
+              why: "MFA/CAPTCHA and URL clues need independent corroboration; they do not prove toolkit identity.",
             },
             {
               label: "L5 · fusion",
-              content: "D-S belief=0.91  ·  Copula discount applied to 2 link-family engines",
-              tag: "D-S + COPULA",
-              why: "Murphy-corrected D-S fuses 4 independent detectors. Copula discount stops link_scan + aitm_detect from double-counting.",
+              content: "clustered_ds_v1 · repeated causal source views deduplicated",
+              tag: "CLUSTERED D-S",
+              why: "The default path deduplicates stable causal keys before fusion; cluster summaries do not cast extra votes.",
             },
           ],
           verdict: {
             level: "CRITICAL",
             score: "0.94",
-            action: "Block delivery  +  rewrite links  +  alert SOC on-call",
+            action: "MTA: policy rejection; mirror: alert and audit",
             className: "verdict-critical",
           },
         },
         {
           id: "exfil",
           name: "Webmail data exfil",
-          headline: "HTTP POST /webmail/compose.jsp  ·  internal user → external @gmail.com  ·  Thu 18:22",
+          headline: "HTTP POST /webmail/compose.jsp · sensitive self-send illustration",
           lines: [
             {
               label: "L1 · pcap",
-              content: "HTTP mirror  ·  multipart/form-data  ·  3 attachments, 42 MB total",
-              tag: "OFF-HOURS",
-              why: "Capture time is outside the user's baseline working hours (09:00–18:00) by dual-EWMA.",
+              content: "HTTP mirror · configured Webmail host · multipart/form-data",
+              tag: "HTTP CAPTURE",
+              why: "HTTP capture requires configured Webmail targets and inspectable traffic.",
             },
             {
               label: "L2 · webmail",
               content: "reassembled body extracted from compose.jsp action payload",
               tag: "WEBMAIL RECON",
-              why: "data_security/webmail.rs rebuilds the outbound MIME object from the HTTP multipart — not just URL filtering.",
+              why: "Coremail field extraction and bounded multipart/file inspection provide HTTP data-security inputs.",
             },
             {
               label: "L3 · dlp",
@@ -433,21 +433,21 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
             },
             {
               label: "L4 · recipient",
-              content: "to=user+backup@gmail.com  first_external_send=true",
-              tag: "FIRST EXTERNAL",
-              why: "Communication graph: user has never emailed this external domain. Classic pre-resignation exfil pattern.",
+              content: "from=user@corp · to=user@corp · sensitive content",
+              tag: "SELF-SEND",
+              why: "Self-send analysis compares sender and recipient; sensitive-data findings require analyst review.",
             },
             {
-              label: "L5 · temporal",
-              content: "Hawkes intensity λ(t) spiked 6.1× baseline over last 48h",
-              tag: "HAWKES BURST",
-              why: "Marked Hawkes self-excitation shows a staging burst: 14 large uploads in 48h vs. weekly average of 2.",
+              label: "L5 · coverage",
+              content: "bounded scan · explicit incomplete-inspection reasons",
+              tag: "DLP COVERAGE",
+              why: "Size and time limits bound DLP inspection. An incomplete scan is not a clean result.",
             },
           ],
           verdict: {
             level: "HIGH",
             score: "0.82",
-            action: "Hold transfer  +  open DLP case  +  notify data-owner",
+            action: "Record HTTP DLP incident for review; mirror cannot block",
             className: "verdict-high",
           },
         },
@@ -456,22 +456,25 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
     cta: {
       title: "Built for engineering-led security teams. Just clone it.",
       body:
-        "If you'd rather own the detection logic than rent a black box, Vigilyx is ready to run. Three commands, mirror or inline on the same engine. AGPL-3.0, no telemetry, no license server.",
+        "Configure a remote build host, initialize it, review runtime settings, then deploy mirror or MTA mode. AGPL-3.0, with no network license requirement. HTTPS requires a TLS entry point.",
       terminal: {
         title: "deploy.sh",
         commands: [
           { kind: "comment", text: "# 1. Clone the repo" },
           { kind: "prompt", text: "git clone https://github.com/HerbiusYang/Vigilyx.git" },
           { kind: "prompt", text: "cd Vigilyx" },
-          { kind: "comment", text: "# 2. Initialize remote build environment (one-off)" },
+          { kind: "comment", text: "# 2. Configure the remote host" },
+          { kind: "prompt", text: "cp deploy.conf.example deploy.conf && chmod 600 deploy.conf" },
+          { kind: "prompt", text: "$EDITOR deploy.conf" },
           { kind: "prompt", text: "./deploy.sh --init" },
-          { kind: "comment", text: "# 3. Open the dashboard" },
-          { kind: "hint", text: "→ https://localhost:8088" },
+          { kind: "comment", text: "# 3. Review remote deploy/docker/.env, then deploy" },
+          { kind: "prompt", text: "./deploy.sh" },
+          { kind: "hint", text: "→ HTTP: remote 127.0.0.1:8088 via SSH tunnel; HTTPS: configured host :443" },
         ],
         copyLabel: "Copy",
         copiedLabel: "Copied",
         copyPayload:
-          "git clone https://github.com/HerbiusYang/Vigilyx.git\ncd Vigilyx\n./deploy.sh --init",
+          "git clone https://github.com/HerbiusYang/Vigilyx.git\ncd Vigilyx\ncp deploy.conf.example deploy.conf\nchmod 600 deploy.conf\n$EDITOR deploy.conf\n./deploy.sh --init\n# Review remote deploy/docker/.env before continuing\n./deploy.sh",
       },
       actions: [
         { text: "Read Quick Start", href: "/docs/quick-start", primary: true },
@@ -487,21 +490,21 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
     hero: {
       badge: "开源 · Rust 核心 · 旁路 + Inline",
       stats: [
-        { value: "D-S + Murphy", label: "证据融合" },
+        { value: "Clustered D-S", label: "证据融合" },
         { value: "5 状态 HMM", label: "BEC 阶段推断" },
         { value: "Hawkes", label: "自激时序建模" },
       ],
       terminal: {
         title: "verdict.jsonl",
         lines: [
-          { kind: "muted", text: "# 实时 verdict 数据流 · 旁路镜像模式" },
-          { kind: "prompt", text: "vigilyx tail --stream verdicts" },
+          { kind: "muted", text: "# 判定示意 · 旁路镜像模式" },
+          { kind: "prompt", text: "# 控制台/API 输出示意" },
           { kind: "out", text: "[SMTP] mail-01 → alice@corp · 主题：\"发票 2026-Q1\"" },
           { kind: "ok", text: "verdict: safe    score 0.08  modules 0/15  dlp ok" },
           { kind: "out", text: "[SMTP] mx-2 → bob@corp · 主题：\"账户验证提醒\"" },
           { kind: "warn", text: "verdict: medium  score 0.52  modules 4/15  nlp phishing=0.71" },
           { kind: "bad", text: "verdict: high    score 0.81  ioc=sender_ip content=urgency yara=phish_01" },
-          { kind: "muted", text: "# action: 已隔离 · 会话可复盘 · 解释链已保存" },
+          { kind: "muted", text: "# 处置：告警与审计 · 旁路不能隔离" },
         ],
       },
       pipeline: {
@@ -527,7 +530,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           label: "旁路镜像部署",
           title: "部署在邮件系统旁边做被动分析",
           body:
-            "Vigilyx 从镜像口 / SPAN 口收到一份流量副本，重组 SMTP、POP3、IMAP 与 Webmail 会话，在投递完成后产出判定。邮件路径完全不动，检测栈永远不会阻塞邮件。",
+            "Vigilyx 从镜像口 / SPAN 口接收流量，重建可检查的 SMTP 及已配置的 HTTP/Webmail 内容。POP3/IMAP 当前只提供元数据和覆盖信号；加密或不完整载荷保留覆盖缺口，旁路只做事后告警与审计。",
           points: [
             "零侵入——不需要改 MX、不需要调整 SMTP 路由",
             "判定是事后参考：告警、审计、复盘、调参",
@@ -539,7 +542,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           label: "MTA 代理部署",
           title: "作为 Inline SMTP 代理在投递前做决策",
           body:
-            "Vigilyx 作为 SMTP 中继放在最终邮件服务器之前，每一封邮件都会经过它做同步检查，然后在投递前被 accept / quarantine / reject。Inline 判定典型耗时 <2s，支持可配置的 fail-open。",
+            "Vigilyx 通过内嵌引擎检查 SMTP 中继邮件，按策略转发、隔离、拒收或返回临时失败。默认 inline 超时为 8 秒，可配置 fail-open；待中继邮件仍受出站 DLP 约束。",
           points: [
             "真正的拦截——邮件在 Vigilyx 决策之前不会到达用户",
             "支持 accept / quarantine / reject，并配 fail-open 作为安全阀",
@@ -582,14 +585,14 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
         "当前项目已经覆盖了很多团队通常需要自己拼起来的部分：解析器、证据融合、内容控制、处置流以及一套能实际用于分析的前端界面。",
       cards: [
         {
-          value: "20",
+          value: "29",
           label: "默认 pipeline entries",
-          body: "覆盖内容、身份、链接、附件、YARA、DLP 与 verdict 的检测链路。",
+          body: "含 verdict 与条件集成的配置条目；SMTP 出站 DLP 是独立策略路径。",
           icon: "pipeline",
         },
         {
-          value: "30",
-          label: "DLP patterns",
+          value: "DLP",
+          label: "敏感数据模式族",
           body: "覆盖敏感内容识别与可疑传输行为的数据安全检测路径。",
           icon: "shield",
         },
@@ -615,7 +618,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
       cards: [
         {
           title: "AI 辅助语义分析",
-          body: "可选接入 NLP 检测，用于钓鱼语义、意图分析和说服话术识别——可以在纯 CPU 环境运行，不依赖 GPU，也可以接入外部大模型（Claude / OpenAI）辅助分析师复核。",
+          body: "本地规则可与可选 CPU ONNX 意图模型影子诊断并行；显式计分模式会替代本地语义路径。Python NLP/OCR 与外部大模型复核是单独的可选集成。",
         },
         {
           title: "核心系统不依赖 AI",
@@ -629,32 +632,32 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
     },
     highlights: {
       kicker: "真正不一样的地方",
-      title: "四件邮件安全产品里几乎看不到的实现。",
+      title: "四条可以直接查看源码的实现路径。",
       body:
-        "下面这些不是市场话术，而是仓库里真实存在的代码。我们只列那些相对于主流邮件网关确实不一样的检测面，而不是所有邮件安全产品都已经做的基础功能。",
+        "证据融合、时序诊断、AitM 线索和 HTML 像素分析均可查看源码；实际证据取决于采集覆盖和运行配置。",
       cards: [
         {
           tag: "证据融合",
-          title: "Murphy 修正的 D-S 证据融合",
+          title: "按因果来源去重的 clustered D-S 融合",
           body:
-            "不是加权求和，不是黑盒分类器。一套正经的 Dempster–Shafer 实现，配合 Murphy 权重平均修正和针对相关检测器的 Copula 折扣——同源同族的信号不会互相放大，每个 verdict 都能按引擎单独解释。用 Rust 自研，不是继承某个商用库。",
-          why: "规避 Zadeh 悖论，显式建模相关性，每个引擎的判定贡献都可以单独解释，而不是只给一个神秘分数。",
-          source: "crates/vigilyx-engine/src/fusion/murphy.rs",
+            "默认 ds_murphy 配置映射到 clustered_ds_v1：证据簇用于场景缩放和诊断，稳定因果键用于去重同一来源的重复视图，每个唯一来源只融合一次。Copula 修正仅属于显式选择的 legacy_ds_murphy 策略。",
+          why: "保留证据来源，限制同一因果来源重复投票；证据簇摘要只用于诊断。",
+          source: "crates/vigilyx-engine/src/pipeline/verdict/clustered_ds_v1.rs",
         },
         {
           tag: "时序层",
           title: "在单邮件判定之上的完整时序层",
           body:
             "CUSUM 累计漂移检测、双速 EWMA 基线漂移、带 mark 的 Hawkes 自激过程建模攻击期节奏、5 状态 HMM 推断 BEC / ATO 阶段（侦察 → 建信 → 执行 → 收割），还叠了一张有向通信图。多数邮件安全产品按「单封邮件」孤立判定——这套不是。",
-          why: "可以抓到那些「单封看起来没问题」的营销期攻击、慢速 BEC 和外泄 burst。",
+          why: "提供跨邮件诊断供分析师复核；推断阶段不等于已证实攻击。",
           source: "crates/vigilyx-engine/src/temporal/",
         },
         {
           tag: "AitM 钓鱼",
           title: "AitM 反向代理钓鱼检测",
           body:
-            "专门针对 2024 年起实战里真在用的 MFA 绕过工具（Tycoon2FA、EvilProxy、Evilginx3）做指纹——Cloudflare Workers / Pages 上的 DGA 托管、OAuth redirect_uri 不一致、Turnstile 验证码工具包指纹、Latin-Cyrillic 同形异义做品牌冒充。这一类钓鱼会完全绕过传统链接信誉库和附件扫描。",
-          why: "反向代理钓鱼这条攻击面对传统「URL 信誉 + 沙箱扫链接」的栈完全不可见。",
+            "分析托管平台 URL、OAuth 回调不一致、MFA/验证码话术及混合字符品牌域名等 AitM 线索。仅凭托管平台或 CAPTCHA 不能确认钓鱼工具包。",
+          why: "为反向代理钓鱼复核补充上下文，并与其他证据共同判断。",
           source: "crates/vigilyx-engine/src/modules/aitm_detect.rs",
         },
         {
@@ -662,7 +665,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           title: "HTML 像素艺术与表格二维码检测",
           body:
             "攻击者用 <table> 的 bgcolor 单元格「画」二维码、用浮动 <div> 配 background-color 拼出钓鱼文字——就是为了绕开 OCR 和沙箱图片扫描。Vigilyx 从 DOM 结构重建位图并用 rqrr 解码。正文里用 Unicode 方块字符拼出来的 ASCII-art 二维码用同一套流程解出来。",
-          why: "常见「用 OCR 扫图片」的工具链一个都看不到这些东西。",
+          why: "以 DOM 图形证据补充图片扫描。",
           source: "crates/vigilyx-engine/src/modules/html_pixel_art.rs",
         },
       ],
@@ -671,10 +674,10 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
       kicker: "逐层剖析",
       title: "打开一封邮件，看每一层是怎么识破它的。",
       body:
-        "选一个场景，然后滚。每一行都是 Vigilyx 对这封捕获邮件真实跑过的一个检测——从网线字节一路到融合 verdict。不是示意图、不是拼接截图：就是你工程师在 SOC 排查时会看到的实际字段。",
+        "以下虚构场景仅用于解释分析概念；字段、分数和历史均为示意，并非抓包输出或实测结果。邮件威胁 verdict 与 HTTP 数据安全事件使用独立路径，最终动作取决于模式和策略。",
       selectorLabel: "场景",
       captureLabel: "已捕获",
-      verdictLabel: "融合判定",
+      verdictLabel: "分析结果示意",
       actionLabelPrefix: "处置",
       hoverHint: "悬停任意一行可查看为什么被标记。",
       layerNames: ["抓包层", "解析层", "检测层", "融合层", "时序层"],
@@ -717,8 +720,8 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           ],
           verdict: {
             level: "HIGH",
-            score: "0.87",
-            action: "隔离 + 通过 SOAR playbook 通知财务审批人",
+            score: "0.81",
+            action: "MTA 按策略隔离；旁路告警与审计",
             className: "verdict-high",
           },
         },
@@ -731,7 +734,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
               label: "L1 · 抓包",
               content: "HTTPS 104.21.48.11  ·  SNI=m1crosoft-auth.workers.dev",
               tag: "CLOUDFLARE DGA",
-              why: "主机名命中 Tycoon2FA / EvilProxy 在 Cloudflare Workers 上的 DGA 模式。域名注册不到 72 小时。",
+              why: "托管平台 URL 是上下文线索，不能据此推断域名年龄或确认工具包。",
             },
             {
               label: "L2 · 链接扫描",
@@ -747,40 +750,40 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
             },
             {
               label: "L4 · AitM 检测",
-              content: "turnstile_fingerprint=true  kit=\"Tycoon2FA\"",
+              content: "MFA/CAPTCHA context + URL observations",
               tag: "TYCOON2FA",
-              why: "Turnstile 工具包指纹 + URI 形态和已公开的 Tycoon2FA 样本吻合。反向代理 MFA 绕过确定。",
+              why: "MFA/验证码及 URL 线索需要独立佐证，不能单独确认工具包身份。",
             },
             {
               label: "L5 · 融合",
-              content: "D-S belief=0.91  ·  2 个链接家族引擎被 Copula 折扣",
-              tag: "D-S + COPULA",
-              why: "Murphy 修正的 D-S 融合 4 个独立检测器；Copula 折扣避免 link_scan 和 aitm_detect 因同源而重复计分。",
+              content: "clustered_ds_v1 · 同因果来源视图已去重",
+              tag: "CLUSTERED D-S",
+              why: "默认路径先按稳定因果键去重再融合；证据簇摘要不额外投票。",
             },
           ],
           verdict: {
             level: "CRITICAL",
             score: "0.94",
-            action: "拦截投递  +  改写链接  +  告警 SOC on-call",
+            action: "MTA 按策略拒收；旁路告警与审计",
             className: "verdict-critical",
           },
         },
         {
           id: "exfil",
           name: "Webmail 数据外泄",
-          headline: "HTTP POST /webmail/compose.jsp  ·  内部员工 → 外部 @gmail.com  ·  周四 18:22",
+          headline: "HTTP POST /webmail/compose.jsp · 敏感内容自发送示意",
           lines: [
             {
               label: "L1 · 抓包",
-              content: "HTTP 镜像  ·  multipart/form-data  ·  3 个附件，42 MB 合计",
-              tag: "非工作时段",
-              why: "捕获时刻超出该用户的基线工作时段（09:00–18:00），双速 EWMA 偏差显著。",
+              content: "HTTP 镜像 · 已配置 Webmail 主机 · multipart/form-data",
+              tag: "HTTP 捕获",
+              why: "HTTP 捕获依赖已配置的 Webmail 目标和可检查流量。",
             },
             {
               label: "L2 · Webmail",
               content: "从 compose.jsp 的 action payload 中重组出发件 body",
               tag: "WEBMAIL 还原",
-              why: "data_security/webmail.rs 从 HTTP multipart 重建出站 MIME 对象——不是简单做 URL 过滤。",
+              why: "Coremail 字段抽取与有界 multipart/文件检查为 HTTP 数据安全提供输入。",
             },
             {
               label: "L3 · DLP",
@@ -790,21 +793,21 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
             },
             {
               label: "L4 · 收件人",
-              content: "to=user+backup@gmail.com  first_external_send=true",
-              tag: "首次外发",
-              why: "通信图：该员工从未给这个外部域名发过邮件。经典离职前外泄模式。",
+              content: "from=user@corp · to=user@corp · sensitive content",
+              tag: "自发送",
+              why: "自发送分析比较发件人与收件人，敏感数据命中需要结合业务复核。",
             },
             {
-              label: "L5 · 时序",
-              content: "Hawkes 强度 λ(t) 过去 48 小时冲高到基线的 6.1 倍",
-              tag: "HAWKES BURST",
-              why: "带 mark 的 Hawkes 自激过程捕捉到外泄阶段性 burst：48 小时内 14 次大文件上传，周均仅 2 次。",
+              label: "L5 · 覆盖",
+              content: "有界扫描 · 显式记录检查不完整原因",
+              tag: "DLP 覆盖",
+              why: "DLP 检查受大小和时间预算限制，不完整检查不能视为安全。",
             },
           ],
           verdict: {
             level: "HIGH",
             score: "0.82",
-            action: "阻断外发  +  建 DLP 工单  +  通知数据 owner",
+            action: "记录 HTTP DLP 事件供复核；旁路不能阻断",
             className: "verdict-high",
           },
         },
@@ -813,22 +816,25 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
     cta: {
       title: "给工程驱动的安全团队。直接 clone 就行。",
       body:
-        "如果你更想自己掌控检测逻辑、而不是租一个黑盒，Vigilyx 已经可以跑起来。三条命令，旁路镜像或 Inline MTA 同一套引擎。AGPL-3.0，不回传任何遥测，不需要联网授权。",
+        "配置远程构建主机并初始化，检查运行参数后部署旁路或 MTA。AGPL-3.0，无需联网授权；HTTPS 需另行配置 TLS 入口。",
       terminal: {
         title: "deploy.sh",
         commands: [
           { kind: "comment", text: "# 1. 拉取仓库" },
           { kind: "prompt", text: "git clone https://github.com/HerbiusYang/Vigilyx.git" },
           { kind: "prompt", text: "cd Vigilyx" },
-          { kind: "comment", text: "# 2. 初始化远程构建环境（一次性）" },
+          { kind: "comment", text: "# 2. 配置远程主机" },
+          { kind: "prompt", text: "cp deploy.conf.example deploy.conf && chmod 600 deploy.conf" },
+          { kind: "prompt", text: "$EDITOR deploy.conf" },
           { kind: "prompt", text: "./deploy.sh --init" },
-          { kind: "comment", text: "# 3. 打开控制台" },
-          { kind: "hint", text: "→ https://localhost:8088" },
+          { kind: "comment", text: "# 3. 检查远程 deploy/docker/.env，再部署" },
+          { kind: "prompt", text: "./deploy.sh" },
+          { kind: "hint", text: "→ HTTP: SSH 隧道访问远程 127.0.0.1:8088；HTTPS: 已配置的主机 :443" },
         ],
         copyLabel: "复制",
         copiedLabel: "已复制",
         copyPayload:
-          "git clone https://github.com/HerbiusYang/Vigilyx.git\ncd Vigilyx\n./deploy.sh --init",
+          "git clone https://github.com/HerbiusYang/Vigilyx.git\ncd Vigilyx\ncp deploy.conf.example deploy.conf\nchmod 600 deploy.conf\n$EDITOR deploy.conf\n./deploy.sh --init\n# 继续前检查远程 deploy/docker/.env\n./deploy.sh",
       },
       actions: [
         { text: "查看快速开始", href: "/zh/docs/quick-start", primary: true },

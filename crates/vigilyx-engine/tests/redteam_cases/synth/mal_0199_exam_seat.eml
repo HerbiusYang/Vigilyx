@@ -1,0 +1,11 @@
+From: =?utf-8?B?6ICD5Yqh?= <kw@exam-seat.example>
+To: student@mail.example
+Date: Fri, 04 Sep 2026 10:18:00 +0800
+Message-ID: <0008-b12@synth.example>
+Subject: 准考证打印入口变更
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+打印入口临时变更，请使用新入口（需重新登录）：
+https://kw-new.example.info/p
+（身份证号+报名号）

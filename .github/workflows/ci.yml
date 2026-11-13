@@ -22,6 +22,29 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  release-workflow-checks:
+    name: Deployment and release tooling
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Verify shipped validators without private files
+        run: python3 scripts/governance/self_test.py
+
+      - name: Verify deployment and release workflows
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+
+  test-fixture-privacy:
+    name: Test fixture privacy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Reject customer-like data in tests
+        run: python3 scripts/check_test_fixture_privacy.py
+
   dependency-audit:
     name: RustSec audit
     runs-on: ubuntu-latest
@@ -29,8 +52,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Install Rust 1.97.1 toolchain
-        uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # 1.97.1
+      - name: Install Rust 1.98.0 toolchain
+        uses: dtolnay/rust-toolchain@f8be11a05b1d4f3fcebe6410cc16743212b999b0 # 1.98.0
 
       - name: Install pinned cargo-audit
         run: cargo install cargo-audit --version 0.22.2 --locked
@@ -57,8 +80,8 @@ jobs:
             pkg-config \
             libssl-dev
 
-      - name: Install Rust 1.97.1 toolchain
-        uses: dtolnay/rust-toolchain@032958afbdc797a9164d3bc0b56325c1308924a5 # 1.97.1
+      - name: Install Rust 1.98.0 toolchain
+        uses: dtolnay/rust-toolchain@f8be11a05b1d4f3fcebe6410cc16743212b999b0 # 1.98.0
         with:
           components: rustfmt, clippy
 
@@ -90,6 +113,13 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace
+
+      - name: Run security fuzz/property and email linkage tests
+        run: |
+          cargo test -p vigilyx-api -- --test-threads=1
+          cargo test -p vigilyx-parser --test security_fuzz -- --test-threads=1
+          cargo test -p vigilyx-engine --test email_security_fuzz -- --test-threads=1
+          cargo test -p vigilyx-mta --test outbound_email_chain -- --test-threads=1
 
       - name: Build documentation
         run: cargo doc --no-deps --workspace

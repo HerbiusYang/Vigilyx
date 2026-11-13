@@ -1,0 +1,11 @@
+From: =?utf-8?B?5ZSu5ZCO5Lit5b+D?= <sh@shop-after.example>
+To: me@personal.example
+Date: Mon, 14 Sep 2026 09:10:00 +0800
+Message-ID: <0000-b21@synth.example>
+Subject: 售后单 AS8842 需短信核验
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您的换货申请需短信核验，验证通道：
+https://after-check.example.info/v
+（收货手机号+短信验证码）

@@ -1,0 +1,19 @@
+From: =?utf-8?B?5pWw5o2u5Lit5b+D?= <data@partner.example>
+To: analyst@corp.internal
+Date: Fri, 28 Aug 2026 14:22:00 +0800
+Message-ID: <0012-b5@synth.example>
+Subject: 8月经营数据（宏版透视）
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+打开时请启用宏以刷新透视表。
+--BS
+Content-Type: application/vnd.ms-excel.sheet.macroEnabled.12
+Content-Disposition: attachment; filename="经营数据.xlsm"
+Content-Transfer-Encoding: base64
+
+UEsDBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+--BS--

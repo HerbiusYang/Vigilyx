@@ -110,9 +110,13 @@ pub(super) fn aggregate_weighted_max(
     );
 
     SecurityVerdict {
+        inspection_coverage: Default::default(),
+        coverage_reasons: vec![],
         id: Uuid::new_v4(),
         session_id,
         threat_level: final_level,
+        threat_type: None,
+        classification: None,
         confidence: max_confidence,
         categories,
         summary,

@@ -1,0 +1,10 @@
+From: =?utf-8?B?5Lqn5ZOB5a6J5YWo?= <psrt@mail-product.example>
+To: it@corp.internal
+Date: Sat, 12 Sep 2026 08:31:00 +0800
+Message-ID: <0021-b20@synth.example>
+Subject: 安全公告：RCE 漏洞（官方更新通道）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+补丁已进入官方更新通道（管理控制台-更新），
+我们不会带外分发安装包；收到此类邮件请上报 PSRT。

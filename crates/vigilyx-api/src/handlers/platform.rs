@@ -14,7 +14,7 @@ use crate::{
     auth::{AuthenticatedUser, hash_password, validate_new_password},
     handlers::ApiResponse,
 };
-use vigilyx_db::PLATFORM_PERMISSIONS;
+use vigilyx_db::{ADMIN_ROLE_ID, AUDIT_ROLE_ID, PLATFORM_PERMISSIONS};
 
 const MAX_NAME_CHARS: usize = 64;
 const MAX_DESCRIPTION_CHARS: usize = 256;
@@ -90,6 +90,12 @@ fn validate_role_name(value: &str) -> Result<(), &'static str> {
     {
         return Err("角色名只能包含字母、数字、点、下划线或连字符");
     }
+    if ["admin", "audit"]
+        .iter()
+        .any(|reserved| value.eq_ignore_ascii_case(reserved))
+    {
+        return Err("admin 和 audit 是系统保留角色名");
+    }
     Ok(())
 }
 
@@ -113,7 +119,14 @@ fn validate_permissions(permissions: &[String]) -> Result<Vec<String>, &'static 
 /// Revoke one user's outstanding JWTs (SEC M-1: targeted revocation — a
 /// global counter here would let any permission change log out every
 /// operator).
-async fn revoke_user_sessions(state: &Arc<AppState>, user_id: &str) -> Result<(), &'static str> {
+async fn revoke_user_sessions(
+    state: &Arc<AppState>,
+    user_id: &str,
+    username: &str,
+) -> Result<(), &'static str> {
+    // The profile/role mutation may already have committed. Invalidate live
+    // sockets before a failing token-version write can leave cached access.
+    crate::websocket::invalidate_websocket_sessions_for_user(state, username);
     state
         .engine_db
         .bump_platform_user_token_version(user_id)
@@ -131,6 +144,9 @@ async fn revoke_role_sessions(state: &Arc<AppState>, role_id: &str) -> Result<()
         .bump_platform_role_token_versions(role_id)
         .await
         .map_err(|_| "会话撤销失败，请重试")?;
+    // The caller already invalidated the global WS epoch synchronously at
+    // role commit, including concurrently added members. No member-list read
+    // is needed to close sockets; this write revokes the role's REST tokens.
     Ok(())
 }
 
@@ -152,6 +168,70 @@ fn audit(
     );
 }
 
+fn is_platform_admin_role(role: &str) -> bool {
+    role == ADMIN_ROLE_ID
+}
+
+/// Platform-management permissions are an authority boundary, not ordinary
+/// delegated capabilities. Only the exact system admin role may grant, retain,
+/// or modify them.
+const PRIVILEGED_PLATFORM_PERMISSIONS: &[&str] = &[
+    "platform.manage",
+    "platform.users.manage",
+    "platform.roles.manage",
+];
+
+fn has_privileged_platform_permission(permissions: &[String]) -> bool {
+    permissions
+        .iter()
+        .any(|permission| PRIVILEGED_PLATFORM_PERMISSIONS.contains(&permission.as_str()))
+}
+
+fn privileged_platform_operation_allowed(
+    actor_role: &str,
+    current_permissions: &[String],
+    requested_permissions: &[String],
+) -> bool {
+    is_platform_admin_role(actor_role)
+        || (!has_privileged_platform_permission(current_permissions)
+            && !has_privileged_platform_permission(requested_permissions))
+}
+
+fn audit_operation_allowed(
+    _actor_role: &str,
+    current_role_id: Option<&str>,
+    requested_role_id: Option<&str>,
+) -> bool {
+    let touches_audit =
+        current_role_id == Some(AUDIT_ROLE_ID) || requested_role_id == Some(AUDIT_ROLE_ID);
+    // The audit approver must remain administratively independent. Provision,
+    // promotion, editing, and disabling are therefore out-of-band operations;
+    // no API role, including role-admin, may mutate role-audit membership.
+    !touches_audit
+}
+
+fn deny_non_admin_audit_operation(
+    state: &Arc<AppState>,
+    actor: &AuthenticatedUser,
+    operation: &'static str,
+    target_id: Option<String>,
+    detail: String,
+) -> Response {
+    audit(state, actor, operation, "platform_user", target_id, detail);
+    error_response(StatusCode::FORBIDDEN, "只有 admin 可以管理 audit 账户")
+}
+
+fn deny_non_admin_privileged_operation(
+    state: &Arc<AppState>,
+    actor: &AuthenticatedUser,
+    operation: &'static str,
+    target_id: Option<String>,
+    detail: String,
+) -> Response {
+    audit(state, actor, operation, "platform_rbac", target_id, detail);
+    error_response(StatusCode::FORBIDDEN, "只有 admin 可以授予或修改平台高权限")
+}
+
 pub async fn list_users(State(state): State<Arc<AppState>>) -> Response {
     match state.engine_db.list_platform_users().await {
         Ok(users) => ApiResponse::ok(users).into_response(),
@@ -167,6 +247,18 @@ pub async fn create_user(
     actor: AuthenticatedUser,
     Json(request): Json<CreateUserRequest>,
 ) -> Response {
+    if !audit_operation_allowed(&actor.role_id, None, Some(request.role_id.as_str())) {
+        return deny_non_admin_audit_operation(
+            &state,
+            &actor,
+            "platform_audit_user_create_denied",
+            None,
+            format!(
+                "actor_role_id={},requested_role_id={}",
+                actor.role_id, request.role_id
+            ),
+        );
+    }
     if let Err(message) = validate_username(&request.username)
         .and_then(|_| {
             validate_text(&request.display_name, MAX_NAME_CHARS, "显示名无效").or_else(|_| {
@@ -188,6 +280,26 @@ pub async fn create_user(
         .unwrap_or(false)
     {
         return error_response(StatusCode::BAD_REQUEST, "角色不存在");
+    }
+    let requested_role_permissions = match state.engine_db.list_platform_roles().await {
+        Ok(roles) => roles
+            .into_iter()
+            .find(|role| role.id == request.role_id)
+            .map(|role| role.permissions)
+            .unwrap_or_default(),
+        Err(_) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "角色读取失败"),
+    };
+    if !privileged_platform_operation_allowed(&actor.role_id, &[], &requested_role_permissions) {
+        return deny_non_admin_privileged_operation(
+            &state,
+            &actor,
+            "platform_privileged_user_create_denied",
+            None,
+            format!(
+                "actor_role_id={},requested_role_id={}",
+                actor.role_id, request.role_id
+            ),
+        );
     }
     let hash = match hash_password(&request.password) {
         Ok(hash) => hash,
@@ -249,6 +361,22 @@ pub async fn update_user(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "用户不存在"),
         Err(_) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "用户读取失败"),
     };
+    if !audit_operation_allowed(
+        &actor.role_id,
+        Some(target.role_id.as_str()),
+        Some(request.role_id.as_str()),
+    ) {
+        return deny_non_admin_audit_operation(
+            &state,
+            &actor,
+            "platform_audit_user_update_denied",
+            Some(id.clone()),
+            format!(
+                "actor_role_id={},target_role_id={},requested_role_id={}",
+                actor.role_id, target.role_id, request.role_id
+            ),
+        );
+    }
     if !state
         .engine_db
         .role_exists(&request.role_id)
@@ -265,6 +393,22 @@ pub async fn update_user(
             .unwrap_or_default(),
         Err(_) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "角色读取失败"),
     };
+    if !privileged_platform_operation_allowed(
+        &actor.role_id,
+        &target.permissions,
+        &target_role_permissions,
+    ) {
+        return deny_non_admin_privileged_operation(
+            &state,
+            &actor,
+            "platform_privileged_user_update_denied",
+            Some(id.clone()),
+            format!(
+                "actor_role_id={},target_role_id={},requested_role_id={}",
+                actor.role_id, target.role_id, request.role_id
+            ),
+        );
+    }
     // Validate and hash a replacement password before mutating the profile so
     // a rejected password cannot leave a partially applied role/display-name
     // update behind.
@@ -279,13 +423,8 @@ pub async fn update_user(
     } else {
         None
     };
-    let was_privileged = target
-        .permissions
-        .iter()
-        .any(|key| key == "platform.users.manage" || key == "platform.manage");
-    let remains_privileged = target_role_permissions
-        .iter()
-        .any(|key| key == "platform.users.manage" || key == "platform.manage");
+    let was_privileged = has_privileged_platform_permission(&target.permissions);
+    let remains_privileged = has_privileged_platform_permission(&target_role_permissions);
     if target.is_active && was_privileged && (!request.is_active || !remains_privileged) {
         match state
             .engine_db
@@ -313,6 +452,9 @@ pub async fn update_user(
         )
         .into_response();
     }
+    // A replacement password write below can fail after the new role or
+    // active state was committed. Do not retain that user's old WS grants.
+    crate::websocket::invalidate_websocket_sessions_for_user(&state, &target.username);
     let mut token_bumped = false;
     if let Some(hash) = replacement_password_hash {
         if state
@@ -330,8 +472,15 @@ pub async fn update_user(
         }
         token_bumped = true;
     }
-    if !token_bumped && revoke_user_sessions(&state, &id).await.is_err() {
+    if !token_bumped
+        && revoke_user_sessions(&state, &id, &target.username)
+            .await
+            .is_err()
+    {
         return error_response(StatusCode::INTERNAL_SERVER_ERROR, "会话撤销失败，请重试");
+    }
+    if token_bumped {
+        crate::websocket::invalidate_websocket_sessions_for_user(&state, &target.username);
     }
     if let Ok(Some(updated)) = state.engine_db.get_platform_user_by_id(&id).await {
         audit(
@@ -339,7 +488,7 @@ pub async fn update_user(
             &actor,
             "platform_user_updated",
             "platform_user",
-            Some(id),
+            Some(id.clone()),
             format!("role_id={},active={}", updated.role_id, updated.is_active),
         );
         ApiResponse::ok(updated).into_response()
@@ -358,10 +507,31 @@ pub async fn disable_user(
         Ok(None) => return error_response(StatusCode::NOT_FOUND, "用户不存在"),
         Err(_) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "用户读取失败"),
     };
-    let privileged = target
-        .permissions
-        .iter()
-        .any(|key| key == "platform.users.manage" || key == "platform.manage");
+    if !audit_operation_allowed(&actor.role_id, Some(target.role_id.as_str()), None) {
+        return deny_non_admin_audit_operation(
+            &state,
+            &actor,
+            "platform_audit_user_disable_denied",
+            Some(id.clone()),
+            format!(
+                "actor_role_id={},target_role_id={}",
+                actor.role_id, target.role_id
+            ),
+        );
+    }
+    let privileged = has_privileged_platform_permission(&target.permissions);
+    if privileged && !is_platform_admin_role(&actor.role_id) {
+        return deny_non_admin_privileged_operation(
+            &state,
+            &actor,
+            "platform_privileged_user_disable_denied",
+            Some(id.clone()),
+            format!(
+                "actor_role_id={},target_role_id={}",
+                actor.role_id, target.role_id
+            ),
+        );
+    }
     if target.is_active
         && privileged
         && state
@@ -381,8 +551,14 @@ pub async fn disable_user(
     {
         return error_response(StatusCode::INTERNAL_SERVER_ERROR, "用户禁用失败");
     }
-    // SEC M-1: require_auth rejects inactive users on every request; no
-    // token-version bump needed (the old code bumped a global counter).
+    // Inactive users are rejected by REST auth, and the token bump plus the
+    // per-user WebSocket epoch closes already-upgraded dashboard sockets.
+    if revoke_user_sessions(&state, &id, &target.username)
+        .await
+        .is_err()
+    {
+        return error_response(StatusCode::INTERNAL_SERVER_ERROR, "会话撤销失败，请重试");
+    }
     audit(
         &state,
         &actor,
@@ -435,6 +611,18 @@ pub async fn create_role(
         Ok(permissions) => permissions,
         Err(message) => return error_response(StatusCode::BAD_REQUEST, message),
     };
+    if !privileged_platform_operation_allowed(&actor.role_id, &[], &permissions) {
+        return deny_non_admin_privileged_operation(
+            &state,
+            &actor,
+            "platform_privileged_role_create_denied",
+            None,
+            format!(
+                "actor_role_id={},permissions={:?}",
+                actor.role_id, permissions
+            ),
+        );
+    }
     match state
         .engine_db
         .create_platform_role(
@@ -479,6 +667,26 @@ pub async fn update_role(
         Ok(permissions) => permissions,
         Err(message) => return error_response(StatusCode::BAD_REQUEST, message),
     };
+    let current_permissions = match state.engine_db.list_platform_roles().await {
+        Ok(roles) => roles
+            .into_iter()
+            .find(|role| role.id == id)
+            .map(|role| role.permissions)
+            .unwrap_or_default(),
+        Err(_) => return error_response(StatusCode::INTERNAL_SERVER_ERROR, "角色读取失败"),
+    };
+    if !privileged_platform_operation_allowed(&actor.role_id, &current_permissions, &permissions) {
+        return deny_non_admin_privileged_operation(
+            &state,
+            &actor,
+            "platform_privileged_role_update_denied",
+            Some(id.clone()),
+            format!(
+                "actor_role_id={},role_id={id},permissions={:?}",
+                actor.role_id, permissions
+            ),
+        );
+    }
     match state
         .engine_db
         .update_platform_role(
@@ -490,6 +698,11 @@ pub async fn update_role(
         .await
     {
         Ok(true) => {
+            // Role permission changes also affect members added concurrently
+            // and must fail closed even if later token/member DB reads fail.
+            // This rare administrative action forces all sockets to reconnect;
+            // ordinary user logout/profile changes retain targeted revocation.
+            crate::websocket::invalidate_websocket_sessions(&state);
             if revoke_role_sessions(&state, &id).await.is_err() {
                 return error_response(StatusCode::INTERNAL_SERVER_ERROR, "会话撤销失败，请重试");
             }
@@ -556,5 +769,314 @@ pub async fn delete_role(
             ApiResponse::<serde_json::Value>::server_error(&error, "Failed to delete platform role")
                 .into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vigilyx_db::AUDIT_ROLE_PERMISSIONS;
+
+    #[test]
+    fn audit_account_operations_require_exact_admin_role() {
+        assert!(is_platform_admin_role(ADMIN_ROLE_ID));
+        assert!(!is_platform_admin_role("admin"));
+        assert!(!is_platform_admin_role("ADMIN"));
+        assert!(!is_platform_admin_role("analyst"));
+        assert!(!is_platform_admin_role("platform-admin"));
+    }
+
+    #[test]
+    fn audit_role_is_a_dedicated_system_role() {
+        assert_eq!(AUDIT_ROLE_ID, "role-audit");
+        assert_ne!(AUDIT_ROLE_ID, "role-viewer");
+    }
+
+    #[test]
+    fn deep_audit_admin_role_lowercase_is_admin() {
+        assert!(is_platform_admin_role(ADMIN_ROLE_ID));
+    }
+
+    #[test]
+    fn deep_audit_admin_display_name_is_not_system_admin() {
+        assert!(!is_platform_admin_role("ADMIN"));
+    }
+
+    #[test]
+    fn deep_audit_admin_mixed_case_display_name_is_not_system_admin() {
+        assert!(!is_platform_admin_role("AdMiN"));
+    }
+
+    #[test]
+    fn deep_audit_non_admin_and_lookalike_roles_are_rejected() {
+        for role in [
+            "",
+            "viewer",
+            "analyst",
+            " admin",
+            "admin ",
+            "admin2",
+            "platform-admin",
+        ] {
+            assert!(
+                !is_platform_admin_role(role),
+                "unexpected admin role: {role:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn deep_audit_create_audit_is_denied_for_admin() {
+        assert!(!audit_operation_allowed(
+            ADMIN_ROLE_ID,
+            None,
+            Some(AUDIT_ROLE_ID)
+        ));
+    }
+
+    #[test]
+    fn deep_audit_create_audit_is_denied_for_analyst() {
+        assert!(!audit_operation_allowed(
+            "role-analyst",
+            None,
+            Some(AUDIT_ROLE_ID)
+        ));
+    }
+
+    #[test]
+    fn deep_audit_create_audit_is_denied_for_viewer() {
+        assert!(!audit_operation_allowed(
+            "role-viewer",
+            None,
+            Some(AUDIT_ROLE_ID)
+        ));
+    }
+
+    #[test]
+    fn deep_audit_create_audit_ignores_manage_permission_without_admin_role() {
+        assert!(!audit_operation_allowed(
+            "role-custom",
+            None,
+            Some(AUDIT_ROLE_ID)
+        ));
+    }
+
+    #[test]
+    fn deep_audit_promote_to_audit_is_denied_for_admin() {
+        assert!(!audit_operation_allowed(
+            ADMIN_ROLE_ID,
+            Some("role-viewer"),
+            Some(AUDIT_ROLE_ID)
+        ));
+    }
+
+    #[test]
+    fn deep_audit_promote_to_audit_is_denied_for_non_admin() {
+        assert!(!audit_operation_allowed(
+            "role-analyst",
+            Some("role-viewer"),
+            Some(AUDIT_ROLE_ID)
+        ));
+    }
+
+    #[test]
+    fn deep_audit_edit_existing_audit_is_denied_for_admin() {
+        assert!(!audit_operation_allowed(
+            ADMIN_ROLE_ID,
+            Some(AUDIT_ROLE_ID),
+            Some(AUDIT_ROLE_ID)
+        ));
+    }
+
+    #[test]
+    fn deep_audit_edit_existing_audit_is_denied_for_non_admin() {
+        assert!(!audit_operation_allowed(
+            "role-analyst",
+            Some(AUDIT_ROLE_ID),
+            Some(AUDIT_ROLE_ID)
+        ));
+    }
+
+    #[test]
+    fn deep_audit_disable_audit_is_denied_for_admin() {
+        assert!(!audit_operation_allowed(
+            ADMIN_ROLE_ID,
+            Some(AUDIT_ROLE_ID),
+            None
+        ));
+    }
+
+    #[test]
+    fn deep_audit_disable_audit_rejects_display_name_only_admin() {
+        assert!(!audit_operation_allowed("ADMIN", Some(AUDIT_ROLE_ID), None));
+    }
+
+    #[test]
+    fn deep_audit_disable_audit_is_denied_for_non_admin() {
+        assert!(!audit_operation_allowed(
+            "role-viewer",
+            Some(AUDIT_ROLE_ID),
+            None
+        ));
+    }
+
+    #[test]
+    fn deep_audit_normal_target_is_allowed_for_non_admin() {
+        assert!(audit_operation_allowed(
+            "role-analyst",
+            Some("role-viewer"),
+            Some("role-analyst")
+        ));
+    }
+
+    #[test]
+    fn deep_audit_audit_to_normal_change_is_denied_for_non_admin() {
+        assert!(!audit_operation_allowed(
+            "role-analyst",
+            Some(AUDIT_ROLE_ID),
+            Some("role-viewer")
+        ));
+    }
+
+    #[test]
+    fn deep_audit_normal_to_normal_change_is_allowed_for_non_admin() {
+        assert!(audit_operation_allowed(
+            "role-viewer",
+            Some("role-analyst"),
+            Some("role-viewer")
+        ));
+    }
+
+    #[test]
+    fn deep_audit_lookalike_role_id_is_not_audit() {
+        assert!(audit_operation_allowed(
+            "role-analyst",
+            Some("role-audit-copy"),
+            Some("role-viewer")
+        ));
+    }
+
+    #[test]
+    fn custom_roles_cannot_reuse_system_role_names() {
+        for name in ["admin", "ADMIN", "audit", "AuDiT"] {
+            assert!(
+                validate_role_name(name).is_err(),
+                "reserved role name: {name}"
+            );
+        }
+        assert!(validate_role_name("security-operator").is_ok());
+    }
+
+    #[test]
+    fn deep_audit_username_accepts_safe_value() {
+        assert!(validate_username("audit.operator").is_ok());
+    }
+
+    #[test]
+    fn deep_audit_username_rejects_whitespace() {
+        assert!(validate_username("audit operator").is_err());
+    }
+
+    #[test]
+    fn deep_audit_username_rejects_control_character() {
+        assert!(validate_username("audit\noperator").is_err());
+    }
+
+    #[test]
+    fn deep_audit_username_rejects_oversized_value() {
+        let oversized = "a".repeat(MAX_NAME_CHARS + 1);
+        assert!(validate_username(&oversized).is_err());
+    }
+
+    #[test]
+    fn deep_audit_username_accepts_unicode_without_whitespace() {
+        assert!(validate_username("审计员").is_ok());
+    }
+
+    #[test]
+    fn deep_audit_role_name_accepts_safe_value() {
+        assert!(validate_role_name("security-audit.v2").is_ok());
+    }
+
+    #[test]
+    fn deep_audit_role_name_rejects_punctuation() {
+        assert!(validate_role_name("audit/ops").is_err());
+    }
+
+    #[test]
+    fn deep_audit_role_name_rejects_whitespace() {
+        assert!(validate_role_name("audit ops").is_err());
+    }
+
+    #[test]
+    fn deep_audit_role_name_rejects_empty_value() {
+        assert!(validate_role_name("").is_err());
+    }
+
+    #[test]
+    fn deep_audit_permissions_are_canonicalized_and_deduplicated() {
+        let permissions = vec![
+            "security.read".to_string(),
+            " sessions.read ".to_string(),
+            "security.read".to_string(),
+        ];
+        assert_eq!(
+            validate_permissions(&permissions).expect("valid permissions"),
+            vec!["security.read", "sessions.read"]
+        );
+    }
+
+    #[test]
+    fn deep_audit_unknown_permission_is_rejected() {
+        let permissions = vec!["sessions.read".to_string(), "platform.root".to_string()];
+        assert!(validate_permissions(&permissions).is_err());
+    }
+
+    #[test]
+    fn deep_audit_role_permission_contract_is_exactly_read_only() {
+        assert_eq!(
+            AUDIT_ROLE_PERMISSIONS,
+            [
+                "sessions.read",
+                "security.read",
+                "data_security.read",
+                "system.read",
+                "audit.read",
+                "privacy.approve",
+                "privacy.reveal",
+                "privacy.eml.download",
+            ]
+            .as_slice()
+        );
+    }
+
+    #[test]
+    fn only_exact_admin_role_can_grant_platform_management_permissions() {
+        let privileged = vec!["platform.users.manage".to_string()];
+        assert!(privileged_platform_operation_allowed(
+            ADMIN_ROLE_ID,
+            &[],
+            &privileged
+        ));
+        assert!(!privileged_platform_operation_allowed(
+            "role-operator",
+            &[],
+            &privileged
+        ));
+        assert!(!privileged_platform_operation_allowed(
+            "role-operator",
+            &privileged,
+            &[]
+        ));
+    }
+
+    #[test]
+    fn non_admin_cannot_modify_a_role_that_already_has_platform_management() {
+        let privileged = vec!["platform.roles.manage".to_string()];
+        assert!(!privileged_platform_operation_allowed(
+            "role-operator",
+            &privileged,
+            &privileged
+        ));
     }
 }

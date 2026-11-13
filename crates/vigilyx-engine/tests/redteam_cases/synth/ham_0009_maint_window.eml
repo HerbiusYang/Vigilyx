@@ -1,0 +1,11 @@
+From: =?utf-8?B?Tk9D?= <noc@corp.internal>
+To: it-all@corp.internal
+Date: Mon, 24 Aug 2026 09:40:00 +0800
+Message-ID: <0029-b1@synth.example>
+Subject: 周六核心交换例行维护
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+本周六 02:00-06:00 核心交换机固件升级，内网预计 2-3 次分钟级闪断，
+生产业务不涉及；专线与出口不中断。
+值班：6000。公告：https://portal.corp.internal/notice/2026-37

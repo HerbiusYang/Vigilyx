@@ -308,18 +308,40 @@ pub async fn whitelist_session(
         }
     };
 
+    let (deleted_auto_iocs, preserved_shared_auto_iocs) = match state
+        .engine_db
+        .delete_auto_iocs_for_session(session_id)
+        .await
+    {
+        Ok(result) => result,
+        Err(e) => {
+            return ApiResponse::<serde_json::Value>::internal_err(&e, "Operation failed")
+                .into_response();
+        }
+    };
+
+    if deleted_auto_iocs > 0 {
+        publish_engine_reload(&state, "ioc").await;
+    }
+
     crate::handlers::spawn_audit_log(
         state.engine_db.clone(),
         user.username,
         "whitelist_session",
         Some("security"),
         Some(session_id.to_string()),
-        Some("sender email and source IP".to_string()),
+        Some(format!(
+            "sender email and source IP; deleted_auto_iocs={deleted_auto_iocs}; preserved_shared_auto_iocs={preserved_shared_auto_iocs}"
+        )),
     );
 
     ApiResponse::ok(serde_json::json!({
         "session_id": session_id,
         "entries": entries,
+        "ioc_cleanup": {
+            "deleted": deleted_auto_iocs,
+            "preserved_shared": preserved_shared_auto_iocs,
+        },
     }))
     .into_response()
 }

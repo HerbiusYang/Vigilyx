@@ -1,0 +1,131 @@
+From: "IdentiCore | Notifications" <notifications@identicore.example>
+To: identity-team@corp.internal
+Cc: it-ops@corp.internal, app-owners@corp.internal
+Date: Wed, 14 Jul 2027 08:00:00 +0000
+Message-ID: <0759-b108@synth.example>
+Subject: [REMINDER] SAML Signing Certificate Expiring July 21 - Download New Metadata From Your Tenant's Well-Known URL Only
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Identity Team, IT Ops, Application Owners,
+
+REMINDER - SAML SIGNING CERTIFICATE
+EXPIRING JULY 21.
+
+The IdentiCore IdP signing certificate
+for your tenant
+(acme.identicore.example) expires
+July 21. Update the certificate in
+your SPs (or federation proxy)
+before then, or SSO logins will
+fail across your SAML apps.
+
+1. ROTATION DETAILS
+
+  Tenant:        acme.identicore.example
+                 (IdP)
+  Current cert:  expires 2027-07-21
+  Affected:      14 SAML SPs (VPN
+                 portal, wiki, BI
+                 suite, HR system)
+  Cadence:       every 2 years
+                 (last: July 2025)
+
+2. HOW TO ROTATE (OFFICIAL PATH
+   ONLY)
+
+    1. Download the new metadata
+       from YOUR TENANT'S
+       well-known URL:
+       https://acme.identicore
+       .example/saml/metadata
+       - type it yourself. This
+       URL is the only valid
+       source of your IdP
+       metadata.
+    2. Verify the new
+       certificate's
+       fingerprint in your
+       admin console (the
+       console displays the
+       upcoming cert under
+       Certificate Lifecycle).
+    3. Import into SPs /
+       federation proxy;
+       rollover metadata
+       (old + new cert) keeps
+       sessions alive during
+       the switch.
+
+  IdentiCore will NEVER:
+  - Email metadata packages
+    as attachments for SAML
+    rotations (a SAML
+    metadata file sent by
+    email and imported
+    wholesale is the classic
+    certificate-injection
+    attack: whoever's key
+    is in the imported
+    metadata can forge
+    assertions for every
+    app that trusts it -
+    full authentication
+    takeover. Metadata
+    comes from the tenant's
+    well-known URL, TLS-
+    protected, or not at
+    all)
+  - Provide a "bulk import"
+    lane pushing one package
+    to many SPs via an
+    emailed page
+  - Use lookalike domains
+    such as
+    "identicore-ops" or
+    "ic-metadata"
+
+3. THE FINGERPRINT RULE
+
+  The malicious variant of
+  this notice tells you to
+  "verify the fingerprint"
+  of the attached file -
+  against a value printed
+  in the same email. That
+  proves nothing: both the
+  file and the number come
+  from the attacker. The
+  only meaningful
+  comparison is attachment
+  (or any downloaded file)
+  versus YOUR admin
+  console or YOUR tenant's
+  HTTPS URL - fetched
+  independently of the
+  email.
+
+4. VERIFY THIS NOTICE
+
+  - Cert expiry and the
+    upcoming certificate
+    appear in your admin
+    console (typed address)
+    under Certificate
+    Lifecycle
+  - The 2025 rotation
+    followed the same
+    URL-only flow
+  - Report lookalike
+    rotation notices to
+    security@identicore.example
+    immediately -
+    metadata phish are the
+    highest-severity class
+
+IdentiCore | Notifications
+This notice concerns tenant
+acme.identicore.example only.
+Certificate lifecycle follows the
+tenant's PKI policy; rotation
+history in the admin console.

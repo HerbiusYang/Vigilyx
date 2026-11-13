@@ -1,0 +1,78 @@
+From: 浙江省网信办-数据出境安全评估 <sjcc@zj-cac-data.example>
+To: 数据安全部 <dpo@corp.internal>
+Cc: 法务部 <legal@corp.internal>
+Date: Fri, 09 Oct 2026 09:15:00 +0800
+Message-ID: <0652-b43@synth.example>
+Subject: 关于贵司数据出境安全评估申报材料的补正通知（申报编号：ZJSJ-2026-0884）
+Disposition-Notification-To: sjcc@zj-cac-data.example
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<div style="background:#1a5276;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">浙江省互联网信息办公室 | 数据出境安全评估</h2>
+</div>
+<div style="padding:20px;border:1px solid #ddd;border-top:none">
+
+<p>数据安全部、法务部：</p>
+
+<p>贵司于 9 月 12 日提交的《数据出境安全评估申报表》（编号：<b>ZJSJ-2026-0884</b>），经我办初审，发现 <b>3 项材料需补正</b>，现将补正要求通知如下。</p>
+
+<h3 style="color:#1a5276;border-bottom:2px solid #1a5276;padding-bottom:4px">一、申报概况</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:120px">申报主体</td><td>贵司（统一社会信用代码：91330106MA2H0XXXXX）</td></tr>
+<tr><td style="background:#f5f5f5">出境场景</td><td>人力资源管理系统（Workday）员工个人信息出境至美国节点</td></tr>
+<tr><td style="background:#f5f5f5">数据类型</td><td>员工姓名、身份证号、薪资、绩效评估（约 2,400 名在职员工）</td></tr>
+<tr><td style="background:#f5f5f5">申报日期</td><td>2026-09-12</td></tr>
+<tr><td style="background:#f5f5f5">初审结论</td><td style="color:#e00"><b>退回补正</b>（3 项材料不合格）</td></tr>
+</table>
+
+<h3 style="color:#1a5276;border-bottom:2px solid #1a5276;padding-bottom:4px">二、补正要求</h3>
+
+<p><b>第 1 项：数据出境影响评估报告（DPIA）</b></p>
+<p>贵司提交的 DPIA 报告缺少以下内容，需补充后重新提交：</p>
+<ul>
+<li>境外接收方（Workday Inc.）的数据处理能力及安全保护措施评估（第 4.2 节要求）</li>
+<li>数据出境后遭遇泄露、篡改、丢失的风险应对预案（第 5.1 节要求）</li>
+<li>数据主体的维权路径说明（境外接收方所在国家/地区的法律环境分析，第 6.3 节要求）</li>
+</ul>
+
+<p><b>第 2 项：境外接收方安全承诺函</b></p>
+<p>Workday 出具的安全承诺函需由其 DPO（Data Protection Officer）签字并加盖公司公章。贵司提交的版本仅有中国区销售代表签字，不符合《数据出境安全评估办法》第 9 条要求。</p>
+
+<p><b>第 3 项：员工个人信息处理情况说明</b></p>
+<p>需补充以下信息：</p>
+<ul>
+<li>涉及数据主体的具体人数（精确到个位，非"约 2400 人"）</li>
+<li>出境数据的字段级清单（含字段名称、数据类型、是否敏感个人信息）</li>
+<li>员工知情同意的取得方式及时间</li>
+</ul>
+
+<h3 style="color:#1a5276;border-bottom:2px solid #1a5276;padding-bottom:4px">三、补正材料提交方式</h3>
+<p>所有补正材料请通过我办<b>数据出境申报系统</b>在线提交。因系统近期升级，原申报系统域名已变更，请使用以下入口：</p>
+<p><a href="https://zj-cac-data.example/sjsb/buzheng?id=ZJSJ-2026-0884" style="background:#1a5276;color:#fff;padding:8px 20px;text-decoration:none">在线提交补正材料</a></p>
+<p style="font-size:12px;color:#888">（需使用申报时注册的账号登录。如密码遗忘，可通过预留手机号找回。）</p>
+
+<h3 style="color:#1a5276;border-bottom:2px solid #1a5276;padding-bottom:4px">四、补正时限</h3>
+<p>根据《数据出境安全评估办法》第 11 条，补正材料应在收到本通知后 <b>15 个工作日</b>内提交（截止日期：<b>2026 年 10 月 30 日</b>）。逾期未提交的，视为撤回申报，需重新排队。</p>
+
+<h3 style="color:#1a5276;border-bottom:2px solid #1a5276;padding-bottom:4px">五、咨询渠道</h3>
+<p>如有疑问，请联系我办数据安全处：</p>
+<ul>
+<li>电话：0571-8711-****（工作日 9:00-11:30, 14:00-17:00）</li>
+<li>邮箱：sjcc@zj-cac-data.example</li>
+</ul>
+
+<p style="font-size:13px;color:#666">特别说明：我办所有申报流程均通过政务服务网或官方申报系统完成，不会要求企业通过邮件传输涉及个人信息的原始数据。请通过上述官方渠道操作。</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">浙江省互联网信息办公室 | 数据安全处</p>
+<p style="font-size:11px;color:#999">通知编号：ZJSJ-2026-0884-BZ | 发出时间：2026年10月9日</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://zj-cac-data.example/api/track?recipient=dpo%40corp.internal&case=ZJSJ-2026-0884&type=gov_notice" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

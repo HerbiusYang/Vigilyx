@@ -1,0 +1,10 @@
+From: =?utf-8?B?5Y+R5biD57uE?= <release@corp.internal>
+To: dev@corp.internal
+Date: Sun, 06 Sep 2026 09:47:00 +0800
+Message-ID: <0037-b14@synth.example>
+Subject: 网关 1.9.5 变更摘要
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><ul><li>超时回退分级（#529）</li><li>修复内存泄漏 3 处（#531）</li><li>熔断阈值可配（#533）</li></ul><a href='https://portal.corp.internal/wiki/changelog/gw-1.9.5' style='color:#1a3c6e'>完整变更</a></body></html>

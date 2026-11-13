@@ -4,16 +4,15 @@ Vigilyx AI service FastAPI entrypoint.
 Endpoints:
   POST /api/vt-scrape              - Scrape VirusTotal detection data with Playwright
   POST /analyze/content            - NLP phishing analysis (HuggingFace Transformer)
-  POST /training/train             - Trigger five-class fine-tuning from batch samples
+  POST /training/train             - Report that the in-service trainer was removed
   POST /model/approve              - Approve a staged (pending) trained model for hot-swap
-  GET  /training/status            - Query training and model status
-  GET  /training/progress          - Query live training progress
+  GET  /training/status            - Query model status (training disabled)
+  GET  /training/progress          - Report that no in-service training is active
   GET  /health                     - Liveness check
   GET  /health/ready               - Model-readiness check
 """
 
 import asyncio
-import hashlib
 import hmac
 import json
 import logging
@@ -28,7 +27,8 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from .scraper import get_scraper, validate_vt_indicator
+from . import __version__
+from .scraper import get_scraper, indicator_log_id, validate_vt_indicator
 from .nlp_phishing import (
     LATEST_MODEL_DIR,
     ModelUnavailableError,
@@ -36,7 +36,6 @@ from .nlp_phishing import (
     analyze_phishing_nlp,
     get_model_manager,
 )
-from .trainer import get_trainer, get_base_model_info, get_training_progress, MIN_SAMPLES
 from .vt_models import VtScrapeRequest, VtScrapeResponse
 from .llm.client import (
     LLMClient,
@@ -46,6 +45,8 @@ from .llm.client import (
     redact_sensitive_text,
 )
 from .llm.prompts import SYSTEM_PROMPT, format_analyze_prompt
+from .safety_policy import ensure_email_only_input
+from .visual_ocr import VisualOcrResult, decode_image_base64, run_image_ocr
 
 # Structured logging
 structlog.configure(
@@ -133,7 +134,6 @@ def request_too_large_response(max_bytes: int) -> JSONResponse:
 
 async def _background_warmup():
     """Warm up models in the background without blocking the health check."""
-    import asyncio
     await asyncio.sleep(0.1)  # Let uvicorn finish startup first.
     loop = asyncio.get_event_loop()
     mgr = get_model_manager(warmup=False)  # Only load fine-tuned weights here.
@@ -145,7 +145,6 @@ async def _background_warmup():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle hook for startup preload and shutdown cleanup."""
-    import asyncio
     logger.info("Intel service starting")
     # Load only the fine-tuned model on startup; zero-shot stays lazy.
     mgr = get_model_manager(warmup=False)
@@ -163,7 +162,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Vigilyx AI Service",
     description="NLP phishing detection, VirusTotal scraping, and threat-intel helper APIs.",
-    version="0.3.0",
+    version=__version__,
     lifespan=lifespan,
 )
 app.add_middleware(RequestBodyLimitMiddleware)
@@ -197,22 +196,51 @@ class LlmRequestConfig(BaseModel):
     Mirrors the `llm` field of Rust ContentAnalysisRequest; populated only when
     the operator configured a remote LLM provider + API key in the UI.
     """
-    provider: str = ""
-    api_key: str = ""
-    model: str = ""
-    temperature: float = 0.3
-    max_tokens: int = 4096
+    provider: str = Field(default="", max_length=32)
+    api_key: str = Field(default="", max_length=4096)
+    model: str = Field(default="", max_length=128)
+    temperature: float = Field(default=0.3, ge=0.0, le=1.0, allow_inf_nan=False)
+    max_tokens: int = Field(default=4096, ge=1, le=8192)
 
 
 class ContentAnalysisRequest(BaseModel):
     """Email-content analysis request aligned with Rust ContentAnalysisRequest."""
-    session_id: str = ""
+    session_id: str = Field(default="", max_length=128)
     subject: Optional[str] = None
     body_text: Optional[str] = None
     body_html: Optional[str] = None
-    mail_from: Optional[str] = None
-    rcpt_to: list[str] = Field(default_factory=list)
+    mail_from: Optional[str] = Field(default=None, max_length=320)
+    rcpt_to: list[str] = Field(default_factory=list, max_length=1000)
     llm: Optional[LlmRequestConfig] = None
+
+
+class VisualOcrImageRequest(BaseModel):
+    """One already-resolved image from the email MIME/HTML body."""
+
+    source_id: str = Field(min_length=1, max_length=64)
+    media_type: str = Field(min_length=1, max_length=64)
+    content_base64: str = Field(min_length=1, max_length=4_000_000)
+
+
+class VisualOcrRequest(BaseModel):
+    """Bounded OCR request; external URLs are intentionally not accepted."""
+
+    session_id: str = Field(default="", max_length=128)
+    images: list[VisualOcrImageRequest] = Field(default_factory=list, max_length=3)
+
+
+class VisualOcrImageResponse(BaseModel):
+    source_id: str
+    status: str
+    text: str = ""
+    confidence: float = 0.0
+    reason: Optional[str] = None
+
+
+class VisualOcrResponse(BaseModel):
+    status: str
+    coverage_limited: bool
+    results: list[VisualOcrImageResponse] = Field(default_factory=list)
 
 
 class AiAnalysisResponse(BaseModel):
@@ -467,7 +495,7 @@ async def _llm_second_opinion(
         logger.warning(
             "LLM second opinion skipped: sender rate limit reached",
             session_id=request.session_id,
-            mail_from=request.mail_from,
+            mail_from=redact_sensitive_text(request.mail_from),
         )
         return None
 
@@ -509,7 +537,7 @@ async def _llm_second_opinion(
             "LLM second opinion failed, keeping local NLP result",
             session_id=request.session_id,
             provider=cfg.provider,
-            error=str(exc),
+            error_type=type(exc).__name__,
         )
         return None
 
@@ -595,12 +623,27 @@ async def analyze_content(request: ContentAnalysisRequest) -> AiAnalysisResponse
     typically 50-200ms per message (long emails are scored in up to
     NLP_MAX_SEGMENTS windows, so worst-case cost scales with segment count).
     """
+    try:
+        ensure_email_only_input(
+            subject=request.subject,
+            body_text=request.body_text,
+            body_html=request.body_html,
+            mail_from=request.mail_from,
+            rcpt_to=request.rcpt_to,
+        )
+    except ValueError:
+        logger.warning("Rejected non-email model request", session_id=request.session_id)
+        return JSONResponse(
+            status_code=422,
+            content={"error": "EMAIL_MODEL_SCOPE_ONLY", "message": "This model only supports email security analysis"},
+        )
+
     logger.info(
         "NLP phishing analysis request",
         session_id=request.session_id,
         has_subject=request.subject is not None,
         has_body=request.body_text is not None or request.body_html is not None,
-        mail_from=request.mail_from,
+        mail_from=redact_sensitive_text(request.mail_from),
     )
 
     try:
@@ -608,7 +651,7 @@ async def analyze_content(request: ContentAnalysisRequest) -> AiAnalysisResponse
             subject=request.subject,
             body_text=request.body_text,
             body_html=request.body_html,
-            mail_from=request.mail_from,
+            mail_from=redact_sensitive_text(request.mail_from),
             rcpt_to=request.rcpt_to,
         )
     except ModelUnavailableError as exc:
@@ -618,7 +661,7 @@ async def analyze_content(request: ContentAnalysisRequest) -> AiAnalysisResponse
             "NLP phishing analysis unavailable",
             session_id=request.session_id,
             retry_after_secs=exc.retry_after_secs,
-            error=str(exc),
+            error_type=type(exc).__name__,
         )
         return JSONResponse(
             status_code=503,
@@ -645,7 +688,7 @@ async def analyze_content(request: ContentAnalysisRequest) -> AiAnalysisResponse
         logger.exception(
             "NLP phishing analysis failed unexpectedly",
             session_id=request.session_id,
-            error=str(exc),
+            error_type=type(exc).__name__,
         )
         return JSONResponse(
             status_code=500,
@@ -681,6 +724,43 @@ async def analyze_content(request: ContentAnalysisRequest) -> AiAnalysisResponse
     )
 
 
+@app.post("/analyze/visual", response_model=VisualOcrResponse)
+async def analyze_visual(request: VisualOcrRequest) -> VisualOcrResponse:
+    """OCR bounded inline/CID email images without fetching remote resources."""
+
+    if not request.images:
+        return VisualOcrResponse(status="not_applicable", coverage_limited=False)
+
+    results: list[VisualOcrImageResponse] = []
+    for image in request.images:
+        decoded = decode_image_base64(image.content_base64, image.media_type)
+        if decoded is None:
+            result = VisualOcrResult(image.source_id, "rejected", reason="invalid_image_payload")
+        else:
+            result = await asyncio.to_thread(
+                run_image_ocr,
+                image.source_id,
+                decoded,
+                image.media_type,
+            )
+        results.append(
+            VisualOcrImageResponse(
+                source_id=result.source_id,
+                status=result.status,
+                text=result.text,
+                confidence=result.confidence,
+                reason=result.reason,
+            )
+        )
+
+    complete = all(result.status in {"ok", "empty"} for result in results)
+    return VisualOcrResponse(
+        status="ok" if complete else "partial",
+        coverage_limited=not complete,
+        results=results,
+    )
+
+
 @app.post("/api/vt-scrape", response_model=VtScrapeResponse)
 async def vt_scrape(request: VtScrapeRequest) -> VtScrapeResponse:
     """
@@ -702,7 +782,7 @@ async def vt_scrape(request: VtScrapeRequest) -> VtScrapeResponse:
 
     logger.info(
         "VT scrape request",
-        indicator=indicator,
+        indicator_id=indicator_log_id(indicator),
         indicator_type=request.indicator_type,
     )
 
@@ -711,7 +791,7 @@ async def vt_scrape(request: VtScrapeRequest) -> VtScrapeResponse:
 
     logger.info(
         "VT scrape result",
-        indicator=indicator,
+        indicator_id=indicator_log_id(indicator),
         verdict=result.verdict,
         malicious=result.malicious_count,
         total=result.total_engines,
@@ -721,32 +801,12 @@ async def vt_scrape(request: VtScrapeRequest) -> VtScrapeResponse:
     return result
 
 
-# Training-management endpoints.
-
-class TrainingSampleInput(BaseModel):
-    """Single training sample sent in batch form from Rust."""
-    session_id: str = ""
-    label: int                    # 0-4 for the five-class training task
-    subject: Optional[str] = None
-    body_text: Optional[str] = None
-    body_html: Optional[str] = None
-    mail_from: Optional[str] = None
-    rcpt_to: list[str] = Field(default_factory=list)
-
-
-class TrainingRequest(BaseModel):
-    """Batch training request used by Rust `trigger_nlp_training`."""
-    samples: list[TrainingSampleInput]
-
-
 # ---------------------------------------------------------------------------
 # Trained-model approval gate
 # ---------------------------------------------------------------------------
 
-# A freshly trained model is staged as "pending" and is only hot-swapped into
-# inference after an explicit operator approval (POST /model/approve). This
-# prevents a consistent-poisoning attack that passes the CV quality gate from
-# going live automatically.
+# A staged model is only hot-swapped into inference after explicit operator
+# approval (POST /model/approve). Keep this gate independent of model training.
 PENDING_MODEL_FILE = os.path.join(os.path.dirname(LATEST_MODEL_DIR), "pending.json")
 
 
@@ -762,15 +822,6 @@ def _read_pending_model() -> Optional[dict]:
     return data
 
 
-def _write_pending_model(info: dict) -> None:
-    """Atomically record a staged model awaiting approval."""
-    os.makedirs(os.path.dirname(PENDING_MODEL_FILE), exist_ok=True)
-    tmp_path = PENDING_MODEL_FILE + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as fh:
-        json.dump(info, fh)
-    os.replace(tmp_path, PENDING_MODEL_FILE)
-
-
 def _clear_pending_model() -> None:
     try:
         os.remove(PENDING_MODEL_FILE)
@@ -778,22 +829,6 @@ def _clear_pending_model() -> None:
         pass
     except OSError as exc:
         logger.warning("Failed to clear pending model file", error=str(exc))
-
-
-def _samples_fingerprint(samples: list["TrainingSampleInput"]) -> str:
-    """Stable hash over the training batch (session_id + label pairs).
-
-    Recorded with the staged model in pending.json so the operator can
-    verify WHICH training set produced the model before approving it, and
-    so a swapped-in training run can be detected via the version check.
-    """
-    digest = hashlib.sha256()
-    for sample in samples:
-        digest.update(sample.session_id.encode("utf-8", "replace"))
-        digest.update(b"\x00")
-        digest.update(str(sample.label).encode("ascii"))
-        digest.update(b"\x00")
-    return digest.hexdigest()
 
 
 class ModelApproveRequest(BaseModel):
@@ -808,51 +843,9 @@ class ModelApproveRequest(BaseModel):
 
 
 @app.post("/training/train")
-async def train(request: TrainingRequest):
-    """
-    Accept batch samples and trigger five-class fine-tuning.
-
-    Rust reads the full training set from the database and posts it here in
-    one batch. Python handles `preprocess_email()`, model training, and the
-    result payload. Training runs in a subprocess so the API stays responsive.
-    A successful run does NOT hot-swap the model automatically: the new model
-    is staged as pending and only goes live after an explicit operator
-    approval via POST /model/approve.
-    """
-    # SEC-M10: Cap request size to reduce OOM risk from oversized payloads.
-    if len(request.samples) > 10000:
-        raise HTTPException(status_code=413, detail="TOO_MANY_SAMPLES")
-
-    logger.info(
-        "Training request received",
-        total_samples=len(request.samples),
-    )
-
-    if len(request.samples) < MIN_SAMPLES:
-        return {"ok": False, "error": f"Insufficient samples: {len(request.samples)}/{MIN_SAMPLES}"}
-
-    trainer = get_trainer()
-    result = await trainer.train(request.samples)
-
-    if result.get("ok"):
-        model_dir = result.get("model_dir", "")
-        if model_dir:
-            # Approval gate: a poisoned-but-consistent training set could pass
-            # the CV quality gate, so the model is staged instead of swapped.
-            _write_pending_model({
-                "model_dir": model_dir,
-                "version": result.get("version", ""),
-                "staged_at": time.time(),
-                "samples_count": len(request.samples),
-                "samples_hash": _samples_fingerprint(request.samples),
-            })
-            result["model_pending_approval"] = True
-            logger.info(
-                "Trained model staged; awaiting approval before hot-swap",
-                model_dir=model_dir,
-            )
-
-    return result
+async def train():
+    """Reject legacy callers after removal of the in-service trainer."""
+    raise HTTPException(status_code=410, detail="TRAINING_REMOVED")
 
 
 @app.post("/model/approve")
@@ -919,32 +912,22 @@ async def approve_model(payload: Optional[ModelApproveRequest] = None):
 
 @app.get("/training/status")
 async def training_status():
-    """Query model and training status."""
+    """Expose inference and approval status without an in-service trainer."""
     manager = get_model_manager(warmup=False)
-    trainer = get_trainer()
-    base_info = get_base_model_info()
 
     return {
         "model_version": manager.model_version,
         "has_finetuned": manager.has_finetuned,
         "model_status": manager.readiness_report(),
-        "is_training": trainer.is_training,
-        "last_trained": trainer.last_trained,
-        "base_model": base_info,
+        "training_enabled": False,
+        "is_training": False,
+        "last_trained": None,
+        "base_model": None,
         "pending_model": _read_pending_model(),
     }
 
 
 @app.get("/training/progress")
 async def training_progress():
-    """Query live training progress."""
-    trainer = get_trainer()
-    if not trainer.is_training:
-        return {"active": False}
-
-    progress = get_training_progress()
-    if progress is None:
-        return {"active": True, "phase": "initializing"}
-
-    progress["active"] = True
-    return progress
+    """Keep legacy progress polling idle after trainer removal."""
+    return {"active": False}

@@ -1,0 +1,10 @@
+From: =?utf-8?B?5YWl6IGM5Yqp5omL?= <onboard@hr-saas2.example>
+To: newhire@corp.internal
+Date: Mon, 07 Sep 2026 09:15:00 +0800
+Message-ID: <0005-b15@synth.example>
+Subject: 入职材料提交（扫码进入）
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>请扫码进入材料提交通道（需人脸核身）：</p><p><img alt='入职通道二维码' width='170'></p><p style='font-size:12px'>通道 24 小时有效。</p></body></html>

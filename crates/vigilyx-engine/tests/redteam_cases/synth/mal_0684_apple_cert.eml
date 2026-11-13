@@ -1,0 +1,110 @@
+From: App Store Connect Developer Support <no-reply@apple-developer.example>
+To: dev@corp.internal
+Date: Mon, 19 Oct 2026 14:00:00 +0800
+Message-ID: <0684-b53@synth.example>
+Subject: [Expired] Your Apple Distribution Certificate expires in 48 hours — renew now to avoid app removal
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif;max-width:640px;margin:0 auto;border:1px solid #007aff;border-radius:8px;overflow:hidden">
+<div style="background:#007aff;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">App Store Connect | Developer Support</h2>
+</div>
+<div style="padding:24px">
+
+<p>Dear Developer,</p>
+
+<p>Your <b>Apple Distribution Certificate</b> (used to sign and distribute your iOS app "<b>Vigilyx Mobile</b>") will expire in <b>48 hours</b>.</p>
+
+<h3 style="color:#007aff;border-bottom:2px solid #007aff;padding-bottom:4px">Certificate Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:180px">Team ID</td><td><b>ABC123DEF4</b></td></tr>
+<tr><td style="background:#f5f5f5">Certificate Type</td><td>Apple Distribution</td></tr>
+<tr><td style="background:#f5f5f5">Serial Number</td><td>3D8K2M9P4Q7R1T6W0Y3B5C</td></tr>
+<tr><td style="background:#f5f5f5">Issue Date</td><td>2025-10-21</td></tr>
+<tr><td style="background:#f5f5f5">Expiration Date</td><td style="color:#e00"><b>2026-10-21 00:00 UTC</b></td></tr>
+<tr><td style="background:#f5f5f5">App ID</td><td>com.vigilyx.mobile (Bundle ID)</td></tr>
+<tr><td style="background:#f5f5f5">Affected App</td><td>Vigilyx Mobile (App Store)</td></tr>
+</table>
+
+<h3 style="color:#007aff;border-bottom:2px solid #007aff;padding-bottom:4px">What happens if the certificate expires?</h3>
+<ul>
+<li>Your app will be <b>removed from the App Store</b> within 24 hours of expiration</li>
+<li>Existing users can continue using the installed app, but <b>cannot receive updates</b></li>
+<li>Push notifications will stop working (APNs certificates linked to distribution cert)</li>
+<li>In-app purchases will fail (StoreKit validation requires valid certificate)</li>
+<li>TestFlight builds will become unopenable</li>
+</ul>
+
+<h3 style="color:#007aff;border-bottom:2px solid #007aff;padding-bottom:4px">How to Renew</h3>
+
+<p><b>Method 1 (Recommended) — Renew via App Store Connect API:</b></p>
+<ol>
+<li>Open <b>https://appleid.apple.com/account/manage</b> in your browser</li>
+<li>Sign in with your Apple Developer account</li>
+<li>Enter the verification code sent to your registered devices</li>
+<li>After authentication, return to this page and click the renew button below</li>
+</ol>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://apple-developer.example/certificates/renew?team=ABC123DEF4" style="display:inline-block;background:#007aff;color:#fff;padding:12px 36px;text-decoration:none;border-radius:8px;font-size:16px">Renew Certificate</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://developer.apple.com/account/resources/certificates/renew</p>
+
+<p style="font-size:12px;color:#888;text-align:center">(You will be asked to sign in with your Apple ID to authorize the renewal.)</p>
+
+<p><b>Method 2 — Manual renewal via Xcode:</b></p>
+<ol>
+<li>Open Xcode → Settings → Accounts</li>
+<li>Select your team → Manage Certificates</li>
+<li>Click "+" → Apple Distribution</li>
+<li>Xcode will create and install a new certificate automatically</li>
+</ol>
+
+<h3 style="color:#007aff;border-bottom:2px solid #007aff;padding-bottom:4px">About Apple ID Verification</h3>
+<p>When you click the "Renew Certificate" button above, you will be redirected to Apple's identity verification page. Depending on your account settings, you may see:</p>
+<ul>
+<li><b>Two-Factor Authentication (2FA):</b> A code will be sent to your trusted devices</li>
+<li><b>Apple ID with device verification:</b> You may be asked to enter a device code on <b>appleid.apple.com</b></li>
+</ul>
+
+<p style="font-size:14px;background:#fff3cd;padding:12px;border-radius:4px">
+<b>Note about device verification:</b> If you are unable to receive 2FA codes on your trusted devices, Apple may offer an alternative verification method through a device code shown on this page. Simply follow the prompts — the entire flow happens on Apple's official domains (<code>appleid.apple.com</code> and <code>developer.apple.com</code>).
+</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">Renewal code (if prompted): APL-DEV-ABC123. Enter at appleid.apple.com/account/verify/device. This code is required for automated certificate renewal via API.</p>
+
+<h3 style="color:#007aff;border-bottom:2px solid #007aff;padding-bottom:4px">Recent Certificate Activity</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Event</th><th>Date</th><th>Source IP</th></tr>
+<tr><td>Certificate created</td><td>2025-10-21</td><td>203.0.113.50</td></tr>
+<tr><td>App signed (v2.4.1)</td><td>2026-08-14</td><td>203.0.113.50</td></tr>
+<tr><td>App signed (v2.4.2)</td><td>2026-09-22</td><td>203.0.113.50</td></tr>
+<tr style="background:#fff3cd"><td><b>Sign attempt (blocked)</b></td><td><b>2026-10-17</b></td><td><b>198.51.100.77</b></td></tr>
+</table>
+
+<p style="font-size:13px;color:#666">Note: We detected a blocked signing attempt from an unrecognized IP on 10/17. If this was not your team, please revoke and re-create all provisioning profiles after renewing your certificate.</p>
+
+<h3 style="color:#007aff;border-bottom:2px solid #007aff;padding-bottom:4px">Frequently Asked Questions</h3>
+<p><b>Q: Can I renew after the certificate expires?</b><br>
+A: Yes, but your app will be removed from the App Store during the gap. Re-submission may take 1-3 days for App Review.</p>
+
+<p><b>Q: Will existing users be affected?</b><br>
+A: Installed apps continue working, but push notifications and in-app purchases will break.</p>
+
+<p><b>Q: I don't have access to Xcode. Can I renew from a web browser?</b><br>
+A: Yes, use Method 1 above (App Store Connect web renewal). The device verification flow works entirely in the browser.</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">App Store Connect | Developer Support</p>
+<p style="font-size:11px;color:#999">Certificate Reference: ABC123DEF4-2026-RENEW</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the Account Holder for Team ABC123DEF4.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://apple-developer.example/api/track?recipient=dev%40corp.internal&team=ABC123DEF4&type=cert_expiry" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

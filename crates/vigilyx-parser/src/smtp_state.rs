@@ -73,11 +73,7 @@ pub enum SmtpCommand {
     /// QUIT
     Quit,
     /// Authenticationcredentialsalready
-    AuthCredential {
-        method: String,
-        username: String,
-        password: String,
-    },
+    AuthCredential { method: String, username: String },
     /// AuthenticationResult (Success/Failed)
     AuthResult(bool),
     /// /Unknown
@@ -90,8 +86,29 @@ pub struct SmtpResponse {
     /// ResponseCode/Digit (if 250, 354)
     pub code: u16,
     /// whether lineResponseoflast1line
-    #[allow(dead_code)]
     pub is_final: bool,
+    /// RFC 3463 enhanced status token, retained without the free-form server
+    /// text so passive capture does not persist unnecessary recipient data.
+    pub enhanced_status: Option<String>,
+    /// Whether this response belongs to the completed DATA/BDAT transaction,
+    /// rather than EHLO, AUTH, MAIL FROM, or an individual RCPT command.
+    pub is_message_transaction: bool,
+}
+
+impl SmtpResponse {
+    /// High-precision packet-native evidence that a fully submitted message
+    /// was rejected for an RFC 3463 security/policy status. A bare 550-554 is
+    /// intentionally insufficient: those codes also cover unknown users,
+    /// invalid addresses, and mailbox/storage failures.
+    pub fn is_security_policy_rejection(&self) -> bool {
+        self.is_final
+            && self.is_message_transaction
+            && (550..=554).contains(&self.code)
+            && self
+                .enhanced_status
+                .as_deref()
+                .is_some_and(|status| status.starts_with("5.7."))
+    }
 }
 
 /// One SMTP message reconstructed from the transport stream.
@@ -146,14 +163,16 @@ pub struct SmtpStateMachine {
     /// parsed as commands. This prevents email body from being silently discarded
     /// when it arrives in a separate TCP packet before the 354 response.
     data_cmd_pending: bool,
+    /// A complete DATA/BDAT payload has been submitted and the final server
+    /// result has not yet been observed. This stays independent of `state` so
+    /// legal/illegal pipelining cannot make a later response look like RCPT.
+    message_result_pending: bool,
     /// AUTH Authentication Segment
     auth_phase: AuthPhase,
     /// AUTH AuthenticationMethod
     auth_method: Option<String>,
     /// AUTH alreadyDecodeofuserName
     auth_username: Option<String>,
-    /// AUTH alreadyDecodeofPassword
-    auth_password: Option<String>,
     /// ByServicehandlerResponse ofWaitGetCommand (if AuthResult, AuthCredential)
     pending_commands: SmallVec<[SmtpCommand; 2]>,
     /// Pipelinecache: DATA Command, 354 Response first emaildata
@@ -207,10 +226,10 @@ impl SmtpStateMachine {
             is_starttls_active: false,
             starttls_pending: false,
             data_cmd_pending: false,
+            message_result_pending: false,
             auth_phase: AuthPhase::None,
             auth_method: None,
             auth_username: None,
-            auth_password: None,
             pending_commands: SmallVec::new(),
             pipelined_data: None,
             in_bdat_mode: false,
@@ -466,6 +485,7 @@ impl SmtpStateMachine {
                 );
                 self.complete_message(Bytes::from(raw));
                 self.state = SmtpState::DataDone;
+                self.message_result_pending = true;
                 commands.push(SmtpCommand::DataEnd);
             } else {
                 self.state = SmtpState::RcptTo;
@@ -483,6 +503,10 @@ impl SmtpStateMachine {
     fn update_state_for_parsed_command(&mut self, cmd: &SmtpCommand) {
         match cmd {
             SmtpCommand::MailFrom(email) => {
+                // A new envelope supersedes any incomplete prior transaction.
+                // This prevents a later RCPT/envelope response from being
+                // mislabeled as the prior message's final DATA result.
+                self.message_result_pending = false;
                 self.mail_from = Some(email.clone());
                 self.rcpt_to.clear();
                 self.state = SmtpState::MailFrom;
@@ -492,6 +516,7 @@ impl SmtpStateMachine {
                 self.state = SmtpState::RcptTo;
             }
             SmtpCommand::Reset => {
+                self.message_result_pending = false;
                 self.mail_from = None;
                 self.rcpt_to.clear();
                 self.state = SmtpState::Greeted;
@@ -574,6 +599,7 @@ impl SmtpStateMachine {
         self.data_buffer.clear();
         self.in_data_mode = false;
         self.state = SmtpState::DataDone;
+        self.message_result_pending = true;
         commands.push(SmtpCommand::DataEnd);
 
         if !remaining.is_empty() {
@@ -676,6 +702,7 @@ impl SmtpStateMachine {
         self.bdat_chunk_start = 0;
         self.data_cmd_pending = false;
         self.state = SmtpState::DataDone;
+        self.message_result_pending = true;
         self.pipelined_data = None;
 
         if raw.is_empty() {
@@ -797,6 +824,24 @@ impl SmtpStateMachine {
                     + (line[1] - b'0') as u16 * 10
                     + (line[2] - b'0') as u16;
                 let is_final = line.get(3) != Some(&b'-');
+                let enhanced_status = line
+                    .get(4..)
+                    .and_then(|payload| std::str::from_utf8(payload).ok())
+                    .map(str::trim_start)
+                    .and_then(|payload| payload.split_ascii_whitespace().next())
+                    .filter(|token| {
+                        let mut parts = token.split('.');
+                        matches!(parts.next(), Some("2" | "4" | "5"))
+                            && parts.next().is_some_and(|part| {
+                                !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())
+                            })
+                            && parts.next().is_some_and(|part| {
+                                !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())
+                            })
+                            && parts.next().is_none()
+                    })
+                    .map(str::to_string);
+                let is_message_transaction = self.message_result_pending;
 
                 trace!(
                     "📩 SMTP Response: code={} is_final={} current_state={:?}",
@@ -818,7 +863,15 @@ impl SmtpStateMachine {
                     }
                 }
 
-                responses.push(SmtpResponse { code, is_final });
+                responses.push(SmtpResponse {
+                    code,
+                    is_final,
+                    enhanced_status,
+                    is_message_transaction,
+                });
+                if is_final && is_message_transaction {
+                    self.message_result_pending = false;
+                }
             }
         }
 
@@ -911,8 +964,7 @@ impl SmtpStateMachine {
                 // buffered message body (response-injection wipe). Mid-stream
                 // captures are the one exception: the DATA command was missed
                 // together with the SYN, so the first lone 354 is still honored.
-                } else if !self.data_cmd_pending
-                    && !(self.midstream_capture && !self.in_data_mode)
+                } else if !self.data_cmd_pending && !(self.midstream_capture && !self.in_data_mode)
                 {
                     self.anomaly_count = self.anomaly_count.saturating_add(1);
                     warn!(
@@ -1074,6 +1126,7 @@ impl SmtpStateMachine {
                         }
                     }
                     SmtpCommand::MailFrom(email) => {
+                        self.message_result_pending = false;
                         self.mail_from = Some(email.clone());
                         self.rcpt_to.clear();
                         self.data_buffer.clear();
@@ -1101,6 +1154,7 @@ impl SmtpStateMachine {
                         break;
                     }
                     SmtpCommand::Reset => {
+                        self.message_result_pending = false;
                         self.mail_from = None;
                         self.rcpt_to.clear();
                         self.state = SmtpState::Greeted;
@@ -1157,7 +1211,6 @@ impl SmtpStateMachine {
         // from a previous failed AUTH into the current one
         self.auth_method = Some(method.clone());
         self.auth_username = None;
-        self.auth_password = None;
         self.auth_phase = AuthPhase::None;
 
         match method.as_str() {
@@ -1209,7 +1262,10 @@ impl SmtpStateMachine {
             AuthPhase::LoginWaitingUsername => {
                 // Received AUTH LOGIN ofuserName (base64)
                 if let Some(username) = Self::decode_base64_string(line_str) {
-                    debug!("🔑 SMTP AUTH LOGIN userNamealreadyDecode: {}", username);
+                    debug!(
+                        username_bytes = username.len(),
+                        "SMTP AUTH LOGIN username decoded"
+                    );
                     self.auth_username = Some(username);
                     // Keep LoginWaitingUsername Status,waitServicehandler 1 334 LoginWaitingPassword
                 } else {
@@ -1218,10 +1274,10 @@ impl SmtpStateMachine {
                 None
             }
             AuthPhase::LoginWaitingPassword => {
-                // Received AUTH LOGIN ofPassword (base64)
-                if let Some(password) = Self::decode_base64_string(line_str) {
-                    debug!("🔑 SMTP AUTH LOGIN PasswordalreadyDecode");
-                    self.auth_password = Some(password);
+                // Validate the challenge response without materializing or
+                // retaining the cleartext password.
+                if Self::decode_base64_bytes(line_str).is_some() {
+                    debug!("SMTP AUTH LOGIN password response received");
                     self.auth_phase = AuthPhase::None;
                     return self.try_emit_credential();
                 } else {
@@ -1242,28 +1298,24 @@ impl SmtpStateMachine {
                 3 => {
                     // authzid\0username\0password
                     self.auth_username = std::str::from_utf8(parts[1]).ok().map(|s| s.to_string());
-                    self.auth_password = std::str::from_utf8(parts[2]).ok().map(|s| s.to_string());
                 }
                 2 => {
                     // username\0password (Standardimplementation)
                     self.auth_username = std::str::from_utf8(parts[0]).ok().map(|s| s.to_string());
-                    self.auth_password = std::str::from_utf8(parts[1]).ok().map(|s| s.to_string());
                 }
                 _ => {}
             }
         }
     }
 
-    /// AuthCredential Command (WhenuserNameAndPasswordallalreadyDecode)
+    /// Emit the authentication identity after a credential response without
+    /// retaining the cleartext password.
     fn try_emit_credential(&self) -> Option<SmtpCommand> {
         let method = self.auth_method.as_ref()?;
         let username = self.auth_username.as_ref()?;
-        // Passwordpossibly Butstored
-        let password = self.auth_password.clone().unwrap_or_default();
         Some(SmtpCommand::AuthCredential {
             method: method.clone(),
             username: username.clone(),
-            password,
         })
     }
 
@@ -1563,7 +1615,6 @@ impl SmtpStateMachine {
         self.auth_phase = AuthPhase::None;
         self.auth_method = None;
         self.auth_username = None;
-        self.auth_password = None;
         self.pending_commands.clear();
         self.cmd_line_buf.clear();
         self.resp_line_buf.clear();
@@ -1604,9 +1655,7 @@ mod tests {
     fn m5_direct_state_update_uses_the_same_recipient_cap() {
         let mut sm = SmtpStateMachine::new();
         for i in 0..(MAX_RCPT_TO + 1) {
-            sm.update_state_for_parsed_command(&SmtpCommand::RcptTo(format!(
-                "u{i}@example.com"
-            )));
+            sm.update_state_for_parsed_command(&SmtpCommand::RcptTo(format!("u{i}@example.com")));
         }
         assert_eq!(sm.rcpt_to().len(), MAX_RCPT_TO);
         assert_eq!(sm.dropped_rcpt_to(), 1);
@@ -1682,15 +1731,9 @@ mod tests {
             .iter()
             .find(|c| matches!(c, SmtpCommand::AuthCredential { .. }));
         assert!(cred.is_some(), "Should have AuthCredential command");
-        if let Some(SmtpCommand::AuthCredential {
-            method,
-            username,
-            password,
-        }) = cred
-        {
+        if let Some(SmtpCommand::AuthCredential { method, username }) = cred {
             assert_eq!(method, "PLAIN");
             assert_eq!(username, "user@example.com");
-            assert_eq!(password, "mypassword");
         }
     }
 
@@ -1731,15 +1774,9 @@ mod tests {
             cred.is_some(),
             "Should have AuthCredential command after password"
         );
-        if let Some(SmtpCommand::AuthCredential {
-            method,
-            username,
-            password,
-        }) = cred
-        {
+        if let Some(SmtpCommand::AuthCredential { method, username }) = cred {
             assert_eq!(method, "LOGIN");
             assert_eq!(username, "user@example.com");
-            assert_eq!(password, "mypassword");
         }
 
         // Server confirms authentication
@@ -1776,15 +1813,9 @@ mod tests {
             cred.is_some(),
             "Should have AuthCredential after split PLAIN"
         );
-        if let Some(SmtpCommand::AuthCredential {
-            method,
-            username,
-            password,
-        }) = cred
-        {
+        if let Some(SmtpCommand::AuthCredential { method, username }) = cred {
             assert_eq!(method, "PLAIN");
             assert_eq!(username, "user@example.com");
-            assert_eq!(password, "mypassword");
         }
     }
 
@@ -1837,6 +1868,29 @@ mod tests {
         assert!(!second[0].is_final);
         assert_eq!(second[1].code, 250);
         assert!(second[1].is_final);
+    }
+
+    #[test]
+    fn security_policy_rejection_requires_completed_message_and_enhanced_status() {
+        let mut before_data = SmtpStateMachine::new();
+        let rcpt_rejection = before_data.process_server_response(b"550 5.7.1 Relaying denied\r\n");
+        assert_eq!(rcpt_rejection[0].enhanced_status.as_deref(), Some("5.7.1"));
+        assert!(!rcpt_rejection[0].is_message_transaction);
+        assert!(!rcpt_rejection[0].is_security_policy_rejection());
+
+        let mut mailbox_full = SmtpStateMachine::new();
+        mailbox_full.message_result_pending = true;
+        let storage_rejection = mailbox_full.process_server_response(b"552 5.2.2 Mailbox full\r\n");
+        assert!(storage_rejection[0].is_message_transaction);
+        assert!(!storage_rejection[0].is_security_policy_rejection());
+
+        let mut after_data = SmtpStateMachine::new();
+        after_data.message_result_pending = true;
+        let security_rejection =
+            after_data.process_server_response(b"554 5.7.1 Message rejected by policy\r\n");
+        assert!(security_rejection[0].is_message_transaction);
+        assert!(security_rejection[0].is_security_policy_rejection());
+        assert!(!after_data.message_result_pending);
     }
 
     #[test]
@@ -2280,7 +2334,11 @@ mod tests {
         sm.process_client_data(b"RCPT TO:<rcpt@example.com>\r\n");
         let cmds = sm.process_client_data(b"DATA \t\r\n");
         assert!(cmds.iter().any(|c| matches!(c, SmtpCommand::Data)));
-        assert_eq!(sm.anomaly_count(), 0, "whitespace padding is not an anomaly");
+        assert_eq!(
+            sm.anomaly_count(),
+            0,
+            "whitespace padding is not an anomaly"
+        );
         sm.process_server_response(b"354 End data with <CR><LF>.<CR><LF>\r\n");
         assert!(sm.is_in_data_mode());
         sm.process_client_data(b"Subject: padded\r\n\r\nbody\r\n.\r\n");
@@ -2310,7 +2368,10 @@ mod tests {
         );
 
         sm.process_server_response(b"354 End data with <CR><LF>.<CR><LF>\r\n");
-        assert!(sm.is_in_data_mode(), "354 after lenient DATA must be honored");
+        assert!(
+            sm.is_in_data_mode(),
+            "354 after lenient DATA must be honored"
+        );
         sm.process_client_data(
             b"Subject: your account will be suspended\r\n\r\nverify now\r\n.\r\n",
         );

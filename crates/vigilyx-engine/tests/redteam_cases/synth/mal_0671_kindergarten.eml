@@ -1,0 +1,74 @@
+From: 滨江实验幼儿园-安保处 <security@bjkindergarten-school.example>
+To: 张敏 <zhang.min@corp.internal>
+Cc: 家委会 <parent-committee@bjkindergarten-school.example>
+Date: Thu, 15 Oct 2026 10:30:00 +0800
+Message-ID: <0671-b49@synth.example>
+Subject: 【紧急】明日校园安全演练——请家长提前登记接送人员信息（明天截止）
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<div style="background:#ff6b35;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">滨江实验幼儿园 | 校园安全通告</h2>
+</div>
+<div style="padding:20px;border:1px solid #ddd;border-top:none">
+
+<p>张敏家长：</p>
+
+<p>为进一步加强校园安全防范，幼儿园将于<b>明天（10/16）上午 9:30</b> 开展全园安全演练（模拟陌生人闯入场景）。为配合演练及日常安全管理，需<b>今天下班前</b>完成接送人员信息登记。</p>
+
+<h3 style="color:#ff6b35;border-bottom:2px solid #ff6b35;padding-bottom:4px">一、为什么需要登记</h3>
+<p>近期杭州发生多起冒充家长进入校园的安全事件：</p>
+<ul>
+<li><b>10/8</b> 西湖区某幼儿园：一名陌生女子冒充"阿姨"试图接走中班幼儿，被门卫拦截</li>
+<li><b>10/11</b> 滨江区某小学：一名男子自称"新聘保安"进入校园，实际为推销人员</li>
+</ul>
+
+<p>为防止类似事件发生在我们园，即日起<b>所有接送人员（含祖辈、保姆、亲戚）必须在园内系统登记</b>，未登记人员一律不得进入校园。</p>
+
+<h3 style="color:#ff6b35;border-bottom:2px solid #ff6b35;padding-bottom:4px">二、需登记的接送人员信息</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>信息项</th><th>说明</th><th>是否必填</th></tr>
+<tr><td>接送人姓名</td><td>与身份证一致</td><td style="color:#e00">必填</td></tr>
+<tr><td>与幼儿关系</td><td>父/母/祖辈/保姆/其他</td><td style="color:#e00">必填</td></tr>
+<tr><td>身份证号码</td><td>用于门禁系统人脸比对</td><td style="color:#e00">必填</td></tr>
+<tr><td>联系电话</td><td>接收紧急通知</td><td style="color:#e00">必填</td></tr>
+<tr><td>人脸照片</td><td>白底证件照，用于AI门禁识别</td><td>选填（可现场采集）</td></tr>
+<tr><td>车牌号</td><td>如开车接送</td><td>选填</td></tr>
+</table>
+
+<h3 style="color:#ff6b35;border-bottom:2px solid #ff6b35;padding-bottom:4px">三、登记方式</h3>
+<p style="text-align:center;margin:20px 0">
+<a href="https://bjkindergarten-school.example/security/registration?student=陈曦" style="display:inline-block;background:#ff6b35;color:#fff;padding:12px 40px;text-decoration:none;border-radius:6px;font-size:16px">立即登记接送人员</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">https://portal.bjedu.cn/parent/security-register</p>
+<p style="font-size:12px;color:#888;text-align:center">（使用家长手机号登录。首次使用需完成身份验证。）</p>
+
+<h3 style="color:#ff6b35;border-bottom:2px solid #ff6b35;padding-bottom:4px">四、明天演练安排</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:100px">时间</td><td>10/16（明天）9:30</td></tr>
+<tr><td style="background:#f5f5f5">场景</td><td>模拟陌生人闯入（教师组织幼儿躲避、一键报警）</td></tr>
+<tr><td style="background:#f5f5f5">参与班级</td><td>全园（含托班）</td></tr>
+<tr><td style="background:#f5f5f5">家长配合</td><td><b>今天完成接送人员登记</b>，明天无需到园</td></tr>
+<tr><td style="background:#f5f5f5">注意事项</td><td>演练期间园门关闭30分钟（9:30-10:00），请勿在此时间段送孩子来园</td></tr>
+</table>
+
+<h3 style="color:#ff6b35;border-bottom:2px solid #ff6b35;padding-bottom:4px">五、演练后安排</h3>
+<p>演练结束后，各班教师将组织幼儿进行安全教育（认识陌生人、求助方法等）。如幼儿在演练中受惊，园内心理咨询师将进行安抚。</p>
+
+<h3 style="color:#ff6b35;border-bottom:2px solid #ff6b35;padding-bottom:4px">六、常见问题</h3>
+<p><b>Q: 我们家只有父母接送，也需要登记吗？</b><br>
+A: 是的，所有可能接送幼儿的人员都需要登记，包括偶尔接送的祖辈或亲友。</p>
+
+<p><b>Q: 为什么要提供身份证号？</b><br>
+A: 用于门禁系统的人脸比对与身份核验，确保只有登记人员可以进入校园。信息加密存储，仅安保人员可查看。</p>
+
+<p><b>Q: 逾期未登记怎么办？</b><br>
+A: 未登记人员明天起将无法进入校园接孩子。可到门卫处现场登记（需出示身份证原件），但会影响接孩子的时间。</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">滨江实验幼儿园 | 安保处</p>
+<p style="font-size:11px;color:#999">地址：杭州市滨江区江南大道XXXX号 | 电话：0571-8765-****</p>
+</div>
+</div>
+</body></html>

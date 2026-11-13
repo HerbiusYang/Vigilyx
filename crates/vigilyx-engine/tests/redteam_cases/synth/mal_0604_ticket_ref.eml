@@ -1,0 +1,9 @@
+From: =?utf-8?B?SVTmnI3liqHlj7A=?= <itsm@corp-relay32.example>
+To: it@corp.internal
+Date: Mon, 28 Sep 2026 08:20:00 +0800
+Message-ID: <0010-b34@synth.example>
+Subject: [工单 #ITSM-7754] 附件是日志包
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+按工单描述收集的网关日志见附件（解压密码工单里）。

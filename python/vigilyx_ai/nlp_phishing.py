@@ -20,6 +20,7 @@ from typing import Optional
 
 import structlog
 import torch
+from .safety_policy import sanitize_email_text
 
 logger = structlog.get_logger()
 
@@ -273,7 +274,7 @@ def preprocess_email(
 
     if len(text) > cap:
         text = text[:cap]
-    return text
+    return sanitize_email_text(text)
 
 
 def _split_into_segments(text: str, segment_chars: int, max_segments: int) -> list[str]:

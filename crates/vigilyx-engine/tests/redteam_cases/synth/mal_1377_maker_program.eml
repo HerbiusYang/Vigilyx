@@ -1,0 +1,64 @@
+Date: Mon, 24 Aug 2026 21:38:19 +0800
+From: TideX交易所 机构服务部 做市商计划组 <maker@tidex-ex.example>
+To: 骆奕帆 <luoyifan@quantdev.example>
+Reply-To: 计划开通受理 <maker@tidex-ex-vip.example>
+Subject: =?utf-8?B?44CQ5YGa5biC5ZWG6K6h5YiS44CRQVBJ5Lqk5piT6YeP6L6+5qCH6YKA57qm77yI5L+d6K+B6YeR5byA6YCa77yJ?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+骆奕帆（UID 8842****17，API主账户）：
+
+系统检测到您的交易画像已满足
+做市商计划邀约条件，发送本函。
+
+【达标数据】
+  近30日现货成交量：4,213,000 USDT
+  Maker占比：61.3%
+  有效交易天数：27天
+  策略类型（接口行为推断）：网格/区间
+
+【计划权益（Tier 3）】
+  Maker返佣：0.015%
+  Taker返佣：0.001
+  提现额度：升级至VIP级
+  API限频：1200 req/s
+  专属行情通道：WebSocket增量推送优先
+
+【开通条件】
+  做市商保证金：5,000 USDT
+  开通方式：将保证金转入
+  计划保证金合约
+  0x7dA4****（完整地址回复本函获取），
+  转账时Memo填写您的UID，
+  合约自动绑定并开始计息
+  （年化4%，平台补贴）。
+
+【注意事项】
+1. 保证金合约仅接受USDT-TRC20，
+   转账请勿附带其他代币；
+2. 绑定后API密钥需重新授权
+   maker-program权限位，
+   回函发送授权指引；
+3. 计划名额按月核定，
+   本月Tier 3余7个席位；
+4. 详细参数见API文档
+   v3.2《机构接口说明》
+   "Market Maker Program"章节。
+
+【为什么现在回复】
+做市商返佣自绑定日起算，
+未绑定的成交量不追溯；
+您的画像下月复核时，
+若Maker占比回落到60%以下，
+将重新排队。
+
+您的IP白名单与nonce配置
+看起来是老手了，流程上
+应该不需要多解释。
+
+回函注明"开通Tier 3"，
+地址与授权指引一并发您。
+
+TideX 机构服务部
+（本函由邀约系统生成，
+  人工复核：Maker组 07）

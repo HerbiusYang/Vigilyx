@@ -26,6 +26,27 @@ pub(crate) fn format_alert_timestamp(t: &DateTime<Utc>) -> String {
     t.to_rfc3339_opts(SecondsFormat::Micros, true)
 }
 
+/// Resolve the current verdict for a session at insert time. Post-verdict
+/// work is asynchronous, so an alert may carry the id from an analysis that a
+/// rescan has already replaced. The fallback preserves alerts such as
+/// operational flood summaries that intentionally have no verdict row.
+const INSERT_ALERT_SQL: &str = r#"
+            INSERT INTO security_alerts
+                (id, verdict_id, session_id, alert_level, expected_loss,
+                 return_period, cvar, risk_final, k_conflict, cusum_alarm,
+                 rationale, created_at)
+            SELECT $1,
+                   COALESCE(
+                       (SELECT id FROM security_verdicts WHERE session_id = $3),
+                       $2
+                   ),
+                   $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+            WHERE NOT EXISTS (
+                SELECT 1 FROM security_alerts
+                WHERE session_id = $3 AND alert_level = $4 AND created_at >= $13
+            )
+            "#;
+
 impl VigilDb {
     /// InsertAlert
     ///
@@ -38,34 +59,22 @@ impl VigilDb {
         let cutoff = format_alert_timestamp(
             &(alert.created_at - chrono::Duration::minutes(ALERT_DEDUP_WINDOW_MINUTES)),
         );
-        let result = sqlx::query(
-            r#"
-            INSERT INTO security_alerts
-                (id, verdict_id, session_id, alert_level, expected_loss,
-                 return_period, cvar, risk_final, k_conflict, cusum_alarm,
-                 rationale, created_at)
-            SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
-            WHERE NOT EXISTS (
-                SELECT 1 FROM security_alerts
-                WHERE session_id = $3 AND alert_level = $4 AND created_at >= $13
-            )
-            "#,
-        )
-        .bind(alert.id.to_string())
-        .bind(alert.verdict_id.to_string())
-        .bind(alert.session_id.to_string())
-        .bind(alert.alert_level.as_str())
-        .bind(alert.expected_loss)
-        .bind(alert.return_period)
-        .bind(alert.cvar)
-        .bind(alert.risk_final)
-        .bind(alert.k_conflict)
-        .bind(alert.cusum_alarm)
-        .bind(&alert.rationale)
-        .bind(format_alert_timestamp(&alert.created_at))
-        .bind(cutoff)
-        .execute(&self.pool)
-        .await?;
+        let result = sqlx::query(INSERT_ALERT_SQL)
+            .bind(alert.id.to_string())
+            .bind(alert.verdict_id.to_string())
+            .bind(alert.session_id.to_string())
+            .bind(alert.alert_level.as_str())
+            .bind(alert.expected_loss)
+            .bind(alert.return_period)
+            .bind(alert.cvar)
+            .bind(alert.risk_final)
+            .bind(alert.k_conflict)
+            .bind(alert.cusum_alarm)
+            .bind(&alert.rationale)
+            .bind(format_alert_timestamp(&alert.created_at))
+            .bind(cutoff)
+            .execute(&self.pool)
+            .await?;
         Ok(result.rows_affected() > 0)
     }
 
@@ -232,7 +241,7 @@ impl AlertRow {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_alert_filter, format_alert_timestamp};
+    use super::{INSERT_ALERT_SQL, build_alert_filter, format_alert_timestamp};
     use chrono::{Duration, TimeZone, Utc};
 
     #[test]
@@ -312,10 +321,18 @@ mod tests {
         // a row exactly at the cutoff is kept (>=), one microsecond before is not.
         let cutoff = format_alert_timestamp(&(base + Duration::seconds(1)));
         let at = format_alert_timestamp(&(base + Duration::seconds(1)));
-        let before = format_alert_timestamp(
-            &(base + Duration::seconds(1) - Duration::microseconds(1)),
-        );
+        let before =
+            format_alert_timestamp(&(base + Duration::seconds(1) - Duration::microseconds(1)));
         assert!(at >= cutoff);
         assert!(before < cutoff);
+    }
+
+    #[test]
+    fn alert_insert_resolves_the_current_verdict_by_session() {
+        assert!(INSERT_ALERT_SQL.contains("COALESCE"));
+        assert!(
+            INSERT_ALERT_SQL.contains("SELECT id FROM security_verdicts WHERE session_id = $3")
+        );
+        assert!(INSERT_ALERT_SQL.contains("$3, $4, $5"));
     }
 }

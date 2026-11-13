@@ -1,0 +1,21 @@
+From: =?utf-8?B?U0RLIERvY3M=?= <docs@vendor-sdk11.example>
+To: rd@corp.internal
+Date: Tue, 22 Sep 2026 10:23:00 +0800
+Message-ID: <0013-b29@synth.example>
+Subject: API reference (offline)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+Compiled help file for offline reference.
+--BS
+Content-Type: application/vnd.ms-htmlhelp
+Content-Disposition: attachment; filename="api-ref.chm"
+Content-Transfer-Encoding: base64
+
+SVRTRgMAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+--BS--

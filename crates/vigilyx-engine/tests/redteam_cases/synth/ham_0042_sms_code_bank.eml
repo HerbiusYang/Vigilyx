@@ -1,0 +1,10 @@
+From: =?utf-8?B?5omL5py66ZO26KGM?= <sms@bank.example>
+To: me@personal.example
+Date: Wed, 26 Aug 2026 11:29:00 +0800
+Message-ID: <0019-b3@synth.example>
+Subject: 动态验证码
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您正在办理转账，验证码 820914，切勿泄露给任何人包括银行工作人员。
+本邮件由系统发出。

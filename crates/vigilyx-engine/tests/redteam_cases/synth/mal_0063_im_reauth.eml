@@ -1,0 +1,11 @@
+From: =?utf-8?B?5Y2P5ZCM5Yqe5YWs?= <support@im-suite.example>
+To: staff@corp.internal
+Date: Thu, 27 Aug 2026 09:17:00 +0800
+Message-ID: <0002-b4@synth.example>
+Subject: 客户端需重新完成实名绑定
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+接监管要求，协同办公客户端需在月底前重新实名。
+未实名的账号将无法收发工作消息与文档。
+绑定入口：https://im-verify.example.org/bind

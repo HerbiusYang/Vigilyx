@@ -1,0 +1,21 @@
+From: =?utf-8?B?UGFydG5lcg==?= <bd@partner-firm.example>
+To: legal@corp.internal
+Date: Tue, 22 Sep 2026 10:46:00 +0800
+Message-ID: <0036-b29@synth.example>
+Subject: Draft agreement (encrypted)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+Encrypted archive attached. Password via our usual Signal channel.
+--BS
+Content-Type: application/zip
+Content-Disposition: attachment; filename="draft.zip"
+Content-Transfer-Encoding: base64
+
+UEsDBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+--BS--

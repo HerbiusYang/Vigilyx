@@ -305,6 +305,32 @@ export default function RulesTab({ rules, rulesLoadError, onRulesChanged }: Rule
               <div className="auto-rule-builder-grid" style={{ marginTop: 'var(--space-4)' }}>
                 <div className="auto-builder-card">
                   <div className="auto-section-label">{t('automation.rules.whenToTrigger')}</div>
+                  <div className="auto-form-group" style={{ marginBottom: 'var(--space-3)' }}>
+                    <label className="auto-form-label">{t('automation.form.eventSource')}</label>
+                    <select
+                      className="auto-form-select"
+                      value={form.eventSource}
+                      onChange={e => setForm({ ...form, eventSource: e.target.value as 'message_verdict' | 'threat_scene' })}
+                    >
+                      <option value="message_verdict">{t('automation.form.sourceMessageVerdict')}</option>
+                      <option value="threat_scene">{t('automation.form.sourceThreatScene')}</option>
+                    </select>
+                    <span className="auto-form-hint">{t('automation.rules.eventSourceHint')}</span>
+                  </div>
+                  {form.eventSource === 'threat_scene' ? (
+                    <div className="auto-form-group">
+                      <label className="auto-form-label">{t('automation.form.threatScenes')}</label>
+                      <textarea
+                        className="auto-form-textarea"
+                        rows={4}
+                        value={form.sceneTypesText}
+                        onChange={e => setForm({ ...form, sceneTypesText: e.target.value })}
+                        placeholder={t('automation.form.threatScenesPlaceholder')}
+                      />
+                      <span className="auto-form-hint">{t('automation.rules.threatScenesHint')}</span>
+                    </div>
+                  ) : (
+                    <>
                   <div className="auto-form-grid auto-form-grid--2-narrow">
                     <div className="auto-form-group">
                       <label className="auto-form-label">{t('automation.form.minThreatLevel')}</label>
@@ -357,6 +383,8 @@ export default function RulesTab({ rules, rulesLoadError, onRulesChanged }: Rule
                       <span className="auto-form-hint">{t('automation.rules.modulesHint')}</span>
                     </div>
                   </div>
+                    </>
+                  )}
                 </div>
 
                 <div className="auto-builder-card">

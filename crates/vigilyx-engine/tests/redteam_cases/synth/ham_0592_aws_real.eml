@@ -1,0 +1,60 @@
+From: Amazon Web Services <no-reply@aws.example>
+To: ops@corp.internal
+Cc: cto@corp.internal
+Date: Mon, 19 Oct 2026 06:15:00 +0800
+Message-ID: <0592-b53@synth.example>
+Subject: [Urgent] Unusual billing activity detected on account 4471-8842-9930 — Action required
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear AWS Customer,
+
+We have detected unusual billing activity on your AWS account.
+
+Detected Anomalies:
+  Account ID: 4471-8842-9930
+  Normal monthly spend: $2,400 - $3,100
+  Current month-to-date: $28,740 (932% increase)
+  Anomalous services: EC2 P3.8xlarge x 16 (GPU instances)
+  Region: us-east-1 (usual: cn-northwest-1)
+  Started: October 14, 2026 03:22 UTC
+  Root cause: Compromised access key (AKIA...4F2A)
+
+Immediate Action Required:
+
+  1. Log in to the AWS Console:
+     Open your browser and navigate to console.aws.amazon.com
+     (Please type the URL manually. Do NOT click links in emails.)
+
+  2. Revoke the compromised access key:
+     IAM → Security Credentials → Access Keys → Delete AKIA...4F2A
+
+  3. Review and terminate unauthorized instances:
+     EC2 → Instances → Filter by us-east-1 → Terminate p3.8xlarge instances
+
+  4. Set up billing alerts:
+     Billing → Billing Preferences → AWS Budgets → Set budget alert
+
+Important Security Notes:
+  AWS will NEVER:
+  - Send you a direct link to "complete a security review" via email
+  - Ask you to authenticate through AWS SSO from an email link
+  - Request an "offline_access" token or OAuth authorization
+  - Suspend your account without allowing manual remediation
+
+  If you receive an email directing you to an SSO portal or
+  requesting OAuth tokens, it is a phishing attempt. Please
+  report it to aws-phishing@amazon.example
+
+  The ONLY way to secure your account is to log in directly
+  at console.aws.amazon.com (type the URL manually).
+
+Cost Breakdown (Anomalous Charges):
+  EC2 (p3.8xlarge x 16):     $24,180.00
+  EBS (gp3 500GB x 16):       $1,920.00
+  Data Transfer (4.2TB):      $2,640.00
+  Total:                     $28,740.00
+
+Amazon Web Services, Inc. | Billing Team
+Reference: AWS-BILL-2026-4471-8842
+You are receiving this because you are the registered account contact.

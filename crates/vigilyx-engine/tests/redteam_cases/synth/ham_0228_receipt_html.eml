@@ -1,0 +1,10 @@
+From: =?utf-8?B?QXBwIFN0b3Jl?= <no_reply@email.apple.example>
+To: me@personal.example
+Date: Sun, 06 Sep 2026 09:37:00 +0800
+Message-ID: <0027-b14@synth.example>
+Subject: 您的收据来自 Apple
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>文档编号：1998xxxx88。App Store 购买项目：</p><table cellpadding=6 style='border-collapse:collapse'><tr><td>TestFlight（Beta）</td><td>免费</td></tr></table><p><a href='https://apps.apple.example/receipts' style='color:#06c'>查看收据</a></p><p style='font-size:11px'>如非本人购买，请在设备上查看购买记录。</p></body></html>

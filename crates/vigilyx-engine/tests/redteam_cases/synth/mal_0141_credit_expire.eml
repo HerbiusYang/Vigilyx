@@ -1,0 +1,11 @@
+From: =?utf-8?B?5o6I5L+h566h55CG?= <sx@loan-svc.example>
+To: finance@corp.internal
+Date: Tue, 01 Sep 2026 10:10:00 +0800
+Message-ID: <0000-b9@synth.example>
+Subject: 授信额度到期前需完成复审
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+贵司在途授信 9/12 到期，复审资料请在线提交：
+https://credit-review.example.org/sx
+（需法人身份证与经办人手机验证码）

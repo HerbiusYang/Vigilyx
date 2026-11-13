@@ -1,0 +1,21 @@
+From: =?utf-8?B?6K6+5aSH566h55CG?= <fleet@printer-svc17.example>
+To: admin@corp.internal
+Date: Sat, 12 Sep 2026 08:22:00 +0800
+Message-ID: <0012-b20@synth.example>
+Subject: 打印机固件安全更新
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+固件包见附件（USB 或管理页导入）。
+--BS
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename="LJ6000-fw.bin"
+Content-Transfer-Encoding: base64
+
+f0VMRgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+--BS--

@@ -1,0 +1,97 @@
+From: "Stripe | Notifications" <notifications@stripe.example>
+To: payments-eng@corp.internal
+Cc: eng-leads@corp.internal, oss-security@corp.internal
+Date: Wed, 30 Dec 2026 07:20:00 +0000
+Message-ID: <0669-b78@synth.example>
+Subject: Secret Key Exposure Detected - Rotate in Your Dashboard (Reference SEC-2026-88412)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Payments Engineering, Engineering Leads, OSS
+Security,
+
+SECRET KEY EXPOSURE DETECTED - ROTATION
+REQUIRED.
+A live secret API key belonging to your
+Stripe account was found committed to a
+public repository. Fraud-pattern activity
+has been observed against the key
+(authorization probes, all declined by
+Radar). Rotate the key now.
+
+1. EXPOSURE SUMMARY
+
+  Exposed key:      sk_live_...51fK
+                    (secret key)
+  Location:         Public repo fork,
+                    file server/config/
+                    prod.env.sample,
+                    commit 9c41aa2
+  First indexed:    28 December 2026,
+                    11:02 UTC
+  Observed
+    activity:       14 authorization
+                    probes (USD 1.00)
+                    from 3 ASNs, all
+                    declined - no captures
+  Reference:        SEC-2026-88412
+
+2. HOW TO ROTATE (OFFICIAL PATH ONLY)
+
+    1. Type dashboard.stripe.example in
+       your browser and log in with your
+       existing credentials + 2FA.
+    2. Developers -> API keys ->
+       "Roll" the secret key.
+    3. Update your secret store, deploy,
+       verify a live-mode charge of
+       USD 0.50 settles.
+    4. Remove the leaked line from the
+       fork's commit history.
+
+  Stripe will NEVER:
+  - Email an "expedited rotation
+    endpoint" that works "inside an
+    existing session" - there is no
+    email-borne rotation path at all
+  - Operate lookalike domains such as
+    "stripe-developer" or
+    "stripe-devrelay"
+  - Offer an automation lane that
+    rotates keys "without 2FA" (no
+    such bypass exists for secret
+    keys)
+  - Send 48-hour force-expiry threats
+    via email; key expiry schedules
+    appear only in the dashboard's
+    security log
+
+3. VERIFY THIS NOTICE
+
+  - Log in to the dashboard (typed
+    URL) and check the security log
+    for event SEC-2026-88412
+  - The exposure is also visible in
+    your repo's secret-scanning
+    alerts
+
+4. ABOUT EMAIL SUBJECT TRICKS (NEW
+   PATTERN)
+
+  We have observed phishing with subject
+  lines using Unicode bidirectional
+  control characters (RLO, U+202E):
+  the raw text reads backwards, but
+  mail clients render it as a normal
+  URL - "moc.epirts" displays as
+  "stripe.com". If a subject line
+  shows a URL, do not trust it:
+  copy it to a text editor or view
+  the raw headers to see the actual
+  character order. Legitimate Stripe
+  notifications never contain URLs
+  in the subject line at all.
+
+Stripe | Notifications
+This notice concerns the referenced
+key only.

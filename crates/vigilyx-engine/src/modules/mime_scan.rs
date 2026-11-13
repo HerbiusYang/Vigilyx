@@ -208,6 +208,33 @@ impl SecurityModule for MimeScanModule {
             }
         }
 
+        // --- 3b. Undeclared charset on an 8-bit text body ---
+        // A text/* body sent as 8bit without charset is interpreted through a
+        // local fallback. Different MUAs may sniff a different legacy
+        // encoding, so the canonical body is not byte-semantically stable.
+        // Keep this as an explicit MIME anomaly instead of silently treating
+        // the fallback projection as authoritative. ASCII-only bodies are
+        // excluded because charset choice is immaterial for them.
+        if content_type_header
+            .as_deref()
+            .is_some_and(is_text_content_type)
+            && content_transfer_encoding
+                .as_deref()
+                .is_some_and(|cte| cte.trim().eq_ignore_ascii_case("8bit"))
+            && content_type_header
+                .as_deref()
+                .is_some_and(|content_type| !declares_non_empty_charset(content_type))
+            && content_has_non_ascii_text(&ctx.session.content)
+        {
+            total_score += 0.15;
+            categories.push("undeclared_8bit_charset".to_string());
+            evidence.push(Evidence {
+                description: "8bit text body has no declared charset; canonical decoding relies on a legacy fallback and may differ from the recipient MUA".to_string(),
+                location: Some("headers:Content-Type".to_string()),
+                snippet: content_type_header.clone(),
+            });
+        }
+
         // --- 4. Duplicate / conflicting MIME boundaries ---
         {
             let unique_count = {
@@ -442,6 +469,38 @@ fn count_email_addresses_in_header(value: &str) -> usize {
     seen.len()
 }
 
+fn is_text_content_type(value: &str) -> bool {
+    value
+        .split(';')
+        .next()
+        .is_some_and(|media_type| media_type.trim().to_ascii_lowercase().starts_with("text/"))
+}
+
+fn declares_non_empty_charset(value: &str) -> bool {
+    value.split(';').skip(1).any(|parameter| {
+        let Some((name, parameter_value)) = parameter.split_once('=') else {
+            return false;
+        };
+        name.trim().eq_ignore_ascii_case("charset")
+            && !parameter_value
+                .trim()
+                .trim_matches(['"', '\''])
+                .trim()
+                .is_empty()
+    })
+}
+
+fn content_has_non_ascii_text(content: &vigilyx_core::models::EmailContent) -> bool {
+    content
+        .body_text
+        .as_deref()
+        .is_some_and(|body| !body.is_ascii())
+        || content
+            .body_html
+            .as_deref()
+            .is_some_and(|body| !body.is_ascii())
+}
+
 fn duplicate_cte_looks_like_nested_part_encoding(values: &[String]) -> bool {
     if values.len() != 2 {
         return false;
@@ -487,7 +546,9 @@ mod tests {
             2
         );
         assert_eq!(
-            count_email_addresses_in_header("Alice <a@x.com>, \"Mr Bob\" <b@y.org>, charlie@z.net"),
+            count_email_addresses_in_header(
+                "Alice <a@x.example>, \"Mr Bob\" <b@y.example>, charlie@z.example"
+            ),
             3
         );
     }
@@ -500,7 +561,7 @@ mod tests {
     #[test]
     fn duplicated_display_name_address_counts_once() {
         assert_eq!(
-            count_email_addresses_in_header("\"12306@rails.com.cn\" <12306@rails.com.cn>"),
+            count_email_addresses_in_header("\"fixture@rail.example\" <fixture@rail.example>"),
             1
         );
     }
@@ -527,6 +588,70 @@ mod tests {
         let result = module.analyze(&ctx).await.unwrap();
 
         assert_eq!(result.threat_level, ThreatLevel::Safe);
+    }
+
+    #[tokio::test]
+    async fn undeclared_8bit_text_charset_is_explicitly_reported() {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.mail_from = Some("sender@example.com".to_string());
+        session.rcpt_to.push("recipient@example.com".to_string());
+        session.content = EmailContent {
+            headers: vec![
+                ("Content-Type".to_string(), "text/plain".to_string()),
+                ("Content-Transfer-Encoding".to_string(), "8bit".to_string()),
+            ],
+            body_text: Some("Привет, подтвердите учётную запись".to_string()),
+            ..Default::default()
+        };
+        let ctx = SecurityContext::new(Arc::new(session));
+
+        let result = MimeScanModule::new().analyze(&ctx).await.unwrap();
+
+        assert!(
+            result
+                .categories
+                .contains(&"undeclared_8bit_charset".to_string())
+        );
+        assert_eq!(result.threat_level, ThreatLevel::Low);
+    }
+
+    #[tokio::test]
+    async fn declared_8bit_text_charset_is_not_flagged() {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.mail_from = Some("sender@example.com".to_string());
+        session.rcpt_to.push("recipient@example.com".to_string());
+        session.content = EmailContent {
+            headers: vec![
+                (
+                    "Content-Type".to_string(),
+                    "text/plain; charset=utf-8".to_string(),
+                ),
+                ("Content-Transfer-Encoding".to_string(), "8bit".to_string()),
+            ],
+            body_text: Some("Привет, подтвердите учётную запись".to_string()),
+            ..Default::default()
+        };
+        let ctx = SecurityContext::new(Arc::new(session));
+
+        let result = MimeScanModule::new().analyze(&ctx).await.unwrap();
+
+        assert!(
+            !result
+                .categories
+                .contains(&"undeclared_8bit_charset".to_string())
+        );
     }
 
     #[test]
@@ -561,13 +686,13 @@ mod tests {
             "10.0.0.2".to_string(),
             25,
         );
-        session.mail_from = Some("1790341540@qq.com".to_string());
+        session.mail_from = Some("fixture-incomplete@qq.com".to_string());
         session.rcpt_to.push("recipient@example.com".to_string());
         let content = EmailContent {
             headers: vec![
                 (
                     "From".to_string(),
-                    "\"Monologue*\" <1790341540@qq.com>".to_string(),
+                    "\"Synthetic Sender\" <fixture-incomplete@qq.com>".to_string(),
                 ),
                 ("To".to_string(), "<recipient@example.com>".to_string()),
                 (

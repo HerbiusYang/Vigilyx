@@ -20,9 +20,10 @@ impl ShardedSessionManager {
                     .sid_user_conflict_total
                     .fetch_add(1, Ordering::Relaxed);
                 warn!(
-                    sid = %sid,
-                    existing_user = %existing.user,
-                    attempted_user = %user,
+                    // SID and mailbox values are credentials/PII. The counter
+                    // plus this event is sufficient for operations; never turn
+                    // the Docker log into a second identity/session database.
+                    mapping_conflict = true,
                     "sid->user conflict: refusing to overwrite existing mapping (possible attribution spoofing)"
                 );
                 return;
@@ -57,8 +58,7 @@ impl ShardedSessionManager {
                     .fetch_add(1, Ordering::Relaxed);
                 warn!(
                     client_ip = %ip,
-                    bound_user = %existing.user,
-                    reported_user = %user,
+                    identity_changed = true,
                     "client_ip_multi_user: same client IP reported a different webmail user"
                 );
             }

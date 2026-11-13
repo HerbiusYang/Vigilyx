@@ -9,6 +9,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use url::Url;
+use vigilyx_core::models::EmailSession;
 use vigilyx_parser::mime::decode_rfc2047;
 
 use crate::module_data::module_data;
@@ -71,6 +72,85 @@ pub fn extract_domain_from_email(addr: &str) -> Option<String> {
         // same domain as "evil.com" or IOC exact-match lookups miss.
         .map(|(_, d)| d.trim().trim_end_matches('.').to_ascii_lowercase())
         .filter(|d| !d.is_empty())
+}
+
+/// Return true for a URL whose destination is a non-public IP address.
+///
+/// A private management URL in a trusted operational notification is an
+/// observation, not an external phishing destination. This helper is kept
+/// separate from generic IP-literal detection so ordinary messages containing
+/// public IP URLs remain actionable.
+pub fn is_private_network_url(url: &str) -> bool {
+    let Ok(parsed) = Url::parse(url) else {
+        return false;
+    };
+    let Some(host) = parsed.host() else {
+        return false;
+    };
+    match host {
+        url::Host::Ipv4(ip) => {
+            ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_unspecified()
+                || ip.is_multicast()
+        }
+        url::Host::Ipv6(ip) => {
+            let address = IpAddr::V6(ip);
+            address.is_loopback()
+                || address.is_unspecified()
+                || address.is_multicast()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local()
+        }
+        url::Host::Domain(_) => false,
+    }
+}
+
+/// Recognize a bounded, provenance-shaped security appliance delivery alert.
+///
+/// This is context only. It must never be used as a general sender whitelist:
+/// the sender domain and multiple body markers must agree before callers may
+/// demote an appliance's private management URL to observation. Independent
+/// native evidence continues to be evaluated normally.
+pub fn is_operational_delivery_alert(session: &EmailSession) -> bool {
+    let mut text = String::new();
+    if let Some(subject) = &session.subject {
+        text.push_str(subject);
+        text.push('\n');
+    }
+    for (_, value) in &session.content.headers {
+        text.push_str(value);
+        text.push('\n');
+    }
+    if let Some(body) = &session.content.body_text {
+        text.push_str(&body.chars().take(64 * 1024).collect::<String>());
+    }
+    if let Some(body) = &session.content.body_html {
+        text.push('\n');
+        text.push_str(&body.chars().take(64 * 1024).collect::<String>());
+    }
+    is_operational_delivery_alert_text(session.mail_from.as_deref().unwrap_or_default(), &text)
+}
+
+/// Text-only form of [`is_operational_delivery_alert`] for bounded report
+/// extraction paths that intentionally do not materialize a full session.
+pub fn is_operational_delivery_alert_text(mail_from: &str, text: &str) -> bool {
+    let Some(sender_domain) = extract_domain_from_email(mail_from) else {
+        return false;
+    };
+    let data = module_data();
+    if !data.contains("operational_alert_sender_domains", &sender_domain) {
+        return false;
+    }
+
+    let normalized = text.to_lowercase();
+    let marker_hits = data
+        .get_list("operational_alert_markers")
+        .iter()
+        .filter(|marker| normalized.contains(&marker.to_lowercase()))
+        .count();
+    marker_hits >= 2
 }
 
 /// Return the registrable/organizational domain used for relaxed sender
@@ -576,15 +656,24 @@ pub fn is_probable_schema_reference_url(url: &str) -> bool {
 
 /// Percent-decode a URL component without allocating intermediate parsers.
 pub fn percent_decode(input: &str) -> String {
+    fn hex_nibble(byte: u8) -> Option<u8> {
+        match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'a'..=b'f' => Some(byte - b'a' + 10),
+            b'A'..=b'F' => Some(byte - b'A' + 10),
+            _ => None,
+        }
+    }
+
     let mut out = Vec::with_capacity(input.len());
     let bytes = input.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%'
             && i + 2 < bytes.len()
-            && let Ok(byte) = u8::from_str_radix(&input[i + 1..i + 3], 16)
+            && let (Some(high), Some(low)) = (hex_nibble(bytes[i + 1]), hex_nibble(bytes[i + 2]))
         {
-            out.push(byte);
+            out.push((high << 4) | low);
             i += 3;
             continue;
         }
@@ -666,15 +755,22 @@ fn normalize_embedded_http_target(value: &str) -> Option<String> {
 /// or cyclic URLs cannot cause unbounded work.
 pub fn extract_redirect_target_urls(url: &str) -> Vec<String> {
     const MAX_REDIRECT_DEPTH: usize = 4;
+    const MAX_REDIRECT_TARGETS: usize = 16;
     let mut targets = Vec::new();
     let mut seen = HashSet::new();
     let mut frontier = vec![(url.to_string(), 0usize)];
 
     while let Some((current, depth)) = frontier.pop() {
+        if targets.len() >= MAX_REDIRECT_TARGETS {
+            break;
+        }
         if depth >= MAX_REDIRECT_DEPTH {
             continue;
         }
         for target in extract_redirect_target_urls_once(&current) {
+            if targets.len() >= MAX_REDIRECT_TARGETS {
+                break;
+            }
             if seen.insert(target.clone()) {
                 frontier.push((target.clone(), depth + 1));
                 targets.push(target);
@@ -744,6 +840,7 @@ fn is_base64_payload_line(line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     // extract_domain_from_email
 
@@ -999,22 +1096,46 @@ mod tests {
     }
 
     #[test]
+    fn percent_decode_never_slices_inside_utf8_after_invalid_escape() {
+        assert_eq!(percent_decode("%�"), "%�");
+        assert_eq!(percent_decode("%%aA"), "%�");
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 128,
+            max_shrink_iters: 1_000,
+            ..ProptestConfig::default()
+        })]
+
+        #[test]
+        fn redirect_extraction_is_bounded_and_never_panics(
+            value in prop::string::string_regex("[A-Za-z0-9%:/?&=._-]{0,2048}").unwrap(),
+        ) {
+            let wrapped = format!("https://docs.google.com/url?q={value}&next={value}&continue={value}");
+            let targets = extract_redirect_target_urls(&wrapped);
+            prop_assert!(targets.len() <= 16);
+            prop_assert!(targets.iter().all(|target| target.len() <= wrapped.len() * 3 + 16));
+        }
+    }
+
+    #[test]
     fn test_organizational_domain_relaxed_alignment() {
         assert_eq!(
-            organizational_domain("mail.contact.acams.org"),
-            Some("acams.org".to_string())
+            organizational_domain("mail.contact.vendor.example"),
+            Some("vendor.example".to_string())
         );
         assert!(domains_share_organizational_domain(
-            "acams.org",
-            "contact.acams.org"
+            "vendor.example",
+            "contact.vendor.example"
         ));
         assert!(domains_share_organizational_domain(
             "example.co.uk",
             "mailer.example.co.uk"
         ));
         assert!(!domains_share_organizational_domain(
-            "acams.org",
-            "acams-login.example"
+            "association.example",
+            "association-login.invalid"
         ));
         assert!(domains_share_organizational_domain(
             "192.0.2.1",
@@ -1029,7 +1150,7 @@ mod tests {
     #[test]
     fn test_non_clickable_render_asset_url_recognizes_showimg_endpoint() {
         assert!(is_probable_non_clickable_render_asset_url(
-            "http://home.sumscope.com:8050/portal/sendcloud/showImg?id=74916bf1ba5d4f7f9731941883c1ffc0"
+            "https://assets.vendor.example/portal/sendcloud/showImg?id=fixture-image"
         ));
     }
 
@@ -1083,6 +1204,39 @@ U29tZSBuZXN0ZWQgcGF5bG9hZA==\r\n";
     fn test_plain_business_text_is_not_raw_mime_container() {
         let plain = "Please review invoice INV-12345 and reply today.";
         assert!(!looks_like_raw_mime_container_text(plain));
+    }
+
+    #[test]
+    fn operational_ddei_alert_is_context_only() {
+        let mut session = EmailSession::new(
+            vigilyx_core::models::Protocol::Smtp,
+            "192.0.2.41".to_string(),
+            36238,
+            "198.51.100.243".to_string(),
+            25,
+        );
+        session.mail_from = Some("notifications@ddei.example".to_string());
+        session.subject = Some("DDEI 严重 - 系统警报 - 中继MTA服务器不可达".to_string());
+        session.content.body_text = Some(
+                "Deep Discovery Email Inspector无法发送以下邮件到中继MTA服务器：\n以下中继MTA服务器不可达：\n[198.51.100.68]:25"
+                .to_string(),
+        );
+
+        assert!(is_operational_delivery_alert(&session));
+        assert!(is_private_network_url("https://10.0.0.41/loginPage.ddei"));
+        assert!(!is_private_network_url("https://198.51.100.10/login"));
+    }
+
+    #[test]
+    fn operational_alert_requires_sender_and_multiple_markers() {
+        assert!(!is_operational_delivery_alert_text(
+            "notifications@example.com",
+            "Deep Discovery Email Inspector 以下中继MTA服务器不可达"
+        ));
+        assert!(!is_operational_delivery_alert_text(
+            "notifications@alerts.example",
+            "Deep Discovery Email Inspector"
+        ));
     }
 
     #[test]

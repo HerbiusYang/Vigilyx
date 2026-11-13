@@ -1,0 +1,19 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev75@partner.example>
+Subject: 系统通知
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+您好，请扫描附件二维码完成确认。--BS
+Content-Type: image/png
+Content-Disposition: attachment; filename="notice.png"
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgoAAAANSUhEUgAAAN4AAADeCAIAAADdBSngAAAD6klEQVR4nO3dwW6kOBRA0arR/P8v08tZMFIjyza34Jx1QtKdK0uvDPjzAQAAAAAAAAAAAAAAAAAAgP98P5Mcx/G5z/f7/evvc/6asyvfNevKY74bf9a63/CKf6ZcBaaTJlHSJEqaREmTqH/7k9qsCXTnzL5usj6G/hW1v8UVVk2ipEmUNImSJlHS5H0T+qxpbtZ0OXaddfP4mO+kK9/7t7jCqkmUNImSJlHSJEqaRG2d0O91Zfd5bD/6fOWxKX7s04CnsmoSJU2ipEmUNImSJlEvmtDXPcE99qz6urvun8GqSZQ0iZImUdIkSppEbZ3Qd86Stf3o2m74Nz/XWzWJkiZR0iRKmkRJk/dN6LWJeN1O971f84ufD1xh1SRKmkRJkyhpEiVNouobqcPWTbtju8/9N7PVWDWJkiZR0iRKmkRJk6iFA+DY29LWnW627ky0WTP7zhPbj2W76s5D5+GkSZQ0iZImUdLk6Xe5j02F696oNkt/Ij5u3Z13HjqvI02ipEmUNImSJlG5PfSx6/zi+95ru+pX7DwL3qpJlDSJkiZR0iRKmrxvD/1s1uS4bg991pnpV658tm4ev6L2t7BqEiVNoqRJlDSJkiZRN++hn/Xf57buZPP+XvxOVk2ipEmUNImSJlHSJOrmV4XXdpZrT8H/4nPo7nLn4aRJlDSJkiZR0iQqt4c+ZucJaGN27rx/N07fJnReR5pESZMoaRIlTZ4+offP+7739LcrfvH++TMTOg8nTaKkSZQ0iZImUbk99Hvvab/ys8auUzvZ7Tvpyt4Ux+tIkyhpEiVNoqRJ1EOeQx+78ph737p2POJzjyusmkRJkyhpEiVNoqTJ++5yX7dLW5vrZ/2sdXv6R+xu+SusmkRJkyhpEiVNoqTJ089DX3dH9KyZfed97+v+7Wf3noe+jlWTKGkSJU2ipEmUNInauoe+87t2zra1+/DH1M5Mt2oSJU2ipEmUNImSJu/bQ3/zd/3inQljnLbG60iTKGkSJU2ipMnTJ/R7d4Rn7f/unMevTN/Hrfer7zxp7syqSZQ0iZImUdIkSpo8fUI/WzftrruDfd1MuvOk9e+k/3nPocP/kCZR0iRKmkRJk/dN6P03pd87a8/6miN/v/oYqyZR0iRKmkRJkyhpErV1Qt9p5xlt/f36s1mfGHhTHK8jTaKkSZQ0iZImUY+d0Hc+wd2/7732Nv4rrJpESZMoaRIlTaKkSdTWCf3eu6bvfb/c2N3px7In7tc9OzCLVZMoaRIlTaKkSZQ0ed956DvtPHHs3rPXr5i1779z9j+zahIlTaKkSZQ0iZImAAAAAAAAAAAAAAAAAAAA8On7A9SgL5c6jJBJAAAAAElFTkSuQmCC
+--BS--
+

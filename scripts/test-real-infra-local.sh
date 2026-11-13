@@ -67,3 +67,6 @@ cargo test -p vigilyx-engine --features infra-tests \
 
 cargo test -p vigilyx-engine --features infra-tests \
   modules::link_reputation::tests::test_xred_mooo_com_with_intel -- --test-threads=1
+
+cargo test -p vigilyx-mta --features infra-tests \
+  --test outbound_email_chain -- --test-threads=1

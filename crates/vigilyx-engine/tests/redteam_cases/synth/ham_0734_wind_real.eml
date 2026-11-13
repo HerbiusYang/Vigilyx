@@ -1,0 +1,118 @@
+From: "NordGrid | Settlements" <settlements@nordgrid.example>
+To: asset-mgmt@windco.example
+Cc: treasury@windco.example, cfo-office@windco.example
+Date: Tue, 25 May 2027 07:00:00 +0000
+Message-ID: <0734-b100@synth.example>
+Subject: [SETTLEMENT PREVIEW] May PPA & Curtailment Settlement WF-88412 - Preview Available in MDM Portal (No Account Changes)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Asset Management, Treasury, CFO Office,
+
+SETTLEMENT PREVIEW NOTICE -
+ASSET WF-88412 (Havsnas Wind Farm).
+
+Your May settlement (PPA energy plus
+curtailment compensation) is due to
+run on the month-end cycle. The
+preview is available in the MDM
+portal; settlement bank details are
+unchanged.
+
+1. SETTLEMENT PREVIEW (WF-88412)
+
+  Asset:          Havnas Wind Farm
+                 (41 turbines,
+                 132 MW, asset ID
+                 WF-88412)
+  PPA:            10-year corporate
+                 PPA (2023)
+  May energy
+    settlement:  31,840 MWh x
+                 EUR 42.10/MWh =
+                 EUR 1,340,464
+  Curtailment
+    compensation
+    (grid):      EUR 418,640
+                 (May 14-16 storm
+                 curtailment,
+                 per TSO log)
+  Negative
+    balancing:   EUR -88,214
+  ---------------------------------
+  Net May
+    settlement:  EUR 1,670,890
+
+2. HOW SETTLEMENT RUNS
+   (UNCHANGED)
+
+    1. Settlements pay into the
+       multi-currency clearing
+       account registered on
+       your asset - the same
+       account since COD,
+       changeable only by
+       dual-authorized written
+       instruction (two
+       signatories + a call-
+       back to registered
+       numbers), never by
+       email confirmation.
+    2. Previews, statements,
+       and the TSO
+       curtailment extract
+       are in the MDM portal
+       (type the address
+       yourself).
+
+  NordGrid will NEVER:
+  - Announce a "clearing
+    migration" for
+    non-Nordic generators
+    moving settlement to a
+    new beneficiary such as
+    "NordGrid Clearing ApS"
+    (our settlement
+    operations are
+    in-house; no Danish
+    clearing entity exists
+    in our payment chain)
+  - Ask you to "confirm"
+    settlement accounts
+    against an emailed IBAN
+    before a cycle
+  - Threaten that held
+    settlements "re-price
+    curtailment compensation
+    by 9%" - curtailment
+    compensation follows
+    the TSO methodology and
+    the grid connection
+    agreement; it does not
+    re-price based on
+    payment timing
+  - Use lookalike domains
+    such as
+    "nordgrid-settlement"
+    or "ng-clearing"
+
+3. VERIFY THIS NOTICE
+
+  - The preview and TSO
+    extract are in the MDM
+    portal (typed address)
+  - Your portfolio manager
+    confirms on the
+    monthly call
+  - Report lookalike
+    settlement notices to
+    treasury-controls@
+    nordgrid.example -
+    settlement fraud
+    attempts are shared
+    industry-wide
+
+NordGrid | Settlements
+This notice concerns asset WF-88412
+only. PPA and grid settlement terms
+govern the calculation.

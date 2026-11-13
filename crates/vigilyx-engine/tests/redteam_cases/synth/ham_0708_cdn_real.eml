@@ -1,0 +1,108 @@
+From: "VelociCDN | Billing" <billing@velocicdn.example>
+To: sre-oncall@corp.internal
+Cc: finops@corp.internal, cto-office@corp.internal
+Date: Wed, 31 Mar 2027 03:40:00 +0000
+Message-ID: <0708-b91@synth.example>
+Subject: [NOTICE] Overage Assessment USD 18,442.60 - Mitigation Event BK-2027-0412 - Posted to Your Monthly Invoice (Dispute Window Open)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+SRE On-call, FinOps, CTO Office,
+
+OVERAGE ASSESSMENT NOTICE - MITIGATION
+EVENT BK-2027-0412.
+During the volumetric attack
+mitigated on March 28-29 (event
+BK-2027-0412), your zones consumed
+burst bandwidth far above the
+committed 40 Gbps tier. The
+resulting overage of
+USD 18,442.60 has been assessed
+and posted to your account; it
+appears on your next monthly
+invoice.
+
+1. OVERAGE BREAKDOWN
+
+  Burst bandwidth:
+    Peak 412 Gbps x 6h10m above
+    40 Gbps commit
+    (@ $0.021/Gbps-min)
+    USD 15,884.20
+  Scrubbing capacity:
+    2,180 GB cleaned, 28-29 March
+    USD 1,918.40
+  Emergency pager & NOC:
+    per MSA Section 19.4
+    USD 640.00
+  ----------------------------------
+  Total overage
+  (BK-2027-0412):    USD 18,442.60
+
+2. HOW OVERAGES SETTLE
+   (PER YOUR MSA)
+
+    1. Overage amounts post to
+       the monthly invoice and
+       are paid on the normal
+       Net-30 cycle like every
+       other line item.
+    2. The full event breakdown
+       (mitigation graph, scrub
+       volume) is in the billing
+       portal under Events ->
+       BK-2027-0412 (type the
+       portal address yourself).
+    3. Disputes: open a ticket
+       from the portal within
+       30 days; disputed amounts
+       are held, not collected,
+       while reviewed.
+
+  VelociCDN will NEVER:
+  - Email a "settlement session"
+    taking corporate card details
+    for an overage (card payments,
+    where offered, happen only
+    inside the billing portal you
+    log in to, through the
+    licensed processor)
+  - Threaten "service degradation
+    in 24 hours" over an unpaid
+    mitigation overage (MSA
+    Section 19 provides a cure
+    period and written notice
+    process; degradation for
+    billing matters is not an
+    automated timer, and would
+    never precede the invoice
+    itself)
+  - Use lookalike domains such
+    as "velocicdn-net" or
+    "vcdn-settlement"
+  - Ask you to choose card
+    payment because "bank
+    transfer clears after the
+    degradation window"
+
+3. VERIFY THIS NOTICE
+
+  - The overage appears in the
+    billing portal Events tab
+    (typed address) - compare
+    against this email only
+    after seeing it there
+  - Your account team can
+    walk through the
+    mitigation timeline on
+    request
+  - Report lookalike billing
+    notices to
+    security@velocicdn.example
+
+VelociCDN | Billing
+This notice concerns account
+AC-88412 and event BK-2027-0412
+only. MSA Section 19 and the
+overage schedule govern this
+assessment.

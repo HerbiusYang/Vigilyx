@@ -14,13 +14,6 @@ data:
   HTTP_PROXY: ""
   HTTPS_PROXY: ""
 
----
-# Production: store the API token in a Secret
-apiVersion: v1
-kind: Secret
-metadata:
-  name: vigilyx-sandbox-secret
-  namespace: vigilyx
-type: Opaque
-stringData:
-  SANDBOX_API_TOKEN: ""  # Replace with the real token
+# Provision this Secret out-of-band; never commit an empty token:
+# kubectl -n vigilyx create secret generic vigilyx-sandbox-secret \
+#   --from-literal=SANDBOX_API_TOKEN='<random-token>'

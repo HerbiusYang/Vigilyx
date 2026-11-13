@@ -139,9 +139,13 @@ pub fn module_to_engine(module_id: &str) -> Option<EngineId> {
         "anomaly_detect" => Some(EngineId::C),
 
         // Engine D: URL, landing-page, and adversary-in-the-middle analysis
-        "link_scan" | "link_reputation" | "link_content" | "landing_page_scan" | "aitm_detect" => {
-            Some(EngineId::D)
-        }
+        "link_scan"
+        | "link_reputation"
+        | "link_content"
+        | "landing_page_scan"
+        | "url_sandbox_scan"
+        | "process_sandbox_scan"
+        | "aitm_detect" => Some(EngineId::D),
 
         // Engine E: Protocol Compliance (2 modules)
         "header_scan" | "mime_scan" => Some(EngineId::E),

@@ -1,0 +1,10 @@
+From: =?utf-8?B?5byA56Wo5Yqp5omL?= <invoice@tax-svc.example>
+To: tax@corp.internal
+Date: Mon, 24 Aug 2026 09:25:00 +0800
+Message-ID: <0014-b1@synth.example>
+Subject: 电子发票已开具，扫码查验
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您好：本期服务费电子发票已开具，请使用微信扫描下方二维码查验并保存。
+二维码 7 日内有效。

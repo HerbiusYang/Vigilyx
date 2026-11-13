@@ -1,0 +1,79 @@
+From: 浙江大学实验室与设备管理处 <equip@zju-lab.example>
+To: 研究管理部 <rd-admin@corp.internal>
+Cc: 采购部 <purchase@corp.internal>
+Date: Sun, 11 Oct 2026 09:20:00 +0800
+Message-ID: <0658-b45@synth.example>
+Subject: 关于联合实验室2026年度设备共享计划的通知（浙大设〔2026〕178号）
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<div style="background:#004098;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">浙江大学 | 实验室与设备管理处</h2>
+</div>
+<div style="padding:20px;border:1px solid #ddd;border-top:none">
+
+<p>研究管理部、采购部：</p>
+
+<p>根据贵我双方 2023 年签署的《产学研联合实验室共建协议》（协议编号：ZJU-Corp-2023-042），现将 2026 年度设备共享计划的申请事项通知如下。</p>
+
+<h3 style="color:#004098;border-bottom:2px solid #004098;padding-bottom:4px">一、共享设备清单</h3>
+<p>我方实验室以下设备面向联合实验室开放使用（按协议约定的优惠费率计费）：</p>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>设备名称</th><th>型号</th><th>主要指标</th><th>标准费率</th><th>协议费率</th></tr>
+<tr><td>场发射扫描电镜</td><td>Zeiss GeminiSEM 500</td><td>0.8nm@15kV</td><td>￥800/h</td><td>￥400/h</td></tr>
+<tr><td>X射线光电子能谱仪</td><td>Thermo K-Alpha+</td><td>能量分辨率0.5eV</td><td>￥600/样</td><td>￥300/样</td></tr>
+<tr><td>高精度三坐标测量仪</td><td>Zeiss CONTURA G2</td><td>精度0.8+L/350μm</td><td>￥500/h</td><td>￥250/h</td></tr>
+<tr><td>高速摄像机</td><td>Phantom VEO 1310L</td><td>9,000fps@1280×960</td><td>￥1,200/天</td><td>￥600/天</td></tr>
+<tr><td>GPU 计算集群</td><td>4×A100 80GB</td><td>NCCL互联</td><td>￥200/GPU·h</td><td>￥100/GPU·h</td></tr>
+</table>
+
+<h3 style="color:#004098;border-bottom:2px solid #004098;padding-bottom:4px">二、申请流程</h3>
+<ol>
+<li><b>注册共享平台账号</b>——贵方研究人员需在我校大型仪器共享平台上注册（首次使用）：</li>
+</ol>
+
+<p style="text-align:center;margin:16px 0">
+<a href="https://zju-lab.example/shared-equipment/register" style="display:inline-block;background:#004098;color:#fff;padding:10px 28px;text-decoration:none;border-radius:4px">注册共享平台</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">https://yqgx.zju.edu.cn/user/register</p>
+
+<p>注册需使用企业邮箱（不接受个人邮箱），系统将发送验证邮件至注册邮箱。注册时请选择"产学研合作单位"身份并填写协议编号 ZJU-Corp-2023-042。</p>
+
+<ol start="2">
+<li><b>在线预约</b>——登录后在"设备预约"模块选择设备与时段；</li>
+<li><b>审批</b>——我方设备管理员 1 个工作日内审批；</li>
+<li><b>使用</b>——凭审批码刷卡进入实验室；</li>
+<li><b>结算</b>——月度统一结算，从联合实验室共建经费中扣除。</li>
+</ol>
+
+<h3 style="color:#004098;border-bottom:2px solid #004098;padding-bottom:4px">三、重要变更</h3>
+<p><b>本年度起新增以下要求：</b></p>
+<ul>
+<li>涉及数据外带的测试项目，需额外签署《数据保密协议》（模板见共享平台"文档下载"）</li>
+<li>GPU 集群使用需提前 3 个工作日预约（因需求量大，不接受当日预约）</li>
+<li>设备使用产生的实验数据，联合实验室双方共有（协议第 8.2 条）</li>
+</ul>
+
+<h3 style="color:#004098;border-bottom:2px solid #004098;padding-bottom:4px">四、时间安排</h3>
+<ul>
+<li><b>10/11–10/25：</b>共享平台注册与账号激活</li>
+<li><b>10/26–11/15：</b>2026 年度设备使用需求申报（按季度提交）</li>
+<li><b>11/16：</b>我方汇总并确认排期</li>
+</ul>
+
+<h3 style="color:#004098;border-bottom:2px solid #004098;padding-bottom:4px">五、联系方式</h3>
+<p>设备管理处共享平台管理员：王老师（内线 8795-****）<br>
+邮箱：shared-equipment@zju-lab.example</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">浙江大学实验室与设备管理处</p>
+<p style="font-size:11px;color:#999">文号：浙大设〔2026〕178号 | 2026年10月11日</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://zju-lab.example/api/track?recipient=rd-admin%40corp.internal&doc=178-2026&type=equip_notice" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

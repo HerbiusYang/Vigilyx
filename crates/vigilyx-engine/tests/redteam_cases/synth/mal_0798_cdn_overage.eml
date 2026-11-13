@@ -1,0 +1,76 @@
+From: "VelociCDN | Billing Operations" <billing.ops@velocicdn-net.example>
+To: sre-oncall@corp.internal
+Cc: finops@corp.internal, cto-office@corp.internal
+Reply-To: billing.desk@vcdn-settlement.example
+Disposition-Notification-To: billing.ops@velocicdn-net.example
+Date: Wed, 31 Mar 2027 03:40:00 +0000
+Message-ID: <0798-b91@synth.example>
+Subject: [URGENT] Overage Settlement USD 18,442.60 - Mitigation Event BK-2027-0412 - Service Degradation Scheduled in 24 Hours Without Immediate Payment
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:-apple-system,'Segoe UI',sans-serif;font-size:14px">
+<p>SRE On-call, FinOps, CTO Office,</p>
+
+<p style="background:#FFEBEE;border-left:4px solid #B71C1C;padding:12px">
+<b>OVERAGE SETTLEMENT REQUIRED — MITIGATION EVENT BK-2027-0412.</b>
+During the volumetric attack mitigated on March 28-29 (event <b>BK-2027-0412</b>), your zones consumed
+burst bandwidth far above the committed 40 Gbps tier. The resulting overage of <b>USD 18,442.60</b>
+is now due. Under the MSA's misuse clause, <b>unpaid mitigation overages trigger service degradation
+(rate-limiting to committed tier) 24 hours after notice</b> — which lands <b>tomorrow 03:40 UTC</b>.
+</p>
+
+<h3>1. Overage Breakdown</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Component</th><th>Detail</th><th>Amount (USD)</th></tr>
+<tr><td>Burst bandwidth</td><td>Peak 412 Gbps × 6h10m above 40 Gbps commit (@ $0.021/Gbps-min)</td><td>15,884.20</td></tr>
+<tr><td>Scrubing capacity</td><td>Attack scrubbing, 28-29 March (2,180 GB cleaned)</td><td>1,918.40</td></tr>
+<tr><td>Emergency pager &amp; NOC</td><td>Escalation handling per MSA §19.4</td><td>640.00</td></tr>
+<tr style="background:#FFEBEE"><td colspan=2><b>Total overage — BK-2027-0412</b></td><td><b>18,442.60</b></td></tr>
+</table>
+
+<h3>2. Immediate Settlement Session</h3>
+<p>Because degradation is automated, the fastest path is the <b>overage settlement session</b> — a
+billing portal page pre-bound to event BK-2027-0412 that takes corporate card payment and posts
+clearance to the mitigation pipeline immediately:</p>
+
+<p style="text-align:center;margin:18px 0">
+<a href="https://vcdn-settlement.example/overage/BK-2027-0412/pay" style="display:inline-block;background:#B71C1C;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">Open Settlement Session &amp; Pay</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">Billing portal: https://portal.velocicdn.example/billing (same portal as your monthly invoices)</p>
+
+<p>The session collects corporate card details (number, expiry, CVC) and posts a receipt referencing
+BK-2027-0412 within minutes. Bank transfer is also possible but clears in 1-3 days — <b>after</b> the
+degradation window.</p>
+
+<h3>3. What Degradation Means</h3>
+<ul>
+<li>All zones rate-limited to the 40 Gbps committed tier (current organic peak: 62 Gbps)</li>
+<li>Rate-limit responses (429s) on API and asset traffic above tier</li>
+<li>Cleared automatically upon payment posting — no manual reversal needed</li>
+</ul>
+
+<p style="font-size:14px;background:#FFF3E0;padding:12px">An urgent wire-me-now billing email during
+an incident's aftermath deserves skepticism — this shape is used for fraud constantly, and checking is
+right. Controls: the settlement session is bound to event BK-2027-0412 and displays your zones and
+the mitigation graph before any payment field; the same overage appears under dispute in your billing
+portal's "Events" tab; and your account team is reachable tonight (the NOC pager chain has their
+number). The 24-hour degradation timer, however, is the MSA §19.4 automation — billing cannot pause
+it for verification calls.</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://vcdn-settlement.example/px/ovr.gif?e=BK-2027-0417&amp;r=sre-oncall%40corp.internal" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">Partner lane: managed-service partners may settle client overages from their consolidated balance at vcdn-settlement.example/partner (no per-client card, balance drawn nightly).</p>
+
+<h3>4. Contact</h3>
+<p>Billing desk (24h): billing.desk@vcdn-settlement.example<br>
+Event reference: BK-2027-0412 · NOC: your escalation chain</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+VelociCDN | Billing Operations · This notice concerns account AC-88412 and event BK-2027-0412 only.<br>
+MSA §19.4 (misuse &amp; mitigation) and the overage schedule govern this settlement.
+</div>
+
+</body></html>

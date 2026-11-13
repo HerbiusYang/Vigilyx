@@ -1,0 +1,81 @@
+From: LVMH Group <brand.protection@lvmh.example>
+To: legal@corp.internal
+Cc: brand-protection@corp.internal, cto@corp.internal
+Date: Sun, 25 Oct 2026 17:30:00 +0200
+Message-ID: <0612-b59@synth.example>
+Subject: AUDIT COMPLIANCE — 2026/FITCH-0842: Brand Protection Findings (Response Required)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Legal Department, Brand Protection Team, CTO:
+
+LVMH's Brand Protection Division has completed its review of
+your company's email security gateway product in the context
+of EU DSA compliance.
+
+Audit Reference: AUDIT-2026/FITCH-0842
+Audit Period: 2026-07-01 to 2026-09-30
+Legal Basis: EU DSA Art. 22
+
+Findings Summary:
+  Finding 1 (HIGH): Blocking rate for counterfeit promotion
+    emails was 65.1% (below the 80% threshold in your
+    DSA Art. 22 obligations). 1,203 of 1,847 emails were
+    delivered to end users.
+
+  Finding 2 (MEDIUM): Quarterly anti-counterfeit performance
+    reports were not submitted (due July 30 and October 30).
+
+  Finding 3 (MEDIUM): Image-based counterfeit promotion
+    pass-through rate was 23%.
+
+Remediation Plan Required (by November 8, 2026):
+
+  Submit through the LVMH compliance portal:
+
+  1. Navigate to lvmh.com in your browser
+     (Type the URL manually. Do NOT click links from emails.)
+
+  2. Go to Brand Protection → Compliance Portal
+
+  3. Log in with your company credentials
+     (issued during the DSA onboarding process, sent by
+     registered post)
+
+  4. Select Audit AUDIT-2026/FITCH-0842
+
+  5. Upload your remediation plan
+
+  Important Security Notes:
+  LVMH will NEVER:
+  - Send payment instructions or bank details via email
+  - Use an "international compliance settlement account"
+  - Require payment to a Belgian bank for a French compliance
+    action
+  - Offer a "Chinese settlement channel" for document upload
+  - Send direct links to remediation submission portals
+
+  Any compliance payment (if determined to be owed) would be:
+  - Assessed through proper legal channels
+  - Paid to the French domestic account specified in the
+    formal legal notice (served by registered post)
+  - NEVER to a Belgian IBAN from an email instruction
+
+  If you receive an email containing bank details for
+  "compliance payment," verify with LVMH through:
+  - Phone: +33-1-44-13-**** (verify at lvmh.com)
+  - Email: brand.protection@lvmh.example
+
+  Note: The EU DSA does NOT grant rights holders direct
+  audit authority over intermediary service providers.
+  Compliance disputes are resolved through national Digital
+  Services Coordinators, not through rights holder invoices.
+
+Right to Respond:
+  You have 30 days to respond to these findings. If you
+  disagree with the assessment, contact the relevant Digital
+  Services Coordinator (in France: Arcom).
+
+LVMH | Brand Protection — Digital Investigations
+8 rue du Faubourg Saint-Honoré, 75008 Paris, France
+This communication may be privileged and confidential.

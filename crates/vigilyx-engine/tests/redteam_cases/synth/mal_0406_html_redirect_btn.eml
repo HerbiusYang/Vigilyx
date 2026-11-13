@@ -1,0 +1,9 @@
+From: =?utf-8?B?6Zeo5oi3?= <portal@corp-relay27.example>
+To: staff@corp.internal
+Date: Fri, 18 Sep 2026 09:13:00 +0800
+Message-ID: <0003-b25@synth.example>
+Subject: 单点登录跳转修复
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>点击下方按钮完成跳转（自动链式跳转 3 次）：</p><a href='https://r1-relay27.example.info/x'>重新进入门户</a></body></html>

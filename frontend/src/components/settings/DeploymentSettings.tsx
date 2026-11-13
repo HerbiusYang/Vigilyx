@@ -11,9 +11,6 @@ export default function DeploymentSettings() {
   const [deployMode, setDeployMode] = useState<DeployMode>(
     () => (localStorage.getItem('vigilyx-deploy-mode') as DeployMode) || 'mirror'
   )
-  const [snifferInterface] = useState(
-    () => getSensitiveSetting('vigilyx-sniffer-iface') || 'eth0'
-  )
   const [deploySaving, setDeploySaving] = useState(false)
   const [deploySaved, setDeploySaved] = useState(false)
   const [mtaDownstreamHost, setMtaDownstreamHost] = useState(
@@ -22,6 +19,14 @@ export default function DeploymentSettings() {
   const [mtaDownstreamPort, setMtaDownstreamPort] = useState(
     () => getSensitiveSetting('vigilyx-mta-downstream-port') || '25'
   )
+  const [mtaOutboundHost, setMtaOutboundHost] = useState(
+    () => getSensitiveSetting('vigilyx-mta-outbound-host') || ''
+  )
+  const [mtaOutboundPort, setMtaOutboundPort] = useState(
+    () => getSensitiveSetting('vigilyx-mta-outbound-port') || '587'
+  )
+  const [mtaOutboundStarttls, setMtaOutboundStarttls] = useState(true)
+  const [mtaOutboundSettingsTouched, setMtaOutboundSettingsTouched] = useState(false)
   const [mtaTimeout, setMtaTimeout] = useState(
     () => localStorage.getItem('vigilyx-mta-timeout') || '8'
   )
@@ -69,6 +74,9 @@ export default function DeploymentSettings() {
               if (data.data.mta_config) {
                 if (mc.mta_downstream_host) setMtaDownstreamHost(mc.mta_downstream_host)
                 if (mc.mta_downstream_port) setMtaDownstreamPort(String(mc.mta_downstream_port))
+                if (mc.mta_outbound_host !== undefined) setMtaOutboundHost(mc.mta_outbound_host || '')
+                if (mc.mta_outbound_port) setMtaOutboundPort(String(mc.mta_outbound_port))
+                if (mc.mta_outbound_starttls !== undefined) setMtaOutboundStarttls(mc.mta_outbound_starttls)
                 if (mc.mta_inline_timeout_secs) setMtaTimeout(String(mc.mta_inline_timeout_secs))
                 if (mc.mta_hostname) setMtaHostname(mc.mta_hostname)
                 if (mc.mta_max_connections) setMtaMaxConn(String(mc.mta_max_connections))
@@ -109,17 +117,13 @@ export default function DeploymentSettings() {
     return () => clearInterval(timer)
   }, [])
 
-  // Switch modes immediately and show a notice
+  // Save the requested mode; the service topology changes only after redeployment.
   const switchDeployMode = useCallback(async (mode: DeployMode) => {
+    const previousMode = deployMode
     setDeployMode(mode)
     localStorage.setItem('vigilyx-deploy-mode', mode)
     setDeploySaving(true)
     setSwitchMsg(null)
-    // Optimistic update: reflect the switch result immediately
-    setDetectedServices({
-      sniffer_online: mode === 'mirror',
-      mta_online: mode === 'mta',
-    })
     try {
       const res = await apiFetch('/api/config/deployment-mode', {
         method: 'PUT',
@@ -130,22 +134,27 @@ export default function DeploymentSettings() {
       if (data.success) {
         if (data.data?.detected_services) setDetectedServices(data.data.detected_services)
         window.dispatchEvent(new CustomEvent(EVENTS.DEPLOY_MODE_CHANGED, { detail: mode }))
-        setSwitchMsg({ type: 'success', text: mode === 'mta' ? t('settings.deployment.switchedToMta') : t('settings.deployment.switchedToMirror') })
+        setSwitchMsg({
+          type: 'success',
+          text: t(mode === 'mta'
+            ? 'settings.deployment.modeSavedMtaNeedsRedeploy'
+            : 'settings.deployment.modeSavedMirrorNeedsRedeploy'),
+        })
       } else {
         setSwitchMsg({ type: 'error', text: data.error || t('settings.deployment.switchFailed') })
-        // Roll back
-        const prev: DeployMode = mode === 'mta' ? 'mirror' : 'mta'
-        setDeployMode(prev)
-        setDetectedServices({ sniffer_online: prev === 'mirror', mta_online: prev === 'mta' })
+        setDeployMode(previousMode)
+        localStorage.setItem('vigilyx-deploy-mode', previousMode)
       }
     } catch {
       setSwitchMsg({ type: 'error', text: t('settings.deployment.networkError') })
+      setDeployMode(previousMode)
+      localStorage.setItem('vigilyx-deploy-mode', previousMode)
     } finally {
       setDeploySaving(false)
       setTimeout(() => setSwitchMsg(null), 6000)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [t])
+  }, [deployMode, t])
 
   // Auto-save all MTA parameters (1.5s debounce)
   useEffect(() => {
@@ -160,6 +169,9 @@ export default function DeploymentSettings() {
           body: JSON.stringify({
             mta_downstream_host: mtaDownstreamHost || undefined,
             mta_downstream_port: mtaDownstreamPort ? Number(mtaDownstreamPort) : undefined,
+            mta_outbound_host: mtaOutboundSettingsTouched ? mtaOutboundHost : undefined,
+            mta_outbound_port: mtaOutboundSettingsTouched && mtaOutboundPort ? Number(mtaOutboundPort) : undefined,
+            mta_outbound_starttls: mtaOutboundSettingsTouched ? mtaOutboundStarttls : undefined,
             mta_inline_timeout_secs: mtaTimeout ? Number(mtaTimeout) : undefined,
             mta_hostname: mtaHostname || undefined,
             mta_max_connections: mtaMaxConn ? Number(mtaMaxConn) : undefined,
@@ -178,7 +190,7 @@ export default function DeploymentSettings() {
     }, 1500)
     return () => { if (deployAutoSaveTimer.current) clearTimeout(deployAutoSaveTimer.current) }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mtaDownstreamHost, mtaDownstreamPort, mtaTimeout, mtaHostname, mtaMaxConn, mtaMaxRecipients, mtaStarttls, mtaFailOpen, mtaLocalDomains, mtaTrustedUpstreamCidrs, mtaDlpEnabled, mtaDlpAction])
+  }, [mtaDownstreamHost, mtaDownstreamPort, mtaOutboundHost, mtaOutboundPort, mtaOutboundStarttls, mtaOutboundSettingsTouched, mtaTimeout, mtaHostname, mtaMaxConn, mtaMaxRecipients, mtaStarttls, mtaFailOpen, mtaLocalDomains, mtaTrustedUpstreamCidrs, mtaDlpEnabled, mtaDlpAction])
 
   // Suppress unused variable warning — state is used for display logic
   void deployModeSource
@@ -241,9 +253,6 @@ export default function DeploymentSettings() {
       {!deploySaving && !switchMsg && ((deployMode === 'mta' && !detectedServices.mta_online) || (deployMode === 'mirror' && !detectedServices.sniffer_online)) && (
         <div style={{ padding: '10px 16px', borderRadius: 10, fontSize: 12, background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.2)', color: '#eab308', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span>{t('settings.deployment.modeMismatch')}</span>
-          <button onClick={() => switchDeployMode(deployMode)} disabled={deploySaving} style={{ fontSize: 12, padding: '4px 12px', borderRadius: 6, border: '1px solid rgba(234,179,8,0.3)', background: 'rgba(234,179,8,0.1)', color: '#eab308', cursor: 'pointer' }}>
-            {t('settings.deployment.syncNow')}
-          </button>
         </div>
       )}
 
@@ -266,10 +275,6 @@ export default function DeploymentSettings() {
           <span>{t('settings.deployment.snifferNicConfig')}</span>
           {detectedServices.sniffer_online && <span style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: 'rgba(59,130,246,0.12)', color: '#3b82f6', fontWeight: 700 }}>{t('settings.deployment.running')}</span>}
         </div>
-        {!detectedServices.sniffer_online && (
-          <div style={{ padding: '0 16px 8px', fontSize: 11, color: 'var(--text-tertiary)' }}>{t('settings.deployment.snifferOfflineNote')}</div>
-        )}
-
           <div style={{ padding: '0 16px 8px', fontSize: 11, color: 'var(--text-tertiary)', opacity: 0.8 }}>{t('settings.deployment.envVarNote')}</div>
 
           <div className="s-setting-row">
@@ -277,14 +282,7 @@ export default function DeploymentSettings() {
               <span className="s-setting-label">{t('settings.deployment.listenInterface')}</span>
               <span className="s-setting-desc">{t('settings.deployment.listenInterfaceDesc')}</span>
             </div>
-            <input
-              className="s-input"
-              style={{ width: 160, textAlign: 'center', fontFamily: 'var(--font-mono)', opacity: 0.6 }}
-              value={snifferInterface}
-              readOnly
-              title={t('settings.deployment.listenInterfaceDesc')}
-              placeholder="eth0"
-            />
+            <code style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)' }}>eth0</code>
           </div>
 
           <div className="s-setting-row">
@@ -292,7 +290,7 @@ export default function DeploymentSettings() {
               <span className="s-setting-label">{t('settings.deployment.captureMode')}</span>
               <span className="s-setting-desc">{t('settings.deployment.captureModeDesc')}</span>
             </div>
-            <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)', padding: '6px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: 6, border: '1px solid var(--border-muted)' }}>promiscuous</span>
+            <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--text-tertiary)', padding: '6px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: 6, border: '1px solid var(--border-muted)' }}>{t('settings.deployment.captureModeDefault')}</span>
           </div>
 
           <div className="s-setting-row">
@@ -302,7 +300,7 @@ export default function DeploymentSettings() {
             </div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {[
-                { proto: 'SMTP', ports: '25,465,587' },
+                { proto: 'SMTP', ports: '25,465,587,2525,2526' },
                 { proto: 'POP3', ports: '110,995' },
                 { proto: 'IMAP', ports: '143,993' },
               ].map(p => (
@@ -350,7 +348,7 @@ export default function DeploymentSettings() {
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
               <input className="s-input" style={{ width: 140, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 12 }}
                 value={mtaDownstreamHost} onChange={e => { setMtaDownstreamHost(e.target.value); setSensitiveSetting('vigilyx-mta-downstream-host', e.target.value) }}
-                placeholder="10.1.246.33" />
+                placeholder="192.0.2.25" />
               <span style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>:</span>
               <input className="s-input" style={{ width: 55, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 12 }}
                 type="number" value={mtaDownstreamPort} onChange={e => { setMtaDownstreamPort(e.target.value); setSensitiveSetting('vigilyx-mta-downstream-port', e.target.value) }} />
@@ -361,6 +359,28 @@ export default function DeploymentSettings() {
             <input className="s-input" style={{ width: 200, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 11 }}
               value={mtaLocalDomains} onChange={e => { setMtaLocalDomains(e.target.value); setSensitiveSetting('vigilyx-mta-local-domains', e.target.value) }}
               placeholder="example.com" />
+          </div>
+        </div>
+
+        <div className="s-setting-row">
+          <div className="s-setting-info">
+            <span className="s-setting-label">{t('settings.deployment.outboundRelay')}</span>
+            <span className="s-setting-desc">{t('settings.deployment.outboundRelayDesc')}</span>
+          </div>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <input className="s-input" style={{ width: 180, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 12 }}
+              value={mtaOutboundHost}
+              onChange={e => { setMtaOutboundSettingsTouched(true); setMtaOutboundHost(e.target.value); setSensitiveSetting('vigilyx-mta-outbound-host', e.target.value) }}
+              placeholder="smtp-relay.example.com" />
+            <span style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>:</span>
+            <input className="s-input" style={{ width: 55, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 12 }}
+              type="number" value={mtaOutboundPort}
+              onChange={e => { setMtaOutboundSettingsTouched(true); setMtaOutboundPort(e.target.value); setSensitiveSetting('vigilyx-mta-outbound-port', e.target.value) }} />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', marginLeft: 4 }}>
+              <input type="checkbox" checked={mtaOutboundStarttls}
+                onChange={e => { setMtaOutboundSettingsTouched(true); setMtaOutboundStarttls(e.target.checked) }} />
+              <span style={{ fontSize: 11 }}>{t('settings.deployment.outboundStarttls')}</span>
+            </label>
           </div>
         </div>
 

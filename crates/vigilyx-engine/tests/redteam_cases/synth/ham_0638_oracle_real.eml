@@ -1,0 +1,89 @@
+From: Oracle License Management <lms@oracle.example>
+To: legal@corp.internal
+Cc: cto@corp.internal, procurement@corp.internal, cfo@corp.internal
+Date: Tue, 03 Nov 2026 09:00:00 -0800
+Message-ID: <0638-b68@synth.example>
+Subject: Re: Re: [LMS Case 8842-VX] Oracle license compliance verification — Response required
+In-Reply-To: <lms-8842@corp.internal>
+References: <lms-8842@corp.internal> <lms-8842-2@corp.internal>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Legal Team, CTO, Procurement, CFO:
+
+Oracle License Management Services has completed a remote
+license verification of your Oracle software deployment.
+
+Case Number: 8842-VX
+Verification Method: Remote (Oracle Support Portal data)
+Verification Period: January 2025 - October 2026
+LMS Consultant: Marcus Rodriguez (EMEA)
+Verification Date: October 25, 2026
+Status: NON-COMPLIANT
+
+Findings:
+  1. Java SE Universal Subscription gap:
+     Licensed: 50 users / Actual: 847 employees
+     Exposure: $190,560
+
+  2. Database EE Processor gap:
+     Licensed: 8 processors / Detected: 64
+     Exposure: $2,660,000 (NOTE: Oracle will work
+     with you to verify actual usage — remote data
+     may overcount due to virtualization)
+
+  3. Extended Support gap:
+     WebLogic 12c, Oracle Linux 6 without ES license
+     Exposure: $842,000
+
+Remediation Process:
+
+  1. Oracle LMS will send a formal verification letter
+     by REGISTERED MAIL to your legal department
+
+  2. You have 30 days to respond with:
+     - Your deployment inventory (on Oracle's LMS form)
+     - Any corrections to our data
+
+  3. Oracle will schedule an on-site or remote
+     verification call to reconcile
+
+  4. Payment terms are discussed AFTER reconciliation,
+     through Oracle's standard sales team (not LMS)
+
+  Important Security Notes:
+  Oracle LMS will NEVER:
+  - Send direct payment bank details via email
+  - Create "Oracle License Compliance Services Europe B.V."
+    for compliance payments
+  - Require Oracle SSO with offline_access for document
+    submission
+  - Request full IT infrastructure through email portals
+  - Offer a "Chinese LMS channel"
+
+  Oracle's actual compliance process:
+  - LMS sends findings by registered mail (formal letter)
+  - You respond on paper forms (or through your Oracle
+    sales representative)
+  - Payment is processed through Oracle's standard sales
+    channel (credit card/invoice), never through
+    third-party Dutch bank accounts
+  - The 50% "good-faith discount" is negotiated with
+    your sales rep, not paid upfront via wire transfer
+
+  If you receive an email with bank details for
+  "compliance payment" or requiring Oracle SSO with
+  OAuth for document upload, it is a phishing attempt.
+
+  Note: Oracle's remote data often overcounts due to
+  virtualization (VMware CPU counting). Do not accept
+  remote audit numbers without reconciliation.
+
+Your Rights:
+  You have 30 days to respond (not 12 days)
+  You may dispute findings through your Oracle sales rep
+  On-site verification is available at your request
+
+Oracle Corporation | License Management Services
+500 Oracle Parkway, Redwood City, CA 94065
+You are receiving this because you are the licensee contact for Support ID 8842.

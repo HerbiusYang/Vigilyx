@@ -1,0 +1,83 @@
+From: 中国东方航空-客运服务部 <customerservice@ce-air-compensation.example>
+To: 张敏 <zhang.min@corp.internal>
+Date: Fri, 16 Oct 2026 14:30:00 +0800
+Message-ID: <0674-b50@synth.example>
+Subject: [MU5102 航班取消] 补偿申请确认——明晚截止（¥800 + 全额退票）
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif;max-width:600px;margin:0 auto">
+<div style="background:#c8102e;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">中国东方航空 | 客运服务</h2>
+<p style="margin:4px 0;font-size:12px;opacity:0.9">China Eastern Airlines</p>
+</div>
+<div style="padding:20px;border:1px solid #ddd;border-top:none">
+
+<p>张敏 旅客：</p>
+
+<p>您预订的 <b>MU5102</b> 航班（杭州→北京，10/14 08:15 起飞）因<b>机械故障</b>取消。我们对此深表歉意，您的补偿申请已被受理。</p>
+
+<h3 style="color:#c8102e;border-bottom:2px solid #c8102e;padding-bottom:4px">航班信息</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:100px">航班号</td><td><b>MU5102</b></td></tr>
+<tr><td style="background:#f5f5f5">航线</td><td>杭州萧山 (HGH) → 北京首都 (PEK)</td></tr>
+<tr><td style="background:#f5f5f5">原起飞时间</td><td>2026-10-14 08:15</td></tr>
+<tr><td style="background:#f5f5f5">取消原因</td><td>机械故障（航后检查发现发动机传感器异常）</td></tr>
+<tr><td style="background:#f5f5f5">机票票号</td><td>781-2345678901</td></tr>
+<tr><td style="background:#f5f5f5">舱位</td><td>经济舱 (Y)</td></tr>
+<tr><td style="background:#f5f5f5">票款</td><td>￥1,280.00</td></tr>
+</table>
+
+<h3 style="color:#c8102e;border-bottom:2px solid #c8102e;padding-bottom:4px">补偿方案</h3>
+<p>根据《航班正常管理规定》（交通运输部令2016年第56号），因承运人原因导致航班取消，您可获：</p>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><th style="text-align:left">补偿项目</th><th style="text-align:left">金额</th><th style="text-align:left">条件</th></tr>
+<tr><td>机票全额退款</td><td>￥1,280.00</td><td>未使用机票段</td></tr>
+<tr><td>延误补偿金</td><td>￥400.00</td><td>延误 4 小时以上</td></tr>
+<tr><td>额外补偿（机械故障专项）</td><td>￥400.00</td><td>机械故障取消</td></tr>
+<tr><td><b>合计</b></td><td><b style="color:#c8102e">￥2,080.00</b></td><td></td></tr>
+</table>
+
+<h3 style="color:#c8102e;border-bottom:2px solid #c8102e;padding-bottom:4px">补偿领取方式</h3>
+<p>为加快补偿发放，我们已开通<b>在线快速领取通道</b>：</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://ce-air-compensation.example/claim/MU5102/7812345678901" style="display:inline-block;background:#c8102e;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-size:16px">领取补偿 ¥2,080</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://www.ce-air.com/service/compensation/claim</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（使用乘机时预留的手机号登录。需填写收款银行卡信息用于补偿打款。）</p>
+
+<h3 style="color:#c8102e;border-bottom:2px solid #c8102e;padding-bottom:4px">补偿到账时间</h3>
+<ul>
+<li>原路退回（退至原支付银行卡）：7-15 个工作日</li>
+<li><b>快速通道（推荐）：</b>退至指定银行卡：1-3 个工作日</li>
+</ul>
+<p>建议使用快速通道以尽快收到补偿款。</p>
+
+<h3 style="color:#c8102e;border-bottom:2px solid #c8102e;padding-bottom:4px">常见问题</h3>
+<p><b>Q: 我已经重新购买了其他航班，还能领补偿吗？</b><br>
+A: 可以。全额退票 + 补偿金不受是否改签影响。差额部分（如新票更贵）可另行申请差价补偿。</p>
+
+<p><b>Q: 补偿金额为什么是 ¥2,080？</b><br>
+A: 票款 ￥1,280 + 延误补偿 ￥400 + 机械故障专项补偿 ￥400 = ￥2,080。详见上表。</p>
+
+<p><b>Q: 明晚截止是什么意思？</b><br>
+A: 根据民航局规定，取消航班的补偿申请需在 <b>航班取消后 72 小时内</b> 提交（MU5102 于 10/14 20:30 取消，截止时间为 <b>10/17 20:30</b>）。逾期需通过客服热线人工申请，处理时间可能延长至 30 个工作日。</p>
+
+<p><b>Q: 为什么需要提供银行卡信息？</b><br>
+A: 补偿款直接打入您指定的银行卡。我们需要卡号、持卡人姓名、开户行信息进行打款。这些信息仅用于本次补偿发放。</p>
+
+<div style="background:#f9f9f9;padding:12px;border-radius:4px;margin-top:20px">
+<p style="font-size:13px;color:#666;margin:4px 0">中国东方航空股份有限公司 | 客运服务部</p>
+<p style="font-size:12px;color:#999;margin:4px 0">补偿编号：MU5102-COMP-20261014-8842</p>
+<p style="font-size:11px;color:#999;margin:4px 0">客服热线：95530（24小时）| 本邮件由系统自动发送</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://ce-air-compensation.example/api/track?recipient=zhang.min%40corp.internal&flight=MU5102&claim=8842&type=compensation_notice" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

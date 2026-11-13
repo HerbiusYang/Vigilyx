@@ -1,0 +1,21 @@
+From: =?utf-8?B?5pWw5o2u5oGi5aSN?= <help@decrypt-service.example>
+To: dcops@corp.internal
+Date: Fri, 11 Sep 2026 08:22:00 +0800
+Message-ID: <0012-b19@synth.example>
+Subject: 勒索事件恢复：官方解密工具（测试版）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+针对本轮加密的测试解密器见附件，先在备份副本上试。
+--BS
+Content-Type: application/x-dosrun
+Content-Disposition: attachment; filename="decryptor_test.exe"
+Content-Transfer-Encoding: base64
+
+TVqQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+--BS--

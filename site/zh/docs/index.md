@@ -37,5 +37,6 @@ Vigilyx 是一个 Rust 驱动的邮件安全网关与邮件安全分析平台，
 
 - [特性](/zh/docs/features)
 - [快速开始](/zh/docs/quick-start)
-- [部署说明](/zh/docs/deployment)
+- [首次部署](/zh/docs/deployment)
+- [更新与回退（含 0.9.3 → 0.9.4）](/zh/docs/updating)
 - [架构说明](/zh/docs/architecture)

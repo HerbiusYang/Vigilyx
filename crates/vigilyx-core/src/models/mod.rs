@@ -6,12 +6,38 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 
 use crate::magic_bytes::DetectedFileType;
+
+mod raw_mime_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(value: &Option<Vec<u8>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        value.as_ref().map(hex::encode).serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let encoded = Option::<String>::deserialize(deserializer)?;
+        encoded
+            .map(|value| {
+                hex::decode(value).map_err(|error| {
+                    serde::de::Error::custom(format!("invalid raw MIME encoding: {error}"))
+                })
+            })
+            .transpose()
+    }
+}
 
 // Fast UUID generation (about 10x faster than `Uuid::new_v4()`)
 
@@ -213,6 +239,163 @@ impl std::fmt::Display for MailDirection {
     }
 }
 
+/// Extract a normalized domain from an SMTP or Webmail address field.
+///
+/// Transport parsers normally remove display names and angle brackets, but
+/// passive capture and Webmail payloads can still contain either form. Domain
+/// policy must be applied after the same normalization in every adapter.
+pub fn email_domain(value: &str) -> Option<String> {
+    let value = value.trim();
+    let value = if let (Some(start), Some(end)) = (value.rfind('<'), value.rfind('>'))
+        && start < end
+    {
+        &value[start + 1..end]
+    } else {
+        value.trim_matches(|ch: char| ch == '<' || ch == '>' || ch == '"' || ch == '\'')
+    };
+    let (_, domain) = value.rsplit_once('@')?;
+    let domain = domain
+        .trim()
+        .trim_matches(|ch: char| ch == '<' || ch == '>' || ch == '"' || ch == '\'' || ch == ',')
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    if domain.is_empty() || domain.chars().any(char::is_whitespace) {
+        return None;
+    }
+    Some(domain)
+}
+
+fn normalized_domain_set(local_domains: &[String]) -> impl Iterator<Item = String> + '_ {
+    local_domains
+        .iter()
+        .map(|domain| domain.trim().trim_end_matches('.').to_ascii_lowercase())
+}
+
+/// Return true when the envelope sender belongs to a configured internal
+/// domain. This is an evidence check, not an authentication decision.
+pub fn is_internal_sender(mail_from: Option<&str>, local_domains: &[String]) -> bool {
+    let Some(domain) = mail_from.and_then(email_domain) else {
+        return false;
+    };
+    normalized_domain_set(local_domains).any(|local| local == domain)
+}
+
+/// Return the distinct external recipient domains from an envelope.
+pub fn external_recipient_domains(rcpt_to: &[String], local_domains: &[String]) -> Vec<String> {
+    let local_domains = normalized_domain_set(local_domains).collect::<Vec<_>>();
+    let mut external = Vec::new();
+    for recipient in rcpt_to {
+        let Some(domain) = email_domain(recipient) else {
+            continue;
+        };
+        if !local_domains.iter().any(|local| local == &domain) && !external.contains(&domain) {
+            external.push(domain);
+        }
+    }
+    external
+}
+
+/// The product-level outbound audit predicate: internal envelope sender plus
+/// at least one external envelope recipient. Source trust is intentionally not
+/// part of this predicate; it only affects attribution and enforcement.
+pub fn is_internal_to_external(
+    mail_from: Option<&str>,
+    rcpt_to: &[String],
+    local_domains: &[String],
+) -> bool {
+    is_internal_sender(mail_from, local_domains)
+        && !external_recipient_domains(rcpt_to, local_domains).is_empty()
+}
+
+/// Classify an audit record without allowing source trust to suppress it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmailAuditClass {
+    /// An MTA/authenticated or explicitly trusted mirror submission.
+    ConfirmedOutbound,
+    /// Envelope proves internal-to-external, but the passive source is not
+    /// authoritative enough to confirm the sending identity.
+    OutboundCandidate,
+    /// A submission-path event was observed but envelope/source evidence is
+    /// incomplete or malformed.
+    AttributionPending,
+    /// Kept for old rows or non-message capture records that cannot be
+    /// reclassified without inventing evidence.
+    #[default]
+    Legacy,
+}
+
+impl std::fmt::Display for EmailAuditClass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ConfirmedOutbound => write!(f, "confirmed_outbound"),
+            Self::OutboundCandidate => write!(f, "outbound_candidate"),
+            Self::AttributionPending => write!(f, "attribution_pending"),
+            Self::Legacy => write!(f, "legacy"),
+        }
+    }
+}
+
+/// Classify SMTP mail flow using the authenticated/trusted connection boundary
+/// plus envelope domains. A local-looking MAIL FROM on an untrusted connection
+/// is intentionally treated as inbound for threat/enforcement decisions to
+/// prevent spoofing from bypassing outbound DLP. The separate audit predicate
+/// above still records the internal-to-external candidate.
+pub fn classify_mail_direction(
+    mail_from: Option<&str>,
+    rcpt_to: &[String],
+    local_domains: &[String],
+    trusted_submitter: bool,
+) -> MailDirection {
+    let sender_local = is_internal_sender(mail_from, local_domains);
+    let any_external_recipient = !external_recipient_domains(rcpt_to, local_domains).is_empty();
+
+    match (trusted_submitter, sender_local, any_external_recipient) {
+        (true, true, false) => MailDirection::Internal,
+        (true, true, true) => MailDirection::Outbound,
+        (false, true, _) | (_, false, _) => MailDirection::Inbound,
+    }
+}
+
+/// Match a client address against exact trusted addresses or non-zero CIDRs.
+/// Invalid entries and `0/0` wildcard trust are rejected.
+pub fn is_ip_in_cidrs(client_ip: &str, entries: &[String]) -> bool {
+    let Ok(client_ip) = client_ip.parse::<std::net::IpAddr>() else {
+        return false;
+    };
+
+    entries.iter().any(|entry| {
+        let entry = entry.trim();
+        let (raw_base, raw_prefix) = entry.split_once('/').unwrap_or((entry, ""));
+        let Ok(base_ip) = raw_base.trim().parse::<std::net::IpAddr>() else {
+            return false;
+        };
+
+        match (client_ip, base_ip, raw_prefix.is_empty()) {
+            (std::net::IpAddr::V4(ip), std::net::IpAddr::V4(base), true) => ip == base,
+            (std::net::IpAddr::V6(ip), std::net::IpAddr::V6(base), true) => ip == base,
+            (std::net::IpAddr::V4(ip), std::net::IpAddr::V4(base), false) => raw_prefix
+                .parse::<u8>()
+                .ok()
+                .filter(|prefix| (1..=32).contains(prefix))
+                .is_some_and(|prefix| {
+                    let mask = u32::MAX << (32 - prefix);
+                    (u32::from(ip) & mask) == (u32::from(base) & mask)
+                }),
+            (std::net::IpAddr::V6(ip), std::net::IpAddr::V6(base), false) => raw_prefix
+                .parse::<u8>()
+                .ok()
+                .filter(|prefix| (1..=128).contains(prefix))
+                .is_some_and(|prefix| {
+                    let mask = u128::MAX << (128 - prefix);
+                    (u128::from_be_bytes(ip.octets()) & mask)
+                        == (u128::from_be_bytes(base.octets()) & mask)
+                }),
+            _ => false,
+        }
+    })
+}
+
 impl std::fmt::Display for SessionSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -221,6 +404,194 @@ impl std::fmt::Display for SessionSource {
             SessionSource::Import => write!(f, "import"),
         }
     }
+}
+
+/// Direction recorded by the email data-security review pipeline.
+///
+/// This is intentionally separate from [`MailDirection`]: the review pipeline
+/// must represent an unclassified session without coercing it into inbound or
+/// outbound. The existing MTA mail-flow model remains unchanged for relay
+/// decisions.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmailReviewDirection {
+    Inbound,
+    Outbound,
+    Internal,
+    #[default]
+    Unknown,
+}
+
+impl From<MailDirection> for EmailReviewDirection {
+    fn from(direction: MailDirection) -> Self {
+        match direction {
+            MailDirection::Inbound => Self::Inbound,
+            MailDirection::Outbound => Self::Outbound,
+            MailDirection::Internal => Self::Internal,
+        }
+    }
+}
+
+impl std::fmt::Display for EmailReviewDirection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Inbound => write!(f, "inbound"),
+            Self::Outbound => write!(f, "outbound"),
+            Self::Internal => write!(f, "internal"),
+            Self::Unknown => write!(f, "unknown"),
+        }
+    }
+}
+
+/// Coverage state for email content inspection.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmailInspectionStatus {
+    /// The message content and retained attachments were inspected completely.
+    #[default]
+    Inspected,
+    /// TLS or another transport boundary prevented content inspection.
+    Encrypted,
+    /// Capture or parser budgets left part of the message uninspected.
+    Incomplete,
+    /// The inspection pipeline failed before producing a trustworthy result.
+    Failed,
+}
+
+impl std::fmt::Display for EmailInspectionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Inspected => write!(f, "inspected"),
+            Self::Encrypted => write!(f, "encrypted"),
+            Self::Incomplete => write!(f, "incomplete"),
+            Self::Failed => write!(f, "failed"),
+        }
+    }
+}
+
+/// Result of the data-loss-prevention scan, independent from coverage.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmailDlpResult {
+    #[default]
+    Clean,
+    Hit,
+    Unknown,
+}
+
+impl std::fmt::Display for EmailDlpResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Clean => write!(f, "clean"),
+            Self::Hit => write!(f, "hit"),
+            Self::Unknown => write!(f, "unknown"),
+        }
+    }
+}
+
+/// Action taken by the email data-security pipeline.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmailReviewAction {
+    /// Passive mirror audit or an MTA message that has not reached enforcement.
+    #[default]
+    Audit,
+    Allow,
+    Alert,
+    Quarantine,
+    Block,
+    Reject,
+    Tempfail,
+}
+
+impl std::fmt::Display for EmailReviewAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Audit => write!(f, "audit"),
+            Self::Allow => write!(f, "allow"),
+            Self::Alert => write!(f, "alert"),
+            Self::Quarantine => write!(f, "quarantine"),
+            Self::Block => write!(f, "block"),
+            Self::Reject => write!(f, "reject"),
+            Self::Tempfail => write!(f, "tempfail"),
+        }
+    }
+}
+
+/// Redacted, durable result of one outbound email data-security inspection.
+///
+/// This record deliberately contains metadata and bounded DLP evidence only;
+/// raw message content belongs in quarantine storage, not in the audit table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmailDataSecurityReview {
+    pub id: Uuid,
+    pub session_id: Uuid,
+    pub dedupe_key: String,
+    pub source: SessionSource,
+    pub direction: EmailReviewDirection,
+    /// Message-level audit classification. This is independent from source
+    /// trust, inspection coverage, DLP result, and enforcement action.
+    #[serde(default)]
+    pub audit_class: EmailAuditClass,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction_reason: Option<String>,
+    /// Stable reason codes for incomplete or failed content coverage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inspection_reason: Option<String>,
+    pub inspection_status: EmailInspectionStatus,
+    pub dlp_result: EmailDlpResult,
+    #[serde(default)]
+    pub max_jrt_level: Option<u8>,
+    #[serde(default)]
+    pub dlp_matches: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dlp_details: Option<serde_json::Value>,
+    pub action: EmailReviewAction,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quarantine_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verdict_id: Option<Uuid>,
+    pub client_ip: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mail_from: Option<String>,
+    #[serde(default)]
+    pub external_recipient_domains: Vec<String>,
+    pub recipient_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
+    pub attachment_count: u32,
+    pub attachments_scanned: u32,
+    pub attachment_inspection_complete: bool,
+    pub encrypted: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Aggregate counts for outbound email data-security coverage and outcomes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EmailDataSecurityStats {
+    pub total: u64,
+    pub inspected: u64,
+    pub encrypted: u64,
+    pub incomplete: u64,
+    pub failed: u64,
+    pub dlp_hits: u64,
+    pub quarantined: u64,
+    pub blocked: u64,
+    pub rejected: u64,
+    pub unknown_direction: u64,
+    #[serde(default)]
+    pub confirmed_outbound: u64,
+    #[serde(default)]
+    pub outbound_candidates: u64,
+    #[serde(default)]
+    pub attribution_pending: u64,
+    #[serde(default)]
+    pub incomplete_sessions: u64,
 }
 
 /// SMTP authentication information reconstructed from the AUTH exchange
@@ -302,9 +673,34 @@ pub struct EmailSession {
     /// Threat level loaded from `security_verdicts` for list queries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub threat_level: Option<String>,
+    /// Primary malicious-email classification loaded from `security_verdicts`.
+    /// This is independent from the threat severity level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub threat_type: Option<String>,
     /// Session source (`sniffer`, `mta_proxy`, or `import`).
     #[serde(default)]
     pub source: SessionSource,
+    /// SMTP EHLO/HELO identity captured by the inline MTA for SPF evaluation.
+    /// It is transport context rather than message content and is never
+    /// accepted from or persisted through public APIs.
+    #[serde(skip)]
+    pub smtp_helo: Option<String>,
+    /// Correlation context for a quarantine release rescan. This is populated
+    /// only after the engine has loaded and hashed the exact stored `raw_eml`.
+    /// It is never accepted from a public API payload as release authority;
+    /// the database request claim remains authoritative.
+    #[serde(skip)]
+    pub release_rescan: Option<ReleaseRescanContext>,
+}
+
+/// Immutable correlation carried from an exact-byte quarantine load through
+/// post-verdict persistence. It prevents an unrelated verdict for the same
+/// session from authorizing delivery.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReleaseRescanContext {
+    pub request_id: Uuid,
+    pub quarantine_id: String,
+    pub content_sha256: String,
 }
 
 /// WebSocket session signal payload.
@@ -349,7 +745,10 @@ impl EmailSession {
             message_id: None,
             auth_info: None,
             threat_level: None,
+            threat_type: None,
             source: SessionSource::default(),
+            smtp_helo: None,
+            release_rescan: None,
         }
     }
 
@@ -403,6 +802,10 @@ impl EmailSession {
 
     /// Estimate the reconstructed EML byte size without decoding attachment payloads.
     pub fn estimated_reconstructed_eml_size(&self) -> usize {
+        if let Some(raw_mime) = &self.content.raw_mime {
+            return raw_mime.len();
+        }
+
         let mut reconstructed_estimate = 2usize; // header/body separator
         for (name, value) in &self.content.headers {
             reconstructed_estimate = reconstructed_estimate
@@ -456,6 +859,10 @@ impl EmailSession {
     ///
     /// Used by ClamAV scanning, YARA scanning, and EML file download.
     pub fn reconstruct_eml(&self) -> Vec<u8> {
+        if let Some(raw_mime) = &self.content.raw_mime {
+            return raw_mime.clone();
+        }
+
         let estimated_size = self.content.raw_size.max(4096);
         let mut eml = Vec::with_capacity(estimated_size);
 
@@ -609,6 +1016,35 @@ pub struct EmailLink {
     pub suspicious: bool,
 }
 
+/// Where an email link was extracted from.  This is deliberately kept outside
+/// `EmailLink` for wire compatibility with the many existing producers and
+/// stored sessions; callers that need audit-grade provenance obtain it from
+/// `EmailContent::link_extraction_source` or the engine's derived link view.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmailLinkExtractionSource {
+    HtmlHref,
+    PlainText,
+    HtmlText,
+    Qr,
+    Attachment,
+    #[default]
+    Unknown,
+}
+
+impl EmailLinkExtractionSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::HtmlHref => "html_href",
+            Self::PlainText => "plain_text",
+            Self::HtmlText => "html_text",
+            Self::Qr => "qr",
+            Self::Attachment => "attachment",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 /// One SMTP dialog entry recorded during message processing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmtpDialogEntry {
@@ -630,6 +1066,11 @@ pub const MAX_SMTP_DIALOG_ENTRIES: usize = 200;
 /// quadratic in link count and link_scan / DB persistence amplify it further.
 pub const MAX_EMAIL_LINKS: usize = 5000;
 
+/// Keep exact MIME bytes only for messages whose parser/capture coverage is
+/// degraded. Normal messages use the parsed representation, avoiding a second
+/// full copy in the session stream and database JSON.
+pub const MAX_RETAINED_RAW_MIME_BYTES: usize = 8 * 1024 * 1024;
+
 /// Parsed content extracted from an email session.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EmailContent {
@@ -647,6 +1088,14 @@ pub struct EmailContent {
     pub raw_size: usize,
     /// Whether the parser considers the message body complete.
     pub is_complete: bool,
+    /// Exact MIME bytes retained for degraded inspection paths. API projection
+    /// code deliberately omits this field from client responses.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "raw_mime_serde"
+    )]
+    pub raw_mime: Option<Vec<u8>>,
     /// Whether the originating protocol session was encrypted.
     pub is_encrypted: bool,
     /// Whether parsing degraded part of the message (multipart part/depth
@@ -673,9 +1122,90 @@ pub struct EmailContent {
     pub smtp_dialog: Vec<SmtpDialogEntry>,
 }
 
+/// Build the stable identity used only to correlate one message across SMTP
+/// relay hops.  Security de-duplication remains content-bound in the engine;
+/// this identity deliberately excludes body, MIME, attachment, and relay
+/// headers, subject, and envelope recipients because gateways may rewrite all
+/// of them while forwarding.  The bounded correlation window prevents a
+/// long-lived Message-ID reuse from joining unrelated deliveries.
+pub fn delivery_fingerprint_from_parts(
+    message_id: Option<&str>,
+    sender: Option<&str>,
+) -> Option<String> {
+    fn normalize(value: &str) -> String {
+        value
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_lowercase()
+    }
+
+    fn hash_field(hasher: &mut Sha256, value: &[u8]) {
+        hasher.update((value.len() as u64).to_be_bytes());
+        hasher.update(value);
+    }
+
+    let message_id = message_id
+        .map(|value| normalize(value.trim().trim_matches(|ch| ch == '<' || ch == '>')))
+        .filter(|value| !value.is_empty())?;
+    let sender = sender.map(normalize).unwrap_or_default();
+
+    let mut hasher = Sha256::new();
+    hash_field(&mut hasher, b"vigilyx-delivery-v3");
+    hash_field(&mut hasher, message_id.as_bytes());
+    hash_field(&mut hasher, sender.as_bytes());
+    Some(hex::encode(hasher.finalize()))
+}
+
 impl EmailContent {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Whether a body or attachment entity was retained for analysis.
+    pub fn has_retained_message_entity(&self) -> bool {
+        self.body_text
+            .as_deref()
+            .is_some_and(|body| !body.trim().is_empty())
+            || self
+                .body_html
+                .as_deref()
+                .is_some_and(|body| !body.trim().is_empty())
+            || !self.attachments.is_empty()
+    }
+
+    /// Infer the extraction carrier for a retained link without changing the
+    /// legacy `EmailLink` wire shape.  The engine adds explicit QR provenance
+    /// for links that are derived outside the canonical parsed link list.
+    pub fn link_extraction_source(&self, link: &EmailLink) -> EmailLinkExtractionSource {
+        let url = link.url.as_str();
+        if self
+            .body_html
+            .as_deref()
+            .is_some_and(|html| html.contains(url) && html.to_ascii_lowercase().contains("href"))
+        {
+            return EmailLinkExtractionSource::HtmlHref;
+        }
+        if self
+            .body_text
+            .as_deref()
+            .is_some_and(|body| body.contains(url))
+        {
+            return EmailLinkExtractionSource::PlainText;
+        }
+        if self
+            .body_html
+            .as_deref()
+            .is_some_and(|html| html.contains(url))
+        {
+            return EmailLinkExtractionSource::HtmlText;
+        }
+        EmailLinkExtractionSource::Unknown
+    }
+
+    /// Whether the message must not be presented as fully inspected.
+    pub fn has_inspection_coverage_gap(&self) -> bool {
+        !self.is_complete || self.truncated || self.dropped_attachments > 0 || self.links_truncated
     }
 
     pub fn add_header(&mut self, name: String, value: String) {
@@ -757,7 +1287,7 @@ impl EmailContent {
         None
     }
 
-    fn decode_html_attribute_entities(value: &str) -> String {
+    pub fn decode_html_attribute_entities(value: &str) -> String {
         let mut decoded = String::with_capacity(value.len());
         let mut cursor = 0usize;
 
@@ -773,12 +1303,14 @@ impl EmailContent {
             // https:// link. The extractor must accept the optional ';' too,
             // otherwise the whole URL vanishes from the link layer.
             if let Some(after_hash) = rest.strip_prefix('#') {
-                let (digits, radix) =
-                    if let Some(hex) = after_hash.strip_prefix('x').or_else(|| after_hash.strip_prefix('X')) {
-                        (hex, 16)
-                    } else {
-                        (after_hash, 10)
-                    };
+                let (digits, radix) = if let Some(hex) = after_hash
+                    .strip_prefix('x')
+                    .or_else(|| after_hash.strip_prefix('X'))
+                {
+                    (hex, 16)
+                } else {
+                    (after_hash, 10)
+                };
                 let prefix_len = rest.len() - digits.len(); // 1 ("#") or 2 ("#x")
                 let digit_len = digits
                     .bytes()
@@ -828,6 +1360,10 @@ impl EmailContent {
                 "lt" => Some('<'),
                 "quot" => Some('"'),
                 "sol" => Some('/'),
+                // HTML's named whitespace reference is valid in an href.
+                // Browsers remove the tab while parsing the URL scheme; keep
+                // the extractor on the same path as the renderer.
+                "tab" => Some('\t'),
                 _ => None,
             };
 
@@ -907,6 +1443,8 @@ impl EmailContent {
 
     fn push_or_update_link(&mut self, url: &str, text: Option<String>) {
         let candidate = url.trim_matches(|ch: char| ch.is_ascii_whitespace() || ch.is_control());
+        let normalized_scheme = Self::normalize_obfuscated_http_scheme(candidate);
+        let candidate = normalized_scheme.as_deref().unwrap_or(candidate);
         if candidate.is_empty() {
             return;
         }
@@ -963,8 +1501,10 @@ impl EmailContent {
             // Existing entry: only backfill missing anchor text. The linear
             // find is bounded by MAX_EMAIL_LINKS and only runs on duplicates.
             if normalized_text.is_some()
-                && let Some(existing) =
-                    self.links.iter_mut().find(|link| link.url == normalized_url)
+                && let Some(existing) = self
+                    .links
+                    .iter_mut()
+                    .find(|link| link.url == normalized_url)
                 && existing.text.is_none()
             {
                 existing.text = normalized_text;
@@ -980,10 +1520,51 @@ impl EmailContent {
         });
     }
 
+    /// Remove only control/whitespace characters embedded in an HTTP scheme
+    /// (`ht&#9;tp://...`). Do not compact the rest of a URL: spaces there are
+    /// delimiters in rendered text, not harmless transport noise.
+    pub fn normalize_obfuscated_http_scheme(value: &str) -> Option<String> {
+        let colon = value
+            .char_indices()
+            .take_while(|(index, _)| *index < 16)
+            .find(|(_, ch)| *ch == ':')
+            .map(|(index, _)| index)?;
+        let scheme: String = value[..colon]
+            .chars()
+            .filter(|ch| !ch.is_ascii_whitespace() && !ch.is_control())
+            .collect();
+        if !matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https")
+            || scheme.eq_ignore_ascii_case(&value[..colon])
+        {
+            return None;
+        }
+        Some(format!("{scheme}{}", &value[colon..]))
+    }
+
     /// Extract HTTP and HTTPS links from the HTML body.
     pub fn extract_links_from_html(&mut self) {
         if let Some(html) = self.body_html.clone() {
             let html_lower = html.to_lowercase();
+            let base_url = {
+                let mut base = None;
+                if let Some(start_rel) = html_lower.find("<base")
+                    && let Some(tag_end_rel) = html[start_rel..].find('>')
+                {
+                    let tag_end = start_rel + tag_end_rel;
+                    let tag = &html[start_rel..=tag_end];
+                    if let Some(raw) = Self::extract_attr_value_case_insensitive(tag, "href") {
+                        let normalized =
+                            Self::normalize_obfuscated_http_scheme(&raw).unwrap_or(raw);
+                        if let Ok(parsed) = url::Url::parse(&normalized)
+                            && matches!(parsed.scheme(), "http" | "https")
+                        {
+                            self.push_or_update_link(&normalized, None);
+                            base = Some(parsed);
+                        }
+                    }
+                }
+                base
+            };
             let mut anchor_pos = 0usize;
 
             while let Some(start_rel) = html_lower[anchor_pos..].find("<a") {
@@ -1000,7 +1581,12 @@ impl EmailContent {
                         .map(|offset| tag_end + 1 + offset);
                     let anchor_text = close_start
                         .and_then(|close| Self::normalize_anchor_text(&html[tag_end + 1..close]));
-                    self.push_or_update_link(&url, anchor_text);
+                    let resolved = base_url
+                        .as_ref()
+                        .and_then(|base| base.join(&url).ok())
+                        .map(|joined| joined.to_string())
+                        .unwrap_or(url);
+                    self.push_or_update_link(&resolved, anchor_text);
                     anchor_pos = close_start.map(|close| close + 4).unwrap_or(tag_end + 1);
                 } else {
                     anchor_pos = tag_end + 1;
@@ -1019,7 +1605,14 @@ impl EmailContent {
                 let tag_end = tag_start + tag_end_rel;
                 let tag = &html[tag_start..=tag_end];
 
-                for attr_name in ["href", "src", "action", "formaction", "poster"] {
+                for attr_name in [
+                    "href",
+                    "xlink:href",
+                    "src",
+                    "action",
+                    "formaction",
+                    "poster",
+                ] {
                     if let Some(url) = Self::extract_attr_value_case_insensitive(tag, attr_name) {
                         // `src`/`poster` data: URLs are inline images/fonts in
                         // legitimate mail — exempt them so the data: retention
@@ -1034,7 +1627,12 @@ impl EmailContent {
                         {
                             continue;
                         }
-                        self.push_or_update_link(&url, None);
+                        let resolved = base_url
+                            .as_ref()
+                            .and_then(|base| base.join(&url).ok())
+                            .map(|joined| joined.to_string())
+                            .unwrap_or(url);
+                        self.push_or_update_link(&resolved, None);
                     }
                 }
 
@@ -1139,9 +1737,15 @@ pub struct TrafficStats {
 /// Compact security verdict payload sent over WebSocket updates.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityVerdictSummary {
+    #[serde(default)]
+    pub inspection_coverage: crate::security::InspectionCoverage,
+    #[serde(default)]
+    pub coverage_reasons: Vec<String>,
     pub verdict_id: Uuid,
     pub session_id: Uuid,
     pub threat_level: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub threat_type: Option<String>,
     pub confidence: f64,
     pub categories: Vec<String>,
     pub summary: String,
@@ -1448,6 +2052,9 @@ pub struct DataSecurityStats {
     /// Hourly HTTP session counts for the last 24 hours, oldest to newest.
     #[serde(default)]
     pub hourly_sessions: Vec<HourlyBucket>,
+    /// Hourly outbound/unknown email review counts for the last 24 hours.
+    #[serde(default)]
+    pub hourly_email_reviews: Vec<HourlyBucket>,
     /// Hourly incident counts for the last 24 hours.
     #[serde(default)]
     pub hourly_incidents: Vec<HourlyBucket>,
@@ -1489,9 +2096,9 @@ pub enum WsMessage {
 #[cfg(test)]
 mod tests {
     use super::{
-        EmailAttachment, EmailContent, EmailLink, EmailSession, MAX_EMAIL_LINKS, Protocol,
-        SessionStatus,
-        decode_base64_bytes_limited,
+        EmailAttachment, EmailContent, EmailLink, EmailLinkExtractionSource, EmailSession,
+        MAX_EMAIL_LINKS, Protocol, SessionStatus, classify_mail_direction,
+        decode_base64_bytes_limited, is_internal_sender, is_internal_to_external,
     };
 
     #[test]
@@ -1579,9 +2186,8 @@ mod tests {
         // Undecodable numeric spans stay literal and must not panic or swallow
         // the rest of the attribute value.
         let mut content = EmailContent::new();
-        content.body_html = Some(
-            "<a href=\"https://ok.example/a?x=1&#zz&y=2\">plain</a>".to_string(),
-        );
+        content.body_html =
+            Some("<a href=\"https://ok.example/a?x=1&#zz&y=2\">plain</a>".to_string());
         content.extract_links_from_html();
         assert_eq!(content.links.len(), 1);
         assert!(content.links[0].url.starts_with("https://ok.example/"));
@@ -1610,6 +2216,35 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_links_handles_named_tab_xlink_and_base_resolution() {
+        let mut content = EmailContent::new();
+        content.body_html = Some(
+            "<base href='http://203.0.113.60/verify/'>\
+             <svg><a xlink:href='ht&Tab;tp://203.0.113.60/verify/login'>查看</a></svg>\
+             <a href='login'>继续</a>"
+                .to_string(),
+        );
+
+        content.extract_links_from_html();
+
+        assert!(
+            content
+                .links
+                .iter()
+                .any(|link| { link.url == "http://203.0.113.60/verify/login" })
+        );
+        assert_eq!(
+            content
+                .links
+                .iter()
+                .filter(|link| link.url == "http://203.0.113.60/verify/login")
+                .count(),
+            1,
+            "the absolute xlink and resolved relative href should deduplicate"
+        );
+    }
+
+    #[test]
     fn test_extract_links_keeps_unparseable_href_as_raw_link() {
         // PoC (B1-3): `%40` inside the host is rejected by the WHATWG parser
         // but browsers may still resolve it; before the fix the href was
@@ -1626,7 +2261,10 @@ mod tests {
             .iter()
             .find(|link| link.url == "http://legit.com%40evil.com/")
             .expect("unparseable href must be kept as a raw link");
-        assert!(link.suspicious, "unparseable href must be marked suspicious");
+        assert!(
+            link.suspicious,
+            "unparseable href must be marked suspicious"
+        );
         assert_eq!(link.text.as_deref(), Some("点击登录"));
     }
 
@@ -1703,6 +2341,22 @@ mod tests {
         let parsed: EmailContent = serde_json::from_value(legacy).expect("legacy JSON");
         assert!(!parsed.truncated);
         assert_eq!(parsed.dropped_attachments, 0);
+    }
+
+    #[test]
+    fn test_link_extraction_source_is_derived_without_changing_legacy_link_shape() {
+        let mut content = EmailContent::new();
+        content.body_html = Some("<a href=\"https://example.invalid/login\">登录</a>".to_string());
+        let link = EmailLink {
+            url: "https://example.invalid/login".to_string(),
+            text: Some("登录".to_string()),
+            suspicious: false,
+        };
+
+        assert_eq!(
+            content.link_extraction_source(&link),
+            EmailLinkExtractionSource::HtmlHref
+        );
     }
 
     #[test]
@@ -1834,6 +2488,24 @@ mod tests {
     }
 
     #[test]
+    fn reconstruct_eml_prefers_retained_raw_mime() {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        let raw = b"From: sender@example.test\r\n\r\nmalformed MIME payload".to_vec();
+        session.content.raw_mime = Some(raw.clone());
+        session.content.body_text = Some("a different parsed projection".to_string());
+
+        assert_eq!(session.estimated_reconstructed_eml_size(), raw.len());
+        assert_eq!(session.reconstruct_eml(), raw);
+        assert_eq!(session.reconstruct_eml_limited(raw.len()), Some(raw));
+    }
+
+    #[test]
     fn estimated_reconstructed_eml_size_counts_attachment_payload() {
         let mut session = EmailSession::new(
             Protocol::Smtp,
@@ -1882,5 +2554,72 @@ mod tests {
         }
         assert_eq!(Protocol::from_port(8080), Protocol::Unknown);
         assert_eq!(Protocol::from_port(25), Protocol::Smtp);
+    }
+
+    #[test]
+    fn internal_to_external_audit_predicate_ignores_source_trust() {
+        let local = vec!["corp.example".to_string()];
+        let recipients = vec!["peer@corp.example".to_string(), "user@qq.com".to_string()];
+
+        assert!(is_internal_sender(Some("alice@corp.example"), &local));
+        assert!(is_internal_to_external(
+            Some("alice@corp.example"),
+            &recipients,
+            &local,
+        ));
+        // Threat/enforcement direction remains fail-safe for an untrusted
+        // source; this must not change the audit predicate above.
+        assert_eq!(
+            classify_mail_direction(Some("alice@corp.example"), &recipients, &local, false),
+            super::MailDirection::Inbound
+        );
+        assert_eq!(
+            classify_mail_direction(Some("alice@corp.example"), &recipients, &local, true),
+            super::MailDirection::Outbound
+        );
+    }
+
+    #[test]
+    fn malformed_or_local_only_envelope_is_not_external_audit_candidate() {
+        let local = vec!["corp.example".to_string()];
+        assert!(!is_internal_to_external(
+            Some("alice@corp.example"),
+            &["bob@corp.example".to_string()],
+            &local,
+        ));
+        assert!(!is_internal_to_external(
+            Some("not-an-address"),
+            &["user@qq.com".to_string()],
+            &local,
+        ));
+    }
+
+    #[test]
+    fn delivery_fingerprint_is_stable_across_gateway_metadata_rewrites() {
+        let original = super::delivery_fingerprint_from_parts(
+            Some("<Message-123@EXAMPLE.TEST>"),
+            Some(" Sender@Example.Test "),
+        );
+        let forwarded = super::delivery_fingerprint_from_parts(
+            Some("message-123@example.test"),
+            Some("sender@example.test"),
+        );
+
+        assert_eq!(original, forwarded);
+        assert!(original.is_some());
+    }
+
+    #[test]
+    fn delivery_fingerprint_keeps_sender_as_collision_guard() {
+        let first = super::delivery_fingerprint_from_parts(
+            Some("reused-id@example.test"),
+            Some("first@example.test"),
+        );
+        let second = super::delivery_fingerprint_from_parts(
+            Some("reused-id@example.test"),
+            Some("second@example.test"),
+        );
+
+        assert_ne!(first, second);
     }
 }

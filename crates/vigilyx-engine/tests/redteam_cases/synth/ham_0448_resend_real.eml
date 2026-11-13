@@ -1,0 +1,22 @@
+From: =?utf-8?B?546L6Iqz?= <wang.fang@corp.internal>
+To: leaders@corp.internal
+Date: Tue, 22 Sep 2026 10:47:00 +0800
+Message-ID: <0037-b29@synth.example>
+In-Reply-To: <budget-2027@corp.internal>
+Subject: Re: 上次说的预算表（重发）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+上次附件挂了，重发一次。
+--BS
+Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+Content-Disposition: attachment; filename="预算表2027.xlsx"
+Content-Transfer-Encoding: base64
+
+UEsDBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+--BS--

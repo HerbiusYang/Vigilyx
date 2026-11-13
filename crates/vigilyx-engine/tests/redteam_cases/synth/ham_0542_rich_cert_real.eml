@@ -1,0 +1,40 @@
+From: 区域网络安全应急响应中心 <alert@cert.govregion.example>
+To: 安全运营中心 <soc@corp.internal>
+Cc: 基础设施部 <infra@corp.internal>
+Date: Thu, 01 Oct 2026 14:20:00 +0800
+Message-ID: <0542-b37@synth.example>
+Subject: [预警] CVE-2026-33917：邮件安全网关解析层反序列化漏洞在野利用通报
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+各关基单位安全团队：
+
+我中心监测到针对邮件安全网关产品的高危漏洞利用活动，现通报如下。
+
+一、漏洞概述
+CVE-2026-33917，邮件网关 MIME 解析层反序列化缺陷。攻击者构造特定嵌套结构的 multipart 报文（depth ≥ 6 且含非法 boundary 拼接），触发网关预解析组件反序列化 gadget，可在网关进程上下文执行任意代码。CVSS 3.1 基准 9.8。受影响版本：1.7.x–1.9.4（1.9.5 已修复）。
+
+二、在野利用特征
+- 首见样本：9/28 02:14（UTC+8）
+- 载体：伪装"视频会议纪要"的嵌套报文（外层 multipart/mixed，内层 depth 6，boundary 注入段位于第二、三段之间）
+- 落地行为：网关进程拉取第二阶段并以其服务账号执行
+- 已知受害：本区域 3 家制造企业、1 家物流企业（均已处置）
+
+三、IOC（供封禁与回检）
+  C2：gw-stage2.real-malware-c2.example（198.51.100.203）
+  样本 SHA256：9f2c…a41b（完整哈希与 YARA 规则见官网通报页）
+  投递主题特征词：纪要 / minutes / 回放
+
+四、处置建议
+1. 立即升级至 1.9.5；
+2. 无法即时升级的，在网关前置 MTA 对 multipart depth > 4 报文做拒收或降级复核；
+3. 回检 9/26 以来网关侧异常外联（重点 198.51.100.0/24）。
+
+特别说明：我中心不通过邮件附件或第三方链接分发"检测包/采集器"，全部材料（YARA、Sigma、信标回检脚本）仅在官网通报页提供，回检结果也请通过官网渠道提交。若收到以我中心名义附带检测包或要求安装"采集器"的邮件，请视为假冒并反馈至 abuse@cert.govregion.example。
+
+五、参考
+官网通报（含完整 IOC 与规则下载）：https://www.cert.govregion.example/advisory/2026-091
+
+区域网络安全应急响应中心
+7×24 值班电话：0571-8888-0911
+（本通报可转发至本单位相关团队，转载请注明出处）

@@ -1,0 +1,67 @@
+From: "Google Play | 开发者通知" <dev-notice@play-developer.example>
+To: android-team@corp.internal
+Cc: security@corp.internal
+Date: Sat, 19 Sep 2026 14:10:00 +0800
+Message-ID: <0911-b159@synth.example>
+Subject: =?utf-8?B?44CQ5Y2H57qn5o+Q6YaS44CRUGxheeW6lOeUqOetvuWQjeWNh+e6p+S4juWvhumSpeeuoeeQhu+8iOW6lOeUqOWMheWQjWNvbS5ob3Jpem9uLm1lc2jvvIk=?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Android 团队、安全负责人：
+
+大家好。Horizon Mesh（com.horizon.mesh）的
+年度应用完整性提醒如下，并说明 Play App
+Signing 的官方机制与一个正在流传的"密钥
+托管"骗局。
+
+一、Play App Signing（官方托管，免费）
+1. 升级方式：开发者控制台 → Setup → Play
+   App Signing，按指引上传现有签名密钥的
+   加密副本——之后应用签名密钥由 Play
+   托管，你们保留"上传密钥"用于签署后续
+   上传；全程免费，密钥托管在隔离的密钥
+   管理基础设施中；
+2. 升级的好处：签名密钥不再需要出现在
+   构建环境（可从 CI 移除生产 keystore）、
+   支持密钥升级（key rotation，发生密钥
+   泄露等事件时可申请更换签名密钥）——
+   这些能力免费提供，不存在 USD 1,200/年
+   的"托管服务费"；
+3. 关于"境内合规托管"：官方托管服务的
+   合规状态以我们发布的隐私与条款为准；
+   以"数据出境"为由推销替代收费托管的，
+   请按贵司法务的口径自行评估，但请注意
+   其要求你们"提供 keystore 文件与密码"
+   ——这本身就是密钥泄露的全部要件，
+   交给任何第三方（无论境内境外）都与
+   你们把密钥放在 Jenkins 里的风险同源。
+
+二、建议的密钥安全实践（免费）
+1. 立即：开启 Play App Signing（若尚未）；
+2. CI 整改：生产签名从 CI 移除（仅保留
+   debug 签名做日常构建），发布构建经
+   受控环境或使用 Play 托管签名；
+3. 上传密钥备份：keystore 密码与文件分开
+   保管（密码管理器 + 离线备份）；
+4. 应用签名证书信息（指纹、安装量）在
+   控制台与公开渠道可见，任何人都能引用
+   ——这不能证明发件方与我们有关。
+
+三、风险提示
+"密钥托管中心"邮件的结构：真实的风险
+概念（密钥泄露可致同签名更新接管——
+完全真实）+ 可自证的公开信息（包名、
+指纹、安装量）+ 收费化的免费机制（官方
+托管免费，卖"境内合规托管"）+ 索要
+keystore 与密码（终点：拿走密钥本身，
+"托管"完成后被接管的正是你们的应用）。
+请团队记住：签名密钥的托管只有两个合法
+终点——Play 官方托管，或你们自己的受控
+环境；任何邮箱受理的"托管迁移"都是
+第三方终点。
+
+四、其他
+应用完整性问题可经控制台工单联系（免费）。
+
+Google Play 开发者支持
+（签名管理以开发者控制台为准，谨防仿冒）

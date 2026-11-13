@@ -1,0 +1,10 @@
+From: =?utf-8?B?55uR5o6n5bmz5Y+w?= <monitor@corp.internal>
+To: sre@corp.internal
+Date: Mon, 28 Sep 2026 08:30:00 +0800
+Message-ID: <0020-b34@synth.example>
+Subject: P99 毛刺的 trace 已导出
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+trace 挂在临时面板：http://trace.corp.internal:8080/t/8842
+（内网地址，半小时有效）

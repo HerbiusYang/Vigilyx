@@ -1,0 +1,113 @@
+From: Walmart Supplier EDI Services <edi.migration@wa1mart-supplier.example>
+To: logistics@corp.internal
+Cc: finance@corp.internal, it@corp.internal
+Reply-To: edi.support@walmart-retailmail.example
+Date: Wed, 28 Oct 2026 07:00:00 -0600
+Message-ID: <0709-b62@synth.example>
+Subject: Re: Re: [Supplier ID 884266] EDI System Migration — New payment processing effective November 1 (Action required before Friday)
+In-Reply-To: <supplier-edi-884266@corp.internal>
+References: <supplier-edi-884266@corp.internal> <supplier-edi-884266-2@corp.internal>
+MIME-Version: 1.0
+Content-Type: text/html; charset=gb2312
+
+<html><body style="font-family:sans-serif">
+<p>Logistics, Finance, IT Teams:</p>
+
+<p>As discussed in our October 20 supplier call, Walmart is migrating its EDI payment processing system from <b>GEIS (General Electric Information Services)</b> to <b>SAP Ariba</b>. This migration affects <b>all payment processing</b> for your supplier account.</p>
+
+<h3>一、Your Supplier Account</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:200px">Supplier ID</td><td><b>884266</b></td></tr>
+<tr><td style="background:#f5f5f5">Supplier Name</td><td>Your Company (Hangzhou) Ltd.</td></tr>
+<tr><td style="background:#f5f5f5">DUNS Number</td><td>31-548-9921</td></tr>
+<tr><td style="background:#f5f5f5">Relationship Since</td><td>March 2023</td></tr>
+<tr><td style="background:#f5f5f5">Annual Volume</td><td>$2,840,000 USD</td></tr>
+<tr><td style="background:#f5f5f5">Products Supplied</td><td>Email Security Appliances (Model GW-2000)</td></tr>
+<tr><td style="background:#f5f5f5">Current EDI System</td><td>GEIS (decommissioning October 31)</td></tr>
+<tr><td style="background:#f5f5f5">New EDI System</td><td>SAP Ariba (effective November 1)</td></tr>
+<tr><td style="background:#f5f5f5">Migration Deadline</td><td style="color:#e00"><b>Friday, October 31, 2024</b></td></tr>
+</table>
+
+<h3>二、What's Changing</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Item</th><th>Old (GEIS)</th><th>New (SAP Ariba)</th></tr>
+<tr><td>EDI Standard</td><td>X12 (850/810/856)</td><td>cXML (Order/Invoice/ASN)</td></tr>
+<tr><td>Payment Method</td><td>EFT via GEIS network</td><td>Ariba Pay (via SAP Financial)</td></tr>
+<tr><td>Remittance Portal</td><td>GEIS Supplier Web</td><td>SAP Ariba Supplier Portal</td></tr>
+<tr><td>Invoicing</td><td>EDI 810</td><td>cXML Invoice or Ariba Network</td></tr>
+<tr><td>Payment Terms</td><td>Net 30</td><td>Net 30 (unchanged)</td></tr>
+</table>
+
+<h3>三、Critical: New Payment Account</h3>
+<div style="background:#FFF3E0;padding:16px;border-radius:4px;border:2px solid #e00">
+<p style="color:#e00"><b>⚠ PAYMENT ACCOUNT CHANGE — Effective November 1 ⚠</b></p>
+<p>Due to the SAP Ariba migration, all supplier payments will be processed through a <b>new centralized payment account</b>:</p>
+<p style="font-size:15px;line-height:1.8">
+<b>Beneficiary:</b> Walmart Supplier Payment Services LLC<br>
+<b>Bank:</b> Bank of America, N.A. (Bentonville, AR)<br>
+<b>Account:</b> 4471-8842-6619-992<br>
+<b>Routing (ACH):</b> 123456780<br>
+<b>Routing (Wire):</b> 123456780<br>
+<b>SWIFT:</b> TSTBUS3N<br>
+<b>Reference:</b> SUP-884266-MIG
+</p>
+<p>Payments sent to the old account after October 31 will be <b>returned</b> and may cause a <b>30-day payment delay</b>.</p>
+</div>
+<p>If you need to verify this account, contact our new <b>EDI migration support hotline: 1-800-555-**** (extension 8842)</b> (the old supplier hotline 1-800-426-**** is being redirected).</p>
+
+<h3>四、Action Required (Before Friday)</h3>
+<ol>
+<li><b>Update your payment records</b> with the new Walmart payment account (above)</li>
+<li><b>Register on SAP Ariba Supplier Portal:</b></li>
+</ol>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://wa1mart-supplier.example/ariba/registration?supplier=884266" style="display:inline-block;background:#0071CE;color:#FCB61A;padding:12px 40px;text-decoration:none;border-radius:20px;font-weight:bold;font-size:16px">Register on Ariba Supplier Portal</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://supplier.ariba.com/registration/walmart</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（Use your supplier email to create an Ariba Network account）</p>
+
+<h3>About Ariba Supplier Registration</h3>
+<p>When you click the registration button, you will be taken to SAP Ariba's supplier onboarding portal. You will need to:</p>
+<ol>
+<li>Create an Ariba Network account (using your corporate email)</li>
+<li>Enter your company details (DUNS, tax ID, banking information)</li>
+<li>Upload your business license and W-9 or international tax forms</li>
+<li>Accept Walmart's supplier terms</li>
+</ol>
+
+<p style="font-size:14px;background:#E3F2FD;padding:12px;border-radius:4px">
+<b>About the registration link:</b> You may notice that the button link goes to a Walmart supplier domain rather than ariba.com directly. This is because Walmart uses a <b>branded supplier registration portal</b> that pre-fills your supplier information before redirecting to SAP Ariba. This eliminates the need to manually enter your DUNS number and product codes. The registration page will display both the Walmart logo and the SAP Ariba logo.
+</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文EDI迁移支持，请访问 wa1mart-supplier.example/cn-edi 上传营业执照与银行账户信息（中文通道，当日处理）。</p>
+
+<h3>五、Recent Orders (Last 30 Days)</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>PO Number</th><th>Date</th><th>Product</th><th>Qty</th><th>Amount</th></tr>
+<tr><td>PO-8842-001</td><td>10/15</td><td>GW-2000</td><td>120</td><td>$288,000</td></tr>
+<tr><td>PO-8842-002</td><td>10/22</td><td>GW-2000</td><td>85</td><td>$204,000</td></tr>
+<tr><td>PO-8842-003</td><td>10/26</td><td>GW-2000</td><td>200</td><td>$480,000</td></tr>
+</table>
+
+<h3>六、Timeline</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td><b>Today (10/28)</b></td><td>Receive migration notice</td></tr>
+<tr><td><b>10/29-10/30</b></td><td>Update payment records + register on Ariba</td></tr>
+<tr><td><b>10/31 (Friday)</b></td><td>Old system (GEIS) decommissioned</td></tr>
+<tr><td><b>11/01</b></td><td>New system (SAP Ariba) active — payments to new account only</td></tr>
+</table>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Walmart Inc. | Supplier EDI Services</p>
+<p style="font-size:11px;color:#999">702 SW 8th Street, Bentonville, AR 72716</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the primary contact for Supplier ID 884266.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://wa1mart-supplier.example/api/track?recipient=logistics%40corp.internal&supplier=884266&type=edi_migration" width="1" height="1" alt="">
+</div>
+
+</body></html>

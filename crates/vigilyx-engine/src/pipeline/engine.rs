@@ -3,12 +3,19 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::Instant;
 
+#[cfg(test)]
 use sha2::{Digest, Sha256};
 use tokio::sync::{RwLock, Semaphore, broadcast, mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
-use vigilyx_core::models::{EmailSession, WsMessage};
-use vigilyx_core::security::{InlineVerdictResponse, ThreatLevel, VerdictDisposition};
+use vigilyx_core::models::{
+    EmailAuditClass, EmailReviewAction, EmailReviewDirection, EmailSession, HttpSession, Protocol,
+    SessionSource, WsMessage, classify_mail_direction, email_domain, is_internal_to_external,
+    is_ip_in_cidrs,
+};
+use vigilyx_core::security::{
+    InlineVerdictResponse, SecurityVerdict, ThreatLevel, VerdictDisposition,
+};
 use vigilyx_db::VigilDb;
 
 use crate::alert::AlertEngine;
@@ -19,7 +26,8 @@ use crate::ioc::IocManager;
 use crate::metrics::EngineMetrics;
 use crate::modules::registry::build_module_registry;
 use crate::orchestrator::{
-    MODULE_EXECUTION_FAILED_CATEGORY, MODULE_EXECUTION_TIMEOUT_CATEGORY, PipelineOrchestrator,
+    MODULE_DEPENDENCY_UNAVAILABLE_CATEGORY, MODULE_EXECUTION_FAILED_CATEGORY,
+    MODULE_EXECUTION_TIMEOUT_CATEGORY, PipelineOrchestrator,
 };
 use crate::temporal::temporal_analyzer::TemporalAnalyzer;
 use crate::whitelist::WhitelistManager;
@@ -27,16 +35,39 @@ use vigilyx_soar::disposition::DispositionEngine;
 
 use super::internal_domains::{load_internal_domains, refresh_internal_domains};
 use super::post_verdict::{PostVerdictContext, run_post_verdict};
+use crate::data_security::email_dlp::scan_email;
+use crate::data_security::email_review::{
+    build_email_review_with_class, build_webmail_email_review, classify_and_scan_webmail_email,
+};
 
+#[cfg(test)]
 type MessageDedupKey = (String, [u8; 32]);
-type MessageDedupMap = Arc<RwLock<HashMap<MessageDedupKey, (Uuid, Instant)>>>;
 
 /// Synchronous MTA work is intentionally bounded to local detectors. Remote
 /// NLP/intel/landing-page work is run by the full pipeline after SMTP has
 /// received a provisional, evidence-based response.
 const INLINE_MAX_PRIORITY: u8 = 90;
+const DEFAULT_INLINE_WORKERS: usize = 4;
+const MAX_INLINE_WORKERS: usize = 64;
 const LARGE_YARA_PACK_RULES: usize = 10_000;
 const MAX_EMAIL_PIPELINE_CONCURRENCY: usize = 1_024;
+
+fn resolve_inline_workers(configured: Option<&str>) -> usize {
+    configured
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| (1..=MAX_INLINE_WORKERS).contains(value))
+        .unwrap_or(DEFAULT_INLINE_WORKERS)
+}
+
+fn configured_inline_workers() -> (usize, bool) {
+    let configured = std::env::var("ENGINE_INLINE_WORKERS").ok();
+    let workers = resolve_inline_workers(configured.as_deref());
+    let configured_override = configured
+        .as_deref()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .is_some_and(|value| (1..=MAX_INLINE_WORKERS).contains(&value));
+    (workers, configured_override)
+}
 
 fn resolve_email_pipeline_concurrency(
     cpu_count: usize,
@@ -88,40 +119,126 @@ fn inline_delivery_disposition(
     quarantine_threshold: ThreatLevel,
     reject_threshold: ThreatLevel,
 ) -> VerdictDisposition {
-    let evidence_disposition =
-        VerdictDisposition::from_threat_level(threat_level, quarantine_threshold, reject_threshold);
-    if inspection_incomplete && matches!(evidence_disposition, VerdictDisposition::Accept) {
-        // A known partial inspection is not an engine outage. Quarantine it
-        // directly so MTA_FAIL_OPEN cannot relay content that was omitted from
-        // scanning. Tempfail remains reserved for timeout/channel/engine
-        // failures, whose behavior is handled by the MTA fail-open setting.
-        VerdictDisposition::Quarantine
-    } else {
-        evidence_disposition
-    }
+    VerdictDisposition::from_threat_and_coverage(
+        threat_level,
+        inspection_incomplete,
+        quarantine_threshold,
+        reject_threshold,
+    )
 }
 
-fn load_inbound_mail_servers_from_env() -> HashSet<String> {
-    std::env::var("INBOUND_MAIL_SERVERS")
-        .unwrap_or_default()
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+fn configured_mirror_trusted_sources() -> Vec<String> {
+    let raw = std::env::var("OUTBOUND_SMTP_RELAY_IPS")
+        .or_else(|_| std::env::var("MTA_TRUSTED_UPSTREAM_CIDRS"))
+        .unwrap_or_default();
+    raw.split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(ToOwned::to_owned)
         .collect()
 }
 
-async fn load_inbound_mail_servers(db: &VigilDb) -> HashSet<String> {
-    match db.get_capture_inbound_target_ips().await {
-        Ok(servers) if !servers.is_empty() => servers,
-        Ok(_) => load_inbound_mail_servers_from_env(),
-        Err(err) => {
-            warn!(
-                "Failed to load inbound targets from ui_preferences: {}",
-                err
-            );
-            load_inbound_mail_servers_from_env()
-        }
+/// A database-backed historical rescan is marked as `Import` so it bypasses
+/// the live-hop and recent-session filters. Its email review must still retain
+/// the original mirror source; otherwise the rescan would never repair the
+/// mirror review row that triggered it.
+fn mirror_review_session(session: &EmailSession) -> Option<EmailSession> {
+    if session.protocol != Protocol::Smtp {
+        return None;
     }
+
+    match session.source {
+        SessionSource::Sniffer => Some(session.clone()),
+        SessionSource::Import => {
+            let mut review_session = session.clone();
+            review_session.source = SessionSource::Sniffer;
+            Some(review_session)
+        }
+        SessionSource::MtaProxy => None,
+    }
+}
+
+/// Mirror mode has no SMTP AUTH trust boundary of its own. A local MAIL FROM
+/// from a configured relay/client source is outbound; a local-looking sender
+/// elsewhere is retained as unknown rather than silently treated as safe.
+fn mirror_review_direction(
+    session: &EmailSession,
+    local_domains: &[String],
+) -> Option<(EmailReviewDirection, EmailAuditClass)> {
+    if session.protocol != Protocol::Smtp || session.source != SessionSource::Sniffer {
+        return None;
+    }
+
+    let trusted_sources = configured_mirror_trusted_sources();
+    let trusted_submitter =
+        !trusted_sources.is_empty() && is_ip_in_cidrs(&session.client_ip, &trusted_sources);
+    // STARTTLS/implicit TLS can expose a session before SMTP envelope fields
+    // are visible. Preserve that observation as an attribution-pending audit
+    // row so encrypted traffic is never silently counted as benign or lost
+    // from the coverage view. It is deliberately not promoted to outbound.
+    if session.content.is_encrypted && session.mail_from.is_none() {
+        return Some((
+            EmailReviewDirection::Unknown,
+            EmailAuditClass::AttributionPending,
+        ));
+    }
+    if !is_internal_to_external(
+        session.mail_from.as_deref(),
+        &session.rcpt_to,
+        local_domains,
+    ) {
+        return None;
+    }
+
+    // Trust changes the attribution/enforcement label only. It must never
+    // suppress the audit row for an envelope that is internal-to-external.
+    let review_direction = if trusted_submitter {
+        EmailReviewDirection::from(classify_mail_direction(
+            session.mail_from.as_deref(),
+            &session.rcpt_to,
+            local_domains,
+            true,
+        ))
+    } else {
+        EmailReviewDirection::Unknown
+    };
+    let audit_class = if trusted_submitter {
+        EmailAuditClass::ConfirmedOutbound
+    } else {
+        EmailAuditClass::OutboundCandidate
+    };
+    Some((review_direction, audit_class))
+}
+
+async fn persist_mirror_email_review(
+    db: &VigilDb,
+    session: &EmailSession,
+    local_domains: &[String],
+    inspect_content: bool,
+) -> Result<bool, String> {
+    let Some(review_session) = mirror_review_session(session) else {
+        return Ok(false);
+    };
+    let Some((direction, audit_class)) = mirror_review_direction(&review_session, local_domains)
+    else {
+        return Ok(false);
+    };
+    let inspection = inspect_content.then(|| scan_email(&review_session));
+    let review = build_email_review_with_class(
+        &review_session,
+        direction,
+        audit_class,
+        local_domains,
+        inspection.as_ref(),
+        EmailReviewAction::Audit,
+        Some("mirror_audit".to_string()),
+        None,
+    );
+    if let Err(error) = db.upsert_email_data_security_review(&review).await {
+        error!(session_id = %session.id, %error, "Failed to persist mirror outbound email review");
+        return Err(error.to_string());
+    }
+    Ok(true)
 }
 
 fn normalize_mailbox(value: &str) -> String {
@@ -172,15 +289,7 @@ async fn session_has_authenticated_whitelist_bypass(
     mailbox_ok && ip_ok
 }
 
-fn log_inbound_mail_servers(servers: &HashSet<String>) {
-    if !servers.is_empty() {
-        info!(
-            servers = ?servers,
-            "Inbound mail server filter active: only analyzing sessions delivered to these IPs"
-        );
-    }
-}
-
+#[cfg(test)]
 fn message_dedup_key(session: &EmailSession) -> Option<MessageDedupKey> {
     let message_id = session
         .message_id
@@ -217,9 +326,23 @@ fn message_dedup_key(session: &EmailSession) -> Option<MessageDedupKey> {
         session.subject.as_deref().unwrap_or_default().as_bytes(),
     );
     for (name, value) in &session.content.headers {
-        // Received changes at each relay and is precisely why hop-level dedup
-        // exists. All other headers remain part of the security identity.
-        if !name.eq_ignore_ascii_case("Received") {
+        // Relay-generated headers (Received, X-* stamps, Authentication-
+        // Results, Delivered-To, DKIM/ARC) change at every gateway. Keep only
+        // message-level headers that are useful as a content guard; the
+        // Message-ID and body/attachment digest remain the primary identity.
+        let stable_header = matches!(
+            name.to_ascii_lowercase().as_str(),
+            "date"
+                | "from"
+                | "to"
+                | "cc"
+                | "mime-version"
+                | "content-type"
+                | "content-transfer-encoding"
+                | "in-reply-to"
+                | "references"
+        );
+        if stable_header {
             hash_field(&mut hasher, name.to_ascii_lowercase().as_bytes());
             hash_field(&mut hasher, value.as_bytes());
         }
@@ -252,6 +375,258 @@ fn message_dedup_key(session: &EmailSession) -> Option<MessageDedupKey> {
     Some((message_id, hasher.finalize().into()))
 }
 
+fn delivery_fingerprint(session: &EmailSession) -> Option<String> {
+    // Delivery correlation is intentionally less strict than security
+    // de-duplication.  Gateways commonly rewrite the body, MIME boundaries,
+    // Received/Auth headers, or attachment presentation while forwarding the
+    // same message.  Those changes must not split one delivery chain into
+    // unrelated messages.  Keep `message_dedup_key` content-bound for
+    // security analysis; this identity is only for hop correlation.
+    let message_id = session
+        .message_id
+        .as_deref()
+        .or_else(|| session.content.get_header("Message-ID"))
+        .filter(|value| !value.trim().is_empty());
+
+    let sender = session
+        .mail_from
+        .as_deref()
+        .or_else(|| session.content.get_header("From"));
+    vigilyx_core::models::delivery_fingerprint_from_parts(message_id, sender)
+}
+
+fn is_mirror_inbound_session(session: &EmailSession, local_domains: &HashSet<String>) -> bool {
+    if session.protocol != Protocol::Smtp || session.source != SessionSource::Sniffer {
+        return false;
+    }
+
+    let has_local_recipient = session.rcpt_to.iter().any(|recipient| {
+        email_domain(recipient).is_some_and(|domain| local_domains.contains(&domain))
+    });
+    if !has_local_recipient {
+        return false;
+    }
+
+    // Keep the existing untrusted-mirror direction policy: a local-looking
+    // MAIL FROM is still treated as inbound when it arrived over an
+    // unauthenticated mirrored connection, so spoofing cannot escape review.
+    let local_domains = local_domains.iter().cloned().collect::<Vec<_>>();
+    classify_mail_direction(
+        session.mail_from.as_deref(),
+        &session.rcpt_to,
+        &local_domains,
+        false,
+    ) == vigilyx_core::models::MailDirection::Inbound
+}
+
+struct InlineProcessorContext {
+    inline_orchestrator: Arc<PipelineOrchestrator>,
+    full_orchestrator: Arc<PipelineOrchestrator>,
+    config: Arc<PipelineConfig>,
+    engine_db: VigilDb,
+    ioc_manager: IocManager,
+    whitelist_manager: WhitelistManager,
+    disposition_engine: DispositionEngine,
+    metrics: EngineMetrics,
+    temporal_analyzer: Arc<TemporalAnalyzer>,
+    alert_engine: Arc<AlertEngine>,
+    ws_tx: broadcast::Sender<WsMessage>,
+    internal_domains: Arc<RwLock<HashSet<String>>>,
+    temporal_semaphore: Arc<Semaphore>,
+    verdict_count: Arc<AtomicU64>,
+    full_semaphore: Arc<Semaphore>,
+}
+
+/// Process one MTA request independently from the dispatcher. A bounded
+/// semaphore in `run_loop` limits the number of these tasks, so a slow inline
+/// scan cannot stall passive sessions or later SMTP requests.
+async fn process_inline_request(
+    request: InlineVerdictRequest,
+    ctx: InlineProcessorContext,
+    inline_permit: tokio::sync::OwnedSemaphorePermit,
+) {
+    let InlineVerdictRequest {
+        session: raw_session,
+        respond_to,
+        deadline,
+        quarantine_threshold,
+        reject_threshold,
+    } = request;
+    let start = Instant::now();
+    let session = Arc::new(raw_session);
+    let session_id = session.id;
+    let remaining = deadline.saturating_duration_since(Instant::now());
+
+    if remaining.is_zero() {
+        warn!(session_id = %session_id, "Inline verdict deadline already expired");
+        let _ = respond_to.send(InlineVerdictResponse {
+            disposition: VerdictDisposition::Tempfail,
+            threat_level: ThreatLevel::Safe,
+            confidence: 0.0,
+            summary: "Security analysis timed out — conservative verdict applied (deadline already expired)".into(),
+            session_id,
+            modules_run: 0,
+            modules_flagged: 0,
+            duration_ms: 0,
+        });
+        return;
+    }
+
+    if session_has_authenticated_whitelist_bypass(session.as_ref(), &ctx.whitelist_manager).await {
+        info!(
+            session_id = %session_id,
+            mail_from = session.mail_from.as_deref().unwrap_or(""),
+            client_ip = %session.client_ip,
+            "Skipping whitelisted SMTP inline session"
+        );
+        let _ = respond_to.send(InlineVerdictResponse {
+            disposition: VerdictDisposition::Accept,
+            threat_level: ThreatLevel::Safe,
+            confidence: 1.0,
+            summary: "Session bypassed by whitelist".into(),
+            session_id,
+            modules_run: 0,
+            modules_flagged: 0,
+            duration_ms: start.elapsed().as_millis() as u64,
+        });
+        return;
+    }
+
+    let domains_snapshot = Arc::new(ctx.internal_domains.read().await.clone());
+    let security_ctx = SecurityContext::with_internal_domains(session.clone(), domains_snapshot);
+    let inline_outcome = ctx
+        .inline_orchestrator
+        .execute_with_timeout(&security_ctx, remaining)
+        .await;
+    if inline_outcome.timed_out {
+        warn!(
+            session_id = %session_id,
+            timeout_ms = remaining.as_millis() as u64,
+            "Inline verdict hit deadline before full analysis completed"
+        );
+        let _ = respond_to.send(InlineVerdictResponse {
+            disposition: VerdictDisposition::Tempfail,
+            threat_level: ThreatLevel::Safe,
+            confidence: 0.0,
+            summary: format!(
+                "Security analysis timed out — conservative verdict applied (full pipeline incomplete after {}ms)",
+                remaining.as_millis()
+            ),
+            session_id,
+            modules_run: 0,
+            modules_flagged: 0,
+            duration_ms: start.elapsed().as_millis() as u64,
+        });
+        return;
+    }
+    if let Some(reason) = inline_outcome.disposition_incomplete_summary() {
+        let dependency_followup = inline_outcome.timed_out_modules.is_empty()
+            && inline_outcome.results.values().any(|result| {
+                result
+                    .categories
+                    .iter()
+                    .any(|category| category == MODULE_DEPENDENCY_UNAVAILABLE_CATEGORY)
+            });
+        warn!(
+            session_id = %session_id,
+            reason = %reason,
+            "Inline verdict pipeline did not complete successfully"
+        );
+        let _ = respond_to.send(InlineVerdictResponse {
+            disposition: VerdictDisposition::Tempfail,
+            threat_level: ThreatLevel::Safe,
+            confidence: 0.0,
+            summary: format!("Security analysis incomplete — temporary failure ({reason})"),
+            session_id,
+            modules_run: inline_outcome.results.len() as u32,
+            modules_flagged: inline_outcome
+                .results
+                .values()
+                .filter(|result| result.threat_level > ThreatLevel::Safe)
+                .count() as u32,
+            duration_ms: start.elapsed().as_millis() as u64,
+        });
+        drop(inline_permit);
+        if dependency_followup {
+            run_inline_full_followup(session, ctx).await;
+        }
+        return;
+    }
+    let results = inline_outcome.results;
+
+    let verdict_result = crate::verdict::aggregate_verdict_with_session(
+        Some(session.as_ref()),
+        session_id,
+        &results,
+        &ctx.config.verdict_config,
+    );
+    let disposition = inline_delivery_disposition(
+        verdict_result.threat_level,
+        crate::verdict::has_incomplete_inspection(&verdict_result),
+        quarantine_threshold,
+        reject_threshold,
+    );
+    let response = InlineVerdictResponse {
+        disposition,
+        threat_level: verdict_result.threat_level,
+        confidence: verdict_result.confidence,
+        summary: verdict_result.summary.clone(),
+        session_id,
+        modules_run: verdict_result.modules_run,
+        modules_flagged: verdict_result.modules_flagged,
+        duration_ms: start.elapsed().as_millis() as u64,
+    };
+
+    info!(
+        session_id = %session_id,
+        threat_level = %verdict_result.threat_level,
+        disposition = %response.disposition,
+        duration_ms = response.duration_ms,
+        "Inline verdict produced"
+    );
+    let _ = respond_to.send(response);
+
+    // The SMTP client has its answer. Release the inline slot before waiting
+    // for the durable full-pipeline follow-up, otherwise slow NLP/intel work
+    // would consume the SMTP worker budget.
+    drop(inline_permit);
+
+    run_inline_full_followup(session, ctx).await;
+}
+
+/// Persist and analyze an MTA message after its inline result is handed to the
+/// SMTP handler. Later analysis is for audit and UI visibility; it never
+/// changes the delivery action selected from the inline result.
+async fn run_inline_full_followup(session: Arc<EmailSession>, ctx: InlineProcessorContext) {
+    let session_id = session.id;
+    if let Err(e) = ctx.engine_db.insert_session(&session).await {
+        error!(session_id = %session_id, "Failed to store MTA session: {e}");
+    }
+
+    let permit = match Arc::clone(&ctx.full_semaphore).acquire_owned().await {
+        Ok(permit) => permit,
+        Err(_) => {
+            warn!(session_id = %session_id, "Full MTA follow-up skipped: pipeline semaphore closed");
+            return;
+        }
+    };
+    let pv = Arc::new(PostVerdictContext {
+        db: ctx.engine_db,
+        ioc: ctx.ioc_manager,
+        disposition: ctx.disposition_engine,
+        metrics: ctx.metrics,
+        temporal: ctx.temporal_analyzer,
+        alert: ctx.alert_engine,
+        ws_tx: ctx.ws_tx,
+        verdict_count: ctx.verdict_count,
+        temporal_semaphore: ctx.temporal_semaphore,
+        temporal_flush_interval: SecurityEngine::TEMPORAL_FLUSH_INTERVAL,
+        internal_domains: ctx.internal_domains,
+    });
+    run_full_pipeline(ctx.full_orchestrator, ctx.config, session, pv).await;
+    drop(permit);
+}
+
 /// Run the complete passive pipeline for a session. MTA inline requests call
 /// this in the background after their bounded fast-tier response, ensuring
 /// slow modules still contribute to the durable verdict and UI evidence.
@@ -266,7 +641,7 @@ async fn run_full_pipeline(
     pv_ctx.metrics.record_session_start();
 
     let domains_snapshot = Arc::new(pv_ctx.internal_domains.read().await.clone());
-    let ctx = SecurityContext::with_internal_domains(session.clone(), domains_snapshot);
+    let ctx = SecurityContext::with_internal_domains(session.clone(), domains_snapshot.clone());
     let pipeline_outcome = orchestrator.execute_outcome(&ctx).await;
     let execution_incomplete = pipeline_outcome.disposition_incomplete_summary();
     let results = pipeline_outcome.results;
@@ -280,12 +655,16 @@ async fn run_full_pipeline(
             .categories
             .iter()
             .any(|category| category == MODULE_EXECUTION_TIMEOUT_CATEGORY);
+        let dependency_unavailable = result
+            .categories
+            .iter()
+            .any(|category| category == MODULE_DEPENDENCY_UNAVAILABLE_CATEGORY);
         pv_ctx
             .metrics
             .record_module_run(
                 module_id,
                 result.duration_ms,
-                !failed && !timed_out,
+                !failed && !timed_out && !dependency_unavailable,
                 timed_out,
             )
             .await;
@@ -318,7 +697,139 @@ async fn run_full_pipeline(
     if let Err(e) = pv_ctx.db.insert_session(&session).await {
         error!(session_id = %session_id, "Failed to persist session: {e}");
     }
+    if session.protocol == Protocol::Smtp
+        && matches!(
+            session.source,
+            SessionSource::Sniffer | SessionSource::Import
+        )
+    {
+        let mut local_domains = domains_snapshot.iter().cloned().collect::<Vec<_>>();
+        local_domains.sort_unstable();
+        let _ = persist_mirror_email_review(&pv_ctx.db, &session, &local_domains, true).await;
+    }
     run_post_verdict(&pv_ctx, &session, &verdict_result, &results).await;
+}
+
+async fn wait_for_first_hop_verdict(
+    db: &VigilDb,
+    first_session_id: Uuid,
+) -> anyhow::Result<Option<SecurityVerdict>> {
+    for attempt in 0..40 {
+        if let Some(verdict) = db.get_verdict_by_session(first_session_id).await? {
+            return Ok(Some(verdict));
+        }
+        if attempt < 39 {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+    }
+    Ok(None)
+}
+
+/// A first hop captured incompletely must not hand its coverage gap to a
+/// downstream hop that holds the complete message; that copy is analyzed.
+fn downstream_hop_needs_own_analysis(
+    first_verdict: &SecurityVerdict,
+    session: &EmailSession,
+) -> bool {
+    first_verdict.has_incomplete_inspection()
+        && session.content.is_complete
+        && !session.content.truncated
+}
+
+async fn run_reused_or_fallback_delivery(
+    orchestrator: Arc<PipelineOrchestrator>,
+    config: Arc<PipelineConfig>,
+    session: Arc<EmailSession>,
+    pv_ctx: Arc<PostVerdictContext>,
+    first_session_id: Uuid,
+    semaphore: Arc<Semaphore>,
+) {
+    async fn native_fallback(
+        orchestrator: Arc<PipelineOrchestrator>,
+        config: Arc<PipelineConfig>,
+        session: Arc<EmailSession>,
+        pv_ctx: Arc<PostVerdictContext>,
+        semaphore: Arc<Semaphore>,
+    ) {
+        let Ok(permit) = semaphore.acquire_owned().await else {
+            warn!(session_id = %session.id, "Downstream fallback skipped: pipeline semaphore closed");
+            return;
+        };
+        let _permit = permit;
+        run_full_pipeline(orchestrator, config, session, pv_ctx).await;
+    }
+
+    match wait_for_first_hop_verdict(&pv_ctx.db, first_session_id).await {
+        Ok(Some(first_verdict)) if downstream_hop_needs_own_analysis(&first_verdict, &session) => {
+            info!(
+                session_id = %session.id,
+                first_session_id = %first_session_id,
+                "First-hop verdict has limited coverage; analyzing complete downstream hop"
+            );
+            native_fallback(orchestrator, config, session, pv_ctx, semaphore).await;
+        }
+        Ok(Some(_first_verdict)) => {
+            if let Err(error) = pv_ctx.db.insert_session(&session).await {
+                error!(
+                    session_id = %session.id,
+                    %error,
+                    "Failed to persist downstream delivery hop before verdict reuse"
+                );
+                native_fallback(orchestrator, config, session, pv_ctx, semaphore).await;
+                return;
+            }
+            match pv_ctx
+                .db
+                .insert_reused_first_hop_verdict(session.id, first_session_id)
+                .await
+            {
+                Ok(_) => {
+                    if let Err(error) = pv_ctx
+                        .db
+                        .mark_email_delivery_hop_reused(session.id, first_session_id)
+                        .await
+                    {
+                        error!(
+                            session_id = %session.id,
+                            %error,
+                            "Failed to mark downstream delivery hop as verdict reuse"
+                        );
+                    }
+                    info!(
+                        session_id = %session.id,
+                        first_session_id = %first_session_id,
+                        "Reused first-hop verdict for downstream delivery hop"
+                    );
+                }
+                Err(error) => {
+                    warn!(
+                        session_id = %session.id,
+                        first_session_id = %first_session_id,
+                        %error,
+                        "First-hop verdict reuse failed; falling back to native analysis"
+                    );
+                    native_fallback(orchestrator, config, session, pv_ctx, semaphore).await;
+                }
+            }
+        }
+        Ok(None) => {
+            warn!(
+                session_id = %session.id,
+                first_session_id = %first_session_id,
+                "First-hop verdict unavailable after bounded wait; running downstream fallback analysis"
+            );
+            native_fallback(orchestrator, config, session, pv_ctx, semaphore).await;
+        }
+        Err(error) => {
+            warn!(
+                session_id = %session.id,
+                first_session_id = %first_session_id,
+                %error,
+                "Failed to read first-hop verdict; running downstream fallback analysis"
+            );
+            native_fallback(orchestrator, config, session, pv_ctx, semaphore).await;
+        }
+    }
 }
 
 // MTA Inline Verdict - (oneshot, vigilyx-core)
@@ -345,6 +856,9 @@ pub struct SecurityEngine {
     pub metrics: EngineMetrics,
     pub temporal_analyzer: Arc<TemporalAnalyzer>,
     pub alert_engine: Arc<AlertEngine>,
+    /// Current internal-domain snapshot shared by threat analysis and the
+    /// pre-ACK email audit adapters.
+    internal_domains: Arc<RwLock<HashSet<String>>>,
     /// Safe-domain cache handle for runtime IOC reload (None if intel disabled).
     pub safe_domains_handle: Option<crate::modules::registry::SafeDomainsHandle>,
 }
@@ -360,12 +874,34 @@ impl SecurityEngine {
         let (tx, rx) = mpsc::channel::<EmailSession>(10_000);
         let (inline_tx, inline_rx) = mpsc::channel::<InlineVerdictRequest>(500);
 
-        // Initialize engine DB and tables
+        // Schema ownership belongs to the one-shot postgres-migrate service.
+        // Runtime API/engine/MTA roles are intentionally non-owners and must
+        // never attempt DDL during startup.
         let engine_db = db;
-        engine_db
-            .init_security_tables()
-            .await
-            .map_err(|e| EngineError::Other(format!("Failed to init engine tables: {}", e)))?;
+        // Parameters are versioned independently of the immutable pipeline.
+        // Polling also covers an MTA process and missed Pub/Sub reload notices.
+        if let Err(error) = crate::ds_learning::reload_from_db(&engine_db).await {
+            warn!(%error, "DS parameters rejected; retaining last valid model");
+        }
+        let ds_parameter_db = engine_db.clone();
+        tokio::spawn(async move {
+            let mut timer = tokio::time::interval(std::time::Duration::from_secs(30));
+            timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut ticks = 0_u64;
+            loop {
+                timer.tick().await;
+                if ticks.is_multiple_of(5)
+                    && let Err(error) =
+                        crate::ds_learning::refresh_candidate(&ds_parameter_db).await
+                {
+                    warn!(%error, "DS candidate refresh failed; retrying on the next interval");
+                }
+                ticks = ticks.wrapping_add(1);
+                if let Err(error) = crate::ds_learning::reload_from_db(&ds_parameter_db).await {
+                    warn!(%error, "DS parameter reload rejected; retaining last valid model");
+                }
+            }
+        });
         match engine_db.seed_system_whitelist().await {
             Ok(n) if n > 0 => info!(
                 "System whitelist seed applied: {} rows inserted/refreshed",
@@ -438,6 +974,7 @@ impl SecurityEngine {
         let bg_metrics = metrics.clone();
         let bg_temporal = Arc::clone(&temporal_analyzer);
         let bg_alert = Arc::clone(&alert_engine);
+        let bg_internal_domains = Arc::clone(&internal_domains);
 
         // Spawn background processor
         tokio::spawn(async move {
@@ -455,7 +992,7 @@ impl SecurityEngine {
                 bg_temporal,
                 bg_alert,
                 ws_tx,
-                internal_domains.clone(),
+                bg_internal_domains,
             )
             .await;
         });
@@ -472,7 +1009,41 @@ impl SecurityEngine {
             temporal_analyzer,
             alert_engine,
             safe_domains_handle,
+            internal_domains,
         })
+    }
+
+    /// Persist the mirror-mode outbound audit before the Redis Stream entry is
+    /// acknowledged.  The predicate is envelope-based; source trust only
+    /// chooses confirmed versus candidate classification.
+    pub async fn audit_mirror_email(&self, session: &EmailSession) -> Result<bool, EngineError> {
+        let domains = self.internal_domains.read().await.clone();
+        let mut local_domains = domains.into_iter().collect::<Vec<_>>();
+        local_domains.sort_unstable();
+        persist_mirror_email_review(&self.engine_db, session, &local_domains, true)
+            .await
+            .map_err(EngineError::Other)
+    }
+
+    /// Persist a Webmail send request in the same review table and with the
+    /// same DLP scanner used by SMTP. Non-send HTTP requests return `Ok(false)`
+    /// and continue through the existing HTTP detector pipeline.
+    pub async fn audit_webmail_email(&self, session: &HttpSession) -> Result<bool, EngineError> {
+        let domains = self.internal_domains.read().await.clone();
+        let mut local_domains = domains.into_iter().collect::<Vec<_>>();
+        local_domains.sort_unstable();
+        let Some((audit_class, inspection)) =
+            classify_and_scan_webmail_email(session, &local_domains).await
+        else {
+            return Ok(false);
+        };
+        let review =
+            build_webmail_email_review(session, audit_class, &local_domains, Some(&inspection));
+        self.engine_db
+            .upsert_email_data_security_review(&review)
+            .await
+            .map_err(|error| EngineError::Other(error.to_string()))?;
+        Ok(true)
     }
 
     /// Submit a session for security analysis (awaits channel capacity).
@@ -632,40 +1203,6 @@ impl SecurityEngine {
             Arc::new(RwLock::new(HashMap::new()));
         let verdict_count = Arc::new(AtomicU64::new(0));
 
-        // Inbound mail server IPs: when configured, the engine ONLY analyzes
-        // sessions delivered TO these IPs — the final hop in the delivery chain
-        // has the most complete information (gateway headers, all Received hops).
-        // Intermediate relay hops are skipped entirely.
-        // Format: comma-separated IPs, e.g. "10.7.126.68,10.1.246.41"
-        let inbound_mail_servers =
-            Arc::new(RwLock::new(load_inbound_mail_servers(&engine_db).await));
-        {
-            let servers = inbound_mail_servers.read().await;
-            log_inbound_mail_servers(&servers);
-        }
-
-        {
-            let inbound_mail_servers = inbound_mail_servers.clone();
-            let db = engine_db.clone();
-            tokio::spawn(async move {
-                let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
-                loop {
-                    interval.tick().await;
-                    let refreshed = load_inbound_mail_servers(&db).await;
-                    let mut current = inbound_mail_servers.write().await;
-                    if *current != refreshed {
-                        *current = refreshed;
-                        log_inbound_mail_servers(&current);
-                    }
-                }
-            });
-        }
-
-        // A Message-ID is sender-controlled and is not a unique security
-        // identity. Pair it with a content fingerprint so a later malicious
-        // message reusing a benign ID is still analyzed.
-        let msgid_dedup: MessageDedupMap = Arc::new(RwLock::new(HashMap::new()));
-
         // Semaphore: bound complete email pipelines. The default stays
         // I/O-oversubscribed without a large signature pack, but switches to
         // a CPU-sized budget once 10k+ governed YARA rules are activated.
@@ -701,204 +1238,118 @@ impl SecurityEngine {
         }
 
         // Threat scene detector (bulk mailing + bounce harvest, every 5 min)
-        crate::threat_scene::spawn_scene_detector(engine_db.clone(), internal_domains.clone());
+        crate::threat_scene::spawn_scene_detector(
+            engine_db.clone(),
+            internal_domains.clone(),
+            disposition_engine.clone(),
+        );
 
         // JoinSet tracks in-flight per-email tasks for graceful shutdown
         let mut inflight = tokio::task::JoinSet::new();
         let mut dedup_cleanup_counter: u64 = 0;
+        let (inline_workers, inline_workers_override) = configured_inline_workers();
+        let inline_semaphore = Arc::new(Semaphore::new(inline_workers));
+        info!(
+            inline_workers,
+            inline_workers_override, "Engine inline SMTP worker capacity"
+        );
 
         loop {
             // Select: inline requests have priority (biased)
-            let session = tokio::select! {
+            let event = tokio::select! {
                 biased;
-                Some(inline_req) = inline_rx.recv() => {
-                   // Inline verdict path (MTA proxy)
-                    let start = Instant::now();
-                    let session = Arc::new(inline_req.session);
-                    let session_id = session.id;
-                    let remaining = inline_req.deadline.saturating_duration_since(Instant::now());
+                Some(inline_req) = inline_rx.recv() => Some(Ok(inline_req)),
+                Some(session) = rx.recv() => Some(Err(session)),
+                else => None,
+            };
 
-                    if remaining.is_zero() {
-                        warn!(session_id = %session_id, "Inline verdict deadline already expired");
-                        // Timeout is enforced through Tempfail. It does not
-                        // manufacture a Low threat finding.
-                        let _ = inline_req.respond_to.send(InlineVerdictResponse {
-                            disposition: VerdictDisposition::Tempfail,
-                            threat_level: ThreatLevel::Safe,
-                            confidence: 0.0,
-                            summary: "Security analysis timed out — conservative verdict applied (deadline already expired)".into(),
-                            session_id,
-                            modules_run: 0,
-                            modules_flagged: 0,
-                            duration_ms: 0,
-                        });
-                        continue;
-                    }
-
-                    if session_has_authenticated_whitelist_bypass(
-                        session.as_ref(),
-                        &whitelist_manager,
-                    )
-                    .await
-                    {
-                        info!(
-                            session_id = %session_id,
-                            mail_from = session.mail_from.as_deref().unwrap_or(""),
-                            client_ip = %session.client_ip,
-                            "Skipping whitelisted SMTP inline session"
-                        );
-                        let _ = inline_req.respond_to.send(InlineVerdictResponse {
-                            disposition: VerdictDisposition::Accept,
-                            threat_level: ThreatLevel::Safe,
-                            confidence: 1.0,
-                            summary: "Session bypassed by whitelist".into(),
-                            session_id,
-                            modules_run: 0,
-                            modules_flagged: 0,
-                            duration_ms: start.elapsed().as_millis() as u64,
-                        });
-                        continue;
-                    }
-
-                    let domains_snapshot = Arc::new(internal_domains.read().await.clone());
-                    let ctx = SecurityContext::with_internal_domains(session.clone(), domains_snapshot);
-                    let inline_outcome = inline_orchestrator.execute_with_timeout(&ctx, remaining).await;
-                    if inline_outcome.timed_out {
-                        warn!(
-                            session_id = %session_id,
-                            timeout_ms = remaining.as_millis() as u64,
-                            "Inline verdict hit deadline before full analysis completed"
-                        );
-                        // Timeout is enforced through Tempfail. It does not
-                        // manufacture a Low threat finding.
-                        let _ = inline_req.respond_to.send(InlineVerdictResponse {
-                            disposition: VerdictDisposition::Tempfail,
-                            threat_level: ThreatLevel::Safe,
-                            confidence: 0.0,
-                            summary: format!(
-                                "Security analysis timed out — conservative verdict applied (full pipeline incomplete after {}ms)",
-                                remaining.as_millis()
-                            ),
-                            session_id,
-                            modules_run: 0,
-                            modules_flagged: 0,
-                            duration_ms: start.elapsed().as_millis() as u64,
-                        });
-                        continue;
-                    }
-                    if let Some(reason) = inline_outcome.disposition_incomplete_summary() {
-                        warn!(
-                            session_id = %session_id,
-                            reason = %reason,
-                            "Inline verdict pipeline did not complete successfully"
-                        );
-                        let _ = inline_req.respond_to.send(InlineVerdictResponse {
-                            disposition: VerdictDisposition::Tempfail,
-                            threat_level: ThreatLevel::Safe,
-                            confidence: 0.0,
-                            summary: format!(
-                                "Security analysis incomplete — temporary failure ({reason})"
-                            ),
-                            session_id,
-                            modules_run: inline_outcome.results.len() as u32,
-                            modules_flagged: inline_outcome
-                                .results
-                                .values()
-                                .filter(|result| result.threat_level > ThreatLevel::Safe)
-                                .count() as u32,
-                            duration_ms: start.elapsed().as_millis() as u64,
-                        });
-                        continue;
-                    }
-                    let results = inline_outcome.results;
-
-                    let verdict_result = crate::verdict::aggregate_verdict_with_session(
-                        Some(session.as_ref()),
-                        session_id,
-                        &results,
-                        &config.verdict_config,
-                    );
-
-                    let disposition = inline_delivery_disposition(
-                        verdict_result.threat_level,
-                        crate::verdict::has_incomplete_inspection(&verdict_result),
-                        inline_req.quarantine_threshold,
-                        inline_req.reject_threshold,
-                    );
-
-                    let response = InlineVerdictResponse {
-                        disposition,
-                        threat_level: verdict_result.threat_level,
-                        confidence: verdict_result.confidence,
-                        summary: verdict_result.summary.clone(),
-                        session_id,
-                        modules_run: verdict_result.modules_run,
-                        modules_flagged: verdict_result.modules_flagged,
-                        duration_ms: start.elapsed().as_millis() as u64,
-                    };
-
-                    info!(
-                        session_id = %session_id,
-                        threat_level = %verdict_result.threat_level,
-                        disposition = %response.disposition,
-                        duration_ms = response.duration_ms,
-                        "Inline verdict produced"
-                    );
-
-                   // Send response back to MTA proxy
-                    let _ = inline_req.respond_to.send(response);
-
-                   // Persist the session to the DB (the MTA inline path had not stored it yet)
-                   if let Err(e) = engine_db.insert_session(&session).await {
-                       error!(session_id = %session_id, "Failed to store MTA session: {e}");
-                   }
-
-                   // Keep asynchronous MTA follow-ups under the same global
-                   // concurrency budget as passive sessions. The SMTP client
-                   // already received its response, so waiting here cannot
-                   // extend the inline deadline.
-                   let permit = match Arc::clone(&semaphore).acquire_owned().await {
-                       Ok(permit) => permit,
-                       Err(_) => {
-                           warn!(session_id = %session_id, "Full MTA follow-up skipped: pipeline semaphore closed");
-                           continue;
-                       }
-                   };
-
-                   // The fast tier only answers SMTP. Run the complete pipeline
-                   // asynchronously so landing-page, intel and NLP modules still
-                   // produce the durable verdict without consuming the MTA
-                   // deadline. This avoids writing a provisional verdict and
-                   // then emitting duplicate alerts/IOC records.
-                   let pv = Arc::new(PostVerdictContext {
-                       db: engine_db.clone(),
-                        ioc: ioc_manager.clone(),
-                        disposition: disposition_engine.clone(),
+            let Some(event) = event else { break };
+            let session = match event {
+                Ok(inline_req) => {
+                    let session_id = inline_req.session.id;
+                    let deadline = inline_req.deadline;
+                    let inline_ctx = InlineProcessorContext {
+                        inline_orchestrator: Arc::clone(&inline_orchestrator),
+                        full_orchestrator: Arc::clone(&orchestrator),
+                        config: Arc::clone(&config),
+                        engine_db: engine_db.clone(),
+                        ioc_manager: ioc_manager.clone(),
+                        whitelist_manager: whitelist_manager.clone(),
+                        disposition_engine: disposition_engine.clone(),
                         metrics: metrics.clone(),
-                        temporal: Arc::clone(&temporal_analyzer),
-                        alert: Arc::clone(&alert_engine),
+                        temporal_analyzer: Arc::clone(&temporal_analyzer),
+                        alert_engine: Arc::clone(&alert_engine),
                         ws_tx: ws_tx.clone(),
-                        verdict_count: Arc::clone(&verdict_count),
+                        internal_domains: Arc::clone(&internal_domains),
                         temporal_semaphore: Arc::clone(&temporal_semaphore),
-                       temporal_flush_interval: Self::TEMPORAL_FLUSH_INTERVAL,
-                       internal_domains: internal_domains.clone(),
-                   });
-                   let full_orchestrator = Arc::clone(&orchestrator);
-                   let full_config = Arc::clone(&config);
-                   let s = session.clone();
-                   inflight.spawn(async move {
-                        let _permit = permit;
-                        run_full_pipeline(full_orchestrator, full_config, s, pv).await;
-                   });
-
-                    continue; // Back to select!
+                        verdict_count: Arc::clone(&verdict_count),
+                        full_semaphore: Arc::clone(&semaphore),
+                    };
+                    let inline_semaphore = Arc::clone(&inline_semaphore);
+                    inflight.spawn(async move {
+                        // Queue within the caller's inline deadline instead of
+                        // rejecting every burst above the worker count. The
+                        // bounded inline channel still provides backpressure;
+                        // once the deadline expires, fail closed through the
+                        // normal Tempfail path.
+                        let remaining = deadline.saturating_duration_since(Instant::now());
+                        let inline_permit =
+                            match tokio::time::timeout(remaining, inline_semaphore.acquire_owned())
+                                .await
+                            {
+                                Ok(Ok(permit)) => permit,
+                                _ => {
+                                    warn!(
+                                        session_id = %session_id,
+                                        "Inline worker queue deadline exceeded"
+                                    );
+                                    let _ = inline_req.respond_to.send(InlineVerdictResponse {
+                                        disposition: VerdictDisposition::Tempfail,
+                                        threat_level: ThreatLevel::Safe,
+                                        confidence: 0.0,
+                                        summary:
+                                            "Security analysis temporarily overloaded — retry later"
+                                                .into(),
+                                        session_id,
+                                        modules_run: 0,
+                                        modules_flagged: 0,
+                                        duration_ms: 0,
+                                    });
+                                    return;
+                                }
+                            };
+                        process_inline_request(inline_req, inline_ctx, inline_permit).await;
+                    });
+                    continue;
                 }
-                Some(session) = rx.recv() => session,
-                else => break,
+                Err(session) => session,
             };
 
             let session = Arc::new(session);
             let session_id = session.id;
+
+            // Record mirror SMTP coverage independently of the inbound-hop
+            // filter below. That filter selects which hop receives the full
+            // threat pipeline; it must never suppress the outbound DLP audit.
+            // Run the shared scan here so a non-target relay hop cannot leave
+            // a permanent `content_scan_not_run` placeholder behind. The full
+            // pipeline may upsert the same session later with richer context.
+            if session.protocol == Protocol::Smtp
+                && matches!(
+                    session.source,
+                    SessionSource::Sniffer | SessionSource::Import
+                )
+            {
+                let db = engine_db.clone();
+                let review_session = Arc::clone(&session);
+                let domains = internal_domains.read().await.clone();
+                let mut local_domains = domains.into_iter().collect::<Vec<_>>();
+                local_domains.sort_unstable();
+                tokio::spawn(async move {
+                    let _ = persist_mirror_email_review(&db, &review_session, &local_domains, true)
+                        .await;
+                });
+            }
 
             // 1. Skip non-email sessions (permanent filter)
             // emailHeaderofSession completeemail, Security
@@ -912,56 +1363,81 @@ impl SecurityEngine {
                 continue;
             }
 
-            // 1b. Inbound IP filter: when INBOUND_MAIL_SERVERS is configured,
-            //     only analyze sessions delivered TO those IPs (the final hop).
-            //     Intermediate relay hops are skipped — the final inbound has
-            //     the most complete info (gateway headers, all Received hops).
             let explicit_rescan = session.source == vigilyx_core::models::SessionSource::Import;
-            let (inbound_filter_active, is_inbound_target) = {
-                let servers = inbound_mail_servers.read().await;
-                if servers.is_empty() {
-                    (false, true) // No filter configured — all sessions pass
-                } else {
-                    (true, servers.contains(&session.server_ip))
-                }
-            };
-            if !is_inbound_target && !explicit_rescan {
+            let local_domains_snapshot = internal_domains.read().await.clone();
+            let is_mirror_inbound = is_mirror_inbound_session(&session, &local_domains_snapshot);
+            if !explicit_rescan && session.source == SessionSource::Sniffer && !is_mirror_inbound {
                 debug!(
                     session_id = %session_id,
                     server_ip = %session.server_ip,
-                    "Skipping non-inbound hop (server_ip not in INBOUND_MAIL_SERVERS)"
+                    "Skipping non-inbound mirror session"
                 );
                 continue;
             }
 
-            // 1c. Message-ID dedup: only active when INBOUND_MAIL_SERVERS is set.
-            //     When inbound filter is active, same email at the same inbound
-            //     server should only produce one verdict.
-            //     When inbound filter is NOT set, all sessions are analyzed (no dedup).
-            if inbound_filter_active
-                && !explicit_rescan
-                && let Some(dedup_key) = message_dedup_key(&session)
+            // Correlate every observed inbound mirror hop before the ordinary
+            // session dedup. The first observed hop owns native analysis;
+            // later hops wait briefly for that verdict and persist a
+            // provenance row instead of running the detector graph again.
+            let delivery_registration = if !explicit_rescan && is_mirror_inbound {
+                match delivery_fingerprint(&session) {
+                    Some(fingerprint) => match engine_db
+                        .register_email_delivery_hop(
+                            &fingerprint,
+                            session_id,
+                            &session.client_ip,
+                            &session.server_ip,
+                            session.started_at,
+                        )
+                        .await
+                    {
+                        Ok(registration) => Some(registration),
+                        Err(error) => {
+                            warn!(
+                                session_id = %session_id,
+                                %error,
+                                "Failed to register mirror delivery hop; continuing with native analysis"
+                            );
+                            None
+                        }
+                    },
+                    None => None,
+                }
+            } else {
+                None
+            };
+
+            if let Some(registration) = delivery_registration
+                && !registration.is_first_hop
             {
-                let now = Instant::now();
-                let mut map = msgid_dedup.write().await;
-                if let Some(&(prev_sid, seen_at)) = map.get(&dedup_key)
-                    && prev_sid != session_id
-                    && now.duration_since(seen_at).as_secs() < Self::DEDUP_WINDOW_SECS
-                {
-                    debug!(
-                        session_id = %session_id,
-                        prev_session_id = %prev_sid,
-                        message_id = %dedup_key.0,
-                        "Skipping duplicate message with matching content fingerprint"
-                    );
-                    continue;
-                }
-                map.insert(dedup_key, (session_id, now));
-                if map.len() > 5000 {
-                    map.retain(|_, (_, seen_at)| {
-                        now.duration_since(*seen_at).as_secs() < Self::DEDUP_WINDOW_SECS
-                    });
-                }
+                let pv_ctx = Arc::new(PostVerdictContext {
+                    db: engine_db.clone(),
+                    ioc: ioc_manager.clone(),
+                    disposition: disposition_engine.clone(),
+                    metrics: metrics.clone(),
+                    temporal: Arc::clone(&temporal_analyzer),
+                    alert: Arc::clone(&alert_engine),
+                    ws_tx: ws_tx.clone(),
+                    verdict_count: Arc::clone(&verdict_count),
+                    temporal_semaphore: Arc::clone(&temporal_semaphore),
+                    temporal_flush_interval: Self::TEMPORAL_FLUSH_INTERVAL,
+                    internal_domains: internal_domains.clone(),
+                });
+                let downstream_orchestrator = Arc::clone(&orchestrator);
+                let downstream_config = Arc::clone(&config);
+                let downstream_semaphore = Arc::clone(&semaphore);
+                inflight.spawn(async move {
+                    run_reused_or_fallback_delivery(
+                        downstream_orchestrator,
+                        downstream_config,
+                        session,
+                        pv_ctx,
+                        registration.first_session_id,
+                        downstream_semaphore,
+                    )
+                    .await;
+                });
+                continue;
             }
 
             // 2. Whitelist check (fast async)
@@ -1120,6 +1596,18 @@ mod tests {
         assert_eq!(
             resolve_email_pipeline_concurrency(16, LARGE_YARA_PACK_RULES, Some("4096")),
             16
+        );
+    }
+
+    #[test]
+    fn inline_worker_capacity_is_bounded_and_configurable() {
+        assert_eq!(resolve_inline_workers(None), DEFAULT_INLINE_WORKERS);
+        assert_eq!(resolve_inline_workers(Some("12")), 12);
+        assert_eq!(resolve_inline_workers(Some("0")), DEFAULT_INLINE_WORKERS);
+        assert_eq!(resolve_inline_workers(Some("65")), DEFAULT_INLINE_WORKERS);
+        assert_eq!(
+            resolve_inline_workers(Some("not-a-number")),
+            DEFAULT_INLINE_WORKERS
         );
     }
 
@@ -1315,6 +1803,66 @@ mod tests {
         final_hop.content.headers.last_mut().unwrap().1 = "from relay-b".to_string();
 
         assert_eq!(message_dedup_key(&first_hop), message_dedup_key(&final_hop));
+    }
+
+    #[test]
+    fn delivery_identity_ignores_gateway_generated_headers() {
+        let mut first_hop = make_session_with_headers();
+        first_hop.message_id = Some("<stable@example.com>".to_string());
+        let mut downstream = first_hop.clone();
+        downstream.id = Uuid::new_v4();
+        downstream.content.headers.extend([
+            ("X-Gateway-Hop".to_string(), "gw-2".to_string()),
+            (
+                "Authentication-Results".to_string(),
+                "relay.example".to_string(),
+            ),
+            ("Delivered-To".to_string(), "admin@example.com".to_string()),
+        ]);
+
+        assert_eq!(
+            delivery_fingerprint(&first_hop),
+            delivery_fingerprint(&downstream)
+        );
+    }
+
+    #[test]
+    fn delivery_identity_ignores_gateway_content_rewrites() {
+        let mut first_hop = make_session_with_headers();
+        first_hop.message_id = Some("<stable@example.com>".to_string());
+        first_hop.subject = Some("Same subject".to_string());
+
+        let mut downstream = first_hop.clone();
+        downstream.id = Uuid::new_v4();
+        downstream.content.body_text = Some("Rewritten by the next gateway".to_string());
+        downstream.content.body_html = Some("<p>Rewritten by the next gateway</p>".to_string());
+        downstream
+            .content
+            .headers
+            .push(("X-Content-Rewritten".to_string(), "gateway-2".to_string()));
+
+        assert_eq!(
+            delivery_fingerprint(&first_hop),
+            delivery_fingerprint(&downstream)
+        );
+    }
+
+    #[test]
+    fn mirror_inbound_requires_a_local_recipient() {
+        let mut session = make_session_with_headers();
+        session.mail_from = Some("sender@outside.example".to_string());
+        session.rcpt_to = vec!["admin@example.com".to_string()];
+        let local_domains = HashSet::from(["example.com".to_string()]);
+        assert!(is_mirror_inbound_session(&session, &local_domains));
+
+        session.rcpt_to = vec!["admin@outside.example".to_string()];
+        assert!(!is_mirror_inbound_session(&session, &local_domains));
+    }
+
+    #[test]
+    fn delivery_identity_requires_message_id() {
+        let session = make_session_with_headers();
+        assert!(delivery_fingerprint(&session).is_none());
     }
 
     #[tokio::test]
@@ -1575,6 +2123,52 @@ mod tests {
     }
 
     #[test]
+    fn historical_import_rescan_keeps_mirror_review_source() {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.2".to_string(),
+            25_000,
+            "198.51.100.237".to_string(),
+            25,
+        );
+        session.source = SessionSource::Import;
+
+        let review_session = mirror_review_session(&session).expect("SMTP import is reviewable");
+
+        assert_eq!(review_session.source, SessionSource::Sniffer);
+        assert_eq!(review_session.server_ip, session.server_ip);
+    }
+
+    #[test]
+    fn encrypted_mirror_session_without_envelope_is_attribution_pending() {
+        let mut session = make_session_with_headers();
+        session.mail_from = None;
+        session.rcpt_to.clear();
+        session.content.is_encrypted = true;
+        session.content.is_complete = false;
+
+        assert_eq!(
+            mirror_review_direction(&session, &["example.com".into()]),
+            Some((
+                EmailReviewDirection::Unknown,
+                EmailAuditClass::AttributionPending
+            ))
+        );
+    }
+
+    #[test]
+    fn cleartext_mirror_session_without_envelope_is_not_promoted_to_review() {
+        let mut session = make_session_with_headers();
+        session.mail_from = None;
+        session.rcpt_to.clear();
+
+        assert_eq!(
+            mirror_review_direction(&session, &["example.com".into()]),
+            None
+        );
+    }
+
+    #[test]
     fn test_tempfail_uses_smtp_451() {
         assert_eq!(VerdictDisposition::Tempfail.smtp_code(), 451);
         assert!(
@@ -1582,5 +2176,57 @@ mod tests {
                 .smtp_message()
                 .starts_with("4.7.1")
         );
+    }
+
+    fn first_hop_verdict(coverage: vigilyx_core::security::InspectionCoverage) -> SecurityVerdict {
+        SecurityVerdict {
+            inspection_coverage: coverage,
+            coverage_reasons: vec![],
+            id: Uuid::new_v4(),
+            session_id: Uuid::new_v4(),
+            threat_level: ThreatLevel::Safe,
+            threat_type: None,
+            classification: None,
+            confidence: 0.5,
+            categories: vec![],
+            summary: "first hop".to_string(),
+            pillar_scores: HashMap::new(),
+            modules_run: 25,
+            modules_flagged: 0,
+            total_duration_ms: 10,
+            created_at: chrono::Utc::now(),
+            fusion_details: None,
+        }
+    }
+
+    #[test]
+    fn complete_downstream_hop_is_analyzed_when_first_hop_coverage_is_limited() {
+        use vigilyx_core::security::InspectionCoverage;
+        // Field case: the gateway hop was captured incompletely, the relay hop
+        // carried the whole message, and reuse copied "inspection incomplete".
+        let mut downstream = make_session_with_headers();
+        downstream.content.is_complete = true;
+        downstream.content.truncated = false;
+        assert!(downstream_hop_needs_own_analysis(
+            &first_hop_verdict(InspectionCoverage::Limited),
+            &downstream
+        ));
+        assert!(!downstream_hop_needs_own_analysis(
+            &first_hop_verdict(InspectionCoverage::Complete),
+            &downstream
+        ));
+
+        // An equally incomplete downstream copy keeps the reuse path.
+        downstream.content.is_complete = false;
+        assert!(!downstream_hop_needs_own_analysis(
+            &first_hop_verdict(InspectionCoverage::Limited),
+            &downstream
+        ));
+        downstream.content.is_complete = true;
+        downstream.content.truncated = true;
+        assert!(!downstream_hop_needs_own_analysis(
+            &first_hop_verdict(InspectionCoverage::Limited),
+            &downstream
+        ));
     }
 }

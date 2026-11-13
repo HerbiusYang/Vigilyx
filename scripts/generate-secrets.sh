@@ -12,6 +12,7 @@
 #
 # ═══════════════════════════════════════════════════
 set -euo pipefail
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -86,18 +87,43 @@ cat <<EOF
 PG_USER=vigilyx
 PG_PASSWORD=$(gen 24)
 PG_DB=vigilyx
+# Non-owner runtime identities (keep each credential distinct).
+PG_API_PASSWORD=$(gen 24)
+PG_ENGINE_PASSWORD=$(gen 24)
+PG_MTA_PASSWORD=$(gen 24)
+# PostgreSQL memory overrides (small-host defaults come from Compose).
+# For the current 128 GiB server use 8GB / 64GB / 512MB respectively.
+# PG_SHARED_BUFFERS=256MB
+# PG_EFFECTIVE_CACHE_SIZE=512MB
+# PG_MAINTENANCE_WORK_MEM=128MB
+# PG_LOG_LOCK_WAITS=on
 
 # ── Redis ──
 REDIS_PASSWORD=$(gen 24)
+REDIS_API_PASSWORD=$(gen 24)
+REDIS_ENGINE_PASSWORD=$(gen 24)
+REDIS_SNIFFER_PASSWORD=$(gen 24)
+REDIS_MTA_PASSWORD=$(gen 24)
+# Optional read-cache Valkey credential; the cache remains disabled by default.
+CACHE_REDIS_PASSWORD=$(gen 24)
 
 # ── API Authentication ──
 API_JWT_SECRET=$(gen 32)
+VIGILYX_CONFIG_ENCRYPTION_KEY=$(gen 32)
 API_PASSWORD=$(gen 16)
 API_SECURE_COOKIE=true
 
+# Independent privacy-audit identity. The bootstrap password is consumed only
+# by the one-shot audit-bootstrap container and must be changed at first login.
+AUDIT_USERNAME=privacy-auditor
+AUDIT_BOOTSTRAP_PASSWORD=Vx!9$(gen 24)
+
 # ── Internal service auth ──
 INTERNAL_API_TOKEN=$(gen 24)
+SNIFFER_API_TOKEN=$(gen 24)
+MTA_API_TOKEN=$(gen 24)
 AI_INTERNAL_TOKEN=$(gen 24)
+MQ_AUTH_TOKEN=$(gen 24)
 
 # ── Packet capture ──
 SERVER_TIMEZONE=Asia/Shanghai
@@ -109,6 +135,7 @@ RUST_LOG=info
 # ── AI service (uncomment to enable, requires --profile ai) ──
 # AI_ENABLED=true
 # HF_ENDPOINT=https://hf-mirror.com
+
 
 # ── TLS (used with --profile tls) ──
 # Caddy auto-selects TLS mode based on VIGILYX_DOMAIN:

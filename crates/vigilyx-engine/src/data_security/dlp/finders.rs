@@ -35,9 +35,16 @@ pub(super) fn find_credit_cards(text: &str) -> (Vec<String>, HashSet<String>) {
         }
         let digits: String = m.as_str().chars().filter(|c| c.is_ascii_digit()).collect();
         if digits.len() == 16 && luhn_check(&digits) && is_valid_card_bin(&digits) {
+            // A repeated card number is one DLP value, not one incident per
+            // occurrence. Deduplicate before formatting and storing the
+            // masked value; hit-heavy mail commonly repeats the same number
+            // in a signature, quoted thread, or HTML/plain-text alternative.
+            if raw_digits.contains(&digits) {
+                continue;
+            }
             let masked = format!("{}****{}", &digits[..4], &digits[12..]);
-            found.push(masked);
             raw_digits.insert(digits);
+            found.push(masked);
         }
     }
     (found, raw_digits)
@@ -122,7 +129,11 @@ pub(super) fn find_chinese_ids(text: &str) -> Vec<String> {
         .find_iter(text)
         .filter_map(|m| {
             // 去分隔符: 匹配串只含数字/X/空格/连字符, 提取字母数字即得候选
-            let digits: String = m.as_str().chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+            let digits: String = m
+                .as_str()
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .collect();
             if digits.len() == 18 && chinese_id_check(&digits) {
                 Some(format!("{}****{}", &digits[..6], &digits[14..]))
             } else {
@@ -183,7 +194,7 @@ pub(super) fn find_chinese_phones(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// lookupBankCard number (16-19 bit, 去分隔符 + Luhn Verify, Excludealreadymatch, Desensitize)
+/// lookupBankCard number (16-19 bit, 去分隔符 + BIN + Luhn Verify, Excludealreadymatch, Desensitize)
 pub(super) fn find_bank_cards(text: &str, exclude: &HashSet<String>) -> Vec<String> {
     let mut found = Vec::new();
     for m in RE_BANK_CARD.find_iter(text) {
@@ -193,7 +204,11 @@ pub(super) fn find_bank_cards(text: &str, exclude: &HashSet<String>) -> Vec<Stri
         // 去分隔符: 空格/连字符写法归一为纯数字串再做 Luhn 校验
         let digits: String = m.as_str().chars().filter(|c| c.is_ascii_digit()).collect();
         let len = digits.len();
-        if (16..=19).contains(&len) && luhn_check(&digits) && !exclude.contains(&digits) {
+        if (16..=19).contains(&len)
+            && luhn_check(&digits)
+            && is_valid_card_bin(&digits)
+            && !exclude.contains(&digits)
+        {
             let masked = format!("{}****{}", &digits[..4], &digits[len - 4..]);
             found.push(masked);
         }
@@ -423,7 +438,13 @@ pub(super) fn find_swift_codes(text: &str) -> Vec<String> {
 /// 检查匹配位置附近是否存在 swift/bic 上下文关键词 (前后各 40 字节窗口)
 fn has_swift_context(text: &str, match_start: usize) -> bool {
     const CONTEXT_KEYWORDS: &[&str] = &[
-        "swift", "bic", "银行代码", "銀行代碼", "swift code", "swiftcode", "银行识别码",
+        "swift",
+        "bic",
+        "银行代码",
+        "銀行代碼",
+        "swift code",
+        "swiftcode",
+        "银行识别码",
     ];
     let window_start = match_start.saturating_sub(40);
     let window_end = (match_start + 60).min(text.len());
@@ -431,9 +452,7 @@ fn has_swift_context(text: &str, match_start: usize) -> bool {
         return false;
     };
     let window_lower = window.to_lowercase();
-    CONTEXT_KEYWORDS
-        .iter()
-        .any(|kw| window_lower.contains(kw))
+    CONTEXT_KEYWORDS.iter().any(|kw| window_lower.contains(kw))
 }
 
 /// ISO 3166-1 alpha-2 Code/DigitSet(Used for SWIFT bit 5-6 Verify)

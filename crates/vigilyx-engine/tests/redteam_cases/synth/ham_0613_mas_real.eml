@@ -1,0 +1,88 @@
+From: Monetary Authority of Singapore <reporting@mas.example>
+To: compliance@corp.internal
+Cc: cfo@corp.internal, legal@corp.internal
+Date: Mon, 26 Oct 2026 10:00:00 +0800
+Message-ID: <0613-b60@synth.example>
+Subject: [MAS Notice PSN02] Quarterly regulatory return overdue — Ref: MAS-FR-2026-Q3-8842
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear Compliance Officer,
+
+Your Q3 2026 regulatory return under MAS Notice PSN02 (Payment
+Services Regulations) is overdue. Late submission penalties apply.
+
+Entity Details:
+  UEN: S6319842A
+  License Type: Major Payment Institution (MPI)
+  Notice: PSN02 — Regulatory Returns
+  Reporting Period: Q3 2026
+  Due Date: 2026-10-12
+  Days Overdue: 14 days
+  Reference: MAS-FR-2026-Q3-8842
+
+Required Return Data:
+  1. Transaction volume (domestic, cross-border, e-money)
+  2. Customer account data
+  3. AML/CFT suspicious transaction reports (STRs)
+  4. Complaint statistics
+  5. Technology risk incidents
+  6. Capital adequacy
+
+How to Submit:
+
+  Navigate to MAS eServices manually:
+
+  1. Open your browser and go to:
+     eservices.mas.gov.sg
+     (Type the URL manually. Do NOT click links from emails.)
+
+  2. Log in with your Singpass Corporate ID
+     (Singpass uses your registered CorpPass credentials,
+      NOT OAuth or offline_access tokens)
+
+  3. Select "Regulatory Reporting" → PSN02 → Q3 2026
+
+  4. Complete the online form (data is saved as you type;
+     you may return to complete it over multiple sessions)
+
+  5. Submit when complete
+
+  Important Security Notes:
+  MAS will NEVER:
+  - Send you a direct "Submit Return" link via email
+  - Request offline_access or any OAuth permission
+  - Use a non-gov.sg domain for regulatory reporting
+  - Offer a "Chinese reporting channel" that bypasses Singpass
+  - Ask for customer transaction data through email portals
+
+  All regulatory returns are submitted through eservices.mas.gov.sg
+  using CorpPass authentication (Singapore's corporate digital
+  identity, not OAuth-based).
+
+  The online form has session save functionality — you do NOT
+  need any special token to maintain your session. Simply log
+  back in with CorpPass to resume.
+
+  If you receive an email with a "Submit" button or Singpass
+  OAuth authorization, it is a phishing attempt targeting
+  MAS-regulated entities.
+
+Consequences of Non-Filing:
+  14 days: Daily penalty accruing
+  30 days: Public censure
+  60 days: License suspension proceedings
+  90 days: License revocation + criminal referral
+
+Regulatory Authority:
+  Payment Services Act 2019 — Section 58(1)
+  MAS Notice PSN02 — Paragraph 5
+
+Contact:
+  Regulatory Reporting Division
+  Phone: +65 6225 **** (8:30 AM - 5:30 PM SGT)
+  In person: 10 Shenton Way, MAS Building, Singapore 079117
+
+Monetary Authority of Singapore | Regulatory Reporting Division
+Reference: MAS-FR-2026-Q3-8842
+You are receiving this because you are the compliance officer for UEN S6319842A.

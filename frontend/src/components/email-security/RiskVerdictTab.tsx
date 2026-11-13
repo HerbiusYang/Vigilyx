@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../../utils/api'
 import { formatTime } from '../../utils/format'
 import type { ApiResponse, VerdictWithMeta } from '../../types'
+import { threatTypeLabel } from './categoryLabels'
 
 const THREAT_LEVEL_COLORS: Record<string, string> = {
   safe: '#22c55e',
@@ -83,9 +84,11 @@ export default function RiskVerdictTab() {
               <thead>
                 <tr>
                   <th style={{ width: 70 }}>{t('emailSecurity.colThreat')}</th>
+                  <th style={{ width: 140 }}>{t('emailSecurity.threatTypeLabel')}</th>
                   <th>{t('emailSecurity.colSender')}</th>
                   <th>{t('emailSecurity.colSubject')}</th>
-                  <th style={{ width: 90 }}>{t('emailSecurity.colConfidence')}</th>
+                  <th style={{ width: 100 }}>{t('emailSecurity.colRiskScore')}</th>
+                  <th style={{ width: 110 }}>{t('emailSecurity.colVerdictConfidence')}</th>
                   <th style={{ width: 160 }}>{t('emailSecurity.colTime')}</th>
                 </tr>
               </thead>
@@ -101,8 +104,10 @@ export default function RiskVerdictTab() {
                         {THREAT_CN[v.threat_level] || v.threat_level}
                       </span>
                     </td>
+                    <td className="sec-risk-type">{threatTypeLabel(v.threat_type) || '-'}</td>
                     <td className="sec-risk-from">{v.mail_from || '-'}</td>
                     <td className="sec-risk-subject">{v.subject || t('emailSecurity.noSubject')}</td>
+                    <td className="sec-td-r sec-mono">{v.risk_score == null ? '-' : `${(v.risk_score * 100).toFixed(0)}%`}</td>
                     <td className="sec-td-r sec-mono">{(v.confidence * 100).toFixed(0)}%</td>
                     <td className="sec-risk-time">{formatTime(v.created_at)}</td>
                   </tr>

@@ -420,6 +420,14 @@ pub fn toad_callback_verbs() -> &'static PhraseMatcher {
     static_matcher(&SLOT, LISTS)
 }
 
+/// Recipient-directed telephone actions used as actionable TOAD evidence.
+/// Generic support mentions stay in `toad_callback_verbs` for diagnostics.
+pub fn toad_explicit_callback_actions() -> &'static PhraseMatcher {
+    static SLOT: OnceLock<PhraseMatcher> = OnceLock::new();
+    static LISTS: &[&str] = &["toad_explicit_callback_actions"];
+    static_matcher(&SLOT, LISTS)
+}
+
 /// Urgency phrases used by TOAD lures.
 pub fn toad_urgency_phrases() -> &'static PhraseMatcher {
     static SLOT: OnceLock<PhraseMatcher> = OnceLock::new();

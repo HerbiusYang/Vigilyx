@@ -1,0 +1,21 @@
+From: =?utf-8?B?5Lya5Yqh57uE?= <photo@roundtable-pics.example>
+To: research@corp.internal
+Date: Wed, 09 Sep 2026 08:18:00 +0800
+Message-ID: <0008-b17@synth.example>
+Subject: 现场照片（精修版）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+合影与讲台照在附件。
+--BS
+Content-Type: image/png
+Content-Disposition: attachment; filename="现场照片.png"
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABQSwMEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+--BS--
