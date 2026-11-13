@@ -1,7 +1,11 @@
 """Release scope must be checked against tracked files, not ignore rules."""
 
 import importlib.util
+import json
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 
 
@@ -44,6 +48,29 @@ class ReleaseDocumentation(unittest.TestCase):
         errors = self.check({"README.md": "# Public"}, ["README.md", "README.md", "missing.md"])
         self.assertTrue(any("duplicate" in error for error in errors))
         self.assertTrue(any("absent" in error for error in errors))
+
+    def test_cli_rejects_tracked_private_file_even_after_local_deletion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def git(*args):
+                subprocess.run(['git', *args], cwd=root, check=True, capture_output=True)
+            git('init', '-q')
+            git('config', 'user.name', 'Release fixture')
+            git('config', 'user.email', 'fixture@example.test')
+            (root / 'README.md').write_text('# Public')
+            (root / 'release-docs.json').write_text(json.dumps({'version': 1, 'files': ['README.md']}))
+            (root / '.gitignore').write_text('docs/\n')
+            (root / 'docs').mkdir()
+            private = root / 'docs/review.md'
+            private.write_text('# Internal')
+            git('add', 'README.md', 'release-docs.json', '.gitignore')
+            git('add', '--force', 'docs/review.md')
+            git('commit', '-qm', 'fixture')
+            private.unlink()
+            result = subprocess.run([sys.executable, str(ROOT / 'scripts/check_release_docs.py'), '--ref', 'HEAD'],
+                                    cwd=root, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn('private file in release tree: docs/review.md', result.stdout)
 
 
 if __name__ == "__main__":

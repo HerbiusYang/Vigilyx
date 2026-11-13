@@ -1216,13 +1216,11 @@ mod tests {
         assert!(!outbound_dlp_scan_is_clean(&inspection, 3));
         // A slow panic hook can outlive the caller's inspection timeout.
         // The worker must retain its permit until unwinding actually ends.
-        let returned_permit = tokio::time::timeout(
-            Duration::from_secs(5),
-            Arc::clone(&limiter).acquire_owned(),
-        )
-        .await
-        .expect("panicking DLP worker must eventually release its permit")
-        .unwrap();
+        let returned_permit =
+            tokio::time::timeout(Duration::from_secs(5), Arc::clone(&limiter).acquire_owned())
+                .await
+                .expect("panicking DLP worker must eventually release its permit")
+                .unwrap();
         drop(returned_permit);
         assert_eq!(limiter.available_permits(), 1);
     }
