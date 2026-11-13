@@ -13,6 +13,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and the proj
 - Added an optional CPU ONNX intent-model ensemble to `semantic_scan`. It records shadow diagnostics by default; an explicit `SEMANTIC_INTENT_SCORE_THRESHOLD` enables the scored path instead of local semantic rules.
 - Added a feedback-based D-S model workflow with preserved evidence snapshots, candidate export/training, explicit install/rollback, and signed acceptance certificates. Training does not automatically activate a model.
 - Added separate first-deployment and update guides, including a concrete 0.9.3 → 0.9.4 upgrade and coordinated recovery procedure.
+- Added an explicit release-document list and CI checks for the actual Git tree, unpublished-document links, and local environment details; internal evaluation and decision records remain outside the release source.
 
 ### Changed
 
