@@ -138,7 +138,7 @@ fn is_known_extension_segment(segment: &str) -> bool {
             || module_data().contains("dangerous_extensions", segment))
 }
 
-/// `cs@xiaoying.com.xlsx`, `www.example.com.pdf`: an inner `.com` that ends an
+/// `cs@example.com.xlsx`, `www.example.com.pdf`: an inner `.com` that ends an
 /// e-mail address or a multi-label domain in the file name is a TLD, not a
 /// second (DOS executable) extension. Only applies when the real final
 /// extension is not itself dangerous; `invoice.com.pdf` keeps the flag.
@@ -2906,11 +2906,11 @@ mod tests {
     }
 
     /// Production false positive (2026-11-13): a spreadsheet named after a
-    /// mailbox (`cs@xiaoying.com.xlsx.example`) was flagged as a `.com.xlsx` double extension.
+    /// mailbox (`cs@example.com.xlsx`) was flagged as a `.com.xlsx` double extension.
     #[test]
     fn inner_com_of_an_address_or_domain_is_not_a_double_extension() {
         for name in [
-            "cs@xiaoying.com.xlsx.example",
+            "cs@example.com.xlsx",
             "www.example.com.pdf",
             "报表.example.com.docx",
         ] {
@@ -2918,11 +2918,7 @@ mod tests {
             let last = parts[parts.len() - 1];
             assert!(inner_com_is_domain_suffix(&parts, last), "{name}");
         }
-        for name in [
-            "invoice.com.pdf",
-            "cs@xiaoying.com.exe.example",
-            "invoice.pdf.exe",
-        ] {
+        for name in ["invoice.com.pdf", "cs@example.com.exe", "invoice.pdf.exe"] {
             let parts: Vec<&str> = name.split('.').collect();
             let last = parts[parts.len() - 1];
             assert!(!inner_com_is_domain_suffix(&parts, last), "{name}");

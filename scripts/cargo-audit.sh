@@ -3,20 +3,22 @@ set -euo pipefail
 
 # RUSTSEC-2023-0071 was removed from the JWT lock graph by using jsonwebtoken's
 # aws-lc-rs backend. Fail if a future dependency change silently
-# dependency change silently reintroduces the affected RSA line.
+# reintroduces the affected RSA line.
 if grep -qE '^name = "rsa"$' Cargo.lock; then
   echo "RustSec guard failed: rsa has re-entered Cargo.lock" >&2
   exit 1
 fi
 
-# yara-x 1.19 is the newest release and still pins Wasmtime 43. The current
-# advisory requires attacker-controlled cross-engine Store/type mixing; Vigilyx
-# only gives untrusted mail bytes to precompiled rules. Keep the exception
-# narrowly pinned and fail as soon as the dependency shape changes.
-if ! cargo tree --locked -p yara-x --depth 1 | grep -qE 'wasmtime v43\.0\.2$'; then
-  echo "RUSTSEC exception must be reviewed: yara-x no longer uses wasmtime 43.0.2" >&2
+# SQLx 0.9 resolves its optional SQLite driver into Cargo.lock even though this
+# workspace only uses PostgreSQL. RUSTSEC-2026-0459 affects that unused driver's
+# bundled SQLite. Permit the lock-only advisory only after proving SQLite is
+# absent from every workspace feature/target graph. Fail closed if resolution
+# fails or a future feature activates SQLite; never extend this to used crates.
+dependency_tree="$(cargo tree --locked --workspace --all-features --target all --prefix none --color never)"
+if grep -qE '^(libsqlite3-sys|sqlx-sqlite|rusqlite) v' <<< "$dependency_tree"; then
+  echo "RustSec exception must be reviewed: SQLite is active in the workspace" >&2
   exit 1
 fi
 
 cargo audit \
-  --ignore RUSTSEC-2026-0222
+  --ignore RUSTSEC-2026-0459

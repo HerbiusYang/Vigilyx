@@ -41,6 +41,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and the proj
 - Exposed PostgreSQL memory/logging settings through Compose and deployment templates; deployment verification checks effective settings and waits for mirror queue recovery.
 - Paused application clients before dependency recreation and attempted to restore their prior running state on failures; schema migrations now require a newly built API binary.
 - Shipped the signing tool's validators and synthetic fixtures with the public source, removing a dependency on the maintainer's ignored local skill directory, and added CI checks for deployment/release tools.
+- Updated Rustix to 1.1.6 and removed the obsolete Wasmtime audit exception. The optional SQLx SQLite lockfile advisory is exempted only while all workspace features and targets prove that SQLite is inactive.
 
 ### Removed
 
