@@ -9,8 +9,8 @@ retaining its configuration and data, follow [Updating](UPDATING.md).
 The OS/Docker preparation below is for a new host; it is not part of an
 application update on an existing shared server.
 
-The current deployment configuration uses `root@36.33.98.77` with
-`VIGILYX_REMOTE_DIR=/home/CCAB_VIGILYX`. The dedicated `vigilyx` account and
+The deployment template uses `root@<server>` with
+`VIGILYX_REMOTE_DIR=/home/CCAB_VIGILYX`; set the SSH target for your own server. The dedicated `vigilyx` account and
 `/home/vigilyx` paths shown in the hardening and backup examples are generic
 alternatives; replace them with the configured remote path when following this
 repository's root based workflow.

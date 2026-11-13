@@ -186,6 +186,17 @@ See the [Deployment Guide](DEPLOYMENT.md) for full deployment instructions.
 - Keep comments and documentation in English.
 - Document public APIs with doc comments (`///` in Rust, JSDoc in TypeScript).
 
+Release documentation is explicitly listed in `release-docs.json`. Keep internal
+audits, decisions, evaluation results, handoff records, and agent instructions
+outside the release tree; the root `docs/` directory is reserved for local
+records. Component READMEs describe current interfaces and usage, without local
+host details or dated experiment results. Public website pages live under
+`site/` and require an entry in the same release list, even when absent from
+navigation. On the remote build host, run
+`python3 scripts/check_release_docs.py --ref HEAD` before publishing a tag.
+Ignore rules do not remove files already tracked by Git; the check inspects the
+actual commit. Archive exclusions add a second defense for source downloads.
+
 ## Testing Requirements
 
 Every PR must pass the supported remote verification sequence before merge:

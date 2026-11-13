@@ -1,0 +1,11 @@
+# Archive defense only; check_release_docs.py also rejects these in Git trees.
+/docs/** export-ignore
+/.agents/** export-ignore
+/.claude/** export-ignore
+/.lotyra/** export-ignore
+/.audit/** export-ignore
+/.rollback/** export-ignore
+AGENTS.md export-ignore
+AGENTS.local.md export-ignore
+CLAUDE.md export-ignore
+**/EVALUATION*.md export-ignore

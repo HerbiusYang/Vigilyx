@@ -32,6 +32,9 @@ jobs:
       - name: Verify shipped validators without private files
         run: python3 scripts/governance/self_test.py
 
+      - name: Verify public documentation scope
+        run: python3 scripts/check_release_docs.py --ref HEAD
+
       - name: Verify deployment and release workflows
         run: python3 -m unittest discover -s tests -p 'test_*.py'
 
