@@ -49,13 +49,12 @@ deploy.conf
 data/
 !/crates/vigilyx-engine/src/semantic/data/
 
-# 本地分析报告、决策草稿和评估产物
+# Local reports, decision drafts, evaluation records, and agent instructions
 /docs/
-!/docs/
-/docs/*
-!/docs/decisions/
-/docs/decisions/*
-!/docs/decisions/2026-08-28-process-level-external-url-sandbox.md
+/.agents/
+/.audit/
+/.rollback/
+/crates/vigilyx-engine/src/semantic/EVALUATION*.md
 
 # 日志
 *.log
