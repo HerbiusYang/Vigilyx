@@ -1,17 +1,28 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Quarantine from './Quarantine'
+import type { PrivacyLease, PrivacyResourceRef, PrivacyScope } from '../../types'
 
-const { apiFetchMock, navigateMock, translateMock } = vi.hoisted(() => ({
+const { apiFetchMock, navigateMock, translateMock, privacyMock, policyMock } = vi.hoisted(() => ({
   apiFetchMock: vi.fn(),
   navigateMock: vi.fn(),
   translateMock: vi.fn((key: string, options?: { page?: number }) =>
     key === 'quarantine.pageNum' ? `page ${options?.page}` : key),
+  privacyMock: { lease: null as PrivacyLease | null, error: null as string | null },
+  policyMock: { enabled: false, loading: false, error: false },
 }))
 
 vi.mock('../../utils/api', () => ({ apiFetch: apiFetchMock }))
+vi.mock('../../hooks/usePrivacyPolicy', () => ({ usePrivacyPolicy: () => policyMock }))
+vi.mock('../../hooks/usePrivacyAccess', () => ({
+  usePrivacyAccess: (resource: PrivacyResourceRef | null) => {
+    const lease = privacyMock.lease?.resource_id === resource?.resource_id ? privacyMock.lease : null
+    return { ...privacyMock, lease, leaseHeaders: (scope: PrivacyScope) => lease?.scopes.includes(scope)
+      ? { 'X-Vigilyx-Privacy-Lease': lease.lease_handle } : undefined }
+  },
+}))
 vi.mock('../../utils/format', () => ({
   formatTimeFull: (value: string) => value,
   formatSize: (value: number) => `${value} B`,
@@ -50,6 +61,9 @@ const entry = (id: string) => ({
 
 describe('Quarantine', () => {
   beforeEach(() => {
+    privacyMock.lease = null
+    privacyMock.error = null
+    Object.assign(policyMock, { enabled: false, loading: false, error: false })
     localStorage.clear()
     localStorage.setItem('vigilyx-deploy-mode', 'mirror')
     apiFetchMock.mockReset()
@@ -123,6 +137,70 @@ describe('Quarantine', () => {
     await user.click(screen.getByRole('button', { name: 'quarantine.viewEvidence' }))
     expect(navigateMock).toHaveBeenCalledWith('/emails/session-q-1')
     expect(screen.queryByText('quarantine.reasonExample')).not.toBeInTheDocument()
+  })
+
+  it('discards plaintext when privacy is enabled even if its replacement request fails', async () => {
+    const original = apiFetchMock.getMockImplementation()!
+    apiFetchMock.mockImplementation((url: string) => url.endsWith('/preview') && policyMock.enabled
+      ? response({ error: 'privacy check unavailable' }, false) : original(url))
+    const user = userEvent.setup()
+    const view = render(<Quarantine />)
+    await user.click(await screen.findByRole('button', { name: 'quarantine.preview' }))
+    expect(await screen.findByText('This is the quarantined message body.')).toBeInTheDocument()
+    policyMock.enabled = true
+    view.rerender(<Quarantine />)
+    expect(screen.queryByText('This is the quarantined message body.')).not.toBeInTheDocument()
+    expect(await screen.findByText('privacy check unavailable')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'quarantine.hidePreview' }))
+    await user.click(screen.getByRole('button', { name: 'quarantine.preview' }))
+    expect(screen.queryByText('This is the quarantined message body.')).not.toBeInTheDocument()
+    expect(apiFetchMock.mock.calls.filter(([url]) => String(url).endsWith('/preview'))).toHaveLength(3)
+  })
+
+  it('hides an expired lease preview and re-reads without the old handle', async () => {
+    policyMock.enabled = true
+    privacyMock.lease = {
+      request_id: 'request-example', resource_type: 'session', resource_id: 'session-q-1', scopes: ['body'],
+      expires_at: '2099-01-01T00:00:00Z', uses_remaining: 10, lease_handle: 'synthetic-lease',
+    }
+    const original = apiFetchMock.getMockImplementation()!
+    apiFetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.endsWith('/preview') && !init?.headers) {
+        return response({ success: true, data: { body_text: null, body_html_source: null, attachments: [], parse_warning: null } })
+      }
+      return original(url, init)
+    })
+    const user = userEvent.setup()
+    const view = render(<Quarantine />)
+    await user.click(await screen.findByRole('button', { name: 'quarantine.preview' }))
+    expect(await screen.findByText('This is the quarantined message body.')).toBeInTheDocument()
+    privacyMock.lease = null
+    view.rerender(<Quarantine />)
+    expect(screen.queryByText('This is the quarantined message body.')).not.toBeInTheDocument()
+    expect(await screen.findByText('quarantine.previewBodyUnavailable')).toBeInTheDocument()
+    const previewCalls = apiFetchMock.mock.calls.filter(([url]) => String(url).endsWith('/preview'))
+    expect(previewCalls[previewCalls.length - 1]?.[1]).toEqual(expect.objectContaining({ headers: undefined }))
+  })
+
+  it('cannot restore plaintext from a response arriving after authorization changed', async () => {
+    let finishOld: ((value: unknown) => void) | undefined
+    const original = apiFetchMock.getMockImplementation()!
+    apiFetchMock.mockImplementation((url: string) => {
+      if (!url.endsWith('/preview')) return original(url)
+      if (!policyMock.enabled) return new Promise(resolve => { finishOld = resolve })
+      return response({ success: true, data: { body_text: null, body_html_source: null, attachments: [], parse_warning: null } })
+    })
+    const user = userEvent.setup()
+    const view = render(<Quarantine />)
+    await user.click(await screen.findByRole('button', { name: 'quarantine.preview' }))
+    await waitFor(() => expect(finishOld).toBeDefined())
+    policyMock.enabled = true
+    view.rerender(<Quarantine />)
+    expect(await screen.findByText('quarantine.previewBodyUnavailable')).toBeInTheDocument()
+    await act(async () => { finishOld?.(await response({ success: true, data: {
+      body_text: 'Late synthetic private body', body_html_source: null, attachments: [], parse_warning: null,
+    } })) })
+    expect(screen.queryByText('Late synthetic private body')).not.toBeInTheDocument()
   })
 
   it('shows action progress, prevents duplicate actions, and surfaces a release failure', async () => {

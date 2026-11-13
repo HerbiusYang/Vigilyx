@@ -1,0 +1,15 @@
+From: =?utf-8?B?6YKu566x566h55CG5ZGY?= <postmaster@mail-service.example>
+To: chen.jie@corp.internal
+Date: Mon, 24 Aug 2026 09:11:00 +0800
+Message-ID: <0000-b1@synth.example>
+Subject: 您的邮箱已超出配额
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+陈杰 您好：
+
+监控显示您的邮箱当前占用 9.8G / 10G，今日起将暂停收件。
+请在今天内完成容量核验与扩容登记，核验地址：
+https://mail-quota-center.example.info/verify
+
+邮箱管理员（系统代发）

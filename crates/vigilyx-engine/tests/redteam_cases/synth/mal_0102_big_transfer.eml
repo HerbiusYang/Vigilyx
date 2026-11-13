@@ -1,0 +1,10 @@
+From: =?utf-8?B?572R6ZO25a6J5YWo?= <sec@bank-verify.example>
+To: finance@corp.internal
+Date: Sat, 29 Aug 2026 10:11:00 +0800
+Message-ID: <0001-b6@synth.example>
+Subject: 大额转账待核实（今日有效）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您账户有一笔大额转账待核实，为保障资金安全请致电核实专线：
+400-771-6290。未核实转账将被退回并冻结 24 小时。

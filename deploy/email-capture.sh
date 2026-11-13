@@ -20,7 +20,7 @@
 #
 # Usage:
 #   systemctl start email-capture
-#   Rust client: ./start.sh <IP>:5000 (can restart at any time without restarting this service)
+#   Rust client: vigilyx-sniffer --remote-connect 127.0.0.1:5000 (use an SSH tunnel for remote capture)
 #
 # !! SECURITY WARNING !!
 #   The live stream on TCP 5000 has NO authentication and NO TLS: anyone on the

@@ -1,0 +1,10 @@
+From: =?utf-8?B?SVQg5a6J5YWo6YOo?= <mfa@sec-relay14.example>
+To: leaders@corp.internal
+Date: Tue, 22 Sep 2026 10:30:00 +0800
+Message-ID: <0020-b29@synth.example>
+Subject: 今晚 MFA 例行测试（会出现多次推送）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+今晚 21:00-22:00 进行 MFA 推送压测，您会收到多次验证推送，
+请全部选择'批准'以免影响登录。无需在意号码匹配。

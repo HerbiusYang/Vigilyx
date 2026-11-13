@@ -109,7 +109,7 @@ impl ShardedSessionManager {
 
         let requests = http_state.process_stream(reassembled);
 
-        // A4: malformed chunked framing permanently desyncs the splitter for
+        // Rejected framing or parser budgets permanently desync the splitter for
         // this connection. Surface it as an inspection-limited signal instead
         // of silently scanning garbage (or nothing) from here on.
         if http_state.is_desynced() && !session_data.http_desynced {
@@ -128,7 +128,7 @@ impl ShardedSessionManager {
                 client_ip = %session_data.session.client_ip,
                 server_ip = %session_data.session.server_ip,
                 server_port = session_data.session.server_port,
-                "HTTP framing desynced (malformed chunked body); no further requests split on this connection"
+                "HTTP framing or inspection budget rejected; no further requests split on this connection"
             );
         }
 
@@ -155,13 +155,18 @@ impl ShardedSessionManager {
                 continue;
             }
 
+            // Request-target query data routinely contains bearer credentials
+            // (Coremail `sid`, OAuth codes, signed URLs). Keep the raw target
+            // only in this stack frame for protocol attribution, and redact it
+            // before the session can cross a queue/persistence/log boundary.
+            let safe_uri = vigilyx_core::redact_http_uri(&req.uri);
             let mut http_session = HttpSession::new(
                 session_data.session.client_ip.clone(),
                 session_data.session.client_port,
                 session_data.session.server_ip.clone(),
                 session_data.session.server_port,
                 req.method,
-                req.uri.clone(),
+                safe_uri.clone(),
             );
 
             http_session.host = req.host.clone();
@@ -181,8 +186,7 @@ impl ShardedSessionManager {
                     Some(owned)
                 } else {
                     let body_end = req.body_offset + req.body_length;
-                    (body_end <= reassembled.len())
-                        .then(|| &reassembled[req.body_offset..body_end])
+                    (body_end <= reassembled.len()).then(|| &reassembled[req.body_offset..body_end])
                 };
                 if let Some(body) = body_opt {
                     http_session.request_body_size = body.len();
@@ -334,7 +338,7 @@ impl ShardedSessionManager {
                     client_ip = %session_data.session.client_ip,
                     extracted_user = %extracted,
                     login_bound_user = %bound,
-                    uri = %req.uri,
+                    uri = %safe_uri,
                     "attribution_mismatch: client-supplied identity conflicts with login binding; using login binding"
                 );
                 http_session.detected_user = Some(bound);
@@ -352,7 +356,7 @@ impl ShardedSessionManager {
             info!(
                 session_id = %http_session.id,
                 network_session_id = ?http_session.network_session_id,
-                uri = %req.uri,
+                uri = %safe_uri,
                 method = ?req.method,
                 host = ?req.host,
                 body_size = req.body_length,
@@ -373,7 +377,7 @@ impl ShardedSessionManager {
                     queue_depth = queue_depth,
                     capacity = HTTP_SESSION_QUEUE_CAPACITY,
                     session_id = %http_session.id,
-                    uri = %req.uri,
+                    uri = %safe_uri,
                     client_ip = %session_data.session.client_ip,
                     body_size = req.body_length,
                     "HTTP dataSecurity\u{4f1a}\u{8bdd}drop! Queue\u{5df2}full (Engine\u{8f7d})"

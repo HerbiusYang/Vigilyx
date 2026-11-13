@@ -1,0 +1,10 @@
+From: =?utf-8?B?5Y+R5biD57uE?= <release@corp.internal>
+To: all-staff@corp.internal
+Date: Wed, 26 Aug 2026 11:45:00 +0800
+Message-ID: <0035-b3@synth.example>
+Subject: 网关 1.9.4 发布说明
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+要点：超时分级回退、熔断阈值可配、修复 3 处内存泄漏。
+变更清单见 CHANGELOG，灰度比例 20% 起。

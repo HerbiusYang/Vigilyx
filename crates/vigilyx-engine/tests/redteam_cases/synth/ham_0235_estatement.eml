@@ -1,0 +1,10 @@
+From: =?utf-8?B?5oub5ZWG6ZO26KGM?= <estatement@cmb.example>
+To: me@personal.example
+Date: Sun, 06 Sep 2026 09:44:00 +0800
+Message-ID: <0034-b14@synth.example>
+Subject: 您的8月电子账单已生成
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><div style='background:#c7000b;color:#fff;padding:10px'>招商银行</div><p>您尾号 6688 的信用卡 8 月账单已生成，应还 ¥2,140.55。</p><p>请登录手机银行或官网查询，<b>本邮件不含链接</b>；我行不会索要卡号有效期与 CVV。</p></body></html>

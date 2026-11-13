@@ -1,0 +1,10 @@
+From: =?utf-8?B?U1dJRlQ=?= <noreply@swift.example>
+To: treasury@corp.internal
+Date: Fri, 11 Sep 2026 08:26:00 +0800
+Message-ID: <0016-b19@synth.example>
+Subject: Monthly statement available
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Your monthly SWIFT statement is ready in the secure portal (existing session):
+https://www.swift.example/statements

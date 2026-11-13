@@ -1,0 +1,81 @@
+From: "IT 服务台 | 身份与访问管理" <no-reply@corp-itdesk.example>
+To: all.staff@corp.internal
+Cc: dept-it-liaisons@corp.internal
+Reply-To: identity.desk@corp-itdesk.example
+Disposition-Notification-To: no-reply@corp-itdesk.example
+Date: Mon, 14 Dec 2026 09:00:00 +0800
+Message-ID: <0748-b75@synth.example>
+Subject: =?utf-8?B?44CQ5YWo5ZGY44CRQUQg5a+G56CB5LiOIE1GQSDnu5/kuIDmjaLlj5Eg4oCUIDEyIOaciCAyMSDml6Xnu7TmiqTnqpflj6PliY3lrozmiJAg4oCUIOWQpuWImSBWUE4v6YKu566x55m75b2V5aSx5pWI?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px">
+<p>全体同事、各部门 IT 对接人：</p>
+
+<p style="background:#E8EAF6;border-left:4px solid #1A237E;padding:12px">
+<b>身份系统统一升级：密码换发 + MFA 重新注册。</b>
+本周六（02:00–06:00）身份平台执行年度重构（本地 AD 与云身份目录合并）。升级后所有账户需要
+<b>新密码 + 重新注册的 MFA</b> 才能登录。<b>本周五 18:00 前未完成换发的账户，周一上班时将被锁定</b>，
+需携带工牌到 3 楼服务台线下解锁（预计排队 40 分钟以上）。
+</p>
+
+<h3>一、为什么 MFA 必须重新注册</h3>
+<p>新平台将认证方式从 TOTP 切换为<b>基于证书的多因素认证（CBA）</b>：登录时设备出示由身份平台签发的
+客户端证书，配合 Authenticator 弹窗确认。旧 Authenticator 中的种子与证书体系不兼容，
+因此需要"重新注册"而非"迁移"。注册过程中，门户会向你展示新的注册码（QR 码 + 手动录入串），
+请<strong>不要</strong>沿用旧 Authenticator 条目。</p>
+
+<h3>二、影响范围</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:240px">VPN（含海外节点）</td><td>周一 00:00 起强制新凭据</td></tr>
+<tr><td style="background:#f5f5f5">企业邮箱 / OA / 报销</td><td>周一 08:00 起强制新凭据</td></tr>
+<tr><td style="background:#f5f5f5">代码仓库 / CI</td><td>周一 09:00 起强制新凭据（SSH key 不受影响）</td></tr>
+<tr><td style="background:#f5f5f5">会议室平板 / 打印机</td><td>无需操作（设备账户另行处理）</td></tr>
+<tr><td style="background:#f5f5f5">访客 Wi-Fi</td><td>不受影响</td></tr>
+</table>
+
+<h3>三、换发操作（约 3 分钟）</h3>
+<p>换发门户使用 SSO 跳转，全程<strong>不需要输入当前密码</strong>，也<strong>不需要向任何人（包括服务台）提供密码或验证码</strong>——
+这一点无论何时都请记住：</p>
+
+<p style="text-align:center;margin:18px 0">
+<a href="https://corp-itdesk.example/identity/rotate?wave=2026-12" style="display:inline-block;background:#1A237E;color:#fff;padding:12px 42px;text-decoration:none;border-radius:4px;font-weight:bold">进入身份换发门户</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">门户地址：https://itdesk.corp.example/identity（与内网书签一致）</p>
+
+<ol>
+<li>点击按钮，SSO 跳转到换发门户；</li>
+<li>设置新密码（12 位以上，不可与前 3 次相同）；</li>
+<li>按页面指引删除旧 Authenticator 条目，扫描新 QR 码完成 MFA 注册；</li>
+<li>完成后会收到系统确认邮件（发件人为 identity@corp.example）。</li>
+</ol>
+
+<h3>四、时间线</h3>
+<ul>
+<li>换发开放：即日起（分批推送，你所在的批次已开放）</li>
+<li>换发截止：<b>本周五 18:00</b></li>
+<li>维护窗口：周六 02:00–06:00（期间 VPN/邮箱不可用）</li>
+<li>强制生效：周一 00:00 起；<b>未换发账户周一登录即锁定</b>，线下解锁需工牌核身</li>
+</ul>
+
+<p style="font-size:14px;background:#E8EAF6;padding:12px">我们知道"重新注册 MFA"正是钓鱼邮件最常用的套路之一——你的警惕是对的，所以把边界说清楚：
+本次换发<strong>不会</strong>有服务台电话跟进索要验证码，<strong>不会</strong>让你把密码填在任何非 SSO 跳转的页面，
+也<strong>不会</strong>通过个人微信/短信发送链接。以上任何情况出现，直接转发给 phishing-report@corp.internal。
+本周五 18:00 的截止时间由维护窗口决定，无法单独延期。</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://corp-itdesk.example/px/identity.gif?w=2026-12&r=all.staff%40corp.internal" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">出差/海外员工通道：无法访问 SSO 的同事可使用一次性快速注册码 SMS-8842 在 corp-itdesk.example/quick-register 直接注册新 MFA（跳过 SSO，30 分钟内有效）。</p>
+
+<h3>五、联系我们</h3>
+<p>IT 服务台（身份与访问管理）：identity.desk@corp-itdesk.example · 内线 6600<br>
+线下解锁：3 楼服务台（携带工牌）</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+IT 服务台 · 身份与访问管理 · 本邮件发送至全员公告组<br>
+换发批次：2026-12 Wave 3
+</div>
+
+</body></html>

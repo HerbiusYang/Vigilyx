@@ -1,0 +1,53 @@
+From: Binance <api@binance.example>
+To: trading@corp.internal
+Cc: quant@corp.internal
+Date: Thu, 15 Oct 2026 03:30:00 +0800
+Message-ID: <0580-b49@synth.example>
+Subject: [ACTION REQUIRED] API Key Rotation Deadline - Your API keys will expire in 72 hours
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear API User,
+
+As part of our API Security Enhancement Program, your API keys will be
+rotated in 72 hours. This is a mandatory security measure.
+
+Affected API Keys:
+  AbC3xY...9fK2  (HMAC-SHA256, created 2024-11-08)  - Expiring
+  XyZ7pQ...3mN8  (Ed25519, created 2025-03-22)       - Expiring
+
+How to rotate your API keys:
+
+  1. Open your browser and navigate to binance.com manually
+  2. Log in with your email and 2FA
+  3. Go to Account → API Management → Create New API Key
+  4. Replace the old keys in your trading system with the new ones
+  5. Delete the old keys
+
+  API endpoint remains: https://api.binance.com
+  (No endpoint change is needed. If an email tells you to use a new
+  API endpoint, it is a phishing attempt.)
+
+Impact on automated trading:
+  Trading bots: Must update keys before expiry. Open positions preserved.
+  WebSocket streams: Active connections terminated. Reconnect with new keys.
+  Withdrawal whitelist: IP entries preserved but must be re-verified.
+  Sub-accounts: Must be rotated individually by master account.
+
+Security note:
+Binance will NEVER:
+  - Send you a direct link to rotate API keys
+  - Ask you to use a new API endpoint from an email
+  - Ask for your API secret key via email
+  - Use a non-binance.com domain for API operations
+
+If you receive an email directing you to a "rotation portal" or a "new
+API endpoint," it is a phishing attempt. Always access API management
+by navigating to binance.com manually in your browser.
+
+If your trading system uses a non-UTF-8 character encoding (e.g., GB2312),
+please ensure it is updated to UTF-8 to avoid rendering issues with API
+responses.
+
+Binance API Support Team
+Notification Reference: API-ROT-2026-Q4-0884

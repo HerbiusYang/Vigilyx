@@ -1,0 +1,11 @@
+From: =?utf-8?B?572R57uc5pyN5Yqh?= <vpn@net-ops.example>
+To: remote@corp.internal
+Date: Thu, 27 Aug 2026 09:16:00 +0800
+Message-ID: <0001-b4@synth.example>
+Subject: VPN 接入证书到期提醒（72小时）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您当前的 VPN 接入证书将在 72 小时后失效，届时无法远程办公。
+请提前换发：https://vpn-cert-renew.example.net/apply
+（换发需使用域账号登录，请勿使用公共网络操作）

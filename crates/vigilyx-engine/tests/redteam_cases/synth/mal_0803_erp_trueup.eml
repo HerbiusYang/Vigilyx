@@ -1,0 +1,114 @@
+From: "InforGiant | License Compliance Office" <audit.licensing@inforgiant-compliance.example>
+To: erp-ops@corp.internal
+Cc: procurement@corp.internal, legal.software@corp.internal
+Reply-To: trueup.desk@ig-licensing.example
+Date: Tue, 13 Apr 2027 06:00:00 +0000
+Message-ID: <0803-b93@synth.example>
+Subject: [TRUE-UP] 2026 License Audit - 86 Unlicensed ERP Seats - Settlement USD 286,440 Before Support Contract Suspension on May 1
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+ERP Operations, Procurement, Software Counsel,
+
+2026 LICENSE TRUE-UP NOTICE - AUDIT
+REFERENCE IG-AUD-2026-1184.
+
+The annual license audit of your InforGiant
+ERP estate is complete. Usage telemetry
+shows 86 named-user seats active beyond
+your entitlement of 400. Under your
+license agreement's true-up clause, the
+settlement below is due BEFORE May 1;
+unpaid true-ups historically trigger support
+contract suspension at renewal.
+
+1. AUDIT SUMMARY (IG-AUD-2026-1184)
+
+  Entitlement:        400 named-user
+                      seats (2021
+                      agreement, IG-ENT-
+                      2021-04417)
+  Peak active users:  486 (November
+                      2026, year-end
+                      close period)
+  Over-usage:         86 seats x 9
+                      months avg
+  Telemetry basis:    Monthly active
+                      user reports
+                      (your LMS portal
+                      mirrors the same
+                      data)
+
+2. TRUE-UP SETTLEMENT
+
+  License true-up
+  (86 seats, prorated):      USD 244,080
+  Support back-coverage
+  (9 months):                USD 42,360
+  ---------------------------------------
+  Total settlement:          USD 286,440
+
+  Settlement should be
+  remitted to the regional
+  licensing settlement
+  account (true-ups are
+  processed outside the
+  standard renewal invoice
+  cycle):
+
+    Beneficiary: InforGiant
+                Licensing
+                Solutions Ltd.
+    IBAN: CY17 0020 0120 0000 4510 8842
+    SWIFT: TSTBCY2N
+    Reference: IG-AUD-2026-1184
+
+3. WHAT HAPPENS WITHOUT SETTLEMENT
+
+  - May 1: support contract
+    moves to suspension
+    processing at renewal
+    (no patches, no
+    regulatory updates -
+    your Q2 SOX cycle
+    depends on the 12.4
+    patch train)
+  - Escalation track:
+    usage data passes to
+    the anti-piracy
+    referral process
+  - Reinstatement:
+    settlement + 12-month
+    support prepay
+
+4. ABOUT THIS NOTICE
+
+  We know vendor audit letters that end
+  in urgent wires are a fraud pattern -
+  your software counsel's caution is
+  appropriate. Checks: the audit
+  reference and the monthly active-user
+  data are visible in your LMS portal
+  ( Licensing -> Audits ); your account
+  manager can confirm the settlement
+  math on a call. One note: true-up
+  settlements are processed by the
+  regional licensing entity (hence the
+  Cyprus account), which is why the
+  beneficiary differs from your annual
+  renewal invoices. The May 1 date is
+  your support renewal date - the
+  suspension trigger is contractual,
+  not negotiable in email.
+
+5. CONTACT
+
+  True-up desk: trueup.desk@ig-licensing.example
+  Reference: IG-AUD-2026-1184 /
+  IG-ENT-2021-04417
+  Account manager: your usual desk
+  (number from your renewal paperwork)
+
+InforGiant | License Compliance Office
+This notice concerns agreement
+IG-ENT-2021-04417 only.

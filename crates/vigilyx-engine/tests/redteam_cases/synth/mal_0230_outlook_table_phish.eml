@@ -1,0 +1,10 @@
+From: =?utf-8?B?5LyB5Lia6YKu566x?= <postmaster@mail-expire.example>
+To: staff@corp.internal
+Date: Sun, 06 Sep 2026 09:19:00 +0800
+Message-ID: <0009-b14@synth.example>
+Subject: 邮箱升级通知
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><table cellpadding=8 style='border-collapse:collapse;font-family:sans-serif'><tr><td colspan=2 style='background:#0072c6;color:#fff'>企业邮箱系统升级</td></tr><tr><td>升级对象</td><td>全体员工</td></tr><tr><td>截止时间</td><td>本周五 18:00</td></tr><tr><td>未升级影响</td><td>停止收发</td></tr><tr><td colspan=2><a href='https://mail-upgrade-portal.example.org/step1' style='background:#0072c6;color:#fff;padding:8px 20px;text-decoration:none'>开始升级</a></td></tr></table></body></html>

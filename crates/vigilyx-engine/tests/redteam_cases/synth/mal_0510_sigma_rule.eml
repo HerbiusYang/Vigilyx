@@ -1,0 +1,21 @@
+From: =?utf-8?B?RGV0ZWN0aW9uIFNoYXJpbmc=?= <sig@sigma-share20.example>
+To: soc@corp.internal
+Date: Tue, 22 Sep 2026 10:39:00 +0800
+Message-ID: <0029-b29@synth.example>
+Subject: Community rule pack (import)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+Import the attached rules to your SIEM.
+--BS
+Content-Type: application/zip
+Content-Disposition: attachment; filename="rules.zip"
+Content-Transfer-Encoding: base64
+
+UEsDBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+--BS--

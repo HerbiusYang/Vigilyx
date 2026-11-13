@@ -1,0 +1,104 @@
+From: UN World Food Programme Procurement <procurement.awards@wfp-un-procurement.example>
+To: contract@corp.internal
+Cc: finance@corp.internal, legal@corp.internal, ceo@corp.internal
+Reply-To: awards.desk@wfp-procmail.example
+Date: Tue, 03 Nov 2026 10:00:00 +0100
+Disposition-Notification-To: procurement.awards@wfp-un-procurement.example
+Message-ID: <0727-b68@synth.example>
+Subject: [CONTRACT AWARD] WFP/2026/FR/8842 — Email Security Services for Field Operations — Advance payment available upon banking verification
+MIME-Version: 1.0
+Content-Type: text/html; charset=gb2312
+
+<html><body style="font-family:sans-serif">
+<p>Contract Team, Finance, Legal, CEO:</p>
+
+<p>Congratulations! The United Nations World Food Programme (WFP) is pleased to inform you that your company has been selected for the award of <b>Contract WFP/2026/FR/8842</b> following competitive bidding process <b>RFQ/2026/FR/2210</b>.</p>
+
+<h3>一、Contract Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:200px">Contract Number</td><td><b>WFP/2026/FR/8842</b></td></tr>
+<tr><td style="background:#f5f5f5">RFQ Reference</td><td>RFQ/2026/FR/2210 (closed August 28, 2026)</td></tr>
+<tr><td style="background:#f5f5f5">Title</td><td>Email Security Services for WFP Field Operations</td></tr>
+<tr><td style="background:#f5f5f5">Scope</td><td>Supply, deployment, and 36-month support of email security gateway appliances for 42 country offices</td></tr>
+<tr><td style="background:#f5f5f5">Contract Value</td><td><b>USD $2,840,000.00</b></td></tr>
+<tr><td style="background:#f5f5f5">Duration</td><td>36 months (January 2027 — December 2029)</td></tr>
+<tr><td style="background:#f5f5f5">Bidders</td><td>7 companies submitted (4 qualified)</td></tr>
+<tr><td style="background:#f5f5f5">Technical Score</td><td>82.4/100 (highest among qualified bidders)</td></tr>
+<tr><td style="background:#f5f5f5">Award Date</td><td>November 2, 2026</td></tr>
+<tr><td style="background:#f5f5f5">Contract Signing Deadline</td><td style="color:#e00"><b>November 21, 2026 (18 days)</b></td></tr>
+</table>
+
+<h3>二、Advance Payment Available</h3>
+<p>WFP offers qualified vendors an <b>advance payment of 20%</b> ($568,000) upon contract signing to support initial procurement and deployment costs. This is available under WFP's Vendor Support Programme for contracts exceeding $1M.</p>
+
+<p>To receive the advance payment, banking verification must be completed:</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://wfp-un-procurement.example/vendor/banking-verify/contract/8842" style="display:inline-block;background:#0FA5E9;color:#fff;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Complete Banking Verification — $568,000 Advance</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://www.wfp.org/vendor-portal/banking-verification</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（UN Supplier Portal authentication required）</p>
+
+<h3>About UN Supplier Portal Authentication</h3>
+<p>When you click the verification button, you will be redirected to <b>supplier.un.org</b> (the UN's official supplier identity portal) for authentication:</p>
+<ol>
+<li>Sign in with your UN Global Marketplace (UNGM) credentials</li>
+<li>Grant the requested permissions</li>
+<li>Complete the banking verification form</li>
+<li>Upload supporting documentation</li>
+</ol>
+
+<p style="font-size:14px;background:#E1F5FE;padding:12px;border-radius:4px">
+<b>Why banking verification for advance payments?</b> The UN requires banking verification for all advance payments to prevent fraud and ensure funds reach the correct recipient. For vendors from non-UN member states, additional documentation is required: company registration, tax clearance certificate, and bank confirmation letter. The offline_access permission maintains your session during the multi-section form (banking + tax + compliance = typically 25-30 minutes).
+</p>
+
+<h3>三、Required Documentation for Advance Payment</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Document</th><th>Format</th><th>Priority</th></tr>
+<tr><td>Bank account details (SWIFT + account number)</td><td>Form</td><td style="color:#e00">Critical</td></tr>
+<tr><td>Company registration certificate</td><td>PDF</td><td style="color:#e00">Critical</td></tr>
+<tr><td>Tax clearance certificate</td><td>PDF</td><td>High</td></tr>
+<tr><td>Bank confirmation letter</td><td>PDF</td><td>High</td></tr>
+<tr><td>Authorized signatory passport</td><td>PDF</td><td>High</td></tr>
+<tr><td>UN Supplier Code of Conduct (signed)</td><td>PDF</td><td>Medium</td></tr>
+</table>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文供应商服务或提交中国银行信息，请访问 wfp-un-procurement.example/cn-vendor 上传公司注册证书与银行对账单（中文通道，当日处理）。</p>
+
+<h3>四、Deployment Schedule</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td><b>January 2027</b></td><td>Contract signing + advance payment released</td></tr>
+<tr><td>February - April 2027</td><td>Phase 1: 15 country offices (East Africa + Middle East)</td></tr>
+<tr><td>May - August 2027</td><td>Phase 2: 14 country offices (Asia Pacific)</td></tr>
+<tr><td>September - December 2027</td><td>Phase 3: 13 country offices (Latin America + Caribbean)</td></tr>
+</table>
+
+<h3>五、Your Technical Proposal Highlights</h3>
+<ul>
+<li><b>Gateway deployment:</b> 42 Vigilyx GW-5000 units with local processing</li>
+<li><b>Network integration:</b> VSAT + terrestrial failover for field offices</li>
+<li><b>Training:</b> 2-day on-site training for IT staff at each country office</li>
+<li><b>Support:</b> 24/7 support with 4-hour response for critical incidents</li>
+<li><b>Data sovereignty:</b> All email filtering occurs in-country (no data leaves the country office)</li>
+</ul>
+
+<h3>六、Contact</h3>
+<p><b>WFP Procurement Division:</b><br>
+Officer: Amara Diallo<br>
+Phone: +39 06 6513 ****<br>
+Email: awards.desk@wfp-procmail.example<br>
+Address: Via Cesare Giulio Viola 68/70, 00148 Rome, Italy</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">United Nations World Food Programme | Procurement Division</p>
+<p style="font-size:11px;color:#999">Via Cesare Giulio Viola 68/70, 00148 Rome, Italy</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the designated contact for Bidder ID BID-8842.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://wfp-un-procurement.example/api/track?recipient=contract%40corp.internal&contract=8842&type=award_notice" width="1" height="1" alt="">
+</div>
+
+</body></html>

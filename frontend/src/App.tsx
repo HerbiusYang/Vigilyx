@@ -228,6 +228,7 @@ function RealtimeBridge({
 
       if (parsed.type === 'SecurityVerdict') {
         notifySecurityVerdict(parsed)
+        window.dispatchEvent(new CustomEvent(EVENTS.SECURITY_VERDICT, { detail: parsed.data }))
         window.dispatchEvent(new Event(EVENTS.DASHBOARD_REFRESH))
       } else if (parsed.type === 'Alert') {
         // High-frequency WS payloads must not be passed as props; notify via window event
@@ -250,6 +251,7 @@ function RealtimeBridge({
 function AppContent({ onLogout, authUser }: AppContentProps) {
   const { t } = useTranslation()
   const { theme, toggleTheme } = useTheme()
+  const location = useLocation()
   const [realtimeConnection, setRealtimeConnection] = useState<RealtimeConnection>(INITIAL_REALTIME_CONNECTION)
   const [deployMode, setDeployMode] = useState<string>(
     () => localStorage.getItem('vigilyx-deploy-mode') || 'mirror'
@@ -367,7 +369,7 @@ function AppContent({ onLogout, authUser }: AppContentProps) {
         </div>
       </header>
 
-      <main className="main">
+      <main className={`main${location.pathname === '/security/overview' ? ' main--security-overview' : location.pathname.startsWith('/security/') ? ' main--security' : location.pathname === '/emails' ? ' main--wide' : ''}`}>
         <ChunkErrorBoundary><Suspense fallback={<div className="page-loading">{t('app.loading')}</div>}>
           <Routes>
             <Route path="/" element={<Dashboard />} />

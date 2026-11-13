@@ -1,12 +1,14 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import type { EmailSession, Protocol, SessionStatus, ApiResponse, PaginatedResponse } from '../../types'
+import type { EmailSession, Protocol, SessionStatus, ApiResponse, PaginatedResponse, SessionCountResponse } from '../../types'
 import { decodeMimeWord } from '../../utils/mime'
 import { formatBytes, formatDate, getRelativeTime, getServerNowMs, isEncryptedPort } from '../../utils/format'
 import { apiFetch } from '../../utils/api'
 import { EVENTS } from '../../utils/events'
 import { getSensitiveSetting } from '../../utils/sensitiveStorage'
+import { usePrivacyPolicy } from '../../hooks/usePrivacyPolicy'
+import { threatTypeLabel } from './categoryLabels'
 
 // ========================================
 // Types
@@ -31,6 +33,79 @@ type DirectionFilter = 'ALL' | 'inbound' | 'outbound'
 type SessionDirection = 'inbound' | 'outbound' | null
 
 const TRAFFIC_LIST_STATE_KEY = 'vigilyx-email-list-state'
+const RELATIVE_FILTER_SNAPSHOT_MS = 60_000
+
+/** `auto` fills the visible table height; the numbers are fixed page sizes. */
+type PageSizeChoice = 'auto' | 20 | 50 | 100
+const FIXED_PAGE_SIZES = [20, 50, 100] as const
+/** Rows are single-line (`td` is nowrap); this matches the fit layout's padded row. */
+const FIT_ROW_HEIGHT_PX = 37
+const FIT_MIN_ROWS = 5
+const FIT_MAX_ROWS = 200
+/** Cards have no fixed height, so the automatic size uses a fixed batch there. */
+const CARD_AUTO_PAGE_SIZE = 24
+
+function readPageSizeChoice(
+  params: URLSearchParams,
+  storedState: Record<string, string | number>,
+): PageSizeChoice {
+  const stored = storedState.page_size
+  const value = Number(params.get('page_size') ?? (stored !== undefined ? stored : 'auto'))
+  return (FIXED_PAGE_SIZES as readonly number[]).includes(value) ? value as PageSizeChoice : 'auto'
+}
+
+function readDirectionRules() {
+  return {
+    inboundSrc: getSensitiveSetting('vigilyx-inbound-src') || '',
+    inboundDst: getSensitiveSetting('vigilyx-inbound-dst') || '',
+    outboundSrc: getSensitiveSetting('vigilyx-outbound-src') || '',
+    outboundDst: getSensitiveSetting('vigilyx-outbound-dst') || '',
+  }
+}
+
+interface SessionListSnapshot {
+  query: string
+  capturedAt: number
+  relativeTime: boolean
+}
+
+function pageQuery(snapshot: SessionListSnapshot, page: number, after?: string): string {
+  const params = new URLSearchParams(snapshot.query)
+  params.set('page', String(page))
+  params.set('skip_count', 'true')
+  if (after) params.set('after', after)
+  return params.toString()
+}
+
+/**
+ * Keep list subjects useful without exposing their plaintext. The API already
+ * applies this projection; repeating it here keeps older API responses safe
+ * during a rolling deployment and is idempotent for already-masked values.
+ */
+function maskEmailListSubject(subject: string): string {
+  const SUBJECT_MASK = '******'
+  const chars = Array.from(subject.trim())
+  if (chars.length === 0) return ''
+  if (chars.every(char => char === '*')) return SUBJECT_MASK
+  if (chars.length >= SUBJECT_MASK.length + 2 && chars.slice(1, -1).every(char => char === '*')) {
+    return subject.trim()
+  }
+  if (chars.length < 2) return SUBJECT_MASK
+  return `${chars[0]}${SUBJECT_MASK}${chars[chars.length - 1]}`
+}
+
+export function getEmailListSubject(
+  subject: string | null,
+  isEncrypted: boolean,
+  noSubjectLabel: string,
+  encryptedLabel: string,
+  privacyEnabled = true,
+): string {
+  const trimmedSubject = subject?.trim()
+  return trimmedSubject
+    ? (privacyEnabled ? maskEmailListSubject(trimmedSubject) : trimmedSubject)
+    : (isEncrypted ? encryptedLabel : noSubjectLabel)
+}
 
 /** Keep the list filters when navigating away and returning to the mail list. */
 function readTrafficListState(): Record<string, string | number> {
@@ -120,12 +195,57 @@ const SkeletonCard = () => (
   </div>
 )
 
+const TRAFFIC_TABLE_COLUMNS = 10
+
 const SkeletonRow = () => (
   <tr className="skeleton-row">
-    {Array.from({ length: 11 }, (_, i) => (
+    {Array.from({ length: TRAFFIC_TABLE_COLUMNS }, (_, i) => (
       <td key={i}><div className="skeleton-line narrow" /></td>
     ))}
   </tr>
+)
+
+/**
+ * Fixed-layout column plan: short columns get compact widths and the subject
+ * absorbs the remaining space. Session status is a dot in the protocol column
+ * and threat type shares the risk column with the security level.
+ */
+const TrafficTableHead = () => {
+  const { t } = useTranslation()
+  return (
+    <>
+      <colgroup>
+        <col className="tcol-protocol" />
+        <col className="tcol-direction" />
+        <col className="tcol-risk" />
+        <col />
+        <col className="tcol-party" />
+        <col className="tcol-party" />
+        <col className="tcol-size" />
+        <col className="tcol-attach" />
+        <col className="tcol-time" />
+        <col className="tcol-actions" />
+      </colgroup>
+      <thead>
+        <tr>
+          <th>{t('emailSecurity.colProtocol')}</th>
+          <th title={t('emailSecurity.colDirection')}>{t('emailSecurity.colDirection')}</th>
+          <th>{t('emailSecurity.colRisk')}</th>
+          <th>{t('emailSecurity.colSubject')}</th>
+          <th>{t('emailSecurity.sender')}</th>
+          <th>{t('emailSecurity.recipient')}</th>
+          <th className="num-cell">{t('emailSecurity.colSize')}</th>
+          <th className="num-cell" title={t('emailSecurity.colAttachments')}>{t('emailSecurity.colAttachments')}</th>
+          <th>{t('emailSecurity.colTime')}</th>
+          <th>{t('emailSecurity.colActions')}</th>
+        </tr>
+      </thead>
+    </>
+  )
+}
+
+const MutedDash = ({ title }: { title?: string }) => (
+  <span className="cell-muted" title={title}>–</span>
 )
 
 // ========================================
@@ -135,7 +255,9 @@ const SkeletonRow = () => (
 const DirectionBadge = ({ clientIp, serverIp }: { clientIp: string; serverIp: string }) => {
   const { t } = useTranslation()
   const dir = detectDirection(clientIp, serverIp)
-  if (!dir) return <span className="direction-badge none">-</span>
+  if (!dir) {
+    return <span className="direction-badge none" title={t('emailSecurity.directionUnknownTitle')}>–</span>
+  }
   return (
     <span className={`direction-badge ${dir}`}>
       {dir === 'inbound' ? t('emailSecurity.inbound') : t('emailSecurity.outbound')}
@@ -143,7 +265,29 @@ const DirectionBadge = ({ clientIp, serverIp }: { clientIp: string; serverIp: st
   )
 }
 
-const EmailCard = React.memo(({ session, detailHref }: { session: EmailSession; detailHref: string }) => {
+const SESSION_STATUS_KEYS: Record<SessionStatus, string> = {
+  active: 'emailSecurity.statusActive',
+  completed: 'emailSecurity.statusCompleted',
+  timeout: 'emailSecurity.statusTimeout',
+  error: 'emailSecurity.statusError',
+}
+
+/** Most sessions are completed, so the status is a dot with its text on hover. */
+const StatusDot = ({ status }: { status: SessionStatus }) => {
+  const { t } = useTranslation()
+  const label = t('emailSecurity.statusTitle', { status: t(SESSION_STATUS_KEYS[status] ?? status) })
+  return <span className={`status-dot status-dot--${status}`} role="img" aria-label={label} title={label} />
+}
+
+const THREAT_LEVEL_KEYS: Record<string, string> = {
+  safe: 'emailSecurity.threatSafe',
+  low: 'emailSecurity.threatLow',
+  medium: 'emailSecurity.threatMedium',
+  high: 'emailSecurity.threatHigh',
+  critical: 'emailSecurity.threatCritical',
+}
+
+const EmailCard = React.memo(({ session, detailHref, privacyEnabled }: { session: EmailSession; detailHref: string; privacyEnabled: boolean }) => {
   const { t } = useTranslation()
   const isEncrypted = session.content?.is_encrypted || isEncryptedPort(session.server_port)
   const hasContent = session.content?.body_text || session.content?.body_html
@@ -151,6 +295,13 @@ const EmailCard = React.memo(({ session, detailHref }: { session: EmailSession; 
   const linkCount = session.content?.links?.length || 0
   const suspiciousLinkCount = session.content?.links?.filter(l => l.suspicious).length || 0
   const decodedSubject = decodeMimeWord(session.subject)
+  const subjectLabel = getEmailListSubject(
+    decodedSubject,
+    isEncrypted,
+    t('emailSecurity.noSubject'),
+    t('emailSecurity.encrypted'),
+    privacyEnabled,
+  )
 
   return (
     <div className={`email-card ${isEncrypted ? 'encrypted' : ''}`}>
@@ -184,7 +335,7 @@ const EmailCard = React.memo(({ session, detailHref }: { session: EmailSession; 
       </div>
 
       <div className="email-card-subject">
-        {decodedSubject || (isEncrypted ? t('emailSecurity.encrypted') : t('emailSecurity.noSubject'))}
+        {subjectLabel}
       </div>
 
       <div className="email-card-participants">
@@ -258,8 +409,6 @@ const EmailCard = React.memo(({ session, detailHref }: { session: EmailSession; 
           <RescanButton sessionId={session.id} disabled={isEncrypted} />
           <WhitelistButton
             sessionId={session.id}
-            email={session.mail_from}
-            ip={session.client_ip}
             disabled={isEncrypted}
           />
         </div>
@@ -274,22 +423,57 @@ const EmailCard = React.memo(({ session, detailHref }: { session: EmailSession; 
 
 const RescanButton = ({ sessionId, disabled }: { sessionId: string; disabled?: boolean }) => {
   const { t } = useTranslation()
-  const [state, setState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
+  const [state, setState] = useState<'idle' | 'loading' | 'analyzing' | 'done' | 'error'>('idle')
+  const resetTimerRef = useRef<number | null>(null)
+  const completedRef = useRef(false)
+  const activeRef = useRef(false)
+
+  useEffect(() => {
+    const onSecurityVerdict = (event: Event) => {
+      const detail = (event as CustomEvent<{ session_id?: unknown }>).detail
+      if (detail?.session_id !== sessionId || !activeRef.current) return
+      completedRef.current = true
+      activeRef.current = false
+      setState(() => {
+        if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current)
+        resetTimerRef.current = window.setTimeout(() => setState('idle'), 2500)
+        return 'done'
+      })
+    }
+    window.addEventListener(EVENTS.SECURITY_VERDICT, onSecurityVerdict)
+    return () => {
+      window.removeEventListener(EVENTS.SECURITY_VERDICT, onSecurityVerdict)
+      if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current)
+    }
+  }, [sessionId])
 
   const handleRescan = async (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    if (state === 'loading') return
+    if (state === 'loading' || state === 'analyzing') return
+    if (resetTimerRef.current) window.clearTimeout(resetTimerRef.current)
+    completedRef.current = false
+    activeRef.current = true
     setState('loading')
     try {
       const res = await apiFetch(`/api/sessions/${sessionId}/rescan`, { method: 'POST' })
-      if (!res.ok) { setState('error'); return }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
-      setState(data.success ? 'done' : 'error')
+      if (!data.success) throw new Error(data.error || 'Rescan rejected')
+      // The API acknowledges queueing only. The matching SecurityVerdict
+      // event marks the actual completion and triggers the list refresh.
+      if (completedRef.current) return
+      setState('analyzing')
+      resetTimerRef.current = window.setTimeout(() => {
+        activeRef.current = false
+        setState(current => current === 'analyzing' ? 'error' : current)
+        resetTimerRef.current = window.setTimeout(() => setState('idle'), 2500)
+      }, 15_000)
     } catch {
+      activeRef.current = false
       setState('error')
+      resetTimerRef.current = window.setTimeout(() => setState('idle'), 2500)
     }
-    setTimeout(() => setState('idle'), 2000)
   }
 
   if (disabled) return null
@@ -298,11 +482,12 @@ const RescanButton = ({ sessionId, disabled }: { sessionId: string; disabled?: b
     <button
       className={`table-action rescan-btn rescan-btn--${state}`}
       onClick={handleRescan}
-      disabled={state === 'loading'}
+      disabled={state === 'loading' || state === 'analyzing'}
       title={t('emailSecurity.rescanTitle')}
     >
       {state === 'idle' && t('emailSecurity.rescanIdle')}
-      {state === 'loading' && '...'}
+      {state === 'loading' && t('emailSecurity.rescanSubmitting')}
+      {state === 'analyzing' && t('emailSecurity.rescanAnalyzing')}
       {state === 'done' && t('emailSecurity.rescanDone')}
       {state === 'error' && t('emailSecurity.rescanError')}
     </button>
@@ -311,28 +496,35 @@ const RescanButton = ({ sessionId, disabled }: { sessionId: string; disabled?: b
 
 export const WhitelistButton = ({
   sessionId,
-  email,
-  ip,
   disabled,
 }: {
   sessionId: string
-  email: string | null
-  ip: string
   disabled?: boolean
 }) => {
   const { t } = useTranslation()
   const [state, setState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
+  const [iocCleanup, setIocCleanup] = useState<{ deleted: number; preserved: number } | null>(null)
 
   const handleWhitelist = async (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    if (state === 'loading' || state === 'done' || !email) return
+    if (state === 'loading' || state === 'done') return
     setState('loading')
+    setIocCleanup(null)
     try {
       const res = await apiFetch(`/api/sessions/${sessionId}/whitelist`, { method: 'POST' })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data: ApiResponse<unknown> = await res.json()
+      const data: ApiResponse<{
+        ioc_cleanup?: { deleted?: number; preserved_shared?: number }
+      }> = await res.json()
       if (!data.success) throw new Error(data.error || 'Whitelist rejected')
+      const cleanup = data.data?.ioc_cleanup
+      if (cleanup && typeof cleanup === 'object') {
+        setIocCleanup({
+          deleted: typeof cleanup.deleted === 'number' ? cleanup.deleted : 0,
+          preserved: typeof cleanup.preserved_shared === 'number' ? cleanup.preserved_shared : 0,
+        })
+      }
       setState('done')
     } catch (error) {
       console.error('Whitelist failed:', error)
@@ -341,29 +533,42 @@ export const WhitelistButton = ({
     }
   }
 
-  if (disabled || !email) return null
+  if (disabled) return null
 
   return (
     <button
       className={`table-action whitelist-btn whitelist-btn--${state}`}
       onClick={handleWhitelist}
       disabled={state === 'loading' || state === 'done'}
-      title={t('emailSecurity.whitelistTitle', { email, ip })}
+      title={t('emailSecurity.whitelistDesc')}
     >
       {state === 'idle' && t('emailSecurity.whitelistListAction')}
       {state === 'loading' && '...'}
-      {state === 'done' && t('emailSecurity.whitelistListDone')}
+      {state === 'done' && (iocCleanup
+        ? t('emailSecurity.whitelistListDoneWithIoc', iocCleanup)
+        : t('emailSecurity.whitelistListDone'))}
       {state === 'error' && t('emailSecurity.whitelistListError')}
     </button>
   )
 }
 
-const EmailRow = React.memo(({ session, detailHref }: { session: EmailSession; detailHref: string }) => {
+const EmailRow = React.memo(({ session, detailHref, privacyEnabled }: { session: EmailSession; detailHref: string; privacyEnabled: boolean }) => {
   const { t } = useTranslation()
   const isEncrypted = session.content?.is_encrypted || isEncryptedPort(session.server_port)
   const attachmentCount = session.content?.attachments?.length || 0
   const decodedSubject = decodeMimeWord(session.subject)
+  const subjectLabel = getEmailListSubject(
+    decodedSubject,
+    isEncrypted,
+    t('emailSecurity.noSubject'),
+    t('emailSecurity.encrypted'),
+    privacyEnabled,
+  )
   const navigate = useNavigate()
+  const threatLevelKey = session.threat_level ? THREAT_LEVEL_KEYS[session.threat_level] : undefined
+  const threatLevelText = threatLevelKey ? t(threatLevelKey) : ''
+  const threatTypeText = threatTypeLabel(session.threat_type) ?? ''
+  const riskTitle = [threatLevelText, threatTypeText].filter(Boolean).join(' · ')
 
   return (
     <tr
@@ -377,6 +582,7 @@ const EmailRow = React.memo(({ session, detailHref }: { session: EmailSession; d
     >
       <td>
         <div className="cell-badges">
+          <StatusDot status={session.status} />
           <span className={`protocol-badge ${session.protocol.toLowerCase()}`}>
             {session.protocol}
           </span>
@@ -392,41 +598,34 @@ const EmailRow = React.memo(({ session, detailHref }: { session: EmailSession; d
       <td>
         <DirectionBadge clientIp={session.client_ip} serverIp={session.server_ip} />
       </td>
-      <td>
-        <span className={`status-badge ${session.status}`}>
-          {session.status === 'active' && t('emailSecurity.statusActive')}
-          {session.status === 'completed' && t('emailSecurity.statusCompleted')}
-          {session.status === 'timeout' && t('emailSecurity.statusTimeout')}
-          {session.status === 'error' && t('emailSecurity.statusError')}
-        </span>
-      </td>
-      <td>
-        {session.threat_level ? (
-          <span className={`threat-badge threat-badge--${session.threat_level}`}>
-            {session.threat_level === 'safe' && t('emailSecurity.threatSafe')}
-            {session.threat_level === 'low' && t('emailSecurity.threatLow')}
-            {session.threat_level === 'medium' && t('emailSecurity.threatMedium')}
-            {session.threat_level === 'high' && t('emailSecurity.threatHigh')}
-            {session.threat_level === 'critical' && t('emailSecurity.threatCritical')}
+      <td title={riskTitle || undefined}>
+        {threatLevelText || threatTypeText ? (
+          <span className="risk-cell">
+            {threatLevelText && (
+              <span className={`threat-badge threat-badge--${session.threat_level}`}>{threatLevelText}</span>
+            )}
+            {threatTypeText && <span className="threat-type-badge">{threatTypeText}</span>}
           </span>
         ) : (
-          <span className="threat-badge threat-badge--none">-</span>
+          <MutedDash />
         )}
       </td>
-      <td className="subject-cell" title={decodedSubject || undefined}>
-        {decodedSubject || (isEncrypted ? t('emailSecurity.encrypted') : t('emailSecurity.noSubject'))}
+      <td className="subject-cell" title={subjectLabel || undefined}>
+        {subjectLabel}
       </td>
-      <td className="col-sender" title={session.mail_from || undefined}>{session.mail_from || t('emailSecurity.unknown')}</td>
-      <td className="col-recipient" title={session.rcpt_to.join(', ') || undefined}>
+      <td title={session.mail_from || undefined}>
+        {session.mail_from || <span className="cell-muted">{t('emailSecurity.unknown')}</span>}
+      </td>
+      <td title={session.rcpt_to.join(', ') || undefined}>
         {session.rcpt_to.length > 0
           ? session.rcpt_to.length > 1
             ? `${session.rcpt_to[0]} +${session.rcpt_to.length - 1}`
             : session.rcpt_to[0]
-          : t('emailSecurity.unknown')}
+          : <span className="cell-muted">{t('emailSecurity.unknown')}</span>}
       </td>
       <td className="num-cell">{formatBytes(session.total_bytes)}</td>
       <td className="num-cell">
-        {attachmentCount > 0 ? `${attachmentCount}` : '-'}
+        {attachmentCount > 0 ? `${attachmentCount}` : <MutedDash />}
       </td>
       <td title={formatDate(session.started_at)}>
         {getRelativeTime(session.started_at)}
@@ -443,8 +642,6 @@ const EmailRow = React.memo(({ session, detailHref }: { session: EmailSession; d
           <RescanButton sessionId={session.id} disabled={isEncrypted} />
           <WhitelistButton
             sessionId={session.id}
-            email={session.mail_from}
-            ip={session.client_ip}
             disabled={isEncrypted}
           />
         </div>
@@ -462,6 +659,7 @@ const Quarantine = React.lazy(() => import('../quarantine/Quarantine'))
 
 export default function TrafficList() {
   const { t } = useTranslation()
+  const { enabled: privacyEnabled } = usePrivacyPolicy()
   const location = useLocation()
   const navigate = useNavigate()
   const initialParamsRef = useRef(new URLSearchParams(location.search))
@@ -497,13 +695,22 @@ export default function TrafficList() {
   const [autoRefreshInterval, setAutoRefreshInterval] = useState<number>(() =>
     readNumberParam(initialParams, 'refresh', 0, [0, 1000, 3000, 5000], storedState)
   ) // 0=off, 1000/3000/5000
+  // Authentication and session-status filters are folded away by default; an
+  // active value restored from the URL or storage keeps them visible.
+  const [showMoreFilters, setShowMoreFilters] = useState(() => authFilter !== 'ALL' || statusFilter !== 'ALL')
 
   // Display settings: enabled protocols (read from localStorage)
   const [enabledProtocols, setEnabledProtocols] = useState<Protocol[]>(getEnabledProtocols)
+  const [directionRules, setDirectionRules] = useState(readDirectionRules)
 
   // Listen for localStorage changes because the Settings page may update them
   useEffect(() => {
-    const onStorage = () => setEnabledProtocols(getEnabledProtocols())
+    const onStorage = () => {
+      const protocols = getEnabledProtocols()
+      setEnabledProtocols(previous => previous.join(',') === protocols.join(',') ? previous : protocols)
+      const rules = readDirectionRules()
+      setDirectionRules(previous => JSON.stringify(previous) === JSON.stringify(rules) ? previous : rules)
+    }
     window.addEventListener('storage', onStorage)
     // Also listen for custom events for Settings changes within the same tab
     window.addEventListener(EVENTS.DISPLAY_SETTINGS_CHANGED, onStorage)
@@ -516,25 +723,46 @@ export default function TrafficList() {
   // Data state - pagination
   const [sessions, setSessions] = useState<EmailSession[]>([])
   const [page, setPage] = useState(() => Math.max(1, readNumberParam(initialParams, 'page', 1)))
-  const [totalPages, setTotalPages] = useState(1)
+  const [totalPages, setTotalPages] = useState<number | null>(null)
   const [loading, setLoading] = useState(true) // Show the skeleton screen on first load
   const [fetching, setFetching] = useState(false) // Loading indicator for pagination/filter changes
   const [loadError, setLoadError] = useState<string | null>(null)
-  const [total, setTotal] = useState(0)
-  // Keep the first view breathable: ten rows is enough context without crowding
-  // the screen. An explicit page_size URL parameter still overrides this.
-  const [pageSize, setPageSize] = useState(() =>
-    readNumberParam(initialParams, 'page_size', 10, [10, 20, 50], storedState)
+  const [pageLoadError, setPageLoadError] = useState<string | null>(null)
+  const [total, setTotal] = useState<number | null>(null)
+  // A timed-out exact count falls back to a labelled database estimate.
+  const [totalExact, setTotalExact] = useState(true)
+  const [hasMore, setHasMore] = useState(false)
+  const [countLoading, setCountLoading] = useState(false)
+  const [countError, setCountError] = useState(false)
+  const [refreshError, setRefreshError] = useState(false)
+  const [snapshotVersion, setSnapshotVersion] = useState(0)
+  // By default a page holds as many rows as the visible table fits. An explicit
+  // page_size URL parameter or a remembered fixed choice overrides this.
+  const [pageSizeChoice, setPageSizeChoice] = useState<PageSizeChoice>(() =>
+    readPageSizeChoice(initialParams, storedState)
   )
+  const [fitRows, setFitRows] = useState<number | null>(null)
+  const autoFitTable = pageSizeChoice === 'auto' && viewMode === 'table'
+  const pageSize = pageSizeChoice !== 'auto' ? pageSizeChoice
+    : viewMode === 'card' ? CARD_AUTO_PAGE_SIZE : (fitRows ?? FIT_MIN_ROWS)
+  // The first list request waits for the measured row count.
+  const waitingForFit = autoFitTable && fitRows === null
+  const tableContainerRef = useRef<HTMLDivElement | null>(null)
   const [jumpInput, setJumpInput] = useState('')
 
   // Refs
   const abortRef = useRef<AbortController | null>(null)
   const refreshAbortRef = useRef<AbortController | null>(null)
+  const countAbortRef = useRef<AbortController | null>(null)
+  const snapshotRef = useRef<SessionListSnapshot | null>(null)
+  const pageCursorsRef = useRef(new Map<number, string>())
+  const hasRowsRef = useRef(false)
+  const rowsSnapshotRef = useRef<SessionListSnapshot | null>(null)
   const isInitialLoad = useRef(true)
   const fetchingPageRef = useRef(false) // Marks an in-flight pagination request so WS/polling writes can be suppressed
   const refreshingRef = useRef(false) // Marks an in-flight background refresh to avoid stacking interval/event requests
   const pageRef = useRef(page) // Always store the latest page number to avoid stale values inside WS/polling closures
+  const requestedPageRef = useRef(page)
 
   // Keep pageRef in sync
   useEffect(() => { pageRef.current = page }, [page])
@@ -550,9 +778,9 @@ export default function TrafficList() {
     if (viewMode !== 'table') params.set('view', viewMode)
     if (autoRefreshInterval > 0) params.set('refresh', String(autoRefreshInterval))
     if (page > 1) params.set('page', String(page))
-    if (pageSize !== 10) params.set('page_size', String(pageSize))
+    if (pageSizeChoice !== 'auto') params.set('page_size', String(pageSizeChoice))
     return params.toString()
-  }, [protocolFilter, statusFilter, contentFilter, timeFilter, directionFilter, authFilter, viewMode, autoRefreshInterval, page, pageSize])
+  }, [protocolFilter, statusFilter, contentFilter, timeFilter, directionFilter, authFilter, viewMode, autoRefreshInterval, page, pageSizeChoice])
 
   const detailSearch = useMemo(
     () => (listStateSearch ? `?from=${encodeURIComponent(`?${listStateSearch}`)}` : ''),
@@ -568,129 +796,174 @@ export default function TrafficList() {
   // Build query string (does NOT depend on page for filter-based reset)
   // ========================================
 
-  const buildQueryString = useCallback((pageNum: number, skipCount = false) => {
-    const params = new URLSearchParams({
-      page: String(pageNum),
-      limit: String(pageSize),
-    })
-    // Performance optimization: skip COUNT queries during auto-refresh/WS refreshes (~4.5s -> 0),
-    // and reuse the last total/totalPages values because they change slowly in the short term.
-    // Only query COUNT on the initial load and when the user manually changes pages.
-    if (skipCount) params.set('skip_count', 'true')
-    if (protocolFilter !== 'ALL') {
-      // The user manually selected a protocol
-      params.set('protocol', protocolFilter)
-    } else if (enabledProtocols.length > 0 && enabledProtocols.length < 3) {
-      // If "All" is selected but some protocols are disabled, show only enabled protocols
-      params.set('protocol', enabledProtocols.join(','))
-    }
+  const sourceIps = directionFilter === 'inbound' ? directionRules.inboundSrc
+    : directionFilter === 'outbound' ? directionRules.outboundSrc : ''
+  const destIps = directionFilter === 'inbound' ? directionRules.inboundDst
+    : directionFilter === 'outbound' ? directionRules.outboundDst : ''
+  const protocolsKey = enabledProtocols.join(',')
+  const filterSignature = useMemo(() => JSON.stringify({
+    protocolFilter, statusFilter, contentFilter, timeFilter, directionFilter,
+    authFilter, protocolsKey, pageSize, sourceIps, destIps,
+  }), [protocolFilter, statusFilter, contentFilter, timeFilter, directionFilter, authFilter, protocolsKey, pageSize, sourceIps, destIps])
+
+  // A list/count pair shares the exact same time cutoff and direction rules.
+  // Page changes reuse this snapshot and its count; relative windows renew at
+  // most once per minute when another refresh or page request is made.
+  const frozenSnapshot = useMemo<SessionListSnapshot>(() => {
+    const params = new URLSearchParams({ limit: String(pageSize) })
+    if (protocolFilter !== 'ALL') params.set('protocol', protocolFilter)
+    else if (protocolsKey && protocolsKey.split(',').length < 3) params.set('protocol', protocolsKey)
     if (statusFilter !== 'ALL') params.set('status', statusFilter)
     params.set('content_filter', contentFilter === 'WITH_CONTENT' ? 'WITH_CONTENT' : 'NON_ENCRYPTED')
     if (authFilter !== 'ALL') params.set('auth_filter', authFilter)
     if (timeFilter !== 'ALL') {
-      const ms: Record<string, number> = {
-        '30m': 30 * 60_000,
-        '1h': 60 * 60_000,
-        '6h': 6 * 60 * 60_000,
-        '24h': 24 * 60 * 60_000,
-      }
-      const since = new Date(getServerNowMs() - ms[timeFilter]).toISOString()
-      params.set('since', since)
+      const ms = { '30m': 30 * 60_000, '1h': 60 * 60_000, '6h': 6 * 60 * 60_000, '24h': 24 * 60 * 60_000 }
+      params.set('since', new Date(getServerNowMs() - ms[timeFilter]).toISOString())
     }
-    // Traffic-direction filtering: read the inbound/outbound rules configured in Settings
-    if (directionFilter !== 'ALL') {
-      const srcKey = directionFilter === 'inbound' ? 'vigilyx-inbound-src' : 'vigilyx-outbound-src'
-      const dstKey = directionFilter === 'inbound' ? 'vigilyx-inbound-dst' : 'vigilyx-outbound-dst'
-      const srcIps = getSensitiveSetting(srcKey) || ''
-      const dstIps = getSensitiveSetting(dstKey) || ''
-      if (srcIps) params.set('source_ips', srcIps)
-      if (dstIps) params.set('dest_ips', dstIps)
+    if (sourceIps) params.set('source_ips', sourceIps)
+    if (destIps) params.set('dest_ips', destIps)
+    return { query: params.toString(), capturedAt: Date.now(), relativeTime: timeFilter !== 'ALL' }
+  }, [protocolFilter, statusFilter, contentFilter, authFilter, timeFilter, directionFilter, protocolsKey, pageSize, sourceIps, destIps, snapshotVersion])
+
+  const translateRef = useRef(t)
+  useEffect(() => { translateRef.current = t }, [t])
+
+  const applyPageData = useCallback((data: PaginatedResponse<EmailSession>, pageNum: number) => {
+    // Earlier page refreshes invalidate later boundaries, including cached
+    // cursors from before a new insertion at the head of the list.
+    for (const knownPage of pageCursorsRef.current.keys()) {
+      if (knownPage > pageNum) pageCursorsRef.current.delete(knownPage)
     }
-    return params.toString()
-  }, [protocolFilter, statusFilter, contentFilter, authFilter, timeFilter, directionFilter, enabledProtocols, pageSize])
-
-  const applyPageData = useCallback((
-    data: ApiResponse<PaginatedResponse<EmailSession>>,
-    pageNum: number,
-    skipCount: boolean,
-  ) => {
-    if (!data.success || !data.data) return
-
-    setSessions(data.data.items)
+    if (data.has_more !== false && data.next_cursor) {
+      pageCursorsRef.current.set(pageNum + 1, data.next_cursor)
+    }
+    setSessions(data.items)
+    hasRowsRef.current = data.items.length > 0
+    rowsSnapshotRef.current = snapshotRef.current
+    setHasMore(data.has_more ?? data.items.length >= data.limit)
     setPage(pageNum)
+    pageRef.current = pageNum
+    // A skipped count's compatibility total=0 is not an empty result.
+    // Only the independent count request updates total and totalPages.
+  }, [])
 
-    if (!skipCount || data.data.total > 0) {
+  const fetchCount = useCallback(async (snapshot: SessionListSnapshot) => {
+    countAbortRef.current?.abort()
+    const controller = new AbortController()
+    countAbortRef.current = controller
+    const isCurrent = () => !controller.signal.aborted
+      && countAbortRef.current === controller && snapshotRef.current === snapshot
+    setCountLoading(true)
+    setCountError(false)
+    try {
+      const res = await apiFetch(`/api/sessions/count?${snapshot.query}`, { signal: controller.signal })
+      const data: ApiResponse<SessionCountResponse> = await res.json()
+      if (!isCurrent()) return
+      if (!data.success || !data.data
+        || !Number.isSafeInteger(data.data.total) || data.data.total < 0
+        || !Number.isSafeInteger(data.data.total_pages) || data.data.total_pages < 0) {
+        throw new Error('session_count_invalid')
+      }
+      // An estimate is shown as such; its page count could point past the real
+      // last page, so estimated totals keep the previous/next navigation.
+      const exact = data.data.exact !== false
       setTotal(data.data.total)
-      setTotalPages(data.data.total_pages)
+      setTotalExact(exact)
+      setTotalPages(exact ? data.data.total_pages : null)
+    } catch (e: unknown) {
+      if (!isCurrent()) return
+      if (e instanceof DOMException && e.name === 'AbortError') return
+      setCountError(true)
+    } finally {
+      if (isCurrent()) {
+        setCountLoading(false)
+        countAbortRef.current = null
+      }
     }
   }, [])
 
-  // ========================================
-  // Fetch: load page data
-  // ========================================
-
-  const fetchPage = useCallback(async (pageNum: number) => {
+  const fetchPage = useCallback(async (pageNum: number, background = false) => {
+    const snapshot = snapshotRef.current
+    if (!snapshot) return
+    if (!background) requestedPageRef.current = pageNum
+    if (snapshot.relativeTime && Date.now() - snapshot.capturedAt >= RELATIVE_FILTER_SNAPSHOT_MS) {
+      setSnapshotVersion(version => version + 1)
+      return
+    }
     abortRef.current?.abort()
     refreshAbortRef.current?.abort()
+    refreshAbortRef.current = null
+    refreshingRef.current = false
     const controller = new AbortController()
     abortRef.current = controller
     fetchingPageRef.current = true
+    const isCurrent = () => !controller.signal.aborted
+      && abortRef.current === controller && snapshotRef.current === snapshot
 
-    // Show the skeleton only on first load; keep existing data during pagination/filter changes and show a loading indicator
     if (isInitialLoad.current) setLoading(true)
     else setFetching(true)
+    setLoadError(null)
+    if (!background) setPageLoadError(null)
 
     try {
-      const qs = buildQueryString(pageNum)
-      const res = await apiFetch(`/api/sessions?${qs}`, { signal: controller.signal })
-      if (!res.ok) throw new Error(t('emailSecurity.sessionListLoadFailed'))
+      const res = await apiFetch(`/api/sessions?${pageQuery(snapshot, pageNum, pageCursorsRef.current.get(pageNum))}`, { signal: controller.signal })
       const data: ApiResponse<PaginatedResponse<EmailSession>> = await res.json()
-      if (!data.success || !data.data) throw new Error(data.error || t('emailSecurity.sessionListLoadFailed'))
-      applyPageData(data, pageNum, false)
-      setLoadError(null)
+      if (!isCurrent()) return
+      if (!data.success || !data.data) throw new Error(data.error || translateRef.current('emailSecurity.sessionListLoadFailed'))
+      applyPageData(data.data, pageNum)
+      if (pageNum === requestedPageRef.current) setPageLoadError(null)
+      setRefreshError(false)
     } catch (e: unknown) {
+      if (!isCurrent()) return
       if (e instanceof DOMException && e.name === 'AbortError') return
-      console.error('Failed to fetch sessions:', e)
-      setLoadError(e instanceof Error && e.message ? e.message : t('emailSecurity.sessionListLoadFailed'))
+      const message = e instanceof Error && e.message ? e.message : translateRef.current('emailSecurity.sessionListLoadFailed')
+      if (hasRowsRef.current && background) setRefreshError(true)
+      else if (hasRowsRef.current && rowsSnapshotRef.current === snapshot) setPageLoadError(message)
+      else setLoadError(message)
     } finally {
-      if (!controller.signal.aborted) {
+      if (isCurrent()) {
         setLoading(false)
         setFetching(false)
         isInitialLoad.current = false
         fetchingPageRef.current = false
+        abortRef.current = null
       }
     }
-  }, [applyPageData, buildQueryString, t])
+  }, [applyPageData])
 
   const refreshPage = useCallback(async (pageNum: number) => {
-    if (fetchingPageRef.current || refreshingRef.current) return
-
+    const snapshot = snapshotRef.current
+    if (!snapshot || fetchingPageRef.current || refreshingRef.current) return
+    if (snapshot.relativeTime && Date.now() - snapshot.capturedAt >= RELATIVE_FILTER_SNAPSHOT_MS) {
+      setSnapshotVersion(version => version + 1)
+      return
+    }
     const controller = new AbortController()
-    refreshAbortRef.current?.abort()
     refreshAbortRef.current = controller
     refreshingRef.current = true
+    const isCurrent = () => !controller.signal.aborted
+      && refreshAbortRef.current === controller && snapshotRef.current === snapshot
 
     try {
-      const qs = buildQueryString(pageNum, true)
-      const res = await apiFetch(`/api/sessions?${qs}`, { signal: controller.signal })
-      if (!res.ok) throw new Error(t('emailSecurity.sessionListRefreshFailed'))
+      const res = await apiFetch(`/api/sessions?${pageQuery(snapshot, pageNum, pageCursorsRef.current.get(pageNum))}`, { signal: controller.signal })
       const data: ApiResponse<PaginatedResponse<EmailSession>> = await res.json()
-      if (!data.success || !data.data) throw new Error(data.error || t('emailSecurity.sessionListRefreshFailed'))
-      if (!controller.signal.aborted) {
-        applyPageData(data, pageNum, true)
-        setLoadError(null)
-      }
+      if (!isCurrent()) return
+      if (!data.success || !data.data) throw new Error('session_list_refresh_failed')
+      applyPageData(data.data, pageNum)
+      setLoadError(null)
+      setRefreshError(false)
     } catch (e: unknown) {
+      if (!isCurrent()) return
       if (e instanceof DOMException && e.name === 'AbortError') return
-      console.error('Failed to refresh sessions:', e)
-      setLoadError(e instanceof Error && e.message ? e.message : t('emailSecurity.sessionListRefreshFailed'))
+      // A refresh failure must not replace usable rows with the empty/error view.
+      setRefreshError(true)
     } finally {
-      if (refreshAbortRef.current === controller) {
+      if (isCurrent()) {
         refreshAbortRef.current = null
+        refreshingRef.current = false
       }
-      refreshingRef.current = false
     }
-  }, [applyPageData, buildQueryString, t])
+  }, [applyPageData])
 
   // ========================================
   // Effect: Initial load & filter changes (reset to page 1)
@@ -716,34 +989,42 @@ export default function TrafficList() {
         auth_filter_mode: authFilter,
         view: viewMode,
         refresh: autoRefreshInterval,
-        page_size: pageSize,
+        page_size: pageSizeChoice,
       }))
     } catch {
       // Storage may be unavailable in private browsing; the list still works normally.
     }
-  }, [protocolFilter, statusFilter, contentFilter, timeFilter, directionFilter, authFilter, viewMode, autoRefreshInterval, pageSize])
+  }, [protocolFilter, statusFilter, contentFilter, timeFilter, directionFilter, authFilter, viewMode, autoRefreshInterval, pageSizeChoice])
 
-  const filterSignature = useMemo(
-    () => JSON.stringify({
-      protocolFilter,
-      statusFilter,
-      contentFilter,
-      timeFilter,
-      directionFilter,
-      authFilter,
-      enabledProtocols,
-      pageSize,
-    }),
-    [protocolFilter, statusFilter, contentFilter, timeFilter, directionFilter, authFilter, enabledProtocols, pageSize],
-  )
   const initialPageRef = useRef(page)
   const lastFilterSignatureRef = useRef<string | null>(null)
 
   useEffect(() => {
-    const pageToLoad = lastFilterSignatureRef.current === null ? initialPageRef.current : 1
+    if (waitingForFit) return
+    const previousSignature = lastFilterSignatureRef.current
+    const pageToLoad = previousSignature === null ? initialPageRef.current
+      : previousSignature !== filterSignature ? 1 : requestedPageRef.current
     lastFilterSignatureRef.current = filterSignature
-    fetchPage(pageToLoad)
-  }, [fetchPage, filterSignature])
+    snapshotRef.current = frozenSnapshot
+    pageCursorsRef.current.clear()
+    setTotal(null)
+    setTotalExact(true)
+    setTotalPages(null)
+    setHasMore(false)
+    setRefreshError(false)
+    setPageLoadError(null)
+    setJumpInput('')
+    void fetchPage(pageToLoad, previousSignature === filterSignature)
+    void fetchCount(frozenSnapshot)
+    return () => {
+      abortRef.current?.abort()
+      refreshAbortRef.current?.abort()
+      countAbortRef.current?.abort()
+      snapshotRef.current = null
+      refreshAbortRef.current = null
+      refreshingRef.current = false
+    }
+  }, [fetchPage, fetchCount, filterSignature, frozenSnapshot, waitingForFit])
 
   // ========================================
   // WebSocket-driven refresh: insert new items at top
@@ -785,7 +1066,7 @@ export default function TrafficList() {
 
   // Perform a full refresh after WebSocket reconnection to compensate for messages lost while disconnected
   useEffect(() => {
-    const handler = () => fetchPage(pageRef.current)
+    const handler = () => { void fetchPage(pageRef.current, true) }
     window.addEventListener(EVENTS.WS_RECONNECTED, handler)
     return () => window.removeEventListener(EVENTS.WS_RECONNECTED, handler)
   }, [fetchPage])
@@ -795,6 +1076,8 @@ export default function TrafficList() {
     return () => {
       abortRef.current?.abort()
       refreshAbortRef.current?.abort()
+      countAbortRef.current?.abort()
+      snapshotRef.current = null
       if (wsRefreshTimerRef.current) clearTimeout(wsRefreshTimerRef.current)
     }
   }, [])
@@ -809,6 +1092,21 @@ export default function TrafficList() {
   const changeTime = (v: TimeFilter) => { setTimeFilter(v); setPage(1) }
   const changeDirection = (v: DirectionFilter) => { setDirectionFilter(v); setPage(1) }
   const changeAuth = (v: AuthFilter) => { setAuthFilter(v); setPage(1) }
+  const resetFilters = () => {
+    setProtocolFilter('ALL')
+    setStatusFilter('ALL')
+    setContentFilter('WITH_CONTENT')
+    setTimeFilter('ALL')
+    setDirectionFilter('ALL')
+    setAuthFilter('ALL')
+    setPage(1)
+  }
+  const hiddenFilterCount = (authFilter !== 'ALL' ? 1 : 0) + (statusFilter !== 'ALL' ? 1 : 0)
+  const activeFilterCount = hiddenFilterCount
+    + (protocolFilter !== 'ALL' ? 1 : 0)
+    + (contentFilter !== 'WITH_CONTENT' ? 1 : 0)
+    + (timeFilter !== 'ALL' ? 1 : 0)
+    + (directionFilter !== 'ALL' ? 1 : 0)
 
   // ========================================
   // Derived data
@@ -833,6 +1131,44 @@ export default function TrafficList() {
   const { restoredCount } = useMemo(() => ({
     restoredCount: displaySessions.filter(isEmailFullyRestored).length,
   }), [displaySessions, isEmailFullyRestored])
+
+  // ========================================
+  // Automatic page size: as many rows as the visible table body holds
+  // ========================================
+
+  const measureFitRows = useCallback(() => {
+    const container = tableContainerRef.current
+    if (!container) return
+    const headHeight = container.querySelector('thead')?.getBoundingClientRect().height ?? 0
+    // Prefer a real row once data is shown; skeleton rows are shorter.
+    const rowHeight = Math.ceil(
+      container.querySelector('tbody tr:not(.skeleton-row)')?.getBoundingClientRect().height || FIT_ROW_HEIGHT_PX
+    )
+    const rows = Math.floor((container.clientHeight - headHeight) / rowHeight)
+    const next = Math.min(FIT_MAX_ROWS, Math.max(FIT_MIN_ROWS, Number.isFinite(rows) ? rows : FIT_MIN_ROWS))
+    setFitRows(previous => previous === next ? previous : next)
+  }, [])
+
+  useLayoutEffect(() => {
+    if (autoFitTable) measureFitRows()
+  }, [autoFitTable, loading, displaySessions, measureFitRows])
+
+  // The table container is re-created between skeleton, rows and empty state.
+  const hasRows = displaySessions.length > 0
+  useEffect(() => {
+    const container = tableContainerRef.current
+    if (!autoFitTable || !container || typeof ResizeObserver === 'undefined') return
+    let timer = 0
+    const observer = new ResizeObserver(() => {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(measureFitRows, 150)
+    })
+    observer.observe(container)
+    return () => {
+      observer.disconnect()
+      window.clearTimeout(timer)
+    }
+  }, [autoFitTable, loading, loadError, hasRows, measureFitRows])
 
   // ========================================
   // Render
@@ -878,9 +1214,9 @@ export default function TrafficList() {
         <div className="header-left">
           <h1>{t('emailSecurity.emailTraffic')}</h1>
           <div className="email-stats">
-            <span className="email-count">
-              {t('emailSecurity.totalCount', { count: total })}{fetching && ` · ${t('emailSecurity.refreshing')}`}
-            </span>
+            {countLoading && <span className="email-hint" role="status">{t('emailSecurity.totalLoading')}</span>}
+            {countError && <span className="email-hint" role="status">{t('emailSecurity.totalUnavailable')}</span>}
+            {refreshError && <span className="email-hint" role="status">{t('emailSecurity.sessionListRefreshFailed')}</span>}
             {contentFilter === 'ALL' && restoredCount > 0 && (
               <span className="email-hint">
                 {t('emailSecurity.restoredCount', { count: restoredCount })}
@@ -889,10 +1225,19 @@ export default function TrafficList() {
           </div>
         </div>
         <div className="header-right">
+          <button
+            type="button"
+            className="pagination-btn"
+            disabled={countLoading}
+            onClick={() => setSnapshotVersion(version => version + 1)}
+          >
+            {t('emailSecurity.recountTotal')}
+          </button>
           <div className="auto-refresh-control">
             <select
               className="filter-select"
               value={autoRefreshInterval}
+              aria-label={t('emailSecurity.autoRefreshLabel')}
               onChange={e => setAutoRefreshInterval(Number(e.target.value))}
             >
               <option value={0}>{t('emailSecurity.manualRefresh')}</option>
@@ -918,20 +1263,60 @@ export default function TrafficList() {
               ≡
             </button>
           </div>
-          <div className="filters">
-            <div className="filter-group">
-              <select
-                className="filter-select"
-                value={directionFilter}
-                onChange={(e) => changeDirection(e.target.value as DirectionFilter)}
-              >
-                <option value="ALL">{t('emailSecurity.allDirections')}</option>
-                <option value="inbound">{t('emailSecurity.inbound')}</option>
-                <option value="outbound">{t('emailSecurity.outbound')}</option>
-              </select>
+        </div>
+      </div>
+
+      <div className="traffic-filterbar">
+        <div className="filters">
+          <select
+            className="filter-select"
+            value={contentFilter}
+            aria-label={t('emailSecurity.allTraffic')}
+            onChange={(e) => changeContent(e.target.value as ContentFilter)}
+          >
+            <option value="ALL">{t('emailSecurity.allTraffic')}</option>
+            <option value="WITH_CONTENT">{t('emailSecurity.restoredEmails')}</option>
+          </select>
+          <select
+            className="filter-select"
+            value={timeFilter}
+            aria-label={t('emailSecurity.allTime')}
+            onChange={(e) => changeTime(e.target.value as TimeFilter)}
+          >
+            <option value="ALL">{t('emailSecurity.allTime')}</option>
+            <option value="30m">{t('emailSecurity.last30m')}</option>
+            <option value="1h">{t('emailSecurity.last1h')}</option>
+            <option value="6h">{t('emailSecurity.last6h')}</option>
+            <option value="24h">{t('emailSecurity.last24h')}</option>
+          </select>
+          <select
+            className="filter-select"
+            value={protocolFilter}
+            aria-label={t('emailSecurity.colProtocol')}
+            onChange={(e) => changeProtocol(e.target.value as Protocol | 'ALL')}
+          >
+            <option value="ALL">{t('emailSecurity.allProtocols')}</option>
+            {enabledProtocols.includes('SMTP') && <option value="SMTP">SMTP</option>}
+            {enabledProtocols.includes('POP3') && <option value="POP3">POP3</option>}
+            {enabledProtocols.includes('IMAP') && <option value="IMAP">IMAP</option>}
+          </select>
+          <select
+            className="filter-select"
+            value={directionFilter}
+            aria-label={t('emailSecurity.allDirections')}
+            onChange={(e) => changeDirection(e.target.value as DirectionFilter)}
+          >
+            <option value="ALL">{t('emailSecurity.allDirections')}</option>
+            <option value="inbound">{t('emailSecurity.inbound')}</option>
+            <option value="outbound">{t('emailSecurity.outbound')}</option>
+          </select>
+          {showMoreFilters && (
+            <>
+              <div className="filter-divider" />
               <select
                 className="filter-select"
                 value={authFilter}
+                aria-label={t('emailSecurity.allAuth')}
                 onChange={(e) => changeAuth(e.target.value as AuthFilter)}
               >
                 <option value="ALL">{t('emailSecurity.allAuth')}</option>
@@ -939,41 +1324,10 @@ export default function TrafficList() {
                 <option value="AUTH_SUCCESS">{t('emailSecurity.authSuccess')}</option>
                 <option value="AUTH_FAILED">{t('emailSecurity.authFailed')}</option>
               </select>
-            </div>
-            <div className="filter-divider" />
-            <div className="filter-group">
-              <select
-                className="filter-select"
-                value={contentFilter}
-                onChange={(e) => changeContent(e.target.value as ContentFilter)}
-              >
-                <option value="ALL">{t('emailSecurity.allTraffic')}</option>
-                <option value="WITH_CONTENT">{t('emailSecurity.restoredEmails')}</option>
-              </select>
-              <select
-                className="filter-select"
-                value={timeFilter}
-                onChange={(e) => changeTime(e.target.value as TimeFilter)}
-              >
-                <option value="ALL">{t('emailSecurity.allTime')}</option>
-                <option value="30m">{t('emailSecurity.last30m')}</option>
-                <option value="1h">{t('emailSecurity.last1h')}</option>
-                <option value="6h">{t('emailSecurity.last6h')}</option>
-                <option value="24h">{t('emailSecurity.last24h')}</option>
-              </select>
-              <select
-                className="filter-select"
-                value={protocolFilter}
-                onChange={(e) => changeProtocol(e.target.value as Protocol | 'ALL')}
-              >
-                <option value="ALL">{t('emailSecurity.allProtocols')}</option>
-                {enabledProtocols.includes('SMTP') && <option value="SMTP">SMTP</option>}
-                {enabledProtocols.includes('POP3') && <option value="POP3">POP3</option>}
-                {enabledProtocols.includes('IMAP') && <option value="IMAP">IMAP</option>}
-              </select>
               <select
                 className="filter-select"
                 value={statusFilter}
+                aria-label={t('emailSecurity.colStatus')}
                 onChange={(e) => changeStatus(e.target.value as SessionStatus | 'ALL')}
               >
                 <option value="ALL">{t('emailSecurity.allStatuses')}</option>
@@ -982,10 +1336,35 @@ export default function TrafficList() {
                 <option value="timeout">{t('emailSecurity.statusTimeout')}</option>
                 <option value="error">{t('emailSecurity.statusError')}</option>
               </select>
-            </div>
-          </div>
+            </>
+          )}
+          <button
+            type="button"
+            className={`filter-more-btn ${showMoreFilters ? 'active' : ''}`}
+            aria-expanded={showMoreFilters}
+            onClick={() => setShowMoreFilters(open => !open)}
+          >
+            {showMoreFilters ? t('emailSecurity.lessFilters') : t('emailSecurity.moreFilters')}
+            {!showMoreFilters && hiddenFilterCount > 0 && (
+              <span className="filter-count" aria-hidden="true">{hiddenFilterCount}</span>
+            )}
+          </button>
         </div>
+        {activeFilterCount > 0 && (
+          <button type="button" className="filter-reset-btn" onClick={resetFilters}>
+            {t('emailSecurity.resetFilters')}
+          </button>
+        )}
       </div>
+
+      {pageLoadError && !loadError && (
+        <div className="email-stats" role="alert" aria-live="polite">
+          <span className="email-hint">{pageLoadError}</span>
+          <button className="pagination-btn" type="button" disabled={fetching} onClick={() => { void fetchPage(requestedPageRef.current) }}>
+            {t('emailSecurity.retry')}
+          </button>
+        </div>
+      )}
 
       {/* Initial loading skeleton */}
       {loading ? (
@@ -994,23 +1373,9 @@ export default function TrafficList() {
             {[1, 2, 3, 4].map(i => <SkeletonCard key={i} />)}
           </div>
         ) : (
-          <div className="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th className="col-protocol">{t('emailSecurity.colProtocol')}</th>
-                  <th className="col-direction">{t('emailSecurity.colDirection')}</th>
-                  <th className="col-status">{t('emailSecurity.colStatus')}</th>
-                  <th className="col-security">{t('emailSecurity.colSecurity')}</th>
-                  <th>{t('emailSecurity.colSubject')}</th>
-                  <th className="col-sender">{t('emailSecurity.sender')}</th>
-                  <th className="col-recipient">{t('emailSecurity.recipient')}</th>
-                  <th className="col-size num-cell">{t('emailSecurity.colSize')}</th>
-                  <th className="col-attach num-cell">{t('emailSecurity.colAttachments')}</th>
-                  <th className="col-time">{t('emailSecurity.colTime')}</th>
-                  <th className="col-actions">{t('emailSecurity.colActions')}</th>
-                </tr>
-              </thead>
+          <div className="table-container" ref={tableContainerRef}>
+            <table className="traffic-table">
+              <TrafficTableHead />
               <tbody>
                 {[1, 2, 3, 4].map(i => <SkeletonRow key={i} />)}
               </tbody>
@@ -1021,7 +1386,7 @@ export default function TrafficList() {
         <div className="empty-state" role="alert" aria-live="polite">
           <h3>{t('emailSecurity.loadFailedTitle')}</h3>
           <p>{loadError}</p>
-          <button className="view-all-btn" type="button" onClick={() => { void fetchPage(pageRef.current) }}>
+          <button className="view-all-btn" type="button" onClick={() => { void fetchPage(requestedPageRef.current) }}>
             {t('emailSecurity.retry')}
           </button>
         </div>
@@ -1056,30 +1421,16 @@ export default function TrafficList() {
       ) : viewMode === 'card' ? (
         <div className="email-card-grid">
             {displaySessions.map(session => (
-            <EmailCard key={session.id} session={session} detailHref={`/emails/${session.id}${detailSearch}`} />
+            <EmailCard key={session.id} session={session} detailHref={`/emails/${session.id}${detailSearch}`} privacyEnabled={privacyEnabled} />
             ))}
         </div>
       ) : (
-        <div className="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th className="col-protocol">{t('emailSecurity.colProtocol')}</th>
-                <th className="col-direction">{t('emailSecurity.colDirection')}</th>
-                <th className="col-status">{t('emailSecurity.colStatus')}</th>
-                <th className="col-security">{t('emailSecurity.colSecurity')}</th>
-                <th>{t('emailSecurity.colSubject')}</th>
-                <th>{t('emailSecurity.sender')}</th>
-                <th>{t('emailSecurity.recipient')}</th>
-                <th className="col-size num-cell">{t('emailSecurity.colSize')}</th>
-                <th className="col-attach num-cell">{t('emailSecurity.colAttachments')}</th>
-                <th className="col-time">{t('emailSecurity.colTime')}</th>
-                <th className="col-actions">{t('emailSecurity.colActions')}</th>
-              </tr>
-            </thead>
+        <div className="table-container" ref={tableContainerRef}>
+          <table className="traffic-table">
+            <TrafficTableHead />
             <tbody>
               {displaySessions.map(session => (
-                <EmailRow key={session.id} session={session} detailHref={`/emails/${session.id}${detailSearch}`} />
+                <EmailRow key={session.id} session={session} detailHref={`/emails/${session.id}${detailSearch}`} privacyEnabled={privacyEnabled} />
               ))}
             </tbody>
           </table>
@@ -1087,27 +1438,18 @@ export default function TrafficList() {
       )}
 
       {/* Pagination controls */}
-      {!loading && total > 0 && (
-        <div className="pagination-controls">
-          <div className="pagination-info">
-            <span className="pagination-text">
-              {t('emailSecurity.paginationInfo', { page, totalPages, total })}
-            </span>
-            <select
-              className="pagination-size-select"
-              value={pageSize}
-              onChange={e => { setPageSize(Number(e.target.value)); setPage(1) }}
-            >
-              <option value={10}>{t('emailSecurity.perPage', { count: 10 })}</option>
-              <option value={20}>{t('emailSecurity.perPage', { count: 20 })}</option>
-              <option value={50}>{t('emailSecurity.perPage', { count: 50 })}</option>
-            </select>
-          </div>
-
-          {totalPages > 1 && (
+      {!loading && (
+        <div className="pagination-controls traffic-pagination" aria-busy={fetching}>
+          {totalPages === null ? (
             <div className="pagination-buttons">
-              <button className="pagination-btn" disabled={page <= 1} onClick={() => fetchPage(1)} title={t('emailSecurity.firstPage')}>&laquo;</button>
-              <button className="pagination-btn" disabled={page <= 1} onClick={() => fetchPage(page - 1)} title={t('emailSecurity.prevPage')}>&lsaquo;</button>
+              <button className="pagination-btn" disabled={fetching || page <= 1} onClick={() => { void fetchPage(page - 1) }} title={t('emailSecurity.prevPage')} aria-label={t('emailSecurity.prevPage')}>&lsaquo;</button>
+              <span className="pagination-text">{t('emailSecurity.currentPage', { page })}</span>
+              <button className="pagination-btn" disabled={fetching || !hasMore} onClick={() => { void fetchPage(page + 1) }} title={t('emailSecurity.nextPage')} aria-label={t('emailSecurity.nextPage')}>&rsaquo;</button>
+            </div>
+          ) : (totalPages > 1 || hasMore || page > 1) && (
+            <div className="pagination-buttons">
+              <button className="pagination-btn" disabled={fetching || page <= 1} onClick={() => { void fetchPage(1) }} title={t('emailSecurity.firstPage')} aria-label={t('emailSecurity.firstPage')}>&laquo;</button>
+              <button className="pagination-btn" disabled={fetching || page <= 1} onClick={() => { void fetchPage(page - 1) }} title={t('emailSecurity.prevPage')} aria-label={t('emailSecurity.prevPage')}>&lsaquo;</button>
 
               {(() => {
                 const items: (number | '...')[] = []
@@ -1129,7 +1471,8 @@ export default function TrafficList() {
                     <button
                       key={item}
                       className={`pagination-btn ${item === page ? 'active' : ''}`}
-                      onClick={() => item !== page && fetchPage(item)}
+                      disabled={fetching}
+                      onClick={() => { if (item !== page) void fetchPage(item) }}
                     >
                       {item}
                     </button>
@@ -1137,30 +1480,61 @@ export default function TrafficList() {
                 )
               })()}
 
-              <button className="pagination-btn" disabled={page >= totalPages} onClick={() => fetchPage(page + 1)} title={t('emailSecurity.nextPage')}>&rsaquo;</button>
-              <button className="pagination-btn" disabled={page >= totalPages} onClick={() => fetchPage(totalPages)} title={t('emailSecurity.lastPage')}>&raquo;</button>
+              <button className="pagination-btn" disabled={fetching || !hasMore} onClick={() => { void fetchPage(page + 1) }} title={t('emailSecurity.nextPage')} aria-label={t('emailSecurity.nextPage')}>&rsaquo;</button>
+              <button className="pagination-btn" disabled={fetching || page >= totalPages} onClick={() => { void fetchPage(totalPages) }} title={t('emailSecurity.lastPage')} aria-label={t('emailSecurity.lastPage')}>&raquo;</button>
             </div>
           )}
 
-          {totalPages > 5 && (
-            <div className="pagination-jump">
-              <span className="pagination-jump-label">{t('emailSecurity.jumpTo')}</span>
-              <input
-                type="text"
-                className="pagination-jump-input"
-                value={jumpInput}
-                onChange={e => setJumpInput(e.target.value.replace(/\D/g, ''))}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') {
-                    const p = parseInt(jumpInput)
-                    if (p >= 1 && p <= totalPages) { fetchPage(p); setJumpInput('') }
-                  }
+          <div className="pagination-actions">
+            {totalPages !== null && totalPages > 5 && (
+              <div className="pagination-jump">
+                <span className="pagination-jump-label">{t('emailSecurity.jumpTo')}</span>
+                <input
+                  type="text"
+                  className="pagination-jump-input"
+                  value={jumpInput}
+                  onChange={e => setJumpInput(e.target.value.replace(/\D/g, ''))}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      const p = parseInt(jumpInput)
+                      if (!fetching && p >= 1 && p <= totalPages) { void fetchPage(p); setJumpInput('') }
+                    }
+                  }}
+                  placeholder={`1-${totalPages}`}
+                />
+                <span className="pagination-jump-label">{t('emailSecurity.pageUnit')}</span>
+              </div>
+            )}
+
+            <div className="pagination-info">
+              {totalPages !== null && <span className="pagination-text">{t('emailSecurity.currentPage', { page })}</span>}
+              {/* While counting or after a failed count the header hint explains the state. */}
+              {total !== null && (
+                totalExact ? (
+                  <span className="pagination-text">{t('emailSecurity.paginationInfo', { page, totalPages, total })}</span>
+                ) : (
+                  <span className="pagination-text" title={t('emailSecurity.totalEstimatedTitle')}>
+                    {t('emailSecurity.paginationInfoEstimated', { total: total.toLocaleString() })}
+                  </span>
+                )
+              )}
+              <select
+                className="pagination-size-select"
+                aria-label={t('emailSecurity.pageSizeLabel')}
+                value={String(pageSizeChoice)}
+                onChange={e => {
+                  const value = e.target.value
+                  setPageSizeChoice(value === 'auto' ? 'auto' : Number(value) as PageSizeChoice)
+                  setPage(1)
                 }}
-                placeholder={`1-${totalPages}`}
-              />
-              <span className="pagination-jump-label">{t('emailSecurity.pageUnit')}</span>
+              >
+                <option value="auto">{t('emailSecurity.perPageAuto', { count: pageSize })}</option>
+                {FIXED_PAGE_SIZES.map(size => (
+                  <option key={size} value={size}>{t('emailSecurity.perPage', { count: size })}</option>
+                ))}
+              </select>
             </div>
-          )}
+          </div>
         </div>
       )}
       </>

@@ -222,7 +222,7 @@ class TestSegmentedInference:
         _install_manager(monkeypatch, manager)
 
         result = asyncio.run(
-            analyze_phishing_nlp(subject="Hi", body_text="short body", mail_from="a@b.com")
+            analyze_phishing_nlp(subject="Hi", body_text="short body", mail_from="a@b.test")
         )
 
         assert len(manager.seen_inputs) == 1
@@ -232,7 +232,7 @@ class TestSegmentedInference:
         _install_manager(monkeypatch, _TokenizerTruncatingManager())
 
         result = asyncio.run(
-            analyze_phishing_nlp(subject="Hi", body_text="short body", mail_from="a@b.com")
+            analyze_phishing_nlp(subject="Hi", body_text="short body", mail_from="a@b.test")
         )
 
         assert result.details["coverage_limited"] is True

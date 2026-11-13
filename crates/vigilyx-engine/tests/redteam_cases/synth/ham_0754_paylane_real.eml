@@ -1,0 +1,119 @@
+From: "PayLane | Merchant Services" <merchants@paylane.example>
+To: payments-ops@shopco.example
+Cc: finance@shopco.example, compliance@shopco.example
+Date: Mon, 05 Jul 2027 06:15:00 +0000
+Message-ID: <0754-b107@synth.example>
+Subject: [KYC RENEWAL] Merchant Account AC-77412 - Upload Refresh Documents in the Dashboard by July 14 (No SMS Codes or Fees Involved)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Payments Operations, Finance, Compliance,
+
+ANNUAL KYC RENEWAL - MERCHANT
+ACCOUNT AC-77412.
+
+Your PayLane merchant account enters
+its annual compliance review. Upload
+refresh documents in the merchant
+dashboard by July 14; payouts are
+unaffected when documents arrive on
+time.
+
+1. ACCOUNT & REVIEW STATUS
+
+  Merchant account:    AC-77412
+                       (e-commerce,
+                       since 2021)
+  June payout volume:  USD 486,200
+                       (avg. settlement
+                       T+2)
+  Review type:         Annual KYC
+                       renewal
+  Document deadline:   2027-07-14
+
+2. HOW KYC RENEWAL WORKS
+   (OFFICIAL PATH)
+
+    1. Sign in to the merchant
+       dashboard by typing the
+       address yourself
+       (dashboard.paylane.example)
+       -> Compliance -> KYC.
+    2. Upload the listed
+       documents:
+       - Beneficial-owner ID
+         (passport/national
+         ID) where changed
+         since the last cycle
+       - Address proof if
+         older than 3 months
+       - Payout bank details:
+         only changed when
+         they actually change,
+         and a payout-account
+         change always triggers
+         BOTH a dashboard
+         confirmation AND a
+         call to your
+         registered number -
+         never an SMS code
+         collected through
+         an emailed page.
+    3. Review completes in
+       5-7 days; payouts
+       continue throughout.
+
+  PayLane will NEVER:
+  - Email a "KYC submission
+    portal" collecting
+    shareholder passports +
+    payout account numbers +
+    SMS verification codes
+    in one session (that
+    package is precisely
+    what a payout-
+    redirection attack
+    needs; real re-
+    verification of payout
+    accounts happens inside
+    the logged-in dashboard
+    with a callback, not
+    through emailed links)
+  - Charge an "expedited
+    review" fee (KYC review
+    is a compliance
+    obligation, free, and
+    has no paid fast lane)
+  - Threaten that two held
+    cycles trigger
+    "enhanced monitoring"
+    to sell the expedited
+    option (documents
+    arriving by the stated
+    deadline never hold
+    payouts at all)
+  - Use lookalike domains
+    such as
+    "paylane-compliance"
+    or "pl-merchant"
+
+3. VERIFY THIS NOTICE
+
+  - KYC expiry and the
+    document checklist are
+    on the dashboard
+    compliance page (typed
+    address)
+  - Your account manager
+    confirms the cycle on
+    the quarterly call
+  - Report lookalike KYC
+    notices to
+    security@paylane.example
+
+PayLane | Merchant Services
+This notice concerns account
+AC-77412 only. KYC requirements
+follow the payment-services
+licensing framework; details on
+the dashboard compliance page.

@@ -1,0 +1,10 @@
+From: =?utf-8?B?5rWZ5LiA5LqS6IGU572R5Yy76Zmi?= <notice@zyhospital.example>
+To: me@personal.example
+Date: Mon, 07 Sep 2026 09:39:00 +0800
+Message-ID: <0029-b15@synth.example>
+Subject: 您的检验报告已出具
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>血常规报告已出具，请在小程序-我的报告中查看。</p><p style='font-size:12px'>报告异常项请以医生解读为准；医院不会电话推销药品。</p></body></html>

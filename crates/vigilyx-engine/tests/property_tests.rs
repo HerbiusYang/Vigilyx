@@ -418,19 +418,19 @@ fn test_luhn_known_valid_cards() {
 #[test]
 fn test_iban_known_valid() {
     // GB standard test IBAN
-    assert!(iban_mod97_check("GB29NWBK60161331926819"));
+    assert!(iban_mod97_check("GB50TSTB00000000000000"));
     // DE standard test IBAN
-    assert!(iban_mod97_check("DE89370400440532013000"));
+    assert!(iban_mod97_check("DE36000000000000000000"));
     // FR standard test IBAN
-    assert!(iban_mod97_check("FR7630006000011234567890189"));
+    assert!(iban_mod97_check("FR7600000000000000000000000"));
 }
 
 #[test]
 fn test_iban_known_invalid() {
     // Wrong check digits
-    assert!(!iban_mod97_check("GB00NWBK60161331926819"));
+    assert!(!iban_mod97_check("GB00TSTB00000000000000"));
     // Tampered BBAN
-    assert!(!iban_mod97_check("GB29NWBK60161331926810"));
+    assert!(!iban_mod97_check("GB50TSTB00000000000001"));
 }
 
 #[test]

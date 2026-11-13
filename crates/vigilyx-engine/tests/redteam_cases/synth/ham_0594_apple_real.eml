@@ -1,0 +1,77 @@
+From: App Store Connect <no-reply@appstoreconnect.example>
+To: dev@corp.internal
+Date: Mon, 19 Oct 2026 14:00:00 +0800
+Message-ID: <0594-b53@synth.example>
+Subject: [Expired] Your Apple Distribution Certificate expires in 48 hours — renew now
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear Developer,
+
+Your Apple Distribution Certificate (used to sign and distribute your iOS
+app "Vigilyx Mobile") will expire in 48 hours.
+
+Certificate Details:
+  Team ID: ABC123DEF4
+  Certificate Type: Apple Distribution
+  Serial Number: 3D8K2M9P4Q7R1T6W0Y3B5C
+  Expiration Date: 2026-10-21 00:00 UTC
+  App ID: com.vigilyx.mobile
+  Affected App: Vigilyx Mobile (App Store)
+
+What happens if the certificate expires:
+  - App removed from App Store within 24 hours
+  - Existing users cannot receive updates
+  - Push notifications stop (APNs linked to distribution cert)
+  - In-app purchases fail (StoreKit validation)
+  - TestFlight builds become unopenable
+
+How to Renew:
+
+  Method 1 (Recommended) - Renew via Xcode:
+  1. Open Xcode → Settings → Accounts
+  2. Select your team → Manage Certificates
+  3. Click "+" → Apple Distribution
+  4. Xcode creates and installs new certificate automatically
+
+  Method 2 - Renew via web:
+  1. Open your browser and navigate to developer.apple.com
+     (Type the URL manually. Do NOT click links from emails.)
+  2. Log in with your Apple Developer account
+  3. Go to Certificates, Identifiers & Profiles → Certificates
+  4. Click "+" to create a new Apple Distribution certificate
+  5. Follow the CSR upload instructions
+
+  Security Notes:
+  Apple will NEVER:
+  - Send you a "renewal code" or "device verification code" via email
+  - Ask you to enter a code at appleid.apple.com from an email link
+  - Redirect you to a non-apple.com domain for certificate renewal
+  - Ask for your Apple ID password through an email link
+
+  All certificate operations happen when you manually navigate to
+  developer.apple.com in your browser. If you receive an email with
+  a "renewal code" or "device verification code," it is a phishing
+  attempt targeting Apple Developer accounts.
+
+Recent Certificate Activity:
+  2025-10-21  Certificate created (203.0.113.50)
+  2026-08-14  App signed v2.4.1 (203.0.113.50)
+  2026-09-22  App signed v2.4.2 (203.0.113.50)
+  2026-10-17  Sign attempt BLOCKED (198.51.100.77) ← unrecognized IP
+
+Note: We detected a blocked signing attempt from an unrecognized IP.
+If this was not your team, revoke and re-create all provisioning
+profiles after renewing.
+
+FAQ:
+  Q: Can I renew after expiry?
+  A: Yes, but app will be removed during the gap. Re-submission
+     may take 1-3 days for App Review.
+
+  Q: Will existing users be affected?
+  A: Installed apps work, but push notifications and IAP break.
+
+App Store Connect | Developer Support
+Certificate Reference: ABC123DEF4-2026-RENEW
+You are receiving this because you are the Account Holder for Team ABC123DEF4.

@@ -1,0 +1,10 @@
+From: =?utf-8?B?5oyC5Y+35bmz5Y+w?= <gh@hospital.example>
+To: me@personal.example
+Date: Wed, 16 Sep 2026 09:32:00 +0800
+Message-ID: <0022-b23@synth.example>
+Subject: 候补提醒（未成功）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+本周候补未成功，下周自动顺延。
+小程序内可取消。

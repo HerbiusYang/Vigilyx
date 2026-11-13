@@ -1,0 +1,13 @@
+From: Corporate Security <security@corp.internal>
+To: employee@corp.internal
+Date: Thu, 15 Oct 2026 09:30:00 +0800
+Message-ID: <redteam-security-advisory@synth.example>
+Subject: 提醒：不要通过邮件提交密码或验证码
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+安全提醒：公司不会通过邮件要求员工提交密码、手机服务密码或验证码，也不会要求通过邮件链接重新验证账户。
+
+如果收到此类请求，请不要回复，也不要打开邮件中提供的页面。需要检查账户时，请使用你平时保存的公司首页书签或联系内部支持团队。
+
+这封邮件不要求你执行任何操作。

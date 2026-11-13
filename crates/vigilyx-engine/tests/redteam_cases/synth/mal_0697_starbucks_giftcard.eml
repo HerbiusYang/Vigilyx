@@ -1,0 +1,99 @@
+From: Starbucks Corporate Sales <bulk.orders@starbuck5-corp.example>
+To: hr-benefits@corp.internal
+Cc: admin@corp.internal
+Date: Sat, 24 Oct 2026 10:00:00 +0800
+Message-ID: <0697-b58@synth.example>
+Subject: [Final Notice] Your Corporate Gift Card order #GC-2026-8842 (500 × $50) — Payment required before Monday shipping cutoff
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif;max-width:640px;margin:0 auto;border:1px solid #00704A;border-radius:8px;overflow:hidden">
+<div style="background:#00704A;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px;color:#C4A265">STARBUCKS | Corporate Sales</h2>
+</div>
+<div style="padding:24px">
+
+<p>Dear Corporate Customer,</p>
+
+<p>This is a <b style="color:#e00">final notice</b> for your corporate gift card order placed on October 18, 2026. If payment is not received by <b>Monday, October 26 at 12:00 PM PST</b>, the order will be cancelled and the cards returned to inventory.</p>
+
+<h3 style="color:#00704A;border-bottom:2px solid #C4A265;padding-bottom:4px">Order Summary</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:180px">Order Number</td><td><b>GC-2026-8842</b></td></tr>
+<tr><td style="background:#f5f5f5">Order Date</td><td>2026-10-18</td></tr>
+<tr><td style="background:#f5f5f5">Card Type</td><td>Starbucks Card (physical, corporate branded)</td></tr>
+<tr><td style="background:#f5f5f5">Card Design</td><td>Custom — your company logo + "Employee Recognition 2026"</td></tr>
+<tr><td style="background:#f5f5f5">Quantity</td><td>500 cards</td></tr>
+<tr><td style="background:#f5f5f5">Denomination</td><td>$50.00 per card</td></tr>
+<tr><td style="background:#f5f5f5">Subtotal</td><td>$25,000.00</td></tr>
+<tr><td style="background:#f5f5f5">Volume Discount (10%)</td><td>-$2,500.00</td></tr>
+<tr><td style="background:#f5f5f5">Custom Printing</td><td>$750.00</td></tr>
+<tr><td style="background:#f5f5f5">Shipping (Express)</td><td>$180.00</td></tr>
+<tr><td style="background:#f5f5f5"><b>Total</b></td><td><b style="color:#00704A">$23,430.00 USD</b></td></tr>
+</table>
+
+<h3 style="color:#00704A;border-bottom:2px solid #C4A265;padding-bottom:4px">Why This Order Matters</h3>
+<p>Based on your order notes, these cards are for your <b>Q4 Employee Recognition Program</b> (scheduled for November 4, 2026). If the order is cancelled:</p>
+<ul>
+<li>Custom-printed cards cannot be reproduced in time (7-day minimum for custom printing)</li>
+<li>Your employee recognition event will have no rewards</li>
+<li>The volume discount rate (10%) will expire at year-end</li>
+</ul>
+
+<h3 style="color:#00704A;border-bottom:2px solid #C4A265;padding-bottom:4px">How to Complete Payment</h3>
+
+<p><b>Option 1 (Recommended) — Corporate Checkout with Apple Business:</b></p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://starbuck5-corp.example/checkout/apple-pay?order=GC-2026-8842&amount=23430" style="display:inline-block;background:#00704A;color:#C4A265;padding:14px 40px;text-decoration:none;border-radius:6px;font-size:16px;font-weight:bold;letter-spacing:1px">Complete Payment — $23,430</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://www.starbucks.com/business/gift-cards/checkout</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（Secure checkout via Apple Business ID. Corporate accounts receive instant activation.）</p>
+
+<h3 style="color:#00704A;border-bottom:2px solid #C4A265;padding-bottom:4px">About Apple Business Checkout</h3>
+<p>Starbucks migrated its corporate gift card platform to <b>Apple Business Connect</b> in September 2026. When you click the payment button above:</p>
+<ol>
+<li>You will be redirected to <b>appleid.apple.com</b> (Apple's official identity domain)</li>
+<li>Sign in with your corporate Apple Business ID (or create one using your company email)</li>
+<li>Authorize the payment using Apple Pay</li>
+<li>Cards will be activated and shipped immediately upon payment confirmation</li>
+</ol>
+
+<p style="font-size:14px;background:#FFF8E1;padding:12px;border-radius:4px">
+<b>A note about the checkout URL:</b> You may notice that the button link goes to a domain that looks different from starbucks.com. This is because Starbucks uses a <b>dedicated corporate commerce domain</b> for B2B transactions (separate from the consumer-facing retail platform). This separation is required by Apple Business Connect's merchant onboarding policy, which mandates that corporate payments be processed on a distinct domain from retail transactions. The checkout page will display the Starbucks logo, your order details, and your company name after authentication.
+</p>
+
+<p><b>Option 2 — Bank Wire Transfer:</b></p>
+<p>Transfer $23,430.00 USD to:</p>
+<div style="background:#f9f9f9;padding:12px;border-radius:4px;border-left:4px solid #00704A">
+<p>Beneficiary: Starbucks Corporation — Corporate Sales Division<br>
+Bank: JPMorgan Chase Bank, N.A.<br>
+Account: 8842-6619-4471<br>
+SWIFT: TSTBUS33<br>
+Reference: GC-2026-8842</p>
+</div>
+<p>Wire transfers take 2-3 business days to process (may miss the Monday cutoff).</p>
+
+<h3 style="color:#00704A;border-bottom:2px solid #C4A265;padding-bottom:4px">Your Order History</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Date</th><th>Order</th><th>Qty × Denom</th><th>Amount</th></tr>
+<tr><td>2025-11-15</td><td>GC-2025-7741</td><td>300 × $30</td><td>$8,100.00</td></tr>
+<tr><td>2026-03-20</td><td>GC-2026-2214</td><td>200 × $50</td><td>$10,000.00</td></tr>
+<tr><td>2026-06-10</td><td>GC-2026-5533</td><td>400 × $25</td><td>$10,000.00</td></tr>
+<tr style="background:#fff3cd"><td><b>2026-10-18</b></td><td><b>GC-2026-8842</b></td><td><b>500 × $50</b></td><td><b>$23,430.00</b></td></tr>
+</table>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Starbucks Coffee Company | Corporate Sales Division</p>
+<p style="font-size:11px;color:#999">2401 Utah Ave S, Seattle, WA 98134</p>
+<p style="font-size:11px;color:#999">You are receiving this because you have an unpaid corporate order.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://starbuck5-corp.example/api/track?recipient=hr-benefits%40corp.internal&order=GC-2026-8842&type=final_notice" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

@@ -1,0 +1,69 @@
+From: Tesla Fleet Operations <fleet@tesla.example>
+To: ops@corp.internal
+Cc: cto@corp.internal, procurement@corp.internal
+Date: Thu, 05 Nov 2026 08:00:00 -0800
+Message-ID: <0644-b70@synth.example>
+Subject: [FLEET ACCESS] 28-vehicle Supercharger fleet program — Next steps
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear Fleet Operations Team,
+
+Your company fleet of 28 Tesla Model Y Performance
+vehicles has been approved for the Tesla Fleet
+Supercharger Access Program.
+
+Fleet Details:
+  Account: TSLA-FLT-8842
+  Vehicles: 28 × Model Y Performance (2025)
+  Program: Fleet Supercharger Access — Enterprise
+  Rate: $0.24/kWh (fleet, 40% off retail)
+  Est. Monthly: $8,400
+
+Next Steps:
+
+  1. Navigate to Tesla Fleet Management:
+     tesla.com/fleet (type URL manually)
+
+  2. Log in with your Tesla account credentials
+     (the same login used for the Tesla mobile app)
+
+  3. Go to: Fleet → TSLA-FLT-8842 → Enroll
+
+  4. Provide for each vehicle:
+     — VIN number
+     — Current location
+
+  5. Billing starts upon enrollment:
+     — Monthly invoice through Tesla account
+     — Credit card or ACH (no deposit needed)
+
+  Important Security Notes:
+  Tesla will NEVER:
+  - Charge an upfront "activation deposit" for fleet
+    Supercharger access
+  - Create "Tesla Energy Fleet Services LLC" for billing
+  - Send bank transfer details via email
+  - Request GPS and route pattern data through
+    email portals
+  - Require "vehicle_data scope" OAuth permissions
+    for basic Supercharger billing
+  - Offer a "Chinese fleet channel"
+
+  Tesla's actual fleet enrollment:
+  — FREE enrollment (no deposit)
+  — Billing is monthly through the Tesla account
+     (credit card/ACH, never wire transfer)
+  — Only VIN number is needed (not GPS, not route
+     patterns, not driver profiles)
+  — Fleet API with vehicle_data scope is for
+     DEVELOPERS building fleet apps, not for
+     basic Supercharger billing
+
+  If you receive an email requesting a "$14,000
+  deposit" or GPS/route data upload, it is a phishing
+  attempt targeting Tesla fleet owners.
+
+Tesla, Inc. | Fleet Operations
+1 Tesla Road, Austin, TX 78725
+You are receiving this because you are the fleet contact.

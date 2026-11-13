@@ -1,0 +1,19 @@
+From: =?utf-8?B?5ZWG5Yqh5ouT5bGV?= <bd@newmarket.example>
+To: sales@corp.internal
+Date: Tue, 25 Aug 2026 10:22:00 +0800
+Message-ID: <0002-b2@synth.example>
+Subject: 新客户对接人名片
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+下周来访的客户对接信息见附件名片。
+--BS
+Content-Type: text/vcard
+Content-Disposition: attachment; filename="客户对接人.vcf"
+Content-Transfer-Encoding: base64
+
+QkVHSU46VkNBUkQNClZFUlNJT046My4wDQpGTjrph4fotK3mgLvnm5Et5p6XDQpPUkc65paw56iL6ZuG5ZuiDQpVUkw6aHR0cHM6Ly9zdXBwbGllci1wb3J0YWwuZXhhbXBsZS5uZXQvYXBwbHkNCkVORDpWQ0FSRA0K
+--BS--

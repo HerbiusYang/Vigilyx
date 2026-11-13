@@ -1,0 +1,10 @@
+From: =?utf-8?B?5byA56Wo?= <kp@invoice-b2b9.example>
+To: ap@corp.internal
+Date: Mon, 21 Sep 2026 09:28:00 +0800
+Message-ID: <0018-b28@synth.example>
+Subject: 发票信息变更确认
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+确认：https://kp-qr9.example.info/c
+（税号+开户行+账号）

@@ -34,6 +34,7 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use vigilyx_core::security::SemanticSourcePart;
 use vigilyx_parser::mime::decode_rfc2047;
 
 use crate::context::SecurityContext;
@@ -43,6 +44,7 @@ use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModu
 use crate::module_data::module_data;
 use crate::modules::content_scan::html_utils::strip_html_tags;
 use crate::modules::content_scan::normalize_text;
+use crate::semantic::{exclude_non_action_claims, semantic_text_projection_with_coverage};
 
 // ---------------------------------------------------------------------------
 // Module struct
@@ -199,6 +201,38 @@ impl SecurityModule for RmmDetectModule {
         corpus.push('\n');
         corpus.push_str(&squashed);
 
+        let mut action_corpus = String::new();
+        let mut action_contexts = Vec::new();
+        let mut action_projection_limited = false;
+        for (source, body) in [
+            (SemanticSourcePart::Header, ctx.session.subject.as_deref()),
+            (
+                SemanticSourcePart::PlainText,
+                ctx.session.content.body_text.as_deref(),
+            ),
+            (
+                SemanticSourcePart::Html,
+                ctx.session.content.body_html.as_deref(),
+            ),
+        ] {
+            if let Some(body) = body {
+                let (projection, limited) =
+                    semantic_text_projection_with_coverage(truncate_for_scan(body), source);
+                action_projection_limited |= limited || body.len() > MAX_SCAN_LEN;
+                let (retained, context) =
+                    exclude_non_action_claims(&ctx.session, &projection, source);
+                action_corpus.push_str(&normalize_text(&retained).to_ascii_lowercase());
+                action_corpus.push('\n');
+                action_contexts.push(context);
+            }
+        }
+        let action_squashed: String = action_corpus
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        action_corpus.push('\n');
+        action_corpus.push_str(&action_squashed);
+
         // ── 1. Attachment installer match ─────────────────────────────────
         let mut installer_hits: Vec<(String, String)> = Vec::new(); // (filename, matched_pattern)
         for att in &ctx.session.content.attachments {
@@ -258,8 +292,14 @@ impl SecurityModule for RmmDetectModule {
         }
 
         // ── 3. Social-engineering action verb ─────────────────────────────
-        let action_match = action_matcher.scan(&corpus).first_pattern();
+        let action_match = action_matcher.scan(&action_corpus).first_pattern();
         let has_action = action_match.is_some();
+        let high_risk_action_match = module_data()
+            .get_list("rmm_high_risk_action_keywords")
+            .iter()
+            .find(|term| action_corpus.contains(&term.to_ascii_lowercase()))
+            .cloned();
+        let has_high_risk_action = high_risk_action_match.is_some();
         if let Some(ref kw) = action_match {
             evidence.push(Evidence {
                 description: format!("RMM-related action/lure phrase: '{}'", kw),
@@ -285,6 +325,20 @@ impl SecurityModule for RmmDetectModule {
             score += boost;
             categories.push(cat.to_string());
         }
+        if !has_installer && has_brand && has_action && has_high_risk_action {
+            score += 0.15;
+            categories.push("rmm_high_risk_remote_access_lure".to_string());
+            evidence.push(Evidence {
+                description: format!(
+                    "RMM brand/action pair also requests high-risk remote-control consent: {}",
+                    high_risk_action_match
+                        .as_deref()
+                        .unwrap_or("configured action")
+                ),
+                location: Some("subject_or_body".to_string()),
+                snippet: None,
+            });
+        }
 
         // ── 5. Finalize ───────────────────────────────────────────────────
         score = score.min(1.0);
@@ -295,16 +349,28 @@ impl SecurityModule for RmmDetectModule {
         let threat_level = ThreatLevel::from_score(score);
 
         if threat_level == ThreatLevel::Safe {
-            return Ok(ModuleResult::safe_analyzed(
+            let mut result = ModuleResult::safe_analyzed(
                 &self.meta.id,
                 &self.meta.name,
                 self.meta.pillar,
                 "No RMM weaponization signals",
                 duration_ms,
-            ));
+            );
+            result.details = serde_json::json!({
+                "score": score, "has_installer": has_installer, "has_action": has_action,
+                "semantic_action_contexts": action_contexts,
+                "semantic_projection_limited": action_projection_limited,
+            });
+            if action_projection_limited {
+                result.categories.push("scan_incomplete".to_string());
+                result.mark_inspection_incomplete(
+                    "RMM source projection reached its inspection budget",
+                );
+            }
+            return Ok(result);
         }
 
-        Ok(ModuleResult {
+        let mut result = ModuleResult {
             module_id: self.meta.id.clone(),
             module_name: self.meta.name.clone(),
             pillar: self.meta.pillar,
@@ -320,9 +386,12 @@ impl SecurityModule for RmmDetectModule {
                 "score": score,
                 "has_brand": has_brand,
                 "has_action": has_action,
+                "has_high_risk_action": has_high_risk_action,
                 "has_installer": has_installer,
                 "brand_match": brand_match,
                 "action_match": action_match,
+                "semantic_action_contexts": action_contexts,
+                "semantic_projection_limited": action_projection_limited,
                 "installer_hits": installer_hits
                     .iter()
                     .map(|(f, p)| serde_json::json!({"filename": f, "pattern": p}))
@@ -332,7 +401,13 @@ impl SecurityModule for RmmDetectModule {
             analyzed_at: Utc::now(),
             bpa: None,
             engine_id: None,
-        })
+        };
+        if action_projection_limited {
+            result.categories.push("scan_incomplete".to_string());
+            result
+                .mark_inspection_incomplete("RMM source projection reached its inspection budget");
+        }
+        Ok(result)
     }
 }
 
@@ -545,5 +620,112 @@ mod tests {
         let lowered = decoded_lower_filename("ＡｎｙＤｅｓｋ\u{200B}Setup.zip");
         assert!(lowered.contains("anydesk"));
         assert!(lowered.contains("setup"));
+    }
+
+    #[tokio::test]
+    async fn hardening_rmm_warning_quote_and_report_are_not_install_requests() {
+        let module = RmmDetectModule::new();
+        for (body, verified_thread) in [
+            (
+                "Do not install ScreenConnect from https://support.invalid/remote-support.msi. Never send the access code to the sender.",
+                false,
+            ),
+            (
+                "Security incident report: install ScreenConnect from https://support.invalid/remote-support.msi.",
+                false,
+            ),
+            (
+                "> Please install AnyDesk and send the access code to the sender.",
+                true,
+            ),
+        ] {
+            let mut ctx = ctx_with(None, Some(body), vec![]);
+            if verified_thread {
+                // The quoted control models a reply with session thread
+                // evidence; a body-only prefix cannot establish that trust.
+                Arc::get_mut(&mut ctx.session)
+                    .unwrap()
+                    .content
+                    .headers
+                    .push((
+                        "In-Reply-To".into(),
+                        "<original-rmm-request@example.invalid>".into(),
+                    ));
+            }
+            let result = module.analyze(&ctx).await.unwrap();
+            assert_eq!(result.details["has_action"], false, "{result:?}");
+            assert!(
+                !result
+                    .categories
+                    .iter()
+                    .any(|category| category == "rmm_lure_combo"
+                        || category == "rmm_high_risk_remote_access_lure"),
+                "{result:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn hardening_rmm_unverified_quote_cannot_hide_install_request() {
+        let body = "> Please install AnyDesk and send the access code to the sender.";
+        let result = RmmDetectModule::new()
+            .analyze(&ctx_with(None, Some(body), vec![]))
+            .await
+            .unwrap();
+        assert_eq!(result.details["has_action"], true, "{result:?}");
+        assert!(
+            result
+                .categories
+                .iter()
+                .any(|category| category == "rmm_lure_combo"),
+            "a quote prefix without thread evidence must retain the install request: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn hardening_rmm_mixed_warning_preserves_request_and_installer() {
+        let module = RmmDetectModule::new();
+        let body = "Never share your password.\n\nPlease install AnyDesk and send the access code to our engineer.";
+        let result = module
+            .analyze(&ctx_with(None, Some(body), vec![]))
+            .await
+            .unwrap();
+        assert!(
+            result
+                .categories
+                .iter()
+                .any(|category| category == "rmm_lure_combo"),
+            "{result:?}"
+        );
+        let attachment = attachment("AnyDesk.exe");
+        let warning = "Do not install AnyDesk. This is an incident report.";
+        let result = module
+            .analyze(&ctx_with(None, Some(warning), vec![attachment]))
+            .await
+            .unwrap();
+        assert!(
+            result
+                .categories
+                .iter()
+                .any(|category| category == "rmm_installer"),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn hardening_rmm_projection_budget_cannot_return_complete_clean() {
+        let body = "Routine maintenance notice.\n".repeat(12_000);
+        let result = RmmDetectModule::new()
+            .analyze(&ctx_with(None, Some(&body), vec![]))
+            .await
+            .unwrap();
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert!(
+            result
+                .categories
+                .iter()
+                .any(|category| category == "scan_incomplete")
+        );
+        assert_eq!(result.details["semantic_projection_limited"], true);
     }
 }

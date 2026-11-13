@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vigilyx-sandbox-isolation
+  namespace: vigilyx
+spec:
+  podSelector:
+    matchLabels:
+      app: vigilyx
+      component: sandbox
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: vigilyx
+          component: engine
+    ports:
+    - protocol: TCP
+      port: 8000
+  # CAPE analysis must not have arbitrary pod egress.  Guest networking is
+  # provided by the dedicated KVM node; if the cluster requires DNS for a
+  # future sandbox component, add a narrowly scoped kube-dns exception here.
+  egress: []

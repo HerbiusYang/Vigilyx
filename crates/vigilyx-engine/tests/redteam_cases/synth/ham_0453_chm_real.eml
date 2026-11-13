@@ -1,0 +1,9 @@
+From: =?utf-8?B?U0RLIERvY3M=?= <docs@vendor.example>
+To: rd@corp.internal
+Date: Tue, 22 Sep 2026 10:52:00 +0800
+Message-ID: <0042-b29@synth.example>
+Subject: API reference moved online
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+CHM downloads are retired; docs are online only at docs.vendor.example.

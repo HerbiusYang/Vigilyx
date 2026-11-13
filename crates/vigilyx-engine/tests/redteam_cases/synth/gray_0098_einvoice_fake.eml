@@ -1,0 +1,10 @@
+From: =?utf-8?B?55S15a2Q5Y+R56Wo?= <fp@tax-relay36.example>
+To: me@personal.example
+Date: Fri, 18 Sep 2026 09:52:00 +0800
+Message-ID: <0042-b25@synth.example>
+Subject: 您的发票可开具（领取专票）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+专票领取需补开票信息：https://fp-lq36.example.info/e
+（税号+开户行+账号）

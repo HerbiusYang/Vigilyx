@@ -13,15 +13,17 @@ use anyhow::Result;
 use clap::Parser;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 use vigilyx_core::models::{
-    EmailSession, HttpSession, Protocol, SessionSource, SessionStatus, WsMessage,
+    EmailSession, HttpSession, Protocol, ReleaseRescanContext, SessionSource, SessionStatus,
+    WsMessage,
 };
 use vigilyx_db::VigilDb;
 use vigilyx_db::mq::{
     MqClient, MqConfig, PoisonedStreamMessage, RescanSessionReference, StreamClient,
-    consumer_groups, keys, streams, topics, verify_cmd_payload,
+    consumer_groups, keys, require_data_plane_token, streams, topics, verify_cmd_payload,
 };
 use vigilyx_db::security::quarantine::QuarantineEntry;
 use vigilyx_parser::mime::{MimeParser, decode_rfc2047};
@@ -94,10 +96,14 @@ async fn main() -> Result<()> {
             .with_env_filter(env_filter)
             .init();
     }
+    vigilyx_core::validate_config_encryption_key()
+        .map_err(|error| anyhow::anyhow!("configuration encryption is required: {error}"))?;
 
     let args = Args::parse();
 
     info!("Vigilyx Engine 独立进程启动中...");
+    require_data_plane_token()
+        .map_err(|error| anyhow::anyhow!("data-plane authentication is required: {error}"))?;
 
     // Database initialization
 
@@ -109,7 +115,6 @@ async fn main() -> Result<()> {
             "DATABASE_URL 环境变量未设置且未通过 --database-url 指定。请在 .env 或环境变量中配置。",
         );
     let db = VigilDb::new(&database_url).await?;
-    db.init_security_tables().await?;
     // Seed built-in system whitelist so curated safe domains override stale external intel pollution.
     match db.seed_system_whitelist().await {
         Ok(n) if n > 0 => info!("系统白名单已注入/刷新: {} 条记录", n),
@@ -502,11 +507,18 @@ async fn build_engine_status(state: &Arc<EngineState>) -> serde_json::Value {
 
 async fn build_engine_heartbeat(state: &Arc<EngineState>, pid: u32) -> serde_json::Value {
     let status = build_engine_status(state).await;
+    let ds_model = vigilyx_engine::ds_learning::runtime_state();
     serde_json::json!({
         "running": true,
         "pid": pid,
         "updated_at": chrono::Utc::now().to_rfc3339(),
         "status": status,
+        "ds_learning": {
+            "loaded_revision": ds_model.revision,
+            "active_parameter_version": ds_model.active.as_ref().map(|p| &p.parameter_version),
+            "active_parameter_sha256": ds_model.active.as_ref().map(vigilyx_engine::ds_learning::parameter_sha256),
+            "candidate_parameter_version": ds_model.candidate.as_ref().map(|p| &p.parameter_version),
+        },
     })
 }
 
@@ -557,6 +569,14 @@ fn handle_reload_command(state: &Arc<EngineState>, target: &str) {
         }
         "config" => {
             warn!("Pipeline 配置已变更, 需重启 Engine 进程生效");
+        }
+        "ds_learning" => {
+            let state = Arc::clone(state);
+            tokio::spawn(async move {
+                if let Err(error) = vigilyx_engine::ds_learning::reload_from_db(&state.db).await {
+                    error!(%error, "DS parameter reload rejected; retaining last valid model");
+                }
+            });
         }
         "keywords" => {
             warn!("Keyword 规则已变更, 需重启 Engine 进程生效");
@@ -784,9 +804,11 @@ async fn stream_input_loop(state: &Arc<EngineState>, stream: &StreamClient) -> R
             batch_ack(stream, streams::RESCAN_REQUESTS, &ack_ids).await;
         }
 
-        // Read HTTP sessions without BLOCK so the command is truly non-blocking.
+        // Read one HTTP session per Stream entry without BLOCK so the command is
+        // truly non-blocking. The sniffer's xadd_batch publishes each item as
+        // its own JSON object, not as one JSON array.
         let mut http_read = stream
-            .xreadgroup_checked::<Vec<HttpSession>>(streams::HTTP_SESSIONS, 10, None)
+            .xreadgroup_checked::<HttpSession>(streams::HTTP_SESSIONS, 10, None)
             .await?;
         {
             let mut ack_ids = dead_letter_poisoned(
@@ -797,8 +819,8 @@ async fn stream_input_loop(state: &Arc<EngineState>, stream: &StreamClient) -> R
             )
             .await;
             ack_ids.reserve(http_read.messages.len());
-            for (id, sessions) in http_read.messages {
-                if stream_process_http(state, sessions) == AckDecision::Immediate {
+            for (id, session) in http_read.messages {
+                if stream_process_http(state, session).await == AckDecision::Immediate {
                     ack_ids.push(id);
                 }
             }
@@ -955,7 +977,7 @@ async fn reclaim_http_pending(
     let mut total = 0usize;
     for _ in 0..max_batches {
         let mut reclaimed = stream
-            .xautoclaim_checked::<Vec<HttpSession>>(streams::HTTP_SESSIONS, 60_000, 200)
+            .xautoclaim_checked::<HttpSession>(streams::HTTP_SESSIONS, 60_000, 200)
             .await?;
         if reclaimed.is_empty() {
             break;
@@ -970,14 +992,14 @@ async fn reclaim_http_pending(
         .await;
         ack_ids.reserve(reclaimed.messages.len());
         let delivery_counts = std::mem::take(&mut reclaimed.delivery_counts);
-        for (id, sessions) in reclaimed.messages {
-            // C5: cap retries for permanently failing HTTP batches.
+        for (id, session) in reclaimed.messages {
+            // C5: cap retries for permanently failing HTTP sessions.
             if exceeds_delivery_cap(&delivery_counts, &id) {
                 match stream
                     .xadd_dlq(
                         streams::HTTP_SESSIONS_DLQ,
                         &id,
-                        &sessions,
+                        &session,
                         "exceeded max delivery attempts (permanent failure)",
                     )
                     .await
@@ -986,12 +1008,12 @@ async fn reclaim_http_pending(
                     Err(error) => warn!(
                         msg_id = %id,
                         %error,
-                        "Failed to dead-letter over-retried HTTP sessions; leaving pending"
+                        "Failed to dead-letter over-retried HTTP session; leaving pending"
                     ),
                 }
                 continue;
             }
-            if stream_process_http(state, sessions) == AckDecision::Immediate {
+            if stream_process_http(state, session).await == AckDecision::Immediate {
                 ack_ids.push(id);
             }
         }
@@ -1069,6 +1091,19 @@ async fn stream_process_email(
         );
     }
 
+    // The outbound email review is a durable delivery guarantee, not a
+    // best-effort side task. Persist it before any analyzability filter and
+    // before this Stream message can be ACKed; a database failure leaves the
+    // message pending for XAUTOCLAIM retry.
+    if let Err(error) = state.security_engine.audit_mirror_email(&session).await {
+        warn!(
+            session_id = %session.id,
+            %error,
+            "Mirror email audit persistence failed; leaving Stream message pending"
+        );
+        return AckDecision::Skip;
+    }
+
     if !session.has_analyzable_content() {
         // Session arrived without analyzable content (e.g. partial SMTP session).
         // Retry from DB after a delay: a later Stream message for the same session
@@ -1086,6 +1121,16 @@ async fn stream_process_email(
                 tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                 match state.db.get_session(session_id).await {
                     Ok(Some(db_session)) if db_session.has_analyzable_content() => {
+                        if let Err(error) =
+                            state.security_engine.audit_mirror_email(&db_session).await
+                        {
+                            warn!(
+                                session_id = %session_id,
+                                %error,
+                                "Delayed mirror email audit persistence failed; retrying"
+                            );
+                            continue;
+                        }
                         submit_to_security_engine(&state, db_session);
                         let _ = stream_clone.xack(streams::EMAIL_SESSIONS, &[&msg_id]).await;
                         return;
@@ -1117,6 +1162,14 @@ async fn stream_process_rescan_reference(
 ) -> AckDecision {
     let session = match reference.quarantine_id.as_deref() {
         Some(quarantine_id) => {
+            if reference.release_request_id.is_none() {
+                warn!(
+                    msg_id,
+                    quarantine_id,
+                    "Quarantine rescan is missing its release request id; acknowledging"
+                );
+                return AckDecision::Immediate;
+            }
             match load_quarantine_rescan_session(state, msg_id, &reference, quarantine_id).await {
                 QuarantineRescanLoad::Ready(session) => session,
                 // Permanent condition (entry gone, unparseable raw message):
@@ -1195,13 +1248,20 @@ async fn load_quarantine_rescan_session(
     reference: &RescanSessionReference,
     quarantine_id: &str,
 ) -> QuarantineRescanLoad {
-    let (raw_eml, entry) = match state.db.quarantine_get_raw_eml(quarantine_id).await {
+    let Some(release_request_id) = reference.release_request_id else {
+        return QuarantineRescanLoad::SkipMessage;
+    };
+    let release_request_id_text = release_request_id.to_string();
+    let (raw_eml, entry) = match state
+        .db
+        .quarantine_get_raw_eml_for_release(quarantine_id, &release_request_id_text)
+        .await
+    {
         Ok(Some(value)) => value,
         Ok(None) => {
             warn!(
                 msg_id,
-                quarantine_id,
-                "Quarantine rescan targets a missing entry; acknowledging"
+                quarantine_id, "Quarantine rescan targets a missing entry; acknowledging"
             );
             return QuarantineRescanLoad::SkipMessage;
         }
@@ -1221,6 +1281,8 @@ async fn load_quarantine_rescan_session(
         &entry,
         &raw_eml,
         reference.client_ip.as_deref(),
+        release_request_id,
+        quarantine_id,
     ) {
         Some(session) => QuarantineRescanLoad::Ready(session),
         None => {
@@ -1250,15 +1312,20 @@ fn quarantine_rescan_session_from_raw(
     entry: &QuarantineEntry,
     raw_eml: &[u8],
     client_ip: Option<&str>,
+    release_request_id: uuid::Uuid,
+    quarantine_id: &str,
 ) -> Option<EmailSession> {
-    let mut content = MimeParser::new().parse(raw_eml).ok()?;
+    let content = MimeParser::new().parse(raw_eml).ok()?;
     // Fail closed on degraded parses: the release gate must vouch for the
     // exact bytes being relayed, and a truncated parse means part of those
     // bytes (e.g. dropped attachments) was never inspected.
-    if content.truncated || content.dropped_attachments > 0 {
+    if !content.is_complete
+        || content.truncated
+        || content.dropped_attachments > 0
+        || content.links_truncated
+    {
         return None;
     }
-    content.is_complete = true;
 
     // The quarantine entry predates full transport-endpoint persistence;
     // restore the real client IP when known, keep the "unknown" placeholder
@@ -1284,6 +1351,11 @@ fn quarantine_rescan_session_from_raw(
     session.subject = entry.subject.clone();
     session.total_bytes = raw_eml.len();
     session.email_count = 1;
+    session.release_rescan = Some(ReleaseRescanContext {
+        request_id: release_request_id,
+        quarantine_id: quarantine_id.to_string(),
+        content_sha256: hex::encode(Sha256::digest(raw_eml)),
+    });
 
     // Mirror the MTA/sniffer path: RFC 2047 encoded-words must be decoded so
     // keyword detectors see the same text the MUA renders.
@@ -1309,6 +1381,28 @@ fn quarantine_rescan_session_from_raw(
 /// `Import` bypasses passive-hop and recent-session dedup while preserving the
 /// normal detector, whitelist, verdict persistence, and alert paths.
 fn prepare_rescan_session(mut session: EmailSession) -> Option<EmailSession> {
+    // Historical rows may contain parser-derived links or attachment metadata
+    // produced by an older engine version.  When the capture path retained the
+    // exact MIME bytes (normally because inspection was incomplete), reparse
+    // those bytes so an explicit rescan actually exercises the current parser.
+    // Keep transport-only context that cannot be recovered from MIME itself.
+    if let Some(raw_mime) = session.content.raw_mime.clone() {
+        match MimeParser::new().parse(&raw_mime) {
+            Ok(mut reparsed) => {
+                reparsed.is_encrypted = session.content.is_encrypted;
+                reparsed.smtp_dialog = std::mem::take(&mut session.content.smtp_dialog);
+                session.content = reparsed;
+            }
+            Err(error) => {
+                warn!(
+                    session_id = %session.id,
+                    ?error,
+                    "Stored raw MIME could not be reparsed; using retained parsed content"
+                );
+            }
+        }
+    }
+
     if !session.has_analyzable_content() {
         return None;
     }
@@ -1316,36 +1410,36 @@ fn prepare_rescan_session(mut session: EmailSession) -> Option<EmailSession> {
     Some(session)
 }
 
-/// Process HTTP sessions and ACK only when the complete Stream message was queued.
-fn stream_process_http(state: &Arc<EngineState>, sessions: Vec<HttpSession>) -> AckDecision {
-    submit_http_sessions(sessions, |session| {
+/// Process one HTTP session and ACK only when the complete Stream message was queued.
+async fn stream_process_http(state: &Arc<EngineState>, session: HttpSession) -> AckDecision {
+    // Webmail send requests share the same envelope/DLP review contract as
+    // SMTP. Non-send HTTP requests are a no-op here and continue to the
+    // existing detector queue. Qualifying reviews must be durable before ACK.
+    if let Err(error) = state.security_engine.audit_webmail_email(&session).await {
+        warn!(
+            session_id = %session.id,
+            %error,
+            "Webmail email audit persistence failed; leaving Stream message pending"
+        );
+        return AckDecision::Skip;
+    }
+    submit_http_session(session, |session| {
         state.data_security_engine.try_submit(session)
     })
 }
 
-fn submit_http_sessions<F>(sessions: Vec<HttpSession>, mut submit: F) -> AckDecision
+fn submit_http_session<F>(session: HttpSession, mut submit: F) -> AckDecision
 where
     F: FnMut(HttpSession) -> Result<(), String>,
 {
-    let count = sessions.len();
-    let mut all_submitted = true;
-    for session in sessions {
-        if let Err(e) = submit(session) {
-            all_submitted = false;
-            warn!(error = %e, "HTTP data security submit failed (channel full)");
-        }
-    }
-    if count > 0 {
-        info!(count, "HTTP data security: processed from Stream");
-    }
-    if all_submitted {
-        AckDecision::Immediate
-    } else {
+    if let Err(e) = submit(session) {
+        warn!(error = %e, "HTTP data security submit failed (channel full)");
         // Leave the message in the PEL. XAUTOCLAIM will retry it after the
-        // consumer has capacity; DataSecurityEngine deduplication makes the
-        // already-submitted prefix safe to replay.
-        AckDecision::Skip
+        // consumer has capacity.
+        return AckDecision::Skip;
     }
+    info!(count = 1, "HTTP data security: processed from Stream");
+    AckDecision::Immediate
 }
 
 /// Redis command loop: Listen for API rescan / reload commands
@@ -1355,9 +1449,9 @@ async fn redis_command_loop(state: &Arc<EngineState>, mq: &MqClient) -> Result<(
         .await?;
 
     // SEC-P06: Read shared token once at startup for control-plane message auth
-    let cmd_token = std::env::var("INTERNAL_API_TOKEN").unwrap_or_default();
+    let cmd_token = std::env::var("MQ_AUTH_TOKEN").unwrap_or_default();
     if cmd_token.is_empty() {
-        warn!("INTERNAL_API_TOKEN not set — control-plane commands will be rejected");
+        warn!("MQ_AUTH_TOKEN not set — control-plane commands will be rejected");
     }
 
     info!("Redis 指令订阅已启动 (cmd:rescan, cmd:reload)");
@@ -1419,44 +1513,38 @@ mod tests {
     }
 
     #[test]
-    fn http_stream_message_is_acked_when_every_session_is_queued() {
-        let sessions = vec![http_session(1), http_session(2), http_session(3)];
-        let mut submitted = Vec::new();
+    fn http_stream_message_is_acked_when_session_is_queued() {
+        let session = http_session(1);
+        let mut submitted = None;
 
-        let decision = submit_http_sessions(sessions, |session| {
-            submitted.push(session.uri);
+        let decision = submit_http_session(session, |session| {
+            submitted = Some(session.uri);
             Ok(())
         });
 
         assert_eq!(decision, AckDecision::Immediate);
-        assert_eq!(submitted, ["/upload/1", "/upload/2", "/upload/3"]);
+        assert_eq!(submitted.as_deref(), Some("/upload/1"));
     }
 
     #[test]
     fn http_stream_message_is_not_acked_when_queue_is_full() {
-        let sessions = vec![http_session(1), http_session(2), http_session(3)];
-        let mut attempts = 0usize;
+        let session = http_session(1);
 
-        let decision = submit_http_sessions(sessions, |_| {
-            attempts += 1;
-            if attempts == 2 {
-                Err("DataSecurityEngine channel full".to_string())
-            } else {
-                Ok(())
-            }
+        let decision = submit_http_session(session, |_| {
+            Err("DataSecurityEngine channel full".to_string())
         });
 
         assert_eq!(decision, AckDecision::Skip);
-        assert_eq!(attempts, 3, "the whole batch should still be attempted");
     }
 
     #[test]
-    fn empty_http_stream_message_is_safe_to_ack() {
-        let decision = submit_http_sessions(Vec::new(), |_| {
-            panic!("empty stream message must not call submit")
-        });
+    fn http_stream_payload_is_a_single_session_object() {
+        let encoded = serde_json::to_vec(&http_session(1)).expect("session should serialize");
+        let decoded: HttpSession =
+            serde_json::from_slice(&encoded).expect("single session object should deserialize");
 
-        assert_eq!(decision, AckDecision::Immediate);
+        assert_eq!(decoded.uri, "/upload/1");
+        assert!(serde_json::from_slice::<Vec<HttpSession>>(&encoded).is_err());
     }
 
     #[test]
@@ -1476,6 +1564,49 @@ mod tests {
         assert_eq!(
             prepared.content.body_text.as_deref(),
             Some("historical email")
+        );
+    }
+
+    #[test]
+    fn database_rescan_reparses_retained_raw_mime_with_current_parser() {
+        let raw_mime = concat!(
+            "From: clearing@example.invalid\r\n",
+            "To: ops@example.invalid\r\n",
+            "Subject: settlement interfaces\r\n",
+            "Content-Type: text/plain; charset=utf-8\r\n",
+            "\r\n",
+            "Interfaces: legacyABC.dbf, CLEARING01.DBF, CLEARING02.DBF. ",
+            "Guide: https://example.com/interfaces\r\n"
+        );
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            40_000,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.content.body_text = Some("stale parsed body".to_string());
+        session.content.links = vec![vigilyx_core::models::EmailLink {
+            url: "https://CLEARING01.DBF".to_string(),
+            text: None,
+            suspicious: false,
+        }];
+        session.content.raw_mime = Some(raw_mime.as_bytes().to_vec());
+
+        let prepared = prepare_rescan_session(session).expect("raw MIME should be analyzable");
+
+        assert_eq!(prepared.source, SessionSource::Import);
+        assert!(
+            prepared
+                .content
+                .body_text
+                .as_deref()
+                .is_some_and(|body| body.contains("CLEARING01.DBF"))
+        );
+        assert_eq!(prepared.content.links.len(), 1);
+        assert_eq!(
+            prepared.content.links[0].url,
+            "https://example.com/interfaces"
         );
     }
 
@@ -1501,6 +1632,7 @@ mod tests {
             rcpt_to: vec!["victim@corp.example".to_string()],
             subject: None,
             threat_level: "high".to_string(),
+            direction: "inbound".to_string(),
             reason: Some("inline verdict".to_string()),
             status: "releasing".to_string(),
             created_at: "2026-08-14T00:00:00Z".to_string(),
@@ -1553,12 +1685,15 @@ mod tests {
             "--mix--\r\n",
         )
         .as_bytes();
+        let release_request_id = uuid::Uuid::new_v4();
 
         let session = quarantine_rescan_session_from_raw(
             session_id,
             &entry,
             raw_eml,
             Some("198.51.100.23"),
+            release_request_id,
+            &entry.id,
         )
         .expect("real raw_eml must parse");
 
@@ -1568,9 +1703,19 @@ mod tests {
         // A5: the real client IP must be restored so IP-reputation signals
         // survive the release rescan.
         assert_eq!(session.client_ip, "198.51.100.23");
-        assert_eq!(session.mail_from.as_deref(), Some("billing@evil-example.com"));
+        assert_eq!(
+            session.mail_from.as_deref(),
+            Some("billing@evil-example.com")
+        );
         assert_eq!(session.rcpt_to, vec!["victim@corp.example".to_string()]);
         assert_eq!(session.total_bytes, raw_eml.len());
+        let release_context = session.release_rescan.as_ref().expect("release context");
+        assert_eq!(release_context.request_id, release_request_id);
+        assert_eq!(release_context.quarantine_id, entry.id);
+        assert_eq!(
+            release_context.content_sha256,
+            hex::encode(Sha256::digest(raw_eml))
+        );
         // RFC 2047 subject fallback: the entry stored no subject, so the
         // encoded-word subject must be decoded from the raw headers.
         let subject = session.subject.as_deref().expect("decoded subject");
@@ -1604,8 +1749,15 @@ mod tests {
         entry.subject = Some("stored subject".to_string());
         let raw_eml = b"From: a@b.example\r\nSubject: header subject\r\n\r\nbody\r\n";
 
-        let session = quarantine_rescan_session_from_raw(session_id, &entry, raw_eml, None)
-            .expect("message should parse");
+        let session = quarantine_rescan_session_from_raw(
+            session_id,
+            &entry,
+            raw_eml,
+            None,
+            uuid::Uuid::new_v4(),
+            &entry.id,
+        )
+        .expect("message should parse");
 
         assert_eq!(session.subject.as_deref(), Some("stored subject"));
         // No client IP anywhere → keep the "unknown" placeholder.
@@ -1621,8 +1773,15 @@ mod tests {
         entry.client_ip = Some("203.0.113.7".to_string());
         let raw_eml = b"From: a@b.example\r\nSubject: hi\r\n\r\nbody\r\n";
 
-        let session = quarantine_rescan_session_from_raw(session_id, &entry, raw_eml, None)
-            .expect("message should parse");
+        let session = quarantine_rescan_session_from_raw(
+            session_id,
+            &entry,
+            raw_eml,
+            None,
+            uuid::Uuid::new_v4(),
+            &entry.id,
+        )
+        .expect("message should parse");
 
         assert_eq!(session.client_ip, "203.0.113.7");
     }
@@ -1639,15 +1798,23 @@ mod tests {
         let entry = quarantine_entry(&session_id);
         let raw_eml = overdeep_multipart_message(12);
 
-        let parsed = MimeParser::new().parse(&raw_eml).expect(
-            "parser degrades over-deep messages instead of erroring",
-        );
+        let parsed = MimeParser::new()
+            .parse(&raw_eml)
+            .expect("parser degrades over-deep messages instead of erroring");
         assert!(
             parsed.truncated || parsed.dropped_attachments > 0,
             "test vector must exceed the parser's nesting limit"
         );
         assert!(
-            quarantine_rescan_session_from_raw(session_id, &entry, &raw_eml, None).is_none()
+            quarantine_rescan_session_from_raw(
+                session_id,
+                &entry,
+                &raw_eml,
+                None,
+                uuid::Uuid::new_v4(),
+                &entry.id,
+            )
+            .is_none()
         );
     }
 

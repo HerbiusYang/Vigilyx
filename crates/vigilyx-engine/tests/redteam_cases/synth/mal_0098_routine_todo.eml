@@ -1,0 +1,10 @@
+From: =?utf-8?B?6L+Q6JCl5bmz5Y+w?= <ops@biz-platform.example>
+To: merchant@corp.internal
+Date: Fri, 28 Aug 2026 14:27:00 +0800
+Message-ID: <0017-b5@synth.example>
+Subject: 巡检发现 1 项待办
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+系统例行巡检发现您有 1 项待办未处理，长时间未处理将影响功能使用，
+处理入口：https://ops-todo.example.net/item

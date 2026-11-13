@@ -1,0 +1,10 @@
+From: =?utf-8?B?6ZmI5pum?= <chen.xi@corp.internal>
+To: li.wei@corp.internal
+Date: Tue, 25 Aug 2026 10:41:00 +0800
+Message-ID: <0021-b2@synth.example>
+Subject: PR 评审：网关超时回退
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+老李，#5121 改了超时回退的层级，230 行，
+测试都绿了但我想让你把把方向，今天内看一眼就行。

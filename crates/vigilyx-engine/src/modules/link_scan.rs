@@ -11,9 +11,10 @@ use std::sync::{LazyLock, OnceLock, RwLock};
 
 use super::common::{
     domain_matches_policy_set, domains_share_organizational_domain, extract_domain_from_url,
-    extract_redirect_target_urls, host_matches_domain_or_subdomain,
-    is_probable_non_clickable_render_asset_url, is_probable_opaque_mail_callback_url,
-    is_probable_safe_static_asset_url, organizational_domain, percent_decode, url_has_userinfo,
+    extract_redirect_target_urls, host_matches_domain_or_subdomain, is_operational_delivery_alert,
+    is_private_network_url, is_probable_non_clickable_render_asset_url,
+    is_probable_opaque_mail_callback_url, is_probable_safe_static_asset_url, organizational_domain,
+    percent_decode, url_has_userinfo,
 };
 use crate::context::SecurityContext;
 use crate::error::EngineError;
@@ -62,7 +63,7 @@ static RE_EMAIL_TEXT: LazyLock<Regex> =
 /// octal (0300.0250.0001.0001) and single-integer (3232235521) IPv4 forms
 /// to a canonical IPv4 host, and recognizes IPv6 literals. Numeric-host
 /// obfuscation must not be able to hide an IP-literal phishing URL.
-fn url_host_is_ip(url: &str) -> bool {
+pub(crate) fn url_host_is_ip(url: &str) -> bool {
     if RE_IP_URL.is_match(url) {
         return true;
     }
@@ -73,6 +74,29 @@ fn url_host_is_ip(url: &str) -> bool {
         parsed.host(),
         Some(url::Host::Ipv4(_)) | Some(url::Host::Ipv6(_))
     )
+}
+
+/// Some mail generators emit a complete href with every delimiter percent
+/// encoded (`https%3A%2F%2F...`). Decode exactly one layer only when the raw
+/// value has no literal HTTP(S) scheme and the decoded value is a valid
+/// absolute web URL. Already-schemed malformed hrefs stay parser-differential
+/// evidence instead of being "repaired" into a potentially different URL.
+fn decode_fully_encoded_absolute_http_url(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    let raw_lower = trimmed.to_ascii_lowercase();
+    if raw_lower.starts_with("http://") || raw_lower.starts_with("https://") {
+        return None;
+    }
+
+    let decoded = percent_decode(trimmed);
+    if decoded == trimmed {
+        return None;
+    }
+    let parsed = url::Url::parse(&decoded).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return None;
+    }
+    Some(parsed.to_string())
 }
 
 #[cfg(test)]
@@ -118,6 +142,69 @@ pub fn unwrap_mail_security_gateway_target(url: &str) -> Option<String> {
     // The recursive extractor returns outer-to-inner order; analyze the
     // deepest destination as the effective URL while link_reputation retains
     // every hop for evidence and per-domain analysis.
+    extract_redirect_target_urls(url).into_iter().last()
+}
+
+/// Recover a destination that is safe to use as the *effective* structural
+/// analysis target.
+///
+/// Redirect parameters are attacker-controlled, so an arbitrary outer URL
+/// must never be replaced by its `next=` value: doing so would let
+/// `evil.example/?next=https://legit.example` hide the malicious outer host.
+/// Replacement is limited to transport wrappers, configured trusted hosts,
+/// and shared platforms whose redirect endpoint is otherwise able to inherit
+/// a structural bypass. The returned target is still analyzed with the normal
+/// IP/userinfo/path rules and does not inherit trust from the wrapper.
+pub fn unwrap_redirect_target_for_analysis(url: &str) -> Option<String> {
+    if let Some(target) = unwrap_mail_security_gateway_target(url) {
+        return Some(target);
+    }
+
+    let parsed = url::Url::parse(url).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = parsed
+        .host_str()?
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+
+    // r.jina.ai accepts the fetched URL as a path rather than a query
+    // parameter (`/http://host/path`). Decode at most two layers, matching the
+    // bounded query-parameter extractor.
+    if host == "r.jina.ai" {
+        let mut candidate = parsed.path().trim_start_matches('/').to_string();
+        for _ in 0..2 {
+            let decoded = percent_decode(&candidate);
+            if decoded == candidate {
+                break;
+            }
+            candidate = decoded;
+        }
+        if let Ok(target) = url::Url::parse(&candidate)
+            && matches!(target.scheme(), "http" | "https")
+            && target.host_str().is_some()
+        {
+            let target = target.to_string();
+            return extract_redirect_target_urls(&target)
+                .into_iter()
+                .last()
+                .or(Some(target));
+        }
+    }
+
+    // Shared-content platforms commonly carry arbitrary query parameters on
+    // normal documents/forms. Only their known redirect endpoint is eligible
+    // for replacement, otherwise a benign `src=` field could be reinterpreted
+    // as a navigation target. Configured first-party redirectors remain
+    // eligible because that trust decision is tenant-controlled.
+    let known_shared_redirect_endpoint =
+        matches!(host.as_str(), "docs.google.com" | "www.google.com")
+            && parsed.path().trim_end_matches('/') == "/url";
+    if !known_shared_redirect_endpoint && !is_trusted_url_domain(&host) {
+        return None;
+    }
+
     extract_redirect_target_urls(url).into_iter().last()
 }
 
@@ -167,6 +254,32 @@ pub fn is_well_known_safe_domain(domain: &str) -> bool {
     };
     let set = set.read().expect("well-known safe domain lock poisoned");
     domain_in_set(&set, domain)
+}
+
+pub(crate) fn is_official_claimed_domain(domain: &str) -> bool {
+    let domain = domain.trim_end_matches('.').to_ascii_lowercase();
+    module_data().contains("protected_domains", &domain)
+        || is_well_known_safe_domain(&domain)
+        || [
+            ".gov", ".gov.uk", ".gov.cn", ".gov.au", ".govt.nz", ".gc.ca", ".gouv.fr", ".gob.mx",
+            ".go.jp", ".go.kr", ".gov.sg", ".gov.in",
+        ]
+        .iter()
+        .any(|suffix| domain.ends_with(suffix))
+}
+
+fn untrusted_host_embeds_sender_domain(host: &str, sender_domain: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    let sender_domain = sender_domain.trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty()
+        || sender_domain.is_empty()
+        || domains_share_organizational_domain(&host, &sender_domain)
+    {
+        return false;
+    }
+    host.starts_with(&format!("{sender_domain}."))
+        || host.contains(&format!(".{sender_domain}."))
+        || host.ends_with(&format!(".{sender_domain}"))
 }
 
 /// Shared-content hosting platforms are legitimate services, but the tenant's
@@ -230,6 +343,36 @@ fn is_machine_tracking_url_text(text: &str) -> bool {
         || lower.contains("auth=")
 }
 
+/// ESP click tracking: the href is the provider's counting redirect and the
+/// visible text is the destination it forwards to (the lingxi360 newsletter
+/// pattern `etrack01.com/track/click2/<token>` shown as `https://chinasif.org/`).
+/// A tracker host or tracker path is not a deceptive label by itself.
+fn is_click_tracking_href(url_lower: &str) -> bool {
+    static RE_LINGXI_TRACKER_HOST: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^etrack\d{2}\.com$").unwrap());
+    const TRACKER_HOSTS: &[&str] = &[
+        "sendgrid.net",
+        "list-manage.com",
+        "mandrillapp.com",
+        "sparkpostmail.com",
+        "hubspotlinks.com",
+    ];
+    const TRACKER_PATHS: &[&str] = &["/track/click", "/ls/click", "/wf/click"];
+    let Ok(parsed) = url::Url::parse(url_lower) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str().map(|host| host.trim_end_matches('.')) else {
+        return false;
+    };
+    RE_LINGXI_TRACKER_HOST.is_match(host)
+        || TRACKER_HOSTS
+            .iter()
+            .any(|tracker| host == *tracker || host.ends_with(&format!(".{tracker}")))
+        || TRACKER_PATHS
+            .iter()
+            .any(|prefix| parsed.path().starts_with(prefix))
+}
+
 fn is_protocol_only_link_text(text: &str) -> bool {
     matches!(
         text.trim().to_ascii_lowercase().as_str(),
@@ -287,39 +430,32 @@ pub fn is_known_safe_tokenized_resource_url(url: &str) -> bool {
             && normalized.contains("pg="))
 }
 
-fn extract_visible_domain_text(text: &str) -> Option<String> {
-    let trimmed = text
-        .trim()
-        .trim_matches(|c: char| matches!(c, '<' | '>' | '(' | ')' | '[' | ']' | '"' | '\''))
-        .trim_end_matches(['.', ',', ';', ':', '/'])
-        .to_ascii_lowercase();
-    let without_scheme = trimmed
-        .strip_prefix("http://")
-        .or_else(|| trimmed.strip_prefix("https://"))
-        .unwrap_or(&trimmed);
-    let candidate = without_scheme
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or("")
-        .trim();
-
-    if candidate.is_empty() {
-        return None;
-    }
-
-    let matched = RE_DOMAINISH_TEXT.find(candidate)?;
-    if matched.start() == 0 && matched.end() == candidate.len() {
-        Some(candidate.to_string())
-    } else {
-        None
-    }
+fn extract_visible_domain_texts(text: &str) -> Vec<String> {
+    RE_DOMAINISH_TEXT
+        .find_iter(text)
+        .map(|matched| {
+            matched
+                .as_str()
+                .trim_end_matches(['.', ',', ';', ':', '/'])
+                .to_ascii_lowercase()
+        })
+        .filter(|domain| !domain.is_empty())
+        .collect()
 }
 
 fn text_and_url_domains_equivalent(text: &str, url_domain: &str) -> bool {
-    let Some(text_domain) = extract_visible_domain_text(text) else {
+    let text_domains = extract_visible_domain_texts(text);
+    if text_domains.is_empty() {
         return false;
-    };
-    text_domain == url_domain || domains_share_organizational_domain(&text_domain, url_domain)
+    }
+
+    // Descriptive labels may include prose around the host (for example,
+    // "Manage tokens on npmjs.com"). Accept them only when every visible
+    // domain belongs to the href's organizational domain; a second unrelated
+    // domain keeps the mismatch signal intact.
+    text_domains.iter().all(|text_domain| {
+        text_domain == url_domain || domains_share_organizational_domain(text_domain, url_domain)
+    })
 }
 
 #[cfg(test)]
@@ -340,7 +476,7 @@ impl SecurityModule for LinkScanModule {
 
     async fn analyze(&self, ctx: &SecurityContext) -> Result<ModuleResult, EngineError> {
         let start = Instant::now();
-        let links = &ctx.session.content.links;
+        let links = ctx.analysis_links();
 
         if links.is_empty() {
             let duration_ms = start.elapsed().as_millis() as u64;
@@ -360,13 +496,35 @@ impl SecurityModule for LinkScanModule {
         let mut unique_domains: HashSet<String> = HashSet::with_capacity(links.len());
         let mut redirect_causes: HashSet<String> = HashSet::new();
         let mut unparseable_hits: usize = 0;
+        let mut generic_mismatch_hits: usize = 0;
+        let mut tracked_label_observations: usize = 0;
         let mut opaque_token_observations: usize = 0;
+        let operational_alert = is_operational_delivery_alert(&ctx.session);
+        let mut operational_management_link_observations: usize = 0;
+        let sender_is_external = ctx
+            .session
+            .mail_from
+            .as_deref()
+            .and_then(|address| address.rsplit('@').next())
+            .is_none_or(|domain| {
+                !ctx.is_internal_domain(domain)
+                    && !module_data().contains("protected_domains", domain)
+                    && !is_well_known_safe_domain(domain)
+            });
+        let sender_domain = ctx
+            .session
+            .mail_from
+            .as_deref()
+            .and_then(|address| address.rsplit('@').next());
+        let mut shared_hosted_redirect_observed = false;
 
-        for link in links {
-            let url = &link.url;
+        for link in &links {
+            let decoded_absolute_url = decode_fully_encoded_absolute_http_url(&link.url);
+            let url = decoded_absolute_url.as_deref().unwrap_or(link.url.as_str());
             let url_lower = url.to_lowercase();
             let gateway_target = unwrap_mail_security_gateway_target(url);
-            let analysis_url = gateway_target.as_deref().unwrap_or(url);
+            let redirect_target = unwrap_redirect_target_for_analysis(url);
+            let analysis_url = redirect_target.as_deref().unwrap_or(url);
             let analysis_url_lower = analysis_url.to_lowercase();
             let using_gateway_target = gateway_target.is_some();
 
@@ -387,6 +545,27 @@ impl SecurityModule for LinkScanModule {
             let is_gateway = is_mail_security_gateway(&url_lower);
             let effective_domain = link_domain.clone();
 
+            // A sender's exact domain embedded as a subdomain of a different
+            // registered host is a common file-share impersonation pattern
+            // (for example, sender.example.attacker-share.test). Preserve it
+            // as a named link signal even when the link has no visible anchor.
+            if sender_is_external
+                && let (Some(host), Some(sender_domain)) =
+                    (effective_domain.as_deref(), sender_domain)
+                && untrusted_host_embeds_sender_domain(host, sender_domain)
+            {
+                total_score += 0.65;
+                categories.push("sender_domain_nested_in_untrusted_host".to_string());
+                suspicious_urls.push(analysis_url.to_string());
+                evidence.push(Evidence {
+                    description: format!(
+                        "Sender domain {sender_domain} is embedded as a subdomain of unrelated link host {host}"
+                    ),
+                    location: Some("sender domain + links".to_string()),
+                    snippet: Some(analysis_url.chars().take(200).collect()),
+                });
+            }
+
             // Trusted domains skip structural checks (suspicious_params, long_url,
             // redirect_url) - their URLs naturally contain long token parameters.
             // NOTE: Security gateways are NOT blanket-trusted. Only the gateway's own
@@ -404,8 +583,70 @@ impl SecurityModule for LinkScanModule {
             let skip_redirect_checks =
                 (is_gateway && using_gateway_target) || is_trusted || is_known_safe_resource;
 
+            // A known shared platform can wrap an attacker-controlled
+            // destination in its own redirect endpoint. The wrapper itself is
+            // trusted infrastructure, but an external auth target must not
+            // inherit that trust. Keep this as a named compound so ordinary
+            // Google/Office document links remain unaffected.
+            if sender_is_external
+                && !shared_hosted_redirect_observed
+                && redirect_target.is_some()
+                && url::Url::parse(url).ok().is_some_and(|wrapper| {
+                    wrapper.host_str().is_some_and(is_shared_hosting_platform)
+                        && wrapper.path().trim_end_matches('/') == "/url"
+                })
+                && redirect_target.as_deref().is_some_and(|target| {
+                    let Ok(parsed) = url::Url::parse(target) else {
+                        return false;
+                    };
+                    let Some(domain) = parsed.host_str() else {
+                        return false;
+                    };
+                    let untrusted = !ctx.is_internal_domain(domain)
+                        && !module_data().contains("protected_domains", domain)
+                        && !is_trusted_url_domain(domain)
+                        && !is_well_known_safe_domain(domain);
+                    let auth_path = parsed.path_segments().is_some_and(|segments| {
+                        module_data()
+                            .get_list("credential_auth_path_segments")
+                            .iter()
+                            .any(|term| {
+                                segments
+                                    .clone()
+                                    .any(|segment| segment.eq_ignore_ascii_case(term))
+                            })
+                    });
+                    untrusted && auth_path
+                })
+            {
+                shared_hosted_redirect_observed = true;
+                total_score += 0.45;
+                categories.push("shared_hosted_redirect_lure".to_string());
+                suspicious_urls.push(redirect_target.clone().unwrap_or_default());
+                evidence.push(Evidence {
+                    description: format!(
+                        "Shared-content redirect endpoint wraps an untrusted authentication target: {}",
+                        redirect_target.as_deref().unwrap_or(url)
+                    ),
+                    location: Some("links:shared_hosted_redirect".to_string()),
+                    snippet: Some(url.chars().take(200).collect()),
+                });
+            }
+
             // --- 1. IP-based URL ---
-            if url_host_is_ip(&analysis_url_lower) {
+            let operational_management_link =
+                operational_alert && is_private_network_url(analysis_url);
+            if operational_management_link {
+                operational_management_link_observations += 1;
+                evidence.push(Evidence {
+                    description: format!(
+                        "Operational alert management URL observed; private IP is not treated as an external phishing destination: {}",
+                        analysis_url
+                    ),
+                    location: Some("links:operational_alert".to_string()),
+                    snippet: Some(analysis_url.to_string()),
+                });
+            } else if url_host_is_ip(&analysis_url_lower) {
                 total_score += 0.25;
                 categories.push("ip_url".to_string());
                 suspicious_urls.push(analysis_url.to_string());
@@ -502,17 +743,53 @@ impl SecurityModule for LinkScanModule {
                     && !text_and_url_domains_equivalent(text, &url_domain)
                     && !text_lower.contains(&url_domain)
                 {
-                    total_score += 0.30;
-                    categories.push("href_text_mismatch".to_string());
-                    suspicious_urls.push(analysis_url.to_string());
-                    evidence.push(Evidence {
-                        description: format!(
-                            "linkConnectText与 URL Domain不match: Text=\"{}\" URLDomain=\"{}\"",
-                            text, url_domain
-                        ),
-                        location: Some("links".to_string()),
-                        snippet: Some(format!("<a href=\"{}\">{}</a>", analysis_url, text)),
-                    });
+                    let official_domain_text_mismatch = extract_domain_from_url(&text_lower)
+                        .is_some_and(|claimed_domain| {
+                            is_official_claimed_domain(&claimed_domain)
+                                && !domains_share_organizational_domain(
+                                    &claimed_domain,
+                                    &url_domain,
+                                )
+                        });
+                    // A generic label behind a click-tracking href names the
+                    // destination the tracker forwards to. An official-domain
+                    // claim is still checked: any host can imitate the path.
+                    if !official_domain_text_mismatch && is_click_tracking_href(&analysis_url_lower)
+                    {
+                        tracked_label_observations += 1;
+                    } else {
+                        // A newsletter has many links; generic mismatches count
+                        // at most twice so link volume cannot reach Critical alone.
+                        total_score += if official_domain_text_mismatch {
+                            0.70
+                        } else {
+                            generic_mismatch_hits += 1;
+                            match generic_mismatch_hits {
+                                1 => 0.30,
+                                2 => 0.15,
+                                _ => 0.0,
+                            }
+                        };
+                        categories.push("href_text_mismatch".to_string());
+                        if official_domain_text_mismatch {
+                            categories.push("official_domain_text_mismatch".to_string());
+                        }
+                        suspicious_urls.push(analysis_url.to_string());
+                        evidence.push(Evidence {
+                            description: format!(
+                                "linkConnectText与 URL Domain不match: Text=\"{}\" URLDomain=\"{}\"{}",
+                                text,
+                                url_domain,
+                                if official_domain_text_mismatch {
+                                    " (the visible URL claims an official trusted domain)"
+                                } else {
+                                    ""
+                                }
+                            ),
+                            location: Some("links".to_string()),
+                            snippet: Some(format!("<a href=\"{}\">{}</a>", analysis_url, text)),
+                        });
+                    }
                 }
             }
 
@@ -639,7 +916,7 @@ impl SecurityModule for LinkScanModule {
         let non_trusted_link_count = links
             .iter()
             .filter(|link| {
-                let effective_url = unwrap_mail_security_gateway_target(&link.url)
+                let effective_url = unwrap_redirect_target_for_analysis(&link.url)
                     .unwrap_or_else(|| link.url.clone());
                 if is_probable_opaque_mail_callback_url(&effective_url) {
                     return false;
@@ -693,7 +970,11 @@ impl SecurityModule for LinkScanModule {
             );
             result.details = serde_json::json!({
                 "total_links": links.len(),
+                "qr_decoded_links": ctx.decoded_qr_urls().len(),
                 "opaque_token_observations": opaque_token_observations,
+                "tracked_label_observations": tracked_label_observations,
+                "operational_alert": operational_alert,
+                "operational_management_link_observations": operational_management_link_observations,
             });
             return Ok(result);
         }
@@ -716,9 +997,13 @@ impl SecurityModule for LinkScanModule {
             details: serde_json::json!({
                 "score": total_score,
                 "total_links": links.len(),
+                "qr_decoded_links": ctx.decoded_qr_urls().len(),
                 "suspicious_urls": suspicious_urls,
                 "unique_domains": unique_domain_list,
                 "opaque_token_observations": opaque_token_observations,
+                "tracked_label_observations": tracked_label_observations,
+                "operational_alert": operational_alert,
+                "operational_management_link_observations": operational_management_link_observations,
             }),
             duration_ms,
             analyzed_at: Utc::now(),
@@ -816,6 +1101,120 @@ mod tests {
     }
 
     #[test]
+    fn trusted_open_redirect_uses_inner_target_for_analysis() {
+        let module = LinkScanModule::new();
+        let ctx = make_ctx(
+            "https://docs.google.com/url?q=http%3A%2F%2F203.0.113.60%2Flogin",
+            Some("查看详情"),
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            result.categories.contains(&"ip_url".to_string()),
+            "{result:?}"
+        );
+        assert!(
+            result.evidence.iter().any(|item| item
+                .snippet
+                .as_deref()
+                .is_some_and(|value| value.contains("203.0.113.60/login"))),
+            "evidence must point at the inner destination: {result:?}"
+        );
+    }
+
+    #[test]
+    fn benign_trusted_redirect_target_does_not_inherit_wrapper_risk() {
+        let module = LinkScanModule::new();
+        let ctx = make_ctx(
+            "https://docs.google.com/url?q=https%3A%2F%2Fwww.google.com%2Fhelp",
+            Some("查看帮助"),
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            !result.categories.contains(&"ip_url".to_string()),
+            "{result:?}"
+        );
+        assert!(
+            !result.categories.contains(&"userinfo_in_url".to_string()),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn ordinary_shared_document_query_is_not_treated_as_redirect() {
+        assert_eq!(
+            unwrap_redirect_target_for_analysis(
+                "https://docs.google.com/document/d/benign?src=http%3A%2F%2F203.0.113.60%2Flogin"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn untrusted_outer_url_is_not_replaced_by_benign_next_target() {
+        assert_eq!(
+            unwrap_redirect_target_for_analysis(
+                "https://evil.example/login?next=https%3A%2F%2Fwww.google.com%2Fhelp"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn jina_path_wrapper_recovers_ip_login_target() {
+        assert_eq!(
+            unwrap_redirect_target_for_analysis("https://r.jina.ai/http://203.0.113.60/login"),
+            Some("http://203.0.113.60/login".to_string())
+        );
+    }
+
+    #[test]
+    fn test_operational_ddei_management_url_is_observation_only() {
+        let _guard = lock_url_domain_set_test_guard();
+        set_trusted_url_domains(Arc::new(HashSet::new()));
+        set_well_known_safe_domains(Arc::new(HashSet::new()));
+
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.mail_from = Some("notifications@ddei.example".to_string());
+        session.subject = Some("DDEI 严重 - 系统警报 - 中继MTA服务器不可达".to_string());
+        session.content = EmailContent {
+            body_text: Some(
+                "Deep Discovery Email Inspector无法发送以下邮件到中继MTA服务器\n\
+                 以下中继MTA服务器不可达：[198.51.100.68]:25"
+                    .to_string(),
+            ),
+            links: vec![EmailLink {
+                url: "https://10.0.0.41/loginPage.ddei".to_string(),
+                text: Some("https://10.0.0.41/loginPage.ddei".to_string()),
+                suspicious: false,
+            }],
+            ..Default::default()
+        };
+
+        let result = analyze_with_runtime(
+            &LinkScanModule::new(),
+            &SecurityContext::new(Arc::new(session)),
+        );
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert!(result.categories.is_empty());
+        assert_eq!(result.details["operational_alert"], true);
+        assert_eq!(
+            result.details["operational_management_link_observations"],
+            1
+        );
+    }
+
+    #[test]
     fn test_gateway_target_used_for_href_text_mismatch() {
         let _guard = lock_url_domain_set_test_guard();
         set_trusted_url_domains(Arc::new(HashSet::new()));
@@ -842,7 +1241,7 @@ mod tests {
         let ctx = make_ctx(
             "https://etrack01.com/track/click2/tokenized-path.html",
             Some(
-                "https://ddei3-0-ctp.asiainfo-sec.com:443/wis/clicktime/v1/query?url=http%3a%2f%2fwww.sumscope.com&umid=test&auth=test",
+                "https://tracking-gateway.invalid/click?url=https%3A%2F%2Fassets.vendor.example&trace=fixture",
             ),
         );
 
@@ -853,6 +1252,134 @@ mod tests {
                 .categories
                 .contains(&"href_text_mismatch".to_string()),
             "machine-generated tracking URL text should not be treated as deceptive label: {:?}",
+            result.categories
+        );
+    }
+
+    fn make_ctx_with_labeled_links(links: &[(&str, &str)]) -> SecurityContext {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.content = EmailContent {
+            links: links
+                .iter()
+                .map(|(url, text)| EmailLink {
+                    url: (*url).to_string(),
+                    text: Some((*text).to_string()),
+                    suspicious: false,
+                })
+                .collect(),
+            ..Default::default()
+        };
+        SecurityContext::new(Arc::new(session))
+    }
+
+    /// Production false positive (2026-11-13): an event invitation sent through
+    /// the lingxi360 ESP reached Critical because every click-tracked link
+    /// showed its real destination as text.
+    #[test]
+    fn esp_click_tracking_links_showing_their_destination_are_not_mismatches() {
+        let _guard = lock_url_domain_set_test_guard();
+        set_trusted_url_domains(Arc::new(HashSet::new()));
+        set_well_known_safe_domains(Arc::new(HashSet::new()));
+        let ctx = make_ctx_with_labeled_links(&[
+            (
+                "https://etrack01.com/track/click2/eNptjr1uwkAQhN",
+                "https://wen.1xi.co/IW8aNeF",
+            ),
+            (
+                "https://etrack01.com/track/click2/eNptjz1zwjAQRP",
+                "https://v.wjx.cn/vm/h4La06R.aspx#",
+            ),
+            (
+                "https://etrack01.com/track/click2/eNptj8tOwzAQRf",
+                "https://wj.qq.com/s2/27383562/e95e/",
+            ),
+            (
+                "https://etrack01.com/track/click2/eNptjs0OgjAQhN",
+                "https://chinasif.org/",
+            ),
+        ]);
+
+        let result = analyze_with_runtime(&LinkScanModule::new(), &ctx);
+
+        assert!(
+            !result
+                .categories
+                .contains(&"href_text_mismatch".to_string()),
+            "{:?}",
+            result.categories
+        );
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert_eq!(result.details["tracked_label_observations"], 4);
+    }
+
+    #[test]
+    fn official_domain_claim_behind_a_tracker_path_is_still_a_mismatch() {
+        let _guard = lock_url_domain_set_test_guard();
+        set_trusted_url_domains(Arc::new(HashSet::new()));
+        set_well_known_safe_domains(Arc::new(HashSet::new()));
+        let ctx = make_ctx(
+            "https://portal-check.invalid/track/click/abc",
+            Some("https://www.gov.cn"),
+        );
+
+        let result = analyze_with_runtime(&LinkScanModule::new(), &ctx);
+
+        assert!(
+            result
+                .categories
+                .contains(&"official_domain_text_mismatch".to_string()),
+            "{:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn generic_href_mismatches_cannot_accumulate_to_critical() {
+        let _guard = lock_url_domain_set_test_guard();
+        set_trusted_url_domains(Arc::new(HashSet::new()));
+        set_well_known_safe_domains(Arc::new(HashSet::new()));
+        let ctx = make_ctx_with_labeled_links(&[
+            ("https://mailer.invalid/a", "https://news-one.example/"),
+            ("https://mailer.invalid/b", "https://news-two.example/"),
+            ("https://mailer.invalid/c", "https://news-three.example/"),
+            ("https://mailer.invalid/d", "https://news-four.example/"),
+        ]);
+
+        let result = analyze_with_runtime(&LinkScanModule::new(), &ctx);
+
+        assert!(
+            result
+                .categories
+                .contains(&"href_text_mismatch".to_string())
+        );
+        assert!(
+            result.threat_level <= ThreatLevel::Medium,
+            "{:?}",
+            result.threat_level
+        );
+    }
+
+    #[test]
+    fn ddei_clicktime_rewrite_is_analyzed_at_its_inner_target() {
+        let _guard = lock_url_domain_set_test_guard();
+        set_trusted_url_domains(Arc::new(HashSet::new()));
+        set_well_known_safe_domains(Arc::new(HashSet::new()));
+        let ctx = make_ctx(
+            "https://ddei3-0-ctp.asiainfo-sec.com/wis/clicktime/v1/query?url=http%3a%2f%2f203.0.113.10%2fpage&umid=fixture",
+            None,
+        );
+
+        let result = analyze_with_runtime(&LinkScanModule::new(), &ctx);
+
+        assert!(
+            result.categories.contains(&"ip_url".to_string()),
+            "{:?}",
             result.categories
         );
     }
@@ -884,7 +1411,7 @@ mod tests {
         set_trusted_url_domains(Arc::new(HashSet::new()));
         let module = LinkScanModule::new();
         let ctx = make_ctx(
-            "https://product-support.chaitin.cn/package/detail?id=18557ddf86cb4f28a89c4cfbf5cc726c7476",
+            "https://product-support.vendor.invalid/package/detail?id=fixture-package-id",
             Some("攻击检测引擎升级包5.11.24-arm64"),
         );
 
@@ -905,8 +1432,8 @@ mod tests {
         set_trusted_url_domains(Arc::new(HashSet::new()));
         let module = LinkScanModule::new();
         let ctx = make_ctx(
-            "https://wx.mail.qq.com/home/index?t=readmail_businesscard_midpage&mail=2428735896%40qq.com&code=abc",
-            Some("丁小帅 2428735896@qq.com"),
+            "https://wx.mail.qq.com/home/index?t=readmail_businesscard_midpage&mail=fixture-card%40example.com&code=fixture-code",
+            Some("测试联系人 fixture-card@example.com"),
         );
 
         let result = analyze_with_runtime(&module, &ctx);
@@ -927,7 +1454,7 @@ mod tests {
         set_well_known_safe_domains(Arc::new(HashSet::new()));
 
         let module = LinkScanModule::new();
-        let ctx = make_ctx("http://www.12306.cn", Some("12306.cn"));
+        let ctx = make_ctx("https://www.rail.example", Some("rail.example"));
 
         let result = analyze_with_runtime(&module, &ctx);
 
@@ -938,6 +1465,30 @@ mod tests {
             "same registrable domain should not be treated as deceptive label: {:?}",
             result.categories
         );
+    }
+
+    #[test]
+    fn descriptive_official_domain_text_matches_www_href() {
+        assert!(text_and_url_domains_equivalent(
+            "Manage Tokens on npmjs.com",
+            "www.npmjs.com"
+        ));
+    }
+
+    #[test]
+    fn descriptive_lookalike_domain_text_does_not_match_href() {
+        assert!(!text_and_url_domains_equivalent(
+            "Manage Tokens on bad-npmjs.com",
+            "www.npmjs.com"
+        ));
+    }
+
+    #[test]
+    fn descriptive_text_with_unrelated_second_domain_keeps_mismatch() {
+        assert!(!text_and_url_domains_equivalent(
+            "Manage tokens at npmjs.com using attacker.example",
+            "www.npmjs.com"
+        ));
     }
 
     #[test]
@@ -1022,14 +1573,16 @@ mod tests {
     }
 
     #[test]
-    fn test_trusted_qixin_export_link_skips_suspicious_params() {
+    fn test_trusted_vendor_export_link_skips_suspicious_params() {
         let _guard = lock_url_domain_set_test_guard();
-        set_trusted_url_domains(Arc::new(HashSet::from(["b.qixin.com".to_string()])));
+        set_trusted_url_domains(Arc::new(HashSet::from([
+            "exports.vendor.example".to_string()
+        ])));
         set_well_known_safe_domains(Arc::new(HashSet::new()));
 
         let module = LinkScanModule::new();
         let ctx = make_ctx(
-            "https://b.qixin.com/offline-export?id=116eb8a2-5a01-49df-b6f0-f91ff32eac12&token=aa6d62d9ef98b077a3fd3cc6ddbff7e3",
+            "https://exports.vendor.example/offline-export?id=fixture-report&token=fixture-token",
             None,
         );
 
@@ -1037,7 +1590,7 @@ mod tests {
 
         assert!(
             !result.categories.contains(&"suspicious_params".to_string()),
-            "trusted qixin export links should not be treated as phishing token URLs: {:?}",
+            "trusted vendor export links should not be treated as phishing token URLs: {:?}",
             result.categories
         );
     }
@@ -1045,42 +1598,42 @@ mod tests {
     #[test]
     fn test_exact_trusted_domain_does_not_bleed_into_subdomains() {
         let _guard = lock_url_domain_set_test_guard();
-        set_trusted_url_domains(Arc::new(HashSet::from(["12306.com".to_string()])));
+        set_trusted_url_domains(Arc::new(HashSet::from(["rail.vendor.example".to_string()])));
         set_well_known_safe_domains(Arc::new(HashSet::new()));
 
-        assert!(is_trusted_url_domain("12306.com"));
-        assert!(!is_trusted_url_domain("pay.12306.com"));
+        assert!(is_trusted_url_domain("rail.vendor.example"));
+        assert!(!is_trusted_url_domain("pay.rail.vendor.example"));
     }
 
     #[test]
-    fn test_trusted_cmb_newsletter_assets_do_not_trigger_excessive_links() {
+    fn test_trusted_synthetic_newsletter_assets_do_not_trigger_excessive_links() {
         let _guard = lock_url_domain_set_test_guard();
         set_trusted_url_domains(Arc::new(HashSet::from([
-            "*.cmbchina.com".to_string(),
-            "*.cmbimg.com".to_string(),
-            "*.cmbt.cn".to_string(),
+            "*.newsletter.example".to_string(),
+            "*.assets.example".to_string(),
+            "*.short.example".to_string(),
         ])));
         set_well_known_safe_domains(Arc::new(HashSet::new()));
 
         let urls = [
-            "https://weclub.ccc.cmbchina.com/weclub/url-link?lc=AweKqgWwO9&f=mrxjgj",
-            "https://cmbt.cn/c/fg2?z=3",
-            "https://site.cc.cmbimg.com/Router/invoke.html?url=cmblife%3A%2F%2Fcfp%2FExchange8",
-            "https://res.cc.cmbimg.com/fsp/File/ClientFacePublic/785/xygjcz2.html",
-            "https://res.cc.cmbimg.com/fsp/File/ClientFacePublic/882/hkxc6.html",
-            "https://s3gw.cmbimg.com/bill/ten-day-bills",
-            "https://cmbt.cn/k695JA",
-            "https://xyk.cmbchina.com/kf/MRXYGJQXDY",
-            "https://s3gw.cmbimg.com/bill/daily_bill_01",
-            "https://s3gw.cmbimg.com/bill/daily_bill_02",
-            "https://s3gw.cmbimg.com/bill/daily_bill_03",
-            "https://s3gw.cmbimg.com/bill/daily_bill_04",
-            "https://s3gw.cmbimg.com/bill/daily_bill_05",
-            "https://s3gw.cmbimg.com/bill/daily_bill_06",
-            "https://s3gw.cmbimg.com/bill/daily_bill_07",
-            "https://s3gw.cmbimg.com/bill/daily_bill_08",
-            "https://s3gw.cmbimg.com/bill/daily_bill_09",
-            "https://s3gw.cmbimg.com/bill/daily_bill_stats",
+            "https://portal.newsletter.example/newsletter/url-link?campaign=fixture&format=html",
+            "https://go.short.example/c/fixture?variant=3",
+            "https://site.assets.example/Router/invoke.html?url=fixtureapp%3A%2F%2Fopen%2Fitem",
+            "https://res.assets.example/files/public/fixture-a.html",
+            "https://res.assets.example/files/public/fixture-b.html",
+            "https://billing.assets.example/bill/ten-day-bills",
+            "https://go.short.example/fixture-route",
+            "https://portal.newsletter.example/help/fixture-topic",
+            "https://billing.assets.example/bill/daily_bill_01",
+            "https://billing.assets.example/bill/daily_bill_02",
+            "https://billing.assets.example/bill/daily_bill_03",
+            "https://billing.assets.example/bill/daily_bill_04",
+            "https://billing.assets.example/bill/daily_bill_05",
+            "https://billing.assets.example/bill/daily_bill_06",
+            "https://billing.assets.example/bill/daily_bill_07",
+            "https://billing.assets.example/bill/daily_bill_08",
+            "https://billing.assets.example/bill/daily_bill_09",
+            "https://billing.assets.example/bill/daily_bill_stats",
         ];
         let result = analyze_with_runtime(&LinkScanModule::new(), &make_ctx_with_urls(&urls));
         assert!(!result.categories.contains(&"excessive_links".to_string()));
@@ -1164,10 +1717,7 @@ mod tests {
         // redirect evidence. Other structural checks must still run.
         let module = LinkScanModule::new();
 
-        let ctx = make_ctx(
-            "https://ddei3-0-ctp.asiainfo-sec.com/wis/clicktime/v1/query?q=notaurl",
-            None,
-        );
+        let ctx = make_ctx("https://urldefense.proofpoint.com/v2/url?q=notaurl", None);
         let result = analyze_with_runtime(&module, &ctx);
         assert!(
             !result.categories.contains(&"redirect_url".to_string()),
@@ -1176,7 +1726,7 @@ mod tests {
         );
 
         let ctx = make_ctx(
-            "https://ddei3-0-ctp.asiainfo-sec.com/wis/clicktime/v1/query?umid=test&token=0123456789abcdef0",
+            "https://urldefense.proofpoint.com/v2/url?trace=fixture&token=fixture-opaque-token",
             None,
         );
         let result = analyze_with_runtime(&module, &ctx);
@@ -1216,7 +1766,7 @@ mod tests {
         let result = analyze_with_runtime(
             &LinkScanModule::new(),
             &make_ctx(
-                "https://connect.acams.org/event?elq=8e97d3&elqTrackId=abc&utm_source=newsletter&q_campaign=august",
+                "https://events.vendor.example/event?elq=fixture&elqTrackId=fixture-track&utm_source=newsletter&q_campaign=august",
                 None,
             ),
         );
@@ -1384,6 +1934,32 @@ mod tests {
                 .any(|item| { item.description.contains("legit.com%40evil.com") }),
             "the dropped href must appear in evidence: {:?}",
             result.evidence
+        );
+    }
+
+    #[test]
+    fn test_fully_encoded_absolute_href_is_canonicalized_before_analysis() {
+        let _guard = lock_url_domain_set_test_guard();
+        set_trusted_url_domains(Arc::new(HashSet::new()));
+        set_well_known_safe_domains(Arc::new(HashSet::new()));
+
+        let module = LinkScanModule::new();
+        let ctx = make_ctx_with_urls(&[
+            "https%3A%2F%2Freports.vendor.example%2Fmonitor%2Fdaily%3Freport%3Dfixture",
+        ]);
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            !result.categories.contains(&"unparseable_url".to_string()),
+            "a fully encoded absolute href is an encoding variant, not a parser differential: {:?}",
+            result.categories
+        );
+        assert_eq!(
+            decode_fully_encoded_absolute_http_url(
+                "https%3A%2F%2Freports.vendor.example%2Fmonitor%2Fdaily"
+            )
+            .as_deref(),
+            Some("https://reports.vendor.example/monitor/daily")
         );
     }
 }

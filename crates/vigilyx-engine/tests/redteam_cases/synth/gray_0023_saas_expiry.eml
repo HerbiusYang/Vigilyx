@@ -1,0 +1,11 @@
+From: =?utf-8?B?U2FhUyBCaWxsaW5n?= <billing@saas-vendor.example>
+To: ops@corp.internal
+Date: Sun, 30 Aug 2026 15:32:00 +0800
+Message-ID: <0022-b7@synth.example>
+Subject: Workspace expires in 7 days
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Your workspace expires Sep 6. Renew in the console to avoid suspension:
+https://console.saas-vendor.example/billing
+This is the final automated reminder.

@@ -37,7 +37,7 @@ function isValidTimeZone(timeZone: string): boolean {
   }
 }
 
-export function normalizeTimestamp(value: string): string {
+function normalizeTimestamp(value: string): string {
   const trimmed = value.trim()
   if (!trimmed) return trimmed
   if (trimmed.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(trimmed)) return trimmed
@@ -274,15 +274,6 @@ export function formatCurrentServerDateTime(): string {
   })
 }
 
-export function formatCurrentServerTime(): string {
-  return formatInServerTime(getServerNowDate(), {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: false,
-  })
-}
-
 export function getServerDateStamp(): string {
   const parts = getServerTimeParts(getServerNowDate())
   return `${parts.year}-${parts.month}-${parts.day}`
@@ -361,6 +352,19 @@ export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / 1048576).toFixed(1)} MB`
+}
+
+/**
+ * Format an analysis duration without turning sub-millisecond work into a
+ * misleading `0ms`. The API currently stores integer milliseconds, so a zero
+ * value means the measured work completed in less than one millisecond (or
+ * the value was not recorded by an older result), not that no work happened.
+ */
+export function formatDurationMs(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value) || value < 0) return '—'
+  if (value < 1) return '<1ms'
+  if (value < 1000) return `${Number.isInteger(value) ? value : value.toFixed(1)}ms`
+  return `${(value / 1000).toFixed(1)}s`
 }
 
 /**

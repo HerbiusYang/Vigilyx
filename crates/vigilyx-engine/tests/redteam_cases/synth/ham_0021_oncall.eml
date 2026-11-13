@@ -1,0 +1,10 @@
+From: =?utf-8?B?5YC854+t6KGo?= <duty@corp.internal>
+To: sre@corp.internal
+Date: Tue, 25 Aug 2026 10:40:00 +0800
+Message-ID: <0020-b2@synth.example>
+Subject: 第36周值班轮换
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+下周值班：周二老许、周四小蔺，周末组合不变。
+交接要点写在值班本，重点盯支付链路的灰度。

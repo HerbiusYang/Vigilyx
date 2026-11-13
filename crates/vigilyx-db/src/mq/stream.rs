@@ -15,7 +15,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// A stream entry whose `data` field could not be deserialized.
 ///
@@ -65,10 +65,9 @@ pub struct StreamClient {
     consumer: String,
     read_conn: Arc<Mutex<Option<MultiplexedConnection>>>,
     /// Shared data-plane token captured at construction (C1). When `None`
-    /// (unset/empty), entries are accepted without verification (legacy mode).
+    /// (unset/empty), every entry is rejected; startup should fail before a
+    /// production consumer is created.
     auth_token: Option<String>,
-    /// Log the unsigned-message downgrade warning only once per consumer.
-    legacy_auth_warned: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl StreamClient {
@@ -82,7 +81,6 @@ impl StreamClient {
             consumer: consumer.into(),
             read_conn: Arc::new(Mutex::new(None)),
             auth_token: super::client::data_plane_token(),
-            legacy_auth_warned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -109,10 +107,10 @@ impl StreamClient {
     ///
     /// Returns the number of messages successfully added.
     /// Uses `MAXLEN ~` for approximate trimming (efficient).
-    /// Entries carry an `auth` field holding the `v1` HMAC-SHA256 signature of
-    /// the `data` bytes when `INTERNAL_API_TOKEN` is configured (C1/M-2); the
-    /// shared token itself is never written to Redis, and consumers reject
-    /// unsigned or badly signed entries.
+    /// Entries always carry an `auth` field holding the `v1` HMAC-SHA256
+    /// signature of the `data` bytes (C1/M-2); the shared token itself is
+    /// never written to Redis, and consumers reject unsigned or badly signed
+    /// entries.
     pub async fn xadd_batch<T: Serialize>(&self, stream: &str, messages: &[T]) -> MqResult<usize> {
         if messages.is_empty() {
             return Ok(0);
@@ -121,7 +119,7 @@ impl StreamClient {
         let max_len = self.mq.config.stream_max_len;
         let mut conn = self.mq.get_conn().await?;
         let batch_size = self.mq.config.batch_size;
-        let auth_token = super::client::data_plane_token();
+        let auth_token = super::client::require_data_plane_token()?;
 
         let mut total = 0;
         for chunk in messages.chunks(batch_size) {
@@ -136,14 +134,16 @@ impl StreamClient {
                     .arg("*")
                     .arg("data")
                     .arg(json.as_str());
-                if let Some(token) = &auth_token {
-                    let ts = super::client::unix_now_secs();
-                    let nonce = super::client::fresh_nonce();
-                    cmd.arg("ts").arg(ts.to_string());
-                    cmd.arg("nonce").arg(&nonce);
-                    cmd.arg("auth")
-                        .arg(super::client::sign_v1(token, ts, &nonce, json.as_bytes()));
-                }
+                let ts = super::client::unix_now_secs();
+                let nonce = super::client::fresh_nonce();
+                cmd.arg("ts").arg(ts.to_string());
+                cmd.arg("nonce").arg(&nonce);
+                cmd.arg("auth").arg(super::client::sign_v1(
+                    &auth_token,
+                    ts,
+                    &nonce,
+                    json.as_bytes(),
+                ));
                 cmd.ignore();
             }
             pipe.query_async::<()>(&mut conn).await?;
@@ -277,9 +277,8 @@ impl StreamClient {
     /// Authenticate parsed entries (C1) and build the final [`StreamRead`].
     ///
     /// Entries signed with a mismatched or missing signature are moved to
-    /// `rejected` (the caller DLQs + ACKs them). Unsigned entries are accepted
-    /// only because no token is configured — an explicitly insecure mode
-    /// flagged at error level (SEC M-2 fail-closed).
+    /// `rejected` (the caller DLQs + ACKs them). Missing configuration is also
+    /// rejected; there is no unauthenticated compatibility mode.
     fn finalize_read<T>(&self, parsed: ParsedStreamRead<T>) -> StreamRead<T> {
         let mut read = StreamRead {
             messages: Vec::with_capacity(parsed.entries.len()),
@@ -293,21 +292,10 @@ impl StreamClient {
                 self.auth_token.as_deref(),
                 entry.ts,
                 entry.nonce.as_deref(),
+                &entry.id,
                 entry.raw_data.as_bytes(),
             ) {
                 StreamEntryAuth::Verified => read.messages.push((entry.id, entry.value)),
-                StreamEntryAuth::Legacy => {
-                    if !self
-                        .legacy_auth_warned
-                        .swap(true, std::sync::atomic::Ordering::Relaxed)
-                    {
-                        error!(
-                            group = %self.group,
-                            "INTERNAL_API_TOKEN not set — accepting unsigned data-plane stream message (insecure mode)"
-                        );
-                    }
-                    read.messages.push((entry.id, entry.value));
-                }
                 StreamEntryAuth::Rejected => {
                     warn!(
                         group = %self.group,
@@ -740,11 +728,8 @@ fn parse_stream_entry_checked<T: DeserializeOwned>(
 enum StreamEntryAuth {
     /// `auth` field carries a valid `v1` HMAC over the entry's data bytes.
     Verified,
-    /// No token configured: the entry is accepted because the deployment has
-    /// an unauthenticated data plane (explicitly insecure mode).
-    Legacy,
-    /// `auth` field missing (with a token configured), malformed, or carrying
-    /// a bad signature: forged message, must be dropped.
+    /// `auth` field missing, a token is not configured, or the signature is
+    /// malformed/bad: forged or unsafe message, must be dropped.
     Rejected,
 }
 
@@ -753,11 +738,11 @@ fn stream_entry_auth(
     expected_token: Option<&str>,
     ts: Option<i64>,
     nonce: Option<&str>,
+    stream_entry_id: &str,
     data: &[u8],
 ) -> StreamEntryAuth {
     let Some(expected) = expected_token.filter(|t| !t.is_empty()) else {
-        // Auth disabled (INTERNAL_API_TOKEN unset): nothing to verify against.
-        return StreamEntryAuth::Legacy;
+        return StreamEntryAuth::Rejected;
     };
     // RT-4: a missing timestamp or nonce is a pre-freshness entry — treat
     // unsigned traffic uniformly and reject.
@@ -768,7 +753,13 @@ fn stream_entry_auth(
         return StreamEntryAuth::Rejected;
     };
     let now = super::client::unix_now_secs();
-    if !super::client::ts_within_window(ts, now) {
+    // Stream entries may legitimately sit in the consumer-group backlog or
+    // be redelivered after a worker restart. Bind the signed producer time to
+    // Redis's immutable XADD-generated entry time instead of rejecting work
+    // merely because consumption was delayed. A copied old signature placed
+    // under a fresh XADD ID fails this check; exact-ID redelivery remains
+    // compatible with Streams' at-least-once contract.
+    if !stream_entry_timestamp_matches(ts, stream_entry_id, now) {
         return StreamEntryAuth::Rejected;
     }
     match auth_field {
@@ -776,9 +767,11 @@ fn stream_entry_auth(
             if !super::client::verify_v1_field(auth, expected, ts, nonce, data) {
                 return StreamEntryAuth::Rejected;
             }
-            // RT-4 round-5: an XADD'd copy of an already-consumed entry dies
-            // here even inside the freshness window.
-            if !super::client::replay_guard().check_and_record(nonce, now) {
+            // RT-4 round-5: a copied nonce on a new XADD entry dies here even
+            // inside the freshness window. The same Redis entry ID may be
+            // redelivered after a consumer crash, as required by Streams'
+            // at-least-once contract.
+            if !super::client::replay_guard().check_and_record_stream(nonce, now, stream_entry_id) {
                 return StreamEntryAuth::Rejected;
             }
             StreamEntryAuth::Verified
@@ -789,6 +782,22 @@ fn stream_entry_auth(
     }
 }
 
+fn stream_entry_timestamp_matches(ts: i64, stream_entry_id: &str, now: i64) -> bool {
+    let Some((milliseconds, sequence)) = stream_entry_id.split_once('-') else {
+        return false;
+    };
+    let (Ok(milliseconds), Ok(_sequence)) = (milliseconds.parse::<i64>(), sequence.parse::<u64>())
+    else {
+        return false;
+    };
+    if milliseconds < 0 {
+        return false;
+    }
+    let entry_seconds = milliseconds / 1000;
+    ts.abs_diff(entry_seconds) <= super::client::MAX_FUTURE_SKEW_SECS as u64
+        && entry_seconds <= now + super::client::MAX_FUTURE_SKEW_SECS
+}
+
 /// Parse the extended XPENDING response into per-message delivery counts.
 ///
 /// Format: `[[id, consumer, idle_ms, delivery_count], ...]` (C5).
@@ -796,7 +805,9 @@ fn parse_xpending_delivery_counts(value: redis::Value) -> std::collections::Hash
     let mut counts = std::collections::HashMap::new();
     if let redis::Value::Array(rows) = value {
         for row in rows {
-            let redis::Value::Array(cols) = row else { continue };
+            let redis::Value::Array(cols) = row else {
+                continue;
+            };
             if cols.len() < 4 {
                 continue;
             }
@@ -1025,13 +1036,11 @@ mod tests {
         signed_entry_full(id, data, token, ts, &nonce)
     }
 
-    fn signed_entry_full(
-        id: &str,
-        data: &str,
-        token: &str,
-        ts: i64,
-        nonce: &str,
-    ) -> redis::Value {
+    fn stream_id_at(ts: i64, sequence: u64) -> String {
+        format!("{}-{sequence}", ts * 1000)
+    }
+
+    fn signed_entry_full(id: &str, data: &str, token: &str, ts: i64, nonce: &str) -> redis::Value {
         let auth = super::super::client::sign_v1(token, ts, nonce, data.as_bytes());
         stream_entry_at(id, data, Some(ts), Some(&auth), Some(nonce))
     }
@@ -1061,7 +1070,10 @@ mod tests {
         assert_eq!(read.rejected.len(), 1);
         assert_eq!(read.rejected[0].id, "1-0");
         assert!(read.rejected[0].error.contains("authentication"));
-        assert_eq!(read.rejected[0].raw_data, r#"{"id":"fake","protocol":"smtp"}"#);
+        assert_eq!(
+            read.rejected[0].raw_data,
+            r#"{"id":"fake","protocol":"smtp"}"#
+        );
     }
 
     #[test]
@@ -1069,12 +1081,14 @@ mod tests {
         let mq = MqClient::new(MqConfig::default());
         let mut client = StreamClient::new(mq, "test-group", "test-consumer");
         client.auth_token = Some("s3cret-env-token".to_string());
+        let ts = super::super::client::unix_now_secs();
+        let id = stream_id_at(ts, 0);
 
         let signed = parse_stream_entry_checked::<String>(&signed_entry(
-            "1-0",
+            &id,
             "\"hello\"",
             "s3cret-env-token",
-            super::super::client::unix_now_secs(),
+            ts,
         ))
         .unwrap();
         let read = client.finalize_read(ParsedStreamRead {
@@ -1082,7 +1096,7 @@ mod tests {
             poisoned: vec![],
         });
 
-        assert_eq!(read.messages, vec![("1-0".to_string(), "hello".to_string())]);
+        assert_eq!(read.messages, vec![(id, "hello".to_string())]);
         assert!(read.rejected.is_empty());
     }
 
@@ -1130,9 +1144,8 @@ mod tests {
     }
 
     #[test]
-    fn unsigned_stream_entry_is_accepted_only_without_token() {
-        // Explicitly insecure mode: tokenless deployments keep an
-        // unauthenticated data plane (documented in the ADR).
+    fn unsigned_stream_entry_is_rejected_without_token() {
+        // Missing token is a deployment error, not a compatibility mode.
         let mq = MqClient::new(MqConfig::default());
         let mut client = StreamClient::new(mq, "test-group", "test-consumer");
         client.auth_token = None;
@@ -1150,18 +1163,26 @@ mod tests {
             poisoned: vec![],
         });
 
-        assert_eq!(read.messages, vec![("1-0".to_string(), "hello".to_string())]);
-        assert!(read.rejected.is_empty());
+        assert!(read.messages.is_empty());
+        assert_eq!(read.rejected.len(), 1);
     }
 
     #[test]
     fn stream_entry_auth_decisions() {
         let ts = super::super::client::unix_now_secs();
+        let id = stream_id_at(ts, 0);
         let data = b"hello";
         let nonce = uuid::Uuid::new_v4().simple().to_string();
         let signature = super::super::client::sign_v1("tok", ts, &nonce, data);
         assert_eq!(
-            stream_entry_auth(Some(&signature), Some("tok"), Some(ts), Some(&nonce), data),
+            stream_entry_auth(
+                Some(&signature),
+                Some("tok"),
+                Some(ts),
+                Some(&nonce),
+                &id,
+                data,
+            ),
             StreamEntryAuth::Verified
         );
         let wrong_nonce = uuid::Uuid::new_v4().simple().to_string();
@@ -1171,22 +1192,69 @@ mod tests {
                 Some("tok"),
                 Some(ts),
                 Some(&wrong_nonce),
+                &stream_id_at(ts, 1),
                 data,
             ),
             StreamEntryAuth::Rejected
         );
         assert_eq!(
-            stream_entry_auth(None, Some("tok"), Some(ts), Some(&wrong_nonce), data),
+            stream_entry_auth(None, Some("tok"), Some(ts), Some(&wrong_nonce), "3-0", data,),
             StreamEntryAuth::Rejected
         );
-        // Auth disabled: everything is legacy regardless of the field.
+        // Missing configuration is fail-closed regardless of the field.
         assert_eq!(
-            stream_entry_auth(Some("x"), None, None, None, data),
-            StreamEntryAuth::Legacy
+            stream_entry_auth(Some("x"), None, None, None, "4-0", data),
+            StreamEntryAuth::Rejected
         );
         assert_eq!(
-            stream_entry_auth(Some("x"), Some(""), None, None, data),
-            StreamEntryAuth::Legacy
+            stream_entry_auth(Some("x"), Some(""), None, None, "5-0", data),
+            StreamEntryAuth::Rejected
+        );
+    }
+
+    #[test]
+    fn stream_redelivery_same_id_is_allowed_but_new_id_replay_is_rejected() {
+        let ts = super::super::client::unix_now_secs();
+        let id = stream_id_at(ts, 0);
+        let copied_id = stream_id_at(ts, 1);
+        let data = b"redeliver-me";
+        let nonce = uuid::Uuid::new_v4().simple().to_string();
+        let signature = super::super::client::sign_v1("tok", ts, &nonce, data);
+
+        assert_eq!(
+            stream_entry_auth(
+                Some(&signature),
+                Some("tok"),
+                Some(ts),
+                Some(&nonce),
+                &id,
+                data,
+            ),
+            StreamEntryAuth::Verified
+        );
+        assert_eq!(
+            stream_entry_auth(
+                Some(&signature),
+                Some("tok"),
+                Some(ts),
+                Some(&nonce),
+                &id,
+                data,
+            ),
+            StreamEntryAuth::Verified,
+            "at-least-once redelivery of the same entry must be processable"
+        );
+        assert_eq!(
+            stream_entry_auth(
+                Some(&signature),
+                Some("tok"),
+                Some(ts),
+                Some(&nonce),
+                &copied_id,
+                data,
+            ),
+            StreamEntryAuth::Rejected,
+            "the same nonce on a new XADD entry must remain a replay"
         );
     }
 
@@ -1237,16 +1305,24 @@ mod tests {
 
         let nonce = uuid::Uuid::new_v4().simple().to_string();
         let now = super::super::client::unix_now_secs();
-        let entry =
-            parse_stream_entry_checked::<String>(&signed_entry_full(
-                "1-0", "\"hello\"", "s3cret-env-token", now, &nonce,
-            ))
-            .unwrap();
-        let copy =
-            parse_stream_entry_checked::<String>(&signed_entry_full(
-                "2-0", "\"hello\"", "s3cret-env-token", now, &nonce,
-            ))
-            .unwrap();
+        let original_id = stream_id_at(now, 0);
+        let copied_id = stream_id_at(now, 1);
+        let entry = parse_stream_entry_checked::<String>(&signed_entry_full(
+            &original_id,
+            "\"hello\"",
+            "s3cret-env-token",
+            now,
+            &nonce,
+        ))
+        .unwrap();
+        let copy = parse_stream_entry_checked::<String>(&signed_entry_full(
+            &copied_id,
+            "\"hello\"",
+            "s3cret-env-token",
+            now,
+            &nonce,
+        ))
+        .unwrap();
 
         let read = client.finalize_read(ParsedStreamRead {
             entries: vec![entry, copy],
@@ -1257,18 +1333,49 @@ mod tests {
     }
 
     #[test]
-    fn rt4_replayed_stream_entry_past_window_is_rejected() {
-        // PoC (RT-4): a captured session entry replayed after the freshness
-        // window must be dropped even with a valid signature.
+    fn delayed_legitimate_stream_entry_past_freshness_window_is_accepted() {
+        // Redis Streams can redeliver an authentic entry after it has been in
+        // the PEL for longer than the Pub/Sub freshness window. Its signed
+        // timestamp still matches the original Redis-generated entry ID.
         let mq = MqClient::new(MqConfig::default());
         let mut client = StreamClient::new(mq, "test-group", "test-consumer");
         client.auth_token = Some("s3cret-env-token".to_string());
 
         let stale_ts =
             super::super::client::unix_now_secs() - super::super::client::MAX_MESSAGE_AGE_SECS - 1;
-        let replayed =
-            parse_stream_entry_checked::<String>(&signed_entry("1-0", "\"hello\"", "s3cret-env-token", stale_ts))
-                .unwrap();
+        let original_id = stream_id_at(stale_ts, 0);
+        let replayed = parse_stream_entry_checked::<String>(&signed_entry(
+            &original_id,
+            "\"hello\"",
+            "s3cret-env-token",
+            stale_ts,
+        ))
+        .unwrap();
+        let read = client.finalize_read(ParsedStreamRead {
+            entries: vec![replayed],
+            poisoned: vec![],
+        });
+
+        assert_eq!(read.messages.len(), 1);
+        assert!(read.rejected.is_empty());
+    }
+
+    #[test]
+    fn old_signed_timestamp_on_a_new_stream_entry_is_rejected() {
+        let mq = MqClient::new(MqConfig::default());
+        let mut client = StreamClient::new(mq, "test-group", "test-consumer");
+        client.auth_token = Some("s3cret-env-token".to_string());
+
+        let stale_ts =
+            super::super::client::unix_now_secs() - super::super::client::MAX_MESSAGE_AGE_SECS - 1;
+        let fresh_id = stream_id_at(super::super::client::unix_now_secs(), 0);
+        let replayed = parse_stream_entry_checked::<String>(&signed_entry(
+            &fresh_id,
+            "\"hello\"",
+            "s3cret-env-token",
+            stale_ts,
+        ))
+        .unwrap();
         let read = client.finalize_read(ParsedStreamRead {
             entries: vec![replayed],
             poisoned: vec![],
@@ -1277,5 +1384,4 @@ mod tests {
         assert!(read.messages.is_empty());
         assert_eq!(read.rejected.len(), 1);
     }
-
 }

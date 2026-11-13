@@ -3,6 +3,7 @@ import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { DataSecurityIncident, HttpSessionItem, ApiResponse, Evidence } from '../../types'
 import { apiFetch } from '../../utils/api'
+import { usePrivacyAccess } from '../../hooks/usePrivacyAccess'
 import { formatRelativeTime, formatSize } from '../../utils/format'
 import {
   SEVERITY_COLOR, SEVERITY_CN,
@@ -11,26 +12,35 @@ import {
 } from './constants'
 import { maskIp, maskUser, maskUrl, getDownloadName } from './helpers'
 import { IncidentTypeBadge, MethodBadge } from './badges'
+import { PrivacyAccessPanel } from '../privacy/PrivacyAccessPanel'
 
 export function IncidentDetail({ incident, onClose, privacyMode }: { incident: DataSecurityIncident; onClose: () => void; privacyMode: boolean }) {
   const { t } = useTranslation()
   const [rs, setRs] = useState<HttpSessionItem | null>(null)
+  const [detailIncident, setDetailIncident] = useState<DataSecurityIncident | null>(null)
   const [rl, setRl] = useState(false)
   const [showBody, setShowBody] = useState(false)
-  const sc = SEVERITY_COLOR[incident.severity] || SEVERITY_COLOR.info
-  const confPct = Math.round(incident.confidence * 100)
+  const privacyAccess = usePrivacyAccess(incident.http_session_id ? { resource_type: 'http_session', resource_id: incident.http_session_id } : null)
+  const privacyHeaders = privacyAccess.leaseHeaders('http_body')
+  const visibleIncident = detailIncident ?? incident
+  const sc = SEVERITY_COLOR[visibleIncident.severity] || SEVERITY_COLOR.info
+  const confPct = Math.round(visibleIncident.confidence * 100)
 
   useEffect(() => {
     if (!incident.http_session_id) return
     let c = false
     setRl(true)
-    apiFetch(`/api/data-security/http-sessions/${incident.http_session_id}`)
+    apiFetch(`/api/data-security/incidents/${incident.id}`, { headers: privacyHeaders })
+      .then(r => r.ok ? r.json() : null)
+      .then((d: ApiResponse<DataSecurityIncident> | null) => { if (!c && d?.success && d.data) setDetailIncident(d.data) })
+      .catch(() => {})
+    apiFetch(`/api/data-security/http-sessions/${incident.http_session_id}`, { headers: privacyHeaders })
       .then(r => r.ok ? r.json() : null)
       .then((d: ApiResponse<HttpSessionItem> | null) => { if (!c && d?.success && d.data) setRs(d.data) })
       .catch(() => {})
       .finally(() => { if (!c) setRl(false) })
     return () => { c = true }
-  }, [incident.http_session_id])
+  }, [incident.id, incident.http_session_id, privacyHeaders])
 
   return (
     <div className="ds3-detail ds3-detail--v2">
@@ -40,14 +50,14 @@ export function IncidentDetail({ incident, onClose, privacyMode }: { incident: D
         <div className="ds3-dtl-hero-content">
           <div className="ds3-dtl-hero-left">
             <div className="ds3-dtl-sev-ring" style={{ borderColor: sc, boxShadow: `0 0 12px ${sc}33` }}>
-              <span style={{ color: sc, fontWeight: 800, fontSize: 11, textTransform: 'uppercase' }}>{SEVERITY_CN[incident.severity]}</span>
+              <span style={{ color: sc, fontWeight: 800, fontSize: 11, textTransform: 'uppercase' }}>{SEVERITY_CN[visibleIncident.severity]}</span>
             </div>
             <div style={{ minWidth: 0 }}>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 4, flexWrap: 'wrap' }}>
-                <IncidentTypeBadge type={incident.incident_type} />
+                <IncidentTypeBadge type={visibleIncident.incident_type} />
               </div>
               <div className="ds3-dtl-id sec-mono">
-                {incident.id.slice(0, 8)} · {formatRelativeTime(incident.created_at)}
+                {visibleIncident.id.slice(0, 8)} · {formatRelativeTime(visibleIncident.created_at)}
               </div>
             </div>
           </div>
@@ -71,18 +81,18 @@ export function IncidentDetail({ incident, onClose, privacyMode }: { incident: D
       </div>
 
       {/* Summary */}
-      <div className="ds3-dtl-summary">{incident.summary}</div>
+      <div className="ds3-dtl-summary">{visibleIncident.summary}</div>
 
       {/* Metadata */}
       <div className="ds3-detail-section">
         <div className="ds3-section-label">{t('dataSecurity.relatedInfo')}</div>
         <div className="ds3-dtl-meta">
           {([
-            [t('dataSecurity.clientIp'), privacyMode ? maskIp(incident.client_ip) : incident.client_ip,
+            [t('dataSecurity.clientIp'), privacyMode ? maskIp(visibleIncident.client_ip) : visibleIncident.client_ip,
               <svg key="ip" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" /></svg>],
-            [t('dataSecurity.user'), privacyMode ? maskUser(incident.detected_user || '') || '—' : incident.detected_user || '—',
+            [t('dataSecurity.user'), privacyMode ? maskUser(visibleIncident.detected_user || '') || '—' : visibleIncident.detected_user || '—',
               <svg key="user" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>],
-            [t('dataSecurity.host'), incident.host || '—',
+            [t('dataSecurity.host'), visibleIncident.host || '—',
               <svg key="host" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></svg>],
           ] as [string, string, JSX.Element][]).map(([l, v, icon], i) => (
             <div key={i} className="ds3-dtl-meta-item">
@@ -94,23 +104,23 @@ export function IncidentDetail({ incident, onClose, privacyMode }: { incident: D
             </div>
           ))}
         </div>
-        {incident.request_url && (
+        {visibleIncident.request_url && (
           <div className="ds3-dtl-url">
-            {incident.method && <MethodBadge method={incident.method} />}
-            <span className="sec-mono" style={{ fontSize: 11, color: 'var(--text-secondary)', wordBreak: 'break-all', flex: 1 }}>{privacyMode ? maskUrl(incident.request_url) : incident.request_url}</span>
+            {visibleIncident.method && <MethodBadge method={visibleIncident.method} />}
+            <span className="sec-mono" style={{ fontSize: 11, color: 'var(--text-secondary)', wordBreak: 'break-all', flex: 1 }}>{privacyMode ? maskUrl(visibleIncident.request_url) : visibleIncident.request_url}</span>
           </div>
         )}
       </div>
 
       {/* DLP Matches */}
-      {incident.dlp_matches.length > 0 && (
+      {visibleIncident.dlp_matches.length > 0 && (
         <div className="ds3-detail-section">
           <div className="ds3-section-label">
             {t('dataSecurity.sensitiveDataHit')}
-            <span className="ds3-section-cnt">{incident.dlp_matches.length}</span>
+            <span className="ds3-section-cnt">{visibleIncident.dlp_matches.length}</span>
           </div>
           <div className="ds3-dtl-dlp-grid">
-            {incident.dlp_matches.map((m, i) => {
+            {visibleIncident.dlp_matches.map((m, i) => {
               const jl = DLP_JRT_LEVEL[m], jc = jl ? JRT_LEVEL_COLOR[jl] : '#ef4444'
               return (
                 <div key={i} className="ds3-dtl-dlp-chip" style={{ '--dlp-c': jc } as React.CSSProperties}>
@@ -124,18 +134,18 @@ export function IncidentDetail({ incident, onClose, privacyMode }: { incident: D
       )}
 
       {/* Evidence Chain */}
-      {incident.evidence.length > 0 && (
+      {visibleIncident.evidence.length > 0 && (
         <div className="ds3-detail-section">
           <div className="ds3-section-label">
             {t('dataSecurity.evidenceChain')}
-            <span className="ds3-section-cnt">{incident.evidence.length}</span>
+            <span className="ds3-section-cnt">{visibleIncident.evidence.length}</span>
           </div>
           <div className="ds3-dtl-evidence">
-            {incident.evidence.map((ev: Evidence, i: number) => (
+            {visibleIncident.evidence.map((ev: Evidence, i: number) => (
               <div key={i} className="ds3-evi-row">
                 <div className="ds3-evi-gutter">
                   <div className="ds3-evi-num">{i + 1}</div>
-                  {i < incident.evidence.length - 1 && <div className="ds3-evi-line" />}
+                  {i < visibleIncident.evidence.length - 1 && <div className="ds3-evi-line" />}
                 </div>
                 <div className="ds3-evi-content">
                   <div className="ds3-evi-desc">{ev.description}</div>
@@ -160,7 +170,7 @@ export function IncidentDetail({ incident, onClose, privacyMode }: { incident: D
         {showBody && (
           <div className="ds3-collapse-content">
             {rl ? <div className="ds3-inline-msg">{t('dataSecurity.loading')}</div>
-              : rs?.request_body ? <pre className="ds3-code-block">{privacyMode ? getMaskedBody() : rs.request_body}</pre>
+            : rs?.request_body ? <pre className="ds3-code-block">{privacyMode ? getMaskedBody() : rs.request_body}</pre>
                 : rs?.uploaded_filename ? (
                   privacyMode ? (
                     <div className="ds3-privacy-notice">{t('dataSecurity.privacyEnabledFileDisabled')}</div>
@@ -181,7 +191,7 @@ export function IncidentDetail({ incident, onClose, privacyMode }: { incident: D
                       onClick={async () => {
                       if (rs.body_is_binary) return
                       try {
-                        const r = await apiFetch(`/api/data-security/http-sessions/${rs.id}/body`)
+                        const r = await apiFetch(`/api/data-security/http-sessions/${rs.id}/body`, { headers: privacyHeaders })
                         if (!r.ok) {
                           const message = (await r.text().catch(() => t('dataSecurity.exportFailed'))).trim()
                           alert(message || t('dataSecurity.exportFailed'))
@@ -199,8 +209,15 @@ export function IncidentDetail({ incident, onClose, privacyMode }: { incident: D
                       {t('dataSecurity.exportRedactedContent')}
                     </button>
                   </div>)
-                ) : <div className="ds3-inline-msg" style={{ color: 'var(--text-tertiary)' }}>{!rs ? t('dataSecurity.failedToLoad') : rs.request_body_size === 0 ? t('dataSecurity.requestBodyEmpty') : t('dataSecurity.requestBodyNotStored')}</div>}
+                ) : <div className="ds3-inline-msg" style={{ color: 'var(--text-tertiary)' }}>{!rs ? t('dataSecurity.failedToLoad') : rs.request_body_size === 0 ? t('dataSecurity.requestBodyEmpty') : rs.privacy?.state === 'redacted' ? t('dataSecurity.requestBodyPrivacyRequired') : t('dataSecurity.requestBodyNotStored')}</div>}
           </div>
+        )}
+        {rs?.privacy?.state === 'redacted' && (
+          <PrivacyAccessPanel
+            resource={{ resource_type: 'http_session', resource_id: incident.http_session_id }}
+            defaultScopes={['http_body']}
+            onLeaseReady={() => void privacyAccess.refresh()}
+          />
         )}
       </div>
     </div>

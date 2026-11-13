@@ -1,0 +1,10 @@
+From: =?utf-8?B?57ay5LiK6YqA6KGM?= <cs@hk-bank.example>
+To: ho@corp.internal
+Date: Wed, 26 Aug 2026 11:18:00 +0800
+Message-ID: <0008-b3@synth.example>
+Subject: 帳戶凍結提示
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+你嘅帳戶因為安全理由已經被凍結，請立即登入做身份確認，
+唔係三個工作日內會被永久停用：https://hk-secure.example.hk/verify

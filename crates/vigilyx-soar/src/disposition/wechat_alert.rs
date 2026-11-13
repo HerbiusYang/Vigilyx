@@ -21,32 +21,7 @@ struct WechatResponse {
 }
 
 fn decrypt_webhook_url(stored: &str) -> Option<String> {
-    let encoded = stored.strip_prefix("ENC:")?;
-    let jwt_secret = std::env::var("API_JWT_SECRET").ok()?;
-
-    use sha2::{Digest, Sha256};
-    let key_bytes: [u8; 32] = {
-        let mut hasher = Sha256::new();
-        hasher.update(b"vigilyx-config-encryption-v1");
-        hasher.update(jwt_secret.as_bytes());
-        hasher.finalize().into()
-    };
-
-    use aes_gcm::aead::Aead;
-    use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
-    use base64::Engine;
-
-    let combined = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .ok()?;
-    if combined.len() < 13 {
-        return None;
-    }
-
-    let cipher = Aes256Gcm::new_from_slice(&key_bytes).ok()?;
-    let nonce = Nonce::try_from(&combined[..12]).ok()?;
-    let plaintext = cipher.decrypt(&nonce, &combined[12..]).ok()?;
-    String::from_utf8(plaintext).ok()
+    vigilyx_core::decrypt_config_secret(stored).ok()
 }
 
 pub fn validate_wechat_webhook_url(raw: &str) -> Result<(), String> {

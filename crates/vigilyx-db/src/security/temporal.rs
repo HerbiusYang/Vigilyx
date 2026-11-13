@@ -7,6 +7,8 @@ use vigilyx_core::security::{CusumState, DualEwmaState, EntityRiskState};
 
 use crate::VigilDb;
 
+const TEMPORAL_BATCH_SIZE: usize = 500;
+
 impl VigilDb {
     /// CUSUM
     pub async fn save_cusum_states(&self, states: &[CusumState]) -> Result<()> {
@@ -15,36 +17,7 @@ impl VigilDb {
         }
         let now = Utc::now().to_rfc3339();
         let mut tx = self.pool.begin().await?;
-        for s in states {
-            sqlx::query(
-                r#"
-                INSERT INTO security_temporal_cusum
-                    (entity_key, s_pos, s_neg, mu_0, sample_count,
-                     alarm_active, running_sum, running_sq_sum, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                ON CONFLICT(entity_key) DO UPDATE SET
-                    s_pos = EXCLUDED.s_pos,
-                    s_neg = EXCLUDED.s_neg,
-                    mu_0 = EXCLUDED.mu_0,
-                    sample_count = EXCLUDED.sample_count,
-                    alarm_active = EXCLUDED.alarm_active,
-                    running_sum = EXCLUDED.running_sum,
-                    running_sq_sum = EXCLUDED.running_sq_sum,
-                    updated_at = EXCLUDED.updated_at
-                "#,
-            )
-            .bind(&s.entity_key)
-            .bind(s.s_pos)
-            .bind(s.s_neg)
-            .bind(s.mu_0)
-            .bind(s.sample_count as i64)
-            .bind(s.alarm_active)
-            .bind(s.running_sum)
-            .bind(s.running_sq_sum)
-            .bind(&now)
-            .execute(&mut *tx)
-            .await?;
-        }
+        upsert_cusum_batch(&mut tx, states, &now).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -66,30 +39,7 @@ impl VigilDb {
         }
         let now = Utc::now().to_rfc3339();
         let mut tx = self.pool.begin().await?;
-        for s in states {
-            sqlx::query(
-                r#"
-                INSERT INTO security_temporal_ewma
-                    (entity_key, fast_value, slow_value, initialized,
-                     observation_count, updated_at)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                ON CONFLICT(entity_key) DO UPDATE SET
-                    fast_value = EXCLUDED.fast_value,
-                    slow_value = EXCLUDED.slow_value,
-                    initialized = EXCLUDED.initialized,
-                    observation_count = EXCLUDED.observation_count,
-                    updated_at = EXCLUDED.updated_at
-                "#,
-            )
-            .bind(&s.entity_key)
-            .bind(s.fast_value)
-            .bind(s.slow_value)
-            .bind(s.initialized)
-            .bind(s.observation_count as i64)
-            .bind(&now)
-            .execute(&mut *tx)
-            .await?;
-        }
+        upsert_ewma_batch(&mut tx, states, &now).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -110,27 +60,7 @@ impl VigilDb {
         }
         let now = Utc::now().to_rfc3339();
         let mut tx = self.pool.begin().await?;
-        for s in states {
-            sqlx::query(
-                r#"
-                INSERT INTO security_entity_risk
-                    (entity_key, risk_value, alpha, email_count, updated_at)
-                VALUES ($1, $2, $3, $4, $5)
-                ON CONFLICT(entity_key) DO UPDATE SET
-                    risk_value = EXCLUDED.risk_value,
-                    alpha = EXCLUDED.alpha,
-                    email_count = EXCLUDED.email_count,
-                    updated_at = EXCLUDED.updated_at
-                "#,
-            )
-            .bind(&s.entity_key)
-            .bind(s.risk_value)
-            .bind(s.alpha)
-            .bind(s.email_count as i64)
-            .bind(&now)
-            .execute(&mut *tx)
-            .await?;
-        }
+        upsert_entity_batch(&mut tx, states, &now).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -151,11 +81,147 @@ impl VigilDb {
         ewma: &[DualEwmaState],
         entity: &[EntityRiskState],
     ) -> Result<()> {
-        self.save_cusum_states(cusum).await?;
-        self.save_ewma_states(ewma).await?;
-        self.save_entity_risk_states(entity).await?;
+        if cusum.is_empty() && ewma.is_empty() && entity.is_empty() {
+            return Ok(());
+        }
+        let now = Utc::now().to_rfc3339();
+        let mut tx = self.pool.begin().await?;
+        upsert_cusum_batch(&mut tx, cusum, &now).await?;
+        upsert_ewma_batch(&mut tx, ewma, &now).await?;
+        upsert_entity_batch(&mut tx, entity, &now).await?;
+        tx.commit().await?;
         Ok(())
     }
+}
+
+async fn upsert_cusum_batch(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    states: &[CusumState],
+    now: &str,
+) -> Result<()> {
+    for chunk in states.chunks(TEMPORAL_BATCH_SIZE) {
+        let mut sql = String::from(
+            "INSERT INTO security_temporal_cusum (entity_key, s_pos, s_neg, mu_0, sample_count, alarm_active, running_sum, running_sq_sum, updated_at) VALUES ",
+        );
+        for (row_idx, _) in chunk.iter().enumerate() {
+            if row_idx > 0 {
+                sql.push_str(", ");
+            }
+            let first = row_idx * 9 + 1;
+            sql.push_str(&format!(
+                "(${0}, ${1}, ${2}, ${3}, ${4}, ${5}, ${6}, ${7}, ${8})",
+                first,
+                first + 1,
+                first + 2,
+                first + 3,
+                first + 4,
+                first + 5,
+                first + 6,
+                first + 7,
+                first + 8
+            ));
+        }
+        sql.push_str(
+            " ON CONFLICT(entity_key) DO UPDATE SET s_pos = EXCLUDED.s_pos, s_neg = EXCLUDED.s_neg, mu_0 = EXCLUDED.mu_0, sample_count = EXCLUDED.sample_count, alarm_active = EXCLUDED.alarm_active, running_sum = EXCLUDED.running_sum, running_sq_sum = EXCLUDED.running_sq_sum, updated_at = EXCLUDED.updated_at",
+        );
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
+        for state in chunk {
+            query = query
+                .bind(&state.entity_key)
+                .bind(state.s_pos)
+                .bind(state.s_neg)
+                .bind(state.mu_0)
+                .bind(state.sample_count as i64)
+                .bind(state.alarm_active)
+                .bind(state.running_sum)
+                .bind(state.running_sq_sum)
+                .bind(now);
+        }
+        query.execute(&mut **tx).await?;
+    }
+    Ok(())
+}
+
+async fn upsert_ewma_batch(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    states: &[DualEwmaState],
+    now: &str,
+) -> Result<()> {
+    for chunk in states.chunks(TEMPORAL_BATCH_SIZE) {
+        let mut sql = String::from(
+            "INSERT INTO security_temporal_ewma (entity_key, fast_value, slow_value, initialized, observation_count, updated_at) VALUES ",
+        );
+        for (row_idx, _) in chunk.iter().enumerate() {
+            if row_idx > 0 {
+                sql.push_str(", ");
+            }
+            let first = row_idx * 6 + 1;
+            sql.push_str(&format!(
+                "(${0}, ${1}, ${2}, ${3}, ${4}, ${5})",
+                first,
+                first + 1,
+                first + 2,
+                first + 3,
+                first + 4,
+                first + 5
+            ));
+        }
+        sql.push_str(
+            " ON CONFLICT(entity_key) DO UPDATE SET fast_value = EXCLUDED.fast_value, slow_value = EXCLUDED.slow_value, initialized = EXCLUDED.initialized, observation_count = EXCLUDED.observation_count, updated_at = EXCLUDED.updated_at",
+        );
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
+        for state in chunk {
+            query = query
+                .bind(&state.entity_key)
+                .bind(state.fast_value)
+                .bind(state.slow_value)
+                .bind(state.initialized)
+                .bind(state.observation_count as i64)
+                .bind(now);
+        }
+        query.execute(&mut **tx).await?;
+    }
+    Ok(())
+}
+
+async fn upsert_entity_batch(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    states: &[EntityRiskState],
+    now: &str,
+) -> Result<()> {
+    for chunk in states.chunks(TEMPORAL_BATCH_SIZE) {
+        let mut sql = String::from(
+            "INSERT INTO security_entity_risk (entity_key, risk_value, alpha, email_count, updated_at) VALUES ",
+        );
+        for (row_idx, _) in chunk.iter().enumerate() {
+            if row_idx > 0 {
+                sql.push_str(", ");
+            }
+            let first = row_idx * 5 + 1;
+            sql.push_str(&format!(
+                "(${0}, ${1}, ${2}, ${3}, ${4})",
+                first,
+                first + 1,
+                first + 2,
+                first + 3,
+                first + 4
+            ));
+        }
+        sql.push_str(
+            " ON CONFLICT(entity_key) DO UPDATE SET risk_value = EXCLUDED.risk_value, alpha = EXCLUDED.alpha, email_count = EXCLUDED.email_count, updated_at = EXCLUDED.updated_at",
+        );
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
+        for state in chunk {
+            query = query
+                .bind(&state.entity_key)
+                .bind(state.risk_value)
+                .bind(state.alpha)
+                .bind(state.email_count as i64)
+                .bind(now);
+        }
+        query.execute(&mut **tx).await?;
+    }
+    Ok(())
 }
 
 // Database row type

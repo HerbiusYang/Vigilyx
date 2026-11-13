@@ -8,7 +8,10 @@ use axum::{
 use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
-use vigilyx_core::{DEFAULT_INTERNAL_SERVICE_HOSTS, validate_internal_service_url};
+use vigilyx_core::{
+    DEFAULT_INTERNAL_SERVICE_HOSTS, decrypt_config_secret_with_legacy, encrypt_config_secret,
+    validate_internal_service_url,
+};
 
 use super::super::ApiResponse;
 use super::mask_api_key;
@@ -16,85 +19,16 @@ use super::publish_engine_reload;
 use crate::AppState;
 use crate::auth::AuthenticatedUser;
 
-// SEC-REMAINING-001: Configurationvalue (AES-256-GCM)
-
-// Use HKDF-SHA256 to derive AES-256 key from API_JWT_SECRET,
-// Encrypt sensitive values like smtp_password and API key before storing in DB.
-// format: "ENC:" + base64(nonce || ciphertext || tag)
-
-/// Derive AES-256 encryption key from JWT secret
-fn derive_encryption_key(jwt_secret: &str) -> [u8; 32] {
-    use sha2::{Digest, Sha256};
-    // HKDF-like: SHA256(salt || secret) - Simplified implementation,sufficient to defend against DB leaks
-    let mut hasher = Sha256::new();
-    hasher.update(b"vigilyx-config-encryption-v1");
-    hasher.update(jwt_secret.as_bytes());
-    hasher.finalize().into()
+/// Encrypt with the dedicated configuration key. The JWT parameter remains
+/// in this private wrapper only to minimize rolling-upgrade churn at callers.
+pub(super) fn encrypt_config_value(plaintext: &str, _jwt_secret: &str) -> Result<String, String> {
+    encrypt_config_secret(plaintext)
 }
 
-/// Configurationvalue (AES-256-GCM)
-pub(super) fn encrypt_config_value(plaintext: &str, jwt_secret: &str) -> Result<String, String> {
-    use aes_gcm::aead::Aead;
-    use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
-
-    if plaintext.is_empty() {
-        return Ok(String::new());
-    }
-    let key_bytes = derive_encryption_key(jwt_secret);
-    let cipher = Aes256Gcm::new_from_slice(&key_bytes).map_err(|e| format!("cipher init: {e}"))?;
-
-    // 96-bit random nonce
-    let mut nonce_bytes = [0u8; 12];
-    getrandom::fill(&mut nonce_bytes).map_err(|e| format!("rng: {e}"))?;
-    let nonce = Nonce::try_from(&nonce_bytes[..]).map_err(|_| "invalid nonce".to_string())?;
-
-    let ciphertext = cipher
-        .encrypt(&nonce, plaintext.as_bytes())
-        .map_err(|e| format!("encrypt: {e}"))?;
-
-    // nonce (12) || ciphertext+tag
-    let mut combined = Vec::with_capacity(12 + ciphertext.len());
-    combined.extend_from_slice(&nonce_bytes);
-    combined.extend_from_slice(&ciphertext);
-
-    use base64::Engine;
-    Ok(format!(
-        "ENC:{}",
-        base64::engine::general_purpose::STANDARD.encode(&combined)
-    ))
-}
-
-/// Decrypt config value (AES-256-GCM)
-#[allow(dead_code)]
+/// Read v2 values and, in the API only, legacy JWT-derived values so callers
+/// can migrate them on their next save.
 pub(super) fn decrypt_config_value(stored: &str, jwt_secret: &str) -> Result<String, String> {
-    use aes_gcm::aead::Aead;
-    use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
-
-    if stored.is_empty() {
-        return Ok(String::new());
-    }
-    // : ENC: value ()
-    let encoded = match stored.strip_prefix("ENC:") {
-        Some(e) => e,
-        None => return Ok(stored.to_string()),
-    };
-
-    use base64::Engine;
-    let combined = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .map_err(|e| format!("base64: {e}"))?;
-    if combined.len() < 13 {
-        return Err("ciphertext too short".into());
-    }
-
-    let key_bytes = derive_encryption_key(jwt_secret);
-    let cipher = Aes256Gcm::new_from_slice(&key_bytes).map_err(|e| format!("cipher init: {e}"))?;
-    let nonce = Nonce::try_from(&combined[..12]).map_err(|_| "invalid nonce".to_string())?;
-    let plaintext = cipher
-        .decrypt(&nonce, &combined[12..])
-        .map_err(|_| "decrypt failed (wrong key or tampered)".to_string())?;
-
-    String::from_utf8(plaintext).map_err(|e| format!("utf8: {e}"))
+    decrypt_config_secret_with_legacy(stored, jwt_secret)
 }
 
 // AI Service configuration
@@ -148,6 +82,13 @@ pub async fn update_ai_config(
             .into_response();
         }
     };
+
+    if let Err(error) = parsed.validate() {
+        return ApiResponse::<serde_json::Value>::bad_request(format!(
+            "Invalid AI config: {error}"
+        ))
+        .into_response();
+    }
 
     // SEC: Validate URL allowlist on save, not just test - prevent SSRF/data exfil (CWE-918)
     if !is_allowed_internal_url(&parsed.service_url) {
@@ -232,6 +173,13 @@ pub async fn test_ai_connection(
                 .into_response();
         }
     };
+
+    if let Err(error) = ai_config.validate() {
+        return ApiResponse::<serde_json::Value>::bad_request(format!(
+            "Invalid AI config: {error}"
+        ))
+        .into_response();
+    }
 
     // SSRF protection: only allow internal service URLs such as `http://ai:8900`.
     if !is_allowed_internal_url(&ai_config.service_url) {
@@ -824,7 +772,10 @@ mod tests {
 
     #[test]
     fn placeholder_detection_does_not_treat_empty_string_as_keep() {
-        assert!(is_masked_secret_placeholder("****", Some("ENC:stored-secret")));
+        assert!(is_masked_secret_placeholder(
+            "****",
+            Some("ENC:stored-secret")
+        ));
         assert!(is_masked_secret_placeholder("****", None));
         assert!(!is_masked_secret_placeholder("", Some("ENC:stored-secret")));
         assert!(!is_masked_secret_placeholder("real-secret", Some("ENC:x")));
@@ -845,16 +796,10 @@ mod tests {
         mask_intel_api_keys(&mut value);
 
         // "ab密钥c" = 5 chars -> 1 star + last 4 chars
-        assert_eq!(
-            value["abuseipdb_api_key"].as_str().unwrap(),
-            "*...b密钥c"
-        );
+        assert_eq!(value["abuseipdb_api_key"].as_str().unwrap(), "*...b密钥c");
         assert_eq!(value["abuseipdb_api_key_set"], json!(true));
         // "密钥abcd" = 6 chars -> 2 stars + last 4 chars
-        assert_eq!(
-            value["virustotal_api_key"].as_str().unwrap(),
-            "**...abcd"
-        );
+        assert_eq!(value["virustotal_api_key"].as_str().unwrap(), "**...abcd");
     }
 
     #[test]
@@ -869,10 +814,7 @@ mod tests {
         assert_eq!(value["abuseipdb_api_key"].as_str().unwrap(), "****");
         assert_eq!(value["abuseipdb_api_key_set"], json!(true));
         // 20 chars -> 8-star cap + last 4 chars
-        assert_eq!(
-            value["virustotal_api_key"].as_str().unwrap(),
-            "****...cdef"
-        );
+        assert_eq!(value["virustotal_api_key"].as_str().unwrap(), "****...cdef");
 
         let mut empty = json!({ "abuseipdb_api_key": "" });
         mask_intel_api_keys(&mut empty);

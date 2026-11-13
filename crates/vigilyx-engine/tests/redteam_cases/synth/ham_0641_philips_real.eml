@@ -1,0 +1,78 @@
+From: Philips Healthcare <interop@philips.example>
+To: rd-clinical@corp.internal
+Cc: qa@corp.internal, regulatory@corp.internal
+Date: Wed, 04 Nov 2026 09:00:00 +0100
+Message-ID: <0641-b69@synth.example>
+Subject: [CERTIFICATION] HL7 FHIR R4 + IHE ITI-TF integration for Vigilyx Healthcare Edition
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear Clinical Research Team,
+
+Philips Healthcare has completed the technical pre-assessment
+of your Vigilyx Gateway Healthcare Edition for integration
+with Philips IntelliVue patient monitoring systems. A
+clinical safety review is required for full certification.
+
+Certification Details:
+  Request: PHIL-INT-2026-8842
+  Product: Vigilyx Gateway Healthcare Edition v2.1
+  Integration: IntelliVue MX750/MX850 patient monitors
+  Protocols: HL7 FHIR R4 + IHE ITI-TF
+  Use Case: Email notification filtering for alarm routing
+  Hospitals: 22 academic medical centers (NL/DE/BE)
+  Pre-assessment: PASSED (October 15, 2026)
+  Clinical Review: PENDING — documentation required
+
+Clinical Safety Review Process:
+
+  1. Philips will send the clinical safety documentation
+     checklist by REGISTERED MAIL to your regulatory
+     affairs department
+
+  2. Submit the completed documentation package:
+     — Through your Philips Partner Manager (same
+        channel as your regular partner communications)
+     — OR through the Philips Partner Portal at
+        partner.philips.com (navigate manually in browser)
+
+  3. The Clinical Engineering Board reviews:
+     — Algorithm logic (how alarms are prioritized)
+     — Clinical safe-list rules
+     — False positive/negative test data
+     — PHI handling (GDPR compliance)
+
+  Important Security Notes:
+  Philips will NEVER:
+  - Require "Philips Certification Portal authentication"
+    with OAuth permissions for documentation submission
+  - Ask for complete algorithm specifications through
+    email portal links
+  - Request offline_access or any OAuth tokens
+  - Offer a "Chinese certification channel"
+  - Set a "November 18 deadline" that delays certification
+    to Q1 2027
+
+  Philips' actual certification process:
+  — Documentation is submitted through your Partner Manager
+     or the Philips Partner Portal (partner.philips.com)
+  — Algorithm specifications are shared under NDA through
+     secure partner collaboration tools, NOT through email
+     portal links
+  — The review timeline is typically 30-60 days from
+     complete submission (not 14 days)
+  — No fees are charged for certification review
+
+  If you receive an email asking for algorithm
+  specifications through a portal link or requiring
+  OAuth authentication, it is a phishing attempt
+  targeting medical device vendors.
+
+Your Partner Manager:
+  Name: Jan van der Berg
+  Phone: +31 40 279 **** (verify at philips.com)
+  Email: interop@philips.example
+
+Koninklijke Philips N.V. | Healthcare — Interoperability
+High Tech Campus 34, 5656 AE Eindhoven, Netherlands
+You are receiving this because you are the technical contact.

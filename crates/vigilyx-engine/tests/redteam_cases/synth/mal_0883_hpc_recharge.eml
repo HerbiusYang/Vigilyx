@@ -1,0 +1,79 @@
+From: "智算云超算中心 | 用户服务部" <jishi.recharge@zhisuan-hpc.example>
+To: pi.lab@university.example
+Cc: graduate.lead@university.example, finance@university.example
+Reply-To: 机时服务组 <jishi.desk@zs-hpc-pay.example>
+Disposition-Notification-To: jishi.recharge@zhisuan-hpc.example
+Date: Mon, 04 Oct 2027 09:40:00 +0800
+Message-ID: <0883-b120@synth.example>
+Subject: =?utf-8?B?44CQ5L2Z6aKd5ZGK5oCl44CR6K++6aGY57uE6LaF566X5py65pe25L2Z6aKd5LuF5YmpNDEuMuS4h+aguOaXtiDigJQg5YWF5YC86YCa6YGT5Y2H57qn6YCa55+lIOKAlCDorq3nu4Pku7vliqHmjpLpmJ/lhrvnu5M=?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px">
+<p>张教授、研究生负责人、财务处：</p>
+
+<p style="background:#FFEBEE;border-left:4px solid #B71C1C;padding:12px">
+<b>课题组超算机时余额告急（训练任务排队冻结风险）。</b>
+贵课题组（账户 <b>HPC-U-2026-0884</b>）机时余额仅剩 <b>41.2 万核时</b>，而当前排队中的大模型
+微调任务预估还需 <b>380 万核时</b>。<b>余额归零后，排队任务自动冻结</b>（checkpoint 保留
+14 天），重新排队将进入低谷时段队列（等待约 3 周）。本季度充值通道完成升级，
+<b>充值需在新通道完成</b>。
+</p>
+
+<h3>一、账户概况</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:230px">账户</td><td><b>HPC-U-2026-0884</b>（A100 分区 + CPU 池，高校课题组）</td></tr>
+<tr><td style="background:#f5f5f5">当前余额</td><td><b style="color:#e00">41.2 万核时</b>（约可支撑 2 天）</td></tr>
+<tr><td style="background:#f5f5f5">排队任务</td><td>3 个（微调主任务 + 消融实验 + 数据预处理）</td></tr>
+<tr><td style="background:#f5f5f5">任务需求</td><td>预估 380 万核时</td></tr>
+<tr><td style="background:#f5f5f5">冻结规则</td><td>余额归零 → 排队冻结，checkpoint 保留 14 天</td></tr>
+</table>
+
+<h3>二、充值通道升级（本季度变更）</h3>
+<p>因计费系统升级，机时充值改经<b>智算科技服务（深圳）有限公司</b>（中心运营主体）
+收取，需充值经费卡（纵向经费）挂接或对公转账：</p>
+
+<p style="background:#E8EAF6;padding:12px;border:1px solid #9FA8DA">
+户名：智算科技服务（深圳）有限公司<br>
+开户行：招商银行深圳科技园支行<br>
+账号：7559 0188 6640 2291 228<br>
+备注：HPC-0884 + 课题组负责人
+</p>
+
+<p>原中心计财账户对机时充值 10 月 10 日起关闭入账。充值后机时实时到账，
+任务不中断。</p>
+
+<h3>三、充值入口</h3>
+<p style="text-align:center;margin:18px 0">
+<a href="https://zs-hpc-pay.example/recharge/HPC-U-2026-0884/v2" style="display:inline-block;background:#B71C1C;color:#fff;padding:12px 42px;text-decoration:none;border-radius:4px;font-weight:bold">进入新充值通道</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">用户服务平台：https://www.zhisuan.example/user（课题组账户登录入口相同）</p>
+
+<h3>四、时间线</h3>
+<ul>
+<li>余额耗尽预估：<b>2 天后（10 月 6 日）</b></li>
+<li>冻结后果：checkpoint 保留 14 天，重新排队约 3 周（论文实验进度直接受损）</li>
+<li>原账户关闭：10 月 10 日</li>
+</ul>
+
+<p style="font-size:14px;background:#FFF3E0;padding:12px">"超算中心发通知换充值账户"应当核实
+——科研经费类诈骗确实有，财务处的谨慎是对的。边界：充值也可以走<b>用户服务平台
+（课题组账户登录）内的经费卡挂接</b>（与历年一致）；机时余额与任务队列在平台内实时
+可查。10 月 6 日的耗尽预估按当前消耗速度计算。</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://zs-hpc-pay.example/px/hpc.gif?a=HPC-0884&amp;r=pi.lab%40university.example" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02;">多课题组通道：院级平台可凭院内编码为多课题组合并充值，在 zs-hpc-pay.example/school 批量办理（单次转账覆盖全部课题组）。</p>
+
+<h3>五、联系方式</h3>
+<p>机时服务组：jishi.desk@zs-hpc-pay.example<br>
+账户引用：HPC-U-2026-0884 · 用户服务热线：400-xxx-xxxx（中心官网公布号码）</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+智算云超算中心 · 用户服务部 · 本通知发送至课题组登记邮箱<br />
+机时计费依据中心用户手册执行。
+</div>
+
+</body></html>

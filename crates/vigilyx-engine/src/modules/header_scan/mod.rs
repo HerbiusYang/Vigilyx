@@ -33,6 +33,27 @@ pub struct HeaderScanModule {
     intel: Option<IntelLayer>,
 }
 
+/// Return only DKIM signing domains validated by the established trusted
+/// Authentication-Results boundary. Raw DKIM-Signature headers and untrusted
+/// Authentication-Results are intentionally excluded.
+pub(crate) fn trusted_dkim_pass_domains(ctx: &SecurityContext) -> Vec<String> {
+    let parsed = parsed::ParsedHeaders::extract_for_session(
+        &ctx.session.content.headers,
+        &ctx.session.client_ip,
+        ctx.session.mail_from.as_deref(),
+        ctx.session.content.is_complete,
+        &|domain| ctx.is_internal_domain(domain),
+        ctx.session.source == SessionSource::MtaProxy,
+    );
+
+    parsed
+        .auth_results
+        .into_iter()
+        .filter(|result| result.dkim_pass)
+        .filter_map(|result| result.dkim_domain)
+        .collect()
+}
+
 impl HeaderScanModule {
     pub fn new(db: Arc<dyn DbQueryService>, intel: Option<IntelLayer>) -> Self {
         // Increase timeout when intel is enabled: IP queries run in parallel with 10s per-IP timeout
@@ -72,6 +93,7 @@ impl SecurityModule for HeaderScanModule {
         let mut evidence = Vec::new();
         let mut categories = Vec::new();
         let mut total_score: f64 = 0.0;
+        let mut ds_learning_items = Vec::new();
 
         // --- Step 0: Extract all header data in a single pass ---
         let parsed = parsed::ParsedHeaders::extract_for_session(
@@ -89,11 +111,38 @@ impl SecurityModule for HeaderScanModule {
         evidence.extend(parsed.injection_evidence.iter().cloned());
 
         // --- Step 1: From / Reply-To domain mismatch ---
-        checks::check_domain_mismatch(&parsed, &mut total_score, &mut categories, &mut evidence);
+        checks::check_domain_mismatch(
+            &parsed,
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+            &mut ds_learning_items,
+        );
 
         // --- Step 1b: Envelope spoofing ---
         checks::check_envelope_spoofing(
             &parsed,
+            ctx,
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+
+        // Exact configured internal-domain text in an external sender's
+        // display name is a weak spoof fact. When paired with a recipient
+        // account/IT action it becomes the existing inline authority-lure
+        // compound; partial substrings and internal senders remain excluded.
+        checks::check_internal_domain_display_name(
+            ctx,
+            &mut total_score,
+            &mut categories,
+            &mut evidence,
+        );
+
+        // Display-name/local-part authority lures are lexical header facts
+        // and must be available in the inline tier, independent of the
+        // database-backed identity behavior module.
+        checks::check_authority_identity_lure(
             ctx,
             &mut total_score,
             &mut categories,
@@ -232,7 +281,10 @@ impl SecurityModule for HeaderScanModule {
 
         // Build summary describing what was analyzed and the outcome
         let summary = if threat_level == ThreatLevel::Safe {
-            if parsed.received_ips.is_empty() {
+            if categories.iter().any(|category| category == "no_received") {
+                "Email header checks completed; no actionable threat evidence found, but the captured headers contain no Received chain"
+                    .to_string()
+            } else if parsed.received_ips.is_empty() {
                 "Email header check passed, no anomalies found".to_string()
             } else {
                 let intel_status = if self.intel.is_some() {
@@ -276,6 +328,7 @@ impl SecurityModule for HeaderScanModule {
             details: {
                 let mut d = serde_json::json!({
                     "score": total_score,
+                    "ds_learning_items": ds_learning_items,
                     "received_count": parsed.received_count,
                     "received_ips": parsed.received_ips,
                     "intel_enabled": self.intel.is_some(),
@@ -396,7 +449,10 @@ mod tests {
         session.mail_from = Some("attacker@evil.tld".to_string());
         session.content = EmailContent {
             headers: vec![
-                ("From".to_string(), "Attacker <attacker@evil.tld>".to_string()),
+                (
+                    "From".to_string(),
+                    "Attacker <attacker@evil.tld>".to_string(),
+                ),
                 ("Reply-To".to_string(), "drop@other.tld".to_string()),
                 (
                     "Received".to_string(),

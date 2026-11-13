@@ -1,0 +1,21 @@
+From: =?utf-8?B?5rOV5Yqh?= <contract@partner-relay4.example>
+To: legal@corp.internal
+Date: Wed, 09 Sep 2026 08:17:00 +0800
+Message-ID: <0007-b17@synth.example>
+Subject: 合同扫描件（RAR 压缩）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+扫描件打包如附件，解压到任意目录即可。
+--BS
+Content-Type: application/vnd.rar
+Content-Disposition: attachment; filename="合同扫描件.rar"
+Content-Transfer-Encoding: base64
+
+UmFyIRoHAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+--BS--

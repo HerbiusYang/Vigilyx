@@ -1,0 +1,10 @@
+From: =?utf-8?B?5p625p6E57uE?= <arch@corp.internal>
+To: dev-team@corp.internal
+Date: Mon, 31 Aug 2026 09:36:00 +0800
+Message-ID: <0026-b8@synth.example>
+Subject: Rust 代码规范 v1.2 生效
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+v1.2 主要变化：错误处理统一 thiserror、日志字段规范。CI 已挂 lint。
+存量代码不强制回改。

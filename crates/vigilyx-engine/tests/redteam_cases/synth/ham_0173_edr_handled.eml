@@ -1,0 +1,10 @@
+From: =?utf-8?B?57uI56uv5a6J5YWo?= <edr@corp.internal>
+To: it@corp.internal
+Date: Thu, 03 Sep 2026 09:32:00 +0800
+Message-ID: <0022-b11@synth.example>
+Subject: 已处置：财务部一台终端误报解除
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+EDR 对一台终端的告警经分析为误报（加密备份进程），已恢复网络。
+样本已入白名单，无需用户操作。

@@ -47,6 +47,15 @@ deploy.conf
 
 # 数据库和运行时数据 (模型、附件、缓存等)
 data/
+!/crates/vigilyx-engine/src/semantic/data/
+
+# 本地分析报告、决策草稿和评估产物
+/docs/
+!/docs/
+/docs/*
+!/docs/decisions/
+/docs/decisions/*
+!/docs/decisions/2026-08-28-process-level-external-url-sandbox.md
 
 # 日志
 *.log
@@ -125,3 +134,7 @@ ehthumbs.db
 
 # Lotyra 本地治理记录（含部署审计与环境线索，不上传）
 .lotyra/
+
+# 本地 Codex 邮件安全治理 skill
+/.agents/skills/vigilyx-email-security-governance/
+/vigilyx-email-security-governance.skill

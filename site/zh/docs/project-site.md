@@ -81,19 +81,33 @@ https://docs.vigilyx.example.com/
 /Vigilyx/
 ```
 
-## 本地预览
+## 远程预览
 
-从仓库根目录执行：
+远程主机使用仓库 `.nvmrc` 固定的 Node.js `24.19.0` 和 `site/package.json` 要求的 npm `12.0.2`。
+
+先把本地站点改动同步到远程构建主机，再从本机通过 SSH 隧道访问：
 
 ```bash
-cd site
-npm ci
-npm run dev
+# 在本地仓库根目录执行；将目标替换为部署使用的 SSH 地址和远程仓库路径
+REMOTE_HOST="root@your-server"
+REMOTE_DIR="/path/to/VIGILYX"
+rsync -az --exclude='node_modules' --exclude='.vitepress/cache' --exclude='.vitepress/dist' \
+  site/ "${REMOTE_HOST}:${REMOTE_DIR}/site/"
+
+# 从本地工作站通过 SSH 在远程主机启动预览
+ssh "$REMOTE_HOST" "cd '${REMOTE_DIR}/site' && npm ci && npm run dev -- --host 127.0.0.1"
+
+# 在本机另一个终端
+REMOTE_HOST="root@your-server"  # 在此终端重新设置相同的 SSH 地址
+ssh -L 5173:127.0.0.1:5173 "$REMOTE_HOST"
 ```
 
-本地构建：
+本地每次修改站点后重新执行 `rsync`；远程 VitePress 会监听同步后的文件。
+
+在远程主机构建：
 
 ```bash
-cd site
-npm run build
+REMOTE_HOST="root@your-server"
+REMOTE_DIR="/path/to/VIGILYX"
+ssh "$REMOTE_HOST" "cd '${REMOTE_DIR}/site' && npm ci && npm run build"
 ```

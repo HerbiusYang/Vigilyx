@@ -1,0 +1,64 @@
+From: DeFi Yield Monitor <alerts@yield-guard-protocol.example>
+To: treasury@corp.internal
+Date: Mon, 12 Oct 2026 21:45:00 +0800
+Message-ID: <0663-b46@synth.example>
+Subject: =?utf-8?B?44CQ6buE6ZKf44CbIHlvdXIgRmluZA==?= =?utf-8?B?6LWE5rex5ZKM6YCJ6aG555uu5qCH6aKY77yIMB==?= =?utf-8?B?LjAlIEFQWSDmlLnluILlj5fmjIHkuIrmraXvvIkm?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Your position in the "FindVault-ETH-USDC" liquidity pool on Arbitrum has been flagged as at-risk.
+
+Position details:
+  Protocol: FindVault (v2)
+  Network: Arbitrum One
+  Pool: ETH-USDC (0.3% fee tier)
+  Position ID: #4472884
+  TVL: $284,000 (your share: 3.2%)
+  Current APY: 0.0% (healthy baseline: 18.4%)
+  Impermanent Loss: -8.2% (increased from -5.1% in 24h)
+
+Why APY dropped to 0%:
+The pool's leading liquidity provider (0x7a3F...e21B) executed a large withdrawal
+($1.2M) at block 184,732,991, causing the pool's fee accumulation to drop to near
+zero for remaining LPs. Your position is now earning effectively nothing while
+being exposed to impermanent loss.
+
+Recommended action:
+1. Withdraw your position from the FindVault pool
+2. Bridge funds back to Ethereum mainnet (Arbitrum bridge may have 7-day delay)
+3. Consider alternative yield on mainnet (Aura Finance: 12.4% APY for ETH-USDC)
+
+To withdraw your position, you'll need to:
+
+1. Connect your wallet to the FindVault interface:
+   https://yield-guard-protocol.example/defi/findvault/withdraw?position=4472884
+
+2. Approve the withdrawal transaction (gas estimate: ~$3.40 on Arbitrum)
+
+3. Confirm withdrawal and receive ETH + USDC back to your wallet
+
+Note: You will need to interact with the FindVault smart contract directly. The
+withdrawal interface is provided as a convenience by our monitoring service.
+
+If you prefer to manage the position manually:
+  FindVault contract: 0x7a3F...e21B (Arbitrum)
+  Method: withdrawPosition(uint256 positionId)
+  Your position ID: 4472884
+
+Risk parameters:
+  Pool utilization: 94.2% (high)
+  Fee growth (24h): -87.3%
+  Volume (24h): $12,840 (down from $184,000)
+  Active LPs: 4 (down from 23)
+
+This alert was triggered because your position's APY dropped below 1% for 6
+consecutive hours. You are receiving this because you subscribed to yield
+monitoring for address 0x4F2A...91C3.
+
+To manage your alert preferences:
+  https://yield-guard-protocol.example/settings/alerts
+
+--
+DeFi Yield Monitor | Real-time position monitoring
+alerts@yield-guard-protocol.example
+(You are receiving this because you subscribed at yield-guard-protocol.example)

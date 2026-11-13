@@ -13,6 +13,8 @@ export const MODULE_NAME_KEYS: Record<string, string> = {
   link_reputation: 'emailSecurity.moduleLinkReputation',
   link_content: 'emailSecurity.moduleLinkContent',
   landing_page_scan: 'emailSecurity.moduleLandingPageScan',
+  url_sandbox_scan: 'emailSecurity.moduleUrlSandboxScan',
+  process_sandbox_scan: 'emailSecurity.moduleProcessSandboxScan',
   aitm_detect: 'emailSecurity.moduleAitmDetect',
   anomaly_detect: 'emailSecurity.moduleAnomalyDetect',
   rmm_detect: 'emailSecurity.moduleRmmDetect',

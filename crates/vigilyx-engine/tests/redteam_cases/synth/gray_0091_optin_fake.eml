@@ -1,0 +1,10 @@
+From: =?utf-8?B?6K6i6ZiF56Gu6K6k?= <confirm@svc-relay32.example>
+To: me@personal.example
+Date: Fri, 18 Sep 2026 09:45:00 +0800
+Message-ID: <0035-b25@synth.example>
+Subject: 请确认您的订阅
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+点击确认：https://svc-relay32.example/c/xy99
+（不点击将保留订阅并计费）

@@ -1,0 +1,11 @@
+From: =?utf-8?B?6Jaq6YWs5bmz5Y+w?= <pay-view@salary-saas.example>
+To: staff@corp.internal
+Date: Tue, 01 Sep 2026 10:23:00 +0800
+Message-ID: <0013-b9@synth.example>
+Subject: 9月工资条已生成
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+查收工资条（首次需验证）：
+https://pay-slip.example.org/v
+（工号+身份证后六位+银行卡后四位）

@@ -1,0 +1,10 @@
+From: =?utf-8?B?55uR5o6n5bmz5Y+w?= <monitor@corp.internal>
+To: duty@corp.internal
+Date: Mon, 24 Aug 2026 09:42:00 +0800
+Message-ID: <0031-b1@synth.example>
+Subject: [恢复] 订单接口超时告警已恢复
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+订单接口 P95 超时告警于 11:42 自动恢复，持续 6 分钟，
+初步归因上游缓存抖动，复盘稍后同步值班群。

@@ -1,0 +1,10 @@
+From: =?utf-8?B?UHlQSSBTZWN1cml0eQ==?= <sec@pypi-sec.example>
+To: dev@corp.internal
+Date: Sat, 05 Sep 2026 10:30:00 +0800
+Message-ID: <0020-b13@synth.example>
+Subject: Malicious package in your requirements
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Your requirements.txt pins a typosquatted package. Remediation wizard:
+https://pypi-fix.example.info/wiz (sign in with your PyPI credentials)

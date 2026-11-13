@@ -1,0 +1,12 @@
+From: =?utf-8?B?5byg5pWP?= <zhang.min@corp.internal>
+To: pmo@corp.internal
+Date: Mon, 24 Aug 2026 09:33:00 +0800
+Message-ID: <0022-b1@synth.example>
+Subject: 数据治理第35周周报
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+本周：元数据采集覆盖到 82%，血缘解析在两个遗留系统上卡住；
+风险：上游接口 9 月初变更，需要提前对齐；
+下周：完成血缘兜底规则，出一份口径对照表。
+明细见 /projects/datagov/week35。

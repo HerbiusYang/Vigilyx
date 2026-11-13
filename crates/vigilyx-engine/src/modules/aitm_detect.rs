@@ -17,6 +17,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use regex::{Regex, RegexSet};
 use tracing::debug;
+use vigilyx_core::security::SemanticSourcePart;
 
 use crate::context::SecurityContext;
 use crate::error::EngineError;
@@ -29,6 +30,7 @@ use crate::module_data::module_data;
 use crate::modules::common::extract_domain_from_url;
 use crate::modules::content_scan::html_utils::strip_html_tags;
 use crate::modules::content_scan::normalize_text;
+use crate::semantic::{exclude_non_action_claims, semantic_text_projection_with_coverage};
 
 // ---------------------------------------------------------------------------
 // Constants: AitM subdomain regex patterns (not data-driven)
@@ -354,41 +356,18 @@ fn detect_hosted_platform_credential_lure(
         return (0.0, Vec::new());
     }
 
-    let has_identity = [
-        "account",
-        "identity",
-        "credential",
-        "password",
-        "login",
-        "sign in",
-        "账户",
-        "帐户",
-        "身份",
-        "凭据",
-        "密码",
-        "登录",
-        "验证",
-        "认证",
-    ]
-    .iter()
-    .any(|term| corpus.contains(term));
-    let has_action = [
-        "click",
-        "confirm",
-        "verify",
-        "enter",
-        "complete",
-        "immediately",
-        "点击",
-        "确认",
-        "验证",
-        "输入",
-        "立即",
-        "完成",
-    ]
-    .iter()
-    .any(|term| corpus.contains(term));
-    if !has_identity || !has_action {
+    let md = module_data();
+    let contains_configured_term = |key: &str, text: &str| {
+        md.get_list(key)
+            .iter()
+            .any(|term| text.contains(&term.to_lowercase()))
+    };
+    let has_identity = contains_configured_term("aitm_hosted_identity_terms", &corpus);
+    let has_action = contains_configured_term("aitm_hosted_action_terms", &corpus);
+    let has_sensitive_business = contains_configured_term("aitm_hosted_business_terms", &corpus);
+    let has_pressure = contains_configured_term("aitm_urgency_phrases", &corpus);
+    let sensitive_action_lure = has_sensitive_business && has_pressure;
+    if !has_action || (!has_identity && !sensitive_action_lure) {
         return (0.0, Vec::new());
     }
 
@@ -404,29 +383,27 @@ fn detect_hosted_platform_credential_lure(
         }
         let path = url_path_query(&link.url).unwrap_or_default();
         let link_text = link.text.as_deref().unwrap_or_default().to_lowercase();
-        let auth_path = [
-            "login",
-            "signin",
-            "verify",
-            "password",
-            "account",
-            "credential",
-            "security",
-            "confirm",
-            "viewform",
-            "oauth",
-        ]
-        .iter()
-        .any(|term| path.contains(term) || link_text.contains(term));
+        let auth_path = md
+            .get_list("aitm_hosted_auth_path_terms")
+            .iter()
+            .any(|term| {
+                let term = term.to_lowercase();
+                path.contains(&term) || link_text.contains(&term)
+            });
         if !auth_path {
             continue;
         }
 
-        score += 0.38;
+        score += if has_identity { 0.38 } else { 0.24 };
         findings.push((
             format!(
-                "Shared-hosting URL {} is paired with credential-verification language and an action/auth path",
-                domain
+                "Shared-hosting URL {} is paired with {} language and an action/auth path",
+                domain,
+                if has_identity {
+                    "credential-verification"
+                } else {
+                    "business-sensitive action and pressure"
+                }
             ),
             "aitm_hosted_credential_lure".to_string(),
         ));
@@ -977,43 +954,66 @@ fn detect_homograph_brand_in_domain(
 //
 //   - Reference to a Device Code Flow URL (microsoft.com/devicelogin or
 //     login.microsoftonline.com/...deviceauth)
-//   - An 8-character user_code string in the body
+//   - A 6-8-character mixed alphanumeric user_code string in the body
 //   - Imperative "enter this code" / "输入此代码" phrasing
 //
 // False-positive guards:
-//   - If the sender domain is on a Microsoft-controlled list
-//     (microsoft.com, microsoftonline.com, office.com etc.), suppress.
-//     Real Microsoft notifications about devicelogin do exist (rare).
-//   - Require the user_code regex to match in close vicinity (same body)
-//     to the device-login URL or the enter-code phrase, not anywhere.
+//   - Remove known anti-action, report and quoted claims before matching.
+//   - A standalone identifier or a login URL is not the request compound.
+//   - A claimed sender domain cannot supply authentication provenance.
 fn detect_device_code_phishing(
     links: &[vigilyx_core::models::EmailLink],
     subject: Option<&str>,
     body_text: Option<&str>,
     body_html: Option<&str>,
-    sender_domain: Option<&str>,
+    _sender_domain: Option<&str>,
+) -> (f64, Vec<(String, String)>) {
+    detect_device_code_phishing_with_policy(
+        links,
+        subject,
+        body_text,
+        body_html,
+        crate::modules::email_attack_hardening::stage_b_enabled(),
+    )
+}
+
+fn is_device_login_endpoint(raw: &str) -> bool {
+    let candidate = if raw.contains("://") {
+        raw.to_string()
+    } else {
+        format!("https://{raw}")
+    };
+    let Ok(parsed) = url::Url::parse(&candidate) else {
+        return false;
+    };
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return false;
+    }
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let endpoint = format!(
+        "{}{}",
+        host.trim_end_matches('.').to_ascii_lowercase(),
+        parsed.path().trim_end_matches('/').to_ascii_lowercase()
+    );
+    module_data()
+        .get_list("device_code_login_endpoints_v1")
+        .contains(&endpoint)
+}
+
+fn detect_device_code_phishing_with_policy(
+    links: &[vigilyx_core::models::EmailLink],
+    subject: Option<&str>,
+    body_text: Option<&str>,
+    body_html: Option<&str>,
+    recover_aliases: bool,
 ) -> (f64, Vec<(String, String)>) {
     let mut score = 0.0_f64;
     let mut findings: Vec<(String, String)> = Vec::new();
 
-    // ── Whitelist: real Microsoft sender domains ─────────────────────────
-    if let Some(d) = sender_domain {
-        let d = d.to_ascii_lowercase();
-        const MS_DOMAINS: &[&str] = &[
-            "microsoft.com",
-            "microsoftonline.com",
-            "office.com",
-            "office365.com",
-            "outlook.com",
-            "azure.com",
-        ];
-        if MS_DOMAINS
-            .iter()
-            .any(|sfx| d == *sfx || d.ends_with(&format!(".{}", sfx)))
-        {
-            return (score, findings);
-        }
-    }
+    // MAIL FROM and header domains are unauthenticated identity claims. They
+    // cannot short-circuit a current device-code request or target analysis.
 
     // ── Build corpus ─────────────────────────────────────────────────────
     let mut combined = String::new();
@@ -1037,15 +1037,34 @@ fn detect_device_code_phishing(
 
     // ── Signal 1: Device-login URL reference ────────────────────────────
     let device_url_in_links = links.iter().any(|link| {
+        if recover_aliases {
+            return is_device_login_endpoint(&link.url);
+        }
         let ll = link.url.to_ascii_lowercase();
         ll.contains("microsoft.com/devicelogin")
             || ll.contains("microsoftonline.com/common/oauth2/deviceauth")
             || ll.contains("/devicelogin")
                 && (ll.contains("microsoft") || ll.contains("microsoftonline"))
     });
-    let device_url_in_text = combined_lower.contains("microsoft.com/devicelogin")
-        || combined_lower.contains("microsoftonline.com/common/oauth2/deviceauth")
-        || combined_lower.contains("aka.ms/devicelogin");
+    let device_url_in_text = if recover_aliases {
+        static RE_ENDPOINT_TOKEN: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(
+                r#"(?i)\b(?:https?://)?(?:[a-z0-9-]+\.)+[a-z]{2,}/[^\s<>\"'\u{e000}-\u{e00f}]+"#,
+            )
+            .expect("endpoint token regex")
+        });
+        RE_ENDPOINT_TOKEN.find_iter(&combined_lower).any(|matched| {
+            is_device_login_endpoint(
+                matched
+                    .as_str()
+                    .trim_end_matches([',', '.', ')', '。', '，']),
+            )
+        })
+    } else {
+        combined_lower.contains("microsoft.com/devicelogin")
+            || combined_lower.contains("microsoftonline.com/common/oauth2/deviceauth")
+            || combined_lower.contains("aka.ms/devicelogin")
+    };
     let has_device_url = device_url_in_links || device_url_in_text;
 
     if has_device_url {
@@ -1056,20 +1075,30 @@ fn detect_device_code_phishing(
         ));
     }
 
-    // ── Signal 2: 8-character alphanumeric user_code ────────────────────
-    // Microsoft device codes are letters + digits, 8 chars, sometimes with
+    // ── Signal 2: mixed alphanumeric user_code ─────────────────────────
+    // Microsoft device codes are commonly eight characters, but observed
+    // tenant/device flows also use shorter six-character codes. They may have
     // separators (BXFK-7QHZ, "BXFK 7QHZ"). The match is case-insensitive
     // and tolerates repeated whitespace/dash separators so attackers cannot
     // evade by lowercasing the code or inserting extra spaces. All-digit
     // candidates are still rejected below (order/invoice numbers).
     static RE_USER_CODE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)\b([A-Z0-9]{4}[\s\-]*[A-Z0-9]{4})\b").expect("device code regex")
+        Regex::new(r"(?i)\b([A-Z0-9]{4}[\s\-]*[A-Z0-9]{2,4})\b").expect("device code regex")
     });
     let mut user_codes: Vec<String> = Vec::new();
     for caps in RE_USER_CODE.captures_iter(&combined_normalized) {
         if let Some(m) = caps.get(1) {
-            // Reject if all-digits (likely an order/invoice number).
-            if m.as_str().chars().any(|c| c.is_ascii_alphabetic()) {
+            let compact_code = m
+                .as_str()
+                .chars()
+                .filter(|character| character.is_ascii_alphanumeric())
+                .collect::<String>();
+            // Reject all-digit values and short incidental identifiers. A
+            // six-character candidate remains actionable only with the
+            // device-login URL or the explicit enter-code instruction below.
+            if (6..=8).contains(&compact_code.len())
+                && compact_code.chars().any(|c| c.is_ascii_alphabetic())
+            {
                 user_codes.push(m.as_str().to_string());
             }
         }
@@ -1267,12 +1296,8 @@ impl SecurityModule for AitmDetectModule {
         // credential lure.  This stays local and inline-safe; reputation and
         // landing-page fetches remain deferred to the asynchronous pipeline.
         {
-            let (s, findings) = detect_hosted_platform_credential_lure(
-                links,
-                subject,
-                body_text,
-                body_html,
-            );
+            let (s, findings) =
+                detect_hosted_platform_credential_lure(links, subject, body_text, body_html);
             total_score += s;
             for (desc, category) in findings {
                 all_categories.push(category);
@@ -1340,6 +1365,8 @@ impl SecurityModule for AitmDetectModule {
             }
         }
 
+        let mut device_action_contexts = Vec::new();
+        let mut device_projection_limited = false;
         // Dimension 6: Storm-2372 Device Code Phishing
         {
             let sender_domain = ctx
@@ -1347,8 +1374,53 @@ impl SecurityModule for AitmDetectModule {
                 .mail_from
                 .as_deref()
                 .and_then(|addr| addr.split('@').nth(1));
-            let (s, findings) =
-                detect_device_code_phishing(links, subject, body_text, body_html, sender_domain);
+            let mut projections = Vec::new();
+            for (source, body) in [
+                (SemanticSourcePart::Header, subject),
+                (SemanticSourcePart::PlainText, body_text),
+                (SemanticSourcePart::Html, body_html),
+            ] {
+                projections.push(body.map(|body| {
+                    let (projection, limited) =
+                        semantic_text_projection_with_coverage(body, source);
+                    device_projection_limited |= limited;
+                    let (retained, context) =
+                        exclude_non_action_claims(&ctx.session, &projection, source);
+                    device_action_contexts.push(context);
+                    retained
+                }));
+            }
+            // Parser-level presence is not a request association. In
+            // particular, a URL in a quoted warning cannot lend its endpoint
+            // to a current code instruction elsewhere in the message.
+            let request_links = links
+                .iter()
+                .filter(|link| {
+                    device_action_contexts.iter().any(|context| {
+                        context.links.iter().any(|observed| {
+                            observed.original_url == link.url
+                                && context.claims.iter().any(|claim| {
+                                    claim.link_ids.contains(&observed.link_id)
+                                        && claim.quote_or_forward_status
+                                            == vigilyx_core::security::SemanticQuoteStatus::Original
+                                        && claim.polarity
+                                            != vigilyx_core::security::SemanticPolarity::AntiAction
+                                        && claim.speech_act
+                                            != vigilyx_core::security::SemanticSpeechAct::Report
+                                        && claim.counter_context_ids.is_empty()
+                                })
+                        })
+                    })
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let (s, findings) = detect_device_code_phishing(
+                &request_links,
+                projections[0].as_deref(),
+                projections[1].as_deref(),
+                projections[2].as_deref(),
+                sender_domain,
+            );
             total_score += s;
             for (desc, category) in findings {
                 all_categories.push(category);
@@ -1387,7 +1459,7 @@ impl SecurityModule for AitmDetectModule {
                 duration_ms,
                 "AitM detection: no indicators found"
             );
-            return Ok(ModuleResult::safe_analyzed(
+            let mut result = ModuleResult::safe_analyzed(
                 &self.meta.id,
                 &self.meta.name,
                 self.meta.pillar,
@@ -1396,7 +1468,16 @@ impl SecurityModule for AitmDetectModule {
                     links.len()
                 ),
                 duration_ms,
-            ));
+            );
+            result.details = serde_json::json!({"semantic_device_contexts": device_action_contexts,
+                    "semantic_projection_limited": device_projection_limited});
+            if device_projection_limited {
+                result.categories.push("scan_incomplete".to_string());
+                result.mark_inspection_incomplete(
+                    "device-code source projection reached its inspection budget",
+                );
+            }
+            return Ok(result);
         }
 
         debug!(
@@ -1407,7 +1488,7 @@ impl SecurityModule for AitmDetectModule {
             "AitM detection: indicators found"
         );
 
-        Ok(ModuleResult {
+        let mut result = ModuleResult {
             module_id: self.meta.id.clone(),
             module_name: self.meta.name.clone(),
             pillar: self.meta.pillar,
@@ -1423,12 +1504,21 @@ impl SecurityModule for AitmDetectModule {
             details: serde_json::json!({
                 "score": total_score,
                 "total_links": links.len(),
+                "semantic_device_contexts": device_action_contexts,
+                "semantic_projection_limited": device_projection_limited,
             }),
             duration_ms,
             analyzed_at: Utc::now(),
             bpa: None,
             engine_id: None,
-        })
+        };
+        if device_projection_limited {
+            result.categories.push("scan_incomplete".to_string());
+            result.mark_inspection_incomplete(
+                "device-code source projection reached its inspection budget",
+            );
+        }
+        Ok(result)
     }
 }
 
@@ -1691,10 +1781,10 @@ mod tests {
         reset_url_domain_sets();
         let module = AitmDetectModule::new();
         let ctx = make_ctx_with_links_and_body(
-            vec!["https://connect.acams.org/signin"],
+            vec!["https://events.vendor.example/signin"],
             Some("重新认证\n本月培训活动席位有限，立即报名。"),
             None,
-            Some("ACAMS 八月活动通讯"),
+            Some("示例协会八月活动通讯"),
         );
 
         let result = analyze_with_runtime(&module, &ctx);
@@ -2021,6 +2111,52 @@ mod tests {
     }
 
     #[test]
+    fn hosted_form_with_sensitive_business_action_and_pressure_is_qualified() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        let ctx = make_ctx_with_links_and_body(
+            vec!["https://docs.google.com/forms/d/e/synthetic-form/viewform"],
+            Some("请通过表单确认薪酬信息，逾期未确认将影响本期工资发放。"),
+            None,
+            Some("薪酬信息确认"),
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            result
+                .categories
+                .contains(&"aitm_hosted_credential_lure".to_string()),
+            "hosted business-sensitive action with pressure must be qualified: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
+    fn hosted_business_form_without_pressure_remains_unqualified() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        let ctx = make_ctx_with_links_and_body(
+            vec!["https://docs.google.com/forms/d/e/synthetic-form/viewform"],
+            Some("请在方便时确认薪酬信息，如有问题请与人事联系。"),
+            None,
+            Some("薪酬信息例行核对"),
+        );
+
+        let result = analyze_with_runtime(&module, &ctx);
+
+        assert!(
+            !result
+                .categories
+                .contains(&"aitm_hosted_credential_lure".to_string()),
+            "business topic without configured pressure must not become a hosted lure: {:?}",
+            result.categories
+        );
+    }
+
+    #[test]
     fn ordinary_hosted_document_without_lure_remains_safe_or_low() {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
@@ -2034,7 +2170,11 @@ mod tests {
 
         let result = analyze_with_runtime(&module, &ctx);
 
-        assert!(!result.categories.contains(&"aitm_hosted_credential_lure".to_string()));
+        assert!(
+            !result
+                .categories
+                .contains(&"aitm_hosted_credential_lure".to_string())
+        );
         assert!(result.threat_level <= ThreatLevel::Low);
     }
 
@@ -2218,10 +2358,9 @@ mod tests {
     }
 
     #[test]
-    fn test_device_code_phishing_real_microsoft_sender_suppressed() {
-        // A genuine Microsoft notification mentioning devicelogin must
-        // NOT trigger device_code_* categories — sender whitelist short
-        // circuits the entire detector.
+    fn test_device_code_phishing_claimed_microsoft_sender_cannot_suppress_request() {
+        // A synthetic MAIL FROM claiming Microsoft ownership has no verified
+        // authentication provenance and cannot suppress the request compound.
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
         let module = AitmDetectModule::new();
@@ -2230,7 +2369,7 @@ mod tests {
                     https://microsoft.com/devicelogin and enter this code: \
                     ABCD1234.";
         let ctx = make_ctx_device_code(
-            "account-security-noreply@accountprotection.microsoft.com",
+            "fixture-security@accountprotection.microsoft.com",
             Some("Device sign-in"),
             Some(body),
             vec!["https://microsoft.com/devicelogin"],
@@ -2238,13 +2377,12 @@ mod tests {
 
         let result = analyze_with_runtime(&module, &ctx);
 
-        let any_device_cat = result
-            .categories
-            .iter()
-            .any(|c| c.starts_with("device_code_"));
         assert!(
-            !any_device_cat,
-            "Real Microsoft sender must suppress device_code categories, got {:?}",
+            result
+                .categories
+                .iter()
+                .any(|c| c == "device_code_phishing_combo"),
+            "Claimed Microsoft sender must retain device-code request evidence, got {:?}",
             result.categories
         );
     }
@@ -2431,5 +2569,169 @@ mod tests {
             "two MFA bait hits must reach Low, got {:?}",
             result.threat_level
         );
+    }
+
+    #[test]
+    fn hardening_device_warning_and_quote_do_not_supply_code_request() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        for (body, verified_thread) in [
+            (
+                "Security training: do not enter this code ABCD-1234 at https://microsoft.com/devicelogin.",
+                false,
+            ),
+            (
+                "> To finish setup, open https://microsoft.com/devicelogin and enter this code ABCD-1234.",
+                true,
+            ),
+        ] {
+            let mut ctx = make_ctx_device_code(
+                "sender@external.example",
+                None,
+                Some(body),
+                vec!["https://microsoft.com/devicelogin"],
+            );
+            if verified_thread {
+                // A quoted reply needs session thread evidence. A bare body
+                // prefix is attacker-controlled and cannot supply it.
+                Arc::get_mut(&mut ctx.session)
+                    .unwrap()
+                    .content
+                    .headers
+                    .push((
+                        "In-Reply-To".into(),
+                        "<original-device-request@example.invalid>".into(),
+                    ));
+            }
+            let result = analyze_with_runtime(&module, &ctx);
+            assert!(
+                !result
+                    .categories
+                    .iter()
+                    .any(|category| category == "device_code_phishing_combo"
+                        || category == "device_code_enter_phrase"),
+                "{result:?}"
+            );
+            assert!(result.details["semantic_device_contexts"].is_array());
+        }
+    }
+
+    #[test]
+    fn hardening_unverified_device_quote_cannot_hide_code_request() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = AitmDetectModule::new();
+        let body = "> To finish setup, open https://microsoft.com/devicelogin and enter this code ABCD-1234.";
+        let ctx = make_ctx_device_code(
+            "sender@external.example",
+            None,
+            Some(body),
+            vec!["https://microsoft.com/devicelogin"],
+        );
+        let result = analyze_with_runtime(&module, &ctx);
+        for category in ["device_code_phishing_combo", "device_code_enter_phrase"] {
+            assert!(
+                result.categories.iter().any(|value| value == category),
+                "a quote prefix without thread evidence must retain the request: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn hardening_device_mixed_warning_keeps_independent_request() {
+        let module = AitmDetectModule::new();
+        let body = "Never share your password.\n\nPlease open https://microsoft.com/devicelogin and enter this code ABCD-1234.";
+        let ctx = make_ctx_device_code(
+            "sender@external.example",
+            None,
+            Some(body),
+            vec!["https://microsoft.com/devicelogin"],
+        );
+        let result = analyze_with_runtime(&module, &ctx);
+        assert!(
+            result
+                .categories
+                .iter()
+                .any(|category| category == "device_code_phishing_combo"),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn hardening_device_endpoint_exact_host_path_and_stage_b_alias() {
+        use vigilyx_core::models::EmailLink;
+        for endpoint in [
+            "https://aka.ms/devicelogin",
+            "https://AKA.MS/devicelogin?source=audit",
+            "https://microsoft.com/devicelogin",
+        ] {
+            assert!(is_device_login_endpoint(endpoint), "{endpoint}");
+        }
+        for endpoint in [
+            "https://aka.ms.attacker.invalid/devicelogin",
+            "https://attacker.invalid/?next=https://microsoft.com/devicelogin",
+            "https://microsoft.com/devicelogin-fake",
+            "https://attacker.invalid/microsoft.com/devicelogin",
+            "https://aka.ms/other",
+        ] {
+            assert!(!is_device_login_endpoint(endpoint), "{endpoint}");
+        }
+        let links = [EmailLink {
+            url: "https://aka.ms/devicelogin".into(),
+            text: Some("Open approval portal".into()),
+            suspicious: false,
+        }];
+        let body = Some("To complete verification, enter this code ABCD-1234.");
+        let (_, legacy) = detect_device_code_phishing_with_policy(&links, None, body, None, false);
+        let (_, recovered) =
+            detect_device_code_phishing_with_policy(&links, None, body, None, true);
+        assert!(
+            !legacy
+                .iter()
+                .any(|(_, category)| category == "device_code_phishing_combo")
+        );
+        assert!(
+            recovered
+                .iter()
+                .any(|(_, category)| category == "device_code_phishing_combo")
+        );
+    }
+
+    #[test]
+    fn hardening_device_projection_budget_is_coverage_not_malice() {
+        let body = "Routine notice.\n".repeat(40_000);
+        let original = make_ctx_device_code("sender@external.example", None, Some(&body), vec![]);
+        let mut session = original.session.as_ref().clone();
+        session.source = vigilyx_core::models::SessionSource::MtaProxy;
+        session.content.is_complete = true;
+        let ctx = SecurityContext::new(Arc::new(session));
+        let result = analyze_with_runtime(&AitmDetectModule::new(), &ctx);
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert!(
+            result
+                .categories
+                .iter()
+                .any(|category| category == "scan_incomplete")
+        );
+        let results = std::collections::HashMap::from([(result.module_id.clone(), result)]);
+        let verdict = crate::pipeline::verdict::aggregate_verdict_with_session(
+            Some(ctx.session.as_ref()),
+            ctx.session.id,
+            &results,
+            &crate::pipeline::config::VerdictConfig::default(),
+        );
+        assert_eq!(verdict.threat_level, ThreatLevel::Safe);
+        assert!(verdict.has_incomplete_inspection());
+        let disposition = vigilyx_core::security::VerdictDisposition::from_threat_and_coverage(
+            verdict.threat_level,
+            verdict.has_incomplete_inspection(),
+            ThreatLevel::Medium,
+            ThreatLevel::Critical,
+        );
+        assert!(matches!(
+            disposition,
+            vigilyx_core::security::VerdictDisposition::Quarantine
+        ));
     }
 }

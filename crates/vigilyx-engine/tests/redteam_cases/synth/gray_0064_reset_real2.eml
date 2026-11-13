@@ -1,0 +1,10 @@
+From: =?utf-8?B?6LSm5Y+35Lit5b+D?= <no-reply@accounts.svc.example>
+To: me@personal.example
+Date: Tue, 08 Sep 2026 09:13:00 +0800
+Message-ID: <0003-b16@synth.example>
+Subject: 重置密码请求（30分钟内有效）
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>我们收到了您的密码重置请求。</p><p><a href='https://accounts.svc.example/reset/rt_9d41ce' style='color:#fff;background:#333;padding:10px 28px;text-decoration:none'>重置密码</a></p><p style='font-size:12px'>链接 30 分钟有效、一次性。非本人操作请忽略并尽快改密。</p></body></html>

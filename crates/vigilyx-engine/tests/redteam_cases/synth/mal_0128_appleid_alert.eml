@@ -1,0 +1,11 @@
+From: =?utf-8?B?QXBwbGU=?= <no_replyid@apple-id-verify.example>
+To: me@personal.example
+Date: Mon, 31 Aug 2026 09:17:00 +0800
+Message-ID: <0007-b8@synth.example>
+Subject: 您的 Apple ID 在新设备登录
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+检测到您的 Apple ID 在济南的 iPhone 登录。如非本人，请立即验证：
+https://apple-id-check.example.co/verify
+24 小时内未验证将冻结 ID。

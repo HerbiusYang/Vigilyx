@@ -13,6 +13,7 @@ use std::time::Duration;
 use reqwest::multipart;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
+use vigilyx_core::{DEFAULT_BLOCKED_HOSTNAMES, resolve_network_host};
 
 /// SandboxAnalyzeTimeout(From Get of longwaitWaittimestamp)
 const DEFAULT_ANALYSIS_TIMEOUT: Duration = Duration::from_secs(300);
@@ -69,12 +70,28 @@ pub struct SubmitResponse {
     pub task_id: Option<u64>,
     /// Version task_ids Array
     pub task_ids: Option<Vec<u64>>,
+    /// CAPEv2 normally nests task IDs below `data`; retain the top-level
+    /// fields for older deployments and accept both wire shapes.
+    pub data: Option<SubmitData>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SubmitData {
+    pub task_id: Option<u64>,
+    pub task_ids: Option<Vec<u64>>,
 }
 
 impl SubmitResponse {
     pub fn get_task_id(&self) -> Option<u64> {
         self.task_id
             .or_else(|| self.task_ids.as_ref().and_then(|ids| ids.first().copied()))
+            .or_else(|| self.data.as_ref().and_then(|data| data.task_id))
+            .or_else(|| {
+                self.data
+                    .as_ref()
+                    .and_then(|data| data.task_ids.as_ref())
+                    .and_then(|ids| ids.first().copied())
+            })
     }
 }
 
@@ -151,6 +168,9 @@ impl SandboxClient {
             .timeout(HTTP_TIMEOUT)
             .pool_max_idle_per_host(4)
             .redirect(reqwest::redirect::Policy::none())
+            // The CAPE API is an internal control-plane endpoint. Never let
+            // ambient proxy variables redirect this request elsewhere.
+            .no_proxy()
             .build()
             .unwrap_or_default();
 
@@ -164,7 +184,9 @@ impl SandboxClient {
 
     /// FromEnvironmentVariableBuildclient
     pub fn from_env() -> Option<Self> {
-        let url = std::env::var("SANDBOX_URL").ok()?;
+        let url = std::env::var("SANDBOX_URL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())?;
 
         // SSRF :
         if let Err(reason) = validate_sandbox_base_url(&url) {
@@ -172,7 +194,18 @@ impl SandboxClient {
             return None;
         }
 
-        let token = std::env::var("SANDBOX_API_TOKEN").ok();
+        let token = match std::env::var("SANDBOX_API_TOKEN")
+            .ok()
+            .filter(|token| !token.trim().is_empty())
+        {
+            Some(token) => Some(token),
+            None => {
+                tracing::error!(
+                    "SANDBOX_URL is configured but SANDBOX_API_TOKEN is missing; sandbox integration disabled"
+                );
+                return None;
+            }
+        };
         let timeout_secs = std::env::var("SANDBOX_TIMEOUT_SECS")
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
@@ -299,6 +332,69 @@ impl SandboxClient {
             .ok_or_else(|| SandboxError::ParseError("No task_id in response".to_string()))
     }
 
+    /// Submit an external HTTP(S) URL to the isolated CAPE browser/VM.
+    ///
+    /// URL detonation is an opt-in, deferred path and must never be reached by
+    /// a normal static link scan or by the MTA inline verdict. The initial URL
+    /// is SSRF-validated here; the CAPE VM must additionally be configured with
+    /// an egress policy that prevents redirects from reaching private networks.
+    pub async fn submit_url(
+        &self,
+        target_url: &str,
+        timeout_secs: u32,
+    ) -> Result<u64, SandboxError> {
+        validate_sandbox_target_url(target_url).map_err(SandboxError::Unavailable)?;
+
+        let url = format!("{}/apiv2/tasks/create/url/", self.base_url);
+        let timeout = timeout_secs.clamp(30, 300).to_string();
+        let form = multipart::Form::new()
+            .text("url", target_url.to_string())
+            .text("timeout", timeout)
+            .text("priority", "2")
+            .text("enforce_timeout", "1")
+            // CAPE's `unique` option lets the server deduplicate an already
+            // queued URL where that feature is enabled.
+            .text("unique", "1");
+        let mut request = self.http.post(&url).multipart(form);
+        if let Some(ref auth) = self.auth_header() {
+            request = request.header("Authorization", auth);
+        }
+
+        let response = request
+            .send()
+            .await
+            .map_err(|e| SandboxError::ConnectionFailed(e.to_string()))?;
+        if !response.status().is_success() {
+            return Err(SandboxError::HttpError {
+                status: response.status().as_u16(),
+                body: response.text().await.unwrap_or_default(),
+            });
+        }
+
+        let submit: SubmitResponse = response
+            .json()
+            .await
+            .map_err(|e| SandboxError::ParseError(e.to_string()))?;
+        submit
+            .get_task_id()
+            .ok_or_else(|| SandboxError::ParseError("No URL task_id in response".to_string()))
+    }
+
+    /// Detonate one external URL in CAPE and return its normalized report.
+    pub async fn analyze_url(
+        &self,
+        target_url: &str,
+        timeout_secs: u32,
+    ) -> Result<SandboxReport, SandboxError> {
+        let task_id = self.submit_url(target_url, timeout_secs).await?;
+        info!(
+            task_id,
+            "Sandbox: external URL submitted for dynamic analysis"
+        );
+        self.wait_for_completion(task_id).await?;
+        self.get_report(task_id).await
+    }
+
     /// Status complete
     pub async fn wait_for_completion(&self, task_id: u64) -> Result<(), SandboxError> {
         let start = std::time::Instant::now();
@@ -416,6 +512,29 @@ impl SandboxClient {
         // Get
         self.get_report(task_id).await
     }
+}
+
+/// Validate the URL before it ever enters a dynamic-analysis VM.
+///
+/// CAPE's guest network is a separate trust boundary, not a substitute for
+/// input validation. Resolve all hostname addresses and reject any sensitive
+/// address so a malicious email cannot ask the sandbox to probe local control
+/// planes or cloud metadata endpoints.
+pub(crate) fn validate_sandbox_target_url(raw: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(raw).map_err(|e| format!("invalid target URL: {e}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err("target URL must use http or https".to_string());
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("target URL must not contain userinfo".to_string());
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "target URL must contain a host".to_string())?;
+    let port = parsed
+        .port_or_known_default()
+        .ok_or_else(|| "target URL has no known port".to_string())?;
+    resolve_network_host(host, port, DEFAULT_BLOCKED_HOSTNAMES).map(|_| ())
 }
 
 fn validate_sandbox_base_url(raw: &str) -> Result<(), String> {
@@ -609,7 +728,7 @@ mod tests {
             "malfamily": "Emotet",
             "network": {
                 "dns": [{"request": "evil.com"}],
-                "hosts": ["1.2.3.4"]
+                "hosts": ["198.51.100.4"]
             },
             "CAPE": {"payloads": [{"sha256": "abc"}]},
             "target": {"file": {"sha256": "deadbeef", "type": "PE32 executable"}}
@@ -620,7 +739,7 @@ mod tests {
         assert_eq!(report.signatures.len(), 1);
         assert_eq!(report.signatures[0].name, "ransomware_file_modifications");
         assert_eq!(report.malfamily.as_deref(), Some("Emotet"));
-        assert_eq!(report.network_iocs, vec!["1.2.3.4", "evil.com"]);
+        assert_eq!(report.network_iocs, vec!["198.51.100.4", "evil.com"]);
         assert_eq!(report.payload_count, 1);
         assert_eq!(report.target_sha256.as_deref(), Some("deadbeef"));
     }
@@ -639,14 +758,36 @@ mod tests {
         let r1 = SubmitResponse {
             task_id: Some(42),
             task_ids: None,
+            data: None,
         };
         assert_eq!(r1.get_task_id(), Some(42));
 
         let r2 = SubmitResponse {
             task_id: None,
             task_ids: Some(vec![10, 20]),
+            data: None,
         };
         assert_eq!(r2.get_task_id(), Some(10));
+    }
+
+    #[test]
+    fn nested_submit_response_task_id_is_supported() {
+        let response = SubmitResponse {
+            task_id: None,
+            task_ids: None,
+            data: Some(SubmitData {
+                task_id: None,
+                task_ids: Some(vec![77]),
+            }),
+        };
+        assert_eq!(response.get_task_id(), Some(77));
+    }
+
+    #[test]
+    fn sandbox_target_validation_rejects_private_and_non_http_urls() {
+        assert!(validate_sandbox_target_url("http://127.0.0.1/login").is_err());
+        assert!(validate_sandbox_target_url("file:///etc/passwd").is_err());
+        assert!(validate_sandbox_target_url("https://203.0.113.10/login").is_ok());
     }
 
     #[test]

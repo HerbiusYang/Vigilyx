@@ -1,0 +1,111 @@
+From: "CVE Program | Notifications" <notifications@cve.org.example>
+To: security-team@corp.internal
+Cc: oss-maintainers@corp.internal
+Date: Wed, 24 Mar 2027 11:00:00 +0000
+Message-ID: <0705-b90@synth.example>
+Subject: [REMINDER] Reserved CVE-2027-21488 - Details Due in 11 Days - Submit via CVE Services (API Keys Unchanged)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Product Security, OSS Maintainers,
+
+RESERVED CVE-2027-21488 - DETAILS DUE
+IN 11 DAYS.
+Your organization's CNA reservation
+for CVE-2027-21488 (booked 2026-12-27
+against the corp-utils library
+advisory) has not yet received its
+public details. Per program rules,
+reserved IDs that reach 180 days
+without details are returned to the
+pool. Yours closes in 11 days.
+
+1. RESERVATION STATUS
+
+  Reserved ID:    CVE-2027-21488
+                  (reserved state)
+  Reserved by:    Your organization
+                  (CNA: org-level,
+                  since 2025)
+  Reserved on:    2026-12-27
+                  (advisory draft:
+                  corp-utils
+                  prototype pollution)
+  Window closes:  11 days (180-day
+                  rule; ID returns
+                  to pool)
+
+2. HOW SUBMISSION WORKS
+   (UNCHANGED)
+
+    1. Submit details through
+       CVE Services using the
+       API keys your team
+       already holds (the
+       org's HMAC key pair
+       from onboarding).
+    2. Type the CVE Services
+       address yourself
+       (cve.org.example ->
+       CVE Services), or use
+       the cvelib CLI with
+       your existing
+       credentials.
+    3. Public description,
+       affected/fixed
+       versions, references,
+       CWE, and CNA
+       container fields.
+
+  The CVE Program will NEVER:
+  - Require CNAs to "migrate"
+    to a GitHub-login portal
+    for details submission
+    (CVE Services API keys
+    remain the only
+    submission path; there
+    is no portal cutover
+    at month-end)
+  - Email an OAuth
+    "Sign in with GitHub"
+    button binding a
+    reservation number
+    (a rogue OAuth app
+    granted read:org and
+    advisory scopes can
+    enumerate your org's
+    private advisory
+    drafts and membership)
+  - Use lookalike domains
+    such as
+    "mitre-cve-program" or
+    "cve-program-portal"
+  - Charge fees of any
+    kind; CVE IDs are free,
+    and no "fast track"
+    exists
+
+3. VERIFY THIS REMINDER
+
+  - Your reservation and
+    its deadline are
+    visible in CVE
+    Services under your
+    org's account (typed
+    address)
+  - The 180-day rule is
+    real - the deadline
+    pressure is legitimate,
+    but the submission
+    path is only ever
+    CVE Services with
+    your API keys
+  - Program announcements
+    are mirrored on the
+    cve-project oss-security
+    list
+
+CVE Program | Notifications
+This notice concerns reservation
+CVE-2027-21488 only. Program rules
+are published on the program site.

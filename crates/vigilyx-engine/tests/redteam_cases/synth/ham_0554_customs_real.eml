@@ -1,0 +1,53 @@
+From: 中远海运集装箱运输-单证服务部 <documentation@cosco.example>
+To: 贸易部 <trade@corp.internal>
+Cc: 财务部 <finance@corp.internal>
+Date: Tue, 06 Oct 2026 11:30:00 +0800
+Message-ID: <0554-b40@synth.example>
+Subject: Re: Re: BL No. COSU6260988 - 目的港清关异常（海关编码归类争议）
+In-Reply-To: <bl-cosu6260988@corp.internal>
+References: <bl-cosu6260988@corp.internal> <bl-cosu6260988-2@corp.internal>
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<p>贸易部各位、财务部：</p>
+
+<p>继昨天电话沟通后，现将 COSU6260988 提单在鹿特丹港的清关异常详情及处理方案汇总如下。</p>
+
+<h3>异常概述</h3>
+<p>贵司于 9/12 从宁波出运的一批精密电子连接器（HS Code <b>8536.69</b>）在鹿特丹海关被抽中查验。海关质疑该编码归类，认为应归入 <b>8538.90</b>（其他电气设备的零件），两者关税差 4.2 个百分点（8536.69 适用 2.1%，8538.90 适用 6.3%），涉及税差约 <b>&euro;8,420</b>。</p>
+
+<h3>海关要求</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc">
+<tr style="background:#f0f0f0"><th>序号</th><th>文件</th><th>截止日期</th><th>状态</th></tr>
+<tr><td>1</td><td>原产地证书（FORM A）正本</td><td>10/09</td><td style="color:#e00">待提供</td></tr>
+<tr><td>2</td><td>产品技术规格书（材质、用途、结构图）</td><td>10/09</td><td style="color:#e00">待提供</td></tr>
+<tr><td>3</td><td>与最终用户的销售合同副本</td><td>10/11</td><td style="color:#0a0">已收到</td></tr>
+<tr><td>4</td><td>海关预归类意见书（如有）</td><td>10/11</td><td style="color:#888">无</td></tr>
+</table>
+
+<h3>处理方案</h3>
+<p>我司鹿特丹代理（Van Briel Customs Brokers）建议双轨并行：</p>
+<p><b>方案 A（推荐）：</b>补充技术规格书证明该连接器为独立成品（非零件），维持 8536.69 归类。代理费 &euro;680，如成功可免缴税差。</p>
+<p><b>方案 B：</b>接受 8538.90 归类，缴纳税差 &euro;8,420 + 滞纳金（每日 &euro;42，自 9/28 起算）。货物可立即放行。</p>
+
+<h3>紧急事项：电子产地证补发</h3>
+<p>原产地证书需要通过出口方在中国国际贸易"单一窗口"（singlewindow.cn）申请电子补发。请贵司报关行登录单一窗口，在"原产地证-补发申请"模块提交。如贵司报关行尚未注册单一窗口，请前往 <a href="https://www.singlewindow.cn">www.singlewindow.cn</a> 注册（免注册费，需营业执照与海关注册编码）。</p>
+<p>请注意：单一窗口是唯一的官方补发渠道。我们不会通过邮件链接代为注册，也不会要求在非政务网站上传营业执照。如收到此类邮件请视为假冒。</p>
+
+<h3>费用预估</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px #ccc">
+<tr style="background:#f0f0f0"><th>项目</th><th>金额（EUR）</th><th>备注</th></tr>
+<tr><td>方案 A 代理费</td><td>680</td><td>如归类成功</td></tr>
+<tr><td>方案 B 税差</td><td>8,420</td><td>如归类失败</td></tr>
+<tr><td>方案 B 滞纳金（至10/9）</td><td>462</td><td>&euro;42/day &times; 11天</td></tr>
+<tr><td>仓储费（码头）</td><td>890</td><td>至10/9（免堆期已用完）</td></tr>
+</table>
+
+<p>请在 <b>10/08（明天）17:00</b> 前回复确认选择方案 A 或 B。如未回复，代理将默认执行方案 B 以避免额外滞纳金。</p>
+
+<p>另外，同一批次的另外两个柜子（COSU6260989、COSU6260990）尚未到港，如归类争议结果为 8538.90，建议提前准备后续两柜的税差预算（合计约 &euro;16,800）。</p>
+
+<p>--<br>陈明 | 单证服务部<br>中远海运集装箱运输有限公司浙江分公司<br>documentation@cosco.example<br>0571-8765-8842</p>
+<p style="font-size:11px;color:#999">（本邮件及其附件含有中远海运商业机密信息。如误收请删除并告知发件人。）</p>
+</body></html>

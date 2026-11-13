@@ -36,7 +36,7 @@
 
 - [ ] For Rust changes: `docker exec vigilyx-rust-builder cargo clippy --workspace -- -D warnings` passes, or CI covers it
 - [ ] For Rust changes: `docker exec vigilyx-rust-builder cargo test --workspace` passes, or CI covers it
-- [ ] For frontend changes: `npx tsc --noEmit` and `npx vite build` pass
+- [ ] For frontend changes: `npm test` and `npm run build` pass
 - [ ] CI is green for this branch or PR
 - [ ] Documentation / examples were updated if behavior, deploy flow, or configuration changed
 - [ ] No hardcoded secrets, passwords, or credentials

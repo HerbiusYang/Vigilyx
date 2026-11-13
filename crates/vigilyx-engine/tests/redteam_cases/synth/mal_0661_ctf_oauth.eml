@@ -1,0 +1,74 @@
+From: DEF CON CTF Organizing Committee <ctf-organizers@defcon-qualifiers.example>
+To: sec-research@corp.internal
+Cc: CTO <cto@corp.internal>
+Date: Mon, 12 Oct 2026 08:30:00 +0800
+Message-ID: <0661-b46@synth.example>
+Subject: [Invitation] DEF CON 31 CTF Qualifiers - Team Registration Open (March 2027)
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:'Courier New',monospace;max-width:680px;margin:0 auto">
+<div style="border:2px solid #00ff41;background:#0a0a0a;color:#00ff41;padding:20px">
+<pre style="margin:0;font-size:13px">
+ ██████╗  ██████╗ ███████╗███╗   ██╗ ██████╗ ██╗  ██╗    ██████╗ ███████╗
+ ██╔══██╗██╔═══██╗██╔════╝████╗  ██║██╔═══██╗██║  ██║    ██╔══██╗██╔════╝
+ ██║  ██║██║   ██║█████╗  ██╔██╗ ██║██║   ██║███████║    ██████╔╝██████╗
+ ██║  ██║██║   ██║██╔══╝  ██║╚██╗██║██║   ██║██╔══██║    ██╔═══╝ ╚════██║
+ ██████╔╝╚██████╔╝███████╗██║ ╚████║╚██████╔╝██║  ██║    ██║     ███████║
+ ╚═════╝  ╚═════╝ ╚══════╝╚═╝  ╚═══╝ ╚═════╝ ╚═╝  ╚═╝    ╚═╝     ╚══════╝
+                    CTF Qualifiers 2027 — Team Registration
+</pre>
+</div>
+<div style="padding:20px;background:#111;color:#0f0">
+
+<p style="font-family:sans-serif;color:#fff">Dear Security Team,</p>
+
+<p style="font-family:sans-serif;color:#fff">Your team has been identified through public CTF rankings (HTB / picoCTF / CTFtime) as a potential qualifier for DEF CON 31 CTF (Las Vegas, August 2027). Team registration for the online qualifiers is now open.</p>
+
+<h3 style="font-family:sans-serif;color:#00ff41;border-bottom:1px solid #00ff41;padding-bottom:4px">Qualifier Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #00ff41;color:#fff;font-family:sans-serif">
+<tr><td style="color:#00ff41">Format</td><td>Jeopardy + Attack-Defense (48 hours)</td></tr>
+<tr><td style="color:#00ff41">Dates</td><td>March 15-17, 2027 (Fri 18:00 UTC – Sun 18:00 UTC)</td></tr>
+<tr><td style="color:#00ff41">Team Size</td><td>2-6 members</td></tr>
+<tr><td style="color:#00ff41">Qualification Slots</td><td>Top 16 teams advance to DEF CON finals</td></tr>
+<tr><td style="color:#00ff41">Categories</td><td>Pwn / Web / Rev / Crypto / Misc / Sandbox Escape</td></tr>
+</table>
+
+<h3 style="font-family:sans-serif;color:#00ff41;border-bottom:1px solid #00ff41;padding-bottom:4px">Team Registration</h3>
+<p style="font-family:sans-serif;color:#fff">Registration is done through the official CTF platform. This year we've migrated to a new authentication system that uses <b>OAuth 2.0 with your existing CTFtime credentials</b> — no new password to remember:</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://ctf-qualifiers.example/oauth/ctftime?client_id=dc31ctf&scope=openid+profile+offline_access&redirect_uri=https://ctf-qualifiers.example/callback" style="display:inline-block;background:#00ff41;color:#000;padding:12px 32px;text-decoration:none;font-family:sans-serif;font-weight:bold;border-radius:4px">Register Team via CTFtime OAuth</a>
+</p>
+
+<p style="font-size:13px;color:#888;text-align:center;font-family:sans-serif">https://qualifier.ctftime.org/oauth/register</p>
+
+<p style="font-size:12px;color:#777;text-align:center;font-family:sans-serif">(If the button doesn't work, copy the URL above into your browser.)</p>
+
+<h3 style="font-family:sans-serif;color:#00ff41;border-bottom:1px solid #00ff41;padding-bottom:4px">Why OAuth?</h3>
+<p style="font-family:sans-serif;color:#fff">We know some of you are thinking: <i>"Why is a security conference using OAuth for CTF registration? Isn't that an attack vector?"</i> Good question — and exactly the kind of thinking we want to see in qualifiers.</p>
+
+<p style="font-family:sans-serif;color:#fff">The answer: DEF CON's security team migrated all authentication to a centralized OAuth infrastructure after the 2025 badge-cloning incident. This means:</p>
+<ul style="font-family:sans-serif;color:#fff">
+<li>One credential across all DEF CON properties (badge / village / CTF)</li>
+<li>The <code>offline_access</code> scope generates a refresh token so you stay logged in for the full 48-hour qualifier</li>
+<li>Your CTFtime profile data (team name, rank, member list) is automatically imported</li>
+</ul>
+
+<p style="font-family:sans-serif;color:#fff">If you're still uncomfortable with OAuth, you can register manually at the on-site registration desk in Las Vegas (but qualifiers are online-only, so you'd miss them).</p>
+
+<h3 style="font-family:sans-serif;color:#00ff41;border-bottom:1px solid #00ff41;padding-bottom:4px">Practice Challenges</h3>
+<p style="font-family:sans-serif;color:#fff">Three warm-up challenges are already live on the platform (after OAuth login):</p>
+<ul style="font-family:sans-serif;color:#fff">
+<li><b>quarantine：</b>Escaping a seccomp-sandboxed SMTP parser (hints: <code>SECCOMP_RET_ERRNO</code> + <code>io_uring</code>)</li>
+<li><b>homograph：</b>Find the punycode in a chain of 5 lookalike domains</li>
+<li><b>ghost_pixel：</b>Steganography challenge — extract a message from a 1×1 CSS tracking pixel</li>
+</ul>
+
+<div style="border-top:1px solid #00ff41;padding-top:12px;margin-top:20px">
+<p style="font-size:11px;color:#00ff41;font-family:sans-serif">DEF CON 31 CTF Organizing Committee | Las Vegas, NV</p>
+<p style="font-size:10px;color:#008822;font-family:sans-serif">This is an automated invitation. To unsubscribe from CTF announcements, visit your CTFtime profile settings.</p>
+</div>
+
+</div>
+</body></html>

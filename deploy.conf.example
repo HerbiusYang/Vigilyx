@@ -16,5 +16,5 @@ VIGILYX_SERVER="root@your-server-ip"
 # Local project path (default: the directory containing deploy.sh)
 # VIGILYX_LOCAL_DIR="/path/to/vigilyx/"
 
-# Remote server project path
-VIGILYX_REMOTE_DIR="/home/vigilyx"
+# Remote server project path. The current deployment uses /home/CCAB_VIGILYX.
+VIGILYX_REMOTE_DIR="/home/CCAB_VIGILYX"

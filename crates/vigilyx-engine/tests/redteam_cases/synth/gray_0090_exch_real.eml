@@ -1,0 +1,10 @@
+From: =?utf-8?B?5b6u6L2v5Lqn5ZOB5a6J5YWo?= <security@ms-product.example>
+To: it@corp.internal
+Date: Sat, 12 Sep 2026 08:34:00 +0800
+Message-ID: <0024-b20@synth.example>
+Subject: Exchange 安全更新（已发布）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+The September SU is available via Microsoft Update / SU tool as usual.
+Microsoft never distributes patches as out-of-band downloads by email.

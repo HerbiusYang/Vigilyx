@@ -344,17 +344,6 @@ impl std::fmt::Display for IpAddr {
 // Packet parsing helpers.
 // ============================================
 
-/// Parse a raw packet frame captured from pcap.
-///
-/// Uses shared `Bytes` storage and `Bytes::slice()` to avoid extra payload copies.
-/// The capture loop performs a single `Bytes::copy_from_slice()`; the rest stays zero-copy.
-#[allow(dead_code)]
-#[inline]
-pub(super) fn parse_raw_packet(frame: Bytes, port_bitmap: &PortBitmap) -> Option<RawpacketInfo> {
-    let mut fragments = Ipv4FragmentReassembler::default();
-    parse_raw_packet_with_reassembler(frame, port_bitmap, &mut fragments)
-}
-
 /// Parse a raw packet with a long-lived IPv4 fragment context.
 #[inline]
 pub(super) fn parse_raw_packet_with_reassembler(
@@ -363,16 +352,6 @@ pub(super) fn parse_raw_packet_with_reassembler(
     fragments: &mut Ipv4FragmentReassembler,
 ) -> Option<RawpacketInfo> {
     parse_frame(frame, port_bitmap, fragments)
-}
-
-/// Fast-path packet parser with early branch pruning.
-///
-/// The capture loop already copied the frame into `Bytes`; this path only uses `slice()`.
-#[allow(dead_code)]
-#[inline]
-pub(super) fn parse_packet(frame: Bytes, port_bitmap: &PortBitmap) -> Option<RawpacketInfo> {
-    let mut fragments = Ipv4FragmentReassembler::default();
-    parse_packet_with_reassembler(frame, port_bitmap, &mut fragments)
 }
 
 /// Fast-path parser with a long-lived IPv4 fragment context.

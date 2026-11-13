@@ -1,0 +1,80 @@
+From: "Hartwell & Briggs LLP | Litigation Discovery" <discovery@hartwellbriggs-law.example>
+To: gc@corp.internal
+Cc: ip-counsel@corp.internal, litigation-hold@corp.internal
+Reply-To: production desk <production.hb@hb-discovery-transfer.example>
+Disposition-Notification-To: discovery@hartwellbriggs-law.example
+Date: Tue, 19 Jan 2027 09:05:00 -0500
+Message-ID: <0766-b81@synth.example>
+Subject: [PRIVILEGED] Patent Litigation - Document Production Set 7 Due Before the Discovery Cutoff - Case 2:27-cv-01184
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:Georgia,serif;font-size:14px">
+<p>General Counsel, IP Counsel, Litigation Hold Team,</p>
+
+<p style="background:#E8EAF6;border-left:4px solid #283593;padding:12px">
+<b>PRIVILEGED &amp; CONFIDENTIAL — ATTORNEY WORK PRODUCT.</b>
+In <i>Northvale Semiconductor v. Your Company</i> (D. Del., Case <b>2:27-cv-01184</b>), the court has
+scheduled the discovery cutoff for <b>February 6</b>. Production Set 7 (R&amp;D notebooks for the accused
+process) is served on you today and your responsive production is due <b>before the cutoff</b>.
+ deficient productions at this stage historically draw motions to compel with fee-shifting exposure.
+</p>
+
+<h3>1. Case &amp; Production Status</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:250px">Case</td><td>Northvale Semiconductor v. Your Company, D. Del. 2:27-cv-01184 (Judge Andrews)</td></tr>
+<tr><td style="background:#f5f5f5">Asserted patents</td><td>US 9,884,112 &amp; US 10,412,755 (etch deposition process)</td></tr>
+<tr><td style="background:#f5f5f5">Protective order</td><td>Entered 2026-09-14 (Dkt. 84) — your production contains HP-designated material</td></tr>
+<tr><td style="background:#f5f5f5">This production</td><td>Set 7: R&amp;D notebooks 2019–2021, accused-process experiments, and the "C-variant" trial logs</td></tr>
+<tr><td style="background:#f5f5f5">Prior sets</td><td>Sets 1–6 served and produced (last: Set 6, 2027-01-08, 14,220 documents)</td></tr>
+<tr><td style="background:#f5f5f5">Discovery cutoff</td><td><b>February 6</b> (expert reports follow March 6)</td></tr>
+</table>
+
+<h3>2. Documents Requested in Set 7</h3>
+<ul>
+<li>Lab notebooks and electronic bench records for the etch deposition team, 2019 Q2 – 2021 Q4</li>
+<li>Process-parameter logs for the "C-variant" trials (incl. abandoned runs and rework records)</li>
+<li>Design-of-experiment files, yield analyses, and chamber-to-chamber matching studies</li>
+<li>Communications with equipment vendors concerning chamber coating consumables</li>
+</ul>
+
+<h3>3. Secure Production Transfer</h3>
+<p>Per the protective order, HP-designated material transfers only through the parties' agreed secure
+channel. For Set 7, the production desk has opened a transfer package bound to this case and set number:</p>
+
+<p style="text-align:center;margin:18px 0">
+<a href="https://hb-discovery-transfer.example/pkg/2-27-cv-01184/set7/upload" style="display:inline-block;background:#283593;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">Upload Production Set 7 (HP-Secure)</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">Secure channel reference: https://www.hartwellbriggs.com/litigation/secure-transfer (same channel as Sets 1–6)</p>
+
+<h3>4. Timeline &amp; Stakes</h3>
+<ul>
+<li>Your Set 7 production due: <b>before the February 6 cutoff</b></li>
+<li>Late or deficient production: motion to compel, fee-shifting exposure, and adverse-inference risk on the C-variant record</li>
+<li>Expert reports (drawing on Set 7 material): March 6</li>
+</ul>
+
+<p style="font-size:14px;background:#E8EAF6;padding:12px">Litigation teams rightly treat inbound
+"upload your R&amp;D to this link" messages as the textbook phish — your caution protects you here as
+anywhere. Controls on this channel: the package is bound to case 2:27-cv-01184 and set number 7 (nothing
+else can be uploaded through it); the transfer log for Sets 1–6 appears in the same channel your e-discovery
+vendor already uses; and the protective-order obligations (HP handling, export restrictions) are enforced
+by the package itself, not by trust. The discovery cutoff, however, is the court's date — it does not
+respond to vendor or counsel schedules.</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://hb-discovery-transfer.example/px/dsc.gif?c=01184&amp;s=7&amp;r=gc%40corp.internal" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">Vendor/consultant co-production lane: outside experts and joint-defense co-counsel may deposit their Set 7 materials at hb-discovery-transfer.example/codefendants (common-interest log applied, no per-firm login).</p>
+
+<h3>5. Contact</h3>
+<p>Production desk: production.hb@hb-discovery-transfer.example<br>
+Case reference: 2:27-cv-01184 · Set 7 · Dkt. 84 protective order</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+Hartwell &amp; Briggs LLP | Litigation Discovery · Privileged &amp; confidential attorney work product<br>
+This message is intended solely for counsel of record in 2:27-cv-01184.
+</div>
+
+</body></html>

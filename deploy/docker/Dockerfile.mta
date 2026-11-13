@@ -8,16 +8,19 @@
 # Build:
 #   docker build -f deploy/docker/Dockerfile.mta -t vigilyx-mta:latest .
 #
-# Run:
-#   docker run -d --name vigilyx-mta \
-#     -p 25:25 -p 465:465 \
-#     -e DATABASE_URL=postgres://vigilyx:xxx@postgres:5432/vigilyx \
-#     -e REDIS_URL=redis://redis:6379 \
-#     -e MTA_DOWNSTREAM_HOST=10.1.246.33 \
-#     vigilyx-mta:latest
+# Runtime:
+#   Use deploy/docker/docker-compose.yml for the supported MTA setup. It provides
+#   the required database/Redis credentials and safely stages the TLS key for
+#   the non-root MTA user.
+#   A direct docker run must join the existing Vigilyx network, set
+#   DATABASE_URL, REDIS_URL, VIGILYX_CONFIG_ENCRYPTION_KEY, and MQ_AUTH_TOKEN,
+#   mount readable TLS certificate/key files, and set MTA_TLS_CERT,
+#   MTA_TLS_KEY, and MTA_SMTPS_PORT=465 when publishing port 465. The image
+#   exposes 465 but does not enable its listener unless TLS and the port are
+#   explicitly configured.
 
 # -- Stage 1: cargo-chef - extract the dependency recipe --
-FROM rust:1.97.1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 AS chef
+FROM rust:1.98.0-bookworm@sha256:e70e2eec3d495fd5c8e0be74adda86507dfac7f51a724fbf9813ff59b2b247c7 AS chef
 RUN cargo install cargo-chef --locked --version 0.1.78
 WORKDIR /app
 

@@ -1,0 +1,10 @@
+From: =?utf-8?B?57O757uf6YCA5L+h?= <mailer-daemon@relay.example>
+To: user@corp.internal
+Date: Tue, 25 Aug 2026 10:33:00 +0800
+Message-ID: <0013-b2@synth.example>
+Subject: 投递失败通知
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+【外部邮件】您的账户存在异常登录记录，请立即按提示核验，
+24 小时内未核验将暂停收件服务。

@@ -1,0 +1,93 @@
+From: "Diligenta VDR | Project Falcon Deal Team" <dealroom.access@diligenta-vdr.example>
+To: cfo@corp.internal
+Cc: corp-dev@corp.internal, legal.m&a@corp.internal
+Reply-To: falcon.support@diligenta-vdr-secure.example
+Disposition-Notification-To: dealroom.access@diligenta-vdr.example
+Date: Thu, 19 Nov 2026 11:20:00 +0000
+Message-ID: <0739-b72@synth.example>
+Subject: Project Falcon - Data Room Access Reissue & Q&A Round 3 Deadline - Ref FR-2026-1142
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:Helvetica,Arial,sans-serif;font-size:14px">
+<p>Dear CFO, Corporate Development, Legal,</p>
+
+<p style="background:#FFF8E1;border-left:4px solid #F57F17;padding:12px">
+<b>PROJECT FALCON — VDR ACCESS REISSUE.</b>
+Following this weekend's Diligenta platform upgrade (8.4.1 → 8.5.0), all deal-team access certificates have been
+rotated. Your existing bookmark will return "certificate revoked" until you re-authenticate.
+<b>Q&amp;A Round 3 closes Friday 17:00 GMT</b> — 6 responses from your working group are still outstanding (see Section 4).
+</p>
+
+<h3>1. Engagement Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:230px">Project code name</td><td><b>Falcon</b> (sell-side)</td></tr>
+<tr><td style="background:#f5f5f5">Data room reference</td><td>FR-2026-1142 (opened 14 September 2026)</td></tr>
+<tr><td style="background:#f5f5f5">Sell-side advisor</td><td>Halstead Partners (London) — deal team led by A. Whitmore</td></tr>
+<tr><td style="background:#f5f5f5">Buyer consortium</td><td>Two strategic parties + one financial sponsor (Phase 2)</td></tr>
+<tr><td style="background:#f5f5f5">Governing NDA</td><td>NDA-2026-0912 (mutual, English law, 24-month term)</td></tr>
+<tr><td style="background:#f5f5f5">Current phase</td><td>Confirmatory diligence — Round 3 of 4 anticipated</td></tr>
+<tr><td style="background:#f5f5f5">Your access level</td><td>Group A (full index) + Group B (financials, restricted)</td></tr>
+</table>
+
+<h3>2. Why Access Must Be Reissued</h3>
+<p>The 8.5.0 platform release moved deal-room certificates from per-deal storage to the advisor's enterprise key
+authority (EKA). Old certificates are revoked automatically at cutover; re-authentication binds your existing VDR
+identity to the new authority. <b>No documents change, no permissions change, and your Q&amp;A history is preserved.</b>
+The reissue takes under two minutes and must be completed by a listed deal-team member — it cannot be delegated
+to an assistant account.</p>
+
+<h3>3. Access Reissue — Project Falcon</h3>
+<p style="text-align:center;margin:18px 0">
+<a href="https://diligenta-vdr.example/projects/falcon-2026/reauth?ref=FR-2026-1142&amp;grp=A-B" style="display:inline-block;background:#1B5E20;color:#fff;padding:12px 34px;text-decoration:none;border-radius:4px;font-weight:bold">Re-authenticate to Project Falcon Data Room</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">Direct link (equivalent): https://www.diligenta.com/projects/falcon-2026/login</p>
+
+<h3>4. Q&amp;A Round 3 — Outstanding Items</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Q ref</th><th>Raised by</th><th>Subject</th><th>Due</th></tr>
+<tr><td>Q-31</td><td>Buyer strategic 1</td><td>Revenue recognition on multi-year support contracts (Schedule A bridge)</td><td>Round 3 close</td></tr>
+<tr><td>Q-33</td><td>Financial sponsor</td><td>Working capital normalisation — holiday season adjustment basis</td><td>Round 3 close</td></tr>
+<tr><td>Q-38</td><td>Buyer strategic 1</td><td>IP schedule: continuation applications filed October (USPTO refs)</td><td>Round 3 close</td></tr>
+<tr><td>Q-41</td><td>Sponsor counsel</td><td>Change-of-control clauses in top-20 customer contracts</td><td>Round 3 close</td></tr>
+<tr><td>Q-44</td><td>Buyer strategic 2</td><td>ESG data pack — Scope 2 methodology note</td><td>Round 3 close</td></tr>
+<tr><td>Q-47</td><td>Sponsor counsel</td><td>Litigation register update — matter L-2025-0068 status</td><td>Round 3 close</td></tr>
+</table>
+
+<h3>5. This Week's Upload Queue (Your Groups)</h3>
+<ul>
+<li>Group B: November management accounts (draft, tagged "unaudited")</li>
+<li>Group A: Updated org chart reflecting the 1 October reorganisation</li>
+<li>Group A: Customer concentration spreadsheet refresh (top-20 by revenue)</li>
+</ul>
+
+<p>We are aware that a re-authentication request arriving mid-deal, days before a Q&amp;A deadline, is exactly the
+sort of message diligence teaches you to distrust — that instinct is correct and we encourage it. If you prefer,
+reissue via the direct link above, or call the Halstead deal desk (+44 20 7———, ref FR-2026-1142) and a team
+member will walk you through the 8.5.0 cutover on screen-share. The Round 3 clock, however, is set by the
+buyers, not by the platform migration.</p>
+
+<h3>6. Remaining Milestones</h3>
+<ul>
+<li>Round 3 responses due: Friday 17:00 GMT</li>
+<li>Management session (remote): 26 November, agenda to follow separately</li>
+<li>Round 4 (final) anticipated: week of 1 December</li>
+<li>Mark-up of definitive agreement: first turn expected 8 December</li>
+</ul>
+
+<h3>7. Deal Desk Contact</h3>
+<p>Falcon support desk: falcon.support@diligenta-vdr-secure.example<br>
+Halstead Partners deal desk: +44 20 7——— (quote FR-2026-1142)<br>
+Confidentiality: this message and the data room are governed by NDA-2026-0912</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+Diligenta Virtual Data Rooms | Project Falcon Deal Team<br>
+This message is confidential and intended solely for the named deal-team recipients.<br>
+If you are not a listed Project Falcon participant, please notify the sender and delete.
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://diligenta-vdr.example/px/reauth.gif?d=FR-2026-1142&amp;u=cfo%40corp.internal" width=1 height=1 alt="">
+</div>
+
+</body></html>

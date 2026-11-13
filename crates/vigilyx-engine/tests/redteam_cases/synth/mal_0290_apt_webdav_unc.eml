@@ -1,0 +1,10 @@
+From: =?utf-8?B?5Y2P5ZCM5bmz5Y+w?= <co@doc-share6.example>
+To: eng@corp.internal
+Date: Thu, 10 Sep 2026 08:14:00 +0800
+Message-ID: <0004-b18@synth.example>
+Subject: 评审文档（协同编辑）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+文档已放到协同目录，直接打开编辑（保持在线）：
+\\doc-share6.example@dav\review\gw-timeout.docx

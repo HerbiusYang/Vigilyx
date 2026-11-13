@@ -1,0 +1,9 @@
+From: =?utf-8?B?566X5rOV5o6l5YWl?= <sf@algo-connect22.example>
+To: quant@corp.internal
+Date: Thu, 24 Sep 2026 09:28:00 +0800
+Message-ID: <0018-b31@synth.example>
+Subject: 策略托管环境（VPN 配置+密钥）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+配置包：https://sf-pz22.example.info/cfg.ovpn

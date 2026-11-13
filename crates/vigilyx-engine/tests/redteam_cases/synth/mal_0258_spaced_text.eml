@@ -1,0 +1,10 @@
+From: =?utf-8?B?5a6i5pyN5Lit5b+D?= <cs@svc-center3.example>
+To: me@personal.example
+Date: Mon, 07 Sep 2026 09:27:00 +0800
+Message-ID: <0017-b15@synth.example>
+Subject: 订单退款已受理
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p style='letter-spacing:2px'>您的 订 单 退 款 已 受 理 ，请 点 击 确 认。</p><p><a href='https://refund-ok3.example.info/c'>确 认 退 款</a></p></body></html>

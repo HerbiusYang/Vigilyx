@@ -5,28 +5,29 @@
 //! Prints one JSON document per invocation.
 
 use vigilyx_core::models::{EmailSession, Protocol, SessionSource, SessionStatus};
-use vigilyx_parser::mime::decode_rfc2047;
 use vigilyx_parser::MimeParser;
+use vigilyx_parser::mime::decode_rfc2047;
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let path = args.next().expect("usage: eml2session <file.eml> [mail_from] [rcpt_to]");
+    let path = args
+        .next()
+        .expect("usage: eml2session <file.eml> [mail_from] [rcpt_to]");
     let mail_from = args
         .next()
-        .unwrap_or_else(|| "sender@partner-external.com".to_string());
+        .unwrap_or_else(|| "sender@partner.example".to_string());
     let rcpt = args
         .next()
-        .unwrap_or_else(|| "employee@ccabchina.com".to_string());
+        .unwrap_or_else(|| "employee@internal.example".to_string());
 
     let raw = std::fs::read(&path).expect("read eml");
-    let mut content = MimeParser::new().parse(&raw).expect("parse eml");
-    content.is_complete = true;
+    let content = MimeParser::new().parse(&raw).expect("parse eml");
 
     let mut session = EmailSession::new(
         Protocol::Smtp,
         "198.51.100.77".to_string(),
         40000,
-        "10.7.126.68".to_string(),
+        "192.0.2.68".to_string(),
         25,
     );
     session.source = SessionSource::Sniffer;

@@ -1,10 +1,11 @@
 #!/bin/sh
 # ═══════════════════════════════════════════════════
 # Vigilyx container entrypoint script
-# Start both the API and Engine processes inside the same container
+# Start the API control plane. A legacy switch can also start the Engine here;
+# current mirror deployments use the dedicated engine service and MTA embeds it.
 # ═══════════════════════════════════════════════════
 #
-# Why are there two processes?
+# Legacy two-process compatibility path:
 #   vigilyx-api    = HTTP/WS server (handles frontend requests and serves static pages)
 #   vigilyx-engine = security analysis engine (receives mail from Redis Streams -> runs the pipeline -> writes back results)
 #   They share PostgreSQL and Redis; communication is via Redis Streams (data) and Pub/Sub (control).
@@ -56,13 +57,13 @@ if [ $WAIT -ge 15 ]; then
     echo "[entrypoint] WARNING: API health check timed out, starting engine anyway..."
 fi
 
-# Skip the standalone engine in MTA mode because the MTA container embeds its own engine and dual engines would race
-# Controlled by the STANDALONE_ENGINE environment variable (default: true = run both API + Engine)
+# Controlled by STANDALONE_ENGINE for backward compatibility. The Compose
+# topology defaults this to false, so the main container runs API only.
 STANDALONE_ENGINE="${STANDALONE_ENGINE:-true}"
 echo "[entrypoint] STANDALONE_ENGINE=$STANDALONE_ENGINE"
 
 if [ "$STANDALONE_ENGINE" = "false" ]; then
-    echo "[entrypoint] STANDALONE_ENGINE=false, skipping standalone engine (MTA mode)"
+    echo "[entrypoint] STANDALONE_ENGINE=false, running API only (engine is managed by the active topology)"
     echo "[entrypoint] Running API only (PID=$API_PID)"
 
     # Monitor only the API process

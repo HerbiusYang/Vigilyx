@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "manifest_version": "sha256:7b4a6ccdcbc93b20fc99a29a39d316853ef544f14730f281be89baeb8edefbfc",
+  "capabilities": [
+    {"id": "account_phishing", "case_set_sha256": "sha256:d234ee59e67fd1fd8db1b11efe1778958a6c2fb3d36bba216b5e80b544c55e68", "minimum_cases": 18},
+    {"id": "bec", "case_set_sha256": "sha256:ec5680074bcde87447dc185d5bb9ddbb0bf7ec8c80dbbdc5b14677a0061c8958", "minimum_cases": 6},
+    {"id": "coverage_gap_contract", "case_set_sha256": "sha256:48d0dd2dc098965f7b05d7d3426d0b6da3e68758789856103e6ac873951b362a", "minimum_cases": 1},
+    {"id": "credential_harvest", "case_set_sha256": "sha256:1a6f0923abc7bbef7ddfec1a6f23d43085e7118389f06076ae47eccfba8dfdac", "minimum_cases": 6},
+    {"id": "encoding_evasion", "case_set_sha256": "sha256:6c0fcd60d68702232750895ebfce4cca7769f90b85c3413898eacc202b324815", "minimum_cases": 2},
+    {"id": "ham_business", "case_set_sha256": "sha256:6243684db1a6cc70f1b8652c0f58158fc7b359b80f079d2cefccd663e7519577", "minimum_cases": 11},
+    {"id": "ham_personal", "case_set_sha256": "sha256:7d2fbcb7e21fd4f64ab6892b6894f89f14c1b9bce0f5c938f000cb588d14b7a7", "minimum_cases": 1},
+    {"id": "identity_spoof", "case_set_sha256": "sha256:98ee15df91058b4a9aaef6b2a526f665ff1dc812f032484c4a64dfb05f54bf14", "minimum_cases": 6},
+    {"id": "language_coverage", "case_set_sha256": "sha256:bbc23491fdcc30eb65a885c46306bf87ebbc964d28aa124a659e9aa306a5028b", "minimum_cases": 5},
+    {"id": "link_obfuscation", "case_set_sha256": "sha256:184ce151128972bc52c99b8c051f3db9f6d51454fe8153449a3901e646c8c367", "minimum_cases": 13},
+    {"id": "malware_attachment", "case_set_sha256": "sha256:317b062f6b55df15cdbcaa0744bee9c78fdc50e96b251a0a975211a24bb9453a", "minimum_cases": 5},
+    {"id": "pii_harvest", "case_set_sha256": "sha256:74bc80db67ec5e6801bb8cdd18347137b2b2be0ae293a155297d7f0acde0283b", "minimum_cases": 1},
+    {"id": "quishing", "case_set_sha256": "sha256:451f5993d98ea253754f2a4e9478a4f6ae7da2aba58ee56121593255331a406d", "minimum_cases": 5},
+    {"id": "redirect_attachment", "case_set_sha256": "sha256:fa537fbd35f80a7a18c467ef5387c4d9998d073c8f219ca094e202cfe9dd2ae6", "minimum_cases": 6},
+    {"id": "sanitizer_evasion", "case_set_sha256": "sha256:41ed5c3362318d5bf091ba2561312ace4ca4b55ded8bcede57eef77fccac1852", "minimum_cases": 3},
+    {"id": "social_trust", "case_set_sha256": "sha256:38d37987a60d69b1ba0f0d7b4a1f6e89584ef786daf7b26568bc2a09f661ae70", "minimum_cases": 3},
+    {"id": "structure_evasion", "case_set_sha256": "sha256:f54c5d2cdd5b73f4d6b0cb50b82d1db8c80bb57a25135e2f9774450fa3c412a7", "minimum_cases": 5},
+    {"id": "subsidy_fraud", "case_set_sha256": "sha256:eb60de8db74d481677acf98a362c6cc1216d8b617ca2b084b65971d388cfcc66", "minimum_cases": 1},
+    {"id": "toad", "case_set_sha256": "sha256:db40c2fdfce63610b95494bfaa6e3869152bb7279b2054a574878bceaa68de46", "minimum_cases": 2},
+    {"id": "visual_lure", "case_set_sha256": "sha256:c6a97bdd3273551bd6945208db3e9fdda79f36ecbb2771d2572426ccec61ac04", "minimum_cases": 5}
+  ]
+}

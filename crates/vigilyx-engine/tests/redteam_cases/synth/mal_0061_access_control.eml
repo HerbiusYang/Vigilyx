@@ -1,0 +1,11 @@
+From: =?utf-8?B?5pm65oWn5Zut5Yy6?= <iac@park-sys.example>
+To: employee@corp.internal
+Date: Thu, 27 Aug 2026 09:15:00 +0800
+Message-ID: <0000-b4@synth.example>
+Subject: 门禁权限即将回收
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您好：因组织架构同步，您在 2 号楼的门禁权限将于本周五回收。
+如仍需通行，请在回收前完成一次权限续期登记：
+https://iac-park.example.info/renew

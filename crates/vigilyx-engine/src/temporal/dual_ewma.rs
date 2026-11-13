@@ -78,8 +78,8 @@ pub fn ewma_update(state: &mut DualEwmaState, value: f64, params: &EwmaParams) -
     // invisible.  Six observations is enough to establish a stable short
     // baseline while still requiring persistence beyond a single spike.
     const MIN_DRIFT_OBSERVATIONS: u64 = 6;
-    let drifting = drift_score > params.drift_threshold
-        && state.observation_count >= MIN_DRIFT_OBSERVATIONS;
+    let drifting =
+        drift_score > params.drift_threshold && state.observation_count >= MIN_DRIFT_OBSERVATIONS;
 
     EwmaResult {
         fast: state.fast_value,

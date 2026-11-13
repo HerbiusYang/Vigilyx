@@ -37,5 +37,6 @@ The project is designed as an engineering-oriented security system:
 
 - [Features](/docs/features)
 - [Quick Start](/docs/quick-start)
-- [Deployment](/docs/deployment)
+- [First deployment](/docs/deployment)
+- [Updating and recovery (including 0.9.3 → 0.9.4)](/docs/updating)
 - [Architecture](/docs/architecture)

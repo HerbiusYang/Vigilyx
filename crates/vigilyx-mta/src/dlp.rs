@@ -3,9 +3,13 @@
 //! vigilyx-engine DLP (24+).
 
 use serde::{Deserialize, Serialize};
-use vigilyx_core::models::{EmailSession, MailDirection};
-use vigilyx_engine::data_security::dlp::{DlpScanResult, scan_text};
-use vigilyx_engine::modules::attach_content::extract_attachment_text_for_policy;
+#[cfg(test)]
+use vigilyx_core::models::EmailSession;
+use vigilyx_core::models::{MailDirection, classify_mail_direction};
+use vigilyx_engine::data_security::dlp::DlpScanResult;
+pub use vigilyx_engine::data_security::email_dlp::{
+    EmailDlpInspection as DlpInspection, scan_email as run_dlp_scan, truncate_to_char_boundary,
+};
 
 /// DLP
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,109 +79,22 @@ pub fn detect_direction(
     local_domains: &[String],
     trusted_submitter: bool,
 ) -> MailDirection {
-    let sender_local = mail_from
-        .and_then(|f| f.rsplit('@').next())
-        .map(|d| local_domains.iter().any(|ld| ld.eq_ignore_ascii_case(d)))
-        .unwrap_or(false);
-
-    let any_external_rcpt = rcpt_to.iter().any(|r| {
-        r.rsplit('@')
-            .next()
-            .map(|d| !local_domains.iter().any(|ld| ld.eq_ignore_ascii_case(d)))
-            .unwrap_or(true)
-    });
-
-    match (trusted_submitter, sender_local, any_external_rcpt) {
-        // Trusted submitter + local sender + all local recipients -> internal
-        (true, true, false) => MailDirection::Internal,
-        // Trusted submitter + local sender + any external recipient -> outbound
-        (true, true, true) => MailDirection::Outbound,
-        // Untrusted connection claiming a local sender -> force inbound scanning (anti-spoofing)
-        (false, true, _) => {
-            tracing::warn!(
-                mail_from = mail_from.unwrap_or("<>"),
-                "Untrusted connection claims local sender domain, forcing Inbound scan"
-            );
-            MailDirection::Inbound
-        }
-        // External sender -> inbound
-        (_, false, _) => MailDirection::Inbound,
-    }
-}
-
-/// DLP (100MB),
-const DLP_MAX_SCAN_SIZE: usize = 100 * 1024 * 1024;
-
-/// DLP
-#[derive(Debug, Default)]
-pub struct DlpInspection {
-    pub result: DlpScanResult,
-    pub complete: bool,
-    pub attachments_scanned: usize,
-}
-
-impl std::ops::Deref for DlpInspection {
-    type Target = DlpScanResult;
-
-    fn deref(&self) -> &Self::Target {
-        &self.result
-    }
-}
-
-pub fn run_dlp_scan(session: &EmailSession) -> DlpInspection {
-    let mut text = String::new();
-
-    if let Some(ref subject) = session.subject {
-        text.push_str(subject);
-        text.push('\n');
-    }
-    if let Some(ref body) = session.content.body_text {
-        text.push_str(body);
-        text.push('\n');
-    }
-    if let Some(ref html) = session.content.body_html {
-        text.push_str(html);
-        text.push('\n');
-    }
-
-    let attachment_text = extract_attachment_text_for_policy(&session.content.attachments);
-    text.push_str(&attachment_text.text);
-
-    if text.is_empty() {
-        return DlpInspection {
-            result: DlpScanResult::default(),
-            complete: attachment_text.complete,
-            attachments_scanned: attachment_text.scanned_count,
-        };
-    }
-
-    if text.len() > DLP_MAX_SCAN_SIZE {
+    let direction = classify_mail_direction(mail_from, rcpt_to, local_domains, trusted_submitter);
+    if !trusted_submitter
+        && mail_from
+            .and_then(|from| from.rsplit('@').next())
+            .is_some_and(|domain| {
+                local_domains
+                    .iter()
+                    .any(|local| local.eq_ignore_ascii_case(domain))
+            })
+    {
         tracing::warn!(
-            session_id = %session.id,
-            text_size = text.len(),
-            max_size = DLP_MAX_SCAN_SIZE,
-            "DLP scan truncated: email content exceeds 100MB limit"
+            mail_from = mail_from.unwrap_or("<>"),
+            "Untrusted connection claims local sender domain, forcing Inbound scan"
         );
-        truncate_to_char_boundary(&mut text, DLP_MAX_SCAN_SIZE);
     }
-
-    DlpInspection {
-        result: scan_text(&text),
-        complete: attachment_text.complete,
-        attachments_scanned: attachment_text.scanned_count,
-    }
-}
-
-fn truncate_to_char_boundary(text: &mut String, max_size: usize) {
-    if text.len() <= max_size {
-        return;
-    }
-
-    let mut end = max_size;
-    while end > 0 && !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    text.truncate(end);
+    direction
 }
 
 /// DLP

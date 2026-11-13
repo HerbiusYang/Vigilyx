@@ -1,0 +1,9 @@
+From: =?utf-8?B?TWljcm9zb2Z0IFRlYW1z?= <noreply@teams-notify.example>
+To: leaders@corp.internal
+Date: Tue, 22 Sep 2026 10:16:00 +0800
+Message-ID: <0006-b29@synth.example>
+Subject: You have new missed messages in Teams
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style='font-family:Segoe UI'><div style='border-left:4px solid #6264a7;padding:12px'><b>李伟</b> mentioned you in <b>管理群</b>:<br>"薪调名单的表我放这了，麻烦确认"</div><p><a href='https://teams-msg-center.example.info/thread/8842' style='background:#6264a7;color:#fff;padding:8px 20px;text-decoration:none'>Reply in Teams</a></p></body></html>

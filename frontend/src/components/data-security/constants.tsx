@@ -20,8 +20,7 @@ export const JRT_LEVEL_COLOR: Record<number, string> = { 4: '#ef4444', 3: '#f973
 export const JRT_LEVEL_LABEL: Record<number, string> = { 4: 'C4', 3: 'C3', 2: 'C2', 1: 'C1' }
 export const METHOD_COLOR: Record<string, string> = { GET: '#22d3ee', POST: '#f97316', PUT: '#eab308', DELETE: '#ef4444', PATCH: '#a855f7' }
 
-export const PRIVACY_KEY = 'vigilyx_ds_privacy_mode'
-export const MASKED_BODY_KEY = 'dataSecurity.maskedBody'
-export const MASKED_SNIPPET_KEY = 'dataSecurity.maskedSnippet'
+const MASKED_BODY_KEY = 'dataSecurity.maskedBody'
+const MASKED_SNIPPET_KEY = 'dataSecurity.maskedSnippet'
 export const getMaskedBody = () => i18n.t(MASKED_BODY_KEY)
 export const getMaskedSnippet = () => i18n.t(MASKED_SNIPPET_KEY)

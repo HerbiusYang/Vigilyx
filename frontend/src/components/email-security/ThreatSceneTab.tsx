@@ -86,15 +86,71 @@ export default function ThreatSceneTab() {
     fetchSceneRules()
   }, [fetchScenes, fetchSceneRules])
 
+  const getRuleNumber = (sceneType: ThreatScene['scene_type'], key: string, fallback: number) => {
+    const value = sceneRules.find(rule => rule.scene_type === sceneType)?.config[key]
+    return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+  }
+
+  const bulkTimeWindowHours = getRuleNumber('bulk_mailing', 'time_window_hours', 24)
+  const bulkMinEmails = getRuleNumber('bulk_mailing', 'min_emails', 5)
+  const bulkMinRecipients = getRuleNumber('bulk_mailing', 'min_unique_internal_recipients', 3)
+  const bounceTimeWindowHours = getRuleNumber('bounce_harvest', 'time_window_hours', 24)
+  const bounceMinBounces = getRuleNumber('bounce_harvest', 'min_bounces', 10)
+  const bounceMinTargets = getRuleNumber('bounce_harvest', 'min_unique_targets', 5)
+  const impersonationTimeWindowHours = getRuleNumber('internal_domain_impersonation', 'time_window_hours', 24)
+  const impersonationMinEmails = getRuleNumber('internal_domain_impersonation', 'min_emails', 3)
+
+  const sceneCards = [
+    {
+      type: 'bulk_mailing' as const,
+      label: t('emailSecurity.bulkMailingAttack'),
+      icon: '\u{1F4E7}',
+      desc: t('emailSecurity.bulkMailingDesc'),
+      logic: t('emailSecurity.bulkMailingLogic', {
+        hours: bulkTimeWindowHours,
+        emails: bulkMinEmails,
+        recipients: bulkMinRecipients,
+      }),
+      evidence: t('emailSecurity.bulkMailingEvidence'),
+    },
+    {
+      type: 'bounce_harvest' as const,
+      label: t('emailSecurity.bounceHarvestAttack'),
+      icon: '\u{1F4E8}',
+      desc: t('emailSecurity.bounceHarvestDesc'),
+      logic: t('emailSecurity.bounceHarvestLogic', {
+        hours: bounceTimeWindowHours,
+        bounces: bounceMinBounces,
+        targets: bounceMinTargets,
+      }),
+      evidence: t('emailSecurity.bounceHarvestEvidence'),
+    },
+    {
+      type: 'internal_domain_impersonation' as const,
+      label: t('emailSecurity.internalDomainImpersonation'),
+      icon: '\u{1F3AD}',
+      desc: t('emailSecurity.internalDomainImpersonationDesc'),
+      logic: t('emailSecurity.internalDomainImpersonationLogic', {
+        hours: impersonationTimeWindowHours,
+        emails: impersonationMinEmails,
+      }),
+      evidence: t('emailSecurity.internalDomainImpersonationEvidence'),
+    },
+  ] as const
+
   return (
     <div className="sec-scene">
+      <div className="sec-scene-explainer">
+        <span className="sec-scene-explainer-icon" aria-hidden="true">ⓘ</span>
+        <div>
+          <strong>{t('emailSecurity.sceneDetectionScope')}</strong>
+          <p>{t('emailSecurity.sceneDetectionScopeDesc')}</p>
+        </div>
+      </div>
+
       {/* Stats cards */}
       <div className="sec-scene-cards">
-        {([
-          { type: 'bulk_mailing' as const, label: t('emailSecurity.bulkMailingAttack'), icon: '\u{1F4E7}', desc: t('emailSecurity.bulkMailingDesc') },
-          { type: 'bounce_harvest' as const, label: t('emailSecurity.bounceHarvestAttack'), icon: '\u{1F4E8}', desc: t('emailSecurity.bounceHarvestDesc') },
-          { type: 'internal_domain_impersonation' as const, label: t('emailSecurity.internalDomainImpersonation'), icon: '\u{1F3AD}', desc: t('emailSecurity.internalDomainImpersonationDesc') },
-        ] as const).map(card => {
+        {sceneCards.map(card => {
           const s = sceneStats?.[card.type]
           return (
             <div key={card.type} className="sec-scene-card">
@@ -103,6 +159,14 @@ export default function ThreatSceneTab() {
                 <span className="sec-scene-card-title">{card.label}</span>
               </div>
               <p className="sec-scene-card-desc">{card.desc}</p>
+              <div className="sec-scene-card-logic">
+                <div className="sec-scene-card-logic-header">
+                  <span>{t('emailSecurity.detectionLogic')}</span>
+                  <span>{t('emailSecurity.sceneScanCadence')}</span>
+                </div>
+                <p>{card.logic}</p>
+                <p className="sec-scene-card-evidence">{card.evidence}</p>
+              </div>
               <div className="sec-scene-card-metrics">
                 <span data-active={!!s?.active}>{t('emailSecurity.active')}: <b>{s?.active ?? 0}</b></span>
                 <span>{t('emailSecurity.blocked')}: <b>{s?.auto_blocked ?? 0}</b></span>
@@ -152,9 +216,9 @@ export default function ThreatSceneTab() {
             <tr>
               <th style={{width:'70px'}}>{t('emailSecurity.threatLevel')}</th>
               <th style={{width:'90px'}}>{t('emailSecurity.sceneType')}</th>
-              <th>{t('emailSecurity.attacker')}</th>
+              <th>{sceneTypeFilter === 'bounce_harvest' ? t('emailSecurity.senderSource') : t('emailSecurity.attackerOrSender')}</th>
               <th style={{width:'70px'}}>{t('emailSecurity.emailCount')}</th>
-              <th style={{width:'70px'}}>{t('emailSecurity.recipients')}</th>
+              <th style={{width:'70px'}}>{sceneTypeFilter === 'bounce_harvest' ? t('emailSecurity.sceneParticipants') : t('emailSecurity.recipients')}</th>
               <th style={{width:'70px'}}>{t('emailSecurity.bounceCount')}</th>
               <th style={{width:'90px'}}>{t('emailSecurity.status')}</th>
               <th style={{width:'130px'}}>{t('emailSecurity.detectionTime')}</th>
@@ -166,8 +230,12 @@ export default function ThreatSceneTab() {
               <>
                 <tr key={sc.id} className="sec-risk-row" onClick={() => setSceneExpanded(sceneExpanded === sc.id ? null : sc.id)}>
                   <td><span className="sec-threat-tag" data-level={sc.threat_level}>{THREAT_CN[sc.threat_level] || sc.threat_level}</span></td>
-                  <td>{sc.scene_type === 'bulk_mailing' ? t('emailSecurity.bulkMailing') : sc.scene_type === 'bounce_harvest' ? t('emailSecurity.bounceHarvest') : t('emailSecurity.internalDomainImpersonation')}</td>
-                  <td className="sec-risk-from">{sc.actor}</td>
+                  <td>{sc.scene_type === 'bulk_mailing' ? t('emailSecurity.bulkMailing') : sc.scene_type === 'bounce_harvest' ? t(sc.details?.source === 'reported_alert' ? 'emailSecurity.reportedBounceObservation' : 'emailSecurity.bounceHarvest') : t('emailSecurity.internalDomainImpersonation')}</td>
+                  <td className="sec-risk-from">{sc.scene_type === 'bounce_harvest'
+                    ? (Array.isArray(sc.details?.sender_domains) && sc.details.sender_domains.length > 0
+                      ? sc.details.sender_domains.filter((value): value is string => typeof value === 'string').join(', ')
+                      : sc.actor === 'multiple_senders' ? t('emailSecurity.multipleSenders') : sc.actor)
+                    : sc.actor}</td>
                   <td>{sc.email_count || '-'}</td>
                   <td>{sc.unique_recipients || '-'}</td>
                   <td>{sc.bounce_count || '-'}</td>
@@ -179,11 +247,11 @@ export default function ThreatSceneTab() {
                     {sc.status === 'active' && (
                       <>
                         <button className="sec-btn-sm" disabled={sceneSaving} onClick={() => handleSceneAction(sc.id, 'acknowledge')} title={t('emailSecurity.acknowledge')}>{t('emailSecurity.acknowledge')}</button>
-                        <button className="sec-btn-sm sec-btn-sm--danger" disabled={sceneSaving} onClick={() => handleSceneAction(sc.id, 'block')} title={t('emailSecurity.block')}>{t('emailSecurity.block')}</button>
+                        <button className="sec-btn-sm sec-btn-sm--danger" disabled={sceneSaving || sc.details?.source === 'reported_alert' || sc.actor_type === 'group'} onClick={() => handleSceneAction(sc.id, 'block')} title={t('emailSecurity.block')}>{t('emailSecurity.block')}</button>
                       </>
                     )}
                     {sc.status === 'acknowledged' && (
-                      <button className="sec-btn-sm sec-btn-sm--danger" disabled={sceneSaving} onClick={() => handleSceneAction(sc.id, 'block')} title={t('emailSecurity.block')}>{t('emailSecurity.block')}</button>
+                      <button className="sec-btn-sm sec-btn-sm--danger" disabled={sceneSaving || sc.details?.source === 'reported_alert' || sc.actor_type === 'group'} onClick={() => handleSceneAction(sc.id, 'block')} title={t('emailSecurity.block')}>{t('emailSecurity.block')}</button>
                     )}
                     {(sc.status === 'active' || sc.status === 'acknowledged' || sc.status === 'auto_blocked') && (
                       <button className="sec-btn-sm" disabled={sceneSaving} onClick={() => handleSceneAction(sc.id, 'resolve')} title={t('emailSecurity.resolve')}>{t('emailSecurity.resolve')}</button>
@@ -197,8 +265,10 @@ export default function ThreatSceneTab() {
                       <div className="sec-scene-detail">
                         <div className="sec-scene-detail-grid">
                           <div>
-                            <h4>{t('emailSecurity.attacker')}</h4>
-                            <p>{sc.actor} ({sc.actor_type === 'domain' ? t('emailSecurity.domain') : t('emailSecurity.email')})</p>
+                            <h4>{sc.scene_type === 'bounce_harvest' ? t('emailSecurity.senderSource') : t('emailSecurity.attacker')}</h4>
+                            <p>{sc.scene_type === 'bounce_harvest' && Array.isArray(sc.details?.sender_domains) && sc.details.sender_domains.length > 0
+                              ? sc.details.sender_domains.filter((value): value is string => typeof value === 'string').join(', ')
+                              : sc.actor} ({sc.actor_type === 'group' ? t('emailSecurity.multipleSenders') : sc.actor_type === 'domain' ? t('emailSecurity.domain') : t('emailSecurity.email')})</p>
                           </div>
                           {sc.target_domain && (
                             <div>
@@ -217,13 +287,23 @@ export default function ThreatSceneTab() {
                               } as Record<string, string>)[sc.details.similarity_type] ?? sc.details.similarity_type}</p>
                             </div>
                           )}
+                          {sc.details?.source === 'reported_alert' && (
+                            <div>
+                              <h4>{t('emailSecurity.reportedAlertSource')}</h4>
+                              <p>{t('emailSecurity.reportedAlertSourceHint')}</p>
+                              <p>{t(sc.details?.detection_basis === 'rotating_sender_template'
+                                ? 'emailSecurity.sparseBounceReview' : 'emailSecurity.reportedBounceReview')}</p>
+                            </div>
+                          )}
                           <div>
                             <h4>{t('emailSecurity.timeWindow')}</h4>
                             <p>{formatDateFull(sc.time_window_start)} — {formatDateFull(sc.time_window_end)}</p>
                           </div>
                           <div>
                             <h4>{t('emailSecurity.statistics')}</h4>
-                            <p>{t('emailSecurity.statsEmails', { count: sc.email_count })} · {t('emailSecurity.statsRecipients', { count: sc.unique_recipients })}{sc.bounce_count > 0 ? ` · ${t('emailSecurity.statsBounces', { count: sc.bounce_count })}` : ''}</p>
+                            <p>{t('emailSecurity.statsEmails', { count: sc.email_count })} · {sc.scene_type === 'bounce_harvest'
+                              ? t(sc.details?.address_role === 'target_addresses' ? 'emailSecurity.statsTargetAddresses' : 'emailSecurity.statsSenderAddresses', { count: sc.unique_recipients })
+                              : t('emailSecurity.statsRecipients', { count: sc.unique_recipients })}{sc.bounce_count > 0 ? ` · ${t('emailSecurity.statsBounces', { count: sc.bounce_count })}` : ''}</p>
                           </div>
                         </div>
                         {sc.sample_subjects.length > 0 && (
@@ -234,7 +314,9 @@ export default function ThreatSceneTab() {
                         )}
                         {sc.sample_recipients.length > 0 && (
                           <div className="sec-scene-detail-section">
-                            <h4>{t('emailSecurity.involvedRecipients')}</h4>
+                            <h4>{sc.scene_type === 'bounce_harvest'
+                              ? t(sc.details?.address_role === 'target_addresses' ? 'emailSecurity.probedAddresses' : 'emailSecurity.senderAddresses')
+                              : t('emailSecurity.involvedRecipients')}</h4>
                             <p className="sec-scene-recipients">{sc.sample_recipients.join(', ')}</p>
                           </div>
                         )}
@@ -299,6 +381,7 @@ export default function ThreatSceneTab() {
                       <>
                         <label>{t('emailSecurity.minBounces')}<input type="number" value={(cfg.min_bounces as number) || 10} onChange={e => setField('min_bounces', +e.target.value)} /></label>
                         <label>{t('emailSecurity.minUniqueTargets')}<input type="number" value={(cfg.min_unique_targets as number) || 5} onChange={e => setField('min_unique_targets', +e.target.value)} /></label>
+                        <label className="sec-scene-cfg-check"><input type="checkbox" checked={cfg.sparse_report_enabled === true} onChange={e => setField('sparse_report_enabled', e.target.checked)} /> {t('emailSecurity.sparseBounceReports')}</label>
                         <label className="sec-scene-cfg-check"><input type="checkbox" checked={cfg.auto_block_enabled as boolean || false} onChange={e => setField('auto_block_enabled', e.target.checked)} /> {t('emailSecurity.autoBlock')}</label>
                         {cfg.auto_block_enabled && (
                           <>

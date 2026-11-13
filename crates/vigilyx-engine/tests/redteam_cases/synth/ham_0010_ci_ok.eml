@@ -1,0 +1,10 @@
+From: =?utf-8?B?Q0nmnLrlmajkuro=?= <ci-bot@corp.internal>
+To: dev-team@corp.internal
+Date: Mon, 24 Aug 2026 09:41:00 +0800
+Message-ID: <0030-b1@synth.example>
+Subject: [OK] gateway #4821 main 构建通过
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+main 分支构建通过：单元 312/312，集成 44/44，耗时 6m40s。
+镜像 gateway:1.9.4-rc2 已推送制品库，可自助拉取。

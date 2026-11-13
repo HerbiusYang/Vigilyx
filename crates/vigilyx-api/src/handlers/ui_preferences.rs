@@ -7,11 +7,15 @@ use std::sync::Arc;
 use super::ApiResponse;
 use crate::AppState;
 use crate::auth::AuthenticatedUser;
+use vigilyx_db::ADMIN_ROLE_ID;
 
 const UI_PREFERENCES_KEY: &str = "ui_preferences";
 
-pub async fn get_ui_preferences(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match load_ui_preferences(&state).await {
+pub async fn get_ui_preferences(
+    State(state): State<Arc<AppState>>,
+    user: AuthenticatedUser,
+) -> impl IntoResponse {
+    match load_ui_preferences(&state, &user.id).await {
         Ok(config) => ApiResponse::ok(config),
         Err(e) => ApiResponse::<Value>::internal_err(&e, "load ui preferences failed"),
     }
@@ -26,7 +30,7 @@ pub async fn update_ui_preferences(
         return ApiResponse::<Value>::bad_request("ui preferences payload must be an object")
             .into_response();
     }
-    if patch_touches_privileged_ui_preferences(&patch) && !user.role.eq_ignore_ascii_case("admin") {
+    if patch_touches_privileged_ui_preferences(&patch) && user.role_id != ADMIN_ROLE_ID {
         return (
             StatusCode::FORBIDDEN,
             ApiResponse::<Value>::err("capture preferences require administrator privileges"),
@@ -34,71 +38,145 @@ pub async fn update_ui_preferences(
             .into_response();
     }
 
-    let mut merged = match load_ui_preferences(&state).await {
-        Ok(config) => config,
-        Err(e) => {
-            return ApiResponse::<Value>::internal_err(&e, "load ui preferences failed")
+    let object = patch.as_object().expect("object checked above");
+    let personal_patch = Value::Object(
+        object
+            .iter()
+            .filter(|(key, _)| key.as_str() != "capture")
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+    );
+
+    if !personal_patch.as_object().is_some_and(Map::is_empty) {
+        let mut personal = match load_personal_ui_preferences(&state, &user.id).await {
+            Ok(config) => config,
+            Err(e) => {
+                return ApiResponse::<Value>::internal_err(&e, "load user ui preferences failed")
+                    .into_response();
+            }
+        };
+        deep_merge(&mut personal, personal_patch);
+        let normalized = match normalize_personal_ui_preferences(personal) {
+            Ok(config) => config,
+            Err(msg) => return ApiResponse::<Value>::bad_request(msg).into_response(),
+        };
+        let json_str = match serde_json::to_string(&normalized) {
+            Ok(json_str) => json_str,
+            Err(e) => {
+                return ApiResponse::<Value>::bad_request(format!(
+                    "ui preferences serialize failed: {}",
+                    e
+                ))
+                .into_response();
+            }
+        };
+        if let Err(e) = state
+            .engine_db
+            .set_platform_user_preferences(&user.id, &json_str)
+            .await
+        {
+            return ApiResponse::<Value>::internal_err(&e, "save user ui preferences failed")
                 .into_response();
         }
-    };
+    }
 
-    deep_merge(&mut merged, patch);
-
-    let normalized = match normalize_ui_preferences(merged) {
-        Ok(config) => config,
-        Err(msg) => return ApiResponse::<Value>::bad_request(msg).into_response(),
-    };
-
-    let json_str = match serde_json::to_string(&normalized) {
-        Ok(json_str) => json_str,
-        Err(e) => {
-            return ApiResponse::<Value>::bad_request(format!(
-                "ui preferences serialize failed: {}",
-                e
-            ))
-            .into_response();
+    if let Some(capture_patch) = object.get("capture") {
+        let mut capture = match load_global_capture_preferences(&state).await {
+            Ok(config) => config,
+            Err(e) => {
+                return ApiResponse::<Value>::internal_err(&e, "load capture preferences failed")
+                    .into_response();
+            }
+        };
+        deep_merge(&mut capture, capture_patch.clone());
+        let normalized_capture = match normalize_capture_preferences(capture) {
+            Ok(config) => config,
+            Err(msg) => return ApiResponse::<Value>::bad_request(msg).into_response(),
+        };
+        let global = json!({"capture": normalized_capture});
+        let json_str = match serde_json::to_string(&global) {
+            Ok(json_str) => json_str,
+            Err(e) => {
+                return ApiResponse::<Value>::bad_request(format!(
+                    "capture preferences serialize failed: {}",
+                    e
+                ))
+                .into_response();
+            }
+        };
+        if let Err(e) = state
+            .engine_db
+            .set_config(UI_PREFERENCES_KEY, &json_str)
+            .await
+        {
+            return ApiResponse::<Value>::internal_err(&e, "save capture preferences failed")
+                .into_response();
         }
-    };
+    }
 
-    match state
-        .engine_db
-        .set_config(UI_PREFERENCES_KEY, &json_str)
-        .await
-    {
-        Ok(()) => {
-            let db = state.engine_db.clone();
-            let username = user.username.clone();
-            tokio::spawn(async move {
-                if let Err(e) = db
-                    .write_audit_log(
-                        &username,
-                        "update_ui_preferences",
-                        Some("config"),
-                        Some(UI_PREFERENCES_KEY),
-                        None,
-                        None,
-                    )
-                    .await
-                {
-                    tracing::error!(error = %e, "audit: ui preferences write failed");
-                }
-            });
-
-            ApiResponse::ok(normalized).into_response()
+    let db = state.engine_db.clone();
+    let username = user.username.clone();
+    tokio::spawn(async move {
+        if let Err(e) = db
+            .write_audit_log(
+                &username,
+                "update_ui_preferences",
+                Some("user_preferences"),
+                None,
+                None,
+                None,
+            )
+            .await
+        {
+            tracing::error!(error = %e, "audit: ui preferences write failed");
         }
+    });
+
+    match load_ui_preferences(&state, &user.id).await {
+        Ok(config) => ApiResponse::ok(config).into_response(),
         Err(e) => {
-            ApiResponse::<Value>::internal_err(&e, "save ui preferences failed").into_response()
+            ApiResponse::<Value>::internal_err(&e, "load ui preferences failed").into_response()
         }
     }
 }
 
-async fn load_ui_preferences(state: &Arc<AppState>) -> anyhow::Result<Value> {
+async fn load_ui_preferences(state: &Arc<AppState>, user_id: &str) -> anyhow::Result<Value> {
+    let mut combined = default_ui_preferences();
+    let capture = load_global_capture_preferences(state).await?;
+    combined
+        .as_object_mut()
+        .expect("default UI preferences must be an object")
+        .insert("capture".to_string(), capture);
+    let personal = load_personal_ui_preferences(state, user_id).await?;
+    deep_merge(&mut combined, personal);
+    Ok(normalize_ui_preferences(combined).unwrap_or_else(|_| default_ui_preferences()))
+}
+
+async fn load_global_capture_preferences(state: &Arc<AppState>) -> anyhow::Result<Value> {
     let raw = state.engine_db.get_config(UI_PREFERENCES_KEY).await?;
+    let capture = raw
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<Value>(value).ok())
+        .and_then(|value| value.get("capture").cloned())
+        .unwrap_or_else(|| default_ui_preferences()["capture"].clone());
+    Ok(normalize_capture_preferences(capture)
+        .unwrap_or_else(|_| default_ui_preferences()["capture"].clone()))
+}
+
+async fn load_personal_ui_preferences(
+    state: &Arc<AppState>,
+    user_id: &str,
+) -> anyhow::Result<Value> {
+    let raw = state
+        .engine_db
+        .get_platform_user_preferences(user_id)
+        .await?;
     let parsed = raw
         .as_deref()
         .and_then(|value| serde_json::from_str::<Value>(value).ok())
-        .unwrap_or_else(default_ui_preferences);
-    Ok(normalize_ui_preferences(parsed).unwrap_or_else(|_| default_ui_preferences()))
+        .unwrap_or_else(default_personal_ui_preferences);
+    Ok(normalize_personal_ui_preferences(parsed)
+        .unwrap_or_else(|_| default_personal_ui_preferences()))
 }
 
 fn default_ui_preferences() -> Value {
@@ -128,6 +206,45 @@ fn default_ui_preferences() -> Value {
             "ntp_interval_minutes": 60
         }
     })
+}
+
+fn default_personal_ui_preferences() -> Value {
+    let mut defaults = default_ui_preferences();
+    defaults
+        .as_object_mut()
+        .expect("default UI preferences must be an object")
+        .remove("capture");
+    defaults
+}
+
+fn normalize_personal_ui_preferences(value: Value) -> Result<Value, String> {
+    let mut normalized = default_personal_ui_preferences();
+    let mut personal = value;
+    if let Some(object) = personal.as_object_mut() {
+        object.remove("capture");
+    } else {
+        return Err("ui preferences must be an object".to_string());
+    }
+    deep_merge(&mut normalized, personal);
+    let root = normalized
+        .as_object_mut()
+        .ok_or_else(|| "ui preferences must be an object".to_string())?;
+    normalize_appearance(root)?;
+    normalize_notifications(root)?;
+    normalize_about(root)?;
+    Ok(Value::Object(root.clone()))
+}
+
+fn normalize_capture_preferences(value: Value) -> Result<Value, String> {
+    let mut normalized = default_ui_preferences();
+    deep_merge(&mut normalized, json!({"capture": value}));
+    let root = normalized
+        .as_object_mut()
+        .ok_or_else(|| "ui preferences must be an object".to_string())?;
+    normalize_capture(root)?;
+    root.get("capture")
+        .cloned()
+        .ok_or_else(|| "capture is missing".to_string())
 }
 
 fn deep_merge(base: &mut Value, patch: Value) {
@@ -332,6 +449,30 @@ mod tests {
             "appearance": {"theme": "light"},
             "notifications": {"desktop_notify": true}
         })));
+    }
+
+    #[test]
+    fn personal_preferences_cannot_retain_or_override_global_capture_state() {
+        let normalized = normalize_personal_ui_preferences(json!({
+            "appearance": {"theme": "light"},
+            "capture": {"inbound_dst": ["192.0.2.10"]}
+        }))
+        .expect("personal preferences should normalize");
+
+        assert_eq!(normalized["appearance"]["theme"], "light");
+        assert!(normalized.get("capture").is_none());
+    }
+
+    #[test]
+    fn capture_preferences_are_normalized_as_a_separate_global_section() {
+        let normalized = normalize_capture_preferences(json!({
+            "inbound_dst": ["192.0.2.10", "192.0.2.10"],
+            "max_packet_size": 1
+        }))
+        .expect("capture preferences should normalize");
+
+        assert_eq!(normalized["inbound_dst"], json!(["192.0.2.10"]));
+        assert_eq!(normalized["max_packet_size"], 512);
     }
 
     #[test]

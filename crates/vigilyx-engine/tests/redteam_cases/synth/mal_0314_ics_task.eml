@@ -1,0 +1,21 @@
+From: =?utf-8?B?5Lya5Yqh?= <cal@rt-calendar.example>
+To: research@corp.internal
+Date: Fri, 11 Sep 2026 08:18:00 +0800
+Message-ID: <0008-b19@synth.example>
+Subject: 行动项：会前完成预读
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+添加到任务后自动提醒。
+--BS
+Content-Type: text/calendar
+Content-Disposition: attachment; filename="tasks.ics"
+Content-Transfer-Encoding: base64
+
+QkVHSU46VkNBTEVOREFSDQpWRVJTSU9OOjIuMA0KQkVHSU46VlRPRE8NClNVTU1BUlk66aKE6K+7DQpERVNDUklQVElPTjpodHRwczovL3J0LXByZS5leGFtcGxlLmluZm8vbQ0KRU5EOlZUT0RPDQpFTkQ6VkNBTEVOREFSDQo=
+--BS--

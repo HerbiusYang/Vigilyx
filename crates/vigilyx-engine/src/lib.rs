@@ -1,4 +1,5 @@
 // Domain-organized modules
+pub mod ai;
 pub mod data_security;
 pub mod external;
 pub mod fusion;
@@ -10,6 +11,7 @@ pub mod yara;
 
 // Root-level modules
 pub mod db_service;
+pub mod ds_learning;
 pub mod error;
 pub mod feedback;
 pub mod intel;
@@ -17,10 +19,10 @@ pub mod ioc;
 pub mod matcher;
 pub mod module;
 pub mod module_data;
+pub mod semantic;
 pub mod syslog;
 pub mod threat_scene;
 pub mod whitelist;
-
 // Backward-compatible re-exports
 // Preserves all existing `crate::X` and `vigilyx_engine::X` paths.
 
@@ -39,8 +41,8 @@ pub use pipeline::orchestrator;
 pub use pipeline::verdict;
 
 // External integrations
+pub use ai::remote;
 pub use external::fetcher;
-pub use external::remote;
 pub use external::rescan;
 
 // Monitoring

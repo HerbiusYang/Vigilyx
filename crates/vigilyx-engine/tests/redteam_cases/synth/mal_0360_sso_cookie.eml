@@ -1,0 +1,10 @@
+From: =?utf-8?B?6Lqr5Lu95bmz5Y+w?= <sso@idp-svc3.example>
+To: staff@corp.internal
+Date: Tue, 15 Sep 2026 09:17:00 +0800
+Message-ID: <0007-b22@synth.example>
+Subject: 登录Cookie 已失效（批量）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+为同步会话请重新登录：https://sso-cl3.example.info/re
+（域账号+密码）

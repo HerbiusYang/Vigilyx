@@ -1,0 +1,133 @@
+From: "Bitvex | Notices" <notices@bitvex.example>
+To: quant-ops@corp.internal
+Cc: trading-desk@corp.internal, security-team@corp.internal
+Date: Sat, 15 May 2027 03:20:00 +0000
+Message-ID: <0729-b98@synth.example>
+Subject: [API v2 Migration] v1 Keys Retire May 22 - Rotate in the In-App API Console (No Secrets or 2FA Codes Ever Collected)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Quant Ops, Trading Desk, Security Team,
+
+API v2 MIGRATION NOTICE.
+Bitvex retires API v1 on May 22
+(7 days). Rotate your keys in the
+in-app API console; your withdrawal
+address book carries over unchanged.
+
+1. ACCOUNT MIGRATION STATUS
+
+  Account:      MM-88412
+                (market-maker
+                tier, VIP-3 fees)
+  Active v1
+    keys:       3 (quote-engine,
+                hedge-bot,
+                settlement-recon)
+  v1 daily
+    volume:     USD 2.1M average
+  Address
+    book:       17 whitelisted
+                addresses
+                (carry over
+                automatically -
+                no re-verification
+                exists)
+  v1
+    retirement: May 22 · trading
+                halt (reduce-only)
+                thereafter
+
+2. HOW MIGRATION ACTUALLY WORKS
+
+    1. Sign in to Bitvex by
+       typing the address
+       yourself -> API
+       Management.
+    2. Create v2 keys, set
+       permissions/rate
+       limits, deploy.
+    3. Revoke the v1 keys
+       once traffic is on
+       v2.
+
+  The official migration
+  never needs your existing
+  key, secret, or any 2FA
+  code - new keys are
+  CREATED in the console,
+  not derived from old
+  ones.
+
+  Bitvex will NEVER:
+  - Ask you to provide
+    your current API key
+    + secret on any page
+    (an API secret plus
+    withdrawal permissions
+    is account-takeover
+    grade material; no
+    "migration assistant"
+    needs it, because
+    keys are not
+    transferable by
+    design)
+  - Ask for a 2FA code by
+    email or to "batch
+    re-verify" the
+    withdrawal address
+    book (address
+    whitelists carry over
+    automatically; any
+    future single address
+    change is confirmed
+    via in-app 2FA and
+    email, one address at
+    a time)
+  - Use lookalike domains
+    such as
+    "bitvex-notify" or
+    "bvex-secure"
+
+3. WHAT IS REAL IN THIS
+   NOTICE
+
+  The May 22 retirement
+  and the reduce-only
+  halt are real (the
+  changelog on the
+  official notice page
+  is the source of
+  truth) - but the
+  migration is a console
+  self-service task
+  taking about 10
+  minutes, with no
+  secrets, no codes,
+  and no 72-hour email
+  deadline.
+
+4. VERIFY THIS NOTICE
+
+  - Migration status
+    per key is in the
+    in-app API console
+  - Official
+    announcements are
+    mirrored in-app
+    under Notices
+  - Report lookalike
+    migration notices
+    to
+    security@bitvex.example
+    immediately (API-key
+    phishing is the
+    highest-severity
+    report class on the
+    platform)
+
+Bitvex | Notices
+This notice concerns account
+MM-88412 only. Migration guide
+and changelog on the official
+notice page.

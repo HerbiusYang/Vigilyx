@@ -1,0 +1,10 @@
+From: notice@station.example
+To: employee@corp.internal
+Date: Mon, 24 Aug 2026 09:30:00 +0800
+Message-ID: <ham08@partner.example>
+Subject: 您的包裹已到驿站
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+【驿站通知】您的包裹已到菜鸟驿站（东门店），
+取件码 8-2-4017，请于 3 日内取件，超时将退回。

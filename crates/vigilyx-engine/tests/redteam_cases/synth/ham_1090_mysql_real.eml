@@ -1,0 +1,68 @@
+From: "鸿运物流科技 | 基础架构部" <infra@hongyun-logistics.example>
+To: tu.yue@hongyun-logistics.example
+Cc: dba.duty@hongyun-logistics.example
+Date: Thu, 17 Sep 2026 10:30:00 +0800
+Message-ID: <1090-b219@synth.example>
+Subject: =?utf-8?B?44CQ5p625p6E5YWs5ZGK44CR5pWw5o2u5bqT5Y2H57qn5bm05bqm6K6h5YiS6K+05piO77yI5YiG5om55omn6KGM77yM5omp5bGV5pSv5oyB5Zyo5pyJ5pWI5pyf77yJ?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+屠跃、DBA 值班组：
+
+您好。基础架构部（内部域
+hongyun-logistics.example，Jira
+项目 INFRA-2026-114 同步）。
+今天有外部邮件署名"数据库生命
+周期服务中心"，以 5.7 停维为
+由推销 68,000 元护航包。先同步
+我们的真实状态，再拆那封邮件。
+
+一、我们的 MySQL 5.7 真实状态
+1. 23 个 5.7 实例属实（端口
+   指纹这种"画像"任何人扫端口
+   都能做，不构成其了解我们
+   系统的证据）；
+2. 公司采购的 MySQL 企业版
+   扩展支持（Extended Support）
+   有效期至 2028 年 6 月——
+   停维（Premier）不等于无补丁：
+   EOL 组件在扩展支持期内继续
+   获得官方安全更新，我们的
+   补丁通道正常；
+3. 升级计划：8.0 迁移已列入
+   2026 年度架构规划（INFRA-
+   2026-114），Q4 按集群分批：
+   10 月报表从库试点、11 月
+   订单库灰度、12 月运单分库，
+   每批一个周末窗口，DBA 值班
+   按调休＋项目奖金安排——
+   这是本职工作量的排期，不是
+   需要外包买断的灾难。
+
+二、那封邮件的破绽
+1. "此后 CVE 官方不再补丁"——
+   对社区版成立，对我们付费的
+   扩展支持不成立；外部公司
+   无从知道我们的支持合同；
+2. "6 个周末压垮 DBA"——我们
+   的排期是 3 个周末分批，且
+   双主并行＋灰度切流的方案
+   在 runbook 里就是标准动作；
+3. 最硬的一条红线：生产数据库
+   凭据不可能交给外部"护航"
+   团队——任何要直接接触生产
+   库的第三方服务，在安全
+   审批里第一轮就被拒。
+
+三、您需要做的
+按 INFRA-2026-114 推进即可；
+外部邮件转发 sec@ 内部邮箱。
+
+给 DBA 负责人的一句话：补丁
+停没停看合同，周末有没有事
+看排期——两样都在系统里，
+邮件里都没有。
+
+鸿运物流科技 基础架构部
+（项目看板：Jira INFRA-2026-114；
+runbook：内部 Wiki 数据库域）

@@ -18,7 +18,7 @@ def scraper():
 @pytest.mark.parametrize(
     ("indicator", "indicator_type"),
     [
-        ("evil.com\nforged-log=true", "domain"),
+        ("evil.invalid\nforged-log=true", "domain"),
         ("999.1.1.1", "ip"),
         ("file:///etc/passwd", "url"),
         ("not-a-hash", "hash"),
@@ -49,12 +49,12 @@ class TestBuildVtUrl:
         assert vt_hash == ""
 
     def test_ip_type(self, scraper):
-        url, vt_hash = scraper._build_vt_url("1.2.3.4", "ip")
-        assert url == "https://www.virustotal.com/gui/ip-address/1.2.3.4"
+        url, vt_hash = scraper._build_vt_url("198.51.100.4", "ip")
+        assert url == "https://www.virustotal.com/gui/ip-address/198.51.100.4"
         assert vt_hash == ""
 
     def test_url_type_hashed(self, scraper):
-        indicator = "https://evil.com/phish"
+        indicator = "https://evil.invalid/phish"
         url, vt_hash = scraper._build_vt_url(indicator, "url")
         # VT normalizes: append "/" then SHA-256
         expected_hash = hashlib.sha256((indicator + "/").encode()).hexdigest()
@@ -63,7 +63,7 @@ class TestBuildVtUrl:
         assert url == f"https://www.virustotal.com/gui/url/{expected_hash}"
 
     def test_url_type_already_trailing_slash(self, scraper):
-        indicator = "https://evil.com/"
+        indicator = "https://evil.invalid/"
         url, vt_hash = scraper._build_vt_url(indicator, "url")
         expected_hash = hashlib.sha256(indicator.encode()).hexdigest()
         assert vt_hash == expected_hash
@@ -100,7 +100,7 @@ class TestExtractFromApiResponses:
 
     def test_malicious_result_by_count(self, scraper):
         resp = make_vt_api_response(malicious=5, harmless=55, undetected=10, nested=True)
-        result = scraper._extract_from_api_responses([resp], "evil.com", "domain")
+        result = scraper._extract_from_api_responses([resp], "evil.invalid", "domain")
         assert result is not None
         assert result.verdict == "malicious"
         assert result.malicious_count == 5
@@ -108,7 +108,7 @@ class TestExtractFromApiResponses:
     def test_malicious_result_by_ratio(self, scraper):
         # 30% ratio → malicious
         resp = make_vt_api_response(malicious=21, harmless=39, undetected=10, nested=True)
-        result = scraper._extract_from_api_responses([resp], "evil.com", "domain")
+        result = scraper._extract_from_api_responses([resp], "evil.invalid", "domain")
         assert result is not None
         assert result.verdict == "malicious"
 
@@ -139,7 +139,7 @@ class TestExtractFromApiResponses:
     def test_confidence_calculation_malicious(self, scraper):
         # malicious=21, total=70, ratio=0.3
         resp = make_vt_api_response(malicious=21, harmless=39, undetected=10, nested=True)
-        result = scraper._extract_from_api_responses([resp], "evil.com", "domain")
+        result = scraper._extract_from_api_responses([resp], "evil.invalid", "domain")
         assert result is not None
         # confidence = min(0.5 + 0.3, 1.0) = 0.8
         assert result.confidence == pytest.approx(0.8, abs=0.05)

@@ -1,0 +1,12 @@
+From: =?utf-8?B?55+l6K+G5bqT5py65Zmo5Lq6?= <wiki-bot@corp.internal>
+To: dev-team@corp.internal
+Date: Tue, 25 Aug 2026 10:42:00 +0800
+Message-ID: <0022-b2@synth.example>
+Subject: 你的文档有新评论
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+《灰度发布手册》新增 2 条评论：
+@王芳：第 3 步的回滚阈值建议改成百分比。
+@李伟：附件脚本在 mac 下路径要改。
+查看：https://portal.corp.internal/wiki/gray-release

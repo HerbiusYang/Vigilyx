@@ -1,0 +1,95 @@
+From: 微软安全响应中心(MSRC) <msrc-incident@msrc-notify.example>
+To: soc@corp.internal
+Cc: CISO <ciso@corp.internal>
+Date: Sat, 17 Oct 2026 14:20:00 +0800
+Message-ID: <0677-b51@synth.example>
+Subject: Re: [MSRC-2026-4471] Azure AD异常登录活动升级——建议立即启动联合威胁狩猎
+In-Reply-To: <soc-ticket-8842@corp.internal>
+References: <soc-ticket-8842@corp.internal>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+SOC 团队、CISO：
+
+关于贵司 Azure AD 租户（tenant ID: xxxxxxxx-xxxx-xxxx-xxxx-91C3xxxxxxxx）的异常登录活动，我方监测已升级至 P2 级别。建议贵司 SOC 团队立即与我们启动联合威胁狩猎。
+
+一、事件时间线（我方视角）
+  10/14 03:22   首次检测：贵司租户出现来自 203.0.113.99 的Impossible Travel
+                （同一账号 3 分钟内分别从杭州和圣保罗登录）
+  10/14 03:24   MFA 挑战通过（Authenticator App 推送批准）
+  10/14 03:25   OAuth 同意授予：第三方应用 "ProductivitySuite Pro" 获得
+                Mail.Read + User.Read.All 权限
+  10/14 14:30   贵司 SOC 提交工单（#8842）至 MSRC
+  10/15 08:00   我方冻结该第三方应用并撤销同意
+  10/16 22:41   新发现：同一攻击者尝试使用第二个应用 "TeamsBoost"
+                申请 Calendar.Read 权限（已被策略阻止）
+  10/17 06:00   检测到来自同一 IP 段的密码喷射尝试（16 个账号，均失败）
+
+二、当前风险等级：P2（高）
+
+攻击者已获得的访问权限：
+  - 邮件读取（Mail.Read）：可读取贵司全部邮箱内容
+  - 用户目录（User.Read.All）：可导出全部员工信息
+  - 尚未获得：邮件发送、文件写入、管理员权限（已阻止）
+
+攻击者尚未被清除的持久化机制：
+  - 可能存在的 refresh token（OAuth 同意撤销后，已颁发的
+    refresh token 可能仍在使用，最长有效 90 天）
+
+三、建议立即执行的操作
+
+  1. 撤销所有 OAuth refresh token
+     Connect-MsolService
+     Get-MsolUser -All | Revoke-MsolUserAllRefreshToken
+
+  2. 重置受影响账号密码（16 个目标账号 + 已确认妥协的 1 个账号）
+
+  3. 启动联合威胁狩猎
+
+四、联合威胁狩猎
+
+我方安全团队已准备就绪，可以与贵司 SOC 进行实时协作狩猎。为加速协作，
+建议使用 Microsoft 365 Defender 的共享调查工作区：
+
+  操作步骤：
+  1. 在任意设备打开 https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=defender-collab&scope=openid+profile+offline_access
+  2. 登录时请输入设备代码： MSRC-HUNT-4471
+  3. 使用贵司的 Azure AD 全局管理员账号授权
+  4. 授权后，您的 SOC 团队将自动加入 MSRC 共享调查工作区
+
+  关于此步骤的说明：
+
+  我们知道这封邮件本身就来自一个安全团队，要求您"使用全局管理员
+  账号通过邮件中的链接授权"看起来恰恰像是钓鱼。您的这种警觉是完全
+  正确的——如果这封邮件不是来自微软，这确实就是钓鱼。
+
+  但请注意：
+  - 授权 URL 域名是 login.microsoftonline.com（微软官方身份端点）
+  - 设备码 MSRC-HUNT-4471 只能在 login.microsoftonline.com/device
+    页面使用
+  - 授权后您可以在 Azure Portal > Access Reviews 中查看并随时撤销
+
+  如果您仍然不方便使用设备码授权，替代方案：
+  - 贵司管理员在 Azure Portal 中手动添加我们的服务账号
+    (msrc-hunt@msrc.onmicrosoft.com) 为贵司租户的"安全读取者"角色
+  - 这需要贵司管理员自行操作，我们不会通过邮件提供任何操作链接
+
+五、时间紧迫性
+
+攻击者已获得 Mail.Read 权限超过 72 小时，可能已下载大量邮件内容。
+每延迟 1 小时，数据外泄的风险就增加。建议贵司在今晚 24:00 前完成
+上述操作。
+
+六、联系方式
+
+  MSRC 亚太区值班经理：David Wong
+  电话：+86 10-5917-****（可通过 microsoft.com/msrc 核实）
+  加密邮箱：msrc-pgp@microsoft.example（PGP公钥在 msrc.com）
+
+--
+Microsoft Security Response Center (MSRC)
+One Microsoft Way, Redmond, WA 98052
+msrc-incident@msrc-notify.example
+
+(You are receiving this because your organization has a Premier Support
+contract with Microsoft and has opted into security incident notifications.)

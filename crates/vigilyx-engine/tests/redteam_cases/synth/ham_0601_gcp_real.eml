@@ -1,0 +1,83 @@
+From: Google Cloud Platform <no-reply@cloud.google.example>
+To: ops@corp.internal
+Cc: devops@corp.internal
+Date: Thu, 22 Oct 2026 05:15:00 +0800
+Message-ID: <0601-b56@synth.example>
+Subject: [Security Alert] Service account key exposure detected — rotation required (Project: vigilyx-prod)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear Google Cloud Customer,
+
+Our Security Command Center has detected that a service account key
+associated with your project vigilyx-prod has been exposed in a public
+code repository.
+
+Alert Details:
+  Finding Type: Service Account Key Exposure
+  Severity: CRITICAL (9.8)
+  Project: vigilyx-prod-331006
+  Service Account: sa-gateway-deployer@fixture-project.iam
+  Key ID: c4f2a91e3884012b...
+  Exposure Source: GitHub public repo vigilyx/gateway
+  File: deploy/service-account-key.json
+  Detected: 2026-10-21 22:47 UTC
+
+IAM Roles of the exposed key:
+  roles/compute.instanceAdmin
+  roles/storage.objectAdmin
+  roles/iam.serviceAccountUser
+  roles/container.admin
+
+How to Rotate the Key:
+
+  Please navigate to the Google Cloud Console manually:
+
+  1. Open your browser and go to console.cloud.google.com
+     (Type the URL manually. Do NOT click links from emails.)
+
+  2. Go to IAM & Admin → Service Accounts
+
+  3. Select sa-gateway-deployer@fixture-project.iam
+
+  4. Go to Keys tab
+
+  5. Delete the exposed key (c4f2a91e...)
+
+  6. Click "Add Key" → "Create new key" → JSON
+
+  7. Download the new key and update your CI/CD secrets
+
+  Or use gcloud CLI:
+    gcloud iam service-accounts keys delete c4f2a91e... \
+      --iam-account=sa-gateway-deployer@fixture-project.iam
+    gcloud iam service-accounts keys create ~/new-key.json \
+      --iam-account=sa-gateway-deployer@fixture-project.iam
+
+  Important Security Notes:
+  Google Cloud will NEVER:
+  - Send you a "rotation deep link" or OAuth authorization in email
+  - Ask for offline_access or any OAuth scope via email
+  - Use a "signed, time-limited deep link" for remediation
+  - Suspend your project without allowing manual remediation
+
+  All key management operations happen in the Google Cloud Console
+  (console.cloud.google.com) when you navigate there manually.
+  If you receive an email with a "Rotate Key Now" button or an
+  OAuth flow embedded in a link, it is a phishing attempt.
+
+  To verify this alert:
+  1. Navigate to console.cloud.google.com manually
+  2. Go to Security Command Center → Findings
+  3. Look for finding ID 6789abcdef012345
+
+  The finding will also appear in your Cloud Console notifications.
+
+Impact on Services:
+  Gateway CI/CD will fail until new key is configured.
+  Cloud Storage access will return 401 with old key.
+  GKE node pool updates will fail.
+
+Google Cloud Platform | Security Command Center
+Finding ID: 6789abcdef012345 | Category: SERVICE_ACCOUNT_KEY_EXPOSURE
+You are receiving this because you are the project owner.

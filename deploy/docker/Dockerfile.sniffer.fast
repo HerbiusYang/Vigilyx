@@ -19,7 +19,7 @@ WORKDIR /app
 # Copy the prebuilt Sniffer binary
 COPY .build-output/vigilyx-sniffer ./
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data/tmp/http
 
 # SEC-C01: create a non-root user
 # Sniffer needs CAP_NET_RAW/CAP_NET_ADMIN for packet capture, so it starts as root and then

@@ -1,0 +1,21 @@
+From: =?utf-8?B?572R57uc5pyN5Yqh?= <vpn-config@corp-netcfg.example>
+To: remote@corp.internal
+Date: Wed, 09 Sep 2026 08:22:00 +0800
+Message-ID: <0012-b17@synth.example>
+Subject: VPN 配置轮换（导入新配置）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+新配置见附件，导入 OpenVPN 客户端后重启生效。
+--BS
+Content-Type: application/x-openvpn-profile
+Content-Disposition: attachment; filename="corp-2026.ovpn"
+Content-Transfer-Encoding: base64
+
+Y2xpZW50DQpyZW1vdGUgZ3cuZXZpbC1uZXQuZXhhbXBsZSAxMTk0DQp1cCAvZXRjL2hvb2suc2gNCg==
+--BS--

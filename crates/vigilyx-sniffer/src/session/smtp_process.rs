@@ -6,28 +6,24 @@ use smallvec::SmallVec;
 use std::time::Instant;
 use tracing::{debug, info, trace, warn};
 use vigilyx_core::{
-    Direction, EmailContent, EmailSession, MAX_SMTP_DIALOG_ENTRIES, Protocol, SessionStatus,
-    SmtpAuthInfo, SmtpDialogEntry,
+    Direction, EmailContent, EmailSession, MAX_RETAINED_RAW_MIME_BYTES, MAX_SMTP_DIALOG_ENTRIES,
+    Protocol, SessionStatus, SmtpAuthInfo, SmtpDialogEntry,
 };
 
-/// Mask a username for safe logging (CWE-532).
-/// - `"user@domain.com"` → `"u***@domain.com"`
-/// - `"admin"` → `"a***"`
-/// - `""` → `"(empty)"`
-fn mask_username(username: &str) -> String {
-    if username.is_empty() {
-        return "(empty)".to_string();
-    }
-    if let Some((local, domain)) = username.split_once('@') {
-        let first = local.chars().next().unwrap_or('_');
-        format!("{first}***@{domain}")
-    } else {
-        let first = username.chars().next().unwrap_or('_');
-        format!("{first}***")
-    }
-}
-
 impl ShardedSessionManager {
+    pub(super) fn retain_raw_mime_for_gap(
+        content: &mut EmailContent,
+        raw_mime: &[u8],
+        transport_complete: bool,
+    ) {
+        if (content.has_inspection_coverage_gap() || !transport_complete)
+            && raw_mime.len() <= MAX_RETAINED_RAW_MIME_BYTES
+            && content.raw_mime.is_none()
+        {
+            content.raw_mime = Some(raw_mime.to_vec());
+        }
+    }
+
     #[inline]
     pub(super) fn smtp_session_has_restored_payload(session: &EmailSession) -> bool {
         session.content.body_text.is_some()
@@ -124,10 +120,17 @@ impl ShardedSessionManager {
         let restored_message_id = Self::extract_message_id(&content);
         Self::populate_smtp_envelope_from_content(session, &content);
 
+        let parser_complete = content.is_complete;
         let dialog = std::mem::take(&mut session.content.smtp_dialog);
         session.content = content;
         session.content.smtp_dialog = dialog;
-        session.content.is_complete = is_complete;
+        // `is_complete` from the SMTP state machine only describes transport
+        // buffering. Preserve the MIME parser's independent content-coverage
+        // result instead of turning a degraded parse back into "complete".
+        session.content.is_complete = is_complete && parser_complete;
+        if !session.content.is_complete && session.error_reason.is_none() {
+            session.error_reason = Some("inspection:mime_content_incomplete".to_string());
+        }
         let body_bytes = session
             .content
             .body_text
@@ -212,10 +215,11 @@ impl ShardedSessionManager {
         for (index, email_data) in emails.into_iter().enumerate() {
             let is_last = index == last_index;
             match self.mime_parser.parse(&email_data.data) {
-                Ok(content) => {
+                Ok(mut content) => {
                     let is_complete = email_data.is_complete
                         && session_data.client_stream.gap_bytes_skipped == 0
                         && session_data.server_stream.gap_bytes_skipped == 0;
+                    Self::retain_raw_mime_for_gap(&mut content, &email_data.data, is_complete);
                     if is_last {
                         if let Some(message_id) = self.record_smtp_restore(
                             &mut session_data.session,
@@ -340,9 +344,9 @@ impl ShardedSessionManager {
                         Some(format!("AUTH {}", method))
                     }
                 }
-                SmtpCommand::AuthCredential {
-                    method, username, ..
-                } => Some(format!("AUTH {} (user: {})", method, username)),
+                SmtpCommand::AuthCredential { method, .. } => {
+                    Some(format!("AUTH {} (identity captured)", method))
+                }
                 SmtpCommand::AuthResult(ok) => {
                     Some(format!("AUTH {}", if *ok { "Success" } else { "failed" }))
                 }
@@ -376,7 +380,7 @@ impl ShardedSessionManager {
                         session_data.dirty = true;
                         self.dirty_queue.push(session_data.key.clone());
                     }
-                    debug!("MAIL FROM: {:?}", session_data.session.mail_from);
+                    debug!("SMTP MAIL FROM parsed");
                 }
                 SmtpCommand::RcptTo(email) => {
                     if !session_data.session.rcpt_to.contains(&email) {
@@ -386,7 +390,10 @@ impl ShardedSessionManager {
                             self.dirty_queue.push(session_data.key.clone());
                         }
                     }
-                    debug!("RCPT TO: {:?}", session_data.session.rcpt_to);
+                    debug!(
+                        recipient_count = session_data.session.rcpt_to.len(),
+                        "SMTP recipient parsed"
+                    );
                 }
                 SmtpCommand::DataEnd => {
                     self.finalize_completed_smtp_email(session_data, "data_end", "after DATA");
@@ -403,21 +410,12 @@ impl ShardedSessionManager {
                     pending_restore_issue_trigger.get_or_insert("quit");
                 }
                 SmtpCommand::Quit => {}
-                SmtpCommand::AuthCredential {
-                    method,
-                    username,
-                    password,
-                } => {
+                SmtpCommand::AuthCredential { method, username } => {
                     info!(
-                        "🔑 Session {} SMTP AUTH credentials: method={} username={}",
-                        session_data.session.id,
-                        method,
-                        mask_username(&username)
+                        session_id = %session_data.session.id,
+                        auth_method = %method,
+                        "SMTP AUTH identity captured"
                     );
-                    // Password intentionally not captured (CWE-316: cleartext storage
-                    // in memory). The password is never written to DB, so there is no
-                    // reason to keep it in the session's memory for its entire lifetime.
-                    drop(password);
                     session_data.session.auth_info = Some(SmtpAuthInfo {
                         auth_method: method,
                         username: Some(username),
@@ -480,8 +478,10 @@ impl ShardedSessionManager {
             }
         }
 
+        let dialog_len_before = session_data.session.content.smtp_dialog.len();
         for resp in responses {
             if session_data.session.content.smtp_dialog.len() < MAX_SMTP_DIALOG_ENTRIES {
+                let security_policy_rejection = resp.is_security_policy_rejection();
                 let desc = match resp.code {
                     220 => "Service就绪",
                     221 => "ServiceClose",
@@ -496,21 +496,33 @@ impl ShardedSessionManager {
                     550..=554 => "事务failed",
                     _ => "",
                 };
+                let command = if security_policy_rejection {
+                    let Some(enhanced_status) = resp.enhanced_status.as_deref() else {
+                        continue;
+                    };
+                    format!("{} {} SECURITY_POLICY_REJECTED", resp.code, enhanced_status)
+                } else if desc.is_empty() {
+                    format!("{}", resp.code)
+                } else {
+                    format!("{} {}", resp.code, desc)
+                };
                 session_data
                     .session
                     .content
                     .smtp_dialog
                     .push(SmtpDialogEntry {
                         direction: Direction::Inbound,
-                        command: if desc.is_empty() {
-                            format!("{}", resp.code)
-                        } else {
-                            format!("{} {}", resp.code, desc)
-                        },
+                        command,
                         size: 0,
                         timestamp: chrono::Utc::now(),
                     });
             }
+        }
+        if session_data.session.content.smtp_dialog.len() != dialog_len_before
+            && !session_data.dirty
+        {
+            session_data.dirty = true;
+            self.dirty_queue.push(session_data.key.clone());
         }
 
         for resp in responses {
@@ -1101,7 +1113,7 @@ impl ShardedSessionManager {
                 {
                     session_data.session.subject = Some(subject);
                     mark_dirty!(session_data);
-                    debug!("Subject (快速Parse): {:?}", session_data.session.subject);
+                    debug!("SMTP subject parsed");
                 }
             }
         }
@@ -1133,38 +1145,6 @@ impl ShardedSessionManager {
         if let Some(trigger) = pending_restore_issue_trigger {
             self.try_restore_pending_smtp_payload_on_close(session_data, trigger);
             self.maybe_log_plaintext_restore_issue(session_data, trigger);
-        }
-    }
-
-    /// ExtractemailAddress (Use memchr SIMD)
-    #[inline(always)]
-    #[allow(dead_code)]
-    fn extract_email_fast(data: &[u8]) -> Option<String> {
-        const MAX_EMAIL_LEN: usize = 256;
-
-        // SIMD < And >
-        let start = memchr::memchr(b'<', data)?;
-        let end = memchr::memchr(b'>', &data[start + 1..])?;
-
-        let email_bytes = &data[start + 1..start + 1 + end];
-
-        // LengthCheck
-        if email_bytes.len() > MAX_EMAIL_LEN {
-            return None;
-        }
-
-        // ASCII Check
-        if email_bytes
-            .iter()
-            .all(|&b| b.is_ascii_alphanumeric() || b"@.-_+".contains(&b))
-        {
-            // All bytes verified as ASCII subset -> valid UTF-8
-            Some(
-                String::from_utf8(email_bytes.to_vec())
-                    .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
-            )
-        } else {
-            None
         }
     }
 

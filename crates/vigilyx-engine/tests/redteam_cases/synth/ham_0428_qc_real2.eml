@@ -1,0 +1,9 @@
+From: =?utf-8?B?6LSo5qOA?= <zj@vendor.example>
+To: qa@corp.internal
+Date: Mon, 21 Sep 2026 09:37:00 +0800
+Message-ID: <0027-b28@synth.example>
+Subject: 本周质检汇总
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+合格率 99.2%，明细见附件 Excel（无宏）。

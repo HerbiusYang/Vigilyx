@@ -1,0 +1,99 @@
+From: "Maersk Line | Trade Documentation" <docs.telex@maersk-line.example>
+To: logistics@corp.internal
+Cc: import-team@corp.internal, finance.ap@corp.internal
+Reply-To: settlement.desk@maersk-line-billing.example
+Disposition-Notification-To: docs.telex@maersk-line.example
+Date: Tue, 10 Nov 2026 09:12:00 +0000
+Message-ID: <0736-b71@synth.example>
+Subject: [SETTLEMENT REQUIRED] Telex Release Pending - B/L MAEU6428113080 - MSKU 7281946 - Vancouver Free Time Expires 14 Nov 17:00 PST
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:Arial,sans-serif;font-size:14px">
+<p>Dear Import Team, Accounts Payable,</p>
+
+<p style="background:#FFF3E0;border-left:4px solid #E65100;padding:12px">
+<b>TELEX RELEASE ON HOLD.</b> The shipper has requested telex release (surrender of original B/L) for shipment MAEU6428113080.
+Release can only be executed once the outstanding settlement invoice has been paid in full.
+<b>Free time at Vancouver expires 14 November 2026, 17:00 PST</b> — after that, demurrage accrues at CAD 328/day and a cargo lien may be applied.
+</p>
+
+<h3>1. Shipment Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:230px">Bill of Lading</td><td><b>MAEU6428113080</b></td></tr>
+<tr><td style="background:#f5f5f5">Container</td><td>MSKU 7281946 (40' High Cube) + TGHU 510923 seal 88410221</td></tr>
+<tr><td style="background:#f5f5f5">Vessel / Voyage</td><td>MAERSK KENSINGTON, V.428E</td></tr>
+<tr><td style="background:#f5f5f5">Route</td><td>Ningbo (CNNGB) → Busan (KRPUS) → Vancouver (CAVAN), transhipment Busan</td></tr>
+<tr><td style="background:#f5f5f5">ETA Vancouver</td><td>9 November 2026, 06:40 PST — <i>discharged, at terminal</i></td></tr>
+<tr><td style="background:#f5f5f5">Commodity</td><td>Precision machine tool parts, 1,842 cartons, 21,470 kg / 17.6 cbm</td></tr>
+<tr><td style="background:#f5f5f5">Shipper</td><td>Hangzhou Zhongjie Precision Machinery Co., Ltd.</td></tr>
+<tr><td style="background:#f5f5f5">Consignee</td><td>Pacific Industrial Equipment Ltd., Richmond BC</td></tr>
+<tr><td style="background:#f5f5f5">Notify Party</td><td>Your logistics desk (this mailbox)</td></tr>
+<tr><td style="background:#f5f5f5">Free Time (combined)</td><td>5 days from discharge — <b style="color:#e00">expires 14 Nov 2026 17:00 PST</b></td></tr>
+</table>
+
+<h3>2. Why This Settlement Is Now Due</h3>
+<p>Under the telex release instruction filed by the shipper on 2 November (ref: TR-NGB-2026-04417),
+original B/Ls were recalled and the shipment moved to "surrender pending settlement" status.
+Our regional billing desk has <b>reissued the settlement invoice</b> under an updated remittance structure
+effective for all Q4 China–North America trade lane settlements (circular NAM-TRD-2026-Q4-08).
+The invoice below supersedes any earlier draft you may hold.</p>
+
+<h3>3. Reissued Settlement Invoice</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Invoice</th><th>Component</th><th>Amount (USD)</th></tr>
+<tr><td>TLX-2026-88431</td><td>Ocean freight + BAF / LSS surcharges</td><td>18,240.00</td></tr>
+<tr><td>TLX-2026-88431</td><td>Terminal handling charge (CN + CA)</td><td>6,410.00</td></tr>
+<tr><td>TLX-2026-88431</td><td>Documentation, telex release &amp; e-filing</td><td>1,150.00</td></tr>
+<tr><td>TLX-2026-88431</td><td>Pier pass / customs ancillaries</td><td>2,600.00</td></tr>
+<tr style="background:#fff8e1"><td colspan=2><b>Total payable</b></td><td><b>28,400.00</b></td></tr>
+</table>
+
+<h3>4. Updated Remittance Details</h3>
+<p style="background:#E8F5E9;padding:12px;border:1px solid #A5D6A7">
+Beneficiary: <b>Maersk Line Settlement Operations Ltd.</b><br>
+Account No.: 88021-441-902773<br>
+Beneficiary Bank: Canadian Western Bank, 595 Burrard St, Vancouver BC<br>
+SWIFT: TSTBCA22 &nbsp;|&nbsp; Transit: 22041-003<br>
+Payment Reference: <b>TLX-88431 / MAEU6428113080</b><br>
+Currency: USD (receiver bears correspondent charges, OUR)
+</p>
+
+<p>A last-minute remittance change on a live shipment rightly invites scrutiny — we agree, and that is healthy.
+If you prefer to verify before paying, you may request written confirmation of the reissue through the
+settlement desk (see Reply-To) quoting circular NAM-TRD-2026-Q4-08; verifications are answered the same business day.
+The demurrage clock, however, does not pause for verification.</p>
+
+<h3>5. If Settlement Is Not Received Before Free Time Expires</h3>
+<ul>
+<li>Demurrage: CAD 328/day (days 1–4), CAD 456/day (day 5 onward), charged per container</li>
+<li>Telex release cancelled; cargo held under carrier's lien pending settlement + accrued charges</li>
+<li>Storage at GCT Vanterm after lien: CAD 210/day, billed weekly</li>
+<li>Consignee account flagged — future bookings move to prepayment terms</li>
+</ul>
+
+<h3>6. Next Steps</h3>
+<ol>
+<li>Arrange USD 28,400.00 to the remittance details in Section 4 (reference TLX-88431 / MAEU6428113080).</li>
+<li>Reply with the MT103 / payment advice so the settlement desk can match it the same day.</li>
+<li>Telex release is transmitted to the terminal within 2 business hours of matched payment.</li>
+<li>Delivery order is then issued to your customs broker under the existing POA.</li>
+</ol>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文结算协助或电放保函模板，请访问 maersk-line-billing.example/cn-settlement 上传电放保函与银行账户变更函（中文通道，当日处理）。</p>
+
+<h3>7. Contact — Trade Documentation Desk</h3>
+<p>Settlement Desk (payments &amp; matching): settlement.desk@maersk-line-billing.example<br>
+Documentation (B/L, telex, delivery order): docs.telex@maersk-line.example<br>
+Demurrage &amp; detention queries: reference MAEU6428113080 in the subject line</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+Maersk Line | Trade Documentation — Asia–North America Trade Lane<br>
+This notice concerns B/L MAEU6428113080 only. Circular NAM-TRD-2026-Q4-08 applies to Q4 2026 settlements.
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://maersk-line.example/px/tlx.gif?b=88431&c=MAEU6428113080&r=finance.ap%40corp.internal" width=1 height=1 alt="">
+</div>
+
+</body></html>

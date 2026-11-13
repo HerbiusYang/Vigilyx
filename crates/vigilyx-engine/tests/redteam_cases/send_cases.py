@@ -17,7 +17,7 @@ HOST = sys.argv[1] if len(sys.argv) > 1 else "127.0.0.1"
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 25
 CASE_DIR = sys.argv[3] if len(sys.argv) > 3 else os.path.dirname(os.path.abspath(__file__))
 
-MAIL_FROM = "sender@partner-external.com"
+MAIL_FROM = "sender@partner.example"
 RCPT_TO = "employee@corp.internal"
 
 

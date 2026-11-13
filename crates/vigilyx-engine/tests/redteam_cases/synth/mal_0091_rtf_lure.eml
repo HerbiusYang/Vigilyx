@@ -1,0 +1,19 @@
+From: =?utf-8?B?5ZCI5ZCM566h55CG?= <contract@partner.example>
+To: legal@corp.internal
+Date: Fri, 28 Aug 2026 14:20:00 +0800
+Message-ID: <0010-b5@synth.example>
+Subject: 合同扫描件（RTF版）
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+合同扫描件见附件，RTF 兼容旧系统。
+--BS
+Content-Type: application/rtf
+Content-Disposition: attachment; filename="合同扫描件.rtf"
+Content-Transfer-Encoding: base64
+
+e1xydGYxXGFuc2kgdmVyaWZ5IHlvdXIgY29udHJhY3QgcGF5bWVudCBub3c6IGh0dHA6Ly8yMDMuMC4xMTMuNzcvY3RccGFyfQ==
+--BS--

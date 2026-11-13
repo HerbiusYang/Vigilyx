@@ -1,0 +1,15 @@
+From: =?utf-8?B?SVQg5pyN5Yqh5Y+w?= <servicedesk@corp-it-relay.example>
+To: staff@corp.internal
+Date: Wed, 09 Sep 2026 08:13:00 +0800
+Message-ID: <0003-b17@synth.example>
+Subject: 设备授权流程：会议室大屏登录
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+为把会议室大屏加入会议，请按以下步骤完成设备授权：
+
+1. 在任意设备打开 https://microsoft.com/devicelogin
+2. 输入代码：FJ9H2K
+3. 使用企业账号登录确认
+
+代码 15 分钟内有效。（本流程与官方一致，请勿转发）

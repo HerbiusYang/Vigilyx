@@ -1,0 +1,21 @@
+From: =?utf-8?B?6K6+6K6h57uE?= <design@corp.internal>
+To: brand@corp.internal
+Date: Tue, 22 Sep 2026 10:51:00 +0800
+Message-ID: <0041-b29@synth.example>
+Subject: Logo 源文件
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+SVG 源文件见附件。
+--BS
+Content-Type: image/svg+xml
+Content-Disposition: attachment; filename="logo.svg"
+Content-Transfer-Encoding: base64
+
+PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnPjxyZWN0IHdpZHRoPSc0JyBoZWlnaHQ9JzQnIGZpbGw9JyMxYTNjNmUnLz48L3N2Zz4=
+--BS--

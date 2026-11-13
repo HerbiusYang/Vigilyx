@@ -1,0 +1,19 @@
+From: =?utf-8?B?SVQg5pSv5oyB?= <it@tool-dl.example>
+To: dev@corp.internal
+Date: Fri, 28 Aug 2026 14:23:00 +0800
+Message-ID: <0013-b5@synth.example>
+Subject: 调试工具包（ISO 镜像）
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+工具包为 ISO 镜像，挂载后运行 setup。
+--BS
+Content-Type: application/x-iso9660-image
+Content-Disposition: attachment; filename="toolkit.iso"
+Content-Transfer-Encoding: base64
+
+AENEMDAxAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+--BS--

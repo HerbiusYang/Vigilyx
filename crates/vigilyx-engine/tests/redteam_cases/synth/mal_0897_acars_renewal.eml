@@ -1,0 +1,119 @@
+From: "SkyComm Data Services | ACARS Billing" <acars.renewal@skycomm-datalink.example>
+To: flight-ops@airline.example
+Cc: engineering@airline.example, finance@airline.example
+Reply-To: renewal.desk@sc-datalink-pay.example
+Date: Wed, 03 Nov 2027 06:00:00 +0000
+Message-ID: <0897-b124@synth.example>
+Subject: [ACARS RENEWAL] Fleet Datalink 2028 USD 486,000 - Billing Entity Change With VDL Upgrade - Service Degradation From Jan 1 Without Renewal
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Flight Ops, Engineering, Finance,
+
+FLEET DATALINK RENEWAL - ACARS
+SERVICE YEAR 2028.
+
+Your fleet's ACARS/VDL datalink
+service renews January 1 (42
+aircraft, USD 486,000). The
+VDL Mode-2 upgrade shipping
+with this renewal moves the
+billing to the datalink JV's
+billing entity - details in
+Section 2. Renewal closes
+December 1; unrenewed fleets
+drop to best-effort datalink
+(weather and ATC uplinks
+queue behind renewed traffic).
+
+1. SERVICE SUMMARY
+
+  Fleet:        42 aircraft
+                (A320 family 28 +
+                A330 14)
+  Service:      ACARS + VDL
+                Mode-2 + SATCOM
+                backup
+  2027 year:    USD 462,000
+  2028 year:    USD 486,000
+                (+5.2%, VDL-M2
+                upgrade included)
+  Renewal
+  deadline:     December 1
+
+2. BILLING ENTITY CHANGE
+   (VDL UPGRADE)
+
+  The VDL Mode-2 upgrade
+  ships under the datalink
+  joint venture; from the
+  2028 service year, renewal
+  invoices and payment
+  route to the JV's billing
+  entity:
+
+    Beneficiary: SkyComm
+                Datalink JV
+                Billing B.V.
+                (Netherlands)
+    IBAN: NL91 ABNA 0417 8842 0066
+    SWIFT: TSTBNL2A
+    Reference: ACARS-2028 /
+                TAIL-LIST-2027
+
+  The 2027 service year's
+  Q4 close-out still bills
+  from the current entity;
+  only the renewal switches.
+
+3. WHAT DEGRADATION MEANS
+   (JAN 1, UNRENEWED)
+
+  - Best-effort datalink:
+    CPDLC logons throttled,
+    weather uplinks queued
+    behind renewed carriers
+  - ATC comm fallback to
+    voice (frequency
+    congestion in your
+    busier sectors)
+  - Ops-control message
+    latency grows during
+    peak departure banks
+
+4. ABOUT THIS NOTICE
+
+  Datalink emails rerouting
+  half-million renewals are
+  what ops-contract reviews
+  exist for - and the VDL
+  upgrade is real enough to
+  check (industry press
+  covered the JV). Checks:
+  the tail list and 2027
+  invoices match your
+  records; the service
+  portal shows the renewal
+  under your account; and
+  your account director
+  confirms scope. The JV
+  billing entity is the
+  item to verify hardest -
+  upgrades add entities,
+  emails add IBANs, and
+  only the first kind is
+  always real.
+
+5. CONTACT
+
+  Renewal desk: renewal.desk@sc-datalink-pay.example
+  Reference: ACARS-2028 / TAIL-LIST-2027
+  Account director: your usual channel
+
+SkyComm Data Services | ACARS
+Billing
+This notice concerns the
+referenced fleet agreement
+only. Service terms follow
+the datalink service
+agreement.

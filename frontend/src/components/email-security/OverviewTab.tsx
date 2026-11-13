@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import type { SecurityStats, EngineStatus, ModuleMetadata } from '../../types'
+import { formatDurationMs } from '../../utils/format'
 import { MODULE_NAME_KEYS } from './moduleI18n'
 
 const THREAT_LEVEL_KEYS = ['safe', 'low', 'medium', 'high', 'critical'] as const
@@ -75,7 +76,7 @@ export default function OverviewTab({ stats, engineStatus }: OverviewTabProps) {
       </div>
 
       {/* Threat-level distribution - bar chart */}
-      <div className="sec-card">
+      <div className="sec-card sec-threat-distribution-card">
         <h3 className="sec-card-title">{t('emailSecurity.threatLevelDistribution')}</h3>
         {threatTotal === 0 ? (
           <div className="sec-empty-hint">{t('emailSecurity.noVerdictData')}</div>
@@ -114,7 +115,7 @@ export default function OverviewTab({ stats, engineStatus }: OverviewTabProps) {
 
       {/* -- Module performance overview (compact table) -- */}
       {engineStatus && engineStatus.module_metrics?.length > 0 && (
-        <div className="sec-card">
+        <div className="sec-card sec-module-performance-card">
           <h3 className="sec-card-title">{t('emailSecurity.modulePerformance')}</h3>
           <div className="sec-table-wrap">
             <table className="sec-table">
@@ -137,7 +138,7 @@ export default function OverviewTab({ stats, engineStatus }: OverviewTabProps) {
                         <span className="sec-module-name" title={m.module_id}>{getModuleName(m.module_id)}</span>
                       </td>
                       <td className="sec-td-r sec-mono">{m.total_runs.toLocaleString()}</td>
-                      <td className="sec-td-r sec-mono">{m.avg_duration_ms.toFixed(1)}ms</td>
+                      <td className="sec-td-r sec-mono">{formatDurationMs(m.avg_duration_ms)}</td>
                       <td className="sec-td-r">
                         <div className="sec-rate-cell">
                           <div className="sec-rate-bar">

@@ -93,7 +93,7 @@ fn extract_display_name(from_value: &str) -> Option<String> {
 }
 
 /// Extract the "from" hostname from a Received header.
-/// "from xmbg8.mail.qq.com (unknown [210.51.43.17])..." -> "xmbg8.mail.qq.com"
+/// "from fixture.mail.example (unknown [198.51.100.17])..." -> "fixture.mail.example"
 static RE_RECEIVED_FROM: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"from\s+([a-zA-Z0-9._-]+\.[a-zA-Z]{2,})").unwrap());
 
@@ -113,8 +113,12 @@ impl SecurityModule for DomainVerifyModule {
         let headers = &ctx.session.content.headers;
 
         let mut alignment_score: f64 = 0.0;
+        let mut trust_score: f64 = 0.0;
         let mut evidence = Vec::new();
         let mut verified = false;
+        let mut received_domain_aligned = false;
+        let mut dkim_domain_aligned = false;
+        let mut cryptographic_dkim_pass = false;
 
         // Extract sender domain
         let sender_domain = ctx
@@ -137,6 +141,9 @@ impl SecurityModule for DomainVerifyModule {
                     evidence: vec![],
                     details: serde_json::json!({
                         "verified": false,
+                        "cryptographic_dkim_pass": false,
+                        "received_domain_aligned": false,
+                        "dkim_domain_aligned": false,
                         "alignment_score": 0.0,
                         "trust_score": 0.0,
                     }),
@@ -160,10 +167,10 @@ impl SecurityModule for DomainVerifyModule {
                 let hostname = hostname.as_str().to_lowercase();
                 if is_subdomain_of(&hostname, &sender_domain) {
                     alignment_score += 0.40;
-                    verified = true;
+                    received_domain_aligned = true;
                     evidence.push(Evidence {
                         description: format!(
-                            "Received hostname {} matches sender domain {}",
+                            "Received hostname {} aligns with sender domain {}; this is routing metadata, not authentication",
                             hostname, sender_domain
                         ),
                         location: Some("headers:Received".to_string()),
@@ -185,10 +192,10 @@ impl SecurityModule for DomainVerifyModule {
                 let dkim_domain = dkim_domain.as_str().to_lowercase();
                 if dkim_domain == sender_domain || is_subdomain_of(&sender_domain, &dkim_domain) {
                     alignment_score += 0.35;
-                    verified = true;
+                    dkim_domain_aligned = true;
                     evidence.push(Evidence {
                         description: format!(
-                            "DKIM signing domain {} matches sender domain {}",
+                            "DKIM-Signature declares aligned domain {} for sender {}; signature verification is not established by header presence",
                             dkim_domain, sender_domain
                         ),
                         location: Some("headers:DKIM-Signature".to_string()),
@@ -200,8 +207,23 @@ impl SecurityModule for DomainVerifyModule {
         }
 
         alignment_score = alignment_score.min(1.0);
-        if alignment_score > 0.0 {
+        let trusted_dkim_domains = crate::modules::header_scan::trusted_dkim_pass_domains(ctx);
+        if let Some(validated_domain) = trusted_dkim_domains.iter().find(|domain| {
+            domain.as_str() == sender_domain
+                || is_subdomain_of(&sender_domain, domain)
+                || is_subdomain_of(domain, &sender_domain)
+        }) {
+            cryptographic_dkim_pass = true;
             verified = true;
+            trust_score = 0.70;
+            evidence.push(Evidence {
+                description: format!(
+                    "Trusted Authentication-Results reports dkim=pass with aligned header.d={}",
+                    validated_domain
+                ),
+                location: Some("headers:Authentication-Results".to_string()),
+                snippet: Some(validated_domain.clone()),
+            });
         }
 
         // Envelope forgery detection: From header domain vs MAIL FROM domain
@@ -231,6 +253,7 @@ impl SecurityModule for DomainVerifyModule {
                 });
             }
             alignment_score = 0.0;
+            trust_score = 0.0;
             verified = false;
         }
 
@@ -275,6 +298,8 @@ impl SecurityModule for DomainVerifyModule {
                             legit_suffixes.iter().any(|ls| sender_domain.contains(ls));
                         if !domain_is_legit {
                             alignment_score = (alignment_score - 0.50).max(0.0);
+                            trust_score = 0.0;
+                            verified = false;
                             evidence.push(Evidence {
                                 description: format!(
                                     "Display name brand impersonation: \"{}\" claims to be a known brand, but sender domain {} does not match",
@@ -290,10 +315,6 @@ impl SecurityModule for DomainVerifyModule {
             }
         }
 
-        if alignment_score <= 0.0 {
-            verified = false;
-        }
-
         let duration_ms = start.elapsed().as_millis() as u64;
 
         let summary = if envelope_mismatch {
@@ -304,8 +325,18 @@ impl SecurityModule for DomainVerifyModule {
             )
         } else if verified {
             format!(
-                "Sender alignment verified (alignment score {:.2}), sender domain: {}",
-                alignment_score, sender_domain
+                "Sender DKIM cryptographically verified by a trusted authentication result, sender domain: {}",
+                sender_domain
+            )
+        } else if cryptographic_dkim_pass {
+            format!(
+                "Trusted DKIM pass observed, but sender trust was suppressed by an identity conflict: {}",
+                sender_domain
+            )
+        } else if alignment_score > 0.0 {
+            format!(
+                "Sender domains are aligned by self-declared/routing metadata, but cryptographic verification is not established: {}",
+                sender_domain
             )
         } else {
             format!(
@@ -319,19 +350,26 @@ impl SecurityModule for DomainVerifyModule {
             module_name: self.meta.name.clone(),
             pillar: self.meta.pillar,
             threat_level: ThreatLevel::Safe,
-            confidence: if verified { 0.90 } else { 0.50 },
+            confidence: if verified { 0.90 } else { 0.0 },
             categories: vec![],
             summary,
             evidence,
             details: serde_json::json!({
                 "verified": verified,
+                "cryptographic_dkim_pass": cryptographic_dkim_pass,
+                "received_domain_aligned": received_domain_aligned,
+                "dkim_domain_aligned": dkim_domain_aligned,
                 "alignment_score": alignment_score,
-                "trust_score": alignment_score,
+                "trust_score": trust_score,
                 "sender_domain": sender_domain,
             }),
             duration_ms,
             analyzed_at: Utc::now(),
-            bpa: Some(Bpa::safe_analyzed()),
+            bpa: Some(if verified {
+                Bpa::safe_analyzed()
+            } else {
+                Bpa::vacuous()
+            }),
             engine_id: None,
         })
     }
@@ -342,7 +380,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use vigilyx_core::models::{EmailContent, EmailLink, EmailSession, Protocol};
+    use vigilyx_core::models::{EmailContent, EmailLink, EmailSession, Protocol, SessionSource};
 
     fn make_context(
         mail_from: &str,
@@ -365,6 +403,7 @@ mod tests {
             links,
             raw_size: 128,
             is_complete: true,
+            raw_mime: None,
             is_encrypted: false,
             truncated: false,
             dropped_attachments: 0,
@@ -378,20 +417,27 @@ mod tests {
     #[tokio::test]
     async fn test_domain_verify_ignores_attacker_controlled_link_alignment() {
         let ctx = make_context(
-            "alerts@change-meme.com",
+            "alerts@mailer.vendor.example",
             vec![
                 (
                     "Received".to_string(),
-                    "from mail.change-meme.com (unknown [43.243.73.163])".to_string(),
+                    "from mail.mailer.vendor.example (unknown [203.0.113.21])".to_string(),
                 ),
                 (
                     "DKIM-Signature".to_string(),
-                    "v=1; a=rsa-sha256; d=change-meme.com; s=mail;".to_string(),
+                    "v=1; a=rsa-sha256; d=mailer.vendor.example; s=mail;".to_string(),
                 ),
-                ("From".to_string(), "alerts@change-meme.com".to_string()),
+                (
+                    "Authentication-Results".to_string(),
+                    "mx.untrusted.invalid; dkim=pass header.d=mailer.vendor.example".to_string(),
+                ),
+                (
+                    "From".to_string(),
+                    "alerts@mailer.vendor.example".to_string(),
+                ),
             ],
             vec![EmailLink {
-                url: "https://login.change-meme.com/reset?token=abc123".to_string(),
+                url: "https://login.mailer.vendor.example/reset?token=fixture".to_string(),
                 text: Some("Reset password".to_string()),
                 suspicious: false,
             }],
@@ -408,24 +454,66 @@ mod tests {
             (alignment - 0.75).abs() < f64::EPSILON,
             "Link/domain self-alignment must not raise the sender alignment score"
         );
+        assert_eq!(result.details["verified"].as_bool(), Some(false));
+        assert_eq!(result.details["trust_score"].as_f64(), Some(0.0));
+        assert_eq!(result.confidence, 0.0);
+        assert!(result.summary.contains("not established"));
+        assert_eq!(result.bpa, Some(Bpa::vacuous()));
+    }
+
+    #[tokio::test]
+    async fn trusted_aligned_dkim_pass_establishes_sender_verification() {
+        let ctx = make_context(
+            "alerts@mailer.vendor.example",
+            vec![
+                (
+                    "Authentication-Results".to_string(),
+                    "mx.gateway.example; dkim=pass header.d=mailer.vendor.example; spf=pass"
+                        .to_string(),
+                ),
+                (
+                    "DKIM-Signature".to_string(),
+                    "v=1; a=rsa-sha256; d=mailer.vendor.example; s=mail;".to_string(),
+                ),
+                (
+                    "From".to_string(),
+                    "Fixture Sender <alerts@mailer.vendor.example>".to_string(),
+                ),
+            ],
+            vec![],
+        );
+        let mut session = (*ctx.session).clone();
+        session.source = SessionSource::MtaProxy;
+        let ctx = SecurityContext::new(Arc::new(session));
+
+        let result = DomainVerifyModule::new().analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.details["verified"].as_bool(), Some(true));
+        assert_eq!(
+            result.details["cryptographic_dkim_pass"].as_bool(),
+            Some(true)
+        );
+        assert_eq!(result.details["trust_score"].as_f64(), Some(0.70));
+        assert!(result.summary.contains("cryptographically verified"));
+        assert_eq!(result.bpa, Some(Bpa::safe_analyzed()));
     }
 
     #[tokio::test]
     async fn test_domain_verify_brand_impersonation_reduces_alignment() {
         let ctx = make_context(
-            "alerts@change-meme.com",
+            "alerts@mailer.vendor.example",
             vec![
                 (
                     "Received".to_string(),
-                    "from mail.change-meme.com (unknown [43.243.73.163])".to_string(),
+                    "from mail.mailer.vendor.example (unknown [203.0.113.21])".to_string(),
                 ),
                 (
                     "DKIM-Signature".to_string(),
-                    "v=1; a=rsa-sha256; d=change-meme.com; s=mail;".to_string(),
+                    "v=1; a=rsa-sha256; d=mailer.vendor.example; s=mail;".to_string(),
                 ),
                 (
                     "From".to_string(),
-                    "\"Microsoft\" <alerts@change-meme.com>".to_string(),
+                    "\"Microsoft\" <alerts@mailer.vendor.example>".to_string(),
                 ),
             ],
             vec![],
@@ -447,18 +535,20 @@ mod tests {
     #[tokio::test]
     async fn test_domain_verify_keeps_parent_subdomain_alignment() {
         let ctx = make_context(
-            "info@contact.acams.org",
+            "relay@mail.vendor.example",
             vec![
                 (
                     "Received".to_string(),
-                    "from mail.contact.acams.org (mail.contact.acams.org [203.0.113.20])"
-                        .to_string(),
+                    "from mail.vendor.example (mail.vendor.example [203.0.113.20])".to_string(),
                 ),
                 (
                     "DKIM-Signature".to_string(),
-                    "v=1; a=rsa-sha256; d=acams.org; s=mail;".to_string(),
+                    "v=1; a=rsa-sha256; d=vendor.example; s=mail;".to_string(),
                 ),
-                ("From".to_string(), "ACAMS <noreply@acams.org>".to_string()),
+                (
+                    "From".to_string(),
+                    "Fixture Association <newsletter@vendor.example>".to_string(),
+                ),
             ],
             vec![],
         );
@@ -481,7 +571,10 @@ mod tests {
                     "DKIM-Signature".to_string(),
                     "v=1; a=rsa-sha256; d=evil.example; s=mail;".to_string(),
                 ),
-                ("From".to_string(), "ACAMS <noreply@acams.org>".to_string()),
+                (
+                    "From".to_string(),
+                    "Fixture Association <newsletter@vendor.example>".to_string(),
+                ),
             ],
             vec![],
         );

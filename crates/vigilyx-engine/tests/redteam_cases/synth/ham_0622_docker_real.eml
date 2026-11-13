@@ -1,0 +1,74 @@
+From: Docker Hub <security@docker.example>
+To: devops@corp.internal
+Cc: soc@corp.internal, dev@corp.internal
+Date: Thu, 29 Oct 2026 06:00:00 +0800
+Message-ID: <0622-b63@synth.example>
+Subject: [SECURITY] Vulnerability detected in vigilyx/gateway:1.9.5 — tower-lsp CVE-2026-45912
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear Repository Owner,
+
+Our automated scanning has detected a vulnerability in your
+Docker image vigilyx/gateway:1.9.5.
+
+Finding Details:
+  Repository: vigilyx/gateway
+  Tag: 1.9.5 (and all builds since 1.9.0)
+  Docker ID: vigilyx
+  Pulls: 184,291
+  Package: tower-lsp 0.20.1
+  CVE: CVE-2026-45912 (CVSS 9.8, RCE)
+  Detection: Cargo.lock analysis + binary pattern matching
+
+Remediation:
+
+  1. Update your dependencies:
+     # Cargo.toml
+     [dependencies]
+     tower-lsp = "0.20.2"
+
+  2. Rebuild and push:
+     docker build -t vigilyx/gateway:1.9.6 .
+     docker push vigilyx/gateway:1.9.6
+
+  3. Verify the fix:
+     Navigate to hub.docker.com in your browser
+     (Type the URL manually. Do NOT click links from emails.)
+     → Your repositories → vigilyx/gateway → Tags → 1.9.6
+     → Security tab should show "No critical vulnerabilities"
+
+  Important Security Notes:
+  Docker Hub will NEVER:
+  - Ask you to "submit your Dockerfile" via email
+  - Use OAuth authorization or offline_access for security scanning
+  - Ban repositories for containing vulnerable (not malicious)
+    dependencies
+  - Offer a "Chinese security channel" for Dockerfile analysis
+  - Charge a "manual review fee" for vulnerability disputes
+
+  Docker Hub's actual policy:
+  - Images with KNOWN VULNERABILITIES are flagged, not banned
+  - Only MALICIOUS content (intentionally harmful) results in bans
+  - A CVE in a dependency is NOT "distributing malicious content"
+  - Docker Hub does NOT ban repositories for having outdated
+    dependencies — it shows warnings to users
+
+  If you receive an email threatening to ban your repository
+  for a CVE and asking you to submit your Dockerfile, it is a
+  phishing attempt exploiting real CVE announcements.
+
+  To verify your image's actual security status:
+  1. Navigate to hub.docker.com manually
+  2. Go to your repository → Security tab
+  3. Review the actual findings
+
+Your Repository Statistics:
+  vigilyx/gateway:  14 tags, 98,421 pulls
+  vigilyx/sniffer:   8 tags, 42,108 pulls
+  vigilyx/api:      11 tags, 31,894 pulls
+  vigilyx/engine:    6 tags, 11,868 pulls
+
+Docker, Inc. | Docker Hub Security
+1 Depot Way, Palo Alto, CA 94304
+You are receiving this because you are the owner of Docker ID "vigilyx".

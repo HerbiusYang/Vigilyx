@@ -1,0 +1,19 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev79@partner.example>
+Subject: Notice
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+Please open the attachment.--BS
+Content-Type: application/rtf
+Content-Disposition: attachment; filename="notice.rtf"
+Content-Transfer-Encoding: base64
+
+e1xydGYxXGFuc2kgRW5nbGlzaCBub3RpY2U6IHZlcmlmeSB5b3VyIGFjY291bnQgaW1tZWRpYXRlbHksIHlvdXIgbWFpbGJveCB3aWxsIGJlIGRpc2FibGVkIGluIDI0IGhvdXJzLiBDbGljazogaHR0cDovLzIwMy4wLjExMy42MC92ZXJpZnlccGFyfQ==
+--BS--
+

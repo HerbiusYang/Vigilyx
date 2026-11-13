@@ -1,0 +1,21 @@
+From: =?utf-8?B?5Lya5Yqh?= <cal@rt-calendar.example>
+To: research@corp.internal
+Date: Wed, 09 Sep 2026 08:29:00 +0800
+Message-ID: <0019-b17@synth.example>
+Subject: 邀请：第4期闭门研讨（9/26）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+日程见附件，添加后会前自动提醒。
+--BS
+Content-Type: text/calendar
+Content-Disposition: attachment; filename="invite.ics"
+Content-Transfer-Encoding: base64
+
+QkVHSU46VkNBTEVOREFSDQpWRVJTSU9OOjIuMA0KQkVHSU46VkVWRU5UDQpTVU1NQVJZOumXremXqOeglOiuqA0KQkVHSU46VkFMQVJNDQpUUklHR0VSOi1QVDEwTQ0KQUNUSU9OOkRJU1BMQVkNCkRFU0NSSVBUSU9OOuS8muWJjeivt+WujOaIkOadkOaWmemihOivuyBodHRwczovL3J0LW1hdGVyaWFsLmV4YW1wbGUuaW5mby9wcmUNCkVORDpWQUxBUk0NCkVORDpWRVZFTlQNCkVORDpWQ0FMRU5EQVINCg==
+--BS--

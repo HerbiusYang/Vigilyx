@@ -4,11 +4,12 @@
 #
 # Architecture:
 #   postgres   = PostgreSQL 17 database
-#   vigilyx    = API + Engine + Frontend (same container)
+#   vigilyx    = API + Frontend (control plane)
+#   engine     = dedicated threat-detection engine (mirror profile)
 #   sniffer    = traffic-capture probe (host networking + NET_RAW)
 #   ai         = Python NLP/LLM service (optional, enable as needed)
 #   clamav     = ClamAV virus scanning (optional, enable as needed)
-#   redis      = message bus (Pub/Sub)
+#   redis      = message bus (Streams data plane + Pub/Sub control plane)
 #
 # Usage:
 #   Passive mirror deployment:
@@ -21,6 +22,8 @@
 #     docker compose --profile mirror --profile ai --profile antivirus up -d
 #
 #   Inline MTA deployment:
+#     This starts vigilyx-mta but does not stop mirror-profile containers already running.
+#     Use ./deploy.sh --mta to switch an existing deployment and persist VIGILYX_MODE.
 #     docker compose --profile mta up -d
 #
 #   Mainland China (use the HF mirror):
@@ -34,7 +37,7 @@
 #   View logs:
 #     docker compose logs --tail 50 vigilyx
 #     docker compose logs --tail 50 sniffer
-#     docker compose logs --tail 50 engine   # (if using engine-standalone profile)
+#     docker compose --profile mirror logs --tail 50 engine
 #
 #   Specify the network interface:
 #     SNIFFER_INTERFACE=eth0 docker compose --profile mirror up -d
@@ -49,18 +52,30 @@
 
 name: vigilyx
 
+x-default-logging: &default-logging
+  driver: local
+  options:
+    max-size: "50m"
+    max-file: "5"
+    compress: "true"
+
 services:
 
   # -- PostgreSQL database --
   postgres:
     # SECURITY: Pinned to an immutable digest (tag kept for readability).
     # Review and bump periodically: re-resolve the digest when bumping the tag.
-    image: postgres:17.11-alpine@sha256:5d61573b31c206ae538c85893edeb6e320e1a9ffd838f0c9dca927fb6f765fa4
+    image: postgres:17.11-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
     container_name: vigilyx-postgres
+    logging: *default-logging
     ports:
       - "127.0.0.1:${PG_PORT:-5433}:5432"
     volumes:
       - vigilyx_pgdata:/var/lib/postgresql/data
+    # Dashboard aggregates use PostgreSQL parallel-query dynamic shared memory.
+    # Keep this above the default Docker 64 MiB limit so concurrent read-only
+    # stats requests cannot fail with "No space left on device".
+    shm_size: "512m"
     environment:
       - TZ=${SERVER_TIMEZONE:-Asia/Shanghai}
       - POSTGRES_USER=${PG_USER:-vigilyx}
@@ -68,15 +83,18 @@ services:
       - POSTGRES_DB=${PG_DB:-vigilyx}
     command: >
       postgres
-      -c shared_buffers=256MB
+      -c shared_buffers=${PG_SHARED_BUFFERS:-256MB}
       -c work_mem=16MB
-      -c maintenance_work_mem=128MB
-      -c effective_cache_size=512MB
+      -c maintenance_work_mem=${PG_MAINTENANCE_WORK_MEM:-128MB}
+      -c effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-512MB}
       -c max_connections=100
       -c wal_buffers=16MB
       -c checkpoint_completion_target=0.9
       -c random_page_cost=1.1
+      -c shared_preload_libraries=pg_stat_statements
+      -c track_io_timing=on
       -c log_min_duration_statement=1000
+      -c log_lock_waits=${PG_LOG_LOCK_WAITS:-on}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-vigilyx} -d ${PG_DB:-vigilyx}"]
       interval: 5s
@@ -84,12 +102,93 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # Schema owner authority exists only in this one-shot process. The runtime
+  # API/engine/MTA containers never receive PG_PASSWORD.
+  postgres-migrate:
+    image: vigilyx-api:${VIGILYX_IMAGE_TAG:-local}
+    container_name: vigilyx-postgres-migrate
+    logging: *default-logging
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=32m
+    environment:
+      - TZ=${SERVER_TIMEZONE:-Asia/Shanghai}
+      - RUST_LOG=${RUST_LOG:-info,vigilyx_api=info}
+      - VIGILYX_MIGRATE_ONLY=true
+      # Fail before queued DDL blocks later application queries behind a
+      # long-running backup or transaction. This limits lock acquisition only;
+      # once a migration owns its lock, the statement may finish normally.
+      - PGOPTIONS=-c lock_timeout=${PG_MIGRATION_LOCK_TIMEOUT_MS:-15000}
+      - DATABASE_URL=postgres://${PG_USER:-vigilyx}:${PG_PASSWORD}@postgres:5432/${PG_DB:-vigilyx}
+    command: ["./vigilyx-api"]
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # Bootstrap fixed non-owner runtime roles after the one-shot migration.
+  postgres-role-init:
+    image: postgres:17.11-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
+    container_name: vigilyx-postgres-role-init
+    logging: *default-logging
+    volumes:
+      - ./postgres-role-init.sh:/usr/local/bin/postgres-role-init.sh:ro
+    environment:
+      - PGHOST=postgres
+      - PGPORT=5432
+      - POSTGRES_USER=${PG_USER:-vigilyx}
+      - POSTGRES_PASSWORD=${PG_PASSWORD:?请在 .env 中设置 PG_PASSWORD}
+      - POSTGRES_DB=${PG_DB:-vigilyx}
+      - PG_API_PASSWORD=${PG_API_PASSWORD:?请在 .env 中设置 PG_API_PASSWORD}
+      - PG_ENGINE_PASSWORD=${PG_ENGINE_PASSWORD:?请在 .env 中设置 PG_ENGINE_PASSWORD}
+      - PG_MTA_PASSWORD=${PG_MTA_PASSWORD:?请在 .env 中设置 PG_MTA_PASSWORD}
+    command: ["/usr/local/bin/postgres-role-init.sh"]
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres-migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  # Out-of-band audit identity bootstrap. It runs with a non-owner DB role,
+  # never overwrites an existing account, and exits before the API starts.
+  audit-bootstrap:
+    image: vigilyx-api:${VIGILYX_IMAGE_TAG:-local}
+    container_name: vigilyx-audit-bootstrap
+    logging: *default-logging
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=32m
+    environment:
+      - TZ=${SERVER_TIMEZONE:-Asia/Shanghai}
+      - RUST_LOG=${RUST_LOG:-info,vigilyx_api=info}
+      - VIGILYX_PROVISION_AUDIT_ONLY=true
+      - DATABASE_URL=postgres://vigilyx_api:${PG_API_PASSWORD}@postgres:5432/${PG_DB:-vigilyx}
+      - AUDIT_USERNAME=${AUDIT_USERNAME:-privacy-auditor}
+      - AUDIT_BOOTSTRAP_PASSWORD=${AUDIT_BOOTSTRAP_PASSWORD:?请在 .env 中设置 AUDIT_BOOTSTRAP_PASSWORD}
+    command: ["./vigilyx-api"]
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres-role-init:
+        condition: service_completed_successfully
+    restart: "no"
+
   # -- Valkey message bus (Redis 7.4+ switched to the non-open RSALv2/SSPLv1 license, so it was replaced with BSD-3-Clause Valkey) --
   redis:
     # SECURITY: Pinned to an immutable digest (tag kept for readability).
     # Review and bump periodically: re-resolve the digest when bumping the tag.
     image: valkey/valkey:8.1.9-alpine@sha256:a038175878d66b9d274fbf8be73c0305e93798b83917647f167e18cef3c71eec
     container_name: vigilyx-redis
+    logging: *default-logging
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
@@ -100,29 +199,69 @@ services:
     environment:
       - TZ=${SERVER_TIMEZONE:-Asia/Shanghai}
       - REDIS_PASSWORD=${REDIS_PASSWORD:?请在 .env 中设置 REDIS_PASSWORD}
+      - REDIS_API_PASSWORD=${REDIS_API_PASSWORD:?请在 .env 中设置 REDIS_API_PASSWORD}
+      - REDIS_ENGINE_PASSWORD=${REDIS_ENGINE_PASSWORD:?请在 .env 中设置 REDIS_ENGINE_PASSWORD}
+      - REDIS_SNIFFER_PASSWORD=${REDIS_SNIFFER_PASSWORD:?请在 .env 中设置 REDIS_SNIFFER_PASSWORD}
+      - REDIS_MTA_PASSWORD=${REDIS_MTA_PASSWORD:?请在 .env 中设置 REDIS_MTA_PASSWORD}
     command: ["/usr/local/bin/valkey-entrypoint.sh"]
     healthcheck:
       # Pass the password via env vars so the -a flag does not expose it in ps/docker inspect
-      test: ["CMD-SHELL", "REDISCLI_AUTH=$$REDIS_PASSWORD valkey-cli ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$REDIS_PASSWORD valkey-cli --user vigilyx_health ping"]
       interval: 10s
       timeout: 3s
       retries: 5
     restart: unless-stopped
 
-  # -- Main service: API + Security Engine + Frontend --
+  # -- Optional Valkey read cache (never share the message-bus instance) --
+  # Enabled explicitly with --profile read-cache. It has no volume, no host
+  # port, and an eviction policy suitable only for disposable aggregates.
+  cache:
+    image: valkey/valkey:8.1.9-alpine@sha256:a038175878d66b9d274fbf8be73c0305e93798b83917647f167e18cef3c71eec
+    container_name: vigilyx-cache
+    logging: *default-logging
+    volumes:
+      - ./valkey-cache-entrypoint.sh:/usr/local/bin/valkey-cache-entrypoint.sh:ro
+    environment:
+      - TZ=${SERVER_TIMEZONE:-Asia/Shanghai}
+      - CACHE_REDIS_PASSWORD=${CACHE_REDIS_PASSWORD:-}
+      - CACHE_MAXMEMORY=${CACHE_MAXMEMORY:-256mb}
+    command: ["/usr/local/bin/valkey-cache-entrypoint.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$CACHE_REDIS_PASSWORD valkey-cli ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    profiles:
+      - read-cache
+    restart: unless-stopped
+
+  # -- Main service: API + Frontend control plane --
   vigilyx:
+    image: vigilyx-api:${VIGILYX_IMAGE_TAG:-local}
     build:
       context: ../..
       # Default: full mode (built inside Docker; first build ~8 minutes, faster incrementals afterward)
       # Development: switch to Dockerfile.api.fast (run deploy.sh --init first to initialize the build container)
       dockerfile: deploy/docker/Dockerfile.api
     container_name: vigilyx
+    logging: *default-logging
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=64m
+    networks:
+      - default
+      - sandbox_internal
     ports:
       - "${API_LISTEN:-127.0.0.1}:${API_PORT:-8088}:8088"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - vigilyx_data:/app/data
+      # Shared HTTP body spool written by the sniffer and managed by the API.
+      - http_temp_data:/app/data/tmp/http
       # Read-only host network counters. /sys/class/net entries are relative
       # symlinks, so their /sys/devices targets must be mounted as well.
       - /sys/class/net:/host/sys/class/net:ro
@@ -135,8 +274,14 @@ services:
       - API_PORT=8088
       # Authentication secrets (read from .env)
       - API_JWT_SECRET=${API_JWT_SECRET:?请在 .env 中设置 API_JWT_SECRET}
+      - VIGILYX_CONFIG_ENCRYPTION_KEY=${VIGILYX_CONFIG_ENCRYPTION_KEY:?请在 .env 中设置 VIGILYX_CONFIG_ENCRYPTION_KEY}
+      - API_USERNAME=${API_USERNAME:-admin}
       - API_PASSWORD=${API_PASSWORD:?请在 .env 中设置 API_PASSWORD}
-      - API_SECURE_COOKIE=${API_SECURE_COOKIE:-}
+      - API_TOKEN_EXPIRE_HOURS=${API_TOKEN_EXPIRE_HOURS:-12}
+      - API_SECURE_COOKIE=${API_SECURE_COOKIE:-true}
+      - API_CORS_ORIGINS=${API_CORS_ORIGINS:-}
+      # Preserve the API's JWT-derived fallback when no dedicated key is configured.
+      - VIGILYX_TRAINING_REDACTION_KEY=${VIGILYX_TRAINING_REDACTION_KEY:-${API_JWT_SECRET}}
       # Trusted reverse proxies (defaults already cover host Caddy/Nginx and the built-in Compose Caddy)
       - TRUSTED_PROXY_IPS=${TRUSTED_PROXY_IPS:-127.0.0.1,::1}
       - TRUSTED_PROXY_HOSTS=${TRUSTED_PROXY_HOSTS:-localhost,host.docker.internal,caddy,vigilyx-caddy}
@@ -144,28 +289,76 @@ services:
       - INTERNAL_API_SOURCE_CIDRS=${INTERNAL_API_SOURCE_CIDRS:-127.0.0.1/32,::1/128,172.30.250.0/24}
       # Internal inter-service auth token (sniffer/engine -> API)
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?请在 .env 中设置 INTERNAL_API_TOKEN}
+      - SNIFFER_API_TOKEN=${SNIFFER_API_TOKEN:?请在 .env 中设置 SNIFFER_API_TOKEN}
+      - MTA_API_TOKEN=${MTA_API_TOKEN:?请在 .env 中设置 MTA_API_TOKEN}
       # Dedicated internal auth token for the AI service (API/engine -> AI); must differ from INTERNAL_API_TOKEN
       - AI_INTERNAL_TOKEN=${AI_INTERNAL_TOKEN:?请在 .env 中设置 AI_INTERNAL_TOKEN}
-      - DATABASE_URL=postgres://${PG_USER:-vigilyx}:${PG_PASSWORD}@postgres:5432/${PG_DB:-vigilyx}
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - DATABASE_URL=postgres://vigilyx_api:${PG_API_PASSWORD}@postgres:5432/${PG_DB:-vigilyx}
+      - REDIS_URL=redis://vigilyx_api:${REDIS_API_PASSWORD}@redis:6379
+      - MQ_AUTH_TOKEN=${MQ_AUTH_TOKEN:?请在 .env 中设置 MQ_AUTH_TOKEN}
+      # Optional operational read cache. These values are ignored while all
+      # read-cache switches remain false; the cache is never a readiness dependency.
+      - READ_CACHE_ENABLED=${READ_CACHE_ENABLED:-false}
+      - READ_CACHE_SHADOW_WRITE=${READ_CACHE_SHADOW_WRITE:-false}
+      - CACHE_REDIS_HOST=${CACHE_REDIS_HOST:-cache}
+      - CACHE_REDIS_PORT=${CACHE_REDIS_PORT:-6379}
+      - CACHE_REDIS_PASSWORD=${CACHE_REDIS_PASSWORD:-}
+      - CACHE_DEPLOYMENT_ID=${CACHE_DEPLOYMENT_ID:-default}
+      - CACHE_MAX_PAYLOAD_BYTES=${CACHE_MAX_PAYLOAD_BYTES:-262144}
+      - CACHE_OPERATION_TIMEOUT_MS=${CACHE_OPERATION_TIMEOUT_MS:-150}
+      - CACHE_REFRESH_LEASE_SECS=${CACHE_REFRESH_LEASE_SECS:-45}
+      - CACHE_SECURITY_STATS_ENABLED=${CACHE_SECURITY_STATS_ENABLED:-false}
+      - CACHE_SECURITY_STATS_SHADOW_WRITE=${CACHE_SECURITY_STATS_SHADOW_WRITE:-false}
+      - CACHE_DELIVERY_STATS_ENABLED=${CACHE_DELIVERY_STATS_ENABLED:-false}
+      - CACHE_LOGIN_STATS_ENABLED=${CACHE_LOGIN_STATS_ENABLED:-false}
+      - CACHE_SESSION_COUNTS_ENABLED=${CACHE_SESSION_COUNTS_ENABLED:-false}
       # AI service address (container-to-container communication over the Docker network)
       - AI_SERVICE_URL=http://ai:8900
       - AI_ENABLED=${AI_ENABLED:-false}
+      # OCR only runs when explicitly enabled; it accepts email-contained image bytes only.
+      - AI_VISUAL_OCR_ENABLED=${AI_VISUAL_OCR_ENABLED:-false}
       - CLAMAV_ENABLED=${CLAMAV_ENABLED:-false}
       # Immutable governed YARA generation (empty keeps built-ins only).
       - YARA_PACK_MANIFEST=${YARA_PACK_MANIFEST:-}
       - YARA_PACK_MIN_RULES=${YARA_PACK_MIN_RULES:-0}
       - ENGINE_MAX_CONCURRENT_EMAILS=${ENGINE_MAX_CONCURRENT_EMAILS:-}
+      - ENGINE_INLINE_WORKERS=${ENGINE_INLINE_WORKERS:-4}
+      # Stage-B nested-message identity/freeze compound stays disabled unless separately enabled after shadow validation.
+      - VIGILYX_NESTED_MESSAGE_IDENTITY_FREEZE_ENABLED=${VIGILYX_NESTED_MESSAGE_IDENTITY_FREEZE_ENABLED:-false}
+      - VIGILYX_EMAIL_SEMANTIC_STAGE_B=${VIGILYX_EMAIL_SEMANTIC_STAGE_B:-false}
+      - VIGILYX_EXTERNAL_CREDENTIAL_LINK_STAGE_B=${VIGILYX_EXTERNAL_CREDENTIAL_LINK_STAGE_B:-false}
+      - VIGILYX_REPLY_TO_HANDOFF_STAGE_B=${VIGILYX_REPLY_TO_HANDOFF_STAGE_B:-false}
+      - VIGILYX_EMAIL_ATTACK_HARDENING_STAGE_B=${VIGILYX_EMAIL_ATTACK_HARDENING_STAGE_B:-false}
+      # Passive mirror outbound attribution: exact SMTP egress/relay IPs or CIDRs.
+      # Local MAIL FROM from other sources remains unknown to avoid spoofing bypass.
+      - OUTBOUND_SMTP_RELAY_IPS=${OUTBOUND_SMTP_RELAY_IPS:-}
       # Inbound mail-server IPs (comma-separated): once configured, the engine analyzes only sessions delivered to these IPs,
       # skipping intermediate forwarding hops. If unset, it analyzes all sessions.
       - INBOUND_MAIL_SERVERS=${INBOUND_MAIL_SERVERS:-}
+      - VIGILYX_TRUSTED_AUTH_SERV_IDS=${VIGILYX_TRUSTED_AUTH_SERV_IDS:-}
+      - VIGILYX_INTERNAL_DOMAINS=${VIGILYX_INTERNAL_DOMAINS:-}
       # ClamAV virus scanning (container-to-container over the Docker network)
       - CLAMAV_HOST=${CLAMAV_HOST:-clamav}
       - CLAMAV_PORT=${CLAMAV_PORT:-3310}
-      # CAPEv2 sandbox (container-to-container over the Docker network)
-      - SANDBOX_URL=${SANDBOX_URL:-http://sandbox:8000}
+      # CAPEv2 sandbox (only reachable over the dedicated sandbox network)
+      # Empty by default: setting a URL without a token only creates a noisy
+      # startup error. Enable both values together with the sandbox profile.
+      - SANDBOX_URL=${SANDBOX_URL:-}
       - SANDBOX_API_TOKEN=${SANDBOX_API_TOKEN:-}
       - SANDBOX_TIMEOUT_SECS=${SANDBOX_TIMEOUT_SECS:-300}
+      # Dynamic URL detonation is deferred and opt-in; never part of MTA inline.
+      - SANDBOX_URL_ANALYSIS_ENABLED=${SANDBOX_URL_ANALYSIS_ENABLED:-false}
+      - SANDBOX_URL_ANALYSIS_TIMEOUT_SECS=${SANDBOX_URL_ANALYSIS_TIMEOUT_SECS:-120}
+      - PROCESS_SANDBOX_ENABLED=${PROCESS_SANDBOX_ENABLED:-false}
+      - PROCESS_SANDBOX_LAUNCHER=${PROCESS_SANDBOX_LAUNCHER:-}
+      - PROCESS_SANDBOX_WORKER=${PROCESS_SANDBOX_WORKER:-}
+      - PROCESS_SANDBOX_PROFILE=${PROCESS_SANDBOX_PROFILE:-offline_snapshot_v1}
+      - PROCESS_SANDBOX_LAUNCHER_ARGS=${PROCESS_SANDBOX_LAUNCHER_ARGS:-}
+      - PROCESS_SANDBOX_TIMEOUT_SECS=${PROCESS_SANDBOX_TIMEOUT_SECS:-20}
+      - PROCESS_SANDBOX_MAX_OUTPUT_BYTES=${PROCESS_SANDBOX_MAX_OUTPUT_BYTES:-65536}
+      - PROCESS_SANDBOX_MAX_STDERR_BYTES=${PROCESS_SANDBOX_MAX_STDERR_BYTES:-16384}
+      - PROCESS_SANDBOX_MAX_MEMORY_BYTES=${PROCESS_SANDBOX_MAX_MEMORY_BYTES:-1073741824}
+      - PROCESS_SANDBOX_MAX_CPU_SECS=${PROCESS_SANDBOX_MAX_CPU_SECS:-15}
       # Portal mode: when true, visiting / automatically redirects to /portal (simplified mail-security UI)
       - PORTAL_MODE=${PORTAL_MODE:-false}
       # Deployment mode: mirror (out-of-band mirroring, default) | mta (MTA proxy)
@@ -179,11 +372,15 @@ services:
       # (decoupled from MTA_INLINE_TIMEOUT_SECS; the full pipeline can spend ~8s on NLP alone)
       - RELEASE_RESCAN_TIMEOUT_SECS=${RELEASE_RESCAN_TIMEOUT_SECS:-30}
       # Prevent internal service requests from going through a proxy (ai/clamav/sandbox containers connect directly over the Docker network)
-      - no_proxy=localhost,127.0.0.1,redis,ai,postgres,clamav,sandbox
-      - NO_PROXY=localhost,127.0.0.1,redis,ai,postgres,clamav,sandbox
+      - no_proxy=localhost,127.0.0.1,redis,cache,ai,postgres,clamav,sandbox
+      - NO_PROXY=localhost,127.0.0.1,redis,cache,ai,postgres,clamav,sandbox
     depends_on:
       postgres:
         condition: service_healthy
+      postgres-role-init:
+        condition: service_completed_successfully
+      audit-bootstrap:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     restart: unless-stopped
@@ -197,32 +394,51 @@ services:
       # Development: switch to Dockerfile.sniffer.fast (run deploy.sh --init first)
       dockerfile: deploy/docker/Dockerfile.sniffer
     container_name: vigilyx-sniffer
+    logging: *default-logging
+    read_only: true
     network_mode: host
+    cap_drop:
+      - ALL
     cap_add:
       - NET_RAW
       - NET_ADMIN
+      # Required only by the root entrypoint while setpriv changes to the
+      # unprivileged vigilyx UID/GID. They are not placed in the child
+      # process's inheritable or ambient capability sets.
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=64m
+    volumes:
+      # Give the capture process access only to the cross-container HTTP body
+      # spool, not to the broader vigilyx_data volume (which also holds packs).
+      - http_temp_data:/app/data/tmp/http
     environment:
       - TZ=${SERVER_TIMEZONE:-Asia/Shanghai}
       - RUST_LOG=${RUST_LOG_SNIFFER:-info,vigilyx_sniffer=info}
       - SNIFFER_INTERFACE=${SNIFFER_INTERFACE:-eth0}
       - SNIFFER_PROMISCUOUS=${SNIFFER_PROMISCUOUS:-true}
       # Connect directly to the host under host-network mode
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@127.0.0.1:${REDIS_PORT:-6379}
-      # Note: PG is mapped to host port 5433 (matching the postgres service ports setting)
-      - DATABASE_URL=postgres://${PG_USER:-vigilyx}:${PG_PASSWORD}@127.0.0.1:${PG_PORT:-5433}/${PG_DB:-vigilyx}
+      - REDIS_URL=redis://vigilyx_sniffer:${REDIS_SNIFFER_PASSWORD}@127.0.0.1:${REDIS_PORT:-6379}
+      - MQ_AUTH_TOKEN=${MQ_AUTH_TOKEN:?请在 .env 中设置 MQ_AUTH_TOKEN}
       - API_HOST=127.0.0.1
       - API_PORT=${API_PORT:-8088}
-      # Internal inter-service auth token (must match the vigilyx container)
-      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?请在 .env 中设置 INTERNAL_API_TOKEN}
+      # Dedicated token for sniffer-only status/import/config routes.
+      - SNIFFER_API_TOKEN=${SNIFFER_API_TOKEN:?请在 .env 中设置 SNIFFER_API_TOKEN}
       - SNIFFER_CAPTURE_BUFFER_MB=${SNIFFER_CAPTURE_BUFFER_MB:-256}
       # Optional: token handshake for --remote-listen pcap ingestion (R5 F7)
       - REMOTE_LISTEN_TOKEN=${REMOTE_LISTEN_TOKEN:-}
       - SNIFFER_WORKERS=${SNIFFER_WORKERS:-16}
+      # Optional CPU isolation; host tuning reserves these CPUs from NIC IRQs.
+      - SNIFFER_WORKER_CPU_LIST=${SNIFFER_WORKER_CPU_LIST:-}
+      - SNIFFER_CAPTURE_CPU=${SNIFFER_CAPTURE_CPU:-}
       - SMTP_PORTS=${SMTP_PORTS:-25,465,587,2525,2526}
       - POP3_PORTS=${POP3_PORTS:-110,995}
       - IMAP_PORTS=${IMAP_PORTS:-143,993}
       - HTTP_PORTS=${HTTP_PORTS:-80,443,8080}
-      # Data security: webmail servers are configured through the UI settings page and stored in the Redis key vigilyx:config:sniffer
+      # Data security: webmail server/port settings are saved through the UI and stored in PostgreSQL config.sniffer_config
     depends_on:
       redis:
         condition: service_healthy
@@ -237,6 +453,14 @@ services:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.ai
     container_name: vigilyx-ai
+    logging: *default-logging
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=512m
+      - /dev/shm:rw,nosuid,nodev,noexec,size=512m
     ports:
       - "127.0.0.1:8900:8900"
     volumes:
@@ -251,6 +475,12 @@ services:
       - HF_HOME=/app/.hf_cache
       - HF_ENDPOINT=${HF_ENDPOINT:-https://huggingface.co}
       - VIGILYX_NUM_THREADS=${VIGILYX_NUM_THREADS:-32}
+      - AI_MAX_CONCURRENCY=${AI_MAX_CONCURRENCY:-4}
+      - AI_VT_MAX_CONCURRENCY=${AI_VT_MAX_CONCURRENCY:-2}
+      - AI_NLP_SEGMENT_CHARS=${AI_NLP_SEGMENT_CHARS:-3000}
+      - AI_NLP_MAX_SEGMENTS=${AI_NLP_MAX_SEGMENTS:-8}
+      - LLM_EXTERNAL_EGRESS_ENABLED=${LLM_EXTERNAL_EGRESS_ENABLED:-false}
+      - VIGILYX_INTERNAL_DOMAINS=${VIGILYX_INTERNAL_DOMAINS:-}
       - PYTHONUNBUFFERED=1
       # SEC-H07: internal AI-service auth token (shared only with components that call AI; do not reuse INTERNAL_API_TOKEN)
       - AI_INTERNAL_TOKEN=${AI_INTERNAL_TOKEN:?请在 .env 中设置 AI_INTERNAL_TOKEN}
@@ -277,33 +507,82 @@ services:
       # Development: docker-compose.fast.yml overrides this with Dockerfile.engine.fast
       dockerfile: deploy/docker/Dockerfile.engine
     container_name: vigilyx-engine-standalone
+    logging: *default-logging
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=64m
+    networks:
+      - default
+      - sandbox_internal
     volumes:
       - vigilyx_data:/app/data
+      # The engine only consumes bodies; cleanup remains an API responsibility.
+      - http_temp_data:/app/data/tmp/http:ro
+      # Optional semantic intent ensemble; see SEMANTIC_INTENT_MODEL_DIR.
+      - vigilyx_intent_models:/app/models/intent:ro
     environment:
       - TZ=${SERVER_TIMEZONE:-Asia/Shanghai}
       - RUST_LOG=${RUST_LOG:-info,vigilyx_engine=info}
       - LOG_FORMAT=json
-      - DATABASE_URL=postgres://${PG_USER:-vigilyx}:${PG_PASSWORD}@postgres:5432/${PG_DB:-vigilyx}
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - DATABASE_URL=postgres://vigilyx_engine:${PG_ENGINE_PASSWORD}@postgres:5432/${PG_DB:-vigilyx}
+      - VIGILYX_CONFIG_ENCRYPTION_KEY=${VIGILYX_CONFIG_ENCRYPTION_KEY:?请在 .env 中设置 VIGILYX_CONFIG_ENCRYPTION_KEY}
+      - REDIS_URL=redis://vigilyx_engine:${REDIS_ENGINE_PASSWORD}@redis:6379
+      - MQ_AUTH_TOKEN=${MQ_AUTH_TOKEN:?请在 .env 中设置 MQ_AUTH_TOKEN}
       - AI_SERVICE_URL=http://ai:8900
       - AI_ENABLED=${AI_ENABLED:-false}
+      - AI_VISUAL_OCR_ENABLED=${AI_VISUAL_OCR_ENABLED:-false}
+      - VIGILYX_INTERNAL_DOMAINS=${VIGILYX_INTERNAL_DOMAINS:-}
       - CLAMAV_ENABLED=${CLAMAV_ENABLED:-false}
       # Immutable governed YARA generation (empty keeps built-ins only).
       - YARA_PACK_MANIFEST=${YARA_PACK_MANIFEST:-}
       - YARA_PACK_MIN_RULES=${YARA_PACK_MIN_RULES:-0}
+      - YARA_PACK_ALLOWED_LICENSES=${YARA_PACK_ALLOWED_LICENSES:-MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,DRL-1.1,DRUL-1.0,GPL-2.0-only,GPL-3.0-only}
       - ENGINE_MAX_CONCURRENT_EMAILS=${ENGINE_MAX_CONCURRENT_EMAILS:-}
+      - ENGINE_INLINE_WORKERS=${ENGINE_INLINE_WORKERS:-4}
       # Inter-service auth tokens (must match the main vigilyx container)
       - AI_INTERNAL_TOKEN=${AI_INTERNAL_TOKEN:?请在 .env 中设置 AI_INTERNAL_TOKEN}
       - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?请在 .env 中设置 INTERNAL_API_TOKEN}
+      # Passive mirror outbound attribution: exact SMTP egress/relay IPs or CIDRs.
+      - OUTBOUND_SMTP_RELAY_IPS=${OUTBOUND_SMTP_RELAY_IPS:-}
       # Inbound mail-server IPs (must match the main vigilyx container)
       - INBOUND_MAIL_SERVERS=${INBOUND_MAIL_SERVERS:-}
+      - VIGILYX_TRUSTED_AUTH_SERV_IDS=${VIGILYX_TRUSTED_AUTH_SERV_IDS:-}
+      - VIGILYX_INTERNAL_DOMAINS=${VIGILYX_INTERNAL_DOMAINS:-}
       # ClamAV virus scanning
       - CLAMAV_HOST=${CLAMAV_HOST:-clamav}
       - CLAMAV_PORT=${CLAMAV_PORT:-3310}
-      # CAPEv2 sandbox
-      - SANDBOX_URL=${SANDBOX_URL:-http://sandbox:8000}
+      # CAPEv2 sandbox (only reachable over the dedicated sandbox network)
+      - SANDBOX_URL=${SANDBOX_URL:-}
       - SANDBOX_API_TOKEN=${SANDBOX_API_TOKEN:-}
       - SANDBOX_TIMEOUT_SECS=${SANDBOX_TIMEOUT_SECS:-300}
+      - SANDBOX_URL_ANALYSIS_ENABLED=${SANDBOX_URL_ANALYSIS_ENABLED:-false}
+      - SANDBOX_URL_ANALYSIS_TIMEOUT_SECS=${SANDBOX_URL_ANALYSIS_TIMEOUT_SECS:-120}
+      - PROCESS_SANDBOX_ENABLED=${PROCESS_SANDBOX_ENABLED:-false}
+      - PROCESS_SANDBOX_LAUNCHER=${PROCESS_SANDBOX_LAUNCHER:-}
+      - PROCESS_SANDBOX_WORKER=${PROCESS_SANDBOX_WORKER:-}
+      - PROCESS_SANDBOX_PROFILE=${PROCESS_SANDBOX_PROFILE:-offline_snapshot_v1}
+      - PROCESS_SANDBOX_LAUNCHER_ARGS=${PROCESS_SANDBOX_LAUNCHER_ARGS:-}
+      - PROCESS_SANDBOX_TIMEOUT_SECS=${PROCESS_SANDBOX_TIMEOUT_SECS:-20}
+      - PROCESS_SANDBOX_MAX_OUTPUT_BYTES=${PROCESS_SANDBOX_MAX_OUTPUT_BYTES:-65536}
+      - PROCESS_SANDBOX_MAX_STDERR_BYTES=${PROCESS_SANDBOX_MAX_STDERR_BYTES:-16384}
+      - PROCESS_SANDBOX_MAX_MEMORY_BYTES=${PROCESS_SANDBOX_MAX_MEMORY_BYTES:-1073741824}
+      - PROCESS_SANDBOX_MAX_CPU_SECS=${PROCESS_SANDBOX_MAX_CPU_SECS:-15}
+      # Stage-B nested-message identity/freeze compound stays disabled unless separately enabled after shadow validation.
+      - VIGILYX_NESTED_MESSAGE_IDENTITY_FREEZE_ENABLED=${VIGILYX_NESTED_MESSAGE_IDENTITY_FREEZE_ENABLED:-false}
+      - VIGILYX_EMAIL_SEMANTIC_STAGE_B=${VIGILYX_EMAIL_SEMANTIC_STAGE_B:-false}
+      - VIGILYX_EXTERNAL_CREDENTIAL_LINK_STAGE_B=${VIGILYX_EXTERNAL_CREDENTIAL_LINK_STAGE_B:-false}
+      - VIGILYX_REPLY_TO_HANDOFF_STAGE_B=${VIGILYX_REPLY_TO_HANDOFF_STAGE_B:-false}
+      - VIGILYX_EMAIL_ATTACK_HARDENING_STAGE_B=${VIGILYX_EMAIL_ATTACK_HARDENING_STAGE_B:-false}
+      # Semantic intent model: packaged ensemble directory inside the model volume,
+      # e.g. /app/models/intent/semantic-intent-v2. Empty keeps it off.
+      - SEMANTIC_INTENT_MODEL_DIR=${SEMANTIC_INTENT_MODEL_DIR:-}
+      - SEMANTIC_INTENT_THREADS=${SEMANTIC_INTENT_THREADS:-4}
+      # Scoring threshold. Set: the model replaces the semantic rule analysis and
+      # hits enter the verdict. Empty: shadow mode beside the rule analysis.
+      - SEMANTIC_INTENT_SCORE_THRESHOLD=${SEMANTIC_INTENT_SCORE_THRESHOLD:-}
       # Prevent internal service requests from going through a proxy
       - no_proxy=localhost,127.0.0.1,redis,ai,postgres,clamav,sandbox
       - NO_PROXY=localhost,127.0.0.1,redis,ai,postgres,clamav,sandbox
@@ -317,7 +596,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      postgres-role-init:
+        condition: service_completed_successfully
       redis:
+        condition: service_healthy
+      vigilyx:
         condition: service_healthy
     profiles:
       - mirror
@@ -330,6 +613,7 @@ services:
     # SECURITY: immutable upstream base image; review and bump periodically.
     image: clamav/clamav:1.5.4_base@sha256:a3c78b2f808ea797f842c6bca1c5f0a54a3d1182ab2efac1884510f667e44f56
     container_name: vigilyx-clamav
+    logging: *default-logging
     ports:
       - "127.0.0.1:3310:3310"
     volumes:
@@ -361,18 +645,23 @@ services:
       context: ./sandbox
       dockerfile: Dockerfile
       args:
-        # Must be pinned to an immutable tag/commit in .env or on the command line; the Dockerfile rejects empty values or drifting HEAD refs
+        # Must be pinned to a full 40-character immutable commit SHA in .env.
+        # The Dockerfile rejects tags, branches, abbreviated SHAs, and empty values.
         CAPEV2_REF: ${CAPEV2_REF:-}
     image: vigilyx-sandbox:latest
     container_name: vigilyx-sandbox
+    logging: *default-logging
     # SECURITY ACCEPTED RISK: privileged is required by KVM/libvirt for VM-based
-    # malware analysis.  The sandbox profile is opt-in (--profile sandbox) and the
-    # container is network-isolated.  Mitigations:
-    #   - Build pins CAPEV2_REF to an immutable commit (Dockerfile rejects empty/HEAD)
+    # malware analysis. The sandbox profile is opt-in and this container is on a
+    # dedicated network shared only with the API/engine callers; it is not placed
+    # on the Redis/PostgreSQL default network. Mitigations:
+    #   - Build pins CAPEV2_REF to a full commit SHA (Dockerfile validates and re-checks HEAD)
     #   - REST API (8000) and ResultServer (2042) bind to 127.0.0.1 only
     #   - NOPASSWD sudo is scoped to the cape user inside the container
     # Review periodically; replace with rootless Podman + sysbox when feasible.
     privileged: true
+    networks:
+      - sandbox_internal
     ports:
       - "127.0.0.1:8000:8000"  # CAPEv2 REST API
       - "127.0.0.1:2042:2042"  # ResultServer (VM -> CAPE callback path)
@@ -385,8 +674,11 @@ services:
     # Therefore the sandbox container does not set proxy environment variables.
     environment:
       - TZ=${SERVER_TIMEZONE:-Asia/Shanghai}
+      # The engine refuses to connect without this token; keep the sandbox
+      # unhealthy when an operator forgot to provision the shared secret.
+      - SANDBOX_API_TOKEN=${SANDBOX_API_TOKEN:-}
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/apiv2/cuckoo/status/ || exit 1"]
+      test: ["CMD-SHELL", "test -n \"$$SANDBOX_API_TOKEN\" && curl -sf http://localhost:8000/apiv2/cuckoo/status/ || exit 1"]
       interval: 60s
       timeout: 15s
       start_period: 300s
@@ -414,6 +706,7 @@ services:
     # Review and bump periodically: re-resolve the digest when bumping the tag.
     image: caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
     container_name: vigilyx-caddy
+    logging: *default-logging
     ports:
       - "80:80"
       - "443:443"
@@ -443,24 +736,63 @@ services:
       - tls
     restart: unless-stopped
 
+  # Copy host-owned TLS material into an MTA-only volume. The short-lived
+  # installer runs as root so the source key can remain mode 600 on the host;
+  # the long-lived MTA still runs as the unprivileged image user.
+  mta-cert-install:
+    image: vigilyx-mta:${VIGILYX_IMAGE_TAG:-local}
+    container_name: vigilyx-mta-cert-install
+    logging: *default-logging
+    user: "0:0"
+    read_only: true
+    network_mode: "none"
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ${MTA_TLS_CERT_SOURCE:-./certs/mta.crt}:/source/mta.crt:ro
+      - ${MTA_TLS_KEY_SOURCE:-./certs/mta.key}:/source/mta.key:ro
+      - mta_certs:/target
+    entrypoint: ["/bin/sh", "-eu", "-c"]
+    command:
+      - |
+        test -f /source/mta.crt && test -f /source/mta.key
+        install -o vigilyx -g vigilyx -m 0444 /source/mta.crt /target/mta.crt
+        install -o vigilyx -g vigilyx -m 0400 /source/mta.key /target/mta.key
+    healthcheck:
+      disable: true
+    profiles:
+      - mta
+    restart: "no"
+
   # -- MTA proxy (optional, replaces the sniffer inline-detection mode) --
   # Enable with: docker compose --profile mta up -d
   mta:
+    image: vigilyx-mta:${VIGILYX_IMAGE_TAG:-local}
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.mta
     container_name: vigilyx-mta
-    # Expose only 25/465. Keep 587 submission closed until SMTP AUTH is implemented to avoid an unauthenticated relay surface.
+    logging: *default-logging
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=64m
+    # Expose only the configured SMTP/SMTPS ports. Keep 587 submission closed until SMTP AUTH is implemented.
     ports:
-      - "${MTA_LISTEN:-127.0.0.1}:${MTA_SMTP_PORT:-25}:25"
-      - "${MTA_LISTEN:-127.0.0.1}:${MTA_SMTPS_PORT:-465}:465"
+      - "${MTA_LISTEN:-127.0.0.1}:${MTA_SMTP_PORT:-25}:${MTA_SMTP_PORT:-25}"
+      - "${MTA_LISTEN:-127.0.0.1}:${MTA_SMTPS_PORT:-465}:${MTA_SMTPS_PORT:-465}"
     volumes:
       - vigilyx_data:/app/data
+      - mta_certs:/app/certs:ro
     environment:
       - TZ=${SERVER_TIMEZONE:-Asia/Shanghai}
       - RUST_LOG=${RUST_LOG_MTA:-info,vigilyx_mta=info,vigilyx_engine=info}
-      - DATABASE_URL=postgres://${PG_USER:-vigilyx}:${PG_PASSWORD}@postgres:5432/${PG_DB:-vigilyx}
-      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - DATABASE_URL=postgres://vigilyx_mta:${PG_MTA_PASSWORD}@postgres:5432/${PG_DB:-vigilyx}
+      - VIGILYX_CONFIG_ENCRYPTION_KEY=${VIGILYX_CONFIG_ENCRYPTION_KEY:?请在 .env 中设置 VIGILYX_CONFIG_ENCRYPTION_KEY}
+      - REDIS_URL=redis://vigilyx_mta:${REDIS_MTA_PASSWORD}@redis:6379
+      - MQ_AUTH_TOKEN=${MQ_AUTH_TOKEN:?请在 .env 中设置 MQ_AUTH_TOKEN}
       - MTA_DOWNSTREAM_HOST=${MTA_DOWNSTREAM_HOST:-127.0.0.1}
       - MTA_DOWNSTREAM_PORT=${MTA_DOWNSTREAM_PORT:-25}
       - MTA_DOWNSTREAM_STARTTLS=${MTA_DOWNSTREAM_STARTTLS:-true}
@@ -470,26 +802,68 @@ services:
       - MTA_OUTBOUND_STARTTLS=${MTA_OUTBOUND_STARTTLS:-true}
       # Local-domain allowlist; leaving it empty makes the MTA reject all RCPT TO commands in fail-closed mode
       - MTA_LOCAL_DOMAINS=${MTA_LOCAL_DOMAINS:-}
-      - MTA_TLS_CERT=${MTA_TLS_CERT:-}
-      - MTA_TLS_KEY=${MTA_TLS_KEY:-}
+      # Internal SMTP servers allowed to submit local-domain mail for external delivery.
+      - MTA_TRUSTED_UPSTREAM_CIDRS=${MTA_TRUSTED_UPSTREAM_CIDRS:-}
+      - MTA_TLS_CERT=${MTA_TLS_CERT:-/app/certs/mta.crt}
+      - MTA_TLS_KEY=${MTA_TLS_KEY:-/app/certs/mta.key}
+      - MTA_LISTEN_HOST=${MTA_LISTEN_HOST:-0.0.0.0}
+      - MTA_SMTP_PORT=${MTA_SMTP_PORT:-25}
+      - MTA_SMTPS_PORT=${MTA_SMTPS_PORT:-465}
       - MTA_HOSTNAME=${MTA_HOSTNAME:-vigilyx-mta}
       - MTA_INLINE_TIMEOUT_SECS=${MTA_INLINE_TIMEOUT_SECS:-8}
       - MTA_FAIL_OPEN=${MTA_FAIL_OPEN:-false}
       - MTA_REQUIRE_STARTTLS=${MTA_REQUIRE_STARTTLS:-true}
       - MTA_MAX_CONNECTIONS=${MTA_MAX_CONNECTIONS:-100}
+      # Per-source-IP cap defaults to 10; raise only for trusted relays that
+      # multiplex many sessions, while keeping the global cap and memory
+      # budget as the final resource guards.
+      - MTA_MAX_CONNECTIONS_PER_IP=${MTA_MAX_CONNECTIONS_PER_IP:-10}
+      # Shared DATA/BDAT memory budget across all connections (32-1024 MiB).
+      # A connection count cap alone still permits synchronized large buffers.
+      - MTA_MESSAGE_MEMORY_BUDGET_MB=${MTA_MESSAGE_MEMORY_BUDGET_MB:-256}
       - MTA_MAX_RECIPIENTS=${MTA_MAX_RECIPIENTS:-50}
+      - MTA_DLP_ENABLED=${MTA_DLP_ENABLED:-true}
+      - MTA_DLP_ACTION=${MTA_DLP_ACTION:-quarantine}
+      - MTA_DLP_MIN_LEVEL=${MTA_DLP_MIN_LEVEL:-3}
       # API status reporting target (inline verdict metrics heartbeat)
       - MTA_API_HOST=${MTA_API_HOST:-vigilyx}
       - MTA_API_PORT=${MTA_API_PORT:-8088}
       # AI service (optional)
       - AI_SERVICE_URL=${AI_SERVICE_URL:-http://ai:8900}
       - AI_ENABLED=${AI_ENABLED:-false}
+      - AI_VISUAL_OCR_ENABLED=${AI_VISUAL_OCR_ENABLED:-false}
+      - AI_INTERNAL_TOKEN=${AI_INTERNAL_TOKEN:?请在 .env 中设置 AI_INTERNAL_TOKEN}
+      # Optional antivirus integration used by the embedded engine.
+      - CLAMAV_ENABLED=${CLAMAV_ENABLED:-false}
+      - CLAMAV_HOST=${CLAMAV_HOST:-clamav}
+      - CLAMAV_PORT=${CLAMAV_PORT:-3310}
+      # URL detonation is deferred and opt-in; never part of MTA inline.
+      - SANDBOX_URL_ANALYSIS_ENABLED=${SANDBOX_URL_ANALYSIS_ENABLED:-false}
+      - SANDBOX_URL_ANALYSIS_TIMEOUT_SECS=${SANDBOX_URL_ANALYSIS_TIMEOUT_SECS:-120}
+      - PROCESS_SANDBOX_ENABLED=${PROCESS_SANDBOX_ENABLED:-false}
+      - PROCESS_SANDBOX_LAUNCHER=${PROCESS_SANDBOX_LAUNCHER:-}
+      - PROCESS_SANDBOX_WORKER=${PROCESS_SANDBOX_WORKER:-}
+      - PROCESS_SANDBOX_PROFILE=${PROCESS_SANDBOX_PROFILE:-offline_snapshot_v1}
+      - PROCESS_SANDBOX_LAUNCHER_ARGS=${PROCESS_SANDBOX_LAUNCHER_ARGS:-}
+      - PROCESS_SANDBOX_TIMEOUT_SECS=${PROCESS_SANDBOX_TIMEOUT_SECS:-20}
+      - PROCESS_SANDBOX_MAX_OUTPUT_BYTES=${PROCESS_SANDBOX_MAX_OUTPUT_BYTES:-65536}
+      - PROCESS_SANDBOX_MAX_STDERR_BYTES=${PROCESS_SANDBOX_MAX_STDERR_BYTES:-16384}
+      - PROCESS_SANDBOX_MAX_MEMORY_BYTES=${PROCESS_SANDBOX_MAX_MEMORY_BYTES:-1073741824}
+      - PROCESS_SANDBOX_MAX_CPU_SECS=${PROCESS_SANDBOX_MAX_CPU_SECS:-15}
       # MTA embeds the same engine and consumes the same read-only pack path.
       - YARA_PACK_MANIFEST=${YARA_PACK_MANIFEST:-}
       - YARA_PACK_MIN_RULES=${YARA_PACK_MIN_RULES:-0}
+      - YARA_PACK_ALLOWED_LICENSES=${YARA_PACK_ALLOWED_LICENSES:-MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,DRL-1.1,DRUL-1.0,GPL-2.0-only,GPL-3.0-only}
       - ENGINE_MAX_CONCURRENT_EMAILS=${ENGINE_MAX_CONCURRENT_EMAILS:-}
-      # Internal inter-service auth token (must match the vigilyx container)
-      - INTERNAL_API_TOKEN=${INTERNAL_API_TOKEN:?请在 .env 中设置 INTERNAL_API_TOKEN}
+      - ENGINE_INLINE_WORKERS=${ENGINE_INLINE_WORKERS:-4}
+      # Stage-B nested-message identity/freeze compound stays disabled unless separately enabled after shadow validation.
+      - VIGILYX_NESTED_MESSAGE_IDENTITY_FREEZE_ENABLED=${VIGILYX_NESTED_MESSAGE_IDENTITY_FREEZE_ENABLED:-false}
+      - VIGILYX_EMAIL_SEMANTIC_STAGE_B=${VIGILYX_EMAIL_SEMANTIC_STAGE_B:-false}
+      - VIGILYX_EMAIL_ATTACK_HARDENING_STAGE_B=${VIGILYX_EMAIL_ATTACK_HARDENING_STAGE_B:-false}
+      - VIGILYX_INTERNAL_DOMAINS=${VIGILYX_INTERNAL_DOMAINS:-}
+      - VIGILYX_TRUSTED_AUTH_SERV_IDS=${VIGILYX_TRUSTED_AUTH_SERV_IDS:-}
+      # Dedicated token for the MTA status endpoint.
+      - MTA_API_TOKEN=${MTA_API_TOKEN:?请在 .env 中设置 MTA_API_TOKEN}
       # Proxy configuration (for external intel lookups)
       - HTTP_PROXY=${HTTP_PROXY:-}
       - HTTPS_PROXY=${HTTPS_PROXY:-}
@@ -498,17 +872,32 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      postgres-role-init:
+        condition: service_completed_successfully
+      mta-cert-install:
+        condition: service_completed_successfully
       redis:
+        condition: service_healthy
+      vigilyx:
         condition: service_healthy
     profiles:
       - mta
+    healthcheck:
+      test: ["CMD-SHELL", "printf 'QUIT\\r\\n' | curl --fail --silent --max-time 4 telnet://127.0.0.1:${MTA_SMTP_PORT:-25} >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
     restart: unless-stopped
 
 volumes:
   redis_data:       # Docker Compose manages lifecycle
   vigilyx_data:     # Docker Compose manages lifecycle
+  http_temp_data:   # Cross-container HTTP body spool (sniffer -> engine/API)
   vigilyx_pgdata:   # Docker Compose manages lifecycle
   vigilyx_models:   # AI fine-tuned models (mounted at /app/data/nlp_models in the ai service)
+  vigilyx_intent_models: # Semantic intent ensemble (read-only in the engine)
+  mta_certs:        # MTA TLS material copied by the one-shot installer
   hf_cache:         # Docker Compose manages lifecycle
   clamav_db:        # Docker Compose manages lifecycle
   sandbox_data:     # Docker Compose manages lifecycle
@@ -520,3 +909,8 @@ networks:
     ipam:
       config:
         - subnet: 172.30.250.0/24
+  sandbox_internal:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.251.0/24

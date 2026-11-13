@@ -9,7 +9,7 @@
 //! WaitingHeaders --(header terminator found)--> parse headers
 //! WaitingBody    --(enough bytes for Content-Length)--> emit request
 //! emit request   --(advance offset)--> WaitingHeaders
-//! chunked Reject --(malformed framing)--> Desynced (permanent; session layer
+//! rejected framing/limits -------------> Desynced (permanent; session layer
 //!                 must surface an inspection-limited signal)
 //! ```
 //!
@@ -155,7 +155,7 @@ impl HttpRequestStateMachine {
     }
 
     /// Whether the parser permanently lost framing synchronization on this
-    /// connection (malformed chunked body). No further requests are split;
+    /// connection (invalid framing or an inspection limit). No further requests are split;
     /// the caller must treat the connection as an inspection coverage gap.
     pub fn is_desynced(&self) -> bool {
         matches!(self.state, HttpParseState::Desynced)
@@ -237,15 +237,15 @@ impl HttpRequestStateMachine {
         let header_end_pos = match memchr::memmem::find(scan_data, HEADER_END) {
             Some(pos) => pos + HEADER_END.len(),
             None => {
-                // Drop the buffered data if it still does not terminate within the scan limit.
+                // Once framing exceeds our limit, body bytes cannot safely be
+                // interpreted as a fresh request on this connection.
                 if scan_len >= MAX_HEADER_SCAN {
                     debug!(
                         offset,
                         "HTTP State machine: header 超 {} Byte未End，hops该Connection",
                         MAX_HEADER_SCAN
                     );
-                    // Advance to the end of the current buffer snapshot and resynchronize.
-                    self.request_start_offset = stream.len();
+                    self.enter_desynced(stream);
                 }
                 return false;
             }
@@ -261,10 +261,9 @@ impl HttpRequestStateMachine {
             Ok(httparse::Status::Complete(size)) => size,
             Ok(httparse::Status::Partial) => return false, // Defensive fallback.
             Err(_) => {
-                // Skip malformed data and continue scanning after the header boundary.
-                trace!(offset, "HTTP State machine: httparse ParseFailed，hops");
-                self.request_start_offset = offset + header_end_pos;
-                return true;
+                trace!(offset, "HTTP header parsing failed; connection desynced");
+                self.enter_desynced(stream);
+                return false;
             }
         };
 
@@ -297,9 +296,18 @@ impl HttpRequestStateMachine {
                     .ok()
                     .map(|s| s.to_string());
             } else if header.name.eq_ignore_ascii_case("content-length") {
-                content_length = std::str::from_utf8(header.value)
+                let parsed_length = std::str::from_utf8(header.value)
                     .ok()
-                    .and_then(|s| s.trim().parse().ok());
+                    .and_then(|s| s.trim().parse::<usize>().ok());
+                let Some(parsed_length) = parsed_length else {
+                    self.enter_desynced(stream);
+                    return false;
+                };
+                if content_length.is_some_and(|previous| previous != parsed_length) {
+                    self.enter_desynced(stream);
+                    return false;
+                }
+                content_length = Some(parsed_length);
             } else if header.name.eq_ignore_ascii_case("cookie") {
                 cookie = std::str::from_utf8(header.value)
                     .ok()
@@ -326,7 +334,7 @@ impl HttpRequestStateMachine {
             // RFC 9112 §6.3: Transfer-Encoding overrides Content-Length. The
             // combination is also the classic request-smuggling primitive.
             warn!(
-                uri = %uri,
+                uri = %vigilyx_core::redact_http_uri(&uri),
                 "HTTP protocol anomaly: Transfer-Encoding: chunked with Content-Length; TE takes precedence"
             );
         }
@@ -374,13 +382,19 @@ impl HttpRequestStateMachine {
                 }
                 ChunkedProgress::Reject => {
                     warn!(
-                        uri = %uri,
+                        uri = %vigilyx_core::redact_http_uri(&uri),
                         "HTTP state machine: malformed/oversized chunked body; connection desynced, HTTP splitting stopped"
                     );
                     self.enter_desynced(stream);
                     return false;
                 }
             }
+        }
+
+        // An unsupported transfer coding has no trustworthy body boundary.
+        if transfer_encoding.is_some() {
+            self.enter_desynced(stream);
+            return false;
         }
 
         let cl = content_length.unwrap_or(0);
@@ -392,9 +406,8 @@ impl HttpRequestStateMachine {
                 "HTTP State machine: body 超 {} MB limit，hops",
                 MAX_BODY_SIZE / 1024 / 1024
             );
-            self.request_start_offset = offset + parsed_size;
-            self.state = HttpParseState::WaitingHeaders;
-            return true;
+            self.enter_desynced(stream);
+            return false;
         }
 
         if cl == 0 {
@@ -608,7 +621,7 @@ impl HttpRequestStateMachine {
             }
             ChunkedProgress::Reject => {
                 warn!(
-                    uri = %uri,
+                    uri = %vigilyx_core::redact_http_uri(&uri),
                     "HTTP state machine: malformed/oversized chunked body; connection desynced, HTTP splitting stopped"
                 );
                 self.enter_desynced(stream);
@@ -955,14 +968,58 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_body_exceeding_max_size_skipped() {
-        // Requests above the hard limit are skipped.
+    fn test_parse_body_exceeding_max_size_desyncs() {
+        // The declared length alone must fail inspection; no large body is needed.
         let header = b"POST /upload HTTP/1.1\r\nHost: corp.com\r\nContent-Length: 52428801\r\n\r\n";
         let mut sm = HttpRequestStateMachine::new();
         let results = sm.process_stream(header);
         assert!(results.is_empty());
         // The parser advances past the rejected request header.
         assert!(sm.consumed_offset() > 0);
+        assert!(sm.is_desynced());
+    }
+
+    #[test]
+    fn test_rejected_headers_never_rescan_body_as_requests() {
+        let mut many_headers = b"POST /upload HTTP/1.1\r\n".to_vec();
+        for _ in 0..65 {
+            many_headers.extend_from_slice(b"X-Fixture: value\r\n");
+        }
+        many_headers.extend_from_slice(b"Content-Length: 4\r\n\r\ndata");
+        let rejected = [
+            many_headers,
+            b"POST /upload HTTP/1.1\r\ninvalid header\r\n\r\n".to_vec(),
+            b"POST /upload HTTP/1.1\r\nContent-Length: 52428801\r\n\r\n".to_vec(),
+            b"POST /upload HTTP/1.1\r\nContent-Length: invalid\r\n\r\n".to_vec(),
+            b"POST /upload HTTP/1.1\r\nContent-Length: 4\r\nContent-Length: 9\r\n\r\n".to_vec(),
+            b"POST /upload HTTP/1.1\r\nTransfer-Encoding: gzip\r\n\r\n".to_vec(),
+        ];
+        for mut stream in rejected {
+            stream.extend_from_slice(
+                b"POST /fake HTTP/1.1\r\nHost: fixture.example\r\nContent-Length: 4\r\n\r\ndata",
+            );
+            let mut sm = HttpRequestStateMachine::new();
+            assert!(sm.process_stream(&stream).is_empty());
+            assert!(sm.is_desynced());
+            stream.extend_from_slice(b"GET /later HTTP/1.1\r\n\r\n");
+            assert!(sm.process_stream(&stream).is_empty());
+            sm.reset();
+            let valid =
+                b"POST /valid HTTP/1.1\r\nHost: fixture.example\r\nContent-Length: 4\r\n\r\ndata";
+            assert_eq!(sm.process_stream(valid).len(), 1);
+            assert!(!sm.is_desynced());
+        }
+    }
+
+    #[test]
+    fn test_unterminated_header_budget_marks_desync() {
+        let mut stream = b"POST /upload HTTP/1.1\r\nX-Fixture: ".to_vec();
+        stream.resize(MAX_HEADER_SCAN, b'x');
+        let mut sm = HttpRequestStateMachine::new();
+        assert!(sm.process_stream(&stream).is_empty());
+        assert!(sm.is_desynced());
+        stream.extend_from_slice(b"\r\n\r\nPOST /fake HTTP/1.1\r\n\r\n");
+        assert!(sm.process_stream(&stream).is_empty());
     }
 
     #[test]
@@ -1125,14 +1182,17 @@ mod tests {
     fn test_parse_chunked_post_body_reassembled() {
         // PoC (R4A legacy-3): a chunked POST carrying sensitive data must reach
         // analysis in full; previously cl=0 emitted an empty body immediately.
-        let sensitive = b"id_card=110101199003077721&card_no=6222021234567890123&memo=salary";
+        let sensitive = b"id_card=000000200001010005&card_no=6222021234567890123&memo=salary";
         let c1 = &sensitive[..17];
         let c2 = &sensitive[17..40];
         let c3 = &sensitive[40..];
         let stream = make_chunked_request(
             "POST",
             "/api/profile/update",
-            &[("Host", "webmail.corp.com"), ("Content-Type", "application/x-www-form-urlencoded")],
+            &[
+                ("Host", "webmail.corp.com"),
+                ("Content-Type", "application/x-www-form-urlencoded"),
+            ],
             &[c1, c2, c3],
             None,
             &[],
@@ -1224,7 +1284,10 @@ mod tests {
         let mut sm = HttpRequestStateMachine::new();
         let results = sm.process_stream(stream);
         assert!(results.is_empty(), "malformed chunk size must be rejected");
-        assert!(sm.consumed_offset() > 0, "parser must not stall on the request");
+        assert!(
+            sm.consumed_offset() > 0,
+            "parser must not stall on the request"
+        );
     }
 
     #[test]
@@ -1241,7 +1304,8 @@ mod tests {
 
     #[test]
     fn test_chunked_empty_body_zero_chunk_only() {
-        let stream = b"POST /ping HTTP/1.1\r\nHost: corp.com\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n";
+        let stream =
+            b"POST /ping HTTP/1.1\r\nHost: corp.com\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n";
         let mut sm = HttpRequestStateMachine::new();
         let results = sm.process_stream(stream);
         assert_eq!(results.len(), 1);
@@ -1257,7 +1321,7 @@ mod tests {
         // RFC 9112 places no limit on chunk extensions. A size line carrying a
         // long (but bounded) extension must parse; the old 64-byte cap rejected
         // this legal traffic and dropped the whole request from DLP.
-        let sensitive = b"id_card=110101199003077721";
+        let sensitive = b"id_card=000000200001010005";
         let ext = format!("1a;{}", "x".repeat(300));
         let mut stream = Vec::new();
         stream.extend_from_slice(
@@ -1340,9 +1404,7 @@ mod tests {
         );
         // Garbage chunk size, followed by bytes that look like a valid request.
         stream.extend_from_slice(b"ZZZnothex\r\n");
-        stream.extend_from_slice(
-            b"GET /inbox HTTP/1.1\r\nHost: corp.com\r\n\r\n",
-        );
+        stream.extend_from_slice(b"GET /inbox HTTP/1.1\r\nHost: corp.com\r\n\r\n");
 
         let mut sm = HttpRequestStateMachine::new();
         let results = sm.process_stream(&stream);
@@ -1367,7 +1429,12 @@ mod tests {
         // resets processed offsets to 0; the state machine must be reset too,
         // otherwise request_start_offset points past the new buffer end and
         // the connection stays blind forever.
-        let req1 = make_request("POST", "/save", &[("Host", "corp.com")], Some(b"alpha-body"));
+        let req1 = make_request(
+            "POST",
+            "/save",
+            &[("Host", "corp.com")],
+            Some(b"alpha-body"),
+        );
         let mut sm = HttpRequestStateMachine::new();
         let results = sm.process_stream(&req1);
         assert_eq!(results.len(), 1);

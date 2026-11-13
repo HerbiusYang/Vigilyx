@@ -1,0 +1,15 @@
+From: =?utf-8?B?5L+h5oGv5oqA5pyv6YOo?= <it-notice@partner.example>
+To: all-staff@corp.internal
+Date: Mon, 24 Aug 2026 09:12:00 +0800
+Message-ID: <0001-b1@synth.example>
+Subject: 关于统一身份密码到期换发的通知
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+各部门：
+
+经核查，您名下的统一身份账号密码将于 48 小时后到期。
+到期未换发的账号将被停用，影响门禁、OA 与邮箱登录。
+请前往换发入口完成修改：http://203.0.113.77/sso/renew
+
+信息技术部（代章）

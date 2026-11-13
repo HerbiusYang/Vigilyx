@@ -1,0 +1,90 @@
+From: 中伦律师事务所-知识产权诉讼部 <litigation.ip@zhonglun-law.example>
+To: 法务部 <legal@corp.internal>
+Cc: CTO <cto@corp.internal>, 董事会秘书 <boardsec@corp.internal>
+Reply-To: litigation.ip@zhonglun-evidence.example
+Date: Fri, 16 Oct 2026 10:00:00 +0800
+Message-ID: <0673-b50@synth.example>
+Subject: Re: Re: [案件编号(2026)浙01民初8842号]——专利侵权诉讼证据交换（第三次延期申请已获批，10/24前提交）
+In-Reply-To: <litigation-8842@corp.internal>
+References: <litigation-8842@corp.internal> <litigation-8842-2@corp.internal> <litigation-8842-3@corp.internal>
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<p>法务部、CTO、董秘：</p>
+
+<p>关于深圳速联科技诉贵司邮件网关产品侵犯其发明专利（专利号：ZL202110XXXXXX.4，"一种基于深度学习的邮件内容分类方法"）一案，杭州中院已批准第三次证据交换延期（延至 <b>10/24</b>）。现将证据材料准备情况汇总如下。</p>
+
+<h3>一、案件进度</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:120px">案号</td><td>(2026)浙01民初8842号</td></tr>
+<tr><td style="background:#f5f5f5">原告</td><td>深圳速联科技有限公司</td></tr>
+<tr><td style="background:#f5f5f5">被告</td><td>贵司</td></tr>
+<tr><td style="background:#f5f5f5">涉案专利</td><td>ZL202110XXXXXX.4（发明专利，2024年授权）</td></tr>
+<tr><td style="background:#f5f5f5">索赔金额</td><td>￥3,000万元 + 停止侵权</td></tr>
+<tr><td style="background:#f5f5f5">法院</td><td>杭州市中级人民法院 知识产权庭</td></tr>
+<tr><td style="background:#f5f5f5">承办法官</td><td>王明华（审判长）、李芳、张伟</td></tr>
+<tr><td style="background:#f5f5f5">下次开庭</td><td><b>11/14 09:30</b>（证据交换 + 庭前会议）</td></tr>
+</table>
+
+<h3>二、证据材料准备清单</h3>
+
+<p><b>我方（被告）证据：</b></p>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>证据编号</th><th>证据名称</th><th>证明目的</th><th>状态</th></tr>
+<tr><td>D-01</td><td>贵司邮件网关产品 V1.0-V1.9.5 的 git 提交历史</td><td>证明被诉功能模块的独立开发过程</td><td style="color:#0a0">已提交</td></tr>
+<tr><td>D-02</td><td>贵司核心算法的技术白皮书与架构设计文档</td><td>证明技术路线与涉案专利权利要求1-5不同</td><td style="color:#e00">待补充</td></tr>
+<tr><td>D-03</td><td>第三方开源项目 tower-lsp 的贡献记录</td><td>证明部分模块源自开源（GPL 合规）</td><td style="color:#0a0">已提交</td></tr>
+<tr><td>D-04</td><td>涉案专利的现有技术检索报告（含 3 篇对比文件）</td><td>证明涉案专利缺乏新颖性</td><td style="color:#e00">待补充</td></tr>
+<tr><td>D-05</td><td>贵司客户的采购合同与技术规格确认书（5 家）</td><td>证明产品功能描述与涉案专利不一致</td><td style="color:#0a0">已提交</td></tr>
+</table>
+
+<p><b>需贵司在 10/20 前补充的材料：</b></p>
+<ol>
+<li><b>D-02 补充：</b>核心算法的设计文档需包含：算法流程图、特征工程说明、模型架构图、与专利权利要求的逐条对比分析（技术特征对照表）。请贵司 CTO 组织研发团队完成。</li>
+<li><b>D-04 补充：</b>现有技术检索报告需由国家知识产权局检索中心出具（或委托第三方检索机构），检索范围涵盖 2018 年前的中美欧专利与学术论文。</li>
+<li><b>新增 D-06：</b>贵司邮件网关产品在 2021 年（涉案专利优先权日）之前的技术文档与客户部署记录，用于证明"先用权"抗辩。</li>
+</ol>
+
+<h3>三、证据材料提交方式</h3>
+<p>杭州中院要求电子证据通过<b>法院指定的电子证据交换平台</b>提交。因法院平台近期升级，我所已为贵司开通了代理提交通道：</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://zhonglun-evidence.example/court/hzzc/8842/submit" style="display:inline-block;background:#1a3c6e;color:#fff;padding:10px 30px;text-decoration:none;border-radius:4px">提交证据材料</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">https://evidence.hzcourt.gov.cn/agent/zhonglun/8842/upload</p>
+<p style="font-size:12px;color:#888;text-align:center">（使用贵司企业邮箱登录代理通道。首次使用需完成授权绑定。）</p>
+
+<h3>四、关于提交通道的说明</h3>
+<p>我们理解您可能会问：<b>"为什么不直接用法院的官方平台？"</b>——这是合理的疑问。</p>
+<p>法院的电子证据平台对单次上传有 50MB 限制，而贵司的 git 历史 + 技术文档（D-02）预计超过 2GB。我们所为此申请了<b>代理大文件通道</b>（与法院平台数据互通），用于传输超大文件。您在此通道上传的材料，我们所的诉讼团队会同步至法院正式系统。</p>
+<p>如果您对此仍有顾虑，也可以刻录光盘并快递至我所（地址见签名档），我们代为提交至法院。但物理介质在 10/24 截止前可能来不及（快递 + 法院录入需 3-5 个工作日）。</p>
+
+<h3>五、诉讼策略要点</h3>
+<ul>
+<li><b>先用权抗辩（D-06）：</b>如能证明在专利优先权日前已做好制造准备，可免除赔偿责任（但不能免除停止侵权）</li>
+<li><b>专利无效宣告（D-04）：</b>已向国家知识产权局提起无效宣告请求（口审日期待定），如无效成功则诉讼终结</li>
+<li><b>技术特征差异（D-02）：</b>核心抗辩——证明贵司产品的分类方法与专利权利要求的技术特征存在实质性差异</li>
+</ul>
+
+<h3>六、费用与时间线</h3>
+<ul>
+<li>本案代理费：固定费用 ￥180,000（一审）+ 风险代理（胜诉金额的 5%）</li>
+<li>预估一审周期：12-18 个月（含技术鉴定 3-4 个月）</li>
+<li>无效宣告结果预计：2027 年 Q1（不影响一审继续进行）</li>
+</ul>
+
+<p style="font-size:13px">如有问题请联系：</p>
+<p style="font-size:13px">
+<b>赵明（合伙人）</b><br>
+中伦律师事务所 | 知识产权部<br>
+电话：0571-8765-****<br>
+邮箱：litigation.ip@zhonglun-evidence.example<br>
+（此为我所诉讼专用邮箱，方便快速响应。公司邮箱 litigation.ip@zhonglun-law.example 也可）</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">中伦律师事务所 | 知识产权诉讼部</p>
+<p style="font-size:11px;color:#999">杭州市西湖区文三路 XXX 号 XXX 大厦 XX 层</p>
+<p style="font-size:11px;color:#999">本邮件受律师-委托人特权保护。若误收请立即删除并通知发件人。</p>
+</div>
+</body></html>

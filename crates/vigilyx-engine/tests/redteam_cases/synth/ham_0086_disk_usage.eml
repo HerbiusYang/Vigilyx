@@ -1,0 +1,10 @@
+From: =?utf-8?B?6LWE5rqQ5beh5qOA?= <sizer@corp.internal>
+To: ops@corp.internal
+Date: Fri, 28 Aug 2026 14:35:00 +0800
+Message-ID: <0025-b5@synth.example>
+Subject: [提醒] es-05 磁盘 87%
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+es-05 数据盘 87%，预计 4 天写满。扩容流程已发起，
+期间避免大索引重建。

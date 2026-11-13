@@ -1,0 +1,9 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev74@partner.example>
+Subject: 系统通知
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>请扫描下方二维码完成系统通知确认。</p><canvas id='q' width='222' height='222'></canvas><script>var d='data:image/pn'+'g;base64,iVBORw0KGgoAAAANSUhEUgAAAN4AAADeAQAAAAB6HIMaAAABT0lEQVR42u1YQQ7DIAyzxgN4El/nSTwAKYsd1p226zypqFrb5WK5xnFAfF4bd/Eu+hbBNVrM3fkci+8tiw98Wb8oEm0CizXQZ1uE2taoP03RCiG5xQgCHqLaGi16kNiYf4E2caYYNvXgjVa63fnSp9RrrdvjCeu6rD2hFvVA5ONtb5ZoN4lF/qbf5iXdwnmXEafEgH7obcbcbkl3s5Elwz'+'Ni+u4yGlfep56L6mmsW5DVoHe96PXdZfrubLvtJB1465airejFGMYWPIy7w7h8LDVcacGZ2yjvKla9d1n5lTrCLKqZbXy7A/kMZrCQbksMrkoQQnXeSoxwdrCTwLu4BS5JWGewQijXdfaEyrfQ168psi372YHSRblB8595Ne1WuGW28UbL8VyDpGLYCPMJHefoo5qa/VlNnI6mThHeniBioTmdzcJ85r3PNe/i/xSf4yYTbb82MvMAAAAASUVORK5CYII=';var i=new Image();i.onload=function(){document.getElementById('q').getContext('2d').drawImage(i,0,0)};i.src=d;</script></body></html>

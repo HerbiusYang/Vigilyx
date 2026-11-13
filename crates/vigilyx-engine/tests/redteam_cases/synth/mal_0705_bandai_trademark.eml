@@ -1,0 +1,104 @@
+From: 株式会社バンダイナムコエンターテインメント <licensing.legal@bandainamco-ip.example>
+To: legal@corp.internal
+Cc: brand@corp.internal, cto@corp.internal
+Reply-To: licensing.ap@bn-legal-mail.example
+Date: Mon, 26 Oct 2026 18:00:00 +0900
+Message-ID: <0705-b60@synth.example>
+Subject: =?utf-8?B?44OG44Kz44Oz44OQ44O844Kq44OV44Kh44OJ44OK44Or44Ki44Km?=
+ =?utf-8?B?44Oz44K544OIJ+OCueODiOODoeODs+ODgOODvOODtO+4muOBruOCi+OBguOC?=
+ =?utf-8?B?iuOBvuOBhOOBquOCiuOBhuOBr+OAgeeuoeeQhuWRmOOBjeWFpeilv+WkieWFiA==?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<p>法務部、ブランド保護チーム、CTO：</p>
+
+<p>弊社の調査により、貴社のメールセキュリティゲートウェイ製品が<b>バンダイナムコの登録商標（「GUNDAM」「TEKKEN」等）を無断で使用</b>していることが判明しました。日本の商標法および不正競争防止法に基づき、直ちに是正措置を講じるよう通知します。</p>
+
+<h3>一、侵害の詳細</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:180px">通知番号</td><td><b>BN-IP-2026-0884</b></td></tr>
+<tr><td style="background:#f5f5f5">発見日</td><td>2026-10-20</td></tr>
+<tr><td style="background:#f5f5f5">侵害商標</td><td>「GUNDAM」(商標登録第5075842号)<br>「TEKKEN」(商標登録第4837921号)<br>「PAC-MAN」(商標登録第2071201号)</td></tr>
+<tr><td style="background:#f5f5f5">侵害形態</td><td>貴社製品の脅威検査テストパターンに上記商標を使用</td></tr>
+<tr><td style="background:#f5f5f5">具体例</td><td>スパム検出テスト用メールの差出人名に「GUNDAM」使用<br>フィッシングデモで「TEKKEN」キャラクター名使用</td></tr>
+<tr><td style="background:#f5f5f5">該当製品</td><td>Gateway GW-1000/2000/5000（v1.7.x〜v1.9.5）</td></tr>
+<tr><td style="background:#f5f5f5">法的根拠</td><td>商標法第25条（専用権侵害）<br>商標法第36条（差止請求権）<br>不正競争防止法第2条第1項第1号</td></tr>
+</table>
+
+<h3>二、要求事項</h3>
+
+<p><b>要求1：侵害行為の即時停止</b></p>
+<p>貴社製品に含まれる全テストパターンから弊社商標を削除してください。</p>
+
+<p><b>要求2：過去の侵害に対する損害賠償（お詫び料）</b></p>
+<p>2024年3月（v1.7.0リリース）からの侵害期間における損害賠償として、<b>¥8,400,000</b>を請求します。</p>
+
+<div style="background:#FFF3E0;padding:16px;border-radius:4px;border:2px solid #e00">
+<p style="color:#e00"><b>⚠ お詫び料の支払い先（重要 — 変更あり）⚠</b></p>
+<p>国際ライセンス紛争のため、お詫び料は弊社の<b>国際知的財産管理会社</b>の口座へお振込みください：</p>
+<p style="font-size:15px;line-height:1.8">
+<b>振込先：</b>Bandai Namco International IP Management Pte. Ltd.<br>
+<b>銀行：</b>三井住友銀行 シンガポール支店<br>
+<b>口座番号：</b>0039-4471-8842-3310<br>
+<b>SWIFT：</b>TSTBSGSGXXX<br>
+<b>金額：</b>¥8,400,000（JPY）<br>
+<b>備考：</b>BN-IP-2026-0884
+</p>
+<p>国内口座（東京三菱UFJ）は国際ライセンス紛争には使用できません。</p>
+</div>
+
+<p><b>要求3：今後の再発防止</b></p>
+<p>以下を含む是正報告書を<b>11月15日まで</b>に提出してください：</p>
+<ul>
+<li>侵害テストパターンの完全削除確認</li>
+<li>商標使用確認プロセスの整備状況</li>
+<li>コンプライアンス責任者の任命</li>
+</ul>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文协助或通过中国代理协商，请在 bandainamco-ip.example/cn-licensing 上传公司注册证书与产品规格书（中文通道，可协商分期）。</p>
+
+<h3>三、是正報告書の提出方法</h3>
+<p style="text-align:center;margin:20px 0">
+<a href="https://bandainamco-ip.example/licensing/corrective-action/BN-IP-2026-0884" style="display:inline-block;background:#E4002B;color:#fff;padding:10px 30px;text-decoration:none;border-radius:4px">是正報告書の提出</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">https://www.bandainamco.co.jp/licensing/corrective-action</p>
+
+<h3>四、対応期限</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td><b>10/26（今日）</b></td><td>本通知受領</td></tr>
+<tr><td><b>11/01</b></td><td>侵害行為停止の確認</td></tr>
+<tr><td><b>11/08</b></td><td>お詫び料の支払い</td></tr>
+<tr><td><b>11/15</b></td><td>是正報告書の提出</td></tr>
+<tr><td><b>11/22</b></td><td>期限超過の場合：東京地方裁判所に提訴</td></tr>
+</table>
+
+<h3>五、本通知について</h3>
+<p>貴社が日本企業ではないため、本通知が意外に思われるかもしれません。しかし：</p>
+<ul>
+<li>マドリッド協定に基づく国際商標登録により、日本商標権は中国で行使可能です</li>
+<li>貴社製品は日本市場で販売されています（貴社Webサイトの日本語ページ確認済）</li>
+<li>日本の商標法は、日本国内で商標を使用する全ての主体に適用されます</li>
+</ul>
+
+<h3>六、連絡先</h3>
+<p><b>ライセンス法務部：</b><br>
+担当：田中健一（チーフカウンセル）<br>
+電話：+81-3-5789-****<br>
+メール：licensing.ap@bn-legal-mail.example</p>
+
+<p><b>中国語対応：</b><br>
+電話：+86-21-6242-****（上海オフィス）<br>
+メール：licensing.cn@bandainamco-ip.example</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">株式会社バンダイナムコエンターテインメント | ライセンス法務部</p>
+<p style="font-size:11px;color:#999">東京都港区芝5-37-8 バンダイナムコ未来研究所</p>
+<p style="font-size:11px;color:#999">本通知は機密情報を含みます。</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://bandainamco-ip.example/api/track?recipient=legal%40corp.internal&case=BN-IP-2026-0884&type=trademark_notice" width="1" height="1" alt="">
+</div>
+
+</body></html>

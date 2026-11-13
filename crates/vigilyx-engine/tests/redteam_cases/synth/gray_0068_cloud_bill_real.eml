@@ -1,0 +1,10 @@
+From: =?utf-8?B?6Zi/6YeM5LqR?= <noreply@aliyun.example>
+To: ops@corp.internal
+Date: Tue, 08 Sep 2026 09:17:00 +0800
+Message-ID: <0007-b16@synth.example>
+Subject: 您的账户余额低于预警线
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>当前余额 ¥3,120.40，低于预警线。可在控制台-费用中心充值。</p><p><a href='https://expense.aliyun-example.com/recharge' style='color:#ff6a00'>前往费用中心</a></p><p style='font-size:12px'>本邮件由系统发出；阿里云不会索要账户密码。</p></body></html>

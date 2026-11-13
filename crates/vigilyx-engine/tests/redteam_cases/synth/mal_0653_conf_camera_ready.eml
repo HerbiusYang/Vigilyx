@@ -1,0 +1,65 @@
+From: ACM CCS 2026-程序委员会秘书处 <ccs-pc-office@acm-ccs2026.example>
+To: 王坚 <sec-research@corp.internal>
+Date: Fri, 09 Oct 2026 14:20:00 +0800
+Message-ID: <0653-b43@synth.example>
+Subject: [Acceptance + Camera-Ready Instructions] CCS 2026 Paper #114 "Layered Timeout Fallback in Email Gateways"
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:Georgia,serif;max-width:680px;margin:0 auto">
+<div style="border-bottom:3px solid #0067b8;padding-bottom:8px">
+<h2 style="margin:0;color:#0067b8">ACM CCS 2026 — 29th ACM Conference on Computer and Communications Security</h2>
+<p style="margin:4px 0;font-size:14px;color:#666">October 27-31, 2026 | Taipei International Convention Center</p>
+</div>
+
+<p>Dear Dr. Wang,</p>
+
+<p>On behalf of the Program Committee, I am pleased to inform you that your paper <b>"Layered Timeout Fallback in Email Gateways: A Practical Approach to Graceful Degradation"</b> (Paper #114) has been <b style="color:#0a7d34">accepted</b> for presentation at ACM CCS 2026.</p>
+
+<p>Your paper received the following review scores: <b>Accept (4.5/5)</b>, <b>Weak Accept (3.5/5)</b>, <b>Accept (4.0/5)</b>. The meta-review highlights "the practical evaluation on a real production email gateway with over 2M daily messages" as a significant strength.</p>
+
+<h3 style="color:#0067b8;border-bottom:1px solid #0067b8;padding-bottom:4px">Camera-Ready Instructions</h3>
+
+<p><b>Deadline:</b> October 17, 2026 (23:59 AoE)</p>
+
+<ol>
+<li><b>Revise your paper</b> based on the reviewer comments (available in the review system). No major revisions are required, but you should address the minor comments about the evaluation methodology in Section 4.2.</li>
+<li><b>Format your paper</b> using the ACM Master Template (acmart). Use the <code>sigconf</code> format with the CCS concepts and keywords. Page limit: 12 pages + references.</li>
+<li><b>Submit the copyright form</b> — ACM will send a separate email with a link to the copyright system. You (or your co-authors) must complete this before camera-ready submission.</li>
+<li><b>Upload your camera-ready paper</b> to the submission system. You may use the following link:</li>
+</ol>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://acm-ccs2026.example/submission/camera-ready/114" style="display:inline-block;background:#0067b8;color:#fff;padding:10px 30px;text-decoration:none;border-radius:4px">Upload Camera-Ready Paper</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://conf.researchr.org/track/ccs-2026/ccs-2026-camera-ready-papers</p>
+
+<p style="font-size:12px;color:#888;text-align:center">(If the button doesn't work, copy and paste the URL above into your browser.)</p>
+
+<h3 style="color:#0067b8;border-bottom:1px solid #0067b8;padding-bottom:4px">Presentation Details</h3>
+<ul>
+<li><b>Format:</b> 20-minute oral presentation + 5-minute Q&A</li>
+<li><b>Session:</b> Session 3B "Network Security in Practice" (Wednesday, October 29, 14:00-15:30)</li>
+<li><b>Slide template:</b> Available on the conference website. Please use the CCS template for the first and last slides.</li>
+<li><b>Poster session:</b> Your paper has also been selected for the poster session (Tuesday, October 28, 17:00-19:00). A 1-page poster is required.</li>
+</ul>
+
+<h3 style="color:#0067b8;border-bottom:1px solid #0067b8;padding-bottom:4px">Registration Requirement</h3>
+<p>At least one author must register at the full conference rate by <b>October 10</b> to guarantee the paper's inclusion in the proceedings. The registration system is available at the conference website.</p>
+
+<p>If you have questions about the camera-ready process, contact the Publications Chair directly (pub-chair@ccs2026.acm.example). Do not reply to this automated email.</p>
+
+<p>Congratulations again, and we look forward to seeing you in Taipei.</p>
+
+<p>Sincerely,<br>
+<b>Sarah M. Smith</b><br>
+PC Co-Chair, ACM CCS 2026<br>
+Professor, Department of Computer Science<br>
+Carnegie Mellon University</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:20px">
+<p style="font-size:11px;color:#999">Paper ID: 114 | Track: Applied Cryptography and Network Security | Session: 3B</p>
+<p style="font-size:11px;color:#999">This is an automated notification from the CCS 2026 submission system (HotCRP).</p>
+</div>
+</body></html>

@@ -1,0 +1,11 @@
+From: =?utf-8?B?5a6J5YWo6L+Q6JCl5Lit5b+D?= <soc@corp.internal>
+To: it-all@corp.internal
+Date: Wed, 09 Sep 2026 08:40:00 +0800
+Message-ID: <0030-b17@synth.example>
+Subject: 转发：区域CERT预警（含IOC）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+转发同行 CERT 预警，IOC 原文链接：https://cert-official.example/2026-091
+本地样本已沙箱复测，网关规则已更新。
+（我们不会以附件分发样本，样本获取走内部样本库）

@@ -23,11 +23,11 @@
 //! Detection strategy
 //! ------------------
 //! We score four orthogonal signals and emit a verdict only when at least
-//! the callback-verb signal is present alongside a real phone number — that
+//! an explicit callback-action signal is present alongside a real phone number — that
 //! combination is the irreducible TOAD core. Single-signal hits stay Safe
 //! to avoid swamping legitimate billing emails.
 //!
-//!   - `toad_callback_verb`     +0.35 (data-driven phrase list)
+//!   - `toad_callback_verb`     +0.35 (explicit recipient-directed phone action)
 //!   - `toad_urgency_phrase`    +0.20 (data-driven phrase list)
 //!   - `toad_brand_impersonation` +0.15 (brand mentioned but sender domain
 //!     does not match)
@@ -36,7 +36,7 @@
 //!     Chinese mobile 1[3-9]xxxxxxxxx)
 //!
 //! Combo escalation:
-//!   - callback_verb + phone_present + (urgency OR brand_impersonation)
+//!   - explicit callback action + phone_present + (urgency OR brand_impersonation)
 //!     → +0.15 boost (`toad_combo`), pushes typical TOAD email to High.
 //!
 //! False-positive guards:
@@ -44,9 +44,9 @@
 //!     does NOT downgrade — TOAD lures sometimes pad with one harmless
 //!     link to look legitimate — but it also does not require absence of
 //!     them, so legitimate phone-bearing emails (signatures, support
-//!     contact lines) are caught only when they also exhibit urgency or
-//!     callback verbs, which legitimate sigs do not.
-//!   - Single phone in body without callback verb → no signal (signature).
+//!     contact lines) are caught only when they also contain an explicit
+//!     instruction to call or dial that channel.
+//!   - Generic support mentions and a phone number alone remain non-actionable.
 //!   - Chat-record forwards already filtered upstream by content_scan.
 
 use async_trait::async_trait;
@@ -57,11 +57,12 @@ use std::time::Instant;
 
 use crate::context::SecurityContext;
 use crate::error::EngineError;
-use crate::matcher::{toad_callback_verbs, toad_urgency_phrases};
+use crate::matcher::{toad_callback_verbs, toad_explicit_callback_actions, toad_urgency_phrases};
 use crate::module::{
     Bpa, Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel,
 };
 use crate::module_data::module_data;
+use crate::modules::common::host_matches_domain_or_subdomain;
 use crate::modules::content_scan::html_utils::strip_html_tags;
 use crate::modules::content_scan::normalize_text;
 
@@ -131,10 +132,12 @@ static RE_INTL_PHONE: LazyLock<Regex> = LazyLock::new(|| {
 /// Chinese 400 / 950 service hotlines: 400-XXX-XXXX, 950XXXX, 95XXX.
 /// `\b` does not work on CJK boundaries (Chinese chars are not word
 /// characters); instead require either start-of-string or a non-digit
-/// before the number.
+/// before the number. 400 service numbers are also printed with uneven
+/// grouping such as `400-8810-226`, so allow separators between their seven
+/// subscriber digits instead of assuming one display convention.
 static RE_CN_HOTLINE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r"(?:^|[^0-9])(400{s}?\d{{3}}{s}?\d{{4}}|950\d{{4,5}}|95\d{{3}})",
+        r"(?:^|[^0-9])(400(?:{s}?\d){{7}}|950\d{{4,5}}|95\d{{3}})",
         s = PHONE_SEP
     ))
     .expect("cn hotline regex")
@@ -156,6 +159,14 @@ static RE_GENERIC_DIALABLE: LazyLock<Regex> = LazyLock::new(|| {
     .expect("generic dialable regex")
 });
 
+/// Masked service numbers are common in callback lures (for example
+/// `0571-88xx-9911`). They are not dialable evidence on their own, but the
+/// surrounding callback/urgency conjunction can still make them actionable.
+static RE_MASKED_PHONE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?:^|[^0-9])(\d{3,4}[\s\-.]?\d{2,4}[xX]{1,4}[\s\-.]?\d{2,4})(?:[^0-9]|$)")
+        .expect("masked phone regex")
+});
+
 /// Digit run with embedded separators ("4 0 0 1 2 3 4 5 6 7" or
 /// "4·0·0·6·1·5·5·5·5"): seven or more digits joined by single separators.
 /// Used to build the squashed second-pass view that catches per-digit
@@ -171,8 +182,8 @@ fn map_chinese_numerals(text: &str) -> String {
     text.chars()
         .map(|c| match c {
             '〇' | '零' => '0',
-            '一' => '1',
-            '二' => '2',
+            '一' | '幺' => '1',
+            '二' | '两' | '兩' => '2',
             '三' => '3',
             '四' => '4',
             '五' => '5',
@@ -199,10 +210,7 @@ fn extract_phone_numbers(body: &str) -> (Vec<String>, Vec<&'static str>) {
         let normalized = s.trim().to_string();
         // Deduplicate on the digits-only form so "400-123-4567" and its
         // squashed twin "4001234567" count once.
-        let dedup_key: String = normalized
-            .chars()
-            .filter(|c| c.is_ascii_digit())
-            .collect();
+        let dedup_key: String = normalized.chars().filter(|c| c.is_ascii_digit()).collect();
         if !dedup_key.is_empty() && seen.insert(dedup_key) {
             found.push((normalized, kind));
         }
@@ -250,6 +258,11 @@ fn extract_phone_numbers(body: &str) -> (Vec<String>, Vec<&'static str>) {
                 push(m.as_str(), "generic", &mut found, &mut seen);
             }
         }
+        for caps in RE_MASKED_PHONE.captures_iter(haystack) {
+            if let Some(m) = caps.get(1) {
+                push(m.as_str(), "masked", &mut found, &mut seen);
+            }
+        }
     }
 
     let numbers: Vec<String> = found.iter().map(|(n, _)| n.clone()).collect();
@@ -274,6 +287,9 @@ fn brand_mismatched(brand: &str, sender_domain: Option<&str>) -> bool {
         Some(d) => d.to_ascii_lowercase(),
         None => return true, // no sender domain → assume mismatch
     };
+    if official_brand_sender_matches(brand, &domain) {
+        return false;
+    }
     let first_token: String = brand
         .split_whitespace()
         .next()
@@ -299,6 +315,225 @@ fn brand_mismatched(brand: &str, sender_domain: Option<&str>) -> bool {
     // multi-label TLD than miss a brand spoof.)
     let core = labels[labels.len() - 2];
     core != first_token
+}
+
+fn profile_matches_brand(profile: &serde_json::Value, brand: &str) -> bool {
+    profile
+        .get("brand")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|configured| configured.eq_ignore_ascii_case(brand))
+        || profile
+            .get("aliases")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|aliases| {
+                aliases.iter().any(|alias| {
+                    alias
+                        .as_str()
+                        .is_some_and(|configured| configured.eq_ignore_ascii_case(brand))
+                })
+            })
+}
+
+fn official_brand_sender_matches(brand: &str, sender_domain: &str) -> bool {
+    let md = module_data();
+    md.get_structured("toad_official_callback_profiles")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|profiles| {
+            profiles.iter().any(|profile| {
+                profile_matches_brand(profile, brand)
+                    && profile
+                        .get("sender_domains")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|domains| {
+                            domains.iter().any(|domain| {
+                                domain.as_str().is_some_and(|domain| {
+                                    host_matches_domain_or_subdomain(sender_domain, domain)
+                                })
+                            })
+                        })
+            })
+        })
+}
+
+fn phone_digits(phone: &str) -> String {
+    phone
+        .chars()
+        .filter(char::is_ascii_digit)
+        .collect::<String>()
+}
+
+/// A brand-aligned service notice is not a callback attack when every
+/// dialable number belongs to that brand. This does not trust the From domain
+/// alone: an unregistered number keeps the callback evidence actionable even
+/// when an attacker spoofs an official-looking sender address.
+fn is_official_brand_callback(
+    brand: &str,
+    sender_domain: Option<&str>,
+    phone_numbers: &[String],
+) -> bool {
+    let Some(sender_domain) = sender_domain else {
+        return false;
+    };
+    if phone_numbers.is_empty() {
+        return false;
+    }
+
+    let md = module_data();
+    let Some(profiles) = md
+        .get_structured("toad_official_callback_profiles")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return false;
+    };
+
+    profiles.iter().any(|profile| {
+        let brand_matches = profile_matches_brand(profile, brand);
+        let sender_matches = profile
+            .get("sender_domains")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|domains| {
+                domains.iter().any(|domain| {
+                    domain.as_str().is_some_and(|domain| {
+                        host_matches_domain_or_subdomain(sender_domain, domain)
+                    })
+                })
+            });
+        let official_numbers = profile
+            .get("phone_numbers")
+            .and_then(serde_json::Value::as_array);
+
+        brand_matches
+            && sender_matches
+            && official_numbers.is_some_and(|official_numbers| {
+                !official_numbers.is_empty()
+                    && phone_numbers.iter().all(|observed| {
+                        let observed = phone_digits(observed);
+                        official_numbers.iter().any(|official| {
+                            official
+                                .as_str()
+                                .is_some_and(|official| phone_digits(official) == observed)
+                        })
+                    })
+            })
+    })
+}
+
+/// A reported scam warning may quote a real brand callback number even when
+/// the notice arrived through an unverified sender. Suppress TOAD only when
+/// it has several anti-impersonation cues, any links belong to the matched
+/// brand's curated HTTPS domains, and every dialable number is a curated
+/// contact for that brand.
+fn is_reported_scam_notice_callback(brand: &str, phone_numbers: &[String]) -> bool {
+    if phone_numbers.is_empty() {
+        return false;
+    }
+
+    let md = module_data();
+    let Some(profiles) = md
+        .get_structured("toad_official_callback_profiles")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return false;
+    };
+
+    profiles.iter().any(|profile| {
+        let brand_matches = profile_matches_brand(profile, brand);
+        let official_numbers = profile
+            .get("phone_numbers")
+            .and_then(serde_json::Value::as_array);
+
+        brand_matches
+            && official_numbers.is_some_and(|official_numbers| {
+                !official_numbers.is_empty()
+                    && phone_numbers.iter().all(|observed| {
+                        let observed = phone_digits(observed);
+                        official_numbers.iter().any(|official| {
+                            official
+                                .as_str()
+                                .is_some_and(|official| phone_digits(official) == observed)
+                        })
+                    })
+            })
+    })
+}
+
+fn callback_action_phone_numbers(
+    corpus: &str,
+    callback_action_matcher: &crate::matcher::PhraseMatcher,
+) -> Vec<String> {
+    let normalized = map_chinese_numerals(corpus);
+    let mut seen = std::collections::HashSet::new();
+    let mut numbers = Vec::new();
+    for segment in normalized.split(['\n', '\r', '。', '！', '？', '!', '?', ';', '；']) {
+        if !callback_action_matcher.scan(segment).is_match() {
+            continue;
+        }
+        let (segment_numbers, kinds) = extract_phone_numbers(segment);
+        for (number, kind) in segment_numbers.into_iter().zip(kinds) {
+            if kind == "masked" {
+                continue;
+            }
+            let digits = phone_digits(&number);
+            if seen.insert(digits) {
+                numbers.push(number);
+            }
+        }
+    }
+    numbers
+}
+
+fn has_only_official_reported_notice_links(
+    brand: &str,
+    links: &[vigilyx_core::models::EmailLink],
+) -> bool {
+    if links.is_empty() {
+        return true;
+    }
+
+    let md = module_data();
+    let Some(profiles) = md
+        .get_structured("toad_official_callback_profiles")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return false;
+    };
+
+    profiles.iter().any(|profile| {
+        if !profile_matches_brand(profile, brand) {
+            return false;
+        }
+        let Some(domains) = profile
+            .get("sender_domains")
+            .and_then(serde_json::Value::as_array)
+        else {
+            return false;
+        };
+        !domains.is_empty()
+            && links.iter().all(|link| {
+                if link.suspicious {
+                    return false;
+                }
+                let candidate = link.url.trim();
+                let candidate = if candidate.contains("://") {
+                    candidate.to_string()
+                } else {
+                    format!("https://{candidate}")
+                };
+                let Ok(parsed) = url::Url::parse(&candidate) else {
+                    return false;
+                };
+                parsed.scheme() == "https"
+                    && parsed.username().is_empty()
+                    && parsed.password().is_none()
+                    && parsed.host_str().is_some_and(|host| {
+                        domains.iter().any(|domain| {
+                            domain.as_str().is_some_and(|domain| {
+                                host_matches_domain_or_subdomain(host, domain)
+                            })
+                        })
+                    })
+            })
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -348,14 +583,25 @@ impl SecurityModule for ToadDetectModule {
         let corpus_lower = corpus.to_ascii_lowercase();
 
         // Aho-Corasick matchers (built once, reused across calls).
-        let callback_matcher = toad_callback_verbs();
+        let callback_mention_matcher = toad_callback_verbs();
+        let callback_action_matcher = toad_explicit_callback_actions();
         let urgency_matcher = toad_urgency_phrases();
 
         // brand_list still needs to flow through `brand_mismatched`, so keep
         // it as a snapshot Vec for the closure below.
         let md = module_data();
         let brand_list = md.get_list("toad_brand_impersonation").to_vec();
-        let callback_empty = md.get_list("toad_callback_verbs").is_empty();
+        let benign_transaction_hits = md
+            .get_list("toad_benign_transaction_notice_markers")
+            .iter()
+            .filter(|marker| corpus_lower.contains(&marker.to_ascii_lowercase()))
+            .count();
+        let reported_scam_marker_hits = md
+            .get_list("toad_reported_scam_notice_markers")
+            .iter()
+            .filter(|marker| corpus_lower.contains(&marker.to_ascii_lowercase()))
+            .count();
+        let callback_empty = md.get_list("toad_explicit_callback_actions").is_empty();
         drop(md);
 
         if callback_empty {
@@ -369,7 +615,8 @@ impl SecurityModule for ToadDetectModule {
         }
 
         // Scan signals.
-        let callback_hit = callback_matcher.scan(&corpus_lower).first_pattern();
+        let callback_mention = callback_mention_matcher.scan(&corpus_lower).first_pattern();
+        let callback_hit = callback_action_matcher.scan(&corpus_lower).first_pattern();
         let urgency_hit = urgency_matcher.scan(&corpus_lower).first_pattern();
 
         let sender_domain = ctx
@@ -381,13 +628,26 @@ impl SecurityModule for ToadDetectModule {
 
         // Brand impersonation: brand mentioned in body, sender domain
         // does not contain the brand token.
-        let brand_hit = brand_list.iter().find(|b| {
+        let mentioned_brand = brand_list.iter().find(|b| {
             let b_lower = b.to_ascii_lowercase();
-            corpus_lower.contains(&b_lower) && brand_mismatched(&b_lower, sender_domain.as_deref())
+            corpus_lower.contains(&b_lower)
+        });
+        let brand_hit = mentioned_brand.filter(|brand| {
+            brand_mismatched(&brand.to_ascii_lowercase(), sender_domain.as_deref())
         });
 
-        let (phone_numbers, phone_kinds) =
-            extract_phone_numbers(&map_chinese_numerals(&corpus));
+        let (phone_numbers, phone_kinds) = extract_phone_numbers(&map_chinese_numerals(&corpus));
+        let callback_phone_numbers =
+            callback_action_phone_numbers(&corpus, callback_action_matcher);
+        // A notice can name several organizations (for example the insurer
+        // and its regulator). Match the quoted callback number against any
+        // named brand profile instead of only the first brand token found in
+        // the body; the anti-scam, callback-number, and brand-link gates below
+        // still have to pass.
+        let reported_scam_notice_brand = brand_list
+            .iter()
+            .filter(|brand| corpus_lower.contains(&brand.to_ascii_lowercase()))
+            .find(|brand| is_reported_scam_notice_callback(brand, &callback_phone_numbers));
         // Allow the noisy `generic` matcher only when an explicit callback
         // verb was found — signature phone numbers in legitimate emails
         // would otherwise create noise.
@@ -398,13 +658,29 @@ impl SecurityModule for ToadDetectModule {
                 .iter()
                 .any(|k| *k != "generic" && *k != "cn_mobile")
         };
+        let official_brand_callback = callback_hit.is_some()
+            && urgency_hit.is_none()
+            && mentioned_brand.is_some_and(|brand| {
+                is_official_brand_callback(brand, sender_domain.as_deref(), &phone_numbers)
+            });
+        let benign_transaction_notice = benign_transaction_hits >= 2
+            && ctx.session.content.links.is_empty()
+            && ctx.session.content.attachments.is_empty();
+        let reported_scam_notice_callback = callback_hit.is_some()
+            && reported_scam_marker_hits >= 3
+            && ctx.session.content.attachments.is_empty()
+            && reported_scam_notice_brand.is_some_and(|brand| {
+                has_only_official_reported_notice_links(brand, &ctx.session.content.links)
+            });
+        let toad_suppressed =
+            official_brand_callback || benign_transaction_notice || reported_scam_notice_callback;
 
         // ── Score ─────────────────────────────────────────────────────────
         let mut score: f64 = 0.0;
         let mut categories: Vec<String> = Vec::new();
         let mut evidence: Vec<Evidence> = Vec::new();
 
-        if let Some(ref kw) = callback_hit {
+        if !toad_suppressed && let Some(ref kw) = callback_hit {
             score += 0.35;
             categories.push("toad_callback_verb".to_string());
             evidence.push(Evidence {
@@ -413,7 +689,7 @@ impl SecurityModule for ToadDetectModule {
                 snippet: None,
             });
         }
-        if let Some(ref kw) = urgency_hit {
+        if !toad_suppressed && let Some(ref kw) = urgency_hit {
             score += 0.20;
             categories.push("toad_urgency_phrase".to_string());
             evidence.push(Evidence {
@@ -422,7 +698,7 @@ impl SecurityModule for ToadDetectModule {
                 snippet: None,
             });
         }
-        if let Some(brand) = brand_hit {
+        if !toad_suppressed && let Some(brand) = brand_hit {
             score += 0.15;
             categories.push("toad_brand_impersonation".to_string());
             evidence.push(Evidence {
@@ -435,7 +711,7 @@ impl SecurityModule for ToadDetectModule {
                 snippet: None,
             });
         }
-        if phone_present {
+        if !toad_suppressed && phone_present {
             score += 0.15;
             categories.push("toad_phone_present".to_string());
             let preview: Vec<String> = phone_numbers.iter().take(3).cloned().collect();
@@ -453,6 +729,7 @@ impl SecurityModule for ToadDetectModule {
         // Core combo: callback verb + phone + (urgency OR brand_impersonation).
         let combo = callback_hit.is_some()
             && phone_present
+            && !toad_suppressed
             && (urgency_hit.is_some() || brand_hit.is_some());
         if combo {
             score += 0.15;
@@ -503,8 +780,10 @@ impl SecurityModule for ToadDetectModule {
                 "phone_count": phone_numbers.len(),
                 "phone_kinds": phone_kinds,
                 "callback_hit": callback_hit,
+                "callback_mention": callback_mention,
                 "urgency_hit": urgency_hit,
                 "brand_hit": brand_hit,
+                "official_brand_callback": official_brand_callback,
             }),
             duration_ms,
             analyzed_at: Utc::now(),
@@ -602,6 +881,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn parcel_delivery_callback_with_yao_phone_fires() {
+        let module = ToadDetectModule::new();
+        let body = "您的地址不详无法派送，今天 18:00 前致电派送员处理，\
+                    逾期包裹退回：幺三九幺七六五幺零三四（微信同号）。";
+        let ctx = ctx_with(
+            "station@express-notice.example",
+            Some("派送异常，请速联系站点"),
+            Some(body),
+        );
+
+        let result = module.analyze(&ctx).await.expect("analyze ok");
+
+        assert!(result.threat_level >= ThreatLevel::Medium, "{result:?}");
+        assert!(result.categories.iter().any(|c| c == "toad_callback_verb"));
+        assert!(result.categories.iter().any(|c| c == "toad_phone_present"));
+    }
+
+    #[tokio::test]
+    async fn refund_unsubscribe_and_ticket_callback_phrases_with_phone_fire() {
+        let module = ToadDetectModule::new();
+        let cases = [
+            (
+                "vip@auto-sub.example",
+                "会员自动续费前提醒",
+                "连续包月服务将于明晚扣费 25 元。退订仅支持客服专线：400-8810-226，线上渠道已关闭。",
+            ),
+            (
+                "kf@kecheng-svc.example",
+                "退费事宜请专线联系",
+                "退费申请已受理，专员回访请接听：400-6900-117。需按语音提示输入银行卡号完成退款登记。",
+            ),
+            (
+                "it-help@corp-relay.example",
+                "Re: 工单 ITSM-7712（待您确认）",
+                "工单处理需要您配合做一次后台确认。回拨值班专线 0571-88xx-9911（转2），报工单号即可。今晚前处理完成，避免升级。",
+            ),
+        ];
+
+        for (sender, subject, body) in cases {
+            let ctx = ctx_with(sender, Some(subject), Some(body));
+            let result = module.analyze(&ctx).await.expect("analyze ok");
+            assert!(
+                result
+                    .categories
+                    .iter()
+                    .any(|category| category == "toad_callback_verb"),
+                "explicit recipient-directed phone action must be retained: {result:?}"
+            );
+            assert!(
+                result
+                    .categories
+                    .iter()
+                    .any(|category| category == "toad_phone_present"),
+                "irregularly grouped or masked service number must be retained: {result:?}"
+            );
+            assert!(result.threat_level >= ThreatLevel::Medium, "{result:?}");
+        }
+    }
+
+    #[tokio::test]
     async fn signature_phone_only_does_not_fire() {
         // Legitimate business email with a phone in the signature.
         // No callback verb → must stay Safe.
@@ -619,6 +958,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ordinary_parcel_status_with_service_number_stays_safe() {
+        let module = ToadDetectModule::new();
+        let body =
+            "您的包裹已送达驿站。物流查询请使用官方小程序；如需咨询，客服热线 400-123-4567。";
+        let ctx = ctx_with("notice@express.example", Some("包裹已送达"), Some(body));
+
+        let result = module.analyze(&ctx).await.expect("analyze ok");
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe, "{result:?}");
+        assert!(result.categories.is_empty(), "{result:?}");
+        assert!(result.details["callback_hit"].is_null(), "{result:?}");
+    }
+
+    #[tokio::test]
     async fn callback_verb_without_phone_does_not_fire() {
         // Marketing email mentions "call us" but no number embedded — Safe.
         let module = ToadDetectModule::new();
@@ -630,6 +983,34 @@ mod tests {
             ThreatLevel::Safe,
             "callback verb without phone must not fire, cats={:?}",
             result.categories
+        );
+    }
+
+    #[tokio::test]
+    async fn renewal_marketing_contact_line_with_phone_is_not_callback_attack() {
+        // A support contact and a phone number are not a recipient-directed
+        // request to call. Keep the broad phrase as diagnostic context only.
+        let module = ToadDetectModule::new();
+        let body = "您的订阅已续费成功。会员续费限时赠礼，活动名额有限。\
+                    续费遇到问题，欢迎随时联系我们的专属客服。\
+                    客服热线：400-000-0000。请通过会员中心查看续费详情。";
+        let ctx = ctx_with(
+            "service@membership.example",
+            Some("会员续费优惠"),
+            Some(body),
+        );
+
+        let result = module.analyze(&ctx).await.expect("analyze ok");
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe, "{result:?}");
+        assert!(result.categories.is_empty(), "{result:?}");
+        assert!(
+            result.details["callback_mention"].is_string(),
+            "the broad support mention should remain diagnostic: {result:?}"
+        );
+        assert!(
+            result.details["callback_hit"].is_null(),
+            "a service mention must not become actionable callback evidence: {result:?}"
         );
     }
 
@@ -727,11 +1108,7 @@ mod tests {
         let module = ToadDetectModule::new();
         let body = "尊敬的客户，您的会员服务已自动续费成功，如非本人操作，\
                     请立即拨打客服热线 4 0 0 1 2 3 4 5 6 7 办理退款。";
-        let ctx = ctx_with(
-            "service@random-host.cn",
-            Some("会员续费提醒"),
-            Some(body),
-        );
+        let ctx = ctx_with("service@random-host.cn", Some("会员续费提醒"), Some(body));
         let result = module.analyze(&ctx).await.expect("analyze ok");
         assert!(
             result.categories.iter().any(|c| c == "toad_callback_verb"),
@@ -757,11 +1134,7 @@ mod tests {
         let module = ToadDetectModule::new();
         let body = "尊敬的客户，您的账户存在异常扣费，如非本人操作，\
                     请立即拨打客服热线４００－１２３－４５６７核实。";
-        let ctx = ctx_with(
-            "service@random-host.cn",
-            Some("账户安全提醒"),
-            Some(body),
-        );
+        let ctx = ctx_with("service@random-host.cn", Some("账户安全提醒"), Some(body));
         let result = module.analyze(&ctx).await.expect("analyze ok");
         assert!(
             result.categories.iter().any(|c| c == "toad_phone_present"),
@@ -778,7 +1151,10 @@ mod tests {
     #[test]
     fn phone_extractor_squashed_digit_run() {
         let (nums, kinds) = extract_phone_numbers("热线 4 0 0 1 2 3 4 5 6 7 办理");
-        assert!(!nums.is_empty(), "squashed pass should detect spaced digits");
+        assert!(
+            !nums.is_empty(),
+            "squashed pass should detect spaced digits"
+        );
         assert!(kinds.contains(&"cn_hotline"));
     }
 
@@ -787,7 +1163,12 @@ mod tests {
         // "400-123-4567" matches directly and again in the squashed pass;
         // digits-only dedup must keep it as a single number.
         let (nums, _) = extract_phone_numbers("拨打400-123-4567办理退款");
-        assert_eq!(nums.len(), 1, "squashed twin must be deduplicated: {:?}", nums);
+        assert_eq!(
+            nums.len(),
+            1,
+            "squashed twin must be deduplicated: {:?}",
+            nums
+        );
     }
 
     #[test]
@@ -801,6 +1182,66 @@ mod tests {
     fn brand_match_long_token_recognized() {
         assert!(!brand_mismatched("paypal", Some("service.paypal.com")));
         assert!(brand_mismatched("paypal", Some("totally-not-paypal.tld")));
+        assert!(!brand_mismatched(
+            "95599",
+            Some("creditcard.abchina.com.cn")
+        ));
+        assert!(brand_mismatched(
+            "95599",
+            Some("abchina.com.cn.attacker.invalid")
+        ));
+    }
+
+    #[tokio::test]
+    async fn official_abc_statement_callback_is_safe() {
+        let module = ToadDetectModule::new();
+        let html = "<html><body><p>农行95599电子对账单。</p>\
+                    <p>如有任何疑问，请拨打我行信用卡24小时客服热线\
+                    4006695599，境外请拨打+86-21-61195599。</p></body></html>";
+        let sender = format!("fixture@{}", "creditcard.abchina.com.cn");
+        let ctx = ctx_with_html(
+            &sender,
+            Some("中国农业银行金穗信用卡电子对账单"),
+            None,
+            Some(html),
+        );
+
+        let result = module.analyze(&ctx).await.expect("analyze ok");
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe, "{result:?}");
+        assert!(result.categories.is_empty(), "{result:?}");
+        assert_eq!(
+            result.details["official_brand_callback"],
+            serde_json::json!(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn official_looking_abc_sender_with_unregistered_phone_still_fires() {
+        let module = ToadDetectModule::new();
+        let body = "农行95599提醒：如有疑问，请立即拨打客服热线4001234567处理。";
+        let sender = format!("fixture@{}", "creditcard.abchina.com.cn");
+        let ctx = ctx_with(&sender, Some("账户服务提醒"), Some(body));
+
+        let result = module.analyze(&ctx).await.expect("analyze ok");
+
+        assert!(result.threat_level >= ThreatLevel::Medium, "{result:?}");
+        assert!(
+            result
+                .categories
+                .contains(&"toad_callback_verb".to_string()),
+            "{result:?}"
+        );
+        assert!(
+            result
+                .categories
+                .contains(&"toad_phone_present".to_string()),
+            "{result:?}"
+        );
+        assert_eq!(
+            result.details["official_brand_callback"],
+            serde_json::json!(false)
+        );
     }
 
     #[tokio::test]
@@ -810,11 +1251,7 @@ mod tests {
         let module = ToadDetectModule::new();
         let body = "尊敬的客户，您的会员服务已自动续费成功，如非本人操作，\
                     请立即拨打客服热线 四零零·六一五·五五五五 办理退款。";
-        let ctx = ctx_with(
-            "service@random-host.cn",
-            Some("会员续费提醒"),
-            Some(body),
-        );
+        let ctx = ctx_with("service@random-host.cn", Some("会员续费提醒"), Some(body));
         let result = module.analyze(&ctx).await.expect("analyze ok");
         assert!(
             result.categories.iter().any(|c| c == "toad_phone_present"),
@@ -836,11 +1273,7 @@ mod tests {
         let module = ToadDetectModule::new();
         let body = "尊敬的客户，您的会员服务已自动续费成功，如非本人操作，\
                     请立即拨打客服热线 4·0·0·6·1·5·5·5·5·5 办理退款。";
-        let ctx = ctx_with(
-            "service@random-host.cn",
-            Some("会员续费提醒"),
-            Some(body),
-        );
+        let ctx = ctx_with("service@random-host.cn", Some("会员续费提醒"), Some(body));
         let result = module.analyze(&ctx).await.expect("analyze ok");
         assert!(
             result.categories.iter().any(|c| c == "toad_phone_present"),
@@ -872,7 +1305,39 @@ mod tests {
     fn map_chinese_numerals_converts_digit_chars() {
         assert_eq!(map_chinese_numerals("四零零六一五"), "400615");
         assert_eq!(map_chinese_numerals("〇零一二"), "0012");
+        assert_eq!(map_chinese_numerals("幺三八两兩"), "13822");
         // Characters outside the numeral set are untouched.
         assert_eq!(map_chinese_numerals("十年树木"), "十年树木");
+    }
+
+    #[tokio::test]
+    async fn yao_and_liang_mobile_numbers_complete_callback_chain() {
+        let module = ToadDetectModule::new();
+        for number in ["幺三八零零幺二三幺七八", "一三八两零零六幺二三四"] {
+            let body = format!("请立即致电客服核验：{number}");
+            let ctx = ctx_with("service@random-host.cn", Some("客服核验"), Some(&body));
+            let result = module.analyze(&ctx).await.expect("analyze ok");
+            assert!(
+                result
+                    .categories
+                    .contains(&"toad_phone_present".to_string()),
+                "variant {number} must be dialable: {result:?}"
+            );
+            assert!(
+                result
+                    .categories
+                    .contains(&"toad_callback_verb".to_string()),
+                "variant {number} must retain callback causality: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_chinese_quantities_do_not_become_phone_numbers() {
+        let (numbers, _) = extract_phone_numbers("会议需要两张票，幺号与二号座位保留。");
+        assert!(
+            numbers.is_empty(),
+            "short quantities are not dialable: {numbers:?}"
+        );
     }
 }

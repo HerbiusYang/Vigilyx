@@ -1,0 +1,82 @@
+From: Walmart Supplier Services <supplier@walmart.example>
+To: logistics@corp.internal
+Cc: finance@corp.internal, it@corp.internal
+Date: Wed, 28 Oct 2026 07:00:00 -0600
+Message-ID: <0619-b62@synth.example>
+Subject: Re: Re: [Supplier ID 884266] EDI System Migration — Payment processing changes effective November 1
+In-Reply-To: <supplier-edi-884266@corp.internal>
+References: <supplier-edi-884266@corp.internal> <supplier-edi-884266-2@corp.internal>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Logistics, Finance, IT Teams:
+
+As discussed in our October 20 supplier call, Walmart is migrating
+its EDI payment processing system from GEIS to SAP Ariba.
+
+Your Supplier Account:
+  Supplier ID: 884266
+  Supplier Name: Your Company (Hangzhou) Ltd.
+  DUNS: 31-548-9921
+  Annual Volume: $2,840,000
+  Products: Email Security Appliances (GW-2000)
+
+What's Changing:
+  EDI Standard: X12 → cXML
+  Payment Method: EFT via GEIS → Ariba Pay (via SAP Financial)
+  Portal: GEIS Supplier Web → SAP Ariba Supplier Portal
+  Payment Terms: Net 30 (unchanged)
+
+Action Required (Before Friday, October 31):
+
+  1. Register on SAP Ariba Supplier Portal:
+     Navigate to supplier.ariba.com in your browser
+     (Type the URL manually. Do NOT click links from emails.)
+
+     → Click "Register as a Supplier"
+     → Enter your DUNS number: 31-548-9921
+     → Complete company profile
+     → Upload business license and tax forms
+
+  2. Update your EDI configuration:
+     Your IT team will receive technical documentation
+     for cXML integration (sent separately via registered mail)
+
+  Important Security Notes:
+  Walmart will NEVER:
+  - Send bank account details or payment routing changes via email
+  - Use a "centralized payment account" with a different
+    beneficiary name
+  - Require payments to "Walmart Supplier Payment Services LLC"
+  - Use a "branded supplier registration portal" on a
+    non-walmart.com or non-ariba.com domain
+  - Offer a "Chinese EDI support channel" for document upload
+
+  All payment account information is:
+  - Displayed within the SAP Ariba Supplier Portal after
+    you register and authenticate
+  - Sent by registered mail to your company's address on file
+  - NEVER provided through email
+
+  If you receive an email containing bank details or routing
+  numbers for "EDI migration," it is a phishing attempt
+  targeting Walmart suppliers.
+
+  To verify any Walmart communication:
+  - Call: 1-800-426-**** (verify at walmart.com/suppliers)
+  - Or log in to the current supplier portal and check
+    for announcements
+
+Recent Orders:
+  PO-8842-001  10/15  GW-2000  120 units  $288,000
+  PO-8842-002  10/22  GW-2000   85 units  $204,000
+  PO-8842-003  10/26  GW-2000  200 units  $480,000
+
+Timeline:
+  10/28  Receive migration notice
+  10/31  Old system (GEIS) decommissioned
+  11/01  New system (SAP Ariba) active
+
+Walmart Inc. | Supplier Services
+702 SW 8th Street, Bentonville, AR 72716
+You are receiving this because you are the contact for Supplier ID 884266.

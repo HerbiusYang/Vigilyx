@@ -1,0 +1,10 @@
+From: =?utf-8?B?bnBt?= <support@npmjs.example>
+To: dev@corp.internal
+Date: Fri, 11 Sep 2026 08:36:00 +0800
+Message-ID: <0026-b19@synth.example>
+Subject: Stewardship transfer: official process
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+If you wish to transfer tower-lsp, use the repository Settings page
+(Transfer ownership). npm staff will never email you links to start it.

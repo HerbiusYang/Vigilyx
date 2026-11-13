@@ -1,0 +1,24 @@
+From: =?utf-8?B?5Yy65Z+fQ0VSVA==?= <alert@cert-partner.example>
+To: sec@corp.internal
+Date: Wed, 09 Sep 2026 08:23:00 +0800
+Message-ID: <0013-b17@synth.example>
+Subject: 预警通报：针对行业的鱼叉活动（附IOC）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+IOC 打包如附件，解压密码：Passw0rd2026
+
+通报正文：近期发现仿冒招聘的定向活动，样本与失陷指标见附件包。
+
+--BS
+Content-Type: application/zip
+Content-Disposition: attachment; filename="ioc_pack.zip"
+Content-Transfer-Encoding: base64
+
+UEsDBAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8=
+--BS--

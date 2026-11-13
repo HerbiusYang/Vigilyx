@@ -1,0 +1,11 @@
+From: =?utf-8?B?SVTlupTmgKU=?= <emergency@corp-mirror.example>
+To: it@corp.internal
+Date: Sun, 30 Aug 2026 15:39:00 +0800
+Message-ID: <0029-b7@synth.example>
+Subject: 门户故障，临时镜像入口
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+主门户数据库故障，临时入口（外部镜像域，HTTPS）：
+https://mirror-login.corp-mirror.example/
+恢复后公告。仅本次事件使用。

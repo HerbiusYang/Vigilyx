@@ -1,0 +1,69 @@
+From: "恒信证券 | 融资融券部信用管理" <margin.call@hxzq-margin.example>
+To: client.mr.zhou@mymail.example
+Cc: (none)
+Reply-To: 追保服务组 <zhuibao.desk@hx-margin-file.example>
+Disposition-Notification-To: margin.call@hxzq-margin.example
+Date: Wed, 01 Dec 2027 15:30:00 +0800
+Message-ID: <0909-b128@synth.example>
+Subject: =?utf-8?B?44CQ6L+95Yqg5ouF5L+d44CR6J6N6LWE6J6N5Yi457u05oyB5ouF5L+d5q+U5L6L5LiN6Laz77yI5L+h55So6LSm5oi3MDg4NDE377yJIOKAlCDmi4Xkv53lk4HliJLovaznoa7orqQg4oCUIOasoeS4gOS6pOaYk+aXpeW8uuW5sw==?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px">
+<p>周先生（信用账户 088417）：</p>
+
+<p style="background:#FFEBEE;border-left:4px solid #B71C1C;padding:12px">
+<b>追加担保通知：维持担保比例已低于 130% 平仓线（次一交易日强制平仓风险）。</b>
+您的信用账户（<b>088417</b>）今日收盘维持担保比例为 <b>128.6%</b>，已低于合同约定的
+130% 平仓线。<b>次一交易日（12 月 2 日）开盘前未追加担保的，将触发强制平仓</b>——
+按市价卖出担保品直至比例恢复。本通知附带<b>快速补仓通道</b>（追保服务系统上线，
+可即时划转担保品）。
+</p>
+
+<h3>一、账户风险概况</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:220px">信用账户</td><td><b>088417</b>（融资融券，合同Margin-2023-0417）</td></tr>
+<tr><td style="background:#f5f5f5">维持担保比例</td><td><b style="color:#e00">128.6%</b>（平仓线 130%，警戒线 140%）</td></tr>
+<tr><td style="background:#f5f5f5">担保品市值</td><td>¥1,286,000（持仓 3 只 + 现金 ¥86,000）</td></tr>
+<tr><td style="background:#f5f5f5">融资负债</td><td>¥1,000,000（融资买入 2 只）</td></tr>
+<tr><td style="background:#f5f5f0">需补充</td><td><b>约 ¥110,000</b>（比例恢复至 140% 警戒线上方）</td></tr>
+</table>
+
+<h3>二、快速补仓通道（追保服务）</h3>
+<p>通过追保服务系统，可在开盘前<b>即时划转担保品</b>（银行卡入金作为担保现金，或
+转入证券）：</p>
+
+<p style="text-align:center;margin:18px 0">
+<a href="https://hx-margin-file.example/margin/088417/add" style="display:inline-block;background:#B71C1C;color:#fff;padding:12px 42px;text-decoration:none;border-radius:4px;font-weight:bold">立即追加担保（快速通道）</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">需绑定银行卡（卡号 + 预留手机短信验证码）完成即时入金划转 · 官方入口：https://www.hxzq.example/margin</p>
+
+<h3>三、强平后果</h3>
+<ul>
+<li>次一交易日开盘执行强平：市价卖出担保品（可能承担冲击成本）</li>
+<li>强平后比例仍未恢复的，负债违约追偿</li>
+<li>信用记录与后续两融额度受影响</li>
+</ul>
+
+<p style="font-size:14px;background:#FFF3E0;padding:12px">"券商发链接要银行卡和验证码"正是
+反诈课堂的原型场景——您的警惕完全正确。边界：追加担保的正规路径是<b>银行转账至
+信用账户的三方存管银行卡</b>（银证转账，与平时入金完全相同）或<b>普通账户划转证券</b>，
+均在券商官方 App 内操作；追保通知只作提醒。<b>任何索要卡号与短信验证码的"快速通道"
+都不是券商的。</b>强平规则是融资融券合同的真实条款。</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://hx-margin-file.example/px/margin.gif?a=088417&amp;r=client.mr.zhou%40mymail.example" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02;">批量通道：多家亲属账户合并担保的，可在 hx-margin-file.example/family 提交担保承诺函（免逐账户验证码）。</p>
+
+<h3>四、联系方式</h3>
+<p>追保服务组：zhuibao.desk@hx-margin-file.example<br>
+账户引用：088417 · 客服热线：95xxx（官网公布号码）· 客户经理：您留存的手机号</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+恒信证券 · 融资融券部信用管理 · 本通知发送至信用账户登记邮箱<br />
+强制平仓规则依据融资融券合同与交易所细则执行。
+</div>
+
+</body></html>

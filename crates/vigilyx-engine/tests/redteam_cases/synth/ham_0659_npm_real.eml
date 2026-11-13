@@ -1,0 +1,95 @@
+From: "npm, Inc. | Security" <security@npmjs.example>
+To: frontend-platform@corp.internal
+Cc: oss-security@corp.internal, eng-directors@corp.internal
+Date: Tue, 15 Dec 2026 16:40:00 +0000
+Message-ID: <0659-b75@synth.example>
+Subject: [ACTION] Maintainer Access Token Exposure Advisory - @corp/design-tokens - Rotate In Your Account Settings
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Frontend Platform, OSS Security, Engineering Directors,
+
+MAINTAINER TOKEN EXPOSURE ADVISORY -
+@corp/design-tokens.
+A granular automation token belonging to your
+organization was found exposed in a public CI
+log. Rotate it and audit publishes made while
+it was live.
+
+1. EXPOSURE SUMMARY
+
+  Package:           @corp/design-tokens
+                     (v4.7.2, ~318K weekly
+                     downloads)
+  Exposed
+    credential:      Granular automation
+                     token npm_xkR2...9fQ4
+                     (read-write, package
+                     scope)
+  Owner account:     corp-ci-publisher
+                     (org: your-org)
+  Exposure vector:   Forked PR workflow
+                     echoed the token in a
+                     build log line
+                     (run #41882, job
+                     "publish-check")
+  First seen
+    in logs:         11 December 2026,
+                     03:14 UTC
+  Publishes since
+    exposure:        1 (v4.7.2, 12 December
+                     - integrity check
+                     required)
+
+2. HOW TO ROTATE (OFFICIAL PATH ONLY)
+
+    1. Type npmjs.example in your browser
+       and log in as the org owner.
+    2. Access Tokens -> identify the token
+       ending ...9fQ4 -> Revoke.
+    3. Generate a new granular token with
+       the same package scope.
+    4. Update the CI secret store that
+       consumed the old token.
+    5. Audit v4.7.2: compare the published
+       tarball manifest and signature
+       against release commit a41f0c2
+       (npm CLI: npm dist-tag ls /
+       npm view @corp/design-tokens
+       dist.integrity).
+
+  npm will NEVER:
+  - Email a "rotation portal" link or
+    button for token management
+  - Operate lookalike domains such as
+    "npmjs-registry" or
+    "npm-maintainer-relay"
+  - Offer an "automation lane" that
+    completes token rotation without
+    2FA (no such bypass exists)
+  - Ask you to compare "token
+    fingerprints" via an emailed link
+    instead of your own account page
+
+3. VERIFY THIS ADVISORY
+
+  - Check your org's security advisories
+    tab on npmjs.example (typed URL)
+  - The referenced CI run #41882 is in
+    your own CI system: read the log
+    line yourself
+  - Rotation history in Access Tokens
+    shows "last used" timestamps you can
+    correlate
+
+4. TIMELINE
+
+  - Rotate before your Monday release
+    train (v4.8.0)
+  - There is no registry-wide "weekend
+    publish freeze"; release timing is
+    entirely your org's own pipeline
+
+npm, Inc. | Security
+You are receiving this because your org
+publishes the affected package.

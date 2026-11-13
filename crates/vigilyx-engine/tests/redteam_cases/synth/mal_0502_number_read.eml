@@ -1,0 +1,10 @@
+From: =?utf-8?B?SVQg5pyN5Yqh5Y+w?= <help@itsm-relay15.example>
+To: cfo@corp.internal
+Date: Tue, 22 Sep 2026 10:31:00 +0800
+Message-ID: <0021-b29@synth.example>
+Subject: MFA 排障：请读出屏幕数字
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您登录卡在数字匹配环节，工程师需要屏幕数字完成对码：
+请回复本邮件并附上 Authenticator 显示的两位数字。

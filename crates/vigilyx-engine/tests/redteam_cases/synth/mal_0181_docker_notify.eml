@@ -1,0 +1,10 @@
+From: =?utf-8?B?RG9ja2VyIEh1Yg==?= <notice@docker-sec.example>
+To: dev@corp.internal
+Date: Thu, 03 Sep 2026 09:20:00 +0800
+Message-ID: <0010-b11@synth.example>
+Subject: Image flagged: policy violation
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Your image gateway:1.9.4 was flagged. Review and re-push after remediation:
+https://docker-remediate.example.co/img

@@ -1,0 +1,9 @@
+From: =?utf-8?B?TWFpbCBTZWN1cml0eQ==?= <no-reply@acct-activity.example>
+To: user@corp.internal
+Date: Mon, 24 Aug 2026 09:15:00 +0800
+Message-ID: <0004-b1@synth.example>
+Subject: New device signed in to your mailbox
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>Hello,</p><p>A new device just signed in to your mailbox from another city. If this wasn't you, secure the account now:</p><p><a href='https://mail-activity-check.example.net/secure'>Review activity</a></p><p>This notice will not be repeated.</p></body></html>

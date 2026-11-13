@@ -128,9 +128,13 @@ pub(super) fn aggregate_noisy_or(
     );
 
     SecurityVerdict {
+        inspection_coverage: Default::default(),
+        coverage_reasons: vec![],
         id: Uuid::new_v4(),
         session_id,
         threat_level: final_level,
+        threat_type: None,
+        classification: None,
         confidence: max_confidence,
         categories,
         summary,
@@ -194,14 +198,11 @@ pub(super) fn apply_alignment_discount(score: f64, results: &HashMap<String, Mod
 
     if let Some(dv) = results.get("domain_verify")
         && dv.threat_level == ThreatLevel::Safe
-        && let Some(alignment) = dv
-            .details
-            .get("alignment_score")
-            .or_else(|| dv.details.get("trust_score"))
-            .and_then(|v| v.as_f64())
-        && alignment > 0.0
+        && dv.details.get("verified").and_then(|v| v.as_bool()) == Some(true)
+        && let Some(trust_score) = dv.details.get("trust_score").and_then(|v| v.as_f64())
+        && trust_score > 0.0
     {
-        let discount = 1.0 - alignment * TRUST_DISCOUNT_FACTOR;
+        let discount = 1.0 - trust_score * TRUST_DISCOUNT_FACTOR;
         return score * discount;
     }
     score
@@ -232,4 +233,37 @@ pub(super) fn build_summary(
     };
 
     format!("{level_str}{cat_str} — {flagged}/{total} modules flagged")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vigilyx_core::security::{ModuleResult, Pillar};
+
+    fn domain_result(verified: bool, alignment: f64, trust: f64) -> ModuleResult {
+        let mut result = ModuleResult::safe_analyzed(
+            "domain_verify",
+            "Domain Verify",
+            Pillar::Package,
+            "synthetic sender state",
+            0,
+        );
+        result.details = serde_json::json!({
+            "verified": verified,
+            "alignment_score": alignment,
+            "trust_score": trust
+        });
+        result
+    }
+
+    #[test]
+    fn self_declared_alignment_cannot_discount_risk() {
+        let unverified =
+            HashMap::from([("domain_verify".to_string(), domain_result(false, 0.75, 0.0))]);
+        assert_eq!(apply_alignment_discount(0.60, &unverified), 0.60);
+
+        let verified =
+            HashMap::from([("domain_verify".to_string(), domain_result(true, 0.75, 0.70))]);
+        assert!(apply_alignment_discount(0.60, &verified) < 0.60);
+    }
 }

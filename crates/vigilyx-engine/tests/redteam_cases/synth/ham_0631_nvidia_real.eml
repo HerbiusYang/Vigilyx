@@ -1,0 +1,78 @@
+From: NVIDIA Developer Program <developer@nvidia.example>
+To: rd@corp.internal
+Cc: cto@corp.internal, finance@corp.internal
+Date: Sun, 01 Nov 2026 09:00:00 -0800
+Message-ID: <0631-b66@synth.example>
+Subject: Re: Re: [DEV-8842-GH200] GPU allocation approved — Next steps
+In-Reply-To: <gpu-request-8842@corp.internal>
+References: <gpu-request-8842@corp.internal> <gpu-request-8842-2@corp.internal>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear Research Team,
+
+Your application for NVIDIA H200 GPU allocation has been
+approved under the NVIDIA Inception program.
+
+Your Allocation:
+  Developer Account: dev_8842_vigilyx
+  Program: NVIDIA Inception (AI Startup)
+  GPU: NVIDIA H200 Tensor Core (141GB HBM3e)
+  Nodes: 8 nodes x 8 GPUs = 64 H200s
+  Duration: 6 months (Dec 2026 - May 2027)
+  Market Value: ~$184,000/month
+  Inception Discount: 95%
+  Your Cost: $9,200/month
+
+Next Steps:
+
+  1. Accept the allocation through the Developer Portal:
+     Navigate to developer.nvidia.com in your browser
+     (Type the URL manually. Do NOT click links from emails.)
+
+  2. Log in with your existing NVIDIA Developer account
+     (the same credentials used for CUDA downloads and
+      NGC container registry)
+
+  3. Go to: My Programs → Inception → GPU Allocation
+
+  4. Click "Accept Allocation"
+
+  5. Billing setup:
+     - Your developer portal billing account will be
+       charged automatically (no upfront activation fee)
+     - First invoice: end of December (after your first
+       month of usage)
+     - No wire transfer or bank payment is needed
+
+  Important Security Notes:
+  NVIDIA will NEVER:
+  - Charge an upfront "activation fee" for GPU allocation
+  - Send bank transfer details via email
+  - Create a "Developer Program Services LLC" for billing
+  - Ask you to submit training data samples through
+    email portals
+  - Require a "Responsible AI review" of your training
+    corpus before GPU access
+
+  NVIDIA's actual billing process:
+  - Inception members are billed monthly AFTER usage
+  - Payment is handled through the developer portal
+    (credit card or invoice, no bank transfers)
+  - No upfront fees exist for any Inception program
+  - Responsible AI review (if any) happens through the
+    developer portal after GPU access is granted
+
+  If you receive an email requesting an "activation fee"
+  wire transfer or training data upload, it is a phishing
+  attempt targeting AI startups.
+
+Your Inception Benefits:
+  95% GPU discount
+  $25,000/year DGX Cloud credits
+  Dedicated Deep Learning Engineer
+  GTC free passes
+
+NVIDIA Corporation | Developer Programs
+2788 San Tomas Expressway, Santa Clara, CA 95051
+You are receiving this because you are the contact for dev_8842_vigilyx.

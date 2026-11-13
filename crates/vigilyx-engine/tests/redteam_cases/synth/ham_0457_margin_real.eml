@@ -1,0 +1,10 @@
+From: =?utf-8?B?6J6N6LWE6J6N5Yi4?= <rz@broker.example>
+To: investor@personal.example
+Date: Wed, 23 Sep 2026 09:32:00 +0800
+Message-ID: <0022-b30@synth.example>
+Subject: 维持担保比例提醒
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+当前 155%，低于预警线 160%。可通过普通卖出或银证转账追加，
+均在交易 App 内操作；我司不会索要密码。

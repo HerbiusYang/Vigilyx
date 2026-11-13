@@ -16,6 +16,7 @@
 
 use std::hash::BuildHasherDefault;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use dashmap::DashMap;
 use rustc_hash::FxHasher;
@@ -116,6 +117,22 @@ pub struct TemporalObservation<'a> {
     pub content_similarity_delta: f64,
 }
 
+/// A point-in-time set of persisted baseline states. The revision beside each
+/// row lets a flush acknowledge only the version it actually wrote; an update
+/// racing with the database transaction remains dirty for the next flush.
+#[derive(Debug, Clone, Default)]
+pub struct TemporalDirtySnapshot {
+    pub cusum: Vec<(CusumState, u64)>,
+    pub ewma: Vec<(DualEwmaState, u64)>,
+    pub entity: Vec<(EntityRiskState, u64)>,
+}
+
+impl TemporalDirtySnapshot {
+    pub fn is_empty(&self) -> bool {
+        self.cusum.is_empty() && self.ewma.is_empty() && self.entity.is_empty()
+    }
+}
+
 fn temporal_risk_upgraded(temporal_risk: f64, single_email_risk: f64) -> bool {
     temporal_risk.is_finite() && single_email_risk.is_finite() && temporal_risk > single_email_risk
 }
@@ -149,6 +166,10 @@ pub struct TemporalAnalyzer {
     cusum_states: Arc<DashMap<String, CusumState, FxBuildHasher>>,
     ewma_states: Arc<DashMap<String, DualEwmaState, FxBuildHasher>>,
     entity_states: Arc<DashMap<String, EntityRiskState, FxBuildHasher>>,
+    dirty_cusum: Arc<DashMap<String, u64, FxBuildHasher>>,
+    dirty_ewma: Arc<DashMap<String, u64, FxBuildHasher>>,
+    dirty_entity: Arc<DashMap<String, u64, FxBuildHasher>>,
+    dirty_revision: AtomicU64,
     hmm_states: Arc<DashMap<String, AttackPhaseState, FxBuildHasher>>,
     hawkes_states: Arc<DashMap<String, HawkesState, FxBuildHasher>>,
     comm_graph: Arc<RwLock<CommGraph>>,
@@ -180,6 +201,10 @@ impl TemporalAnalyzer {
             cusum_states: Arc::new(DashMap::with_hasher(FxBuildHasher::default())),
             ewma_states: Arc::new(DashMap::with_hasher(FxBuildHasher::default())),
             entity_states: Arc::new(DashMap::with_hasher(FxBuildHasher::default())),
+            dirty_cusum: Arc::new(DashMap::with_hasher(FxBuildHasher::default())),
+            dirty_ewma: Arc::new(DashMap::with_hasher(FxBuildHasher::default())),
+            dirty_entity: Arc::new(DashMap::with_hasher(FxBuildHasher::default())),
+            dirty_revision: AtomicU64::new(0),
             hmm_states: Arc::new(DashMap::with_hasher(FxBuildHasher::default())),
             hawkes_states: Arc::new(DashMap::with_hasher(FxBuildHasher::default())),
             comm_graph: Arc::new(RwLock::new(CommGraph::new())),
@@ -237,8 +262,8 @@ impl TemporalAnalyzer {
         // CUSUM alarm) and useless (a compromised webmail account's risk is
         // diluted by the domain's clean traffic). Those senders fall back to
         // sender-scope baselines.
-        let sender_domain = registered_sender_domain(&sender_lower)
-            .unwrap_or_else(|| sender_lower.clone());
+        let sender_domain =
+            registered_sender_domain(&sender_lower).unwrap_or_else(|| sender_lower.clone());
         let sender_key = if crate::pipeline::internal_domains::is_public_mail_domain(&sender_domain)
         {
             sender_identity_key.clone()
@@ -247,50 +272,62 @@ impl TemporalAnalyzer {
         };
 
         // 1-3. CUSUM + EWMA + Entity (DashMap per-shard locks, no whole-map lock needed)
-        let cusum_result = if self.has_temporal_capacity(&self.cusum_states, &sender_key) {
+        let cusum_persisted = self.has_temporal_capacity(&self.cusum_states, &sender_key);
+        let cusum_result = if cusum_persisted {
             let mut entry = self
                 .cusum_states
                 .entry(sender_key.clone())
                 .or_insert_with(|| CusumState::new(sender_key.clone()));
             cusum_update(entry.value_mut(), obs.risk_single, &self.cusum_params)
         } else {
-            debug!(key = sender_key.as_str(), "temporal cusum map at capacity; computing statelessly");
+            debug!("temporal cusum map at capacity; computing statelessly");
             let mut tmp = CusumState::new(sender_key.clone());
             cusum_update(&mut tmp, obs.risk_single, &self.cusum_params)
         };
-        let ewma_result = if self.has_temporal_capacity(&self.ewma_states, &sender_key) {
+        if cusum_persisted {
+            self.mark_dirty(&self.dirty_cusum, &sender_key);
+        }
+
+        let ewma_persisted = self.has_temporal_capacity(&self.ewma_states, &sender_key);
+        let ewma_result = if ewma_persisted {
             let mut entry = self
                 .ewma_states
                 .entry(sender_key.clone())
                 .or_insert_with(|| DualEwmaState::new(sender_key.clone()));
             ewma_update(entry.value_mut(), obs.risk_single, &self.ewma_params)
         } else {
-            debug!(key = sender_key.as_str(), "temporal ewma map at capacity; computing statelessly");
+            debug!("temporal ewma map at capacity; computing statelessly");
             let mut tmp = DualEwmaState::new(sender_key.clone());
             ewma_update(&mut tmp, obs.risk_single, &self.ewma_params)
         };
-        let entity_result = if self.has_temporal_capacity(&self.entity_states, &sender_key) {
+        if ewma_persisted {
+            self.mark_dirty(&self.dirty_ewma, &sender_key);
+        }
+
+        let entity_persisted = self.has_temporal_capacity(&self.entity_states, &sender_key);
+        let entity_result = if entity_persisted {
             let mut entry = self
                 .entity_states
                 .entry(sender_key.clone())
                 .or_insert_with(|| EntityRiskState::with_defaults(sender_key.clone()));
             entity_risk_update(entry.value_mut(), obs.risk_single, &self.entity_params)
         } else {
-            debug!(key = sender_key.as_str(), "temporal entity map at capacity; computing statelessly");
+            debug!("temporal entity map at capacity; computing statelessly");
             let mut tmp = EntityRiskState::with_defaults(sender_key.clone());
             entity_risk_update(&mut tmp, obs.risk_single, &self.entity_params)
         };
+        if entity_persisted {
+            self.mark_dirty(&self.dirty_entity, &sender_key);
+        }
 
         if cusum_result.alarm {
             warn!(
-                sender = obs.sender,
                 s_pos = cusum_result.s_pos,
                 "CUSUM alarm triggered for sender"
             );
         }
         if ewma_result.drifting {
             warn!(
-                sender = obs.sender,
                 drift = ewma_result.drift_score,
                 "EWMA drift detected for sender"
             );
@@ -353,7 +390,10 @@ impl TemporalAnalyzer {
                             .or_insert_with(|| AttackPhaseState::new(pair_key_buf.clone()));
                         entry.value_mut().update(&hmm_obs)
                     } else {
-                        debug!(pair = pair_key_buf.as_str(), "temporal hmm map at capacity; computing statelessly");
+                        debug!(
+                            pair = pair_key_buf.as_str(),
+                            "temporal hmm map at capacity; computing statelessly"
+                        );
                         let mut tmp = AttackPhaseState::new(pair_key_buf.clone());
                         tmp.update(&hmm_obs)
                     };
@@ -397,7 +437,6 @@ impl TemporalAnalyzer {
             };
             if result.is_anomalous {
                 warn!(
-                    sender = obs.sender,
                     pattern = result.pattern_label.as_str(),
                     score = result.anomaly_score,
                     "Communication graph anomaly detected"
@@ -418,30 +457,26 @@ impl TemporalAnalyzer {
         let hawkes_result = if !obs.recipients.is_empty() {
             let mut worst_hawkes: Option<HawkesResult> = None;
             {
-                for (i, recipient_lower) in recipients_lower.iter().enumerate() {
+                for recipient_lower in &recipients_lower {
                     pair_key_buf.clear();
                     pair_key_buf.push_str(&sender_lower);
                     pair_key_buf.push('→');
                     pair_key_buf.push_str(recipient_lower);
 
-                    let result = if self.has_temporal_capacity(&self.hawkes_states, &pair_key_buf)
-                    {
-                        let mut entry =
-                            self.hawkes_states.entry(pair_key_buf.clone()).or_default();
+                    let result = if self.has_temporal_capacity(&self.hawkes_states, &pair_key_buf) {
+                        let mut entry = self.hawkes_states.entry(pair_key_buf.clone()).or_default();
                         entry.value_mut().observe(now_hours, obs.risk_single)
                     } else {
-                        debug!(pair = pair_key_buf.as_str(), "temporal hawkes map at capacity; computing statelessly");
+                        debug!(
+                            pair = pair_key_buf.as_str(),
+                            "temporal hawkes map at capacity; computing statelessly"
+                        );
                         let mut tmp = HawkesState::new();
                         tmp.observe(now_hours, obs.risk_single)
                     };
 
                     if result.burst_detected {
-                        warn!(
-                            sender = obs.sender,
-                            recipient = obs.recipients[i].as_str(),
-                            ratio = result.intensity_ratio,
-                            "Hawkes burst detected"
-                        );
+                        warn!(ratio = result.intensity_ratio, "Hawkes burst detected");
                     }
 
                     let is_worse = worst_hawkes
@@ -462,7 +497,7 @@ impl TemporalAnalyzer {
                     .or_default();
                 entry.value_mut().observe(now_hours, obs.risk_single)
             } else {
-                debug!(sender = obs.sender, "temporal hawkes map at capacity; computing statelessly");
+                debug!("temporal hawkes map at capacity; computing statelessly");
                 let mut tmp = HawkesState::new();
                 tmp.observe(now_hours, obs.risk_single)
             };
@@ -556,6 +591,75 @@ impl TemporalAnalyzer {
             .collect()
     }
 
+    fn mark_dirty(&self, dirty: &DashMap<String, u64, FxBuildHasher>, key: &str) {
+        let revision = self.dirty_revision.fetch_add(1, Ordering::Relaxed) + 1;
+        dirty.insert(key.to_string(), revision);
+    }
+
+    /// Export only baseline states changed since the previous successful
+    /// flush. This avoids rewriting every known sender on every interval.
+    pub fn export_dirty_states(&self) -> TemporalDirtySnapshot {
+        let cusum = self
+            .dirty_cusum
+            .iter()
+            .filter_map(|entry| {
+                self.cusum_states
+                    .get(entry.key())
+                    .map(|state| (state.clone(), *entry.value()))
+            })
+            .collect();
+        let ewma = self
+            .dirty_ewma
+            .iter()
+            .filter_map(|entry| {
+                self.ewma_states
+                    .get(entry.key())
+                    .map(|state| (state.clone(), *entry.value()))
+            })
+            .collect();
+        let entity = self
+            .dirty_entity
+            .iter()
+            .filter_map(|entry| {
+                self.entity_states
+                    .get(entry.key())
+                    .map(|state| (state.clone(), *entry.value()))
+            })
+            .collect();
+        TemporalDirtySnapshot {
+            cusum,
+            ewma,
+            entity,
+        }
+    }
+
+    /// Acknowledge exactly the revisions included in a committed DB flush.
+    /// An update that raced with the flush has a newer revision and remains
+    /// dirty for the next batch.
+    pub fn mark_persisted(&self, snapshot: &TemporalDirtySnapshot) {
+        clear_dirty_if_current(
+            &self.dirty_cusum,
+            snapshot
+                .cusum
+                .iter()
+                .map(|(state, revision)| (state.entity_key.as_str(), *revision)),
+        );
+        clear_dirty_if_current(
+            &self.dirty_ewma,
+            snapshot
+                .ewma
+                .iter()
+                .map(|(state, revision)| (state.entity_key.as_str(), *revision)),
+        );
+        clear_dirty_if_current(
+            &self.dirty_entity,
+            snapshot
+                .entity
+                .iter()
+                .map(|(state, revision)| (state.entity_key.as_str(), *revision)),
+        );
+    }
+
     /// Export all temporal state for DB persistence.
     pub async fn export_states(
         &self,
@@ -607,9 +711,39 @@ impl TemporalAnalyzer {
     }
 }
 
+fn clear_dirty_if_current<'a>(
+    dirty: &DashMap<String, u64, FxBuildHasher>,
+    states: impl IntoIterator<Item = (&'a str, u64)>,
+) {
+    for (key, revision) in states {
+        if let dashmap::mapref::entry::Entry::Occupied(entry) = dirty.entry(key.to_string())
+            && *entry.get() == revision
+        {
+            entry.remove();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn dirty_flush_acknowledges_only_the_snapshot_revision() {
+        let analyzer = TemporalAnalyzer::new();
+        analyzer.analyze("alice@example.com", 0.8).await;
+        let first = analyzer.export_dirty_states();
+        assert!(!first.is_empty());
+
+        analyzer.mark_persisted(&first);
+        assert!(analyzer.export_dirty_states().is_empty());
+
+        analyzer.analyze("alice@example.com", 0.9).await;
+        let old_snapshot = analyzer.export_dirty_states();
+        analyzer.analyze("alice@example.com", 0.7).await;
+        analyzer.mark_persisted(&old_snapshot);
+        assert!(!analyzer.export_dirty_states().is_empty());
+    }
 
     #[test]
     fn temporal_risk_only_upgrades_when_it_exceeds_single_email_risk() {
@@ -747,8 +881,6 @@ mod tests {
         analyzer.analyze_full(&obs).await;
         assert!(analyzer.hmm_states.len() <= MAX_TRACKED_RECIPIENTS);
         assert!(analyzer.hawkes_states.len() <= MAX_TRACKED_RECIPIENTS);
-        assert!(
-            analyzer.comm_graph.read().await.edge_count() <= MAX_TRACKED_RECIPIENTS
-        );
+        assert!(analyzer.comm_graph.read().await.edge_count() <= MAX_TRACKED_RECIPIENTS);
     }
 }

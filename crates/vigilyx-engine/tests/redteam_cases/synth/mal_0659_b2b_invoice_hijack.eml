@@ -1,0 +1,62 @@
+From: 华信国际贸易-财务部 张兰 <zhanglan@hongxin-trade.example>
+To: 应付账款 <ap@corp.internal>
+Cc: 采购部-周明 <zhouming@hongxin-trade.example>
+Date: Sun, 11 Oct 2026 14:30:00 +0800
+Message-ID: <0659-b45@synth.example>
+Subject: Re: Re: Re: Q4对账——9月差异已解决，10月发票随件
+In-Reply-To: <recon-2026-q4@corp.internal>
+References: <recon-2026-q4@corp.internal> <recon-2026-q4-2@corp.internal> <recon-2026-q4-3@corp.internal>
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<p>王会计、周总：</p>
+
+<p>按上周电话沟通的结论，现将 Q4 对账和 10 月发票安排汇总如下。</p>
+
+<h3>一、9月差异解决方案（已确认）</h3>
+<p>上个月提到的 ￥2,317.40 差异，构成已在上一轮邮件中说明（红字发票 ￥1,842.00 + 运费口径差 ￥475.40）。处理结果：</p>
+<ul>
+<li>红字发票（发票号 04728841）已于 9/18 开出，请贵司在进项税平台勾选确认</li>
+<li>运费红字 ￥475.40 已随 9 月末对账单发出，金额并入 Q4 首笔结算</li>
+</ul>
+<p>至此 9 月双方账面一致，无未达项。</p>
+
+<h3>二、10月发票明细</h3>
+<p>10 月共两批次交货，发票随本邮件汇总如下（三张发票的电子版已上传至共享平台）：</p>
+
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>发票号</th><th>日期</th><th>批次</th><th>品名</th><th>数量</th><th>单价</th><th>金额（含税）</th></tr>
+<tr><td>04731101</td><td>10/02</td><td>1012</td><td>精密连接器A型</td><td>12,000</td><td>￥3.42</td><td>￥41,040.00</td></tr>
+<tr><td>04731102</td><td>10/02</td><td>1012</td><td>精密连接器B型</td><td>8,500</td><td>￥4.86</td><td>￥41,310.00</td></tr>
+<tr><td>04731556</td><td>10/08</td><td>1026</td><td>精密连接器A型</td><td>15,000</td><td>￥3.42</td><td>￥51,300.00</td></tr>
+</table>
+
+<p><b>10 月合计：￥133,650.00</b>（含 13% 增值税，税率与合同一致）</p>
+
+<p>发票电子版（PDF）请在以下平台查阅与下载：</p>
+<p style="text-align:center;margin:16px 0">
+<a href="https://hongxin-invoice.example/platform/q4/october" style="display:inline-block;background:#0067b8;color:#fff;padding:10px 28px;text-decoration:none;border-radius:4px">查看10月发票</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">https://fp.hongxin-trade.example/shared-invoices/q4-2026/october</p>
+<p style="font-size:12px;color:#888;text-align:center">（需使用贵司企业邮箱登录发票共享平台。如首次使用，系统将引导完成注册。）</p>
+
+<h3>三、Q4付款安排</h3>
+<p>按合同约定，Q4 两笔货款（10 月 ￥133,650 + 12 月预估 ￥121,800）的付款账户<b>维持不变</b>（仍为我司钱江新城支行账户）。如有变更，我方将另行正式函告并电话确认——不会仅通过邮件通知账户变更。</p>
+
+<h3>四、10月26日批次（1026）预告</h3>
+<p>1026 批次已完成 100% 出柜检验（因 8 月批次破损率 8% 的问题，我司加强质检）。检验报告编号 QC-1026-8842，将随货同行。如贵司需要提前查阅报告，请回复本邮件。</p>
+
+<h3>五、下次对账</h3>
+<p>11 月初进行 Q4 中期对账（电话+邮件确认）。如无差异，Q4 末不再单独出对账单，直接以 12 月发票汇总为准。</p>
+
+<p>以上如有疑问请回复或电话（0571-8830-6621）。</p>
+
+<p style="font-size:13px;color:#666">顺祝商祺。</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">张兰 | 应收会计 | 华信国际贸易有限公司</p>
+<p style="font-size:11px;color:#999">zhanglan@hongxin-trade.example | 0571-8830-6621</p>
+<p style="font-size:11px;color:#999">（本邮件含商业敏感信息，如误收请删除并告知。）</p>
+</div>
+</body></html>

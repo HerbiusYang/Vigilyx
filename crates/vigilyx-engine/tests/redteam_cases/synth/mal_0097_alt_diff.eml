@@ -1,0 +1,17 @@
+From: =?utf-8?B?5LyB5Lia5pyN5Yqh?= <mag@corp-mag.example>
+To: user@corp.internal
+Date: Fri, 28 Aug 2026 14:26:00 +0800
+Message-ID: <0016-b5@synth.example>
+Subject: 企业通讯
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="BA"
+
+--BA
+Content-Type: text/plain; charset=utf-8
+
+您好，本期企业通讯已发布，请查收。
+--BA
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>尊敬的用户：您的账户存在异常登录，请立即<a href='http://203.0.113.60/ok'>验证身份</a>，24小时内未验证将冻结账户。</p></body></html>
+--BA--

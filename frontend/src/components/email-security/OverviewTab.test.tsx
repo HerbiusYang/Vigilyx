@@ -1,9 +1,18 @@
 import { render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { MemoryRouter } from 'react-router-dom'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import i18n from '../../i18n'
 import type { EngineStatus } from '../../types'
+import { apiFetch } from '../../utils/api'
 import OverviewTab from './OverviewTab'
+import RiskVerdictTab from './RiskVerdictTab'
+
+vi.mock('../../utils/api', () => ({
+  apiFetch: vi.fn(),
+}))
+
+const mockedApiFetch = vi.mocked(apiFetch)
 
 function engineStatus(moduleId: string, failureCount = 0): EngineStatus {
   const totalRuns = 35_472
@@ -29,6 +38,7 @@ function engineStatus(moduleId: string, failureCount = 0): EngineStatus {
 
 describe('OverviewTab module performance', () => {
   beforeEach(async () => {
+    mockedApiFetch.mockReset()
     await i18n.changeLanguage('zh')
   })
 
@@ -52,5 +62,56 @@ describe('OverviewTab module performance', () => {
 
     expect(screen.getByText('99.99%')).toBeVisible()
     expect(screen.queryByText('100%')).not.toBeInTheDocument()
+  })
+})
+
+describe('RiskVerdictTab score labels', () => {
+  beforeEach(async () => {
+    mockedApiFetch.mockReset()
+    await i18n.changeLanguage('zh')
+  })
+
+  it('shows fused risk separately from verdict confidence', async () => {
+    mockedApiFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        success: true,
+        data: {
+          total: 1,
+          items: [{
+            verdict_id: 'verdict-001',
+            session_id: 'session-001',
+            threat_level: 'medium',
+            risk_score: 0.72,
+            confidence: 0.5,
+            categories: [],
+            summary: 'test',
+            modules_run: 22,
+            modules_flagged: 2,
+            total_duration_ms: 15,
+            created_at: '2026-08-18T00:00:00Z',
+            mail_from: 'sender@example.com',
+            rcpt_to: 'recipient@example.com',
+            subject: '测试邮件',
+            protocol: 'smtp',
+            client_ip: '192.0.2.1',
+            server_ip: '192.0.2.2',
+          }],
+        },
+        error: null,
+      }),
+    } as unknown as Response)
+
+    render(
+      <MemoryRouter>
+        <RiskVerdictTab />
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('72%')).toBeVisible()
+    expect(screen.getByText('50%')).toBeVisible()
+    expect(screen.getByRole('columnheader', { name: '综合风险' })).toBeVisible()
+    expect(screen.getByRole('columnheader', { name: '判定置信度' })).toBeVisible()
   })
 })

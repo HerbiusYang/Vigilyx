@@ -16,9 +16,10 @@ import AccountSettings from './AccountSettings'
 import TrainingSettings from './TrainingSettings'
 import AboutSettings from './AboutSettings'
 import PlatformAccessSettings from './PlatformAccessSettings'
+import PrivacyAccessCenter from '../privacy/PrivacyAccessCenter'
 import type { AuthUser } from '../../App'
 
-type SettingsTab = 'appearance' | 'notification' | 'capture' | 'data_security' | 'syslog' | 'threat_intel' | 'deployment' | 'database' | 'training' | 'account' | 'platform' | 'about'
+type SettingsTab = 'appearance' | 'notification' | 'capture' | 'data_security' | 'privacy' | 'syslog' | 'threat_intel' | 'deployment' | 'database' | 'training' | 'account' | 'platform' | 'about'
 
 const TAB_ICONS: Record<SettingsTab, JSX.Element> = {
   appearance: (
@@ -39,6 +40,11 @@ const TAB_ICONS: Record<SettingsTab, JSX.Element> = {
   data_security: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>
+    </svg>
+  ),
+  privacy: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/><circle cx="12" cy="15" r="1"/>
     </svg>
   ),
   syslog: (
@@ -82,9 +88,9 @@ const TAB_ICONS: Record<SettingsTab, JSX.Element> = {
   ),
 }
 
-const TAB_KEYS: SettingsTab[] = ['appearance', 'notification', 'capture', 'data_security', 'syslog', 'threat_intel', 'deployment', 'database', 'training', 'account', 'platform', 'about']
+const TAB_KEYS: SettingsTab[] = ['appearance', 'notification', 'capture', 'data_security', 'privacy', 'syslog', 'threat_intel', 'deployment', 'database', 'training', 'account', 'platform', 'about']
 
-const VALID_TABS = new Set<string>(['appearance','notification','capture','data_security','syslog','threat_intel','deployment','database','training','account','platform','about'])
+const VALID_TABS = new Set<string>(['appearance','notification','capture','data_security','privacy','syslog','threat_intel','deployment','database','training','account','platform','about'])
 
 function Settings({ authUser }: { authUser: AuthUser }) {
   const { t } = useTranslation()
@@ -133,6 +139,7 @@ function Settings({ authUser }: { authUser: AuthUser }) {
       case 'notification': return <NotificationSettings />
       case 'capture': return <CaptureSettings />
       case 'data_security': return <DataSecuritySettings />
+      case 'privacy': return <PrivacyAccessCenter />
       case 'syslog': return <SyslogSettings />
       case 'threat_intel': return <ThreatIntelSettings />
       case 'deployment': return <DeploymentSettings />

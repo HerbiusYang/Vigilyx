@@ -16,7 +16,7 @@
 #     vigilyx-engine:latest
 
 # -- Stage 1: cargo-chef - extract the dependency recipe --
-FROM rust:1.97.1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 AS chef
+FROM rust:1.98.0-bookworm@sha256:e70e2eec3d495fd5c8e0be74adda86507dfac7f51a724fbf9813ff59b2b247c7 AS chef
 RUN cargo install cargo-chef --locked --version 0.1.78
 WORKDIR /app
 
@@ -44,6 +44,12 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release -p vigilyx-engine && \
     cp /app/target/release/vigilyx-engine /app/vigilyx-engine
 
+# -- Stage 4b: pinned ONNX Runtime for the optional semantic intent model --
+# SHA256-verified by the script; build-time proxy arguments reach curl as usual.
+FROM chef AS onnxruntime
+COPY deploy/docker/fetch-onnxruntime.sh /tmp/fetch-onnxruntime.sh
+RUN bash /tmp/fetch-onnxruntime.sh /onnxruntime
+
 # -- Stage 5: final runtime image --
 FROM debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
 
@@ -58,8 +64,9 @@ WORKDIR /app
 
 # Copy the engine binary
 COPY --from=rust-builder /app/vigilyx-engine ./
+COPY --from=onnxruntime /onnxruntime/ /app/lib/onnxruntime/
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data/tmp/http
 
 # SEC-C01: non-root user
 RUN groupadd -r vigilyx && useradd -r -g vigilyx -d /app vigilyx \
@@ -68,7 +75,8 @@ USER vigilyx
 
 # Default environment variables
 ENV RUST_LOG=info,vigilyx_engine=info \
-    LOG_FORMAT=json
+    LOG_FORMAT=json \
+    ORT_DYLIB_PATH=/app/lib/onnxruntime/libonnxruntime.so.1.20.1
 
 # Engine has no HTTP port — it communicates via Redis Streams and PostgreSQL.
 # Health is checked via the local heartbeat file (written every 5s by the engine process).

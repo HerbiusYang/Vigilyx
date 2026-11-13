@@ -1,0 +1,11 @@
+From: =?utf-8?B?6L2m566h5pyN5Yqh?= <dmv@vehicle-svc.example>
+To: driver@personal.example
+Date: Wed, 02 Sep 2026 11:13:00 +0800
+Message-ID: <0003-b10@synth.example>
+Subject: 车辆年检到期（逾期罚分）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您的车辆年检 9/15 到期，逾期将记 3 分：
+预约检测（需行驶证号+身份证）：
+https://dmv-book.example.org/yj

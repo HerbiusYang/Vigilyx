@@ -1,0 +1,11 @@
+From: =?utf-8?B?6ZO26KGM?= <kh@bank-kyc.example>
+To: finance@corp.internal
+Date: Sat, 05 Sep 2026 10:36:00 +0800
+Message-ID: <0026-b13@synth.example>
+Subject: 单位账户年检（KYC 材料更新）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+按反洗钱要求更新开户资料，请在线提交：
+https://kyc-bank.example.org/u
+（法人身份证+对公账户+网银管理员密码）

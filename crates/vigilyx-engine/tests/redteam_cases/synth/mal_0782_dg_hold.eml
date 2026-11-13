@@ -1,0 +1,134 @@
+From: "AeroFreight Solutions | Dangerous Goods Compliance" <dg.review@aerofreight-dgr.example>
+To: dg-desk@corp.internal
+Cc: export-ops@corp.internal, logistics-manager@corp.internal
+Reply-To: compliance.desk@af-dg-settlement.example
+Date: Tue, 23 Feb 2027 06:30:00 +0000
+Message-ID: <0782-b86@synth.example>
+Subject: [HOLD] DG Declaration MAWB 176-88412375 - UN1845 Dry Ice Discrepancy - Correction Fee Settlement Before Tomorrow's Uplift Cutoff
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+DG Desk, Export Operations, Logistics Manager,
+
+Your consignment under MAWB 176-88412375
+(CPV pharma shipment, UN1845 dry ice
+as refrigerant) has been placed on
+DG documentation hold at our FRA
+gateway. This notice sets out the
+discrepancy, the correction path, and
+the administrative settlement required
+to release the consignment before
+tomorrow night's uplift cutoff.
+
+1. CONSIGNMENT DETAILS
+
+  MAWB:            176-88412375
+                   (AeroFreight 176)
+  Routing:         PVG -> FRA -> GRU
+  Commodity:       CPV veterinary
+                   vaccine, 6 ULD
+                   containers
+  Refrigerant:     UN1845 dry ice,
+                   declared 180 kg
+                   per ULD
+  Shipper's DGD:   DGD-2027-04417,
+                   issued 2027-02-19
+  Acceptance
+    check:         FRA gateway ramp
+                   check, 22 Feb
+
+2. THE DISCREPANCY
+
+  The ramp check measured sublimation-
+  adjusted remaining dry ice at 62%
+  of declared quantity at a point
+  where flight plan assumptions
+  required 85%. Two issues arise
+  under IATA DGR:
+
+  a) The DGD's "net quantity per
+     package" was carried over from
+     the February 2026 template
+     (180 kg) while this cycle's
+     packing instructions (PI 954)
+     call for 215 kg per ULD for
+     the GRU sector length;
+  b) The Shipper's Declaration
+     signature block lacks the
+     2027 revision date of the DGR,
+     rendering the declaration
+     version-invalid for acceptance.
+
+3. WHAT IS REQUIRED
+
+  a) A corrected Shipper's
+     Declaration (DGD) on the 2027
+     form, quantities restated;
+  b) Confirmation from your
+     responsible DG officer that
+     no other consignments shipped
+     this week carry the 2026
+     template quantities;
+  c) Settlement of the DG
+     administrative correction
+     fee: EUR 640.00 per ULD
+     x 6 = EUR 3,840.00, payable
+     to the compliance settlement
+     account below BEFORE re-
+     acceptance (the fee covers
+     re-check, re-documentation
+     and ramp re-handling):
+
+       Beneficiary: AFS Compliance
+                    Settlements Ltd.
+       IBAN: DE44 5001 0517 5407 3216 88
+       BIC: TSTBDEFFXXX
+       Reference: 176-88412375 / DGR
+
+4. TIMELINE
+
+  - Uplift cutoff: tomorrow night
+    22:40 local (FRA), the last
+    GRU-compatible cold chain
+    departure this week
+  - Fee settlement + corrected DGD
+    needed by tomorrow 14:00 local
+    to re-clear acceptance
+  - Missed uplift: next cold chain
+    GRU departure in 6 days; CPV
+    viability window is 9 days
+    from packing
+
+5. ON THE PAYMENT REQUEST
+
+  We are aware that urgent fees wired
+  to named accounts after a hold
+  notice are the classic BEC shape -
+  your caution is appropriate and we
+  do not discourage verifying with
+  your AeroFreight account manager.
+  Note only: settlement accounts for
+  DG corrections sit with the
+  compliance subsidiary (AFS
+  Compliance Settlements Ltd.),
+  which is why the beneficiary
+  differs from the AeroFreight
+  freight account you have paid
+  monthly. Verification calls go to
+  the account manager; the cutoff
+  clock is set by the cold chain
+  schedule, not by us.
+
+6. CONTACT
+
+  Compliance desk:
+  compliance.desk@af-dg-settlement.example
+  Reference: 176-88412375 / DGD-2027-04417
+  Account manager: your usual desk
+  (number from your monthly
+  statements)
+
+AeroFreight Solutions | Dangerous
+Goods Compliance - FRA Gateway
+This notice concerns MAWB
+176-88412375 only.

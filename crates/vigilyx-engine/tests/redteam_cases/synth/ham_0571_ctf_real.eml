@@ -1,0 +1,40 @@
+From: DEF CON CTF Organizing Committee <ctf@defcon.example>
+To: sec-research@corp.internal
+Cc: CTO <cto@corp.internal>
+Date: Mon, 12 Oct 2026 08:30:00 +0800
+Message-ID: <0571-b46@synth.example>
+Subject: [Invitation] DEF CON 31 CTF Qualifiers - Team Registration Open (March 2027)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear Security Team,
+
+Your team has been identified through public CTF rankings (CTFtime) as a potential qualifier for DEF CON 31 CTF (Las Vegas, August 2027). Team registration for the online qualifiers is now open.
+
+Qualifier Details:
+  Format: Jeopardy + Attack-Defense (48 hours)
+  Dates: March 15-17, 2027 (Fri 18:00 UTC - Sun 18:00 UTC)
+  Team Size: 2-6 members
+  Qualification Slots: Top 16 teams advance to DEF CON finals
+  Categories: Pwn / Web / Rev / Crypto / Misc / Sandbox Escape
+
+Team Registration:
+Registration is done through the CTFtime platform. Please navigate to qualifier.ctftime.org in your browser and log in with your existing CTFtime account. Do NOT use any registration links from email — always access CTFtime directly.
+
+Practice Challenges:
+Three warm-up challenges are live on the platform:
+  "quarantine": Escaping a seccomp-sandboxed SMTP parser
+  "homograph": Find the punycode in a chain of lookalike domains
+  "ghost_pixel": Extract a message from a CSS tracking pixel
+
+Security note:
+DEF CON and CTFtime will NEVER ask you to:
+  - Complete OAuth authorization through an email link
+  - Grant "offline_access" or any token scope via email
+  - Register on a non-CTFtime.org domain
+If you receive such an email claiming to be from DEF CON, it is a phishing attempt targeting security researchers. Please report it to the DEF CON security team (security@defcon.example).
+
+See you in Vegas.
+
+DEF CON 31 CTF Organizing Committee
+ctf@defcon.example

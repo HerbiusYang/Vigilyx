@@ -1,0 +1,484 @@
+{
+  "version": "intent-prototypes-v1",
+  "notes": "Hand-written prototype sentences for the zero-training PoC, based on the upgrade plan's intent list and training-split categories. Sentences resembling the three demo emails or any red-team text seen while checking export formats were reworded, so demo results stay illustrative. All names, links and numbers are fictional.",
+  "core": {
+    "I1": {
+      "name": "credential_request",
+      "zh": [
+        "请点击下方链接登录邮箱并输入账号密码完成验证。",
+        "您的企业邮箱需要年度重新激活，请登录以下页面确认，否则将无法收信。",
+        "请把刚收到的短信验证码发给我，我帮你完成认证。",
+        "系统升级需要您重新输入工号和密码，请在链接页面提交。",
+        "请扫描二维码重新认证您的企业邮箱账户。",
+        "您的密码将于今日过期，请点击此处保留当前密码。",
+        "为确保账户安全，请在下方表单中填写您的登录名和密码。",
+        "请回复本邮件提供您的邮箱密码，以便管理员为您迁移数据。",
+        "您的账户在异地登录，请点击链接确认是否为本人操作并重新输入密码。",
+        "点开附件里的网页，用你的统一身份认证账号登录查看文件。",
+        "请通过以下链接重新绑定动态口令并输入令牌上的数字。",
+        "你先把网银的登录密码和U盾密码告诉我，我帮你处理。",
+        "麻烦把你的VPN账号和密码发我一下，我这边急用。",
+        "文件已共享给您，请使用Office 365账号登录后下载。"
+      ],
+      "en": [
+        "Click the link below and sign in with your email password to verify your account.",
+        "Your mailbox needs to be reactivated; log in through this page or incoming mail will be held.",
+        "Please send me the verification code you just received by text message.",
+        "Enter your username and password on the secure page to keep your access.",
+        "Scan the QR code to re-authenticate your corporate account.",
+        "Your password expires today; click here to keep your current password.",
+        "Reply to this email with your login credentials so IT can migrate your mailbox.",
+        "We detected an unusual sign-in; confirm your identity at the link or your account will be locked.",
+        "A document has been shared with you; sign in with your Microsoft 365 account to view it.",
+        "Please confirm your online banking login and one-time passcode on the form below.",
+        "Re-enter your SSO credentials to restore access to payroll.",
+        "Open the attached page and log in to read the secure message.",
+        "Share your MFA code with me so I can finish setting up your access."
+      ]
+    },
+    "I2": {
+      "name": "payment_or_account_change",
+      "zh": [
+        "我们公司的收款账户已变更，请按新账户信息付款。",
+        "原账户正在年审无法收款，本期货款请转到以下新账户。",
+        "今天下班前务必把这笔款转过去，具体账号我单独发你。",
+        "请暂停向旧账户付款，改为汇入附件中的新银行账户。",
+        "这笔供应商尾款很急，你先安排付款，审批我回来再补。",
+        "请立即向以下账户汇款三十万元，完成后把回单发我。",
+        "因税务原因，本次付款请转入我们香港子公司的账户。",
+        "财务那边先帮我对一个私人账户打款，回头走报销。",
+        "请把发票金额支付到新的收款人名下，旧账户已注销。",
+        "需要你马上处理一笔对外转账，别走正常流程了。"
+      ],
+      "en": [
+        "Our bank details have changed; please send all future payments to the new account below.",
+        "The old account is under audit, so wire this invoice to the updated account instead.",
+        "Please process this wire transfer before end of day and send me the confirmation.",
+        "Stop paying the previous account and use the new beneficiary details attached.",
+        "I need you to make an urgent payment to this vendor today; I will approve it later.",
+        "Kindly remit the outstanding balance to our new account in Hong Kong.",
+        "Update the supplier's banking information in the system and release the payment.",
+        "Transfer the funds now and keep this between us until the deal is announced.",
+        "Pay the attached invoice to the new IBAN; the old one is no longer valid."
+      ]
+    },
+    "I3": {
+      "name": "gift_card_or_advance_purchase",
+      "zh": [
+        "帮我去便利店买几张话费充值卡，把充值密码回复给我。",
+        "帮我买几张苹果充值卡送客户，兑换码直接回复给我。",
+        "你先替我垫付一下这笔费用，回头走报销。",
+        "麻烦去超市买十张购物卡，刮开涂层把密码发给我。",
+        "帮我代购几张游戏点卡，充值码发我就行，钱晚点转你。",
+        "你先替我付一下这笔押金，我下午把钱转给你。",
+        "公司要给员工发福利，你先买一批礼品卡，把兑换码整理给我。",
+        "帮我在网上下个单付款，订单截图发我，我马上还你。"
+      ],
+      "en": [
+        "Can you buy five Amazon gift cards for a client and send me the codes?",
+        "Scratch off the back of the cards and email me photos of the redemption codes.",
+        "I'm in a meeting; please pay for this on your card and I'll reimburse you later.",
+        "Pick up some iTunes cards on your way and text me the numbers.",
+        "I need a favor: purchase a few gift cards for staff rewards and send me the PINs.",
+        "Cover this deposit for me for now and I'll pay you back this afternoon.",
+        "Buy Google Play cards worth 500 dollars and reply with the codes."
+      ]
+    },
+    "I4": {
+      "name": "channel_shift",
+      "zh": [
+        "加我私人微信详聊，这个邮箱不方便说。",
+        "有问题请直接回电400-000-0000，不要回复这封邮件。",
+        "后续请改用这个邮箱联系我，旧邮箱已经停用了。",
+        "如非本人操作，请立即拨打客服热线取消扣款。",
+        "下载这个聊天软件，我们在上面沟通工作安排。",
+        "我换了新手机号，以后有事打这个号码找我。",
+        "扫码加入工作群，具体任务在群里说。",
+        "请添加QQ号码完成后续退款流程。"
+      ],
+      "en": [
+        "Add me on WhatsApp so we can talk privately.",
+        "If you did not authorize this charge, call our support line at 800-000-0000 within 24 hours.",
+        "Please contact me on my personal email from now on; my work account is down.",
+        "Do not reply to this message; text me at this number instead.",
+        "Call the number below to cancel your subscription renewal and get a refund.",
+        "Let's move this conversation to Telegram.",
+        "Join the group chat using this code to receive your next task."
+      ]
+    },
+    "I7": {
+      "name": "extortion",
+      "zh": [
+        "我已经录下了你的视频，二十四小时内付比特币，否则发给你所有联系人。",
+        "你的电脑早就被我控制了，不想照片外泄就按要求转账。",
+        "你的聊天记录和私密照片都在我手里，付钱我就删除。",
+        "不给钱，我就把这些材料寄给你的单位和家人。",
+        "你的公司服务器被我们加密了，支付赎金才能恢复数据。"
+      ],
+      "en": [
+        "I recorded you through your webcam; pay in Bitcoin within 48 hours or I send the video to your contacts.",
+        "I have your private photos and will publish them unless you pay.",
+        "Your files are encrypted; pay the ransom to get the decryption key.",
+        "If you don't transfer the money, everyone at your company will see this.",
+        "I hacked your device months ago and copied everything; pay to keep it private."
+      ]
+    },
+    "I8": {
+      "name": "malicious_attachment_or_install",
+      "zh": [
+        "打开附件后请点击启用内容，才能正常显示表格。",
+        "请下载并安装这个插件，否则无法查看加密文件。",
+        "附件是压缩包，解压密码是1234，运行里面的程序即可。",
+        "请安装远程协助软件，把识别码和验证码告诉我。",
+        "您的电脑存在漏洞，请运行附件中的补丁程序修复。",
+        "下载链接里的安装包，用管理员身份运行。"
+      ],
+      "en": [
+        "Open the attached document and click Enable Content to view the invoice.",
+        "Download and install this plugin to read the encrypted file.",
+        "The archive password is 1234; extract it and run the setup file.",
+        "Install this remote support tool and tell me the access code on your screen.",
+        "Run the attached security update to fix the vulnerability on your computer.",
+        "Enable macros to see the full content of this spreadsheet."
+      ]
+    },
+    "I9": {
+      "name": "personal_data_collection",
+      "zh": [
+        "请提供您的身份证号码、银行卡号和预留手机号用于核实。",
+        "回复本邮件附上身份证正反面照片和银行卡照片。",
+        "为办理补贴，请填写姓名、身份证号、开户行和卡号。",
+        "请把员工花名册和身份证复印件整理好发到这个邮箱。",
+        "请在表格中填写社保账号、银行卡有效期和背面三位安全码。",
+        "麻烦把全体员工的工资卡号和手机号导出发给我。"
+      ],
+      "en": [
+        "Please provide your social security number, bank account number and date of birth for verification.",
+        "Reply with a photo of your ID card and the front and back of your bank card.",
+        "Fill in your full name, card number, expiry date and CVV to complete the refund.",
+        "Send me the W-2 forms for all employees by end of day.",
+        "Confirm your passport number and home address in the form below.",
+        "Export the employee list with bank details and email it to me."
+      ]
+    },
+    "I10": {
+      "name": "reward_subsidy_or_inheritance_lure",
+      "zh": [
+        "您有一笔个人补贴待领取，请点击链接填写申领信息。",
+        "恭喜您获得本期幸运大奖，缴纳手续费后即可领取奖金。",
+        "您的个税退税已审核通过，请登录以下页面填写银行卡领取。",
+        "我行发现一笔无人认领的遗产，经核实您是合法受益人，需先支付公证费。",
+        "海外账户有一笔资金需要转移，事成后与您五五分成。",
+        "您符合社保补贴发放条件，请扫码登记银行卡信息。",
+        "您的快递丢失，平台将双倍理赔，请点击链接办理退款。",
+        "您被选为幸运用户，可免费领取最新款手机，只需支付运费。"
+      ],
+      "en": [
+        "You are eligible for a tax refund; submit your bank details through the link to receive it.",
+        "Congratulations, you have won a cash prize; pay the processing fee to release it.",
+        "A dormant account of a deceased client names you as beneficiary; we need a small legal fee to proceed.",
+        "I need a trusted partner to move these funds abroad and you will receive 30 percent.",
+        "Claim your government subsidy today by filling in the application form.",
+        "Your parcel was lost; click here to claim double compensation.",
+        "You have been selected to receive a free gift; just cover the shipping cost."
+      ]
+    },
+    "I11": {
+      "name": "investment_or_task_scam",
+      "zh": [
+        "下载这个理财APP，跟着老师操作稳赚不赔，日收益百分之五。",
+        "刷单返利，先垫付本金完成任务，佣金和本金一起返还。",
+        "这个虚拟币项目内部名额有限，现在入金下个月翻倍。",
+        "加入我们的投资群，导师每天免费推荐牛股。",
+        "平台检测到您的账户有收益未提现，需要先缴纳保证金才能解冻。",
+        "点赞关注就能赚钱，完成三单后需要充值才能做高佣任务。",
+        "我们有内部渠道，保本保息年化百分之三十，起投一万元。"
+      ],
+      "en": [
+        "Download this trading app and follow our mentor's signals for guaranteed daily returns.",
+        "Complete simple tasks, prepay the order amount, and get your principal back with commission.",
+        "This crypto pre-sale is invitation-only; deposit now and double your money next month.",
+        "Your withdrawal is frozen until you pay the account verification deposit.",
+        "Join our VIP investment group for insider stock tips.",
+        "Earn money by liking videos; top up your account to unlock high-commission tasks."
+      ]
+    },
+    "I12": {
+      "name": "fake_job_fee",
+      "zh": [
+        "高薪招聘海外客服，包吃包住包机票，入职前缴纳培训费。",
+        "兼职打字员日结三百元，先交两百元押金领取资料。",
+        "恭喜您通过面试，请先支付体检费和服装费办理入职。",
+        "境外高薪岗位，无需经验，月入三万，先办签证押金。",
+        "居家兼职刷单，需先购买会员才能接单。"
+      ],
+      "en": [
+        "You have been hired for a remote position; pay the training fee to start.",
+        "Work from home and earn 300 dollars a day; a refundable deposit is required for materials.",
+        "Overseas customer service job with free flights and housing; visa deposit required upfront.",
+        "To complete onboarding, purchase the equipment from our approved vendor and we will reimburse you.",
+        "Part-time data entry job: buy a membership to unlock assignments."
+      ]
+    },
+    "I13": {
+      "name": "romance_or_intimate_request",
+      "zh": [
+        "发张你的私密照片给我，看完我就删。",
+        "亲爱的，我在国外遇到点麻烦，你先转点钱给我应急。",
+        "我们见面之前，你先帮我付一下机票钱好吗？",
+        "视频聊天的时候你把衣服脱了，就我们两个人看。",
+        "宝贝，我教你在这个平台投资，我们一起攒结婚的钱。"
+      ],
+      "en": [
+        "Send me a private photo of you, I promise I'll delete it.",
+        "My love, I'm stuck abroad and need you to wire me money for the hospital.",
+        "Before we meet, can you help me pay for my flight ticket?",
+        "Turn on your camera and undress for me, it's just between us.",
+        "Darling, let me show you how I invest on this platform so we can save for our future."
+      ]
+    },
+    "I14": {
+      "name": "safe_account_or_case_investigation",
+      "zh": [
+        "您的账户涉嫌洗钱案件，请将资金转入安全账户配合调查。",
+        "我是公安局民警，您的身份信息被冒用，需要核查名下资金。",
+        "检察院已对您立案，请勿告诉任何人，按要求转账可撤销。",
+        "您的医保卡涉嫌违规套现，请联系专案组配合资金审查。",
+        "法院传票已生成，请登录下方网站查看案件并缴纳保证金。"
+      ],
+      "en": [
+        "Your account is linked to a money laundering case; transfer your funds to a safe account for review.",
+        "This is the police: your identity was used in a crime and we must verify your assets.",
+        "A warrant has been issued in your name; pay the bail bond to avoid arrest.",
+        "Do not tell anyone about this investigation and follow our instructions to clear your name.",
+        "The court has filed a case against you; log in to view the summons and pay the deposit."
+      ]
+    }
+  },
+  "modifier": {
+    "I5": {
+      "name": "impersonation_or_authority",
+      "zh": [
+        "我是王总，现在在外面开会。",
+        "这里是公司IT部，正在进行邮箱安全升级。",
+        "国家税务总局通知您：",
+        "我是你们领导，用的是新号。",
+        "本邮件由银行风控中心发出。"
+      ],
+      "en": [
+        "This is the CEO; I'm traveling and can't talk.",
+        "IT Help Desk here, we are upgrading the mail system.",
+        "Notice from the Internal Revenue Service.",
+        "I'm your manager writing from my personal account.",
+        "Message from the bank's fraud prevention department."
+      ]
+    },
+    "I6": {
+      "name": "urgency_or_secrecy",
+      "zh": [
+        "请立即处理，否则账户将在两小时内停用。",
+        "这件事先别告诉其他人，办完再说。",
+        "今天必须完成，过时不候。",
+        "名额仅剩三个，今晚十二点通道关闭。",
+        "逾期未处理将承担法律责任。"
+      ],
+      "en": [
+        "Act now or your account will be closed within two hours.",
+        "Keep this confidential and don't discuss it with anyone.",
+        "This must be done today, no exceptions.",
+        "Only three spots left; the offer expires at midnight.",
+        "Failure to respond will result in legal action."
+      ]
+    }
+  },
+  "benign": {
+    "B01_maintenance_no_action": {
+      "zh": [
+        "本周六凌晨机房电力检修，部分业务系统短暂中断，用户无需处理。",
+        "系统已完成升级，原有账号和密码保持不变，无需重新登录。",
+        "数据中心将于今晚进行网络割接，业务不受影响，特此通知。"
+      ],
+      "en": [
+        "Scheduled maintenance will take place this Saturday; no action is required on your part.",
+        "The upgrade is complete and your existing password remains unchanged.",
+        "Brief network downtime is expected tonight; services will resume automatically."
+      ]
+    },
+    "B02_self_initiated_security": {
+      "zh": [
+        "您正在申请重置密码，验证码为483920，请勿告诉他人。",
+        "您的账号于今日在新设备登录，如是本人操作请忽略本邮件。",
+        "我们不会以任何理由向您索要验证码或密码。",
+        "您刚刚绑定了新的手机号，如非本人操作请在官方App中修改密码。"
+      ],
+      "en": [
+        "Your verification code is 483920; do not share it with anyone.",
+        "A new sign-in was detected; if this was you, you can ignore this message.",
+        "We will never ask for your password or verification code by email.",
+        "You recently changed your phone number; if this wasn't you, reset your password in the official app."
+      ]
+    },
+    "B03_official_channel_guidance": {
+      "zh": [
+        "请通过官方App或官网自行登录查看详情，不要点击邮件中的陌生链接。",
+        "如有疑问，请拨打银行卡背面的官方客服电话核实。",
+        "本通知仅作提醒，相关业务请前往营业网点办理。"
+      ],
+      "en": [
+        "Please sign in through our official app or website to view details instead of clicking links in emails.",
+        "If you have questions, call the number on the back of your card.",
+        "This is a reminder only; please visit a branch to complete the process."
+      ]
+    },
+    "B04_payment_confirmation_invoice": {
+      "zh": [
+        "贵司十月份货款已于今日支付，请查收并开具发票。",
+        "附件是本月对账单，请核对后回复确认。",
+        "我们已收到您的付款，感谢合作。",
+        "合同约定的第二期款项将按原账户于月底前支付。"
+      ],
+      "en": [
+        "We have paid the October invoice today; please confirm receipt.",
+        "Attached is this month's statement for your reconciliation.",
+        "Thank you, your payment has been received.",
+        "The second installment will be paid to your account on file by month end."
+      ]
+    },
+    "B05_hr_finance_notice": {
+      "zh": [
+        "十月工资条已发放，请登录人事系统查看。",
+        "报销单请于每月二十五日前提交至财务共享中心。",
+        "年度体检安排已出，请各部门按时间表前往。"
+      ],
+      "en": [
+        "Your October payslip is available in the HR portal.",
+        "Please submit expense reports through the finance system by the 25th.",
+        "Open enrollment for benefits begins next Monday."
+      ]
+    },
+    "B06_training_meeting": {
+      "zh": [
+        "定于周三下午三点在三楼会议室召开项目评审会，请准时参加。",
+        "信息安全培训将于下周举行，届时将介绍常见的钓鱼邮件识别方法。",
+        "会议纪要已整理好，见附件。"
+      ],
+      "en": [
+        "The project review meeting is scheduled for Wednesday at 3 pm in room 301.",
+        "Next week's security awareness training will cover how to spot phishing emails.",
+        "Please find the meeting minutes attached."
+      ]
+    },
+    "B07_marketing_subscription": {
+      "zh": [
+        "双十一大促开启，全场满三百减五十。",
+        "感谢订阅我们的周刊，本期为您精选十篇行业文章。",
+        "如不想再收到此类邮件，可点击底部退订。"
+      ],
+      "en": [
+        "Our autumn sale starts today with 20 percent off sitewide.",
+        "Thanks for subscribing; here are this week's top stories.",
+        "You can unsubscribe from these emails at any time."
+      ]
+    },
+    "B08_order_logistics": {
+      "zh": [
+        "您的订单已发货，预计明天送达。",
+        "快递已放至小区驿站，请凭取件码领取。",
+        "您购买的商品已签收，欢迎评价。"
+      ],
+      "en": [
+        "Your order has shipped and will arrive tomorrow.",
+        "Your package was delivered to the front desk.",
+        "Thank you for your purchase; your receipt is attached."
+      ]
+    },
+    "B09_antifraud_awareness": {
+      "zh": [
+        "近期出现冒充领导要求购买礼品卡的诈骗，请大家提高警惕。",
+        "公检法机关不会通过电话或邮件要求转账到安全账户。",
+        "收到索要密码的邮件请直接删除并报告信息部门。"
+      ],
+      "en": [
+        "Be aware of scams where someone pretends to be an executive and asks for gift cards.",
+        "Police will never ask you to transfer money to a safe account.",
+        "If you receive an email asking for your password, report it to IT and delete it."
+      ]
+    },
+    "B10_work_correspondence": {
+      "zh": [
+        "方案初稿已上传到共享盘，麻烦大家周五前给意见。",
+        "这个接口的测试我今天完成，明天提交代码评审。",
+        "客户反馈的问题已经定位，补丁下周发布。",
+        "附件是修改后的报价单，请查阅。"
+      ],
+      "en": [
+        "I've uploaded the draft to the shared drive; please comment by Friday.",
+        "Testing is done on my side and I'll open a pull request tomorrow.",
+        "We found the root cause of the customer issue and will ship a fix next week.",
+        "Attached is the revised quote for your review."
+      ]
+    },
+    "B11_personal": {
+      "zh": [
+        "周末一起吃饭吧，地点你定。",
+        "照片我整理好了，发你看看。",
+        "生日快乐，祝你一切顺利。"
+      ],
+      "en": [
+        "Want to grab dinner this weekend?",
+        "Here are the photos from the trip.",
+        "Happy birthday, hope you have a great day."
+      ]
+    },
+    "B12_public_institution_notice": {
+      "zh": [
+        "根据区教育局通知，下周一起调整课后服务时间。",
+        "医院门诊将于国庆期间正常开放，具体安排见官网。",
+        "社区将于本周六开展免费义诊活动，欢迎居民参加。",
+        "个人所得税年度汇算将于三月开始，请通过个人所得税App办理。"
+      ],
+      "en": [
+        "The school will adjust after-school hours starting next Monday.",
+        "The clinic remains open during the holiday; see our website for hours.",
+        "The city will hold a free health fair this Saturday.",
+        "Annual tax filing opens in March; file through the official tax portal."
+      ]
+    },
+    "B13_bill_due_reminder": {
+      "zh": [
+        "您本月信用卡账单已出，最后还款日为二十五日，可通过手机银行还款。",
+        "您的电费余额不足，请通过国家电网App缴费。",
+        "您的宽带将于下月到期，可在营业厅或官方App续费。"
+      ],
+      "en": [
+        "Your credit card statement is ready; payment is due on the 25th via online banking.",
+        "Your utility bill is due next week; pay in the official app.",
+        "Your subscription renews next month; manage it in your account settings."
+      ]
+    },
+    "B14_legit_recruiting": {
+      "zh": [
+        "感谢您投递简历，面试定于周四上午十点，地址见附件。",
+        "我们的招聘全程不收取任何费用。",
+        "录用通知书已发送，请在人事系统确认入职日期。"
+      ],
+      "en": [
+        "Thank you for applying; your interview is scheduled for Thursday at 10 am.",
+        "We never charge candidates any fees during hiring.",
+        "Your offer letter is attached; please confirm your start date in the HR system."
+      ]
+    },
+    "B15_it_notice_official": {
+      "zh": [
+        "您的域账号密码将于七天后到期，请在内网自助门户修改，信息部不会通过邮件索要密码。",
+        "新版办公软件已推送，电脑重启后自动安装。",
+        "如需开通VPN，请在OA中提交申请。"
+      ],
+      "en": [
+        "Your network password expires in seven days; change it on the internal self-service portal.",
+        "The new office software will install automatically after restart.",
+        "To request VPN access, submit a ticket in the service desk."
+      ]
+    }
+  }
+}

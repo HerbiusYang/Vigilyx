@@ -1,0 +1,83 @@
+From: "npm 包名权益服务中心 | 抢注协调组" <baozhu@npm-name-svc.example>
+To: pu.shaojie@indie.dev.example
+Reply-To: 赎回通道组 <sh@nn-us.example>
+Date: Thu, 08 Oct 2026 14:30:00 +0800
+Message-ID: <1244-b240@synth.example>
+Subject: =?utf-8?B?44CQ5YyF5ZCN6LWO5Zue44CRcHVnLW5vZGUtdXRpbHPooqvmiqLms6jlj5HluIPkuI7otY7lm57pgJrpgZPvvIjlo7Doqonlj5fmjZ/po47pmanvvIk=?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+蒲少杰开发者（npm 包
+pug-node-utils 作者，
+最后版本 1.2.4 发布于
+2022 年 11 月）：
+
+您好。npm 包名权益服务中心
+抢注通报：您的包名因连续
+18 个月无维护提交，已被
+第三方开发者依据 registry
+的 inactive name 政策申请
+接管，并于 10 月 2 日发布
+了 2.0.0 版本。
+
+一、接管后发生了什么（事态
+在恶化）
+1. 新版本安装量 4,100+：
+   下游 install 直接拉到
+   2.0.0——而 2.0.0 的
+   install 脚本里有
+   postinstall 外联行为
+   （我们做了静态分析）；
+2. 您的声誉关联：包的
+   repository 字段仍指向
+   您的 GitHub（接管方未
+   改）——下游开发者发现
+   恶意行为，issue 提到
+   您的名下；
+3. 您的 GitHub 邮箱开始
+   收到下游的质询——声誉
+   损害正在发生。
+
+二、赎回通道（800 美元）
+1. 包名赎回：经权益通道
+   向 registry 提交
+   original author 证明，
+   恢复您对包名的控制权
+   （下架 2.0.0、收回
+   publish 权限）；
+2. 3 个工作日完成；
+3. 赎回不成功全额退还。
+
+三、您可能会问的问题
+问：npm 官方不能申诉？
+答：官方申诉排队 6-8 周
+   ——期间恶意版本每天
+   在扩散，您的声誉每天
+   在扣分。
+问：证据是我们做的？
+答：静态分析报告随赎回
+   附赠。
+问：不赎回呢？
+答：放任恶意版本挂着
+   您的名字——找工作
+   背调查 GitHub 时，
+   谁听你解释？
+
+四、确认方式
+回复"赎回-包名"，800
+美元（USDT 或对公美元
+账户）回传地址即发。
+
+给开源作者的话：包是
+您三年前写的，名字是
+您今天要保的——800
+美元买回自己的署名。
+
+抢注协调组
+（npm 官方 support 与
+GitHub 不受理第三方赎回
+——权益服务独立运营）
+
+收款（USDT-TRC20）：
+TQx9mK4pRd7nWv2sB6aGc1JtVu8EyHk3fN
+（memo 填包名）

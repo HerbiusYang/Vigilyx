@@ -15,13 +15,13 @@ use tracing::{error, info, warn};
 use vigilyx_core::models::WsMessage;
 use vigilyx_db::VigilDb;
 use vigilyx_db::mq::topics;
-use vigilyx_db::mq::{MqClient, MqConfig, verify_cmd_payload};
+use vigilyx_db::mq::{MqClient, MqConfig, require_data_plane_token, verify_cmd_payload};
 use vigilyx_engine::config::PipelineConfig;
 use vigilyx_engine::modules::registry::reload_runtime_ioc_caches;
 use vigilyx_engine::pipeline::engine::SecurityEngine;
 
-use vigilyx_mta::config::MtaConfig;
 use vigilyx_mta::authentication::AuthenticationVerifier;
+use vigilyx_mta::config::{MtaConfig, max_connections_per_ip_from_env};
 use vigilyx_mta::metrics::VerdictMetrics;
 use vigilyx_mta::relay::downstream::DownstreamRelay;
 use vigilyx_mta::server::listener::{self, PerIpLimiter};
@@ -49,7 +49,11 @@ async fn main() -> anyhow::Result<()> {
 
     // .env
     let _ = dotenvy::dotenv();
+    vigilyx_core::validate_config_encryption_key()
+        .map_err(|error| anyhow::anyhow!("configuration encryption is required: {error}"))?;
     let args = Args::parse();
+    require_data_plane_token()
+        .map_err(|error| anyhow::anyhow!("data-plane authentication is required: {error}"))?;
 
     // MTA config: env vars -> DB overrides (UI settings take priority)
     let mut config = MtaConfig::from_env()?;
@@ -90,7 +94,6 @@ async fn main() -> anyhow::Result<()> {
         .database_url
         .unwrap_or_else(|| config.database_url.clone());
     let db = VigilDb::new(&db_url).await?;
-    db.init_security_tables().await?;
     info!("Database connected");
 
     let pipeline_config = load_pipeline_config(&db).await;
@@ -115,7 +118,9 @@ async fn main() -> anyhow::Result<()> {
         );
         Arc::new(DownstreamRelay::new(outbound_cfg).await?)
     } else {
-        warn!("MTA_OUTBOUND_HOST not set, outbound emails will use inbound downstream relay");
+        warn!(
+            "MTA_OUTBOUND_HOST not set; external recipients will be rejected (outbound disabled)"
+        );
         Arc::clone(&relay)
     };
     let db = Arc::new(quarantine_db);
@@ -147,7 +152,12 @@ async fn main() -> anyhow::Result<()> {
     // Inline 判定分布计数器（随状态心跳上报到 API）
     let verdict_metrics = Arc::new(VerdictMetrics::default());
     // SEC: per-IP connection limiter shared between all listeners (CWE-400)
-    let per_ip_limiter = Arc::new(PerIpLimiter::new(10));
+    let max_connections_per_ip = max_connections_per_ip_from_env();
+    info!(
+        max_per_ip = max_connections_per_ip,
+        "Per-IP SMTP connection limit configured"
+    );
+    let per_ip_limiter = Arc::new(PerIpLimiter::new(max_connections_per_ip));
 
     let mut tasks = Vec::new();
 
@@ -164,10 +174,8 @@ async fn main() -> anyhow::Result<()> {
         let met = Arc::clone(&verdict_metrics);
         let auth = Arc::clone(&authentication);
         tasks.push(tokio::spawn(async move {
-            if let Err(e) = listener::run_smtp_listener(
-                cfg, eng, rl, orl, d, ac, ipl, tls, met, auth,
-            )
-            .await
+            if let Err(e) =
+                listener::run_smtp_listener(cfg, eng, rl, orl, d, ac, ipl, tls, met, auth).await
             {
                 error!("SMTP listener error: {e}");
             }
@@ -189,10 +197,8 @@ async fn main() -> anyhow::Result<()> {
         let met = Arc::clone(&verdict_metrics);
         let auth = Arc::clone(&authentication);
         tasks.push(tokio::spawn(async move {
-            if let Err(e) = listener::run_smtps_listener(
-                cfg, eng, rl, orl, d, ac, ipl, tls, met, auth,
-            )
-            .await
+            if let Err(e) =
+                listener::run_smtps_listener(cfg, eng, rl, orl, d, ac, ipl, tls, met, auth).await
             {
                 error!("SMTPS listener error: {e}");
             }
@@ -271,9 +277,9 @@ async fn redis_reload_loop(
     let mut pubsub = mq.subscribe(&[topics::ENGINE_CMD_RELOAD]).await?;
 
     // SEC-P06: Read shared token once at startup for control-plane message auth
-    let cmd_token = std::env::var("INTERNAL_API_TOKEN").unwrap_or_default();
+    let cmd_token = std::env::var("MQ_AUTH_TOKEN").unwrap_or_default();
     if cmd_token.is_empty() {
-        warn!("INTERNAL_API_TOKEN not set — MTA reload commands will be rejected");
+        warn!("MQ_AUTH_TOKEN not set — MTA reload commands will be rejected");
     }
 
     info!("MTA Redis reload subscription started (cmd:reload)");
@@ -331,7 +337,7 @@ async fn redis_reload_loop(
 /// 构建带内部认证 token 的 HTTP 默认头（与 sniffer 的 internal_api_headers 一致）
 fn internal_api_headers() -> reqwest::header::HeaderMap {
     let mut h = reqwest::header::HeaderMap::new();
-    if let Ok(t) = std::env::var("INTERNAL_API_TOKEN")
+    if let Ok(t) = std::env::var("MTA_API_TOKEN")
         && let Ok(v) = t.parse()
     {
         h.insert("X-Internal-Token", v);

@@ -1,0 +1,82 @@
+From: "Meridian Capital Partners | Investor Relations" <ir.portal@meridian-ir-portal.example>
+To: family-office.contact@fo.example
+Cc: (none)
+Reply-To: portal.desk@mc-ir-access.example
+Disposition-Notification-To: ir.portal@meridian-ir-portal.example
+Date: Mon, 16 Aug 2027 08:00:00 +0000
+Message-ID: <0862-b113@synth.example>
+Subject: [ACTION] Investor Portal Migration - Q2 Fund Reports & Capital Statements - Account Reactivation Required Before the Reporting Window Closes
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:Georgia,serif;font-size:14px">
+<p>Dear Limited Partner Contact,</p>
+
+<p style="background:#E8EAF6;border-left:4px solid #283593;padding:12px">
+<b>INVESTOR PORTAL MIGRATION — ACCOUNT REACTIVATION.</b>
+Meridian's investor portal is moving to a new platform ahead of the Q2 reporting cycle. Your
+LP account (Fund IV, commitment tier B) must be <b>reactivated on the new portal</b> to receive
+the <b>Q2 fund reports, capital account statements, and the schedule-K package</b>. The reporting
+window opens <b>August 30</b>; accounts not reactivated by then receive reports by postal mail
+only — <b>the K-1 tax package misses your advisors' September extension deadline</b>.
+</p>
+
+<h3>1. Your Account</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:260px">Fund</td><td>Meridian Capital Fund IV, L.P. (2019 vintage)</td></tr>
+<tr><td style="background:#f5f5f5">Commitment</td><td>Tier B (capital deployed 82%)</td></tr>
+<tr><td style="background:#f5f5f5">Reports held for release</td><td>Q2 fund report · capital statement · K-1 package</td></tr>
+<tr><td style="background:#f5f5f0">Reporting window</td><td><b>August 30</b></td></tr>
+<tr><td style="background:#f5f5f5">Old portal status</td><td>Read-only from August 20 (migration cutover)</td></tr>
+</table>
+
+<h3>2. Account Reactivation (One Session)</h3>
+<p>Reactivation carries your access history and report permissions to the new platform. The
+session asks for your <b>registered email, your existing portal password (for one-time
+migration verification), and a new 2FA enrollment</b> — after which the new portal issues
+your permanent credentials:</p>
+
+<p style="text-align:center;margin:18px 0">
+<a href="https://mc-ir-access.example/activate/fo-account/b-tier" style="display:inline-block;background:#1B5E20;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">Reactivate LP Account</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">Investor relations: https://ir.meridiancap.example (fund documents, same contact)</p>
+
+<h3>3. What the Portal Holds</h3>
+<ul>
+<li>Q2 report + capital account statement + K-1 tax package (postal mail otherwise)</li>
+<li>Historical fund documents (2019-2027) and the Fund IV operating agreement</li>
+<li>Capital call and distribution notices (the new portal's 2FA governs future capital call acknowledgments)</li>
+</ul>
+
+<h3>4. Timeline</h3>
+<ul>
+<li>Old portal read-only: <b>August 20</b></li>
+<li>Reactivation deadline: <b>August 29</b> (before the window)</li>
+<li>Reporting window: August 30; K-1 to advisors before the September extension deadline</li>
+</ul>
+
+<p style="font-size:14px;background:#E8EAF6;padding:12px">A fund emailing you for your existing
+password should end the conversation — that instinct is right, and legitimate migrations
+know it. The check that matters: fund documents and capital-account access have always run
+through the portal you reach from <b>the link in your Fund IV operating agreement's exhibit</b>
+or from ir.meridiancap.example typed by hand. If our migration notice ever differs from what
+that path shows, the notice is not ours. The August 30 window and your advisors' tax
+deadlines are real — the safe reactivation takes the same two minutes from the typed
+address.</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://mc-ir-access.example/px/lp.gif?t=b-tier&amp;r=family-office.contact%40fo.example" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">Advisor lane: registered tax advisors may reactivate on the LP's behalf with an advisor letter at mc-ir-access.example/advisor (LP notification email is deferred to the Q2 package).</p>
+
+<h3>5. Contact</h3>
+<p>Portal desk: portal.desk@mc-ir-access.example<br>
+Fund reference: Fund IV / Tier B · IR line: the number on your capital account statements</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+Meridian Capital Partners | Investor Relations · This notice concerns Fund IV LP accounts only.<br />
+Reporting and K-1 timelines follow the LPA and your advisors' filing calendar.
+</div>
+
+</body></html>

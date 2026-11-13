@@ -1,0 +1,9 @@
+From: =?utf-8?B?SVQg5a6J5YWo6YOo?= <security-key@corp-enroll.example>
+To: leaders@corp.internal
+Date: Wed, 09 Sep 2026 08:30:00 +0800
+Message-ID: <0020-b17@synth.example>
+Subject: 硬件密钥升级：扫码绑定新令牌
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>本季度为管理岗更换硬件密钥。请用企业微信扫码进入绑定页：</p><p><img src='https://corp-enroll.example/q.png' alt='绑定二维码' width='170'></p><p style='font-size:12px'>绑定过程需输入域账号完成核验。</p></body></html>

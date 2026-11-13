@@ -1,11 +1,13 @@
 # Docker Compose Override: development frontend asset mount
-# Keeps the default deployment immutable while letting local `frontend/dist`
-# override the container's bundled SPA during development.
+# Keeps the default deployment immutable while letting the remote build host's
+# `frontend/dist` override the container's bundled SPA during development.
 #
 # Usage:
 #   cd deploy/docker
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#   # On the remote host, in another shell:
 #   cd ../../frontend && npm run build -- --watch
+#   # Access from the workstation through an SSH tunnel to 127.0.0.1:8088.
 #
 # Optional:
 #   Set FRONTEND_DIST in deploy/docker/.env if your dist path differs.

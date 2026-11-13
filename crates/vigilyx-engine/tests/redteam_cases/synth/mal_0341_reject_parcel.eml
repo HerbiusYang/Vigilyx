@@ -1,0 +1,10 @@
+From: =?utf-8?B?5rS+6YCB6YCa55+l?= <ps@express-reject.example>
+To: me@personal.example
+Date: Mon, 14 Sep 2026 09:15:00 +0800
+Message-ID: <0005-b21@synth.example>
+Subject: 您的快件被标记'拒收'，退回前可撤回
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+撤回需支付保价费 3 元并登记手机号：
+https://reject-ch2.example.info/x

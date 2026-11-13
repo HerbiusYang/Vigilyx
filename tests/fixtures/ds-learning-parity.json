@@ -1,0 +1,807 @@
+{
+  "cases": [
+    {
+      "expected": {
+        "belief": 0.0,
+        "calibrated": null,
+        "dependency_groups": 0,
+        "disbelief": 0.0,
+        "fallback_items": 0,
+        "learned_items": 0,
+        "probability": 0.02,
+        "probability_uncalibrated": 0.02,
+        "risk_constrained": 0.02,
+        "uncertainty": 1.0
+      },
+      "id": "empty",
+      "items": [],
+      "model": {
+        "base_rate": 0.02,
+        "calibration": null,
+        "parameter_version": "parity-numerical-v1",
+        "schema_version": 1,
+        "sources": {
+          "content:request": {
+            "intercept": -1,
+            "reliability": 0.8,
+            "slope": 2
+          }
+        },
+        "training_sample_count": 0,
+        "training_status": "candidate"
+      },
+      "parameter_content_sha256": "8e1741d99ea6989a6afdbefc75a7969f4e1d870ef79c487d5f4a224500629971"
+    },
+    {
+      "expected": {
+        "belief": 0.3600000000000001,
+        "calibrated": null,
+        "dependency_groups": 1,
+        "disbelief": 0.0,
+        "fallback_items": 0,
+        "learned_items": 1,
+        "probability": 0.3728000000000001,
+        "probability_uncalibrated": 0.3728000000000001,
+        "risk_constrained": 0.3728000000000001,
+        "uncertainty": 0.6399999999999999
+      },
+      "id": "sigmoid_zero",
+      "items": [
+        {
+          "causal_key": "body:one",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.3,
+          "raw_score": 0.5,
+          "source_id": "content:request"
+        }
+      ],
+      "model": {
+        "base_rate": 0.02,
+        "calibration": null,
+        "parameter_version": "parity-numerical-v1",
+        "schema_version": 1,
+        "sources": {
+          "content:request": {
+            "intercept": -1,
+            "reliability": 0.8,
+            "slope": 2
+          }
+        },
+        "training_sample_count": 0,
+        "training_status": "candidate"
+      },
+      "parameter_content_sha256": "8e1741d99ea6989a6afdbefc75a7969f4e1d870ef79c487d5f4a224500629971"
+    },
+    {
+      "expected": {
+        "belief": 0.6341738961440754,
+        "calibrated": null,
+        "dependency_groups": 1,
+        "disbelief": 0.0,
+        "fallback_items": 0,
+        "learned_items": 1,
+        "probability": 0.6414904182211939,
+        "probability_uncalibrated": 0.6414904182211939,
+        "risk_constrained": 0.6414904182211939,
+        "uncertainty": 0.3658261038559246
+      },
+      "id": "sigmoid_positive",
+      "items": [
+        {
+          "causal_key": "body:one",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.3,
+          "raw_score": 0.5,
+          "source_id": "content:request"
+        }
+      ],
+      "model": {
+        "base_rate": 0.02,
+        "calibration": null,
+        "parameter_version": "parity-numerical-v1",
+        "schema_version": 1,
+        "sources": {
+          "content:request": {
+            "intercept": 0,
+            "reliability": 0.8,
+            "slope": 4
+          }
+        },
+        "training_sample_count": 0,
+        "training_status": "candidate"
+      },
+      "parameter_content_sha256": "1992622c5761582380ac88c0d8d07c731bd05eb11e50dc3bf06ecfb308f3f6fa"
+    },
+    {
+      "expected": {
+        "belief": 0.0858261038559246,
+        "calibrated": null,
+        "dependency_groups": 1,
+        "disbelief": 0.0,
+        "fallback_items": 0,
+        "learned_items": 1,
+        "probability": 0.10410958177880611,
+        "probability_uncalibrated": 0.10410958177880611,
+        "risk_constrained": 0.10410958177880611,
+        "uncertainty": 0.9141738961440754
+      },
+      "id": "sigmoid_negative",
+      "items": [
+        {
+          "causal_key": "body:one",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.3,
+          "raw_score": 0.5,
+          "source_id": "content:request"
+        }
+      ],
+      "model": {
+        "base_rate": 0.02,
+        "calibration": null,
+        "parameter_version": "parity-numerical-v1",
+        "schema_version": 1,
+        "sources": {
+          "content:request": {
+            "intercept": -2,
+            "reliability": 0.8,
+            "slope": 0
+          }
+        },
+        "training_sample_count": 0,
+        "training_status": "candidate"
+      },
+      "parameter_content_sha256": "451e512ecd198698437a227c9955df312bd520a332fca838b36fc79f062fbfd8"
+    },
+    {
+      "expected": {
+        "belief": 0.5800000000000001,
+        "calibrated": null,
+        "dependency_groups": 2,
+        "disbelief": 0.0,
+        "fallback_items": 2,
+        "learned_items": 0,
+        "probability": 0.5884,
+        "probability_uncalibrated": 0.5884,
+        "risk_constrained": 0.5884,
+        "uncertainty": 0.41999999999999993
+      },
+      "id": "unknown_and_legacy",
+      "items": [
+        {
+          "causal_key": "body:two",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.4,
+          "raw_score": 0.5,
+          "source_id": "unknown:x"
+        },
+        {
+          "causal_key": "body:one",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": false,
+          "legacy_mass": 0.3,
+          "raw_score": 0.5,
+          "source_id": "content:request"
+        }
+      ],
+      "model": {
+        "base_rate": 0.02,
+        "calibration": null,
+        "parameter_version": "parity-numerical-v1",
+        "schema_version": 1,
+        "sources": {
+          "content:request": {
+            "intercept": -1,
+            "reliability": 0.8,
+            "slope": 2
+          }
+        },
+        "training_sample_count": 0,
+        "training_status": "candidate"
+      },
+      "parameter_content_sha256": "8e1741d99ea6989a6afdbefc75a7969f4e1d870ef79c487d5f4a224500629971"
+    },
+    {
+      "expected": {
+        "belief": 0.3600000000000001,
+        "calibrated": null,
+        "dependency_groups": 1,
+        "disbelief": 0.0,
+        "fallback_items": 0,
+        "learned_items": 2,
+        "probability": 0.3728000000000001,
+        "probability_uncalibrated": 0.3728000000000001,
+        "risk_constrained": 0.3728000000000001,
+        "uncertainty": 0.6399999999999999
+      },
+      "id": "same_source_different_keys",
+      "items": [
+        {
+          "causal_key": "body:one",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.3,
+          "raw_score": 0.5,
+          "source_id": "content:request"
+        },
+        {
+          "causal_key": "body:two",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.3,
+          "raw_score": 0.5,
+          "source_id": "content:request"
+        }
+      ],
+      "model": {
+        "base_rate": 0.02,
+        "calibration": null,
+        "parameter_version": "parity-numerical-v1",
+        "schema_version": 1,
+        "sources": {
+          "content:request": {
+            "intercept": -1,
+            "reliability": 0.8,
+            "slope": 2
+          }
+        },
+        "training_sample_count": 0,
+        "training_status": "candidate"
+      },
+      "parameter_content_sha256": "8e1741d99ea6989a6afdbefc75a7969f4e1d870ef79c487d5f4a224500629971"
+    },
+    {
+      "expected": {
+        "belief": 0.4,
+        "calibrated": null,
+        "dependency_groups": 1,
+        "disbelief": 0.0,
+        "fallback_items": 1,
+        "learned_items": 1,
+        "probability": 0.41200000000000003,
+        "probability_uncalibrated": 0.41200000000000003,
+        "risk_constrained": 0.41200000000000003,
+        "uncertainty": 0.6
+      },
+      "id": "same_key_different_sources",
+      "items": [
+        {
+          "causal_key": "body:one",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.3,
+          "raw_score": 0.5,
+          "source_id": "content:request"
+        },
+        {
+          "causal_key": "body:one",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.4,
+          "raw_score": 0.5,
+          "source_id": "other:x"
+        }
+      ],
+      "model": {
+        "base_rate": 0.02,
+        "calibration": null,
+        "parameter_version": "parity-numerical-v1",
+        "schema_version": 1,
+        "sources": {
+          "content:request": {
+            "intercept": -1,
+            "reliability": 0.8,
+            "slope": 2
+          }
+        },
+        "training_sample_count": 0,
+        "training_status": "candidate"
+      },
+      "parameter_content_sha256": "8e1741d99ea6989a6afdbefc75a7969f4e1d870ef79c487d5f4a224500629971"
+    },
+    {
+      "expected": {
+        "belief": 0.4,
+        "calibrated": null,
+        "dependency_groups": 1,
+        "disbelief": 0.0,
+        "fallback_items": 1,
+        "learned_items": 2,
+        "probability": 0.41200000000000003,
+        "probability_uncalibrated": 0.41200000000000003,
+        "risk_constrained": 0.41200000000000003,
+        "uncertainty": 0.6
+      },
+      "id": "transitive",
+      "items": [
+        {
+          "causal_key": "body:one",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.3,
+          "raw_score": 0.5,
+          "source_id": "content:request"
+        },
+        {
+          "causal_key": "body:two",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.3,
+          "raw_score": 0.5,
+          "source_id": "content:request"
+        },
+        {
+          "causal_key": "body:two",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.4,
+          "raw_score": 0.5,
+          "source_id": "other:x"
+        }
+      ],
+      "model": {
+        "base_rate": 0.02,
+        "calibration": null,
+        "parameter_version": "parity-numerical-v1",
+        "schema_version": 1,
+        "sources": {
+          "content:request": {
+            "intercept": -1,
+            "reliability": 0.8,
+            "slope": 2
+          }
+        },
+        "training_sample_count": 0,
+        "training_status": "candidate"
+      },
+      "parameter_content_sha256": "8e1741d99ea6989a6afdbefc75a7969f4e1d870ef79c487d5f4a224500629971"
+    },
+    {
+      "expected": {
+        "belief": 0.3600000000000001,
+        "calibrated": 0.11502124664790392,
+        "dependency_groups": 1,
+        "disbelief": 0.0,
+        "fallback_items": 0,
+        "learned_items": 1,
+        "probability": 0.11502124664790392,
+        "probability_uncalibrated": 0.3728000000000001,
+        "risk_constrained": 0.11502124664790392,
+        "uncertainty": 0.6399999999999999
+      },
+      "id": "calibration",
+      "items": [
+        {
+          "causal_key": "body:one",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.3,
+          "raw_score": 0.5,
+          "source_id": "content:request"
+        }
+      ],
+      "model": {
+        "base_rate": 0.02,
+        "calibration": {
+          "intercept": -1,
+          "slope": 2
+        },
+        "parameter_version": "parity-numerical-v1",
+        "schema_version": 1,
+        "sources": {
+          "content:request": {
+            "intercept": -1,
+            "reliability": 0.8,
+            "slope": 2
+          }
+        },
+        "training_sample_count": 0,
+        "training_status": "candidate"
+      },
+      "parameter_content_sha256": "8a04b4fb86d063cd3d0ec61c490931ee5fbcc6bb3a955091b6f9b6c4c2ba15cc"
+    },
+    {
+      "expected": {
+        "belief": 0.0,
+        "calibrated": null,
+        "dependency_groups": 0,
+        "disbelief": 0.0,
+        "fallback_items": 0,
+        "learned_items": 0,
+        "probability": 0.02,
+        "probability_uncalibrated": 0.02,
+        "risk_constrained": 0.02,
+        "uncertainty": 1.0
+      },
+      "id": "zero_score_confidence",
+      "items": [
+        {
+          "causal_key": "body:one",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0.3,
+          "item_scored": true,
+          "legacy_mass": 0.3,
+          "raw_score": 0,
+          "source_id": "content:request"
+        },
+        {
+          "causal_key": "body:two",
+          "cluster": "social_engineering_intent",
+          "confidence": 0,
+          "confirmed_anchor_mass": 0.8,
+          "item_scored": true,
+          "legacy_mass": 0.8,
+          "raw_score": 0.5,
+          "source_id": "other:x"
+        }
+      ],
+      "model": {
+        "base_rate": 0.02,
+        "calibration": null,
+        "parameter_version": "parity-numerical-v1",
+        "schema_version": 1,
+        "sources": {
+          "content:request": {
+            "intercept": -1,
+            "reliability": 0.8,
+            "slope": 2
+          }
+        },
+        "training_sample_count": 0,
+        "training_status": "candidate"
+      },
+      "parameter_content_sha256": "8e1741d99ea6989a6afdbefc75a7969f4e1d870ef79c487d5f4a224500629971"
+    },
+    {
+      "expected": {
+        "belief": 0.6,
+        "calibrated": null,
+        "dependency_groups": 2,
+        "disbelief": 0.0,
+        "fallback_items": 2,
+        "learned_items": 1,
+        "probability": 0.608,
+        "probability_uncalibrated": 0.608,
+        "risk_constrained": 0.608,
+        "uncertainty": 0.4
+      },
+      "id": "unbound_envelope",
+      "items": [
+        {
+          "causal_key": "body:one",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.3,
+          "raw_score": 0.5,
+          "source_id": "content:request"
+        },
+        {
+          "causal_key": null,
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.6,
+          "raw_score": 0.5,
+          "source_id": "other:x"
+        },
+        {
+          "causal_key": null,
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.4,
+          "raw_score": 0.5,
+          "source_id": "third:x"
+        }
+      ],
+      "model": {
+        "base_rate": 0.02,
+        "calibration": null,
+        "parameter_version": "parity-numerical-v1",
+        "schema_version": 1,
+        "sources": {
+          "content:request": {
+            "intercept": -1,
+            "reliability": 0.8,
+            "slope": 2
+          }
+        },
+        "training_sample_count": 0,
+        "training_status": "candidate"
+      },
+      "parameter_content_sha256": "8e1741d99ea6989a6afdbefc75a7969f4e1d870ef79c487d5f4a224500629971"
+    },
+    {
+      "expected": {
+        "belief": 0.3600000000000001,
+        "calibrated": null,
+        "dependency_groups": 1,
+        "disbelief": 0.0,
+        "fallback_items": 0,
+        "learned_items": 1,
+        "probability": 0.3728000000000001,
+        "probability_uncalibrated": 0.3728000000000001,
+        "risk_constrained": 0.8,
+        "uncertainty": 0.6399999999999999
+      },
+      "id": "anchor_separate",
+      "items": [
+        {
+          "causal_key": "body:one",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0.8,
+          "item_scored": true,
+          "legacy_mass": 0.8,
+          "raw_score": 0.5,
+          "source_id": "content:request"
+        }
+      ],
+      "model": {
+        "base_rate": 0.02,
+        "calibration": null,
+        "parameter_version": "parity-numerical-v1",
+        "schema_version": 1,
+        "sources": {
+          "content:request": {
+            "intercept": -1,
+            "reliability": 0.8,
+            "slope": 2
+          }
+        },
+        "training_sample_count": 0,
+        "training_status": "candidate"
+      },
+      "parameter_content_sha256": "8e1741d99ea6989a6afdbefc75a7969f4e1d870ef79c487d5f4a224500629971"
+    },
+    {
+      "expected": {
+        "belief": 0.4,
+        "calibrated": null,
+        "dependency_groups": 1,
+        "disbelief": 0.0,
+        "fallback_items": 2,
+        "learned_items": 2,
+        "probability": 0.41200000000000003,
+        "probability_uncalibrated": 0.41200000000000003,
+        "risk_constrained": 0.41200000000000003,
+        "uncertainty": 0.6
+      },
+      "id": "zero_reliability_dependency",
+      "items": [
+        {
+          "causal_key": "one",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.3,
+          "raw_score": 0.5,
+          "source_id": "a:x"
+        },
+        {
+          "causal_key": "two",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.4,
+          "raw_score": 0.5,
+          "source_id": "b:x"
+        },
+        {
+          "causal_key": "one",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.3,
+          "raw_score": 0.5,
+          "source_id": "bridge:x"
+        },
+        {
+          "causal_key": "two",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.3,
+          "raw_score": 0.5,
+          "source_id": "bridge:x"
+        }
+      ],
+      "model": {
+        "base_rate": 0.02,
+        "calibration": null,
+        "parameter_version": "parity-numerical-v1",
+        "schema_version": 1,
+        "sources": {
+          "bridge:x": {
+            "intercept": -1,
+            "reliability": 0,
+            "slope": 1
+          }
+        },
+        "training_sample_count": 0,
+        "training_status": "candidate"
+      },
+      "parameter_content_sha256": "df429644c129808360c438bfd85c8267c11d189dd4d30e49a792ea6ba118ee31"
+    },
+    {
+      "expected": {
+        "belief": 0.44000000000000006,
+        "calibrated": null,
+        "dependency_groups": 2,
+        "disbelief": 0.0,
+        "fallback_items": 2,
+        "learned_items": 0,
+        "probability": 0.45120000000000005,
+        "probability_uncalibrated": 0.45120000000000005,
+        "risk_constrained": 0.45120000000000005,
+        "uncertainty": 0.5599999999999999
+      },
+      "id": "non_ascii_runtime_keys",
+      "items": [
+        {
+          "causal_key": "正文:一",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.2,
+          "raw_score": 0.5,
+          "source_id": "other:x"
+        },
+        {
+          "causal_key": "正文:二",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.3,
+          "raw_score": 0.5,
+          "source_id": "another:x"
+        }
+      ],
+      "model": {
+        "base_rate": 0.02,
+        "calibration": null,
+        "parameter_version": "parity-numerical-v1",
+        "schema_version": 1,
+        "sources": {
+          "content:request": {
+            "intercept": -1,
+            "reliability": 0.8,
+            "slope": 2
+          }
+        },
+        "training_sample_count": 0,
+        "training_status": "candidate"
+      },
+      "parameter_content_sha256": "8e1741d99ea6989a6afdbefc75a7969f4e1d870ef79c487d5f4a224500629971"
+    },
+    {
+      "expected": {
+        "belief": 0.5263621766136036,
+        "calibrated": null,
+        "dependency_groups": 1,
+        "disbelief": 0.0,
+        "fallback_items": 0,
+        "learned_items": 1,
+        "probability": 0.5263621766136036,
+        "probability_uncalibrated": 0.5263621766136036,
+        "risk_constrained": 0.5263621766136036,
+        "uncertainty": 0.4736378233863964
+      },
+      "id": "signed_zero_hash",
+      "items": [
+        {
+          "causal_key": "body:one",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.3,
+          "raw_score": 0.5,
+          "source_id": "content:request"
+        }
+      ],
+      "model": {
+        "base_rate": -0.0,
+        "calibration": null,
+        "parameter_version": "parity-numerical-v1",
+        "schema_version": 1,
+        "sources": {
+          "content:request": {
+            "intercept": -0.0,
+            "reliability": 0.8,
+            "slope": 2
+          }
+        },
+        "training_sample_count": 0,
+        "training_status": "candidate"
+      },
+      "parameter_content_sha256": "ed213ca3f55262e303434a5c3f45ba290a5af38164fc7ae12a6d14d62e8bbc1d"
+    },
+    {
+      "expected": {
+        "belief": 4.499999999962867e-06,
+        "calibrated": null,
+        "dependency_groups": 1,
+        "disbelief": 0.0,
+        "fallback_items": 0,
+        "learned_items": 1,
+        "probability": 4.500999995462867e-06,
+        "probability_uncalibrated": 4.500999995462867e-06,
+        "risk_constrained": 4.500999995462867e-06,
+        "uncertainty": 0.9999955
+      },
+      "id": "scientific_notation_hash",
+      "items": [
+        {
+          "causal_key": "body:one",
+          "cluster": "social_engineering_intent",
+          "confidence": 0.9,
+          "confirmed_anchor_mass": 0,
+          "item_scored": true,
+          "legacy_mass": 0.3,
+          "raw_score": 0.5,
+          "source_id": "content:request"
+        }
+      ],
+      "model": {
+        "base_rate": 1e-09,
+        "calibration": null,
+        "parameter_version": "parity-numerical-v1",
+        "schema_version": 1,
+        "sources": {
+          "content:request": {
+            "intercept": -1,
+            "reliability": 1e-05,
+            "slope": 2
+          }
+        },
+        "training_sample_count": 0,
+        "training_status": "candidate"
+      },
+      "parameter_content_sha256": "596565bec0f2e9b3979da7c1a66bf679447fa476c40aab1f92614fa74737364c"
+    }
+  ],
+  "expected_generator": "scripts/ds_learned_model.py run on remote host 77",
+  "purpose": "Invented numerical inference parity only; no real feedback or performance claim.",
+  "schema_version": 1
+}

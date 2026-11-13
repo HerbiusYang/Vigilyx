@@ -66,11 +66,12 @@ impl ShardedSessionManager {
         };
 
         match self.mime_parser.parse(&email_data) {
-            Ok(content) => {
+            Ok(mut content) => {
                 session_data.session.email_count += 1;
                 let is_complete = parser_complete
                     && session_data.client_stream.gap_bytes_skipped == 0
                     && session_data.server_stream.gap_bytes_skipped == 0;
+                Self::retain_raw_mime_for_gap(&mut content, &email_data, is_complete);
                 let headers_len = content.headers.len();
                 let has_message_id = content.get_header("Message-ID").is_some();
                 let has_subject = content.get_header("Subject").is_some();

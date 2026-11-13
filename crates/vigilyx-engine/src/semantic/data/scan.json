@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "description": "Existing semantic scan module data; consumed through the unified module-data registry.",
+  "lists": {
+    "semantic_body_selection_policy_v1": {
+      "description": "Selects HTML-derived semantic text only when sanitized plain text is empty or is a short gateway/notice stub and HTML is materially richer.",
+      "category": "semantic_scan",
+      "source_file": "modules/semantic_scan.rs",
+      "items": {
+        "plain_stub_max_chars": 220,
+        "html_min_chars": 160,
+        "html_to_plain_ratio": 3.0
+      }
+    },
+    "semantic_llm_style_policy_v1": {
+      "description": "Versioned stylistic observation policy. Style never supplies threat evidence or promotion authority.",
+      "category": "semantic_scan",
+      "source_file": "modules/semantic_scan.rs",
+      "items": {
+        "boilerplate": [
+          "i hope this email finds you well",
+          "i hope this message finds you well",
+          "i am reaching out regarding",
+          "i am writing to inform you",
+          "i am writing to let you know",
+          "please do not hesitate to",
+          "should you have any questions",
+          "should you require any further",
+          "thank you for your time and consideration",
+          "looking forward to your prompt response",
+          "we appreciate your understanding",
+          "we kindly ask that you",
+          "as previously mentioned",
+          "in light of recent",
+          "我希望这封邮件",
+          "希望您一切顺利",
+          "如有任何疑问，请随时",
+          "如您有任何问题",
+          "感谢您的理解与配合",
+          "期待您的及时回复",
+          "请您务必在",
+          "为了确保您的账户"
+        ],
+        "connectives": [
+          "furthermore",
+          "moreover",
+          "additionally",
+          "consequently",
+          "subsequently",
+          "nevertheless",
+          "nonetheless",
+          "henceforth",
+          "thereafter",
+          "in conclusion",
+          "to summarize"
+        ],
+        "zh_connectives": [
+          "此外",
+          "然而",
+          "尽管如此",
+          "综上所述",
+          "因此",
+          "鉴于此",
+          "与此同时"
+        ],
+        "expanded_forms": [
+          "do not ",
+          "will not ",
+          "cannot ",
+          "i am ",
+          "we are ",
+          "you are "
+        ],
+        "contracted_forms": [
+          "don't ",
+          "won't ",
+          "can't ",
+          "i'm ",
+          "we're ",
+          "you're "
+        ]
+      }
+    },
+    "semantic_text_classifier_policy_v1": {
+      "description": "Switch for the compiled local text classifier. mode=shadow records the probability and outcome in details without changing the module result; mode=review lets a positive result raise a review-only Low (omitted mode means review). Shipped in shadow mode because the model still flags a large share of benign notices outside its training data (see semantic/README.md). The weights ship with the engine and are not edited here.",
+      "category": "semantic_scan",
+      "source_file": "semantic/classifier.rs",
+      "items": {
+        "enabled": true,
+        "mode": "shadow"
+      }
+    },
+    "semantic_attachment_policy_v1": {
+      "description": "Switch for analyzing extracted attachment text with the semantic relation rules. mode=score lets attachment relations raise the module result; mode=shadow runs the same analysis and records it in details only (omitted mode means score). Set mode to shadow to silence attachment findings without a redeploy, for example if business documents produce false positives. Extraction bounds live in modules/attach_content.rs.",
+      "category": "semantic_scan",
+      "source_file": "semantic/attachments.rs",
+      "items": {
+        "enabled": true,
+        "mode": "score"
+      }
+    }
+  }
+}

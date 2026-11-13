@@ -16,6 +16,38 @@ pub fn is_coremail_compose_uri(uri: &str) -> bool {
         .any(|pattern| uri_lower.contains(pattern))
 }
 
+/// Return whether an HTTP request is an actual Webmail delivery operation.
+///
+/// Send and draft/autosave requests often share the same compose endpoint.
+/// Keep this predicate shared by the email audit path and the existing HTTP
+/// detector so a draft cannot be counted as an outbound email, while a send
+/// request cannot be missed because the two paths used different URI lists.
+pub fn is_delivery_request(uri: &str, body: Option<&str>) -> bool {
+    let uri_lower = uri.to_ascii_lowercase();
+    if is_coremail_compose_uri(uri) {
+        return body
+            .and_then(extract_body_action)
+            .is_some_and(|action| action == "deliver");
+    }
+
+    [
+        "/compose/send",
+        "/sendmail",
+        "/send_mail",
+        "func=mbox:compose&action=deliver",
+        "func=mbox:deliver",
+        "action=deliver",
+        "/coremail/xt5/proxy/compose",
+        "/owa/service.svc",
+        "/api/mail/send",
+        "/api/compose/send",
+        "/mail/send",
+        "/webmail/send",
+    ]
+    .iter()
+    .any(|pattern| uri_lower.contains(pattern))
+}
+
 /// Extract email content from Coremail compose JSON body for DLP scanning.
 ///
 /// Coremail compose.jsp POST body structure:
@@ -258,6 +290,19 @@ mod tests {
     }
 
     #[test]
+    fn delivery_request_distinguishes_coremail_send_from_draft() {
+        assert!(is_delivery_request(
+            "/coremail/common/mbox/compose.jsp",
+            Some(r#"{"action":"deliver","attrs":{"content":"x"}}"#),
+        ));
+        assert!(!is_delivery_request(
+            "/coremail/common/mbox/compose.jsp",
+            Some(r#"{"action":"save","attrs":{"content":"x"}}"#),
+        ));
+        assert!(is_delivery_request("/api/mail/send", None));
+    }
+
+    #[test]
     fn test_extract_body_action_save() {
         let body = r#"{"attrs":{},"action":"save"}"#;
         assert_eq!(extract_body_action(body), Some("save".to_string()));
@@ -289,7 +334,7 @@ mod tests {
 
     #[test]
     fn test_extract_content_for_dlp_normal() {
-        let body = r#"{"id":"1774418005615","attrs":{"subject":"Test主题","content":"emailbodyContent"},"action":"deliver"}"#;
+        let body = r#"{"id":"1000000000001","attrs":{"subject":"Test主题","content":"emailbodyContent"},"action":"deliver"}"#;
         let result = extract_content_for_dlp(body);
         assert!(result.is_some());
         let text = result.unwrap();
@@ -297,24 +342,24 @@ mod tests {
         assert!(text.contains("emailbodyContent"));
         // packetContains id Segment
         assert!(
-            !text.contains("1774418005615"),
+            !text.contains("1000000000001"),
             "Should not contain JSON id field"
         );
     }
 
     #[test]
     fn test_extract_content_for_dlp_no_phone_in_id() {
-        // found Scenario:id MediumContainsClassMobile phoneNumber
-        let body = r#"{"id":"1774418005615","attrs":{"account":"support@example.com","content":"<div>38D3670BE3FE3409</div>"},"action":"deliver"}"#;
+        // Synthetic numeric metadata must not be mistaken for a mobile number.
+        let body = r#"{"id":"1000000000001","attrs":{"account":"support@example.com","content":"<div>0123456789ABCDEF</div>"},"action":"deliver"}"#;
         let result = extract_content_for_dlp(body);
         assert!(result.is_some());
         let text = result.unwrap();
         assert!(
-            !text.contains("17744180056"),
+            !text.contains("10000000000"),
             "Extracted content should not contain digits from the id field"
         );
         assert!(
-            text.contains("38D3670BE3FE3409"),
+            text.contains("0123456789ABCDEF"),
             "Should contain the actual email content"
         );
     }
@@ -458,11 +503,11 @@ mod tests {
 
     #[test]
     fn test_extract_content_preserves_id_number_across_tags() {
-        // found: ID cardNumber HTML
-        let body = r#"{"attrs":{"content":"<span>610582</span><span>19950624</span><span>0513</span>","subject":""}}"#;
+        // A synthetic ID with an invalid region code is split across HTML tags.
+        let body = r#"{"attrs":{"content":"<span>000000</span><span>19950624</span><span>0519</span>","subject":""}}"#;
         let result = extract_content_for_dlp(body).unwrap();
         assert!(
-            result.contains("610582199506240513"),
+            result.contains("000000199506240519"),
             "ID number split across tags should be rejoined after stripping"
         );
     }

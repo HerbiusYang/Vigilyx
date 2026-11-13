@@ -1,0 +1,10 @@
+From: =?utf-8?B?U1JF?= <sre@corp.internal>
+To: it-all@corp.internal
+Date: Mon, 31 Aug 2026 09:38:00 +0800
+Message-ID: <0028-b8@synth.example>
+Subject: 8/30 支付抖动复盘会
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+影响 14 分钟，根因连接池配置。复盘周四 15:00，
+改进项三条已立项。

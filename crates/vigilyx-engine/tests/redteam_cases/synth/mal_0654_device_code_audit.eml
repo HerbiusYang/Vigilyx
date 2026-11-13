@@ -1,0 +1,68 @@
+From: Trail of Bits | Blockchain Security Team <audit-delivery@trailofbits-web3.example>
+To: blockchain@corp.internal
+Cc: CTO <cto@corp.internal>
+Date: Fri, 09 Oct 2026 16:45:00 +0800
+Message-ID: <0654-b43@synth.example>
+Subject: [Confidential] Smart Contract Audit Report Delivery - VaultFactory.sol (Audit #TB-2026-0884)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+CTO、区块链团队：
+
+贵司委托的 VaultFactory.sol 智能合约安全审计已完成。按审计合同约定，报告通过加密渠道交付。
+
+一、审计概况
+  审计对象：VaultFactory.sol（0x7a3F...e21B，Ethereum Mainnet）
+  合约功能：多签金库工厂合约（创建/管理/销毁 Vault 实例）
+  审计周期：2026-09-20 至 2026-10-05
+  审计范围：Solidity 0.8.19，3 个合约（VaultFactory / Vault / VaultStorage），共 1,847 行
+  审计工具：Slither 0.9.3 / Echidna 2.0 / Mythril 0.24（自动化）+ 2 名高级审计师人工审阅
+
+二、发现概要
+  严重（Critical）：1 项
+  高危（High）：2 项
+  中危（Medium）：3 项
+  低危（Low）：4 项
+  信息（Informational）：7 项
+
+最严重发现概述：
+  C-01（Critical）：VaultFactory.createVault() 中的初始 owner 设置存在 front-running 风险。
+  攻击者可监听 createVault 交易并在同一区块提交恶意 createVault，抢先注册目标
+  Vault 地址，导致后续资产锁入攻击者控制的合约。建议使用 CREATE2 + commit-reveal
+  模式或在部署时通过 allowlist 限制调用者。
+  
+  H-01（High）：Vault.withdraw() 缺少重入保护（reentrancy guard）。虽然当前使用
+  OpenZeppelin 的 ReentrancyGuard，但在 delegatecall 上下文中被绕过。建议改为
+  nonReentrant 修饰符直接应用于 withdraw 函数。
+
+三、报告交付方式
+因审计报告含合约源码与漏洞细节（Critical 漏洞在修复前公开可能导致主网资金被盗），按合同约定使用加密交付：
+
+我们使用 GitHub 的私有 Repository 作为交付渠道。您团队的 GitHub 组织（your-org）已被添加为 Collaborator。请通过以下步骤访问报告：
+
+  步骤 1：打开 https://github.com/login/device
+  步骤 2：输入设备码：WDJB-MJAN
+  步骤 3：使用贵司 GitHub 组织账号授权
+
+这是 GitHub 官方的设备授权流程（您应该已经熟悉——它同样用于 GitHub CLI 和 Codespaces 登录）。授权后，您将自动获得对私有仓库 trailofbits-audits/vault-factory-audit 的访问权限，报告 PDF 与 PoC 代码均在其中。
+
+设备码有效期 15 分钟。如过期，回复本邮件获取新码。
+
+四、修复建议时间线
+  C-01（Critical）：建议在 48 小时内修复并重新部署（主网已部署合约不可升级）
+  H-01/H-02：建议在 7 天内修复
+  其余：下一版本迭代
+
+修复后我们提供免费的复审（1 轮），请将修复后的合约地址发至本邮箱。
+
+五、关于交付方式的说明
+我们理解您可能会对"通过邮件发送设备码"感到警惕——这恰恰说明您的安全意识在线，这也是贵司选择我们做审计的原因。但请放心：您访问的是 github.com/login/device（GitHub 官方域），我们只是通过邮件传递设备码，不涉及任何凭据收集。这与 Discord / GitHub CLI / VS Code 的设备授权流程完全一致。
+
+六、联系
+审计师：Dimitris (dimitris@trailofbits.example)
+紧急联系：PGP 加密邮件（公钥在报告附录）
+
+--
+Trail of Bits | Blockchain Security Practice
+audit-delivery@trailofbits-web3.example
+（本邮件含审计保密信息，请勿转发。报告受 NDA 保护。）

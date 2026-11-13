@@ -1,0 +1,111 @@
+From: "HM Revenue & Customs | Notifications" <noreply@hmrc.gov.example>
+To: eu-sellers@corp.internal
+Cc: finance-ec@corp.internal, tax-consulate@corp.internal
+Date: Thu, 07 Jan 2027 10:15:00 +0000
+Message-ID: <0672-b79@synth.example>
+Subject: [FILING DUE] VAT Return Period 10/2026 - Registration 455-312-889 - File Through Government Gateway by the 7th
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+EU Seller Operations, Finance, Tax Counsel,
+
+VAT RETURN PERIOD 10/2026 - DEFERRED
+FILING WINDOW.
+Registration 455-312-889 (non-established
+taxable person, Amazon EU marketplace
+fulfiled) has a deferred filing window
+for period 10/2026 pending reconciliation
+of marketplace-collected VAT. The window
+closes on the 7th of next month.
+
+1. PERIOD SUMMARY
+
+  VAT registration:   455-312-889
+                      (NETP, goods)
+  Period:             10/2026
+                      (1 Oct - 31 Oct 2026)
+  Scheme:             Marketplace
+                      collection (import
+                      B2C < GBP 135) +
+                      seller-declared
+                      UK stock
+  Marketplace VAT
+    collected:        GBP 21,447.92
+  Seller-declared
+    output tax:       GBP 8,912.40
+  Discrepancy under
+    review:           GBP 1,204.15
+                      ("FBA multichannel"
+                      line unmatched)
+  Filing reference:   VAT907-455-312-889-
+                      1026
+
+2. HOW TO FILE (OFFICIAL PATH ONLY)
+
+    1. Type the Government Gateway
+       address yourself
+       (tax.service.gov.uk style -
+       use the address from your
+       registration certificate,
+       not from any email).
+    2. Sign in with your Gateway
+       user ID and password.
+    3. Submit the VAT return for
+       period 10/2026 and upload
+       supporting records
+       (marketplace reports, C79s)
+       through the same session.
+
+  HMRC will NEVER:
+  - Email a "deferred filing
+    submission" button or link
+    bound to a filing reference
+  - Accept records through
+    lookalike domains such as
+    "hmrc-gov-uk" or
+    "uk-vat-filing"
+  - Offer an "agent bulk lane"
+    that uploads multi-client
+    reconciliations without
+    per-client Gateway login
+    (fiscal representatives file
+    through their own Agent
+    Services account)
+  - Ask for marketplace sales
+    ledgers, fulfilment records,
+    or import evidence by email
+    or reference-bound web pages
+
+3. VERIFY THIS NOTICE
+
+  - Your deferral letter (posted
+    copy) carries the same
+    reference VAT907-455-312-889-
+    1026; compare against the
+    letter, not the email
+  - Sign in to the Gateway and
+    check the outstanding return
+    under registration
+    455-312-889
+  - Your fiscal representative
+    receives the same schedule
+    through Agent Services
+
+4. ABOUT PENALTIES
+
+  Penalty and surcharge positions
+  are assessed and appealed
+  through the Gateway
+  (proof-of-posting and
+  reasonable-excuse routes
+  exist); an email threatening
+  "automated penalty assessment
+  plus marketplace joint-
+  liability flagging" to force
+  a web upload is not an HMRC
+  process.
+
+HM Revenue & Customs |
+Notifications
+This notice concerns registration
+455-312-889 only.

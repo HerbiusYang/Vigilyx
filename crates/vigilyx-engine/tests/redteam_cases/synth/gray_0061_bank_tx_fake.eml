@@ -1,0 +1,10 @@
+From: =?utf-8?B?5bu66K6+6ZO26KGM?= <message@ccb-notify2.example>
+To: me@personal.example
+Date: Tue, 08 Sep 2026 09:10:00 +0800
+Message-ID: <0000-b16@synth.example>
+Subject: 您有一笔异常交易待确认
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>您尾号 6688 的账户发生一笔 2,860.00 元交易（境外）。</p><p><a href='https://ccb-tx-confirm.example.vip/ok' style='background:#0066b3;color:#fff;padding:10px 28px;text-decoration:none'>确认是否本人</a></p><p style='font-size:12px'>未确认将临时冻结账户。</p></body></html>

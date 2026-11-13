@@ -1,0 +1,98 @@
+From: Airbnb Corporate Travel <refund.desk@airbnb-travel-refund.example>
+To: travel@corp.internal
+Cc: finance@corp.internal, hr-benefits@corp.internal
+Reply-To: refunds.cn@airbnb-holiday-mail.example
+Date: Wed, 28 Oct 2026 22:30:00 +0100
+Disposition-Notification-To: refund.desk@airbnb-travel-refund.example
+Message-ID: <0711-b62@synth.example>
+Subject: =?utf-8?B?4p2k77qiIOKHiCBIQ0w0ODQy4oCMMjcg4oCM5Y2a5a6i6Zmi6YeM?=
+ =?utf-8?B?44Gr44Gv44Gq44KKIC0tIOOCueODqeODnOODvOetlOS4reaLriDkuIvljZAg?=
+ =?utf-8?B?44GX44Gm44GE44Gf?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif;max-width:640px;margin:0 auto;border:1px solid #FF5A5F;border-radius:8px;overflow:hidden">
+<div style="background:#FF5A5F;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">Airbnb | Corporate Travel — Refund Processing</h2>
+</div>
+<div style="padding:24px">
+
+<p>Dear Corporate Travel Team,</p>
+
+<p>Your booking <b>HCL4842</b> (27 nights, Lisbon) has been cancelled by the host. A refund of <b style="color:#00A680">€14,280.00</b> is ready for processing. However, your original payment method is no longer valid.</p>
+
+<h3>一、Booking Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:200px">Confirmation Code</td><td><b>HCL4842</b></td></tr>
+<tr><td style="background:#f5f5f5">Property</td><td>Modern Loft, Alfama District, Lisbon</td></tr>
+<tr><td style="background:#f5f5f5">Check-in / Check-out</td><td>Nov 3 - Nov 30, 2026 (27 nights)</td></tr>
+<tr><td style="background:#f5f5f5">Guest</td><td>Elena Vasquez (+3 guests)</td></tr>
+<tr><td style="background:#f5f5f5">Original Payment</td><td>€14,280.00 (Corporate AMEX ending 8842)</td></tr>
+<tr><td style="background:#f5f5f5">Cancellation Reason</td><td>Host cancelled (personal emergency)</td></tr>
+<tr><td style="background:#f5f5f5">Cancellation Policy</td><td>Full refund (host-initiated cancellation)</td></tr>
+<tr><td style="background:#f5f5f5">Refund Amount</td><td><b style="color:#00A680">€14,280.00 EUR</b></td></tr>
+</table>
+
+<h3>二、Refund Issue</h3>
+<p>The original payment was made with <b>Corporate American Express ending 8842</b>. Our payment processor has flagged this card as <b>"expired"</b> (the corporate card was reissued in October with a new number). Since we cannot refund to an expired card, we need your updated banking information.</p>
+
+<h3>三、How to Receive Your €14,280 Refund</h3>
+
+<p><b>Option 1 (Recommended) — Bank Transfer (3-5 business days):</b></p>
+
+<p>Provide your new banking details through our secure refund portal:</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://airbnb-travel-refund.example/refund/HCL4842/bank-details" style="display:inline-block;background:#FF5A5F;color:#fff;padding:14px 40px;text-decoration:none;border-radius:22px;font-weight:bold;font-size:16px">Provide Bank Details for €14,280 Refund</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://www.airbnb.com/help/article/104/refunds</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（You will need to verify your identity to prevent fraud）</p>
+
+<h3>About Identity Verification for Refunds</h3>
+<p>To process a €14,280 refund to a new bank account, we require identity verification:</p>
+<ol>
+<li><b>Government-issued photo ID</b> — passport or national ID of the account holder</li>
+<li><b>Proof of bank account ownership</b> — bank statement showing the account number</li>
+<li><b>Company authorization</b> — if the refund is to a corporate account, a letter from your finance department</li>
+</ol>
+
+<p style="font-size:14px;background:#FFEBEE;padding:12px;border-radius:4px">
+<b>Why we can't refund to the new AMEX card automatically:</b> Corporate card reissuance creates a new card number that isn't linked to the original transaction in our system. While we could refund to your Airbnb account credit, this wouldn't work for corporate accounting (your finance team needs the funds returned to a bank account for reconciliation). Bank transfer is the only option for corporate refunds when the original card has been reissued. The €14,280 will arrive in your account within 3-5 business days after verification.
+</p>
+
+<p><b>Option 2 — Airbnb Credit (instant):</b></p>
+<p>Receive €14,280 as Airbnb travel credit. However, this cannot be used for corporate expense reconciliation and may not be acceptable to your finance department.</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文退款协助或使用中国银行账户接收退款，请访问 airbnb-travel-refund.example/cn-refund 上传公司注册证书与财务负责人护照（中文通道，当日处理）。</p>
+
+<h3>四、Refund Deadline</h3>
+<p style="color:#e00"><b>This refund must be claimed within 14 days</b> (by November 11, 2026). After this date, the funds will be returned to the host and your claim will require formal dispute resolution (60-90 days).</p>
+
+<h3>五、Corporate Travel Policy Note</h3>
+<p>This booking was made through Airbnb for Work (Corporate Travel). For corporate refunds:</p>
+<ul>
+<li>Refund must go to a bank account (not Airbnb credit) for expense reconciliation</li>
+<li>Your finance department will need the refund reference number for their records</li>
+<li>The refund reference will be: <b>RFND-HCL4842-20261028</b></li>
+</ul>
+
+<h3>六、Contact</h3>
+<p><b>Corporate Travel Refund Desk:</b><br>
+Phone: +351-21-347-**** (Lisbon, for European bookings)<br>
+Phone: +86-571-8842-**** (China support)<br>
+Email: refunds.cn@airbnb-holiday-mail.example</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Airbnb Ireland UC | Corporate Travel Division</p>
+<p style="font-size:11px;color:#999">8 Hanover Quay, Dublin 2, D02 YE50, Ireland</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the booking contact for HCL4842.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://airbnb-travel-refund.example/api/track?recipient=travel%40corp.internal&booking=HCL4842&type=refund_notice" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

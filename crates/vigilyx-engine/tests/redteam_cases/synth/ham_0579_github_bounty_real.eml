@@ -1,0 +1,80 @@
+From: GitHub Security Lab <securitylab@github.example>
+To: sec-research@corp.internal
+Date: Wed, 14 Oct 2026 18:00:00 +0800
+Message-ID: <0579-b48@synth.example>
+Subject: [Bounty Approved] GHSA-7x2m-p4q9: $4,000 payout — check your GitHub Sponsors dashboard
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Hi,
+
+Congratulations! Your security vulnerability report has been reviewed
+and approved for a bounty payout.
+
+Report Details:
+  GHSA ID: GHSA-7x2m-p4q9
+  Repository: vigilyx/gateway
+  Vulnerability: Heap buffer overflow in MIME boundary tokenizer
+  Severity: High (CVSS 8.1)
+  Bounty Amount: $4,000.00 USD
+  Reported: September 22, 2026
+  Approved: October 14, 2026
+
+HOW TO CLAIM YOUR BOUNTY:
+
+We process all bounty payments through GitHub Sponsors. To receive
+your $4,000:
+
+  1. Open your browser and navigate to github.com/sponsors manually
+  2. Log in with your GitHub account
+  3. Go to Dashboard → Payouts
+  4. You should see the $4,000 bounty from GHSA-7x2m-p4q9
+  5. Click "Accept payout" and follow the Stripe Connect flow
+
+  The payout should appear in your dashboard within 24 hours of this
+  email. If you don't see it after 24 hours, reply to this email.
+
+TO VERIFY THIS EMAIL IS LEGITIMATE:
+
+  1. Navigate to github.com/advisories in your browser (manually)
+  2. Search for GHSA-7x2m-p4q9
+  3. The advisory page will show "Bounty: $4,000 — Approved"
+
+SECURITY NOTES:
+
+The GitHub Security Lab will NEVER:
+  - Send you a device code to "claim your bounty"
+  - Ask you to authenticate through a link in an email
+  - Ask you to "link your account" through OAuth authorization
+  - Request your password, tokens, or payment credentials via email
+
+All bounty payments are received through your existing GitHub Sponsors
+dashboard. You never need to "claim" or "authorize" anything through an
+email link. If you receive such an email, it is a phishing attempt
+targeting security researchers — please report it to
+securitylab@github.example and to phishing@github.example.
+
+FREQUENTLY ASKED QUESTIONS:
+
+Q: Do I need to pay taxes on this bounty?
+A: GitHub will issue a 1099-NEC form if you're a US taxpayer.
+
+Q: Can I donate the bounty to charity?
+A: Yes. Reply to this email with the charity name.
+
+Q: What if I reported anonymously?
+A: We'll need to verify your identity through GitHub's standard KYC
+   process (initiated from your GitHub dashboard, not from email).
+
+Q: Why is the amount $4,000 instead of the $5,000 I expected?
+A: The bounty committee reviewed the report and determined that while
+   the vulnerability is valid, the exploitability was rated Medium
+   rather than High due to sandbox constraints. If you disagree, you
+   may appeal within 30 days by replying to this email.
+
+--
+GitHub Security Lab | Bug Bounty Program
+securitylab@github.example
+
+To unsubscribe from bounty notifications, visit github.com/settings
+(navigate manually in your browser).

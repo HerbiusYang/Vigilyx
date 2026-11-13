@@ -1,5 +1,4 @@
 //! API error
-#![allow(dead_code)] // API, handler
 
 //! client `error_code` field Processerror, errormessage.
 
@@ -36,14 +35,8 @@ pub const AUTH_FORBIDDEN: &str = "AUTH_008";
 
 // requestverify
 
-/// ID format (Such as UUID Parsefailed)
-pub const VALIDATION_INVALID_ID: &str = "VAL_001";
-
 /// Requestparameter (Type/ /format)
 pub const VALIDATION_INVALID_PARAMS: &str = "VAL_002";
-
-/// field
-pub const VALIDATION_MISSING_FIELD: &str = "VAL_003";
 
 // Source
 
@@ -57,9 +50,6 @@ pub const RESOURCE_CONFLICT: &str = "RES_002";
 
 /// Data Operation failed
 pub const INTERNAL_DATABASE_ERROR: &str = "INT_001";
-
-/// EngineProcessfailed
-pub const INTERNAL_ENGINE_ERROR: &str = "INT_002";
 
 /// Service
 pub const INTERNAL_SERVICE_UNAVAILABLE: &str = "INT_003";
@@ -79,13 +69,10 @@ mod tests {
             AUTH_PASSWORD_CHANGE_REQUIRED,
             AUTH_INTERNAL_SOURCE_DENIED,
             AUTH_FORBIDDEN,
-            VALIDATION_INVALID_ID,
             VALIDATION_INVALID_PARAMS,
-            VALIDATION_MISSING_FIELD,
             RESOURCE_NOT_FOUND,
             RESOURCE_CONFLICT,
             INTERNAL_DATABASE_ERROR,
-            INTERNAL_ENGINE_ERROR,
             INTERNAL_SERVICE_UNAVAILABLE,
         ];
         let mut seen = std::collections::HashSet::new();
@@ -107,9 +94,7 @@ mod tests {
         assert!(AUTH_FORBIDDEN.starts_with("AUTH_"));
 
         // VAL codes start with "VAL_"
-        assert!(VALIDATION_INVALID_ID.starts_with("VAL_"));
         assert!(VALIDATION_INVALID_PARAMS.starts_with("VAL_"));
-        assert!(VALIDATION_MISSING_FIELD.starts_with("VAL_"));
 
         // RES codes start with "RES_"
         assert!(RESOURCE_NOT_FOUND.starts_with("RES_"));
@@ -117,7 +102,6 @@ mod tests {
 
         // INT codes start with "INT_"
         assert!(INTERNAL_DATABASE_ERROR.starts_with("INT_"));
-        assert!(INTERNAL_ENGINE_ERROR.starts_with("INT_"));
         assert!(INTERNAL_SERVICE_UNAVAILABLE.starts_with("INT_"));
     }
 }

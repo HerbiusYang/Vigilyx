@@ -1,0 +1,21 @@
+From: =?utf-8?B?TWVldGluZyBTZXJ2aWNlcw==?= <plugin@meet-upgrade11.example>
+To: staff@corp.internal
+Date: Tue, 22 Sep 2026 10:24:00 +0800
+Message-ID: <0014-b29@synth.example>
+Subject: Meeting room plugin (required for Thursday)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+Install the plugin before Thursday's all-hands.
+--BS
+Content-Type: application/x-msi
+Content-Disposition: attachment; filename="meet-plugin.msi"
+Content-Transfer-Encoding: base64
+
+0M8R4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+--BS--

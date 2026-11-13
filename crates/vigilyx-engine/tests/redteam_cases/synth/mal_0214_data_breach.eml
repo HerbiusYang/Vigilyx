@@ -1,0 +1,11 @@
+From: =?utf-8?B?5rOE6Zyy6YCa55+l?= <notice@breach-alert.example>
+To: me@personal.example
+Date: Sat, 05 Sep 2026 10:13:00 +0800
+Message-ID: <0003-b13@synth.example>
+Subject: 您的信息出现在泄露库中
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+监测到您的邮箱+密码出现在新泄露库，立即检查泄露详情并改密：
+https://breach-check.example.info/q
+（邮箱+常用密码查询）

@@ -1,0 +1,86 @@
+From: "Stripe | Developer Platform Security" <dev-sec@stripe-developer.example>
+To: payments-eng@corp.internal
+Cc: eng-leads@corp.internal, oss-security@corp.internal
+Reply-To: key.rotation@stripe-devrelay.example
+Disposition-Notification-To: dev-sec@stripe-developer.example
+Date: Wed, 30 Dec 2026 07:20:00 +0000
+Message-ID: <0759-b78@synth.example>
+Subject: =?utf-8?B?U3RyaXBlIFNESzogU2VjcmV0IEtleSBFeHBvc3VyZSAtIHJvdGF0ZSBhdCDigK5tb2MuZXBpcnRzL2RyYW9idHNhZOKArCB3aXRoaW4gNDho?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:-apple-system,'Segoe UI',sans-serif;font-size:14px">
+<p>Payments Engineering, Engineering Leads, OSS Security,</p>
+
+<p style="background:#FFEBEE;border-left:4px solid #B71C1C;padding:12px">
+<b>SECRET KEY EXPOSURE — IMMEDIATE ROTATION REQUIRED.</b>
+A live secret API key belonging to your Stripe account was found committed to a public repository.
+Fraud-pattern activity has been observed against the key (small-value authorization probes).
+<b>Rotate within 48 hours</b> — after that window our automated controls force-expire the key, which
+will break any production integration still reading it.
+</p>
+
+<h3>1. Exposure Summary</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:260px">Exposed key</td><td><code>sk_live_…51fK</code> (secret key, account: your company)</td></tr>
+<tr><td style="background:#f5f5f5">Location</td><td>Public repo fork, file <code>server/config/prod.env.sample</code>, commit <code>9c41aa2</code></td></tr>
+<tr><td style="background:#f5f5f5">First indexed</td><td>28 December 2026, 11:02 UTC</td></tr>
+<tr><td style="background:#f5f5f5">Observed activity</td><td>14 authorization probes (USD 1.00) from 3 ASNs, all declined by radar — <b>no captures</b></td></tr>
+<tr><td style="background:#f5f5f5">Affected integration</td><td>Checkout backend (payment-intents, webhooks signing under the same key family)</td></tr>
+<tr><td style="background:#f5f5f5">Reference</td><td>SEC-2026-88412</td></tr>
+</table>
+
+<h3>2. Why Probes Were Declined (and Why Rotation Still Matters)</h3>
+<p>Radar blocked the probes because of ASN reputation, not because the key is safe. A secret key grants
+refund, payout-schedule, and webhook-endpoint control; the decline pattern indicates testing before a
+more careful attempt. Rotation closes the window permanently.</p>
+
+<h3>3. Rotation Steps</h3>
+<ol>
+<li>Create the replacement key and update your secret store (both <code>sk_live</code> and the
+webhook signing secret if rotated together).</li>
+<li>Deploy, verify a test-mode then live-mode charge of USD 0.50 settles.</li>
+<li>Expire the old key — do not delete it first; expiry preserves the audit trail.</li>
+<li>Remove the leaked line from the fork's history (our exposure report lists the exact commit range).</li>
+</ol>
+
+<h3>4. Expedited Rotation Endpoint</h3>
+<p>To reduce the window, this notice carries an expedited rotation endpoint pre-scoped to key
+<code>…51fK</code>. The endpoint shows the key fingerprint from your own account's security log
+(event <code>SEC-2026-88412</code>) before asking for anything, so you can compare values without
+entering credentials:</p>
+
+<p style="text-align:center;margin:18px 0">
+<a href="https://stripe-developer.example/rotate/expedited?k=51fK&amp;e=88412" style="display:inline-block;background:#635BFF;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">Open Expedited Rotation</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">Dashboard path: https://dashboard.stripe.com/apikeys</p>
+
+<p style="font-size:14px;background:#FFF3E0;padding:12px">You should be suspicious of any email linking to
+what looks like a Stripe login — that instinct is correct and we won't argue with it. The expedited endpoint
+works inside an existing dashboard session (no password is ever entered on it), and the fingerprint it
+displays first is the same one in your security log, so a mismatch is visible before you act. The 48-hour
+force-expiry, however, is set by the automated controls and cannot be extended by support.</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://stripe-developer.example/px/sec.gif?e=88412&amp;r=payments-eng%40corp.internal" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">Automation lane: CI-owned integrations may rotate non-interactively at stripe-developer.example/automation (account slug + key fingerprint, no 2FA challenge, 10-minute sessions).</p>
+
+<h3>5. Timeline</h3>
+<ul>
+<li>Rotation window: <b>48 hours from this notice</b></li>
+<li>Force-expiry of <code>…51fK</code>: automatic at window close</li>
+<li>Post-rotation report: appended to your account security log within 24h</li>
+</ul>
+
+<h3>6. Contact</h3>
+<p>Developer Platform Security: key.rotation@stripe-devrelay.example<br>
+Reference: SEC-2026-88412 · account: your company</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:16px;font-size:11px;color:#999">
+Stripe | Developer Platform Security · This notice concerns the referenced key only.<br>
+Verify independently: the security log event SEC-2026-88412 appears in your dashboard.
+</div>
+
+</body></html>

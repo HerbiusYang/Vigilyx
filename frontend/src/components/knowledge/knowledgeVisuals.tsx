@@ -434,7 +434,7 @@ function TopicIllustration({ topicId, language }: { topicId: TopicId; language: 
             <ArtPanel x={356} y={64} w={258} h={204} title="Redis Streams" subtitle={pickText(copy('数据面 / consumer groups', 'Data plane / consumer groups'), language)} accent="#22d3ee" />
             <ArtPanel x={684} y={86} w={210} h={160} title="Engine" subtitle={pickText(copy('XREADGROUP / XACK', 'XREADGROUP / XACK'), language)} accent="#34d399" />
             <ArtArrow x1={286} y1={166} x2={356} y2={166} label={pickText(copy('vigilyx:stream:sessions', 'vigilyx:stream:sessions'), language)} />
-            <ArtArrow x1={614} y1={166} x2={684} y2={166} label={pickText(copy('at-least-once', 'at-least-once'), language)} />
+            <ArtArrow x1={614} y1={166} x2={684} y2={166} label={pickText(copy('条目仍保留时', 'While entries remain'), language)} />
             <ArtPill x={408} y={118} w={90} label="PEL" tone="amber" />
             <ArtPill x={510} y={118} w={108} label="XAUTOCLAIM" tone="purple" />
             <ArtPanel x={356} y={286} w={258} h={46} title={pickText(copy('Pub/Sub 控制广播', 'Pub/Sub control broadcast'), language)} accent="#f59e0b" />
@@ -443,16 +443,17 @@ function TopicIllustration({ topicId, language }: { topicId: TopicId; language: 
       case 'quarantine-lab':
         return (
           <>
-            <ArtPanel x={66} y={86} w={206} h={158} title={pickText(copy('SMTP DATA', 'SMTP DATA'), language)} subtitle={pickText(copy('收下整封邮件', 'Receive full message'), language)} accent="#60a5fa" />
-            <ArtPanel x={340} y={66} w={262} h={198} title={pickText(copy('内联判定', 'Inline verdict'), language)} subtitle={pickText(copy('Safe / Low / Medium / High / Critical', 'Safe / Low / Medium / High / Critical'), language)} accent="#22d3ee" />
-            <ArtPanel x={670} y={86} w={224} h={158} title={pickText(copy('隔离区', 'Quarantine'), language)} subtitle={pickText(copy('保留 raw_eml 与操作记录', 'Preserve raw_eml and release metadata'), language)} accent="#ef4444" />
-            <ArtArrow x1={272} y1={166} x2={340} y2={166} />
-            <ArtArrow x1={602} y1={166} x2={670} y2={166} />
-            <ArtPill x={392} y={124} w={90} label="Safe" tone="green" />
-            <ArtPill x={492} y={124} w={84} label="Low" tone="blue" />
-            <ArtPill x={392} y={176} w={100} label="Medium" tone="amber" />
-            <ArtPill x={504} y={176} w={80} label="High" tone="red" />
-            <ArtPill x={732} y={144} w={106} label={pickText(copy('释放 / 删除', 'Release / delete'), language)} tone="purple" />
+            <ArtPanel x={30} y={132} w={170} h={96} title={pickText(copy('SMTP 邮件', 'SMTP message'), language)} subtitle={pickText(copy('DATA 完成 / BDAT LAST', 'DATA complete / BDAT LAST'), language)} accent="#60a5fa" />
+            <ArtPanel x={240} y={115} w={210} h={130} title={pickText(copy('内联判定', 'Inline verdict'), language)} subtitle={pickText(copy('风险等级 + 检查完整性', 'Threat level + coverage'), language)} accent="#22d3ee" />
+            <ArtPanel x={520} y={38} w={190} h={82} title={pickText(copy('中继候选', 'Relay candidate'), language)} subtitle={pickText(copy('Safe/Low 完整 · fail-open', 'Safe/Low complete · fail-open'), language)} accent="#34d399" />
+            <ArtPanel x={738} y={38} w={202} h={100} title={pickText(copy('出站 DLP', 'Outbound DLP'), language)} subtitle={pickText(copy('仅在中继路径执行处置', 'Enforced on relay path only'), language)} accent="#f59e0b" />
+            <ArtPanel x={520} y={144} w={420} h={82} title={pickText(copy('威胁处置', 'Threat disposition'), language)} subtitle={pickText(copy('Safe/Low 覆盖缺口或 Medium/High → 隔离 · Critical → 拒绝', 'Safe/Low coverage gap or Medium/High → quarantine · Critical → reject'), language)} accent="#f59e0b" />
+            <ArtPanel x={520} y={248} w={420} h={82} title={pickText(copy('阻断性执行失败', 'Blocking execution failure'), language)} subtitle={pickText(copy('默认 451 · fail-open → 中继 / 出站 DLP', 'Default 451 · fail-open → relay / outbound DLP'), language)} accent="#ef4444" />
+            <ArtArrow x1={200} y1={180} x2={240} y2={180} />
+            <ArtArrow x1={450} y1={180} x2={520} y2={79} />
+            <ArtArrow x1={450} y1={180} x2={520} y2={185} />
+            <ArtArrow x1={450} y1={180} x2={520} y2={289} />
+            <ArtArrow x1={710} y1={79} x2={738} y2={79} />
           </>
         )
       case 'link-mask':
@@ -652,12 +653,12 @@ const topicVisuals: Record<TopicId, TopicVisual> = {
     ],
   },
   'ds-fusion': {
-    title: copy('多引擎融合可视化', 'Multi-engine fusion at a glance'),
-    caption: copy('真正难的不是单个模块打分，而是如何把“支持恶意”“支持安全”“模块没把握”这三种状态合成到一起。', 'The hard part is not scoring one module. It is merging support for malicious, support for safe, and plain uncertainty into one coherent result.'),
+    title: copy('D-S V2 正式融合', 'Authoritative D-S V2 fusion'),
+    caption: copy('V2 按因果物件去重，单边证据只组合一次；恶意信念与策略核查地板分别展示。', 'V2 deduplicates causal artifacts and combines one-sided evidence once. Malicious belief and policy review floors are shown separately.'),
     nodes: [
       { tone: 'mta', title: copy('模块评分', 'Module scores'), subtitle: copy('score + confidence', 'score + confidence'), edgeToNext: copy('转 BPA', 'Convert to BPA') },
-      { tone: 'relay', title: copy('BPA 三元组', 'BPA triplets'), subtitle: copy('b / d / u', 'b / d / u'), edgeToNext: copy('引擎分组', 'Group engines') },
-      { tone: 'mta', title: copy('Murphy 融合', 'Murphy fusion'), subtitle: copy('冲突先降噪', 'De-conflict first'), edgeToNext: copy('风险输出', 'Risk output') },
+      { tone: 'relay', title: copy('BPA 三元组', 'BPA triplets'), subtitle: copy('b / d / u', 'b / d / u'), edgeToNext: copy('物件去重', 'Deduplicate artifacts') },
+      { tone: 'mta', title: copy('D-S V2', 'D-S V2'), subtitle: copy('单次组合 → 具名约束', 'Combine once → named constraints'), edgeToNext: copy('风险输出', 'Risk output') },
       { tone: 'sender', title: copy('最终 Verdict', 'Final verdict'), subtitle: copy('Safe → Critical', 'Safe → Critical') },
     ],
     cards: [
@@ -676,7 +677,7 @@ const topicVisuals: Record<TopicId, TopicVisual> = {
         items: [
           copy('P=0.5 不能区分“50% 风险”和“根本看不清”', 'P=0.5 cannot separate “50% risky” from “cannot tell at all”'),
           copy('多模块剧烈冲突时，冲突本身就是信号', 'Strong inter-module conflict is itself a signal'),
-          copy('Murphy 修正就是为了解决这种冲突放大问题', 'Murphy correction exists to stabilize this conflict'),
+          copy('V2 将冲突保留为不确定性', 'V2 preserves conflict as uncertainty'),
         ],
       },
     ],
@@ -713,11 +714,11 @@ const topicVisuals: Record<TopicId, TopicVisual> = {
   },
   'module-pipeline': {
     title: copy('默认安全管线示意', 'Default security pipeline'),
-    caption: copy('这里最容易误解的点是：20 个条目不等于 20 个独立引擎。它们先跑模块，再映射到更高层的概念引擎。', 'The key distinction here is that 20 pipeline entries do not mean 20 independent fusion engines. Modules run first, then collapse into higher-level conceptual engines.'),
+    caption: copy('默认路径先按稳定因果键去重，再将物件归入 8 个证据簇；簇内合并后由 clustered_ds_v2 组合一次。29 个配置条目不等于每封邮件都会运行 29 个模块。', 'The default path deduplicates stable causal keys, assigns artifacts to eight evidence clusters, combines artifact mass within clusters, then runs clustered_ds_v2 combination once. The 29 configured entries do not mean 29 modules run for every message.'),
     nodes: [
       { tone: 'mta', title: copy('EmailSession', 'EmailSession'), subtitle: copy('头 / 正文 / 附件 / 链接', 'headers / body / attachments / links'), edgeToNext: copy('模块执行', 'Run modules') },
-      { tone: 'relay', title: copy('模块层', 'Module layer'), subtitle: copy('20 默认条目', '20 default entries'), edgeToNext: copy('引擎映射', 'Map to engines') },
-      { tone: 'mta', title: copy('融合层', 'Fusion layer'), subtitle: copy('Copula + Murphy', 'Copula + Murphy'), edgeToNext: copy('判定', 'Verdict') },
+      { tone: 'relay', title: copy('证据簇分类', 'Evidence cluster mapping'), subtitle: copy('8 簇：场景缩放与诊断', '8 clusters: scaling and diagnostics'), edgeToNext: copy('来源去重', 'Deduplicate sources') },
+      { tone: 'mta', title: copy('来源融合', 'Source fusion'), subtitle: copy('clustered_ds_v2 · 因果键只计一次', 'clustered_ds_v2 · one vote per causal key'), edgeToNext: copy('判定', 'Verdict') },
       { tone: 'sender', title: copy('最终结果', 'Final result'), subtitle: copy('写库 + WebSocket', 'Persist + WebSocket') },
     ],
     cards: [
@@ -727,16 +728,17 @@ const topicVisuals: Record<TopicId, TopicVisual> = {
         items: [
           copy('内容、HTML、附件、头、链接、语义、身份、交易、AV、YARA', 'Content, HTML, attachment, header, link, semantic, identity, transaction, AV, and YARA'),
           copy('verdict 是汇总阶段，不是前置分析模块', 'verdict is the final aggregation stage, not an early detector'),
-          copy('运行时还可接入落地页、AITM、沙箱等扩展', 'Landing-page, AITM, and sandbox modules can join at runtime'),
+          copy('配置中包含落地页、AITM、沙箱模块，运行受条件或 opt-in 门控', 'Landing-page, AITM, and sandbox entries are configured by default but remain condition or opt-in gated'),
         ],
       },
       {
         tone: 'purple',
-        title: copy('为什么要分层', 'Why it is layered'),
+        title: copy('事件驱动调度的作用', 'Why event-driven scheduling matters'),
         items: [
-          copy('独立模块可以并行，缩短分析时延', 'Independent modules can run in parallel to reduce latency'),
-          copy('依赖链通过 DAG 保证顺序', 'Dependency order is enforced by the DAG'),
-          copy('先模块、后引擎、再融合，才能控制重复计数', 'Module-first, engine-second, fusion-last keeps evidence from being double-counted'),
+          copy('没有依赖的根模块会立即并发启动', 'Independent root modules start concurrently'),
+          copy('后继模块在依赖完成后立即启动，不等待整层结束', 'Successors start when their dependencies finish, without a layer-wide wait'),
+          copy('should_run 与 ConditionConfig 会跳过当前邮件不适用的模块', 'should_run and ConditionConfig can skip modules that do not apply to this message'),
+          copy('先去重物件，再簇内合并，最后对各簇组合一次', 'Deduplicate artifacts, merge within clusters, then combine clusters once'),
         ],
       },
     ],
@@ -865,7 +867,7 @@ const topicVisuals: Record<TopicId, TopicVisual> = {
     title: copy('Webmail 数据安全链路', 'Webmail data-security flow'),
     caption: copy('这块不是看 SMTP，而是看浏览器里发邮件、存草稿、传文件时的 HTTP 会话。', 'This path is not about SMTP. It watches browser-driven webmail sessions such as drafting, uploading, and sending through HTTP.'),
     nodes: [
-      { tone: 'mta', title: copy('HTTP 会话', 'HTTP session'), subtitle: copy('WEBMAIL_SERVERS 命中', 'WEBMAIL_SERVERS hit'), edgeToNext: copy('字段提取', 'Extract fields') },
+      { tone: 'mta', title: copy('HTTP 会话', 'HTTP session'), subtitle: copy('UI/API 已保存的服务器命中', 'Matches saved UI/API server list'), edgeToNext: copy('字段提取', 'Extract fields') },
       { tone: 'relay', title: copy('请求解析', 'Request parsing'), subtitle: copy('from / to / subject', 'from / to / subject'), edgeToNext: copy('DLP 扫描', 'DLP scan') },
       { tone: 'mta', title: copy('事件生成', 'Incident creation'), subtitle: copy('info → critical', 'info → critical'), edgeToNext: copy('推送前端', 'Push to UI') },
       { tone: 'sender', title: copy('API / WebSocket', 'API / WebSocket'), subtitle: copy('实时展示', 'Realtime display') },
@@ -923,7 +925,7 @@ const topicVisuals: Record<TopicId, TopicVisual> = {
   },
   'message-bus': {
     title: copy('数据面和控制面分离', 'Separate the data plane from the control plane'),
-    caption: copy('消息层不是一个 Redis 功能全包。会话数据要求可靠，命令广播要求轻量，所以分两条线。', 'The message layer does not use one Redis primitive for everything. Session data needs reliability, while command fan-out needs lightness, so the architecture splits them deliberately.'),
+    caption: copy('Streams 支持确认与失败恢复，但有长度上限；Pub/Sub 用于即时通知，离线订阅者收不到历史消息。', 'Streams support acknowledgements and recovery but have bounded retention; Pub/Sub carries live notifications that offline subscribers do not receive.'),
     nodes: [
       { tone: 'mta', title: copy('Sniffer', 'Sniffer'), subtitle: copy('会话生产者', 'Session producer'), edgeToNext: copy('Streams', 'Streams') },
       { tone: 'relay', title: copy('Redis Streams', 'Redis Streams'), subtitle: copy('数据面', 'Data plane'), edgeToNext: copy('Consumer Group', 'Consumer group') },
@@ -935,17 +937,17 @@ const topicVisuals: Record<TopicId, TopicVisual> = {
         tone: 'green',
         title: copy('为什么数据面走 Streams', 'Why the data plane uses Streams'),
         items: [
-          copy('邮件会话和 HTTP 会话不能静默丢', 'Email and HTTP sessions must not be silently dropped'),
+          copy('已发布且未修剪的条目支持至少一次处理', 'Published entries are processed at least once while retained'),
           copy('XACK 之后才算真正处理成功', 'A message counts as done only after XACK'),
-          copy('崩溃恢复还能靠 PEL / XAUTOCLAIM 找回未完成工作', 'PEL and XAUTOCLAIM recover abandoned work after crashes'),
+          copy('PEL / XAUTOCLAIM 可恢复仍保留的未确认条目', 'PEL / XAUTOCLAIM recover retained pending entries'),
         ],
       },
       {
         tone: 'purple',
         title: copy('为什么控制面走 Pub/Sub', 'Why the control plane uses Pub/Sub'),
         items: [
-          copy('reload、rescan、status 更像广播通知', 'reload, rescan, and status look more like broadcasts'),
-          copy('这些消息轻量、幂等、可接受 fire-and-forget', 'They are lightweight, idempotent, and acceptable as fire-and-forget'),
+          copy('当前重扫走 Streams；reload 和状态通知走 Pub/Sub', 'Current rescans use Streams; reload and status use Pub/Sub'),
+          copy('订阅者离线时不会保留 Pub/Sub 通知', 'Pub/Sub notifications are not retained for offline subscribers'),
           copy('更适合同时扇出到多个组件和 WebSocket 层', 'They fan out naturally to multiple components and the WebSocket layer'),
         ],
       },
@@ -955,7 +957,7 @@ const topicVisuals: Record<TopicId, TopicVisual> = {
     title: copy('隔离区处置流', 'Quarantine response flow'),
     caption: copy('隔离区的价值不是“先挡住”，而是“挡住以后还保留可追溯、可放行、可删除的操作面”。', 'Quarantine is valuable not only because it stops the message, but because it preserves a reviewable, releasable, and deletable control surface afterward.'),
     nodes: [
-      { tone: 'mta', title: copy('SMTP DATA', 'SMTP DATA'), subtitle: copy('收完整封邮件', 'Receive full message'), edgeToNext: copy('inline 判定', 'Inline verdict') },
+      { tone: 'mta', title: copy('SMTP 邮件正文', 'SMTP message body'), subtitle: copy('DATA / BDAT LAST', 'DATA / BDAT LAST'), edgeToNext: copy('inline 判定', 'Inline verdict') },
       { tone: 'relay', title: copy('内联引擎', 'Inline engine'), subtitle: copy('Safe / Low / Medium / High / Critical', 'Safe / Low / Medium / High / Critical'), edgeToNext: copy('三种动作', 'Three actions') },
       { tone: 'mta', title: copy('放行 / 隔离 / 拒绝', 'Forward / quarantine / reject'), subtitle: copy('策略驱动', 'Policy driven'), edgeToNext: copy('管理员处置', 'Admin review') },
       { tone: 'sender', title: copy('释放 / 删除', 'Release / delete'), subtitle: copy('JWT 记操作人', 'JWT ties operator identity') },

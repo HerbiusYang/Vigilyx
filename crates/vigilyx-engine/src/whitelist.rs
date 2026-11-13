@@ -76,25 +76,6 @@ impl WhitelistCache {
             _ => {}
         }
     }
-
-    #[allow(dead_code)]
-    fn remove(&mut self, entry_type: &str, value: &str) {
-        match entry_type {
-            WL_DOMAIN => {
-                self.domains.remove(value);
-            }
-            WL_IP => {
-                self.ips.remove(value);
-            }
-            WL_EMAIL => {
-                self.emails.remove(value);
-            }
-            WL_HASH => {
-                self.hashes.remove(value);
-            }
-            _ => {}
-        }
-    }
 }
 
 impl WhitelistManager {

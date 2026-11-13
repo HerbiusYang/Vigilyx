@@ -1,0 +1,79 @@
+From: Sony Interactive Entertainment <partners@sie.example>
+To: dev-pub@corp.internal
+Cc: finance@corp.internal, legal@corp.internal
+Date: Fri, 30 Oct 2026 17:00:00 +0900
+Message-ID: <0627-b64@synth.example>
+Subject: PLAYSTATION PARTNER REVENUE SHARE — Q3 2026 — Banking Information Update
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Developer Publishing Team, Finance, Legal:
+
+Your PlayStation Partner revenue share for Q3 2026 is ready
+for disbursement. Your banking information needs to be
+confirmed in the Partner Portal.
+
+Revenue Summary:
+  Partner ID: SIE-P-884266
+  Title: Vigilyx Defense Protocol (PS5, PS4)
+  Quarter: Q3 2026 (July-September)
+  Gross Revenue: $847,200.00
+  Platform Fee (30%): -$254,160.00
+  Regional Taxes: -$62,880.00
+  Net Payout: $530,160.00 USD
+
+How to Confirm Banking Details:
+
+  1. Navigate to the PlayStation Partners portal:
+     partners.playstation.com
+     (Type the URL manually in your browser.
+      Do NOT click links from emails.)
+
+  2. Log in with your Sony Partner Network credentials
+     (same username/password you use for patch submission
+      and store management)
+
+  3. Go to: Payments → Banking → Confirm Details
+
+  4. If your details are unchanged, click "Confirm"
+     If changed, enter new details
+
+  5. No additional documents are needed if your details
+     are unchanged from the previous quarter
+
+  Important Security Notes:
+  Sony Interactive Entertainment will NEVER:
+  - Send direct banking verification links via email
+  - Require "SONY ID SSO with offline_access" for
+    payment confirmation
+  - Ask you to upload bank statements or company
+    registration certificates through email portals
+  - Offer an "expedited payment" via a "regional
+    financial partner" in Hong Kong
+  - Charge a "$85 processing fee" for payment release
+  - Set a "November 15 deadline" for bank verification
+    (revenue is held in escrow, never lost)
+
+  All banking updates are done through the Partner
+  Portal at partners.playstation.com using your existing
+  login credentials. No OAuth permissions or additional
+  authentication is required.
+
+  Revenue is automatically released to your bank account
+  on the regular quarterly cycle. If banking details need
+  updating, the payment is held until the next cycle —
+  it is never lost and there is no "processing fee."
+
+  If you receive an email asking you to remit a
+  "processing fee" or verify banking through a link,
+  it is a phishing attempt targeting game developers.
+
+Your Game Performance (Q3 2026):
+  North America: 142,800 downloads / $384,200 / 4.6 stars
+  Europe:        98,400 downloads / $248,100 / 4.4 stars
+  Japan:         54,200 downloads / $148,900 / 4.2 stars
+  Asia:          31,600 downloads /  $66,000 / 4.5 stars
+
+Sony Interactive Entertainment LLC | PlayStation Partners
+2207 Bridgepointe Parkway, San Mateo, CA 94404
+You are receiving this because you are the contact for Partner ID SIE-P-884266.

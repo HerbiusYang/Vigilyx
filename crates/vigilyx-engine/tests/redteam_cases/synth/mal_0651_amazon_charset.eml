@@ -1,0 +1,58 @@
+From: 亚马逊全球开店-卖家绩效团队 <seller-performance@amazon-seller.example>
+To: merchant@corp.internal
+Cc: 运营部 <operations@corp.internal>
+Date: Thu, 08 Oct 2026 14:30:00 +0800
+Message-ID: <0651-b42@synth.example>
+Subject: [Second Review Required] Your selling account is under review -Action needed within 72 hours
+MIME-Version: 1.0
+Content-Type: text/html; charset=gb2312
+
+<html><body style="font-family:sans-serif">
+<p>Dear Seller,</p>
+
+<p>We are contacting you because your Amazon seller account (<b>SELLER-ID: A2E8K4M7PQ</b>, marketplace: <b>amazon.com</b>) has been flagged for a second review under our <b>Supply Chain Integrity Policy</b>.</p>
+
+<h3>Why your account is under review</h3>
+<p>During a routine audit of invoices submitted for Q3 2026, our verification team identified <b>3 invoices</b> from your supplier "Shenzhen HuaXin Trading Co., Ltd." that could not be verified against the supplier's VAT registration record. Specifically:</p>
+
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc">
+<tr style="background:#f0f0f0"><th>Invoice #</th><th>Date</th><th>Amount (CNY)</th><th>Issue</th></tr>
+<tr><td>04728841</td><td>2026-07-15</td><td>84,200.00</td><td style="color:#e00">VAT number not found</td></tr>
+<tr><td>04729915</td><td>2026-08-02</td><td>112,800.00</td><td style="color:#e00">Supplier name mismatch</td></tr>
+<tr><td>04730122</td><td>2026-08-28</td><td>96,400.00</td><td style="color:#e00">Invoice format anomaly</td></tr>
+</table>
+
+<h3>What happens next</h3>
+<p>You have <b>72 hours</b> (until October 11, 2026, 23:59 UTC) to submit the following:</p>
+<ol>
+<li><b>Supplier verification letter</b> — A letter from Shenzhen HuaXin Trading confirming they issued the above invoices, including their VAT registration certificate and business license</li>
+<li><b>Bank payment proof</b> — Bank statements or wire transfer receipts corresponding to the three invoices above</li>
+<li><b>Product authenticity declaration</b> — A signed declaration that all products listed are authentic and sourced from authorized channels</li>
+</ol>
+
+<h3>How to submit documents</h3>
+<p>All documents must be submitted through our <b>Seller Performance Document Portal</b>. Due to the sensitive nature of business documents (invoices, bank statements), we use an encrypted submission platform:</p>
+
+<p><a href="https://amazon-seller.example/performance/documents/upload?case=SP-2026-8842" style="background:#ff9900;color:#000;padding:10px 28px;text-decoration:none;border-radius:4px;font-weight:bold">Submit Documents</a></p>
+
+<p style="font-size:13px;color:#666">https://sellercentral.amazon.com/gp/case-log.html</p>
+
+<p>The encrypted portal requires Amazon seller credentials to access. If you cannot log in, please ensure you are using your primary seller account email, not a secondary user account.</p>
+
+<h3>If you miss the deadline</h3>
+<p>Failure to submit the required documents within 72 hours will result in:</p>
+<ul>
+<li>Temporary suspension of your selling privileges</li>
+<li>Withholding of all pending disbursements (estimated balance: $48,340.22)</li>
+<li>Possible permanent removal of listing privileges for affected ASINs</li>
+</ul>
+
+<h3>Appeal process</h3>
+<p>If you believe this review is in error, you may submit an appeal through Seller Central → Performance → Account Health → Appeal. However, appeals without supporting documents are rarely successful. We strongly recommend submitting the requested documents first.</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:24px">
+<p style="font-size:12px;color:#888">Amazon Seller Performance Team</p>
+<p style="font-size:11px;color:#999">Case ID: SP-2026-8842 | Marketplace: amazon.com | Account: A2E8K4M7PQ</p>
+<p style="font-size:11px;color:#999">This is an automated notification. Please do not reply to this email.</p>
+</div>
+</body></html>

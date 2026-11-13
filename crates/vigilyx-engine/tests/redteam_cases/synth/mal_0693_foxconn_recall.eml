@@ -1,0 +1,109 @@
+From: 富士康科技集团-中央品质管理部 <sqa.notify@fxcn-quality.example>
+To: quality@corp.internal
+Cc: purchase@corp.internal, legal@corp.internal
+Reply-To: sqa.recall@fxcn-case.example
+Date: Thu, 22 Oct 2026 14:30:00 +0800
+Message-ID: <0693-b56@synth.example>
+Subject: Re: Re: [品质异常 QN-2026-0884] 连接器镀层不良 —— 客户端批量质量事件与召回成本分摊（明晚回复）
+In-Reply-To: <qn-2026-0884@corp.internal>
+References: <qn-2026-0884@corp.internal> <qn-2026-0884-2@corp.internal>
+MIME-Version: 1.0
+Content-Type: text/html; charset=gb2312
+
+<html><body style="font-family:sans-serif">
+<p>品质部、采购部、法务部：</p>
+
+<p>关于贵司供应的精密连接器（料号：CONN-A1284-32P）镀层不良问题，我司客户端已发生<b>批量质量事件</b>。现将事件详情与成本分摊方案通知如下。</p>
+
+<h3>一、事件概述</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:150px">品质异常编号</td><td><b>QN-2026-0884</b></td></tr>
+<tr><td style="background:#f5f5f5">供应商</td><td>贵司</td></tr>
+<tr><td style="background:#f5f5f5">不良零件</td><td>精密连接器 CONN-A1284-32P（32Pin，0.5mm pitch）</td></tr>
+<tr><td style="background:#f5f5f5">不良模式</td><td>镀金层厚度不足（规格 ≥0.38μm，实测 0.12-0.21μm）</td></tr>
+<tr><td style="background:#f5f5f5">影响批次</td><td>2026-W33 至 2026-W39（共 7 周，21 个批次）</td></tr>
+<tr><td style="background:#f5f5f5">影响数量</td><td>约 184,000 pcs（已上机）</td></tr>
+<tr><td style="background:#f5f5f5">不良率</td><td>客户端 3.2%（返修率 1.8% + 功能失效 1.4%）</td></tr>
+<tr><td style="background:#f5f5f5">首发现日</td><td>2026-10-08（客户Dell首批返修）</td></tr>
+<tr><td style="background:#f5f5f5">影响客户</td><td>Dell、HP、联想（共3家ODM客户）</td></tr>
+<tr><td style="background:#f5f5f5">质量事件等级</td><td style="color:#e00"><b>S级（最高）— 客户端批量功能失效</b></td></tr>
+</table>
+
+<h3>二、不良分析</h3>
+<p>经我司实验室（实验室编号：CNAS L1234）分析：</p>
+<ul>
+<li><b>X-Ray膜厚测试（ASTM B568）：</b>镀金层厚度 0.12-0.21μm（规格 ≥0.38μm，实际为规格的 32%-55%）</li>
+<li><b>SIMS 深度剖析：</b>镍底层扩散至金层表面（导致接触电阻增大）</li>
+<li><b>接触电阻测试：</b>初始合格（<20mΩ），但经 500 次插拔后增至 45-80mΩ（规格 <30mΩ）</li>
+<li><b>根因初步判断：</b>贵司电镀线在 W33-W39 期间的镀金缸药水浓度异常（可能为补加液时未按 SOP 执行）</li>
+</ul>
+
+<h3>三、客户影响</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>客户</th><th>影响机种</th><th>上机数量</th><th>返修数量</th><th>返修率</th></tr>
+<tr><td>Dell</td><td>Latitude 5450</td><td>68,000</td><td>2,414</td><td>3.55%</td></tr>
+<tr><td>HP</td><td>ProBook 450 G11</td><td>72,000</td><td>2,232</td><td>3.10%</td></tr>
+<tr><td>联想</td><td>ThinkPad E16</td><td>44,000</td><td>1,243</td><td>2.83%</td></tr>
+<tr><td colspan="4" style="text-align:right"><b>合计</b></td><td><b>184,000 / 5,889</b></td></tr>
+</table>
+
+<h3>四、召回成本分摊</h3>
+<p>根据《供应商质量保证协议》（合同编号：SQA-2024-042）第 7.3 条，S 级质量事件的召回成本由供应商全额承担。预估成本如下：</p>
+
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>成本项目</th><th>金额（￥）</th><th>说明</th></tr>
+<tr><td>客户端返修人工费</td><td>2,944,500</td><td>5,889台 × ￥500/台</td></tr>
+<tr><td>免费更换零件费</td><td>1,178,000</td><td>5,889台 × 32pcs × ￥6.25</td></tr>
+<tr><td>物流费（往返）</td><td>353,400</td><td>5,889台 × ￥60/台</td></tr>
+<tr><td>客户端罚款（Dell）</td><td>800,000</td><td>按Dell SQE通知</td></tr>
+<tr><td>客户端罚款（HP）</td><td>600,000</td><td>按HP SQE通知</td></tr>
+<tr><td>客户端罚款（联想）</td><td>400,000</td><td>按联想SQE通知</td></tr>
+<tr><td>商誉损失赔偿</td><td>2,000,000</td><td>按协议第7.5条</td></tr>
+<tr><td colspan="2" style="text-align:right"><b>合计</b></td><td><b>￥8,275,900</b></td></tr>
+</table>
+
+<h3>五、付款方式（重要）</h3>
+<div style="background:#fff3cd;padding:16px;border-radius:4px;border:2px solid #e00">
+<p style="color:#e00"><b>⚠ 召回成本请汇入以下品质事故处理专用账户 ⚠</b></p>
+<p>因本次事件涉及3家境外客户（美元结算），我司已启用<b>品质事故处理专用账户</b>（用于多币种收款与快速分拨至客户）：</p>
+<p style="font-size:15px">
+<b>户名：</b>富士康精密电子（杭州）有限公司（品质事故处理专户）<br>
+<b>开户行：</b>中国银行杭州市高新支行<br>
+<b>账号：</b>6225 0091 4471 3310 8842<br>
+<b>大额支付行号：</b>104331004288<br>
+<b>备注：</b>QN-2026-0884 + 供应商名称
+</p>
+<p>原SQA协议约定的结算账户（招商银行）仅用于月度货款结算，不适用于品质事故赔款。</p>
+</div>
+<p>如需核实账户，请联系我司<b>品质事故处理专线 0571-8765-9910</b>（原中央品质部总机已变更）。</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需分期支付，请回复本邮件并附公司营业执照、法人身份证与银行账户信息，我司将安排3-6期分期方案（首期不低于30%）。</p>
+
+<h3>六、回复截止</h3>
+<p><b>明晚（10/23）20:00 前</b>，请贵司回复确认以下三项：</p>
+<ol>
+<li>是否接受不良分析结果（如不接受，可申请第三方复检）</li>
+<li>是否接受成本分摊方案（如不接受，我司将启动法律程序）</li>
+<li>首期赔款 ￥2,482,770（30%）的汇款时间</li>
+</ol>
+<p>逾期未回复，我司将直接从应付款中扣除全部 ￥8,275,900（可能影响贵司现金流）。</p>
+
+<h3>七、后续措施</h3>
+<ul>
+<li>贵司需在 10/28 前提交 8D 报告（含纠正措施与预防措施）</li>
+<li>贵司需在 11/15 前完成电镀线整改（我司将安排现场审核）</li>
+<li>整改期间，贵司所有出货批次的镀层厚度报告需随货同行</li>
+<li>我司将对贵司进行降级处理（从 A 级供应商降至 B 级，影响后续订单份额）</li>
+</ul>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">富士康科技集团 | 中央品质管理部（SQA）</p>
+<p style="font-size:11px;color:#999">品质事故处理专员：王大伟（0571-8765-9910）</p>
+<p style="font-size:11px;color:#999">地址：杭州市滨江区江陵路88号富士康科技园</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://fxcn-quality.example/api/track?recipient=quality%40corp.internal&qn=QN-2026-0884&type=recall_notice" width="1" height="1" alt="">
+</div>
+
+</body></html>

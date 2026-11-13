@@ -1,0 +1,9 @@
+From: =?utf-8?B?5Y+R56Wo5Lit5b+D?= <fp@invoice-html6.example>
+To: finance@corp.internal
+Date: Fri, 18 Sep 2026 09:11:00 +0800
+Message-ID: <0001-b25@synth.example>
+Subject: 增值税发票预览
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><table border=1 cellpadding=6><tr><th>品名</th><th>金额</th></tr><tr><td>咨询服务</td><td>36,000.00</td></tr></table><a href='https://fp-view6.example.info/d'>下载发票联</a></body></html>

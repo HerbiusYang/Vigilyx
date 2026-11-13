@@ -1,0 +1,106 @@
+From: "TraceLens | Renewals" <renewals@tracelens.example>
+To: observability-team@corp.internal
+Cc: sre-leads@corp.internal, finance.ap@corp.internal
+Date: Tue, 27 Apr 2027 05:30:00 +0000
+Message-ID: <0719-b95@synth.example>
+Subject: [RENEWAL] APM Contract TL-2024-88412 - Renew in the Admin Console by May 1 (Retention Unchanged)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Observability Team, SRE Leads, Accounts
+Payable,
+
+RENEWAL NOTICE - CONTRACT
+TL-2024-88412.
+
+Your TraceLens APM contract renews
+May 1. Renew in the admin console;
+your 13-month retention tier carries
+over unchanged. No deposit of any
+kind exists in our pricing.
+
+1. CONTRACT STATUS
+
+  Contract:      TL-2024-88412
+                (APM Enterprise,
+                3.2 TB/day ingest)
+  Renewal term:  2027-05-01 ->
+                2028-05-01
+                (USD 148,000,
+                price held)
+  Retention
+    tier:        13-month trace
+                retention (carries
+                over automatically
+                with renewal)
+  Ingest:        3.2 TB/day
+                average (release
+                spikes to 4.1 TB)
+
+2. HOW TO RENEW (OFFICIAL PATH)
+
+    1. Sign in to the admin
+       console by typing the
+       address yourself
+       (app.tracelens.example ->
+       Billing).
+    2. Renewal quote is ready
+       under Contracts ->
+       TL-2024-88412; approve
+       and it moves to your
+       standard invoice flow
+       (Net-30, same as every
+       year since 2024).
+    3. Retention settings are
+       untouched by renewal;
+       they change only if an
+       admin edits them in
+       the console.
+
+  TraceLens will NEVER:
+  - Introduce a "retention
+    deposit" or any new wire
+    step by email (pricing
+    changes appear in the
+    console's contract
+    schedule and in a
+    countersigned order
+    form - never as an
+    emailed IBAN to a
+    "Retention Operations
+    Ltd." in Malta)
+  - Auto-drop retention to
+    7 days as "quota
+    automation" at renewal
+    (retention is a
+    contractual tier; it
+    does not degrade
+    silently, and deleting
+    customer traces mid-
+    investigation would be
+    a contract breach, not
+    automation)
+  - Use lookalike domains
+    such as
+    "tracelens-ops" or
+    "tl-retention"
+
+3. VERIFY THIS NOTICE
+
+  - Contract, ingest usage,
+    and retention settings
+    are all in the admin
+    console (typed address)
+  - The renewal quote
+    exists in the console
+    before any email
+    matters
+  - Report lookalike
+    notices to
+    security@tracelens.example
+
+TraceLens | Renewals
+This notice concerns contract
+TL-2024-88412 only. Retention
+policies and pricing are documented
+in your contract schedule.

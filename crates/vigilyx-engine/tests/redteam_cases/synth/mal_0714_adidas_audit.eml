@@ -1,0 +1,124 @@
+From: Adidas Group Social & Environmental Affairs <compliance.audit@adidas-sea.example>
+To: compliance@corp.internal
+Cc: factory.mgmt@corp.internal, legal@corp.internal
+Reply-To: audit.findings@adidas-compliance.example
+Date: Thu, 29 Oct 2026 14:00:00 +0800
+Message-ID: <0714-b63@synth.example>
+Subject: =?utf-8?B?77uP4oCi4oCMIERldGFjaGVkIEZhY3RvcnkgQXVkaXQgLS0gUHJvZHVjdGlvbiBT?=
+ =?utf-8?B?dXNwZW5zaW9uICYgQ29tcGxpYW5jZSBJbXByb3ZlbWVudCBGdW5kIFJlcXVpcmVk?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<p>Compliance Team, Factory Management, Legal:</p>
+
+<p>Adidas Group's Social & Environmental Affairs (SEA) division has completed its <b>unannounced factory audit</b> at your Hangzhou manufacturing facility. The audit found <b style="color:#e00">four critical violations</b> requiring immediate remediation and a <b>Compliance Improvement Fund</b> contribution.</p>
+
+<h3>一、Audit Summary</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:200px">Audit Reference</td><td><b>SEA-2026-HZ-8842</b></td></tr>
+<tr><td style="background:#f5f5f5">Factory</td><td>Your Company Manufacturing Facility (Hangzhou)</td></tr>
+<tr><td style="background:#f5f5f5">Audit Type</td><td>Unannounced (fourth audit this year)</td></tr>
+<tr><td style="background:#f5f5f5">Audit Date</td><td>October 24-25, 2026</td></tr>
+<tr><td style="background:#f5f5f5">Auditors</td><td>Sarah Chen (SEA Lead), Mike Wong (Environmental)</td></tr>
+<tr><td style="background:#f5f5f5">Workers Interviewed</td><td>47 (randomly selected across 3 shifts)</td></tr>
+<tr><td style="background:#f5f5f5">Overall Rating</td><td style="color:#e00"><b>C — FAIL (production suspension risk)</b></td></tr>
+</table>
+
+<h3>二、Critical Findings</h3>
+
+<p><b>Finding 1 — Excessive Overtime (CRITICAL)</b></p>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Indicator</th><th>Adidas Standard</th><th>Your Factory</th></tr>
+<tr><td>Weekly overtime</td><td>Max 12 hours</td><td style="color:#e00"><b>28-35 hours</b></td></tr>
+<tr><td>Monthly overtime</td><td>Max 36 hours</td><td style="color:#e00"><b>112 hours</b></td></tr>
+<tr><td>Consecutive work days</td><td>Max 6 days</td><td style="color:#e00"><b>18 days</b></td></tr>
+<tr><td>Workers affected</td><td>—</td><td style="color:#e00"><b>312 out of 847</b></td></tr>
+</table>
+
+<p><b>Finding 2 — Wage Violations (CRITICAL)</b></p>
+<ul>
+<li>142 workers paid below local minimum wage (Hangzhou: ¥2,480/month, actual: ¥2,150-2,320)</li>
+<li>Overtime premium not paid at 1.5x/2x/3x rates (paid at flat 1.2x)</li>
+<li>3 months of delayed social insurance contributions (July-September)</li>
+</ul>
+
+<p><b>Finding 3 — Safety Violations (HIGH)</b></p>
+<ul>
+<li>12 of 48 fire extinguishers past inspection date (expired 2025-Q4)</li>
+<li>Emergency exit blocked by inventory on Floor 3</li>
+<li>2 workers without proper PPE in chemical handling zone</li>
+</ul>
+
+<p><b>Finding 4 — Environmental Non-Compliance (HIGH)</b></p>
+<ul>
+<li>Wastewater discharge exceeding permitted zinc levels by 340%</li>
+<li>Hazardous waste storage without secondary containment</li>
+</ul>
+
+<h3>三、Compliance Improvement Fund</h3>
+<p>Per the Adidas Supplier Code of Conduct (Section 7.4), suppliers with a "C" rating must contribute to the <b>Compliance Improvement Fund</b>:</p>
+
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Item</th><th>Amount (USD)</th></tr>
+<tr><td>Overtime compensation (312 workers × 3 months × average $180)</td><td>$168,480</td></tr>
+<tr><td>Wage arrears (142 workers × 3 months × average $95)</td><td>$40,470</td></tr>
+<tr><td>Social insurance back-payment</td><td>$68,200</td></tr>
+<tr><td>Safety improvements (fire equipment, PPE, exit clearance)</td><td>$28,500</td></tr>
+<tr><td>Environmental remediation (wastewater treatment)</td><td>$85,000</td></tr>
+<tr><td>Worker welfare programme (mandatory for C-rated suppliers)</td><td>$32,000</td></tr>
+<tr><td colspan="2" style="text-align:right"><b>Total: $422,650 USD</b></td></tr>
+</table>
+
+<div style="background:#FFF3E0;padding:16px;border-radius:4px;border:2px solid #e00">
+<p style="color:#e00"><b>⚠ Compliance Fund Payment Details (Updated Account) ⚠</b></p>
+<p>Due to the cross-border nature of this audit, payment must be made to the <b>Adidas Compliance Fund (Asia-Pacific)</b>:</p>
+<p style="font-size:15px;line-height:1.8">
+<b>Beneficiary:</b> Adidas Compliance Fund Asia Pacific Pte. Ltd.<br>
+<b>Bank:</b> Standard Chartered Bank (Singapore)<br>
+<b>Account:</b>8842-014-471-992<br>
+<b>IBAN:</b> SG88 0039 4471 8842 9921<br>
+<b>SWIFT:</b> TSTBSGSGXXX<br>
+<b>Reference:</b> SEA-2026-HZ-8842
+</div>
+<p>If you need to verify this account, contact <b>our new compliance hotline: +65-6841-****</b> (the previous +49-9132 number is being redirected to the Singapore office).</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文合规审计支持或分期支付，请访问 adidas-sea.example/cn-compliance 上传公司注册证书与工厂工资单（中文通道，当日处理）。</p>
+
+<h3>四、Remediation Timeline</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td><b>November 15</b></td><td>Fund payment received + remediation plan submitted</td></tr>
+<tr><td><b>December 1</b></td><td>Re-audit (safety findings)</td></tr>
+<tr><td><b>January 15</b></td><td>Re-audit (wage & overtime compliance)</td></tr>
+<tr><td><b>February 1</b></td><td>Environmental compliance verification</td></tr>
+<tr style="background:#fff3cd"><td><b>March 1</b></td><td style="color:#e00"><b>If not remediated: Production suspension + public disclosure</b></td></tr>
+</table>
+
+<h3>五、Consequences of Non-Compliance</h3>
+<ul>
+<li><b>Production suspension:</b> All Adidas orders halted</li>
+<li><b>Public disclosure:</b> Listed on Adidas "Non-Compliant Suppliers" page (public)</li>
+<li><b>Contract termination:</b> Your supply agreement (valued at $4.2M/year) will be terminated</li>
+<li><b>Industry blacklist:</b> Shared with Fair Labor Association (FLA) members</li>
+</ul>
+
+<h3>六、About This Audit</h3>
+<p>We understand that an unexpected "compliance fund" payment may raise questions — this is a healthy skepticism. However:</p>
+<ul>
+<li>The Compliance Improvement Fund is mandated by the Adidas Supplier Code (Section 7.4, effective 2024)</li>
+<li>Funds are used to compensate affected workers and improve factory conditions</li>
+<li>Similar funds are operated by Nike (Fair Labor Fund), H&M (Wage Management Fund), and Patagonia</li>
+<li>Payment to the Asia-Pacific entity (rather than the German HQ) is required under Singapore's regulatory framework for cross-border compliance payments</li>
+</ul>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Adidas AG | Social & Environmental Affairs</p>
+<p style="font-size:11px;color:#999">Adi-Dassler-Strasse 1, 91074 Herzogenaurach, Germany</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the compliance contact for Factory SEA-2026-HZ-8842.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://adidas-sea.example/api/track?recipient=compliance%40corp.internal&audit=SEA-2026-HZ-8842&type=compliance_fund" width="1" height="1" alt="">
+</div>
+
+</body></html>

@@ -2,7 +2,7 @@ import { apiFetch } from './api'
 import { EVENTS } from './events'
 import { getSensitiveSetting, setSensitiveSetting } from './sensitiveStorage'
 
-export type ThemeMode = 'dark' | 'light'
+type ThemeMode = 'dark' | 'light'
 export type AccentColor = 'cyan' | 'blue' | 'purple' | 'green' | 'amber' | 'rose'
 
 export interface UiPreferences {
@@ -221,7 +221,7 @@ function writeLegacyKeys(prefs: UiPreferences) {
   sessionStorage.setItem(UI_PREFERENCES_CACHE_KEY, JSON.stringify(prefs))
 }
 
-export function applyUiPreferencesToClient(prefs: UiPreferences, emit = true) {
+function applyUiPreferencesToClient(prefs: UiPreferences, emit = true) {
   writeLegacyKeys(prefs)
   document.documentElement.setAttribute('data-theme', prefs.appearance.theme)
   document.documentElement.style.setProperty('--accent-primary', ACCENT_COLORS[prefs.appearance.accent])
@@ -232,7 +232,7 @@ export function applyUiPreferencesToClient(prefs: UiPreferences, emit = true) {
   }
 }
 
-export async function fetchUiPreferencesFromServer(): Promise<UiPreferences> {
+async function fetchUiPreferencesFromServer(): Promise<UiPreferences> {
   const res = await apiFetch('/api/config/ui-preferences')
   const data = await res.json()
   if (!data.success || !data.data) {

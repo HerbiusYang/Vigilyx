@@ -1,0 +1,11 @@
+From: =?utf-8?B?44Ki44Kr44Km44Oz44OI566h55CG?= <id-manage@example-svc.example>
+To: tanaka@corp.internal
+Date: Wed, 26 Aug 2026 11:10:00 +0800
+Message-ID: <0000-b3@synth.example>
+Subject: =?iso-2022-jp?B?GyRCJSIlKyUmJXMlSERkO18kTiQ0MEZGYhsoQg==?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=iso-2022-jp
+
+お客様のアカウントに対して不正なログイン試行が確認されました。
+24時間以内に下記より本人確認を行わない場合、アカウントを停止します。
+https://id-manage-verify.example.jp/confirm

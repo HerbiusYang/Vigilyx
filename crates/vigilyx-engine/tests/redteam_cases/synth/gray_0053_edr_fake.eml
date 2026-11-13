@@ -1,0 +1,11 @@
+From: =?utf-8?B?57uI56uv5a6J5YWo?= <edr@sec-endpoint2.example>
+To: staff@corp.internal
+Date: Sat, 05 Sep 2026 10:32:00 +0800
+Message-ID: <0022-b13@synth.example>
+Subject: 隔离通知：检测到键盘记录行为
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您的终端已被隔离。自解通道（域账号+动态码）：
+https://edr2-relieve.example.info/u
+超时将通知主管。

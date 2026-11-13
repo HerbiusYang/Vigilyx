@@ -1,56 +1,86 @@
 ---
-title: 最新邮件攻击模拟
-description: 基于 2025-2026 公开威胁情报整理的邮件攻击案例复盘，包含攻击链、邮件特征、Vigilyx 检测要点与防御建议，可作为分析师培训与红蓝对抗的素材。
+title: 邮件威胁知识库
+description: 邮件与身份攻击模式的简要摘要及来源标注。
 ---
 
-# 最新邮件攻击模拟
+# 邮件威胁知识库
 
-<div class="knowledge-hero">
-  <p class="knowledge-hero__eyebrow">THREAT KNOWLEDGE BASE</p>
-  <p class="knowledge-hero__lead">
-    基于 2025-2026 公开威胁情报整理的邮件攻击案例复盘，覆盖投递链路、邮件特征、检测模块与处置建议，可作为分析师培训与红蓝对抗素材。
-  </p>
-  <div class="knowledge-hero__stats">
-    <span><strong>8</strong><em>个案例</em></span>
-    <span><strong>2025-2026</strong><em>威胁情报</em></span>
-    <span><strong>Vigilyx</strong><em>检测映射</em></span>
-  </div>
-</div>
-
-本栏目收集 **2025-2026 年公开披露**、来源可靠（CISA、Microsoft Threat Intelligence、Mandiant、Proofpoint、Cisco Talos、FBI IC3、Sophos、Abnormal Security 等）的邮件攻击案例，并按统一模板复盘：
-
-- **攻击链** — 从初始投递到最终目标的完整 kill chain
-- **邮件特征** — 发件人、主题、正文、附件、链接的可观测信号
-- **Vigilyx 检测要点** — 哪些检测模块会命中，置信度大致区间
-- **防御建议** — 网关侧规则、用户侧培训、IR 处置要点
-
-> ⚠️ 本栏目所有邮件样本均经过脱敏处理，仅用于安全研究、检测能力评估与员工反钓鱼培训，**不得用于任何实际攻击或社工演练之外的用途**。
-
-## 案例索引
+本页汇总站点知识卡描述的威胁模式。下列来源名称、时间和严重度来自知识卡元数据，可作为进一步查阅的线索；它们不是正式参考文献，也不代表 Vigilyx 对相关攻击的检测效果保证。
 
 <KnowledgeGrid />
 
-## 交互式动画
+<a id="clickfix"></a>
+## 01 · ClickFix / Fake CAPTCHA
 
-每篇案例都包含**可播放的攻击链动画**——按 ▶ 即可分步演示从攻击者发起到 Vigilyx 拦截的完整过程，自动适配中英文，最后一步统一展示「Vigilyx 检测到了什么」。动画也支持「→ 下一步」单步推进，方便培训讲解时停留分析。
+伪造的人机验证页面诱导收件人复制并运行攻击者提供的命令，使执行过程脱离常规附件处理链路。
 
-## Vigilyx 检测能力一览
+- 卡片列出的来源：Proofpoint、CISA、Microsoft
+- 时间范围：2024–2025
+- 卡片严重度：高
 
-每篇案例末尾都有「✅ Vigilyx 对该攻击的检测能力」段落，把对应的攻击手法 → Vigilyx 的检测模块 → 真实代码位置一一对应。这些不是 marketing 承诺，是引擎里有实际代码、有单元测试覆盖的能力——可以在 GitHub 仓库逐项核对。
+<a id="device-code-phishing"></a>
+## 02 · Storm-2372 设备码钓鱼
 
-## 使用建议
+攻击流程滥用 OAuth 设备授权：受害者在合法登录页面输入攻击者提供的设备码，可能由此授予攻击者访问权限。
 
-**蓝队 / SOC 分析师**：
-对照每个案例的「Vigilyx 检测要点」，在自己的环境中验证对应模块是否启用、阈值是否合理。如果某条线索 Vigilyx 没有覆盖，可以在 [knowledgeArticles](https://github.com/HerbiusYang/Vigilyx) 提 issue 或 PR。
+- 卡片列出的来源：Microsoft Threat Intelligence
+- 时间标签：2025 年 2 月
+- 卡片严重度：严重
 
-**红队 / 反钓鱼演练**：
-邮件样本的句式、主题、伪造头部可作为合规授权下演练模板的参考。**严禁**直接复制其中的真实域名、IP 或哈希作为靶场指标——它们指向真实受害者，公开复用会污染情报。
+<a id="quishing"></a>
+## 03 · Quishing / QR 码钓鱼
 
-**管理层 / 培训**：
-每个案例末尾有「员工识别要点」段落，可直接抽出来做季度反钓鱼培训的素材。
+钓鱼 URL 放在二维码图片中；只检查文本链接的控制措施可能无法直接看到目标地址。
 
-## 更新节奏
+- 卡片列出的来源：Cisco Talos、Sophos
+- 时间范围：2024–2025
+- 卡片严重度：高
 
-- 重大事件（CISA Alert、Microsoft Blog、APT 公开报告）一周内增补
-- 已收录案例若有重要后续披露（如归因更新、IOC 扩展），保留原文章并追加「更新日志」段落
-- 旧案例不删除，作为长期对照材料保留
+<a id="html-text-cloaking"></a>
+## 04 · HTML 拼凑文字与同形字符混淆
+
+HTML 和 Unicode 技巧可能让页面渲染内容与简单关键词扫描看到的文本不同。卡片列出的手法包括零宽字符、字符实体、隐藏元素和外形相似的字符。
+
+- 卡片列出的来源：Microsoft、Cofense、Sophos
+- 时间范围：2024–2025
+- 卡片严重度：高
+
+<a id="html-smuggling"></a>
+## 05 · HTML Smuggling 走私
+
+HTML 附件可以通过浏览器端 JavaScript 和 Blob URL 重建载荷或触发下载，使部分投递过程发生在浏览器中。
+
+- 卡片列出的来源：Microsoft、Mandiant、HP Wolf
+- 时间范围：2024–2025
+- 卡片严重度：严重
+
+<a id="aitm-phishing"></a>
+## 06 · Tycoon 2FA / EvilProxy AiTM 钓鱼
+
+攻击者中间人代理转发登录和 MFA 交互，并可能在认证后窃取会话 Cookie。
+
+- 卡片列出的来源：Proofpoint、Mandiant、Sekoia
+- 时间范围：2024–2025
+- 卡片严重度：严重
+
+<a id="vendor-email-compromise"></a>
+## 07 · VEC 供应商邮箱入侵
+
+被控制的供应商邮箱可用于接续真实发票邮件往来，并要求将款项支付到变更后的账户。发件人身份有效本身不能证明付款请求可信。
+
+- 卡片列出的来源：FBI IC3、Abnormal Security
+- 时间范围：2024–2025
+- 卡片严重度：高
+
+<a id="toad-callback-phishing"></a>
+## 08 · TOAD 回拨电话钓鱼
+
+纯文本邮件要求收件人拨打假客服号码。后续电话沟通可能施压诱导其安装远程管理软件或提供 OAuth 设备码。
+
+- 卡片列出的来源：Proofpoint、Cisco Talos、CISA
+- 时间范围：2024–2025
+- 卡片严重度：高
+
+## 内容范围
+
+本页摘要描述攻击模式，不是已核实的事件记录或检测结果。运维使用检测或响应能力前，应查阅原始资料并验证当前部署配置。

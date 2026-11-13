@@ -1,0 +1,17 @@
+.email-feedback { margin: 16px 0; padding: 20px; border: 1px solid rgba(255,255,255,.14); border-radius: 10px; background: rgba(255,255,255,.03); font-size: 13px; }
+.email-feedback-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.email-feedback h3, .email-feedback h4 { margin: 0 0 10px; }
+.email-feedback p { line-height: 1.6; margin: 10px 0; }
+.email-feedback [role="alert"] { color: #fca5a5; }
+.email-feedback [role="status"] { color: #86efac; }
+.email-feedback button, .email-feedback select { border: 1px solid rgba(255,255,255,.2); border-radius: 6px; background: #182235; color: inherit; padding: 7px 12px; cursor: pointer; }
+.email-feedback button:disabled, .email-feedback select:disabled { cursor: default; opacity: .5; }
+.email-feedback button[aria-pressed="true"] { border-color: #38bdf8; color: #7dd3fc; }
+.email-feedback-types { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.email-feedback form { display: grid; gap: 10px; }
+.email-feedback form button { justify-self: end; }
+.email-feedback textarea { padding: 10px; border: 1px solid rgba(255,255,255,.2); border-radius: 6px; background: #182235; color: inherit; resize: vertical; }
+.email-feedback-history { overflow-x: auto; margin-top: 20px; }
+.email-feedback table { width: 100%; border-collapse: collapse; text-align: left; }
+.email-feedback th, .email-feedback td { padding: 8px; border-bottom: 1px solid rgba(255,255,255,.1); white-space: nowrap; }
+.email-feedback-learning { margin-top: 20px; padding-top: 18px; border-top: 1px solid rgba(255,255,255,.14); }

@@ -1,0 +1,15 @@
+From: IT 服务台 <itsm@corp-relay38.example>
+To: it@corp.internal
+Date: Wed, 30 Sep 2026 08:20:00 +0800
+Message-ID: <0613-b36@synth.example>
+Subject: VPN 网关证书已轮换
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+各位：
+
+新证书已于今晨下发。因证书链变更，客户端需手动重新导入一次：
+
+导入页：https://corp-relay38.example/cert
+
+（浏览器打开后选"导入到系统"，重启客户端生效）

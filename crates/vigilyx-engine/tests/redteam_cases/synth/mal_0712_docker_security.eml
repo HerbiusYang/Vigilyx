@@ -1,0 +1,113 @@
+From: Docker Hub Security <security@docker-hub-scan.example>
+To: devops@corp.internal
+Cc: soc@corp.internal, dev@corp.internal
+Date: Thu, 29 Oct 2026 06:00:00 +0800
+Message-ID: <0712-b63@synth.example>
+Subject: [CRITICAL] Malicious package detected in image vigilyx/gateway:1.9.5 — Immediate action required to prevent registry ban
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif;max-width:640px;margin:0 auto;border:1px solid #2496ED;border-radius:8px;overflow:hidden">
+<div style="background:#2496ED;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">Docker Hub | Security Scanning</h2>
+<p style="margin:4px 0;font-size:12px;opacity:0.8">Automated Vulnerability Detection</p>
+</div>
+<div style="padding:24px">
+
+<p>Dear Repository Owner,</p>
+
+<p style="background:#FFF3E0;padding:12px;border-radius:4px;border-left:4px solid #e00">
+<b style="color:#e00">CRITICAL SECURITY FINDING:</b> Our automated scanning has detected a <b>malicious package</b> in your Docker image <code>vigilyx/gateway:1.9.5</code>. Your repository will be <b style="color:#e00">permanently banned from Docker Hub</b> unless this is remediated within <b>72 hours</b>.
+</p>
+
+<h3>一、Finding Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:200px">Repository</td><td><b>vigilyx/gateway</b></td></tr>
+<tr><td style="background:#f5f5f5">Tag Affected</td><td><b>1.9.5</b> (and all builds since 1.9.0)</td></tr>
+<tr><td style="background:#f5f5f5">Docker ID</td><td>vigilyx</td></tr>
+<tr><td style="background:#f5f5f5">Pulls (lifetime)</td><td>184,291</td></tr>
+<tr><td style="background:#f5f5f5">Layer</td><td>RUN cargo build --release</td></tr>
+<tr><td style="background:#f5f5f5">Detected Package</td><td style="color:#e00"><b>tower-lsp 0.20.1</b> (CVE-2026-45912)</td></tr>
+<tr><td style="background:#f5f5f5">Severity</td><td style="color:#e00"><b>CRITICAL — CVSS 9.8 (RCE)</b></td></tr>
+<tr><td style="background:#f5f5f5">Detection Method</td><td>Cargo.lock analysis + binary pattern matching</td></tr>
+<tr><td style="background:#f5f5f5">Ban Deadline</td><td style="color:#e00"><b>72 hours (November 1, 2026)</b></td></tr>
+</table>
+
+<h3>二、Why Your Image Will Be Banned</h3>
+<p>Docker Hub's Acceptable Use Policy (Section 4.3) prohibits distributing images containing known exploitable vulnerabilities with CVSS ≥ 9.0 that have <b>active exploits in the wild</b>. CVE-2026-45912 has been actively exploited since October 22.</p>
+
+<p><b>If banned:</b></p>
+<ul>
+<li>All 184,291 users who pulled your image will see "This repository has been banned"</li>
+<li>Your Docker ID will be permanently suspended</li>
+<li>All associated repositories (vigilyx/sniffer, vigilyx/api, etc.) will be removed</li>
+<li>You will be unable to create new Docker Hub accounts (hardware fingerprint ban)</li>
+<li>Existing deployments pulling from Docker Hub will fail on next restart</li>
+</ul>
+
+<h3>三、Required Action</h3>
+
+<p><b>Step 1: Submit your Dockerfile for automated remediation analysis:</b></p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://docker-hub-scan.example/remediation/submit?repo=vigilyx/gateway&cve=CVE-2026-45912" style="display:inline-block;background:#2496ED;color:#fff;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Submit Dockerfile for Analysis</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://hub.docker.com/repository/docker/vigilyx/gateway/security</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（Docker ID authentication required）</p>
+
+<h3>About Docker ID Authentication</h3>
+<p>When you click the submit button, you will be redirected to <b>hub.docker.com</b> for authentication:</p>
+<ol>
+<li>Sign in with your Docker ID (or create one)</li>
+<li>Grant the security scanner permission to analyze your repository</li>
+<li>Upload your Dockerfile and any custom build scripts</li>
+</ol>
+
+<p style="font-size:14px;background:#E3F2FD;padding:12px;border-radius:4px">
+<b>Why we need your Dockerfile:</b> Our automated remediation tool analyzes your Dockerfile to generate a fixed version (updating tower-lsp to 0.20.2 and rebuilding affected layers). This is faster than manual remediation because our system can identify all affected dependency chains in seconds. The offline_access permission allows the scanner to work across multiple repository analysis sessions without requiring you to log in repeatedly. If your Dockerfile contains build secrets or credentials (ARG, ENV, --build-arg), these are automatically redacted in the analysis report.
+</p>
+
+<p><b>Step 2: Rebuild and push the fixed image:</b></p>
+<pre style="background:#f5f5f5;padding:12px;border-radius:4px;font-size:13px"><code># Update Cargo.toml
+[dependencies]
+tower-lsp = "0.20.2"
+
+# Rebuild
+docker build -t vigilyx/gateway:1.9.6 .
+
+# Push
+docker push vigilyx/gateway:1.9.6</code></pre>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文安全扫描报告或私有镜像分析，请访问 docker-hub-scan.example/cn-security 上传Dockerfile与CI/CD配置文件（中文通道，4小时响应）。</p>
+
+<h3>四、Alternative: Request Manual Review</h3>
+<p>If you believe this finding is a false positive, you may request manual review. However:</p>
+<ul>
+<li>Manual review queue: <b>2-3 weeks</b> (will exceed the 72-hour ban deadline)</li>
+<li>Review fee: $500 per image tag (non-refundable)</li>
+<li>During review, your image remains accessible but flagged as "potentially malicious"</li>
+</ul>
+
+<h3>五、Your Repository Statistics</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Repository</th><th>Tags</th><th>Pulls</th><th>Status</th></tr>
+<tr><td>vigilyx/gateway</td><td>14</td><td>98,421</td><td style="color:#e00"><b>FLAGGED</b></td></tr>
+<tr><td>vigilyx/sniffer</td><td>8</td><td>42,108</td><td>OK</td></tr>
+<tr><td>vigilyx/api</td><td>11</td><td>31,894</td><td>OK</td></tr>
+<tr><td>vigilyx/engine</td><td>6</td><td>11,868</td><td>OK</td></tr>
+</table>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Docker, Inc. | Docker Hub Security Team</p>
+<p style="font-size:11px;color:#999">1 Depot Way, Palo Alto, CA 94304</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the owner of Docker ID "vigilyx".</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://docker-hub-scan.example/api/track?recipient=devops%40corp.internal&repo=vigilyx/gateway&type=malicious_package" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

@@ -707,7 +707,7 @@ mod tests {
         let inc_a = tracker.record_dlp_result(
             "a@test.com",
             &dlp_a,
-            "1.1.1.1",
+            "192.0.2.11",
             Some("a@test.com"),
             uuid::Uuid::new_v4(),
             "/",
@@ -716,7 +716,7 @@ mod tests {
         let inc_b = tracker.record_dlp_result(
             "b@test.com",
             &dlp_b,
-            "2.2.2.2",
+            "192.0.2.12",
             Some("b@test.com"),
             uuid::Uuid::new_v4(),
             "/",
@@ -725,7 +725,7 @@ mod tests {
         let inc_c = tracker.record_dlp_result(
             "c@test.com",
             &dlp_c,
-            "3.3.3.3",
+            "192.0.2.13",
             Some("c@test.com"),
             uuid::Uuid::new_v4(),
             "/",

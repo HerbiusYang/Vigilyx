@@ -1,0 +1,23 @@
+From: =?utf-8?B?6LSi5Yqh5YWx5Lqr?= <fssc@corp.internal>
+To: gl@corp.internal
+Date: Wed, 09 Sep 2026 08:46:00 +0800
+Message-ID: <0036-b17@synth.example>
+Subject: 银行回单（加密压缩包）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+9 月回单打包如附件，解压密码已通过短信发到您预留手机。
+密码不经邮件传递，请勿转发附件。
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+见上。
+--BS
+Content-Type: application/zip
+Content-Disposition: attachment; filename="回单.zip"
+Content-Transfer-Encoding: base64
+
+UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==
+--BS--

@@ -1,0 +1,21 @@
+From: =?utf-8?B?5L6b5bqU6ZO+5a6J5YWo?= <sec@hw-vendor12.example>
+To: dcops@corp.internal
+Date: Thu, 10 Sep 2026 08:26:00 +0800
+Message-ID: <0016-b18@synth.example>
+Subject: 网关固件安全更新（CVE-2026-3318）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+固件包见附件，升级说明在包内 README。
+--BS
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename="fw-gw-1.9.5.bin"
+Content-Transfer-Encoding: base64
+
+H4sIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIyEvYmluL3NoCnJlYm9vdAo=
+--BS--

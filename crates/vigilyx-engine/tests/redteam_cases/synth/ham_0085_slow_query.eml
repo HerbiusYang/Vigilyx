@@ -1,0 +1,10 @@
+From: =?utf-8?B?REJBIOW5s+WPsA==?= <dba@corp.internal>
+To: dev@corp.internal
+Date: Fri, 28 Aug 2026 14:34:00 +0800
+Message-ID: <0024-b5@synth.example>
+Subject: [告警] 慢查询 TOP3（8/28）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+orders 表全表扫描 3 次（>2s），索引建议见工单 DBA-1024。
+明晚窗口评估加索引。

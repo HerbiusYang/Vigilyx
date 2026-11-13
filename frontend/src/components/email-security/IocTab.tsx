@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { Fragment, useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { apiFetch } from '../../utils/api'
 import { formatDateOnly, getServerDateStamp, isPastServerNow } from '../../utils/format'
-import type { ApiResponse, IocEntry } from '../../types'
+import type { ApiResponse, IocCalibrationSummary, IocEntry, IocShadowTelemetry } from '../../types'
 
 const PAGE_SIZE = 30
 
@@ -17,6 +17,10 @@ export default function IocTab() {
   const [iocForm, setIocForm] = useState({ indicator: '', ioc_type: 'ip', verdict: 'suspicious', confidence: 0.8, attack_type: 'unknown', description: '' })
   const [iocPage, setIocPage] = useState(0)
   const [showExportMenu, setShowExportMenu] = useState(false)
+  const [expandedIocId, setExpandedIocId] = useState<string | null>(null)
+  const [shadowTelemetry, setShadowTelemetry] = useState<IocShadowTelemetry | null>(null)
+  const [loadingTelemetry, setLoadingTelemetry] = useState(false)
+  const [calibration, setCalibration] = useState<IocCalibrationSummary | null>(null)
   const exportMenuRef = useRef<HTMLDivElement>(null)
 
   // Close export dropdown on outside click
@@ -54,6 +58,13 @@ export default function IocTab() {
   useEffect(() => {
     fetchIoc()
   }, [fetchIoc])
+
+  useEffect(() => {
+    apiFetch('/api/security/ioc/calibration?limit=200')
+      .then(res => res.json() as Promise<ApiResponse<IocCalibrationSummary>>)
+      .then(data => { if (data.success && data.data) setCalibration(data.data) })
+      .catch(e => console.error('Failed to fetch IOC calibration:', e))
+  }, [])
 
   const handleAddIoc = async () => {
     if (!iocForm.indicator.trim()) return
@@ -111,6 +122,28 @@ export default function IocTab() {
       console.error('Failed to extend IOC:', e)
     }
   }
+
+  const toggleTelemetry = async (ioc: IocEntry) => {
+    if (expandedIocId === ioc.id) {
+      setExpandedIocId(null)
+      setShadowTelemetry(null)
+      return
+    }
+    setExpandedIocId(ioc.id)
+    setLoadingTelemetry(true)
+    setShadowTelemetry(null)
+    try {
+      const res = await apiFetch(`/api/security/ioc/${ioc.id}/telemetry`)
+      const data: ApiResponse<{ shadow: IocShadowTelemetry | null }> = await res.json()
+      if (data.success) setShadowTelemetry(data.data?.shadow ?? null)
+    } catch (e) {
+      console.error('Failed to fetch IOC telemetry:', e)
+    } finally {
+      setLoadingTelemetry(false)
+    }
+  }
+
+  const percent = (value: number) => `${(value * 100).toFixed(1)}%`
 
   const exportIoc = (verdictFilter?: string) => {
     const params = verdictFilter ? `?verdict=${verdictFilter}` : ''
@@ -185,6 +218,11 @@ export default function IocTab() {
         </select>
         <div className="sec-ioc-actions">
           <span className="sec-ioc-total">{t('emailSecurity.totalItems', { count: iocTotal })}</span>
+          {calibration?.brier_score !== null && calibration?.brier_score !== undefined && (
+            <span className="sec-ioc-total" title={calibration.note}>
+              {t('emailSecurity.brierScore')}: {calibration.brier_score.toFixed(3)}
+            </span>
+          )}
           <div className="sec-export-dropdown" ref={exportMenuRef}>
             <button className="sec-btn sec-btn--sm sec-btn--ghost" onClick={() => setShowExportMenu(!showExportMenu)} title={t('emailSecurity.exportIocTitle')}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -324,6 +362,7 @@ export default function IocTab() {
                   : isExpired ? t('emailSecurity.expired')
                   : formatDateOnly(ioc.expires_at)
                 return (
+                  <Fragment key={ioc.id}>
                   <tr key={ioc.id} style={isExpired ? { opacity: 0.5 } : undefined}>
                     <td className="sec-ioc-indicator" title={ioc.indicator}>
                       <span className="sec-mono">{ioc.indicator}</span>
@@ -351,12 +390,49 @@ export default function IocTab() {
                       {expiresLabel}
                     </td>
                     <td className="sec-td-r" style={{ whiteSpace: 'nowrap' }}>
+                      <button className="sec-btn-extend" onClick={() => toggleTelemetry(ioc)} title={t('emailSecurity.iocConfidenceEvidenceTitle')}>
+                        {expandedIocId === ioc.id ? t('emailSecurity.hideEvidence') : t('emailSecurity.viewEvidence')}
+                      </button>
                       {ioc.source !== 'system' && ioc.expires_at && (
                         <button className="sec-btn-extend" onClick={() => handleExtendIoc(ioc.id, 30)} title={t('emailSecurity.extend30d')}>+30d</button>
                       )}
                       <button className="sec-btn-del" onClick={() => handleDeleteIoc(ioc.id)}>{t('emailSecurity.delete')}</button>
                     </td>
                   </tr>
+                  {expandedIocId === ioc.id && (
+                    <tr key={`${ioc.id}-telemetry`}>
+                      <td colSpan={8} style={{ padding: '14px 18px', background: 'var(--surface-secondary, rgba(127,127,127,.06))' }}>
+                        {loadingTelemetry ? (
+                          <span className="sec-text-muted">{t('emailSecurity.loadingEvidence')}</span>
+                        ) : shadowTelemetry ? (
+                          <div style={{ display: 'grid', gap: 10 }}>
+                            <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center' }}>
+                              <strong>{t('emailSecurity.shadowProbability')}: {percent(shadowTelemetry.score.probability)}</strong>
+                              <span>{t('emailSecurity.evidenceInterval')}: {percent(shadowTelemetry.score.evidence_interval_lower)} – {percent(shadowTelemetry.score.evidence_interval_upper)}</span>
+                              <span>{t('emailSecurity.legacyConfidence')}: {percent(ioc.confidence)}</span>
+                              <span className="sec-badge sec-badge--type">{t(`emailSecurity.shadowStatus.${shadowTelemetry.calibration_status}`)}</span>
+                              <span className="sec-badge sec-badge--auto">{t('emailSecurity.shadowOnly')}</span>
+                            </div>
+                            <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 12 }}>
+                              <span>{t('emailSecurity.localObservations')}: {shadowTelemetry.traffic.observed_count}</span>
+                              <span>{t('emailSecurity.distinctSessions')}: {shadowTelemetry.traffic.distinct_session_count}</span>
+                              <span>{t('emailSecurity.distinctActivities')}: {shadowTelemetry.traffic.distinct_activity_count}</span>
+                              <span>{t('emailSecurity.outboundObservations')}: {shadowTelemetry.traffic.outbound_count}</span>
+                              <span>{t('emailSecurity.labeledOutcomes')}: {shadowTelemetry.outcomes.malicious + shadowTelemetry.outcomes.normal}</span>
+                              <span>{t('emailSecurity.decayFactor')}: {shadowTelemetry.score.decay_factor.toFixed(3)}</span>
+                              <span>{t('emailSecurity.halfLife')}: {shadowTelemetry.half_life_hours.toFixed(0)}h</span>
+                            </div>
+                            <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+                              {t('emailSecurity.shadowFormulaHint', { source: shadowTelemetry.prior_source })}
+                            </div>
+                          </div>
+                        ) : (
+                          <span className="sec-text-muted">{t('emailSecurity.noShadowEvidence')}</span>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 )
               })}
             </tbody>

@@ -16,6 +16,8 @@ use vigilyx_core::security::{
     ThreatLevel, ThreatScene, ThreatSceneStatus, ThreatSceneType,
 };
 use vigilyx_db::VigilDb;
+use vigilyx_db::security::threat_scene::BounceHarvestRow;
+use vigilyx_soar::disposition::DispositionEngine;
 
 /// Scan interval: 5 minutes.
 const SCAN_INTERVAL_SECS: u64 = 300;
@@ -23,8 +25,22 @@ const SCAN_INTERVAL_SECS: u64 = 300;
 /// Initial delay before first scan (let engine stabilize).
 const INITIAL_DELAY_SECS: u64 = 120;
 
+async fn persist_scene(
+    db: &VigilDb,
+    disposition: &DispositionEngine,
+    scene: &ThreatScene,
+) -> anyhow::Result<()> {
+    db.upsert_threat_scene(scene).await?;
+    disposition.evaluate_scene(scene).await;
+    Ok(())
+}
+
 /// Spawn the background threat scene detector.
-pub fn spawn_scene_detector(db: VigilDb, internal_domains: Arc<RwLock<HashSet<String>>>) {
+pub fn spawn_scene_detector(
+    db: VigilDb,
+    internal_domains: Arc<RwLock<HashSet<String>>>,
+    disposition: DispositionEngine,
+) {
     tokio::spawn(async move {
         // Wait for engine to stabilize
         tokio::time::sleep(std::time::Duration::from_secs(INITIAL_DELAY_SECS)).await;
@@ -41,7 +57,7 @@ pub fn spawn_scene_detector(db: VigilDb, internal_domains: Arc<RwLock<HashSet<St
             if domains.is_empty() {
                 continue;
             }
-            if let Err(e) = run_detection_cycle(&db, &domains).await {
+            if let Err(e) = run_detection_cycle(&db, &domains, &disposition).await {
                 error!("Threat scene detection cycle failed: {e}");
             }
         }
@@ -52,6 +68,7 @@ pub fn spawn_scene_detector(db: VigilDb, internal_domains: Arc<RwLock<HashSet<St
 async fn run_detection_cycle(
     db: &VigilDb,
     internal_domains: &HashSet<String>,
+    disposition: &DispositionEngine,
 ) -> anyhow::Result<()> {
     // Load scene rules
     let rules = db.get_scene_rules().await?;
@@ -64,9 +81,17 @@ async fn run_detection_cycle(
         .find(|r| r.scene_type == ThreatSceneType::BulkMailing)
         && rule.enabled
     {
-        let config: BulkMailingConfig =
-            serde_json::from_value(rule.config.clone()).unwrap_or_default();
-        detect_bulk_mailing(db, &domain_list, &config).await?;
+        match serde_json::from_value::<BulkMailingConfig>(rule.config.clone()) {
+            Ok(config) => match config.validate() {
+                Ok(()) => detect_bulk_mailing(db, &domain_list, &config, disposition).await?,
+                Err(error) => {
+                    warn!(scene = "bulk_mailing", %error, "Invalid threat scene configuration; skipping cycle")
+                }
+            },
+            Err(error) => {
+                warn!(scene = "bulk_mailing", %error, "Invalid threat scene configuration; skipping cycle")
+            }
+        }
     }
 
     // 2. Bounce harvest detection
@@ -75,9 +100,21 @@ async fn run_detection_cycle(
         .find(|r| r.scene_type == ThreatSceneType::BounceHarvest)
         && rule.enabled
     {
-        let config: BounceHarvestConfig =
-            serde_json::from_value(rule.config.clone()).unwrap_or_default();
-        detect_bounce_harvest(db, &domain_list, &config).await?;
+        let backfilled = db.backfill_recent_bounce_metadata(72, 500).await?;
+        if backfilled > 0 {
+            info!(backfilled, "Backfilled structured bounce metadata");
+        }
+        match serde_json::from_value::<BounceHarvestConfig>(rule.config.clone()) {
+            Ok(config) => match config.validate() {
+                Ok(()) => detect_bounce_harvest(db, &domain_list, &config, disposition).await?,
+                Err(error) => {
+                    warn!(scene = "bounce_harvest", %error, "Invalid threat scene configuration; skipping cycle")
+                }
+            },
+            Err(error) => {
+                warn!(scene = "bounce_harvest", %error, "Invalid threat scene configuration; skipping cycle")
+            }
+        }
     }
 
     // 3. Internal domain impersonation detection
@@ -86,9 +123,19 @@ async fn run_detection_cycle(
         .find(|r| r.scene_type == ThreatSceneType::InternalDomainImpersonation)
         && rule.enabled
     {
-        let config: InternalDomainImpersonationConfig =
-            serde_json::from_value(rule.config.clone()).unwrap_or_default();
-        detect_internal_impersonation(db, &domain_list, &config).await?;
+        match serde_json::from_value::<InternalDomainImpersonationConfig>(rule.config.clone()) {
+            Ok(config) => match config.validate() {
+                Ok(()) => {
+                    detect_internal_impersonation(db, &domain_list, &config, disposition).await?
+                }
+                Err(error) => {
+                    warn!(scene = "internal_domain_impersonation", %error, "Invalid threat scene configuration; skipping cycle")
+                }
+            },
+            Err(error) => {
+                warn!(scene = "internal_domain_impersonation", %error, "Invalid threat scene configuration; skipping cycle")
+            }
+        }
     }
 
     // 4. Auto-resolve stale scenes
@@ -106,6 +153,7 @@ async fn detect_bulk_mailing(
     db: &VigilDb,
     internal_domains: &[String],
     config: &BulkMailingConfig,
+    disposition: &DispositionEngine,
 ) -> anyhow::Result<()> {
     let hits = db.detect_bulk_mailing(internal_domains, config).await?;
     if hits.is_empty() {
@@ -160,7 +208,7 @@ async fn detect_bulk_mailing(
                 );
             }
 
-            db.upsert_threat_scene(&scene).await?;
+            persist_scene(db, disposition, &scene).await?;
         } else {
             // Create new scene
             let mut scene = ThreatScene {
@@ -221,7 +269,7 @@ async fn detect_bulk_mailing(
                 severity = %severity,
                 "Detected bulk mailing scene"
             );
-            db.upsert_threat_scene(&scene).await?;
+            persist_scene(db, disposition, &scene).await?;
         }
     }
 
@@ -246,22 +294,43 @@ async fn detect_bounce_harvest(
     db: &VigilDb,
     internal_domains: &[String],
     config: &BounceHarvestConfig,
+    disposition: &DispositionEngine,
 ) -> anyhow::Result<()> {
-    let hits = db.detect_bounce_harvest(internal_domains, config).await?;
+    let mut hits = db.detect_bounce_harvest(internal_domains, config).await?;
+    let cutoff = (Utc::now() - Duration::hours(config.time_window_hours)).to_rfc3339();
+    let alerts = db.detect_bounce_harvest_alert_candidates(&cutoff).await?;
+    hits.extend(parse_reported_bounce_harvest(
+        &alerts,
+        internal_domains,
+        config,
+    ));
     if hits.is_empty() {
         return Ok(());
     }
 
     for hit in &hits {
-        let severity = bounce_harvest_severity(hit.bounce_count, hit.unique_targets);
+        let severity = if hit.detection_basis == "rotating_sender_template" {
+            ThreatLevel::Low
+        } else {
+            bounce_harvest_severity(hit.bounce_count, hit.unique_targets)
+        };
 
         let existing = db
-            .find_active_scene("bounce_harvest", &hit.target_domain)
-            .await?;
+            .find_active_bounce_scene(&hit.sender, &hit.target_domain, &hit.source)
+            .await?
+            .or(db
+                .find_legacy_bounce_scene(&hit.source, &hit.sender, &hit.target_domain)
+                .await?);
 
         let now = Utc::now();
 
         if let Some(mut scene) = existing {
+            scene.actor = hit.sender.clone();
+            scene.actor_type = bounce_actor_type(hit);
+            scene.target_domain = Some(hit.target_domain.clone());
+            scene.time_window_start = chrono::DateTime::parse_from_rfc3339(&hit.window_start)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or(scene.time_window_start);
             scene.bounce_count = hit.bounce_count as i32;
             scene.unique_recipients = hit.unique_targets as i32;
             scene.time_window_end = chrono::DateTime::parse_from_rfc3339(&hit.window_end)
@@ -270,17 +339,20 @@ async fn detect_bounce_harvest(
             scene.threat_level = severity;
             scene.sample_subjects = hit.sample_subjects.clone();
             scene.sample_recipients = hit.sample_recipients.clone();
+            scene.details = bounce_scene_details(hit);
             scene.updated_at = now;
 
             if config.auto_block_enabled
+                && bounce_auto_block_eligible(hit)
                 && !scene.auto_blocked
                 && hit.bounce_count >= config.auto_block_bounce_threshold
             {
                 // For bounce harvest, we block the target domain in a different way:
-                // create an alert IOC for the probed domain pattern
+                // block the original sender/source domain. The target domain is
+                // our own address space and must never be persisted as malicious.
                 let ioc_id = auto_block_domain(
                     db,
-                    &hit.target_domain,
+                    &hit.sender,
                     "bounce_harvest",
                     config.auto_block_duration_hours,
                     &format!(
@@ -299,13 +371,13 @@ async fn detect_bounce_harvest(
                 );
             }
 
-            db.upsert_threat_scene(&scene).await?;
+            persist_scene(db, disposition, &scene).await?;
         } else {
             let mut scene = ThreatScene {
                 id: Uuid::new_v4(),
                 scene_type: ThreatSceneType::BounceHarvest,
-                actor: hit.target_domain.clone(),
-                actor_type: "domain".to_string(),
+                actor: hit.sender.clone(),
+                actor_type: bounce_actor_type(hit),
                 target_domain: Some(hit.target_domain.clone()),
                 time_window_start: chrono::DateTime::parse_from_rfc3339(&hit.window_start)
                     .map(|dt| dt.with_timezone(&Utc))
@@ -327,10 +399,15 @@ async fn detect_bounce_harvest(
                 updated_at: now,
             };
 
-            if config.auto_block_enabled && hit.bounce_count >= config.auto_block_bounce_threshold {
+            scene.details = bounce_scene_details(hit);
+
+            if config.auto_block_enabled
+                && bounce_auto_block_eligible(hit)
+                && hit.bounce_count >= config.auto_block_bounce_threshold
+            {
                 let ioc_id = auto_block_domain(
                     db,
-                    &hit.target_domain,
+                    &hit.sender,
                     "bounce_harvest",
                     config.auto_block_duration_hours,
                     &format!(
@@ -356,12 +433,49 @@ async fn detect_bounce_harvest(
                 severity = %severity,
                 "Detected bounce harvest scene (Directory Harvest Attack)"
             );
-            db.upsert_threat_scene(&scene).await?;
+            persist_scene(db, disposition, &scene).await?;
         }
     }
 
     Ok(())
 }
+
+fn bounce_scene_details(hit: &BounceHarvestRow) -> serde_json::Value {
+    serde_json::json!({
+        "source": hit.source,
+        "source_session_id": hit.source_session_id.map(|id| id.to_string()),
+        "source_session_ids": hit.source_session_ids,
+        "source_spans": hit.source_spans,
+        "detection_basis": hit.detection_basis,
+        "evidence_class": if hit.source == "reported_alert" { "observation" } else { "network_pattern" },
+        "assessment": if hit.source == "reported_alert" { "needs_review" } else { "detected_pattern" },
+        "sender_identity": if hit.source == "reported_alert" { "reported_unverified" } else { "envelope_recipient" },
+        "speech_act": if hit.source == "reported_alert" { "report" } else { "none" },
+        "quote_or_forward_status": if hit.source == "reported_alert" { "reported" } else { "original" },
+        "sender_domains": hit.sender_domains,
+        "address_role": match hit.source.as_str() {
+            "reported_alert" => "target_addresses",
+            "network_bounce_recipient_spray" => "bounce_recipient_addresses",
+            _ => "sender_addresses",
+        },
+        "automatic_blocking_eligible": bounce_auto_block_eligible(hit),
+    })
+}
+
+fn bounce_auto_block_eligible(hit: &BounceHarvestRow) -> bool {
+    hit.source == "network_bounce"
+}
+
+fn bounce_actor_type(hit: &BounceHarvestRow) -> String {
+    if hit.sender == "multiple_senders" {
+        "group".to_string()
+    } else {
+        "domain".to_string()
+    }
+}
+
+mod reported_bounce;
+use reported_bounce::parse_reported_bounce_harvest;
 
 fn bounce_harvest_severity(bounce_count: i64, unique_targets: i64) -> ThreatLevel {
     // Base level from bounce count
@@ -393,6 +507,7 @@ async fn detect_internal_impersonation(
     db: &VigilDb,
     internal_domains: &[String],
     config: &InternalDomainImpersonationConfig,
+    disposition: &DispositionEngine,
 ) -> anyhow::Result<()> {
     // Get all external sender domains with aggregated stats
     let candidates = db
@@ -471,7 +586,7 @@ async fn detect_internal_impersonation(
                 );
             }
 
-            db.upsert_threat_scene(&scene).await?;
+            persist_scene(db, disposition, &scene).await?;
         } else {
             // Create new scene
             let mut scene = ThreatScene {
@@ -538,7 +653,7 @@ async fn detect_internal_impersonation(
                 severity = %severity,
                 "Detected internal domain impersonation scene"
             );
-            db.upsert_threat_scene(&scene).await?;
+            persist_scene(db, disposition, &scene).await?;
         }
     }
 
@@ -871,4 +986,80 @@ async fn auto_block_domain(
 
     db.upsert_ioc(&ioc).await?;
     Ok(id.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vigilyx_db::security::threat_scene::BounceHarvestAlertRow;
+
+    #[test]
+    fn parses_ddei_report_into_observation_scene() {
+        let alert = BounceHarvestAlertRow {
+            session_id: Uuid::new_v4(),
+            mail_from: Some("notifications@ddei.example".to_string()),
+            client_ip: "192.0.2.41".to_string(),
+            started_at: "2026-08-21T01:16:44+00:00".to_string(),
+            subject: Some("DDEI 严重 - 系统警报 - 中继MTA服务器不可达".to_string()),
+            body_text: "Deep Discovery Email Inspector无法发送以下邮件到中继MTA服务器：\n\
+                Risk: Normal\n\
+                Recipients: a@corp.example\n\
+                Sender: first@sender-one.example\n\
+                Subject: first\n\
+                ============================================================\n\
+                Risk: Normal\n\
+                Recipients: b@corp.example\n\
+                Sender: second@sender-two.example\n\
+                Subject: second\n\
+                ============================================================\n\
+                Risk: Normal\n\
+                Recipients: c@corp.example\n\
+                Sender: third@sender-one.example\n\
+                Subject: third\n\
+                以下中继MTA服务器不可达：\n[198.51.100.68]:25"
+                .to_string(),
+        };
+        let domains = vec!["corp.example".to_string()];
+        let config = BounceHarvestConfig {
+            min_bounces: 3,
+            min_unique_targets: 3,
+            ..Default::default()
+        };
+
+        let rows = parse_reported_bounce_harvest(std::slice::from_ref(&alert), &domains, &config);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].target_domain, "corp.example");
+        assert_eq!(rows[0].bounce_count, 3);
+        assert_eq!(rows[0].unique_targets, 3);
+        assert_eq!(rows[0].sender, "multiple_senders");
+        assert_eq!(
+            rows[0].sender_domains,
+            vec!["sender-one.example", "sender-two.example"]
+        );
+        assert_eq!(rows[0].source, "reported_alert");
+        assert!(rows[0].source_session_id.is_some());
+    }
+
+    #[test]
+    fn generic_mail_with_mta_words_is_not_reported_alert() {
+        let alert = BounceHarvestAlertRow {
+            session_id: Uuid::new_v4(),
+            mail_from: Some("sender@example.com".to_string()),
+            client_ip: "198.51.100.10".to_string(),
+            started_at: "2026-08-21T01:16:44+00:00".to_string(),
+            subject: Some("Relay MTA documentation".to_string()),
+            body_text: "Recipients: a@corp.example\nSubject: relay MTA".to_string(),
+        };
+        let domains = vec!["corp.example".to_string()];
+        let rows = parse_reported_bounce_harvest(
+            std::slice::from_ref(&alert),
+            &domains,
+            &BounceHarvestConfig {
+                min_bounces: 1,
+                min_unique_targets: 1,
+                ..Default::default()
+            },
+        );
+        assert!(rows.is_empty());
+    }
 }

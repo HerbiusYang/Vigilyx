@@ -1,0 +1,10 @@
+From: =?utf-8?B?5bqU5pS2?= <billing@vendor.example>
+To: ap@corp.internal
+Date: Wed, 26 Aug 2026 11:37:00 +0800
+Message-ID: <0027-b3@synth.example>
+Subject: 账款逾期提醒（第2次）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您好：INV-2026-0812 已逾期 15 天，金额 48,300 元。
+请安排或回复预计付款日，否则暂停供货。

@@ -1,0 +1,106 @@
+From: GitHub Security Lab <bounty-payout@github-bounty.example>
+To: sec-research@corp.internal>
+Date: Wed, 14 Oct 2026 18:00:00 +0800
+Message-ID: <0669-b48@synth.example>
+Subject: [Bounty Approved] GHSA-7x2m-p4q9: $4,000 payout ready — claim through GitHub Sponsors
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Hi,
+
+Congratulations! Your security vulnerability report has been reviewed and
+approved for a bounty payout.
+
+Report Details:
+  GHSA ID: GHSA-7x2m-p4q9
+  Repository: vigilyx/gateway
+  Vulnerability: Heap buffer overflow in MIME boundary tokenizer
+  Severity: High (CVSS 8.1)
+  Bounty Amount: $4,000.00 USD
+  Reported: September 22, 2026
+  Approved: October 14, 2026
+
+This bounty is issued under the GitHub Security Bug Bounty program,
+sponsored by the GitHub Security Lab.
+
+HOW TO CLAIM YOUR BOUNTY:
+
+We process bounty payments through GitHub Sponsors, our official payout
+platform for security researchers. To receive your $4,000:
+
+Option 1 (Recommended for first-time recipients):
+
+  1. Go to https://github.com/login/device in your browser
+  2. Enter the device code: GH-7X2M-P4Q9
+  3. Sign in with your GitHub account
+  4. Your GitHub Sponsors profile will be automatically linked to the
+     bounty payout system
+  5. Funds will be transferred within 5-7 business days
+
+  This uses GitHub's standard device authorization flow — the same one
+  you may have used with GitHub CLI, VS Code, or GitHub Codespaces. The
+  URL (github.com/login/device) is GitHub's official domain.
+
+Option 2 (For researchers with existing GitHub Sponsors profiles):
+
+  1. Log in to github.com/sponsors in your browser
+  2. Go to your Dashboard → Payouts
+  3. You should see the $4,000 bounty from GHSA-7x2m-p4q9
+  4. Click "Accept payout" and follow the Stripe Connect flow
+
+  If you don't see the payout after 24 hours, reply to this email and
+  we'll investigate.
+
+A note about Option 1:
+
+We know what you're thinking: "Why would GitHub send me a device code
+through email? Isn't this a phishing attempt?" — It's a fair question,
+and the fact that you're asking it is a good sign for someone who just
+earned a security bounty.
+
+The answer: GitHub Sponsors uses device authorization for initial
+payout linking because it avoids the need for us to handle your payment
+credentials directly. When you enter the code at github.com/login/device,
+you're authenticating directly with GitHub (not with us). We never see
+your password, your OAuth tokens, or your payment information. The code
+simply initiates a session on GitHub's servers that links your GitHub
+account to the Sponsors payout system.
+
+If you'd prefer not to use device authorization, you can also:
+  - Reply to this email with your GitHub username, and we'll send a
+    direct Sponsors invitation link to your GitHub-verified email
+  - Or wait for Option 2 to activate (may take 24-48 hours)
+
+FREQUENTLY ASKED QUESTIONS:
+
+Q: Do I need to pay taxes on this bounty?
+A: GitHub will issue a 1099-NEC form if you're a US taxpayer. For
+   non-US researchers, please consult your local tax authority. GitHub
+   does not withhold taxes for non-US recipients.
+
+Q: Can I donate the bounty to charity?
+A: Yes. Reply to this email with the charity name and we'll process a
+   charitable donation in your name instead.
+
+Q: What if I reported anonymously?
+A: If you used a pseudonym, we'll need to verify your identity before
+   releasing funds. Reply to this email and our team will guide you
+   through the KYC process.
+
+Q: Is this email legitimate?
+A: Fair question. You can verify this bounty by:
+   1. Logging into github.com/advisories (navigate manually)
+   2. Searching for GHSA-7x2m-p4q9
+   3. The advisory page will show "Bounty: $4,000 — Approved"
+
+   We understand that verifying a security email by clicking a link in
+   that same email feels circular. Your skepticism is healthy — and
+   it's one of the reasons you're getting this bounty.
+
+--
+GitHub Security Lab | Bug Bounty Program
+bounty-payout@github-bounty.example
+
+You are receiving this because you submitted a report to the GitHub
+Security Bug Bounty program. To unsubscribe from bounty notifications,
+visit github.com/settings/notifications (navigate manually).

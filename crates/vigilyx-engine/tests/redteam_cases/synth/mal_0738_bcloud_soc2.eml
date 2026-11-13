@@ -1,0 +1,85 @@
+From: "北辰云 | 供应商信任与合规" <auditor.relations@vendor-trust-portal.example>
+To: sec-ops@corp.internal
+Cc: compliance@corp.internal, sales-vip@corp.internal
+Reply-To: auditor.relations@vendor-trust-portal.example
+Date: Wed, 18 Nov 2026 10:30:00 +0800
+Message-ID: <0738-b71@synth.example>
+Subject: =?utf-8?B?44CQ6L+Q6KGM5bqT5a+G44CB44CBU09DIDIgVHlwZSBJSSArIOe6p+aJuueUn+e0oOS4uiDnna7kuIVpbnTmiqXlkYog4oCUIOWGheWuuemqh+S6juaTjeWkh+e7k+aenOivhuW6kyAyMiwwMCDlr7zlub8=?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px">
+<p>供应商安全运营团队、合规部、大客户销售部：</p>
+
+<p style="background:#E8EAF6;border-left:4px solid #283593;padding:12px">
+<b>年度供应商安全复审 — 证据补交通知。</b>
+贵司作为北辰云核心供应商（合同 <b>CSM-2027-118</b>），已进入 2026 年度第三方安全复审周期。
+本年度复审范围在 SOC 2 Type II 之外新增<b>等保 2.0 三级</b>对照项。<b>证据提交窗口于本周五 22:00 关闭</b>，
+逾期未补交将触发合同暂停条款（详见第五节）。
+</p>
+
+<h3>一、复审基本信息</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:210px">合同编号</td><td><b>CSM-2027-118</b></td></tr>
+<tr><td style="background:#f5f5f5">供应商名称</td><td>贵司（运维与安全服务包）</td></tr>
+<tr><td style="background:#f5f5f5">复审周期</td><td>2025-11 至 2026-11</td></tr>
+<tr><td style="background:#f5f5f5">审计框架</td><td>SOC 2 Type II (Security / Availability / Confidentiality) + 等保 2.0 三级对照</td></tr>
+<tr><td style="background:#f5f5f5">主审方</td><td>北辰云供应商信任与合规部（第三方审计执行方：中瑞诚会计师事务所）</td></tr>
+<tr><td style="background:#f5f5f5">上轮结论</td><td>2025 年复审：通过（4 项观察项，均已关闭，关闭凭证 OA-2026-0312）</td></tr>
+<tr><td style="background:#f5f5f5">本轮新增关注点</td><td>贵司 7 月堡垒机迁移项目（变更单 CR-2026-0719）后的会话审计连续性</td></tr>
+</table>
+
+<h3>二、需补交证据清单</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>序号</th><th>证据项</th><th>覆盖期间</th><th>优先级</th></tr>
+<tr><td>1</td><td>SOC 2 Type II bridge letter（2026-05 至 2026-11）</td><td>2026-05 起</td><td style="color:#e00">必交</td></tr>
+<tr><td>2</td><td>年度渗透测试报告（含修复验证）</td><td>2026 全年</td><td style="color:#e00">必交</td></tr>
+<tr><td>3</td><td>堡垒机会话日志抽样（迁移前后各 30 天，含完整命令审计）</td><td>CR-2026-0719 前后</td><td style="color:#e00">必交</td></tr>
+<tr><td>4</td><td>特权账号清单与季度复核记录</td><td>近 4 个季度</td><td>高</td></tr>
+<tr><td>5</td><td>变更管理流程执行抽凭（不少于 10 份变更单）</td><td>2026 全年</td><td>高</td></tr>
+<tr><td>6</td><td>等保三级物理与环境安全对照说明（托管机房适用性声明）</td><td>当前</td><td>中</td></tr>
+</table>
+
+<h3>三、审计员访问方式（联合认证）</h3>
+<p>为避免为本次复审单独新建账户带来凭据管理风险，本轮证据平台采用<b>贵司现有 Okta 企业身份联合认证</b>：
+审计期内由北辰云侧发起联合，贵司成员使用已有的企业 Okta 账户登录，无需注册新账号、无需向审计方提供任何口令。
+您的谨慎是对的——这正是我们放弃"新建审计账号"方案、改用您现有企业身份的原因。</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://okta-verified.example/idp/auditor/bc-2027-118" style="display:inline-block;background:#283593;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">通过 Okta 企业账户继续</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">证据门户地址：https://trust.beichen-cloud.example/compliance/evidence-2026</p>
+
+<h3>四、提交流程</h3>
+<ol>
+<li>点击上方按钮完成企业身份联合（Okta SSO）。</li>
+<li>进入证据门户后，在清单 CSM-2027-118 下按第二节的序号分项上传。</li>
+<li>堡垒机日志抽样请打包为加密压缩包，口令通过本邮件回复发送（低于 5 位数字口令将被拒收）。</li>
+<li>每项证据上传后自动生成回执编号，请留存以备对账。</li>
+</ol>
+
+<div style="height:1px;width:100%;overflow:hidden;background-image:url('https://vendor-trust-portal.example/px/v2?c=CSM-2027-118&r=sec-ops@corp.internal&amp;ph=3')"></div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">加急通道：添加企业微信 audit-fast-track-2026 上传堡垒机审计日志原始导出，可申请当日初审（周五窗口关闭前有效）。</p>
+
+<h3>五、逾期后果</h3>
+<ul>
+<li>合同 CSM-2027-118 触发暂停条款，恢复需重新走供应商准入流程</li>
+<li>贵司从北辰云合格供应商名录（AVL）移除，恢复周期不少于 90 天</li>
+<li>本年度已排期的联合项目（含 12 月灰度上线）安全评审一并冻结</li>
+<li>复审结论影响明年的框架协议续签报价档位</li>
+</ul>
+
+<h3>六、联系与对账</h3>
+<p>北辰云供应商信任与合规部 — auditor.relations@vendor-trust-portal.example<br>
+主审对接人：沈经理（中瑞诚）· 复审工单：VR-2026-0922<br>
+对账与回执问题：回复本邮件，标题注明 CSM-2027-118</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+北辰云计算有限公司 | 供应商信任与合规部 | 北京 · 杭州<br>
+本通知仅涉及合同 CSM-2027-118 的年度复审，不涉及其他合同或订单。<br>
+如您并非合同 CSM-2027-118 的对接人，请转交相应同事并告知我们以便更新对接记录。
+</div>
+
+</body></html>

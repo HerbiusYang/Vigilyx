@@ -1,0 +1,10 @@
+From: =?utf-8?B?5aSH5Lu957O757uf?= <backup@corp.internal>
+To: ops@corp.internal
+Date: Tue, 15 Sep 2026 09:41:00 +0800
+Message-ID: <0031-b22@synth.example>
+Subject: [告警] 备份窗口超时（非失败）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+数据量上涨导致窗口超时 40 分钟，任务仍在跑。
+明晚调优分片。

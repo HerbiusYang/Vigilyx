@@ -1,0 +1,9 @@
+From: =?utf-8?B?572R57uc5pyN5Yqh?= <dns@corp.internal>
+To: it@corp.internal
+Date: Tue, 15 Sep 2026 09:39:00 +0800
+Message-ID: <0029-b22@synth.example>
+Subject: 内网 DNS 周四切换
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+旧 DNS 保留一周，客户端自动。

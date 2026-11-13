@@ -1,0 +1,120 @@
+From: DBS Bank Trade Finance Operations <lc.operations@dbs-tradefinance.example>
+To: trade@corp.internal
+Cc: finance@corp.internal, legal@corp.internal
+Reply-To: lc.amendment@dbs-trademail.example
+Date: Wed, 04 Nov 2026 16:00:00 +0800
+Disposition-Notification-To: lc.operations@dbs-tradefinance.example
+Message-ID: <0732-b69@synst.example>
+Subject: [URGENT] LC discrepancy notice LC-8842-447199 — Beneficiary documents rejected — Amendment fee required before Friday
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<p>Trade Team, Finance, Legal:</p>
+
+<p style="background:#FFF3E0;padding:12px;border-radius:4px;border-left:4px solid #e00">
+<b style="color:#e00">DOCUMENTARY DISCREPANCY:</b> Your Letter of Credit (<b>LC-8842-447199</b>) beneficiary documents have been <b style="color:#e00">rejected</b> by the issuing bank due to discrepancies. The shipment of $842,000 in goods is currently <b style="color:#e00">held at Singapore Port</b>. An amendment fee must be paid before Friday to release the goods.
+</p>
+
+<h3>一、LC Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:220px">LC Number</td><td><b>LC-8842-447199</b></td></tr>
+<tr><td style="background:#f5f5f5">LC Type</td><td>Irrevocable Sight LC (UCP 600)</td></tr>
+<tr><td style="background:#f5f5f5">Applicant</td><td>Your Company (Hangzhou) — Beneficiary</td></tr>
+<tr><td style="background:#f5f5f5">Issuing Bank</td><td>DBS Bank, Singapore</td></tr>
+<tr><td style="background:#f5f5f5">Advising Bank</td><td>Bank of China, Hangzhou</td></tr>
+<tr><td style="background:#f5f5f5">LC Value</td><td><b>USD $842,000.00</b></td></tr>
+<tr><td style="background:#f5f5f5">Goods</td><td>Email Security Gateway Appliances (GW-5000 × 42 units)</td></tr>
+<tr><td style="background:#f5f5f5">Latest Shipment</td><td>October 28, 2026 (met)</td></tr>
+<tr><td style="background:#f5f5f5">Expiry Date</td><td style="color:#e00"><b>November 8, 2026 at Singapore (4 days)</b></td></tr>
+<tr><td style="background:#f5f5f5">Port of Loading</td><td>Shanghai, China</td></tr>
+<tr><td style="background:#f5f5f5">Port of Discharge</td><td>Singapore (goods currently held)</td></tr>
+</table>
+
+<h3>二、Discrepancies Identified</h3>
+
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>#</th><th>Type</th><th>Detail</th><th>Severity</th></tr>
+<tr><td>1</td><td>Late Presentation</td><td>Documents presented 3 days after B/L date (UCP 600 Art. 14(c): must be within 21 days)</td><td style="color:#e00">Major</td></tr>
+<tr><td>2</td><td>Description Mismatch</td><td>Invoice states "Gateway Appliances" vs LC requirement "Email Security Gateway Appliances"</td><td>Minor</td></tr>
+<tr><td>3</td><td>Insurance Certificate</td><td>Coverage 110% CIF (LC requires 110% of invoice value — rounding difference of $420)</td><td>Minor</td></tr>
+</table>
+
+<p>Discrepancy 1 (Late Presentation) requires an <b>LC amendment</b> approved by the applicant and issued by DBS. Discrepancies 2-3 may be waived by the issuing bank.</p>
+
+<h3>三、Amendment Fee Payment</h3>
+
+<div style="background:#FFF8E1;padding:16px;border-radius:4px;border:2px solid #FFA000">
+<p><b>⚠ LC Amendment Fee — Updated Processing Account ⚠</b></p>
+<p>Due to DBS's trade finance system upgrade (migration to iGTB platform), amendment fees are now processed through the new operations account:</p>
+<p style="font-size:15px;line-height:1.8">
+<b>Beneficiary:</b> DBS Trade Finance Operations (iGTB)<br>
+<b>Bank:</b> DBS Bank Ltd, Singapore — Trade Operations Centre<br>
+<b>Account:</b> 003-4-471884<br>
+<strong>SWIFT:</strong> TSTBSGSGXXX<br>
+<b>Branch Code:</b> 003 (Trade Operations)<br>
+<b>Amount:</b> SGD $2,842.00 (amendment + discrepancy handling)<br>
+<b>Reference:</b> LC-8842-447199-AMD
+</div>
+<p>If you need to verify, contact our <b>new trade operations desk at +65-6878-**** (extension 8842)</b> (the previous +65-6337-**** is being redirected).</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文贸易融资支持或提交中国银行担保函，请访问 dbs-tradefinance.example/cn-trade 上传贸易单据与银行信息（中文通道，当日处理）。</p>
+
+<h3>四、What Happens If You Miss Friday</h3>
+<ul>
+<li><b>LC expires November 8</b> — goods cannot be cleared without valid LC</li>
+<li><b>Demurrage charges:</b> SGD $1,200/day (accruing since October 30)</li>
+<li><b>Goods return:</b> Shipment may be returned to Shanghai (freight at your cost)</li>
+<li><b>Contract breach:</b> Singapore buyer may claim damages for non-delivery</li>
+<li><b>Banking relationship:</b> Repeated LC discrepancies affect your trade finance rating</li>
+</ul>
+
+<h3>五、Required Documentation (with amendment fee)</h3>
+<p>To process the amendment and release documents:</p>
+<ol>
+<li><b>Commercial Invoice (revised)</b> — with exact LC description wording</li>
+<li><b>Packing List</b> — with container/seal numbers matching B/L</li>
+<li><b>Bill of Lading (original)</b> — properly endorsed</li>
+<li><b>Insurance Certificate (revised)</b> — correct coverage amount</li>
+<li><b>Amendment request letter</b> — signed by beneficiary</li>
+</ol>
+
+<p>Submit through DBS Trade Finance Portal:</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://dbs-tradefinance.example/portal/lc/8842-447199/documents" style="display:inline-block;background:#E31837;color:#fff;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Submit LC Amendment Documents</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://www.dbs.com.sg/sme/trade-finance/portal</p>
+
+<h3>About DBS IDEAL Portal Authentication</h3>
+<p>When you click the submit button, you will be redirected to <b>ideal.dbs.com.sg</b> (DBS's official corporate banking portal):</p>
+<ol>
+<li>Sign in with your DBS IDEAL credentials (corporate banking)</li>
+<li>Grant the requested permissions</li>
+<li>Upload trade documentation</li>
+</ol>
+
+<p style="font-size:14px;background:#FDE8E8;padding:12px;border-radius:4px">
+<b>Why online submission instead of through your advising bank?</b> DBS's new iGTB platform allows direct beneficiary submission, eliminating the advising bank's processing time (2-3 days). With only 4 days until LC expiry, direct submission is the fastest option. The offline_access permission maintains your session during the multi-document upload (trade documentation packages are typically 30-80MB). This is standard for DBS's digital trade finance platform.
+</p>
+
+<h3>六、Your Trade Finance History with DBS</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Year</th><th>LCs Processed</th><th>Discrepancies</th><th>Rating</th></tr>
+<tr><td>2024</td><td>18</td><td>1 (minor)</td><td>Good</td></tr>
+<tr><td>2025</td><td>24</td><td>0</td><td>Excellent</td></tr>
+<tr style="background:#fff3cd"><td><b>2026 YTD</b></td><td>16</td><td style="color:#e00"><b>3 (1 major)</b></td><td><b>Review</b></td></tr>
+</table>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">DBS Bank Ltd | Trade Finance Operations — Singapore</p>
+<p style="font-size:11px;color:#999">12 Marina Boulevard, DBS Asia Central, Marina Bay Financial Centre Tower 3, Singapore 018982</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the beneficiary contact for LC-8842-447199.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://dbs-tradefinance.example/api/track?recipient=trade%40corp.internal&lc=8842-447199&type=discrepancy" width="1" height="1" alt="">
+</div>
+
+</body></html>

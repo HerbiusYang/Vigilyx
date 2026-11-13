@@ -21,6 +21,7 @@
 
 mod alerts;
 mod disposition;
+mod ds_learning;
 mod pipeline;
 pub mod quarantine;
 mod rescan;
@@ -41,6 +42,7 @@ pub use disposition::{
     create_disposition_rule, delete_disposition_rule, list_disposition_rules,
     update_disposition_rule,
 };
+pub use ds_learning::{get_ds_learning_state, install_ds_model, rollback_ds_model};
 pub use pipeline::{
     get_content_rules, get_keyword_overrides, get_module_data_overrides, get_modules_metadata,
     get_pipeline_config, update_keyword_overrides, update_module_data_overrides,
@@ -57,8 +59,9 @@ pub use threat_scene::{
     get_threat_scene, list_threat_scenes, resolve_scene, threat_scene_stats, update_scene_rules,
 };
 pub use verdict::{
-    get_engine_status, get_feedback_stats, get_security_stats, get_session_security_results,
-    get_session_verdict, list_recent_verdicts, submit_feedback,
+    get_ds_learning_samples, get_engine_status, get_feedback_stats, get_security_stats,
+    get_session_feedback, get_session_security_results, get_session_verdict,
+    list_delivery_risk_details, list_recent_verdicts, submit_feedback,
 };
 pub use whitelist::{
     add_whitelist_entry, delete_whitelist_entry, get_whitelist, update_whitelist, whitelist_session,
@@ -69,9 +72,7 @@ use vigilyx_db::mq::topics;
 use crate::AppState;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub(crate) struct EngineStatusSnapshot {
-    pub snapshot: serde_json::Value,
     pub status: serde_json::Value,
     pub heartbeat_secs: i64,
 }
@@ -207,7 +208,6 @@ fn parse_engine_status_snapshot(value: serde_json::Value) -> Option<EngineStatus
     let status = engine_status_from_snapshot(&value)?;
     let heartbeat_secs = engine_snapshot_age_secs(&value)?;
     Some(EngineStatusSnapshot {
-        snapshot: value,
         status,
         heartbeat_secs,
     })

@@ -14,6 +14,8 @@ pub mod coremail;
 pub mod dlp;
 pub mod document_extract;
 pub mod draft_detect;
+pub mod email_dlp;
+pub mod email_review;
 pub mod engine;
 pub mod file_transit_detect;
 pub mod jrt;
@@ -238,21 +240,21 @@ mod tests {
 
     #[test]
     fn test_extract_snippet_basic() {
-        let text = "客户ID cardNumberCode/Digit是 110101199001011237 请妥善保管";
-        let values = vec!["110101199001011237".to_string()];
+        let text = "客户ID cardNumberCode/Digit是 000000200001010005 请妥善保管";
+        let values = vec!["000000200001010005".to_string()];
         let result = extract_snippet(text, &values);
         assert!(result.is_some());
         let s = result.unwrap();
         assert!(
-            s.contains("【110101199001011237】"),
+            s.contains("【000000200001010005】"),
             "Value should be highlighted"
         );
     }
 
     #[test]
     fn test_extract_snippet_with_context() {
-        let text = "first面of文字 110101199001011237 后面of文字";
-        let values = vec!["110101199001011237".to_string()];
+        let text = "first面of文字 000000200001010005 后面of文字";
+        let values = vec!["000000200001010005".to_string()];
         let result = extract_snippet(text, &values).unwrap();
         assert!(
             result.contains("first面of文字"),
@@ -317,8 +319,8 @@ mod tests {
 
     #[test]
     fn test_extract_snippet_value_at_start() {
-        let text = "110101199001011237 是ID cardNumber";
-        let values = vec!["110101199001011237".to_string()];
+        let text = "000000200001010005 是ID cardNumber";
+        let values = vec!["000000200001010005".to_string()];
         let result = extract_snippet(text, &values).unwrap();
         assert!(
             result.starts_with("【"),
@@ -328,8 +330,8 @@ mod tests {
 
     #[test]
     fn test_extract_snippet_value_at_end() {
-        let text = "ID cardNumber是 110101199001011237";
-        let values = vec!["110101199001011237".to_string()];
+        let text = "ID cardNumber是 000000200001010005";
+        let values = vec!["000000200001010005".to_string()];
         let result = extract_snippet(text, &values).unwrap();
         assert!(
             !result.ends_with("…"),

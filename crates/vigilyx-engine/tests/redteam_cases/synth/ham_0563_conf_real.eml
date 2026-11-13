@@ -1,0 +1,62 @@
+From: ACM CCS 2026-程序委员会秘书处 <ccs-pc-office@acm.example>
+To: 王坚 <sec-research@corp.internal>
+Date: Fri, 09 Oct 2026 14:20:00 +0800
+Message-ID: <0563-b43@synth.example>
+Subject: [Acceptance + Camera-Ready Instructions] CCS 2026 Paper #114 "Layered Timeout Fallback in Email Gateways"
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:Georgia,serif;max-width:680px;margin:0 auto">
+<div style="border-bottom:3px solid #0067b8;padding-bottom:8px">
+<h2 style="margin:0;color:#0067b8">ACM CCS 2026 — 29th ACM Conference on Computer and Communications Security</h2>
+<p style="margin:4px 0;font-size:14px;color:#666">October 27-31, 2026 | Taipei International Convention Center</p>
+</div>
+
+<p>Dear Dr. Wang,</p>
+
+<p>On behalf of the Program Committee, I am pleased to inform you that your paper <b>"Layered Timeout Fallback in Email Gateways: A Practical Approach to Graceful Degradation"</b> (Paper #114) has been <b style="color:#0a7d34">accepted</b> for presentation at ACM CCS 2026.</p>
+
+<p>Your paper received the following review scores: <b>Accept (4.5/5)</b>, <b>Weak Accept (3.5/5)</b>, <b>Accept (4.0/5)</b>. The meta-review highlights "the practical evaluation on a real production email gateway with over 2M daily messages" as a significant strength.</p>
+
+<h3 style="color:#0067b8;border-bottom:1px solid #0067b8;padding-bottom:4px">Camera-Ready Instructions</h3>
+
+<p><b>Deadline:</b> October 17, 2026 (23:59 AoE)</p>
+
+<ol>
+<li><b>Revise your paper</b> based on the reviewer comments (available in the submission system). No major revisions required.</li>
+<li><b>Format your paper</b> using the ACM Master Template (acmart, sigconf format).</li>
+<li><b>Submit the copyright form</b> — ACM will send a separate email with a link to the copyright system.</li>
+<li><b>Upload your camera-ready paper</b> to the submission system. Please log in to HotCRP directly (the same system you used to submit your paper):</li>
+</ol>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://ccs2026.hotcrp.example/camera-ready/114" style="display:inline-block;background:#0067b8;color:#fff;padding:10px 30px;text-decoration:none;border-radius:4px">Upload via HotCRP</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://ccs2026.hotcrp.example/camera-ready/114</p>
+
+<p style="font-size:12px;color:#888;text-align:center;background:#fff3cd;padding:8px;border-radius:4px">
+<b>Security note:</b> ACM conferences use HotCRP exclusively for paper management. We will never direct you to a third-party submission portal, ask for institutional credentials, or require OAuth authorization to upload your paper. If you receive such an email, it is a phishing attempt — please report it to the PC Chair.
+</p>
+
+<h3 style="color:#0067b8;border-bottom:1px solid #0067b8;padding-bottom:4px">Presentation Details</h3>
+<ul>
+<li><b>Format:</b> 20-minute oral presentation + 5-minute Q&A</li>
+<li><b>Session:</b> Session 3B "Network Security in Practice" (Wednesday, October 29, 14:00-15:30)</li>
+<li><b>Poster session:</b> Also selected for poster session (Tuesday, October 28, 17:00-19:00).</li>
+</ul>
+
+<h3 style="color:#0067b8;border-bottom:1px solid #0067b8;padding-bottom:4px">Registration Requirement</h3>
+<p>At least one author must register at the full conference rate by <b>October 10</b>. Registration is available on the conference website (acm.example/conferences/ccs2026).</p>
+
+<p>Questions about camera-ready: contact the Publications Chair (pub-chair@ccs2026.acm.example).</p>
+
+<p>Sincerely,<br>
+<b>Sarah M. Smith</b><br>
+PC Co-Chair, ACM CCS 2026<br>
+Carnegie Mellon University</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:20px">
+<p style="font-size:11px;color:#999">Paper ID: 114 | Track: Applied Cryptography and Network Security | Session: 3B</p>
+</div>
+</body></html>

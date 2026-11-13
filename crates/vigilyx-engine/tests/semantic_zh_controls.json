@@ -1,0 +1,328 @@
+{
+  "version": 1,
+  "description": "Synthetic Chinese intent and threat controls; independent of inherited dataset labels.",
+  "cases": [
+    {
+      "id": "otp_reply",
+      "body": "请把短信验证码回复给我们。",
+      "current_request": true,
+      "threat": true,
+      "scenario": "credential_request"
+    },
+    {
+      "id": "otp_question",
+      "body": "您刚收到的验证码是多少？",
+      "current_request": true,
+      "threat": true,
+      "scenario": "credential_request"
+    },
+    {
+      "id": "unowned_question",
+      "body": "验证码是多少？",
+      "current_request": false,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "bank_notice",
+      "body": "您的验证码为123456，十分钟内有效，切勿向他人透露。",
+      "current_request": false,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "bank_never_asks",
+      "body": "银行不会要求您提供密码或验证码。",
+      "current_request": false,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "long_negation",
+      "body": "公安机关不会通过社交软件、陌生链接或非官方渠道要求公民提供隐私信息。",
+      "current_request": false,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "no_need",
+      "body": "不需要您把验证码发送给我。",
+      "current_request": false,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "conditional_password_change",
+      "body": "如非本人操作，请及时修改密码。",
+      "current_request": true,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "first_person_request_zh",
+      "body": "我请求您提供短信验证码给我。",
+      "current_request": true,
+      "threat": true,
+      "scenario": "credential_request"
+    },
+    {
+      "id": "sender_self",
+      "body": "我需要提交我的验证码。",
+      "current_request": false,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "sender_future",
+      "body": "我会把验证码发送给您。",
+      "current_request": false,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "third_party",
+      "body": "用户需要把验证码发送给其他人。",
+      "current_request": false,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "different_destination",
+      "body": "请发送验证码给我们。请勿向他人发送验证码。",
+      "current_request": true,
+      "threat": true,
+      "scenario": "credential_request"
+    },
+    {
+      "id": "same_destination",
+      "body": "请发送验证码给我。请勿把验证码发送给我。",
+      "current_request": false,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "reminder",
+      "body": "别忘了把短信验证码回复给我们。",
+      "current_request": true,
+      "threat": true,
+      "scenario": "credential_request"
+    },
+    {
+      "id": "training_report",
+      "body": "安全培训案例：我录下了你的私密视频。请在48小时内支付比特币到钱包地址，否则我会公开视频。",
+      "current_request": false,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "training_secret",
+      "body": "安全培训案例：请把验证码发送给我。",
+      "current_request": false,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "mixed_training",
+      "body": "安全培训案例：不要提供验证码。\n\n请把短信验证码回复给我。",
+      "current_request": true,
+      "threat": true,
+      "scenario": "credential_request"
+    },
+    {
+      "id": "training_wrapper",
+      "body": "【安全培训】请把验证码发送给我。",
+      "current_request": true,
+      "threat": true,
+      "scenario": "credential_request"
+    },
+    {
+      "id": "quoted_request",
+      "body": "他说：“请把验证码发送给我。”",
+      "current_request": false,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "request_list",
+      "body": "请提供以下信息：\n- 姓名\n- 身份证号码\n- 联系电话",
+      "current_request": true,
+      "threat": false,
+      "scenario": "sensitive_data_request"
+    },
+    {
+      "id": "numbered_actions",
+      "body": "请立即采取以下操作：\n1. 点击下方按钮查看完整报告。",
+      "current_request": true,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "no_request_list",
+      "body": "已收集以下信息：\n- 姓名\n- 身份证号码",
+      "current_request": false,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "private_picture_soft",
+      "body": "就交换一张私密照片存在专属相册里，当作我们感情的小契约好不好？",
+      "current_request": true,
+      "threat": false,
+      "scenario": "sensitive_data_request"
+    },
+    {
+      "id": "picture_question",
+      "body": "你能不能帮拍张日常照？",
+      "current_request": true,
+      "threat": false,
+      "scenario": "sensitive_data_request"
+    },
+    {
+      "id": "payment",
+      "body": "请将货款转入新账户。",
+      "current_request": true,
+      "threat": false,
+      "scenario": "payment_account_change_request"
+    },
+    {
+      "id": "deposit",
+      "body": "请缴纳保证金。",
+      "current_request": true,
+      "threat": false,
+      "scenario": "payment_account_change_request"
+    },
+    {
+      "id": "meeting_secret",
+      "body": "请把会议密码发送给我。",
+      "current_request": true,
+      "threat": false,
+      "scenario": "credential_request"
+    },
+    {
+      "id": "official_login",
+      "body": "请登录官网输入短信验证码。",
+      "current_request": true,
+      "threat": false,
+      "scenario": "credential_request"
+    },
+    {
+      "id": "personal_name_query",
+      "body": "您的姓名是什么？",
+      "current_request": true,
+      "threat": false,
+      "scenario": "sensitive_data_request"
+    },
+    {
+      "id": "fresh_request_after_warning",
+      "body": "本邮件不包含任何附件下载要求请把验证码发送给我。",
+      "current_request": true,
+      "threat": true,
+      "scenario": "credential_request"
+    },
+    {
+      "id": "negated_then_official",
+      "body": "本邮件不包含任何附件下载要求，请登录官网核对账户。",
+      "current_request": true,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "confirm_historical_secret",
+      "body": "请确认您是否已经把短信验证码发送给我。",
+      "current_request": true,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "discuss_historical_secret",
+      "body": "请说明为何把验证码发送给我。",
+      "current_request": true,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "request_after_confirmation",
+      "body": "请确认账户信息，然后把短信验证码发送给我。",
+      "current_request": true,
+      "threat": true,
+      "scenario": "credential_request"
+    },
+    {
+      "id": "received_is_not_sent",
+      "body": "请把您已经收到的短信验证码发送给我。",
+      "current_request": true,
+      "threat": true,
+      "scenario": "credential_request"
+    },
+    {
+      "id": "funds_verification_transfer",
+      "body": "请将人民币5,000元转账至指定账户进行资金验证，验证完成后将原路返还。",
+      "current_request": true,
+      "threat": true,
+      "scenario": null
+    },
+    {
+      "id": "funds_verification_whole_balance",
+      "body": "资金验证流程：请向指定账户转账全额授信额度。该款项验证完成后全额退还。",
+      "current_request": true,
+      "threat": true,
+      "scenario": null
+    },
+    {
+      "id": "funds_verification_microdeposit",
+      "body": "请向您自己的账户转账人民币0.01元进行资金验证，验证完成后原路返还。",
+      "current_request": true,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "ordinary_rental_deposit",
+      "body": "请向业主支付人民币5,000元租赁押金，退房后原路返还。",
+      "current_request": true,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "ordinary_corporate_capital",
+      "body": "请将人民币50,000元存入公司自有账户用于公司注册验资，完成后全额退回。",
+      "current_request": true,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "historical_verification_transfer",
+      "body": "请确认人民币5,000元的资金验证转账是否已经到账。该款项将原路返还。",
+      "current_request": true,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "verification_without_refund_promise",
+      "body": "请将人民币5,000元转账至指定账户进行资金验证。",
+      "current_request": true,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "funds_warning",
+      "body": "任何要求您转账人民币5,000元进行资金验证并承诺原路返还的都是诈骗。",
+      "current_request": false,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "funds_training",
+      "body": "安全培训案例：请将人民币5,000元转账至指定账户进行资金验证，验证完成后将原路返还。",
+      "current_request": false,
+      "threat": false,
+      "scenario": null
+    },
+    {
+      "id": "funds_unrelated_paragraph",
+      "body": "请支付人民币5,000元租赁押金。\n\n其他案例的资金验证款项将原路返还。",
+      "current_request": true,
+      "threat": false,
+      "scenario": null
+    }
+  ]
+}

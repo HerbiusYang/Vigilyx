@@ -1,0 +1,110 @@
+From: Tesla Fleet Operations <fleet.activation@tesla-supercharger.example>
+To: ops@corp.internal
+Cc: cto@corp.internal, procurement@corp.internal
+Reply-To: fleet.support@tesla-fleetmail.example
+Date: Thu, 05 Nov 2026 08:00:00 -0800
+Message-ID: <0734-b70@synth.example>
+Subject: [FLEET ACCESS] 28-vehicle Supercharger fleet program — Activation deposit & fleet telematics registration (Friday cutoff)
+MIME-Version:1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif;max-width:640px;margin:0 auto;border:1px solid #E82127;border-radius:8px;overflow:hidden">
+<div style="background:#E82127;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">TESLA | Fleet Operations — Supercharger Access</h2>
+</div>
+<div style="padding:24px">
+
+<p>Dear Fleet Operations Team,</p>
+
+<p>Your company fleet of <b>28 Tesla Model Y Performance</b> vehicles has been approved for the <b>Tesla Fleet Supercharger Access Program</b>. An activation deposit and fleet telematics registration are required before Friday's billing cycle cutoff.</p>
+
+<h3>一、Fleet Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:220px">Fleet Account</td><td><b>TSLA-FLT-8842</b></td></tr>
+<tr><td style="background:#f5f5f5">Vehicles</td><td>28 × Model Y Performance (2025 MY)</td></tr>
+<tr><td style="background:#f5f5f5">Program</td><td>Fleet Supercharger Access — Enterprise Tier</td></tr>
+<tr><td style="background:#f5f5f5">Charging Rate</td><td>$0.24/kWh (fleet rate, 40% off retail)</td></tr>
+<tr><td style="background:#f5f5f5">Supercharger Access</td><td>18,000+ Superchargers worldwide</td></tr>
+<tr><td style="background:#f5f5f5">Monthly Est. Spend</td><td>$8,400 (28 vehicles × ~$300/month)</td></tr>
+<tr><td style="background:#f5f5f5">Activation Deposit</td><td style="color:#e00"><b>$14,000 (28 vehicles × $500)</b></td></tr>
+<tr><td style="background:#f5f5f5">Registration Deadline</td><td style="color:#e00"><b>Friday, November 7, 2026 at 17:00 PST</b></td></tr>
+</table>
+
+<h3>二、Fleet Telematics Registration</h3>
+<p>To optimize fleet charging and enable vehicle-to-grid (V2G) services, Tesla requires fleet telematics registration for each vehicle. This includes:</p>
+
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Data Type</th><th>Purpose</th><th>Required</th></tr>
+<tr><td>Vehicle identification (VIN + plate)</td><td>Supercharger billing per vehicle</td><td style="color:#e00">Critical</td></tr>
+<tr><td>GPS location + route patterns</td><td>Charging optimization + nearest Supercharger</td><td style="color:#e00">Critical</td></tr>
+<tr><td>Battery health + charging history</td><td>Fleet battery warranty tracking</td><td>High</td></tr>
+<tr><td>Driver profiles</td><td>Insurance integration (optional)</td><td>Optional</td></tr>
+</table>
+
+<h3>三、Activation Deposit Payment</h3>
+
+<div style="background:#FFF3E0;padding:16px;border-radius:4px;border:2px solid #e00">
+<p style="color:#e00"><b>⚠ Fleet Activation Deposit — New Tesla Energy Division Account ⚠</b></p>
+<p>Due to Tesla's corporate restructuring (Energy division separation), fleet deposits are now processed through <b>Tesla Energy Fleet Services LLC</b>:</p>
+<p style="font-size:15px;line-height:1.8">
+<b>Beneficiary:</b> Tesla Energy Fleet Services LLC<br>
+<b>Bank:</b> Wells Fargo Bank, Austin, TX<br>
+<b>Account:</b> 8842-4471-9920<br>
+<b>Routing (Wire):</b> 123456780<br>
+<b>SWIFT:</b> TSTBUS6S<br>
+<b>Amount:</b> $14,000.00 USD<br>
+<b>Reference:</b> TSLA-FLT-8842-DEP
+</div>
+<p>If you need to verify, contact our <b>new fleet activation desk at +1-512-884-****</b> (the previous +1-650-681-**** is being redirected).</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文车队服务或提交中国车牌信息，请访问 tesla-supercharger.example/cn-fleet 上传车辆VIN与GPS数据（中文通道，当日处理）。</p>
+
+<h3>四、Fleet Portal Registration</h3>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://tesla-supercharger.example/fleet/portal/TSLA-FLT-8842/register" style="display:inline-block;background:#E82127;color:#fff;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Register Fleet — 28 Vehicles</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://www.tesla.com/fleet-api/registration</p>
+
+<h3>About Tesla Fleet API Authentication</h3>
+<p>When you click the register button, you will be redirected to <b>accounts.tesla.com</b> (Tesla's official identity portal):</p>
+<ol>
+<li>Sign in with your Tesla Fleet account</li>
+<li>Grant the requested permissions (openid, offline_access, vehicle_data)</li>
+<li>Complete the fleet telematics registration</li>
+<li>Upload vehicle GPS and route data</li>
+</ol>
+
+<p style="font-size:14px;background:#FBE9E7;padding:12px;border-radius:4px">
+<b>Why we need GPS and route patterns:</b> Tesla's fleet charging AI optimizes when and where your vehicles charge based on their driving patterns and nearby Supercharger availability. This reduces fleet charging costs by an average of 23%. The vehicle_data scope includes location, battery state, and charging history — all necessary for the optimization engine. The offline_access permission maintains your session during the multi-vehicle registration (28 vehicles × VIN + telematics data = typically 30-40 minutes). This is standard for all Tesla Fleet API integrations.
+</p>
+
+<h3>五、What Happens If You Miss Friday</h3>
+<ul>
+<li>Fleet Supercharger rate reverts to <b>retail pricing</b> ($0.40/kWh, 67% higher)</li>
+<li>Additional $336/month per vehicle ($9,408/month total increase)</li>
+<li>Existing charge history retained (no data loss)</li>
+<li>Re-enrollment available next billing cycle (December 7)</li>
+</ul>
+
+<h3>六、Your Fleet Details</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Vehicle</th><th>VIN (partial)</th><td>Location</td><th>Est. Monthly kWh</th></tr>
+<tr><td>MY-P-001</td><td>5YJ3...</td><td>Hangzhou HQ</td><td>1,420</td></tr>
+<tr><td>MY-P-002</td><td>5YJ3...</td><td>Hangzhou HQ</td><td>1,380</td></tr>
+<tr><td>MY-P-003 to 026</td><td>5YJ3... (24)</td><td>Regional offices</td><td>1,200 avg</td></tr>
+<tr><td>MY-P-027 to 028</td><td>5YJ3...</td><td>Shanghai</td><td>1,460</td></tr>
+</table>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Tesla, Inc. | Fleet Operations</p>
+<p style="font-size:11px;color:#999">1 Tesla Road, Austin, TX 78725</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the fleet contact for TSLA-FLT-8842.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://tesla-supercharger.example/api/track?recipient=ops%40corp.internal&fleet=8842&type=fleet_activation" width="1" height="1" alt="">
+</div>
+
+</body></html>

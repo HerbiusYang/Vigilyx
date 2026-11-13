@@ -1,0 +1,101 @@
+From: "KeyVault Enterprise | Notifications" <notifications@keyvault.example>
+To: it-security@corp.internal
+Cc: ciso-office@corp.internal, helpdesk@corp.internal
+Date: Thu, 01 Jul 2027 03:30:00 +0000
+Message-ID: <0751-b106@synth.example>
+Subject: [SECURITY ADVISORY] Third-Party Breach Affects Your Email Domain - Rotate Affected Passwords Inside the Vault (No Master Credential Ever Requested)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+IT Security, CISO Office, Helpdesk,
+
+SECURITY ADVISORY - THIRD-PARTY
+BREACH.
+
+A third-party marketing-platform
+breach (disclosed last night)
+exposed credential lists including
+addresses on your corporate domain.
+Per your organization's rotation
+policy (Security Baseline Section
+7.2), affected site passwords
+should be rotated - inside the
+vault, by the credential owners.
+
+1. WHAT TO DO
+
+    1. Sign in to the web vault
+       by typing the address
+       yourself
+       (vault.keyvault.example)
+       - or use the desktop app.
+    2. The admin console lists
+       exposed addresses
+       (9 collections have
+       owners on the list);
+       rotate the affected
+       site passwords there.
+    3. Autofill and sharing
+       continue uninterrupted -
+       rotating individual
+       passwords requires no
+       vault-level event.
+
+  KeyVault will NEVER:
+  - Email a "master credential
+    re-verification" page
+    (zero-knowledge means no
+    one at KeyVault can ever
+    ask for, receive, or
+    process your master
+    password - a vendor
+    "emergency rotation"
+    that requires typing the
+    master password into an
+    emailed page is the
+    definitive vault-takeover
+    phish: the master password
+    is the single credential
+    that unlocks every secret
+    in the enterprise)
+  - Claim collections "freeze
+    read-only" pending a
+    verification window
+    (vaults do not degrade by
+    email countdown; break-
+    glass flows exist and
+    are initiated by YOUR
+    admins, not by vendor
+    rotation events)
+  - Offer a "delegate lane"
+    where delegates submit
+    a passphrase with owner
+    notifications suppressed
+  - Use lookalike domains
+    such as "keyvault-sec"
+    or "kv-emergency"
+
+2. VERIFY THIS ADVISORY
+
+  - The exposed-address list
+    is in your admin console
+    (typed address), not in
+    this email
+  - The breach disclosure is
+    public (compare sources
+    before acting on any
+    single email)
+  - Report lookalike vault
+    notices immediately to
+    security@keyvault.example
+    and your CISO - master-
+    password phishing is
+    the highest-severity
+    report class
+
+KeyVault Enterprise |
+Notifications
+This notice concerns the
+disclosed third-party breach only.
+Rotation policy follows your
+organization's Security Baseline.

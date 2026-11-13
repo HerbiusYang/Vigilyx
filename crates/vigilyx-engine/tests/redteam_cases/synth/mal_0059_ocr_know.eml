@@ -1,0 +1,10 @@
+From: =?utf-8?B?5a2m57GN5Lit5b+D?= <registry@edu-notice.example>
+To: parent@mail.example
+Date: Wed, 26 Aug 2026 11:27:00 +0800
+Message-ID: <0017-b3@synth.example>
+Subject: 学籍信息核对通知
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+请家长在 48 小时内完成学籍信息核对，逾期未核对将影响学籍注册，
+核对入口：https://xj-check.example.org/parent

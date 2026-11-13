@@ -1,0 +1,10 @@
+From: =?utf-8?B?5Yy65Z+fQ0VSVA==?= <alert@cert-official.example>
+To: sec@corp.internal
+Date: Thu, 10 Sep 2026 08:34:00 +0800
+Message-ID: <0024-b18@synth.example>
+Subject: 预警通报（IOC 网页版）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+通报正文与 IOC 已发布在官网：https://cert-official.example/2026-091
+密码保护的样本包仅向注册成员开放下载。

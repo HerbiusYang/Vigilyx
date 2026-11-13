@@ -13,8 +13,3 @@ export function setSensitiveSetting(key: string, value: string): void {
   localStorage.removeItem(key)
   sessionStorage.setItem(key, value)
 }
-
-export function removeSensitiveSetting(key: string): void {
-  localStorage.removeItem(key)
-  sessionStorage.removeItem(key)
-}

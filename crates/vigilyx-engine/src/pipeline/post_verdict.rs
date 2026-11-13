@@ -170,7 +170,7 @@ pub(crate) async fn run_post_verdict(
     // transaction): concurrent analyses of the same session must never leave
     // a verdict from analysis A next to module rows from analysis B.
     let results_refs: Vec<&_> = results.values().collect();
-    if let Err(e) = ctx
+    let verdict_stored = if let Err(e) = ctx
         .db
         .insert_verdict_with_module_results(verdict_result, &results_refs)
         .await
@@ -179,11 +179,77 @@ pub(crate) async fn run_post_verdict(
             session_id = %session_id,
             "Failed to store verdict and module results: {}", e
         );
+        false
+    } else {
+        true
+    };
+
+    // A quarantine release is authorized only by the verdict produced for
+    // its unique claim and the exact raw_eml hash carried through this
+    // analysis. Never let the API infer authorization from the session's
+    // latest verdict: a generic or delayed rescan of the same session can race
+    // with this one.
+    if verdict_stored && let Some(release) = session.release_rescan.as_ref() {
+        let request_id = release.request_id.to_string();
+        let session_id_text = session_id.to_string();
+        let verdict_id = verdict_result.id.to_string();
+        match ctx
+            .db
+            .quarantine_complete_release_rescan(
+                &release.quarantine_id,
+                &request_id,
+                &session_id_text,
+                &verdict_id,
+                &verdict_result.threat_level.to_string(),
+                &release.content_sha256,
+            )
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => error!(
+                session_id = %session_id,
+                quarantine_id = %release.quarantine_id,
+                "Release rescan result lost its exact database claim; release remains fail-closed"
+            ),
+            Err(error) => error!(
+                session_id = %session_id,
+                quarantine_id = %release.quarantine_id,
+                %error,
+                "Failed to bind release rescan verdict to its claim; release remains fail-closed"
+            ),
+        }
     }
 
-    // 2. Auto-record IOC if threat_level>= High
-    // Security: UPSERT Use Connect (MAX),confidence downgrade;
-    // auto IOC 30 DayExpired;admin_clean Name override.
+    if verdict_stored
+        && let Err(error) = ctx
+            .db
+            .record_email_delivery_first_verdict(
+                session_id,
+                verdict_result.id,
+                &verdict_result.threat_level.to_string(),
+            )
+            .await
+    {
+        error!(
+            session_id = %session_id,
+            %error,
+            "Failed to finalize passive email delivery-chain verdict"
+        );
+    }
+
+    // Stage-1 IOC telemetry: record the local denominator and every observed
+    // normalized indicator. This is shadow-only and must not affect the
+    // existing verdict or any delivery disposition.
+    {
+        let domains = ctx.internal_domains.read().await;
+        ctx.ioc
+            .record_traffic_telemetry(session, verdict_result, &domains)
+            .await;
+    }
+
+    // 2. Auto-record Low-or-higher indicators as short-lived suspicious
+    // references; Critical indicators use the stronger malicious IOC path.
+    // Safe verdicts do not create automatic IOC entries.
     ctx.ioc
         .auto_record_from_verdict(session, verdict_result)
         .await;
@@ -228,9 +294,12 @@ pub(crate) async fn run_post_verdict(
 
     // 3. Broadcast verdict via WebSocket
     let summary = SecurityVerdictSummary {
+        inspection_coverage: verdict_result.inspection_coverage,
+        coverage_reasons: verdict_result.coverage_reasons.clone(),
         verdict_id: verdict_result.id,
         session_id: verdict_result.session_id,
         threat_level: verdict_result.threat_level.to_string(),
+        threat_type: verdict_result.threat_type.map(|value| value.to_string()),
         confidence: verdict_result.confidence,
         categories: verdict_result.categories.clone(),
         summary: verdict_result.summary.clone(),
@@ -259,10 +328,29 @@ pub(crate) async fn run_post_verdict(
         let temporal = Arc::clone(&ctx.temporal);
         let db = ctx.db.clone();
         tokio::spawn(async move {
-            let (cusum, ewma, entity) = temporal.export_states().await;
+            let snapshot = temporal.export_dirty_states();
+            if snapshot.is_empty() {
+                return;
+            }
+            let cusum = snapshot
+                .cusum
+                .iter()
+                .map(|(state, _)| state.clone())
+                .collect::<Vec<_>>();
+            let ewma = snapshot
+                .ewma
+                .iter()
+                .map(|(state, _)| state.clone())
+                .collect::<Vec<_>>();
+            let entity = snapshot
+                .entity
+                .iter()
+                .map(|(state, _)| state.clone())
+                .collect::<Vec<_>>();
             if let Err(e) = db.flush_temporal_states(&cusum, &ewma, &entity).await {
                 error!("Failed to flush temporal states: {}", e);
             } else {
+                temporal.mark_persisted(&snapshot);
                 debug!(
                     cusum = cusum.len(),
                     ewma = ewma.len(),
@@ -360,8 +448,7 @@ fn spawn_temporal_analysis(
             // Flood protection: P3 is the default level for every email
             // scoring >= 0.15, so cap it process-wide; higher severities are
             // never rate-limited.
-            let admitted =
-                decision.level != AlertLevel::P3 || p3_alert_admitted(&db, &ws).await;
+            let admitted = decision.level != AlertLevel::P3 || p3_alert_admitted(&db, &ws).await;
             if admitted {
                 let record = AlertEngine::to_record(&decision, verdict_id, v_session_id);
                 match db.insert_alert(&record).await {
@@ -470,7 +557,9 @@ fn incomplete_inspection_alert_reason(
     let coverage_flag = crate::pipeline::verdict::has_incomplete_inspection(verdict);
     match (coverage_flag, inspection_error) {
         (false, None) => None,
-        (true, Some(error)) => Some(format!("inspection coverage incomplete; capture error: {error}")),
+        (true, Some(error)) => Some(format!(
+            "inspection coverage incomplete; capture error: {error}"
+        )),
         (true, None) => Some("inspection coverage incomplete".to_string()),
         (false, Some(error)) => Some(format!("capture error: {error}")),
     }
@@ -534,9 +623,13 @@ mod tests {
 
     fn make_verdict(categories: &[&str]) -> SecurityVerdict {
         SecurityVerdict {
+            inspection_coverage: Default::default(),
+            coverage_reasons: vec![],
             id: Uuid::new_v4(),
             session_id: Uuid::new_v4(),
             threat_level: ThreatLevel::Safe,
+            threat_type: None,
+            classification: None,
             confidence: 0.5,
             categories: categories.iter().map(|c| (*c).to_string()).collect(),
             summary: "test verdict".to_string(),

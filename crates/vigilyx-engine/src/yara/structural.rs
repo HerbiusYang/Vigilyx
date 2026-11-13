@@ -98,8 +98,18 @@ pub fn inspect_attachment(filename: &str, data: &[u8]) -> StructuralInspection {
     let mut budget = DecodeBudget::default();
     let extension = file_extension(filename);
     let is_pdf = has_pdf_header(data);
-    let zip_prefixed = data.starts_with(b"PK\x03\x04") || data.starts_with(b"PK\x05\x06");
     let trailing_eocd = vigilyx_core::magic_bytes::find_trailing_zip_eocd(data);
+    // Some valid split/spanned ZIP producers prepend the data-descriptor
+    // signature (PK\x07\x08) and a short marker before the first local header.
+    // Archive readers accept that form, so it must not be classified as an
+    // appended-archive polyglot merely because PK\x03\x04 is not at byte 0.
+    let split_zip_prefix = data.starts_with(b"PK\x07\x08")
+        && data[..data.len().min(64)]
+            .windows(4)
+            .any(|window| window == b"PK\x03\x04");
+    let zip_prefixed = data.starts_with(b"PK\x03\x04")
+        || data.starts_with(b"PK\x05\x06")
+        || (split_zip_prefix && trailing_eocd.is_some());
     // Polyglot: no ZIP magic at offset 0, but a trailing EOCD record means
     // archive tools (7-Zip, Windows Explorer) still unpack the archive from
     // the tail — `cat photo.jpg payload.zip > invoice.jpg` must not sail
@@ -189,9 +199,13 @@ pub fn inspect_attachment(filename: &str, data: &[u8]) -> StructuralInspection {
             } else if pe.offset == 0 && is_executable_extension(extension) {
                 StructuralFinding {
                     rule_name: "PE_Attachment_Structurally_Valid",
-                    severity: "high",
+                    // A PE whose declared extension is already executable is
+                    // a file-type observation, not proof of malware.  Exact
+                    // signatures, reputation, sandbox behavior, disguise, or
+                    // an embedded/polyglot payload remain threat evidence.
+                    severity: "low",
                     confidence: 0.94,
-                    categories: vec!["verified_executable_payload", "executable_attachment"],
+                    categories: vec!["executable_attachment"],
                     description: "Attachment is a structurally valid Windows PE executable"
                         .to_string(),
                     location: format!("attachment:{}", sanitize_component(filename)),
@@ -623,8 +637,8 @@ fn collect_pdf_layers(
             let risky_action = found_tokens
                 .iter()
                 .any(|token| matches!(*token, "/Launch" | "/GoToE" | "/RichMedia"));
-            let hidden_open_action = !raw_open_action_visible
-                && contains_pdf_name(layer_names, b"/OpenAction");
+            let hidden_open_action =
+                !raw_open_action_visible && contains_pdf_name(layer_names, b"/OpenAction");
             if hidden_open_action && js_entry {
                 found_tokens.push("/OpenAction");
             }
@@ -694,8 +708,13 @@ fn collect_zip_layers(
         // returns PASSWORD_REQUIRED before it can yield a ZipFile, which would
         // otherwise hide the fact that the coverage gap is encryption.
         let (entry_name, entry_size, encrypted, is_dir) = match archive.by_index_raw(index) {
+            // zip 9 rejects names whose local and central headers disagree.
+            // Keep scanning the bytes under a positional name.
             Ok(entry) => (
-                sanitize_component(entry.name()),
+                entry
+                    .name()
+                    .map(|name| sanitize_component(&name))
+                    .unwrap_or_else(|_| format!("entry_{index}")),
                 entry.size(),
                 entry.encrypted(),
                 entry.is_dir(),
@@ -839,7 +858,8 @@ fn gzip_inner_name(filename: &str) -> String {
     filename.to_string()
 }
 
-fn read_bounded(mut reader: impl Read, limit: usize) -> Result<Vec<u8>, &'static str> {    let mut bytes = Vec::new();
+fn read_bounded(mut reader: impl Read, limit: usize) -> Result<Vec<u8>, &'static str> {
+    let mut bytes = Vec::new();
     match (&mut reader)
         .take((limit + 1) as u64)
         .read_to_end(&mut bytes)
@@ -1047,6 +1067,21 @@ mod tests {
     }
 
     #[test]
+    fn declared_pe_is_an_observation_not_a_verified_malicious_payload() {
+        let result = inspect_attachment("vendor-driver.exe", &minimal_pe());
+        let finding = result
+            .findings
+            .iter()
+            .find(|finding| finding.rule_name == "PE_Attachment_Structurally_Valid")
+            .expect("declared PE should retain structural type evidence");
+
+        assert_eq!(finding.severity, "low");
+        assert!(finding.categories.contains(&"executable_attachment"));
+        assert!(!finding.categories.contains(&"verified_executable_payload"));
+        assert!(!finding.categories.contains(&"verified_payload_anchor"));
+    }
+
+    #[test]
     fn benign_pdf_compressed_magic_coincidence_is_not_a_pe() {
         let mut pixels = vec![0x41; 4096];
         pixels[100..102].copy_from_slice(b"MZ");
@@ -1096,6 +1131,37 @@ mod tests {
         assert!(finding.location.contains("diagnostic.exe"));
         assert!(!finding.categories.contains(&"verified_payload_anchor"));
         assert_eq!(finding.severity, "medium");
+    }
+
+    #[test]
+    fn split_zip_marker_before_local_header_is_not_a_polyglot() {
+        let mut cursor = Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut cursor);
+            writer
+                .start_file(
+                    "documents/readme.txt",
+                    zip::write::SimpleFileOptions::default(),
+                )
+                .unwrap();
+            writer.write_all(b"ordinary archive content").unwrap();
+            writer.finish().unwrap();
+        }
+
+        // Historical false-positive shape: PK\x07\x08 at byte 0 followed by
+        // one marker byte and a real local header at byte 5.
+        let mut split_form = b"PK\x07\x08\0".to_vec();
+        split_form.extend_from_slice(cursor.get_ref());
+        let result = inspect_attachment("documents.zip", &split_form);
+
+        assert!(
+            !result
+                .findings
+                .iter()
+                .any(|finding| finding.rule_name == "Polyglot_Zip_Appended_Archive"),
+            "a split/spanned ZIP prefix is an archive marker, not a foreign-file prefix: {:?}",
+            result.findings
+        );
     }
 
     #[test]
@@ -1173,11 +1239,9 @@ mod tests {
 
         let result = inspect_attachment("invoice.jpg", &data);
         assert!(
-            result
-                .findings
-                .iter()
-                .any(|finding| finding.rule_name == "Polyglot_Zip_Appended_Archive"
-                    && finding.severity == "high"),
+            result.findings.iter().any(|finding| finding.rule_name
+                == "Polyglot_Zip_Appended_Archive"
+                && finding.severity == "high"),
             "polyglot container finding missing: {:?}",
             result.findings
         );
@@ -1366,10 +1430,7 @@ mod tests {
         // PoC bypass: /JavaScript lives only inside an ObjStm-compressed
         // object, so raw-byte YARA rules (which require a %PDF anchor the
         // decoded layer lacks) never see it.
-        let pdf = objstm_pdf(
-            b"2 0 << /S /JavaScript /JS (app.alert(1)) >>",
-            b"",
-        );
+        let pdf = objstm_pdf(b"2 0 << /S /JavaScript /JS (app.alert(1)) >>", b"");
         let result = inspect_attachment("report.pdf", &pdf);
         assert!(
             result

@@ -46,7 +46,9 @@ impl ProtocolParser {
             Protocol::Imap => self.imap.parse(data),
             Protocol::Http => {
                 // HTTP Command: Extract method + URI command Segment
-                http::parse_http_request(data).map(|req| format!("{} {}", req.method, req.uri))
+                http::parse_http_request(data).map(|req| {
+                    format!("{} {}", req.method, vigilyx_core::redact_http_uri(&req.uri))
+                })
             }
             Protocol::Unknown => None,
         }

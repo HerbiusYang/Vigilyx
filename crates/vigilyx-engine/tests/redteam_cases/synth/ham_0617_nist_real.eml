@@ -1,0 +1,81 @@
+From: NVD <nvd@nist.example>
+To: sec-research@corp.internal
+Cc: soc@corp.internal, cto@corp.internal
+Date: Tue, 27 Oct 2026 11:00:00 -0500
+Message-ID: <0617-b61@synth.example>
+Subject: [CRITICAL] CVE-2026-45912: RCE in tower-lsp crate — Affects vigilyx/gateway
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+A critical vulnerability has been identified in the tower-lsp
+Rust crate that affects your repository vigilyx/gateway.
+
+Vulnerability Details:
+  CVE ID: CVE-2026-45912
+  CVSS: 9.8 CRITICAL
+  Component: tower-lsp (LSP server framework)
+  Affected: 0.20.0 - 0.20.1
+  Fixed: 0.20.2 (2026-10-25)
+  CWE: CWE-94 (Improper Control of Code Generation)
+  Exploit Status: Known exploited in the wild
+  Your Exposure: vigilyx/gateway uses tower-lsp 0.20.1
+
+Technical Description:
+  Format string injection via crafted LSP initialize request
+  rootUri field. Allows arbitrary memory read/write and code
+  execution when tower-lsp processes the malicious URI.
+
+Impact:
+  tower-lsp 0.20.1 in vigilyx/gateway: VULNERABLE
+
+Required Action:
+
+  1. Verify your exposure by reviewing your Cargo.lock:
+     grep tower-lsp Cargo.lock
+
+  2. Update dependencies:
+     # Cargo.toml
+     [dependencies]
+     tower-lsp = "0.20.2"
+
+     # Then:
+     cargo update -p tower-lsp
+
+  3. Block untrusted LSP connections until updated
+
+  To verify this advisory:
+  Navigate to nvd.nist.gov/vuln/detail/CVE-2026-45912
+  in your browser (type the URL manually).
+
+  Important Security Notes:
+  NVD/NIST will NEVER:
+  - Ask you to submit source code for "automated CVE scanning"
+  - Use GitHub device authorization to access private repos
+  - Send device codes or OAuth authorization via email
+  - Offer a "Chinese advisory channel" for code submission
+  - Request offline_access or any OAuth scope
+
+  NVD is a vulnerability DATABASE — it indexes CVEs but does
+  NOT scan private code. If you receive an email asking you
+  to "submit code for CVE impact scanning" with a device
+  code, it is a phishing attempt targeting the named CVE.
+
+  To check if your code is affected:
+  1. Review your Cargo.lock manually
+  2. Use cargo audit (install: cargo install cargo-audit)
+  3. Check GitHub's Dependabot alerts (on github.com, navigate
+     to your repo → Security → Dependabot alerts)
+
+Known Exploitation:
+  Malicious .vscode/settings.json configurations
+  Compromised IDE extensions
+  CI/CD pipelines with untrusted language servers
+
+References:
+  NVD: nvd.nist.gov/vuln/detail/CVE-2026-45912
+  GitHub Advisory: github.com/ebkalderon/tower-lsp/security
+  Project Zero: projectzero.google/blog (navigate manually)
+
+NIST | National Vulnerability Database
+100 Bureau Drive, Gaithersburg, MD 20899
+You are receiving this because NVD monitors public repositories.

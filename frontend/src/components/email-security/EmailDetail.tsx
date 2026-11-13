@@ -1,20 +1,88 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useLocation, useParams, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import type { EmailSession, ApiResponse, SecurityVerdict, ModuleResult } from '../../types'
 import { decodeMimeWord } from '../../utils/mime'
 import { formatBytes, formatClockTime, formatDateFull, getFileIcon, isEncryptedPort } from '../../utils/format'
 import { apiFetch } from '../../utils/api'
+import { PRIVACY_LEASE_HEADER, usePrivacyAccess } from '../../hooks/usePrivacyAccess'
+import { usePrivacyPolicy } from '../../hooks/usePrivacyPolicy'
+import { PrivacyAccessPanel } from '../privacy/PrivacyAccessPanel'
+import { EVENTS } from '../../utils/events'
 import { buildEmailPreviewDoc } from '../../utils/emailHtml'
 import SecurityAnalysisView, { RadarChart, isModuleUnavailable } from './SecurityAnalysisView'
+import FeedbackPanel from './FeedbackPanel'
+import { categoryLabel, classificationLabel, threatTypeLabel } from './categoryLabels'
+
+const EMAIL_PRIVACY_SCOPES = ['body', 'html', 'headers', 'verdict', 'attachment_download', 'eml_download'] as const
 
 const MAX_ATTACHMENT_DOWNLOAD_BYTES = 25 * 1024 * 1024
+const RESCAN_POLL_INTERVAL_MS = 500
+const RESCAN_MAX_WAIT_MS = 15_000
+
+type EmailSecurityData = {
+  verdict: SecurityVerdict | null
+  results: ModuleResult[]
+}
+
+/**
+ * A rescan is queued asynchronously. Keep the two read paths independent so
+ * a temporarily unavailable legacy verdict cannot hide fresh module results.
+ */
+async function fetchEmailSecurity(
+  id: string,
+  headers?: HeadersInit,
+  signal?: AbortSignal,
+): Promise<EmailSecurityData> {
+  const fetchVerdict = async (): Promise<SecurityVerdict | null> => {
+    try {
+      const response = await apiFetch(`/api/sessions/${id}/verdict`, { signal, headers })
+      const data: ApiResponse<SecurityVerdict> = await response.json()
+      return data.success && data.data ? data.data : null
+    } catch { return null }
+  }
+
+  const fetchResults = async (): Promise<ModuleResult[]> => {
+    try {
+      const response = await apiFetch(`/api/sessions/${id}/security-results`, { signal, headers })
+      const data: ApiResponse<ModuleResult[]> = await response.json()
+      return data.success ? normalizeModuleResults(data.data) : []
+    } catch { return [] }
+  }
+
+  const [verdict, results] = await Promise.all([fetchVerdict(), fetchResults()])
+  return { verdict, results }
+}
+
+/**
+ * Keep the security view renderable when an older API or a partial response
+ * omits optional module fields. Privacy mode no longer redacts this endpoint,
+ * but normalizing at the response boundary keeps the detail page resilient.
+ */
+export function normalizeModuleResults(value: unknown): ModuleResult[] {
+  if (!Array.isArray(value)) return []
+
+  return value
+    .filter((item): item is Record<string, unknown> => (
+      Boolean(item) && typeof item === 'object' && !Array.isArray(item)
+    ))
+    .map(item => ({
+      ...item,
+      categories: Array.isArray(item.categories)
+        ? item.categories.filter((category): category is string => typeof category === 'string')
+        : [],
+      evidence: Array.isArray(item.evidence) ? item.evidence : [],
+      details: item.details && typeof item.details === 'object' && !Array.isArray(item.details)
+        ? item.details
+        : {},
+    }) as ModuleResult)
+}
 
 export default function EmailDetail() {
   const { t } = useTranslation()
   const { id } = useParams<{ id: string }>()
   const location = useLocation()
-  const [session, setSession] = useState<EmailSession | null>(null)
+  const [sessionSnapshot, setSession] = useState<{ key: string; data: EmailSession } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'content' | 'headers' | 'attachments' | 'smtp-dialog' | 'security'>('content')
@@ -22,18 +90,70 @@ export default function EmailDetail() {
   const [expandedModules, setExpandedModules] = useState<Set<string> | null>(null)
   const [verdict, setVerdict] = useState<SecurityVerdict | null>(null)
   const [moduleResults, setModuleResults] = useState<ModuleResult[]>([])
-  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false)
-  const [feedbackDone, setFeedbackDone] = useState(false)
-  const [feedbackType, setFeedbackType] = useState<'legitimate' | 'phishing' | 'spoofing' | 'social_engineering' | 'other_threat' | null>(null)
-  const [feedbackComment, setFeedbackComment] = useState('')
-  const [rescanStatus, setRescanStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
+  const [rescanStatus, setRescanStatus] = useState<'idle' | 'loading' | 'analyzing' | 'done' | 'error'>('idle')
   const [whitelistStatus, setWhitelistStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
   const [copiedLinkIndex, setCopiedLinkIndex] = useState<number | null>(null)
+  const privacyAccess = usePrivacyAccess(id ? { resource_type: 'session', resource_id: id } : null)
+  const privacyPolicy = usePrivacyPolicy()
+  const authorizationKey = JSON.stringify([
+    id, privacyPolicy.enabled, privacyPolicy.loading, privacyPolicy.error,
+    privacyAccess.error, privacyAccess.lease?.lease_handle,
+    privacyAccess.lease?.expires_at, privacyAccess.lease?.scopes,
+  ])
+  // Hide the old DOM in this render, before an effect or replacement request
+  // can run. A failed refresh must not leave a previous plaintext snapshot.
+  const session = sessionSnapshot?.key === authorizationKey ? sessionSnapshot.data : null
+  const currentAuthorizationKey = useRef(authorizationKey)
+  currentAuthorizationKey.current = authorizationKey
+  const privacyHeaders = useMemo(
+    () => privacyAccess.lease?.lease_handle
+      ? { [PRIVACY_LEASE_HEADER]: privacyAccess.lease.lease_handle }
+      : undefined,
+    [privacyAccess.lease?.lease_handle],
+  )
+  const rescanStatusRef = useRef(rescanStatus)
+  const rescanRunRef = useRef(0)
+  const rescanCompletedRef = useRef(false)
+  const rescanPreviousVerdictIdRef = useRef<string | undefined>(undefined)
+  const rescanActiveRef = useRef(false)
+  const rescanResetTimerRef = useRef<number | null>(null)
+  const mountedRef = useRef(true)
   const fromSearch = new URLSearchParams(location.search).get('from') || ''
   const listSearch = fromSearch.startsWith('?') ? fromSearch : fromSearch ? `?${fromSearch}` : ''
   const backToList = `/emails${listSearch}`
   const detailLink = (sessionId: string) =>
     `/emails/${sessionId}${fromSearch ? `?from=${encodeURIComponent(listSearch)}` : ''}`
+
+  useEffect(() => {
+    rescanStatusRef.current = rescanStatus
+  }, [rescanStatus])
+
+  useEffect(() => () => {
+    mountedRef.current = false
+    rescanRunRef.current += 1
+    if (rescanResetTimerRef.current) window.clearTimeout(rescanResetTimerRef.current)
+  }, [])
+
+  const refreshSecurity = useCallback(async (signal?: AbortSignal) => {
+    if (!id) return null
+    const security = await fetchEmailSecurity(id, privacyHeaders, signal)
+    if (!mountedRef.current || signal?.aborted || currentAuthorizationKey.current !== authorizationKey) return null
+    if (security.verdict) setVerdict(security.verdict)
+    setModuleResults(security.results)
+    return security
+  }, [id, privacyHeaders, authorizationKey])
+
+  const reportRescanStatus = useCallback((status: 'done' | 'error', runId: number) => {
+    if (!mountedRef.current || runId !== rescanRunRef.current) return
+    rescanActiveRef.current = false
+    setRescanStatus(status)
+    if (rescanResetTimerRef.current) window.clearTimeout(rescanResetTimerRef.current)
+    rescanResetTimerRef.current = window.setTimeout(() => {
+      if (mountedRef.current && rescanRunRef.current === runId) setRescanStatus('idle')
+      rescanResetTimerRef.current = null
+    }, 2500)
+  }, [])
 
   const THREAT_CN: Record<string, string> = {
     safe: t('emailSecurity.threat_safe'), low: t('emailSecurity.threat_low'), medium: t('emailSecurity.threat_medium'), high: t('emailSecurity.threat_high'), critical: t('emailSecurity.threat_critical'),
@@ -42,24 +162,38 @@ export default function EmailDetail() {
   useEffect(() => {
     if (!id) return
 
+    setSession(null)
+    setVerdict(null)
+    setModuleResults([])
+    setRelatedSessions([])
+    setError(null)
+    setLoading(true)
+    if (privacyPolicy.loading) return
+    if (privacyPolicy.error) {
+      setError(t('emailSecurity.networkError'))
+      setLoading(false)
+      return
+    }
+
     const controller = new AbortController()
     const signal = controller.signal
 
     const fetchData = async () => {
       try {
         // 1. Fetch session details first because they determine whether the page can render
-        const sessionRes = await apiFetch(`/api/sessions/${id}`, { signal })
+        const sessionRes = await apiFetch(`/api/sessions/${id}`, { signal, headers: privacyHeaders })
         const sessionData: ApiResponse<EmailSession> = await sessionRes.json()
+        if (signal.aborted || currentAuthorizationKey.current !== authorizationKey) return
 
         if (!sessionData.success || !sessionData.data) {
           setError(t('emailSecurity.cannotLoadSession'))
           return
         }
-        setSession(sessionData.data)
+        setSession({ key: authorizationKey, data: sessionData.data })
         // End the loading state as early as possible so the page can render sooner
         setLoading(false)
 
-        if (signal.aborted) return
+        if (signal.aborted || currentAuthorizationKey.current !== authorizationKey) return
 
         // 2. Load the remaining data in parallel without blocking the main page render
         const fetchRelated = async () => {
@@ -70,38 +204,54 @@ export default function EmailDetail() {
           } catch { return [] }
         }
 
-        const fetchSecurity = async () => {
-          try {
-            const [vRes, rRes] = await Promise.all([
-              apiFetch(`/api/sessions/${id}/verdict`, { signal }),
-              apiFetch(`/api/sessions/${id}/security-results`, { signal }),
-            ])
-            const vData: ApiResponse<SecurityVerdict> = await vRes.json()
-            const rData: ApiResponse<ModuleResult[]> = await rRes.json()
-            return {
-              verdict: vData.success && vData.data ? vData.data : null,
-              results: rData.success && rData.data ? rData.data : [],
-            }
-          } catch { return { verdict: null, results: [] as ModuleResult[] } }
-        }
-
-        const [related, security] = await Promise.all([fetchRelated(), fetchSecurity()])
-        if (signal.aborted) return
+        const [related, security] = await Promise.all([
+          fetchRelated(),
+          fetchEmailSecurity(id, privacyHeaders, signal),
+        ])
+        if (signal.aborted || currentAuthorizationKey.current !== authorizationKey) return
         setRelatedSessions(related)
         if (security.verdict) setVerdict(security.verdict)
-        if (security.results.length > 0) setModuleResults(security.results)
+        setModuleResults(security.results)
       } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') return
+        if (signal.aborted || currentAuthorizationKey.current !== authorizationKey || (err instanceof DOMException && err.name === 'AbortError')) return
+        setSession(null)
         setError(t('emailSecurity.networkError'))
       } finally {
-        if (!signal.aborted) setLoading(false)
+        if (!signal.aborted && currentAuthorizationKey.current === authorizationKey) setLoading(false)
       }
     }
 
     fetchData()
 
     return () => controller.abort()
-  }, [id, t])
+  }, [id, authorizationKey, t])
+
+  // The engine emits a compact verdict only after the new result is persisted.
+  // Use it as the fast path, then reload the full verdict and module evidence.
+  useEffect(() => {
+    if (!id) return
+
+    const onSecurityVerdict = (event: Event) => {
+      const detail = (event as CustomEvent<{ session_id?: unknown }>).detail
+      if (!detail || detail.session_id !== id) return
+      const wasRescanning = rescanActiveRef.current
+        || rescanStatusRef.current === 'loading'
+        || rescanStatusRef.current === 'analyzing'
+      const eventRunId = rescanRunRef.current
+      void refreshSecurity().then(security => {
+        const isFreshVerdict = Boolean(
+          security?.verdict && security.verdict.id !== rescanPreviousVerdictIdRef.current,
+        )
+        if (wasRescanning && isFreshVerdict && eventRunId === rescanRunRef.current) {
+          rescanCompletedRef.current = true
+          reportRescanStatus('done', eventRunId)
+        }
+      })
+    }
+
+    window.addEventListener(EVENTS.SECURITY_VERDICT, onSecurityVerdict)
+    return () => window.removeEventListener(EVENTS.SECURITY_VERDICT, onSecurityVerdict)
+  }, [id, refreshSecurity, reportRescanStatus])
 
   // Accordion: expand alert modules by default
   useEffect(() => {
@@ -155,27 +305,53 @@ export default function EmailDetail() {
   }
 
   const handleRescan = async () => {
-    if (!id || rescanStatus === 'loading') return
+    if (!id || rescanStatus === 'loading' || rescanStatus === 'analyzing') return
+    const runId = rescanRunRef.current + 1
+    rescanRunRef.current = runId
+    rescanCompletedRef.current = false
+    rescanActiveRef.current = true
+    const previousVerdictId = verdict?.id
+    rescanPreviousVerdictIdRef.current = previousVerdictId
     setRescanStatus('loading')
     try {
       const res = await apiFetch(`/api/sessions/${id}/rescan`, { method: 'POST' })
       const data: ApiResponse<{ status?: string }> = await res.json()
       if (!data.success) throw new Error(data.error || 'Rescan rejected')
-      setRescanStatus('done')
+
+      // POST only means that Redis accepted the job. Do not claim completion
+      // until a newer verdict is visible in the database.
+      // A very fast engine can publish the verdict before this POST returns.
+      // Preserve the terminal state instead of overwriting it with analyzing.
+      if (rescanCompletedRef.current) {
+        reportRescanStatus('done', runId)
+        return
+      }
+      setRescanStatus('analyzing')
+      const deadline = Date.now() + RESCAN_MAX_WAIT_MS
+      while (Date.now() < deadline && !rescanCompletedRef.current) {
+        await new Promise(resolve => window.setTimeout(resolve, RESCAN_POLL_INTERVAL_MS))
+        if (runId !== rescanRunRef.current || !mountedRef.current) return
+        const security = await refreshSecurity()
+        if (security?.verdict && security.verdict.id !== previousVerdictId) {
+          rescanCompletedRef.current = true
+          reportRescanStatus('done', runId)
+          return
+        }
+      }
+      if (!rescanCompletedRef.current) reportRescanStatus('error', runId)
     } catch (err) {
       console.error('Rescan failed:', err)
-      setRescanStatus('error')
-    } finally {
-      window.setTimeout(() => setRescanStatus('idle'), 2500)
+      reportRescanStatus('error', runId)
     }
   }
 
   const downloadAttachment = async (index: number, filename: string) => {
     if (!id) return
     try {
-      const res = await apiFetch(`/api/sessions/${id}/attachments/${index}`)
+      const res = await apiFetch(`/api/sessions/${id}/attachments/${index}`, { headers: privacyHeaders })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const blob = await res.blob()
+      if (currentAuthorizationKey.current !== authorizationKey) return
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -187,7 +363,7 @@ export default function EmailDetail() {
     }
   }
 
-  if (loading) {
+  if (loading || (!session && !error)) {
     return (
       <div className="email-detail-loading">
         <div className="spinner"></div>
@@ -226,7 +402,14 @@ export default function EmailDetail() {
   const headerCount = session.content?.headers?.length || 0
   const linkCount = displayContent?.links?.length || 0
   const suspiciousLinkCount = displayContent?.links?.filter(l => l.suspicious).length || 0
-  const inspectionIncomplete = session.status === 'completed' && displayContent?.is_complete === false
+  const inspectionIncomplete = verdict?.inspection_coverage === 'limited'
+    || verdict?.categories.some(category =>
+      ['inspection_incomplete', 'inspection_coverage_incomplete', 'inspection_execution_incomplete', 'inspection_quarantine_required', 'inspection_dependency_unavailable'].includes(category),
+    )
+    || (session.status === 'completed' && displayContent?.is_complete === false)
+  const operationalAlert = moduleResults.some(
+    module => module.module_id === 'link_scan' && module.details?.operational_alert === true,
+  )
   const fallbackRiskByThreat: Record<string, number> = {
     safe: 0,
     low: 0.2,
@@ -237,6 +420,14 @@ export default function EmailDetail() {
   const riskPct = verdict
     ? Math.round((verdict.fusion_details?.risk_single ?? fallbackRiskByThreat[verdict.threat_level] ?? 0) * 100)
     : 0
+  // Safe verdicts can still carry auditable observation categories (for
+  // example invoice_spam, first_contact, or random_sender). Keep these
+  // visible at the top of the detail page so "safe" is not mistaken for
+  // "nothing was inspected"; the copy explicitly avoids changing threat
+  // semantics or disposition.
+  const observationCategories = verdict?.threat_level === 'safe'
+    ? verdict.categories.filter(category => category.trim().length > 0)
+    : []
   const safeHtmlPreview = displayContent?.body_html
     ? buildEmailPreviewDoc(displayContent.body_html)
     : ''
@@ -249,19 +440,8 @@ export default function EmailDetail() {
     return cmd
   }
 
-  const senderShort = (session.mail_from || t('emailSecurity.unknown')).split('@')[0]
-
   return (
     <div className="email-detail-page">
-      {/* Breadcrumb navigation */}
-      <nav className="ed-breadcrumb">
-        <Link to={backToList} className="ed-bc-link">{t('emailSecurity.breadcrumbSecurity')}</Link>
-        <span className="ed-bc-sep">/</span>
-        <Link to={backToList} className="ed-bc-link">{t('emailSecurity.breadcrumbList')}</Link>
-        <span className="ed-bc-sep">/</span>
-        <span className="ed-bc-current" title={session.mail_from || ''}>{senderShort}</span>
-      </nav>
-
       {/* === Two-column layout === */}
       <div className="ed-layout">
 
@@ -290,11 +470,21 @@ export default function EmailDetail() {
             {verdict && (
               <>
                 <span className={`ed-threat-tag ed-threat--${verdict.threat_level}`}>
-                  {THREAT_CN[verdict.threat_level] || verdict.threat_level}
+                  {verdict.threat_level === 'safe' && (inspectionIncomplete || verdict.fusion_details?.primary_result?.epistemic_state === 'unknown') ? t('emailSecurity.threatUncertain') : THREAT_CN[verdict.threat_level] || verdict.threat_level}
                 </span>
                 <span className="ed-risk-tag">
                   {t('emailSecurity.overallRisk')} {riskPct}%
                 </span>
+                {threatTypeLabel(verdict.threat_type) && (
+                  <span className="ed-risk-tag">
+                    {t('emailSecurity.threatTypeLabel')}: {threatTypeLabel(verdict.threat_type)}
+                  </span>
+                )}
+                {classificationLabel(verdict.classification) && (
+                  <span className="ed-risk-tag">
+                    {t('emailSecurity.classificationLabel')}: {classificationLabel(verdict.classification)}
+                  </span>
+                )}
               </>
             )}
             <span className={`protocol-badge ${session.protocol.toLowerCase()}`}>{session.protocol}</span>
@@ -302,6 +492,32 @@ export default function EmailDetail() {
               {session.status === 'active' ? t('emailSecurity.statusActive') : session.status === 'completed' ? t('emailSecurity.statusCompleted') : session.status === 'timeout' ? t('emailSecurity.statusTimeout') : t('emailSecurity.statusError')}
             </span>
           </div>
+
+          {observationCategories.length > 0 && (
+            <div
+              data-testid="observation-signals"
+              style={{
+                marginTop: 10,
+                padding: '8px 10px',
+                borderRadius: 6,
+                border: '1px solid rgba(96,165,250,0.28)',
+                background: 'rgba(59,130,246,0.07)',
+                color: 'rgba(255,255,255,0.58)',
+                fontSize: 11,
+                lineHeight: 1.5,
+              }}
+            >
+              <div style={{ color: '#93c5fd', fontWeight: 600 }}>
+                {t('emailSecurity.observationSignalsTitle')}
+              </div>
+              <div style={{ marginTop: 3 }}>
+                {observationCategories.map(categoryLabel).join('、')}
+              </div>
+              <div style={{ marginTop: 3, color: 'rgba(255,255,255,0.38)' }}>
+                {t('emailSecurity.observationSignalsAdvisory')}
+              </div>
+            </div>
+          )}
 
           <div className="ed-meta-list">
             <div className="ed-meta-item">
@@ -364,6 +580,12 @@ export default function EmailDetail() {
               <div>{t('emailSecurity.inspectionIncompleteMessage')}</div>
             </div>
           )}
+          {operationalAlert && (
+            <div className="ed-banner ed-banner--info" role="status">
+              <strong>{t('emailSecurity.operationalAlertTitle')}</strong>
+              <div>{t('emailSecurity.operationalAlertMessage')}</div>
+            </div>
+          )}
 
           {/* Content navigation */}
           <nav className="ed-nav">
@@ -402,6 +624,14 @@ export default function EmailDetail() {
 
         {/* -- Right side: tabs + content -- */}
         <div className="ed-main">
+
+      {session.privacy?.state === 'redacted' && id && (
+        <PrivacyAccessPanel
+          resource={{ resource_type: 'session', resource_id: id }}
+          defaultScopes={[...EMAIL_PRIVACY_SCOPES]}
+          onLeaseReady={() => void privacyAccess.refresh()}
+        />
+      )}
 
       {/* Tab navigation */}
       <div className="detail-tabs">
@@ -450,41 +680,9 @@ export default function EmailDetail() {
         <div className="detail-tabs-sep" />
         {/* Right-side actions */}
         <div className="detail-tab-actions">
-          {/* Feedback button group - click once to submit */}
-          {!feedbackDone && (
-            <div className="ed-fb-inline">
-              {([
-                ['legitimate', t('emailSecurity.feedbackLegitimate')],
-                ['phishing', t('emailSecurity.feedbackPhishing')],
-                ['spoofing', t('emailSecurity.feedbackSpoofing')],
-                ['social_engineering', t('emailSecurity.feedbackSocialEng')],
-                ['other_threat', t('emailSecurity.feedbackOther')],
-              ] as const).map(([val, label]) => (
-                <button
-                  key={val}
-                  className={`ed-fb-btn ${feedbackType === val ? 'ed-fb-btn--active' : ''}`}
-                  disabled={feedbackSubmitting}
-                  onClick={async () => {
-                    setFeedbackType(val)
-                    setFeedbackSubmitting(true)
-                    try {
-                      const resp = await apiFetch(`/api/sessions/${id}/feedback`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ feedback_type: val, comment: feedbackComment || null }),
-                      })
-                      if (resp.ok) setFeedbackDone(true)
-                    } catch (e) {
-                      console.error('Failed to submit feedback:', e)
-                    } finally {
-                      setFeedbackSubmitting(false)
-                    }
-                  }}
-                >{label}</button>
-              ))}
-            </div>
-          )}
-          {feedbackDone && <span className="ed-fb-done">{t('emailSecurity.feedbackDone')}: {feedbackType === 'legitimate' ? t('emailSecurity.feedbackLegitimate') : feedbackType === 'phishing' ? t('emailSecurity.feedbackPhishing') : feedbackType === 'spoofing' ? t('emailSecurity.feedbackSpoofing') : feedbackType === 'social_engineering' ? t('emailSecurity.feedbackSocialEng') : t('emailSecurity.feedbackOther')}</span>}
+          <button className="ed-fb-btn" onClick={() => setFeedbackOpen(true)}>
+            {t('emailSecurity.feedbackReviewAction')}
+          </button>
           <button
             className={`ed-rescan-btn ed-rescan-btn--${rescanStatus}`}
             disabled={rescanStatus === 'loading'}
@@ -492,7 +690,8 @@ export default function EmailDetail() {
             title={t('emailSecurity.rescanTitle')}
           >
             {rescanStatus === 'idle' && t('emailSecurity.rescanIdle')}
-            {rescanStatus === 'loading' && '...'}
+            {rescanStatus === 'loading' && t('emailSecurity.rescanSubmitting')}
+            {rescanStatus === 'analyzing' && t('emailSecurity.rescanAnalyzing')}
             {rescanStatus === 'done' && t('emailSecurity.rescanDone')}
             {rescanStatus === 'error' && t('emailSecurity.rescanError')}
           </button>
@@ -523,11 +722,10 @@ export default function EmailDetail() {
             className="detail-tab ed-eml-btn"
             onClick={async () => {
               try {
-                const res = await fetch(`/api/sessions/${id}/eml`, {
-                  credentials: 'same-origin',
-                })
+                const res = await apiFetch(`/api/sessions/${id}/eml`, { headers: privacyHeaders })
                 if (!res.ok) throw new Error(`HTTP ${res.status}`)
                 const blob = await res.blob()
+                if (currentAuthorizationKey.current !== authorizationKey) return
                 const url = URL.createObjectURL(blob)
                 const a = document.createElement('a')
                 a.href = url
@@ -544,6 +742,9 @@ export default function EmailDetail() {
           </button>
         </div>
       </div>
+
+      {id && <FeedbackPanel key={id} sessionId={id} verdict={verdict} open={feedbackOpen}
+        onClose={() => setFeedbackOpen(false)} onRefreshVerdict={refreshSecurity} />}
 
       {/* Content area */}
       <div className="detail-content">
@@ -819,27 +1020,7 @@ export default function EmailDetail() {
             moduleResults={moduleResults}
             expandedModules={expandedModules}
             toggleModuleExpand={toggleModuleExpand}
-            feedbackDone={feedbackDone}
-            feedbackType={feedbackType}
-            feedbackComment={feedbackComment}
-            feedbackSubmitting={feedbackSubmitting}
-            setFeedbackType={setFeedbackType}
-            setFeedbackComment={setFeedbackComment}
-            submitFeedback={async () => {
-              setFeedbackSubmitting(true)
-              try {
-                const resp = await apiFetch(`/api/sessions/${id}/feedback`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ feedback_type: feedbackType, comment: feedbackComment || null }),
-                })
-                if (resp.ok) setFeedbackDone(true)
-              } catch (e) {
-                console.error('Failed to submit feedback:', e)
-              } finally {
-                setFeedbackSubmitting(false)
-              }
-            }}
+            onOpenFeedback={() => setFeedbackOpen(true)}
           />
         )}
         {/* old security analysis code removed */}

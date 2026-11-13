@@ -1,0 +1,10 @@
+From: =?utf-8?B?5Lqa5py1?= <booking@atour.example>
+To: me@personal.example
+Date: Mon, 07 Sep 2026 09:37:00 +0800
+Message-ID: <0027-b15@synth.example>
+Subject: 预订确认：杭州西湖店 9/12-9/13
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>订单已确认，到店付 ¥429。</p><p><a href='https://www.atour-example.com/order/9917' style='color:#0084ff'>订单详情</a></p><p style='font-size:12px'>18:00 后到店请备注。</p></body></html>

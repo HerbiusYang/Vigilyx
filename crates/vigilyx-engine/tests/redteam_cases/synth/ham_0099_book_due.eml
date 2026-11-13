@@ -1,0 +1,11 @@
+From: =?utf-8?B?5Zu+5Lmm6aaG?= <lib@corp.internal>
+To: dev@corp.internal
+Date: Fri, 28 Aug 2026 14:48:00 +0800
+Message-ID: <0038-b5@synth.example>
+Subject: 借阅到期提醒（2 本）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+《Designing Data-Intensive Applications》明日到期，
+内网续借入口：https://portal.corp.internal/lib
+逾期一天扣部门积分。

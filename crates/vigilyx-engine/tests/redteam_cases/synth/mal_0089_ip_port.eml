@@ -1,0 +1,10 @@
+From: =?utf-8?B?5oql6KGo5bmz5Y+w?= <bi@corp-bi.example>
+To: analyst@corp.internal
+Date: Fri, 28 Aug 2026 14:18:00 +0800
+Message-ID: <0008-b5@synth.example>
+Subject: 报表平台迁移临时入口
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+新报表平台灰度入口（临时）：http://203.0.113.60:8081/bi
+用 BI 账号+密码登录，稳定后统一跳转。

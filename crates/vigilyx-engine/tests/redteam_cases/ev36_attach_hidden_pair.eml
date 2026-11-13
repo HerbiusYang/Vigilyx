@@ -1,0 +1,19 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev36@partner.example>
+Subject: 邮箱安全验证提醒
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+您好，请打开附件查看详情。--BS
+Content-Type: text/html
+Content-Disposition: attachment; filename="notice.html"
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGhlYWQ+PHN0eWxlPi54e2Rpc3BsYXk6bm9uZX08L3N0eWxlPjwvaGVhZD48Ym9keT48cD7lsIrmlaznmoTnlKjmiLfvvJrmgqjnmoTotKY8c3BhbiBjbGFzcz14PmtxPC9zcGFuPuaIt+WtmOWcqOW8gjxzcGFuIGNsYXNzPXg+dGI8L3NwYW4+5bi477yM6K+356uLPHNwYW4gY2xhc3M9eD51ajwvc3Bhbj7ljbPnmbs8c3BhbiBjbGFzcz14PnZtPC9zcGFuPuW9lemqjDxzcGFuIGNsYXNzPXg+eW48L3NwYW4+6K+B6Lqr5Lu944CCPC9wPjxwPjxhIGhyZWY9J2h0dHA6Ly8yMDMuMC4xMTMuNjAvdmVyaWZ5L2xvZ2luJz5odHRwOi8vMjAzLjAuMTEzLjYwL3ZlcmlmeS9sb2dpbjwvYT48L3A+PC9ib2R5PjwvaHRtbD4=
+--BS--
+

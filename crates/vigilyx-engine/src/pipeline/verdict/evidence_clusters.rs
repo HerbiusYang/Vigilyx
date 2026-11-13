@@ -1,11 +1,19 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, OnceLock, RwLock};
 
+use crate::semantic::is_current_recipient_action;
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use vigilyx_core::models::EmailSession;
-use vigilyx_core::security::ModuleResult;
+use vigilyx_core::security::{
+    Bpa, EmailClassification, ModuleResult, SemanticClaim, classify_email_classification,
+};
 
 use crate::config::VerdictConfig;
 use crate::modules::content_scan::{EffectiveKeywordLists, normalize_keyword_list};
+
+const ENGINE_MODULE_DATA_SEED_JSON: &str =
+    include_str!("../../../../../shared/schemas/engine_module_data_seed.json");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum EvidenceClusterId {
@@ -41,19 +49,6 @@ impl EvidenceClusterId {
             Self::ExternalReputationIoc => "external_reputation_ioc",
             Self::SocialEngineeringIntent => "social_engineering_intent",
             Self::BusinessSensitivity => "business_sensitivity",
-        }
-    }
-
-    pub const fn display_name(self) -> &'static str {
-        match self {
-            Self::InheritedGatewayPrior => "Inherited Gateway Prior",
-            Self::DeliveryIntegrity => "Delivery Integrity",
-            Self::SenderIdentityAuthenticity => "Sender Identity Authenticity",
-            Self::LinkAndHtmlDeception => "Link and HTML Deception",
-            Self::PayloadMalware => "Payload Malware",
-            Self::ExternalReputationIoc => "External Reputation and IOC",
-            Self::SocialEngineeringIntent => "Social Engineering Intent",
-            Self::BusinessSensitivity => "Business Sensitivity",
         }
     }
 
@@ -97,32 +92,73 @@ impl EvidenceClusterId {
     }
 }
 
+/// A single admitted source view. Preserve the score/confidence pair from
+/// its producer; a cluster's aggregate is diagnostic, not a vote for each key.
+#[derive(Debug, Clone)]
+pub struct CausalAtom {
+    pub causal_key: String,
+    pub score: f64,
+    pub confidence: f64,
+    pub breaker_eligible: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct ClusterEvidence {
     pub id: EvidenceClusterId,
     pub score: f64,
+    // Aggregate diagnostics are retained only for normalizer regression tests.
+    // Runtime constraints consume the attributed causal atoms below.
+    #[cfg(test)]
     pub confidence: f64,
     /// Whether this cluster contains an independently strong signal allowed
     /// to activate the generic hard risk-floor circuit breaker.
+    #[cfg(test)]
     pub breaker_eligible: bool,
+    /// Stable causes represented by this cluster.  URL heuristics that point
+    /// at the same target share one key, so DGA/path/TLD/intel aliases cannot
+    /// manufacture independent convergence evidence.
+    #[cfg(test)]
+    pub causal_keys: Vec<String>,
+    pub causal_atoms: Vec<CausalAtom>,
+    #[cfg(test)]
     pub modules: Vec<String>,
+    #[cfg(test)]
     pub key_factors: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct ScenarioContext {
     pub tags: Vec<String>,
+    /// Content compounds whose actor/action/target relation and distinct
+    /// source keys survived semantic admission. Labels alone cannot arm floors.
+    pub qualified_content_compounds: BTreeSet<String>,
+    /// Positive native categories that passed producer and runtime admission.
+    /// Raw observations are retained separately and cannot arm risk floors.
+    pub admitted_categories: BTreeSet<String>,
+    pub qualified_link_compounds: BTreeSet<String>,
+    /// Account content that actually contributed an admitted fusion signal.
+    /// Retained subject-only observations cannot arm the account floors.
+    pub has_admitted_content_account_signal: bool,
+    /// One admitted recipient-action/target/brand relation. Its derivative
+    /// categories are aliases of this native compound, not independent votes.
+    pub qualified_credential_brand_target: bool,
     pub gateway_banner_polluted: bool,
     pub notice_banner_polluted: bool,
     pub dsn_like_system_mail: bool,
     pub auto_reply_like: bool,
     pub semantic_nlp_only_signal: bool,
     pub transcript_like_structure: bool,
+    /// A weak image-only layout observation retained as zero-weight context.
+    /// It becomes actionable only when qualified link categories corroborate it.
+    pub image_only_layout_observed: bool,
     pub sender_alignment_verified: bool,
     pub has_header_spoof_signal: bool,
     pub has_payment_change_signal: bool,
     pub has_account_security_signal: bool,
     pub has_credential_link_signal: bool,
+    pub has_high_risk_credential_target_signal: bool,
+    pub has_brand_sender_target_mismatch_signal: bool,
+    pub has_gateway_unwrapped_risky_target_signal: bool,
     pub has_malicious_ioc_signal: bool,
     pub has_subsidy_fraud_signal: bool,
     pub has_invoice_spam_signal: bool,
@@ -131,10 +167,142 @@ pub struct ScenarioContext {
     pub has_attachment_sensitive_data_signal: bool,
     pub has_high_risk_attachment_content: bool,
     /// Structural threat signals independent of NLP/banner text pollution.
-    /// Includes: DGA domains, brand impersonation, domain mismatches,
-    /// suspicious TLDs, language inconsistency, attachment type mismatches.
+    /// Weak URL shape, tracking, redirect, and port observations are kept
+    /// out; strong impersonation and qualified target signals remain here.
     pub has_structural_threat_signal: bool,
     pub alignment_score: f64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ImageOnlyPhishingMediumPolicy {
+    pub enabled: bool,
+    pub trigger_category: String,
+    pub minimum_social_score: f64,
+    pub verdict_floor: f64,
+    pub require_unverified_sender: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct HighConfidenceLinkImpersonationPolicy {
+    pub enabled: bool,
+    pub trigger_categories: Vec<String>,
+    pub verdict_floor: f64,
+}
+
+fn parse_image_only_phishing_medium_policy(
+    value: serde_json::Value,
+) -> Option<ImageOnlyPhishingMediumPolicy> {
+    let policy = serde_json::from_value::<ImageOnlyPhishingMediumPolicy>(value).ok()?;
+    (policy.enabled
+        && !policy.trigger_category.trim().is_empty()
+        && (0.0..=1.0).contains(&policy.minimum_social_score)
+        && (0.40..=1.0).contains(&policy.verdict_floor))
+    .then_some(policy)
+}
+
+pub fn image_only_phishing_medium_policy() -> Option<ImageOnlyPhishingMediumPolicy> {
+    parse_image_only_phishing_medium_policy(
+        crate::module_data::module_data()
+            .get_structured("image_only_phishing_medium_policy_v1")?
+            .clone(),
+    )
+}
+
+fn parse_high_confidence_link_impersonation_policy(
+    value: serde_json::Value,
+) -> Option<HighConfidenceLinkImpersonationPolicy> {
+    let policy = serde_json::from_value::<HighConfidenceLinkImpersonationPolicy>(value).ok()?;
+    (policy.enabled
+        && !policy.trigger_categories.is_empty()
+        && policy
+            .trigger_categories
+            .iter()
+            .all(|category| !category.trim().is_empty())
+        && (0.40..=1.0).contains(&policy.verdict_floor))
+    .then_some(policy)
+}
+
+pub fn high_confidence_link_impersonation_policy() -> Option<HighConfidenceLinkImpersonationPolicy>
+{
+    parse_high_confidence_link_impersonation_policy(
+        crate::module_data::module_data()
+            .get_structured("high_confidence_link_impersonation_policy_v1")?
+            .clone(),
+    )
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ObfuscatedDomainLureVerdictPolicy {
+    pub enabled: bool,
+    pub result_category: String,
+    pub minimum_social_score: f64,
+    pub verdict_floor: f64,
+}
+
+fn parse_obfuscated_domain_lure_verdict_policy(
+    value: serde_json::Value,
+) -> Option<ObfuscatedDomainLureVerdictPolicy> {
+    let policy = serde_json::from_value::<ObfuscatedDomainLureVerdictPolicy>(value).ok()?;
+    (policy.enabled
+        && !policy.result_category.trim().is_empty()
+        && (0.0..=1.0).contains(&policy.minimum_social_score)
+        && (0.40..=1.0).contains(&policy.verdict_floor))
+    .then_some(policy)
+}
+
+pub fn obfuscated_domain_lure_verdict_policy() -> Option<ObfuscatedDomainLureVerdictPolicy> {
+    parse_obfuscated_domain_lure_verdict_policy(
+        crate::module_data::module_data()
+            .get_structured("obfuscated_domain_lure_policy_v1")?
+            .clone(),
+    )
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CredentialBrandTargetScenarioPolicy {
+    pub enabled: bool,
+    pub credential_link_category: String,
+    pub high_risk_target_category: String,
+    pub brand_mismatch_category: String,
+    pub credential_link_scale: f64,
+    pub brand_mismatch_scale: f64,
+    pub redirect_target_category: String,
+    pub redirect_target_scale: f64,
+    pub redirect_target_floor: f64,
+    pub minimum_redirect_link_score: f64,
+    pub verdict_floor: f64,
+    pub minimum_identity_score: f64,
+    pub minimum_link_score: f64,
+    pub minimum_social_score: f64,
+}
+
+fn parse_credential_brand_target_scenario_policy(
+    value: serde_json::Value,
+) -> Option<CredentialBrandTargetScenarioPolicy> {
+    let policy = serde_json::from_value::<CredentialBrandTargetScenarioPolicy>(value).ok()?;
+    (policy.enabled
+        && !policy.credential_link_category.trim().is_empty()
+        && !policy.high_risk_target_category.trim().is_empty()
+        && !policy.brand_mismatch_category.trim().is_empty()
+        && (0.0..=1.0).contains(&policy.credential_link_scale)
+        && (0.0..=1.0).contains(&policy.brand_mismatch_scale)
+        && !policy.redirect_target_category.trim().is_empty()
+        && (0.0..=1.0).contains(&policy.redirect_target_scale)
+        && (0.0..=1.0).contains(&policy.redirect_target_floor)
+        && (0.0..=1.0).contains(&policy.minimum_redirect_link_score)
+        && (0.0..=1.0).contains(&policy.verdict_floor)
+        && (0.0..=1.0).contains(&policy.minimum_identity_score)
+        && (0.0..=1.0).contains(&policy.minimum_link_score)
+        && (0.0..=1.0).contains(&policy.minimum_social_score))
+    .then_some(policy)
+}
+
+pub fn credential_brand_target_scenario_policy() -> Option<CredentialBrandTargetScenarioPolicy> {
+    parse_credential_brand_target_scenario_policy(
+        crate::module_data::module_data()
+            .get_structured("credential_brand_target_policy_v1")?
+            .clone(),
+    )
 }
 
 #[derive(Debug, Clone, Default)]
@@ -207,6 +375,7 @@ struct MappedSignal {
 struct FamilyAccumulator {
     score: f64,
     confidence: f64,
+    breaker_eligible: bool,
     categories: BTreeSet<String>,
     modules: BTreeSet<String>,
     factors: BTreeSet<String>,
@@ -214,10 +383,1136 @@ struct FamilyAccumulator {
 
 #[derive(Debug, Default)]
 struct ClusterAccumulator {
-    families: HashMap<&'static str, FamilyAccumulator>,
+    families: HashMap<String, FamilyAccumulator>,
     categories: BTreeSet<String>,
     modules: BTreeSet<String>,
     breaker_eligible: bool,
+}
+
+fn is_causally_deduplicated_url_signal(module_id: &str, category: &str) -> bool {
+    match module_id {
+        "link_content" => matches!(
+            category,
+            "suspicious_params"
+                | "targeted_credential_phishing"
+                | "dga_random_domain"
+                | "gateway_unwrapped_risky_target"
+                | "long_domain"
+                | "deep_subdomain"
+                | "random_domain"
+                | "suspicious_tld"
+                | "redirect_target"
+                | "redirect_url"
+                | "long_url"
+                | "multiple_redirects"
+                | "credential_link_lure"
+                | "high_risk_credential_target"
+                | "brand_sender_target_mismatch"
+                | "idn_homograph"
+                | "mixed_script_domain"
+                | "at_sign_obfuscation"
+                | "org_domain_mimicry"
+                | "url_typo"
+                | "hex_subdomain"
+                | "encoded_separator"
+                | "suspicious_path"
+                | "credential_pathing"
+                | "ip_action_target"
+        ),
+        "link_reputation" => matches!(
+            category,
+            "long_domain"
+                | "deep_subdomain"
+                | "random_domain"
+                | "suspicious_tld"
+                | "free_hosting"
+                | "numeric_domain"
+                | "embedded_ip"
+                | "redirect_target"
+                | "redirect_url"
+                | "brand_impersonation"
+                | "idn_homograph"
+                | "mixed_script_domain"
+                | "suspicious_path"
+        ),
+        _ => false,
+    }
+}
+
+fn causal_family_name(result: &ModuleResult, category: &str, default_family: &str) -> String {
+    if !is_causally_deduplicated_url_signal(&result.module_id, category) {
+        return default_family.to_string();
+    }
+
+    let Some(entries) = result
+        .details
+        .get("causal_findings")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return default_family.to_string();
+    };
+
+    let mut keys = BTreeSet::new();
+    for entry in entries {
+        let Some(categories) = entry
+            .get("categories")
+            .and_then(serde_json::Value::as_array)
+        else {
+            continue;
+        };
+        if !categories
+            .iter()
+            .any(|item| item.as_str() == Some(category))
+        {
+            continue;
+        }
+        if let Some(key) = entry.get("causal_key").and_then(serde_json::Value::as_str)
+            && !key.trim().is_empty()
+        {
+            keys.insert(key.to_string());
+        }
+    }
+
+    if keys.len() == 1 {
+        format!(
+            "url_structural:{}",
+            keys.into_iter().next().unwrap_or_default()
+        )
+    } else {
+        // Multiple hosts in one category are not safely collapsible without
+        // an item-level key; preserve the existing conservative family.
+        default_family.to_string()
+    }
+}
+
+pub(super) fn is_runtime_causal_key(key: &str) -> bool {
+    if key != key.trim() {
+        return false;
+    }
+    let Some((source, value)) = key.split_once(':') else {
+        return false;
+    };
+    !value.trim().is_empty()
+        && !matches!(value, "unknown" | "unbound" | "none" | "not_observed")
+        && matches!(
+            source,
+            "host"
+                | "url"
+                | "sender_ip"
+                | "artifact"
+                | "header_identity"
+                | "compound_claim"
+                | "body_relation"
+                | "semantic_span"
+                | "semantic_url"
+                | "reply_target"
+        )
+}
+
+fn causal_family_names(
+    session: Option<&EmailSession>,
+    result: &ModuleResult,
+    category: &str,
+    default_family: &str,
+) -> Vec<String> {
+    if result.module_id == "link_content" && governed_link_compound(category) {
+        return qualified_link_claim_keys(result, category)
+            .into_iter()
+            .map(|key| format!("url_structural:{key}"))
+            .collect();
+    }
+    if let Some(entries) = result
+        .details
+        .get("causal_findings")
+        .and_then(serde_json::Value::as_array)
+    {
+        let keys = entries
+            .iter()
+            .filter(|entry| {
+                entry
+                    .get("categories")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|categories| {
+                        categories
+                            .iter()
+                            .any(|value| value.as_str() == Some(category))
+                    })
+            })
+            .filter_map(|entry| entry.get("causal_key").and_then(serde_json::Value::as_str))
+            .filter(|key| is_runtime_causal_key(key))
+            .collect::<BTreeSet<_>>();
+        if !keys.is_empty() {
+            return keys
+                .into_iter()
+                .map(|key| format!("url_structural:{key}"))
+                .collect();
+        }
+    }
+    if let Some(session) = session {
+        let attachment_modules = matches!(
+            result.module_id.as_str(),
+            "av_attach_scan" | "attach_scan" | "attach_content"
+        );
+        if attachment_modules {
+            let infected = result
+                .details
+                .get("infected_files")
+                .and_then(serde_json::Value::as_array);
+            let artifacts = session
+                .content
+                .attachments
+                .iter()
+                .filter(|attachment| {
+                    attachment.hash.len() == 64
+                        && attachment.hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+                        && (infected.is_some_and(|files| {
+                            files
+                                .iter()
+                                .any(|file| file.as_str() == Some(attachment.filename.as_str()))
+                        }) || result.evidence.iter().any(|evidence| {
+                            evidence.location.as_deref()
+                                == Some(format!("attachment:{}", attachment.filename).as_str())
+                        }))
+                })
+                .map(|attachment| {
+                    format!(
+                        "url_structural:artifact:{}",
+                        attachment.hash.to_ascii_lowercase()
+                    )
+                })
+                .collect::<BTreeSet<_>>();
+            // A native antivirus verdict identifies each infected file. Other
+            // producers have category-level summaries, so attribute only when
+            // every actionable finding refers to the same retained artifact.
+            if !artifacts.is_empty()
+                && (artifacts.len() == 1
+                    || (result.module_id == "av_attach_scan" && infected.is_some()))
+            {
+                return artifacts.into_iter().collect();
+            }
+        }
+        if matches!(
+            result.module_id.as_str(),
+            "header_scan" | "identity_anomaly"
+        ) && (!session.content.headers.is_empty() || session.mail_from.is_some())
+        {
+            let mut digest = Sha256::new();
+            for value in session.mail_from.iter().map(String::as_str).chain(
+                session
+                    .content
+                    .headers
+                    .iter()
+                    .flat_map(|(name, value)| [name.as_str(), value.as_str()]),
+            ) {
+                digest.update((value.len() as u64).to_be_bytes());
+                digest.update(value.as_bytes());
+            }
+            return vec![format!(
+                "url_structural:header_identity:{}",
+                hex::encode(digest.finalize())
+            )];
+        }
+    }
+    if result.module_id == "content_scan"
+        && matches!(
+            category,
+            "external_action_link_lure" | "pii_collection_lure"
+        )
+    {
+        return qualified_content_claim_keys(result, category)
+            .into_iter()
+            .map(|key| format!("url_structural:{key}"))
+            .collect();
+    }
+    vec![causal_family_name(result, category, default_family)]
+}
+
+/// One attributed producer finding. Scores belong to this concrete cause,
+/// never to every category emitted by a module. Legacy summaries remain
+/// explicitly distinguishable until their producers supply item-level scores.
+#[derive(Debug, Clone)]
+pub(super) struct AttributedFinding {
+    pub causal_key: Option<String>,
+    pub score: f64,
+    pub confidence: f64,
+    pub item_scored: bool,
+}
+
+pub(super) fn attributed_findings(
+    session: Option<&EmailSession>,
+    result: &ModuleResult,
+    category: &str,
+) -> Vec<AttributedFinding> {
+    let strict = result.details.get("evidence_items_version").is_some();
+    if strict && result.details["evidence_items_version"].as_u64() != Some(1) {
+        return vec![];
+    }
+    let mass_inputs = |record: &serde_json::Value| {
+        if result.module_id == "link_reputation"
+            && matches!(category, "url_intel_suspicious" | "intel_suspicious")
+        {
+            let source = record
+                .get("source")
+                .or_else(|| (!strict).then(|| result.details.get("source")).flatten());
+            if !source
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|source| {
+                    source.split('+').map(str::trim).any(|part| {
+                        !part.is_empty() && !matches!(part, "auto_reference" | "reference")
+                    })
+                })
+            {
+                return None;
+            }
+        }
+        let item_scored = record.get("score").is_some();
+        if strict && !item_scored {
+            return None;
+        }
+        let score = if item_scored {
+            record.get("score")?.as_f64()?
+        } else {
+            result.raw_score()
+        };
+        let confidence = if record.get("confidence").is_some() {
+            record.get("confidence")?.as_f64()?
+        } else if strict {
+            return None;
+        } else {
+            result.confidence
+        };
+        (score.is_finite()
+            && confidence.is_finite()
+            && (0.0..=1.0).contains(&score)
+            && (0.0..=1.0).contains(&confidence))
+        .then_some((score, confidence, item_scored))
+    };
+    let mut findings = Vec::new();
+    let qualified_field = if result.module_id == "link_content" && governed_link_compound(category)
+    {
+        Some("qualified_link_compounds")
+    } else if result.module_id == "content_scan"
+        && matches!(
+            category,
+            "external_action_link_lure" | "pii_collection_lure"
+        )
+    {
+        Some("qualified_compounds")
+    } else {
+        None
+    };
+    if let Some(field) = qualified_field {
+        for record in result.details[field].as_array().into_iter().flatten() {
+            let key = if field == "qualified_link_compounds" {
+                qualified_link_record_key(record, category)
+            } else {
+                // Reuse the exact semantic admission contract for each record;
+                // a valid sibling record must not authorize an invalid one.
+                let mut single = result.clone();
+                single.details = serde_json::json!({"qualified_compounds": [record]});
+                qualified_content_claim_keys(&single, category)
+                    .into_iter()
+                    .next()
+            };
+            if let Some(key) = key
+                && let Some((score, confidence, item_scored)) = mass_inputs(record)
+            {
+                findings.push(AttributedFinding {
+                    causal_key: Some(key),
+                    score,
+                    confidence,
+                    item_scored,
+                });
+            }
+        }
+        return findings;
+    }
+    let mut matching_records = false;
+    for record in result.details["causal_findings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        if !record["categories"].as_array().is_some_and(|categories| {
+            categories
+                .iter()
+                .any(|value| value.as_str() == Some(category))
+        }) {
+            continue;
+        }
+        matching_records = true;
+        let Some(key) = record["causal_key"]
+            .as_str()
+            .map(str::trim)
+            .filter(|key| !key.is_empty())
+        else {
+            continue;
+        };
+        if strict && !is_runtime_causal_key(key) {
+            continue;
+        }
+        if let Some((score, confidence, item_scored)) = mass_inputs(record) {
+            findings.push(AttributedFinding {
+                causal_key: Some(key.to_string()),
+                score,
+                confidence,
+                item_scored,
+            });
+        }
+    }
+    if matching_records || strict {
+        return findings;
+    }
+    let Some((score, confidence, item_scored)) = mass_inputs(&serde_json::Value::Null) else {
+        return findings;
+    };
+    let family = map_signal(&result.module_id, category).map_or("legacy", |mapped| mapped.family);
+    for key in causal_family_names(session, result, category, family) {
+        findings.push(AttributedFinding {
+            causal_key: key.strip_prefix("url_structural:").map(str::to_string),
+            score,
+            confidence,
+            item_scored,
+        });
+    }
+    findings
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct EvidenceAdmissionPolicy {
+    enabled: bool,
+    #[serde(default)]
+    diagnostic_only: HashMap<String, BTreeSet<String>>,
+    #[serde(default)]
+    observation_only: HashMap<String, BTreeSet<String>>,
+}
+
+impl EvidenceAdmissionPolicy {
+    fn contains(
+        tiers: &HashMap<String, BTreeSet<String>>,
+        module_id: &str,
+        category: &str,
+    ) -> bool {
+        tiers
+            .get(module_id)
+            .is_some_and(|categories| categories.contains(category))
+    }
+
+    fn is_diagnostic_only(&self, module_id: &str, category: &str) -> bool {
+        Self::contains(&self.diagnostic_only, module_id, category)
+    }
+
+    fn is_observation_only(&self, module_id: &str, category: &str) -> bool {
+        Self::contains(&self.observation_only, module_id, category)
+    }
+}
+
+fn parse_evidence_admission_policy(value: serde_json::Value) -> Option<EvidenceAdmissionPolicy> {
+    let policy = serde_json::from_value::<EvidenceAdmissionPolicy>(value).ok()?;
+    let tiers_are_valid = policy
+        .diagnostic_only
+        .iter()
+        .chain(policy.observation_only.iter())
+        .all(|(module_id, categories)| {
+            !module_id.trim().is_empty()
+                && !categories.is_empty()
+                && categories
+                    .iter()
+                    .all(|category| !category.trim().is_empty())
+        });
+
+    (policy.enabled
+        && tiers_are_valid
+        && (!policy.diagnostic_only.is_empty() || !policy.observation_only.is_empty()))
+    .then_some(policy)
+}
+
+/// Use the compiled, versioned admission tiers when a runtime override is
+/// missing or malformed. Keeping fallback categories in the shared JSON seed
+/// prevents an invalid DB policy from silently restoring weak URL-shape
+/// findings to threat fusion.
+fn compiled_evidence_admission_policy() -> Option<&'static EvidenceAdmissionPolicy> {
+    static POLICY: OnceLock<Option<EvidenceAdmissionPolicy>> = OnceLock::new();
+    POLICY
+        .get_or_init(|| {
+            let seed =
+                serde_json::from_str::<serde_json::Value>(ENGINE_MODULE_DATA_SEED_JSON).ok()?;
+            let items = seed
+                .get("lists")?
+                .get("evidence_admission_policy_v1")?
+                .get("items")?
+                .clone();
+            parse_evidence_admission_policy(items)
+        })
+        .as_ref()
+}
+
+/// Conservative Stage-A fallback for known weak observations.  The runtime
+/// policy is authoritative when present, but a missing/malformed policy must
+/// not silently promote URL shape noise into threat evidence.  Strong
+/// categories (for example `url_intel_malicious`) are deliberately absent.
+fn builtin_observation_only(result: &ModuleResult, category: &str) -> bool {
+    if category == "inspection_coverage_incomplete" {
+        return true;
+    }
+    if result.module_id == "link_content"
+        && governed_link_compound(category)
+        && qualified_link_claim_keys(result, category).is_empty()
+    {
+        return true;
+    }
+    match (result.module_id.as_str(), category) {
+        ("content_scan", "external_action_link_lure" | "pii_collection_lure") => {
+            !qualified_content_compound(result, category)
+        }
+        // Content-scan observations are deliberately retained in the final
+        // category list even when the module is Safe, so the verdict explains
+        // why the message was reviewed without turning context into fusion
+        // belief.  Image-only layout keeps its historical scenario-only path.
+        (
+            "content_scan",
+            "adult_content_observed"
+            | "generic_lure_observed"
+            | "empty_body_observed"
+            | "html_visual_text_uncovered"
+            | "html_external_visual_unresolved"
+            | "transactional_notice"
+            | "attachment_delivery_observed"
+            | "invoice_spam",
+        ) => true,
+        ("url_sandbox_scan", "sandbox_url_network_observed" | "scan_incomplete") => true,
+        ("process_sandbox_scan", "scan_incomplete") => true,
+        // Attachment URL shape is retained for analyst context, but a raw IP
+        // or generic auth-looking path alone is not fusion-grade evidence.
+        ("attach_content", "attachment_url_shape_observation") => true,
+        // Attachment content reuses the legacy generic labels, while the
+        // attachment-specific URL/form/payload categories carry the actual
+        // actionable anchor.
+        ("attach_content", "phishing" | "bec" | "weak_phishing" | "bec_no_ioc_social") => true,
+        // A legacy Office container (OLE) carrying a .docx name, or another
+        // non-executable format drift, is a useful analyst observation but is
+        // not independent malware evidence.  Keep this fallback aligned with
+        // the versioned admission policy so persisted pre-policy registries do
+        // not reintroduce the false-positive path.
+        ("attach_scan", "mime_mismatch" | "type_mismatch") => true,
+        // PDF JavaScript and ordinary form/navigation actions are useful
+        // analyst context, but require a separately qualified payload signal
+        // before they can contribute malicious belief.
+        ("attach_scan", "active_content" | "pdf_active_content") => true,
+        // Envelope/From disagreement is retained as an identity observation.
+        // Forwarders, delegated senders, and gateway boundaries can produce it
+        // without proving impersonation. Stronger identity or payload/link
+        // evidence remains independently actionable.
+        ("header_scan", "envelope_spoofing" | "protected_domain_spoof") => true,
+        // A display-name mismatch is not an impersonation verdict by itself.
+        // Keep the finding visible, but require an authority/brand/reply
+        // anchor before it participates in fusion.
+        ("header_scan" | "identity_anomaly", "display_name_spoof") => true,
+        ("identity_anomaly", "envelope_mismatch") => true,
+        (
+            "identity_anomaly",
+            "first_contact"
+            | "new_sender_on_known_domain"
+            | "random_domain"
+            | "random_sender"
+            | "suspicious_client",
+        ) => true,
+        ("link_content", "url_typo")
+        | ("link_content", "recipient_in_url")
+        | ("link_content", "suspicious_path")
+        | ("link_content", "suspicious_params")
+        | ("link_content", "long_url")
+        | ("link_content", "long_domain")
+        | ("link_content", "deep_subdomain")
+        | ("link_content", "multiple_redirects")
+        | ("link_content", "unusual_port")
+        | ("link_content", "dga_random_domain")
+        | ("link_content", "random_domain")
+        | ("link_content", "suspicious_tld")
+        | ("link_content", "tracking_parameter")
+        | ("link_content", "hex_subdomain")
+        | ("link_content", "encoded_separator")
+        | ("link_content", "at_sign_obfuscation")
+        | ("link_content", "org_domain_mimicry")
+        | ("link_reputation", "random_domain")
+        | ("link_reputation", "suspicious_tld")
+        | ("link_reputation", "long_domain")
+        | ("link_reputation", "deep_subdomain")
+        | ("link_reputation", "unusual_port")
+        | ("link_reputation", "free_hosting")
+        | ("link_reputation", "numeric_domain")
+        | ("link_reputation", "embedded_ip")
+        | ("link_reputation", "suspicious_path")
+        | ("link_reputation", "brand_impersonation")
+        | ("link_reputation", "suspicious_sender_domain")
+        | ("link_scan", "redirect_url")
+        | ("link_scan", "suspicious_params")
+        | ("link_scan", "excessive_links")
+        | ("link_scan", "url_shortener")
+        | ("link_scan", "unparseable_url") => true,
+        // Auto/reference intel is a lookup hint, not an independent external
+        // IOC.  Treat missing provenance conservatively as observation too.
+        ("link_reputation", "url_intel_suspicious") | ("link_reputation", "intel_suspicious") => {
+            !attributed_findings(None, result, category)
+                .iter()
+                .any(|item| item.score > 1e-12 && item.confidence > 1e-12)
+        }
+        // CSS hiding is useful coverage telemetry, but without an active
+        // payload/target it is normal responsive-email structure rather than
+        // fusion-grade threat evidence.
+        ("html_scan", "css_hidden_content") => true,
+        // Generic text labels are compatibility categories emitted by several
+        // qualified detectors. The detector-specific compound category is the
+        // actionable admission point; the generic label must not create a
+        // second threat family or turn ordinary business vocabulary into a
+        // phishing verdict.
+        (
+            "content_scan",
+            "phishing"
+            | "phishing_subject"
+            | "phishing_no_ioc"
+            | "bec_no_ioc_social"
+            | "weak_phishing"
+            | "phone_in_subject"
+            | "phone_in_body"
+            | "multilingual_gibberish"
+            | "lang_inconsistency",
+        ) => true,
+        // Named no-IOC BEC compounds retain their high-score generic `bec`
+        // label for backward compatibility. Low-score generic BEC results are
+        // observations only; qualified results still fuse through
+        // `bec_payment_change`, `bec_external_compound`, or their high-score
+        // named compound evidence.
+        ("content_scan", "bec") => {
+            result.raw_score() < 0.70
+                && !result.categories.iter().any(|candidate| {
+                    matches!(
+                        candidate.as_str(),
+                        "bec_payment_change" | "bec_external_compound"
+                    )
+                })
+        }
+        // A subject-only keyword hit is a triage observation.  Account
+        // phishing becomes actionable when the body, links, or another
+        // evidence location supplies a recipient-facing operation/target.
+        ("content_scan", "account_security_phishing") => {
+            !result.evidence.is_empty()
+                && result
+                    .evidence
+                    .iter()
+                    .all(|e| e.location.as_deref() == Some("subject"))
+        }
+        _ => false,
+    }
+}
+
+fn governed_link_compound(category: &str) -> bool {
+    matches!(
+        category,
+        "targeted_credential_phishing"
+            | "ip_action_target"
+            | "qr_to_login_chain"
+            | "qr_ip_login_chain"
+            | "device_code_phishing"
+            | "oauth_device_flow"
+            | "auth_barrier_url"
+            | "mobile_redirect"
+    ) || credential_brand_target_scenario_policy().is_some_and(|policy| {
+        category == policy.credential_link_category
+            || category == policy.high_risk_target_category
+            || category == policy.brand_mismatch_category
+    })
+}
+
+fn qualified_link_record_key(record: &serde_json::Value, category: &str) -> Option<String> {
+    if record.get("category").and_then(serde_json::Value::as_str) != Some(category) {
+        return None;
+    }
+    let claim = serde_json::from_value::<SemanticClaim>(record.get("claim")?.clone()).ok()?;
+    if !is_current_recipient_action(&claim)
+        || claim.source_span_id.trim().is_empty()
+        || claim.span.start_byte >= claim.span.end_byte
+        || !claim.confidence.is_finite()
+        || !(0.0..=1.0).contains(&claim.confidence)
+    {
+        return None;
+    }
+    let original = url::Url::parse(record.get("original_url")?.as_str()?).ok()?;
+    let effective = url::Url::parse(record.get("effective_url")?.as_str()?).ok()?;
+    if !matches!(original.scheme(), "http" | "https")
+        || original.host_str().is_none()
+        || !matches!(effective.scheme(), "http" | "https")
+    {
+        return None;
+    }
+    if !matches!(
+        record
+            .get("link_extraction_source")
+            .and_then(serde_json::Value::as_str),
+        Some("href" | "plain_text" | "html_text" | "form_action" | "qr")
+    ) {
+        return None;
+    }
+    let key = format!("host:{}", effective.host_str()?);
+    (record.get("causal_key").and_then(serde_json::Value::as_str) == Some(key.as_str())
+        && [
+            "link_transport_status",
+            "link_content_status",
+            "link_ownership_status",
+            "coverage_reason",
+        ]
+        .iter()
+        .all(|field| {
+            record
+                .get(field)
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty())
+        }))
+    .then_some(key)
+}
+
+fn qualified_link_claim_keys(result: &ModuleResult, category: &str) -> BTreeSet<String> {
+    result
+        .details
+        .get("qualified_link_compounds")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|record| qualified_link_record_key(record, category))
+        .collect()
+}
+
+fn qualified_gateway_credential_relation(result: &ModuleResult) -> bool {
+    let Some(policy) = credential_brand_target_scenario_policy() else {
+        return false;
+    };
+    if !result.categories.contains(&policy.redirect_target_category) {
+        return false;
+    }
+    let Some(records) = result
+        .details
+        .get("qualified_link_compounds")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return false;
+    };
+    let Some(observations) = result
+        .details
+        .get("credential_target_observations")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return false;
+    };
+    records.iter().any(|record| {
+        qualified_link_record_key(record, &policy.credential_link_category).is_some()
+            && observations.iter().any(|observation| {
+                observation
+                    .get("gateway_unwrapped")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true)
+                    && observation.get("original_url") == record.get("original_url")
+                    && observation.get("effective_url") == record.get("effective_url")
+                    && record.get("original_url") != record.get("effective_url")
+            })
+    })
+}
+
+fn qualified_credential_brand_relation(result: &ModuleResult) -> bool {
+    let Some(policy) = credential_brand_target_scenario_policy() else {
+        return false;
+    };
+    let Some(records) = result
+        .details
+        .get("qualified_link_compounds")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return false;
+    };
+    records.iter().any(|record| {
+        if record.get("category").and_then(serde_json::Value::as_str)
+            != Some(policy.brand_mismatch_category.as_str())
+            || qualified_link_record_key(record, &policy.brand_mismatch_category).is_none()
+        {
+            return false;
+        }
+        let Some(proof) = record.get("brand_proof") else {
+            return false;
+        };
+        if proof
+            .get("sender_brand_aligned")
+            .and_then(serde_json::Value::as_bool)
+            != Some(false)
+            || proof
+                .get("target_brand_aligned")
+                .and_then(serde_json::Value::as_bool)
+                != Some(false)
+            || ["claimed_brand", "from_domain", "target_domain"]
+                .iter()
+                .any(|field| {
+                    proof
+                        .get(field)
+                        .and_then(serde_json::Value::as_str)
+                        .is_none_or(str::is_empty)
+                })
+        {
+            return false;
+        }
+        let target_host = record
+            .get("effective_url")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|raw| url::Url::parse(raw).ok())
+            .and_then(|url| url.host_str().map(str::to_string));
+        if proof
+            .get("target_domain")
+            .and_then(serde_json::Value::as_str)
+            != target_host.as_deref()
+        {
+            return false;
+        }
+        let span = record.pointer("/claim/source_span_id");
+        let original = record.get("original_url");
+        let effective = record.get("effective_url");
+        [
+            &policy.credential_link_category,
+            &policy.high_risk_target_category,
+        ]
+        .iter()
+        .all(|category| {
+            records.iter().any(|candidate| {
+                qualified_link_record_key(candidate, category).is_some()
+                    && candidate.pointer("/claim/source_span_id") == span
+                    && candidate.get("claim") == record.get("claim")
+                    && candidate.get("original_url") == original
+                    && candidate.get("effective_url") == effective
+            })
+        })
+    })
+}
+
+fn has_admitted_identity_anchor(
+    result: &ModuleResult,
+    policy: Option<&EvidenceAdmissionPolicy>,
+) -> bool {
+    result.categories.iter().any(|candidate| {
+        matches!(
+            candidate.as_str(),
+            "authority_display_name_lure"
+                | "authority_localpart_lure"
+                | "brand_spoof_reply_to"
+                | "known_impersonation_domain"
+                | "local_part_brand_spoof"
+                | "reply_chain_anomaly"
+        ) && !policy.is_some_and(|policy| {
+            policy.is_diagnostic_only(&result.module_id, candidate)
+                || policy.is_observation_only(&result.module_id, candidate)
+        }) && !builtin_observation_only(result, candidate)
+            && map_signal(&result.module_id, candidate).is_some()
+    })
+}
+
+/// A producer's policy-excluded anchor cannot lend authority to its display
+/// observation. Use the same gate for fusion and persisted classification.
+fn observation_only_with_policy(
+    result: &ModuleResult,
+    category: &str,
+    policy: Option<&EvidenceAdmissionPolicy>,
+) -> bool {
+    if policy.is_some_and(|policy| policy.is_observation_only(&result.module_id, category)) {
+        return true;
+    }
+    if matches!(
+        result.module_id.as_str(),
+        "header_scan" | "identity_anomaly"
+    ) && category == "display_name_spoof"
+    {
+        return !has_admitted_identity_anchor(result, policy);
+    }
+    builtin_observation_only(result, category)
+}
+
+/// A legacy label or malformed record is an observation, not an actionable
+/// request. URL inspection/ownership may remain unknown, but that state must
+/// be explicit and cannot be silently presented as a verified clean target.
+fn qualified_content_compound(result: &ModuleResult, category: &str) -> bool {
+    !qualified_content_claim_keys(result, category).is_empty()
+}
+
+/// A request and its observed destination form one cause. Do not count the
+/// request span and URL as two independent clusters, or count two detector
+/// names for the same compound as independent convergence evidence.
+fn qualified_content_claim_keys(result: &ModuleResult, category: &str) -> BTreeSet<String> {
+    result
+        .details
+        .get("qualified_compounds")
+        .and_then(serde_json::Value::as_array)
+        .map(|records| {
+            records
+                .iter()
+                .filter_map(|record| {
+                    let field = |name: &str| record.get(name).and_then(serde_json::Value::as_str);
+                    let span = field("source_span_id")
+                        .filter(|span| span.starts_with("body:") && span.len() > 5)?;
+                    if field("category") != Some(category)
+                        || field("actor_role") != Some("sender")
+                        || field("target_role") != Some("recipient")
+                        || !matches!(field("speech_act"), Some("request" | "instruction"))
+                        || field("polarity") != Some("action")
+                        || field("quote_or_forward_status") != Some("original")
+                        || record
+                            .get("counter_context_ids")
+                            .and_then(serde_json::Value::as_array)
+                            .is_none_or(|contexts| !contexts.is_empty())
+                        || [
+                            "link_transport_status",
+                            "link_content_status",
+                            "link_ownership_status",
+                            "coverage_reason",
+                        ]
+                        .iter()
+                        .any(|name| field(name).is_none_or(|value| value.trim().is_empty()))
+                    {
+                        return None;
+                    }
+                    let raw_keys = record
+                        .get("causal_keys")
+                        .and_then(serde_json::Value::as_array)?;
+                    let keys: BTreeSet<&str> = raw_keys
+                        .iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .filter(|key| !key.trim().is_empty())
+                        .collect();
+                    if keys.len() < 2 || keys.len() != raw_keys.len() || !keys.contains(span) {
+                        return None;
+                    }
+                    let observed_target = match field("link_extraction_source") {
+                        Some("href" | "plain_text" | "html_text" | "form_action") => {
+                            field("original_url").is_some_and(|url| {
+                                url::Url::parse(url).ok().is_some_and(|parsed| {
+                                    matches!(parsed.scheme(), "http" | "https")
+                                        && parsed.host_str().is_some()
+                                })
+                            }) && field("effective_url").is_some_and(|url| {
+                                url::Url::parse(url).ok().is_some_and(|parsed| {
+                                    matches!(parsed.scheme(), "http" | "https")
+                                        && parsed.host_str().is_some()
+                                })
+                            }) && keys
+                                .iter()
+                                .any(|key| key.starts_with("url:") && key.len() > 4)
+                        }
+                        Some("none") if category == "pii_collection_lure" => field("reply_target")
+                            .is_some_and(|target| {
+                                target.starts_with("reply_target:")
+                                    && target.len() > 13
+                                    && keys.contains(target)
+                            }),
+                        _ => false,
+                    };
+                    if !observed_target {
+                        return None;
+                    }
+                    if let Some(url) = field("effective_url")
+                        && let Ok(parsed) = url::Url::parse(url)
+                        && let Some(host) = parsed.host_str()
+                    {
+                        // URL-bearing content and link producers describe the
+                        // same destination. The native request/URL proof stays
+                        // in details; it does not establish a second cause.
+                        return Some(format!("host:{host}"));
+                    }
+                    let mut digest = Sha256::new();
+                    for key in keys {
+                        // Length-prefixing makes the ordered compound unambiguous.
+                        digest.update((key.len() as u64).to_be_bytes());
+                        digest.update(key.as_bytes());
+                    }
+                    Some(format!("compound_claim:{}", hex::encode(digest.finalize())))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn evidence_admission_policy() -> Option<EvidenceAdmissionPolicy> {
+    parse_evidence_admission_policy(
+        crate::module_data::module_data()
+            .get_structured("evidence_admission_policy_v1")?
+            .clone(),
+    )
+}
+
+fn admitted_classification_signal(
+    result: &ModuleResult,
+    category: &str,
+    config: &VerdictConfig,
+    policy: Option<&EvidenceAdmissionPolicy>,
+) -> bool {
+    let weight = config
+        .weights
+        .get(&result.module_id)
+        .copied()
+        .unwrap_or(1.0);
+    result.threat_level > vigilyx_core::security::ThreatLevel::Safe
+        && attributed_findings(None, result, category)
+            .iter()
+            .any(|item| (item.score * weight).clamp(0.0, 1.0) > 1e-12 && item.confidence > 1e-12)
+        && !result.bpa.as_ref().is_some_and(|bpa| bpa.b <= 1e-12)
+        && !policy.is_some_and(|policy| {
+            policy.is_diagnostic_only(&result.module_id, category)
+                || policy.is_observation_only(&result.module_id, category)
+        })
+        && !observation_only_with_policy(result, category, policy)
+        && map_signal(&result.module_id, category).is_some()
+}
+
+/// Freeze the same category-level evidence admission used by classification.
+/// V2 consumes this snapshot before forming artifact BPA values.
+pub(super) fn actionable_fusion_categories(
+    results: &HashMap<String, ModuleResult>,
+    config: &VerdictConfig,
+) -> BTreeSet<(String, String)> {
+    let runtime = evidence_admission_policy();
+    let policy = match runtime.as_ref() {
+        Some(policy) => Some(policy),
+        None => compiled_evidence_admission_policy(),
+    };
+    results
+        .values()
+        .flat_map(|result| {
+            result
+                .categories
+                .iter()
+                .filter(|category| admitted_classification_signal(result, category, config, policy))
+                .map(|category| (result.module_id.clone(), category.clone()))
+        })
+        .collect()
+}
+
+fn attack_classification(category: &str) -> bool {
+    matches!(
+        classify_email_classification(&[category.to_string()]),
+        EmailClassification::Malware
+            | EmailClassification::Phishing
+            | EmailClassification::Bec
+            | EmailClassification::Impersonation
+            | EmailClassification::Scam
+            | EmailClassification::SocialEngineering
+    )
+}
+
+/// Canonical top-level categories survive database reconstruction. Keep the
+/// original labels in module results, but do not persist an attack
+/// classification alias when its only producer supplied an observation.
+/// Classification-only spam/transactional facts are intentionally unaffected.
+pub(super) fn canonicalize_observed_attack_classification_categories(
+    categories: &mut Vec<String>,
+    results: &HashMap<String, ModuleResult>,
+    config: &VerdictConfig,
+) -> BTreeSet<String> {
+    let runtime_policy = evidence_admission_policy();
+    let policy = match runtime_policy.as_ref() {
+        Some(policy) => Some(policy),
+        None => compiled_evidence_admission_policy(),
+    };
+    canonicalize_observed_attack_classification_categories_with_policy(
+        categories, results, config, policy,
+    )
+}
+
+fn canonicalize_observed_attack_classification_categories_with_policy(
+    categories: &mut Vec<String>,
+    results: &HashMap<String, ModuleResult>,
+    config: &VerdictConfig,
+    policy: Option<&EvidenceAdmissionPolicy>,
+) -> BTreeSet<String> {
+    let policy = match policy {
+        Some(policy) => Some(policy),
+        None => compiled_evidence_admission_policy(),
+    };
+    let mut observations = BTreeSet::new();
+    for category in categories.iter_mut() {
+        if !attack_classification(category)
+            || !results.values().any(|result| {
+                result.categories.contains(category)
+                    && (result.module_id == "content_scan"
+                        || (matches!(
+                            result.module_id.as_str(),
+                            "header_scan" | "identity_anomaly"
+                        ) && category == "display_name_spoof")
+                        || observation_only_with_policy(result, category, policy)
+                        || policy.is_some_and(|policy| {
+                            policy.is_diagnostic_only(&result.module_id, category)
+                                || policy.is_observation_only(&result.module_id, category)
+                        }))
+            })
+        {
+            continue;
+        }
+        let supported = results.values().any(|result| {
+            if !result.categories.contains(category) {
+                return false;
+            }
+            if admitted_classification_signal(result, category, config, policy) {
+                return true;
+            }
+            // A weak routing/display alias may describe a proven identity
+            // attack only when the same producer also admitted an independent
+            // registered identity anchor. A stale-date or first-contact fact
+            // cannot supply that authority.
+            if matches!(
+                result.module_id.as_str(),
+                "header_scan" | "identity_anomaly"
+            ) && classify_email_classification(std::slice::from_ref(category))
+                == EmailClassification::Impersonation
+                && result.categories.iter().any(|candidate| {
+                    matches!(
+                        candidate.as_str(),
+                        "authority_display_name_lure"
+                            | "authority_localpart_lure"
+                            | "brand_spoof_reply_to"
+                            | "known_impersonation_domain"
+                            | "local_part_brand_spoof"
+                    ) && admitted_classification_signal(result, candidate, config, policy)
+                })
+            {
+                return true;
+            }
+            // Generic labels are compatibility aliases for existing named
+            // compounds, including PII reply harvesting whose specific name
+            // is not a standalone entry in the core classification taxonomy.
+            if !matches!(
+                category.as_str(),
+                "phishing" | "phishing_subject" | "phishing_no_ioc" | "bec" | "bec_no_ioc_social"
+            ) {
+                return false;
+            }
+            result.categories.iter().any(|candidate| {
+                candidate.as_str() != category.as_str()
+                    && admitted_classification_signal(result, candidate, config, policy)
+                    && map_signal(&result.module_id, candidate).is_some_and(|mapped| {
+                        !matches!(
+                            mapped.cluster,
+                            EvidenceClusterId::InheritedGatewayPrior
+                                | EvidenceClusterId::DeliveryIntegrity
+                        )
+                    })
+                    && !matches!(
+                        classify_email_classification(std::slice::from_ref(candidate)),
+                        EmailClassification::Spam
+                            | EmailClassification::Business
+                            | EmailClassification::Transactional
+                            | EmailClassification::Marketing
+                    )
+            })
+        });
+        if !supported {
+            observations.insert(category.clone());
+            *category = "generic_lure_observed".to_string();
+        }
+    }
+    categories.sort();
+    categories.dedup();
+    observations
 }
 
 pub fn normalize_results(
@@ -225,11 +1520,33 @@ pub fn normalize_results(
     results: &HashMap<String, ModuleResult>,
     config: &VerdictConfig,
 ) -> NormalizedEvidence {
+    // Load once per verdict so one message sees one internally consistent
+    // admission policy even if module data is reloaded concurrently. Missing
+    // or malformed policy uses the conservative built-in weak-observation
+    // fallback below; it never promotes known URL shape noise.
+    let admission_policy = evidence_admission_policy();
+    normalize_results_with_admission_policy(session, results, config, admission_policy.as_ref())
+}
+
+fn normalize_results_with_admission_policy(
+    session: Option<&EmailSession>,
+    results: &HashMap<String, ModuleResult>,
+    config: &VerdictConfig,
+    admission_policy: Option<&EvidenceAdmissionPolicy>,
+) -> NormalizedEvidence {
+    let admission_policy = match admission_policy {
+        Some(policy) => Some(policy),
+        None => compiled_evidence_admission_policy(),
+    };
     let mut accumulators: HashMap<EvidenceClusterId, ClusterAccumulator> = HashMap::new();
     let mut categories = BTreeSet::new();
     let mut modules_run = 0u32;
     let mut modules_flagged = 0u32;
     let mut total_duration_ms = 0u64;
+    let mut admitted_content_account_signal = false;
+    let mut admitted_content_compounds = BTreeSet::new();
+    let mut admitted_link_compounds = BTreeSet::new();
+    let mut admitted_categories = BTreeSet::new();
 
     for result in results
         .values()
@@ -239,40 +1556,178 @@ pub fn normalize_results(
         total_duration_ms += result.duration_ms;
 
         if result.threat_level <= vigilyx_core::security::ThreatLevel::Safe {
+            for category in &result.categories {
+                if observation_only_with_policy(result, category, admission_policy) {
+                    categories.insert(category.clone());
+                }
+            }
             continue;
         }
 
-        modules_flagged += 1;
+        // A stale/legacy unsafe level must not turn a zero-belief diagnostic
+        // result into threat evidence. Likewise, a module with no surviving
+        // actionable categories has nothing eligible for fusion.
+        let qualified_categories: Vec<&String> = result
+            .categories
+            .iter()
+            .filter(|category| {
+                !admission_policy
+                    .is_some_and(|policy| policy.is_diagnostic_only(&result.module_id, category))
+            })
+            .collect();
+        if result.bpa.as_ref().is_some_and(|bpa| bpa.b <= 1e-12) || qualified_categories.is_empty()
+        {
+            continue;
+        }
+
         let module_weight = config
             .weights
             .get(&result.module_id)
             .copied()
             .unwrap_or(1.0);
-        let base_score = (result.raw_score() * module_weight).clamp(0.0, 1.0);
-        let confidence = result.confidence.clamp(0.0, 1.0);
-        for category in &result.categories {
+        let mut module_actionable = false;
+        for category in qualified_categories {
             categories.insert(category.clone());
+            if observation_only_with_policy(result, category, admission_policy) {
+                continue;
+            }
             if let Some(mapped) = map_signal(&result.module_id, category) {
+                let items = attributed_findings(session, result, category);
+                let positive_content_evidence = items
+                    .iter()
+                    .any(|item| item.score * module_weight > 1e-12 && item.confidence > 1e-12);
+                if !positive_content_evidence {
+                    continue;
+                }
+                module_actionable = true;
+                if positive_content_evidence {
+                    admitted_categories.insert(category.clone());
+                }
+                if positive_content_evidence
+                    && result.module_id == "link_content"
+                    && governed_link_compound(category)
+                {
+                    admitted_link_compounds.insert(category.clone());
+                }
+                admitted_content_account_signal |= positive_content_evidence
+                    && result.module_id == "content_scan"
+                    && category == "account_security_phishing";
+                if positive_content_evidence
+                    && result.module_id == "content_scan"
+                    && matches!(
+                        category.as_str(),
+                        "external_action_link_lure" | "pii_collection_lure"
+                    )
+                {
+                    admitted_content_compounds.insert(category.clone());
+                }
                 let cluster = accumulators.entry(mapped.cluster).or_default();
                 cluster.categories.insert(category.clone());
                 cluster.modules.insert(result.module_id.clone());
                 cluster.breaker_eligible |= is_breaker_eligible_signal(&result.module_id, category);
 
-                let family = cluster.families.entry(mapped.family).or_default();
-                family.score = family
-                    .score
-                    .max((base_score * mapped.scale).clamp(0.0, 1.0));
-                family.confidence = family.confidence.max(confidence);
-                family.categories.insert(category.clone());
-                family.modules.insert(result.module_id.clone());
-                family
-                    .factors
-                    .insert(key_factor_for_signal(result, category));
+                for item in items {
+                    let family_name = item.causal_key.map_or_else(
+                        || causal_family_name(result, category, mapped.family),
+                        |key| format!("url_structural:{key}"),
+                    );
+                    let family = cluster.families.entry(family_name).or_default();
+                    let base_score = (item.score * module_weight).clamp(0.0, 1.0);
+                    let confidence = item.confidence;
+                    let score = (base_score * mapped.scale).clamp(0.0, 1.0);
+                    let native = is_breaker_eligible_signal(&result.module_id, category);
+                    let risk = Bpa::from_score_confidence(
+                        (score.min(mapped.cluster.score_cap()) * mapped.cluster.threat_scale())
+                            .min(1.0),
+                        (confidence * mapped.cluster.confidence_scale()).clamp(0.20, 0.95),
+                    )
+                    .risk_score(config.eta);
+                    let previous_risk = Bpa::from_score_confidence(
+                        (family.score.min(mapped.cluster.score_cap())
+                            * mapped.cluster.threat_scale())
+                        .min(1.0),
+                        (family.confidence * mapped.cluster.confidence_scale()).clamp(0.20, 0.95),
+                    )
+                    .risk_score(config.eta);
+                    let order = risk
+                        .total_cmp(&previous_risk)
+                        .then_with(|| score.total_cmp(&family.score))
+                        .then_with(|| confidence.total_cmp(&family.confidence))
+                        .then_with(|| native.cmp(&family.breaker_eligible));
+                    if family.categories.is_empty() || order.is_gt() {
+                        family.score = score;
+                        family.confidence = confidence;
+                        family.breaker_eligible = native;
+                    }
+                    family.categories.insert(category.clone());
+                    family.modules.insert(result.module_id.clone());
+                    family
+                        .factors
+                        .insert(key_factor_for_signal(result, category));
+                }
             }
+        }
+        // Preserve the public field for compatibility, but make its meaning
+        // explicit: only modules that contributed at least one actionable
+        // fusion signal count as flagged. Observation-only and diagnostic
+        // results remain visible through categories/details instead of being
+        // presented as threat-bearing modules.
+        if module_actionable {
+            modules_flagged += 1;
         }
     }
 
-    let scenario = detect_scenarios(session, &categories, results);
+    // Context can annotate/cap a verdict, but cannot become a native floor
+    // input merely because its diagnostic label survived persistence.
+    let mut scenario_categories = admitted_categories.clone();
+    scenario_categories.extend(
+        categories
+            .iter()
+            .filter(|category| {
+                matches!(
+                    category.as_str(),
+                    "gateway_pre_classified"
+                        | "nlp_phishing"
+                        | "nlp_scam"
+                        | "nlp_bec"
+                        | "nlp_spam"
+                        | "nonsensical_spam"
+                        | "image_only_layout_observed"
+                        | "invoice_spam"
+                )
+            })
+            .cloned(),
+    );
+    if let Some(policy) = credential_brand_target_scenario_policy()
+        && admitted_link_compounds.contains(&policy.credential_link_category)
+        && results.values().any(|result| {
+            result.module_id == "link_content" && qualified_gateway_credential_relation(result)
+        })
+    {
+        // Transport annotation stays outside native categories. It is legal
+        // only for the same original/effective URL as an admitted CTA record.
+        scenario_categories.insert(policy.redirect_target_category);
+    }
+    let mut scenario = detect_scenarios(session, &scenario_categories, results);
+    scenario.has_admitted_content_account_signal = admitted_content_account_signal;
+    scenario.qualified_content_compounds = admitted_content_compounds;
+    scenario.admitted_categories = admitted_categories;
+    scenario.qualified_link_compounds = admitted_link_compounds;
+    scenario.qualified_credential_brand_target =
+        results.get("link_content").is_some_and(|result| {
+            result.raw_score() > 1e-12
+                && result.confidence > 1e-12
+                && qualified_credential_brand_relation(result)
+        });
+    if !scenario.sender_alignment_verified
+        && !scenario.dsn_like_system_mail
+        && !scenario.auto_reply_like
+    {
+        for compound in forged_sender_compounds(results, &scenario.admitted_categories) {
+            scenario.admitted_categories.insert(compound.to_string());
+            categories.insert(compound.to_string());
+        }
+    }
     let mut clusters = Vec::new();
 
     for cluster_id in EvidenceClusterId::ALL {
@@ -283,15 +1738,33 @@ pub fn normalize_results(
             continue;
         }
 
-        let mut family_scores: Vec<f64> = cluster.families.values().map(|f| f.score).collect();
-        family_scores.sort_by(|a, b| b.total_cmp(a));
-
+        let runtime_families = cluster
+            .families
+            .iter()
+            .filter(|(key, _)| {
+                key.starts_with("url_structural:") || key.starts_with("compound_claim:")
+            })
+            .collect::<Vec<_>>();
+        let unknown_score = cluster
+            .families
+            .iter()
+            .filter(|(key, _)| {
+                !key.starts_with("url_structural:") && !key.starts_with("compound_claim:")
+            })
+            .map(|(_, family)| family.score)
+            .fold(0.0, f64::max);
         let base_score = 1.0
-            - family_scores
+            - runtime_families
                 .iter()
-                .fold(1.0, |acc, score| acc * (1.0 - score));
-        let synergy = (cluster.families.len().saturating_sub(1).min(3) as f64) * 0.04;
-        let mut score = (base_score + synergy).min(cluster_id.score_cap());
+                .fold(1.0, |acc, (_, family)| acc * (1.0 - family.score));
+        let synergy = (runtime_families.len().saturating_sub(1).min(3) as f64) * 0.04;
+        // A category name cannot establish an independent source. Unknown
+        // native observations retain their individual strength via max only.
+        #[cfg(test)]
+        let runtime_wins = base_score + synergy >= unknown_score;
+        let mut score = (base_score + synergy)
+            .max(unknown_score)
+            .min(cluster_id.score_cap());
         // Structural URL heuristics can be numerous but are not independent
         // proof of credential theft. Keep a weak-only link cluster below High
         // until a breaker-eligible anchor is present.
@@ -299,24 +1772,69 @@ pub fn normalize_results(
             score = score.min(0.44);
         }
 
-        let mut max_confidence: f64 = 0.0;
-        let mut key_factors = BTreeSet::new();
-        for family in cluster.families.values() {
-            max_confidence = max_confidence.max(family.confidence);
-            for factor in family.factors.iter().take(2) {
-                key_factors.insert(factor.clone());
+        let causal_atoms = cluster
+            .families
+            .iter()
+            .map(|(family_key, family)| {
+                let causal_key = family_key
+                    .strip_prefix("url_structural:")
+                    .map_or_else(|| format!("family:{family_key}"), str::to_string);
+                let mut atom_score = family.score.min(cluster_id.score_cap());
+                if cluster_id == EvidenceClusterId::LinkAndHtmlDeception && !family.breaker_eligible
+                {
+                    atom_score = atom_score.min(0.44);
+                }
+                CausalAtom {
+                    causal_key,
+                    score: atom_score,
+                    confidence: (family.confidence * cluster_id.confidence_scale())
+                        .clamp(0.20, 0.95),
+                    breaker_eligible: family.breaker_eligible,
+                }
+            })
+            .collect::<Vec<_>>();
+        #[cfg(test)]
+        let causal_keys: BTreeSet<String> = causal_atoms
+            .iter()
+            .map(|atom| atom.causal_key.clone())
+            .collect();
+        #[cfg(test)]
+        let (confidence, key_factors) = {
+            let mut max_confidence: f64 = 0.0;
+            let mut key_factors = BTreeSet::new();
+            for (key, family) in &cluster.families {
+                if (key.starts_with("url_structural:") || key.starts_with("compound_claim:"))
+                    == runtime_wins
+                {
+                    max_confidence = max_confidence.max(family.confidence);
+                }
+                for factor in family.factors.iter().take(2) {
+                    key_factors.insert(factor.clone());
+                }
             }
-        }
-        let confidence = ((max_confidence * cluster_id.confidence_scale())
-            + 0.03 * (cluster.modules.len().saturating_sub(1).min(3) as f64))
+            let confidence = ((max_confidence * cluster_id.confidence_scale())
+                + if runtime_wins {
+                    0.03 * (runtime_families.len().saturating_sub(1).min(3) as f64)
+                } else {
+                    0.0
+                })
             .clamp(0.20, 0.95);
+            (confidence, key_factors)
+        };
 
         clusters.push(ClusterEvidence {
             id: cluster_id,
             score,
+            #[cfg(test)]
             confidence,
+            #[cfg(test)]
             breaker_eligible: cluster.breaker_eligible,
+            #[cfg(test)]
+            causal_keys: causal_keys.into_iter().collect(),
+            causal_atoms,
+            #[cfg(test)]
             modules: cluster.modules.into_iter().collect(),
+            #[cfg(test)]
             key_factors: key_factors.into_iter().take(4).collect(),
         });
     }
@@ -331,6 +1849,105 @@ pub fn normalize_results(
         total_duration_ms,
         scenario,
     }
+}
+
+/// Forged/unauthenticated sender plus an admitted account-security lure.
+pub(super) const FORGED_SENDER_ACCOUNT_LURE: &str = "forged_sender_account_lure";
+/// Forged sender plus a recipient-bound or obfuscated link, corroborated by a
+/// High identity result or an admitted content lure.
+pub(super) const FORGED_SENDER_LINK_LURE_CORROBORATED: &str =
+    "forged_sender_link_lure_corroborated";
+/// Forged sender plus a recipient-bound or obfuscated link.
+pub(super) const FORGED_SENDER_LINK_LURE: &str = "forged_sender_link_lure";
+/// Header envelope forgery, failed/missing authentication and a High identity result.
+pub(super) const FORGED_SENDER_UNAUTHENTICATED: &str = "forged_sender_unauthenticated";
+
+/// Named compounds over individually observation-only sender and link facts.
+///
+/// Envelope/From disagreement, a missing Received chain, randomised sender
+/// names, a recipient address in a URL or a DGA-shaped link host each have
+/// benign explanations (forwarders, ESPs, tracking links) and therefore never
+/// enter fusion alone. Commodity credential phishing, delivery scams and
+/// template spam combine them, and observed production samples ended Safe
+/// because no module had admitted evidence. Facts are attributed to the module
+/// that reported them, so a random *link* domain cannot stand in for a random
+/// *sender* domain. Header and identity analysis describe one envelope, so
+/// their facts are alternatives for a single forged-sender condition.
+fn forged_sender_compounds(
+    results: &HashMap<String, ModuleResult>,
+    admitted: &BTreeSet<String>,
+) -> Vec<&'static str> {
+    let flagged = |module: &str, wanted: &[&str]| {
+        results.get(module).is_some_and(|result| {
+            result.threat_level > vigilyx_core::security::ThreatLevel::Safe
+                && result
+                    .categories
+                    .iter()
+                    .any(|category| wanted.contains(&category.as_str()))
+        })
+    };
+    let forged_sender = flagged("header_scan", &["envelope_spoofing"])
+        || flagged("identity_anomaly", &["envelope_mismatch"])
+        || (flagged("header_scan", &["domain_mismatch"])
+            && flagged("header_scan", &["no_received"]))
+        || (flagged("identity_anomaly", &["random_domain"])
+            && flagged("identity_anomaly", &["random_sender"]));
+    if !forged_sender {
+        return Vec::new();
+    }
+    // Tracking parameters, redirects and long URLs are ordinary marketing
+    // structure; only recipient-bound or obfuscated destinations qualify.
+    let targeted_link = flagged(
+        "link_content",
+        &[
+            "recipient_in_url",
+            "dga_random_domain",
+            "url_typo",
+            "at_sign_obfuscation",
+            "org_domain_mimicry",
+            "idn_homograph",
+        ],
+    ) || flagged(
+        "link_scan",
+        &["href_text_mismatch", "ip_url", "userinfo_in_url"],
+    );
+    let account_lure = admitted.contains("account_security_phishing")
+        || admitted.contains("targeted_credential_phishing");
+    let identity_high = results
+        .get("identity_anomaly")
+        .is_some_and(|result| result.threat_level >= vigilyx_core::security::ThreatLevel::High);
+    let content_lure = results.get("content_scan").is_some_and(|result| {
+        result.threat_level > vigilyx_core::security::ThreatLevel::Safe
+            && result
+                .categories
+                .iter()
+                .any(|category| !category.starts_with("gateway_") && admitted.contains(category))
+    });
+    let unauthenticated = flagged(
+        "header_scan",
+        &[
+            "no_auth_results",
+            "dkim_unverified",
+            "untrusted_auth_results",
+            "no_received",
+        ],
+    );
+
+    let mut compounds = Vec::new();
+    if account_lure {
+        compounds.push(FORGED_SENDER_ACCOUNT_LURE);
+    }
+    if targeted_link {
+        compounds.push(if identity_high || content_lure {
+            FORGED_SENDER_LINK_LURE_CORROBORATED
+        } else {
+            FORGED_SENDER_LINK_LURE
+        });
+    }
+    if identity_high && unauthenticated && flagged("header_scan", &["envelope_spoofing"]) {
+        compounds.push(FORGED_SENDER_UNAUTHENTICATED);
+    }
+    compounds
 }
 
 fn detect_scenarios(
@@ -352,6 +1969,33 @@ fn detect_scenarios_with_patterns(
         alignment_score: extract_alignment_score(results),
         ..ScenarioContext::default()
     };
+    if let Some(result) = results.get("content_scan") {
+        context.qualified_content_compounds = result
+            .categories
+            .iter()
+            .filter(|category| {
+                matches!(
+                    category.as_str(),
+                    "external_action_link_lure" | "pii_collection_lure"
+                )
+            })
+            .filter(|category| qualified_content_compound(result, category))
+            .cloned()
+            .collect();
+    }
+    let credential_brand_policy = credential_brand_target_scenario_policy();
+
+    if results.get("content_scan").is_some_and(|result| {
+        result.categories.iter().any(|category| {
+            matches!(
+                category.as_str(),
+                "image_only_phishing" | "image_only_layout_observed"
+            )
+        })
+    }) {
+        context.image_only_layout_observed = true;
+        context.tags.push("image_only_layout_observed".to_string());
+    }
 
     let subject_lower = session
         .and_then(|session| session.subject.as_deref())
@@ -367,10 +2011,14 @@ fn detect_scenarios_with_patterns(
         .to_lowercase();
 
     let has_gateway_prior = categories.contains("gateway_pre_classified");
+    // Only genuine NLP model verdicts count as an echo of the polluted body.
+    // `nonsensical_spam` is a purely statistical CJK observation that an
+    // attacker can self-induce (rare/random characters); letting it qualify
+    // would turn "statistical noise + forged body notice" into a 0.12 cap.
     let has_nlp_echo = categories.iter().any(|category| {
         matches!(
             category.as_str(),
-            "nlp_phishing" | "nlp_scam" | "nlp_bec" | "nlp_spam" | "nonsensical_spam"
+            "nlp_phishing" | "nlp_scam" | "nlp_bec" | "nlp_spam"
         )
     });
     // The banner pattern must actually appear in the body. A subject tag
@@ -456,8 +2104,8 @@ fn detect_scenarios_with_patterns(
         context.tags.push("dsn_like_system_mail".to_string());
     }
 
-    let auto_reply_corroborated = is_auto_reply_subject
-        && (is_system_sender || has_empty_return_path || is_multipart_report);
+    let auto_reply_corroborated =
+        is_auto_reply_subject && (is_system_sender || has_empty_return_path || is_multipart_report);
     if auto_submitted_corroborated || auto_reply_corroborated {
         context.auto_reply_like = true;
         context.tags.push("auto_reply_like".to_string());
@@ -522,10 +2170,13 @@ fn detect_scenarios_with_patterns(
         matches!(
             category.as_str(),
             "account_security_phishing"
-                | "credential_link_lure"
                 | "targeted_credential_phishing"
+                | "subject_account_expiry_lure"
         )
-    }) {
+    }) || credential_brand_policy
+        .as_ref()
+        .is_some_and(|policy| categories.contains(policy.credential_link_category.as_str()))
+    {
         context.has_account_security_signal = true;
         context.tags.push("account_security_signal".to_string());
     }
@@ -533,8 +2184,7 @@ fn detect_scenarios_with_patterns(
     if categories.iter().any(|category| {
         matches!(
             category.as_str(),
-            "credential_link_lure"
-                | "targeted_credential_phishing"
+            "targeted_credential_phishing"
                 | "attachment_phishing_url"
                 | "device_code_phishing_combo"
                 | "aitm_hosted_platform_auth"
@@ -548,9 +2198,49 @@ fn detect_scenarios_with_patterns(
                 | "aitm_compound_redirect_mfa"
                 | "aitm_multi_convergence"
         )
-    }) {
+    }) || credential_brand_policy
+        .as_ref()
+        .is_some_and(|policy| categories.contains(policy.credential_link_category.as_str()))
+    {
         context.has_credential_link_signal = true;
         context.tags.push("credential_link_signal".to_string());
+    }
+
+    if credential_brand_policy
+        .as_ref()
+        .is_some_and(|policy| categories.contains(policy.high_risk_target_category.as_str()))
+    {
+        context.has_high_risk_credential_target_signal = true;
+        context
+            .tags
+            .push("high_risk_credential_target_signal".to_string());
+    }
+
+    if credential_brand_policy
+        .as_ref()
+        .is_some_and(|policy| categories.contains(policy.brand_mismatch_category.as_str()))
+    {
+        context.has_brand_sender_target_mismatch_signal = true;
+        context
+            .tags
+            .push("brand_sender_target_mismatch_signal".to_string());
+    }
+
+    // A gateway-unwrapped target is transport provenance plus a structural
+    // observation.  It becomes a scenario signal only when an independent
+    // account/credential cue is present; otherwise a redirect wrapper must
+    // not manufacture an actionable threat on its own.
+    if credential_brand_policy.as_ref().is_some_and(|policy| {
+        categories.contains(policy.redirect_target_category.as_str())
+            && (context.has_account_security_signal
+                || context.has_credential_link_signal
+                || context.has_high_risk_credential_target_signal
+                || context.has_brand_sender_target_mismatch_signal)
+    }) {
+        context.has_gateway_unwrapped_risky_target_signal = true;
+        context
+            .tags
+            .push("gateway_unwrapped_risky_target_signal".to_string());
     }
 
     if categories.iter().any(|category| {
@@ -577,6 +2267,8 @@ fn detect_scenarios_with_patterns(
                 | "protected_domain_spoof"
                 | "envelope_spoofing"
                 | "display_name_spoof"
+                | "authority_display_name_lure"
+                | "authority_localpart_lure"
                 | "external_impersonation"
                 | "domain_mismatch"
         )
@@ -590,9 +2282,13 @@ fn detect_scenarios_with_patterns(
         context.tags.push("subsidy_fraud_signal".to_string());
     }
 
-    if categories.contains("invoice_spam") {
+    if categories.contains("invoice_spam") || categories.contains("invoice_fraud") {
         context.has_invoice_spam_signal = true;
-        context.tags.push("invoice_spam_signal".to_string());
+        context.tags.push(if categories.contains("invoice_fraud") {
+            "invoice_fraud_signal".to_string()
+        } else {
+            "invoice_spam_signal".to_string()
+        });
     }
 
     if categories
@@ -634,17 +2330,19 @@ fn detect_scenarios_with_patterns(
     if categories.iter().any(|category| {
         matches!(
             category.as_str(),
-            "dga_random_domain"
-                | "external_impersonation"
+            "external_impersonation"
                 | "domain_mismatch"
-                | "suspicious_tld"
-                | "lang_inconsistency"
-                | "type_mismatch"
                 | "idn_homograph"
                 | "mixed_script_domain"
+                | "at_sign_obfuscation"
+                | "org_domain_mimicry"
+                | "url_typo"
                 | "attachment_phishing_url"
+                | "ip_action_target"
         )
-    }) {
+    }) || context.has_high_risk_credential_target_signal
+        || context.has_brand_sender_target_mismatch_signal
+    {
         context.has_structural_threat_signal = true;
         context.tags.push("structural_threat_signal".to_string());
     }
@@ -720,10 +2418,23 @@ fn key_factor_for_signal(result: &ModuleResult, category: &str) -> String {
 fn humanize_category(category: &str) -> String {
     match category {
         "account_security_phishing" => return "Account Security Phishing".to_string(),
+        "credential_link_lure" => return "Credential Verification Link Lure".to_string(),
+        "high_risk_credential_target" => return "High-Risk Credential Target".to_string(),
+        "brand_sender_target_mismatch" => {
+            return "Brand, Sender, and Landing Domain Mismatch".to_string();
+        }
+        "gateway_unwrapped_risky_target" => {
+            return "Risky Gateway-Unwrapped Target".to_string();
+        }
         "targeted_credential_phishing" => return "Targeted Credential Phishing".to_string(),
         "bec" => return "Business Email Compromise".to_string(),
         "gateway_pre_classified" => return "Upstream Gateway Prior".to_string(),
         "subject_contact_lure" => return "Subject Contact Lure".to_string(),
+        "mailbox_enumeration_probe" => return "Mailbox Enumeration Probe".to_string(),
+        "adult_content_lure" => return "Adult-Content Lure".to_string(),
+        "adult_content_observed" => return "Adult-Content Observation".to_string(),
+        "generic_lure_observed" => return "Generic Lure Observation".to_string(),
+        "empty_body_observed" => return "Empty Body Observation".to_string(),
         "ioc_ip_hit" => return "IOC-Matched Sender IP".to_string(),
         "sender_ip_malicious" => return "Malicious Sender IP".to_string(),
         "intel_malicious" => return "Malicious External Intel Match".to_string(),
@@ -752,12 +2463,8 @@ fn humanize_category(category: &str) -> String {
 fn extract_alignment_score(results: &HashMap<String, ModuleResult>) -> f64 {
     results
         .get("domain_verify")
-        .and_then(|result| {
-            result
-                .details
-                .get("alignment_score")
-                .or_else(|| result.details.get("trust_score"))
-        })
+        .filter(|result| result.details.get("verified").and_then(|v| v.as_bool()) == Some(true))
+        .and_then(|result| result.details.get("trust_score"))
         .and_then(|value| value.as_f64())
         .unwrap_or(0.0)
         .clamp(0.0, 1.0)
@@ -769,15 +2476,17 @@ fn map_signal(module_id: &str, category: &str) -> Option<MappedSignal> {
         "content_scan" => map_content_signal(category),
         "attach_content" => map_attach_content_signal(category),
         "attach_scan" => match category {
-            // These categories describe inspection coverage only.  They are
-            // retained in the module result and verdict metadata, but must
-            // never enter the Payload Malware evidence cluster.
+            // Coverage gaps and generic active-content labels are retained for
+            // analysts, but only a qualified payload category enters the
+            // Payload Malware evidence cluster.
             "attachment_inspection_limited"
             | "unsupported_container"
             | "encrypted_attachment"
             | "encrypted_archive"
             | "encrypted_pdf"
-            | "ocr_unavailable" => None,
+            | "ocr_unavailable"
+            | "active_content"
+            | "pdf_active_content" => None,
             _ => Some(MappedSignal {
                 cluster: EvidenceClusterId::PayloadMalware,
                 family: "attachment_anomaly",
@@ -801,6 +2510,11 @@ fn map_signal(module_id: &str, category: &str) -> Option<MappedSignal> {
             family: "malware_signature",
             scale: 0.95,
         }),
+        "url_sandbox_scan" => Some(MappedSignal {
+            cluster: EvidenceClusterId::LinkAndHtmlDeception,
+            family: "dynamic_url_sandbox",
+            scale: 0.92,
+        }),
         "yara_scan" => map_yara_signal(category),
         "header_scan" => map_header_signal(category),
         "mime_scan" => match category {
@@ -815,17 +2529,31 @@ fn map_signal(module_id: &str, category: &str) -> Option<MappedSignal> {
         },
         "identity_anomaly" => map_identity_signal(category),
         "aitm_detect" => map_aitm_signal(category),
-        "html_scan" | "html_pixel_art" => Some(MappedSignal {
-            cluster: EvidenceClusterId::LinkAndHtmlDeception,
-            family: "html_obfuscation",
-            scale: 0.74,
-        }),
+        "html_scan" | "html_pixel_art" => {
+            let credential_exfiltration = module_id == "html_scan"
+                && crate::modules::html_scan::is_credential_exfiltration_form_category(category);
+            Some(MappedSignal {
+                cluster: EvidenceClusterId::LinkAndHtmlDeception,
+                family: if credential_exfiltration {
+                    "credential_exfiltration"
+                } else {
+                    "html_obfuscation"
+                },
+                scale: if credential_exfiltration { 0.92 } else { 0.74 },
+            })
+        }
         "link_scan" => map_link_scan_signal(category),
         "link_content" => map_link_content_signal(category),
         "link_reputation" => map_link_reputation_signal(category),
         "semantic_scan" => map_semantic_signal(category),
+        "toad_detect" => map_toad_signal(category),
         "anomaly_detect" => match category {
             "no_recipients" | "recipient_metadata_incomplete" => None,
+            "mailbox_enumeration_probe" => Some(MappedSignal {
+                cluster: EvidenceClusterId::SenderIdentityAuthenticity,
+                family: "recipient_enumeration",
+                scale: 0.76,
+            }),
             _ => Some(MappedSignal {
                 cluster: EvidenceClusterId::SocialEngineeringIntent,
                 family: "behavioral_pattern",
@@ -852,6 +2580,15 @@ fn map_signal(module_id: &str, category: &str) -> Option<MappedSignal> {
 }
 
 fn map_content_signal(category: &str) -> Option<MappedSignal> {
+    if let Some(policy) = credential_brand_target_scenario_policy()
+        && category == policy.credential_link_category
+    {
+        return Some(MappedSignal {
+            cluster: EvidenceClusterId::LinkAndHtmlDeception,
+            family: "credential_lure",
+            scale: policy.credential_link_scale,
+        });
+    }
     match category {
         "gateway_pre_classified" => Some(MappedSignal {
             cluster: EvidenceClusterId::InheritedGatewayPrior,
@@ -867,6 +2604,26 @@ fn map_content_signal(category: &str) -> Option<MappedSignal> {
             family: "external_impersonation",
             scale: 0.78,
         }),
+        "pii_reply_harvest_lure" => Some(MappedSignal {
+            cluster: EvidenceClusterId::SocialEngineeringIntent,
+            family: "pii_collection_lure",
+            scale: 0.86,
+        }),
+        "external_reply_to_social_engineering" => Some(MappedSignal {
+            cluster: EvidenceClusterId::SocialEngineeringIntent,
+            family: "external_reply_to_social_engineering",
+            scale: 0.90,
+        }),
+        "external_identity_consent_lure" => Some(MappedSignal {
+            cluster: EvidenceClusterId::LinkAndHtmlDeception,
+            family: "external_identity_consent_lure",
+            scale: 0.86,
+        }),
+        "external_internal_service_link" => Some(MappedSignal {
+            cluster: EvidenceClusterId::LinkAndHtmlDeception,
+            family: "external_internal_service_link",
+            scale: 0.84,
+        }),
         // Payment-account-change BEC from an external sender (detectors.rs
         // emits this with a score of up to 0.78) is concrete business
         // sensitivity evidence — it must not be dropped on the floor.
@@ -875,31 +2632,94 @@ fn map_content_signal(category: &str) -> Option<MappedSignal> {
             family: transaction_family(category),
             scale: transaction_scale(category),
         }),
+        "bec_external_compound" => Some(MappedSignal {
+            cluster: EvidenceClusterId::BusinessSensitivity,
+            family: "external_bec_compound",
+            scale: 0.82,
+        }),
+        "qr_text_lure" => Some(MappedSignal {
+            cluster: EvidenceClusterId::SocialEngineeringIntent,
+            family: "text_qr_lure",
+            scale: 0.82,
+        }),
+        "clickfix_lure" => Some(MappedSignal {
+            cluster: EvidenceClusterId::PayloadMalware,
+            family: "clickfix_command_paste",
+            scale: 0.92,
+        }),
+        "base_href_action_lure" => Some(MappedSignal {
+            cluster: EvidenceClusterId::LinkAndHtmlDeception,
+            family: "html_base_href_redirect",
+            scale: 0.82,
+        }),
+        "social_trust_lure" => Some(MappedSignal {
+            cluster: EvidenceClusterId::SocialEngineeringIntent,
+            family: "social_trust_payment_lure",
+            scale: 0.78,
+        }),
+        "targeted_recruitment_lure" => Some(MappedSignal {
+            cluster: EvidenceClusterId::SocialEngineeringIntent,
+            family: "targeted_recruitment_spearphish",
+            scale: 0.78,
+        }),
+        "image_alt_phishing" => Some(MappedSignal {
+            cluster: EvidenceClusterId::LinkAndHtmlDeception,
+            family: "image_alt_credential_lure",
+            scale: 0.84,
+        }),
+        "embedded_image_qr_lure" => Some(MappedSignal {
+            cluster: EvidenceClusterId::LinkAndHtmlDeception,
+            family: "embedded_image_qr_lure",
+            scale: 0.84,
+        }),
+        "embedded_iframe_auth_lure" => Some(MappedSignal {
+            cluster: EvidenceClusterId::LinkAndHtmlDeception,
+            family: "embedded_iframe_auth_lure",
+            scale: 0.86,
+        }),
+        "external_action_link_lure" => Some(MappedSignal {
+            cluster: EvidenceClusterId::LinkAndHtmlDeception,
+            family: "external_action_link_lure",
+            scale: 0.82,
+        }),
+        "credential_exfiltration_lure" => Some(MappedSignal {
+            cluster: EvidenceClusterId::SocialEngineeringIntent,
+            family: "credential_exfiltration_lure",
+            scale: 0.86,
+        }),
+        "protocol_execution_lure" => Some(MappedSignal {
+            cluster: EvidenceClusterId::PayloadMalware,
+            family: "protocol_execution_lure",
+            scale: 0.92,
+        }),
+        "hidden_external_action_lure" => Some(MappedSignal {
+            cluster: EvidenceClusterId::LinkAndHtmlDeception,
+            family: "hidden_external_action_lure",
+            scale: 0.82,
+        }),
+        "attachment_delivery_lure" => Some(MappedSignal {
+            cluster: EvidenceClusterId::PayloadMalware,
+            family: "attachment_delivery_lure",
+            scale: 0.78,
+        }),
         "subject_contact_lure" => Some(MappedSignal {
             cluster: EvidenceClusterId::SocialEngineeringIntent,
             family: "off_platform_contact_lure",
             scale: 0.50,
         }),
-        // The structural combination is a link deception signal. It is not a
-        // generic breaker anchor by itself; clustered DS applies the scenario
-        // floor only after both the credential instruction and auth-link facts
-        // are present.
-        "credential_link_lure" => Some(MappedSignal {
-            cluster: EvidenceClusterId::LinkAndHtmlDeception,
-            family: "credential_lure",
-            scale: 0.86,
+        "subject_account_expiry_lure" => Some(MappedSignal {
+            cluster: EvidenceClusterId::SocialEngineeringIntent,
+            family: "subject_account_expiry_lure",
+            scale: 0.78,
         }),
-        "phishing"
-        | "bec"
-        | "bec_no_ioc_social"
-        | "phishing_subject"
-        | "phone_in_subject"
+        "bec"
         | "image_only_phishing"
         | "account_security_phishing"
+        | "pii_collection_lure"
         | "subsidy_fraud"
-        | "invoice_spam"
-        | "phone_in_body"
-        | "lang_inconsistency" => Some(MappedSignal {
+        | "invoice_fraud"
+        | "adult_content_lure"
+        | "obfuscated_domain_lure" => Some(MappedSignal {
             cluster: EvidenceClusterId::SocialEngineeringIntent,
             family: social_family(category),
             scale: social_scale(category),
@@ -911,12 +2731,18 @@ fn map_content_signal(category: &str) -> Option<MappedSignal> {
 fn map_attach_content_signal(category: &str) -> Option<MappedSignal> {
     match category {
         // DLP in attachments: same policy — record but don't score
-        "dlp_credit_card" | "dlp_id_number" => None,
-        "attachment_phishing_url" => Some(MappedSignal {
-            cluster: EvidenceClusterId::LinkAndHtmlDeception,
-            family: "attachment_embedded_url",
-            scale: 0.74,
-        }),
+        "dlp_credit_card"
+        | "dlp_id_number"
+        | "nested_message_observed"
+        | "attachment_business_keyword_observation"
+        | "attachment_url_shape_observation" => None,
+        "attachment_phishing_url" | "attachment_redirect_lure" | "attachment_payment_lure" => {
+            Some(MappedSignal {
+                cluster: EvidenceClusterId::LinkAndHtmlDeception,
+                family: "attachment_embedded_url",
+                scale: 0.74,
+            })
+        }
         // A meta-refresh target inside an HTML attachment is the same kind of
         // embedded-URL evidence as a phishing URL — one family, one signal.
         "attachment_meta_refresh" => Some(MappedSignal {
@@ -924,15 +2750,45 @@ fn map_attach_content_signal(category: &str) -> Option<MappedSignal> {
             family: "attachment_embedded_url",
             scale: 0.70,
         }),
+        "ics_url_credential_lure" => Some(MappedSignal {
+            cluster: EvidenceClusterId::LinkAndHtmlDeception,
+            family: "attachment_calendar_credential_lure",
+            scale: 0.82,
+        }),
+        "attachment_contact_redirect" => Some(MappedSignal {
+            cluster: EvidenceClusterId::LinkAndHtmlDeception,
+            family: "attachment_contact_redirect",
+            scale: 0.76,
+        }),
         "attachment_credential_form" | "nested_message_phishing" => Some(MappedSignal {
             cluster: EvidenceClusterId::LinkAndHtmlDeception,
             family: "attachment_embedded_phishing",
             scale: 0.86,
         }),
+        "office_active_content_lure" => Some(MappedSignal {
+            cluster: EvidenceClusterId::PayloadMalware,
+            family: "office_active_content_lure",
+            scale: 0.86,
+        }),
+        "security_rule_archive_lure" | "svg_active_content" | "external_executable_attachment" => {
+            Some(MappedSignal {
+                cluster: EvidenceClusterId::PayloadMalware,
+                family: "attachment_active_payload",
+                scale: 0.88,
+            })
+        }
         "ics_embedded_executable" => Some(MappedSignal {
             cluster: EvidenceClusterId::PayloadMalware,
             family: "attachment_embedded_payload",
             scale: 0.80,
+        }),
+        "dangerous_container_lure"
+        | "html_smuggling"
+        | "polyglot_container"
+        | "executable_delivery_lure" => Some(MappedSignal {
+            cluster: EvidenceClusterId::PayloadMalware,
+            family: "attachment_active_container_lure",
+            scale: 0.86,
         }),
         "ics_urgency" => Some(MappedSignal {
             cluster: EvidenceClusterId::SocialEngineeringIntent,
@@ -964,34 +2820,41 @@ fn map_header_signal(category: &str) -> Option<MappedSignal> {
                 0.72
             },
         }),
-        "envelope_spoofing" => Some(MappedSignal {
-            cluster: EvidenceClusterId::SenderIdentityAuthenticity,
-            family: "envelope_alignment",
-            scale: 0.80,
-        }),
+        // This is a routing mismatch, not proof of impersonation. Keep the
+        // category visible and let an independently qualified identity or
+        // content relation establish an actionable verdict.
+        "envelope_spoofing" | "protected_domain_spoof" => None,
         // Outsourced reply handling is common in legitimate marketing and
         // transactional mail. Preserve the mismatch in verdict categories
         // and scenario context, but do not manufacture an identity cluster
         // from this routing observation alone. Compound spoof/lure scenarios
         // still consume `has_header_spoof_signal` below.
         "domain_mismatch" => None,
-        "brand_spoof_reply_to" | "protected_domain_spoof" | "known_impersonation_domain" => {
-            Some(MappedSignal {
-                cluster: EvidenceClusterId::SenderIdentityAuthenticity,
-                family: "protected_identity",
-                scale: 0.80,
-            })
-        }
+        "brand_spoof_reply_to"
+        | "known_impersonation_domain"
+        | "display_name_spoof"
+        | "authority_display_name_lure"
+        | "authority_localpart_lure" => Some(MappedSignal {
+            cluster: EvidenceClusterId::SenderIdentityAuthenticity,
+            family: "protected_identity",
+            scale: if category.starts_with("authority_") {
+                0.92
+            } else {
+                0.80
+            },
+        }),
+        // X-Mailer is a self-declared client fingerprint. It is useful
+        // analyst context, but it has no independent malicious meaning and
+        // therefore cannot enter D-S even when another header fact makes the
+        // module result non-Safe.
+        "suspicious_mailer" => None,
         "auth_spf_dmarc_fail"
         | "auth_spf_fail"
         | "auth_dmarc_fail"
-        | "no_auth_results"
         | "future_date"
         | "stale_date"
         | "missing_date"
         | "missing_message_id"
-        | "suspicious_mailer"
-        | "no_received"
         | "excessive_hops"
         | "header_injection" => Some(MappedSignal {
             cluster: EvidenceClusterId::DeliveryIntegrity,
@@ -1070,6 +2933,43 @@ fn map_aitm_signal(category: &str) -> Option<MappedSignal> {
 }
 
 fn map_link_content_signal(category: &str) -> Option<MappedSignal> {
+    if category == "ip_action_target" {
+        return Some(MappedSignal {
+            cluster: EvidenceClusterId::LinkAndHtmlDeception,
+            family: "ip_action_target",
+            scale: 0.92,
+        });
+    }
+    if let Some(policy) = credential_brand_target_scenario_policy() {
+        if category == policy.brand_mismatch_category {
+            return Some(MappedSignal {
+                cluster: EvidenceClusterId::SenderIdentityAuthenticity,
+                family: "brand_target_alignment",
+                scale: policy.brand_mismatch_scale,
+            });
+        }
+        if category == policy.credential_link_category {
+            return Some(MappedSignal {
+                cluster: EvidenceClusterId::SocialEngineeringIntent,
+                family: "credential_theft_intent",
+                scale: policy.credential_link_scale,
+            });
+        }
+        if category == policy.high_risk_target_category {
+            return Some(MappedSignal {
+                cluster: EvidenceClusterId::LinkAndHtmlDeception,
+                family: "credential_target_chain",
+                scale: policy.credential_link_scale,
+            });
+        }
+        if category == policy.redirect_target_category {
+            return Some(MappedSignal {
+                cluster: EvidenceClusterId::LinkAndHtmlDeception,
+                family: "gateway_target_chain",
+                scale: policy.redirect_target_scale,
+            });
+        }
+    }
     Some(MappedSignal {
         cluster: EvidenceClusterId::LinkAndHtmlDeception,
         family: link_content_family(category),
@@ -1084,17 +2984,25 @@ fn map_yara_signal(category: &str) -> Option<MappedSignal> {
         "attachment_inspection_limited" | "yara_match" | "structural_payload_validation" => {
             return None;
         }
-        // These categories can only be emitted after exact-signature opt-in
-        // or format-aware payload validation.
+        // These categories can only be emitted after exact-signature opt-in,
+        // format-aware payload validation, or the separately feature-flagged
+        // LNK execution-chain admission in `yara_scan`.
         "verified_yara_signature" | "verified_payload_anchor" => 0.98,
+        "weaponized_lnk_execution" => 0.98,
         "verified_executable_payload" => 0.94,
-        // Candidate rules are hunting leads. They must not inherit the same
-        // fusion scale as AV verdicts or structurally verified executables.
-        "pe_structural_candidate" => 0.48,
+        // Candidate rules are hunting leads. They remain visible as module
+        // observations until a separate structural validator confirms an
+        // executable payload.
+        "pe_structural_candidate" => return None,
         // A container polyglot (image with an appended ZIP) is strong
         // evasion evidence, but it is not proof of a malicious payload.
-        "polyglot_container" => 0.60,
-        _ => 0.78,
+        "polyglot_container" => return None,
+        // Legacy/custom rule labels (for example `webshell` and
+        // `malware_family`) are hunting observations. They may remain
+        // visible on the module card, but without an exact signature or a
+        // validated payload they must not acquire D-S threat mass merely by
+        // falling through to a generic YARA scale.
+        _ => return None,
     };
 
     Some(MappedSignal {
@@ -1108,10 +3016,20 @@ fn map_yara_signal(category: &str) -> Option<MappedSignal> {
 }
 
 fn map_link_scan_signal(category: &str) -> Option<MappedSignal> {
+    if category == "shared_hosted_redirect_lure" {
+        return Some(MappedSignal {
+            cluster: EvidenceClusterId::LinkAndHtmlDeception,
+            family: "shared_hosted_redirect_lure",
+            scale: 0.86,
+        });
+    }
     let family = match category {
         "redirect_url" | "suspicious_params" | "excessive_links" | "url_shortener"
         | "unparseable_url" => "weak_link_context",
-        "href_text_mismatch" | "userinfo_in_url" => "link_impersonation",
+        "href_text_mismatch"
+        | "userinfo_in_url"
+        | "official_domain_text_mismatch"
+        | "sender_domain_nested_in_untrusted_host" => "link_impersonation",
         "javascript_uri" | "data_uri" | "ip_url" => "active_link_payload",
         _ => "link_structure_other",
     };
@@ -1128,19 +3046,29 @@ fn map_link_scan_signal(category: &str) -> Option<MappedSignal> {
     })
 }
 
-fn is_breaker_eligible_signal(module_id: &str, category: &str) -> bool {
+pub(super) fn is_breaker_eligible_signal(module_id: &str, category: &str) -> bool {
     if matches!(module_id, "av_eml_scan" | "av_attach_scan" | "sandbox_scan") {
         return true;
     }
+    if module_id == "url_sandbox_scan" {
+        return category == "sandbox_url_malicious";
+    }
 
     // A generic/custom YARA match is not automatically equivalent to an AV
-    // conviction. Only an explicitly exact signature or the structural
-    // validator's active-payload anchor may impose a hard risk floor.
+    // conviction. Only an explicitly exact signature, the structural
+    // validator's active-payload anchor, or the separately governed and
+    // format-anchored LNK execution chain may impose a hard risk floor.
     if module_id == "yara_scan" {
         return matches!(
             category,
-            "verified_yara_signature" | "verified_payload_anchor"
+            "verified_yara_signature" | "verified_payload_anchor" | "weaponized_lnk_execution"
         );
+    }
+
+    if module_id == "html_scan"
+        && crate::modules::html_scan::is_credential_exfiltration_form_category(category)
+    {
+        return true;
     }
 
     matches!(
@@ -1149,6 +3077,7 @@ fn is_breaker_eligible_signal(module_id: &str, category: &str) -> bool {
             | "virus_detected"
             | "sandbox_malicious"
             | "sandbox_c2_detected"
+            | "sandbox_url_malicious"
             | "malicious_document"
             | "webshell"
             | "hash_intel_malicious"
@@ -1158,7 +3087,6 @@ fn is_breaker_eligible_signal(module_id: &str, category: &str) -> bool {
             | "ioc_ip_hit"
             | "blacklisted_domain"
             | "blacklisted_parent_domain"
-            | "protected_domain_spoof"
             | "known_impersonation_domain"
             | "brand_spoof_reply_to"
             | "targeted_credential_phishing"
@@ -1169,6 +3097,7 @@ fn is_breaker_eligible_signal(module_id: &str, category: &str) -> bool {
             | "aitm_multi_convergence"
             | "javascript_uri"
             | "data_uri"
+            | "ip_action_target"
     )
 }
 
@@ -1193,11 +3122,45 @@ fn map_link_reputation_signal(category: &str) -> Option<MappedSignal> {
     }
 }
 
+/// Semantic coverage/diagnostic labels describe what the scanner could not
+/// inspect (budget, truncation, AI unavailability, review required). Like the
+/// attachment/YARA coverage labels, they are operational state and must never
+/// be mapped into threat evidence. Covers `semantic_inspection_limited`,
+/// `semantic_ai_inspection_limited`, any future `*_inspection_limited` label,
+/// and `semantic_review_required`.
+fn is_semantic_coverage_category(category: &str) -> bool {
+    category.ends_with("_inspection_limited") || category.ends_with("semantic_review_required")
+}
+
 fn map_semantic_signal(category: &str) -> Option<MappedSignal> {
+    // The local text classifier was trained on research corpora without
+    // Chinese benign controls; it stays a module-level review signal until
+    // its false-positive rate is validated on real traffic.
+    if is_semantic_coverage_category(category)
+        || category == "repetitive_template_text"
+        || category == crate::semantic::TEXT_CLASSIFIER_CATEGORY
+    {
+        return None;
+    }
     Some(MappedSignal {
         cluster: EvidenceClusterId::SocialEngineeringIntent,
         family: social_family(category),
         scale: social_scale(category),
+    })
+}
+
+fn map_toad_signal(category: &str) -> Option<MappedSignal> {
+    let scale = match category {
+        "toad_combo" => 0.92,
+        "toad_callback_verb" => 0.72,
+        "toad_urgency_phrase" | "toad_brand_impersonation" => 0.68,
+        "toad_phone_present" => 0.52,
+        _ => return None,
+    };
+    Some(MappedSignal {
+        cluster: EvidenceClusterId::SocialEngineeringIntent,
+        family: "toad_callback_phishing",
+        scale,
     })
 }
 
@@ -1219,7 +3182,7 @@ fn delivery_family(category: &str) -> &'static str {
         }
         "future_date" | "stale_date" | "missing_date" => "date_integrity",
         "missing_message_id" | "header_injection" => "header_integrity",
-        "no_received" | "excessive_hops" => "received_chain",
+        "excessive_hops" => "received_chain",
         "suspicious_mailer" => "mailer_identity",
         _ => "delivery_other",
     }
@@ -1229,7 +3192,7 @@ fn delivery_scale(category: &str) -> f64 {
     match category {
         "auth_spf_dmarc_fail" => 0.72,
         "auth_spf_fail" | "auth_dmarc_fail" => 0.65,
-        "no_auth_results" | "no_received" => 0.50,
+        "no_auth_results" => 0.50,
         "header_injection" => 0.75,
         _ => 0.55,
     }
@@ -1240,18 +3203,20 @@ fn social_family(category: &str) -> &'static str {
         "phishing"
         | "phishing_subject"
         | "account_security_phishing"
-        | "credential_link_lure"
         | "image_only_phishing"
         | "targeted_credential_phishing" => "credential_theft_intent",
         "bec" | "bec_no_ioc_social" | "nlp_bec" => "bec_intent",
-        "subsidy_fraud" | "invoice_spam" | "nlp_scam" => "financial_fraud_intent",
+        "subsidy_fraud" | "invoice_spam" | "invoice_fraud" | "nlp_scam" => "financial_fraud_intent",
         "sextortion" | "extortion_threat" => "extortion_intent",
         "nlp_spam" | "nonsensical_spam" | "mass_mailing" | "spam_cannon" => "bulk_spam_intent",
         "foreign_to_cn_corp" | "japanese_to_cn_corp" | "japanese_unexpected" => "language_context",
         "phone_in_subject" | "phone_in_body" => "contact_urgency",
-        "subject_contact_lure" => "off_platform_contact_lure",
+        "subject_contact_lure" | "adult_content_lure" | "obfuscated_domain_lure" => {
+            "off_platform_contact_lure"
+        }
         "llm_injection_suspected" => "ai_integrity",
         "lang_inconsistency" | "multilingual_gibberish" => "language_anomaly",
+        crate::semantic::INTENT_MODEL_CATEGORY => "model_intent",
         _ => "social_other",
     }
 }
@@ -1259,10 +3224,12 @@ fn social_family(category: &str) -> &'static str {
 fn social_scale(category: &str) -> f64 {
     match category {
         "account_security_phishing" => 0.88,
-        "credential_link_lure" => 0.82,
         "phishing" | "phishing_subject" | "nlp_phishing" => 0.76,
         "bec" | "bec_no_ioc_social" | "nlp_bec" => 0.72,
         "subsidy_fraud" | "invoice_spam" | "nlp_scam" => 0.66,
+        "invoice_fraud" => 0.78,
+        "adult_content_lure" => 0.58,
+        "obfuscated_domain_lure" => 0.72,
         "sextortion" | "extortion_threat" => 0.82,
         "gateway_pre_classified" => 0.30,
         "foreign_to_cn_corp" | "japanese_to_cn_corp" | "japanese_unexpected" => 0.42,
@@ -1274,6 +3241,9 @@ fn social_scale(category: &str) -> f64 {
         // a harmless mail past Low (availability/alert-storm guard, A6).
         "llm_injection_suspected" => 0.15,
         "nlp_spam" | "nonsensical_spam" => 0.46,
+        // The module already caps a model hit at a review-level Low score;
+        // full scale lets that score reach the verdict unchanged.
+        crate::semantic::INTENT_MODEL_CATEGORY => 1.0,
         _ => 0.56,
     }
 }
@@ -1302,12 +3272,19 @@ fn transaction_scale(category: &str) -> f64 {
 fn link_content_family(category: &str) -> &'static str {
     match category {
         "targeted_credential_phishing" => "targeted_link",
-        "recipient_in_url" | "long_url" | "suspicious_params" | "suspicious_param_value"
-        | "double_encoding" | "multiple_redirects" => "weak_link_context",
+        "recipient_in_url"
+        | "long_url"
+        | "suspicious_params"
+        | "suspicious_param_value"
+        | "double_encoding"
+        | "multiple_redirects" => "weak_link_context",
         "at_sign_obfuscation" | "idn_homograph" | "org_domain_mimicry" | "url_typo" => {
             "link_impersonation"
         }
-        "dga_random_domain" | "hex_subdomain" | "encoded_separator" | "unusual_port"
+        "dga_random_domain"
+        | "hex_subdomain"
+        | "encoded_separator"
+        | "unusual_port"
         | "oss_content_override" => "link_obfuscation",
         // Percent-decoded layers that resolve to a dangerous protocol are
         // active payloads, not context — same family link_scan uses for
@@ -1315,6 +3292,7 @@ fn link_content_family(category: &str) -> &'static str {
         "encoded_protocol_param" | "double_encoded_payload" => "active_link_payload",
         "deep_fragment_route" | "suspicious_fragment" | "mobile_redirect" => "fragment_obfuscation",
         "suspicious_path" => "credential_pathing",
+        "qr_ip_login_chain" => "credential_target_chain",
         _ => "link_content_other",
     }
 }
@@ -1322,10 +3300,14 @@ fn link_content_family(category: &str) -> &'static str {
 fn link_content_scale(category: &str) -> f64 {
     match category {
         "targeted_credential_phishing" => 0.92,
-        "recipient_in_url" | "at_sign_obfuscation" | "idn_homograph" | "org_domain_mimicry"
+        "recipient_in_url"
+        | "at_sign_obfuscation"
+        | "idn_homograph"
+        | "org_domain_mimicry"
         | "encoded_protocol_param" => 0.82,
         "dga_random_domain" | "double_encoded_payload" | "oss_content_override" => 0.72,
         "mobile_redirect" => 0.60,
+        "qr_ip_login_chain" => 0.90,
         _ => 0.66,
     }
 }
@@ -1378,7 +3360,7 @@ mod tests {
     use serde_json::json;
     use std::collections::{BTreeSet, HashMap};
     use vigilyx_core::models::{EmailContent, EmailSession, Protocol};
-    use vigilyx_core::security::{ModuleResult, Pillar, ThreatLevel};
+    use vigilyx_core::security::{Bpa, Evidence, ModuleResult, Pillar, ThreatLevel};
 
     fn make_session(subject: &str, body: &str, sender: &str) -> EmailSession {
         let mut session = EmailSession::new(
@@ -1403,7 +3385,7 @@ mod tests {
         threat_level: ThreatLevel,
         categories: &[&str],
     ) -> ModuleResult {
-        ModuleResult {
+        let mut result = ModuleResult {
             module_id: module_id.to_string(),
             module_name: module_id.to_string(),
             pillar,
@@ -1417,7 +3399,1008 @@ mod tests {
             analyzed_at: Utc::now(),
             bpa: None,
             engine_id: None,
+        };
+        qualify_link_fixture(&mut result);
+        result
+    }
+
+    fn qualify_link_fixture(result: &mut ModuleResult) {
+        if result.module_id != "link_content" {
+            return;
         }
+        let records = result.categories.iter().filter(|category| governed_link_compound(category)).map(|category| json!({
+            "category": category,
+            "claim": {
+                "source_span_id": "html:0:90", "source_part": "html",
+                "span": {"start_byte": 0, "end_byte": 90}, "actor_role": "sender", "target_role": "recipient",
+                "speech_act": "request", "polarity": "action", "quote_or_forward_status": "original",
+                "actions": ["verify"], "objects": ["account"], "link_ids": ["link:fixture"],
+                "counter_context_ids": [], "confidence": 0.85, "causal_key": "claim:fixture"
+            },
+            "original_url": "https://capture.attacker.example/login", "effective_url": "https://capture.attacker.example/login",
+            "link_extraction_source": "href", "causal_key": "host:capture.attacker.example",
+            "link_transport_status": "not_attempted", "link_content_status": "not_observed",
+            "link_ownership_status": "unknown", "coverage_reason": "fixture has static source only",
+            "brand_proof": {"claimed_brand": "Acme", "from_domain": "sender.invalid", "target_domain": "capture.attacker.example", "sender_brand_aligned": false, "target_brand_aligned": false}
+        })).collect::<Vec<_>>();
+        result.details["qualified_link_compounds"] = json!(records);
+    }
+
+    #[test]
+    fn item_protocol_rejects_malformed_mass_without_module_score_fallback() {
+        let mut result = make_result(
+            "link_content",
+            Pillar::Link,
+            ThreatLevel::High,
+            &["encoded_protocol_param"],
+        );
+        let valid = json!({"causal_key": "host:payload.example",
+            "categories": ["encoded_protocol_param"], "score": 0.30, "confidence": 0.75});
+        result.details["evidence_items_version"] = json!(1);
+        result.details["causal_findings"] = json!([valid.clone()]);
+        assert_eq!(
+            attributed_findings(None, &result, "encoded_protocol_param").len(),
+            1
+        );
+        for (field, value) in [
+            ("score", json!(null)),
+            ("score", json!(-0.1)),
+            ("score", json!(1.1)),
+            ("confidence", json!(null)),
+            ("confidence", json!(2.0)),
+            ("causal_key", json!("")),
+        ] {
+            let mut bad = valid.clone();
+            bad[field] = value;
+            result.details["causal_findings"] = json!([bad]);
+            assert!(attributed_findings(None, &result, "encoded_protocol_param").is_empty());
+            assert!(!admitted_classification_signal(
+                &result,
+                "encoded_protocol_param",
+                &VerdictConfig::default(),
+                None
+            ));
+        }
+        result.details["causal_findings"] = json!([valid]);
+        result.details["evidence_items_version"] = json!(99);
+        assert!(attributed_findings(None, &result, "encoded_protocol_param").is_empty());
+    }
+
+    #[test]
+    fn suspicious_reputation_admits_only_the_item_with_independent_provenance() {
+        let mut result = make_result(
+            "link_reputation",
+            Pillar::Link,
+            ThreatLevel::High,
+            &["url_intel_suspicious"],
+        );
+        result.details = json!({"score": 1.0, "evidence_items_version": 1,
+        "source": "trusted_module_summary_must_not_authorize_items",
+        "causal_findings": [
+            {"causal_key": "host:observed.example", "categories": ["url_intel_suspicious"],
+                "score": 0.20, "confidence": 0.80, "source": "otx"},
+            {"causal_key": "host:reference.example", "categories": ["url_intel_suspicious"],
+                "score": 1.0, "confidence": 1.0, "source": "auto_reference"},
+            {"causal_key": "host:unknown.example", "categories": ["url_intel_suspicious"],
+                "score": 1.0, "confidence": 1.0}
+        ]});
+        assert!(!builtin_observation_only(&result, "url_intel_suspicious"));
+        let items = attributed_findings(None, &result, "url_intel_suspicious");
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0].causal_key.as_deref(),
+            Some("host:observed.example")
+        );
+        assert_eq!(items[0].score, 0.20);
+        result.details["causal_findings"][0]["source"] = json!("auto_reference+reference");
+        assert!(builtin_observation_only(&result, "url_intel_suspicious"));
+    }
+
+    #[test]
+    fn valid_semantic_sibling_cannot_authorize_an_unrelated_quoted_item() {
+        let mut result = make_result(
+            "link_content",
+            Pillar::Link,
+            ThreatLevel::High,
+            &["credential_link_lure"],
+        );
+        result.details["evidence_items_version"] = json!(1);
+        let valid = &mut result.details["qualified_link_compounds"][0];
+        valid["score"] = json!(0.40);
+        valid["confidence"] = json!(0.75);
+        let mut quoted = valid.clone();
+        quoted["causal_key"] = json!("host:quoted.example");
+        quoted["score"] = json!(1.0);
+        quoted["claim"]["quote_or_forward_status"] = json!("quoted");
+        result.details["qualified_link_compounds"]
+            .as_array_mut()
+            .unwrap()
+            .push(quoted);
+        let items = attributed_findings(None, &result, "credential_link_lure");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].score, 0.40);
+        assert_eq!(
+            items[0].causal_key.as_deref(),
+            Some("host:capture.attacker.example")
+        );
+    }
+
+    #[test]
+    fn form_action_source_keeps_current_request_admission_gates() {
+        let mut link = make_result(
+            "link_content",
+            Pillar::Link,
+            ThreatLevel::High,
+            &["credential_link_lure"],
+        );
+        link.details["qualified_link_compounds"][0]["link_extraction_source"] =
+            json!("form_action");
+        assert!(!qualified_link_claim_keys(&link, "credential_link_lure").is_empty());
+        let original = link.details["qualified_link_compounds"][0]["claim"].clone();
+        for (field, value) in [
+            ("polarity", "anti_action"),
+            ("quote_or_forward_status", "quoted"),
+            ("actor_role", "unknown"),
+        ] {
+            link.details["qualified_link_compounds"][0]["claim"] = original.clone();
+            link.details["qualified_link_compounds"][0]["claim"][field] = json!(value);
+            assert!(qualified_link_claim_keys(&link, "credential_link_lure").is_empty());
+        }
+        let mut content = make_result(
+            "content_scan",
+            Pillar::Content,
+            ThreatLevel::High,
+            &["external_action_link_lure"],
+        );
+        let mut record = qualified_lure_record("external_action_link_lure");
+        record["link_extraction_source"] = json!("form_action");
+        content.details["qualified_compounds"] = json!([record]);
+        assert!(qualified_content_compound(
+            &content,
+            "external_action_link_lure"
+        ));
+        content.details["qualified_compounds"][0]["quote_or_forward_status"] = json!("quoted");
+        assert!(!qualified_content_compound(
+            &content,
+            "external_action_link_lure"
+        ));
+    }
+
+    #[test]
+    fn legacy_link_labels_require_native_claim_proof() {
+        let mut result = make_result(
+            "link_content",
+            Pillar::Link,
+            ThreatLevel::High,
+            &["targeted_credential_phishing"],
+        );
+        let valid = normalize_results(
+            None,
+            &HashMap::from([("link_content".to_string(), result.clone())]),
+            &VerdictConfig::default(),
+        );
+        assert!(!valid.clusters.is_empty());
+        for field in [
+            "actor_role",
+            "target_role",
+            "polarity",
+            "quote_or_forward_status",
+        ] {
+            let original = result.details.clone();
+            result.details["qualified_link_compounds"][0]["claim"][field] = json!(match field {
+                "actor_role" => "quoted_author",
+                "target_role" => "named_third_party",
+                "polarity" => "anti_action",
+                _ => "quoted",
+            });
+            let rejected = normalize_results(
+                None,
+                &HashMap::from([("link_content".to_string(), result.clone())]),
+                &VerdictConfig::default(),
+            );
+            assert!(rejected.clusters.is_empty(), "{field}: {rejected:?}");
+            result.details = original;
+        }
+        result.details["qualified_link_compounds"] = json!([]);
+        let legacy = normalize_results(
+            None,
+            &HashMap::from([("link_content".to_string(), result)]),
+            &VerdictConfig::default(),
+        );
+        assert!(legacy.clusters.is_empty());
+        assert!(
+            legacy
+                .categories
+                .iter()
+                .any(|category| category == "targeted_credential_phishing")
+        );
+    }
+
+    #[test]
+    fn brand_relation_cannot_borrow_a_valid_record_from_another_url() {
+        let policy = credential_brand_target_scenario_policy().unwrap();
+        let mut result = make_result(
+            "link_content",
+            Pillar::Link,
+            ThreatLevel::High,
+            &[
+                &policy.credential_link_category,
+                &policy.high_risk_target_category,
+                &policy.brand_mismatch_category,
+            ],
+        );
+        assert!(qualified_credential_brand_relation(&result));
+        let records = result.details["qualified_link_compounds"]
+            .as_array_mut()
+            .unwrap();
+        let mut other = records[0].clone();
+        other["original_url"] = json!("https://other.attacker.example/login");
+        other["effective_url"] = json!("https://other.attacker.example/login");
+        other["causal_key"] = json!("host:other.attacker.example");
+        other["claim"]["source_span_id"] = json!("html:100:190");
+        records[0]["claim"]["polarity"] = json!("anti_action");
+        records.push(other);
+        assert!(!qualified_credential_brand_relation(&result));
+    }
+
+    #[test]
+    fn unattributed_aliases_keep_max_strength_without_noisy_or() {
+        let mut one = make_result(
+            "link_scan",
+            Pillar::Link,
+            ThreatLevel::Low,
+            &["javascript_uri"],
+        );
+        one.details = json!({"score": 0.20});
+        one.evidence = vec![Evidence {
+            description: "Executable JavaScript URI found in retained HTML".to_string(),
+            location: Some("html:href".to_string()),
+            snippet: Some("javascript:alert(document.cookie)".to_string()),
+        }];
+        let baseline = normalize_results(
+            None,
+            &HashMap::from([("link_scan".to_string(), one.clone())]),
+            &VerdictConfig::default(),
+        );
+        one.categories
+            .extend(["javascript_uri".to_string(), "data_uri".to_string()]);
+        one.evidence.push(Evidence {
+            description: "Executable data URI found in retained HTML".to_string(),
+            location: Some("html:href".to_string()),
+            snippet: Some("data:text/html,<script>alert(document.cookie)</script>".to_string()),
+        });
+        let repeated = normalize_results(
+            None,
+            &HashMap::from([("link_scan".to_string(), one)]),
+            &VerdictConfig::default(),
+        );
+        assert_eq!(baseline.clusters.len(), 1);
+        assert_eq!(repeated.clusters.len(), 1);
+        assert_eq!(baseline.clusters[0].score, repeated.clusters[0].score);
+        assert_eq!(
+            baseline.clusters[0].confidence,
+            repeated.clusters[0].confidence
+        );
+        assert_eq!(repeated.clusters[0].causal_atoms.len(), 1);
+        assert_eq!(
+            baseline.clusters[0].causal_atoms[0].score,
+            repeated.clusters[0].causal_atoms[0].score
+        );
+        assert_eq!(
+            baseline.clusters[0].causal_atoms[0].confidence,
+            repeated.clusters[0].causal_atoms[0].confidence
+        );
+        assert!(
+            repeated.clusters[0]
+                .causal_keys
+                .iter()
+                .all(|key| key.starts_with("family:"))
+        );
+    }
+
+    #[test]
+    fn only_verified_trust_score_sets_sender_alignment_verified() {
+        let mut observed = make_result("domain_verify", Pillar::Package, ThreatLevel::Safe, &[]);
+        observed.details = json!({
+            "verified": false,
+            "alignment_score": 0.75,
+            "trust_score": 0.0
+        });
+        let mut results = HashMap::from([("domain_verify".to_string(), observed)]);
+        let scenario = detect_scenarios(None, &BTreeSet::new(), &results);
+        assert_eq!(scenario.alignment_score, 0.0);
+        assert!(!scenario.sender_alignment_verified);
+
+        results.get_mut("domain_verify").unwrap().details = json!({
+            "verified": true,
+            "alignment_score": 0.75,
+            "trust_score": 0.70
+        });
+        let scenario = detect_scenarios(None, &BTreeSet::new(), &results);
+        assert_eq!(scenario.alignment_score, 0.70);
+        assert!(scenario.sender_alignment_verified);
+    }
+
+    fn qualified_lure_record(category: &str) -> serde_json::Value {
+        json!({
+            "category": category,
+            "source_span_id": "body:test-request-span",
+            "actor_role": "sender",
+            "target_role": "recipient",
+            "speech_act": "request",
+            "polarity": "action",
+            "quote_or_forward_status": "original",
+            "link_extraction_source": "href",
+            "original_url": "https://target.example.invalid/verify",
+            "effective_url": "https://target.example.invalid/verify",
+            "link_transport_status": "not_attempted",
+            "link_content_status": "not_observed",
+            "link_ownership_status": "unproven",
+            "coverage_reason": "destination_not_fetched",
+            "counter_context_ids": [],
+            "causal_keys": ["body:test-request-span", "url:test-target"]
+        })
+    }
+
+    #[test]
+    fn unqualified_content_lure_label_cannot_enter_fusion_or_arm_floor() {
+        let result = make_result(
+            "content_scan",
+            Pillar::Content,
+            ThreatLevel::High,
+            &[
+                "phishing",
+                "external_action_link_lure",
+                "pii_collection_lure",
+            ],
+        );
+        let results = HashMap::from([("content_scan".to_string(), result)]);
+        let config = VerdictConfig::default();
+        let normalized = normalize_results(None, &results, &config);
+        assert!(normalized.clusters.is_empty());
+        assert!(normalized.scenario.qualified_content_compounds.is_empty());
+        let verdict = super::super::aggregate_verdict(uuid::Uuid::nil(), &results, &config);
+        assert!(verdict.threat_level < ThreatLevel::Medium);
+        assert!(verdict.fusion_details.as_ref().unwrap().risk_single < 0.40);
+    }
+
+    #[test]
+    fn scoped_request_and_target_record_preserves_actionable_lure() {
+        let category = "external_action_link_lure";
+        let mut result = make_result(
+            "content_scan",
+            Pillar::Content,
+            ThreatLevel::High,
+            &[category],
+        );
+        result.details["qualified_compounds"] = json!([qualified_lure_record(category)]);
+        let results = HashMap::from([("content_scan".to_string(), result)]);
+        let config = VerdictConfig::default();
+        let normalized = normalize_results(None, &results, &config);
+        assert!(!normalized.clusters.is_empty());
+        assert!(
+            normalized
+                .scenario
+                .qualified_content_compounds
+                .contains(category)
+        );
+        let verdict = super::super::aggregate_verdict(uuid::Uuid::nil(), &results, &config);
+        assert!(verdict.threat_level >= ThreatLevel::Medium);
+    }
+
+    #[test]
+    fn same_content_claim_shares_one_cause_across_detector_labels() {
+        let action = "external_action_link_lure";
+        let pii = "pii_collection_lure";
+        let mut result = make_result(
+            "content_scan",
+            Pillar::Content,
+            ThreatLevel::High,
+            &[action, pii],
+        );
+        let action_record = qualified_lure_record(action);
+        let mut pii_record = qualified_lure_record(pii);
+        // Input ordering and repeated copies do not manufacture new causes.
+        pii_record["causal_keys"] = json!(["url:test-target", "body:test-request-span"]);
+        result.details["qualified_compounds"] =
+            json!([action_record.clone(), action_record, pii_record,]);
+        let results = HashMap::from([("content_scan".to_string(), result)]);
+        let normalized = normalize_results(None, &results, &VerdictConfig::default());
+        assert_eq!(normalized.clusters.len(), 2, "{normalized:?}");
+        let keys = normalized
+            .clusters
+            .iter()
+            .flat_map(|cluster| cluster.causal_keys.iter())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(keys.len(), 1, "{normalized:?}");
+        assert!(
+            keys.iter()
+                .all(|key| key.as_str() == "host:target.example.invalid")
+        );
+        let verdict =
+            super::super::aggregate_verdict(uuid::Uuid::nil(), &results, &VerdictConfig::default());
+        assert!(
+            verdict
+                .fusion_details
+                .as_ref()
+                .unwrap()
+                .convergence_breaker
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn content_and_link_request_views_share_the_same_destination_cause() {
+        let mut content = make_result(
+            "content_scan",
+            Pillar::Content,
+            ThreatLevel::High,
+            &["pii_collection_lure"],
+        );
+        let mut record = qualified_lure_record("pii_collection_lure");
+        record["original_url"] = json!("https://capture.attacker.example/login");
+        record["effective_url"] = record["original_url"].clone();
+        content.details["qualified_compounds"] = json!([record]);
+        let link = make_result(
+            "link_content",
+            Pillar::Link,
+            ThreatLevel::High,
+            &["credential_link_lure"],
+        );
+        let normalized = normalize_results(
+            None,
+            &HashMap::from([
+                ("content_scan".to_string(), content.clone()),
+                ("link_content".to_string(), link.clone()),
+            ]),
+            &VerdictConfig::default(),
+        );
+        let keys = normalized
+            .clusters
+            .iter()
+            .flat_map(|cluster| cluster.causal_atoms.iter())
+            .map(|atom| atom.causal_key.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(keys, BTreeSet::from(["host:capture.attacker.example"]));
+
+        let fusion = super::super::clustered_ds_v2::evaluate_model(
+            None,
+            &HashMap::from([
+                ("content_scan".to_string(), content.clone()),
+                ("link_content".to_string(), link.clone()),
+            ]),
+            &VerdictConfig::default(),
+        );
+        assert_eq!(fusion.artifact_count, 1);
+        assert_eq!(fusion.fallback_artifact_count, 0);
+
+        content.details["qualified_compounds"][0]["original_url"] =
+            json!("https://independent.example/submit");
+        content.details["qualified_compounds"][0]["effective_url"] =
+            json!("https://independent.example/submit");
+        let independent = normalize_results(
+            None,
+            &HashMap::from([
+                ("content_scan".to_string(), content),
+                ("link_content".to_string(), link),
+            ]),
+            &VerdictConfig::default(),
+        );
+        assert_eq!(
+            independent
+                .clusters
+                .iter()
+                .flat_map(|cluster| cluster.causal_atoms.iter())
+                .map(|atom| atom.causal_key.as_str())
+                .collect::<BTreeSet<_>>()
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn family_keeps_one_producer_score_confidence_pair() {
+        let mut score_view = make_result(
+            "link_content",
+            Pillar::Link,
+            ThreatLevel::High,
+            &["credential_link_lure"],
+        );
+        score_view.details["score"] = json!(0.80);
+        score_view.confidence = 0.55;
+        let mut confidence_view = score_view.clone();
+        confidence_view.details["score"] = json!(0.35);
+        confidence_view.confidence = 0.95;
+        let config = VerdictConfig::default();
+        let first = normalize_results(
+            None,
+            &HashMap::from([("first".to_string(), score_view.clone())]),
+            &config,
+        );
+        let second = normalize_results(
+            None,
+            &HashMap::from([("second".to_string(), confidence_view.clone())]),
+            &config,
+        );
+        let combined = normalize_results(
+            None,
+            &HashMap::from([
+                ("first".to_string(), score_view),
+                ("second".to_string(), confidence_view),
+            ]),
+            &config,
+        );
+        let pair = |normalized: &NormalizedEvidence| {
+            let atom = &normalized.clusters[0].causal_atoms[0];
+            (atom.score, atom.confidence)
+        };
+        assert!(pair(&combined) == pair(&first) || pair(&combined) == pair(&second));
+    }
+
+    #[test]
+    fn independent_content_claims_keep_distinct_runtime_causes() {
+        let action = "external_action_link_lure";
+        let pii = "pii_collection_lure";
+        let mut result = make_result(
+            "content_scan",
+            Pillar::Content,
+            ThreatLevel::High,
+            &[action, pii],
+        );
+        let mut independent = qualified_lure_record(pii);
+        independent["source_span_id"] = json!("body:second-request-span");
+        independent["original_url"] = json!("https://second.example.invalid/submit");
+        independent["effective_url"] = json!("https://second.example.invalid/submit");
+        independent["causal_keys"] = json!(["body:second-request-span", "url:second-target"]);
+        result.details["qualified_compounds"] = json!([qualified_lure_record(action), independent]);
+        let results = HashMap::from([("content_scan".to_string(), result)]);
+        let normalized = normalize_results(None, &results, &VerdictConfig::default());
+        let keys = normalized
+            .clusters
+            .iter()
+            .flat_map(|cluster| cluster.causal_keys.iter())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(keys.len(), 2, "{normalized:?}");
+    }
+
+    #[test]
+    fn subject_only_account_observation_cannot_borrow_a_link_for_its_floor() {
+        for link_category in ["href_text_mismatch", "ip_url"] {
+            let mut content = make_result(
+                "content_scan",
+                Pillar::Content,
+                ThreatLevel::Medium,
+                &["account_security_phishing", "phishing"],
+            );
+            content.details["score"] = json!(0.30);
+            content.evidence = vec![Evidence {
+                description: "Synthetic subject observation".to_string(),
+                location: Some("subject".to_string()),
+                snippet: None,
+            }];
+            let mut link = make_result(
+                "link_scan",
+                Pillar::Link,
+                ThreatLevel::Low,
+                &[link_category],
+            );
+            link.details["score"] = json!(0.30);
+            let mut results = HashMap::from([
+                ("content_scan".to_string(), content),
+                ("link_scan".to_string(), link),
+            ]);
+            let config = VerdictConfig::default();
+            let normalized = normalize_results(None, &results, &config);
+            assert!(!normalized.clusters.is_empty(), "{normalized:?}");
+            assert!(!normalized.scenario.has_admitted_content_account_signal);
+            let observed = super::super::aggregate_verdict(uuid::Uuid::nil(), &results, &config);
+            assert!(observed.threat_level < ThreatLevel::Medium, "{observed:?}");
+            assert!(
+                !observed
+                    .categories
+                    .contains(&"account_security_phishing".to_string()),
+                "{observed:?}"
+            );
+            assert!(
+                !observed.categories.contains(&"phishing".to_string()),
+                "{observed:?}"
+            );
+            assert_ne!(
+                observed.classification,
+                Some(EmailClassification::Phishing),
+                "{observed:?}"
+            );
+
+            let content = results.get_mut("content_scan").unwrap();
+            content.details["score"] = json!(0.50);
+            content.evidence[0] = Evidence {
+                description: "Account expiration threat with a recipient verification request"
+                    .to_string(),
+                location: Some("body".to_string()),
+                snippet: Some(
+                    "Your account expires today. Verify your account to retain access.".to_string(),
+                ),
+            };
+            let normalized = normalize_results(None, &results, &config);
+            assert!(normalized.scenario.has_admitted_content_account_signal);
+            let requested = super::super::aggregate_verdict(uuid::Uuid::nil(), &results, &config);
+            assert!(
+                requested.threat_level >= ThreatLevel::Medium,
+                "{requested:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn account_floor_requires_actual_admission_not_a_raw_result_category() {
+        for mode in 0..3 {
+            let mut content = make_result(
+                "content_scan",
+                Pillar::Content,
+                ThreatLevel::Medium,
+                &["account_security_phishing", "phishing"],
+            );
+            content.evidence = vec![Evidence {
+                description: "Synthetic account request".to_string(),
+                location: Some("body".to_string()),
+                snippet: None,
+            }];
+            let mut policy = None;
+            match mode {
+                0 => content.threat_level = ThreatLevel::Safe,
+                1 => content.bpa = Some(Bpa::vacuous()),
+                _ => {
+                    policy = parse_evidence_admission_policy(json!({
+                        "enabled": true,
+                        "observation_only": {"content_scan": ["account_security_phishing"]},
+                    }))
+                }
+            }
+            let results = HashMap::from([("content_scan".to_string(), content)]);
+            let normalized = normalize_results_with_admission_policy(
+                None,
+                &results,
+                &VerdictConfig::default(),
+                policy.as_ref(),
+            );
+            assert!(
+                !normalized.scenario.has_admitted_content_account_signal,
+                "mode {mode}"
+            );
+        }
+    }
+
+    #[test]
+    fn content_floor_qualification_requires_positive_weight_score_and_confidence() {
+        let action = "external_action_link_lure";
+        let pii = "pii_collection_lure";
+        for mode in 0..3 {
+            let mut content = make_result(
+                "content_scan",
+                Pillar::Content,
+                ThreatLevel::High,
+                &["account_security_phishing", action, pii],
+            );
+            content.details["qualified_compounds"] =
+                json!([qualified_lure_record(action), qualified_lure_record(pii),]);
+            content.evidence = vec![Evidence {
+                description: "Synthetic body request".to_string(),
+                location: Some("body".to_string()),
+                snippet: None,
+            }];
+            let mut config = VerdictConfig::default();
+            match mode {
+                0 => {
+                    config.weights.insert("content_scan".to_string(), 0.0);
+                }
+                1 => content.details["score"] = json!(0.0),
+                _ => content.confidence = 0.0,
+            }
+            let mut results = HashMap::from([("content_scan".to_string(), content)]);
+            let normalized = normalize_results(None, &results, &config);
+            assert!(
+                !normalized.scenario.has_admitted_content_account_signal,
+                "mode {mode}"
+            );
+            assert!(
+                normalized.scenario.qualified_content_compounds.is_empty(),
+                "mode {mode}"
+            );
+            for category in ["account_security_phishing", action, pii] {
+                assert!(
+                    normalized
+                        .categories
+                        .iter()
+                        .any(|observed| observed == category),
+                    "mode {mode}"
+                );
+            }
+
+            config.weights.insert("content_scan".to_string(), 1.0);
+            let content = results.get_mut("content_scan").unwrap();
+            content.details["score"] = json!(0.80);
+            content.confidence = 0.85;
+            let normalized = normalize_results(None, &results, &config);
+            assert!(
+                normalized.scenario.has_admitted_content_account_signal,
+                "mode {mode}"
+            );
+            assert!(
+                normalized
+                    .scenario
+                    .qualified_content_compounds
+                    .contains(action)
+            );
+            assert!(
+                normalized
+                    .scenario
+                    .qualified_content_compounds
+                    .contains(pii)
+            );
+        }
+    }
+
+    #[test]
+    fn policy_excluded_identity_anchor_cannot_rescue_display_fusion_or_classification() {
+        for anchor in ["authority_display_name_lure", "known_impersonation_domain"] {
+            for tier in ["diagnostic_only", "observation_only"] {
+                let mut policy_value = json!({"enabled": true});
+                policy_value[tier] = json!({"header_scan": [anchor]});
+                let policy = parse_evidence_admission_policy(policy_value)
+                    .expect("valid scoped identity admission policy");
+                let header = make_result(
+                    "header_scan",
+                    Pillar::Package,
+                    ThreatLevel::High,
+                    &["display_name_spoof", anchor],
+                );
+                let results = HashMap::from([("header_scan".to_string(), header)]);
+                let config = VerdictConfig::default();
+                let normalized =
+                    normalize_results_with_admission_policy(None, &results, &config, Some(&policy));
+                assert!(
+                    normalized.clusters.is_empty(),
+                    "{anchor}/{tier}: {normalized:?}"
+                );
+                assert_eq!(normalized.modules_flagged, 0);
+                let mut categories = normalized.categories.clone();
+                canonicalize_observed_attack_classification_categories_with_policy(
+                    &mut categories,
+                    &results,
+                    &config,
+                    Some(&policy),
+                );
+                assert_eq!(
+                    classify_email_classification(&categories),
+                    EmailClassification::Undetermined
+                );
+                assert!(categories.contains(&"generic_lure_observed".to_string()));
+                assert!(!categories.contains(&"display_name_spoof".to_string()));
+                assert!(
+                    results["header_scan"]
+                        .categories
+                        .contains(&"display_name_spoof".to_string())
+                );
+            }
+
+            let header = make_result(
+                "header_scan",
+                Pillar::Package,
+                ThreatLevel::High,
+                &["display_name_spoof", anchor],
+            );
+            let results = HashMap::from([("header_scan".to_string(), header)]);
+            let config = VerdictConfig::default();
+            let normalized = normalize_results_with_admission_policy(None, &results, &config, None);
+            assert!(!normalized.clusters.is_empty(), "{anchor}: {normalized:?}");
+            let mut categories = normalized.categories.clone();
+            canonicalize_observed_attack_classification_categories_with_policy(
+                &mut categories,
+                &results,
+                &config,
+                None,
+            );
+            assert_eq!(
+                classify_email_classification(&categories),
+                EmailClassification::Impersonation
+            );
+            assert!(categories.contains(&"display_name_spoof".to_string()));
+        }
+    }
+
+    #[test]
+    fn display_classification_cannot_borrow_an_anchor_from_another_producer() {
+        let header = make_result(
+            "header_scan",
+            Pillar::Package,
+            ThreatLevel::High,
+            &["authority_display_name_lure"],
+        );
+        let identity = make_result(
+            "identity_anomaly",
+            Pillar::Semantic,
+            ThreatLevel::High,
+            &["display_name_spoof"],
+        );
+        let results = HashMap::from([
+            ("header_scan".to_string(), header),
+            ("identity_anomaly".to_string(), identity),
+        ]);
+        let config = VerdictConfig::default();
+        let normalized = normalize_results_with_admission_policy(None, &results, &config, None);
+        assert!(
+            !normalized.clusters.is_empty(),
+            "native header anchor must remain: {normalized:?}"
+        );
+        assert!(
+            normalized
+                .clusters
+                .iter()
+                .all(|cluster| !cluster.modules.contains(&"identity_anomaly".to_string()))
+        );
+        let mut categories = normalized.categories;
+        canonicalize_observed_attack_classification_categories_with_policy(
+            &mut categories,
+            &results,
+            &config,
+            None,
+        );
+        assert!(!categories.contains(&"display_name_spoof".to_string()));
+        assert!(categories.contains(&"authority_display_name_lure".to_string()));
+        assert!(categories.contains(&"generic_lure_observed".to_string()));
+    }
+
+    #[test]
+    fn malformed_counter_context_or_repeated_cause_cannot_qualify_lure() {
+        let category = "external_action_link_lure";
+        for mutation in 0..8 {
+            let mut record = qualified_lure_record(category);
+            match mutation {
+                0 => {
+                    record["causal_keys"] =
+                        json!(["body:test-request-span", "body:test-request-span"])
+                }
+                1 => record["polarity"] = json!("anti_action"),
+                2 => record["quote_or_forward_status"] = json!("quoted"),
+                3 => record["counter_context_ids"] = json!(["span:warning"]),
+                4 => {
+                    record
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("link_content_status");
+                }
+                5 => record["coverage_reason"] = json!(""),
+                6 => record["source_span_id"] = json!("body:"),
+                _ => record["original_url"] = json!("not-a-url"),
+            }
+            let mut result = make_result(
+                "content_scan",
+                Pillar::Content,
+                ThreatLevel::High,
+                &[category],
+            );
+            result.details["qualified_compounds"] = json!([record]);
+            assert!(
+                !qualified_content_compound(&result, category),
+                "mutation {mutation}"
+            );
+        }
+    }
+
+    #[test]
+    fn safe_image_only_observation_is_context_not_fusion_evidence() {
+        let mut results = HashMap::new();
+        results.insert(
+            "content_scan".to_string(),
+            make_result(
+                "content_scan",
+                Pillar::Content,
+                ThreatLevel::Safe,
+                &["image_only_phishing"],
+            ),
+        );
+
+        let normalized = normalize_results(None, &results, &VerdictConfig::default());
+
+        assert!(normalized.scenario.image_only_layout_observed);
+        assert!(normalized.clusters.is_empty());
+        assert!(normalized.categories.is_empty());
+        assert_eq!(normalized.modules_flagged, 0);
+    }
+
+    #[test]
+    fn safe_content_observations_remain_visible_without_fusion_belief() {
+        let mut results = HashMap::new();
+        results.insert(
+            "content_scan".to_string(),
+            make_result(
+                "content_scan",
+                Pillar::Content,
+                ThreatLevel::Safe,
+                &[
+                    "adult_content_observed",
+                    "generic_lure_observed",
+                    "empty_body_observed",
+                ],
+            ),
+        );
+
+        let normalized = normalize_results(None, &results, &VerdictConfig::default());
+
+        assert!(
+            normalized
+                .categories
+                .iter()
+                .any(|category| category == "adult_content_observed")
+        );
+        assert!(
+            normalized
+                .categories
+                .iter()
+                .any(|category| category == "generic_lure_observed")
+        );
+        assert!(
+            normalized
+                .categories
+                .iter()
+                .any(|category| category == "empty_body_observed")
+        );
+        assert!(normalized.clusters.is_empty());
+        assert_eq!(normalized.modules_flagged, 0);
+    }
+
+    #[test]
+    fn image_only_layout_observation_is_visible_but_excluded_from_fusion() {
+        let mut results = HashMap::new();
+        results.insert(
+            "content_scan".to_string(),
+            make_result(
+                "content_scan",
+                Pillar::Content,
+                ThreatLevel::Low,
+                &["image_only_layout_observed"],
+            ),
+        );
+
+        let normalized = normalize_results(None, &results, &VerdictConfig::default());
+
+        assert!(normalized.scenario.image_only_layout_observed);
+        assert!(
+            normalized
+                .categories
+                .contains(&"image_only_layout_observed".to_string())
+        );
+        assert!(normalized.clusters.is_empty());
+        assert_eq!(normalized.modules_flagged, 0);
+    }
+
+    #[test]
+    fn subject_only_account_security_keyword_is_observation_only() {
+        let mut result = make_result(
+            "content_scan",
+            Pillar::Content,
+            ThreatLevel::Low,
+            &["account_security_phishing"],
+        );
+        result.evidence = vec![Evidence {
+            description: "subject keyword only".to_string(),
+            location: Some("subject".to_string()),
+            snippet: None,
+        }];
+
+        let normalized = normalize_results(
+            None,
+            &HashMap::from([("content_scan".to_string(), result)]),
+            &VerdictConfig::default(),
+        );
+
+        assert!(
+            normalized
+                .categories
+                .contains(&"account_security_phishing".to_string())
+        );
+        assert!(normalized.clusters.is_empty());
+        assert_eq!(normalized.modules_flagged, 0);
     }
 
     #[test]
@@ -1425,7 +4408,7 @@ mod tests {
         let session = make_session(
             "微信聊天记录",
             "附件中包含密码重置提示与卡号信息",
-            "799422752@qq.com",
+            "fixture-attachment@sender.invalid",
         );
         let mut categories = BTreeSet::new();
         categories.insert("phishing".to_string());
@@ -1457,7 +4440,7 @@ mod tests {
         let session = make_session(
             "August newsletter",
             "Read the latest compliance news.",
-            "info@contact.acams.org",
+            "newsletter@campaign.vendor.example",
         );
         let categories = BTreeSet::from([
             "redirect_url".to_string(),
@@ -1482,7 +4465,7 @@ mod tests {
         let session = make_session(
             "August newsletter",
             "Read the latest compliance news.",
-            "info@contact.acams.org",
+            "newsletter@campaign.vendor.example",
         );
         let mut results = HashMap::new();
         results.insert(
@@ -1532,19 +4515,29 @@ mod tests {
         );
 
         let normalized = normalize_results(Some(&session), &results, &VerdictConfig::default());
-        let identity = normalized
-            .clusters
-            .iter()
-            .find(|cluster| cluster.id == EvidenceClusterId::SenderIdentityAuthenticity)
-            .expect("identity cluster");
         let links = normalized
             .clusters
             .iter()
             .find(|cluster| cluster.id == EvidenceClusterId::LinkAndHtmlDeception)
             .expect("link cluster");
 
-        assert!((identity.score - 0.64).abs() < 1e-9);
-        assert!(!identity.breaker_eligible);
+        assert!(
+            normalized
+                .categories
+                .contains(&"envelope_spoofing".to_string())
+        );
+        assert!(
+            normalized
+                .categories
+                .contains(&"envelope_mismatch".to_string())
+        );
+        assert!(
+            normalized
+                .clusters
+                .iter()
+                .all(|cluster| cluster.id != EvidenceClusterId::SenderIdentityAuthenticity),
+            "routing mismatch observations must not create an identity cluster: {normalized:?}"
+        );
         assert!(links.score <= 0.44);
         assert!(!links.breaker_eligible);
         assert!(!normalized.scenario.has_credential_link_signal);
@@ -1594,7 +4587,7 @@ mod tests {
     }
 
     #[test]
-    fn only_verified_yara_or_structural_payload_can_trigger_breaker() {
+    fn only_governed_yara_or_structural_payload_can_trigger_breaker() {
         assert!(is_breaker_eligible_signal(
             "yara_scan",
             "verified_yara_signature"
@@ -1603,6 +4596,32 @@ mod tests {
             "yara_scan",
             "verified_payload_anchor"
         ));
+        assert!(is_breaker_eligible_signal(
+            "yara_scan",
+            "weaponized_lnk_execution"
+        ));
+        assert!(map_yara_signal("executable_attachment").is_none());
+    }
+
+    #[test]
+    fn legacy_yara_categories_are_observation_only_for_ds() {
+        for category in [
+            "webshell",
+            "malware_family",
+            "pe_structural_candidate",
+            "polyglot_container",
+            "yara_match",
+        ] {
+            assert!(
+                map_yara_signal(category).is_none(),
+                "legacy YARA category must not enter D-S: {category}"
+            );
+        }
+
+        assert!(map_yara_signal("verified_yara_signature").is_some());
+        assert!(map_yara_signal("verified_payload_anchor").is_some());
+        assert!(map_yara_signal("verified_executable_payload").is_some());
+        assert!(map_yara_signal("weaponized_lnk_execution").is_some());
     }
 
     #[test]
@@ -1610,7 +4629,7 @@ mod tests {
         let session = make_session(
             "外贸货款对公 平台结算",
             "请尽快处理补贴款，另可加Q 3826878185 办理增值税发票并使用钱包地址支付",
-            "yleqte@qq.com",
+            "fixture-solicitation@sender.invalid",
         );
         let categories = BTreeSet::from([
             "subsidy_fraud".to_string(),
@@ -1718,8 +4737,13 @@ mod tests {
             "bec_payment_change must produce a BusinessSensitivity cluster, got {cluster_ids:?}"
         );
         assert!(
-            cluster_ids.contains(&EvidenceClusterId::SocialEngineeringIntent),
-            "bec_no_ioc_social must produce a SocialEngineeringIntent cluster, got {cluster_ids:?}"
+            !cluster_ids.contains(&EvidenceClusterId::SocialEngineeringIntent),
+            "the generic no-IOC BEC label must not duplicate payment-change evidence, got {cluster_ids:?}"
+        );
+        assert!(
+            normalized
+                .categories
+                .contains(&"bec_no_ioc_social".to_string())
         );
         assert!(
             normalized.scenario.has_payment_change_signal,
@@ -1732,7 +4756,7 @@ mod tests {
         let session = make_session(
             "VT 发Q-3826878185 加微",
             "",
-            "fjlmodtf@diic.com",
+            "fixture-contact-lure@sender.invalid",
         );
         let mut results = HashMap::new();
         results.insert(
@@ -1755,6 +4779,40 @@ mod tests {
         assert!(social.score > 0.0);
         assert!(!social.breaker_eligible);
         assert!(!normalized.scenario.has_invoice_spam_signal);
+    }
+
+    #[test]
+    fn normalize_results_maps_adult_content_lure_into_social_cluster() {
+        let session = make_session(
+            "Synthetic viewing invitation",
+            "Synthetic adult-content lure with an external destination.",
+            "promo@sender.invalid",
+        );
+        let mut results = HashMap::new();
+        results.insert(
+            "content_scan".to_string(),
+            make_result(
+                "content_scan",
+                Pillar::Content,
+                ThreatLevel::Low,
+                &["adult_content_lure"],
+            ),
+        );
+
+        let normalized = normalize_results(Some(&session), &results, &VerdictConfig::default());
+        let social = normalized
+            .clusters
+            .iter()
+            .find(|cluster| cluster.id == EvidenceClusterId::SocialEngineeringIntent)
+            .expect("adult-content lure should produce a social-engineering cluster");
+
+        assert!(social.score > 0.0);
+        assert!(
+            social
+                .key_factors
+                .iter()
+                .any(|factor| factor.contains("Adult-Content") || factor.contains("adult_content"))
+        );
     }
 
     #[test]
@@ -1788,11 +4846,623 @@ mod tests {
     }
 
     #[test]
+    fn normalize_results_maps_mailbox_enumeration_probe_into_sender_identity_cluster() {
+        let session = make_session("h525266r", "", "h525266r@ccabchina.com.example");
+        let results = HashMap::from([(
+            "anomaly_detect".to_string(),
+            make_result(
+                "anomaly_detect",
+                Pillar::Package,
+                ThreatLevel::Medium,
+                &["mailbox_enumeration_probe"],
+            ),
+        )]);
+
+        let normalized = normalize_results(Some(&session), &results, &VerdictConfig::default());
+        let identity = normalized
+            .clusters
+            .iter()
+            .find(|cluster| cluster.id == EvidenceClusterId::SenderIdentityAuthenticity)
+            .expect("mailbox enumeration probe should produce an identity cluster");
+
+        assert!(identity.score > 0.0);
+        assert!(
+            identity
+                .key_factors
+                .iter()
+                .any(|factor| factor.contains("Mailbox Enumeration Probe"))
+        );
+    }
+
+    #[test]
+    fn diagnostic_only_unsafe_result_is_excluded_from_fusion() {
+        let session = make_session(
+            "Synthetic statement",
+            "Your monthly statement is attached.",
+            "billing@vendor.example",
+        );
+        let mut results = HashMap::new();
+        results.insert(
+            "header_scan".to_string(),
+            make_result(
+                "header_scan",
+                Pillar::Package,
+                ThreatLevel::Low,
+                &[
+                    "untrusted_auth_results",
+                    "dkim_unverified",
+                    "no_auth_results",
+                ],
+            ),
+        );
+        results.insert(
+            "link_content".to_string(),
+            make_result(
+                "link_content",
+                Pillar::Link,
+                ThreatLevel::Critical,
+                &["long_url"],
+            ),
+        );
+
+        let normalized = normalize_results(Some(&session), &results, &VerdictConfig::default());
+
+        assert_eq!(normalized.modules_flagged, 0);
+        assert_eq!(normalized.categories, vec!["long_url".to_string()]);
+        assert!(normalized.clusters.is_empty(), "{normalized:?}");
+    }
+
+    #[test]
+    fn attachment_url_shape_observation_is_excluded_from_fusion() {
+        let session = make_session(
+            "Synthetic business report",
+            "The attachment contains internal service endpoints.",
+            "sender@vendor.example",
+        );
+        let results = HashMap::from([(
+            "attach_content".to_string(),
+            make_result(
+                "attach_content",
+                Pillar::Attachment,
+                ThreatLevel::Safe,
+                &["attachment_url_shape_observation"],
+            ),
+        )]);
+
+        assert!(map_attach_content_signal("attachment_url_shape_observation").is_none());
+        let normalized = normalize_results(Some(&session), &results, &VerdictConfig::default());
+
+        assert_eq!(normalized.modules_flagged, 0, "{normalized:?}");
+        assert!(
+            normalized
+                .categories
+                .contains(&"attachment_url_shape_observation".to_string())
+        );
+        assert!(normalized.clusters.is_empty(), "{normalized:?}");
+    }
+
+    #[test]
+    fn attachment_type_mismatch_is_observation_but_executable_disguise_stays_actionable() {
+        let session = make_session(
+            "Synthetic contract delivery",
+            "The requested contract documents are attached.",
+            "sender@vendor.example",
+        );
+        let benign_results = HashMap::from([(
+            "attach_scan".to_string(),
+            make_result(
+                "attach_scan",
+                Pillar::Attachment,
+                ThreatLevel::Low,
+                &["type_mismatch"],
+            ),
+        )]);
+
+        // Exercise the built-in fallback as well as the seeded policy: a
+        // persisted registry from before this fix must not restore the false
+        // positive when the policy is absent or malformed.
+        let normalized = normalize_results_with_admission_policy(
+            Some(&session),
+            &benign_results,
+            &VerdictConfig::default(),
+            None,
+        );
+        assert!(
+            normalized.categories.contains(&"type_mismatch".to_string()),
+            "format observations must remain visible: {normalized:?}"
+        );
+        assert_eq!(normalized.modules_flagged, 0, "{normalized:?}");
+        assert!(
+            normalized.clusters.is_empty(),
+            "a non-executable format mismatch must not create payload belief: {normalized:?}"
+        );
+
+        let seeded_normalized =
+            normalize_results(Some(&session), &benign_results, &VerdictConfig::default());
+        assert_eq!(
+            seeded_normalized.modules_flagged, 0,
+            "{seeded_normalized:?}"
+        );
+        assert!(
+            seeded_normalized.clusters.is_empty(),
+            "the versioned policy must also exclude format mismatch from fusion: {seeded_normalized:?}"
+        );
+
+        let malicious_results = HashMap::from([(
+            "attach_scan".to_string(),
+            make_result(
+                "attach_scan",
+                Pillar::Attachment,
+                ThreatLevel::High,
+                &["executable_disguise"],
+            ),
+        )]);
+        let normalized = normalize_results_with_admission_policy(
+            Some(&session),
+            &malicious_results,
+            &VerdictConfig::default(),
+            None,
+        );
+        assert_eq!(normalized.modules_flagged, 1, "{normalized:?}");
+        assert!(
+            normalized
+                .clusters
+                .iter()
+                .any(|cluster| cluster.id == EvidenceClusterId::PayloadMalware),
+            "executable disguises must remain actionable: {normalized:?}"
+        );
+    }
+
+    #[test]
+    fn missing_received_is_retained_as_observation_without_delivery_cluster() {
+        let session = make_session(
+            "Synthetic statement",
+            "Your monthly statement is attached.",
+            "billing@vendor.example",
+        );
+        let results = HashMap::from([(
+            "header_scan".to_string(),
+            make_result(
+                "header_scan",
+                Pillar::Package,
+                ThreatLevel::Low,
+                &["no_received"],
+            ),
+        )]);
+
+        assert!(map_header_signal("no_received").is_none());
+        let normalized = normalize_results(Some(&session), &results, &VerdictConfig::default());
+
+        assert_eq!(normalized.modules_flagged, 0, "{normalized:?}");
+        assert!(
+            normalized.categories.contains(&"no_received".to_string()),
+            "coverage observation should remain analyst-visible: {normalized:?}"
+        );
+        assert!(normalized.clusters.is_empty(), "{normalized:?}");
+    }
+
+    #[test]
+    fn envelope_spoof_observations_are_retained_without_identity_fusion() {
+        let session = make_session(
+            "Routine internal notice",
+            "This message is a routine operational notification.",
+            "sender@partner.example",
+        );
+        let result = make_result(
+            "header_scan",
+            Pillar::Package,
+            ThreatLevel::High,
+            &["envelope_spoofing", "protected_domain_spoof"],
+        );
+        let normalized = normalize_results(
+            Some(&session),
+            &HashMap::from([("header_scan".to_string(), result)]),
+            &VerdictConfig::default(),
+        );
+
+        assert!(
+            normalized
+                .categories
+                .contains(&"envelope_spoofing".to_string())
+        );
+        assert!(
+            normalized
+                .categories
+                .contains(&"protected_domain_spoof".to_string())
+        );
+        assert!(
+            normalized
+                .clusters
+                .iter()
+                .all(|cluster| cluster.id != EvidenceClusterId::SenderIdentityAuthenticity),
+            "routing mismatch must remain an observation until corroborated: {normalized:?}"
+        );
+        assert_eq!(normalized.modules_flagged, 0, "{normalized:?}");
+        assert!(!is_breaker_eligible_signal(
+            "header_scan",
+            "protected_domain_spoof"
+        ));
+        assert!(map_header_signal("envelope_spoofing").is_none());
+        assert!(map_header_signal("protected_domain_spoof").is_none());
+    }
+
+    #[test]
+    fn suspicious_mailer_observation_is_excluded_from_fusion() {
+        let session = make_session(
+            "Synthetic document delivery",
+            "The requested document is attached.",
+            "sender@vendor.example",
+        );
+        let results = HashMap::from([(
+            "header_scan".to_string(),
+            make_result(
+                "header_scan",
+                Pillar::Package,
+                ThreatLevel::Low,
+                &["suspicious_mailer", "dkim_unverified"],
+            ),
+        )]);
+
+        let normalized = normalize_results(Some(&session), &results, &VerdictConfig::default());
+
+        assert_eq!(normalized.modules_flagged, 0, "{normalized:?}");
+        assert!(
+            normalized
+                .categories
+                .contains(&"suspicious_mailer".to_string()),
+            "the client fingerprint remains analyst-visible"
+        );
+        assert!(
+            normalized.clusters.is_empty(),
+            "a mail-client fingerprint must not create threat belief: {normalized:?}"
+        );
+    }
+
+    #[test]
+    fn semantic_coverage_and_template_context_cannot_raise_threat() {
+        let session = make_session(
+            "Synthetic monthly operations report",
+            "Repeated report sections are context, not threat evidence.",
+            "reports@vendor.example",
+        );
+        let results = HashMap::from([(
+            "semantic_scan".to_string(),
+            make_result(
+                "semantic_scan",
+                Pillar::Semantic,
+                ThreatLevel::Low,
+                &["semantic_ai_inspection_limited", "repetitive_template_text"],
+            ),
+        )]);
+
+        let normalized = normalize_results(Some(&session), &results, &VerdictConfig::default());
+
+        assert_eq!(normalized.modules_flagged, 0, "{normalized:?}");
+        assert_eq!(
+            normalized.categories,
+            vec!["repetitive_template_text".to_string()],
+            "coverage diagnostics must be separated while observations stay visible"
+        );
+        assert!(
+            normalized.clusters.is_empty(),
+            "coverage and repetitive-template context must not enter D-S fusion: {normalized:?}"
+        );
+    }
+
+    #[test]
+    fn configured_observations_remain_visible_without_creating_fusion_clusters() {
+        let session = make_session(
+            "Synthetic business notice",
+            "This fixture contains only contextual observations.",
+            "notice@vendor.example",
+        );
+        let results = HashMap::from([
+            (
+                "identity_anomaly".to_string(),
+                make_result(
+                    "identity_anomaly",
+                    Pillar::Semantic,
+                    ThreatLevel::Low,
+                    &["first_contact"],
+                ),
+            ),
+            (
+                "link_content".to_string(),
+                make_result(
+                    "link_content",
+                    Pillar::Link,
+                    ThreatLevel::Low,
+                    &["recipient_in_url"],
+                ),
+            ),
+            (
+                "link_reputation".to_string(),
+                make_result(
+                    "link_reputation",
+                    Pillar::Link,
+                    ThreatLevel::Low,
+                    &["long_domain"],
+                ),
+            ),
+            (
+                "attach_scan".to_string(),
+                make_result(
+                    "attach_scan",
+                    Pillar::Attachment,
+                    ThreatLevel::Low,
+                    &["mime_mismatch"],
+                ),
+            ),
+        ]);
+
+        let normalized = normalize_results(Some(&session), &results, &VerdictConfig::default());
+
+        for category in [
+            "first_contact",
+            "recipient_in_url",
+            "long_domain",
+            "mime_mismatch",
+        ] {
+            assert!(
+                normalized.categories.iter().any(|item| item == category),
+                "observation {category} must remain visible: {normalized:?}"
+            );
+        }
+        assert_eq!(normalized.modules_flagged, 0, "{normalized:?}");
+        assert!(
+            normalized.clusters.is_empty(),
+            "contextual observations must not become D-S evidence: {normalized:?}"
+        );
+    }
+
+    #[test]
+    fn malformed_evidence_admission_policy_fails_closed() {
+        assert!(
+            parse_evidence_admission_policy(json!({
+                "enabled": true,
+                "diagnostic_only": {},
+                "observation_only": {
+                    "link_content": "recipient_in_url"
+                }
+            }))
+            .is_none()
+        );
+        assert!(
+            parse_evidence_admission_policy(json!({
+                "enabled": true,
+                "diagnostic_only": {},
+                "observation_only": {
+                    "": ["recipient_in_url"]
+                }
+            }))
+            .is_none()
+        );
+
+        let session = make_session(
+            "Synthetic tracking notice",
+            "This fixture verifies fail-closed admission behavior.",
+            "tracking@sender.example",
+        );
+        let results = HashMap::from([(
+            "link_content".to_string(),
+            make_result(
+                "link_content",
+                Pillar::Link,
+                ThreatLevel::Low,
+                &["recipient_in_url"],
+            ),
+        )]);
+        let normalized = normalize_results_with_admission_policy(
+            Some(&session),
+            &results,
+            &VerdictConfig::default(),
+            None,
+        );
+
+        assert!(
+            normalized.clusters.is_empty(),
+            "the compiled admission tiers must keep URL-shape noise out of fusion when the runtime policy is invalid: {normalized:?}"
+        );
+        assert_eq!(normalized.modules_flagged, 0, "{normalized:?}");
+        assert!(
+            normalized
+                .categories
+                .contains(&"recipient_in_url".to_string())
+        );
+
+        let strong = HashMap::from([(
+            "link_content".to_string(),
+            make_result(
+                "link_content",
+                Pillar::Link,
+                ThreatLevel::High,
+                &["targeted_credential_phishing"],
+            ),
+        )]);
+        let strong_normalized = normalize_results_with_admission_policy(
+            Some(&session),
+            &strong,
+            &VerdictConfig::default(),
+            None,
+        );
+        assert!(
+            strong_normalized
+                .clusters
+                .iter()
+                .any(|cluster| cluster.id == EvidenceClusterId::LinkAndHtmlDeception),
+            "a registered credential-target anchor must survive the fallback policy: {strong_normalized:?}"
+        );
+    }
+
+    #[test]
+    fn missing_policy_keeps_known_weak_url_observations_out_of_fusion() {
+        let mut typo = make_result(
+            "link_content",
+            Pillar::Link,
+            ThreatLevel::Medium,
+            &["url_typo"],
+        );
+        typo.details = json!({"score": 0.70});
+        let results = HashMap::from([(String::from("link_content"), typo)]);
+        let normalized = normalize_results_with_admission_policy(
+            None,
+            &results,
+            &VerdictConfig::default(),
+            None,
+        );
+
+        assert!(normalized.categories.contains(&"url_typo".to_string()));
+        assert!(normalized.clusters.is_empty(), "{normalized:?}");
+    }
+
+    #[test]
+    fn stage_a_admission_keeps_strong_neighbor_signals_actionable() {
+        let session = make_session(
+            "Synthetic security alert",
+            "Use the supplied security link to review the alert.",
+            "security@sender.example",
+        );
+        let results = HashMap::from([
+            (
+                "header_scan".to_string(),
+                make_result(
+                    "header_scan",
+                    Pillar::Package,
+                    ThreatLevel::High,
+                    &["protected_domain_spoof"],
+                ),
+            ),
+            (
+                "link_content".to_string(),
+                make_result(
+                    "link_content",
+                    Pillar::Link,
+                    ThreatLevel::High,
+                    &["dga_random_domain", "targeted_credential_phishing"],
+                ),
+            ),
+            (
+                "link_reputation".to_string(),
+                make_result(
+                    "link_reputation",
+                    Pillar::Link,
+                    ThreatLevel::High,
+                    &["intel_malicious"],
+                ),
+            ),
+            (
+                "attach_scan".to_string(),
+                make_result(
+                    "attach_scan",
+                    Pillar::Attachment,
+                    ThreatLevel::High,
+                    &["type_mismatch", "executable_disguise"],
+                ),
+            ),
+        ]);
+
+        let normalized = normalize_results(Some(&session), &results, &VerdictConfig::default());
+        let cluster_ids = normalized
+            .clusters
+            .iter()
+            .map(|cluster| cluster.id)
+            .collect::<BTreeSet<_>>();
+
+        assert!(
+            !cluster_ids.contains(&EvidenceClusterId::SenderIdentityAuthenticity),
+            "the envelope mismatch observation must not manufacture identity evidence: {normalized:?}"
+        );
+        assert!(
+            cluster_ids.contains(&EvidenceClusterId::LinkAndHtmlDeception),
+            "{normalized:?}"
+        );
+        assert!(
+            cluster_ids.contains(&EvidenceClusterId::ExternalReputationIoc),
+            "{normalized:?}"
+        );
+        assert!(
+            cluster_ids.contains(&EvidenceClusterId::PayloadMalware),
+            "{normalized:?}"
+        );
+        assert!(
+            normalized
+                .clusters
+                .iter()
+                .any(|cluster| cluster.breaker_eligible),
+            "strong controls must retain breaker eligibility: {normalized:?}"
+        );
+    }
+
+    #[test]
+    fn random_sender_domain_shape_remains_visible_but_does_not_create_threat_evidence() {
+        let session = make_session(
+            "Synthetic pending-item notice",
+            "A synthetic internal-notice lure with no stronger link anchor.",
+            "notice@random-sender.example",
+        );
+        let results = HashMap::from([(
+            "identity_anomaly".to_string(),
+            make_result(
+                "identity_anomaly",
+                Pillar::Semantic,
+                ThreatLevel::Low,
+                &["first_contact", "random_domain"],
+            ),
+        )]);
+
+        let normalized = normalize_results(Some(&session), &results, &VerdictConfig::default());
+        assert!(
+            !normalized
+                .clusters
+                .iter()
+                .any(|cluster| cluster.id == EvidenceClusterId::SenderIdentityAuthenticity),
+            "random sender-domain shape must not create an identity cluster by itself: {normalized:?}"
+        );
+        assert_eq!(normalized.modules_flagged, 0, "{normalized:?}");
+        assert!(
+            normalized
+                .categories
+                .iter()
+                .any(|category| category == "first_contact"),
+            "the demoted first-contact observation remains visible: {normalized:?}"
+        );
+        assert!(
+            normalized
+                .categories
+                .iter()
+                .any(|category| category == "random_domain")
+        );
+    }
+
+    #[test]
+    fn explicit_zero_belief_result_is_excluded_even_with_actionable_label() {
+        let session = make_session(
+            "Synthetic notice",
+            "This fixture exercises stale result normalization.",
+            "notice@vendor.example",
+        );
+        let mut result = make_result(
+            "link_reputation",
+            Pillar::Link,
+            ThreatLevel::Low,
+            &["intel_suspicious"],
+        );
+        result.bpa = Some(Bpa::safe_analyzed());
+        let results = HashMap::from([("link_reputation".to_string(), result)]);
+
+        let normalized = normalize_results(Some(&session), &results, &VerdictConfig::default());
+
+        assert_eq!(normalized.modules_flagged, 0);
+        assert!(normalized.categories.is_empty(), "{normalized:?}");
+        assert!(normalized.clusters.is_empty(), "{normalized:?}");
+    }
+
+    #[test]
     fn lone_reply_domain_mismatch_is_visible_without_standalone_cluster() {
         let session = make_session(
             "Electronic invoice",
             "Your invoice is ready.",
-            "notify@supports.ly.com",
+            "notify@travel-service.invalid",
         );
         let mut results = HashMap::new();
         results.insert(
@@ -1814,12 +5484,21 @@ mod tests {
             "the analyst-visible header observation must be retained"
         );
         assert!(
+            !normalized
+                .categories
+                .contains(&"dkim_unverified".to_string()),
+            "verification gaps stay diagnostic instead of becoming verdict headlines"
+        );
+        assert!(
             normalized.clusters.is_empty(),
             "a bare Reply-To routing mismatch must not create threat evidence: {:?}",
             normalized.clusters
         );
-        assert!(normalized.scenario.has_header_spoof_signal);
-        assert!(normalized.scenario.has_structural_threat_signal);
+        assert!(
+            !normalized.scenario.has_header_spoof_signal,
+            "an observation cannot lend native spoof authority"
+        );
+        assert!(!normalized.scenario.has_structural_threat_signal);
     }
 
     #[test]
@@ -1851,7 +5530,10 @@ mod tests {
 
         let normalized = normalize_results(Some(&session), &results, &VerdictConfig::default());
 
-        assert!(normalized.scenario.has_header_spoof_signal);
+        assert!(
+            !normalized.scenario.has_header_spoof_signal,
+            "an observation cannot lend native spoof authority"
+        );
         assert!(normalized.scenario.has_credential_link_signal);
         assert!(normalized.clusters.iter().any(|cluster| {
             cluster.id == EvidenceClusterId::LinkAndHtmlDeception && cluster.breaker_eligible
@@ -2234,12 +5916,8 @@ mod tests {
         );
         let categories = BTreeSet::from(["nlp_bec".to_string()]);
 
-        let scenario = detect_scenarios_with_patterns(
-            Some(&session),
-            &categories,
-            &HashMap::new(),
-            &patterns,
-        );
+        let scenario =
+            detect_scenarios_with_patterns(Some(&session), &categories, &HashMap::new(), &patterns);
 
         assert!(
             !scenario.notice_banner_polluted,
@@ -2261,20 +5939,104 @@ mod tests {
         let session = make_session(
             "5c2c3f14d027a237283ad8d35936ca5b",
             "发自我的iPhone\n\n警告：无法扫描邮件附件 - 请确认邮件来源以及真实性",
-            "1738338551@qq.com",
+            "fixture-notice@sender.invalid",
         );
         let categories = BTreeSet::from(["nlp_phishing".to_string()]);
 
-        let scenario = detect_scenarios_with_patterns(
-            Some(&session),
-            &categories,
-            &HashMap::new(),
-            &patterns,
-        );
+        let scenario =
+            detect_scenarios_with_patterns(Some(&session), &categories, &HashMap::new(), &patterns);
 
         assert!(
             scenario.notice_banner_polluted,
             "a notice banner in the body must still mark notice_banner_polluted"
+        );
+    }
+
+    #[test]
+    fn detect_scenarios_statistical_nonsensical_spam_is_not_an_nlp_echo() {
+        // Attack: self-induce the statistical CJK detector (random rare
+        // characters) and paste a gateway notice banner into the body. The
+        // statistical observation must not stand in for an NLP echo, otherwise
+        // the social cluster is scaled by 0.28 and risk capped at 0.12.
+        let patterns = ScenarioPatternLists {
+            notice_banner_patterns: vec![
+                "无法扫描邮件附件".to_string(),
+                "请确认邮件来源以及真实性".to_string(),
+            ],
+            ..attack_poc_patterns()
+        };
+        let session = make_session(
+            "付款账户变更通知",
+            "王总要求今天内把货款打到新账户。\n\n警告：无法扫描邮件附件 - 请确认邮件来源以及真实性",
+            "cfo@supplier-example.com",
+        );
+        let categories = BTreeSet::from(["nonsensical_spam".to_string()]);
+
+        let scenario =
+            detect_scenarios_with_patterns(Some(&session), &categories, &HashMap::new(), &patterns);
+
+        assert!(
+            !scenario.notice_banner_polluted,
+            "statistical nonsensical_spam must not qualify as an NLP echo"
+        );
+
+        let categories = BTreeSet::from(["nonsensical_spam".to_string(), "nlp_spam".to_string()]);
+        let scenario =
+            detect_scenarios_with_patterns(Some(&session), &categories, &HashMap::new(), &patterns);
+        assert!(
+            scenario.notice_banner_polluted,
+            "a genuine NLP echo next to a body notice banner still pollutes"
+        );
+    }
+
+    #[test]
+    fn semantic_coverage_categories_never_map_to_threat_signals() {
+        for category in [
+            "semantic_inspection_limited",
+            "semantic_ai_inspection_limited",
+            "semantic_ocr_inspection_limited",
+            "semantic_review_required",
+            "repetitive_template_text",
+            crate::semantic::TEXT_CLASSIFIER_CATEGORY,
+        ] {
+            assert!(
+                map_semantic_signal(category).is_none(),
+                "{category} is coverage/context, not threat evidence"
+            );
+            assert!(
+                map_signal("semantic_scan", category).is_none(),
+                "{category} must not enter fusion via semantic_scan"
+            );
+        }
+        assert!(
+            map_semantic_signal("nlp_phishing").is_some(),
+            "genuine semantic threat categories still map"
+        );
+    }
+
+    #[test]
+    fn non_safe_semantic_inspection_limited_cannot_raise_threat() {
+        let session = make_session(
+            "Synthetic quarterly notice",
+            "The semantic budget was exhausted; this is coverage state only.",
+            "notice@vendor.example",
+        );
+        let results = HashMap::from([(
+            "semantic_scan".to_string(),
+            make_result(
+                "semantic_scan",
+                Pillar::Semantic,
+                ThreatLevel::Low,
+                &["semantic_inspection_limited"],
+            ),
+        )]);
+
+        let normalized = normalize_results(Some(&session), &results, &VerdictConfig::default());
+
+        assert_eq!(normalized.modules_flagged, 0, "{normalized:?}");
+        assert!(
+            normalized.clusters.is_empty(),
+            "semantic_inspection_limited must not enter D-S fusion: {normalized:?}"
         );
     }
 
@@ -2384,7 +6146,6 @@ mod tests {
             "Oss Content Override",
             "Encoded Protocol Param",
             "Double Encoded Payload",
-            "Suspicious Param Value",
         ] {
             assert!(
                 links.key_factors.iter().any(|factor| factor == expected),
@@ -2392,5 +6153,426 @@ mod tests {
                 links.key_factors
             );
         }
+    }
+
+    #[test]
+    fn weak_url_observations_are_visible_but_not_actionable_without_a_qualifier() {
+        let session = make_session(
+            "Invoice notification",
+            "Download the invoice.",
+            "notice@sender.invalid",
+        );
+        let mut link_content = make_result(
+            "link_content",
+            Pillar::Link,
+            ThreatLevel::Medium,
+            &["dga_random_domain", "gateway_unwrapped_risky_target"],
+        );
+        link_content.details = json!({
+            "score": 0.43,
+            "causal_findings": [{
+                "causal_key": "host:bucket.s3.region.object-storage.example.invalid",
+                "categories": ["dga_random_domain", "gateway_unwrapped_risky_target"]
+            }]
+        });
+        let mut link_reputation = make_result(
+            "link_reputation",
+            Pillar::Link,
+            ThreatLevel::Low,
+            &["long_domain", "deep_subdomain", "random_domain"],
+        );
+        link_reputation.details = json!({
+            "score": 0.20,
+            "causal_findings": [{
+                "causal_key": "host:bucket.s3.region.object-storage.example.invalid",
+                "categories": ["long_domain", "deep_subdomain", "random_domain"]
+            }]
+        });
+
+        let results = HashMap::from([
+            ("link_content".to_string(), link_content),
+            ("link_reputation".to_string(), link_reputation),
+        ]);
+        let normalized = normalize_results(Some(&session), &results, &VerdictConfig::default());
+        assert!(
+            normalized
+                .clusters
+                .iter()
+                .all(|cluster| { cluster.id != EvidenceClusterId::LinkAndHtmlDeception }),
+            "same-host weak URL observations must not create a standalone link cluster: {normalized:?}"
+        );
+        assert!(
+            normalized
+                .categories
+                .contains(&"dga_random_domain".to_string())
+        );
+        assert!(
+            normalized
+                .categories
+                .contains(&"gateway_unwrapped_risky_target".to_string())
+        );
+        assert!(!normalized.scenario.has_structural_threat_signal);
+        assert!(
+            !normalized
+                .scenario
+                .has_gateway_unwrapped_risky_target_signal
+        );
+    }
+
+    #[test]
+    fn one_effective_target_with_only_shape_signals_stays_out_of_threat_fusion() {
+        let session = make_session(
+            "Invoice notification",
+            "Download the invoice.",
+            "notice@sender.invalid",
+        );
+        let mut link_content = make_result(
+            "link_content",
+            Pillar::Link,
+            ThreatLevel::High,
+            &["idn_homograph", "suspicious_params"],
+        );
+        link_content.details = json!({
+            "score": 0.70,
+            "causal_findings": [{
+                "causal_key": "host:target.example.invalid",
+                "categories": ["idn_homograph", "suspicious_params"]
+            }]
+        });
+        let mut link_reputation = make_result(
+            "link_reputation",
+            Pillar::Link,
+            ThreatLevel::High,
+            &["brand_impersonation"],
+        );
+        link_reputation.details = json!({
+            "score": 0.60,
+            "causal_findings": [{
+                "causal_key": "host:target.example.invalid",
+                "categories": ["brand_impersonation"]
+            }]
+        });
+
+        let results = HashMap::from([
+            ("link_content".to_string(), link_content),
+            ("link_reputation".to_string(), link_reputation),
+        ]);
+        let normalized = normalize_results(Some(&session), &results, &VerdictConfig::default());
+        assert!(
+            normalized.clusters.is_empty(),
+            "homograph, parameter, and brand-shape findings from one target are observations until independently corroborated: {normalized:?}"
+        );
+        assert_eq!(normalized.modules_flagged, 0, "{normalized:?}");
+        for category in ["idn_homograph", "suspicious_params", "brand_impersonation"] {
+            assert!(normalized.categories.iter().any(|item| item == category));
+        }
+    }
+
+    #[test]
+    fn credential_brand_target_policy_maps_into_distinct_link_and_identity_clusters() {
+        let policy = credential_brand_target_scenario_policy()
+            .expect("embedded credential-brand-target policy must be valid");
+        let session = make_session(
+            "Synthetic account security review",
+            "A new device was detected. Complete the requested security review.",
+            "notice@sender.invalid",
+        );
+        let mut link_result = make_result("link_content", Pillar::Link, ThreatLevel::High, &[]);
+        link_result.categories = vec![
+            policy.credential_link_category.clone(),
+            policy.high_risk_target_category.clone(),
+            policy.brand_mismatch_category.clone(),
+            policy.redirect_target_category.clone(),
+            "dga_random_domain".to_string(),
+        ];
+        qualify_link_fixture(&mut link_result);
+        let gateway_url =
+            "https://gateway.example/redirect?url=https%3A%2F%2Fcapture.attacker.example%2Flogin";
+        for record in link_result.details["qualified_link_compounds"]
+            .as_array_mut()
+            .unwrap()
+        {
+            record["original_url"] = json!(gateway_url);
+        }
+        link_result.details["credential_target_observations"] = json!([{
+            "original_url": gateway_url,
+            "effective_url": "https://capture.attacker.example/login",
+            "gateway_unwrapped": true,
+        }]);
+        let mut results = HashMap::new();
+        results.insert("link_content".to_string(), link_result);
+        results.insert(
+            "content_scan".to_string(),
+            make_result(
+                "content_scan",
+                Pillar::Content,
+                ThreatLevel::High,
+                &["account_security_phishing"],
+            ),
+        );
+
+        let normalized = normalize_results(Some(&session), &results, &VerdictConfig::default());
+
+        assert!(normalized.scenario.has_account_security_signal);
+        assert!(normalized.scenario.has_credential_link_signal);
+        assert!(normalized.scenario.has_high_risk_credential_target_signal);
+        assert!(normalized.scenario.has_brand_sender_target_mismatch_signal);
+        assert!(
+            normalized
+                .scenario
+                .has_gateway_unwrapped_risky_target_signal
+        );
+        let link_cluster = normalized
+            .clusters
+            .iter()
+            .find(|cluster| cluster.id == EvidenceClusterId::LinkAndHtmlDeception)
+            .expect("the risky target category must map into the link cluster");
+        let identity_cluster = normalized
+            .clusters
+            .iter()
+            .find(|cluster| cluster.id == EvidenceClusterId::SenderIdentityAuthenticity)
+            .expect("the brand triad category must map into the identity cluster");
+        assert!(link_cluster.score > 0.0);
+        assert!(identity_cluster.score > 0.0);
+        assert!(
+            normalized
+                .categories
+                .contains(&policy.high_risk_target_category)
+        );
+        assert!(
+            normalized
+                .categories
+                .contains(&policy.brand_mismatch_category)
+        );
+        assert!(
+            !normalized
+                .scenario
+                .admitted_categories
+                .contains(&policy.redirect_target_category)
+        );
+
+        results.get_mut("link_content").unwrap().details["credential_target_observations"][0]["effective_url"] =
+            json!("https://unrelated.example/login");
+        let unrelated = normalize_results(Some(&session), &results, &VerdictConfig::default());
+        assert!(!unrelated.scenario.has_gateway_unwrapped_risky_target_signal);
+        assert!(unrelated.scenario.has_credential_link_signal);
+        assert!(unrelated.scenario.qualified_credential_brand_target);
+    }
+
+    #[test]
+    fn malformed_credential_scenario_policy_cannot_arm_a_floor() {
+        let mut invalid = crate::module_data::module_data()
+            .get_structured("credential_brand_target_policy_v1")
+            .expect("embedded policy")
+            .clone();
+        invalid["verdict_floor"] = serde_json::json!(2.0);
+
+        assert!(
+            parse_credential_brand_target_scenario_policy(invalid).is_none(),
+            "an invalid floor must disable the scenario policy without panicking"
+        );
+    }
+
+    #[test]
+    fn malformed_image_only_phishing_policy_fails_closed() {
+        assert!(
+            parse_image_only_phishing_medium_policy(json!({
+                "enabled": true,
+                "trigger_category": "image_only_phishing",
+                "minimum_social_score": 0.08,
+                "verdict_floor": 0.35,
+                "require_unverified_sender": true
+            }))
+            .is_none()
+        );
+        assert!(
+            parse_image_only_phishing_medium_policy(json!({
+                "enabled": true,
+                "trigger_category": "",
+                "minimum_social_score": 0.08,
+                "verdict_floor": 0.40,
+                "require_unverified_sender": true
+            }))
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn malformed_obfuscated_domain_lure_verdict_policy_fails_closed() {
+        assert!(
+            parse_obfuscated_domain_lure_verdict_policy(json!({
+                "enabled": true,
+                "result_category": "obfuscated_domain_lure",
+                "minimum_social_score": 0.30,
+                "verdict_floor": 0.39
+            }))
+            .is_none()
+        );
+        assert!(
+            parse_obfuscated_domain_lure_verdict_policy(json!({
+                "enabled": true,
+                "result_category": "",
+                "minimum_social_score": 0.30,
+                "verdict_floor": 0.40
+            }))
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn mailto_credential_form_is_native_actionable_html_evidence() {
+        let data = crate::module_data::module_data();
+        let category = data
+            .get_structured("html_mailto_credential_form_policy_v1")
+            .and_then(|policy| policy.get("result_category"))
+            .and_then(serde_json::Value::as_str)
+            .expect("embedded mailto credential-form category");
+        let mapped = map_signal("html_scan", category).expect("mapped HTML signal");
+
+        assert_eq!(mapped.cluster, EvidenceClusterId::LinkAndHtmlDeception);
+        assert_eq!(mapped.family, "credential_exfiltration");
+        assert!(mapped.scale >= 0.90);
+        assert!(is_breaker_eligible_signal("html_scan", category));
+    }
+
+    #[test]
+    fn stage_a_weak_fp_observations_do_not_create_threat_clusters() {
+        let session = make_session(
+            "Synthetic business notice",
+            "A routine statement contains account fields and a long vendor URL.",
+            "notice@vendor.example",
+        );
+
+        let mut identity = make_result(
+            "identity_anomaly",
+            Pillar::Semantic,
+            ThreatLevel::High,
+            &[
+                "display_name_spoof",
+                "first_contact",
+                "random_domain",
+                "suspicious_client",
+            ],
+        );
+        identity.details = json!({ "score": 0.35 });
+
+        let mut content = make_result(
+            "content_scan",
+            Pillar::Content,
+            ThreatLevel::High,
+            &[
+                "phishing",
+                "bec",
+                "bec_no_ioc_social",
+                "phishing_subject",
+                "multilingual_gibberish",
+            ],
+        );
+        content.details = json!({ "score": 0.55 });
+
+        let mut links = make_result(
+            "link_content",
+            Pillar::Link,
+            ThreatLevel::High,
+            &[
+                "suspicious_params",
+                "suspicious_path",
+                "long_domain",
+                "deep_subdomain",
+            ],
+        );
+        links.details = json!({ "score": 0.80 });
+
+        let mut attachment = make_result(
+            "attach_scan",
+            Pillar::Attachment,
+            ThreatLevel::High,
+            &["mime_mismatch"],
+        );
+        attachment.details = json!({ "score": 0.40 });
+
+        let results = HashMap::from([
+            ("identity_anomaly".to_string(), identity),
+            ("content_scan".to_string(), content),
+            ("link_content".to_string(), links),
+            ("attach_scan".to_string(), attachment),
+        ]);
+
+        let normalized = normalize_results(Some(&session), &results, &VerdictConfig::default());
+
+        assert!(normalized.clusters.is_empty(), "{normalized:?}");
+        assert_eq!(normalized.modules_flagged, 0, "{normalized:?}");
+        for category in [
+            "display_name_spoof",
+            "phishing",
+            "bec",
+            "suspicious_params",
+            "mime_mismatch",
+        ] {
+            assert!(
+                normalized.categories.iter().any(|item| item == category),
+                "weak observation {category} must remain analyst-visible: {normalized:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn stage_a_pii_reply_harvest_anchor_remains_actionable() {
+        let mapped = map_content_signal("pii_reply_harvest_lure")
+            .expect("qualified PII-harvest anchor must be registered");
+        assert_eq!(mapped.cluster, EvidenceClusterId::SocialEngineeringIntent);
+        assert_eq!(mapped.family, "pii_collection_lure");
+        assert!(mapped.scale >= 0.86);
+    }
+
+    #[test]
+    fn stage_a_generic_phishing_demotion_keeps_named_link_anchor_actionable() {
+        let session = make_session(
+            "Synthetic account verification",
+            "Use the supplied link to review the security alert.",
+            "security@sender.example",
+        );
+        let mut content = make_result(
+            "content_scan",
+            Pillar::Content,
+            ThreatLevel::High,
+            &["phishing", "external_action_link_lure"],
+        );
+        content.details = json!({ "score": 0.56 });
+
+        let mut links = make_result(
+            "link_content",
+            Pillar::Link,
+            ThreatLevel::High,
+            &["suspicious_params", "targeted_credential_phishing"],
+        );
+        links.details = json!({ "score": 0.82 });
+        qualify_link_fixture(&mut links);
+
+        let results = HashMap::from([
+            ("content_scan".to_string(), content),
+            ("link_content".to_string(), links),
+        ]);
+        let normalized = normalize_results(Some(&session), &results, &VerdictConfig::default());
+
+        assert!(
+            normalized
+                .clusters
+                .iter()
+                .any(|cluster| cluster.id == EvidenceClusterId::LinkAndHtmlDeception),
+            "the named action-link and targeted credential anchors must remain actionable: {normalized:?}"
+        );
+        assert!(
+            !normalized
+                .clusters
+                .iter()
+                .any(|cluster| cluster.id == EvidenceClusterId::SocialEngineeringIntent)
+        );
+        assert!(
+            normalized
+                .categories
+                .iter()
+                .any(|category| category == "phishing")
+        );
     }
 }

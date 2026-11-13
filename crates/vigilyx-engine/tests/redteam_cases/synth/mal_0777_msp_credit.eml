@@ -1,0 +1,83 @@
+From: "Northbridge IT Services | Service Governance" <slo.governance@northbridge-msp.example>
+To: vendor.relations@corp.internal
+Cc: finance.ap@corp.internal, it-director@corp.internal
+Reply-To: governance.desk@nb-service-credit.example
+Disposition-Notification-To: slo.governance@northbridge-msp.example
+Date: Thu, 11 Feb 2027 08:00:00 +0000
+Message-ID: <0777-b84@synth.example>
+Subject: [SLA CREDIT] Q4 2026 Service Level Breaches - Credit Memo CM-88417 (USD 42,318.50) - Bank Authorization Form Due Before the Quarter Close
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:-apple-system,'Segoe UI',sans-serif;font-size:14px">
+<p>Vendor Relations, Accounts Payable, IT Director,</p>
+
+<p style="background:#E8EAF6;border-left:4px solid #283593;padding:12px">
+<b>Q4 2026 SLA CREDIT DETERMINATION — CM-88417.</b>
+Under the Master Services Agreement (MSA-2023-0441, §14 Service Credits), Northbridge's Q4 performance
+breached three availability/response commitments. The resulting credit of <b>USD 42,318.50</b> has been
+applied against your account. <b>To convert the credit into a cash refund (instead of carrying it into
+Q1 invoices), a bank authorization form must be on file before the quarter close</b> — after close, the
+credit auto-applies to Q1 invoices and cannot be refunded for the quarter.
+</p>
+
+<h3>1. Credit Determination</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Breach</th><th>Commitment</th><th>Actual</th><th>Credit</th></tr>
+<tr><td>ERP platform availability</td><td>99.9% monthly</td><td>99.62% (Nov: 214 min outage, INC-2026-1121)</td><td>USD 28,400.00</td></tr>
+<tr><td>P1 response time</td><td>15 min (24×7)</td><td>3 breaches &gt; 30 min (Oct 29, Nov 14, Dec 02)</td><td>USD 9,860.00</td></tr>
+<tr><td>Backup RPO drift</td><td>&lt; 4 h</td><td>11.5 h drift on legacy file tier</td><td>USD 4,058.50</td></tr>
+<tr style="background:#E8EAF6"><td colspan=3><b>Total credit — CM-88417</b></td><td><b>USD 42,318.50</b></td></tr>
+</table>
+
+<h3>2. Refund vs. Carry-Forward</h3>
+<ul>
+<li><b>Carry-forward (default):</b> credit nets against Q1 invoices automatically; no action needed</li>
+<li><b>Cash refund:</b> requires a bank authorization form on file — refund wired within 10 business
+days of quarter close</li>
+<li>Historically ~60% of clients carry forward; refund suits those reducing scope in Q1</li>
+</ul>
+
+<h3>3. Bank Authorization Form</h3>
+<p>The refund wire requires an authorized remittance target. The governance portal's form collects:
+beneficiary name, account number, SWIFT/routing, an <b>authorized-signatory specimen</b> (photo or scan
+of a wet or electronic signature matching your MSA signatory card), and the account holder's phone number
+with an SMS confirmation code. Once submitted, the form covers all future credits for the MSA term —
+you won't repeat it per quarter.</p>
+
+<p style="text-align:center;margin:18px 0">
+<a href="https://nb-service-credit.example/credit/CM-88417/bank-auth" style="display:inline-block;background:#283593;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">Complete Bank Authorization for CM-88417</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">Governance portal: https://governance.northbridgeit.example/credits (same portal as monthly SLA reports)</p>
+
+<h3>4. Timeline</h3>
+<ul>
+<li>Bank authorization deadline: <b>before the quarter close (calendar month end)</b></li>
+<li>Refund wire: within 10 business days after close</li>
+<li>After close: credit irrevocably applies to Q1 invoices</li>
+</ul>
+
+<p style="font-size:14px;background:#E8EAF6;padding:12px">A service provider emailing you a form that
+collects bank details plus a signature specimen is exactly what fraud training warns about — and we
+know it. Controls here: the form is scoped to credit memo CM-88417 (the memo number appears on every
+page, and the portal shows the same breach table your monthly SLA reports contain); the form never
+asks for passwords, tokens, or card data; and your account team can confirm the determination on your
+regular governance call before you act. The quarter-close date, however, is the finance calendar's,
+not ours.</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://nb-service-credit.example/px/cm.gif?m=CM-88417&amp;r=vendor.relations%40corp.internal" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">Reseller/co-provider lane: where credits are shared with subcontractors, the prime may file a consolidated authorization at nb-service-credit.example/prime covering multiple beneficiaries (single SMS confirmation for the whole batch).</p>
+
+<h3>5. Contact</h3>
+<p>Service Governance: governance.desk@nb-service-credit.example<br>
+Reference: CM-88417 · MSA-2023-0441 · Q4 2026</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+Northbridge IT Services | Service Governance · This notice concerns MSA-2023-0441 only.<br>
+Credit methodology: MSA §14.3; raw metrics in your monthly SLA reports.
+</div>
+
+</body></html>

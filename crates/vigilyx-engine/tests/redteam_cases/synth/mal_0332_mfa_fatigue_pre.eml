@@ -1,0 +1,11 @@
+From: =?utf-8?B?SVQg5a6J5YWo6YOo?= <mfa@corp-relay16.example>
+To: leaders@corp.internal
+Date: Sat, 12 Sep 2026 08:21:00 +0800
+Message-ID: <0011-b20@synth.example>
+Subject: MFA 升级：预授权确认
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+今晚 MFA 平滑升级，管理岗需提前完成'预授权'：
+点击确认（收到推送请选择'批准'）：
+https://corp-relay16.example/mfa-pre

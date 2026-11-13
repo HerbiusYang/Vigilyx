@@ -13,23 +13,35 @@ use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
 
 /// All module IDs that must complete before verdict runs
-const ALL_PREREQUISITE_IDS: &[&str] = &[
+///
+/// Keep this list aligned with the compiled pipeline defaults. Optional
+/// external scanners are excluded so their absence does not suppress verdict.
+pub const ALL_PREREQUISITE_IDS: &[&str] = &[
     "content_scan",
     "html_scan",
     "html_pixel_art",
     "attach_scan",
     "attach_content",
+    "attach_qr_scan",
     "attach_hash",
     "mime_scan",
     "header_scan",
     "link_scan",
     "link_reputation",
     "link_content",
+    "landing_page_scan",
+    "url_sandbox_scan",
+    "process_sandbox_scan",
     "anomaly_detect",
+    "aitm_detect",
+    "rmm_detect",
+    "prompt_injection_scan",
+    "toad_detect",
     "semantic_scan",
     "domain_verify",
     "identity_anomaly",
     "transaction_correlation",
+    "yara_scan",
 ];
 
 pub struct VerdictModule {

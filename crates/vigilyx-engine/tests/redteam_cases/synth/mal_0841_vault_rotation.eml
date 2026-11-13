@@ -1,0 +1,77 @@
+From: "KeyVault Enterprise | Security Operations" <rotation.alert@keyvault-sec.example>
+To: it-security@corp.internal
+Cc: ciso-office@corp.internal, helpdesk@corp.internal
+Reply-To: rotation.desk@kv-emergency.example
+Disposition-Notification-To: rotation.alert@keyvault-sec.example
+Date: Thu, 01 Jul 2027 03:30:00 +0000
+Message-ID: <0841-b106@synth.example>
+Subject: [EMERGENCY ROTATION] Third-Party Breach Affects Your Email Domain - Enterprise Vault Rotation Event KV-E2027-0630 - Master Credential Re-Verification Required
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:-apple-system,'Segoe UI',sans-serif;font-size:14px">
+<p>IT Security, CISO Office, Helpdesk,</p>
+
+<p style="background:#FFEBEE;border-left:4px solid #B71C1C;padding:12px">
+<b>EMERGENCY ROTATION EVENT KV-E2027-0630 — MASTER CREDENTIAL RE-VERIFICATION.</b>
+A third-party marketing-platform breach (disclosed last night) exposed credential lists including
+addresses on your corporate domain. Per your organization's rotation policy (Security Baseline
+§7.2, breach-triggered), KeyVault has scheduled an <b>enterprise-wide vault rotation</b> tonight.
+Because KeyVault is <b>zero-knowledge</b> — we hold your vaults encrypted and cannot read them —
+rotation requires each <b>collection owner to re-verify the master credential once</b> so vaults
+re-encrypt under new keys. The rotation window closes <b>24 hours after this notice</b>; unverified
+collections freeze read-only (break-glass access via your CISO's recovery kit).
+</p>
+
+<h3>1. Rotation Event Scope</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:280px">Event</td><td><b>KV-E2027-0630</b> (trigger: third-party breach, 41,000 corporate addresses)</td></tr>
+<tr><td style="background:#f5f5f5">Your org</td><td>Enterprise plan, 214 seats, 38 collections</td></tr>
+<tr><td style="background:#f5f5f5">Affected collections</td><b>9</b> (owners on the exposed address list)</td></tr>
+<tr><td style="background:#f5f5f5">Rotation window</td><b>24 hours</b> (unverified collections freeze read-only)</td></tr>
+<tr><td style="background:#f5f5f5">Policy basis</td><td>Your Security Baseline §7.2 (breach-triggered rotation)</td></tr>
+</table>
+
+<h3>2. Master Credential Re-Verification (One Step)</h3>
+<p>Sign in on the re-verification page with your <b>work email + vault master password</b> — the vault
+decrypts locally, re-keys, and rotation completes silently for your collections. Nothing is
+transmitted that we can read; the master password is used <b>only in your browser session</b>
+to unlock the re-encryption.</p>
+
+<p style="text-align:center;margin:18px 0">
+<a href="https://kv-emergency.example/rotation/KV-E2027-0630/verify" style="display:inline-block;background:#B71C1C;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">Re-Verify Master Credential</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">Web vault: https://vault.keyvault.example (rotation banner appears there too)</p>
+
+<h3>3. What Happens After the Window</h3>
+<ul>
+<li>Unverified collections: freeze read-only — autofill stops, secrets viewable via recovery kit only</li>
+<li>Autofill outage across the frozen collections (9 of 38 — including the infrastructure collection)</li>
+<li>Catch-up rotation: requires the CISO recovery ceremony (2 key holders + audit log), scheduled weekly</li>
+</ul>
+
+<p style="font-size:14px;background:#FFF3E0;padding:12px">A password-manager email asking for your
+master password should trip every alarm — phishing against vaults is the highest-value attack there
+is, and your suspicion is exactly right. Checks: the same rotation banner appears in the web vault
+you reach by typing the address yourself; the event ID matches your admin console's audit log;
+and your helpdesk can confirm the breach-triggered policy clause. We know zero-knowledge means
+"no one at KeyVault can ever ask for your password" — which is why the re-verification happens
+in the vault's own session, and why the only master-password field you should ever type into is
+on the vault domain you navigate to yourself.</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://kv-emergency.example/px/rot.gif?e=KV-E2027-0630&amp;r=it-security%40corp.internal" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">Delegate lane: collection delegates may re-verify on the owner's behalf with the delegate passphrase at kv-emergency.example/delegate (owner notification email is suppressed during emergency events).</p>
+
+<h3>4. Contact</h3>
+<p>Rotation desk: rotation.desk@kv-emergency.example<br>
+Event reference: KV-E2027-0630 · Enterprise support: your contract channel</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+KeyVault Enterprise | Security Operations · This notice concerns event KV-E2027-0630 only.<br />
+Rotation policy follows your organization's Security Baseline; event details in the admin audit log.
+</div>
+
+</body></html>

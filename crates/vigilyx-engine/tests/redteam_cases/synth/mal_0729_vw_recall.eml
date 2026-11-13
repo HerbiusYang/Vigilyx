@@ -1,0 +1,108 @@
+From: Volkswagen AG | Software Recall Management <ota.recall@vw-software-update.example>
+To: legal@corp.internal
+Cc: cto@corp.internal, compliance@corp.internal, ceo@corp.internal
+Reply-To: recall.software@vw-supplier.example
+Date: Tue, 03 Nov 2026 14:00:00 +0100
+Disposition-Notification-To: ota.recall@vw-software-update.example
+Message-ID: <0729-b68@synth.example>
+Subject: =?utf-8?B?77uP4oCi4oCMVlc3cgU29mdHdhcmUgUmVjYWxsIC0tIEdhdGV3YXkgU29mdHdhcmUg?=
+ =?utf-8?B?SW50ZWdyYXRpb24g4oCMIFN1cHBsaWVyIENvbnRyaWJ1dGlvbiBQYXltZW50ICYgRlJD?=
+ =?utf-8?B?VSBDb21wbGlhbmNlIFJldmlldw==?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<p>Legal Team, CTO, Compliance, CEO:</p>
+
+<p>Volkswagen AG has identified a <b style="color:#e00">safety-critical software defect</b> in the gateway software supplied by your company for the VW ID.7 and ID. Buzz electric vehicle platforms. A formal recall has been initiated under <b>EU Regulation 2018/858 (Vehicle General Safety)</b>. Your company is required to contribute to remediation costs and submit to an FRSU compliance review.</p>
+
+<h3>一、Recall Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:220px">VW Recall Number</td><td><b>9148-B2-2026</b></td></tr>
+<tr><td style="background:#f5f5f5">Affected Component</td><td>Central Gateway Module (CGM) — Email/Connectivity Filtering Software</td></tr>
+<tr><td style="background:#f5f5f5">VW Platform</td><td>MEB (ID.7, ID. Buzz, ID.4, ID.5)</td></tr>
+<tr><td style="background:#f5f5f5">Affected Vehicles</td><td style="color:#e00"><b>184,224 vehicles worldwide</b></td></tr>
+<tr><td style="background:#f5f5f5">Software Version</td><td>Vigilyx Automotive Gateway v2.3.1 — v2.4.7</td></tr>
+<tr><td style="background:#f5f5f5">Defect Description</td><td>Email filtering failure may allow phishing emails to reach vehicle infotainment, potentially compromising connected services</td></tr>
+<tr><td style="background:#f5f5f5">Risk Level</td><td style="color:#e00"><b>HIGH — Connected services credential theft possible</b></td></tr>
+<tr><td style="background:#f5f5f5">Recall Initiated</td><td>October 28, 2026</td></tr>
+<tr><td style="background:#f5f5f5">KBA (German Transport Authority) Notified</td><td>October 30, 2026</td></tr>
+<tr><td style="background:#f5f5f5">Remediation Deadline</td><td style="color:#e00"><b>November 30, 2026 (27 days)</b></td></tr>
+</table>
+
+<h3>二、Supplier Contribution</h3>
+<p>Under the <b>VW Supplier Agreement (Section 14.3 — Quality Cost Sharing)</b>, suppliers are responsible for remediation costs when the defect is attributable to supplied software:</p>
+
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Cost Item</th><th>VW Share</th><th>Supplier Share</th><th>Amount (EUR)</th></tr>
+<tr><td>OTA software update development</td><td>60%</td><td>40%</td><td>€1,842,000</td></tr>
+<tr><td>Dealership technical support</td><td>80%</td><td>20%</td><td>€420,000</td></tr>
+<tr><td>Customer goodwill payments</td><td>100%</td><td>0%</td><td>€0</td></tr>
+<tr><td>Regulatory fines (if imposed)</td><td>50%</td><td>50%</td><td>€TBD</td></tr>
+<tr><td><b>Total Supplier Contribution</b></td><td></td><td></td><td><b>€2,262,000</b></td></tr>
+</table>
+
+<div style="background:#FFF3E0;padding:16px;border-radius:4px;border:2px solid #e00">
+<p style="color:#e00"><b>⚠ Supplier Contribution Payment — New Software Entity ⚠</b></p>
+<p>Due to VW's transition to <b>CARIAD Software Company</b> (VW's software division), supplier contributions for software recalls are processed through:</p>
+<p style="font-size:15px;line-height:1.8">
+<b>Beneficiary:</b> CARIAD Software Services GmbH<br>
+<b>Bank:</b> Deutsche Bank AG, Wolfsburg<br>
+<b>IBAN:</b> DE88 3707 0024 0447 1884 26<br>
+<b>SWIFT:</b> TSTBDEDBXXX<br>
+<b>Amount:</b> €2,262,000.00 EUR<br>
+<b>Reference:</b> RECALL-9148-B2-SUPPLIER
+</div>
+<p>If you need to verify, contact our <b>new CARIAD supplier desk at +49-5361-884-****</b> (the previous VW number +49-5361-9-**** is being redirected).</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文供应商支持或提交中国工厂代码，请访问 vw-software-update.example/cn-supplier 上传软件源代码与ECU固件（中文通道，当日处理）。</p>
+
+<h3>三、FRSU Compliance Review (Required)</h3>
+<p>Under EU Regulation 2018/858, the German Federal Motor Transport Authority (KBA) requires a <b>Formal Remediation Software Update (FRSU) compliance review</b> of your gateway software. You must submit:</p>
+
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Required</th><th>Details</th><th>Priority</th></tr>
+<tr><td>ECU firmware source code</td><td>Full source for CGM module (v2.3.1-v2.4.7)</td><td style="color:#e00">Critical</td></tr>
+<tr><td>Email filtering engine code</td><td>Core algorithm + rule sets</td><td style="color:#e00">Critical</td></tr>
+<tr><td>Security architecture documentation</td><td>How the gateway isolates infotainment from CAN bus</td><td>High</td></tr>
+<tr><td>Penetration test results</td><td>Latest 3rd-party pentest reports</td><td>High</td></tr>
+<tr><td>OTA update mechanism documentation</td><td>How updates are deployed to vehicles</td><td>Medium</td></tr>
+</table>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://vw-software-update.example/supplier/frsu/9148-B2/documents" style="display:inline-block;background:#001E50;color:#fff;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Submit FRSU Documentation</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://supplier.vw.com/frsu-portal</p>
+
+<h3>About VW Supplier Portal Authentication</h3>
+<p>When you click the submit button, you will be redirected to the VW Supplier Portal for authentication:</p>
+<ol>
+<li>Sign in with your VW Supplier ID</li>
+<li>Complete the FRSU documentation upload form</li>
+</ol>
+
+<p style="font-size:14px;background:#E3F2FD;padding:12px;border-radius:4px">
+<b>Why we need your ECU source code:</b> The KBA requires independent verification that the software fix addresses the identified safety defect without introducing new risks. Your email filtering engine source code and security architecture are reviewed by VW's CARIAD team and KBA-certified auditors. The offline_access permission maintains your session during the large source code upload (full CGM firmware packages are 200-500MB). This is standard for all automotive software recalls under EU 2018/858.
+</p>
+
+<h3>四、Consequences of Non-Compliance</h3>
+<ul>
+<li><b>Contract termination:</b> VW Supplier Agreement terminated (est. €42M annual business)</li>
+<li><b>Legal action:</b> Product liability lawsuit (German Product Liability Act — ProdHaftG)</li>
+<li><b>Regulatory fine:</b> Up to €30M per EU Regulation 2018/858</li>
+<li><b>Industry blacklist:</b> Removed from VW Group approved supplier list (affects Audi, Porsche, SEAT, Škoda)</li>
+<li><b>Public disclosure:</b> Recall attributed to your software in KBA public database</li>
+</ul>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Volkswagen AG | Software Recall Management — CARIAD Division</p>
+<p style="font-size:11px;color:#999">Berliner Ring 2, 38440 Wolfsburg, Germany</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the software supplier contact for Recall 9148-B2-2026.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://vw-software-update.example/api/track?recipient=legal%40corp.internal&recall=9148-B2&type=software_recall" width="1" height="1" alt="">
+</div>
+
+</body></html>

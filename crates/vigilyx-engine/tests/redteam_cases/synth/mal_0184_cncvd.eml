@@ -1,0 +1,11 @@
+From: =?utf-8?B?Q05DVkQ=?= <report@vuln-report.example>
+To: sec@corp.internal
+Date: Thu, 03 Sep 2026 09:23:00 +0800
+Message-ID: <0013-b11@synth.example>
+Subject: 贵司系统存在高危漏洞（已测绘）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+测绘发现贵司对外系统存在未授权访问漏洞，详情与修复指引：
+https://vuln-detail.example.org/d
+（需负责人手机号+验证码查看）

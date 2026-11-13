@@ -5,24 +5,30 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::Duration;
 
 use tokio::net::TcpListener;
+use tokio::sync::Semaphore;
 use tokio_rustls::TlsAcceptor;
 use tracing::{error, info, warn};
 
+use crate::authentication::AuthenticationVerifier;
 use crate::config::MtaConfig;
 use crate::config::is_trusted_upstream_ip;
-use crate::authentication::AuthenticationVerifier;
-use crate::dlp::{DlpAction, detect_direction, format_dlp_reason, run_dlp_scan};
+use crate::dlp::{DlpAction, DlpInspection, detect_direction, format_dlp_reason, run_dlp_scan};
 use crate::metrics::VerdictMetrics;
 use crate::relay::downstream::{DownstreamRelay, RelayResult};
-use crate::relay::quarantine::store_quarantine;
+use crate::relay::quarantine::store_quarantine_id;
 use crate::server::connection::{HandleResult, SmtpConnection};
 
-use vigilyx_core::models::MailDirection;
+use vigilyx_core::models::{
+    EmailAuditClass, EmailReviewAction, EmailReviewDirection, MailDirection,
+    is_internal_to_external,
+};
 use vigilyx_core::security::VerdictDisposition;
 use vigilyx_db::VigilDb;
+use vigilyx_engine::data_security::email_review::build_email_review_with_class;
 use vigilyx_engine::pipeline::engine::SecurityEngine;
 
 enum ConnectionOutcome {
@@ -40,6 +46,59 @@ struct SmtpRuntime<'a> {
     metrics: &'a VerdictMetrics,
 }
 
+// SMTP and SMTPS share admission control. A timed-out caller cannot release
+// its worker's permit while the blocking inspection is still running.
+const MTA_DLP_MAX_WORKERS: usize = 2;
+const MTA_DLP_TIMEOUT: Duration = Duration::from_secs(15);
+static MTA_DLP_WORKERS: LazyLock<Arc<Semaphore>> =
+    LazyLock::new(|| Arc::new(Semaphore::new(MTA_DLP_MAX_WORKERS)));
+
+async fn run_dlp_scan_bounded(session: &vigilyx_core::models::EmailSession) -> DlpInspection {
+    run_bounded_dlp_task(Arc::clone(&MTA_DLP_WORKERS), MTA_DLP_TIMEOUT, || {
+        // Clone only after admission; queued connections do not multiply
+        // retained attachment bodies before a worker slot becomes available.
+        let session = session.clone();
+        move || run_dlp_scan(&session)
+    })
+    .await
+}
+
+async fn run_bounded_dlp_task<F, J>(
+    limiter: Arc<Semaphore>,
+    timeout: Duration,
+    make_scan: F,
+) -> DlpInspection
+where
+    F: FnOnce() -> J + Send,
+    J: FnOnce() -> DlpInspection + Send + 'static,
+{
+    let result = tokio::time::timeout(timeout, async {
+        let permit = limiter
+            .acquire_owned()
+            .await
+            .map_err(|error| error.to_string())?;
+        let scan = make_scan();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            scan()
+        })
+        .await
+        .map_err(|error| error.to_string())
+    })
+    .await;
+    match result {
+        Ok(Ok(inspection)) => inspection,
+        Ok(Err(error)) => {
+            warn!(%error, "MTA DLP worker unavailable; inspection coverage is incomplete");
+            DlpInspection::default()
+        }
+        Err(_) => {
+            warn!("MTA DLP admission or inspection timed out; inspection coverage is incomplete");
+            DlpInspection::default()
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DeliveryPlan {
     Relay {
@@ -49,6 +108,42 @@ enum DeliveryPlan {
     TempfailReply,
     Quarantine,
     Reject,
+}
+
+#[derive(Debug)]
+struct OutboundDlpDecision {
+    action: EmailReviewAction,
+    terminate: bool,
+    delivery_status: &'static str,
+    quarantine_id: Option<String>,
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn persist_mta_email_review(
+    runtime: &SmtpRuntime<'_>,
+    session: &vigilyx_core::models::EmailSession,
+    direction: EmailReviewDirection,
+    audit_class: EmailAuditClass,
+    inspection: Option<&DlpInspection>,
+    action: EmailReviewAction,
+    delivery_status: &str,
+    quarantine_id: Option<String>,
+) -> Result<(), String> {
+    let review = build_email_review_with_class(
+        session,
+        direction,
+        audit_class,
+        &runtime.config.local_domains,
+        inspection,
+        action,
+        Some(delivery_status.to_string()),
+        quarantine_id,
+    );
+    if let Err(error) = runtime.db.upsert_email_data_security_review(&review).await {
+        error!(session_id = %session.id, %error, "Failed to persist outbound email data-security review");
+        return Err(error.to_string());
+    }
+    Ok(())
 }
 
 const SECURITY_INSPECTION_TEMPFAIL_REPLY: &[u8] =
@@ -134,7 +229,10 @@ where
     S: tokio::io::AsyncWrite + Unpin,
     I: Copy + std::fmt::Display,
 {
-    match relay.relay_from(mail_from, rcpt_to, raw_eml, client_ip).await {
+    match relay
+        .relay_from(mail_from, rcpt_to, raw_eml, client_ip)
+        .await
+    {
         RelayResult::Accepted => {
             write_reply(stream, b"250 2.0.0 OK\r\n").await;
             true
@@ -164,27 +262,23 @@ async fn enforce_outbound_dlp<S>(
     runtime: &SmtpRuntime<'_>,
     session: &vigilyx_core::models::EmailSession,
     raw_eml: &[u8],
-) -> bool
+    dlp_result: &DlpInspection,
+) -> Option<OutboundDlpDecision>
 where
     S: tokio::io::AsyncWrite + Unpin,
 {
-    if !runtime.config.dlp.enabled {
-        return false;
-    }
-
-    let dlp_result = run_dlp_scan(session);
     let has_policy_match =
         !dlp_result.is_empty() && dlp_result.count_items_at_level(runtime.config.dlp.min_level) > 0;
-    if !has_policy_match && dlp_result.complete {
-        return false;
+    if outbound_dlp_scan_is_clean(dlp_result, runtime.config.dlp.min_level) {
+        return None;
     }
 
     let reason = if dlp_result.complete {
-        format_dlp_reason(&dlp_result)
+        format_dlp_reason(dlp_result)
     } else if has_policy_match {
         format!(
             "{}; attachment inspection incomplete",
-            format_dlp_reason(&dlp_result)
+            format_dlp_reason(dlp_result)
         )
     } else {
         "DLP: attachment inspection incomplete — safe release prohibited".to_string()
@@ -204,10 +298,15 @@ where
                 b"550 5.7.1 Message blocked: sensitive data detected\r\n",
             )
             .await;
-            true
+            Some(OutboundDlpDecision {
+                action: EmailReviewAction::Block,
+                terminate: true,
+                delivery_status: "blocked",
+                quarantine_id: None,
+            })
         }
         DlpAction::Quarantine => {
-            let stored = store_quarantine(
+            let quarantine_id = store_quarantine_id(
                 runtime.db,
                 &session.id,
                 session.mail_from.as_deref(),
@@ -215,31 +314,49 @@ where
                 session.subject.as_deref(),
                 raw_eml,
                 "high",
+                "outbound",
                 &reason,
                 Some(session.client_ip.as_str()),
             )
             .await;
-            if stored {
+            if let Some(quarantine_id) = quarantine_id {
                 write_reply(stream, b"250 2.0.0 OK\r\n").await;
+                Some(OutboundDlpDecision {
+                    action: EmailReviewAction::Quarantine,
+                    terminate: true,
+                    delivery_status: "quarantined",
+                    quarantine_id: Some(quarantine_id),
+                })
             } else {
                 warn!(session_id = %session.id, "DLP quarantine storage failed");
                 write_reply(stream, b"451 4.7.1 Quarantine storage unavailable\r\n").await;
+                Some(OutboundDlpDecision {
+                    action: EmailReviewAction::Tempfail,
+                    terminate: true,
+                    delivery_status: "quarantine_failed",
+                    quarantine_id: None,
+                })
             }
-            true
         }
         DlpAction::AllowAndAlert => {
             warn!(
                 session_id = %session.id,
                 "DLP alert (allow_and_alert): {reason}"
             );
-            false
+            Some(OutboundDlpDecision {
+                action: EmailReviewAction::Alert,
+                terminate: false,
+                delivery_status: "alerted",
+                quarantine_id: None,
+            })
         }
     }
 }
 
-/// SEC: Maximum concurrent connections from a single IP address (CWE-400).
-/// Prevents a single source from exhausting all connection slots.
-const MAX_CONN_PER_IP: usize = 10;
+fn outbound_dlp_scan_is_clean(inspection: &DlpInspection, min_level: u8) -> bool {
+    inspection.complete
+        && (inspection.is_empty() || inspection.count_items_at_level(min_level) == 0)
+}
 
 /// SEC: TLS handshake hard deadline (F-3, CWE-400). An idle pre-handshake
 /// client otherwise holds a connection slot (and its per-IP slot) forever.
@@ -305,6 +422,10 @@ impl PerIpLimiter {
         }
         *count += 1;
         true
+    }
+
+    pub fn max_per_ip(&self) -> usize {
+        self.max_per_ip
     }
 
     /// Release a connection slot for the given IP.
@@ -375,7 +496,7 @@ pub async fn run_smtp_listener(
         let client_ip_addr = addr.ip();
         if !per_ip_limiter.try_acquire(client_ip_addr) {
             release_global_connection_slot(&active_connections);
-            warn!(addr = %addr, limit = MAX_CONN_PER_IP, "Per-IP connection limit reached, rejecting");
+            warn!(addr = %addr, limit = per_ip_limiter.max_per_ip(), "Per-IP connection limit reached, rejecting");
             drop(stream);
             continue;
         }
@@ -461,7 +582,7 @@ pub async fn run_smtps_listener(
         let client_ip_addr = peer_addr.ip();
         if !per_ip_limiter.try_acquire(client_ip_addr) {
             release_global_connection_slot(&active_connections);
-            warn!(addr = %peer_addr, limit = MAX_CONN_PER_IP, "Per-IP connection limit reached, rejecting");
+            warn!(addr = %peer_addr, limit = per_ip_limiter.max_per_ip(), "Per-IP connection limit reached, rejecting");
             drop(stream);
             continue;
         }
@@ -565,7 +686,8 @@ async fn handle_smtp_connection(
         ConnectionOutcome::StartTls => {
             if let Some(acceptor) = tls_acceptor {
                 let inner = stream.into_inner();
-                if let Some(tls_stream) = accept_tls_with_timeout(&acceptor, inner, &client_ip).await
+                if let Some(tls_stream) =
+                    accept_tls_with_timeout(&acceptor, inner, &client_ip).await
                 {
                     let mut tls_stream = tokio::io::BufStream::new(tls_stream);
                     // After TLS upgrade: skip banner (client already saw 220 before STARTTLS)
@@ -577,8 +699,7 @@ async fn handle_smtp_connection(
                         config.clone(),
                         true,
                     );
-                    let _ =
-                        drive_connection(&mut tls_stream, &mut tls_conn, true, &runtime).await;
+                    let _ = drive_connection(&mut tls_stream, &mut tls_conn, true, &runtime).await;
                 }
             } else {
                 warn!(client_ip = %client_ip, "STARTTLS requested but no TLS acceptor is configured");
@@ -659,6 +780,27 @@ where
                     &runtime.config.local_domains,
                     trusted_submitter,
                 );
+                let audit_candidate = is_internal_to_external(
+                    mail_from.as_deref(),
+                    &rcpt_to,
+                    &runtime.config.local_domains,
+                );
+                let audit_direction = if audit_candidate && trusted_submitter {
+                    EmailReviewDirection::Outbound
+                } else if audit_candidate {
+                    EmailReviewDirection::Unknown
+                } else {
+                    EmailReviewDirection::from(direction)
+                };
+                let audit_class = if audit_candidate {
+                    if trusted_submitter {
+                        EmailAuditClass::ConfirmedOutbound
+                    } else {
+                        EmailAuditClass::OutboundCandidate
+                    }
+                } else {
+                    EmailAuditClass::Legacy
+                };
 
                 // SEC: only log domain part to avoid leaking full addresses (CWE-532)
                 let from_domain = mail_from
@@ -674,9 +816,33 @@ where
                     "Email received"
                 );
 
-                let outbound_dlp_session = (direction == MailDirection::Outbound
-                    && runtime.config.dlp.enabled)
-                    .then(|| session.clone());
+                let review_session = session.clone();
+
+                // Establish one durable DATA-level audit row before inline
+                // analysis or downstream delivery. The later upsert carries
+                // the final DLP/relay disposition, while this initial row
+                // guarantees that a crash cannot turn a DATA event into an
+                // invisible message.
+                if let Err(error) = persist_mta_email_review(
+                    runtime,
+                    &review_session,
+                    audit_direction,
+                    audit_class,
+                    None,
+                    EmailReviewAction::Audit,
+                    "mta_audit_pending",
+                    None,
+                )
+                .await
+                {
+                    error!(
+                        session_id = %session_id,
+                        %error,
+                        "Failed to create MTA DATA audit row; returning temporary failure"
+                    );
+                    write_reply(stream, b"451 4.7.1 Audit storage unavailable\r\n").await;
+                    continue;
+                }
 
                 let timeout =
                     std::time::Duration::from_secs(runtime.config.inline_timeout_secs as u64);
@@ -698,6 +864,18 @@ where
                     "Inline verdict: {}", response.summary
                 );
 
+                // Run the shared outbound DLP pass once after the inline
+                // verdict, regardless of whether the threat verdict itself
+                // already quarantined/rejected the message. The review table
+                // must distinguish "DLP clean" from "not scanned" for every
+                // outbound message, and a threat verdict must not hide a
+                // separate sensitive-data hit.
+                let dlp_inspection = if runtime.config.dlp.enabled {
+                    Some(run_dlp_scan_bounded(&review_session).await)
+                } else {
+                    None
+                };
+
                 match delivery_plan(
                     &response.disposition,
                     direction,
@@ -717,10 +895,35 @@ where
                             );
                         }
 
-                        if should_enforce_outbound_dlp
-                            && let Some(ref dlp_session) = outbound_dlp_session
-                            && enforce_outbound_dlp(stream, runtime, dlp_session, &raw_eml).await
-                        {
+                        let dlp_decision = if should_enforce_outbound_dlp {
+                            match dlp_inspection.as_ref() {
+                                Some(inspection) => {
+                                    enforce_outbound_dlp(
+                                        stream,
+                                        runtime,
+                                        &review_session,
+                                        &raw_eml,
+                                        inspection,
+                                    )
+                                    .await
+                                }
+                                None => None,
+                            }
+                        } else {
+                            None
+                        };
+                        if let Some(decision) = dlp_decision.as_ref().filter(|d| d.terminate) {
+                            let _ = persist_mta_email_review(
+                                runtime,
+                                &review_session,
+                                audit_direction,
+                                audit_class,
+                                dlp_inspection.as_ref(),
+                                decision.action,
+                                decision.delivery_status,
+                                decision.quarantine_id.clone(),
+                            )
+                            .await;
                             continue;
                         }
 
@@ -739,6 +942,36 @@ where
                         } else if relayed {
                             runtime.metrics.inc_accepted();
                         }
+                        {
+                            let (action, status, quarantine_id) = match dlp_decision.as_ref() {
+                                Some(decision) => (
+                                    decision.action,
+                                    if relayed {
+                                        "relayed_after_alert"
+                                    } else {
+                                        "relay_failed_after_alert"
+                                    },
+                                    decision.quarantine_id.clone(),
+                                ),
+                                None if runtime.config.dlp.enabled => (
+                                    EmailReviewAction::Allow,
+                                    if relayed { "relayed" } else { "relay_failed" },
+                                    None,
+                                ),
+                                None => (EmailReviewAction::Audit, "dlp_disabled", None),
+                            };
+                            let _ = persist_mta_email_review(
+                                runtime,
+                                &review_session,
+                                audit_direction,
+                                audit_class,
+                                dlp_inspection.as_ref(),
+                                action,
+                                status,
+                                quarantine_id,
+                            )
+                            .await;
+                        }
                     }
                     DeliveryPlan::TempfailReply => {
                         warn!(
@@ -747,11 +980,24 @@ where
                         );
                         write_reply(stream, b"451 4.7.1 Security engine temporary failure\r\n")
                             .await;
+                        {
+                            let _ = persist_mta_email_review(
+                                runtime,
+                                &review_session,
+                                audit_direction,
+                                audit_class,
+                                dlp_inspection.as_ref(),
+                                EmailReviewAction::Tempfail,
+                                "engine_tempfail",
+                                None,
+                            )
+                            .await;
+                        }
                         continue;
                     }
                     DeliveryPlan::Quarantine => {
                         // Quarantine -> 250,
-                        let stored = store_quarantine(
+                        let quarantine_id = store_quarantine_id(
                             runtime.db,
                             &session_id,
                             mail_from.as_deref(),
@@ -759,13 +1005,27 @@ where
                             subject.as_deref(),
                             &raw_eml,
                             &response.threat_level.to_string(),
+                            &direction.to_string(),
                             &response.summary,
                             Some(client_ip.as_str()),
                         )
                         .await;
-                        if stored {
+                        if let Some(quarantine_id) = quarantine_id {
                             runtime.metrics.inc_quarantined();
                             write_reply(stream, b"250 2.0.0 OK\r\n").await;
+                            {
+                                let _ = persist_mta_email_review(
+                                    runtime,
+                                    &review_session,
+                                    audit_direction,
+                                    audit_class,
+                                    dlp_inspection.as_ref(),
+                                    EmailReviewAction::Quarantine,
+                                    "engine_quarantined",
+                                    Some(quarantine_id),
+                                )
+                                .await;
+                            }
                         } else {
                             warn!(
                                 session_id = %session_id,
@@ -773,6 +1033,19 @@ where
                             );
                             write_reply(stream, b"451 4.7.1 Quarantine storage unavailable\r\n")
                                 .await;
+                            {
+                                let _ = persist_mta_email_review(
+                                    runtime,
+                                    &review_session,
+                                    audit_direction,
+                                    audit_class,
+                                    dlp_inspection.as_ref(),
+                                    EmailReviewAction::Tempfail,
+                                    "quarantine_failed",
+                                    None,
+                                )
+                                .await;
+                            }
                         }
                     }
                     DeliveryPlan::Reject => {
@@ -784,6 +1057,19 @@ where
                         runtime.metrics.inc_rejected();
                         let reply = format!("550 5.7.1 {reason}\r\n");
                         write_reply(stream, reply.as_bytes()).await;
+                        {
+                            let _ = persist_mta_email_review(
+                                runtime,
+                                &review_session,
+                                audit_direction,
+                                audit_class,
+                                dlp_inspection.as_ref(),
+                                EmailReviewAction::Reject,
+                                "engine_rejected",
+                                None,
+                            )
+                            .await;
+                        }
                     }
                 }
             }
@@ -803,6 +1089,133 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn clean_dlp_inspection() -> DlpInspection {
+        DlpInspection {
+            complete: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_pdf_extraction_gap_reaches_outbound_dlp_fail_safe_without_a_hit() {
+        use vigilyx_core::models::{EmailAttachment, EmailSession, Protocol};
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            2525,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        // The 27-byte prefix and 21-byte noise group are each aligned to a
+        // base64 quantum, so concatenation retains a valid encoded fixture.
+        let encoded_pdf = format!(
+            "JVBERi0xLjcKKFJvdXRpbmUgbm90ZSkgVGoK{}",
+            "c3RyZWFtIHN0cmVhbSBzdHJlYW0g".repeat(684)
+        );
+        session.content.attachments.push(EmailAttachment {
+            filename: "routine.pdf".to_string(),
+            content_type: "application/pdf".to_string(),
+            size: 27 + 21 * 684,
+            hash: "synthetic".to_string(),
+            content_base64: Some(encoded_pdf),
+        });
+        let inspection = run_dlp_scan(&session);
+        assert!(
+            inspection.is_empty(),
+            "coverage is not a sensitive-data belief"
+        );
+        assert!(!inspection.complete);
+        assert!(!outbound_dlp_scan_is_clean(&inspection, 3));
+    }
+
+    #[tokio::test]
+    async fn test_bounded_dlp_success_preserves_complete_clean_result() {
+        let limiter = Arc::new(Semaphore::new(1));
+        let inspection = run_bounded_dlp_task(Arc::clone(&limiter), Duration::from_secs(1), || {
+            clean_dlp_inspection
+        })
+        .await;
+        assert!(outbound_dlp_scan_is_clean(&inspection, 3));
+        assert_eq!(limiter.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_bounded_dlp_queue_timeout_is_incomplete_without_constructing_job() {
+        use std::sync::atomic::AtomicBool;
+        let limiter = Arc::new(Semaphore::new(1));
+        let _occupied = Arc::clone(&limiter).acquire_owned().await.unwrap();
+        let constructed = Arc::new(AtomicBool::new(false));
+        let marker = Arc::clone(&constructed);
+        let inspection = run_bounded_dlp_task(limiter, Duration::from_millis(20), move || {
+            marker.store(true, Ordering::SeqCst);
+            clean_dlp_inspection
+        })
+        .await;
+        assert!(!constructed.load(Ordering::SeqCst));
+        assert!(!inspection.complete);
+        assert!(inspection.result.is_empty());
+        assert!(!outbound_dlp_scan_is_clean(&inspection, 3));
+    }
+
+    #[tokio::test]
+    async fn test_timed_out_dlp_worker_holds_permit_until_actual_exit() {
+        use std::sync::atomic::AtomicBool;
+        let limiter = Arc::new(Semaphore::new(1));
+        let worker_limiter = Arc::clone(&limiter);
+        let (release, wait_for_release) = std::sync::mpsc::channel::<()>();
+        let (started, wait_for_start) = tokio::sync::oneshot::channel();
+        let caller = tokio::spawn(async move {
+            run_bounded_dlp_task(worker_limiter, Duration::from_millis(50), || {
+                move || {
+                    let _ = started.send(());
+                    // Block without CPU load. Dropping release also unblocks the
+                    // worker, including when this test exits unexpectedly.
+                    let _ = wait_for_release.recv();
+                    clean_dlp_inspection()
+                }
+            })
+            .await
+        });
+        tokio::time::timeout(Duration::from_secs(1), wait_for_start)
+            .await
+            .unwrap()
+            .unwrap();
+        let timed_out = caller.await.unwrap();
+        let available_before_exit = limiter.available_permits();
+        let constructed = Arc::new(AtomicBool::new(false));
+        let marker = Arc::clone(&constructed);
+        let queued =
+            run_bounded_dlp_task(Arc::clone(&limiter), Duration::from_millis(20), move || {
+                marker.store(true, Ordering::SeqCst);
+                clean_dlp_inspection
+            })
+            .await;
+        let second_job_started = constructed.load(Ordering::SeqCst);
+        release.send(()).unwrap();
+        let returned_permit = tokio::time::timeout(Duration::from_secs(1), limiter.acquire_owned())
+            .await
+            .unwrap()
+            .unwrap();
+        drop(returned_permit);
+
+        assert!(!timed_out.complete);
+        assert_eq!(available_before_exit, 0);
+        assert!(!queued.complete);
+        assert!(!second_job_started);
+    }
+
+    #[tokio::test]
+    async fn test_panicking_dlp_worker_is_incomplete_and_releases_permit() {
+        let limiter = Arc::new(Semaphore::new(1));
+        let inspection = run_bounded_dlp_task(Arc::clone(&limiter), Duration::from_secs(1), || {
+            || -> DlpInspection { panic!("synthetic worker failure") }
+        })
+        .await;
+        assert!(!inspection.complete);
+        assert!(!outbound_dlp_scan_is_clean(&inspection, 3));
+        assert_eq!(limiter.available_permits(), 1);
+    }
 
     #[test]
     fn test_security_inspection_failure_is_a_retryable_smtp_reply() {
@@ -1351,68 +1764,22 @@ mod tests {
 
     // ── F-3: TLS handshake timeout ────────────────────────────────────────
 
-    // Test-only self-signed certificate for CN=vigilyx-mta-test (no SAN,
-    // never used for real TLS termination, generated for these tests).
-    const TEST_CERT_PEM: &str = "-----BEGIN CERTIFICATE-----\n\
-MIIDFzCCAf+gAwIBAgIUXN/LFLYWhMYNAbta+InDVJnKsp8wDQYJKoZIhvcNAQEL\n\
-BQAwGzEZMBcGA1UEAwwQdmlnaWx5eC1tdGEtdGVzdDAeFw0yNjA4MTQwMTE5MDda\n\
-Fw0zNjA4MTEwMTE5MDdaMBsxGTAXBgNVBAMMEHZpZ2lseXgtbXRhLXRlc3QwggEi\n\
-MA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDXawCL8gM+MBsOWfZ2p/XcrpIN\n\
-+MQLHclk2SSzj5hUUDfZreHNtiyhZteleJEVh7yCoVYXz0h74spsl3QsfGgDu8zL\n\
-gpKpSCgrk+AbgFbyF08ewT6BjBmEOfv5K4HzGt0m9SNSSDJyf8pA+ykluK85bNE/\n\
-hJfs8NORKRNQM9I5g6iX2n2MCCP75Oh5BHrRpHlMES5kBAc+JZWAKJKJiC9dqgSa\n\
-OtG8LZIeJCoOduEcA4YOKC0bOppEh5oVTbGXBbr6bzTQ9yvu6J2E2/w6r9+qn0fF\n\
-ugq2ClYJ/DD0l1CejC1M+l9LYMB50w3XDFzlFCwX8wplm9yht7MK0i0mS+UTAgMB\n\
-AAGjUzBRMB0GA1UdDgQWBBS2D7RjNQiCD4WSGLWaW1nQcia12zAfBgNVHSMEGDAW\n\
-gBS2D7RjNQiCD4WSGLWaW1nQcia12zAPBgNVHRMBAf8EBTADAQH/MA0GCSqGSIb3\n\
-DQEBCwUAA4IBAQCC2gbo/HQS1b6j9QZAg69Hvqj8CPwj1nKAoZX1GOih0ZVCATmN\n\
-T5uotAlrsFkL90Crbs2m9iTxZZi6isP+OupEifVyvOIawUNGfm+j5PFi0fDbxpO8\n\
-8uSbYDLjCsJYlAicna/ZYAWn+9KnR5PYPpGZDfsB03DpK+wEv1ouLqWjDH05j0rQ\n\
-OpzXs0gEGPodcTE7oDyJHoNZNkcILjfPb7csFL9MtWf5ZWYaJ47ouT0lokzbbUUY\n\
-dFqFBhMf5TVSEpV5dDGw/F2Ake8osambLCB2XuO5d72WJDmlXY9Gz8kCi8BmVShC\n\
-GhXcojlaCBZbOKgaS7E3BNijTzsYAHAGjO4U\n\
------END CERTIFICATE-----\n";
-
-    const TEST_KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----\n\
-MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDXawCL8gM+MBsO\n\
-WfZ2p/XcrpIN+MQLHclk2SSzj5hUUDfZreHNtiyhZteleJEVh7yCoVYXz0h74sps\n\
-l3QsfGgDu8zLgpKpSCgrk+AbgFbyF08ewT6BjBmEOfv5K4HzGt0m9SNSSDJyf8pA\n\
-+ykluK85bNE/hJfs8NORKRNQM9I5g6iX2n2MCCP75Oh5BHrRpHlMES5kBAc+JZWA\n\
-KJKJiC9dqgSaOtG8LZIeJCoOduEcA4YOKC0bOppEh5oVTbGXBbr6bzTQ9yvu6J2E\n\
-2/w6r9+qn0fFugq2ClYJ/DD0l1CejC1M+l9LYMB50w3XDFzlFCwX8wplm9yht7MK\n\
-0i0mS+UTAgMBAAECggEAOCvFo7hCkje3BmH8+2nGmXnHye7hJ8jnl+1rPYsm/G1C\n\
-cvd9Vse3EYsglhw/MK8JP8LUETdSvkMf53sCpwr1kGuq9jIhDhUrrFlN6b3obg4X\n\
-6nwXUW53xNvd0VY/92U834iyYiVDSkn6MkGLtDNZNY8jbP2lI/qUIFjmmVY57hbl\n\
-FNmoW50HIldL2WmPhIe7SMwaUzzAyCM8qp9VmP9QNvewU7IylS+vKah6vOJsYhCA\n\
-mkrpP3JKlG2OhNTVRDc5rQVMc0oir4MTvdhCgHTgLND5eJRdqXIGszAdSwLdjsz3\n\
-7dxP+5O1g79uQR0MI2kb3V/GhVAl3PCLIvFcp/zmgQKBgQDzqKw9zrr7rRfB7TJi\n\
-93MwpvPC3YX8pzHeFhgSjbXIsis6GRhAJy+2f3/jXJ+p4PeulWiGkVJsMsGbz3U1\n\
-voSrAdCTTSw1r/CW2SGU+QfvDyaDE7B5m/dzIqfPfKN47S1BWUbSmvnuuc7bNyO5\n\
-/OAyn4Hd/n74cjapK6Y0rYoxQQKBgQDiVCcGevZhOlEUf8kH9O3FGB0Wr6/w1wmy\n\
-FVmtBlbmRMqHCryyo1LpToB/PYAhdPJ8H9E6vAIgKCbupHi2bu4PtntI/KGC8nev\n\
-aUKVvrEVW9zc8L9s2iRhmshWN2ZMmtjtE/sCJuqKZD9PdClVOhEzbCIyyHm1DlD+\n\
-y0FeXPWtUwKBgQDVvbcqmPjp4hOfKIY0zsEbgrj+zfjFg515JoSDchBvN+w3kN/3\n\
-FukB/KKhPhVJnnFnkuUYds6I35V7Kue096XFpVfkf6QyjF5O1bZhynstOGsePN1o\n\
-MGtHcrUmjD2SzOwQEVLRWOW6hwBwyNPsSWoavlXb+W5EX1yX1hR8zWcWgQKBgQDR\n\
-vebEjKNTCzYkZx+n7gWDB4u9gGbuLHnhvQNz41IY51tAtmSUr+KgL43JXPcnCjfF\n\
-a778TUsy/cLGmUj81+RqT1QFGYmbzpO3zTZVi3iUMKOHZNwhRi88/LH3pDN7fmzV\n\
-mBSfs+za/3fka+P6BWv3WZh/s2WGspPA7B/SERfj3QKBgHSOdCJJFH6gy0GkVq3y\n\
-VKav/G7QcaAMAiSB7o7KigZYUWN3LzpejxNi887xuSb4WN7Mwxwb2sLlqTfqMfdK\n\
-uI1z59S9RiHd0LMf//ma55dJ8kEKpsDIMqZ0ps9A9RHIM+pPB/thBtC4DjriC8Dm\n\
-tXOsY15IIfKL93pMXxy6cYL+\n\
------END PRIVATE KEY-----\n";
-
     fn test_tls_acceptor() -> TlsAcceptor {
-        let certs: Vec<_> = rustls_pemfile::certs(&mut TEST_CERT_PEM.as_bytes())
-            .collect::<Result<Vec<_>, _>>()
-            .expect("test cert PEM should parse");
-        let key = rustls_pemfile::private_key(&mut TEST_KEY_PEM.as_bytes())
-            .expect("test key PEM should parse")
-            .expect("test key PEM should contain a private key");
-        let server_config = rustls::ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(certs, key)
-            .expect("test cert/key should build a ServerConfig");
+        let rcgen::CertifiedKey { cert, signing_key } =
+            rcgen::generate_simple_self_signed(vec!["vigilyx-mta-test.example".to_string()])
+                .expect("test certificate generation should succeed");
+        let certs = vec![rustls::pki_types::CertificateDer::from(cert.der().to_vec())];
+        let key = rustls::pki_types::PrivateKeyDer::Pkcs8(
+            rustls::pki_types::PrivatePkcs8KeyDer::from(signing_key.serialize_der()),
+        );
+        let server_config = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("safe protocol versions should be available")
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .expect("test cert/key should build a ServerConfig");
         TlsAcceptor::from(Arc::new(server_config))
     }
 

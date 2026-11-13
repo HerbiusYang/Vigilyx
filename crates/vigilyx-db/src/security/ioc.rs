@@ -37,7 +37,7 @@ impl VigilDb {
     ///
     /// Two-tier source protection against self-neutralization:
     /// - Tier 1 (`admin_clean`, `system`): never overwritten by any other source.
-    /// - Tier 2 (`auto`, `manual`, `import`): never overwritten by external
+    /// - Tier 2 (`auto`, `auto_reference`, `manual`, `import`): never overwritten by external
     ///   intel feeds (otx / vt_scrape / virustotal / abuseipdb). Without this an
     ///   attacker could pre-poison the external clean cache to neutralize an
     ///   auto-recorded malicious IOC.
@@ -55,32 +55,76 @@ impl VigilDb {
                 confidence = CASE
                     WHEN (security_ioc.source IN ('admin_clean', 'system')
                         AND EXCLUDED.source NOT IN ('admin_clean', 'system'))
-                        OR (security_ioc.source IN ('auto', 'manual', 'import')
-                        AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import'))
+                        OR (security_ioc.source IN ('auto', 'auto_reference', 'manual', 'import')
+                        AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'auto_reference', 'manual', 'import'))
+                        OR (EXCLUDED.source NOT IN ('admin_clean', 'system')
+                            AND CASE LOWER(security_ioc.verdict)
+                            WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3
+                            WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END
+                            > CASE LOWER(EXCLUDED.verdict)
+                            WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3
+                            WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END)
+                        OR (security_ioc.source = 'auto'
+                        AND LOWER(security_ioc.verdict) = 'malicious'
+                        AND EXCLUDED.source IN ('auto', 'auto_reference')
+                        AND LOWER(EXCLUDED.verdict) <> 'malicious')
                         THEN security_ioc.confidence
                     ELSE EXCLUDED.confidence
                 END,
                 verdict = CASE
                     WHEN (security_ioc.source IN ('admin_clean', 'system')
                         AND EXCLUDED.source NOT IN ('admin_clean', 'system'))
-                        OR (security_ioc.source IN ('auto', 'manual', 'import')
-                        AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import'))
+                        OR (security_ioc.source IN ('auto', 'auto_reference', 'manual', 'import')
+                        AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'auto_reference', 'manual', 'import'))
+                        OR (EXCLUDED.source NOT IN ('admin_clean', 'system')
+                            AND CASE LOWER(security_ioc.verdict)
+                            WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3
+                            WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END
+                            > CASE LOWER(EXCLUDED.verdict)
+                            WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3
+                            WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END)
+                        OR (security_ioc.source = 'auto'
+                        AND LOWER(security_ioc.verdict) = 'malicious'
+                        AND EXCLUDED.source IN ('auto', 'auto_reference')
+                        AND LOWER(EXCLUDED.verdict) <> 'malicious')
                         THEN security_ioc.verdict
                     ELSE EXCLUDED.verdict
                 END,
                 source = CASE
                     WHEN (security_ioc.source IN ('admin_clean', 'system')
                         AND EXCLUDED.source NOT IN ('admin_clean', 'system'))
-                        OR (security_ioc.source IN ('auto', 'manual', 'import')
-                        AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import'))
+                        OR (security_ioc.source IN ('auto', 'auto_reference', 'manual', 'import')
+                        AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'auto_reference', 'manual', 'import'))
+                        OR (EXCLUDED.source NOT IN ('admin_clean', 'system')
+                            AND CASE LOWER(security_ioc.verdict)
+                            WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3
+                            WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END
+                            > CASE LOWER(EXCLUDED.verdict)
+                            WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3
+                            WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END)
+                        OR (security_ioc.source = 'auto'
+                        AND LOWER(security_ioc.verdict) = 'malicious'
+                        AND EXCLUDED.source IN ('auto', 'auto_reference')
+                        AND LOWER(EXCLUDED.verdict) <> 'malicious')
                         THEN security_ioc.source
                     ELSE EXCLUDED.source
                 END,
                 attack_type = CASE
                     WHEN (security_ioc.source IN ('admin_clean', 'system')
                         AND EXCLUDED.source NOT IN ('admin_clean', 'system'))
-                        OR (security_ioc.source IN ('auto', 'manual', 'import')
-                        AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import'))
+                        OR (security_ioc.source IN ('auto', 'auto_reference', 'manual', 'import')
+                        AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'auto_reference', 'manual', 'import'))
+                        OR (EXCLUDED.source NOT IN ('admin_clean', 'system')
+                            AND CASE LOWER(security_ioc.verdict)
+                            WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3
+                            WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END
+                            > CASE LOWER(EXCLUDED.verdict)
+                            WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3
+                            WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END)
+                        OR (security_ioc.source = 'auto'
+                        AND LOWER(security_ioc.verdict) = 'malicious'
+                        AND EXCLUDED.source IN ('auto', 'auto_reference')
+                        AND LOWER(EXCLUDED.verdict) <> 'malicious')
                         THEN security_ioc.attack_type
                     WHEN EXCLUDED.attack_type != '' THEN EXCLUDED.attack_type
                     ELSE security_ioc.attack_type
@@ -88,16 +132,38 @@ impl VigilDb {
                 context = CASE
                     WHEN (security_ioc.source IN ('admin_clean', 'system')
                         AND EXCLUDED.source NOT IN ('admin_clean', 'system'))
-                        OR (security_ioc.source IN ('auto', 'manual', 'import')
-                        AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import'))
+                        OR (security_ioc.source IN ('auto', 'auto_reference', 'manual', 'import')
+                        AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'auto_reference', 'manual', 'import'))
+                        OR (EXCLUDED.source NOT IN ('admin_clean', 'system')
+                            AND CASE LOWER(security_ioc.verdict)
+                            WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3
+                            WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END
+                            > CASE LOWER(EXCLUDED.verdict)
+                            WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3
+                            WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END)
+                        OR (security_ioc.source = 'auto'
+                        AND LOWER(security_ioc.verdict) = 'malicious'
+                        AND EXCLUDED.source IN ('auto', 'auto_reference')
+                        AND LOWER(EXCLUDED.verdict) <> 'malicious')
                         THEN security_ioc.context
                     ELSE EXCLUDED.context
                 END,
                 expires_at = CASE
                     WHEN (security_ioc.source IN ('admin_clean', 'system')
                         AND EXCLUDED.source NOT IN ('admin_clean', 'system'))
-                        OR (security_ioc.source IN ('auto', 'manual', 'import')
-                        AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import'))
+                        OR (security_ioc.source IN ('auto', 'auto_reference', 'manual', 'import')
+                        AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'auto_reference', 'manual', 'import'))
+                        OR (EXCLUDED.source NOT IN ('admin_clean', 'system')
+                            AND CASE LOWER(security_ioc.verdict)
+                            WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3
+                            WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END
+                            > CASE LOWER(EXCLUDED.verdict)
+                            WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3
+                            WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END)
+                        OR (security_ioc.source = 'auto'
+                        AND LOWER(security_ioc.verdict) = 'malicious'
+                        AND EXCLUDED.source IN ('auto', 'auto_reference')
+                        AND LOWER(EXCLUDED.verdict) <> 'malicious')
                         THEN security_ioc.expires_at
                     ELSE EXCLUDED.expires_at
                 END,
@@ -127,7 +193,7 @@ impl VigilDb {
     /// upsert IOC (, VALUES)
     ///
     /// Same two-tier source protection as `upsert_ioc`: admin/system entries are
-    /// never overwritten; auto/manual/import entries are never overwritten by
+    /// never overwritten; auto/auto_reference/manual/import entries are never overwritten by
     /// external intel feeds.
     /// VALUES INSERT, N DB ceil(N/CHUNK).
     /// 14 x 500 = 7000,Security.
@@ -212,32 +278,76 @@ impl VigilDb {
                     confidence = CASE \
                         WHEN (security_ioc.source IN ('admin_clean', 'system') \
                             AND EXCLUDED.source NOT IN ('admin_clean', 'system')) \
-                            OR (security_ioc.source IN ('auto', 'manual', 'import') \
-                            AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import')) \
+                            OR (security_ioc.source IN ('auto', 'auto_reference', 'manual', 'import') \
+                            AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'auto_reference', 'manual', 'import')) \
+                            OR (EXCLUDED.source NOT IN ('admin_clean', 'system') \
+                                AND CASE LOWER(security_ioc.verdict) \
+                                WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3 \
+                                WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END \
+                                > CASE LOWER(EXCLUDED.verdict) \
+                                WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3 \
+                                WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END) \
+                            OR (security_ioc.source = 'auto' \
+                            AND LOWER(security_ioc.verdict) = 'malicious' \
+                            AND EXCLUDED.source IN ('auto', 'auto_reference') \
+                            AND LOWER(EXCLUDED.verdict) <> 'malicious') \
                             THEN security_ioc.confidence \
                         ELSE EXCLUDED.confidence \
                     END, \
                     verdict = CASE \
                         WHEN (security_ioc.source IN ('admin_clean', 'system') \
                             AND EXCLUDED.source NOT IN ('admin_clean', 'system')) \
-                            OR (security_ioc.source IN ('auto', 'manual', 'import') \
-                            AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import')) \
+                            OR (security_ioc.source IN ('auto', 'auto_reference', 'manual', 'import') \
+                            AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'auto_reference', 'manual', 'import')) \
+                            OR (EXCLUDED.source NOT IN ('admin_clean', 'system') \
+                                AND CASE LOWER(security_ioc.verdict) \
+                                WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3 \
+                                WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END \
+                                > CASE LOWER(EXCLUDED.verdict) \
+                                WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3 \
+                                WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END) \
+                            OR (security_ioc.source = 'auto' \
+                            AND LOWER(security_ioc.verdict) = 'malicious' \
+                            AND EXCLUDED.source IN ('auto', 'auto_reference') \
+                            AND LOWER(EXCLUDED.verdict) <> 'malicious') \
                             THEN security_ioc.verdict \
                         ELSE EXCLUDED.verdict \
                     END, \
                     source = CASE \
                         WHEN (security_ioc.source IN ('admin_clean', 'system') \
                             AND EXCLUDED.source NOT IN ('admin_clean', 'system')) \
-                            OR (security_ioc.source IN ('auto', 'manual', 'import') \
-                            AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import')) \
+                            OR (security_ioc.source IN ('auto', 'auto_reference', 'manual', 'import') \
+                            AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'auto_reference', 'manual', 'import')) \
+                            OR (EXCLUDED.source NOT IN ('admin_clean', 'system') \
+                                AND CASE LOWER(security_ioc.verdict) \
+                                WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3 \
+                                WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END \
+                                > CASE LOWER(EXCLUDED.verdict) \
+                                WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3 \
+                                WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END) \
+                            OR (security_ioc.source = 'auto' \
+                            AND LOWER(security_ioc.verdict) = 'malicious' \
+                            AND EXCLUDED.source IN ('auto', 'auto_reference') \
+                            AND LOWER(EXCLUDED.verdict) <> 'malicious') \
                             THEN security_ioc.source \
                         ELSE EXCLUDED.source \
                     END, \
                     attack_type = CASE \
                         WHEN (security_ioc.source IN ('admin_clean', 'system') \
                             AND EXCLUDED.source NOT IN ('admin_clean', 'system')) \
-                            OR (security_ioc.source IN ('auto', 'manual', 'import') \
-                            AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import')) \
+                            OR (security_ioc.source IN ('auto', 'auto_reference', 'manual', 'import') \
+                            AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'auto_reference', 'manual', 'import')) \
+                            OR (EXCLUDED.source NOT IN ('admin_clean', 'system') \
+                                AND CASE LOWER(security_ioc.verdict) \
+                                WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3 \
+                                WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END \
+                                > CASE LOWER(EXCLUDED.verdict) \
+                                WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3 \
+                                WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END) \
+                            OR (security_ioc.source = 'auto' \
+                            AND LOWER(security_ioc.verdict) = 'malicious' \
+                            AND EXCLUDED.source IN ('auto', 'auto_reference') \
+                            AND LOWER(EXCLUDED.verdict) <> 'malicious') \
                             THEN security_ioc.attack_type \
                         WHEN EXCLUDED.attack_type != '' THEN EXCLUDED.attack_type \
                         ELSE security_ioc.attack_type \
@@ -245,16 +355,38 @@ impl VigilDb {
                     context = CASE \
                         WHEN (security_ioc.source IN ('admin_clean', 'system') \
                             AND EXCLUDED.source NOT IN ('admin_clean', 'system')) \
-                            OR (security_ioc.source IN ('auto', 'manual', 'import') \
-                            AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import')) \
+                            OR (security_ioc.source IN ('auto', 'auto_reference', 'manual', 'import') \
+                            AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'auto_reference', 'manual', 'import')) \
+                            OR (EXCLUDED.source NOT IN ('admin_clean', 'system') \
+                                AND CASE LOWER(security_ioc.verdict) \
+                                WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3 \
+                                WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END \
+                                > CASE LOWER(EXCLUDED.verdict) \
+                                WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3 \
+                                WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END) \
+                            OR (security_ioc.source = 'auto' \
+                            AND LOWER(security_ioc.verdict) = 'malicious' \
+                            AND EXCLUDED.source IN ('auto', 'auto_reference') \
+                            AND LOWER(EXCLUDED.verdict) <> 'malicious') \
                             THEN security_ioc.context \
                         ELSE EXCLUDED.context \
                     END, \
                     expires_at = CASE \
                         WHEN (security_ioc.source IN ('admin_clean', 'system') \
                             AND EXCLUDED.source NOT IN ('admin_clean', 'system')) \
-                            OR (security_ioc.source IN ('auto', 'manual', 'import') \
-                            AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'manual', 'import')) \
+                            OR (security_ioc.source IN ('auto', 'auto_reference', 'manual', 'import') \
+                            AND EXCLUDED.source NOT IN ('admin_clean', 'system', 'auto', 'auto_reference', 'manual', 'import')) \
+                            OR (EXCLUDED.source NOT IN ('admin_clean', 'system') \
+                                AND CASE LOWER(security_ioc.verdict) \
+                                WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3 \
+                                WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END \
+                                > CASE LOWER(EXCLUDED.verdict) \
+                                WHEN 'malicious' THEN 4 WHEN 'suspicious' THEN 3 \
+                                WHEN 'clean' THEN 2 WHEN 'safe' THEN 2 ELSE 0 END) \
+                            OR (security_ioc.source = 'auto' \
+                            AND LOWER(security_ioc.verdict) = 'malicious' \
+                            AND EXCLUDED.source IN ('auto', 'auto_reference') \
+                            AND LOWER(EXCLUDED.verdict) <> 'malicious') \
                             THEN security_ioc.expires_at \
                         ELSE EXCLUDED.expires_at \
                     END, \
@@ -289,7 +421,7 @@ impl VigilDb {
     /// Refresh `last_seen`/`hit_count` only, without touching verdict/confidence/source.
     ///
     /// Used when an external intel feed re-observes an indicator that already
-    /// has an entry recorded by a non-external source (auto/manual/import/
+    /// has an entry recorded by a non-external source (auto/auto_reference/manual/import/
     /// admin_clean/system): the external result must never overwrite the
     /// stronger verdict, only prove the indicator is still active.
     pub async fn touch_ioc_last_seen(&self, ioc_type: &str, indicator: &str) -> Result<()> {
@@ -358,6 +490,26 @@ impl VigilDb {
             Some(r) => Ok(Some(r.into_ioc()?)),
             None => Ok(None),
         }
+    }
+
+    /// Find an IOC by its stable identifier, including expired entries. The
+    /// management UI needs expired rows to explain why a legacy record is no
+    /// longer active while its historical Shadow evidence remains readable.
+    pub async fn find_ioc_by_id(&self, id: Uuid) -> Result<Option<IocEntry>> {
+        let row = sqlx::query_as::<_, IocRow>(
+            r#"
+            SELECT id, indicator, ioc_type, source, verdict, confidence, attack_type,
+                   first_seen, last_seen, hit_count, context, expires_at,
+                   created_at, updated_at
+            FROM security_ioc
+            WHERE id = $1
+            LIMIT 1
+            "#,
+        )
+        .bind(id.to_string())
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(IocRow::into_ioc).transpose()
     }
 
     /// IOC (Pagination)
@@ -446,6 +598,42 @@ impl VigilDb {
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    /// Remove one-off automatic IOC observations produced while analyzing a
+    /// session that an operator has explicitly allowlisted.
+    ///
+    /// Automatic IOC rows keep the originating session in `context`, because
+    /// the legacy table predates a normalized session-to-IOC relation. Never
+    /// remove manual, imported, system, or admin-clean intelligence here. A
+    /// row with a hit count greater than one is shared by other observations;
+    /// it is retained and reported to the caller instead of being globally
+    /// deleted as a side effect of one false-positive review.
+    pub async fn delete_auto_iocs_for_session(&self, session_id: Uuid) -> Result<(u64, u64)> {
+        let session_marker = format!("%session={session_id}%");
+        let shared_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::BIGINT
+             FROM security_ioc
+             WHERE source IN ('auto', 'auto_reference')
+               AND hit_count > 1
+               AND context LIKE $1",
+        )
+        .bind(&session_marker)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let deleted = sqlx::query(
+            "DELETE FROM security_ioc
+             WHERE source IN ('auto', 'auto_reference')
+               AND hit_count <= 1
+               AND context LIKE $1",
+        )
+        .bind(&session_marker)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+
+        Ok((deleted, shared_count.max(0) as u64))
     }
 
     /// IOC
@@ -980,7 +1168,10 @@ mod infra_tests {
             .await
             .unwrap()
             .expect("IOC must still exist");
-        assert_eq!(ioc.verdict, "malicious", "external clean must not overwrite auto malicious");
+        assert_eq!(
+            ioc.verdict, "malicious",
+            "external clean must not overwrite auto malicious"
+        );
         assert_eq!(ioc.source, "auto");
         assert_eq!(ioc.hit_count, 1, "last_seen/hit_count still refresh");
     }
@@ -1007,6 +1198,29 @@ mod infra_tests {
             .expect("IOC must still exist");
         assert_eq!(ioc.verdict, "malicious");
         assert_eq!(ioc.source, "auto");
+    }
+
+    /// A low-risk reference must not downgrade a stronger external malicious
+    /// result that was already recorded for the same indicator.
+    #[tokio::test]
+    async fn low_reference_does_not_downgrade_external_malicious() {
+        let db = make_db().await;
+        let indicator = format!("stronger-{}.example", Uuid::new_v4().simple());
+
+        db.upsert_ioc(&make_ioc(&indicator, "virustotal", "malicious", 0.95))
+            .await
+            .unwrap();
+        db.upsert_ioc(&make_ioc(&indicator, "auto_reference", "suspicious", 0.55))
+            .await
+            .unwrap();
+
+        let ioc = db
+            .find_ioc("domain", &indicator)
+            .await
+            .unwrap()
+            .expect("IOC must still exist");
+        assert_eq!(ioc.verdict, "malicious");
+        assert_eq!(ioc.source, "virustotal");
     }
 
     /// Manual admin entries must also survive external clean cache writes.
@@ -1069,7 +1283,10 @@ mod infra_tests {
             .await
             .unwrap()
             .expect("admin entry must survive seeding");
-        assert_eq!(ioc.verdict, "clean", "malicious seed must not overwrite admin_clean");
+        assert_eq!(
+            ioc.verdict, "clean",
+            "malicious seed must not overwrite admin_clean"
+        );
         assert_eq!(ioc.source, "admin_clean");
     }
 }

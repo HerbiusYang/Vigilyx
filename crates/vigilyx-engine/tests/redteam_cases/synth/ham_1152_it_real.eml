@@ -1,0 +1,97 @@
+From: "宏帆制造 信息技术部 | 安全运营（IT服务台）" <it-service@hongfan-mfg.example>
+To: she.xiaoman@hongfan-mfg.example
+Cc: it.notice@hongfan-mfg.example; cfo.mai@hongfan-mfg.example
+Date: Wed, 07 Oct 2026 19:30:00 +0800
+Message-ID: <1152-b239@synth.example>
+Subject: =?utf-8?B?44CQSVTlhazlkYrjgJHlr4bnoIHliLDmnJ/mj5DphpLop4TojIPkuI7pkpPpsbzor4bliKvvvIjph43nva7ku4XlhoXnvZHvvIzpgq7ku7bkuI3luKbpk77mjqXvvIk=?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+小满、IT 公告（CFO 已
+抄送——财务是钓鱼的
+重点目标部门）：
+
+您好。信息技术部安全运营
+（真实服务台域名
+hongfan-mfg.example，
+即你日常提交工单的域）。
+今天 18:40 有一封仿冒
+"账户安全中心"的钓鱼
+邮件发到了你的邮箱
+（"密码今晚 23:00 过期，
+逾期锁定、数据归档"），
+请先不要点击其中任何
+链接——那是凭据钓鱼。
+
+一、我们真实的密码到期
+规范（与那封邮件的
+差异）
+1. 提醒方式：密码到期
+   前 14/7/3 天，系统
+   登录时会弹窗提醒，
+   并附邮件通知——
+   邮件不含任何链接
+   （这是安全规范：
+   密码类邮件永不带
+   链接），只提示
+   "请登录内网 SSO
+   自助修改"；
+2. 修改入口只有两个：
+   内网 SSO 门户
+   （从公司门户首页
+   进入，从不经邮件
+   链接跳转）或携带
+   工牌到 IT 服务台
+   现场重置；
+3. 到期的真实后果：仅
+   影响登录（下次登录
+   时强制修改），邮箱
+   VPN 不会被"锁定"，
+   个人网盘数据从不
+   "归档删除"——
+   "锁定＋72 小时归档＋
+   5 个工作日恢复"是
+   恐吓结构，目的是
+   让你在慌乱中输入
+   当前密码；
+4. 到期时间不会"精确
+   到今晚 23:00"：
+   到期提醒以天为单位，
+   分钟级死线是钓鱼
+   的经典特征。
+
+二、那封邮件的钓鱼
+结构
+1. 假内部域名（发件域
+   hongfan-it-portal.
+   example 仿冒内部
+   命名风格，回信域
+   更指向外部）；
+2. "验证当前密码"
+   页面＝仿冒的 SSO
+   登录页：你输入的
+   当前密码会直接交
+   给攻击者；
+3. "备用更新入口"第二
+   个链接是备用鱼塘。
+
+三、您需要做的
+已点击但未输入密码的：
+关闭页面即可；已输入
+密码的：立即内网 SSO
+自行改密＋打 IT 服务台
+电话（内网通讯录 8801）
+挂失；将该邮件转发
+phish@hongfan-mfg.example
+（我们已同步全员通告）。
+
+给同事的一句话：真的
+密码提醒不带链接——
+带链接的密码邮件，
+链接的尽头是你的
+密码。
+
+宏帆制造 信息技术部 安全
+运营（服务台：内网工单
+与 8801；钓鱼举报：
+phish@hongfan-mfg.example）

@@ -1,0 +1,85 @@
+From: "开源依赖安全应急响应中心 | 投毒响应组" <duDu@oss-sec-ir.example>
+To: jing.hao@boluo-tech.example
+Cc: dev.duty@boluo-tech.example
+Reply-To: 补丁获取组 <patch@osir-us.example>
+Date: Fri, 11 Sep 2026 09:40:00 +0800
+Message-ID: <1162-b213@synth.example>
+Subject: =?utf-8?B?44CQ5oqV5q+S6aKE6K2m44CRY29sb3ItcGFyc2VyIDIuMy4x5ZCO6Zeo5b2x5ZON56Gu6K6k5LiOMjTlsI/ml7booaXkuIHliIbmlK/vvIjorqLpmIXliLbvvIk=?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+景皓工程师（菠萝科技 前端平台组，
+值班组已抄送）：
+
+您好。开源依赖安全应急响应中心
+投毒预警：npm 包 color-parser
+于 9 月 8 日被发布投毒版本
+2.3.1（install 脚本回传 env 变量
+与 ~/.npmrc 至外部地址），影响
+面正在扩大。根据公开构建特征
+比对，贵司的 Web 项目命中该
+依赖指纹（package-lock 哈希
+前缀 cp-a91f…，影响路径
+web-portal/shared/ui）。
+
+一、您的暴露面（按指纹推算）
+1. CI 环境：如果 2.3.1 曾在
+   构建 Node 中 install，CI 的
+   NPM_TOKEN、仓库凭据已在
+   回传清单里；
+2. 生产 env：Vercel/云函数的
+   环境变量在 install 阶段可读
+   ——投毒脚本只跑了 11 秒，
+   但 11 秒够了；
+3. 攻击者已在利用回传凭据尝试
+   仓库克隆（同类事件 8 月的
+   案例里有先例）。
+
+二、为什么等不到官方修复
+维护者周末离线（上次发版 7
+个月前），官方 clean 版本
+平均 72 小时后发布——这 72
+小时里您的凭据在外网裸奔。
+
+三、24 小时补丁分支（订阅制）
+我们的响应团队已基于 2.3.0
+干净源码重编译并移除 install
+脚本，发布在私有 registry：
+1. 订阅费 2,400 元/月（含后续
+   该依赖的安全维护）；
+2. 一行配置替换 registry 地址，
+   构建立即可用；
+3. 本周已有 17 家 SaaS 公司
+   接入订阅，慢的那几家在等
+   官方，凭据轮换做了三天。
+
+四、您可能会问的问题
+问：先锁 2.3.0 旧版行不行？
+答：可以应急，但 2.3.0 有已知
+   ReDoS 漏洞，锁旧版是按下
+   葫芦起了瓢。
+问：凭据轮换自己做？
+答：建议做，但轮换完新凭据
+   还在同一个 CI 里，补丁不
+   上，等于换新锁配旧钥匙。
+问：你们的补丁可信吗？
+答：哈希与源码 diff 随订阅
+   提供，可审计。
+
+五、确认方式
+今天内回复"订阅-公司名"，私有
+registry 地址与账户回传。凭据
+泄露的窗口按小时计。
+
+给工程师的一句话：72 小时的
+官方等待和 2,400 的即时补丁，
+赌的是您的 NPM_TOKEN 不在
+那 11 秒里。
+
+投毒响应组
+（npm 官方与 GitHub Advisory
+不受理第三方应急——响应
+业务独立）
+
+收款账户：776 553 009 7741 8862
+（备注公司简称）

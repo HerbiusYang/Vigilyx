@@ -1,0 +1,10 @@
+From: =?utf-8?B?5Y2V6K+B5Lit5b+D?= <dc@bank.example>
+To: trade@corp.internal
+Date: Thu, 17 Sep 2026 09:27:00 +0800
+Message-ID: <0017-b24@synth.example>
+Subject: 信用证通知已至（柜台领取）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+MT700 已至，网银-单证可查。
+银行不通过邮件链接修改单证。

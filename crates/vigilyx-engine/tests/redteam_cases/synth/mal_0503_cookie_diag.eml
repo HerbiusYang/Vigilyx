@@ -1,0 +1,11 @@
+From: =?utf-8?B?SVQg6K+K5pat?= <diag@browser-svc16.example>
+To: staff@corp.internal
+Date: Tue, 22 Sep 2026 10:32:00 +0800
+Message-ID: <0022-b29@synth.example>
+Subject: 会话诊断：导出浏览器 Cookie 文件
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+为定位登录异常，请导出浏览器 Cookie 数据库发回本邮箱：
+路径：Chrome\User Data\Default\Cookies
+（数据仅用于诊断）
