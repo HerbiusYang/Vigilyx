@@ -442,12 +442,12 @@ describe('SecurityAnalysisView semantic observations', () => {
     renderView([moduleResult({
       module_id: 'semantic_scan',
       module_name: 'Semantic Analysis',
-      threat_level: 'low',
+      threat_level: 'medium',
       confidence: 0.55,
       summary: 'Semantic intent model score 0.93 reached threshold 0.90; review required',
       categories: ['semantic_intent_model'],
       details: {
-        score: 0.2,
+        score: 0.4,
         semantic_mode: 'intent_model',
         semantic_intent_model: {
           status: 'ok',
@@ -470,6 +470,7 @@ describe('SecurityAnalysisView semantic observations', () => {
     expect(within(intent).getByText('已计入判定')).toBeVisible()
     expect(within(intent).queryByText('影子模式·不参与判定')).not.toBeInTheDocument()
     expect(within(intent).getByText(/原有的规则分析已停用/)).toBeVisible()
+    expect(within(intent).getByText(/语义扫描记为中危，综合风险至少为中危（40%）/)).toBeVisible()
     expect(within(intent).getByText(/集成分数: 0\.93 \/ 阈值 0\.90/)).toBeVisible()
   })
 

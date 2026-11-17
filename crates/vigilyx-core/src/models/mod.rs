@@ -1838,7 +1838,11 @@ pub enum DataSecurityIncidentType {
     SelfSending,
     /// Traffic anomaly (too many sensitive operations from one user/IP in a short time)
     VolumeAnomaly,
-    /// JR/T 0197-2020 compliance threshold alert (sensitive data volume reached the regulatory threshold)
+    /// Sensitive delivery submission; authorization needs verification.
+    SensitiveDataTransfer,
+    /// Product bulk-transfer escalation, independent of single-event alerts.
+    BulkSensitiveTransfer,
+    /// Legacy stored event type; never emitted by the current detectors.
     JrtComplianceViolation,
 }
 
@@ -1849,6 +1853,8 @@ impl std::fmt::Display for DataSecurityIncidentType {
             DataSecurityIncidentType::FileTransitAbuse => write!(f, "file_transit_abuse"),
             DataSecurityIncidentType::SelfSending => write!(f, "self_sending"),
             DataSecurityIncidentType::VolumeAnomaly => write!(f, "volume_anomaly"),
+            DataSecurityIncidentType::SensitiveDataTransfer => write!(f, "sensitive_data_transfer"),
+            DataSecurityIncidentType::BulkSensitiveTransfer => write!(f, "bulk_sensitive_transfer"),
             DataSecurityIncidentType::JrtComplianceViolation => {
                 write!(f, "jrt_compliance_violation")
             }
@@ -2041,9 +2047,13 @@ pub struct DataSecurityStats {
     pub self_send_count: u64,
     /// Volume anomaly incident count.
     pub volume_anomaly_count: u64,
-    /// JR/T 0197-2020 compliance incident count.
+    /// Legacy bulk incident count, retained for wire compatibility.
     #[serde(default)]
     pub jrt_compliance_count: u64,
+    #[serde(default)]
+    pub sensitive_transfer_count: u64,
+    #[serde(default)]
+    pub bulk_transfer_count: u64,
     /// High-severity incidents observed in the last 24 hours.
     pub high_severity_24h: u64,
     /// Incident counts grouped by severity label.

@@ -30,7 +30,7 @@ pub struct DlpConfig {
     pub enabled: bool,
 
     pub action: DlpAction,
-    /// JR/T (1-5, 3 = C3)
+    /// Candidate security level (1-5); personal-financial C1-C3 categories are separate.
     pub min_level: u8,
 }
 

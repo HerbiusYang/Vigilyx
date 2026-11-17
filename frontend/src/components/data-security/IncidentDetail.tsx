@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import type { JSX } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { DataSecurityIncident, HttpSessionItem, ApiResponse, Evidence } from '../../types'
@@ -7,40 +7,46 @@ import { usePrivacyAccess } from '../../hooks/usePrivacyAccess'
 import { formatRelativeTime, formatSize } from '../../utils/format'
 import {
   SEVERITY_COLOR, SEVERITY_CN,
-  DLP_MATCH_CN, DLP_JRT_LEVEL, JRT_LEVEL_COLOR, JRT_LEVEL_LABEL,
+  DLP_MATCH_CN, getSecurityLevel, DATA_SECURITY_LEVEL_COLOR, DATA_SECURITY_LEVEL_LABEL,
   getMaskedBody, getMaskedSnippet,
 } from './constants'
 import { maskIp, maskUser, maskUrl, getDownloadName } from './helpers'
 import { IncidentTypeBadge, MethodBadge } from './badges'
 import { PrivacyAccessPanel } from '../privacy/PrivacyAccessPanel'
+import { localizeIncidentText, localizeIncidentLocation } from './incidentText'
 
 export function IncidentDetail({ incident, onClose, privacyMode }: { incident: DataSecurityIncident; onClose: () => void; privacyMode: boolean }) {
   const { t } = useTranslation()
-  const [rs, setRs] = useState<HttpSessionItem | null>(null)
-  const [detailIncident, setDetailIncident] = useState<DataSecurityIncident | null>(null)
+  const [sessionSnapshot, setSessionSnapshot] = useState<{ key: string; data: HttpSessionItem } | null>(null)
+  const [incidentSnapshot, setIncidentSnapshot] = useState<{ key: string; data: DataSecurityIncident } | null>(null)
   const [rl, setRl] = useState(false)
   const [showBody, setShowBody] = useState(false)
-  const privacyAccess = usePrivacyAccess(incident.http_session_id ? { resource_type: 'http_session', resource_id: incident.http_session_id } : null)
-  const privacyHeaders = privacyAccess.leaseHeaders('http_body')
-  const visibleIncident = detailIncident ?? incident
+  const isSmtp = incident.details?.source === 'smtp' || incident.method === 'SMTP'
+  const privacyAccess = usePrivacyAccess(!isSmtp && incident.http_session_id ? { resource_type: 'http_session', resource_id: incident.http_session_id } : null)
+  const privacyHeaders = useMemo(() => privacyAccess.leaseHeaders('http_body'), [privacyAccess.leaseHeaders])
+  const authorizationKey = JSON.stringify([incident.id, privacyMode, privacyAccess.error, privacyHeaders])
+  const rs = sessionSnapshot?.key === authorizationKey ? sessionSnapshot.data : null
+  const visibleIncident = incidentSnapshot?.key === authorizationKey ? incidentSnapshot.data : incident
   const sc = SEVERITY_COLOR[visibleIncident.severity] || SEVERITY_COLOR.info
   const confPct = Math.round(visibleIncident.confidence * 100)
 
   useEffect(() => {
     if (!incident.http_session_id) return
-    let c = false
+    const controller = new AbortController()
+    setShowBody(false)
     setRl(true)
-    apiFetch(`/api/data-security/incidents/${incident.id}`, { headers: privacyHeaders })
+    apiFetch(`/api/data-security/incidents/${incident.id}`, { headers: privacyHeaders, signal: controller.signal })
       .then(r => r.ok ? r.json() : null)
-      .then((d: ApiResponse<DataSecurityIncident> | null) => { if (!c && d?.success && d.data) setDetailIncident(d.data) })
+      .then((d: ApiResponse<DataSecurityIncident> | null) => { if (!controller.signal.aborted && d?.success && d.data) setIncidentSnapshot({ key: authorizationKey, data: d.data }) })
       .catch(() => {})
-    apiFetch(`/api/data-security/http-sessions/${incident.http_session_id}`, { headers: privacyHeaders })
+    if (isSmtp) { setRl(false); return () => controller.abort() }
+    apiFetch(`/api/data-security/http-sessions/${incident.http_session_id}`, { headers: privacyHeaders, signal: controller.signal })
       .then(r => r.ok ? r.json() : null)
-      .then((d: ApiResponse<HttpSessionItem> | null) => { if (!c && d?.success && d.data) setRs(d.data) })
+      .then((d: ApiResponse<HttpSessionItem> | null) => { if (!controller.signal.aborted && d?.success && d.data) setSessionSnapshot({ key: authorizationKey, data: d.data }) })
       .catch(() => {})
-      .finally(() => { if (!c) setRl(false) })
-    return () => { c = true }
-  }, [incident.id, incident.http_session_id, privacyHeaders])
+      .finally(() => { if (!controller.signal.aborted) setRl(false) })
+    return () => controller.abort()
+  }, [incident.id, incident.http_session_id, privacyHeaders, authorizationKey, isSmtp])
 
   return (
     <div className="ds3-detail ds3-detail--v2">
@@ -81,7 +87,11 @@ export function IncidentDetail({ incident, onClose, privacyMode }: { incident: D
       </div>
 
       {/* Summary */}
-      <div className="ds3-dtl-summary">{visibleIncident.summary}</div>
+      <div className="ds3-dtl-summary">{localizeIncidentText(visibleIncident.summary)}</div>
+      {visibleIncident.incident_type === 'draft_box_abuse' && <p className="ds3-dtl-summary">{t('dataSecurity.draftObservationNotice')}</p>}
+
+      {visibleIncident.details?.authorization_status === 'unverified' && <p className="ds3-dtl-summary">{t('dataSecurity.singleTransferNotice')}</p>}
+      {isSmtp && <p className="ds3-dtl-summary">{t('dataSecurity.smtpIncidentNotice')}</p>}
 
       {/* Metadata */}
       <div className="ds3-detail-section">
@@ -121,10 +131,10 @@ export function IncidentDetail({ incident, onClose, privacyMode }: { incident: D
           </div>
           <div className="ds3-dtl-dlp-grid">
             {visibleIncident.dlp_matches.map((m, i) => {
-              const jl = DLP_JRT_LEVEL[m], jc = jl ? JRT_LEVEL_COLOR[jl] : '#ef4444'
+              const jl = getSecurityLevel(m, visibleIncident.dlp_matches), jc = jl ? DATA_SECURITY_LEVEL_COLOR[jl] : '#ef4444'
               return (
                 <div key={i} className="ds3-dtl-dlp-chip" style={{ '--dlp-c': jc } as React.CSSProperties}>
-                  {jl && <span className="ds3-dtl-dlp-lv" style={{ background: jc }}>{JRT_LEVEL_LABEL[jl]}</span>}
+                  {jl && <span className="ds3-dtl-dlp-lv" style={{ background: jc }}>{DATA_SECURITY_LEVEL_LABEL[jl]}</span>}
                   <span className="ds3-dtl-dlp-name">{DLP_MATCH_CN[m] || m}</span>
                 </div>
               )
@@ -148,8 +158,8 @@ export function IncidentDetail({ incident, onClose, privacyMode }: { incident: D
                   {i < visibleIncident.evidence.length - 1 && <div className="ds3-evi-line" />}
                 </div>
                 <div className="ds3-evi-content">
-                  <div className="ds3-evi-desc">{ev.description}</div>
-                  {ev.location && <div className="ds3-evi-loc">{ev.location}</div>}
+                  <div className="ds3-evi-desc">{localizeIncidentText(ev.description)}</div>
+                  {ev.location && <div className="ds3-evi-loc">{localizeIncidentLocation(ev.location)}</div>}
                   {ev.snippet && <pre className="ds3-evi-snippet sec-mono">{privacyMode ? getMaskedSnippet() : ev.snippet}</pre>}
                 </div>
               </div>
@@ -159,7 +169,7 @@ export function IncidentDetail({ incident, onClose, privacyMode }: { incident: D
       )}
 
       {/* Redacted request body */}
-      <div className="ds3-detail-section" style={{ paddingBottom: 20 }}>
+      {!isSmtp && <div className="ds3-detail-section" style={{ paddingBottom: 20 }}>
         <button className="ds3-collapse-btn ds3-collapse-btn--v2" onClick={() => setShowBody(!showBody)}>
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ transform: showBody ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s ease' }}>
             <polyline points="9 18 15 12 9 6" />
@@ -219,7 +229,7 @@ export function IncidentDetail({ incident, onClose, privacyMode }: { incident: D
             onLeaseReady={() => void privacyAccess.refresh()}
           />
         )}
-      </div>
+      </div>}
     </div>
   )
 }

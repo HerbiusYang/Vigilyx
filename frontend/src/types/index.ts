@@ -728,7 +728,7 @@ export interface ContentRules {
 // ============================================
 
 // Data security event type
-type DataSecurityIncidentType = 'draft_box_abuse' | 'file_transit_abuse' | 'self_sending' | 'volume_anomaly' | 'jrt_compliance_violation'
+type DataSecurityIncidentType = 'sensitive_data_transfer' | 'bulk_sensitive_transfer' | 'draft_box_abuse' | 'file_transit_abuse' | 'self_sending' | 'volume_anomaly' | 'jrt_compliance_violation'
 
 // Data security severity
 type DataSecuritySeverity = 'info' | 'low' | 'medium' | 'high' | 'critical'
@@ -766,6 +766,8 @@ export interface DataSecurityStats {
   self_send_count: number
   volume_anomaly_count: number
   jrt_compliance_count?: number
+  sensitive_transfer_count?: number
+  bulk_transfer_count?: number
   high_severity_24h: number
   incidents_by_severity: Record<string, number>
   hourly_sessions?: HourlyBucket[]

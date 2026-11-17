@@ -10,7 +10,9 @@ use regex::Regex;
 use std::sync::{LazyLock, OnceLock, RwLock};
 
 use super::common::{
-    domain_matches_policy_set, domains_share_organizational_domain, extract_domain_from_url,
+    domain_matches_policy_set, domains_share_institutional_brand,
+    domains_share_organizational_domain, domains_share_sender_organization,
+    extract_domain_from_url,
     extract_redirect_target_urls, host_matches_domain_or_subdomain, is_operational_delivery_alert,
     is_private_network_url, is_probable_non_clickable_render_asset_url,
     is_probable_opaque_mail_callback_url, is_probable_safe_static_asset_url, organizational_domain,
@@ -274,6 +276,8 @@ fn untrusted_host_embeds_sender_domain(host: &str, sender_domain: &str) -> bool 
     if host.is_empty()
         || sender_domain.is_empty()
         || domains_share_organizational_domain(&host, &sender_domain)
+        || domains_share_sender_organization(&host, &sender_domain)
+        || domains_share_institutional_brand(&host, &sender_domain)
     {
         return false;
     }
@@ -1067,6 +1071,47 @@ mod tests {
             ..Default::default()
         };
         SecurityContext::new(Arc::new(session))
+    }
+
+    #[test]
+    fn china_cc_tld_shop_does_not_nest_the_sender_domain() {
+        assert!(!untrusted_host_embeds_sender_domain(
+            "shop.lenovo.com.cn",
+            "lenovo.com"
+        ));
+        assert!(untrusted_host_embeds_sender_domain(
+            "lenovo.com.attacker.example",
+            "lenovo.com"
+        ));
+
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.mail_from = Some("news@lenovo.com".to_string());
+        session.content.links.push(EmailLink {
+            url: "https://shop.lenovo.com.cn/investor/html/legal.html".to_string(),
+            text: Some("法律声明".to_string()),
+            suspicious: false,
+        });
+        let result = analyze_with_runtime(
+            &LinkScanModule::new(),
+            &SecurityContext::new(Arc::new(session)),
+        );
+        assert!(
+            !result
+                .categories
+                .iter()
+                .any(|category| category == "sender_domain_nested_in_untrusted_host"),
+            "lenovo.com.cn is the China site, not an unrelated host: {result:?}"
+        );
+        assert!(
+            result.threat_level < ThreatLevel::High,
+            "the legal page must not become high risk: {result:?}"
+        );
     }
 
     #[test]

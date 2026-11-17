@@ -30,22 +30,66 @@ pub fn is_delivery_request(uri: &str, body: Option<&str>) -> bool {
             .is_some_and(|action| action == "deliver");
     }
 
+    let parsed = url::Url::parse(&format!("http://webmail.invalid{uri}"));
+    let path = uri_lower.split('?').next().unwrap_or(&uri_lower);
+    let query_action = parsed.as_ref().ok().and_then(|url| {
+        url.query_pairs()
+            .find(|(key, _)| key.eq_ignore_ascii_case("action"))
+            .map(|(_, value)| value.to_ascii_lowercase())
+    });
+    if path.ends_with("/owa/service.svc") {
+        if query_action
+            .as_deref()
+            .is_some_and(|a| matches!(a, "senditem" | "sendmessage"))
+        {
+            return true;
+        }
+        fn sends(value: &serde_json::Value) -> bool {
+            match value {
+                serde_json::Value::Object(fields) => fields.iter().any(|(key, value)| {
+                    let explicit = value.as_str().is_some_and(|v| match key.as_str() {
+                        "MessageDisposition" => matches!(v, "SendOnly" | "SendAndSaveCopy"),
+                        "Action" | "action" => {
+                            matches!(v.to_ascii_lowercase().as_str(), "senditem" | "sendmessage")
+                        }
+                        "__type" => v.starts_with("SendItemRequest:"),
+                        _ => false,
+                    });
+                    explicit
+                        || (key != "Content" && key != "content" && sends(value))
+                }),
+                serde_json::Value::Array(values) => values.iter().any(sends),
+                _ => false,
+            }
+        }
+        return body
+            .and_then(|b| serde_json::from_str::<serde_json::Value>(b).ok())
+            .is_some_and(|value| sends(&value));
+    }
+    if path.ends_with("/coremail/xt5/proxy/compose") {
+        return body
+            .and_then(extract_body_action)
+            .is_some_and(|action| action == "deliver")
+            || query_action.as_deref() == Some("deliver");
+    }
+    if parsed.as_ref().ok().is_some_and(|url| {
+        url.query_pairs().any(|(key, value)| {
+            key.eq_ignore_ascii_case("func") && value.eq_ignore_ascii_case("mbox:deliver")
+        })
+    }) {
+        return true;
+    }
     [
         "/compose/send",
         "/sendmail",
         "/send_mail",
-        "func=mbox:compose&action=deliver",
-        "func=mbox:deliver",
-        "action=deliver",
-        "/coremail/xt5/proxy/compose",
-        "/owa/service.svc",
         "/api/mail/send",
         "/api/compose/send",
         "/mail/send",
         "/webmail/send",
     ]
     .iter()
-    .any(|pattern| uri_lower.contains(pattern))
+    .any(|suffix| path.ends_with(suffix))
 }
 
 /// Extract email content from Coremail compose JSON body for DLP scanning.
@@ -274,6 +318,30 @@ fn is_top_level_key_position(body: &str, pos: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_owa_endpoint_requires_an_explicit_send_operation() {
+        assert!(!is_delivery_request(
+            "/owa/service.svc",
+            Some(r#"{"Body":{"Content":"SendItem"}}"#)
+        ));
+        assert!(!is_delivery_request(
+            "/owa/service.svc?action=CreateItem",
+            Some(r#"{"Body":{"MessageDisposition":"SaveOnly"}}"#)
+        ));
+        assert!(is_delivery_request(
+            "/owa/service.svc?action=SendItem",
+            None
+        ));
+        assert!(is_delivery_request(
+            "/owa/service.svc",
+            Some(r#"{"Body":{"MessageDisposition":"SendAndSaveCopy"}}"#)
+        ));
+        assert!(!is_delivery_request(
+            "/login?next=/mail/send",
+            Some("password=example")
+        ));
+    }
 
     #[test]
     fn test_is_coremail_compose_uri_match() {

@@ -65,6 +65,118 @@ async fn store_message(db: &VigilDb, suffix: &str) -> Result<String> {
 }
 
 #[tokio::test]
+async fn retention_skips_busy_sessions_and_rolls_back_counter_lock_waits() -> Result<()> {
+    let db = VigilDb::new(&test_database_url()?).await?;
+    db.init().await?;
+    db.init_security_tables().await?;
+    db.init_data_security_tables().await?;
+    let mut ids = Vec::new();
+    for day in [100, 101, 0] {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "192.0.2.77".into(),
+            40_000,
+            "198.51.100.77".into(),
+            25,
+        );
+        session.started_at = Utc::now() - Duration::days(day);
+        session.status = SessionStatus::Completed;
+        db.insert_session(&session).await?;
+        ids.push(session.id.to_string());
+    }
+    let mut busy = db.pool().begin().await?;
+    sqlx::query("SELECT id FROM sessions WHERE id=$1 FOR UPDATE")
+        .bind(&ids[0])
+        .fetch_one(&mut *busy)
+        .await?;
+    let (deleted, _) = db.cleanup_old_data(90).await?;
+    assert_eq!(
+        deleted, 1,
+        "unlocked expired row must be removed without waiting"
+    );
+    busy.rollback().await?;
+
+    let mut counter_lock = db.pool().begin().await?;
+    sqlx::query("SELECT id FROM stats_cache WHERE id=1 FOR UPDATE")
+        .fetch_one(&mut *counter_lock)
+        .await?;
+    let started = std::time::Instant::now();
+    let (deleted, _) = db.cleanup_old_data(90).await?;
+    assert_eq!(deleted, 0, "counter contention must defer retention");
+    assert!(started.elapsed() < std::time::Duration::from_secs(3));
+    counter_lock.rollback().await?;
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id=$1)")
+        .bind(&ids[0])
+        .fetch_one(db.pool())
+        .await?;
+    assert!(exists, "timed-out batch must roll back its delete");
+
+    assert_eq!(db.cleanup_old_data(90).await?.0, 1);
+    let recent: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id=$1)")
+        .bind(&ids[2])
+        .fetch_one(db.pool())
+        .await?;
+    assert!(recent, "retention must preserve recent sessions");
+    Ok(())
+}
+
+#[tokio::test]
+async fn medium_review_policy_refresh_preserves_admin_configuration() -> Result<()> {
+    let db = VigilDb::new(&test_database_url()?).await?;
+    db.init().await?;
+    db.init_security_tables().await?;
+    let mut seed: serde_json::Value =
+        serde_json::from_str(&db.get_config("engine_module_data_seed").await?.unwrap())?;
+    seed["lists"]["semantic_intent_review_policy_v2"]["items"]["minimum_risk"] =
+        serde_json::json!(0.15);
+    seed["lists"]
+        .as_object_mut()
+        .unwrap()
+        .remove("recipient_targeting_review_policy_v2");
+    // Seeds are canonical application data and are refreshed on init. Editable
+    // administrator configuration lives in overrides and pipeline settings.
+    let identity_policy = seed["lists"]["identity_review_policy_v2"].clone();
+    let overrides = r#"{"overrides":{"fixture_terms":{"added":["preserve"],"removed":[]}}}"#;
+    let pipeline = r#"{"verdict_config":{"aggregation":"clustered_ds_v2","alert_floor_factor":1.0},"medium_review_test":"preserve"}"#;
+    db.set_config("engine_module_data_seed", &serde_json::to_string(&seed)?)
+        .await?;
+    db.set_config("engine_module_data_overrides", overrides)
+        .await?;
+    db.set_config("security_pipeline", pipeline).await?;
+    sqlx::query("DELETE FROM schema_migrations WHERE version='135_medium_content_review'")
+        .execute(db.pool())
+        .await?;
+    db.init_security_tables().await?;
+    let upgraded = db.get_config("engine_module_data_seed").await?.unwrap();
+    let seed: serde_json::Value = serde_json::from_str(&upgraded)?;
+    for name in [
+        "semantic_intent_review_policy_v2",
+        "recipient_targeting_review_policy_v2",
+    ] {
+        assert_eq!(seed["lists"][name]["items"]["minimum_risk"], 0.40);
+    }
+    assert_eq!(seed["lists"]["identity_review_policy_v2"], identity_policy);
+    assert_eq!(
+        db.get_config("engine_module_data_overrides")
+            .await?
+            .as_deref(),
+        Some(overrides)
+    );
+    assert_eq!(
+        db.get_config("security_pipeline").await?.as_deref(),
+        Some(pipeline)
+    );
+    db.init_security_tables().await?;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(
+            &db.get_config("engine_module_data_seed").await?.unwrap()
+        )?,
+        seed
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn real_migrations_are_repeatable_and_upgrade_a_missing_column() -> Result<()> {
     let db = VigilDb::new(&test_database_url()?).await?;
     db.init().await?;

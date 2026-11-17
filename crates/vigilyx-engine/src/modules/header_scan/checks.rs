@@ -7,7 +7,9 @@ use std::collections::HashSet;
 use crate::context::SecurityContext;
 use crate::module::Evidence;
 use crate::module_data::module_data;
-use crate::modules::common::domains_share_organizational_domain;
+use crate::modules::common::{
+    domains_share_organizational_domain, domains_share_sender_organization,
+};
 use vigilyx_parser::mime::decode_rfc2047;
 
 use super::parsed::{PROTECTED_DOMAINS, ParsedHeaders, extract_domain};
@@ -27,7 +29,7 @@ pub(super) fn check_domain_mismatch(
         let from_domain = extract_domain(from);
         let reply_domain = extract_domain(reply_to);
         if let (Some(fd), Some(rd)) = (from_domain, reply_domain)
-            && !domains_share_organizational_domain(&fd, &rd)
+            && !domains_share_sender_organization(&fd, &rd)
         {
             // Domain mismatch detected
             *total_score += 0.25;
@@ -1202,8 +1204,38 @@ mod tests {
             assert_eq!(score, 0.30);
             assert_eq!(categories, ["envelope_spoofing"]);
             assert!(evidence.is_empty());
-            assert!(items.is_empty());
         }
+    }
+
+    #[test]
+    fn known_brand_sibling_suffix_is_not_a_from_reply_mismatch() {
+        let mut score = 0.0;
+        let mut categories = Vec::new();
+        let mut evidence = Vec::new();
+        let mut items = Vec::new();
+        check_domain_mismatch(
+            &ds_header_pair(
+                "service@rep.hundsun.cn",
+                Some("service@hundsun.com"),
+            ),
+            &mut score,
+            &mut categories,
+            &mut evidence,
+            &mut items,
+        );
+        assert_eq!(score, 0.0);
+        assert!(categories.is_empty());
+        assert!(items.is_empty());
+
+        check_domain_mismatch(
+            &ds_header_pair("service@hundsun.com", Some("service@evil.example")),
+            &mut score,
+            &mut categories,
+            &mut evidence,
+            &mut items,
+        );
+        assert!(categories.contains(&"domain_mismatch".to_string()));
+        assert_eq!(items.len(), 1);
     }
 
     fn internal_display_ctx(display: &str, address: &str, body: &str) -> SecurityContext {

@@ -1537,8 +1537,18 @@ fn analyze_url_with_anchor_context_scored(
         && (!is_probable_static_asset_path(path) || has_content_override_params(&effective_url))
     {
         let domain_part = host_for_check;
-        // Split into domain labels (excluding TLD)
-        let labels: Vec<&str> = domain_part.split('.').collect();
+        // Tenant labels under a hosted mail platform are assigned identifiers.
+        // Keep the platform suffix itself in the scan; drop only the prefix.
+        let platform_labels = crate::modules::common::hosted_identity_platform(domain_part)
+            .as_deref()
+            .map(|suffix| suffix.split('.').count());
+        let all_labels: Vec<&str> = domain_part.split('.').collect();
+        let labels: Vec<&str> = match platform_labels {
+            Some(count) if all_labels.len() >= count => {
+                all_labels[all_labels.len() - count..].to_vec()
+            }
+            _ => all_labels,
+        };
         let md = crate::module_data::module_data();
         let common_subdomains = md.get_list("common_service_subdomains");
         for label in &labels {
@@ -1586,6 +1596,19 @@ fn analyze_url_with_anchor_context_scored(
                     continue;
                 }
                 if crate::modules::identity_anomaly::is_human_readable_domain_label(candidate) {
+                    continue;
+                }
+                // A short label that still contains a vowel is an institutional
+                // abbreviation (shcpe), not a consonant-run DGA. Vowel-less
+                // short labels such as xvkrz stay eligible. Pinyin-initial
+                // abbreviations are already excluded above.
+                let has_vowel = alpha_bytes.iter().any(|byte| {
+                    matches!(
+                        byte.to_ascii_lowercase(),
+                        b'a' | b'e' | b'i' | b'o' | b'u'
+                    )
+                });
+                if alpha_bytes.len() <= 6 && has_vowel {
                     continue;
                 }
 
@@ -2277,13 +2300,13 @@ impl SecurityModule for LinkContentModule {
                 decoded_url.contains(&sha1_hex) || decoded_url.contains(&sha256_hex)
             });
             if has_recipient {
-                total_score += 0.35;
+                total_score += 0.40;
                 categories.push("recipient_in_url".to_string());
                 record_causal_score(
                     &mut causal_findings,
                     &effective_url,
                     "recipient_in_url",
-                    0.35,
+                    0.40,
                 );
                 evidence.push(Evidence {
                     description: "URL contains recipient email or a SHA-1/SHA-256 mailbox digest (targeted credential phishing)".to_string(),
@@ -2296,9 +2319,10 @@ impl SecurityModule for LinkContentModule {
                     }),
                 });
 
-                // A recipient token is common in preference and campaign
-                // links, so it remains observation-only by itself.  Promote
-                // it only when the same message also asks the recipient to
+                // Admitted targeting evidence requires Medium review. Known
+                // preference/metadata and trusted destinations were excluded
+                // above. Only add a credential-phishing compound when the
+                // same message also asks the recipient to
                 // continue an account-authentication flow and the destination
                 // is outside configured/internal sender trust.  This is the
                 // named compound needed for targeted credential lures whose
@@ -3186,6 +3210,22 @@ mod tests {
     }
 
     #[test]
+    fn trusted_recipient_url_does_not_enter_medium_review() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        crate::modules::link_scan::set_trusted_url_domains(Arc::new(HashSet::from([
+            "trusted.vendor.example".to_string(),
+        ])));
+        let result = analyze_with_runtime(
+            &LinkContentModule::new(),
+            &make_ctx("https://trusted.vendor.example/?member=victim%40example.com"),
+        );
+        reset_url_domain_sets();
+        assert!(!result.categories.contains(&"recipient_in_url".to_string()));
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+    }
+
+    #[test]
     fn test_preference_url_recipient_digest_is_marketing_metadata() {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
@@ -3201,6 +3241,7 @@ mod tests {
             "preference metadata must not become credential evidence: {:?}",
             result.categories
         );
+        assert!(result.threat_level < ThreatLevel::Medium);
     }
 
     #[test]
@@ -3284,7 +3325,7 @@ mod tests {
     }
 
     #[test]
-    fn recipient_token_without_account_instruction_stays_observation_only() {
+    fn recipient_token_without_account_instruction_requires_medium_review_only() {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
         reset_url_domain_sets();
 
@@ -3298,11 +3339,12 @@ mod tests {
         );
 
         assert!(result.categories.contains(&"recipient_in_url".to_string()));
+        assert_eq!(result.threat_level, ThreatLevel::Medium);
         assert!(
             !result
                 .categories
                 .contains(&"targeted_credential_phishing".to_string()),
-            "recipient token without an authentication instruction must remain an observation: {:?}",
+            "targeting alone must not fabricate a credential-phishing compound: {:?}",
             result.categories
         );
     }
@@ -3355,7 +3397,7 @@ mod tests {
         );
         assert_eq!(
             causal_item(&expanded, "host:newsletter.example", "recipient_in_url")["score"],
-            0.35
+            0.40
         );
         assert!(
             !expanded
@@ -3535,6 +3577,41 @@ mod tests {
         assert_eq!(
             result.details["diagnostic_observations"]["long_url_count"],
             1
+        );
+    }
+
+    #[test]
+    fn short_vowel_abbreviation_is_not_dga_and_vowel_less_label_still_is() {
+        let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard();
+        reset_url_domain_sets();
+        let module = LinkContentModule::new();
+        let announcement = analyze_with_runtime(
+            &module,
+            &make_ctx(
+                "http://www.shcpe.com.cn/content/shcpe/news/announce.html?articleType=news-announce",
+            ),
+        );
+        assert!(
+            !announcement
+                .categories
+                .contains(&"dga_random_domain".to_string()),
+            "shcpe is a short institutional abbreviation: {announcement:?}"
+        );
+
+        // xqzpk is entirely pinyin initials, so the existing abbreviation
+        // exemption applies. xvkrz has no vowel and contains a non-initial.
+        let hosted = analyze_with_runtime(
+            &module,
+            &make_ctx("https://xvkrz.wecom.work/mail/download"),
+        );
+        assert!(
+            !hosted.categories.contains(&"dga_random_domain".to_string()),
+            "a WeCom tenant label is not a DGA domain: {hosted:?}"
+        );
+        let random = analyze_with_runtime(&module, &make_ctx("https://xvkrz.example/status"));
+        assert!(
+            random.categories.contains(&"dga_random_domain".to_string()),
+            "a vowel-less short label remains DGA: {random:?}"
         );
     }
 

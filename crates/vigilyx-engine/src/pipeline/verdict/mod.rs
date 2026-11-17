@@ -1964,9 +1964,9 @@ mod tests {
     }
 
     /// A scored intent-model hit enters fusion: alone, next to clean modules,
-    /// it lifts the verdict to Low and no further.
+    /// it requires Medium review without treating the model score as probability.
     #[test]
-    fn scored_intent_model_hit_alone_reaches_low_and_no_further() {
+    fn scored_intent_model_hit_alone_requires_medium_review() {
         init_test_scenario_patterns();
         let session = make_session(
             "季度会议安排",
@@ -1978,7 +1978,7 @@ mod tests {
             make_result_with_confidence(
                 "semantic_scan",
                 Pillar::Semantic,
-                0.20,
+                0.40,
                 0.55,
                 vec![crate::semantic::INTENT_MODEL_CATEGORY],
             ),
@@ -2002,7 +2002,7 @@ mod tests {
         );
         assert_eq!(
             verdict.threat_level,
-            ThreatLevel::Low,
+            ThreatLevel::Medium,
             "risk {:?}: {}",
             verdict
                 .fusion_details
@@ -2640,7 +2640,7 @@ mod tests {
     }
 
     #[test]
-    fn test_recipient_url_without_account_lure_stays_below_medium() {
+    fn test_recipient_url_without_account_lure_requires_medium_review() {
         init_test_scenario_patterns();
         let session = make_session(
             "August newsletter",
@@ -2676,7 +2676,7 @@ mod tests {
             &VerdictConfig::default(),
         );
 
-        assert!(verdict.threat_level < ThreatLevel::Medium);
+        assert_eq!(verdict.threat_level, ThreatLevel::Medium);
     }
 
     #[test]

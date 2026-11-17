@@ -9,6 +9,7 @@
 //! Policies:
 //! - Time policy (time_policy) - non-working-hours alerts
 
+pub mod bulk_transfer;
 pub mod chunked_upload;
 pub mod coremail;
 pub mod dlp;
@@ -18,10 +19,9 @@ pub mod email_dlp;
 pub mod email_review;
 pub mod engine;
 pub mod file_transit_detect;
-pub mod jrt;
-pub mod jrt_compliance;
+pub mod financial_policy;
+pub mod mail_transfer_detect;
 pub mod redact;
-pub mod self_send_detect;
 pub mod time_policy;
 pub mod volume_anomaly;
 
@@ -86,7 +86,7 @@ pub async fn read_temp_path_limited_async(path: &str, max_bytes: usize) -> Optio
     Some(data)
 }
 
-/// Detector analysis result: incident + optional DLP result (for JR/T compliance tracking).
+/// Detector analysis result: incident + optional DLP result (for bulk transfer tracking).
 pub type DetectorResult = Option<(DataSecurityIncident, Option<DlpScanResult>)>;
 
 /// Data security detector trait.
@@ -97,7 +97,7 @@ pub trait DataSecurityDetector: Send + Sync {
     fn name(&self) -> &str;
     /// Analyze an HTTP session. Returns (incident, dlp_result) if a security issue is found.
 
-    /// `dlp_result` is used by JR/T 0197-2020 compliance tracking to accumulate
+    /// `dlp_result` is used by product bulk-transfer tracking to accumulate
     /// sensitive data counts by classification level.
     /// If the detector does not perform DLP internally, returns None for the second element.
     fn analyze(&self, session: &HttpSession) -> DetectorResult;

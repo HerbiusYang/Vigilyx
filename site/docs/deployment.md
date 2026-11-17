@@ -94,8 +94,10 @@ Use MTA mode when you want inline SMTP decisions before delivery.
 Data flow:
 
 ```text
-SMTP client -> vigilyx-mta -> inline engine -> quarantine/reject/relay -> downstream MTA
+SMTP client -> vigilyx-mta -> inline engine -> relay, quarantine, reject, or temporary failure
 ```
+
+Only a relay is sent to the downstream MTA. The current thresholds are on the [releases](/docs/releases) page.
 
 Typical use cases:
 

@@ -65,15 +65,9 @@ pub fn build_email_review_with_class(
     let dlp_matches = inspection
         .map(|inspection| inspection.result.matches.clone())
         .unwrap_or_default();
-    let max_jrt_level = inspection.and_then(|inspection| {
-        inspection
-            .result
-            .matches
-            .iter()
-            .map(|name| super::jrt::jrt_level(name))
-            .max()
-            .filter(|level| *level > 0)
-    });
+    let max_jrt_level = inspection
+        .map(|value| super::financial_policy::max_security_level(&value.result.matches))
+        .filter(|level| *level > 0);
     let dlp_details = inspection.map(|inspection| {
         serde_json::Value::Object(
             inspection
@@ -139,6 +133,53 @@ pub fn build_email_review_with_class(
         created_at: session.started_at,
         updated_at: Utc::now(),
     }
+}
+
+/// A single protected field in an observed outbound submission creates a risk
+/// incident. Review direction and transport disposition remain separate facts.
+pub fn build_transfer_incident(
+    review: &EmailDataSecurityReview,
+    inspection: Option<&EmailDlpInspection>,
+) -> Option<vigilyx_core::DataSecurityIncident> {
+    if !matches!(
+        review.audit_class,
+        EmailAuditClass::ConfirmedOutbound | EmailAuditClass::OutboundCandidate
+    ) {
+        return None;
+    }
+    let result = &inspection?.result;
+    if super::financial_policy::max_security_level(&result.matches) <= 1 {
+        return None;
+    }
+    let mut details = super::financial_policy::transfer_details(&result.matches, "smtp");
+    details["email_review_id"] = review.id.to_string().into();
+    details["direction"] = serde_json::to_value(review.direction).ok()?;
+    details["audit_class"] = serde_json::to_value(review.audit_class).ok()?;
+    details["action"] = serde_json::to_value(review.action).ok()?;
+    details["delivery_status"] = serde_json::to_value(&review.delivery_status).ok()?;
+    let mut incident = vigilyx_core::DataSecurityIncident {
+        id: review.id,
+        http_session_id: review.session_id,
+        incident_type: vigilyx_core::DataSecurityIncidentType::SensitiveDataTransfer,
+        severity: super::financial_policy::transfer_severity(&result.matches),
+        confidence: 0.85,
+        summary: "Sensitive outbound email submission; authorization unverified, transport outcome recorded separately".into(),
+        evidence: result.details.iter().map(|(kind, values)| vigilyx_core::security::Evidence {
+            description: format!("{}: {} field matches", kind, values.len()),
+            location: Some("email content".into()),
+            snippet: None,
+        }).collect(),
+        details: Some(details),
+        dlp_matches: result.matches.clone(),
+        client_ip: review.client_ip.clone(),
+        detected_user: review.mail_from.clone(),
+        request_url: String::new(),
+        host: None,
+        method: "SMTP".into(),
+        created_at: review.created_at,
+    };
+    super::financial_policy::assign_incident_id(&mut incident);
+    Some(incident)
 }
 
 /// Return whether the parsed message has enough coverage for a clean result.
@@ -436,15 +477,9 @@ pub fn build_webmail_email_review(
         inspection_reason: webmail_inspection_reason(session, inspection),
         inspection_status,
         dlp_result,
-        max_jrt_level: inspection.and_then(|value| {
-            value
-                .result
-                .matches
-                .iter()
-                .map(|name| super::jrt::jrt_level(name))
-                .max()
-                .filter(|level| *level > 0)
-        }),
+        max_jrt_level: inspection
+            .map(|value| super::financial_policy::max_security_level(&value.result.matches))
+            .filter(|level| *level > 0),
         dlp_matches,
         dlp_details,
         action: EmailReviewAction::Audit,
@@ -588,6 +623,36 @@ mod tests {
             smtp_helo: None,
             release_rescan: None,
         }
+    }
+
+    #[test]
+    fn smtp_single_item_creates_idempotent_risk_but_inbound_and_public_only_do_not() {
+        let mut email = session();
+        email.content.body_text = Some("客户手机 13800138000".into());
+        let scan = super::super::email_dlp::scan_email(&email);
+        let mut review = build_email_review(
+            &email,
+            EmailReviewDirection::Outbound,
+            &["corp.example".into()],
+            Some(&scan),
+            EmailReviewAction::Audit,
+            Some("mirror_audit".into()),
+            None,
+        );
+        let incident = build_transfer_incident(&review, Some(&scan)).unwrap();
+        assert_eq!(incident.severity, vigilyx_core::DataSecuritySeverity::High);
+        assert_eq!(
+            incident.id,
+            build_transfer_incident(&review, Some(&scan)).unwrap().id
+        );
+        assert_eq!(incident.details.unwrap()["delivery_confirmed"], false);
+        review.audit_class = EmailAuditClass::AttributionPending;
+        assert!(build_transfer_incident(&review, Some(&scan)).is_none());
+        review.audit_class = EmailAuditClass::OutboundCandidate;
+        assert!(build_transfer_incident(&review, Some(&scan)).is_some());
+        email.content.body_text = Some("SWIFT: CITIUS33".into());
+        let public_scan = super::super::email_dlp::scan_email(&email);
+        assert!(build_transfer_incident(&review, Some(&public_scan)).is_none());
     }
 
     #[test]

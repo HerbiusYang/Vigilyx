@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Finish one k-fold group on the training server: wait for the fold runs
 # NAME0..NAME4 started with run_ft.sh, score each with report_accuracy.py
-# (fold k on DCU k), then pool out-of-fold results with kfold_report.py.
+# (fold k on the k-th DCU of VIGILYX_DCUS, cycling; default 0-4), then pool
+# out-of-fold results with kfold_report.py.
 # usage: kfold_finish.sh NAME MODEL_DIR FOLDS_DATA   (paths relative to /work)
 # Always uses the training-only Docker socket.
 set -u
 export DOCKER_HOST=unix:///run/umbella-training-docker/docker.sock
-root=/root/vigilyx-training/intent-ft-20261110
+root=${VIGILYX_FT_ROOT:?set VIGILYX_FT_ROOT to the experiment root under /data/vigilyx-training}
+IFS=, read -r -a dcus <<< "${VIGILYX_DCUS:-0,1,2,3,4}"
 image=harbor.sourcefind.cn:5443/dcu/admin/base/custom:vllm0.18.1-ubuntu22.04-dtk26.04-py3.10-20260810-qwen3.8
 name=$1; model=$2; folds=$3
 wait_all() {  # wait_all PREFIX: block until logs/PREFIX{0..4}.status exist
@@ -24,7 +26,7 @@ for k in 0 1 2 3 4; do
     rm -f "$root/logs/acc-$name$k.status"
     docker run -d --rm --name "vigilyx-acc-$name$k" --network none --device /dev/kfd --device /dev/dri \
         --group-add video --shm-size 8g -v /opt/hyhal:/opt/hyhal:ro -v "$root:/work" \
-        -e HIP_VISIBLE_DEVICES="$k" -e PYTHONDONTWRITEBYTECODE=1 -w /work/scripts --entrypoint sh "$image" \
+        -e HIP_VISIBLE_DEVICES="${dcus[$((k % ${#dcus[@]}))]}" -e PYTHONDONTWRITEBYTECODE=1 -w /work/scripts --entrypoint sh "$image" \
         -c "python3 report_accuracy.py --run /work/runs/$name$k --model-dir /work/$model --data /work/$folds/fold$k \
             > /work/logs/acc-$name$k.log 2>&1; echo \$? > /work/logs/acc-$name$k.status" > /dev/null
 done

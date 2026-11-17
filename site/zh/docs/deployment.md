@@ -93,8 +93,10 @@ libpcap capture -> Redis Streams -> Engine -> PostgreSQL -> API/UI
 数据流：
 
 ```text
-SMTP client -> vigilyx-mta -> inline engine -> quarantine/reject/relay -> downstream MTA
+SMTP client -> vigilyx-mta -> inline engine -> 转发、隔离、拒收或临时失败
 ```
+
+只有转发会送到下游 MTA。当前阈值见 [版本发布](/zh/docs/releases)。
 
 适合：
 

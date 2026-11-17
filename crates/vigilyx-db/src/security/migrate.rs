@@ -1604,6 +1604,34 @@ impl VigilDb {
         )
         .await?;
 
+        // Refresh only the two requested review policies. Preserve all other
+        // seeded lists, pipeline settings and administrator overrides.
+        let review_seed_refresh_needed: bool = sqlx::query_scalar(
+            "SELECT NOT EXISTS (SELECT 1 FROM schema_migrations \
+             WHERE version = '135_medium_content_review')",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if review_seed_refresh_needed {
+            let seed: serde_json::Value = serde_json::from_str(embedded_module_data_seed())?;
+            sqlx::query(
+                "UPDATE config SET value = jsonb_set(\
+                 jsonb_set(value::jsonb, '{lists,semantic_intent_review_policy_v2}', $1), \
+                 '{lists,recipient_targeting_review_policy_v2}', $2)::text \
+                 WHERE key = 'engine_module_data_seed'",
+            )
+            .bind(&seed["lists"]["semantic_intent_review_policy_v2"])
+            .bind(&seed["lists"]["recipient_targeting_review_policy_v2"])
+            .execute(&self.pool)
+            .await?;
+            record_migration(
+                &self.pool,
+                "135_medium_content_review",
+                "Medium review for scored semantic intent and admitted recipient-specific URLs",
+            )
+            .await?;
+        }
+
         self.init_privacy_tables().await?;
 
         Ok(())

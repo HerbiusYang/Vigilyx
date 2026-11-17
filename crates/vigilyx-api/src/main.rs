@@ -508,6 +508,29 @@ async fn main() -> Result<()> {
         });
     }
 
+    // Warm expensive data-security aggregates independently of the first
+    // browser visit. The DB snapshots coalesce requests and refresh in the
+    // background, so concurrent tabs do not each scan millions of rows.
+    {
+        let state_bg = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                if let Err(error) = state_bg.db.get_email_data_security_stats().await {
+                    warn!(%error, "Data-security email stats warm-up failed");
+                }
+                if let Err(error) = state_bg.db.get_data_security_stats().await {
+                    warn!(%error, "Data-security overview warm-up failed");
+                }
+                if let Err(error) = state_bg.db.get_data_security_engine_totals().await {
+                    warn!(%error, "Data-security totals warm-up failed");
+                }
+            }
+        });
+    }
+
     // Start dashboard cache background refresh task
     {
         let state_bg = state.clone();

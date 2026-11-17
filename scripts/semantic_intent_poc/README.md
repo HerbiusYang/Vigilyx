@@ -13,7 +13,20 @@ Use each script's `--help` for its exact arguments; experiment directory names
 and results are not release configuration.
 
 - `prepare_ft_data.py` and `build_kfold.py` prepare grouped training inputs.
-- `run_ft.sh` launches offline training on a configured training host.
+- `add_vigilyx_corpus.py` adds the VIGILYX-Training-Data corpus (rendered with
+  its own `render_records.py --history both`) to an existing fold assignment.
+  Corpus records take part in the folds, grouped by thread family, pair, source
+  group and template family. Real institutions stay verbatim in training text;
+  `--rows-out --swap-real-orgs` writes a counterfactual view (other people,
+  other real institutions of the same type) for `score_counterfactual.py`, which
+  reports how many held-out decisions flip.
+- `run_ft.sh` launches offline training on a configured training host;
+  `ft_queue.sh` runs a queue of such jobs with one worker per DCU. Set
+  `VIGILYX_FT_ROOT` (required) to the experiment root under
+  `/data/vigilyx-training/` on the training server, never the shared system
+  disk, and `VIGILYX_DCUS` (e.g. `6,7`) to the cards `kfold_finish.sh` may score on.
+- `score_rows.py` scores a jsonl with an existing package's members and
+  decision rule, e.g. an earlier package on newly added data.
 - `package_final.py` creates an ensemble package containing `ensemble.json`,
   each member's `model.onnx`, `tokenizer.json`, and `classifier_config.json`.
 - `intent_parity_cases.py` prepares inputs for the engine's explicitly ignored
@@ -44,3 +57,4 @@ is on the mirror engine; MTA requires separate setup.
 
 The packaged weights were trained on E-PhishLLM and Fraud-R1, which ship no licence and are
 for research use without redistribution: keep them inside the deployment, do not publish them.
+This holds for packages that also include the MIT-licensed VIGILYX-Training-Data corpus.

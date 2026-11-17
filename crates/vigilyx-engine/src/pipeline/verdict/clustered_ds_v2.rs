@@ -398,12 +398,20 @@ pub(super) fn aggregate_clustered_ds_v2(
     }
     model.risk_constrained = scenario_risk;
     apply_identity_review_policy(&mut model, results);
-    if let Some(policy) = review_policy("semantic_intent_review_policy_v2", 0.15) {
+    if let Some(policy) = review_policy("semantic_intent_review_policy_v2", 0.40) {
         apply_review_minimum(
             &mut model,
             results,
             &policy,
             "semantic_intent_review_minimum",
+        );
+    }
+    if let Some(policy) = review_policy("recipient_targeting_review_policy_v2", 0.40) {
+        apply_review_minimum(
+            &mut model,
+            results,
+            &policy,
+            "recipient_targeting_review_minimum",
         );
     }
     // All applied bounds share one final feasibility check. A later cap
@@ -547,6 +555,9 @@ fn apply_review_minimum(
                         .triggers
                         .get(&r.module_id)
                         .is_some_and(|categories| categories.contains(*category))
+                        && super::evidence_clusters::attributed_findings(None, r, category)
+                            .iter()
+                            .any(|finding| finding.score > 0.0 && finding.confidence > 0.0)
                 })
                 .map(|category| format!("{}:{}", r.module_id, category))
         })
@@ -1166,6 +1177,103 @@ mod tests {
                 &VerdictConfig::default(),
             );
             assert_eq!(verdict.threat_level, expected, "{category}");
+        }
+    }
+
+    #[test]
+    fn content_review_signals_require_medium_individually_and_together() {
+        for signals in [
+            vec![("semantic_scan", "semantic_intent_model")],
+            vec![("link_content", "recipient_in_url")],
+            vec![
+                ("semantic_scan", "semantic_intent_model"),
+                ("link_content", "recipient_in_url"),
+            ],
+        ] {
+            let results = signals
+                .iter()
+                .map(|(module, category)| {
+                    let mut signal = result(module, category, 0.40, 0.55, None);
+                    signal.categories.push((*category).into());
+                    ((*module).to_string(), signal)
+                })
+                .collect::<HashMap<_, _>>();
+            let raw = evaluate_model(None, &results, &VerdictConfig::default());
+            let mut reviewed = raw.clone();
+            for (name, id) in [
+                (
+                    "semantic_intent_review_policy_v2",
+                    "semantic_intent_review_minimum",
+                ),
+                (
+                    "recipient_targeting_review_policy_v2",
+                    "recipient_targeting_review_minimum",
+                ),
+            ] {
+                apply_review_minimum(
+                    &mut reviewed,
+                    &results,
+                    &review_policy(name, 0.40).unwrap(),
+                    id,
+                );
+            }
+            assert_eq!(
+                reviewed.fused_bpa, raw.fused_bpa,
+                "review policy must not rewrite raw belief"
+            );
+            let verdict = aggregate_clustered_ds_v2(
+                None,
+                Uuid::new_v4(),
+                &results,
+                &VerdictConfig::default(),
+            );
+            assert_eq!(verdict.threat_level, ThreatLevel::Medium, "{signals:?}");
+            let primary = verdict.fusion_details.unwrap().primary_result.unwrap();
+            assert_eq!(primary.risk_constrained, 0.40);
+            assert_eq!(primary.risk_base, primary.fused_bpa.b);
+            assert!(primary.risk_base < primary.risk_constrained);
+            assert_eq!(
+                primary
+                    .active_constraints
+                    .iter()
+                    .filter(|c| {
+                        matches!(
+                            c.id.as_str(),
+                            "semantic_intent_review_minimum" | "recipient_targeting_review_minimum"
+                        )
+                    })
+                    .count(),
+                signals.len(),
+                "duplicate categories must not create repeated review votes"
+            );
+        }
+    }
+
+    #[test]
+    fn content_review_policy_ignores_unscored_or_wrong_module_categories() {
+        for (module, category, score, confidence) in [
+            ("semantic_scan", "semantic_intent_model", 0.0, 0.55),
+            ("semantic_scan", "semantic_intent_model", 0.40, 0.0),
+            ("link_scan", "recipient_in_url", 0.40, 0.75),
+            ("link_content", "long_url", 0.10, 0.75),
+        ] {
+            let results = HashMap::from([(
+                module.to_string(),
+                result(module, category, score, confidence, None),
+            )]);
+            let verdict = aggregate_clustered_ds_v2(
+                None,
+                Uuid::new_v4(),
+                &results,
+                &VerdictConfig::default(),
+            );
+            let primary = verdict.fusion_details.unwrap().primary_result.unwrap();
+            assert!(!primary.active_constraints.iter().any(|c| {
+                matches!(
+                    c.id.as_str(),
+                    "semantic_intent_review_minimum" | "recipient_targeting_review_minimum"
+                )
+            }));
         }
     }
 

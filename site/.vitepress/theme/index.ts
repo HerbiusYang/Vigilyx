@@ -5,6 +5,7 @@ import HomeLanding from "./components/HomeLanding.vue";
 import HeroBackdrop from "./components/HeroBackdrop.vue";
 import SharePanel from "./components/SharePanel.vue";
 import KnowledgeGrid from "./components/KnowledgeGrid.vue";
+import ArchitectureFlow from "./components/ArchitectureFlow.vue";
 import "./custom.css";
 
 export default {
@@ -15,6 +16,7 @@ export default {
     app.component("HomeLanding", HomeLanding);
     app.component("HeroBackdrop", HeroBackdrop);
     app.component("KnowledgeGrid", KnowledgeGrid);
+    app.component("ArchitectureFlow", ArchitectureFlow);
   },
   Layout() {
     return h(DefaultTheme.Layout, null, {

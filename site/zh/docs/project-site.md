@@ -11,10 +11,11 @@ Vigilyx 的公共官网与文档存放在 `site/`，使用 VitePress 构建。
 
 仓库里只保存站点源码：
 
-- `site/index.md`
-- `site/docs/*.md`
-- `site/.vitepress/*`
-- `site/public/*`
+- `site/index.md` 和 `site/zh/index.md`
+- `site/docs/` 和 `site/zh/docs/`
+- `site/.vitepress/`
+- `site/public/`
+- `site/package.json`、`site/package-lock.json`、`site/scripts/postbuild.mjs`
 
 构建产物，比如 `site/.vitepress/dist`，已经被忽略，不会提交到仓库。
 
@@ -37,6 +38,12 @@ GitHub Pages 通过 `.github/workflows/pages.yml` 发布。
 
 ```text
 https://herbiusyang.github.io/Vigilyx/
+```
+
+英文文档入口：
+
+```text
+https://herbiusyang.github.io/Vigilyx/docs/
 ```
 
 中文站点入口：

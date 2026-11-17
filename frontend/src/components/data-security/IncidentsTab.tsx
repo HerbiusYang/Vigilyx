@@ -7,11 +7,12 @@ import { formatTimeWithSeconds, formatRelativeTime } from '../../utils/format'
 import {
   SEVERITY_COLOR, SEVERITY_CN,
   INCIDENT_TYPE_COLOR,
-  DLP_MATCH_CN, DLP_JRT_LEVEL, JRT_LEVEL_COLOR,
+  DLP_MATCH_CN, getSecurityLevel, DATA_SECURITY_LEVEL_COLOR,
 } from './constants'
 import { maskIp, maskUser } from './helpers'
 import { SeverityBadge, IncidentTypeBadge } from './badges'
 import { IncidentDetail } from './IncidentDetail'
+import { localizeIncidentText } from './incidentText'
 
 export function IncidentsTab({ selectedId, onSelect, privacyMode }: { selectedId?: string; onSelect: (id: string | null) => void; privacyMode: boolean }) {
   const { t } = useTranslation()
@@ -95,7 +96,7 @@ export function IncidentsTab({ selectedId, onSelect, privacyMode }: { selectedId
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
               {t('dataSecurity.type')}
             </span>
-            {[{ v: '', l: t('dataSecurity.all') }, { v: 'draft_box_abuse', l: t('dataSecurity.incidentType_draft_box_abuse') }, { v: 'file_transit_abuse', l: t('dataSecurity.incidentType_file_transit_abuse') }, { v: 'self_sending', l: t('dataSecurity.incidentType_self_sending') }, { v: 'volume_anomaly', l: t('dataSecurity.incidentType_volume_anomaly') }, { v: 'jrt_compliance_violation', l: t('dataSecurity.incidentType_jrt_compliance_violation') }].map(f => (
+            {[{ v: '', l: t('dataSecurity.all') }, { v: 'draft_box_abuse', l: t('dataSecurity.incidentType_draft_box_abuse') }, { v: 'file_transit_abuse', l: t('dataSecurity.incidentType_file_transit_abuse') }, { v: 'sensitive_data_transfer', l: t('dataSecurity.incidentType_sensitive_data_transfer') }, { v: 'bulk_sensitive_transfer', l: t('dataSecurity.incidentType_bulk_sensitive_transfer') }, { v: 'self_sending', l: t('dataSecurity.incidentType_self_sending') }, { v: 'volume_anomaly', l: t('dataSecurity.incidentType_volume_anomaly') }, { v: 'jrt_compliance_violation', l: t('dataSecurity.incidentType_jrt_compliance_violation') }].map(f => (
               <button key={f.v}
                 className={`ds3-filter-pill ${filterType === f.v ? 'ds3-filter-pill--active' : ''}`}
                 style={f.v && filterType === f.v ? { borderColor: INCIDENT_TYPE_COLOR[f.v], color: INCIDENT_TYPE_COLOR[f.v], background: INCIDENT_TYPE_COLOR[f.v] + '10' } : undefined}
@@ -187,7 +188,7 @@ export function IncidentsTab({ selectedId, onSelect, privacyMode }: { selectedId
                           <span className="ds3-card3-time sec-mono" title={formatTimeWithSeconds(inc.created_at)}>{formatRelativeTime(inc.created_at)}</span>
                         </div>
                         {/* Row 2: summary */}
-                        <div className="ds3-card3-sum">{inc.summary}</div>
+                        <div className="ds3-card3-sum">{localizeIncidentText(inc.summary)}</div>
                         {/* Row 3: meta chips inline */}
                         <div className="ds3-card3-foot">
                           {inc.detected_user && (
@@ -198,7 +199,7 @@ export function IncidentsTab({ selectedId, onSelect, privacyMode }: { selectedId
                           )}
                           <span className="ds3-card3-chip ds3-card3-chip--ip sec-mono">{privacyMode ? maskIp(inc.client_ip) : inc.client_ip}</span>
                           {inc.dlp_matches.length > 0 && inc.dlp_matches.slice(0, 2).map((m, i) => {
-                            const jl = DLP_JRT_LEVEL[m], jc = jl ? JRT_LEVEL_COLOR[jl] : '#ef4444'
+                            const jl = getSecurityLevel(m, inc.dlp_matches), jc = jl ? DATA_SECURITY_LEVEL_COLOR[jl] : '#ef4444'
                             return <span key={i} className="ds3-card3-chip ds3-card3-chip--dlp" style={{ color: jc, borderColor: jc + '30', background: jc + '08' }}>{DLP_MATCH_CN[m] || m}</span>
                           })}
                           {inc.dlp_matches.length > 2 && <span className="ds3-card3-chip ds3-card3-chip--more">+{inc.dlp_matches.length - 2}</span>}

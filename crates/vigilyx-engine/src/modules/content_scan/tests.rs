@@ -573,6 +573,136 @@ fn stage_b_link_window_does_not_promote_reports_unrelated_links_or_secret_mentio
 }
 
 #[test]
+fn known_brand_sibling_reply_to_is_not_social_engineering() {
+    let body = "请立即回复本邮件，把银行卡号和密码发来，今天必须完成付款。";
+    let sibling = reply_to_lure_for_pair(
+        "service@rep.hundsun.cn",
+        "service@hundsun.com",
+        body,
+    );
+    assert!(
+        !sibling.contains(&"external_reply_to_social_engineering".to_string()),
+        "hundsun.cn and hundsun.com are the same known brand: {sibling:?}"
+    );
+    let unrelated = reply_to_lure_for_pair(
+        "service@hundsun.com",
+        "service@evil.example",
+        body,
+    );
+    assert!(
+        unrelated.contains(&"external_reply_to_social_engineering".to_string()),
+        "a known brand replying to an unrelated domain still alerts: {unrelated:?}"
+    );
+}
+
+#[test]
+fn same_vendor_console_download_is_not_an_action_lure() {
+    let body = "请非标2.0所有用户更新工作日。使用脚本下载日历配置：https://www.hs.net/online-console/downloadDetail?id=fixture";
+    let ctx = make_ctx_with_subject_and_body(
+        "非标2.0系统交易日历维护",
+        Some(body),
+        None,
+        vec![EmailLink {
+            url: "https://www.hs.net/online-console/downloadDetail?id=fixture".into(),
+            text: Some("下载".into()),
+            suspicious: false,
+        }],
+        Some("service@rep.hundsun.cn"),
+    );
+    let (categories, _) = external_action_lure_categories_for_stage(&ctx, false);
+    assert!(
+        !categories.contains(&"external_action_link_lure".to_string()),
+        "a Hundsun console download is still the sender organization: {categories:?}"
+    );
+
+    let credential = make_ctx_with_subject_and_body(
+        "账号验证",
+        Some("请更新并输入系统密码：https://www.hs.net/online-console/downloadDetail?id=fixture"),
+        None,
+        vec![EmailLink {
+            url: "https://www.hs.net/online-console/downloadDetail?id=fixture".into(),
+            text: Some("登录".into()),
+            suspicious: false,
+        }],
+        Some("service@rep.hundsun.cn"),
+    );
+    let (categories, _) = external_action_lure_categories_for_stage(&credential, false);
+    assert!(
+        categories.contains(&"external_action_link_lure".to_string()),
+        "a password request on the vendor console still alerts: {categories:?}"
+    );
+}
+
+fn institutional_announcement_page_is_not_an_action_lure() {
+    let notice = "请非标2.0所有用户注意进行2027年工作日历维护。使用脚本“交易日历20WorkDateConfig”更新工作日。详情见 http://www.shcpe.com.cn/content/shcpe/news/announce.html?articleType=news-announce&articleId=1";
+    let url = "http://www.shcpe.com.cn/content/shcpe/news/announce.html?articleType=news-announce&articleId=1";
+    let ctx = make_ctx_with_subject_and_body(
+        "非标2.0系统关于2027年交易日历维护的提示",
+        Some(notice),
+        None,
+        vec![EmailLink {
+            url: url.to_string(),
+            text: Some("公告".to_string()),
+            suspicious: false,
+        }],
+        Some("service@rep.hundsun.cn"),
+    );
+    let (categories, compounds) = external_action_lure_categories_for_stage(&ctx, false);
+    assert!(
+        !categories.contains(&"external_action_link_lure".to_string()),
+        "a Shanghai Commercial Paper Exchange announcement is not an action lure: {categories:?} {compounds:?}"
+    );
+
+    let credential = make_ctx_with_subject_and_body(
+        "账号验证",
+        Some("请更新并输入系统密码：https://account-check.example/verify"),
+        None,
+        vec![EmailLink {
+            url: "https://account-check.example/verify".to_string(),
+            text: Some("登录验证".to_string()),
+            suspicious: false,
+        }],
+        Some("notice@sender.example"),
+    );
+    let (categories, _) = external_action_lure_categories_for_stage(&credential, false);
+    assert!(
+        categories.contains(&"external_action_link_lure".to_string()),
+        "a credential request on an ordinary external link still alerts: {categories:?}"
+    );
+}
+
+fn reply_to_lure_for_pair(from: &str, reply_to: &str, body: &str) -> Vec<String> {
+    let mut session = EmailSession::new(
+        Protocol::Smtp,
+        "192.0.2.10".into(),
+        2525,
+        "192.0.2.20".into(),
+        25,
+    );
+    session.mail_from = Some(from.into());
+    session.rcpt_to.push("recipient@example.com".into());
+    session.subject = Some("付款确认".into());
+    session.content.body_text = Some(body.into());
+    session.content.headers = vec![
+        ("From".into(), format!("Service <{from}>")),
+        ("Reply-To".into(), format!("Service <{reply_to}>")),
+    ];
+    let ctx = SecurityContext::new(Arc::new(session));
+    let mut score = 0.0;
+    let mut categories = Vec::new();
+    let mut evidence = Vec::new();
+    super::detectors::detect_reply_to_social_engineering_lure_with_stage_b(
+        &ctx,
+        ctx.session.content.body_text.as_deref(),
+        &mut score,
+        &mut categories,
+        &mut evidence,
+        false,
+    );
+    categories
+}
+
+#[test]
 fn reply_to_stage_b_recovers_local_sensitive_handoff_and_keeps_controls_safe() {
     let attack = "她说缺一份发票原件照片，你直接回她邮箱就行，纸质的我这边补。";
     let baseline = reply_to_lure_categories_for_stage(attack, false);

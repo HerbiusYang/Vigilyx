@@ -205,6 +205,117 @@ pub fn domains_share_organizational_domain(left: &str, right: &str) -> bool {
     }
 }
 
+/// Same organization when the registrable brand label matches a known brand
+/// and both domains sit on an institutional public suffix.
+///
+/// `rep.hundsun.cn` and `hundsun.com` share the known label `hundsun`. A
+/// reply to an unrelated label, or the same label on a non-institutional
+/// suffix, stays a mismatch.
+pub fn domains_share_known_brand(left: &str, right: &str) -> bool {
+    if same_explicit_brand_group(left, right) {
+        return true;
+    }
+    let Some(left_label) = registrable_brand_label(left) else {
+        return false;
+    };
+    let Some(right_label) = registrable_brand_label(right) else {
+        return false;
+    };
+    if left_label != right_label {
+        return false;
+    }
+    if !module_data().contains("benign_brand_domain_labels", &left_label) {
+        return false;
+    }
+    is_institutional_public_suffix(left) && is_institutional_public_suffix(right)
+}
+
+/// Longest configured mail-platform suffix of `domain`, if the hostname is
+/// that platform or a tenant under it.
+///
+/// `zayh2.wecom.work` returns `wecom.work`. `zayh2.wecom.work.evil.com` does
+/// not: the suffix must be the real right-hand parent, not a substring.
+pub fn hosted_identity_platform(domain: &str) -> Option<String> {
+    let normalized = domain.trim().trim_end_matches('.').to_ascii_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+    module_data()
+        .get_list("hosted_identity_platforms")
+        .iter()
+        .filter(|suffix| normalized == suffix.as_str() || normalized.ends_with(&format!(".{suffix}")))
+        .max_by_key(|suffix| suffix.len())
+        .cloned()
+}
+
+/// Same registrable brand on two institutional suffixes.
+///
+/// `lenovo.com` and `shop.lenovo.com.cn` are the same brand on `.com` and
+/// `.com.cn`. This does not make the domains one organization for reply-to
+/// or payment checks. It only stops a compound suffix from looking like the
+/// sender domain was nested inside an unrelated host.
+pub fn domains_share_institutional_brand(left: &str, right: &str) -> bool {
+    let Some(left_label) = registrable_brand_label(left) else {
+        return false;
+    };
+    let Some(right_label) = registrable_brand_label(right) else {
+        return false;
+    };
+    left_label == right_label
+        && is_institutional_public_suffix(left)
+        && is_institutional_public_suffix(right)
+}
+
+/// Organizational alignment used when a sibling brand domain is still the
+/// same sender. Exact registrable domains continue to match on their own.
+pub fn domains_share_sender_organization(left: &str, right: &str) -> bool {
+    domains_share_organizational_domain(left, right) || domains_share_known_brand(left, right)
+}
+
+fn same_explicit_brand_group(left: &str, right: &str) -> bool {
+    const GROUPS: &[&[&str]] = &[&["hundsun.cn", "hundsun.com", "hs.net"]];
+    let (Some(left_org), Some(right_org)) = (organizational_domain(left), organizational_domain(right))
+    else {
+        return false;
+    };
+    GROUPS.iter().any(|group| {
+        group.contains(&left_org.as_str()) && group.contains(&right_org.as_str())
+    })
+}
+
+fn registrable_brand_label(domain: &str) -> Option<String> {
+    let org = organizational_domain(domain)?;
+    let label = org.split('.').next()?.trim();
+    if label.is_empty() || label.parse::<IpAddr>().is_ok() {
+        return None;
+    }
+    Some(label.to_string())
+}
+
+fn is_institutional_public_suffix(domain: &str) -> bool {
+    let Some(org) = organizational_domain(domain) else {
+        return false;
+    };
+    let Some((_, suffix)) = org.split_once('.') else {
+        return false;
+    };
+    matches!(
+        suffix,
+        "com" | "cn" | "net" | "org"
+            | "com.cn"
+            | "net.cn"
+            | "org.cn"
+            | "gov.cn"
+            | "ac.cn"
+            | "edu.cn"
+            | "com.hk"
+            | "com.tw"
+            | "co.jp"
+            | "com.sg"
+            | "co.kr"
+    )
+}
+
 fn sanitized_http_url_candidate(url: &str) -> Option<&str> {
     let trimmed = url.trim();
     if !(trimmed.starts_with("https://") || trimmed.starts_with("http://")) {
@@ -1144,6 +1255,46 @@ mod tests {
         assert!(!domains_share_organizational_domain(
             "192.0.2.1",
             "192.0.2.2"
+        ));
+        assert!(domains_share_known_brand(
+            "rep.hundsun.cn",
+            "service.hundsun.com"
+        ));
+        assert!(domains_share_known_brand("rep.hundsun.cn", "www.hs.net"));
+        assert!(!domains_share_known_brand("www.hs.net", "hs.evil.example"));
+        assert!(domains_share_sender_organization(
+            "mail.rep.hundsun.cn",
+            "hundsun.com"
+        ));
+        assert!(!domains_share_known_brand(
+            "hundsun.com",
+            "notices.evil.example"
+        ));
+        assert!(!domains_share_known_brand("notabrand.com", "notabrand.cn"));
+        assert_eq!(
+            hosted_identity_platform("zayh2.wecom.work").as_deref(),
+            Some("wecom.work")
+        );
+        assert_eq!(
+            hosted_identity_platform("tenant.mail.protection.outlook.com").as_deref(),
+            Some("mail.protection.outlook.com")
+        );
+        assert_eq!(
+            hosted_identity_platform("zayh2.wecom.work.evil.com"),
+            None
+        );
+        assert_eq!(hosted_identity_platform("zayh2.invalid"), None);
+        assert!(domains_share_institutional_brand(
+            "lenovo.com",
+            "shop.lenovo.com.cn"
+        ));
+        assert!(!domains_share_institutional_brand(
+            "lenovo.com",
+            "lenovo.com.attacker.example"
+        ));
+        assert!(!domains_share_organizational_domain(
+            "rep.hundsun.cn",
+            "hundsun.com"
         ));
     }
 

@@ -5,6 +5,8 @@ description: Vigilyx 的核心产品能力，覆盖旁路镜像、Inline MTA、�
 
 # 特性
 
+Vigilyx 把训练语料单独开源为 [VIGILYX-Training-Data](https://github.com/HerbiusYang/VIGILYX-Training-Data)（MIT）。当前 `data/corpus.json` 有 5,438 条（恶意 4,537，正常 901）。见 [训练语料](/zh/docs/training-data)。
+
 Vigilyx 不是只给一个“风险分”的黑盒网关。它把邮件会话采集、MIME 解析、检测模块、证据融合、隔离处置和运维部署都放在同一个开源工程里，安全团队可以直接查看规则、调试模块、扩展检测逻辑，并按自己的邮件链路选择旁路或 Inline。
 
 ## 一页看懂
@@ -98,8 +100,7 @@ ClamAV 可注册 `av_eml_scan` 和 `av_attach_scan`，CAPEv2 URL 与 token 同�
 和 `ORT_DYLIB_PATH` 产物后，引擎可在 CPU 上运行 bge/e5 ONNX 集成模型。
 默认只在影子模式记录 `semantic_intent_model` 诊断；有效的
 `SEMANTIC_INTENT_SCORE_THRESHOLD` 显式切换到计分模式，替代本地语义规则及后续
-Python NLP/OCR 路径。达到阈值时以 Low 模块分数 0.20 进入融合，不保证最终等级
-或处置。加载失败会警告并禁用模型，检查不完整仍保留覆盖缺口。当前 Compose
+Python NLP/OCR 路径。达到阈值时只是融合里的复核信号，不保证最终等级或处置。具体分数见 [版本发布](/zh/docs/releases)。加载失败会警告并禁用模型，检查不完整仍保留覆盖缺口。当前 Compose
 的模型接线在旁路 engine，MTA 需要单独配置。
 
 ## 证据融合与时序分析

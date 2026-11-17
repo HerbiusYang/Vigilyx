@@ -147,7 +147,7 @@ impl DataSecurityDetector for FileTransitDetector {
 
         let mut evidence = Vec::new();
         let mut dlp_matches = Vec::new();
-        let mut dlp_for_jrt: Option<dlp::DlpScanResult> = None;
+        let mut dlp_for_bulk: Option<dlp::DlpScanResult> = None;
         let mut document_scan_incomplete = false;
 
         // Checkwhether FileUpload (multipart FileName Coremail directData)
@@ -155,8 +155,7 @@ impl DataSecurityDetector for FileTransitDetector {
         // Coremail upload.jsp?func=directData application/octet-stream
         // multipart/form-data, URL
         let uri_lower = session.uri.to_lowercase();
-        let is_coremail_direct_upload =
-            uri_lower.contains("func=directdata") || uri_lower.contains("func=directdata");
+        let is_coremail_direct_upload = uri_lower.contains("func=directdata");
         let has_file = session.uploaded_filename.is_some()
             || Self::is_multipart(session.content_type.as_deref())
             || is_coremail_direct_upload;
@@ -314,19 +313,21 @@ impl DataSecurityDetector for FileTransitDetector {
                         dlp_result.truncated |= document_scan_incomplete;
                         document_scan_incomplete |= dlp_result.truncated;
                         if document_scan_incomplete {
-                            dlp_for_jrt = Some(dlp_result.clone());
+                            dlp_for_bulk = Some(dlp_result.clone());
                         }
                         if !dlp_result.is_empty() {
-                            dlp_for_jrt = Some(dlp_result.clone());
+                            dlp_for_bulk = Some(dlp_result.clone());
                             dlp_matches.extend(dlp_result.matches);
                             for (dtype, values) in &dlp_result.details {
-                                let snippet = super::extract_snippet(&extracted_text, values);
+                                let snippet =
+                                    (super::financial_policy::match_level(dtype, &dlp_matches) < 4)
+                                        .then(|| super::extract_snippet(&extracted_text, values))
+                                        .flatten();
                                 evidence.push(Evidence {
                                     description: format!(
-                                        "File content contains {} ({} occurrences): {}",
+                                        "File content contains {} ({} field matches)",
                                         super::dlp_type_cn(dtype),
-                                        values.len(),
-                                        values.join(", ")
+                                        values.len()
                                     ),
                                     location: Some("DocumentationContent".to_string()),
                                     snippet,
@@ -334,7 +335,7 @@ impl DataSecurityDetector for FileTransitDetector {
                             }
                         }
                     } else if document_scan_incomplete {
-                        dlp_for_jrt = Some(dlp::DlpScanResult {
+                        dlp_for_bulk = Some(dlp::DlpScanResult {
                             truncated: true,
                             ..Default::default()
                         });
@@ -361,16 +362,18 @@ impl DataSecurityDetector for FileTransitDetector {
                     let mut dlp_result = dlp::scan_text(&dlp_text);
                     dlp_result.truncated |= document_scan_incomplete;
                     if !dlp_result.is_empty() {
-                        dlp_for_jrt = Some(dlp_result.clone());
+                        dlp_for_bulk = Some(dlp_result.clone());
                         dlp_matches.extend(dlp_result.matches);
                         for (dtype, values) in &dlp_result.details {
-                            let snippet = super::extract_snippet(&dlp_text, values);
+                            let snippet =
+                                (super::financial_policy::match_level(dtype, &dlp_matches) < 4)
+                                    .then(|| super::extract_snippet(&dlp_text, values))
+                                    .flatten();
                             evidence.push(Evidence {
                                 description: format!(
-                                    "File content contains {} ({} occurrences): {}",
+                                    "File content contains {} ({} field matches)",
                                     super::dlp_type_cn(dtype),
-                                    values.len(),
-                                    values.join(", ")
+                                    values.len()
                                 ),
                                 location: Some("FileContent".to_string()),
                                 snippet,
@@ -379,25 +382,6 @@ impl DataSecurityDetector for FileTransitDetector {
                     }
                 }
             }
-        }
-
-        // FP-1: swift_code 2Base/RadixFile(Image/PDF Byte/Unknown2Base/Radix)Medium match
-        // When swift_code 1 DLP Medium (MediumDescription ContainsSensitivedata)
-        // : is_binary_file already step 3 first; step 3a ExtractofDocumentationText Security
-        let is_binary_for_fp1 = session.body_is_binary
-            || session
-                .detected_file_type
-                .map(|ft| !ft.is_text_scannable())
-                .unwrap_or(true);
-        if is_binary_for_fp1
-            && dlp_matches.len() == 1
-            && dlp_matches.contains(&"swift_code".to_string())
-        {
-            dlp_matches.clear();
-            evidence.retain(|e| {
-                e.location.as_deref() != Some("FileContent")
-                    && e.location.as_deref() != Some("DocumentationContent")
-            });
         }
 
         // FP-2: employee_info ByFileNameMediumof" bit/ "waitGeneral
@@ -434,7 +418,12 @@ impl DataSecurityDetector for FileTransitDetector {
         }
 
         // if not SensitiveFound,
-        if dlp_matches.is_empty() {
+        if dlp_matches.is_empty()
+            || (!document_scan_incomplete
+                && dlp_matches
+                    .iter()
+                    .all(|name| super::financial_policy::security_level(name) == 1))
+        {
             return None;
         }
 
@@ -449,7 +438,7 @@ impl DataSecurityDetector for FileTransitDetector {
         } else if has_executable || has_mismatch || has_encrypted {
             DataSecuritySeverity::High
         } else {
-            super::jrt::severity_from_max_jrt_level(&dlp_matches)
+            super::financial_policy::transfer_severity(&dlp_matches)
         };
 
         let filename_info = session
@@ -465,7 +454,7 @@ impl DataSecurityDetector for FileTransitDetector {
             )
         } else {
             format!(
-                "File transit risk: {} from {} uploaded sensitive file \"{}\"",
+                "File transit risk: {} from {} submitted file \"{}\"; authorization unverified",
                 user.as_deref().unwrap_or("Unknownuser"),
                 session.client_ip,
                 filename_info
@@ -481,12 +470,12 @@ impl DataSecurityDetector for FileTransitDetector {
                 confidence: if coverage_only { 0.0 } else { 0.85 },
                 summary,
                 evidence,
-                details: document_scan_incomplete.then(|| {
-                    serde_json::json!({
-                        "scan_complete": false,
-                        "scan_truncated": true,
-                        "coverage_only": coverage_only,
-                    })
+                details: Some({
+                    let mut details =
+                        super::financial_policy::transfer_details(&dlp_matches, "http_file_upload");
+                    details["scan_complete"] = (!document_scan_incomplete).into();
+                    details["coverage_only"] = coverage_only.into();
+                    details
                 }),
                 dlp_matches,
                 client_ip: session.client_ip.clone(),
@@ -496,7 +485,7 @@ impl DataSecurityDetector for FileTransitDetector {
                 method: session.method.to_string(),
                 created_at: Utc::now(),
             },
-            dlp_for_jrt,
+            dlp_for_bulk,
         ))
     }
 }
@@ -1363,6 +1352,25 @@ mod tests {
     }
 
     // 2Base/RadixFilehops Step 3b DLP Test
+
+    #[test]
+    fn test_public_swift_pdf_does_not_create_sensitive_transfer_alert() {
+        let text = "%PDF-1.7\nBT (SWIFT: TSTBCN00) Tj ET";
+        let session = make_session_with_file_type(
+            "/file/upload",
+            Some("bank.pdf"),
+            Some(DetectedFileType::Pdf),
+            None,
+            true,
+            Some(text),
+        );
+        assert!(FileTransitDetector::new().analyze(&session).is_none());
+        assert!(
+            dlp::scan_text("SWIFT: TSTBCN00")
+                .matches
+                .contains(&"swift_code".to_string())
+        );
+    }
 
     #[test]
     fn test_binary_file_with_swift_pattern_skips_dlp() {

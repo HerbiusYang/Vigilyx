@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
 import type { JSX } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -8,12 +8,12 @@ import { EVENTS } from '../../utils/events'
 import { usePrivacyPolicy } from '../../hooks/usePrivacyPolicy'
 import type { TabKey } from './types'
 import { OverviewTab } from './OverviewTab'
-import { PolicyTab } from './PolicyTab'
-import { IncidentsTab } from './IncidentsTab'
-import { HttpSessionsTab } from './HttpSessionsTab'
-import { OutboundEmailReviewsTab } from './OutboundEmailReviewsTab'
-import { SettingsTab } from './SettingsTab'
-import { TimePolicyTab } from './TimePolicyTab'
+const PolicyTab = lazy(() => import('./PolicyTab').then(module => ({ default: module.PolicyTab })))
+const IncidentsTab = lazy(() => import('./IncidentsTab').then(module => ({ default: module.IncidentsTab })))
+const HttpSessionsTab = lazy(() => import('./HttpSessionsTab').then(module => ({ default: module.HttpSessionsTab })))
+const OutboundEmailReviewsTab = lazy(() => import('./OutboundEmailReviewsTab').then(module => ({ default: module.OutboundEmailReviewsTab })))
+const SettingsTab = lazy(() => import('./SettingsTab').then(module => ({ default: module.SettingsTab })))
+const TimePolicyTab = lazy(() => import('./TimePolicyTab').then(module => ({ default: module.TimePolicyTab })))
 
 export default function DataSecurity() {
   const { t } = useTranslation()
@@ -59,68 +59,70 @@ export default function DataSecurity() {
   const [emailReviewStats, setEmailReviewStats] = useState<EmailDataSecurityStats | null>(null)
   const [loadFailed, setLoadFailed] = useState(false)
 
-  const loadStats = useCallback(async () => {
-    try {
-      const [sr, er] = await Promise.allSettled([
-        apiFetch('/api/data-security/stats'),
-        apiFetch('/api/data-security/engine-status'),
-      ])
-      if (sr.status !== 'fulfilled' || er.status !== 'fulfilled' || !sr.value.ok || !er.value.ok) {
-        setLoadFailed(true)
-        return
-      }
-      const sd: ApiResponse<DataSecurityStats> = await sr.value.json()
-      const ed: ApiResponse<DataSecurityEngineStatus> = await er.value.json()
-      if (sd.success && sd.data) { setStats(sd.data); setLoadFailed(false) }
-      if (ed.success && ed.data) setEngineStatus(ed.data)
-    } catch { setLoadFailed(true) }
-  }, [])
+  const overviewActive = activeTab === 'overview'
+  const emailStatsActive = overviewActive || activeTab === 'outbound-emails'
+  const statsInFlight = useRef(false)
+  const emailInFlight = useRef(false)
 
-  // Email reviews are the live operational feed on this page. Keep their
-  // aggregate independent from the heavier HTTP/incident dashboard query so
-  // the mail posture can refresh frequently without increasing the cost of
-  // every other data-security metric.
+  const loadStats = useCallback(async () => {
+    if (!overviewActive || document.hidden || statsInFlight.current) return
+    statsInFlight.current = true
+    try {
+      await Promise.allSettled([
+        (async () => {
+          try {
+            const response = await apiFetch('/api/data-security/stats')
+            const body: ApiResponse<DataSecurityStats> = await response.json()
+            if (!body.success || !body.data) throw new Error('Invalid data-security stats')
+            setStats(body.data)
+            setLoadFailed(false)
+          } catch { setLoadFailed(true) }
+        })(),
+        (async () => {
+          const response = await apiFetch('/api/data-security/engine-status')
+          const body: ApiResponse<DataSecurityEngineStatus> = await response.json()
+          if (body.success && body.data) setEngineStatus(body.data)
+        })(),
+      ])
+    } finally { statsInFlight.current = false }
+  }, [overviewActive])
+
   const loadEmailReviewStats = useCallback(async () => {
+    if (!emailStatsActive || document.hidden || emailInFlight.current) return
+    emailInFlight.current = true
     try {
       const response = await apiFetch('/api/data-security/email-reviews/stats')
-      if (!response.ok) return
       const body: ApiResponse<EmailDataSecurityStats> = await response.json()
       if (body.success && body.data) setEmailReviewStats(body.data)
     } catch {
-      // The main dashboard remains usable if the optional email aggregate
-      // request is temporarily unavailable; the next tick or WS event retries.
-    }
-  }, [])
+      // A coverage aggregate failure must not hide the HTTP overview.
+    } finally { emailInFlight.current = false }
+  }, [emailStatsActive])
 
-  const dbRef = useRef<number | null>(null)
-  const dbLoad = useCallback(() => {
-    if (dbRef.current) return
-    dbRef.current = window.setTimeout(() => {
-      dbRef.current = null
-      void loadStats()
-      void loadEmailReviewStats()
-    }, 3000)
-  }, [loadEmailReviewStats, loadStats])
-
-  useEffect(() => { const h = () => dbLoad(); window.addEventListener(EVENTS.DASHBOARD_REFRESH, h); return () => window.removeEventListener(EVENTS.DASHBOARD_REFRESH, h) }, [dbLoad])
   useEffect(() => {
-    const h = () => {
+    let pending: number | undefined
+    const refresh = () => {
       void loadStats()
       void loadEmailReviewStats()
     }
-    window.addEventListener(EVENTS.WS_RECONNECTED, h)
-    return () => window.removeEventListener(EVENTS.WS_RECONNECTED, h)
-  }, [loadEmailReviewStats, loadStats])
-  useEffect(() => {
-    void loadStats()
-    void loadEmailReviewStats()
-    const statsTimer = window.setInterval(loadStats, 15000)
-    const emailTimer = window.setInterval(loadEmailReviewStats, 5000)
+    const schedule = () => {
+      if (document.hidden || pending !== undefined || !overviewActive) return
+      pending = window.setTimeout(() => { pending = undefined; refresh() }, 3000)
+    }
+    const resume = () => { if (!document.hidden) refresh() }
+    refresh()
+    const timer = window.setInterval(refresh, 15000)
+    window.addEventListener(EVENTS.DASHBOARD_REFRESH, schedule)
+    window.addEventListener(EVENTS.WS_RECONNECTED, refresh)
+    document.addEventListener('visibilitychange', resume)
     return () => {
-      window.clearInterval(statsTimer)
-      window.clearInterval(emailTimer)
+      window.clearInterval(timer)
+      if (pending !== undefined) window.clearTimeout(pending)
+      window.removeEventListener(EVENTS.DASHBOARD_REFRESH, schedule)
+      window.removeEventListener(EVENTS.WS_RECONNECTED, refresh)
+      document.removeEventListener('visibilitychange', resume)
     }
-  }, [loadEmailReviewStats, loadStats])
+  }, [overviewActive, loadEmailReviewStats, loadStats])
 
   const tabs: [TabKey, string, JSX.Element, number?][] = [
     ['overview', t('dataSecurity.tabOverview'), <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /></svg>],
@@ -166,12 +168,14 @@ export default function DataSecurity() {
         </aside>
 
         <div className="ds3-main">
+          <Suspense fallback={<div className="sec-loading">{t('dataSecurity.loading')}</div>}>
           {activeTab === 'overview' && <OverviewTab stats={stats} engineStatus={engineStatus} emailReviewStats={emailReviewStats} onOpenOutbound={() => setActiveTab('outbound-emails')} loadFailed={loadFailed} />}
           {activeTab === 'outbound-emails' && <OutboundEmailReviewsTab privacyMode={effectivePrivacy} />}
           {activeTab === 'policy' && <PolicyTab />}
           {activeTab === 'incidents' && <IncidentsTab selectedId={selectedId} onSelect={id => navigate(id ? `${basePath}/incidents/${id}` : `${basePath}/incidents`)} privacyMode={effectivePrivacy} />}
           {activeTab === 'http-sessions' && <HttpSessionsTab selectedId={selectedId} onSelect={id => navigate(id ? `${basePath}/http-sessions/${id}` : `${basePath}/http-sessions`)} privacyMode={effectivePrivacy} privacyUnavailable={privacyLoading || privacyError} />}
           {activeTab === 'settings' && (isPortal ? <TimePolicyTab /> : <SettingsTab />)}
+          </Suspense>
         </div>
       </div>
     </div>

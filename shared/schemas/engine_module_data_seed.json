@@ -15068,6 +15068,24 @@
         "api secret"
       ]
     },
+    "hosted_identity_platforms": {
+      "description": "Mail and collaboration platforms that assign the mailbox hostname. Labels under the suffix are tenant identifiers, not a sender-chosen domain, and must not be judged as random or DGA. The platform suffix itself remains subject to the normal registrable-label check. This is not a trust exemption for free DNS or attacker-controlled hosting.",
+      "category": "identity_anomaly",
+      "source_file": "modules/common.rs",
+      "items": [
+        "wecom.work",
+        "onmicrosoft.com",
+        "onmschina.cn",
+        "mail.protection.outlook.com",
+        "protection.outlook.com",
+        "qcloudmail.com",
+        "exmail.qq.com",
+        "qiye.163.com",
+        "mxhichina.com",
+        "aliyundm.com",
+        "dm.aliyun.com"
+      ]
+    },
     "public_mail_domains": {
       "description": "Well-known public email service domains. Used to: 1) exclude from internal domain auto-detection, 2) skip first-contact checks in identity_anomaly. Coverage: CN/JP/KR/RU/EU/LATAM/ME/SaaS.",
       "category": "pipeline",
@@ -21481,15 +21499,29 @@
       }
     },
     "semantic_intent_review_policy_v2": {
-      "description": "Preserve the established Low review behavior for the explicitly scored semantic intent model without converting uncertainty to malicious belief.",
+      "description": "Explicit operator policy: a scored semantic intent model hit requires at least Medium review, without converting uncertainty to malicious belief.",
       "category": "verdict_policy",
       "source_file": "pipeline/verdict/clustered_ds_v2.rs",
       "items": {
         "enabled": true,
-        "minimum_risk": 0.15,
+        "minimum_risk": 0.4,
         "triggers": {
           "semantic_scan": [
             "semantic_intent_model"
+          ]
+        }
+      }
+    },
+    "recipient_targeting_review_policy_v2": {
+      "description": "Explicit operator policy: admitted recipient-specific untrusted URLs require at least Medium review. Preference/metadata and trusted destinations remain excluded by link_content. This does not establish credential theft or rewrite raw V2 belief.",
+      "category": "verdict_policy",
+      "source_file": "pipeline/verdict/clustered_ds_v2.rs",
+      "items": {
+        "enabled": true,
+        "minimum_risk": 0.4,
+        "triggers": {
+          "link_content": [
+            "recipient_in_url"
           ]
         }
       }

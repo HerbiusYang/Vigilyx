@@ -29,7 +29,8 @@ use crate::matcher::{
 use crate::module::Evidence;
 use crate::module_data::module_data;
 use crate::modules::common::{
-    domains_share_organizational_domain, extract_domain_from_email, extract_domain_from_url,
+    domains_share_organizational_domain, domains_share_sender_organization,
+    extract_domain_from_email, extract_domain_from_url,
     is_probable_non_clickable_render_asset_url,
 };
 
@@ -448,7 +449,7 @@ fn has_cross_domain_untrusted_body_destination(
         let sender_related = sender_domain.as_deref().is_some_and(|sender| {
             domain == sender
                 || domain.ends_with(&format!(".{sender}"))
-                || domains_share_organizational_domain(&domain, sender)
+                || domains_share_sender_organization(&domain, sender)
         });
         !sender_related
             && !ctx.is_internal_domain(&domain)
@@ -4257,7 +4258,7 @@ pub(super) fn detect_external_pii_collection(
         let same_sender = extract_domain_from_url(&link.effective_url).is_some_and(|domain| {
             sender_domain
                 .as_deref()
-                .is_some_and(|sender| domains_share_organizational_domain(&domain, sender))
+                .is_some_and(|sender| domains_share_sender_organization(&domain, sender))
         });
         if qualifies(&link.prose, &link.target_prose, same_sender) {
             admitted = Some(qualified_link_compound("pii_collection_lure", &link, 0.58));
@@ -4947,14 +4948,25 @@ pub(super) fn detect_external_action_link_lure_with_stage_b(
         let same_sender = extract_domain_from_url(&link.effective_url).is_some_and(|domain| {
             sender_domain
                 .as_deref()
-                .is_some_and(|sender| domains_share_organizational_domain(&domain, sender))
+                .is_some_and(|sender| domains_share_sender_organization(&domain, sender))
         });
+        let secret_native_hits = md
+            .get_list("external_action_link_high_risk_terms")
+            .iter()
+            .filter(|term| {
+                !observation_fields.contains(term)
+                    && !is_operational_action_term(term)
+                    && keyword_matches_text(&normalized, &compact, term)
+            })
+            .count();
         let same_sender_lure = count_config_terms(
             &normalized,
             &compact,
             md.get_list("external_action_link_same_sender_lure_terms"),
         ) > 0
-            || native_field_hits > 0;
+            || secret_native_hits > 0
+            || account_threat
+            || stage_b_qualified;
         let semantic_qualification = native_field_hits > 0
             || context_hits >= 2
             || (specific_action.is_some() && context_hits > 0)
@@ -4973,6 +4985,14 @@ pub(super) fn detect_external_action_link_lure_with_stage_b(
                 high_risk_hits,
                 &link.prose,
                 &link.prose,
+            )
+            || is_cn_institutional_announcement_without_credential(
+                &link.effective_url,
+                &normalized,
+                &compact,
+                account_threat
+                    || stage_b_account_threat
+                    || stage_b_sensitive_credential_request,
             )
         {
             continue;
@@ -4996,6 +5016,57 @@ pub(super) fn detect_external_action_link_lure_with_stage_b(
         });
         return;
     }
+}
+
+/// A Chinese institutional news or announcement page is not an action lure.
+/// Credential or account-threat language in the same claim still qualifies.
+fn is_operational_action_term(term: &str) -> bool {
+    matches!(
+        term,
+        "脚本" | "命令" | "终端" | "script" | "command" | "terminal"
+    )
+}
+
+fn is_cn_institutional_announcement_without_credential(
+    url: &str,
+    normalized: &str,
+    compact: &str,
+    credential_context: bool,
+) -> bool {
+    if credential_context || !is_cn_institutional_announcement_url(url) {
+        return false;
+    }
+    let operational_terms = ["脚本", "命令", "终端", "script", "command", "terminal"];
+    module_data()
+        .get_list("external_action_link_high_risk_terms")
+        .iter()
+        .filter(|term| {
+            !operational_terms
+                .iter()
+                .any(|operational| operational.eq_ignore_ascii_case(term))
+                && keyword_matches_text(normalized, compact, term)
+        })
+        .count()
+        == 0
+}
+
+fn is_cn_institutional_announcement_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    let Some(host) = extract_domain_from_url(&lower) else {
+        return false;
+    };
+    let institutional = host.ends_with(".com.cn")
+        || host.ends_with(".gov.cn")
+        || host.ends_with(".org.cn")
+        || host.ends_with(".ac.cn")
+        || host.ends_with(".net.cn")
+        || host.ends_with(".edu.cn");
+    if !institutional {
+        return false;
+    }
+    lower.contains("/news/")
+        || lower.contains("announce")
+        || lower.contains("articletype=news")
 }
 
 /// Detect OAuth-style consent lures that describe a business or partner
@@ -5740,7 +5811,7 @@ fn is_explicit_anti_phishing_security_advisory(
         domain.is_some_and(|domain| {
             sender_domain
                 .as_deref()
-                .is_some_and(|sender| domains_share_organizational_domain(&domain, sender))
+                .is_some_and(|sender| domains_share_sender_organization(&domain, sender))
                 || crate::modules::link_scan::is_trusted_url_domain(&domain)
                 || crate::modules::link_scan::is_well_known_safe_domain(&domain)
         })
@@ -6791,7 +6862,7 @@ fn has_external_reply_to_domain_mismatch(ctx: &SecurityContext) -> bool {
     ) else {
         return false;
     };
-    !domains_share_organizational_domain(&from_domain, &reply_to_domain)
+    !domains_share_sender_organization(&from_domain, &reply_to_domain)
         && !ctx.is_internal_domain(&reply_to_domain)
         && !module_data().contains("protected_domains", &reply_to_domain)
 }
@@ -7011,7 +7082,7 @@ pub(super) fn detect_reply_to_social_engineering_lure_with_stage_b(
     ) else {
         return;
     };
-    if domains_share_organizational_domain(&from_domain, &reply_to_domain)
+    if domains_share_sender_organization(&from_domain, &reply_to_domain)
         || ctx.is_internal_domain(&reply_to_domain)
         || md.contains("protected_domains", &reply_to_domain)
     {
@@ -7025,7 +7096,7 @@ pub(super) fn detect_reply_to_social_engineering_lure_with_stage_b(
         .and_then(extract_domain_from_email);
     if envelope_domain
         .as_deref()
-        .is_some_and(|domain| domains_share_organizational_domain(domain, &reply_to_domain))
+        .is_some_and(|domain| domains_share_sender_organization(domain, &reply_to_domain))
     {
         return;
     }
@@ -7118,7 +7189,7 @@ pub(super) fn detect_reply_to_social_engineering_lure_with_stage_b(
     // destination for reply-based collection, so a body URL is not required
     // for the recipient-facing action to be consequential.
     let has_untrusted_destination = has_untrusted_body_destination(ctx, &actionable_context)
-        || (!domains_share_organizational_domain(&from_domain, &reply_to_domain)
+        || (!domains_share_sender_organization(&from_domain, &reply_to_domain)
             && !ctx.is_internal_domain(&reply_to_domain)
             && !md.contains("protected_domains", &reply_to_domain));
     let has_recipient_action = has_recipient_directed_action(&actionable_context)

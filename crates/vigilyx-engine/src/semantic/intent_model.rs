@@ -49,8 +49,8 @@ use super::text::floor_char_boundary;
 pub const INTENT_MODEL_DETAILS_KEY: &str = "semantic_intent_model";
 /// Category added to semantic_scan when the scored model fires.
 pub const INTENT_MODEL_CATEGORY: &str = "semantic_intent_model";
-/// Review-level Low score supplied by a scored model hit.
-pub(super) const INTENT_MODEL_SCORE: f64 = 0.20;
+/// Review-level Medium score supplied by a scored model hit.
+pub(super) const INTENT_MODEL_SCORE: f64 = 0.40;
 const ENSEMBLE_SCHEMA: &str = "vigilyx-semantic-intent-ensemble/v1";
 /// Share of the 3 s semantic module budget the outcome may be awaited for.
 const INTENT_WAIT_BUDGET: Duration = Duration::from_millis(2400);
@@ -549,7 +549,7 @@ async fn complete_within(
 }
 
 /// semantic_scan result in scored mode, where the model replaces the local
-/// rule analysis. A hit is a review-level Low score that enters verdict
+/// rule analysis. A hit is a review-level Medium score that enters verdict
 /// fusion; a miss is an ordinary safe result; a model that did not finish
 /// (busy, timeout, error) carries no belief and marks the inspection incomplete.
 pub(super) fn intent_model_result(
@@ -733,20 +733,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scored_mode_result_is_low_on_a_hit_safe_on_a_miss_and_vacuous_when_unfinished() {
+    async fn scored_mode_result_is_medium_on_a_hit_safe_on_a_miss_and_vacuous_when_unfinished() {
         use crate::module::SecurityModule;
         let module = crate::semantic::SemanticScanModule::new(None);
         let meta = module.metadata();
         let budget = Duration::from_secs(5);
 
         let hit = complete_within(
-            Some(finished_request(0.95, Some(0.90))),
+            Some(finished_request(0.90, Some(0.90))),
             Instant::now(),
             budget,
         )
         .await;
         let result = intent_model_result(meta, hit, 7);
-        assert_eq!(result.threat_level, ThreatLevel::Low);
+        assert_eq!(result.threat_level, ThreatLevel::Medium);
         assert_eq!(result.categories, vec![INTENT_MODEL_CATEGORY.to_string()]);
         assert_eq!(result.details["score"], INTENT_MODEL_SCORE);
         assert_eq!(result.details["semantic_mode"], "intent_model");

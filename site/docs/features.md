@@ -5,6 +5,8 @@ description: Vigilyx capabilities across passive capture, inline MTA inspection,
 
 # Features
 
+Vigilyx shares its training mail as [VIGILYX-Training-Data](https://github.com/HerbiusYang/VIGILYX-Training-Data) (MIT). The current `data/corpus.json` has 5,438 records (4,537 malicious, 901 benign). See [Training corpus](/docs/training-data).
+
 Vigilyx combines mail-session capture, MIME parsing, analysis modules, evidence fusion, quarantine workflows, and deployment tooling in one open-source project. Operators can inspect and extend the rules, then choose passive mirror monitoring or inline SMTP inspection to fit their mail path.
 
 ## At a glance
@@ -100,8 +102,7 @@ Local semantic rules run without the Python AI service. With valid
 run a bge/e5 ONNX ensemble on CPU. It records `semantic_intent_model` diagnostics
 in shadow mode by default. A valid `SEMANTIC_INTENT_SCORE_THRESHOLD` explicitly
 switches to scored mode, replacing the local semantic-rule and later Python
-NLP/OCR path; a threshold hit supplies a Low module score of 0.20 to fusion,
-not a guaranteed final verdict or action. Model load failures disable the model
+NLP/OCR path. A threshold hit is a review signal in fusion, not a final verdict or action. Model load failures disable the model
 with a warning; incomplete checks remain coverage gaps. Current Compose model
 wiring is on the mirror engine and requires separate setup for MTA.
 

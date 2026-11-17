@@ -76,6 +76,11 @@ pub struct VigilDb {
     /// snapshot. Holding this mutex during refresh coalesces request bursts.
     pub(crate) security_stats_cache: Arc<Mutex<Option<(std::time::Instant, SecurityStats)>>>,
     pub(crate) session_count_cache: Arc<infra::session::SessionCountCache>,
+    pub(crate) data_security_stats_cache:
+        Arc<infra::snapshot::Snapshot<vigilyx_core::DataSecurityStats>>,
+    pub(crate) email_review_stats_cache:
+        Arc<infra::snapshot::Snapshot<vigilyx_core::EmailDataSecurityStats>>,
+    pub(crate) data_security_totals_cache: Arc<infra::snapshot::Snapshot<(u64, u64)>>,
 }
 
 #[cfg(feature = "postgres")]

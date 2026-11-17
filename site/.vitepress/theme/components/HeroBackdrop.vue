@@ -1,6 +1,8 @@
 <template>
   <div class="hero-backdrop" aria-hidden="true">
     <div class="hero-backdrop__grid"></div>
+    <div class="hero-backdrop__scan"></div>
+    <div class="hero-backdrop__packet"></div>
     <div class="hero-backdrop__glow hero-backdrop__glow--teal"></div>
     <div class="hero-backdrop__glow hero-backdrop__glow--blue"></div>
     <div class="hero-backdrop__noise"></div>
@@ -43,6 +45,54 @@
     transparent 85%
   );
   opacity: 0.5;
+  animation: vig-grid-drift 28s linear infinite;
+}
+
+.hero-backdrop__scan {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 18%;
+  top: -20%;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(94, 234, 212, 0.07) 45%,
+    rgba(94, 234, 212, 0.16) 50%,
+    rgba(94, 234, 212, 0.07) 55%,
+    transparent
+  );
+  animation: vig-scan 7.5s ease-in-out infinite;
+  will-change: transform;
+}
+
+.hero-backdrop__packet {
+  position: absolute;
+  top: 42%;
+  left: -8%;
+  width: 72px;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, #5eead4 40%, #93c5fd);
+  box-shadow: 0 0 12px rgba(94, 234, 212, 0.45);
+  animation: vig-packet 9s linear infinite;
+  will-change: transform;
+}
+
+@keyframes vig-grid-drift {
+  to { background-position: 28px 28px; }
+}
+
+@keyframes vig-scan {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(680%); }
+}
+
+@keyframes vig-packet {
+  0% { transform: translateX(0); opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { transform: translateX(140vw); opacity: 0; }
 }
 
 /* Two static corner glows — no animation, no blur (pre-baked gradient) */
@@ -102,6 +152,18 @@
   }
   .hero-backdrop__grid {
     background-size: 22px 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-backdrop__grid,
+  .hero-backdrop__scan,
+  .hero-backdrop__packet {
+    animation: none;
+  }
+  .hero-backdrop__scan,
+  .hero-backdrop__packet {
+    display: none;
   }
 }
 </style>

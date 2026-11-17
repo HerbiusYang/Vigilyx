@@ -8,7 +8,7 @@ description: Product overview for Vigilyx, including mirror mode, MTA proxy mode
 Vigilyx is a Rust-powered email security gateway and analysis platform. It supports two operating modes:
 
 - **Mirror mode**: passive traffic capture, analysis, alerting, and audit after delivery
-- **MTA proxy mode**: inline SMTP relay with accept, quarantine, and reject decisions before delivery
+- **MTA proxy mode**: inline SMTP relay with accept, quarantine, reject, or temporary-failure decisions before delivery
 
 The project is designed as an engineering-oriented security system:
 
@@ -27,6 +27,7 @@ The project is designed as an engineering-oriented security system:
 - Attachment and link analysis
 - Automated response and alerting
 - Web dashboard and audit workflow
+- Open training corpus, [VIGILYX-Training-Data](https://github.com/HerbiusYang/VIGILYX-Training-Data)
 
 ## Source code
 
@@ -39,4 +40,6 @@ The project is designed as an engineering-oriented security system:
 - [Quick Start](/docs/quick-start)
 - [First deployment](/docs/deployment)
 - [Updating and recovery (including 0.9.3 → 0.9.4)](/docs/updating)
+- [Releases](/docs/releases)
 - [Architecture](/docs/architecture)
+- [Training corpus](/docs/training-data)

@@ -77,9 +77,10 @@ pub(super) static RE_SOCIAL_CREDIT: LazyLock<Regex> = LazyLock::new(|| {
 
 /// 密码/口令模式
 /// 匹配: "密码:xxx", "password: xxx", "口令:xxx", "PIN: xxxx", "PIN码:xxxx"
-/// 简体/繁体成对: 密码/密碼, 账号/帳號, 帐户/帳戶 (帐号/账户 为常见简写变体)
+/// Account identifiers alone are not authentication secrets. Financial
+/// account numbers are handled by the bank-account detector separately.
 pub(super) static RE_CREDENTIAL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:Password|password|pass|pwd|密码|密碼|口令|pin码|pin|passcode|secret|credential|账号|帳號|帐户|帳戶|帐号|账户)\s*[：:=]\s*\S+")
+    Regex::new(r"(?i)(?:Password|password|pass|pwd|密码|密碼|口令|pin码|pin|passcode|secret|credential)\s*[：:=]\s*\S+")
         .unwrap()
 });
 
@@ -146,62 +147,62 @@ pub(super) static RE_HEX_CANDIDATE: LazyLock<Regex> =
 
 // JR/T 0197-2020 模式 (idx 16-29)
 
-/// 生物特征关键词 (C4) - 至少 2 个不同关键词才命中
+/// 生物特征关键词 (level-4) - 至少 2 个不同关键词才命中
 pub(super) static RE_BIOMETRIC: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:指纹|虹膜|人脸识别|声纹|面部特征|生物特征|faceID|fingerprint|iris|facial\s*recognition|voiceprint|步态|耳纹|眼纹)").unwrap()
 });
 
-/// 医疗健康关键词 (C4) - 至少 2 个不同关键词才命中
+/// 医疗健康关键词 (level-3) - 至少 2 个不同关键词才命中
 pub(super) static RE_MEDICAL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:病历|诊断|处方|病症|住院|手术记录|过敏史|病史|医嘱|检验报告|用药记录|血型|基因检测|体检报告|传染病|麻醉记录|护理记录|生育信息|既往病史|家族病史)").unwrap()
 });
 
-/// 车辆信息 (C3) - 车牌, 大小写容忍
+/// 车辆信息 (level-3) - 车牌, 大小写容忍
 pub(super) static RE_VEHICLE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)[京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤川青藏琼宁][A-HJ-NP-Z][A-HJ-NP-Z0-9]{4,5}[A-HJ-NP-Z0-9挂学警港澳]").unwrap()
 });
 
-/// VIN 车架号 (C3) - 17 位字母数字, 排除 I/O/Q, 大小写容忍
+/// VIN 车架号 (level-3) - 17 位字母数字, 排除 I/O/Q, 大小写容忍
 pub(super) static RE_VIN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)\b[A-HJ-NPR-Z0-9]{17}\b").unwrap());
 
-/// 房产/不动产关键词 (C3) - 关键词 + 编号/号上下文
+/// 房产/不动产关键词 (level-3) - 关键词 + 编号/号上下文
 pub(super) static RE_PROPERTY: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:不动产权证|房产证|土地证|房屋所有权证|产权证|房产登记)\s*(?:编号|号)?[：:=]?\s*[\w\-]{5,}|(?:不动产|房产|土地使用权|房屋产权)").unwrap()
 });
 
-/// 工资/收入信息 (C3) - 关键词 + 金额上下文
+/// 工资/收入信息 (level-3) - 关键词 + 金额上下文
 pub(super) static RE_INCOME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:工资|薪资|年薪|月薪|收入|税后|税前|公积金缴存|社保缴费|个人所得税|纳税额)\s*[：:=]?\s*[\d,.]+\s*(?:元|万|万元)?").unwrap()
 });
 
-/// 地理位置 (C3)
+/// 地理位置 (level-3)
 pub(super) static RE_GEO: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\b\d{2,3}\.\d{4,8}\s*[,，]\s*\d{2,3}\.\d{4,8}\b|(?:经度|纬度|longitude|latitude|GPS坐标|定位)\s*[：:=]?\s*\d{2,3}\.\d{3,}").unwrap()
 });
 
-/// 验证码/OTP (C3)
+/// 验证码/OTP (level-3)
 /// 注意: `验证码` 在 CVV 上下文检测中也有使用, 引擎层面做了去重避免重复计数
 pub(super) static RE_OTP: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:验证码|动态口令|OTP|短信验证|动态密码|auth.?code|confirmation.?code)\s*[：:=]?\s*\d{4,8}").unwrap()
 });
 
-/// 贷款/信用信息 (C3) - 关键词 + 金额上下文
+/// 贷款/信用信息 (level-3) - 关键词 + 金额上下文
 pub(super) static RE_LOAN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:贷款余额|欠款金额|逾期金额|还款金额|借款金额|授信额度|信用额度|贷款总额|欠息|罚息)\s*[：:=]?\s*[\d,.]+\s*(?:元|万|万元)?").unwrap()
 });
 
-/// 保险信息 (C3) - 关键词上下文
+/// 保险信息 (level-3) - 关键词上下文
 pub(super) static RE_INSURANCE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:投保人|被保险人|受益人|保险人|保单号|保费|保额|理赔金额|出险|核保|保全|退保)\s*[：:=]?\s*[\w\d,.]+").unwrap()
 });
 
-/// 家庭关系信息 (C3) - 关键词 + 姓名/关系上下文
+/// 家庭关系信息 (level-3) - 关键词 + 姓名/关系上下文
 pub(super) static RE_FAMILY: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:父亲|母亲|配偶|子女|兄弟|姐妹|家属|紧急联系人|监护人|夫妻|亲属)\s*[：:=]?\s*(?:[\p{Han}]{2,4}|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)|(?:家庭关系|亲属关系|社交关系)").unwrap()
 });
 
-/// 员工/职务信息 (C2) - 关键词上下文
+/// 员工/职务信息 (level-3) - 关键词上下文
 /// 特定关键词(员工编号/工号/入职日期/离职日期)分隔符可选;
 /// 通用关键词(部门/岗位/职位/在职)必须有分隔符, 避免"岗位职责"等通用表述误报
 pub(super) static RE_EMPLOYEE: LazyLock<Regex> = LazyLock::new(|| {
@@ -215,12 +216,12 @@ pub(super) static RE_EMPLOYEE: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
-/// 司法记录关键词 (C2) - 至少 2 个不同关键词才命中
+/// 司法记录关键词 (level-3) - 至少 2 个不同关键词才命中
 pub(super) static RE_JUDICIAL: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:失信被执行人|被执行人|开庭公告|犯罪记录|行政处罚|违法违规|立案信息|判决书|裁定书|强制执行|限制消费|限制出境)").unwrap()
 });
 
-/// 学历/教育信息 (C2)
+/// 学历/教育信息 (level-3)
 pub(super) static RE_EDUCATION: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?:学历|学位|毕业院校|毕业学校|毕业日期|入学日期|就读学校)\s*[：:=]?\s*[\w\p{Han}\d\-/]+",
@@ -228,7 +229,7 @@ pub(super) static RE_EDUCATION: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
-/// 营业执照注册号 (C2) - 15 位数字
+/// 营业执照注册号 (level-1) - 15 位数字
 pub(super) static RE_BIZ_LICENSE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:营业执照|工商登记|注册号)\s*(?:编号|号)?[：:=]?\s*\d{15}").unwrap()
 });
@@ -249,7 +250,7 @@ pub(super) static DLP_REGEX_SET: LazyLock<RegexSet> = LazyLock::new(|| {
         r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", // 5: email
         r"\b[EGDSPHLegdsph]\d{8}\b",                         // 6: passport
         r"(?i)\b[1-9A-HJ-NP-RTUW][0-9A-HJ-NP-RTUW]{17}\b",   // 7: social_credit
-        r"(?i)(?:Password|password|pass|pwd|密码|密碼|口令|pin码|pin|passcode|secret|credential|账号|帳號|帐户|帳戶|帐号|账户)\s*[：:=]", // 8: credential
+        r"(?i)(?:Password|password|pass|pwd|密码|密碼|口令|pin码|pin|passcode|secret|credential)\s*[：:=]", // 8: credential
         r"(?i)\b[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b", // 9: swift (matches detailed regex exactly)
         r"(?i)(?:cvv|cvc|cvv2|cvc2|安全码|验证码|card\s*verification)", // 10: cvv
         r"(?i)\b\d{6}[A-HJ-NP-Y0-9]{9}\b",                      // 11: tax_id

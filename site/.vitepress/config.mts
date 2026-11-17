@@ -85,8 +85,10 @@ function createThemeConfig(locale: "en" | "zh"): DefaultTheme.Config {
           { text: "快速开始", link: "/zh/docs/quick-start" },
           { text: "首次部署", link: "/zh/docs/deployment" },
           { text: "更新", link: "/zh/docs/updating" },
+          { text: "版本", link: "/zh/docs/releases" },
           { text: "架构", link: "/zh/docs/architecture" },
           { text: "知识库", link: "/zh/docs/knowledge/" },
+          { text: "语料", link: "/zh/docs/training-data" },
           { text: "GitHub", link: "https://github.com/HerbiusYang/Vigilyx" },
         ]
       : [
@@ -95,8 +97,10 @@ function createThemeConfig(locale: "en" | "zh"): DefaultTheme.Config {
           { text: "Quick Start", link: "/docs/quick-start" },
           { text: "First Deployment", link: "/docs/deployment" },
           { text: "Updating", link: "/docs/updating" },
+          { text: "Releases", link: "/docs/releases" },
           { text: "Architecture", link: "/docs/architecture" },
           { text: "Knowledge", link: "/docs/knowledge/" },
+          { text: "Corpus", link: "/docs/training-data" },
           { text: "GitHub", link: "https://github.com/HerbiusYang/Vigilyx" },
         ],
     sidebar: {
@@ -109,7 +113,9 @@ function createThemeConfig(locale: "en" | "zh"): DefaultTheme.Config {
             { text: isZh ? "快速开始" : "Quick Start", link: `${docsPrefix}quick-start` },
             { text: isZh ? "首次部署" : "First Deployment", link: `${docsPrefix}deployment` },
             { text: isZh ? "更新与回退" : "Updating and Recovery", link: `${docsPrefix}updating` },
+            { text: isZh ? "版本发布" : "Releases", link: `${docsPrefix}releases` },
             { text: isZh ? "架构" : "Architecture", link: `${docsPrefix}architecture` },
+            { text: isZh ? "训练语料" : "Training corpus", link: `${docsPrefix}training-data` },
             { text: isZh ? "项目站点" : "Project Site", link: `${docsPrefix}project-site` },
           ],
         },
@@ -175,7 +181,9 @@ function createThemeConfig(locale: "en" | "zh"): DefaultTheme.Config {
       { icon: "github", link: "https://github.com/HerbiusYang/Vigilyx" },
     ],
     footer: {
-      message: isZh ? "基于 AGPL-3.0-only 发布。" : "Released under AGPL-3.0-only.",
+      message: isZh
+        ? '基于 AGPL-3.0-only 发布。AI 技术支持：<a href="https://fells.dev" target="_blank" rel="noopener noreferrer">fells.dev</a>'
+        : 'Released under AGPL-3.0-only. AI support: <a href="https://fells.dev" target="_blank" rel="noopener noreferrer">fells.dev</a>',
       copyright: isZh
         ? "Copyright © 2026 Vigilyx contributors"
         : "Copyright © 2026 Vigilyx contributors",

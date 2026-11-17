@@ -350,8 +350,7 @@ pub(super) fn find_credentials(text: &str) -> Vec<String> {
                 .take_while(|c| *c != '：' && *c != ':' && *c != '=')
                 .collect();
             // Extractdelimited ofvalue
-            let sep_pos = keyword.len();
-            let value: String = s.chars().skip(sep_pos + 1).collect();
+            let value: String = s[keyword.len()..].chars().skip(1).collect();
             let value_trimmed = value.trim();
             // PasswordConfigurationvalue
             if is_non_secret_value(value_trimmed) {
@@ -398,8 +397,8 @@ pub(super) fn is_non_secret_value(value: &str) -> bool {
 
 /// lookup SWIFT/BIC Code/Digit (8 11 bit + ISO Code/Digit + Exclude, Desensitize: first 4 + ****)
 /// 正则大小写容忍, 匹配后统一大写化再做国家码/常见词校验
-/// 小写/混合大小写候选必须带 swift/bic 上下文, 否则英文散文中的普通单词
-/// (如 "attached" -> ATTA+CH+ED) 会构成误报
+/// Every candidate needs a nearby banking field label. Uppercase prose and
+/// PDF font identifiers can also satisfy the BIC shape and country check.
 pub(super) fn find_swift_codes(text: &str) -> Vec<String> {
     RE_SWIFT
         .find_iter(text)
@@ -420,9 +419,7 @@ pub(super) fn find_swift_codes(text: &str) -> Vec<String> {
             if is_common_word_prefix(bank_code) {
                 return false;
             }
-            // 原文全大写 = 正常大写 SWIFT, 直接接受;
-            // 含小写字母的候选 (小写绕过场景) 需要 swift/bic 上下文佐证
-            if s.chars().any(|c| c.is_ascii_lowercase()) && !has_swift_context(text, m.start()) {
+            if !has_swift_context(text, m.start(), m.end()) {
                 return false;
             }
             true
@@ -435,24 +432,21 @@ pub(super) fn find_swift_codes(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// 检查匹配位置附近是否存在 swift/bic 上下文关键词 (前后各 40 字节窗口)
-fn has_swift_context(text: &str, match_start: usize) -> bool {
-    const CONTEXT_KEYWORDS: &[&str] = &[
-        "swift",
-        "bic",
-        "银行代码",
-        "銀行代碼",
-        "swift code",
-        "swiftcode",
-        "银行识别码",
-    ];
-    let window_start = match_start.saturating_sub(40);
-    let window_end = (match_start + 60).min(text.len());
-    let Some(window) = text.get(window_start..window_end) else {
-        return false;
-    };
-    let window_lower = window.to_lowercase();
-    CONTEXT_KEYWORDS.iter().any(|kw| window_lower.contains(kw))
+/// Only a separate, bounded field context can qualify a BIC-shaped token.
+/// Do not borrow "bic" from a word ("publicity") or from the candidate itself.
+fn has_swift_context(text: &str, match_start: usize, match_end: usize) -> bool {
+    static LABEL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)(?:^|[^a-z])(?:swift(?:[\s_-]*(?:code|bic))?|bic)(?:$|[^a-z])|银行代码|銀行代碼|银行识别码|銀行識別碼|汇款至|汇款到|汇款行|收款银行").unwrap()
+    });
+    let mut start = match_start.saturating_sub(64);
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    let mut end = (match_end + 40).min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    LABEL.is_match(&text[start..match_start]) || LABEL.is_match(&text[match_end..end])
 }
 
 /// ISO 3166-1 alpha-2 Code/DigitSet(Used for SWIFT bit 5-6 Verify)
@@ -695,7 +689,7 @@ pub(super) fn find_context_matches(re: &Regex, text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Vehicle information (C3)
+/// Vehicle information (level-3)
 pub(super) fn find_vehicle_info(text: &str) -> Vec<String> {
     let mut found = HashSet::new();
     // 1. Detect Chinese license plates (CN plate format)

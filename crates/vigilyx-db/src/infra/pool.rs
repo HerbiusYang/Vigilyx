@@ -50,6 +50,9 @@ impl VigilDb {
             pool,
             security_stats_cache: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
             session_count_cache: std::sync::Arc::new(Default::default()),
+            data_security_stats_cache: Default::default(),
+            email_review_stats_cache: Default::default(),
+            data_security_totals_cache: Default::default(),
         })
     }
 

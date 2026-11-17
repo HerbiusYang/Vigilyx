@@ -1,11 +1,5 @@
-//! Self-sending detector.
-//!
-//! Detects users sending emails to themselves via webmail HTTP interface.
-//! Scenario: user sends an email (HTTP POST to send endpoint),
-//! where recipient address matches sender address.
-//!
-//! Coremail handling: compose.jsp URL is shared for send and save;
-//! the JSON body `"action":"deliver"` field identifies send operations.
+//! Sensitive Webmail delivery submissions, including self-sending.
+//! Authorization and completed delivery are not inferred from captured content.
 
 use chrono::Utc;
 use vigilyx_core::security::Evidence;
@@ -16,9 +10,9 @@ use super::dlp;
 use super::{DataSecurityDetector, DetectorResult, extract_snippet};
 
 #[derive(Default)]
-pub struct SelfSendDetector;
+pub struct MailTransferDetector;
 
-impl SelfSendDetector {
+impl MailTransferDetector {
     pub fn new() -> Self {
         Self
     }
@@ -70,59 +64,47 @@ impl SelfSendDetector {
     }
 }
 
-impl DataSecurityDetector for SelfSendDetector {
+impl DataSecurityDetector for MailTransferDetector {
     fn id(&self) -> &str {
-        "self_send_detect"
+        "mail_transfer_detect"
     }
 
     fn name(&self) -> &str {
-        "Self-sending detection"
+        "Sensitive mail transfer detection"
     }
 
     fn analyze(&self, session: &HttpSession) -> DetectorResult {
         // Only check POST requests
-        if session.method != HttpMethod::Post {
+        if !matches!(session.method, HttpMethod::Post | HttpMethod::Put) {
             return None;
         }
 
-        // URI match: direct send URL or Coremail compose.jsp + action=deliver
-        let is_send = coremail::is_delivery_request(&session.uri, session.request_body.as_deref());
+        // Temp bodies contain the complete bounded payload; the in-memory body may be a preview.
+        let temp_body = session
+            .body_temp_file
+            .as_deref()
+            .and_then(|path| super::read_temp_path_limited(path, super::MAX_TEMP_BODY_READ_BYTES))
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+        let body = temp_body.as_deref().or(session.request_body.as_deref());
+        let is_send = coremail::is_delivery_request(&session.uri, body);
         if !is_send {
             return None;
         }
 
-        // Extract sender and recipient info
-        let sender = session.detected_sender.as_deref()?;
-        if sender.is_empty() || session.detected_recipients.is_empty() {
-            return None;
-        }
-
-        // Check if this is a self-send
-        if !Self::is_self_sending(sender, &session.detected_recipients) {
-            return None;
-        }
-
-        let mut evidence = Vec::new();
+        let sender = session.detected_sender.as_deref().unwrap_or("unknown");
+        let self_sending = Self::is_self_sending(sender, &session.detected_recipients);
         let sender_display = Self::normalize_email(sender);
-
-        evidence.push(Evidence {
-            description: format!(
-                "User {} sent email to themselves via webmail (URI: {})",
-                sender_display, session.uri
-            ),
-            location: Some("HTTP request".to_string()),
-            snippet: Some(format!(
-                "from={}, to={}",
-                sender_display,
-                session.detected_recipients.join(", ")
-            )),
-        });
+        let mut evidence = vec![Evidence {
+            description: "Sensitive content in a Webmail delivery submission; authorization and completed delivery require verification".to_string(),
+            location: Some("HTTP delivery request".to_string()),
+            snippet: None,
+        }];
 
         // DLP scan email content - self-sending with sensitive data triggers alert
         let mut dlp_matches = Vec::new();
-        let mut dlp_for_jrt = None;
+        let mut dlp_for_bulk = None;
 
-        if let Some(ref body) = session.request_body
+        if let Some(body) = body
             && !body.is_empty()
         {
             // Coremail: extract attrs.content to avoid raw JSON metadata
@@ -130,16 +112,17 @@ impl DataSecurityDetector for SelfSendDetector {
                 dlp::extract_dlp_text(body, &session.uri, session.content_type.as_deref());
             let dlp_result = dlp::scan_text(&dlp_text);
             if !dlp_result.is_empty() {
-                dlp_for_jrt = Some(dlp_result.clone());
+                dlp_for_bulk = Some(dlp_result.clone());
                 dlp_matches.extend(dlp_result.matches);
                 for (dtype, values) in &dlp_result.details {
-                    let snippet = extract_snippet(&dlp_text, values);
+                    let snippet = (super::financial_policy::match_level(dtype, &dlp_matches) < 4)
+                        .then(|| extract_snippet(&dlp_text, values))
+                        .flatten();
                     evidence.push(Evidence {
                         description: format!(
-                            "Email content contains {} ({} occurrences): {}",
+                            "Email content contains {} ({} field matches)",
                             super::dlp_type_cn(dtype),
-                            values.len(),
-                            values.join(", ")
+                            values.len()
                         ),
                         location: Some("email body".to_string()),
                         snippet,
@@ -149,40 +132,44 @@ impl DataSecurityDetector for SelfSendDetector {
         }
 
         // Self-sending without sensitive data is normal behavior (e.g. notes, reminders) — no alert
-        if dlp_matches.is_empty() {
+        if super::financial_policy::max_security_level(&dlp_matches) <= 1 {
             return None;
         }
 
-        // Determine severity by highest JR/T classification level (JR/T 0197-2020)
-        let severity = super::jrt::severity_from_max_jrt_level(&dlp_matches);
+        // Single sensitive field is sufficient; bulk escalation is independent.
+        let severity = super::financial_policy::transfer_severity(&dlp_matches);
 
         let summary = format!(
-            "Self-sending: {} from {} sent email to self containing {}",
+            "Sensitive mail transfer risk: {} from {} submitted {}; authorization unverified",
             sender_display,
             session.client_ip,
             dlp_matches.join(", ")
         );
+        let details = super::financial_policy::transfer_details(&dlp_matches, "webmail");
 
-        Some((
-            DataSecurityIncident {
-                id: vigilyx_core::fast_uuid(),
-                http_session_id: session.id,
-                incident_type: DataSecurityIncidentType::SelfSending,
-                severity,
-                confidence: 0.85,
-                summary,
-                evidence,
-                details: None,
-                dlp_matches,
-                client_ip: session.client_ip.clone(),
-                detected_user: dlp::extract_user(session),
-                request_url: session.uri.clone(),
-                host: session.host.clone(),
-                method: session.method.to_string(),
-                created_at: Utc::now(),
+        let mut incident = DataSecurityIncident {
+            id: vigilyx_core::fast_uuid(),
+            http_session_id: session.id,
+            incident_type: if self_sending {
+                DataSecurityIncidentType::SelfSending
+            } else {
+                DataSecurityIncidentType::SensitiveDataTransfer
             },
-            dlp_for_jrt,
-        ))
+            severity,
+            confidence: 0.85,
+            summary,
+            evidence,
+            details: Some(details),
+            dlp_matches,
+            client_ip: session.client_ip.clone(),
+            detected_user: dlp::extract_user(session),
+            request_url: session.uri.clone(),
+            host: session.host.clone(),
+            method: session.method.to_string(),
+            created_at: Utc::now(),
+        };
+        super::financial_policy::assign_incident_id(&mut incident);
+        Some((incident, dlp_for_bulk))
     }
 }
 
@@ -211,9 +198,180 @@ mod tests {
     }
 
     #[test]
+    fn envelope_addresses_do_not_alert_but_customer_addresses_in_content_do() {
+        for (body, expected) in [
+            (
+                r#"{"from":"alice@example.com","to":["bob@example.net"],"body":"Meeting at noon"}"#,
+                false,
+            ),
+            (
+                r#"{"from":"alice@example.com","to":["bob@example.net"],"body":"客户联系邮箱：customer@example.org"}"#,
+                true,
+            ),
+            (
+                r#"{"from":"alice@example.com","to":["bob@example.net"],"body":"客户手机号：13800138000"}"#,
+                true,
+            ),
+        ] {
+            let session = make_session("/mail/send", None, vec![], Some(body));
+            assert_eq!(
+                MailTransferDetector.analyze(&session).is_some(),
+                expected,
+                "{body}"
+            );
+        }
+        let mut form = make_session(
+            "/mail/send",
+            None,
+            vec![],
+            Some("to=bob%40example.net&from=alice%40example.com&body=Meeting+at+noon"),
+        );
+        form.content_type = Some("application/x-www-form-urlencoded".into());
+        assert!(MailTransferDetector.analyze(&form).is_none());
+    }
+
+    #[test]
+    fn single_sensitive_item_alerts_for_an_ordinary_recipient() {
+        for (text, kind, severity) in [
+            (
+                "客户身份证：000000200001010005",
+                "id_number",
+                vigilyx_core::DataSecuritySeverity::High,
+            ),
+            (
+                "客户手机号：13800138000",
+                "phone_number",
+                vigilyx_core::DataSecuritySeverity::High,
+            ),
+            (
+                "客户邮箱：alice@example.com",
+                "email_address",
+                vigilyx_core::DataSecuritySeverity::High,
+            ),
+            (
+                "客户信用卡号：4532015112830366",
+                "credit_card",
+                vigilyx_core::DataSecuritySeverity::High,
+            ),
+            (
+                "CVV: 731",
+                "cvv_code",
+                vigilyx_core::DataSecuritySeverity::Critical,
+            ),
+        ] {
+            let session = make_session(
+                "/api/mail/send",
+                Some("sender@corp.example"),
+                vec!["recipient@example.net"],
+                Some(text),
+            );
+            let (incident, result) = MailTransferDetector.analyze(&session).expect(text);
+            assert_eq!(
+                incident.incident_type,
+                DataSecurityIncidentType::SensitiveDataTransfer
+            );
+            assert_eq!(incident.severity, severity, "{text}");
+            assert!(result.unwrap().matches.contains(&kind.to_string()));
+            assert_eq!(
+                incident.details.as_ref().unwrap()["authorization_status"],
+                "unverified"
+            );
+        }
+    }
+
+    #[test]
+    fn repeated_processing_is_idempotent_but_new_sends_are_retained() {
+        let first = make_session(
+            "/mail/send",
+            None,
+            vec![],
+            Some("身份证 000000200001010005"),
+        );
+        let first_incident = MailTransferDetector.analyze(&first).unwrap().0;
+        assert_eq!(
+            first_incident.id,
+            MailTransferDetector.analyze(&first).unwrap().0.id
+        );
+        let mut second = first.clone();
+        second.id = uuid::Uuid::new_v4();
+        assert_ne!(
+            first_incident.id,
+            MailTransferDetector.analyze(&second).unwrap().0.id
+        );
+    }
+
+    #[test]
+    fn public_reference_login_and_saved_drafts_are_not_sensitive_sends() {
+        for (uri, body) in [
+            ("/mail/send", "SWIFT: CITIUS33"),
+            ("/login", "password=abc123456"),
+            (
+                "/coremail/common/mbox/compose.jsp",
+                r#"{"action":"save","attrs":{"content":"身份证 000000200001010005"}}"#,
+            ),
+            (
+                "/owa/service.svc?action=CreateItem",
+                r#"{"Body":{"MessageDisposition":"SaveOnly","Content":"身份证 000000200001010005"}}"#,
+            ),
+            (
+                "/coremail/xt5/proxy/compose",
+                r#"{"action":"save","attrs":{"content":"身份证 000000200001010005"}}"#,
+            ),
+        ] {
+            assert!(
+                MailTransferDetector
+                    .analyze(&make_session(uri, None, vec![], Some(body)))
+                    .is_none(),
+                "{uri}"
+            );
+        }
+    }
+
+    #[test]
+    fn secret_evidence_never_copies_raw_credentials() {
+        let session = make_session(
+            "/mail/send",
+            None,
+            vec![],
+            Some("Password: UniqueSecret729!"),
+        );
+        let incident = MailTransferDetector.analyze(&session).unwrap().0;
+        assert!(
+            !serde_json::to_string(&incident)
+                .unwrap()
+                .contains("UniqueSecret729")
+        );
+    }
+
+    #[test]
+    fn send_action_and_sensitive_tail_are_loaded_from_a_validated_temp_body() {
+        let path = format!("data/tmp/http/{}.bin", uuid::Uuid::new_v4());
+        std::fs::create_dir_all("data/tmp/http").unwrap();
+        let body = serde_json::json!({"action":"deliver", "attrs":{"content": format!("{} 客户手机 13800138000", "普通内容 ".repeat(3000))}}).to_string();
+        std::fs::write(&path, &body).unwrap();
+        let mut session = make_session(
+            "/coremail/common/mbox/compose.jsp",
+            None,
+            vec![],
+            Some("preview only"),
+        );
+        session.body_temp_file = Some(path.clone());
+        session.request_body_size = body.len();
+        let result = MailTransferDetector.analyze(&session);
+        std::fs::remove_file(path).unwrap();
+        assert!(
+            result
+                .unwrap()
+                .0
+                .dlp_matches
+                .contains(&"phone_number".to_string())
+        );
+    }
+
+    #[test]
     fn test_self_send_no_sensitive_data_no_alert() {
         // self-sendButnot Sensitivedata -> Normalline, Alert
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         let session = make_session(
             "/compose/send",
             Some("alice@example.com"),
@@ -230,7 +388,7 @@ mod tests {
     #[test]
     fn test_self_send_with_sensitive_data_alerts() {
         // self-send + Sensitivedata -> Alert
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         let session = make_session(
             "/compose/send",
             Some("alice@example.com"),
@@ -253,7 +411,7 @@ mod tests {
 
     #[test]
     fn test_self_send_case_insensitive() {
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         let session = make_session(
             "/api/mail/send",
             Some("Alice@Example.COM"),
@@ -269,7 +427,7 @@ mod tests {
 
     #[test]
     fn test_self_send_with_angle_brackets() {
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         let session = make_session(
             "/compose/send",
             Some("<alice@example.com>"),
@@ -285,7 +443,7 @@ mod tests {
 
     #[test]
     fn test_self_send_different_addresses_no_alert() {
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         let session = make_session(
             "/compose/send",
             Some("alice@example.com"),
@@ -298,7 +456,7 @@ mod tests {
 
     #[test]
     fn test_self_send_non_send_uri_no_alert() {
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         let session = make_session(
             "/inbox/list",
             Some("alice@example.com"),
@@ -311,7 +469,7 @@ mod tests {
 
     #[test]
     fn test_self_send_with_sensitive_content_high_severity() {
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         let session = make_session(
             "/compose/send",
             Some("alice@example.com"),
@@ -328,7 +486,7 @@ mod tests {
 
     #[test]
     fn test_self_send_no_sender_no_alert() {
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         let session = make_session("/compose/send", None, vec!["alice@example.com"], None);
         let result = detector.analyze(&session);
         assert!(result.is_none());
@@ -336,7 +494,7 @@ mod tests {
 
     #[test]
     fn test_self_send_coremail_compose_jsp_deliver_with_sensitive() {
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         // Coremail compose.jsp + action=deliver + self-send + Sensitivedata (ID cardNumber)
         let body = r#"{"attrs":{"account":"user@corp.example","to":["user@corp.example"],"content":"客户ID card 000000200001010005"},"action":"deliver"}"#;
         let session = make_session(
@@ -360,7 +518,7 @@ mod tests {
 
     #[test]
     fn test_self_send_coremail_compose_jsp_deliver_no_sensitive() {
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         // Coremail compose.jsp + action=deliver + self-send But Sensitivedata -> Alert
         let body =
             r#"{"attrs":{"account":"user@corp.com","to":["user@corp.com"]},"action":"deliver"}"#;
@@ -379,7 +537,7 @@ mod tests {
 
     #[test]
     fn test_self_send_coremail_compose_jsp_save_not_send() {
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         // action=save Send, self-senddetect
         let body =
             r#"{"attrs":{"account":"user@corp.com","to":["user@corp.com"]},"action":"save"}"#;
@@ -398,7 +556,7 @@ mod tests {
 
     #[test]
     fn test_self_send_coremail_display_name_addresses() {
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         // with NameofAddress + Sensitivedata
         let session = make_session(
             "/compose/send",
@@ -417,19 +575,19 @@ mod tests {
     fn test_normalize_email_display_name_format() {
         // ofNormalize
         assert_eq!(
-            SelfSendDetector::normalize_email("\"Zhang San\" <zhangsan@corp.com>"),
+            MailTransferDetector::normalize_email("\"Zhang San\" <zhangsan@corp.com>"),
             "zhangsan@corp.com"
         );
         assert_eq!(
-            SelfSendDetector::normalize_email("<user@domain.com>"),
+            MailTransferDetector::normalize_email("<user@domain.com>"),
             "user@domain.com"
         );
         assert_eq!(
-            SelfSendDetector::normalize_email("User@Domain.COM"),
+            MailTransferDetector::normalize_email("User@Domain.COM"),
             "user@domain.com"
         );
         assert_eq!(
-            SelfSendDetector::normalize_email("  alice@example.com  "),
+            MailTransferDetector::normalize_email("  alice@example.com  "),
             "alice@example.com"
         );
     }
@@ -439,7 +597,7 @@ mod tests {
     #[test]
     fn test_self_send_case_insensitive_with_sensitive_data() {
         // sizewrite SameButSame1email + Sensitivedata
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         let session = make_session(
             "/compose/send",
             Some("Alice@CORP.COM"),
@@ -456,7 +614,7 @@ mod tests {
     #[test]
     fn test_self_send_multiple_recipients_one_is_self() {
         // recipientMedium 1
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         let session = make_session(
             "/compose/send",
             Some("alice@corp.com"),
@@ -472,7 +630,7 @@ mod tests {
 
     #[test]
     fn test_self_send_empty_recipients() {
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         let session = make_session(
             "/compose/send",
             Some("alice@corp.com"),
@@ -485,7 +643,7 @@ mod tests {
 
     #[test]
     fn test_self_send_empty_sender() {
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         let session = make_session(
             "/compose/send",
             Some(""),
@@ -493,12 +651,15 @@ mod tests {
             Some("Password: abc"),
         );
         let result = detector.analyze(&session);
-        assert!(result.is_none(), "Empty sender should not trigger");
+        assert_eq!(
+            result.unwrap().0.incident_type,
+            DataSecurityIncidentType::SensitiveDataTransfer
+        );
     }
 
     #[test]
     fn test_self_send_get_request_no_alert() {
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         let mut session = HttpSession::new(
             "192.168.1.100".to_string(),
             12345,
@@ -521,34 +682,34 @@ mod tests {
     fn test_normalize_email_edge_cases() {
         // Number
         assert_eq!(
-            SelfSendDetector::normalize_email("<user@test.com>"),
+            MailTransferDetector::normalize_email("<user@test.com>"),
             "user@test.com"
         );
 
         assert_eq!(
-            SelfSendDetector::normalize_email("  <  user@test.com  >  "),
+            MailTransferDetector::normalize_email("  <  user@test.com  >  "),
             "user@test.com"
         );
         // String
-        assert_eq!(SelfSendDetector::normalize_email(""), "");
+        assert_eq!(MailTransferDetector::normalize_email(""), "");
         // @ Number
-        assert_eq!(SelfSendDetector::normalize_email("@"), "@");
+        assert_eq!(MailTransferDetector::normalize_email("@"), "@");
     }
 
     #[test]
     fn test_normalize_email_for_compare_strips_plus_tag() {
         // PoC: +tag (plus addressing) 变形比对必须一致
         assert_eq!(
-            SelfSendDetector::normalize_email_for_compare("alice+archive@corp.com"),
+            MailTransferDetector::normalize_email_for_compare("alice+archive@corp.com"),
             "alice@corp.com"
         );
         assert_eq!(
-            SelfSendDetector::normalize_email_for_compare("\"Zhang\" <zhangsan+evil@corp.com>"),
+            MailTransferDetector::normalize_email_for_compare("\"Zhang\" <zhangsan+evil@corp.com>"),
             "zhangsan@corp.com"
         );
         // 展示路径保留原始 +tag
         assert_eq!(
-            SelfSendDetector::normalize_email("alice+archive@corp.com"),
+            MailTransferDetector::normalize_email("alice+archive@corp.com"),
             "alice+archive@corp.com"
         );
     }
@@ -557,7 +718,7 @@ mod tests {
     fn test_self_send_plus_tag_bypass_detected() {
         // PoC: 攻击者发往 alice+archive@corp.com (plus addressing 仍投递本人邮箱),
         // 修复前地址比对不一致 -> 绕过自发自送检测; 修复后 +tag 剥离 -> 检出
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         let session = make_session(
             "/compose/send",
             Some("alice@corp.com"),
@@ -574,7 +735,7 @@ mod tests {
     #[test]
     fn test_self_send_plus_tag_on_sender_side_detected() {
         // PoC 变体: 发件人一侧带 +tag, 收件人是裸地址
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         let session = make_session(
             "/compose/send",
             Some("alice+evil@corp.com"),
@@ -589,8 +750,8 @@ mod tests {
     }
 
     #[test]
-    fn test_self_send_returns_dlp_for_jrt() {
-        let detector = SelfSendDetector::new();
+    fn test_self_send_returns_dlp_for_bulk() {
+        let detector = MailTransferDetector::new();
         let session = make_session(
             "/compose/send",
             Some("alice@example.com"),
@@ -602,18 +763,18 @@ mod tests {
         let (_inc, dlp_opt) = result.unwrap();
         assert!(
             dlp_opt.is_some(),
-            "Should return DLP result for JRT compliance tracking"
+            "Should return DLP result for additional bulk escalation"
         );
     }
 
     #[test]
     fn test_self_send_coremail_xt5_proxy_uri() {
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         let session = make_session(
             "/coremail/xt5/proxy/compose",
             Some("alice@corp.com"),
             vec!["alice@corp.com"],
-            Some("Password: secret123"),
+            Some(r#"{"action":"deliver","attrs":{"content":"Password: secret123"}}"#),
         );
         let result = detector.analyze(&session);
         assert!(
@@ -624,7 +785,7 @@ mod tests {
 
     #[test]
     fn test_self_send_exchange_owa_uri() {
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         let session = make_session(
             "/owa/service.svc?action=SendMessage",
             Some("alice@corp.com"),
@@ -641,7 +802,7 @@ mod tests {
     #[test]
     fn test_coremail_json_id_no_false_positive_phone() {
         // Synthetic 13-digit JSON/CSS identifiers must not be treated as phone numbers.
-        let detector = SelfSendDetector::new();
+        let detector = MailTransferDetector::new();
         let coremail_body = r#"{"id":"1000000000001","attrs":{"account":"\"Testuser\" <support@example.com>","to":["\"Testuser\" <support@example.com>"],"subject":"","isHtml":true,"content":"<style>p {margin:0}.default-font-1000000000002 {font-size: 14px}</style><div class=\"default-font-1000000000002\"><span>0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF</span></div>"},"action":"deliver"}"#;
         let mut session = make_session(
             "/coremail/common/mbox/compose.jsp?sid=BAWhTkKKxyz",

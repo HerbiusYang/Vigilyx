@@ -24,7 +24,9 @@ use crate::context::SecurityContext;
 use crate::db_service::{DbQueryService, SenderRelationshipHistory};
 use crate::error::EngineError;
 use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModule, ThreatLevel};
-use crate::modules::common::{domains_share_organizational_domain, extract_domain_from_email};
+use crate::modules::common::{
+    domains_share_organizational_domain, extract_domain_from_email, organizational_domain,
+};
 
 /// Maximum score from all checks combined.
 const MAX_RAW_SCORE: f64 = 1.0;
@@ -859,8 +861,19 @@ impl SecurityModule for IdentityAnomalyModule {
             // Skip well-known safe domains (intel_safe + admin_clean IOC)
             let is_safe =
                 crate::modules::link_scan::is_well_known_safe_domain(&sender_domain_lower);
+            // Platform-assigned tenant labels (WeCom, Microsoft 365, enterprise
+            // mail hosts) are not a domain the sender chose.
+            let hosted_identity = crate::modules::common::hosted_identity_platform(
+                &sender_domain_lower,
+            )
+            .is_some();
 
-            let main_part = sender_domain.split('.').next().unwrap_or("");
+            // Judge the registrable label, not the leftmost tenant prefix.
+            let registrable = organizational_domain(&sender_domain_lower);
+            let main_part = registrable
+                .as_deref()
+                .and_then(|domain| domain.split('.').next())
+                .unwrap_or("");
 
             // (a) 5+ consecutive consonants -> likely random/DGA (snajgc, bncgjwl)
             // (b) Short mixed alphanumeric -> likely random (8t5om, ycgg4)
@@ -871,6 +884,7 @@ impl SecurityModule for IdentityAnomalyModule {
                 && !is_human_readable_domain_label(main_part)
                 && !is_internal
                 && !is_safe
+                && !hosted_identity
             {
                 let mut is_random = false;
                 let mut reason = String::new();
@@ -1250,6 +1264,63 @@ mod tests {
         assert_eq!(items[0]["score"], 0.25);
         let expected = Bpa::from_score_confidence(0.35, 0.70);
         assert!((result.bpa.unwrap().b - expected.b).abs() < 1e-12);
+    }
+
+    #[tokio::test]
+    async fn wecom_tenant_prefix_is_not_a_random_domain() {
+        let module = IdentityAnomalyModule::new(None);
+        let hosted = module
+            .analyze(&identity_context(
+                "liuxiaoting@zayh2.wecom.work",
+                "Liu <liuxiaoting@zayh2.wecom.work>",
+            ))
+            .await
+            .expect("identity analysis");
+        assert!(
+            !hosted.categories.iter().any(|category| category == "random_domain"),
+            "WeCom tenant labels are assigned platform ids: {hosted:?}"
+        );
+        let consonant_tenant = module
+            .analyze(&identity_context(
+                "notice@xvkrz.wecom.work",
+                "Notice <notice@xvkrz.wecom.work>",
+            ))
+            .await
+            .expect("identity analysis");
+        assert!(
+            !consonant_tenant
+                .categories
+                .iter()
+                .any(|category| category == "random_domain"),
+            "a consonant-heavy WeCom tenant id is still a platform label: {consonant_tenant:?}"
+        );
+
+        let apex = module
+            .analyze(&identity_context(
+                "notice@zayh2.invalid",
+                "Sender <notice@zayh2.invalid>",
+            ))
+            .await
+            .expect("identity analysis");
+        assert!(
+            apex.categories.iter().any(|category| category == "random_domain"),
+            "an apex mixed alphanumeric domain remains random: {apex:?}"
+        );
+
+        let nested = module
+            .analyze(&identity_context(
+                "notice@mail.qnhshufpn.invalid",
+                "Sender <notice@mail.qnhshufpn.invalid>",
+            ))
+            .await
+            .expect("identity analysis");
+        assert!(
+            nested
+                .categories
+                .iter()
+                .any(|category| category == "random_domain"),
+            "a readable subdomain does not hide a random registrable domain: {nested:?}"
+        );
     }
 
     #[tokio::test]

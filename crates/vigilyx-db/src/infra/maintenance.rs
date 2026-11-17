@@ -16,6 +16,15 @@ const HTTP_TEMP_DIR: &str = "data/tmp/http";
 /// the column is TEXT and compared lexicographically.
 const CLEANUP_ALERTS_SQL: &str = "DELETE FROM security_alerts WHERE created_at < $1";
 
+const SESSION_RETENTION_BATCH_SIZE: i64 = 200;
+const SESSION_RETENTION_BATCH_SQL: &str = r#"
+    WITH expired AS (
+        SELECT id FROM sessions WHERE started_at < $1
+        ORDER BY started_at LIMIT $2 FOR UPDATE SKIP LOCKED
+    )
+    DELETE FROM sessions s USING expired e WHERE s.id = e.id
+"#;
+
 /// Operational data removed by the Settings UI's "full cleanup" actions.
 /// Persistent analyst policy and system configuration are intentionally absent;
 /// deleting those belongs exclusively to `factory_reset`.
@@ -516,12 +525,27 @@ impl VigilDb {
             .rows_affected();
         security_deleted += al;
 
-        // 7. sessions()
-        let sessions_deleted = sqlx::query("DELETE FROM sessions WHERE started_at < $1")
-            .bind(&cutoff_str)
-            .execute(&self.pool)
-            .await?
-            .rows_affected();
+        // Session row triggers update shared counters. A single historical
+        // DELETE can hold those counters for hours and block every new insert.
+        let sessions_deleted = self.cleanup_expired_sessions(&cutoff_str).await?;
+
+        // The login dashboard only reads a 24-hour window. Keep one extra
+        // day for boundary-hour diagnostics without letting the L3 tables
+        // grow with the lifetime of the raw sessions table.
+        let login_hourly_cutoff = (chrono::Utc::now() - chrono::Duration::hours(48)).to_rfc3339();
+        let login_hourly_sources_deleted = sqlx::query(
+            "DELETE FROM external_login_hourly_sources WHERE hour_start < $1::timestamptz",
+        )
+        .bind(&login_hourly_cutoff)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        let login_hourly_deleted =
+            sqlx::query("DELETE FROM external_login_hourly WHERE hour_start < $1::timestamptz")
+                .bind(&login_hourly_cutoff)
+                .execute(&self.pool)
+                .await?
+                .rows_affected();
 
         // The login dashboard only reads a 24-hour window. Keep one extra
         // day for boundary-hour diagnostics without letting the L3 tables
@@ -556,6 +580,55 @@ impl VigilDb {
         );
 
         Ok((sessions_deleted, security_deleted))
+    }
+
+    async fn cleanup_expired_sessions(&self, cutoff: &str) -> Result<u64> {
+        let started = std::time::Instant::now();
+        let mut deleted = 0;
+        // Bound both each transaction and the entire daily maintenance pass.
+        // Remaining expired rows are eligible again on the next pass.
+        for _ in 0..100 {
+            if started.elapsed() >= std::time::Duration::from_secs(30) {
+                break;
+            }
+            let mut tx = self.pool.begin().await?;
+            sqlx::query("SET LOCAL lock_timeout = '250ms'")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("SET LOCAL statement_timeout = '2s'")
+                .execute(&mut *tx)
+                .await?;
+            let result = sqlx::query(SESSION_RETENTION_BATCH_SQL)
+                .bind(cutoff)
+                .bind(SESSION_RETENTION_BATCH_SIZE)
+                .execute(&mut *tx)
+                .await;
+            let count = match result {
+                Ok(result) => result.rows_affected(),
+                Err(error) => {
+                    let defer = error
+                        .as_database_error()
+                        .is_some_and(|e| matches!(e.code().as_deref(), Some("55P03" | "57014")));
+                    tx.rollback().await?;
+                    if defer {
+                        tracing::warn!(
+                            deleted,
+                            "Session retention deferred after bounded database wait"
+                        );
+                        break;
+                    }
+                    return Err(error.into());
+                }
+            };
+            tx.commit().await?;
+            deleted += count;
+            if count < SESSION_RETENTION_BATCH_SIZE as u64 {
+                break;
+            }
+            // Give ingest transactions a chance to acquire the shared counters.
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        Ok(deleted)
     }
 
     /// (sender_baselines, temporal_cusum/ewma, entity_risk)

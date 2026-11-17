@@ -5,7 +5,7 @@
 # Always uses the training-only Docker socket, never the host's default daemon.
 set -u
 export DOCKER_HOST=unix:///run/umbella-training-docker/docker.sock
-root=/root/vigilyx-training/intent-ft-20261110
+root=${VIGILYX_FT_ROOT:?set VIGILYX_FT_ROOT to the experiment root under /data/vigilyx-training}
 image=harbor.sourcefind.cn:5443/dcu/admin/base/custom:vllm0.18.1-ubuntu22.04-dtk26.04-py3.10-20260810-qwen3.8
 name=$1; dcu=$2; shift 3
 ranks=$(printf '%s' "$dcu" | awk -F, '{print NF}')

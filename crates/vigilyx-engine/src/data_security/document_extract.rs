@@ -295,7 +295,11 @@ fn extract_pdf_text_with_coverage(data: &[u8], complete: &mut bool) -> Option<St
             break;
         }
     }
-    *complete &= budget.complete;
+    *complete &= budget.complete && !text.is_empty();
+    // This lightweight extractor does not apply custom CID/ToUnicode maps.
+    if find_subslice(data, b"/ToUnicode").is_some() {
+        *complete = false;
+    }
 
     if text.is_empty() {
         debug!("PDF: no text content extracted");
@@ -513,6 +517,9 @@ fn inflate_pdf_flate_streams(data: &[u8], budget: &mut PdfExtractionBudget) -> V
         let legacy_window =
             vigilyx_core::magic_bytes::normalize_pdf_name_escapes(&data[win_start..keyword]);
         if !dict_declares_flate(&dict) && !dict_declares_flate(&legacy_window) {
+            if find_subslice(&dict, b"/Filter").is_some() {
+                budget.complete = false;
+            }
             continue;
         }
 
@@ -569,116 +576,259 @@ fn extract_pdf_text_operators(content: &str, text: &mut String, budget: &mut Pdf
     if !budget.charge_work(content.len().saturating_mul(2)) {
         return;
     }
-    // Extract Number ofText: (Hello World) Tj
-    let mut in_paren = false;
-    let mut depth = 0u32;
-    let mut current = String::new();
-
-    for (index, ch) in content.chars().enumerate() {
-        if index.is_multiple_of(4096) && !budget.within_deadline() {
-            return;
-        }
-        if ch == '(' && !in_paren {
-            in_paren = true;
-            depth = 1;
-            current.clear();
-        } else if in_paren {
-            if ch == '(' {
-                depth += 1;
-                current.push(ch);
-            } else if ch == ')' {
-                depth -= 1;
-                if depth == 0 {
-                    in_paren = false;
-                    // TextContent (characters, Streamwait)
-                    push_pdf_string(&current, text);
-                } else {
-                    current.push(ch);
-                }
-            } else {
-                current.push(ch);
-            }
-        }
-
-        if text.len() >= MAX_EXTRACT_LEN {
+    let bytes = content.as_bytes();
+    let mut cursor = 0;
+    let mut strings: Vec<Vec<u8>> = Vec::new();
+    let mut in_array = false;
+    let mut array_ready = false;
+    while cursor < bytes.len() {
+        if strings.len() > 8192 || !budget.within_deadline() || text.len() >= MAX_EXTRACT_LEN {
             budget.complete = false;
             return;
         }
+        match bytes[cursor] {
+            b if b.is_ascii_whitespace() => {
+                cursor += 1;
+            }
+            b'%' => {
+                while cursor < bytes.len() && !matches!(bytes[cursor], b'\r' | b'\n') {
+                    cursor += 1;
+                }
+            }
+            b'(' => {
+                if !in_array {
+                    strings.clear();
+                    array_ready = false;
+                }
+                let (value, end, closed) = read_pdf_literal(bytes, cursor + 1, budget);
+                cursor = end;
+                if !closed {
+                    budget.complete = false;
+                    return;
+                }
+                strings.push(value);
+            }
+            b'<' if bytes.get(cursor + 1) != Some(&b'<') => {
+                if !in_array {
+                    strings.clear();
+                    array_ready = false;
+                }
+                let start = cursor + 1;
+                cursor = start;
+                while cursor < bytes.len() && bytes[cursor] != b'>' {
+                    if cursor.is_multiple_of(4096) && !budget.within_deadline() {
+                        return;
+                    }
+                    cursor += 1;
+                }
+                if cursor == bytes.len() {
+                    budget.complete = false;
+                    return;
+                }
+                let hex: Vec<u8> = bytes[start..cursor]
+                    .iter()
+                    .copied()
+                    .filter(|b| !b.is_ascii_whitespace())
+                    .collect();
+                cursor += 1;
+                if hex.len() <= 8192 && hex.iter().all(u8::is_ascii_hexdigit) {
+                    let mut value = Vec::with_capacity(hex.len().div_ceil(2));
+                    for pair in hex.chunks(2) {
+                        let digit = |b: u8| {
+                            if b.is_ascii_digit() {
+                                b - b'0'
+                            } else {
+                                b.to_ascii_lowercase() - b'a' + 10
+                            }
+                        };
+                        value.push(digit(pair[0]) * 16 + pair.get(1).map_or(0, |b| digit(*b)));
+                    }
+                    strings.push(value);
+                } else {
+                    strings.clear();
+                }
+            }
+            b'[' => {
+                strings.clear();
+                in_array = true;
+                array_ready = false;
+                cursor += 1;
+            }
+            b']' => {
+                in_array = false;
+                array_ready = true;
+                cursor += 1;
+            }
+            b'/' => {
+                strings.clear();
+                array_ready = false;
+                cursor += 1;
+                while cursor < bytes.len() && !pdf_delimiter(bytes[cursor]) {
+                    cursor += 1;
+                }
+            }
+            b'<' | b'>' | b')' | b'{' | b'}' => {
+                strings.clear();
+                array_ready = false;
+                cursor += 1;
+            }
+            _ => {
+                let start = cursor;
+                while cursor < bytes.len() && !pdf_delimiter(bytes[cursor]) {
+                    cursor += 1;
+                }
+                let token = &bytes[start..cursor];
+                // Never tokenize compressed font/image bytes as PDF syntax.
+                if token == b"stream" {
+                    strings.clear();
+                    array_ready = false;
+                    if !budget.charge_work(start.min(PDF_STREAM_DICT_MAX_BACKTRACK)) {
+                        return;
+                    }
+                    let (dict_start, dict_end) = stream_dict_span(bytes, start);
+                    let dict = vigilyx_core::magic_bytes::normalize_pdf_name_escapes(
+                        &bytes[dict_start..dict_end],
+                    );
+                    if find_subslice(&dict, b"/Filter").is_some() {
+                        if let Some(end) = find_subslice(&bytes[cursor..], b"endstream") {
+                            cursor += end + 9;
+                        } else {
+                            budget.complete = false;
+                            return;
+                        }
+                    }
+                    continue;
+                }
+                let show = (token == b"TJ" && array_ready)
+                    || (matches!(token, b"Tj" | b"'" | b"\"") && !in_array && !array_ready);
+                if show {
+                    for value in &strings {
+                        push_pdf_string(&decode_pdf_string(value), text);
+                        if text.len() >= MAX_EXTRACT_LEN {
+                            budget.complete = false;
+                            return;
+                        }
+                    }
+                }
+                // Numeric kerning/quote operands preserve strings; any other
+                // operator consumes them. CMap, font names and metadata never
+                // become text just because they contain parentheses or hex.
+                if token.is_empty()
+                    || !token
+                        .iter()
+                        .all(|b| b.is_ascii_digit() || matches!(b, b'+' | b'-' | b'.'))
+                {
+                    strings.clear();
+                    array_ready = false;
+                }
+            }
+        }
     }
+}
 
-    // Hex strings: `<48656C6C6F> Tj` and TJ arrays carry the same text for
-    // CID-keyed fonts; the raw byte view never decodes them. `<<` (dict open)
-    // is skipped, and tokens are size-capped so embedded hex blobs cannot
-    // flood the extractor.
-    let bytes = content.as_bytes();
-    let mut cursor = 0usize;
+fn pdf_delimiter(b: u8) -> bool {
+    b.is_ascii_whitespace()
+        || matches!(
+            b,
+            b'(' | b')' | b'<' | b'>' | b'[' | b']' | b'{' | b'}' | b'/' | b'%'
+        )
+}
+
+/// PDF literal strings escape parentheses, octal bytes and line breaks.
+fn read_pdf_literal(
+    bytes: &[u8],
+    mut cursor: usize,
+    budget: &mut PdfExtractionBudget,
+) -> (Vec<u8>, usize, bool) {
+    let mut value = Vec::new();
+    let mut depth = 1usize;
     while cursor < bytes.len() {
         if cursor.is_multiple_of(4096) && !budget.within_deadline() {
-            return;
+            break;
         }
-        if text.len() >= MAX_EXTRACT_LEN {
+        let byte = bytes[cursor];
+        cursor += 1;
+        match byte {
+            b'\\' => {
+                let Some(&escaped) = bytes.get(cursor) else {
+                    break;
+                };
+                cursor += 1;
+                match escaped {
+                    b'n' => value.push(b'\n'),
+                    b'r' => value.push(b'\r'),
+                    b't' => value.push(b'\t'),
+                    b'b' => value.push(8),
+                    b'f' => value.push(12),
+                    b'\n' => {}
+                    b'\r' => {
+                        if bytes.get(cursor) == Some(&b'\n') {
+                            cursor += 1;
+                        }
+                    }
+                    b'0'..=b'7' => {
+                        let mut number = u16::from(escaped - b'0');
+                        for _ in 0..2 {
+                            if let Some(&next @ b'0'..=b'7') = bytes.get(cursor) {
+                                number = number * 8 + u16::from(next - b'0');
+                                cursor += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        value.push(number as u8);
+                    }
+                    other => value.push(other),
+                }
+            }
+            b'(' => {
+                depth += 1;
+                value.push(byte);
+            }
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return (value, cursor, true);
+                }
+                value.push(byte);
+            }
+            other => value.push(other),
+        }
+        if value.len() >= MAX_EXTRACT_LEN {
             budget.complete = false;
             break;
         }
-        if bytes[cursor] != b'<' {
-            cursor += 1;
-            continue;
-        }
-        if bytes.get(cursor + 1) == Some(&b'<') {
-            cursor += 2;
-            continue;
-        }
-        let token_start = cursor + 1;
-        let mut token_end = token_start;
-        while token_end < bytes.len() && bytes[token_end] != b'>' {
-            if token_end.is_multiple_of(4096) && !budget.within_deadline() {
-                return;
-            }
-            token_end += 1;
-        }
-        cursor = token_end + 1;
-        let token = &content[token_start..token_end.min(content.len())];
-        if token.len() < 4 || token.len() > 8192 {
-            continue;
-        }
-        let hex_digits: String = token.chars().filter(|c| !c.is_whitespace()).collect();
-        if hex_digits.len() < 4
-            || !hex_digits.len().is_multiple_of(2)
-            || !hex_digits.chars().all(|c| c.is_ascii_hexdigit())
-        {
-            continue;
-        }
-        let raw: Vec<u8> = (0..hex_digits.len())
-            .step_by(2)
-            .filter_map(|i| u8::from_str_radix(&hex_digits[i..i + 2], 16).ok())
-            .collect();
-        if raw.len() < 2 || raw.len() > 4096 {
-            continue;
-        }
-        // CID-font hex strings are usually UTF-16BE; ASCII hex strings decode
-        // directly. Prefer UTF-16BE only when it decodes strictly AND the
-        // UTF-8 view is degraded (replacement chars / no alphanumerics) —
-        // otherwise even-length ASCII ("48656C6C" = "Hell") would flip into
-        // bogus CJK.
-        let utf8 = String::from_utf8_lossy(&raw).into_owned();
-        let utf8_degraded = utf8.contains(char::REPLACEMENT_CHARACTER)
-            || !utf8.chars().any(|c| c.is_alphanumeric() || c > '\u{4e00}');
-        let decoded = if raw.len().is_multiple_of(2) && utf8_degraded {
-            let units: Vec<u16> = raw
-                .as_chunks::<2>()
-                .0
-                .iter()
-                .map(|pair| u16::from_be_bytes(*pair))
-                .collect();
-            match String::from_utf16(&units) {
-                Ok(text) => text,
-                Err(_) => utf8,
-            }
-        } else {
-            utf8
-        };
-        push_pdf_string(&decoded, text);
     }
+    (value, cursor, false)
+}
+
+fn decode_pdf_string(raw: &[u8]) -> String {
+    if let Some(bytes) = raw.strip_prefix(&[0xfe, 0xff]) {
+        let units: Vec<u16> = bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_be_bytes(*pair))
+            .collect();
+        return String::from_utf16_lossy(&units);
+    }
+    let utf8 = String::from_utf8_lossy(raw);
+    // Preserve the previous UTF-16BE support, but never decode arbitrary
+    // CMap/font tables: only actual text-showing operands reach this helper.
+    if raw.len().is_multiple_of(2)
+        && (utf8.contains(char::REPLACEMENT_CHARACTER) || raw.contains(&0))
+    {
+        let units: Vec<u16> = raw
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_be_bytes(*pair))
+            .collect();
+        if let Ok(text) = String::from_utf16(&units) {
+            return text;
+        }
+    }
+    utf8.into_owned()
 }
 
 /// Push one extracted PDF string candidate into the output, applying the same
@@ -1317,7 +1467,7 @@ mod tests {
     #[test]
     fn test_extract_pdf_text_literal_strings() {
         // Region code 000000 and repeated phone digits make these visibly synthetic fixtures.
-        let pdf = "%PDF-1.4 (Customer ID: 000000200001010005) Tj (Phone: 13000000000) Tj";
+        let pdf = "%PDF-1.4\n(Customer ID: 000000200001010005) Tj (Phone: 13000000000) Tj";
         let result = extract_pdf_text(pdf.as_bytes());
         assert!(result.is_some());
         let text = result.unwrap();
@@ -1418,12 +1568,12 @@ mod tests {
     #[test]
     fn test_extract_pdf_hex_strings() {
         // PDF <hex> string carrying ASCII text ("Hello").
-        let pdf = "%PDF-1.4 <48656C6C6F> Tj";
+        let pdf = "%PDF-1.4\n<48656C6C6F> Tj";
         let result = extract_pdf_text(pdf.as_bytes());
         assert_eq!(result.as_deref(), Some("Hello"));
 
         // CID-font form: UTF-16BE hex string (8EAB 4EFD = 身份).
-        let pdf = "%PDF-1.4 <8EAB4EFD> Tj";
+        let pdf = "%PDF-1.4\n<8EAB4EFD> Tj";
         let result = extract_pdf_text(pdf.as_bytes());
         assert!(
             result.as_deref().is_some_and(|t| t.contains("身份")),
@@ -1839,5 +1989,51 @@ mod tests {
         assert!(!dict_declares_flate(b"<< /Filter /FlXyZ >>"));
         assert!(!dict_declares_flate(b"<< /Filter /Fl#6 >>"));
         assert!(!dict_declares_flate(b"<< /Length 42 >>"));
+    }
+}
+
+#[cfg(test)]
+mod pdf_false_positive_tests {
+    use super::*;
+
+    #[test]
+    fn font_and_cmap_data_are_not_document_text() {
+        let pdf = b"%PDF-1.7\n/FontName (SWIFT: TSTBCN00)\n<53574946543a2054535442434e3030>\nBT (Routine document) Tj ET";
+        assert_eq!(extract_pdf_text(pdf).as_deref(), Some("Routine document"));
+    }
+
+    #[test]
+    fn literal_hex_arrays_and_escapes_preserve_real_dlp_text() {
+        let pdf = br"%PDF-1.7
+        BT [(SWIFT: ) -10 <54535442434e3030>] TJ
+        (Bank \(test\) field) Tj (BIC: TSTBHK00) ' ET";
+        let text = extract_pdf_text(pdf).unwrap();
+        assert!(text.contains("SWIFT: TSTBCN00"));
+        assert!(text.contains("Bank (test) field"));
+        assert!(text.contains("BIC: TSTBHK00"));
+        assert!(
+            crate::data_security::dlp::scan_text(&text)
+                .matches
+                .contains(&"swift_code".to_string())
+        );
+    }
+
+    #[test]
+    fn filtered_stream_is_not_scanned_before_decoding() {
+        // An unsupported encoding may expose printable, BIC-shaped bytes;
+        // they must never be scanned as if they were decoded page content.
+        let pdf =
+            b"%PDF-1.7\n<< /Filter /ASCII85Decode >>\nstream\n(SWIFT: TSTBCN00) Tj\nendstream\n";
+        assert!(extract_pdf_text(pdf).is_none());
+    }
+
+    #[test]
+    fn custom_font_mapping_remains_explicitly_incomplete() {
+        let result = extract_text_with_coverage(
+            b"%PDF-1.7\n/ToUnicode 2 0 R (Routine) Tj",
+            Some(DetectedFileType::Pdf),
+        );
+        assert_eq!(result.text.as_deref(), Some("Routine"));
+        assert!(!result.complete);
     }
 }

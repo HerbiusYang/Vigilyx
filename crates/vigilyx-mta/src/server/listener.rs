@@ -143,6 +143,15 @@ async fn persist_mta_email_review(
         error!(session_id = %session.id, %error, "Failed to persist outbound email data-security review");
         return Err(error.to_string());
     }
+    if let Some(incident) =
+        vigilyx_engine::data_security::email_review::build_transfer_incident(&review, inspection)
+    {
+        runtime
+            .db
+            .insert_data_security_incident(&incident)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
 

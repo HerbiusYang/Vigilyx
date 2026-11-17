@@ -38,6 +38,17 @@ done
 "${compose[@]}" up -d --wait --wait-timeout 120 postgres redis
 "${compose[@]}" run --rm --no-deps postgres-role-init
 if $run_migrations; then
+    # PostgreSQL can continue a long query after its container client stops.
+    # All runtime clients above are now stopped; drain only their fixed roles
+    # in this application's database so orphaned queries cannot block DDL.
+    docker exec -i vigilyx-postgres sh -lc \
+        'exec psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+SELECT pg_terminate_backend(pid, 5000)
+FROM pg_stat_activity
+WHERE datname = current_database()
+  AND usename IN ('vigilyx_api', 'vigilyx_engine', 'vigilyx_mta')
+  AND pid <> pg_backend_pid();
+SQL
     "${compose[@]}" run --rm --no-deps postgres-migrate
 else
     echo "  Schema migration skipped: this deployment did not build a new API binary."

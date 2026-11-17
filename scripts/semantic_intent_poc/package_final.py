@@ -41,6 +41,7 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--version", required=True)
     parser.add_argument("--evaluation", type=Path, help="kfold_ensemble.py report to quote in the model card")
+    parser.add_argument("--data-note", action="append", default=[], help="extra training-data paragraph for the card")
     args = parser.parse_args()
     dev_rows = [json.loads(line) for line in open(args.data / "dev.jsonl", encoding="utf-8") if line.strip()]
     dev_ids = [r["id"] for r in dev_rows]
@@ -79,8 +80,9 @@ def main():
 
     evaluation = json.loads(args.evaluation.read_text()) if args.evaluation else None
     lines = [f"# Semantic intent ensemble {args.version}", "",
-             "Fine-tuned encoders scored on CPU inside the Vigilyx engine (semantic_scan, shadow mode:",
-             "recorded in details, never part of the verdict).", "",
+             "Fine-tuned encoders scored on CPU inside the Vigilyx engine (semantic_scan). Shadow mode records",
+             "the score in details only; scored mode (SEMANTIC_INTENT_SCORE_THRESHOLD) turns a hit into a",
+             "review-level Low module result that enters verdict fusion.", "",
              "## Members", ""]
     for m in members:
         lines.append(f"- `{m['name']}`: {m['source_model']} (lowercase={m['lowercase']}, {m['training_args']})")
@@ -92,9 +94,12 @@ def main():
               "E-PhishLLM (ACM AISec 2025) and Fraud-R1 (Findings of ACL 2025), plus synthetic benign notices",
               "(generator versions 1 and 2) and a translated English anti-fraud supplement. Fraud-R1 commercial",
               "mail is labelled by round: raw/generated/round2 benign, round3/round4 malicious. Identities are",
-              "masked before training and inference. No real user mail was used.", "",
-              "**Licence restriction:** neither dataset ships a licence; both are for (defensive) research use",
-              "and must not be redistributed. Do not publish these weights without the dataset authors' consent.",
+              "masked before training and inference. No real user mail was used.", ""]
+    for note in args.data_note:
+        lines += [note, ""]
+    lines += ["**Licence restriction:** E-PhishLLM and Fraud-R1 ship no licence; both are for (defensive)",
+              "research use and must not be redistributed. Do not publish these weights without the dataset",
+              "authors' consent.",
               # bge-small-zh-v1.5, bge-m3 and multilingual-e5-base are all MIT
               f"Base models are MIT ({', '.join(m['source_model'].split()[0] for m in members)}).", ""]
     if evaluation:
@@ -105,8 +110,8 @@ def main():
         lines.append("")
     lines += ["## Limits", "",
               "- Public and synthetic data only; red-team AUC about 0.55. Not validated on real traffic.",
-              "- About 125 of the remaining out-of-fold errors are not decidable from the body text (malicious",
-              "  links or attachments behind ordinary wording, round-2 marketing pressure).", ""]
+              "- Some remaining out-of-fold errors are not decidable from the body text (malicious links or",
+              "  attachments behind ordinary wording, round-2 marketing pressure).", ""]
     (args.output / "MODEL_CARD.md").write_text("\n".join(lines), encoding="utf-8")
     files = sorted(p for p in args.output.rglob("*") if p.is_file() and p.name != "SHA256SUMS")
     (args.output / "SHA256SUMS").write_text(

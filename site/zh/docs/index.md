@@ -7,13 +7,13 @@ description: Vigilyx 产品概览，包含旁路镜像模式、MTA 代理模式�
 
 Vigilyx 是一个 Rust 驱动的邮件安全网关与邮件安全分析平台，支持两种运行方式：
 
-- **旁路镜像模式**：在投递后做流量分析、告警与审计
-- **MTA 代理模式**：在最终投递前做 Inline SMTP 决策
+- **旁路镜像模式**：被动抓取流量，在投递后做分析、告警与审计
+- **MTA 代理模式**：在最终投递前做 Inline SMTP 决策，可以转发、隔离、拒收或临时失败
 
 这个项目更偏工程化安全系统，而不是单纯的“AI 一把梭”：
 
 - 判定结果应当可解释
-- 误报和漏报应当能持续回归
+- 误报和漏报应能回溯到具体证据
 - 规则与融合逻辑应当方便迭代
 - 即使关闭 AI，核心检测链也要能稳定运行
 
@@ -27,6 +27,7 @@ Vigilyx 是一个 Rust 驱动的邮件安全网关与邮件安全分析平台，
 - 附件与链接分析
 - 自动化响应与告警
 - Web 控制台与审计流
+- 开源训练语料 [VIGILYX-Training-Data](https://github.com/HerbiusYang/VIGILYX-Training-Data)
 
 ## 源码
 
@@ -39,4 +40,6 @@ Vigilyx 是一个 Rust 驱动的邮件安全网关与邮件安全分析平台，
 - [快速开始](/zh/docs/quick-start)
 - [首次部署](/zh/docs/deployment)
 - [更新与回退（含 0.9.3 → 0.9.4）](/zh/docs/updating)
+- [版本发布](/zh/docs/releases)
 - [架构说明](/zh/docs/architecture)
+- [训练语料](/zh/docs/training-data)

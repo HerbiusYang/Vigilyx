@@ -11,10 +11,11 @@ The public Vigilyx website and docs live in `site/` and are built with VitePress
 
 This repository stores only the site source:
 
-- `site/index.md`
-- `site/docs/*.md`
-- `site/.vitepress/*`
-- `site/public/*`
+- `site/index.md` and `site/zh/index.md`
+- `site/docs/` and `site/zh/docs/`
+- `site/.vitepress/`
+- `site/public/`
+- `site/package.json`, `site/package-lock.json`, and `site/scripts/postbuild.mjs`
 
 Generated output such as `site/.vitepress/dist` is ignored and is not committed to the repository.
 
@@ -49,6 +50,12 @@ The Simplified Chinese site is:
 
 ```text
 https://herbiusyang.github.io/Vigilyx/zh/
+```
+
+The Simplified Chinese docs are:
+
+```text
+https://herbiusyang.github.io/Vigilyx/zh/docs/
 ```
 
 ## Custom domain variables

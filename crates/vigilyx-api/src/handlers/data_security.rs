@@ -61,7 +61,36 @@ const MAX_HTTP_BODY_DOWNLOAD_BYTES: usize = 5 * 1024 * 1024;
 
 fn redact_incident(mut incident: DataSecurityIncident) -> DataSecurityIncident {
     incident.evidence.clear();
-    incident.details = None;
+    // Operational policy facts stay visible without exposing content evidence.
+    incident.details = incident.details.and_then(|value| {
+        let fields = value.as_object()?;
+        let safe: serde_json::Map<String, serde_json::Value> = fields
+            .iter()
+            .filter(|(key, _)| {
+                matches!(
+                    key.as_str(),
+                    "policy_version"
+                        | "security_level_candidate"
+                        | "authorization_status"
+                        | "observation"
+                        | "delivery_confirmed"
+                        | "source"
+                        | "legal_assessment"
+                        | "scan_complete"
+                        | "coverage_only"
+                        | "counter_scope"
+                        | "counter_durability"
+                        | "email_review_id"
+                        | "direction"
+                        | "audit_class"
+                        | "action"
+                        | "delivery_status"
+                )
+            })
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        (!safe.is_empty()).then_some(serde_json::Value::Object(safe))
+    });
     incident.detected_user = None;
     incident
 }
@@ -272,6 +301,8 @@ fn validate_incident_type(t: &str) -> bool {
             | "self_sending"
             | "volume_anomaly"
             | "jrt_compliance_violation"
+            | "sensitive_data_transfer"
+            | "bulk_sensitive_transfer"
     )
 }
 
@@ -802,13 +833,17 @@ pub async fn download_http_session_body(
 }
 
 const REDACTED_VALUE: &str = "[REDACTED]";
-const SENSITIVE_KEY_EXACT: &[&str] = &["auth", "otp", "pass", "pwd", "secret", "token"];
+const SENSITIVE_KEY_EXACT: &[&str] = &[
+    "auth", "otp", "pass", "pwd", "secret", "token", "cvv", "cvv2", "cvc", "cvc2", "pin",
+];
 const SENSITIVE_KEY_FRAGMENTS: &[&str] = &[
     "accesstoken",
     "apikey",
     "authorization",
     "clientsecret",
     "credential",
+    "cardverification",
+    "securitycode",
     "passwd",
     "passcode",
     "passphrase",
@@ -864,6 +899,9 @@ fn redact_json_value(value: &mut serde_json::Value) {
             for item in items {
                 redact_json_value(item);
             }
+        }
+        serde_json::Value::String(text) => {
+            *text = redact_xml_tag_credentials(&redact_key_value_credentials(text));
         }
         _ => {}
     }
@@ -1016,6 +1054,16 @@ mod tests {
     };
     use proptest::prelude::*;
     use serde_json::Value;
+
+    #[test]
+    fn redacts_cvv_and_credentials_inside_compose_content() {
+        let raw = r#"{"cvv":"731","attrs":{"content":"CVV: 732 Password: SyntheticOnly729!"}}"#;
+        let redacted = redact_request_body(raw, Some("application/json"));
+        assert!(!redacted.contains("731"));
+        assert!(!redacted.contains("732"));
+        assert!(!redacted.contains("SyntheticOnly729"));
+        assert!(redacted.contains("REDACTED"));
+    }
 
     #[test]
     fn redacts_form_credentials() {

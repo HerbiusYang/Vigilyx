@@ -50,6 +50,13 @@ impl VigilDb {
     /// been persisted. Keeping these counts derived from their source tables
     /// avoids a second mutable counter that can drift after retries or restarts.
     pub async fn get_data_security_engine_totals(&self) -> Result<(u64, u64)> {
+        let db = self.clone();
+        self.data_security_totals_cache
+            .get(move || async move { db.query_data_security_engine_totals().await })
+            .await
+    }
+
+    async fn query_data_security_engine_totals(&self) -> Result<(u64, u64)> {
         let (sessions, incidents): (i64, i64) = sqlx::query_as(
             r#"
             SELECT
@@ -471,7 +478,7 @@ impl VigilDb {
     pub async fn insert_data_security_incident(
         &self,
         incident: &DataSecurityIncident,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let evidence = serde_json::to_string(&incident.evidence)?;
         let details = incident
             .details
@@ -480,7 +487,7 @@ impl VigilDb {
             .unwrap_or_else(|| "null".to_string());
         let dlp_matches = serde_json::to_string(&incident.dlp_matches)?;
 
-        sqlx::query(
+        let result = sqlx::query(
             r#"
             INSERT INTO data_security_incidents
                 (id, http_session_id, incident_type, severity, confidence,
@@ -507,29 +514,7 @@ impl VigilDb {
         .bind(incident.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
-        Ok(())
-    }
-
-    /// Type (DB Level)
-    pub async fn has_recent_incident(
-        &self,
-        user: &str,
-        incident_type: &str,
-        dlp_matches_json: &str,
-        since: &str,
-    ) -> Result<bool> {
-        let row: Option<(i64,)> = sqlx::query_as(
-            "SELECT 1::BIGINT FROM data_security_incidents \
-             WHERE detected_user = $1 AND incident_type = $2 AND dlp_matches = $3 \
-             AND created_at > $4 LIMIT 1",
-        )
-        .bind(user)
-        .bind(incident_type)
-        .bind(dlp_matches_json)
-        .bind(since)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row.is_some())
+        Ok(result.rows_affected() > 0)
     }
 
     /// QueryData security
@@ -654,10 +639,17 @@ impl VigilDb {
     ///
     /// items SQL Query COUNT Query, Data.
     pub async fn get_data_security_stats(&self) -> Result<DataSecurityStats> {
+        let db = self.clone();
+        self.data_security_stats_cache
+            .get(move || async move { db.query_data_security_stats().await })
+            .await
+    }
+
+    async fn query_data_security_stats(&self) -> Result<DataSecurityStats> {
         let cutoff = (Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
 
         // items Query:According toType + 24h
-        let row: (i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+        let row: (i64, i64, i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
             r#"
             SELECT
                 COUNT(*),
@@ -666,7 +658,9 @@ impl VigilDb {
                 COALESCE(SUM(CASE WHEN incident_type = 'self_sending' THEN 1 ELSE 0 END), 0)::BIGINT,
                 COALESCE(SUM(CASE WHEN incident_type = 'volume_anomaly' THEN 1 ELSE 0 END), 0)::BIGINT,
                 COALESCE(SUM(CASE WHEN severity IN ('high', 'critical') AND created_at >= $1 THEN 1 ELSE 0 END), 0)::BIGINT,
-                COALESCE(SUM(CASE WHEN incident_type = 'jrt_compliance_violation' THEN 1 ELSE 0 END), 0)::BIGINT
+                COALESCE(SUM(CASE WHEN incident_type = 'jrt_compliance_violation' THEN 1 ELSE 0 END), 0)::BIGINT,
+                COUNT(*) FILTER (WHERE incident_type = 'sensitive_data_transfer'),
+                COUNT(*) FILTER (WHERE incident_type = 'bulk_sensitive_transfer')
             FROM data_security_incidents
             "#,
         )
@@ -763,6 +757,8 @@ impl VigilDb {
             self_send_count: row.3 as u64,
             volume_anomaly_count: row.4 as u64,
             jrt_compliance_count: row.6 as u64,
+            sensitive_transfer_count: row.7 as u64,
+            bulk_transfer_count: row.8 as u64,
             high_severity_24h: row.5 as u64,
             incidents_by_severity,
             hourly_sessions,
@@ -1014,6 +1010,13 @@ impl VigilDb {
 
     /// Aggregate outbound email inspection coverage and enforcement outcomes.
     pub async fn get_email_data_security_stats(&self) -> Result<EmailDataSecurityStats> {
+        let db = self.clone();
+        self.email_review_stats_cache
+            .get(move || async move { db.query_email_data_security_stats().await })
+            .await
+    }
+
+    async fn query_email_data_security_stats(&self) -> Result<EmailDataSecurityStats> {
         let row: EmailReviewStatsRow = sqlx::query_as(
             r#"
             SELECT
@@ -1503,6 +1506,8 @@ fn parse_incident_type(s: &str) -> DataSecurityIncidentType {
         "self_sending" => DataSecurityIncidentType::SelfSending,
         "volume_anomaly" => DataSecurityIncidentType::VolumeAnomaly,
         "jrt_compliance_violation" => DataSecurityIncidentType::JrtComplianceViolation,
+        "sensitive_data_transfer" => DataSecurityIncidentType::SensitiveDataTransfer,
+        "bulk_sensitive_transfer" => DataSecurityIncidentType::BulkSensitiveTransfer,
         _ => DataSecurityIncidentType::DraftBoxAbuse,
     }
 }

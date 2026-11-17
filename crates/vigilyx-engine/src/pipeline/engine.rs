@@ -238,6 +238,13 @@ async fn persist_mirror_email_review(
         error!(session_id = %session.id, %error, "Failed to persist mirror outbound email review");
         return Err(error.to_string());
     }
+    if let Some(incident) =
+        crate::data_security::email_review::build_transfer_incident(&review, inspection.as_ref())
+    {
+        db.insert_data_security_incident(&incident)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
     Ok(true)
 }
 
