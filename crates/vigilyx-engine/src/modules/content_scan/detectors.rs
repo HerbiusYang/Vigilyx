@@ -30,8 +30,7 @@ use crate::module::Evidence;
 use crate::module_data::module_data;
 use crate::modules::common::{
     domains_share_organizational_domain, domains_share_sender_organization,
-    extract_domain_from_email, extract_domain_from_url,
-    is_probable_non_clickable_render_asset_url,
+    extract_domain_from_email, extract_domain_from_url, is_probable_non_clickable_render_asset_url,
 };
 
 mod threat_actions;
@@ -4990,9 +4989,7 @@ pub(super) fn detect_external_action_link_lure_with_stage_b(
                 &link.effective_url,
                 &normalized,
                 &compact,
-                account_threat
-                    || stage_b_account_threat
-                    || stage_b_sensitive_credential_request,
+                account_threat || stage_b_account_threat || stage_b_sensitive_credential_request,
             )
         {
             continue;
@@ -5064,9 +5061,7 @@ fn is_cn_institutional_announcement_url(url: &str) -> bool {
     if !institutional {
         return false;
     }
-    lower.contains("/news/")
-        || lower.contains("announce")
-        || lower.contains("articletype=news")
+    lower.contains("/news/") || lower.contains("announce") || lower.contains("articletype=news")
 }
 
 /// Detect OAuth-style consent lures that describe a business or partner

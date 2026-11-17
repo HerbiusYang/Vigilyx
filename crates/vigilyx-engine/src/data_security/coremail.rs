@@ -55,8 +55,7 @@ pub fn is_delivery_request(uri: &str, body: Option<&str>) -> bool {
                         "__type" => v.starts_with("SendItemRequest:"),
                         _ => false,
                     });
-                    explicit
-                        || (key != "Content" && key != "content" && sends(value))
+                    explicit || (key != "Content" && key != "content" && sends(value))
                 }),
                 serde_json::Value::Array(values) => values.iter().any(sends),
                 _ => false,

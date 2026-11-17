@@ -87,7 +87,7 @@ async fn single_transfers_retries_drafts_public_data_and_bulk_escalation() -> Re
     second.id = uuid::Uuid::new_v4();
     engine.submit(second).await.map_err(anyhow::Error::msg)?;
     engine
-        .submit(fixture("SWIFT: CITIUS33", "public-fixture", "/mail/send"))
+        .submit(fixture("SWIFT: TESTUS33", "public-fixture", "/mail/send"))
         .await
         .map_err(anyhow::Error::msg)?;
     engine

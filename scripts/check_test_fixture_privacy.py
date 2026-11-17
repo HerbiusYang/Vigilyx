@@ -64,6 +64,11 @@ PUBLIC_INTEROP_SUFFIXES = (
     ".swift.com",
     ".unionpay.com",
     ".weixin.qq.com",
+    ".wecom.work",
+    ".hundsun.com",
+    ".hundsun.cn",
+    ".lenovo.com",
+    ".lenovo.com.cn",
 )
 PUBLIC_INTEROP_DOMAINS = {
     suffix.removeprefix(".") for suffix in PUBLIC_INTEROP_SUFFIXES
@@ -74,6 +79,11 @@ PUBLIC_INTEROP_DOMAINS = {
     "npmjs.com",
     "crowdstrike.com",
     "msrc.onmicrosoft.com",
+    "wecom.work",
+    "hundsun.com",
+    "hundsun.cn",
+    "lenovo.com",
+    "lenovo.com.cn",
 }
 SYNTHETIC_MOBILE_NUMBERS = {
     "13000000000",

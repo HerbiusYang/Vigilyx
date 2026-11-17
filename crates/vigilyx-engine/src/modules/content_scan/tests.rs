@@ -575,20 +575,12 @@ fn stage_b_link_window_does_not_promote_reports_unrelated_links_or_secret_mentio
 #[test]
 fn known_brand_sibling_reply_to_is_not_social_engineering() {
     let body = "请立即回复本邮件，把银行卡号和密码发来，今天必须完成付款。";
-    let sibling = reply_to_lure_for_pair(
-        "service@rep.hundsun.cn",
-        "service@hundsun.com",
-        body,
-    );
+    let sibling = reply_to_lure_for_pair("service@rep.hundsun.cn", "service@hundsun.com", body);
     assert!(
         !sibling.contains(&"external_reply_to_social_engineering".to_string()),
         "hundsun.cn and hundsun.com are the same known brand: {sibling:?}"
     );
-    let unrelated = reply_to_lure_for_pair(
-        "service@hundsun.com",
-        "service@evil.example",
-        body,
-    );
+    let unrelated = reply_to_lure_for_pair("service@hundsun.com", "service@evil.example", body);
     assert!(
         unrelated.contains(&"external_reply_to_social_engineering".to_string()),
         "a known brand replying to an unrelated domain still alerts: {unrelated:?}"

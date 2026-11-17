@@ -243,7 +243,9 @@ pub fn hosted_identity_platform(domain: &str) -> Option<String> {
     module_data()
         .get_list("hosted_identity_platforms")
         .iter()
-        .filter(|suffix| normalized == suffix.as_str() || normalized.ends_with(&format!(".{suffix}")))
+        .filter(|suffix| {
+            normalized == suffix.as_str() || normalized.ends_with(&format!(".{suffix}"))
+        })
         .max_by_key(|suffix| suffix.len())
         .cloned()
 }
@@ -274,13 +276,14 @@ pub fn domains_share_sender_organization(left: &str, right: &str) -> bool {
 
 fn same_explicit_brand_group(left: &str, right: &str) -> bool {
     const GROUPS: &[&[&str]] = &[&["hundsun.cn", "hundsun.com", "hs.net"]];
-    let (Some(left_org), Some(right_org)) = (organizational_domain(left), organizational_domain(right))
+    let (Some(left_org), Some(right_org)) =
+        (organizational_domain(left), organizational_domain(right))
     else {
         return false;
     };
-    GROUPS.iter().any(|group| {
-        group.contains(&left_org.as_str()) && group.contains(&right_org.as_str())
-    })
+    GROUPS
+        .iter()
+        .any(|group| group.contains(&left_org.as_str()) && group.contains(&right_org.as_str()))
 }
 
 fn registrable_brand_label(domain: &str) -> Option<String> {
@@ -301,7 +304,10 @@ fn is_institutional_public_suffix(domain: &str) -> bool {
     };
     matches!(
         suffix,
-        "com" | "cn" | "net" | "org"
+        "com"
+            | "cn"
+            | "net"
+            | "org"
             | "com.cn"
             | "net.cn"
             | "org.cn"
@@ -1279,10 +1285,7 @@ mod tests {
             hosted_identity_platform("tenant.mail.protection.outlook.com").as_deref(),
             Some("mail.protection.outlook.com")
         );
-        assert_eq!(
-            hosted_identity_platform("zayh2.wecom.work.evil.com"),
-            None
-        );
+        assert_eq!(hosted_identity_platform("zayh2.wecom.work.evil.com"), None);
         assert_eq!(hosted_identity_platform("zayh2.invalid"), None);
         assert!(domains_share_institutional_brand(
             "lenovo.com",

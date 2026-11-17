@@ -965,8 +965,14 @@ fn test_combined_c4_c3_data() {
         result.matches.contains(&"family_relation".to_string()),
         "应检出家庭关系"
     );
-    assert!(result.count_items_at_level(4) >= 1, "At least 1 Item level-4");
-    assert!(result.count_items_at_level(3) >= 3, "At least 3 Item level-3+");
+    assert!(
+        result.count_items_at_level(4) >= 1,
+        "At least 1 Item level-4"
+    );
+    assert!(
+        result.count_items_at_level(3) >= 3,
+        "At least 3 Item level-3+"
+    );
 }
 
 #[test]
@@ -2076,8 +2082,14 @@ fn test_items_by_security_level_distribution() {
     let text = "Password：abc123, 身份证 000000200001010005, 月薪: 25000元, 工号: E001";
     let result = scan_text(text);
     let levels = result.items_by_security_level();
-    assert!(levels.get(&4).unwrap_or(&0) >= &1, "Should have level-4 items");
-    assert!(levels.get(&3).unwrap_or(&0) >= &1, "Should have level-3 items");
+    assert!(
+        levels.get(&4).unwrap_or(&0) >= &1,
+        "Should have level-4 items"
+    );
+    assert!(
+        levels.get(&3).unwrap_or(&0) >= &1,
+        "Should have level-3 items"
+    );
 }
 
 #[test]
@@ -2979,7 +2991,10 @@ fn test_realistic_payroll_batch() {
         "Should detect income info"
     );
     let c3_plus = result.count_items_at_level(3);
-    assert!(c3_plus >= 3, "Should have >=3 level-3+ items from income data");
+    assert!(
+        c3_plus >= 3,
+        "Should have >=3 level-3+ items from income data"
+    );
 }
 
 #[test]

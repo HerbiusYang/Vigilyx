@@ -863,10 +863,8 @@ impl SecurityModule for IdentityAnomalyModule {
                 crate::modules::link_scan::is_well_known_safe_domain(&sender_domain_lower);
             // Platform-assigned tenant labels (WeCom, Microsoft 365, enterprise
             // mail hosts) are not a domain the sender chose.
-            let hosted_identity = crate::modules::common::hosted_identity_platform(
-                &sender_domain_lower,
-            )
-            .is_some();
+            let hosted_identity =
+                crate::modules::common::hosted_identity_platform(&sender_domain_lower).is_some();
 
             // Judge the registrable label, not the leftmost tenant prefix.
             let registrable = organizational_domain(&sender_domain_lower);
@@ -1277,7 +1275,10 @@ mod tests {
             .await
             .expect("identity analysis");
         assert!(
-            !hosted.categories.iter().any(|category| category == "random_domain"),
+            !hosted
+                .categories
+                .iter()
+                .any(|category| category == "random_domain"),
             "WeCom tenant labels are assigned platform ids: {hosted:?}"
         );
         let consonant_tenant = module
@@ -1303,7 +1304,9 @@ mod tests {
             .await
             .expect("identity analysis");
         assert!(
-            apex.categories.iter().any(|category| category == "random_domain"),
+            apex.categories
+                .iter()
+                .any(|category| category == "random_domain"),
             "an apex mixed alphanumeric domain remains random: {apex:?}"
         );
 

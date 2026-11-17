@@ -1214,10 +1214,7 @@ mod tests {
         let mut evidence = Vec::new();
         let mut items = Vec::new();
         check_domain_mismatch(
-            &ds_header_pair(
-                "service@rep.hundsun.cn",
-                Some("service@hundsun.com"),
-            ),
+            &ds_header_pair("service@rep.hundsun.cn", Some("service@hundsun.com")),
             &mut score,
             &mut categories,
             &mut evidence,

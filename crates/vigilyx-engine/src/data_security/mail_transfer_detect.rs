@@ -303,7 +303,7 @@ mod tests {
     #[test]
     fn public_reference_login_and_saved_drafts_are_not_sensitive_sends() {
         for (uri, body) in [
-            ("/mail/send", "SWIFT: CITIUS33"),
+            ("/mail/send", "SWIFT: TESTUS33"),
             ("/login", "password=abc123456"),
             (
                 "/coremail/common/mbox/compose.jsp",

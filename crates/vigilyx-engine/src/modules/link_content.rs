@@ -1603,10 +1603,7 @@ fn analyze_url_with_anchor_context_scored(
                 // short labels such as xvkrz stay eligible. Pinyin-initial
                 // abbreviations are already excluded above.
                 let has_vowel = alpha_bytes.iter().any(|byte| {
-                    matches!(
-                        byte.to_ascii_lowercase(),
-                        b'a' | b'e' | b'i' | b'o' | b'u'
-                    )
+                    matches!(byte.to_ascii_lowercase(), b'a' | b'e' | b'i' | b'o' | b'u')
                 });
                 if alpha_bytes.len() <= 6 && has_vowel {
                     continue;
@@ -3600,10 +3597,8 @@ mod tests {
 
         // xqzpk is entirely pinyin initials, so the existing abbreviation
         // exemption applies. xvkrz has no vowel and contains a non-initial.
-        let hosted = analyze_with_runtime(
-            &module,
-            &make_ctx("https://xvkrz.wecom.work/mail/download"),
-        );
+        let hosted =
+            analyze_with_runtime(&module, &make_ctx("https://xvkrz.wecom.work/mail/download"));
         assert!(
             !hosted.categories.contains(&"dga_random_domain".to_string()),
             "a WeCom tenant label is not a DGA domain: {hosted:?}"

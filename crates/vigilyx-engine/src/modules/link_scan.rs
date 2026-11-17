@@ -12,11 +12,10 @@ use std::sync::{LazyLock, OnceLock, RwLock};
 use super::common::{
     domain_matches_policy_set, domains_share_institutional_brand,
     domains_share_organizational_domain, domains_share_sender_organization,
-    extract_domain_from_url,
-    extract_redirect_target_urls, host_matches_domain_or_subdomain, is_operational_delivery_alert,
-    is_private_network_url, is_probable_non_clickable_render_asset_url,
-    is_probable_opaque_mail_callback_url, is_probable_safe_static_asset_url, organizational_domain,
-    percent_decode, url_has_userinfo,
+    extract_domain_from_url, extract_redirect_target_urls, host_matches_domain_or_subdomain,
+    is_operational_delivery_alert, is_private_network_url,
+    is_probable_non_clickable_render_asset_url, is_probable_opaque_mail_callback_url,
+    is_probable_safe_static_asset_url, organizational_domain, percent_decode, url_has_userinfo,
 };
 use crate::context::SecurityContext;
 use crate::error::EngineError;

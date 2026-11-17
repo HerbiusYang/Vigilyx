@@ -23,6 +23,8 @@
     "site/docs/knowledge/index.md",
     "site/docs/project-site.md",
     "site/docs/quick-start.md",
+    "site/docs/releases.md",
+    "site/docs/training-data.md",
     "site/docs/updating.md",
     "site/index.md",
     "site/zh/docs/architecture.md",
@@ -32,6 +34,8 @@
     "site/zh/docs/knowledge/index.md",
     "site/zh/docs/project-site.md",
     "site/zh/docs/quick-start.md",
+    "site/zh/docs/releases.md",
+    "site/zh/docs/training-data.md",
     "site/zh/docs/updating.md",
     "site/zh/index.md"
   ]

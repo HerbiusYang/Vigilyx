@@ -650,7 +650,7 @@ mod tests {
         assert!(build_transfer_incident(&review, Some(&scan)).is_none());
         review.audit_class = EmailAuditClass::OutboundCandidate;
         assert!(build_transfer_incident(&review, Some(&scan)).is_some());
-        email.content.body_text = Some("SWIFT: CITIUS33".into());
+        email.content.body_text = Some("SWIFT: TESTUS33".into());
         let public_scan = super::super::email_dlp::scan_email(&email);
         assert!(build_transfer_incident(&review, Some(&public_scan)).is_none());
     }
