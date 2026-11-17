@@ -547,24 +547,6 @@ impl VigilDb {
                 .await?
                 .rows_affected();
 
-        // The login dashboard only reads a 24-hour window. Keep one extra
-        // day for boundary-hour diagnostics without letting the L3 tables
-        // grow with the lifetime of the raw sessions table.
-        let login_hourly_cutoff = (chrono::Utc::now() - chrono::Duration::hours(48)).to_rfc3339();
-        let login_hourly_sources_deleted = sqlx::query(
-            "DELETE FROM external_login_hourly_sources WHERE hour_start < $1::timestamptz",
-        )
-        .bind(&login_hourly_cutoff)
-        .execute(&self.pool)
-        .await?
-        .rows_affected();
-        let login_hourly_deleted =
-            sqlx::query("DELETE FROM external_login_hourly WHERE hour_start < $1::timestamptz")
-                .bind(&login_hourly_cutoff)
-                .execute(&self.pool)
-                .await?
-                .rows_affected();
-
         tracing::info!(
             sessions = sessions_deleted,
             verdicts = vd,
