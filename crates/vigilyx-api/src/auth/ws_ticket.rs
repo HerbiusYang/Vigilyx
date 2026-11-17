@@ -10,8 +10,15 @@ use std::{
 struct WsTicketRecord {
     issued_at: Instant,
     username: String,
+    token_version: u64,
     client_ip: IpAddr,
     user_agent: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WsTicketPrincipal {
+    pub username: String,
+    pub token_version: u64,
 }
 
 /// WebSocket: 1 URL JWT
@@ -55,6 +62,16 @@ impl WsTicketStore {
         client_ip: IpAddr,
         user_agent: Option<&str>,
     ) -> Option<String> {
+        self.issue_with_token_version(username, 0, client_ip, user_agent)
+    }
+
+    pub fn issue_with_token_version(
+        &self,
+        username: &str,
+        token_version: u64,
+        client_ip: IpAddr,
+        user_agent: Option<&str>,
+    ) -> Option<String> {
         let ticket = uuid::Uuid::new_v4().to_string();
         let mut tickets = self.tickets.lock().unwrap_or_else(|poisoned| {
             tracing::warn!("WsTicketStore lock was poisoned, recovering");
@@ -76,7 +93,6 @@ impl WsTicketStore {
             .count();
         if user_tickets >= MAX_TICKETS_PER_USER {
             tracing::warn!(
-                username = %username,
                 outstanding = user_tickets,
                 "WsTicketStore per-user 配额已满 ({MAX_TICKETS_PER_USER})，拒绝签发New票据"
             );
@@ -87,6 +103,7 @@ impl WsTicketStore {
             WsTicketRecord {
                 issued_at: now,
                 username: username.to_string(),
+                token_version,
                 client_ip,
                 user_agent: normalize_user_agent(user_agent),
             },
@@ -97,14 +114,14 @@ impl WsTicketStore {
     /// Verify (1: verify delete).
 
     /// ,, DoS.
-    /// Verify (1: verify delete). Returns the bound username so the
-    /// connection can track per-user revocation epochs.
+    /// Verify (1: verify delete). Returns the bound identity snapshot so the
+    /// connection can reject tickets issued before token revocation.
     pub fn consume(
         &self,
         ticket: &str,
         client_ip: IpAddr,
         user_agent: Option<&str>,
-    ) -> Option<String> {
+    ) -> Option<WsTicketPrincipal> {
         let mut tickets = self.tickets.lock().unwrap_or_else(|poisoned| {
             tracing::warn!("WsTicketStore lock was poisoned, recovering");
             poisoned.into_inner()
@@ -120,7 +137,6 @@ impl WsTicketStore {
         let normalized_user_agent = normalize_user_agent(user_agent);
         if record.client_ip != client_ip || record.user_agent != normalized_user_agent {
             tracing::warn!(
-                username = %record.username,
                 expected_ip = %record.client_ip,
                 actual_ip = %client_ip,
                 "WebSocket ticket source mismatch"
@@ -129,7 +145,10 @@ impl WsTicketStore {
         }
 
         tickets.remove(ticket);
-        Some(record.username)
+        Some(WsTicketPrincipal {
+            username: record.username,
+            token_version: record.token_version,
+        })
     }
 
     pub fn clear(&self) {
@@ -157,12 +176,32 @@ mod tests {
             .issue("admin", ip(10), Some("Mozilla/5.0"))
             .expect("ticket should be issued");
 
-        assert!(store
-            .consume(&ticket, ip(10), Some("Mozilla/5.0"))
-            .is_some());
-        assert!(store
-            .consume(&ticket, ip(10), Some("Mozilla/5.0"))
-            .is_none());
+        assert!(
+            store
+                .consume(&ticket, ip(10), Some("Mozilla/5.0"))
+                .is_some()
+        );
+        assert!(
+            store
+                .consume(&ticket, ip(10), Some("Mozilla/5.0"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn ticket_preserves_token_version_for_revocation_check() {
+        let store = WsTicketStore::new();
+        let ticket = store
+            .issue_with_token_version("admin", 7, ip(10), Some("Mozilla/5.0"))
+            .expect("ticket should be issued");
+
+        assert_eq!(
+            store.consume(&ticket, ip(10), Some("Mozilla/5.0")),
+            Some(WsTicketPrincipal {
+                username: "admin".to_string(),
+                token_version: 7,
+            })
+        );
     }
 
     #[test]
@@ -172,12 +211,16 @@ mod tests {
             .issue("admin", ip(10), Some("Mozilla/5.0"))
             .expect("ticket should be issued");
 
-        assert!(store
-            .consume(&ticket, ip(11), Some("Mozilla/5.0"))
-            .is_none());
-        assert!(store
-            .consume(&ticket, ip(10), Some("Mozilla/5.0"))
-            .is_some());
+        assert!(
+            store
+                .consume(&ticket, ip(11), Some("Mozilla/5.0"))
+                .is_none()
+        );
+        assert!(
+            store
+                .consume(&ticket, ip(10), Some("Mozilla/5.0"))
+                .is_some()
+        );
     }
 
     #[test]
@@ -187,12 +230,12 @@ mod tests {
             .issue("admin", ip(10), Some("Mozilla/5.0"))
             .expect("ticket should be issued");
 
-        assert!(store
-            .consume(&ticket, ip(10), Some("curl/8.0"))
-            .is_none());
-        assert!(store
-            .consume(&ticket, ip(10), Some("Mozilla/5.0"))
-            .is_some());
+        assert!(store.consume(&ticket, ip(10), Some("curl/8.0")).is_none());
+        assert!(
+            store
+                .consume(&ticket, ip(10), Some("Mozilla/5.0"))
+                .is_some()
+        );
     }
 
     #[test]
@@ -205,15 +248,18 @@ mod tests {
             WsTicketRecord {
                 issued_at: Instant::now() - TICKET_TTL - Duration::from_secs(1),
                 username: "admin".to_string(),
+                token_version: 0,
                 client_ip: ip(10),
                 user_agent: Some("Mozilla/5.0".to_string()),
             },
         );
         drop(tickets);
 
-        assert!(store
-            .consume(&ticket, ip(10), Some("Mozilla/5.0"))
-            .is_none());
+        assert!(
+            store
+                .consume(&ticket, ip(10), Some("Mozilla/5.0"))
+                .is_none()
+        );
         assert!(!store.tickets.lock().unwrap().contains_key(&ticket));
     }
 
@@ -224,12 +270,16 @@ mod tests {
         let store = WsTicketStore::new();
         for _ in 0..MAX_TICKETS_PER_USER {
             assert!(
-                store.issue("attacker", ip(10), Some("Mozilla/5.0")).is_some(),
+                store
+                    .issue("attacker", ip(10), Some("Mozilla/5.0"))
+                    .is_some(),
                 "tickets within the per-user quota must be issued"
             );
         }
         assert!(
-            store.issue("attacker", ip(10), Some("Mozilla/5.0")).is_none(),
+            store
+                .issue("attacker", ip(10), Some("Mozilla/5.0"))
+                .is_none(),
             "the ticket past the per-user quota must be refused"
         );
     }
@@ -262,9 +312,11 @@ mod tests {
 
         // Consuming one ticket frees one slot for the same user.
         let consumed = tickets.pop().expect("a ticket to consume");
-        assert!(store
-            .consume(&consumed, ip(10), Some("Mozilla/5.0"))
-            .is_some());
+        assert!(
+            store
+                .consume(&consumed, ip(10), Some("Mozilla/5.0"))
+                .is_some()
+        );
         assert!(store.issue("admin", ip(10), Some("Mozilla/5.0")).is_some());
     }
 }

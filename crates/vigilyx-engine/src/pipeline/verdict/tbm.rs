@@ -201,9 +201,13 @@ pub(super) fn aggregate_tbm_v5(
     );
 
     SecurityVerdict {
+        inspection_coverage: Default::default(),
+        coverage_reasons: vec![],
         id: Uuid::new_v4(),
         session_id,
         threat_level: final_level,
+        threat_type: None,
+        classification: None,
         confidence: max_confidence,
         categories,
         summary,
@@ -225,6 +229,9 @@ pub(super) fn aggregate_tbm_v5(
             fusion_method: Some("tbm_v5".to_string()),
             circuit_breaker: None,
             convergence_breaker: None,
+            shadow_results: Vec::new(),
+            primary_result: None,
+            relational_shadow: None,
         }),
     }
 }

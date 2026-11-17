@@ -1,0 +1,11 @@
+From: =?utf-8?B?5ZCI6KeE5Lit5b+D?= <kyc@coin-ex.example>
+To: me@personal.example
+Date: Fri, 04 Sep 2026 10:11:00 +0800
+Message-ID: <0001-b12@synth.example>
+Subject: KYC 信息即将过期
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您的 KYC 认证 7 日后过期，影响提币。更新需重新提交：
+https://kyc-up.example.info/k
+（身份证正反面+手持照+银行卡）

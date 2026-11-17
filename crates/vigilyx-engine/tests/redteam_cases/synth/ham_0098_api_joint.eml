@@ -1,0 +1,10 @@
+From: =?utf-8?B?6IGU6LCD?= <api@partner.example>
+To: dev@corp.internal
+Date: Fri, 28 Aug 2026 14:47:00 +0800
+Message-ID: <0037-b5@synth.example>
+Subject: 对账接口联调时间（9/3）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+9/3 上午联调对账接口，测试环境 token 已发到对接群。
+沙箱地址不变，联调用例 12 条在共享文档。

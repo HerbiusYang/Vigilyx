@@ -1,0 +1,10 @@
+From: =?utf-8?B?56iO5Yqh5pyN5Yqh?= <svc@tax-mobile.example>
+To: finance@corp.internal
+Date: Sat, 29 Aug 2026 10:10:00 +0800
+Message-ID: <0000-b6@synth.example>
+Subject: 个税 App 版本过低，影响申报
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+检测到您使用的个税 App 版本过低，年度汇算功能受限。
+请通过校验通道更新并核验身份：https://tax-mobile-fix.example.org/up

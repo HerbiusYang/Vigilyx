@@ -1,0 +1,22 @@
+From: =?utf-8?B?6K6u56iL5aeU5ZGY5LyaLeW8oA==?= <pc.zhang@conf-official.example>
+To: sec-research@corp.internal
+Date: Thu, 10 Sep 2026 08:11:00 +0800
+Message-ID: <0001-b18@synth.example>
+In-Reply-To: <stage1@corp.internal>
+Subject: Re: 很高兴在会场交流
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+上次说的内部材料整理了一份给您参考（压缩包，密码随后短信）。
+--BS
+Content-Type: application/vnd.rar
+Content-Disposition: attachment; filename="reference_materials.rar"
+Content-Transfer-Encoding: base64
+
+UmFyIRoHAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+--BS--

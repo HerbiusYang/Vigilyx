@@ -23,9 +23,11 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use prometheus::{
-    Counter, CounterVec, Encoder, Gauge, HistogramVec, TextEncoder, register_counter,
-    register_counter_vec, register_gauge, register_histogram_vec,
+    Counter, CounterVec, Encoder, Gauge, GaugeVec, HistogramVec, IntCounterVec, TextEncoder,
+    register_counter, register_counter_vec, register_gauge, register_gauge_vec,
+    register_histogram_vec, register_int_counter_vec,
 };
+use vigilyx_db::cache::{CacheDataset, CacheError};
 
 // Metric definitions (global singletons via LazyLock)
 
@@ -98,6 +100,127 @@ pub static ENGINE_MODULE_DURATION_SECONDS: LazyLock<HistogramVec> = LazyLock::ne
     )
     .expect("engine_module_duration_seconds metric must register")
 });
+
+/// Shared read-cache request outcomes.  All label values are selected from
+/// fixed call-site strings; no request input is used as a label.
+pub static READ_CACHE_REQUESTS_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register_int_counter_vec!(
+        "vigilyx_read_cache_requests_total",
+        "Read-cache requests by dataset, layer, and outcome",
+        &["dataset", "layer", "outcome"]
+    )
+    .expect("vigilyx_read_cache_requests_total metric must register")
+});
+
+pub static READ_CACHE_REFRESH_DURATION_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register_histogram_vec!(
+        "vigilyx_read_cache_refresh_duration_seconds",
+        "Read-cache refresh duration by dataset",
+        &["dataset"],
+        vec![0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0]
+    )
+    .expect("vigilyx_read_cache_refresh_duration_seconds metric must register")
+});
+
+pub static READ_CACHE_REFRESH_FAILURES_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register_int_counter_vec!(
+        "vigilyx_read_cache_refresh_failures_total",
+        "Read-cache refresh failures by dataset and bounded reason",
+        &["dataset", "reason"]
+    )
+    .expect("vigilyx_read_cache_refresh_failures_total metric must register")
+});
+
+pub static READ_CACHE_STALE_SERVED_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register_int_counter_vec!(
+        "vigilyx_read_cache_stale_served_total",
+        "Read-cache stale values served by dataset",
+        &["dataset"]
+    )
+    .expect("vigilyx_read_cache_stale_served_total metric must register")
+});
+
+pub static READ_CACHE_LOCK_CONTENTION_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register_int_counter_vec!(
+        "vigilyx_read_cache_lock_contention_total",
+        "Read-cache refresh lease contention by dataset",
+        &["dataset"]
+    )
+    .expect("vigilyx_read_cache_lock_contention_total metric must register")
+});
+
+pub static READ_CACHE_ENTRY_BYTES: LazyLock<GaugeVec> = LazyLock::new(|| {
+    register_gauge_vec!(
+        "vigilyx_read_cache_entry_bytes",
+        "Latest successfully written read-cache entry size",
+        &["dataset"]
+    )
+    .expect("vigilyx_read_cache_entry_bytes metric must register")
+});
+
+pub static READ_CACHE_AGE_SECONDS: LazyLock<GaugeVec> = LazyLock::new(|| {
+    register_gauge_vec!(
+        "vigilyx_read_cache_age_seconds",
+        "Age of the latest observed read-cache entry",
+        &["dataset"]
+    )
+    .expect("vigilyx_read_cache_age_seconds metric must register")
+});
+
+pub static READ_CACHE_FALLBACK_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register_int_counter_vec!(
+        "vigilyx_read_cache_fallback_total",
+        "Read-cache fallbacks to local cache or PostgreSQL",
+        &["dataset", "reason"]
+    )
+    .expect("vigilyx_read_cache_fallback_total metric must register")
+});
+
+pub fn cache_dataset_label(dataset: CacheDataset) -> &'static str {
+    dataset.slug()
+}
+
+pub fn cache_error_reason(error: &CacheError) -> &'static str {
+    match error {
+        CacheError::Redis(_) => "redis",
+        CacheError::Serialization(_) => "serialization",
+        CacheError::Timeout => "timeout",
+        CacheError::PayloadTooLarge { .. } => "payload_too_large",
+        CacheError::UnsupportedSchema(_) => "schema",
+    }
+}
+
+pub fn record_cache_request(dataset: CacheDataset, layer: &'static str, outcome: &'static str) {
+    READ_CACHE_REQUESTS_TOTAL
+        .with_label_values(&[cache_dataset_label(dataset), layer, outcome])
+        .inc();
+}
+
+pub fn record_cache_refresh_failure(dataset: CacheDataset, error: &CacheError) {
+    READ_CACHE_REFRESH_FAILURES_TOTAL
+        .with_label_values(&[cache_dataset_label(dataset), cache_error_reason(error)])
+        .inc();
+}
+
+pub fn record_cache_fallback(dataset: CacheDataset, reason: &'static str) {
+    READ_CACHE_FALLBACK_TOTAL
+        .with_label_values(&[cache_dataset_label(dataset), reason])
+        .inc();
+}
+
+pub fn record_cache_observation(
+    dataset: CacheDataset,
+    generated_at: chrono::DateTime<chrono::Utc>,
+) {
+    let age = (chrono::Utc::now() - generated_at)
+        .to_std()
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0)
+        .max(0.0);
+    READ_CACHE_AGE_SECONDS
+        .with_label_values(&[cache_dataset_label(dataset)])
+        .set(age);
+}
 
 // Path label selection (SEC-03: bounded label cardinality)
 

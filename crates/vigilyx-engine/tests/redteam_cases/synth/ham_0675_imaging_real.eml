@@ -1,0 +1,107 @@
+From: "Meridian Imaging Partners | Patient Notifications" <notifications@meridianimaging.example>
+To: d.whitfield@mymail.example
+Cc: (none)
+Date: Wed, 13 Jan 2027 08:50:00 -0500
+Message-ID: <0675-b80@synth.example>
+Subject: Chest CT Follow-Up Reminder - Accession R-2026-118842 - Report Available From Your Physician
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear Mr. Whitfield,
+
+FOLLOW-UP REMINDER ON YOUR RECENT CHEST
+CT.
+The radiologist's report on your 18
+December imaging (accession
+R-2026-118842) notes an incidental
+4 mm right lower-lobe nodule. The
+report recommends discussing results
+with your referring physician, who
+has received the full report.
+
+1. PATIENT SUMMARY
+
+  Study:          Chest CT without
+                  contrast, 18 Dec 2026
+  Accession:      R-2026-118842
+                  (ordered by Dr. Alvarez,
+                  PCP referral)
+  Finding:        4 mm solid nodule,
+                  right lower lobe,
+                  perifissural location
+  Guideline:      Fleischner 2017:
+                  incidental solid nodule
+                  < 6 mm in low-risk
+                  patient - routine
+                  12-month CT optional
+  Overall
+    impression:   "No acute
+                  cardiopulmonary
+                  process. Benign-appearing
+                  nodule, surveillance per
+                  guideline."
+
+2. HOW TO GET YOUR REPORT AND IMAGES
+   (OFFICIAL PATH)
+
+    1. Your full report has gone to
+       Dr. Alvarez; schedule your
+       results visit as you normally
+       would (portal or phone).
+    2. Images and reports are
+       downloadable from the patient
+       portal you registered with at
+       your visit: type
+       meridianimaging.example and
+       log in with the credentials
+       you created.
+    3. If you want a second opinion,
+       ask Dr. Alvarez or any
+       physician you choose to send
+       a records request - DICOM
+       transfers go physician-to-
+       physician or through the
+       portal's records export,
+       never through email upload
+       pages.
+
+  Meridian Imaging will NEVER:
+  - Email an "upload records for
+    second-opinion review" page
+    scoped to an accession number
+  - Collect a "technical review
+    fee" through an emailed
+    payment step (second opinions
+    are either billed through
+    insurance or arranged by the
+    requesting physician)
+  - Run "expedited review weeks"
+    with limited slots attached
+    to a scary finding
+  - Offer a caregiver lane that
+    transfers records with the
+    patient's date of birth plus
+    an ID photo and no patient
+    authorization
+  - Use meridian-imaging-care /
+    meridian-radreports variant
+    domains
+
+3. ABOUT THE FINDING
+
+  Perifissural nodules under 6 mm
+  are overwhelmingly benign; the
+  12-month surveillance your
+  report recommends (or simply
+  reviewing with your PCP) is
+  the standard of care. Any
+  message that converts a
+  low-risk finding into a
+  this-week-only paid decision
+  is exploiting the moment, not
+  practicing medicine.
+
+Meridian Imaging Partners |
+Patient Notifications
+This notice concerns accession
+R-2026-118842 only.

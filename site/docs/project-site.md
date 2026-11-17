@@ -11,10 +11,11 @@ The public Vigilyx website and docs live in `site/` and are built with VitePress
 
 This repository stores only the site source:
 
-- `site/index.md`
-- `site/docs/*.md`
-- `site/.vitepress/*`
-- `site/public/*`
+- `site/index.md` and `site/zh/index.md`
+- `site/docs/` and `site/zh/docs/`
+- `site/.vitepress/`
+- `site/public/`
+- `site/package.json`, `site/package-lock.json`, and `site/scripts/postbuild.mjs`
 
 Generated output such as `site/.vitepress/dist` is ignored and is not committed to the repository.
 
@@ -51,6 +52,12 @@ The Simplified Chinese site is:
 https://herbiusyang.github.io/Vigilyx/zh/
 ```
 
+The Simplified Chinese docs are:
+
+```text
+https://herbiusyang.github.io/Vigilyx/zh/docs/
+```
+
 ## Custom domain variables
 
 The workflow supports three repository variables.
@@ -85,19 +92,34 @@ Example:
 /Vigilyx/
 ```
 
-## Local preview
+## Remote preview
 
-Run the site locally from the repository root:
+Use Node.js `24.19.0` and npm `12.0.2`, as pinned by the repository's `.nvmrc` and `site/package.json`.
+
+Sync local site edits to the remote build host, then run the site there and use an SSH tunnel from the local machine:
 
 ```bash
-cd site
-npm ci
-npm run dev
+# On the local workstation, from the repository root; replace these values
+# with the SSH target and repository path used by your deployment.
+REMOTE_HOST="root@your-server"
+REMOTE_DIR="/path/to/VIGILYX"
+rsync -az --exclude='node_modules' --exclude='.vitepress/cache' --exclude='.vitepress/dist' \
+  site/ "${REMOTE_HOST}:${REMOTE_DIR}/site/"
+
+# From the local workstation, start the preview on the remote host
+ssh "$REMOTE_HOST" "cd '${REMOTE_DIR}/site' && npm ci && npm run dev -- --host 127.0.0.1"
+
+# In a second local terminal
+REMOTE_HOST="root@your-server"  # set the same SSH target again in this terminal
+ssh -L 5173:127.0.0.1:5173 "$REMOTE_HOST"
 ```
 
-To build it locally:
+Repeat the `rsync` command after local edits; the remote VitePress server watches the synchronized files.
+
+Build it on the remote host:
 
 ```bash
-cd site
-npm run build
+REMOTE_HOST="root@your-server"
+REMOTE_DIR="/path/to/VIGILYX"
+ssh "$REMOTE_HOST" "cd '${REMOTE_DIR}/site' && npm ci && npm run build"
 ```

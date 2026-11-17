@@ -3,7 +3,9 @@
 use anyhow::{Context, Result, ensure};
 use redis::aio::MultiplexedConnection;
 use serde::{Deserialize, Serialize};
+use tokio::time::{Duration, sleep};
 use uuid::Uuid;
+use vigilyx_db::cache::{CacheDataset, CacheEnvelope, CacheKey, ReadCacheClient, ReadCacheConfig};
 use vigilyx_db::mq::{MqClient, MqConfig, StreamClient};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,8 +78,10 @@ async fn real_stream_covers_pel_autoclaim_ack_dlq_and_reconnect() -> Result<()> 
     assert_eq!(consumer_a.xpending_summary(&stream).await?.total, 2);
 
     // A second consumer represents a replacement process after consumer A died.
-    // min_idle=0 makes ownership transfer deterministic without sleeping.
-    let claimed = consumer_b.xautoclaim::<TestMessage>(&stream, 0, 10).await?;
+    // Give Redis a small, explicit idle interval; some Redis/Valkey versions
+    // do not consider an entry immediately claimable at exactly 0ms.
+    sleep(Duration::from_millis(10)).await;
+    let claimed = consumer_b.xautoclaim::<TestMessage>(&stream, 1, 10).await?;
     assert_eq!(claimed.len(), 2);
     assert_eq!(claimed[1].1, messages[1]);
 
@@ -133,5 +137,56 @@ async fn real_stream_covers_pel_autoclaim_ack_dlq_and_reconnect() -> Result<()> 
 
     let mut cleanup = admin_connection(&url).await?;
     delete_test_keys(&mut cleanup, &[&stream, &dlq]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn real_read_cache_round_trips_and_coalesces_refresh_leases() -> Result<()> {
+    let url = test_redis_url()?;
+    let suffix = Uuid::new_v4().simple().to_string();
+    let deployment_id = format!("cache-test-{suffix}");
+    let config = ReadCacheConfig::for_integration_test(url.clone(), deployment_id.clone());
+    let client = ReadCacheClient::new(config);
+    client.warm_up().await?;
+
+    let key = CacheKey::security_overview();
+    let envelope = CacheEnvelope::for_dataset(
+        CacheDataset::SecurityOverview24h,
+        serde_json::json!({"test": suffix}),
+        Some("integration-watermark".to_string()),
+    );
+    assert!(client.set(key, &envelope).await? > 0);
+
+    let stored = client
+        .get::<serde_json::Value>(key)
+        .await?
+        .context("read-cache value should round-trip")?;
+    assert_eq!(stored.data["test"], suffix);
+    assert!(stored.is_fresh(chrono::Utc::now()));
+
+    let first_token = format!("first-{suffix}");
+    let second_token = format!("second-{suffix}");
+    assert!(client.try_acquire_refresh_lease(key, &first_token).await?);
+    assert!(!client.try_acquire_refresh_lease(key, &second_token).await?);
+    client.release_refresh_lease(key, &first_token).await?;
+    assert!(client.try_acquire_refresh_lease(key, &second_token).await?);
+    client.release_refresh_lease(key, &second_token).await?;
+
+    client.delete(key).await?;
+    assert!(client.get::<serde_json::Value>(key).await?.is_none());
+
+    let mut cleanup = admin_connection(&url).await?;
+    delete_test_keys(&mut cleanup, &[&key.redis_key(&deployment_id)]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn read_cache_connection_failure_is_bounded() -> Result<()> {
+    let suffix = Uuid::new_v4().simple().to_string();
+    let client = ReadCacheClient::new(ReadCacheConfig::for_integration_test(
+        "redis://127.0.0.1:1".to_string(),
+        format!("cache-failure-{suffix}"),
+    ));
+    assert!(client.warm_up().await.is_err());
     Ok(())
 }

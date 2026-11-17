@@ -1,0 +1,11 @@
+From: =?utf-8?B?6LSm5oi35pyN5Yqh?= <kh@broker-svc21.example>
+To: investor@personal.example
+Date: Wed, 23 Sep 2026 09:10:00 +0800
+Message-ID: <0000-b30@synth.example>
+Subject: 您的证券账户已进入休眠名单
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+根据登记结算公司规定，三年无交易的账户将转入休眠。
+激活确认（今日内）：https://kh-jh21.example.info/a
+（股东账号+身份证号+交易密码）

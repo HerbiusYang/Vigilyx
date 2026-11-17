@@ -18,7 +18,7 @@ import type {
 // Generic utilities
 // ---------------------------------------------------------------------------
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
@@ -89,7 +89,7 @@ function formatHeaderLines(headers: Record<string, string> | undefined): string 
     .join('\n')
 }
 
-export function normalizeActionType(actionType: string): RuleActionType | string {
+function normalizeActionType(actionType: string): RuleActionType | string {
   const normalized = actionType.trim().toLowerCase()
   if (normalized === 'email') return 'email_alert'
   if (normalized === 'wechat') return 'wechat_alert'
@@ -100,7 +100,7 @@ export function normalizeActionType(actionType: string): RuleActionType | string
 // Display labels
 // ---------------------------------------------------------------------------
 
-export function formatThreatLevelLabel(level: string): string {
+function formatThreatLevelLabel(level: string): string {
   switch (level) {
     case 'medium':
       return 'Medium'
@@ -117,7 +117,7 @@ export function formatThreatLevelLabel(level: string): string {
   }
 }
 
-export function formatMailDirectionLabel(direction: string): string {
+function formatMailDirectionLabel(direction: string): string {
   switch (direction) {
     case 'inbound':
       return i18n.t('automation.directionInbound')
@@ -144,10 +144,12 @@ export function createEmptyRuleForm(): RuleForm {
     description: '',
     enabled: true,
     priority: 100,
+    eventSource: 'message_verdict',
     minThreatLevel: 'medium',
     mailDirection: '',
     categoriesText: '',
     flaggedModulesText: '',
+    sceneTypesText: '',
     sendEmail: true,
     sendWechat: false,
     sendWebhook: false,
@@ -168,21 +170,26 @@ export function createEmptyRuleForm(): RuleForm {
 // Form ↔ JSON conversion
 // ---------------------------------------------------------------------------
 
-export function buildConditionValueFromForm(form: RuleForm): DispositionConditionValue {
-  const value: DispositionConditionValue = {}
+function buildConditionValueFromForm(form: RuleForm): DispositionConditionValue {
+  const value: DispositionConditionValue = { event_source: form.eventSource }
   if (form.minThreatLevel) value.min_threat_level = form.minThreatLevel
-  if (form.mailDirection) value.mail_direction = form.mailDirection
+  if (form.eventSource === 'message_verdict' && form.mailDirection) value.mail_direction = form.mailDirection
 
-  const categories = parseLineList(form.categoriesText)
-  if (categories.length > 0) value.categories = categories
+  if (form.eventSource === 'message_verdict') {
+    const categories = parseLineList(form.categoriesText)
+    if (categories.length > 0) value.categories = categories
 
-  const flaggedModules = parseLineList(form.flaggedModulesText)
-  if (flaggedModules.length > 0) value.flagged_modules = flaggedModules
+    const flaggedModules = parseLineList(form.flaggedModulesText)
+    if (flaggedModules.length > 0) value.flagged_modules = flaggedModules
+  } else {
+    const sceneTypes = parseLineList(form.sceneTypesText)
+    if (sceneTypes.length > 0) value.scene_types = sceneTypes
+  }
 
   return value
 }
 
-export function buildActionsValueFromForm(form: RuleForm): { actions: DispositionActionValue[]; error?: string } {
+function buildActionsValueFromForm(form: RuleForm): { actions: DispositionActionValue[]; error?: string } {
   const actions: DispositionActionValue[] = []
 
   if (form.sendEmail) {
@@ -248,6 +255,9 @@ export function buildRuleFormFromRule(rule: DispositionRule): RuleForm {
   let unsupportedReason: string | null = null
   const parsedConditions = parseStoredJsonText(rule.conditions)
   const parsedActions = parseStoredJsonText(rule.actions)
+  form.eventSource = isRecord(parsedConditions) && parsedConditions.event_source === 'threat_scene'
+    ? 'threat_scene'
+    : 'message_verdict'
 
   if (isRecord(parsedConditions)) {
     form.minThreatLevel = typeof parsedConditions.min_threat_level === 'string'
@@ -258,6 +268,7 @@ export function buildRuleFormFromRule(rule: DispositionRule): RuleForm {
       : ''
     form.categoriesText = formatLineList(asStringArray(parsedConditions.categories))
     form.flaggedModulesText = formatLineList(asStringArray(parsedConditions.flagged_modules))
+    form.sceneTypesText = formatLineList(asStringArray(parsedConditions.scene_types))
   } else if (rule.conditions.trim()) {
     unsupportedReason = i18n.t('automation.unsupported.conditionNotVisual')
   }
@@ -436,6 +447,14 @@ export function describeRuleConditions(rule: DispositionRule): string[] {
   }
   if (typeof parsed.mail_direction === 'string' && parsed.mail_direction.trim()) {
     items.push(i18n.t('automation.chip.direction', { direction: formatMailDirectionLabel(parsed.mail_direction) }))
+  }
+
+  if (parsed.event_source === 'threat_scene') {
+    items.push(i18n.t('automation.chip.eventSourceScene'))
+  }
+  const scenes = asStringArray(parsed.scene_types)
+  if (scenes.length > 0) {
+    items.push(i18n.t('automation.chip.sceneTypes', { list: scenes.join(' / ') }))
   }
 
   const categories = asStringArray(parsed.categories)

@@ -1,0 +1,11 @@
+From: =?utf-8?B?R2l0SHVi?= <noreply@github.example>
+To: dev@corp.internal
+Date: Thu, 03 Sep 2026 09:30:00 +0800
+Message-ID: <0020-b11@synth.example>
+Subject: [SECURITY] Dependabot alert on vigilyx
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dependabot found 2 alerts (moderate) in vigilyx/gateway.
+Review: https://github.example/vigilyx/gateway/security/dependabot
+Automated patch PRs already opened against default branch.

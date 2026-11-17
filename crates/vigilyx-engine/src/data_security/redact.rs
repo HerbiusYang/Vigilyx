@@ -15,7 +15,9 @@ use regex::{Captures, Regex};
 /// 脱敏占位符 (与 API 读取层一致)
 const REDACTED_VALUE: &str = "[REDACTED]";
 /// 精确匹配的敏感键 (小写归一后)
-const SENSITIVE_KEY_EXACT: &[&str] = &["auth", "otp", "pass", "pwd", "secret", "token"];
+const SENSITIVE_KEY_EXACT: &[&str] = &[
+    "auth", "otp", "pass", "pwd", "secret", "token", "cvv", "cvv2", "cvc", "cvc2", "pin",
+];
 /// 子串匹配的敏感键片段 (小写归一后)
 const SENSITIVE_KEY_FRAGMENTS: &[&str] = &[
     "accesstoken",
@@ -23,6 +25,8 @@ const SENSITIVE_KEY_FRAGMENTS: &[&str] = &[
     "authorization",
     "clientsecret",
     "credential",
+    "cardverification",
+    "securitycode",
     "passwd",
     "passcode",
     "passphrase",
@@ -94,6 +98,9 @@ fn redact_json_value(value: &mut serde_json::Value) {
             for item in items {
                 redact_json_value(item);
             }
+        }
+        serde_json::Value::String(text) => {
+            *text = redact_xml_tag_credentials(&redact_key_value_credentials(text));
         }
         _ => {}
     }
@@ -196,6 +203,16 @@ fn xml_tag_regex() -> &'static Regex {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redacts_cvv_and_credentials_inside_compose_content() {
+        let raw = r#"{"cvv":"731","attrs":{"content":"CVV: 732 Password: SyntheticOnly729!"}}"#;
+        let redacted = redact_request_body(raw, Some("application/json"));
+        assert!(!redacted.contains("731"));
+        assert!(!redacted.contains("732"));
+        assert!(!redacted.contains("SyntheticOnly729"));
+        assert!(redacted.contains("REDACTED"));
+    }
 
     #[test]
     fn redacts_form_login_credentials_before_storage() {

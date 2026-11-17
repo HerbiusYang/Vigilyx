@@ -1,0 +1,22 @@
+From: =?utf-8?B?6LW15bel?= <zhao@partner-relay5.example>
+To: eng@corp.internal
+Date: Wed, 09 Sep 2026 08:25:00 +0800
+Message-ID: <0015-b17@synth.example>
+In-Reply-To: <dwg-v3@corp.internal>
+Subject: Re: 图纸第3版
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+见附件。
+--BS
+Content-Type: application/pdf
+Content-Disposition: attachment; filename="第3版签字页.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+--BS--

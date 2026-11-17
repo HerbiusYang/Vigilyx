@@ -1,0 +1,100 @@
+From: Shopee 卖家支持中心 <seller-support@shopee-seller.example>
+To: merchant@corp.internal
+Cc: operations@corp.internal
+Reply-To: appeals@shopee-case.example
+Date: Tue, 20 Oct 2026 09:45:00 +0800
+Message-ID: <0685-b54@synth.example>
+Subject: [URGENT] Shop Suspension Appeal Deadline - Shop ID 884266 (48 hours remaining)
+MIME-Version: 1.0
+Content-Type: text/html; charset=gb2312
+
+<html><body style="font-family:sans-serif;max-width:640px;margin:0 auto;border:1px solid #ee4d2d;border-radius:8px;overflow:hidden">
+<div style="background:#ee4d2d;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">Shopee | Seller Support Center</h2>
+</div>
+<div style="padding:24px">
+
+<p>Dear Seller,</p>
+
+<p>Your shop <b>(Shop ID: 884266, Shop Name: VigilyxTech)</b> has been <b style="color:#e00">suspended</b> due to a violation of Shopee's Intellectual Property Policy. You have <b>48 hours</b> to submit an appeal before the suspension becomes permanent.</p>
+
+<h3 style="color:#ee4d2d;border-bottom:2px solid #ee4d2d;padding-bottom:4px">Suspension Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:150px">Shop ID</td><td><b>884266</b></td></tr>
+<tr><td style="background:#f5f5f5">Shop Name</td><td>VigilyxTech</td></tr>
+<tr><td style="background:#f5f5f5">Marketplace</td><td>Shopee Malaysia (MY)</td></tr>
+<tr><td style="background:#f5f5f5">Violation Type</td><td>Intellectual Property Infringement</td></tr>
+<tr><td style="background:#f5f5f5">Complaint Source</td><td>Brand Owner: Apple Inc. (Case #IP-MY-2026-4471)</td></tr>
+<tr><td style="background:#f5f5f5">Affected Listings</td><td>12 SKUs (iPhone-compatible accessories)</td></tr>
+<tr><td style="background:#f5f5f5">Suspension Date</td><td>2026-10-18</td></tr>
+<tr><td style="background:#f5f5f5">Appeal Deadline</td><td style="color:#e00"><b>2026-10-22 09:45 (48 hours from now)</b></td></tr>
+</table>
+
+<h3 style="color:#ee4d2d;border-bottom:2px solid #ee4d2d;padding-bottom:4px">Why was my shop suspended?</h3>
+<p>On October 15, Apple Inc. filed a formal complaint (Case #IP-MY-2026-4471) alleging that 12 of your product listings use the trademark "iPhone" and "MFi-Certified" without authorization. Specifically:</p>
+<ul>
+<li>SKU: ACC-IP15-CASE-01 — "iPhone 15 Pro Max MFi Certified Case" (MFi claim not verified)</li>
+<li>SKU: ACC-IP15-CHG-02 — "iPhone Fast Charging Cable MFi" (MFi claim not verified)</li>
+<li>10 additional SKUs using "iPhone" in product titles without brand authorization</li>
+</ul>
+
+<h3 style="color:#ee4d2d;border-bottom:2px solid #ee4d2d;padding-bottom:4px">How to Appeal</h3>
+<p>To appeal this suspension, you must provide evidence of brand authorization or remove the infringing listings. Submit your appeal through the Seller Case Management Portal:</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://shopee-seller.example/appeal/submit?shop=884266&case=IP-MY-2026-4471" style="display:inline-block;background:#ee4d2d;color:#fff;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Submit Appeal</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://seller.shopee.com.my/portal/case/appeal/884266</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（Use your registered seller email and password to log in. First-time users will need to verify their identity.）</p>
+
+<h3 style="color:#ee4d2d;border-bottom:2px solid #ee4d2d;padding-bottom:4px">Required Appeal Documents</h3>
+<ol>
+<li><b>Brand Authorization Letter</b> — from Apple Inc. or an authorized distributor permitting use of "iPhone" and "MFi"</li>
+<li><b>Supplier Invoices</b> — for all 12 affected SKUs (showing legitimate sourcing)</li>
+<li><b>Business License</b> — company registration documents</li>
+<li><b>Legal Representative ID</b> — passport or national ID of the company legal representative</li>
+<li><b>Bank Account Information</b> — for potential settlement fund release during suspension</li>
+</ol>
+
+<h3 style="color:#ee4d2d;border-bottom:2px solid #ee4d2d;padding-bottom:4px">Consequences of Permanent Suspension</h3>
+<ul>
+<li>All 847 product listings will be permanently removed</li>
+<li>Settlement funds (approximately <b>MYR 42,300</b>) will be frozen for 180 days</li>
+<li>Seller account and sub-accounts will be permanently banned</li>
+<li>Related accounts (same phone number/email/IP) will also be suspended</li>
+<li>You will be blacklisted from registering new Shopee seller accounts</li>
+</ul>
+
+<h3 style="color:#ee4d2d;border-bottom:2px solid #ee4d2d;padding-bottom:4px">Settlement Fund Release</h3>
+<p>During the suspension period, your settlement funds are frozen. If you wish to request an early release (before the 180-day freeze period ends), you may apply through the appeal portal. You will need to provide:</p>
+<ul>
+<li>Bank account details for fund transfer</li>
+<li>Verification of account ownership (bank statement + ID)</li>
+</ul>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">快速申诉通道（免登录）：shopee-seller.example/quick-appeal/884266 直接上传营业执照与法人证件，48小时内优先审核。</p>
+
+<h3 style="color:#ee4d2d;border-bottom:2px solid #ee4d2d;padding-bottom:4px">FAQ</h3>
+<p><b>Q: I don't have MFi authorization. Can I still appeal?</b><br>
+A: Yes. You can appeal by removing all "MFi" and "iPhone" references from your listings, then submitting a "Product Modification Appeal" instead of an "Authorization Appeal." Processing time: 3-5 business days.</p>
+
+<p><b>Q: How do I check my frozen settlement funds?</b><br>
+A: Log in to the Seller Centre → Finance → My Wallet. The frozen amount and release date will be shown. For early release, submit through the appeal portal.</p>
+
+<p><b>Q: What if I miss the 48-hour deadline?</b><br>
+A: The suspension becomes permanent. You may file a new seller account after 180 days, but all listing history and ratings will be lost.</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Shopee Seller Support Center | Cross-border Operations</p>
+<p style="font-size:11px;color:#999">Case Reference: SUSP-884266-IP-MY-2026</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the registered seller for Shop ID 884266.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://shopee-seller.example/api/track?recipient=merchant%40corp.internal&shop=884266&type=suspension_notice" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

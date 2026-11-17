@@ -79,11 +79,22 @@ pub(super) struct ParsedHeaders {
 /// Minimal representation of an Authentication-Results header value.
 pub(super) struct AuthResult {
     pub spf_fail: bool,
+    /// SPF explicitly reported `none`. This is an authentication-coverage
+    /// state, not general threat evidence, but is relevant to the narrow M365
+    /// Direct Send pattern.
+    pub spf_none: bool,
     pub dmarc_fail: bool,
-    /// DKIM=fail or DKIM=none (no signature). DKIM=pass leaves this false.
+    /// DMARC explicitly reported `none`; see `spf_none`.
+    pub dmarc_none: bool,
+    /// DKIM explicitly reported `fail`. DKIM=pass leaves this false.
     pub dkim_fail: bool,
+    /// DKIM explicitly reported `none`; see `spf_none`.
+    pub dkim_none: bool,
     /// DKIM=pass was explicitly reported by a trusted authentication hop.
     pub dkim_pass: bool,
+    /// The signing domain reported as `header.d` by that trusted hop.
+    /// A pass without this identity cannot establish sender-domain alignment.
+    pub dkim_domain: Option<String>,
     /// `arc=pass` indicates an upstream MTA already authenticated this hop.
     /// Used to suppress Direct Send false positives on legitimate forwarders.
     pub arc_pass: bool,
@@ -167,9 +178,8 @@ impl ParsedHeaders {
                 "dkim-signature" => has_dkim_signature = true,
                 "x-mailer" => x_mailer_value = Some(value.clone()),
                 "x-ms-exchange-crosstenant-authas" => {
-                    microsoft_cross_tenant_internal = value
-                        .to_ascii_lowercase()
-                        .contains("internal");
+                    microsoft_cross_tenant_internal =
+                        value.to_ascii_lowercase().contains("internal");
                 }
                 "received" => {
                     received_count += 1;
@@ -192,10 +202,13 @@ impl ParsedHeaders {
                 | "arc-authentication-results"
                 | "x-ms-exchange-authentication-results" => {
                     let authserv_id = normalize_authserv_id(value);
-                    let allowlisted = !authserv_id.is_empty()
-                        && configured_trusted_authserv_ids().contains(&authserv_id);
-                    let trusted = !authserv_id.is_empty()
-                        && ((trust_mta_generated_auth_results && !first_ar_seen) || allowlisted);
+                    let trusted_authserv_ids = configured_trusted_authserv_ids();
+                    let trusted = auth_results_header_is_trusted(
+                        &authserv_id,
+                        first_ar_seen,
+                        trust_mta_generated_auth_results,
+                        &trusted_authserv_ids,
+                    );
                     first_ar_seen = true;
                     if trusted {
                         if trusted_ar_authserv.is_none() {
@@ -205,23 +218,20 @@ impl ParsedHeaders {
 
                         // Parse method/result tokens exactly. Substrings such
                         // as `x-spf=pass` or `arc=passive` are not evidence.
-                        let spf_fail = has_auth_result(value, "spf", "fail")
-                            || has_auth_result(value, "spf", "softfail")
-                            || has_auth_result(value, "spf", "none")
-                            || has_auth_result(value, "spf", "temperror")
-                            || has_auth_result(value, "spf", "permerror");
+                        // Only an explicit, provenance-qualified `fail` is a
+                        // failure. none/neutral/errors are authentication or
+                        // coverage states, never attack evidence. SPF softfail
+                        // is a policy hint and remains non-actionable here.
+                        let spf_fail = has_auth_result(value, "spf", "fail");
+                        let spf_none = has_auth_result(value, "spf", "none");
 
-                        let dmarc_fail = has_auth_result(value, "dmarc", "fail")
-                            || has_auth_result(value, "dmarc", "none")
-                            || has_auth_result(value, "dmarc", "temperror")
-                            || has_auth_result(value, "dmarc", "permerror");
+                        let dmarc_fail = has_auth_result(value, "dmarc", "fail");
+                        let dmarc_none = has_auth_result(value, "dmarc", "none");
 
                         let dkim_pass = has_auth_result(value, "dkim", "pass");
-                        let dkim_fail = (has_auth_result(value, "dkim", "fail")
-                            || has_auth_result(value, "dkim", "none")
-                            || has_auth_result(value, "dkim", "neutral")
-                            || has_auth_result(value, "dkim", "permerror"))
-                            && !dkim_pass;
+                        let dkim_domain = dkim_pass.then(|| dkim_pass_domain(value)).flatten();
+                        let dkim_fail = has_auth_result(value, "dkim", "fail") && !dkim_pass;
+                        let dkim_none = has_auth_result(value, "dkim", "none") && !dkim_pass;
 
                         // ARC chain validation — when the upstream MTA has already
                         // authenticated and forwarded the message we treat it as
@@ -236,9 +246,13 @@ impl ParsedHeaders {
 
                         auth_results.push(AuthResult {
                             spf_fail,
+                            spf_none,
                             dmarc_fail,
+                            dmarc_none,
                             dkim_fail,
+                            dkim_none,
                             dkim_pass,
+                            dkim_domain,
                             arc_pass,
                             from_eop,
                         });
@@ -320,6 +334,17 @@ fn configured_trusted_authserv_ids() -> HashSet<String> {
         .collect()
 }
 
+fn auth_results_header_is_trusted(
+    authserv_id: &str,
+    earlier_auth_results_seen: bool,
+    trust_mta_generated_auth_results: bool,
+    trusted_authserv_ids: &HashSet<String>,
+) -> bool {
+    !authserv_id.is_empty()
+        && !earlier_auth_results_seen
+        && (trust_mta_generated_auth_results || trusted_authserv_ids.contains(authserv_id))
+}
+
 fn has_auth_result(value: &str, method: &str, result: &str) -> bool {
     value
         .split(|ch: char| ch == ';' || ch.is_ascii_whitespace())
@@ -327,6 +352,35 @@ fn has_auth_result(value: &str, method: &str, result: &str) -> bool {
         .any(|(name, outcome)| {
             name.eq_ignore_ascii_case(method) && outcome.eq_ignore_ascii_case(result)
         })
+}
+
+fn dkim_pass_domain(value: &str) -> Option<String> {
+    for clause in value.split(';').skip(1) {
+        if !has_auth_result(clause, "dkim", "pass") {
+            continue;
+        }
+
+        let domains: HashSet<String> = clause
+            .split_ascii_whitespace()
+            .filter_map(|token| token.split_once('='))
+            .filter(|(name, _)| name.eq_ignore_ascii_case("header.d"))
+            .map(|(_, raw_value)| {
+                raw_value
+                    .trim_matches(|ch: char| matches!(ch, '"' | '\'' | ',' | '(' | ')'))
+                    .trim_end_matches('.')
+                    .to_ascii_lowercase()
+            })
+            .filter(|domain| !domain.is_empty())
+            .collect();
+
+        // Ambiguous identity properties are not authoritative. Continue to a
+        // later independently passing clause rather than pairing identities
+        // across method-result clauses.
+        if domains.len() == 1 {
+            return domains.into_iter().next();
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -361,7 +415,12 @@ mod tests {
         for i in 0..20u8 {
             headers.push((
                 "Received".to_string(),
-                format!("from forged-{} ([198.51.100.{}]) by fake-{}.tld", i, i + 1, i),
+                format!(
+                    "from forged-{} ([198.51.100.{}]) by fake-{}.tld",
+                    i,
+                    i + 1,
+                    i
+                ),
             ));
         }
         let parsed = ParsedHeaders::extract(
@@ -435,6 +494,35 @@ mod tests {
     }
 
     #[test]
+    fn unknown_and_temporary_auth_states_are_not_failures() {
+        for value in [
+            "mx.example.org; spf=none; dkim=none; dmarc=none",
+            "mx.example.org; spf=neutral; dkim=neutral; dmarc=temperror",
+            "mx.example.org; spf=temperror; dkim=permerror; dmarc=permerror",
+            "mx.example.org; spf=softfail; dkim=none; dmarc=none",
+        ] {
+            let parsed = extract(&[("Authentication-Results", value)]);
+            assert_eq!(parsed.auth_results.len(), 1, "value={value}");
+            let auth = &parsed.auth_results[0];
+            assert!(!auth.spf_fail, "SPF unknown became failure: {value}");
+            assert!(!auth.dkim_fail, "DKIM unknown became failure: {value}");
+            assert!(!auth.dmarc_fail, "DMARC unknown became failure: {value}");
+        }
+    }
+
+    #[test]
+    fn explicit_trusted_failures_remain_failures() {
+        let parsed = extract(&[(
+            "Authentication-Results",
+            "mx.example.org; spf=fail; dkim=fail; dmarc=fail",
+        )]);
+        let auth = &parsed.auth_results[0];
+        assert!(auth.spf_fail);
+        assert!(auth.dkim_fail);
+        assert!(auth.dmarc_fail);
+    }
+
+    #[test]
     fn forged_deep_arc_pass_is_ignored() {
         let parsed = extract(&[
             (
@@ -469,7 +557,7 @@ mod tests {
     }
 
     #[test]
-    fn ar_from_internal_authserv_is_trusted_anywhere() {
+    fn internal_authserv_suffix_does_not_override_topmost_boundary() {
         // Internal-domain suffixes are not a trust boundary. Only the first
         // synthetic gateway result is accepted by the compatibility wrapper.
         let parsed = ParsedHeaders::extract(
@@ -532,6 +620,62 @@ mod tests {
         assert!(!parsed.auth_results_found);
         assert!(parsed.auth_results.is_empty());
         assert!(parsed.untrusted_auth_results);
+    }
+
+    #[test]
+    fn trusted_dkim_pass_preserves_normalized_header_d_identity() {
+        let parsed = ParsedHeaders::extract_for_session(
+            &[(
+                "Authentication-Results".to_string(),
+                "mx.gateway.example; dkim=pass header.d=MAILER.VENDOR.EXAMPLE; spf=pass"
+                    .to_string(),
+            )],
+            "203.0.113.10",
+            Some("sender@mailer.vendor.example"),
+            true,
+            &|_| false,
+            true,
+        );
+
+        assert_eq!(parsed.auth_results.len(), 1);
+        assert!(parsed.auth_results[0].dkim_pass);
+        assert_eq!(
+            parsed.auth_results[0].dkim_domain.as_deref(),
+            Some("mailer.vendor.example")
+        );
+    }
+
+    #[test]
+    fn deep_allowlisted_authserv_id_is_not_a_trusted_boundary() {
+        let trusted = HashSet::from(["trusted.gateway.example".to_string()]);
+        assert!(!auth_results_header_is_trusted(
+            "trusted.gateway.example",
+            true,
+            false,
+            &trusted,
+        ));
+    }
+
+    #[test]
+    fn dkim_header_d_is_bound_to_its_exact_passing_clause() {
+        let parsed = ParsedHeaders::extract_for_session(
+            &[(
+                "Authentication-Results".to_string(),
+                "mx.gateway.example; dkim=fail header.d=sender.example; dkim=pass header.d=other.example"
+                    .to_string(),
+            )],
+            "203.0.113.10",
+            Some("sender@sender.example"),
+            true,
+            &|_| false,
+            true,
+        );
+
+        assert!(parsed.auth_results[0].dkim_pass);
+        assert_eq!(
+            parsed.auth_results[0].dkim_domain.as_deref(),
+            Some("other.example")
+        );
     }
 
     #[test]

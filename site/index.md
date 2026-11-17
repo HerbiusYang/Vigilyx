@@ -3,12 +3,12 @@ layout: home
 
 title: Vigilyx
 titleTemplate: Rust-Powered Email Security Gateway
-description: Open-source Rust mail security gateway. Not a black box — a detection stack you can read, test, and extend. Mirror or inline MTA deployment on the same engine.
+description: Fast, explainable email security. Rust core, inline or mirror deployment, built to catch current phishing, BEC, and semantic threats.
 
 hero:
   name: Vigilyx
-  text: Email security that is actually different under the hood.
-  tagline: Open-source Rust mail security gateway. Not a black box — a detection stack you can read, test, and extend.
+  text: Fast mail security that catches the threats in front of you.
+  tagline: Rust-fast inspection, a console analysts can actually use, and detection for current phishing, BEC, QR, and semantic attacks.
   actions:
     - theme: brand
       text: Quick Start

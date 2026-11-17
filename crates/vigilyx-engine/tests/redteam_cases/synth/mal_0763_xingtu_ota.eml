@@ -1,0 +1,81 @@
+From: "星途汽车 | 车联网服务与OTA" <ota.service@xingtu-motors.example>
+To: chenlei@mymail.example
+Cc: (none)
+Reply-To: OTA 预约台 <ota.desk@xingtu-connected.example>
+Disposition-Notification-To: ota.service@xingtu-motors.example
+Date: Mon, 11 Jan 2027 10:20:00 +0800
+Message-ID: <0763-b80@synth.example>
+Subject: =?utf-8?B?44CQ5a6J5YWo5Y+s5Zue44CR5pif6YCUVFhM5Yi25Yqo6L2v5Lu2T1RB5Y2H57qn6aKE57qmIOKAlCDovabmnrblj7flsL7mrrUgTDkwMjE4NCDigJQg5Y2H57qn56qX5Y+j5pys5ZGo5LqU5oiq5q2i77yM6YC+5pyf5b2x5ZON5bm05qOA?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px">
+<p>陈磊先生：</p>
+
+<p style="background:#FFEBEE;border-left:4px solid #B71C1C;padding:12px">
+<b>安全召回：制动软件 OTA 升级（ Campaign ST-2026-OTA-11）。</b>
+您的星途 TXL（车架号尾段 <b>L902184</b>）在本次召回范围内：湿滑路面 ABS 与 AEB 协同标定存在
+软件缺陷（缺陷代码 BR-4417）。升级通过 OTA 推送，<b>升级窗口本周五 24:00 截止</b>——逾期未完成的
+车辆，故障提示将常亮并<b>影响下次年检的 OBD 读取</b>，需到店刷写（收费工时）。
+</p>
+
+<h3>一、车辆与召回信息</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:220px">车型</td><td>星途 TXL 400T 四驱旗舰（2024 款）</td></tr>
+<tr><td style="background:#f5f5f5">车架号尾段</td><td>L902184</td></tr>
+<tr><td style="background:#f5f5f5">当前软件版本</td><td>IBCU 2.4.16（目标版本 2.5.02）</td></tr>
+<tr><td style="background:#f5f5f5">缺陷描述</td><td>ABS/AEB 协同标定：湿地低速跟车场景制动力分配延迟约 0.4s</td></tr>
+<tr><td style="background:#f5f5f5">召回备案</td><td>市场监管总局缺陷召回公告 2026-11-08（ST-2026-OTA-11）</td></tr>
+<tr><td style="background:#f5f5f5">升级方式</td><td>OTA 远程推送（约 35 分钟，车辆驻电状态）</td></tr>
+<tr><td style="background:#f5f5f5">费用</td><td>免费（召回性质）</td></tr>
+</table>
+
+<h3>二、为什么需要"车机账户重新授权"</h3>
+<p>本次升级涉及制动域控制器，按车联网安全新规（GB 汽车整车信息安全技术要求），跨域刷写前
+车机账户需完成<b>升级授权码绑定</b>：OTA 推送到达车机后，屏幕显示 6 位授权码，该码同时短信发送
+至车机账户绑定的手机号。<b>将授权码提交到本邮件的预约台完成绑定后，升级包才会解密写入。</b>
+这是防止他人恶意触发跨域刷写的双重确认设计。</p>
+
+<h3>三、预约与授权流程</h3>
+<p style="text-align:center;margin:18px 0">
+<a href="https://xingtu-connected.example/ota/bind?camp=ST-2026-OTA-11&amp;vin=L902184" style="display:inline-block;background:#B71C1C;color:#fff;padding:12px 42px;text-decoration:none;border-radius:4px;font-weight:bold">进入 OTA 升级预约与授权绑定</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">预约入口：https://www.xingtu-motors.example/owners/ota（车主 App 内"召回服务"入口相同）</p>
+
+<ol>
+<li>点击上方入口，确认车架号与召回活动；</li>
+<li>选择升级时段（今晚起每晚 22:00-次日 6:00 可推送）；</li>
+<li>推送到达车机后，将<b>屏幕显示的 6 位授权码</b>在绑定页提交；</li>
+<li>升级完成自动生成电子回执（存入车主 App，年检可出示）。</li>
+</ol>
+
+<h3>四、时间线</h3>
+<ul>
+<li>授权绑定截止：<b>本周五 24:00</b>（与召回 OTA 窗口同步关闭）</li>
+<li>逾期后果：故障灯常亮 + 年检 OBD 受影响 + 到店刷写收工时费（约 380 元）</li>
+<li>下一批窗口：尚未排期（召回类不保证补发）</li>
+</ul>
+
+<p style="font-size:14px;background:#FFF3E0;padding:12px">"车企发链接要验证码"正是诈骗培训里的经典
+桥段——你的警惕完全正确。区别在两点：其一，授权码是<b>车机屏幕显示、短信同步</b>的双通道码，
+绑定页只收这个码，不收您的车主 App 密码或支付信息；其二，预约也可以完全不走链接——直接在
+车主 App"召回服务"里操作，流程相同。但本周五的窗口是国家召回备案的统一时限，无法为单台车
+延期。</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://xingtu-connected.example/px/ota.gif?c=ST-2026-OTA-11&amp;v=L902184&amp;r=chenlei%40mymail.example" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">二手车/代管车辆通道：非车主本人代办升级的，可在绑定页上传行驶证与代办人身份证完成授权（免车主短信码，当日审核）。</p>
+
+<h3>五、联系方式</h3>
+<p>OTA 预约台：ota.desk@xingtu-connected.example<br>
+活动引用：ST-2026-OTA-11 · 车架号尾段 L902184<br>
+客服热线：400-xxx-xxxx（车主 App 内直拨优先）</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+星途汽车 · 车联网服务与 OTA · 本通知发送至车主登记邮箱<br>
+召回信息可在市场监管总局缺陷产品管理中心官网按 VIN 查询。
+</div>
+
+</body></html>

@@ -1,0 +1,79 @@
+From: "SaaSCon 2027 | Registration Desk" <register@saascon2027-events.example>
+To: platform-team@corp.internal
+Cc: eng-leads@corp.internal, finance.ap@corp.internal
+Reply-To: registration.desk@saascon-reg.example
+Disposition-Notification-To: register@saascon2027-events.example
+Date: Thu, 18 Mar 2027 09:20:00 +0000
+Message-ID: <0792-b89@synth.example>
+Subject: [EARLY BIRD CLOSES FRIDAY] SaaSCon 2027 Registration - Team Pass + Workshop Bundle - Invoice & Payment Step in One Session
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:-apple-system,'Segoe UI',sans-serif;font-size:14px">
+<p>Platform Team, Engineering Leads, Accounts Payable,</p>
+
+<p style="background:#E8F5E9;border-left:4px solid #1B5E20;padding:12px">
+<b>EARLY-BIRD PRICING CLOSES FRIDAY 17:00 PT.</b>
+Your team's partial registration (3 of 5 passes held under company rate code CORP-4417) expires with the
+early-bird window. After Friday, passes return to standard pricing (<b>+$240 per pass</b>) and the
+Observability Masterclass workshop seats are released. The registration desk has opened a
+<b>batch completion session</b> for your group: invoice details and payment in one step.
+</p>
+
+<h3>1. Your Group's Registration Status</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:260px">Rate code</td><td>CORP-4417 (your company)</td></tr>
+<tr><td style="background:#f5f5f5">Passes held</td><td>3 of 5 (early-bird hold expires Friday)</td></tr>
+<tr><td style="background:#f5f5f5">Early-bird pass</td><td>$680 each (standard $920 from Saturday)</td></tr>
+<tr><td style="background:#f5f5f5">Workshop add-on</td><td>Observability Masterclass, 2 seats held ($310 each)</td></tr>
+<tr><td style="background:#f5f5f5">Group total (if completed)</td><td><b>$2,660</b> (3 passes + 2 workshop seats)</td></tr>
+<tr><td style="background:#f5f5f5">Conference</td><td>SaaSCon 2027 · San Jose · June 8-10</td></tr>
+</table>
+
+<h3>2. Batch Completion Session (Invoice + Payment)</h3>
+<p>The batch session lets your finance contact complete all held items in one checkout: company invoice
+details (billing entity, VAT/tax ID, PO number) and card payment for the full group. The session is
+pre-linked to rate code CORP-4417:</p>
+
+<p style="text-align:center;margin:18px 0">
+<a href="https://saascon-reg.example/checkout/CORP-4417?complete=batch" style="display:inline-block;background:#1B5E20;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">Complete Group Registration &amp; Pay</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">Registration site: https://www.saascon.example/2027/register (rate code entry at checkout)</p>
+
+<h3>3. What the Checkout Collects</h3>
+<ul>
+<li>Invoice details: billing entity, address, tax ID, PO number (emailed invoice follows within 24h)</li>
+<li>Payment: corporate card (number, expiry, CVC) — processed by the conference payment desk</li>
+<li>Attendee names/emails for the 3 passes and 2 workshop seats</li>
+</ul>
+
+<h3>4. Timeline</h3>
+<ul>
+<li>Early-bird close: <b>Friday 17:00 PT</b> — held passes and workshop seats release automatically</li>
+<li>Standard pricing from Saturday: $920/pass, workshop $390</li>
+<li>Invoice: emailed within 24h of payment</li>
+</ul>
+
+<p style="font-size:14px;background:#E8F5E9;padding:12px">A registration email taking card details is
+worth a pause — conferences get impersonated too. Checks: the checkout session displays your rate code
+and held items before any payment field; the invoice is issued by the conference organizer (SaaSCon
+Events LLC) and reconciles against your PO; and the same completion flow exists on the registration
+site itself (address above) if you'd rather start there. The early-bird clock, however, is the venue
+contract's, and holds really do release Friday.</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://saascon-reg.example/px/reg.gif?c=CORP-4417&amp;r=platform-team%40corp.internal" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">Agency lane: if a travel agency books on your behalf, the desk can invoice the agency net-30 — send agency details + card guarantee at saascon-reg.example/agency (guarantee card charged only on no-show).</p>
+
+<h3>5. Contact</h3>
+<p>Registration desk: registration.desk@saascon-reg.example<br>
+Rate code reference: CORP-4417 · Desk hours 08:00-18:00 PT</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+SaaSCon 2027 | Registration Desk · Moscone West, San Jose · June 8-10, 2027<br>
+You are receiving this because holds exist under your company's rate code.
+</div>
+
+</body></html>

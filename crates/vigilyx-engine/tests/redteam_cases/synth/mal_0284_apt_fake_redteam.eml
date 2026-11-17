@@ -1,0 +1,11 @@
+From: =?utf-8?B?5a6J5YWo5ZON5bqU?= <triage@corp-redteam-relay.example>
+To: it@corp.internal
+Date: Wed, 09 Sep 2026 08:33:00 +0800
+Message-ID: <0023-b17@synth.example>
+Subject: 红队演练：请勿处理本封（有效性验证）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+本封为红队演练有效性验证样本。
+如您看到本邮件，说明投递通道正常，请点击"确认送达"以完成统计：
+https://corp-redteam-relay.example/ack/it

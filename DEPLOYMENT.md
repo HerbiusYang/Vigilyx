@@ -1,8 +1,19 @@
-# Vigilyx Production Deployment Guide
+# Vigilyx First Deployment Guide
 
 Complete guide for deploying Vigilyx on a remote Linux server with security hardening.
 
 **Target audience**: System administrators deploying Vigilyx in enterprise environments.
+
+Use this guide for a **new server**. To upgrade an installed environment while
+retaining its configuration and data, follow [Updating](UPDATING.md).
+The OS/Docker preparation below is for a new host; it is not part of an
+application update on an existing shared server.
+
+The deployment template uses `root@<server>` with
+`VIGILYX_REMOTE_DIR=/home/CCAB_VIGILYX`; set the SSH target for your own server. The dedicated `vigilyx` account and
+`/home/vigilyx` paths shown in the hardening and backup examples are generic
+alternatives; replace them with the configured remote path when following this
+repository's root based workflow.
 
 ---
 
@@ -12,6 +23,7 @@ Complete guide for deploying Vigilyx on a remote Linux server with security hard
 - [2. OS Security Baseline](#2-os-security-baseline)
 - [3. Docker Installation](#3-docker-installation)
 - [4. Vigilyx Deployment](#4-vigilyx-deployment)
+- [Updating an existing deployment](UPDATING.md)
 - [5. TLS / HTTPS Setup](#5-tls--https-setup)
 - [6. Firewall Configuration](#6-firewall-configuration)
 - [7. Backup and Recovery](#7-backup-and-recovery)
@@ -39,6 +51,12 @@ Complete guide for deploying Vigilyx on a remote Linux server with security hard
 | OS | Rocky Linux 9 / Ubuntu 22.04+ / Debian 12+ |
 | Docker Engine | 24+ |
 | Docker Compose | v2.20+ |
+
+The current checkout pins Rust `1.98.0`, Node `24.19.0`, npm `12.0.2`,
+PostgreSQL `17.11`, Valkey `8.1.9`, Caddy `2.11.4`, ClamAV `1.5.4`, and
+Python `3.12` for its build/runtime images. Image tags and digests in
+`deploy/docker/` are the source of truth when this guide and a different
+checkout disagree.
 
 ### Network
 
@@ -218,7 +236,6 @@ cat > /etc/docker/daemon.json << 'EOF'
     "max-file": "3"
   },
   "live-restore": true,
-  "userns-remap": "default",
   "no-new-privileges": true,
   "default-ulimits": {
     "nofile": {
@@ -231,9 +248,10 @@ cat > /etc/docker/daemon.json << 'EOF'
 EOF
 ```
 
-> **Note on `userns-remap`**: This maps container root to an unprivileged host user. The **sniffer container** requires `NET_RAW`/`NET_ADMIN` capabilities which may conflict with user namespaces. If sniffer fails to start, either:
-> - Remove `"userns-remap"` from daemon.json, or
-> - Add `"userns-mode": "host"` to the sniffer service in docker-compose.yml
+The Compose file applies non-root users, read-only filesystems, dropped
+capabilities, and `no-new-privileges` per service. Do not enable daemon-wide
+`userns-remap` without first validating the sniffer's host-network packet
+capture and every bind/named-volume permission on a staging host.
 
 ```bash
 # Enable and start Docker
@@ -245,28 +263,82 @@ docker info | grep -E "Server Version|Security Options|Logging Driver"
 
 ### 3.3 Docker Log Rotation
 
-The daemon.json above sets 50MB x 3 files per container. Verify:
+The daemon default above keeps 50 MB x 3 JSON log files. Vigilyx services
+override this with Docker's `local` log driver at 50 MB x 5 files. Verify the
+effective driver and file usage instead of assuming the daemon default applies:
 
 ```bash
-# Check current log sizes
-du -sh /var/lib/docker/containers/*/*-json.log 2>/dev/null | sort -rh | head -5
+docker inspect vigilyx --format '{{.HostConfig.LogConfig.Type}} {{json .HostConfig.LogConfig.Config}}'
+docker system df
 ```
 
 ---
 
 ## 4. Vigilyx Deployment
 
+### Recommended: deploy from a workstation
+
+The workstation needs Bash, SSH, rsync, and Python 3. The target needs Bash,
+Python 3, rsync, OpenSSL, Docker Engine 24+, and Compose v2.20+. Confirm SSH key
+access, Docker access, enough disk space for source/images/build caches, and
+registry access before initialization. The server must reach OCI registries,
+Rust distribution/crate servers, npm, and Debian package mirrors. Configure
+any required proxy on the target; a workstation proxy is not automatically
+forwarded over SSH.
+
+Obtain the complete release checkout or source archive on the workstation.
+All following helper commands run from that checkout; builds/tests run remotely.
+
+```bash
+cp deploy.conf.example deploy.conf
+chmod 600 deploy.conf
+${EDITOR:-vi} deploy.conf
+# Set VIGILYX_SERVER and VIGILYX_REMOTE_DIR; keep VIGILYX_LOCAL_DIR unset.
+
+# On the target, pre-pull the image required by setup-builder.sh.
+ssh root@<server> \
+  "docker pull rust:1.98.0-bookworm@sha256:e70e2eec3d495fd5c8e0be74adda86507dfac7f51a724fbf9813ff59b2b247c7"
+./deploy.sh --init
+
+# Review the generated configuration on the target before starting services.
+ssh root@<server> "vi /home/CCAB_VIGILYX/deploy/docker/.env"
+# Mirror: VIGILYX_MODE=mirror, SNIFFER_INTERFACE=<capture NIC>.
+# Keep AI_ENABLED=false unless intentionally enabling the optional AI service.
+# MTA: configure downstream/local domains/listen IP and install PEM files below.
+
+# Choose ONE initial topology:
+./deploy.sh --production             # mirror by default
+# ./deploy.sh --production --mta     # MTA instead; install its TLS files first
+```
+
+Replace the example SSH target and remote directory with `deploy.conf` values.
+`--init` generates `.env` only if missing, creates the persistent builder, and
+warms its cache; it does not start the application. Do not run the separate
+secret generator after initialization. The first application deployment must be
+complete; component-only commands assume an existing installation.
+
+For bundled HTTPS on a new host, add `--tls` to the selected deployment command
+(for example, `./deploy.sh --production --tls`). Otherwise provision a host
+reverse proxy in section 5. An existing host proxy and bundled Caddy must not
+both claim ports 80/443. The default API is only reachable at
+`127.0.0.1:8088` until a proxy or SSH tunnel is configured.
+
+Finish with the readiness checks in section 4.4 and first login in section 4.5.
+After installation, use [Updating](UPDATING.md) for version/component updates,
+backups, and rollback. The sections below also describe the alternative of
+building directly on the target without the workstation helper.
+
 ### 4.1 Get the Source Code
 
 > Publishing to GitHub is optional. You can deploy from a private Git server, an internal mirror, an offline tarball, or `rsync` from your workstation.
 
 ```bash
-cd /home/vigilyx
-git clone <your-git-remote-or-local-mirror> vigilyx
-cd vigilyx
+cd /home
+git clone <your-git-remote-or-local-mirror> CCAB_VIGILYX
+cd /home/CCAB_VIGILYX
 
 # Example without GitHub:
-# rsync -av ./VIGILYX/ vigilyx@server:/home/vigilyx/vigilyx/
+# rsync -av ./VIGILYX/ root@server:/home/CCAB_VIGILYX/
 ```
 
 ### 4.2 Generate Secrets
@@ -280,7 +352,27 @@ vi deploy/docker/.env
 # Required: SNIFFER_INTERFACE=<your capture interface>
 # Optional: AI_ENABLED=true (also pass --profile ai to docker compose)
 # Optional: HF_ENDPOINT=https://hf-mirror.com (China mainland)
+# MTA: configure downstream/local domains and install PEM files as
+# deploy/docker/certs/mta.crt + mta.key (private key mode 600)
+# For SMTP clients on other hosts, set MTA_LISTEN to the intended host-interface IP.
+# Compose defaults to 127.0.0.1 (local connections only).
 ```
+
+The MTA profile intentionally refuses to start without TLS material: STARTTLS
+is required and the SMTPS listener on 465 is enabled by default. Install the
+certificate from the repository root before the first MTA start:
+
+```bash
+install -d -m 700 deploy/docker/certs
+install -m 644 /path/to/fullchain.pem deploy/docker/certs/mta.crt
+install -m 600 /path/to/private-key.pem deploy/docker/certs/mta.key
+```
+
+`mta-cert-install` copies these host-owned files into an MTA-only named volume,
+sets the private key to mode `400` for the image's unprivileged user, and exits
+before `vigilyx-mta` starts. To use different host paths, set
+`MTA_TLS_CERT_SOURCE` and `MTA_TLS_KEY_SOURCE` in `.env`. Replace the source
+files and recreate `mta-cert-install` plus `mta` when renewing the certificate.
 
 ### 4.3 Persistent Volumes
 
@@ -299,8 +391,9 @@ Recommended public production path:
 ```bash
 cd deploy/docker
 
-# First-time build (pulls images + compiles, ~10-15 minutes)
-docker compose build
+# First-time build (pulls images + compiles the selected topology, ~10-15 minutes)
+docker compose --profile mirror build
+# For an MTA-only host, use: docker compose --profile mta build
 
 # Start the default passive-capture stack
 docker compose --profile mirror up -d
@@ -309,7 +402,9 @@ docker compose --profile mirror up -d
 docker compose --profile mirror --profile ai up -d   # if AI_ENABLED=true
 docker compose --profile mirror --profile tls up -d  # all-in-one TLS: auto domain certs, internal CA, or file certs
 
-# Inline MTA mode (adds vigilyx-mta instead of the mirror sniffer path)
+# Inline MTA profile (does not stop an already-running mirror data plane).
+# First place a PEM certificate/key at deploy/docker/certs/mta.crt and
+# deploy/docker/certs/mta.key; keep the private key mode 600.
 docker compose --profile mta up -d
 
 # Experimental / isolated lab only (requires KVM/libvirt)
@@ -319,37 +414,59 @@ docker compose --profile sandbox up -d
 docker compose ps
 ```
 
-If you deploy from a local checkout through the helper script, use the explicit production path:
+Compose profile commands select services but do not stop services from another profile or persist `VIGILYX_MODE`. Use `./deploy.sh --mta` to switch a running deployment; it updates the mode and stops the mirror sniffer/engine before starting MTA.
 
-```bash
-./deploy.sh --production
-./deploy.sh --production --backend
-./deploy.sh --production --frontend
-./deploy.sh --production --sniffer
-```
-
-`./deploy.sh` without `--production` remains the fast developer path (`release-fast` + `docker-compose.fast.yml`).
+`./deploy.sh` without `--production` uses the developer `release-fast` path.
+For existing installations, including component updates, schema changes,
+maintenance windows, configuration preservation, and recovery, follow
+[Updating](UPDATING.md). The deployment helper does not change host sysctl,
+NIC, IRQ, or RPS settings.
 
 If you terminate TLS with host-level Caddy or Nginx in section 5, keep the container bound to localhost and do not enable the Compose `tls` profile.
-In the current Compose defaults, `--profile mta` adds `vigilyx-mta`; it does not automatically disable the standalone engine inside `vigilyx`.
+The profiles select the data plane explicitly: `mirror` starts `vigilyx-sniffer` plus the dedicated `vigilyx-engine-standalone`; `mta` starts `vigilyx-mta` with its embedded engine. The main `vigilyx` container is the API/frontend control plane in both modes.
 
 Typical output (with `mirror` + `ai` enabled, without TLS):
 ```
 NAME               STATUS                    PORTS
 vigilyx            Up (healthy)              127.0.0.1:8088->8088/tcp
 vigilyx-ai         Up (healthy)              127.0.0.1:8900->8900/tcp
+vigilyx-engine-standalone Up (healthy)
 vigilyx-postgres   Up (healthy)              127.0.0.1:5433->5432/tcp
 vigilyx-redis      Up (healthy)              127.0.0.1:6379->6379/tcp
 vigilyx-sniffer    Up
 ```
 
+Container state alone is not a readiness check. Verify the public aggregate endpoint after startup:
+
+```bash
+curl -fsS http://127.0.0.1:8088/api/health/ready
+# {"status":"ready"}
+```
+
+`deploy.sh` also compares the effective PostgreSQL memory/logging settings with
+the resolved Compose configuration. In mirror mode it waits up to 120 seconds
+for both consumer groups to have at most 100 undelivered entries on two consecutive
+observations. In-flight pending work is reported separately. A stuck backlog
+fails deployment verification even when the health endpoint returns ready.
+These read-only checks can be rerun with `python3 scripts/verify-deployment.py --mode mirror`
+from the remote deployment directory.
+
 ### 4.5 First Login
 
 1. For production, enable TLS and open `https://<your-domain-or-server>`
 2. Without TLS, the service binds to localhost by default; open `http://127.0.0.1:8088` on the server itself or use an SSH tunnel / reverse proxy
-3. Set `API_LISTEN=0.0.0.0` only for temporary non-TLS remote testing, then open `http://<server-ip>:8088`
-4. Login with `admin` / `<API_PASSWORD from .env>`
+3. For a temporary non-TLS test from another machine, set both `API_LISTEN=0.0.0.0` and `API_SECURE_COOKIE=false`, then open `http://<server-ip>:8088`. Restore `API_SECURE_COOKIE=true` and `API_LISTEN=127.0.0.1` after testing, or enable TLS before normal use. Without this temporary cookie setting, browsers reject the Secure session cookie over HTTP and login will not persist.
+4. On a brand-new database, log in with `<API_USERNAME, default admin>` / `<API_PASSWORD from .env>`
 5. **Change your password immediately** via Settings page
+
+After the first password change, the database-backed credential takes
+precedence. Editing `API_PASSWORD` does not rotate an existing account.
+
+The one-shot bootstrap also creates `AUDIT_USERNAME` with the independent
+`AUDIT_BOOTSTRAP_PASSWORD` only when that account does not already exist. An
+authorized operator should use it for the first audit login and change it
+immediately. Subsequent bootstrap runs leave the existing account and password
+unchanged; the value remaining in `.env` is not a password-rotation mechanism.
 
 ---
 
@@ -419,6 +536,9 @@ chmod 600 /etc/nginx/ssl/vigilyx.key
 dnf install -y nginx   # or: apt install -y nginx
 
 cat > /etc/nginx/conf.d/vigilyx.conf << 'EOF'
+# conf.d files are included from the http context by the standard distro config.
+limit_req_zone $binary_remote_addr zone=api:10m rate=30r/s;
+
 server {
     listen 443 ssl http2;
     server_name _;
@@ -438,8 +558,7 @@ server {
     # Request limits
     client_max_body_size 10m;
 
-    # Rate limiting
-    limit_req_zone $binary_remote_addr zone=api:10m rate=30r/s;
+    # Rate limiting (zone declared above, at http scope)
     limit_req zone=api burst=50 nodelay;
 
     location / {
@@ -525,7 +644,7 @@ Notes:
 - With an IP address or `localhost`, Caddy falls back to its internal CA unless you force `CADDY_TLS_MODE=files`
 - File mode expects readable certificate files at `VIGILYX_TLS_CERT_FILE` and `VIGILYX_TLS_KEY_FILE`
 - For public production with a real domain, host-level Caddy is still the preferred path
-- Keep `API_LISTEN=127.0.0.1` unless you explicitly need temporary non-TLS remote testing
+- Keep `API_LISTEN=127.0.0.1` and `API_SECURE_COOKIE=true` for normal use. Temporary remote HTTP testing requires `API_LISTEN=0.0.0.0` and `API_SECURE_COOKIE=false`; restore both afterward.
 
 ---
 
@@ -537,63 +656,52 @@ Notes:
 # Enable firewall
 systemctl enable --now firewalld
 
-# Allow only necessary ports
-firewall-cmd --permanent --add-service=ssh
-firewall-cmd --permanent --add-port=443/tcp    # HTTPS (if using TLS proxy)
-firewall-cmd --permanent --add-port=8088/tcp   # Vigilyx API (remove if behind proxy)
+# Add rules to the zone that owns the management interface.
+FIREWALL_ZONE=$(firewall-cmd --get-default-zone)
+firewall-cmd --permanent --zone="$FIREWALL_ZONE" --add-service=ssh
+firewall-cmd --permanent --zone="$FIREWALL_ZONE" --add-service=http   # ACME + HTTPS redirect
+firewall-cmd --permanent --zone="$FIREWALL_ZONE" --add-service=https
 
-# Block everything else by default
-firewall-cmd --permanent --set-default-zone=drop
+# Inline MTA only, after MTA_LISTEN is set to the intended public/interface IP:
+# firewall-cmd --permanent --zone="$FIREWALL_ZONE" --add-service=smtp
+# firewall-cmd --permanent --zone="$FIREWALL_ZONE" --add-service=smtps
 
 # Apply
 firewall-cmd --reload
 
 # Verify
-firewall-cmd --list-all
+firewall-cmd --zone="$FIREWALL_ZONE" --list-all
 ```
 
-### iptables (Ubuntu / Debian)
+Do not open `8088`, `5433`, `6379`, `8900`, `3310`, or `8000` publicly. The
+Compose defaults bind those ports to loopback; production UI traffic should
+enter through the TLS reverse proxy.
+
+### UFW (Ubuntu / Debian)
 
 ```bash
-# Install persistent rules
-apt install -y iptables-persistent
-
-# Create rules
-cat > /etc/iptables/rules.v4 << 'EOF'
-*filter
-:INPUT DROP [0:0]
-:FORWARD DROP [0:0]
-:OUTPUT ACCEPT [0:0]
-
-# Loopback
--A INPUT -i lo -j ACCEPT
-
-# Established connections
--A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-
-# SSH
--A INPUT -p tcp --dport 22 -m conntrack --ctstate NEW -m recent --set
--A INPUT -p tcp --dport 22 -m conntrack --ctstate NEW -m recent --update --seconds 60 --hitcount 4 -j DROP
--A INPUT -p tcp --dport 22 -j ACCEPT
-
-# HTTPS (if using TLS proxy)
--A INPUT -p tcp --dport 443 -j ACCEPT
-
-# Vigilyx API (remove if behind proxy)
--A INPUT -p tcp --dport 8088 -j ACCEPT
-
-# ICMP (ping)
--A INPUT -p icmp --icmp-type echo-request -j ACCEPT
-
-COMMIT
-EOF
-
-iptables-restore < /etc/iptables/rules.v4
+apt install -y ufw
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow OpenSSH
+ufw allow 80/tcp     # ACME + HTTPS redirect
+ufw allow 443/tcp
+# Inline MTA only, after MTA_LISTEN is set intentionally:
+# ufw allow 25/tcp
+# ufw allow 465/tcp
+ufw enable
+ufw status verbose
 ```
+
+Docker manages its own packet-filtering rules. Keep the Compose host bindings
+at their secure defaults and verify the effective exposure with `ss -lntp` from
+another host; do not rely on UFW alone to hide a Docker-published port.
 
 ### IP Whitelist (Restrict to Trusted Networks)
 
-For maximum security, restrict API access to known IP ranges:
+If you intentionally set `API_LISTEN=0.0.0.0` for direct, non-TLS testing,
+restrict port 8088 to the exact management ranges instead of opening it
+globally. This is not a substitute for HTTPS:
 
 ```bash
 # Only allow specific IPs to access Vigilyx
@@ -610,28 +718,33 @@ firewall-cmd --reload
 
 ```bash
 # Create backup script
+install -d -o vigilyx -g vigilyx -m 700 /home/vigilyx/backups
 cat > /home/vigilyx/backup-db.sh << 'SCRIPT'
 #!/bin/bash
 set -euo pipefail
+umask 077
 BACKUP_DIR="/home/vigilyx/backups"
 DATE=$(date +%Y%m%d_%H%M%S)
 mkdir -p "$BACKUP_DIR"
+FINAL="$BACKUP_DIR/vigilyx_${DATE}.dump"
+PARTIAL="${FINAL}.partial"
+trap 'rm -f "$PARTIAL"' EXIT
 
-# Source the .env for credentials
-source /home/vigilyx/vigilyx/deploy/docker/.env
+# Dump with the owner identity already present in the PostgreSQL container.
+# The cron user therefore does not need read access to the root-owned .env.
+docker exec vigilyx-postgres sh -lc \
+  'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --compress=zstd:3' \
+  > "$PARTIAL"
 
-# Dump database
-docker exec vigilyx-postgres pg_dump \
-  -U "${PG_USER:-vigilyx}" \
-  -d "${PG_DB:-vigilyx}" \
-  --format=custom \
-  --compress=9 \
-  > "$BACKUP_DIR/vigilyx_${DATE}.dump"
+# Do not publish a truncated dump under the final filename.
+docker exec -i vigilyx-postgres pg_restore --list < "$PARTIAL" >/dev/null
+mv "$PARTIAL" "$FINAL"
+trap - EXIT
 
 # Retain last 7 days
 find "$BACKUP_DIR" -name "vigilyx_*.dump" -mtime +7 -delete
 
-echo "[$(date)] Backup complete: vigilyx_${DATE}.dump ($(du -h "$BACKUP_DIR/vigilyx_${DATE}.dump" | cut -f1))"
+echo "[$(date)] Backup complete: $(basename "$FINAL") ($(du -h "$FINAL" | cut -f1))"
 SCRIPT
 
 chmod +x /home/vigilyx/backup-db.sh
@@ -640,47 +753,68 @@ chmod +x /home/vigilyx/backup-db.sh
 ### 7.2 Schedule Daily Backups
 
 ```bash
-# Run backup daily at 3 AM
-echo "0 3 * * * /home/vigilyx/backup-db.sh >> /home/vigilyx/backups/backup.log 2>&1" | crontab -u vigilyx -
+# Run as root: a separate cron.d file preserves existing schedules.
+cat > /etc/cron.d/vigilyx-backup << 'CRON'
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+0 3 * * * vigilyx /home/vigilyx/backup-db.sh >> /home/vigilyx/backups/backup.log 2>&1
+CRON
+chown root:root /etc/cron.d/vigilyx-backup
+chmod 644 /etc/cron.d/vigilyx-backup
 ```
 
 ### 7.3 Restore from Backup
 
 ```bash
-# Stop the application
-cd /home/vigilyx/vigilyx/deploy/docker
-docker compose stop vigilyx
+# Stop every process that can write application data. PostgreSQL stays up for restore.
+cd /home/CCAB_VIGILYX/deploy/docker
+docker compose --profile mirror --profile mta stop vigilyx engine sniffer mta
 
-# Restore
-source .env
-docker exec -i vigilyx-postgres pg_restore \
-  -U "${PG_USER:-vigilyx}" \
-  -d "${PG_DB:-vigilyx}" \
-  --clean --if-exists \
+# Restore with the owner identity already present in the PostgreSQL container.
+docker exec -i vigilyx-postgres sh -lc \
+  'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' \
   < /home/vigilyx/backups/vigilyx_YYYYMMDD_HHMMSS.dump
 
-# Restart with the same profiles you use in production
+# Restart the active topology (use mta instead of mirror for MTA mode)
 docker compose --profile mirror up -d
-# Add --profile ai / --profile tls / --profile mta as needed
+# Add optional --profile ai / --profile tls when configured.
+# Do not add --profile mta alongside --profile mirror; choose one topology.
 ```
 
 ### 7.4 Volume Backup (Full Disaster Recovery)
 
 ```bash
 # Stop all services
-cd /home/vigilyx/vigilyx/deploy/docker
-docker compose down
+cd /home/CCAB_VIGILYX/deploy/docker
+docker compose --profile '*' down
 
-# Backup all volumes
-for vol in vigilyx_vigilyx_pgdata vigilyx_redis_data vigilyx_vigilyx_data vigilyx_hf_cache; do
-  docker run --rm -v ${vol}:/data -v /home/vigilyx/backups:/backup \
-    alpine tar czf /backup/${vol}_$(date +%Y%m%d).tar.gz -C /data .
+# Back up every persistent volume that exists. Optional-service volumes are
+# skipped when that profile has never been started.
+for vol in \
+  vigilyx_vigilyx_pgdata \
+  vigilyx_redis_data \
+  vigilyx_vigilyx_data \
+  vigilyx_http_temp_data \
+  vigilyx_vigilyx_models \
+  vigilyx_mta_certs \
+  vigilyx_hf_cache \
+  vigilyx_clamav_db \
+  vigilyx_sandbox_data \
+  vigilyx_caddy_data \
+  vigilyx_caddy_config; do
+  docker volume inspect "$vol" >/dev/null 2>&1 || continue
+  docker run --rm -v "${vol}:/data:ro" -v /home/vigilyx/backups:/backup \
+    alpine tar czf "/backup/${vol}_$(date +%Y%m%d).tar.gz" -C /data .
 done
 
 # Restart with the same profiles you use in production
 docker compose --profile mirror up -d
-# Add --profile ai / --profile tls / --profile mta as needed
+# For MTA, replace --profile mirror with --profile mta.
+# Add --profile ai / --profile tls as needed.
 ```
+
+The Compose project has the fixed name `vigilyx`, so these volume names are deterministic. Test the restore process on a separate host; an unread backup is not a recovery plan.
+`deploy.sh` excludes a top-level `backups/` directory from `rsync --delete`,
+but storing backups outside the synchronized checkout is still recommended.
 
 ---
 
@@ -692,13 +826,16 @@ docker compose --profile mirror up -d
 cat > /home/vigilyx/healthcheck.sh << 'SCRIPT'
 #!/bin/bash
 API_URL="http://127.0.0.1:8088"
+# Set this to "mta" for an MTA deployment. A Compose profile does not switch
+# or stop the other data plane; use ./deploy.sh --mta for a topology switch.
+COMPOSE_PROFILE="mirror"
 
-# Check API health
-if ! curl -sf "${API_URL}/api/health" > /dev/null 2>&1; then
-  echo "[ALERT] Vigilyx API is down!" | mail -s "Vigilyx Alert" admin@example.com
+# Check aggregate readiness (API process + PostgreSQL + Redis + engine heartbeat)
+if ! curl -fsS "${API_URL}/api/health/ready" > /dev/null 2>&1; then
+  echo "[ALERT] Vigilyx is not ready!" | mail -s "Vigilyx Alert" admin@example.com
   # Auto-restart (optional)
-  cd /home/vigilyx/vigilyx/deploy/docker
-  docker compose --profile mirror up -d
+  cd /home/CCAB_VIGILYX/deploy/docker
+  docker compose --profile "$COMPOSE_PROFILE" up -d
 fi
 
 # Check disk space (alert at 85%)
@@ -710,37 +847,44 @@ SCRIPT
 
 chmod +x /home/vigilyx/healthcheck.sh
 
-# Run every 5 minutes
-echo "*/5 * * * * /home/vigilyx/healthcheck.sh >> /home/vigilyx/healthcheck.log 2>&1" | crontab -u vigilyx -
+# Run as root: keep this independent of the backup schedule.
+cat > /etc/cron.d/vigilyx-healthcheck << 'CRON'
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+*/5 * * * * vigilyx /home/vigilyx/healthcheck.sh >> /home/vigilyx/healthcheck.log 2>&1
+CRON
+chown root:root /etc/cron.d/vigilyx-healthcheck
+chmod 644 /etc/cron.d/vigilyx-healthcheck
 ```
 
 ### 8.2 Log Management
 
-Application logs are inside the container:
+Application logs go to stdout/stderr and are managed by Docker's log driver:
 
 ```bash
-# View real-time logs
-docker exec vigilyx tail -f /app/logs/api.log
-docker exec vigilyx tail -f /app/logs/engine.log
-docker logs -f vigilyx-sniffer
+# Mirror deployment
+docker compose logs -f vigilyx engine sniffer
 
-# Log rotation (container logs handled by Docker daemon.json)
-# Application logs: rotated by the Rust tracing layer (file-based)
+# MTA deployment (the engine is embedded in the MTA process)
+docker compose logs -f vigilyx mta
+
+# Rotation is handled by each service's `local` log-driver settings in Compose;
+# the daemon.json settings are only the host fallback.
 ```
 
 ### 8.3 Docker Image Updates
 
 ```bash
-cd /home/vigilyx/vigilyx
+cd /home/CCAB_VIGILYX
 
 # Pull latest code
 git pull origin main
 
-# Rebuild and redeploy
+# Rebuild and redeploy the active topology
 cd deploy/docker
-docker compose build
+docker compose --profile mirror build
 docker compose --profile mirror up -d
-# Add --profile ai / --profile tls / --profile mta as needed
+# Add optional --profile ai / --profile tls when configured.
+# For MTA, replace --profile mirror with --profile mta; never select both topologies.
 
 # Clean up old images
 docker image prune -f
@@ -750,14 +894,16 @@ docker image prune -f
 
 ```bash
 # Analyze tables for query optimizer
-docker exec vigilyx-postgres psql -U vigilyx -d vigilyx -c "ANALYZE;"
+docker exec vigilyx-postgres sh -lc \
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "ANALYZE;"'
 
 # Check database size
-docker exec vigilyx-postgres psql -U vigilyx -d vigilyx -c \
-  "SELECT pg_size_pretty(pg_database_size('vigilyx'));"
+docker exec vigilyx-postgres sh -lc \
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT pg_size_pretty(pg_database_size(current_database()));"'
 
 # Vacuum (reclaim space)
-docker exec vigilyx-postgres psql -U vigilyx -d vigilyx -c "VACUUM ANALYZE;"
+docker exec vigilyx-postgres sh -lc \
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "VACUUM ANALYZE;"'
 ```
 
 ---
@@ -771,7 +917,7 @@ Run through this checklist before going to production:
 - [ ] OS fully updated (`dnf update` / `apt upgrade`)
 - [ ] SSH: key-only auth, no root password login, MaxAuthTries=3
 - [ ] fail2ban installed and enabled
-- [ ] Firewall enabled, only required ports open (SSH + 443/8088)
+- [ ] Firewall enabled; normally only SSH + 80/443 are public (plus 25/465 for an intentionally exposed MTA)
 - [ ] Automatic security updates enabled
 - [ ] Kernel security parameters applied (sysctl)
 - [ ] Unnecessary services disabled
@@ -791,6 +937,7 @@ Run through this checklist before going to production:
 - [ ] `.env` file has `chmod 600` permissions
 - [ ] `.env` file is NOT committed to git
 - [ ] Default admin password changed after first login
+- [ ] Independent audit bootstrap password changed after first audit login
 - [ ] `RUST_LOG` set to `info` (never `debug` in production)
 - [ ] Internal services bound to `127.0.0.1` (Redis, PostgreSQL, AI)
 - [ ] `SNIFFER_INTERFACE` set to correct capture interface
@@ -881,15 +1028,4 @@ docker stats --no-stream
 
 ### Forgot Admin Password
 
-```bash
-# Generate a new password hash and update in database
-source deploy/docker/.env
-NEW_PASS="your-new-password"
-
-# The simplest way: delete the saved hash, restart, and it will use API_PASSWORD from .env
-docker exec vigilyx-postgres psql -U vigilyx -d vigilyx \
-  -c "DELETE FROM config WHERE key = 'auth_password_hash';"
-docker restart vigilyx
-
-# Login with API_PASSWORD from .env, then change via Settings page
-```
+Use another active administrator account to reset the affected user in the platform user settings. Changing `API_PASSWORD` or deleting only the legacy `auth_password_hash` config row does **not** overwrite an existing `platform_users` password. If no administrator account remains accessible, restore a tested database backup or use the authenticated factory-reset workflow only when complete application-data loss is acceptable; there is currently no unauthenticated password-reset command.

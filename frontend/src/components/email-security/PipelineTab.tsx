@@ -18,7 +18,6 @@ type ThresholdKey =
   | 'alert_floor_factor'
   | 'convergence_base_floor'
   | 'convergence_belief_threshold'
-  | 'alert_belief_threshold'
   | 'default_epsilon'
 
 interface ThresholdField {
@@ -35,8 +34,9 @@ interface ThresholdField {
 }
 
 // Ranges mirror VerdictConfig::validate() in crates/vigilyx-engine/src/pipeline/config.rs
-// (AGENTS.md rules: alert_floor_factor >= 1.0, convergence_base_floor >= 0.40,
-// convergence_belief_threshold <= 0.10).
+// Current clustered_ds_v2 uses eligible source scores and qualified independent
+// causal/evidence-cluster convergence. The convergence field retains a historical
+// name. Retired Murphy-only controls are no longer displayed.
 const THRESHOLD_FIELDS: ThresholdField[] = [
   {
     key: 'alert_floor_factor',
@@ -67,15 +67,6 @@ const THRESHOLD_FIELDS: ThresholdField[] = [
     rangeLabel: '(0, 0.10]',
   },
   {
-    key: 'alert_belief_threshold',
-    labelKey: 'pipeline.alertBeliefThreshold',
-    hintKey: 'pipeline.alertBeliefThresholdHint',
-    min: 0.0,
-    max: 0.6,
-    step: 0.01,
-    rangeLabel: '0.00 – 0.60',
-  },
-  {
     key: 'default_epsilon',
     labelKey: 'pipeline.epsilon',
     hintKey: 'pipeline.epsilonHint',
@@ -95,7 +86,6 @@ function draftFromConfig(config: PipelineConfig): ThresholdDraft {
     alert_floor_factor: String(vc.alert_floor_factor),
     convergence_base_floor: String(vc.convergence_base_floor),
     convergence_belief_threshold: String(vc.convergence_belief_threshold),
-    alert_belief_threshold: String(vc.alert_belief_threshold),
     default_epsilon: String(vc.default_epsilon),
   }
 }

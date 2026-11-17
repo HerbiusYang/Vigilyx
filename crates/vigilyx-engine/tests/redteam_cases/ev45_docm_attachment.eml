@@ -1,0 +1,19 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev45@partner.example>
+Subject: 月度报告
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+您好，附件为月度报告，请查收。--BS
+Content-Type: application/vnd.ms-word.document.macroEnabled.12
+Content-Disposition: attachment; filename="report.docm"
+Content-Transfer-Encoding: base64
+
+UEsDBJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQ
+--BS--
+

@@ -1,0 +1,9 @@
+From: =?utf-8?B?5Z+56K6t5Lit5b+D?= <train@academy.example>
+To: hr@corp.internal
+Date: Mon, 24 Aug 2026 09:26:00 +0800
+Message-ID: <0015-b1@synth.example>
+Subject: 周四培训签到改扫码
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>各位：本周四《数据合规》培训签到改为扫码签到，到场后扫描屏幕下方二维码完成登记，未签到按缺席处理。</p><p><img src='https://cdn-academy.example/signin.png' alt='签到二维码'></p></body></html>

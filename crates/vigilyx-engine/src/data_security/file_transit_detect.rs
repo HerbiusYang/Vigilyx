@@ -147,15 +147,15 @@ impl DataSecurityDetector for FileTransitDetector {
 
         let mut evidence = Vec::new();
         let mut dlp_matches = Vec::new();
-        let mut dlp_for_jrt: Option<dlp::DlpScanResult> = None;
+        let mut dlp_for_bulk: Option<dlp::DlpScanResult> = None;
+        let mut document_scan_incomplete = false;
 
         // Checkwhether FileUpload (multipart FileName Coremail directData)
 
         // Coremail upload.jsp?func=directData application/octet-stream
         // multipart/form-data, URL
         let uri_lower = session.uri.to_lowercase();
-        let is_coremail_direct_upload =
-            uri_lower.contains("func=directdata") || uri_lower.contains("func=directdata");
+        let is_coremail_direct_upload = uri_lower.contains("func=directdata");
         let has_file = session.uploaded_filename.is_some()
             || Self::is_multipart(session.content_type.as_deref())
             || is_coremail_direct_upload;
@@ -301,30 +301,44 @@ impl DataSecurityDetector for FileTransitDetector {
                 .unwrap_or(false)
             {
                 let raw_bytes = Self::read_body_bytes(session);
-                if !raw_bytes.is_empty()
-                    && let Some(extracted_text) = super::document_extract::extract_text(
+                if !raw_bytes.is_empty() {
+                    let extracted = super::document_extract::extract_text_with_coverage(
                         &raw_bytes,
                         session.detected_file_type,
-                    )
-                {
-                    scanned = true;
-                    let dlp_result = dlp::scan_text(&extracted_text);
-                    if !dlp_result.is_empty() {
-                        dlp_for_jrt = Some(dlp_result.clone());
-                        dlp_matches.extend(dlp_result.matches);
-                        for (dtype, values) in &dlp_result.details {
-                            let snippet = super::extract_snippet(&extracted_text, values);
-                            evidence.push(Evidence {
-                                description: format!(
-                                    "File content contains {} ({} occurrences): {}",
-                                    super::dlp_type_cn(dtype),
-                                    values.len(),
-                                    values.join(", ")
-                                ),
-                                location: Some("DocumentationContent".to_string()),
-                                snippet,
-                            });
+                    );
+                    document_scan_incomplete = !extracted.complete;
+                    if let Some(extracted_text) = extracted.text {
+                        scanned = true;
+                        let mut dlp_result = dlp::scan_text(&extracted_text);
+                        dlp_result.truncated |= document_scan_incomplete;
+                        document_scan_incomplete |= dlp_result.truncated;
+                        if document_scan_incomplete {
+                            dlp_for_bulk = Some(dlp_result.clone());
                         }
+                        if !dlp_result.is_empty() {
+                            dlp_for_bulk = Some(dlp_result.clone());
+                            dlp_matches.extend(dlp_result.matches);
+                            for (dtype, values) in &dlp_result.details {
+                                let snippet =
+                                    (super::financial_policy::match_level(dtype, &dlp_matches) < 4)
+                                        .then(|| super::extract_snippet(&extracted_text, values))
+                                        .flatten();
+                                evidence.push(Evidence {
+                                    description: format!(
+                                        "File content contains {} ({} field matches)",
+                                        super::dlp_type_cn(dtype),
+                                        values.len()
+                                    ),
+                                    location: Some("DocumentationContent".to_string()),
+                                    snippet,
+                                });
+                            }
+                        }
+                    } else if document_scan_incomplete {
+                        dlp_for_bulk = Some(dlp::DlpScanResult {
+                            truncated: true,
+                            ..Default::default()
+                        });
                     }
                 }
             }
@@ -345,18 +359,21 @@ impl DataSecurityDetector for FileTransitDetector {
                 {
                     let dlp_text =
                         dlp::extract_dlp_text(body, &session.uri, session.content_type.as_deref());
-                    let dlp_result = dlp::scan_text(&dlp_text);
+                    let mut dlp_result = dlp::scan_text(&dlp_text);
+                    dlp_result.truncated |= document_scan_incomplete;
                     if !dlp_result.is_empty() {
-                        dlp_for_jrt = Some(dlp_result.clone());
+                        dlp_for_bulk = Some(dlp_result.clone());
                         dlp_matches.extend(dlp_result.matches);
                         for (dtype, values) in &dlp_result.details {
-                            let snippet = super::extract_snippet(&dlp_text, values);
+                            let snippet =
+                                (super::financial_policy::match_level(dtype, &dlp_matches) < 4)
+                                    .then(|| super::extract_snippet(&dlp_text, values))
+                                    .flatten();
                             evidence.push(Evidence {
                                 description: format!(
-                                    "File content contains {} ({} occurrences): {}",
+                                    "File content contains {} ({} field matches)",
                                     super::dlp_type_cn(dtype),
-                                    values.len(),
-                                    values.join(", ")
+                                    values.len()
                                 ),
                                 location: Some("FileContent".to_string()),
                                 snippet,
@@ -365,25 +382,6 @@ impl DataSecurityDetector for FileTransitDetector {
                     }
                 }
             }
-        }
-
-        // FP-1: swift_code 2Base/RadixFile(Image/PDF Byte/Unknown2Base/Radix)Medium match
-        // When swift_code 1 DLP Medium (MediumDescription ContainsSensitivedata)
-        // : is_binary_file already step 3 first; step 3a ExtractofDocumentationText Security
-        let is_binary_for_fp1 = session.body_is_binary
-            || session
-                .detected_file_type
-                .map(|ft| !ft.is_text_scannable())
-                .unwrap_or(true);
-        if is_binary_for_fp1
-            && dlp_matches.len() == 1
-            && dlp_matches.contains(&"swift_code".to_string())
-        {
-            dlp_matches.clear();
-            evidence.retain(|e| {
-                e.location.as_deref() != Some("FileContent")
-                    && e.location.as_deref() != Some("DocumentationContent")
-            });
         }
 
         // FP-2: employee_info ByFileNameMediumof" bit/ "waitGeneral
@@ -407,8 +405,25 @@ impl DataSecurityDetector for FileTransitDetector {
             }
         }
 
+        // Coverage alone is an operational observation, not a sensitive-data
+        // match. Keep it visible without assigning a threat probability.
+        let coverage_only = document_scan_incomplete && dlp_matches.is_empty();
+        if document_scan_incomplete {
+            dlp_matches.push("scan_incomplete".to_string());
+            evidence.push(Evidence {
+                description: "Document inspection exceeded a work or extraction budget; retained text does not certify complete coverage".to_string(),
+                location: Some("DocumentationContent".to_string()),
+                snippet: None,
+            });
+        }
+
         // if not SensitiveFound,
-        if dlp_matches.is_empty() {
+        if dlp_matches.is_empty()
+            || (!document_scan_incomplete
+                && dlp_matches
+                    .iter()
+                    .all(|name| super::financial_policy::security_level(name) == 1))
+        {
             return None;
         }
 
@@ -418,10 +433,12 @@ impl DataSecurityDetector for FileTransitDetector {
         let has_mismatch = dlp_matches.contains(&"file_type_mismatch".to_string());
         let has_encrypted = dlp_matches.contains(&"encrypted_archive".to_string())
             || dlp_matches.contains(&"encrypted_pdf".to_string());
-        let severity = if has_executable || has_mismatch || has_encrypted {
+        let severity = if coverage_only {
+            DataSecuritySeverity::Info
+        } else if has_executable || has_mismatch || has_encrypted {
             DataSecuritySeverity::High
         } else {
-            super::jrt::severity_from_max_jrt_level(&dlp_matches)
+            super::financial_policy::transfer_severity(&dlp_matches)
         };
 
         let filename_info = session
@@ -430,12 +447,19 @@ impl DataSecurityDetector for FileTransitDetector {
             .unwrap_or("UnknownFile");
 
         let user = dlp::extract_user(session);
-        let summary = format!(
-            "File transit risk: {} from {} uploaded sensitive file \"{}\"",
-            user.as_deref().unwrap_or("Unknownuser"),
-            session.client_ip,
-            filename_info
-        );
+        let summary = if coverage_only {
+            format!(
+                "Document inspection incomplete: {} uploaded \"{}\"",
+                session.client_ip, filename_info
+            )
+        } else {
+            format!(
+                "File transit risk: {} from {} submitted file \"{}\"; authorization unverified",
+                user.as_deref().unwrap_or("Unknownuser"),
+                session.client_ip,
+                filename_info
+            )
+        };
 
         Some((
             DataSecurityIncident {
@@ -443,10 +467,16 @@ impl DataSecurityDetector for FileTransitDetector {
                 http_session_id: session.id,
                 incident_type: DataSecurityIncidentType::FileTransitAbuse,
                 severity,
-                confidence: 0.85,
+                confidence: if coverage_only { 0.0 } else { 0.85 },
                 summary,
                 evidence,
-                details: None,
+                details: Some({
+                    let mut details =
+                        super::financial_policy::transfer_details(&dlp_matches, "http_file_upload");
+                    details["scan_complete"] = (!document_scan_incomplete).into();
+                    details["coverage_only"] = coverage_only.into();
+                    details
+                }),
                 dlp_matches,
                 client_ip: session.client_ip.clone(),
                 detected_user: dlp::extract_user(session),
@@ -455,7 +485,7 @@ impl DataSecurityDetector for FileTransitDetector {
                 method: session.method.to_string(),
                 created_at: Utc::now(),
             },
-            dlp_for_jrt,
+            dlp_for_bulk,
         ))
     }
 }
@@ -479,6 +509,34 @@ mod tests {
         s.uploaded_file_size = Some(1024);
         s.request_body = body.map(|b| b.to_string());
         s
+    }
+
+    #[test]
+    fn test_pdf_extraction_budget_gap_is_info_without_sensitive_matches() {
+        let body = format!("%PDF-1.7\n(Routine note) Tj\n{}", "stream ".repeat(2049));
+        let mut session = make_session("/file/upload", Some("routine.pdf"), Some(&body));
+        session.body_is_binary = true;
+        session.detected_file_type = Some(DetectedFileType::Pdf);
+        let (incident, dlp) = FileTransitDetector::new().analyze(&session).unwrap();
+        assert_eq!(incident.severity, DataSecuritySeverity::Info);
+        assert_eq!(incident.confidence, 0.0);
+        assert_eq!(incident.dlp_matches, ["scan_incomplete"]);
+        assert_eq!(incident.details.unwrap()["scan_complete"], false);
+        let dlp = dlp.unwrap();
+        assert!(dlp.truncated);
+        assert!(dlp.is_empty(), "a coverage gap is not a sensitive-data hit");
+    }
+
+    #[test]
+    fn test_benign_pdf_neighbor_with_complete_coverage_has_no_incident() {
+        let mut session = make_session(
+            "/file/upload",
+            Some("routine.pdf"),
+            Some("%PDF-1.7\n(Routine note) Tj\n"),
+        );
+        session.body_is_binary = true;
+        session.detected_file_type = Some(DetectedFileType::Pdf);
+        assert!(FileTransitDetector::new().analyze(&session).is_none());
     }
 
     #[test]
@@ -590,7 +648,7 @@ mod tests {
         // GB 11643-1999
         // 4532015112830366 is Luhn-valid
         s.request_body = Some(
-            "客户: 110101199001011237\n\
+            "客户: 000000200001010005\n\
              信用卡: 4532015112830366\n\
              Password: MyBankP@ss123"
                 .to_string(),
@@ -1033,6 +1091,8 @@ mod tests {
 
     #[test]
     fn test_file_transit_unencrypted_zip_no_encrypted_flag() {
+        use std::io::Write;
+
         let detector = FileTransitDetector::new();
         let mut session = make_session_with_file_type(
             "/file/upload",
@@ -1042,16 +1102,60 @@ mod tests {
             true,
             None,
         );
-        // Set Encryptof ZIP header body
-        session.request_body = Some(
-            String::from_utf8_lossy(&[0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00]).into_owned(),
-        );
+        // Use a complete ordinary archive. A bare eight-byte PK header is
+        // unencrypted but corrupt and correctly reports incomplete coverage.
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        writer
+            .start_file(
+                "photo.jpg",
+                zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored),
+            )
+            .unwrap();
+        writer.write_all(b"routine photo content").unwrap();
+        let zip = writer.finish().unwrap().into_inner();
+        assert!(!is_encrypted_archive(&zip));
+
+        // Binary ZIP bytes must not pass through lossy UTF-8 conversion.
+        let base = std::path::Path::new("data/tmp/http");
+        std::fs::create_dir_all(base).unwrap();
+        let mut body = tempfile::NamedTempFile::new_in(base).unwrap();
+        body.write_all(&zip).unwrap();
+        session.body_temp_file = Some(body.path().to_string_lossy().into_owned());
+        session.request_body_size = zip.len();
+        session.uploaded_file_size = Some(zip.len());
 
         let result = detector.analyze(&session);
         // FileName SensitiveKeywords, Encrypt -> Alert
         assert!(
             result.is_none(),
             "Unencrypted ZIP with normal filename should not alert"
+        );
+    }
+
+    #[test]
+    fn test_file_transit_corrupt_unencrypted_zip_is_only_a_coverage_gap() {
+        let session = make_session_with_file_type(
+            "/file/upload",
+            Some("photos.zip"),
+            Some(DetectedFileType::ZipArchive),
+            None,
+            true,
+            Some("\x50\x4B\x03\x04\x14\x00\x00\x00"),
+        );
+
+        let (incident, dlp) = FileTransitDetector::new().analyze(&session).unwrap();
+        assert_eq!(incident.severity, DataSecuritySeverity::Info);
+        assert_eq!(incident.confidence, 0.0);
+        assert_eq!(incident.dlp_matches, ["scan_incomplete"]);
+        let details = incident.details.unwrap();
+        assert_eq!(details["scan_complete"], false);
+        assert_eq!(details["coverage_only"], true);
+        let dlp = dlp.unwrap();
+        assert!(dlp.truncated);
+        assert!(
+            dlp.is_empty(),
+            "a corrupt archive is not a sensitive-data hit"
         );
     }
 
@@ -1169,7 +1273,7 @@ mod tests {
             Some(DetectedFileType::PlainText),
             None,
             false,
-            Some("客户: ID card 110101199001011237, Password: admin123"),
+            Some("客户: ID card 000000200001010005, Password: FixturePass!23"),
         );
         let result = detector.analyze(&session);
         assert!(result.is_some());
@@ -1250,6 +1354,25 @@ mod tests {
     // 2Base/RadixFilehops Step 3b DLP Test
 
     #[test]
+    fn test_public_swift_pdf_does_not_create_sensitive_transfer_alert() {
+        let text = "%PDF-1.7\nBT (SWIFT: TSTBCN00) Tj ET";
+        let session = make_session_with_file_type(
+            "/file/upload",
+            Some("bank.pdf"),
+            Some(DetectedFileType::Pdf),
+            None,
+            true,
+            Some(text),
+        );
+        assert!(FileTransitDetector::new().analyze(&session).is_none());
+        assert!(
+            dlp::scan_text("SWIFT: TSTBCN00")
+                .matches
+                .contains(&"swift_code".to_string())
+        );
+    }
+
+    #[test]
     fn test_binary_file_with_swift_pattern_skips_dlp() {
         // 2Base/RadixFile body MediumpacketContains match SWIFT Code/DigitofByte -> step 3b hops, DLP
         let detector = FileTransitDetector::new();
@@ -1260,7 +1383,7 @@ mod tests {
             None,
             true,
             // 2Base/RadixMediumof SWIFT match
-            Some("binary header BKCHCNBJ more binary data"),
+            Some("binary header TSTBCN00 more binary data"),
         );
         session.body_is_binary = true;
         let result = detector.analyze(&session);

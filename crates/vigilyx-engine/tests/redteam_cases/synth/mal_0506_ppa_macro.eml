@@ -1,0 +1,21 @@
+From: =?utf-8?B?VHJhaW5pbmc=?= <train@partner-edu18.example>
+To: hr@corp.internal
+Date: Tue, 22 Sep 2026 10:35:00 +0800
+Message-ID: <0025-b29@synth.example>
+Subject: Courseware (click to start)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+Click the slide icon inside to start the course.
+--BS
+Content-Type: application/vnd.ms-powerpoint
+Content-Disposition: attachment; filename="course.ppa"
+Content-Transfer-Encoding: base64
+
+0M8R4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+--BS--

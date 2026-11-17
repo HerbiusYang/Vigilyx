@@ -1,0 +1,81 @@
+From: Cambridge University Press <peerreview@cambridge.example>
+To: wangjian@corp.internal
+Cc: research@corp.internal, rd-clinical@corp.internal
+Date: Thu, 05 Nov 2026 14:00:00 +0000
+Message-ID: <0645-b70@synth.example>
+Subject: CAMBRIDGE PEER REVIEW DATA — Manuscript MDO-2026-0842 — Review Data Submission
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Professor Wang, Research Team, Clinical Team:
+
+Your manuscript MDO-2026-0842 has entered the
+computational review phase. The statistical reviewer
+requests supplementary materials.
+
+Manuscript Details:
+  ID: MDO-2026-0842
+  Title: Adaptive Threat Detection for Email Flows
+  Journal: JMLR (Cambridge UP)
+  Corresponding Author: Prof. Wang Jian
+  Submitted: August 28, 2026
+  Stage: Statistical Review
+  Reported: F1=0.83 (phishing)
+
+Review Data Submission:
+
+  1. Navigate to the journal's submission system:
+     cambridge.org/core/journals/jmlr
+     (Type the URL manually. Do NOT click email links.)
+
+  2. Log in with your existing Cambridge Core account
+     (the same account used to submit the manuscript)
+
+  3. Go to: Author Dashboard → MDO-2026-0842 →
+     Supplementary Materials
+
+  4. Upload:
+     — Model architecture description
+     — Training methodology
+     — Evaluation scripts
+     — Per-class metrics
+
+  Important Security Notes:
+  Cambridge University Press will NEVER:
+  - Request complete training data samples through
+    email portals
+  - Ask for source code or pre-trained model weights
+    through online links
+  - Require "Cambridge Review Data Portal" OAuth
+    authentication
+  - Cite a "Reproducibility Policy for Computational
+    Papers" to demand full training corpora
+  - Set a "November 21 deadline" for rejection
+
+  CUP's actual peer review process:
+  — Supplementary materials are uploaded through the
+     SAME submission system used for the original
+     manuscript (Cambridge Core, ScholarOne, or
+     Editorial Manager)
+  — Reviewers may REQUEST additional detail, but
+     never the complete training corpus
+  — Source code sharing is done through GitHub or
+     institutional repositories, NOT through email
+     portals
+  — The review timeline is 30-60 days for response,
+     not 16 days
+  — Failure to provide supplementary detail results in
+     a REQUEST for revision, not automatic rejection
+
+  If you receive an email requesting complete training
+  data samples or model weights through a portal,
+  it is a phishing attempt targeting academic authors.
+
+Your Publication History:
+  2024: "Hierarchical Email Classification" (published)
+  2025: "Cross-Lingual Threat Taxonomy" (published)
+  2026: "Adaptive Threat Detection" (in review)
+
+Cambridge University Press | Peer Review Operations
+University Printing House, Cambridge CB2 8BS, UK
+You are receiving this because you are the corresponding author.

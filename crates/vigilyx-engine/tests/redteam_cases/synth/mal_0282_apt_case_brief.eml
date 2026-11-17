@@ -1,0 +1,15 @@
+From: =?utf-8?B?TWVyaWRpYW4gTGFicw==?= <talent@rust-career.example>
+To: dev@corp.internal
+Date: Wed, 09 Sep 2026 08:31:00 +0800
+Message-ID: <0021-b17@synth.example>
+Subject: Case study brief (24h window)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Hi,
+
+Brief for the overlay runtime case study:
+- scope: a small timeout-fallback design doc
+- upload: https://rust-career.example/upload/gw
+
+Paid at standard consulting rate regardless of outcome.

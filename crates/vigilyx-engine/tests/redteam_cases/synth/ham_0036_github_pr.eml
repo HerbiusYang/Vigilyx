@@ -1,0 +1,11 @@
+From: =?utf-8?B?R2l0SHVi?= <notifications@github.example>
+To: dev@corp.internal
+Date: Tue, 25 Aug 2026 10:55:00 +0800
+Message-ID: <0035-b2@synth.example>
+Subject: [vigilyx] PR #512: fix timeout
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+chenxi opened PR #512 "gateway: tiered timeout fallback".
++230 -18 across 6 files. CI green. Review requested: liwei.
+https://git.corp.internal/vigilyx/pull/512

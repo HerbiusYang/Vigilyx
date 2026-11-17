@@ -16,6 +16,15 @@ const HTTP_TEMP_DIR: &str = "data/tmp/http";
 /// the column is TEXT and compared lexicographically.
 const CLEANUP_ALERTS_SQL: &str = "DELETE FROM security_alerts WHERE created_at < $1";
 
+const SESSION_RETENTION_BATCH_SIZE: i64 = 200;
+const SESSION_RETENTION_BATCH_SQL: &str = r#"
+    WITH expired AS (
+        SELECT id FROM sessions WHERE started_at < $1
+        ORDER BY started_at LIMIT $2 FOR UPDATE SKIP LOCKED
+    )
+    DELETE FROM sessions s USING expired e WHERE s.id = e.id
+"#;
+
 /// Operational data removed by the Settings UI's "full cleanup" actions.
 /// Persistent analyst policy and system configuration are intentionally absent;
 /// deleting those belongs exclusively to `factory_reset`.
@@ -34,6 +43,9 @@ const OPERATIONAL_DATA_DROP_STATEMENTS: &[&str] = &[
     "DROP TABLE IF EXISTS sessions",
     "DROP TABLE IF EXISTS data_security_incidents",
     "DROP TABLE IF EXISTS data_security_http_sessions",
+    "DROP TABLE IF EXISTS data_security_email_reviews",
+    "DROP TABLE IF EXISTS external_login_hourly_sources",
+    "DROP TABLE IF EXISTS external_login_hourly",
     "DROP TABLE IF EXISTS stats_cache",
 ];
 
@@ -70,6 +82,9 @@ impl VigilDb {
             "DROP TABLE IF EXISTS sessions",
             "DROP TABLE IF EXISTS data_security_incidents",
             "DROP TABLE IF EXISTS data_security_http_sessions",
+            "DROP TABLE IF EXISTS data_security_email_reviews",
+            "DROP TABLE IF EXISTS external_login_hourly_sources",
+            "DROP TABLE IF EXISTS external_login_hourly",
             "DROP TABLE IF EXISTS config_security_pipeline",
             "DROP TABLE IF EXISTS config_sniffer",
             "DROP TABLE IF EXISTS config_ai_service",
@@ -199,73 +214,184 @@ impl VigilDb {
         }
     }
 
-    /// Get Statistics (24, According to)
+    /// Get external-login statistics for the last 24 hours.
     ///
-    /// Statistics:
-    /// - SMTP: auth_info Session ()
-    /// - POP3/IMAP: Session ()
-    /// - HTTP:, When Data
+    /// Completed hours are read from the incremental hourly tables. Only the
+    /// partial first and current hours are read from `sessions`, and all
+    /// summary counters are calculated in the same statement. The old
+    /// implementation scanned that bounded tail three times (hourly rows,
+    /// success/failure, and unique IPs), which made the endpoint contend with
+    /// the capture writer on large installations.
     pub async fn get_external_login_stats(&self) -> Result<ExternalLoginStats> {
-        let since = (chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
+        let now = chrono::Utc::now();
+        let since = now - chrono::Duration::hours(24);
 
-        // x
-        let rows: Vec<(String, String, i64)> = sqlx::query_as(
+        #[derive(Debug, sqlx::FromRow)]
+        struct ExternalLoginStatsRow {
+            hour: Option<String>,
+            protocol: Option<String>,
+            row_count: Option<i64>,
+            success_24h: i64,
+            failed_24h: i64,
+            unique_ips_24h: i64,
+        }
+
+        // The generic prepared plan overestimates the two boundary ranges on
+        // large installations and can trigger PostgreSQL JIT compilation for
+        // a small result set.  Keep JIT disabled only for this read transaction
+        // so the connection-pool session setting is never leaked.
+        let mut snapshot = self.pool.begin().await?;
+        sqlx::query("SET LOCAL jit = off")
+            .execute(&mut *snapshot)
+            .await?;
+
+        let rows: Vec<ExternalLoginStatsRow> = sqlx::query_as(
             r#"
+            WITH boundary_ranges AS MATERIALIZED (
+                SELECT
+                    $1::timestamptz AS lower_bound,
+                    date_trunc('hour', $1::timestamptz) + INTERVAL '1 hour' AS upper_bound
+                UNION ALL
+                SELECT
+                    date_trunc('hour', $2::timestamptz) AS lower_bound,
+                    $2::timestamptz AS upper_bound
+            ), boundary_sessions AS MATERIALIZED (
+                SELECT
+                    date_trunc('hour', s.started_at_ts) AS hour_start,
+                    CASE
+                        WHEN s.protocol IN ('SMTP', 'Smtp') THEN 'SMTP'
+                        WHEN s.protocol IN ('POP3', 'Pop3') THEN 'POP3'
+                        WHEN s.protocol IN ('IMAP', 'Imap') THEN 'IMAP'
+                        ELSE 'HTTP'
+                    END AS protocol,
+                    s.client_ip,
+                    s.auth_info
+                FROM sessions s
+                INNER JOIN boundary_ranges b
+                    ON s.started_at_ts > b.lower_bound
+                   AND s.started_at_ts <= b.upper_bound
+                  AND (
+                      (s.protocol IN ('SMTP', 'Smtp') AND s.auth_info IS NOT NULL)
+                      OR s.protocol IN ('POP3', 'Pop3')
+                      OR s.protocol IN ('IMAP', 'Imap')
+                      OR (s.protocol IN ('HTTP', 'Http') AND s.auth_info IS NOT NULL)
+                  )
+
+                UNION ALL
+
+                -- Compatibility for rows written before started_at_ts was
+                -- introduced. The immutable parser expression is indexed by
+                -- the security migration, so old rows do not force a scan of
+                -- the whole legacy TEXT timestamp range.
+                SELECT
+                    date_trunc('hour', vigilyx_text_timestamptz(s.started_at)) AS hour_start,
+                    CASE
+                        WHEN s.protocol IN ('SMTP', 'Smtp') THEN 'SMTP'
+                        WHEN s.protocol IN ('POP3', 'Pop3') THEN 'POP3'
+                        WHEN s.protocol IN ('IMAP', 'Imap') THEN 'IMAP'
+                        ELSE 'HTTP'
+                    END AS protocol,
+                    s.client_ip,
+                    s.auth_info
+                FROM sessions s
+                INNER JOIN boundary_ranges b
+                    ON vigilyx_text_timestamptz(s.started_at) > b.lower_bound
+                   AND vigilyx_text_timestamptz(s.started_at) <= b.upper_bound
+                WHERE s.started_at_ts IS NULL
+                  AND (
+                      (s.protocol IN ('SMTP', 'Smtp') AND s.auth_info IS NOT NULL)
+                      OR s.protocol IN ('POP3', 'Pop3')
+                      OR s.protocol IN ('IMAP', 'Imap')
+                      OR (s.protocol IN ('HTTP', 'Http') AND s.auth_info IS NOT NULL)
+                  )
+            ), combined AS MATERIALIZED (
+                SELECT
+                    hour_start,
+                    protocol,
+                    login_count AS row_count,
+                    success_count,
+                    failed_count
+                FROM external_login_hourly
+                WHERE hour_start > date_trunc('hour', $1::timestamptz)
+                  AND hour_start < date_trunc('hour', $2::timestamptz)
+
+                UNION ALL
+
+                SELECT
+                    hour_start,
+                    protocol,
+                    COUNT(*)::BIGINT AS row_count,
+                    COUNT(*) FILTER (WHERE auth_info->>'auth_success' = 'true')::BIGINT,
+                    COUNT(*) FILTER (WHERE auth_info->>'auth_success' = 'false')::BIGINT
+                FROM boundary_sessions
+                GROUP BY hour_start, protocol
+            ), hourly AS MATERIALIZED (
+                SELECT
+                    hour_start,
+                    protocol,
+                    SUM(row_count)::BIGINT AS row_count,
+                    SUM(success_count)::BIGINT AS success_count,
+                    SUM(failed_count)::BIGINT AS failed_count
+                FROM combined
+                GROUP BY hour_start, protocol
+            ), source_set AS MATERIALIZED (
+                SELECT client_ip
+                FROM external_login_hourly_sources
+                WHERE hour_start > date_trunc('hour', $1::timestamptz)
+                  AND hour_start < date_trunc('hour', $2::timestamptz)
+                UNION
+                SELECT client_ip FROM boundary_sessions
+            ), summary AS (
+                SELECT
+                    COALESCE(SUM(success_count), 0)::BIGINT AS success_24h,
+                    COALESCE(SUM(failed_count), 0)::BIGINT AS failed_24h,
+                    (SELECT COUNT(*)::BIGINT FROM source_set) AS unique_ips_24h
+                FROM hourly
+            ), result_rows AS (
+                SELECT
+                    TO_CHAR(hour_start, 'YYYY-MM-DD"T"HH24:00:00"Z"') AS hour,
+                    protocol,
+                    row_count,
+                    FALSE AS summary_row
+                FROM hourly
+                UNION ALL
+                SELECT NULL, NULL, NULL, TRUE FROM summary
+            )
             SELECT
-                TO_CHAR(started_at::timestamp, 'YYYY-MM-DD"T"HH24:00:00"Z"') as hour,
-                protocol,
-                COUNT(*) as cnt
-            FROM sessions
-            WHERE started_at >= $1
-                AND (
-                    (protocol IN ('SMTP', 'Smtp') AND auth_info IS NOT NULL)
-                    OR protocol IN ('POP3', 'Pop3')
-                    OR protocol IN ('IMAP', 'Imap')
-                    OR (protocol IN ('HTTP', 'Http') AND auth_info IS NOT NULL)
-                )
-            GROUP BY hour, protocol
-            ORDER BY hour ASC
+                result_rows.hour,
+                result_rows.protocol,
+                result_rows.row_count,
+                summary.success_24h,
+                summary.failed_24h,
+                summary.unique_ips_24h
+            FROM result_rows
+            CROSS JOIN summary
+            ORDER BY result_rows.summary_row, result_rows.hour NULLS LAST, result_rows.protocol NULLS LAST
             "#,
         )
-        .bind(&since)
-        .fetch_all(&self.pool)
+        .bind(since.to_rfc3339())
+        .bind(now.to_rfc3339())
+        .fetch_all(&mut *snapshot)
         .await?;
-
-        // Merge: IP + SMTP / (2 -> 1 DB)
-        let agg: (i64, i64, i64) = sqlx::query_as(
-            r#"
-            SELECT
-                COUNT(DISTINCT client_ip),
-                COALESCE(SUM(CASE WHEN (auth_info->>'auth_success') = 'true' THEN 1 ELSE 0 END), 0)::BIGINT,
-                COALESCE(SUM(CASE WHEN (auth_info->>'auth_success') = 'false' THEN 1 ELSE 0 END), 0)::BIGINT
-            FROM sessions
-            WHERE started_at >= $1
-                AND (
-                    (protocol IN ('SMTP', 'Smtp') AND auth_info IS NOT NULL)
-                    OR protocol IN ('POP3', 'Pop3')
-                    OR protocol IN ('IMAP', 'Imap')
-                    OR (protocol IN ('HTTP', 'Http') AND auth_info IS NOT NULL)
-                )
-            "#,
-        )
-        .bind(&since)
-        .fetch_one(&self.pool)
-        .await?;
-        let unique_ips = agg.0;
-        let auth_stats = (agg.1, agg.2);
+        snapshot.commit().await?;
 
         // Build items
         let mut hourly_map: std::collections::BTreeMap<String, HourlyLoginEntry> =
             std::collections::BTreeMap::new();
 
-        for (hour, protocol, cnt) in &rows {
+        let summary = rows.first();
+        for row in &rows {
+            let (Some(hour), Some(protocol), Some(cnt)) = (&row.hour, &row.protocol, row.row_count)
+            else {
+                continue;
+            };
             let entry = hourly_map
                 .entry(hour.clone())
                 .or_insert_with(|| HourlyLoginEntry {
                     hour: hour.clone(),
                     ..HourlyLoginEntry::default()
                 });
-            let count = *cnt as u64;
+            let count = cnt as u64;
             match protocol.as_str() {
                 "SMTP" | "Smtp" => entry.smtp = count,
                 "POP3" | "Pop3" => entry.pop3 = count,
@@ -291,9 +417,9 @@ impl VigilDb {
             pop3_24h,
             imap_24h,
             http_24h,
-            success_24h: auth_stats.0 as u64,
-            failed_24h: auth_stats.1 as u64,
-            unique_ips_24h: unique_ips as u64,
+            success_24h: summary.map_or(0, |row| row.success_24h.max(0) as u64),
+            failed_24h: summary.map_or(0, |row| row.failed_24h.max(0) as u64),
+            unique_ips_24h: summary.map_or(0, |row| row.unique_ips_24h.max(0) as u64),
         })
     }
 
@@ -399,12 +525,27 @@ impl VigilDb {
             .rows_affected();
         security_deleted += al;
 
-        // 7. sessions()
-        let sessions_deleted = sqlx::query("DELETE FROM sessions WHERE started_at < $1")
-            .bind(&cutoff_str)
-            .execute(&self.pool)
-            .await?
-            .rows_affected();
+        // Session row triggers update shared counters. A single historical
+        // DELETE can hold those counters for hours and block every new insert.
+        let sessions_deleted = self.cleanup_expired_sessions(&cutoff_str).await?;
+
+        // The login dashboard only reads a 24-hour window. Keep one extra
+        // day for boundary-hour diagnostics without letting the L3 tables
+        // grow with the lifetime of the raw sessions table.
+        let login_hourly_cutoff = (chrono::Utc::now() - chrono::Duration::hours(48)).to_rfc3339();
+        let login_hourly_sources_deleted = sqlx::query(
+            "DELETE FROM external_login_hourly_sources WHERE hour_start < $1::timestamptz",
+        )
+        .bind(&login_hourly_cutoff)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+        let login_hourly_deleted =
+            sqlx::query("DELETE FROM external_login_hourly WHERE hour_start < $1::timestamptz")
+                .bind(&login_hourly_cutoff)
+                .execute(&self.pool)
+                .await?
+                .rows_affected();
 
         tracing::info!(
             sessions = sessions_deleted,
@@ -414,11 +555,62 @@ impl VigilDb {
             ds_http_sessions = dsh,
             feedback = fb,
             alerts = al,
+            login_hourly = login_hourly_deleted,
+            login_hourly_sources = login_hourly_sources_deleted,
             days = days,
             "Data保留清理完成"
         );
 
         Ok((sessions_deleted, security_deleted))
+    }
+
+    async fn cleanup_expired_sessions(&self, cutoff: &str) -> Result<u64> {
+        let started = std::time::Instant::now();
+        let mut deleted = 0;
+        // Bound both each transaction and the entire daily maintenance pass.
+        // Remaining expired rows are eligible again on the next pass.
+        for _ in 0..100 {
+            if started.elapsed() >= std::time::Duration::from_secs(30) {
+                break;
+            }
+            let mut tx = self.pool.begin().await?;
+            sqlx::query("SET LOCAL lock_timeout = '250ms'")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("SET LOCAL statement_timeout = '2s'")
+                .execute(&mut *tx)
+                .await?;
+            let result = sqlx::query(SESSION_RETENTION_BATCH_SQL)
+                .bind(cutoff)
+                .bind(SESSION_RETENTION_BATCH_SIZE)
+                .execute(&mut *tx)
+                .await;
+            let count = match result {
+                Ok(result) => result.rows_affected(),
+                Err(error) => {
+                    let defer = error
+                        .as_database_error()
+                        .is_some_and(|e| matches!(e.code().as_deref(), Some("55P03" | "57014")));
+                    tx.rollback().await?;
+                    if defer {
+                        tracing::warn!(
+                            deleted,
+                            "Session retention deferred after bounded database wait"
+                        );
+                        break;
+                    }
+                    return Err(error.into());
+                }
+            };
+            tx.commit().await?;
+            deleted += count;
+            if count < SESSION_RETENTION_BATCH_SIZE as u64 {
+                break;
+            }
+            // Give ingest transactions a chance to acquire the shared counters.
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        Ok(deleted)
     }
 
     /// (sender_baselines, temporal_cusum/ewma, entity_risk)
@@ -473,10 +665,12 @@ impl VigilDb {
 
     /// Performance notesData
     pub async fn optimize(&self) -> Result<()> {
-        tracing::info!("开始OptimizeData库...");
-        sqlx::query("ANALYZE").execute(&self.pool).await?;
-        sqlx::query("VACUUM").execute(&self.pool).await?;
-        tracing::info!("Data库Optimize完成");
+        // VACUUM/ANALYZE without an explicit table targets every relation in
+        // the database (including catalogs) and requires table ownership.  A
+        // long-lived application role must not own schema objects merely so it
+        // can run maintenance. PostgreSQL autovacuum already performs both
+        // operations with the required privileges after the cleanup deletes.
+        tracing::info!("数据库优化已委托 PostgreSQL autovacuum");
         Ok(())
     }
 

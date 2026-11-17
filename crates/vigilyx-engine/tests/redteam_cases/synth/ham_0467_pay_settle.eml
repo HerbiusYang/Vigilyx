@@ -1,0 +1,9 @@
+From: =?utf-8?B?5pSv5LuY?= <zj@pay.example>
+To: merchant@corp.internal
+Date: Wed, 23 Sep 2026 09:42:00 +0800
+Message-ID: <0032-b30@synth.example>
+Subject: T+1 结算到账
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+昨日交易款已结算至预留账户。

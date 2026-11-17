@@ -1,0 +1,10 @@
+From: =?utf-8?B?IEVNU+WbvemZhQ==?= <intl@ems.example>
+To: me@personal.example
+Date: Mon, 07 Sep 2026 09:41:00 +0800
+Message-ID: <0031-b15@synth.example>
+Subject: 国际件清关补税通知
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>您的国际件（EE88xx…）需缴纳行邮税 52 元。</p><a href='https://ems-intl-example.com/tax/pay?no=EE8842' style='color:#0f7a3d'>缴税通道</a><p style='font-size:12px'>税额以海关文书为准。</p></body></html>

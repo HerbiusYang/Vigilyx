@@ -1,0 +1,11 @@
+From: =?utf-8?B?57uI56uv5a6J5YWo?= <edr@sec-endpoint.example>
+To: it@corp.internal
+Date: Thu, 03 Sep 2026 09:22:00 +0800
+Message-ID: <0012-b11@synth.example>
+Subject: 您的终端已被隔离（检测到木马）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+终端检测到远控木马，已网络隔离。
+自助解除（需管理员账号）：https://edr-unlock.example.info/r
+10 分钟内未处理将上报安全部。

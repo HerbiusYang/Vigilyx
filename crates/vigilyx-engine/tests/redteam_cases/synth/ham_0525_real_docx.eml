@@ -1,0 +1,22 @@
+From: =?utf-8?B?6YeH6LStLeiAgeWRqA==?= <zhou@hongxin-trade.example>
+To: purchase@corp.internal
+Date: Mon, 28 Sep 2026 08:31:00 +0800
+Message-ID: <0021-b34@synth.example>
+In-Reply-To: <po-2026-1148@corp.internal>
+Subject: Re: PO-2026-1148 签字版
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+签字版转好了。
+--BS
+Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+Content-Disposition: attachment; filename="签字版.docx"
+Content-Transfer-Encoding: base64
+
+UEsDBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+--BS--

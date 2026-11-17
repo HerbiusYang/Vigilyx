@@ -1,0 +1,9 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev25@partner.example>
+Subject: 系统通知
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><head><base href='http://203.0.113.60/verify/'></head><body><p>系统维护通知：请点击下方入口查看详情并完成相应操作，谢谢配合。</p><p><a href='login'>立即查看</a></p></body></html>

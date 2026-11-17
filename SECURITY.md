@@ -19,7 +19,9 @@ Include:
 - Potential impact
 - A suggested fix, if you have one
 
-### Response Timeline
+### Response Targets
+
+These are best-effort open-source maintenance targets, not a contractual SLA:
 
 | Stage | Timeline |
 |-------|----------|
@@ -53,12 +55,13 @@ In scope:
 - React frontend
 - Docker deployment configuration
 - Authentication and authorization flows
+- A vulnerable dependency or supply-chain configuration when it is reachable in a supported Vigilyx deployment
 
 Out of scope:
 
-- Vulnerabilities in third-party dependencies that have not been modified by this project
+- Upstream CVE reports with no demonstrated impact on a supported Vigilyx version
 - Social engineering attacks
-- Denial of service through expected high-volume traffic alone
+- Capacity exhaustion that requires ordinary expected high-volume traffic; low-volume crafted-input resource exhaustion remains in scope
 
 ### Recognition
 

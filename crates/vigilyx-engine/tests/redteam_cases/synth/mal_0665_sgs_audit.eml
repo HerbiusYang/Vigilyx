@@ -1,0 +1,89 @@
+From: SGS 通标标准技术服务有限公司-供应商审核部 <supplier.audit@sgs-verify.example>
+To: 品质部 <qa@corp.internal>
+Cc: 采购部 <purchase@corp.internal>
+Reply-To: audit.support@sgs-supplier-portal.example
+Date: Tue, 13 Oct 2026 11:00:00 +0800
+Message-ID: <0665-b47@synth.example>
+Subject: Re: Re: [SGS-AUDIT-2026-1147] 供应商安全审核问卷（第三轮补充）—— 10/17 前提交
+In-Reply-To: <sgs-audit-1147@corp.internal>
+References: <sgs-audit-1147@corp.internal> <sgs-audit-1147-2@corp.internal>
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<p>品质部、采购部：</p>
+
+<p>继 9 月第二轮现场审核后的电话沟通，现将第三轮（远程补充）审核问卷发λ出。本轮审核是贵司成为 Apple 供应链合格供应商的前置条件（贵司客户 Meridian Labs 要求其供应商通过 SGS 信息安全审核）。</p>
+
+<h3>审核概况</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:130px">审核编号</td><td><b>SGS-AUDIT-2026-1147</b></td></tr>
+<tr><td style="background:#f5f5f5">审核标准</td><td>ISO/IEC 27001:2022 + TISAX（Automotive SPICE® Level 2 附加）</td></tr>
+<tr><td style="background:#f5f5f5">审核范围</td><td>邮件安全网关产品的开发、部署、运维全生命周期</td></tr>
+<tr><td style="background:#f5f5f5">第一轮</td><td>2026-08-12 文件审查（通过）</td></tr>
+<tr><td style="background:#f5f5f5">第二轮</td><td>2026-09-18 现场审核（2 项轻微不符合 + 1 项观察项）</td></tr>
+<tr><td style="background:#f5f5f5">第三轮</td><td style="color:#e00"><b>远程补充问卷（本文）</b></td></tr>
+<tr><td style="background:#f5f5f5">截止日期</td><td style="color:#e00"><b>2026-10-17 17:00</b></td></tr>
+</table>
+
+<h3>第二轮不符合项整改确认</h3>
+<p><b>NC-01（轻微）：</b>邮件网关的密码策略缺少暴力破解防护。贵司在 10/5 回复已添加登录失败锁定（5 次失败锁定 30 分钟）。请提供：</p>
+<ul>
+<li>配置截图（含锁定阈值与锁定时长）</li>
+<li>相关测试报告（含暴力破解场景的渗透测试记录）</li>
+</ul>
+
+<p><b>NC-02（轻微）：</b>审计日志缺少不可篡改性保证。贵司回复已接入远程 syslog。请提供：</p>
+<ul>
+<li>syslog 服务器 IP 地址与端口</li>
+<li>最近 7 天的日志样本（.log 格式）</li>
+</ul>
+
+<h3>第三轮补充问卷（12 题）</h3>
+<ol>
+<li>贵司邮件网关产品的安全开发生命周期（SDL）流程图（如无请说明）</li>
+<li>代码审计频率与工具（SAST/DAST/IAST）</li>
+<li>员工安全意识培训年度计划与最近一次培训记录</li>
+<li>数据出境的合规评估（如适用）</li>
+<li>产品漏洞响应流程（含 SLA）与最近 12 个月的安全公告列表</li>
+<li>供应链风险管理：第三方组件（含 Rust crates / npm packages）的版本管理与漏洞监控</li>
+<li>物理安全：生产环境机房的门禁与视频监控</li>
+<li>业务连续性计划（BCP）与灾难恢复（DR）演练记录</li>
+<li>个人信息处理（PIPL）合规：员工与客户的个人信息处理清单</li>
+<li>安全事件响应：最近 12 个月的安全事件统计与处置报告（脱敏）</li>
+<li>管理评审：最近一次信息安全管理体系（ISMS）管理评审的会议纪要</li>
+<li>内部审核：最近一次内部审核的审核计划、检查表与不符合项清单</li>
+</ol>
+
+<h3>提交方式</h3>
+<p>所有材料请通过 SGS <b>Supplier Audit Portal</b> 在线提交：</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://sgs-supplier-portal.example/audit/SGS-AUDIT-2026-1147/submit" style="display:inline-block;background:#0055a5;color:#fff;padding:10px 28px;text-decoration:none;border-radius:4px">提交审核材料</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://audit.sgs.com/supplierportal/SGS-AUDIT-2026-1147/upload</p>
+<p style="font-size:12px;color:#888;text-align:center">（使用贵司企业邮箱登录 SGS Supplier Portal。首次使用需完成供应商注册。）</p>
+
+<p>如材料过大（>100MB），可分批上传。每个文件需附文件清单索引（Excel 模板见 Portal 内"文档下载"区）。</p>
+
+<h3>审核结果时间线</h3>
+<ul>
+<li><b>10/17：</b>材料提交截止</li>
+<li><b>10/18-10/22：</b>SGS 远程审核（含电话访谈 1-2 名技术负责人）</li>
+<li><b>10/25：</b>出具审核报告（通过 / 有条件通过 / 不通过）</li>
+<li><b>11/1：</b>如通过，颁发 SGS 信息安全审核证书（有效期 2 年）</li>
+</ul>
+
+<p>如有问题请联系审核项目经理：</p>
+<p style="font-size:13px">
+王大伟（SGS 杭州）<br>
+电话：0571-8763-****<br>
+邮箱：audit.support@sgs-supplier-portal.example
+</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">SGS 通标标准技术服务有限公司 | 供应商审核部</p>
+<p style="font-size:11px;color:#999">SGS-CMS-CN-2026 | 杭州市滨江区江陵路368号</p>
+</div>
+</body></html>

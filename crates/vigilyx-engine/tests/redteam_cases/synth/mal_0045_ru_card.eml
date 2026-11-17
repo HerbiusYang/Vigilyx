@@ -1,0 +1,11 @@
+From: =?utf-8?B?0JHQsNC90Lo=?= <info@bank-card.example>
+To: petrov@corp.internal
+Date: Wed, 26 Aug 2026 11:13:00 +0800
+Message-ID: <0003-b3@synth.example>
+Subject: =?utf-8?B?0JrQsNC6INC90LUg0L/Rg9GC?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=windows-1251
+Content-Transfer-Encoding: 8bit
+
+Уважаемый клиент, ваша карта будет заблокирована. Подтвердите данные:
+http://203.0.113.60/card/confirm

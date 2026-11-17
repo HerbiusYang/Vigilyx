@@ -23,6 +23,12 @@ use crate::module::{Evidence, ModuleMetadata, ModuleResult, Pillar, SecurityModu
 
 /// Maximum number of tables to analyze (prevents timeout on large HTML)
 const MAX_TABLES_TO_ANALYZE: usize = 10;
+/// Maximum number of inline data-URI images to inspect as possible QR carriers.
+const MAX_INLINE_QR_IMAGES: usize = 4;
+const MAX_UNICODE_QR_HTML_BYTES: usize = 512 * 1024;
+const MAX_UNICODE_QR_CARRIERS: usize = 4;
+const MAX_UNICODE_QR_DIMENSION: usize = 185; // Version 40 plus quiet zone.
+const MAX_UNICODE_QR_TEXT_BYTES: usize = 256 * 1024;
 /// Minimum QR code grid size (Version 1 = 21x21)
 const MIN_QR_GRID: usize = 21;
 /// Pre-filter threshold: minimum bgcolor occurrence count
@@ -110,10 +116,20 @@ impl SecurityModule for HtmlPixelArtModule {
 
         let check_qr =
             bgcolor_count >= PREFILTER_BGCOLOR_THRESHOLD && td_count >= PREFILTER_TD_THRESHOLD;
+        let check_inline_qr = html_lower.contains("data:image/");
+        let check_svg_vector_qr = html_lower.contains("<svg")
+            && (html_lower.contains("<path") || html_lower.contains("<rect"));
         let check_pixel_art = float_count >= PREFILTER_PIXEL_ART_THRESHOLD
             && margin_count >= PREFILTER_PIXEL_ART_THRESHOLD;
+        let check_unicode_qr = crate::modules::email_attack_hardening::stage_b_enabled()
+            && has_unicode_qr_carrier(body_html);
 
-        if !check_qr && !check_pixel_art {
+        if !check_qr
+            && !check_inline_qr
+            && !check_svg_vector_qr
+            && !check_pixel_art
+            && !check_unicode_qr
+        {
             return Ok(ModuleResult {
                 module_id: self.meta.id.clone(),
                 module_name: self.meta.name.clone(),
@@ -142,7 +158,6 @@ impl SecurityModule for HtmlPixelArtModule {
         // QR table detect
         if check_qr && let Ok(table_sel) = Selector::parse("table") {
             let mut qr_tables_found = 0u32;
-            let mut decoded_urls: Vec<String> = Vec::new();
 
             for table in document.select(&table_sel).take(MAX_TABLES_TO_ANALYZE) {
                 let analysis = analyze_table_for_qr(&table);
@@ -174,51 +189,59 @@ impl SecurityModule for HtmlPixelArtModule {
                             analysis.rows, analysis.cols
                         )),
                     });
-
-                    // Stage 3: QR Decode
-                    if let Some(ref grid) = analysis.grid
-                        && let Some(decoded) = decode_qr_from_grid(grid)
-                    {
-                        total_score += 0.05;
-                        decoded_urls.push(decoded.clone());
-
-                        // Check if decoded URL contains recipient email address
-                        let url_lower = decoded.to_lowercase();
-                        let has_recipient = ctx
-                            .session
-                            .rcpt_to
-                            .iter()
-                            .any(|r| url_lower.contains(&r.to_lowercase()));
-                        if has_recipient {
-                            total_score += 0.15;
-                            categories.push("qr_targeted_phishing".to_string());
-                        }
-
-                        categories.push("qr_malicious_url".to_string());
-                        evidence.push(Evidence {
-                            description: format!(
-                                "QR code decoded URL: {}{}",
-                                decoded,
-                                if has_recipient {
-                                    " (contains recipient email - targeted phishing)"
-                                } else {
-                                    ""
-                                },
-                            ),
-                            location: Some("qr_decoded".to_string()),
-                            snippet: Some(decoded),
-                        });
-                    }
                 }
             }
 
             details.insert("qr_tables_found".into(), qr_tables_found.into());
+        }
+
+        if check_qr || check_inline_qr || check_svg_vector_qr || check_unicode_qr {
+            let decoded_urls = ctx.decoded_qr_urls();
+            for decoded in decoded_urls {
+                // The decoded target is an observation here.  URL modules own
+                // maliciousness decisions so a routine QR link cannot become
+                // threat evidence merely because it was encoded as a QR code.
+                let url_lower = decoded.to_lowercase();
+                let has_recipient = ctx
+                    .session
+                    .rcpt_to
+                    .iter()
+                    .any(|r| url_lower.contains(&r.to_lowercase()));
+                evidence.push(Evidence {
+                    description: format!(
+                        "QR code decoded URL: {}{}",
+                        decoded,
+                        if has_recipient {
+                            " (contains recipient email - targeted phishing)"
+                        } else {
+                            ""
+                        },
+                    ),
+                    location: Some("qr_decoded".to_string()),
+                    snippet: Some(decoded.clone()),
+                });
+            }
+            let inspection = ctx.html_qr_inspection();
+            details.insert(
+                "unicode_qr_carriers".into(),
+                inspection.unicode_carriers.into(),
+            );
+            if !inspection.coverage_reasons.is_empty() {
+                // Existing coverage category: no new threat category, score,
+                // promotion or floor. Mode policy decides quarantine last.
+                categories.push("scan_incomplete".to_string());
+                details.insert(
+                    "qr_coverage_reasons".into(),
+                    serde_json::json!(inspection.coverage_reasons),
+                );
+            }
             if !decoded_urls.is_empty() {
                 details.insert(
                     "qr_decoded_urls".into(),
                     serde_json::Value::Array(
                         decoded_urls
-                            .into_iter()
+                            .iter()
+                            .cloned()
                             .map(serde_json::Value::String)
                             .collect(),
                     ),
@@ -267,7 +290,7 @@ impl SecurityModule for HtmlPixelArtModule {
         details.insert("bgcolor_count".into(), bgcolor_count.into());
         details.insert("td_count".into(), td_count.into());
 
-        Ok(ModuleResult {
+        let mut result = ModuleResult {
             module_id: self.meta.id.clone(),
             module_name: self.meta.name.clone(),
             pillar: self.meta.pillar,
@@ -281,8 +304,187 @@ impl SecurityModule for HtmlPixelArtModule {
             analyzed_at: Utc::now(),
             bpa: None,
             engine_id: None,
-        })
+        };
+        if !ctx.html_qr_inspection().coverage_reasons.is_empty() {
+            result.mark_inspection_incomplete("Unicode QR carrier inspection was incomplete");
+        }
+        Ok(result)
     }
+}
+
+#[derive(Default)]
+pub(crate) struct HtmlQrInspection {
+    pub urls: Vec<String>,
+    pub unicode_carriers: usize,
+    pub coverage_reasons: Vec<String>,
+}
+
+pub(crate) fn inspect_html_qr(body_html: &str, recover_unicode: bool) -> HtmlQrInspection {
+    let mut inspection = HtmlQrInspection {
+        urls: extract_decoded_qr_http_urls(body_html),
+        ..Default::default()
+    };
+    if recover_unicode && has_unicode_qr_carrier(body_html) {
+        inspect_unicode_qr(body_html, &mut inspection);
+    }
+    inspection.urls.sort();
+    inspection.urls.dedup();
+    inspection
+}
+
+fn has_unicode_qr_carrier(html: &str) -> bool {
+    static BLOCK_ENTITY: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)&#(?:x258[048]|960[048]);").expect("block entity syntax")
+    });
+    html.as_bytes()
+        .windows(4)
+        .any(|bytes| bytes.eq_ignore_ascii_case(b"<pre"))
+        && (html.contains(['█', '▀', '▄']) || BLOCK_ENTITY.is_match(html))
+}
+
+fn inspect_unicode_qr(html: &str, inspection: &mut HtmlQrInspection) {
+    if html.len() > MAX_UNICODE_QR_HTML_BYTES {
+        inspection
+            .coverage_reasons
+            .push("unicode_qr_html_size_limit".into());
+        return;
+    }
+    let document = Html::parse_document(html);
+    let selector = Selector::parse("pre").expect("valid Unicode QR selector");
+    let mut attempted = 0;
+    for (index, element) in document.select(&selector).take(129).enumerate() {
+        if index == 128 {
+            inspection
+                .coverage_reasons
+                .push("unicode_qr_dom_element_limit".into());
+            break;
+        }
+        let text: String = element.text().collect();
+        if !text.contains(['█', '▀', '▄']) {
+            continue;
+        }
+        if text.len() > MAX_UNICODE_QR_TEXT_BYTES {
+            inspection
+                .coverage_reasons
+                .push("unicode_qr_text_size_limit".into());
+            continue;
+        }
+        if text.lines().count() > MAX_UNICODE_QR_DIMENSION
+            || text
+                .lines()
+                .any(|line| line.chars().count() > MAX_UNICODE_QR_DIMENSION * 2)
+        {
+            inspection
+                .coverage_reasons
+                .push("unicode_qr_dimension_limit".into());
+            continue;
+        }
+        let Some(grid) = unicode_qr_grid(&text) else {
+            continue;
+        };
+        // QR finder geometry distinguishes carriers from ordinary block art.
+        // Try both polarities; an inverted QR is still just a URL carrier.
+        let inverted: Vec<Vec<bool>> = grid
+            .iter()
+            .map(|row| row.iter().map(|value| !value).collect())
+            .collect();
+        let qualified = has_quiet_zone_finders(&grid) || has_quiet_zone_finders(&inverted);
+        if !qualified {
+            continue;
+        }
+        inspection.unicode_carriers += 1;
+        if attempted >= MAX_UNICODE_QR_CARRIERS {
+            inspection
+                .coverage_reasons
+                .push("unicode_qr_candidate_limit".into());
+            break;
+        }
+        attempted += 1;
+        if let Some(payload) = decode_qr_from_grid(&grid).or_else(|| decode_qr_from_grid(&inverted))
+        {
+            if let Some(url) = normalize_qr_http_url(&payload) {
+                inspection.urls.push(url);
+            }
+        } else {
+            inspection
+                .coverage_reasons
+                .push("unicode_qr_decode_failed".into());
+        }
+    }
+    inspection.coverage_reasons.sort();
+    inspection.coverage_reasons.dedup();
+}
+
+fn unicode_qr_grid(text: &str) -> Option<Vec<Vec<bool>>> {
+    let lines: Vec<_> = text.trim_matches(['\n', '\r']).lines().collect();
+    if lines.is_empty() || lines.len() > MAX_UNICODE_QR_DIMENSION {
+        return None;
+    }
+    let half_blocks = text.contains(['▀', '▄']);
+    let mut grid = Vec::new();
+    let mut width = None;
+    for line in lines {
+        let mut top = Vec::new();
+        let mut bottom = Vec::new();
+        for ch in line.chars() {
+            let (upper, lower) = match ch {
+                '█' => (true, true),
+                '▀' => (true, false),
+                '▄' => (false, true),
+                ' ' | '\u{00a0}' => (false, false),
+                _ => return None,
+            };
+            top.push(upper);
+            bottom.push(lower);
+            if top.len() > MAX_UNICODE_QR_DIMENSION * 2 {
+                return None;
+            }
+        }
+        if width.is_some_and(|width| top.len() != width) {
+            return None;
+        }
+        width = Some(top.len());
+        grid.push(top);
+        if half_blocks {
+            grid.push(bottom);
+        }
+    }
+    let width = width?;
+    if width == grid.len() * 2
+        && grid
+            .iter()
+            .all(|row| row.as_chunks::<2>().0.iter().all(|pair| pair[0] == pair[1]))
+    {
+        for row in &mut grid {
+            *row = row.iter().step_by(2).copied().collect();
+        }
+    }
+    // Half-block encoders may pad the final bottom row to an even height.
+    if half_blocks && grid.len() == grid[0].len() + 1 && grid.last()?.iter().all(|value| !value) {
+        grid.pop();
+    }
+    let size = grid.len();
+    ((MIN_QR_GRID..=MAX_UNICODE_QR_DIMENSION).contains(&size)
+        && grid.iter().all(|row| row.len() == size))
+    .then_some(grid)
+}
+
+fn has_quiet_zone_finders(grid: &[Vec<bool>]) -> bool {
+    // Typical QR quiet zones are 0..4 modules. Never infer maliciousness from
+    // finder geometry, and do not discard rows/columns of a candidate.
+    (0..=4).any(|quiet| {
+        let size = grid.len();
+        size >= 21 + 2 * quiet
+            && [
+                (quiet, quiet),
+                (quiet, size - quiet - 7),
+                (size - quiet - 7, quiet),
+            ]
+            .iter()
+            .filter(|&&(row, col)| check_finder_at(grid, row, col))
+            .count()
+                >= 2
+    })
 }
 
 // QR table analysis
@@ -426,6 +628,82 @@ fn check_finder_at(grid: &[Vec<bool>], start_row: usize, start_col: usize) -> bo
     }
 
     match_count as f64 / total as f64 > 0.85
+}
+
+/// Decode HTTP(S) URLs from HTML QR carriers (tables and inline data images).
+///
+/// This is deliberately exposed to the link modules through `SecurityContext`:
+/// a QR target is an alternate URL carrier, not a separate threat source. The
+/// target is only admitted to downstream URL analysis when it parses as HTTP(S);
+/// arbitrary QR payloads such as Wi-Fi/configuration text remain non-actionable.
+pub(crate) fn extract_decoded_qr_http_urls(body_html: &str) -> Vec<String> {
+    let html_lower = body_html.to_lowercase();
+    let bgcolor_count = html_lower.matches("bgcolor").count();
+    let td_count = html_lower.matches("<td").count();
+    let has_table_qr_carrier =
+        bgcolor_count >= PREFILTER_BGCOLOR_THRESHOLD && td_count >= PREFILTER_TD_THRESHOLD;
+    let has_inline_qr_carrier = html_lower.contains("data:image/");
+    let has_svg_vector_qr_carrier = html_lower.contains("<svg")
+        && (html_lower.contains("<path") || html_lower.contains("<rect"));
+    if !has_table_qr_carrier && !has_inline_qr_carrier && !has_svg_vector_qr_carrier {
+        return Vec::new();
+    }
+
+    let mut decoded_urls = Vec::new();
+    let mut seen = HashSet::new();
+
+    if has_table_qr_carrier {
+        let document = Html::parse_document(body_html);
+        if let Ok(table_sel) = Selector::parse("table") {
+            for table in document.select(&table_sel).take(MAX_TABLES_TO_ANALYZE) {
+                let analysis = analyze_table_for_qr(&table);
+                let Some(grid) = analysis.grid.as_ref().filter(|_| analysis.score >= 0.40) else {
+                    continue;
+                };
+                let Some(payload) = decode_qr_from_grid(grid) else {
+                    continue;
+                };
+                if let Some(normalized) = normalize_qr_http_url(&payload)
+                    && seen.insert(normalized.clone())
+                {
+                    decoded_urls.push(normalized);
+                }
+            }
+        }
+    }
+
+    if has_inline_qr_carrier {
+        for payload in crate::modules::attach_qr_scan::decode_data_uri_qr_payloads(
+            body_html,
+            MAX_INLINE_QR_IMAGES,
+        ) {
+            if let Some(normalized) = normalize_qr_http_url(&payload)
+                && seen.insert(normalized.clone())
+            {
+                decoded_urls.push(normalized);
+            }
+        }
+    }
+
+    if has_svg_vector_qr_carrier {
+        for payload in crate::modules::attach_qr_scan::decode_svg_vector_qr_payloads(body_html) {
+            if let Some(normalized) = normalize_qr_http_url(&payload)
+                && seen.insert(normalized.clone())
+            {
+                decoded_urls.push(normalized);
+            }
+        }
+    }
+
+    decoded_urls
+}
+
+fn normalize_qr_http_url(payload: &str) -> Option<String> {
+    let parsed = url::Url::parse(payload.trim()).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    Some(parsed.to_string())
 }
 
 // QR Decode (rqrr)
@@ -687,6 +965,23 @@ mod tests {
     }
 
     #[test]
+    fn test_qr_payload_only_admits_http_urls() {
+        assert_eq!(
+            normalize_qr_http_url(" https://example.test/login "),
+            Some("https://example.test/login".to_string())
+        );
+        assert_eq!(normalize_qr_http_url("WIFI:T:WPA;S:guest;P:secret;;"), None);
+        assert_eq!(normalize_qr_http_url("javascript:alert(1)"), None);
+    }
+
+    #[test]
+    fn test_inline_image_carrier_is_bounded_and_non_actionable_without_valid_qr() {
+        let html =
+            r#"<html><body><img src="data:image/png;base64,not-a-real-image"></body></html>"#;
+        assert!(extract_decoded_qr_http_urls(html).is_empty());
+    }
+
+    #[test]
     fn test_analyze_table_detects_qr_grid() {
         let html = build_qr_table_html(25);
         let doc = Html::parse_document(&html);
@@ -809,5 +1104,127 @@ mod tests {
         );
         assert_eq!(extract_px_value("width:3px", "width:"), Some(3.0));
         assert_eq!(extract_px_value("color: red", "width:"), None);
+    }
+
+    const HARDENING_QR: &str = include_str!("../../tests/fixtures/unicode_qr_blocks.txt");
+
+    #[test]
+    fn hardening_unicode_qr_full_double_half_inverted_and_entity_carriers() {
+        let doubled = format!("<pre>{HARDENING_QR}</pre>");
+        let single = HARDENING_QR
+            .lines()
+            .map(|row| row.chars().step_by(2).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let matrix: Vec<Vec<char>> = single.lines().map(|row| row.chars().collect()).collect();
+        let mut half = String::new();
+        for pair in matrix.chunks(2) {
+            for (col, ch) in pair[0].iter().enumerate() {
+                let top = *ch == '█';
+                let bottom = pair.get(1).is_some_and(|row| row[col] == '█');
+                half.push(match (top, bottom) {
+                    (true, true) => '█',
+                    (true, false) => '▀',
+                    (false, true) => '▄',
+                    _ => ' ',
+                });
+            }
+            half.push('\n');
+        }
+        let inverted: String = single
+            .chars()
+            .map(|ch| match ch {
+                '█' => ' ',
+                ' ' => '█',
+                other => other,
+            })
+            .collect();
+        for html in [
+            doubled.clone(),
+            format!("<pre>{single}</pre>"),
+            format!("<pre>{half}</pre>"),
+            format!("<pre>{inverted}</pre>"),
+            doubled.replace('█', "&#x2588;").replace(' ', "&#160;"),
+        ] {
+            let result = inspect_html_qr(&html, true);
+            assert_eq!(
+                result.urls,
+                vec!["http://203.0.113.60/sso/login"],
+                "{} carriers, {:?}",
+                result.unicode_carriers,
+                result.coverage_reasons
+            );
+            assert!(result.coverage_reasons.is_empty());
+        }
+        assert!(inspect_html_qr(&doubled, false).urls.is_empty());
+    }
+
+    #[test]
+    fn hardening_unicode_non_qr_and_failed_qr_coverage_are_separate() {
+        let art = format!(
+            "<pre>{}</pre>",
+            (0..37)
+                .map(|_| "█ ".repeat(37))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let result = inspect_html_qr(&art, true);
+        assert!(result.urls.is_empty());
+        assert!(result.coverage_reasons.is_empty());
+        let grid = unicode_qr_grid(HARDENING_QR).unwrap();
+        let damaged: String = grid
+            .iter()
+            .enumerate()
+            .map(|(row, cells)| {
+                cells
+                    .iter()
+                    .enumerate()
+                    .map(|(col, black)| {
+                        if row >= 12 && col >= 12 {
+                            ' '
+                        } else if *black {
+                            '█'
+                        } else {
+                            ' '
+                        }
+                    })
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let failed = inspect_html_qr(&format!("<pre>{damaged}</pre>"), true);
+        assert_eq!(failed.unicode_carriers, 1);
+        assert!(failed.urls.is_empty());
+        assert!(
+            failed
+                .coverage_reasons
+                .iter()
+                .any(|reason| reason == "unicode_qr_decode_failed")
+        );
+    }
+
+    #[test]
+    fn hardening_unicode_qr_size_and_candidate_budgets() {
+        let oversized = format!(
+            "<pre>{}</pre>{}",
+            HARDENING_QR,
+            "a".repeat(MAX_UNICODE_QR_HTML_BYTES)
+        );
+        let result = inspect_html_qr(&oversized, true);
+        assert!(
+            result
+                .coverage_reasons
+                .iter()
+                .any(|reason| reason == "unicode_qr_html_size_limit")
+        );
+        let many = format!("<pre>{HARDENING_QR}</pre>").repeat(MAX_UNICODE_QR_CARRIERS + 1);
+        let result = inspect_html_qr(&many, true);
+        assert_eq!(result.urls.len(), 1);
+        assert!(
+            result
+                .coverage_reasons
+                .iter()
+                .any(|reason| reason == "unicode_qr_candidate_limit")
+        );
     }
 }

@@ -1,0 +1,21 @@
+From: =?utf-8?B?5rOV5Yqh?= <legal@partner-relay8.example>
+To: legal@corp.internal
+Date: Thu, 10 Sep 2026 08:17:00 +0800
+Message-ID: <0007-b18@synth.example>
+Subject: 客户来函（转发原件）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+客户原始来函如附件（eml 原件）。
+--BS
+Content-Type: message/rfc822
+Content-Disposition: attachment; filename="客户来函.eml"
+Content-Transfer-Encoding: base64
+
+RnJvbTogY0B4DQpTdWJqZWN0OiBvaw0KDQpjb250ZW50
+--BS--

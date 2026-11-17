@@ -1,0 +1,81 @@
+From: "菠萝科技 | 安全应急响应小组 PSIRT" <psirt@boluo-tech.example>
+To: jing.hao@boluo-tech.example
+Cc: dev.duty@boluo-tech.example
+Date: Fri, 11 Sep 2026 10:30:00 +0800
+Message-ID: <1072-b213@synth.example>
+Subject: =?utf-8?B?44CQ5L6d6LWW5a6J5YWo44CR5oqV5q+S5LqL5Lu25omr5o+P57uT6K665LiO5YWN6LS55Y2H57qn5oyH5byV77yI5Yu/55So56ys5LiJ5pa56KGl5LiB5rqQ77yJ?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+景皓工程师（值班组已抄送）：
+
+您好。公司安全应急响应小组 PSIRT
+（内部域 boluo-tech.example，工单
+PSIRT-2026-044）。今晨有外部邮件
+署名"开源依赖安全应急响应中心"，
+就 color-parser 2.3.1 投毒事件向
+贵组推销 2,400 元/月的私有补丁
+registry。先把我们的扫描结论给你，
+再说这件事的正确处置。
+
+一、我们的扫描结论（已完成）
+1. 全仓库 package-lock 扫描：所有
+   锁定版本均为 2.2.7，无任何
+   项目引用过 2.3.1（投毒版本
+   9 月 8 日发布，我们的 lock
+   文件最后更新在 9 月 5 日）；
+   "package-lock 哈希指纹命中"
+   的说法与我们实际扫描结果
+   不符；
+2. CI 缓存审计：构建缓存中无
+   2.3.1 拉取记录，NPM_TOKEN
+   使用日志无异常；
+3. 结论：我们不在影响面内。
+   日常依赖更新走 renovate
+   自动 PR＋人工审核，本次
+   已将 2.3.1 加入拒绝列表。
+
+二、那封邮件的正确打开方式
+1. "凭据裸奔 72 小时"建立在
+   "您已中招"的前提上——扫描
+   证明前提不成立，这是此类
+   推销的标准结构：先替你确认
+   暴露，再卖解药；
+2. 更重要的：把构建 registry
+   指向陌生私有源，本身就是
+   供应链攻击向量——2024 年
+   以来的多起真实入侵，正是
+   通过"安全补丁 registry"
+   分发的：您付费订阅的
+   "干净补丁"，恰恰是新的
+   投毒入口；
+3. "锁 2.3.0 有 ReDoS"：我们
+   锁定的 2.2.7 不在受影响
+   版本列（GitHub Advisory
+   可自行核对）。
+
+三、真实事件的正确处置（免费，
+未来遇到时照做）
+1. 核对 lock 文件与 CI 缓存
+   （半小时）；
+2. 命中则立即轮换 CI 凭据＋
+   回滚版本＋删除污染缓存；
+3. 等 npm 官方 yank 与安全版本
+   ——官方渠道免费且可信，
+   advisory 页面进度公开。
+
+四、反诈声明
+PSIRT 通告只经内部域与值班群；
+npm/GitHub Advisory 不授权任何
+第三方"应急响应中心"。收到
+类似邮件转发 psirt@（本邮箱），
+我们会在工单里给出扫描结论。
+
+给工程师的一句话：真正的应急
+响应第一步是扫描自己——花
+半小时看 lock 文件，比花 2,400
+订阅别人的"确定性"便宜且真实。
+
+菠萝科技 PSIRT
+（工单 PSIRT-2026-044；扫描
+报告见内网 Wiki 安全面板）

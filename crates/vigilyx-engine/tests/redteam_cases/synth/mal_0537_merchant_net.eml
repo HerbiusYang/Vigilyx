@@ -1,0 +1,10 @@
+From: =?utf-8?B?5ZWG5oi35pyN5Yqh?= <shj@pay-merchant22.example>
+To: merchant@corp.internal
+Date: Thu, 24 Sep 2026 09:16:00 +0800
+Message-ID: <0006-b31@synth.example>
+Subject: 商户入网复核（结算卡变更）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+复核：https://shj-fk22.example.org/c
+（新结算卡+确认打款金额）

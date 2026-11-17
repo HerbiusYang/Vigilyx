@@ -1,0 +1,79 @@
+From: "市建设工程施工图审查中心 | 项目审查科" <shencha.reply@cstc-drawings.example>
+To: design-director@institute.example
+Cc: project-team@institute.example, admin.office@institute.example
+Reply-To: 审查受理组 <shengcha.desk@cstc-online.example>
+Disposition-Notification-To: shencha.reply@cstc-drawings.example
+Date: Thu, 13 May 2027 09:40:00 +0800
+Message-ID: <0817-b98@synth.example>
+Subject: =?utf-8?B?44CQ5a6h5p+l5oSP6KeB44CR5ZWG5Lia57u85ZCI5L2T6aG555uu5pa95bel5Zu+5a6h5p+l5oSP6KeB5Lmm77yIM+mhuei/neWPjeW8uuadoe+8iSDigJQg5Zyo57q/562+5pS257O757uf5Y2H57qn6ZyA5Y2V5L2N6K+B5Lmm5qC46aqMIOKAlCDmlbTmlLnlm57lpI0xNeaXpeWGhQ==?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px">
+<p>设计院总工、项目组、院办：</p>
+
+<p style="background:#FFEBEE;border-left:4px solid #B71C1C;padding:12px">
+<b>施工图审查意见书已出具（含 3 项违反强制性条文）——需在线签收并 15 日内回复整改。</b>
+贵院设计的"滨江商业综合体项目"（审查受理号 <b>SC-2027-04417</b>）施工图审查已完成，
+意见书编号 <b>YS-2027-1184</b>。其中 <b>3 项违反强条</b>（消防、结构各涉及），需修改设计文件
+后重新报审。审查中心本季度上线<b>在线签收系统</b>，意见书签收、整改回复上传均在线完成，
+首次使用需完成<b>单位数字证书核验</b>。
+</p>
+
+<h3>一、审查概况</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:230px">项目名称</td><td>滨江商业综合体项目（地上 24 层，地下 2 层，8.6 万㎡）</td></tr>
+<tr><td style="background:#f5f5f5">审查受理号</td><td><b>SC-2027-04417</b>（2027-04-20 受理）</td></tr>
+<tr><td style="background:#f5f5f5">意见书编号</td><td><b>YS-2027-1184</b>（2027-05-12 出具）</td></tr>
+<tr><td style="background:#f5f5f5">审查类别</td><td>消防 + 建筑 + 结构 + 节能（联合审查）</td></tr>
+<tr><td style="background:#f5f5f5">意见总数</td><td>23 条：强条违反 3 · 一般性 17 · 建议 3</td></tr>
+<tr><td style="background:#f5f5f5">整改期限</td><td><b>签收之日起 15 日内</b>回复整改设计文件</td></tr>
+</table>
+
+<h3>二、3 项强条违反（摘要）</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>序号</th><th>强条</th><th>意见</th></tr>
+<tr><td>1</td><td>《建筑防火通用规范》GB55037-2022 第 7.1.5 条</td><td>疏散楼梯间首层直通室外的门净宽不足 1.1m（设计 0.95m）</td></tr>
+<tr><td>2</td><td>《混凝土结构通用规范》GB55008-2021 第 2.0.8 条</td><td>地下室外墙裂缝控制验算未按二 a 类环境提交</td></tr>
+<tr><td>3</td><td>《建筑节能与可再生能源利用通用规范》GB55015-2021 第 3.1.14 条</td><td>幕墙 K 值计算书与节能模型参数不一致</td></tr>
+</table>
+
+<h3>三、在线签收（首次需单位证书核验）</h3>
+<p>在线签收系统本季度启用，替代原纸质签收。首次签收需完成<b>单位数字证书（CA）绑定核验</b>：
+输入单位证书口令<b>前四位</b> + 证书绑定手机短信验证码，核验后本次及后续项目签收均免验。
+签收后即可下载意见书全本并上传整改回复。</p>
+
+<p style="text-align:center;margin:18px 0">
+<a href="https://cstc-online.example/receipt/SC-2027-04417/YS-2027-1184" style="display:inline-block;background:#B71C1C;color:#fff;padding:12px 42px;text-decoration:none;border-radius:4px;font-weight:bold">在线签收意见书（首次需核验）</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">审查系统：https://www.cstcsctest.example/system（原纸质受理窗口同步保留）</p>
+
+<h3>四、时间线</h3>
+<ul>
+<li>签收期限：意见书出具后 <b>10 日内</b>（至 5 月 22 日）</li>
+<li>整改回复：签收后 <b>15 日内</b>上传（强条违反项必须修改设计文件）</li>
+<li>逾期后果：项目审查状态转为"退回"，需重新受理排队（当前联合审查排队约 18 个工作日）</li>
+</ul>
+
+<p style="font-size:14px;background:#FFF3E0;padding:12px">"审查系统要单位证书口令"应当核实——
+工程建设领域钓鱼确实在增多，设计单位的证书即单位签名权。边界：核验只收<b>口令前四位</b>
+（无法用于签署文件），验证码发证书绑定手机；也可以完全走线下——<b>携单位证书 UKey 到
+审查中心受理窗口</b>现场签收（4 号窗口，即到即办）。10 日与 15 日的期限是《房屋建筑和
+市政基础设施工程施工图设计文件审查管理办法》的规定时限，无法为单个项目延期。</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://cstc-online.example/px/sc.gif?c=YS-2027-1184&amp;r=design-director%40institute.example" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">代办通道：院办或图审代办人员可凭代办委托书照片在 cstc-online.example/agency 代为签收（免单位证书核验，当日生效）。</p>
+
+<h3>五、联系方式</h3>
+<p>审查受理组：shengcha.desk@cstc-online.example<br>
+受理号引用：SC-2027-04417 · 审查中心咨询电话：0571-87xx xxxx（中心官网公布号码）</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+市建设工程施工图审查中心 · 项目审查科 · 本通知发送至设计单位登记邮箱<br>
+审查意见书全本于签收后在系统内下载；强条目录以住建部发布为准。
+</div>
+
+</body></html>

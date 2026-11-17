@@ -1,0 +1,75 @@
+From: CrowdStrike Support <support@crowdstrike.example>
+To: soc@corp.internal
+Cc: infra@corp.internal
+Date: Wed, 21 Oct 2026 12:00:00 +0800
+Message-ID: <0599-b55@synth.example>
+Subject: Re: [CS-2026-4471] CRITICAL: Falcon sensor kernel panic on Ubuntu 22.04 — sensor update required (v7.22→v7.24)
+In-Reply-To: <soc-cs-4471@corp.internal>
+References: <soc-cs-4471@corp.internal> <soc-cs-4471-2@corp.internal>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+SOC 团队、基础设施部：
+
+关于贵司工单 CS-2026-4471 中报告的 Falcon 传感器在 Ubuntu 22.04 上触发 kernel panic 的问题，我们已确认这是 v7.22 的已知缺陷。请升级至 v7.24。
+
+一、问题背景
+  工单编号：CS-2026-4471
+  影响产品：Falcon Sensor for Linux
+  影响版本：v7.22
+  影响内核：Ubuntu 22.04 LTS, kernel 6.8.0-45-generic
+  症状：kernel panic → 系统重启 → 循环
+  影响范围：贵司约 47 台 Ubuntu 服务器（12 台受影响）
+  根因：eBPF hook 与 cgroup v2 变更冲突
+
+二、修复方案
+
+  v7.24 已修复此问题。升级步骤：
+
+  1. 在浏览器中手动输入 falcon.crowdstrike.com
+  2. 登录后进入 Support → Sensor Downloads
+  3. 下载 v7.24 (Ubuntu 22.04 .deb)
+  4. 通过 Ansible/Puppet 批量部署：
+
+     # Ansible playbook 示例
+     - name: Upgrade Falcon Sensor
+       apt:
+         deb: /tmp/falcon-sensor_7.24_amd64.deb
+         state: present
+       notify: restart falcon-sensor
+
+  5. 传感器升级后自动重新注册（无需手动干预）
+
+  重要安全提醒：
+  CrowdStrike 在任何情况下都不会：
+  - 通过邮件发送设备注册码或 OAuth 授权链接
+  - 要求通过 Okta/Azure AD "批量注册传感器"
+  - 要求客户提供 Okta 或任何 IdP 的认证凭据
+  - 引导客户到非 falcon.crowdstrike.com 域名操作
+
+  传感器升级仅通过 Falcon Console 完成：
+  手动导航 falcon.crowdstrike.com → Sensor Downloads
+
+  如果您收到要求"通过 Okta 设备码注册传感器"的邮件，
+  即使声称来自 CrowdStrike，也请视为钓鱼并报告。
+
+三、紧急程度
+  12 台服务器处于 kernel panic 循环中。
+  另外 35 台在下次重启时可能触发。
+  建议尽快完成升级。
+
+四、技术细节
+  v7.24 changelog:
+    - Fixed: kernel panic on cgroup v2 with kernel >= 6.8.0-45
+    - Improved: sensor auto-registration on upgrade
+  升级前请确保内核版本 >= 6.8.0-45。
+
+五、联系方式
+  支持 Engineer：Jason Chen (CrowdStrike APAC)
+  电话：+86 21-6242-****
+  工单系统：falcon.crowdstrike.com/support（手动导航）
+
+--
+CrowdStrike | Falcon Support Team
+support@crowdstrike.example
+(Priority-1 notification for ticket CS-2026-4471)

@@ -63,6 +63,18 @@ pub struct Config {
 impl Config {
     /// Load configuration from environment variables
     pub fn from_env() -> Result<Self> {
+        Self::from_env_inner(true)
+    }
+
+    /// Load capture/API configuration for the standalone sniffer.
+    ///
+    /// The sniffer publishes through authenticated HTTP and Valkey channels;
+    /// it intentionally has no PostgreSQL credential or direct database path.
+    pub fn from_env_for_sniffer() -> Result<Self> {
+        Self::from_env_inner(false)
+    }
+
+    fn from_env_inner(require_database_url: bool) -> Result<Self> {
         // Try to load.env file
         let _ = dotenvy::dotenv();
 
@@ -127,8 +139,16 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(8080),
-            database_url: env::var("DATABASE_URL")
-                .expect("DATABASE_URL 环境变量必须set (例: postgres://user:pass@host:5432/db)"),
+            database_url: match env::var("DATABASE_URL") {
+                Ok(value) if !value.trim().is_empty() => value,
+                _ if require_database_url => {
+                    return Err(Error::Config(
+                        "DATABASE_URL is required (example: postgres://user:pass@host:5432/db)"
+                            .to_string(),
+                    ));
+                }
+                _ => String::new(),
+            },
         })
     }
 

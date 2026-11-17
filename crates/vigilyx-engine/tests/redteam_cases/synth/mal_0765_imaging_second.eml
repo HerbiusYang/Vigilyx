@@ -1,0 +1,79 @@
+From: "Meridian Imaging Partners | Patient Portal Records" <records.secondopinion@meridian-imaging-care.example>
+To: d.whitfield@mymail.example
+Cc: (none)
+Reply-To: second.opinion@meridian-radreports.example
+Disposition-Notification-To: records.secondopinion@meridian-imaging-care.example
+Date: Wed, 13 Jan 2027 08:50:00 -0500
+Message-ID: <0765-b80@synth.example>
+Subject: Chest CT Follow-Up - Incidental 4mm Nodule Noted (Accession R-2026-118842) - Radiologist Second-Opinion Window Opens This Week
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:Helvetica,Arial,sans-serif;font-size:14px">
+<p>Dear Mr. Whitfield,</p>
+
+<p style="background:#FFEBEE;border-left:4px solid #B71C1C;padding:12px">
+<b>FOLLOW-UP RECOMMENDED ON YOUR RECENT CHEST CT.</b>
+The radiologist's report on your 18 December imaging (accession <b>R-2026-118842</b>) notes an
+<b>incidental 4 mm right lower-lobe nodule</b>. The report recommends a 12-month surveillance CT per
+Fleischner guidelines. Patients receiving this finding commonly request a <b>radiologist second opinion</b>
+before the surveillance period — our records desk is opening second-opinion review slots
+<b>this week only</b>, and your study qualifies for the expedited track.
+</p>
+
+<h3>1. What the Report Says (Patient Summary)</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:260px">Study</td><td>Chest CT without contrast, 18 Dec 2026</td></tr>
+<tr><td style="background:#f5f5f5">Accession</td><td>R-2026-118842 (ordered by Dr. Alvarez, PCP referral)</td></tr>
+<tr><td style="background:#f5f5f5">Finding</td><td>4 mm solid nodule, right lower lobe, perifissural location</td></tr>
+<tr><td style="background:#f5f5f5">Guideline</td><td>Fleischner 2017: incidental solid nodule &lt; 6 mm in low-risk patient — routine 12-month CT optional</td></tr>
+<tr><td style="background:#f5f5f5">Overall impression</td><td>"No acute cardiopulmonary process. Benign-appearing nodule, surveillance per guideline."</td></tr>
+</table>
+
+<h3>2. About the Second-Opinion Track</h3>
+<p>The second-opinion program re-reads your study with a subspecialty chest radiologist and returns a
+written addendum within 48 hours. To re-read, the program needs your imaging files (DICOM) and report
+bundled into a transfer package:</p>
+
+<p style="text-align:center;margin:18px 0">
+<a href="https://meridian-radreports.example/secondopinion/patient?acc=R-2026-118842" style="display:inline-block;background:#00695C;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">Upload Records for Second-Opinion Review</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">Records portal: https://www.meridianimaging.com/patients/records</p>
+
+<p>The expedited track carries a technical review fee of <b>$298</b>, collected during upload (the standard
+insurance path for second opinions is also available but queues 3–4 weeks — this week's slots are the
+expedited track).</p>
+
+<h3>3. Why the Window Is This Week</h3>
+<ul>
+<li>Subspecialty reviewer availability: chest-radiologist blocks are released Mondays and fill quickly</li>
+<li>Your study's DICOM files remain in fast-access storage for 30 days from the scan date; after that,
+extraction from archive adds 5–7 days</li>
+<li>The 12-month surveillance clock starts from the original read; an addendum filed before your PCP
+follow-up visit (typically 2 weeks out) reaches your doctor in time to adjust the plan if warranted</li>
+</ul>
+
+<p style="font-size:14px;background:#FFF3E0;padding:12px">A fee-for-records email arriving right after a
+scary finding deserves every ounce of your skepticism — and the finding itself is genuinely low-risk
+(perifissural nodules under 6 mm are overwhelmingly benign). Two things about this track: the upload session
+is scoped to accession R-2026-118842 only, and payment runs through the same processor as our in-office
+copays (your statement arrives from Meridian Imaging, not from this mailbox). If you'd rather skip the
+second opinion entirely, the 12-month surveillance your report recommends is the standard of care, and
+doing nothing extra is a fully reasonable choice.</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://meridian-radreports.example/px/so.gif?acc=R-2026-118842&amp;r=d.whitfield%40mymail.example" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">Family/caregiver lane: uploading on behalf of a patient? Submit their date of birth plus your own ID photo at meridian-radreports.example/caregiver to receive their package link (no patient signature required for records transfer).</p>
+
+<h3>4. Contact</h3>
+<p>Records desk: second.opinion@meridian-radreports.example<br>
+Accession reference: R-2026-118842 · Statement questions: the number on your imaging center statement</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+Meridian Imaging Partners | Patient Records · This notice concerns accession R-2026-118842 only.<br>
+Your full report is available from your referring physician or the patient portal you registered with.
+</div>
+
+</body></html>

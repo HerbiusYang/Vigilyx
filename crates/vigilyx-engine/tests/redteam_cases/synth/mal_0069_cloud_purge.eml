@@ -1,0 +1,10 @@
+From: =?utf-8?B?5LqR55uY6L+Q6JCl?= <drive@cloud-svc.example>
+To: user@corp.internal
+Date: Thu, 27 Aug 2026 09:23:00 +0800
+Message-ID: <0008-b4@synth.example>
+Subject: 账号活跃度不足，30 日后清理
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您的云盘已连续 180 天未完成安全校验，按规则将于 30 日后进入清理队列。
+保留数据请完成校验：https://drive-keep.example.net/check

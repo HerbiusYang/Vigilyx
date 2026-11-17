@@ -1,0 +1,10 @@
+From: =?utf-8?B?5p625p6E57uE?= <arch@corp.internal>
+To: dev-team@corp.internal
+Date: Mon, 31 Aug 2026 09:37:00 +0800
+Message-ID: <0027-b8@synth.example>
+Subject: tokio 升级评审（周三）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+tokio 1.x 升级 PR 已挂，改动集中在定时器 API。
+周三过一遍，灰度计划附在 PR 描述。

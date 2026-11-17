@@ -1,0 +1,104 @@
+From: Sony Interactive Entertainment | PlayStation Partners <partner.payments@playstation-partners.example>
+To: dev-pub@corp.internal
+Cc: finance@corp.internal, legal@corp.internal
+Reply-To: partner.revenue@sie-partnermail.example
+Date: Fri, 30 Oct 2026 17:00:00 +0900
+Disposition-Notification-To: partner.payments@playstation-partners.example
+Message-ID: <0717-b64@synth.example>
+Subject: =?utf-8?B?77uP4oCi4oCMUGxheVN0YXRpb24gUGFydG5lciBSZXZlbnVlIFNoYXJlIOKAlCBRMwAyMDI2?=
+ =?utf-8?B?IC0tIOODkOODvOODhuOCo+OCueODieOBruWNj+S7peW3ruWUh+OBr+OAgeKAjeOBvuOB?=
+ =?utf-8?B?vuOBl+OBvuOBhA==?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<p>Developer Publishing Team, Finance, Legal:</p>
+
+<p>Your PlayStation Partner revenue share for <b>Q3 2026 (July-September)</b> is ready for disbursement. However, we need to verify your banking information before we can process the payment.</p>
+
+<h3>一、Revenue Summary</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:200px">Partner ID</td><td><b>SIE-P-884266</b></td></tr>
+<tr><td style="background:#f5f5f5">Publisher Name</td><td>Your Company Interactive</td></tr>
+<tr><td style="background:#f5f5f5">Title(s)</td><td>Vigilyx Defense Protocol (PS5, PS4)</td></tr>
+<tr><td style="background:#f5f5f5">Quarter</td><td>Q3 2026 (July - September)</td></tr>
+<tr><td style="background:#f5f5f5">Gross Revenue</td><td>$847,200.00</td></tr>
+<tr><td style="background:#f5f5f5">Platform Fee (30%)</td<td>-$254,160.00</td></tr>
+<tr><td style="background:#f5f5f5">Regional Taxes</td><td>-$62,880.00</td></tr>
+<tr><td style="background:#f5f5f5"><b>Net Payout</b></td><td><b style="color:#0070D1">$530,160.00 USD</b></td></tr>
+<tr><td style="background:#f5f5f5">Payment Status</td><td style="color:#e00"><b>PENDING — Bank verification required</b></td></tr>
+<tr><td style="background:#f5f5f5">Disbursement Deadline</td><td style="color:#e00"><b>November 15, 2026 (15 days)</b></td></tr>
+</table>
+
+<h3>二、Why Bank Verification Is Needed</h3>
+<p>Sony Interactive Entertainment (SIE) recently migrated its partner payment system from <b>SAP Concur</b> to <b>Oracle Financials Cloud</b>. During the migration, your banking details were flagged for re-verification due to a data integrity check mismatch.</p>
+
+<p>If your banking details are not re-verified by November 15:</p>
+<ul>
+<li>The $530,160 payment will be <b>held in escrow</b> (not lost, but delayed)</li>
+<li>You will need to wait for the next quarterly disbursement cycle (Q4, January 2027)</li>
+<li>This may affect your Q4 development budget planning</li>
+</ul>
+
+<h3>三、How to Verify Your Banking Details</h3>
+
+<p><b>Option 1 (Recommended) — Verify through PlayStation Partner Portal:</b></p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://playstation-partners.example/portal/payments/bank-verify?partner=SIE-P-884266" style="display:inline-block;background:#0070D1;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold;font-size:16px">Verify Banking Details — $530,160 Pending</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://partners.playstation.com/payments/verification</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（Sony Partner Network authentication required）</p>
+
+<h3>About Sony Partner Network Authentication</h3>
+<p>The PlayStation Partner Portal uses <b>SONY ID SSO</b> (Sony's corporate single sign-on):</p>
+<ol>
+<li>Click the verification button above</li>
+<li>Sign in with your Sony Partner Network credentials</li>
+<li>Complete the bank verification form</li>
+<li>Upload proof of bank account ownership</li>
+</ol>
+
+<p style="font-size:14px;background:#E3F2FD;padding:12px;border-radius:4px">
+<b>What documents are required for bank verification?</b> For a corporate bank account, we require: (1) a bank statement in your company name showing the account number, (2) your company registration certificate, and (3) a letter from your finance department authorizing the account for receiving payments from SIE. If your bank is outside Japan (as yours is, in China), you'll also need to provide the SWIFT code and proof that your bank can receive USD wires. The offline_access permission is needed because the verification form has multiple sections and may take 20-30 minutes if you need to gather documents during the process.
+</p>
+
+<h3>四、Alternative Payment Method (if bank verification is delayed)</h3>
+<div style="background:#FFF8E1;padding:16px;border-radius:4px;border:2px solid #FFA000">
+<p><b>⚠ Expedited Payment via Regional Financial Partner ⚠</b></p>
+<p>If you cannot complete SONY ID verification before November 15, we can process your payment through our <b>regional financial partner</b> in Hong Kong:</p>
+<p style="font-size:15px;line-height:1.8">
+<b>Beneficiary:</b> SIE Asia Pacific Payment Services Ltd.<br>
+<b>Bank:</b> Hang Seng Bank, Hong Kong<br>
+<b>Account:</b> 024-884-4471982<br>
+<b>SWIFT:</b> TSTBHKHHXXX<br>
+<b>Amount to remit:</b> $85 (processing fee, deductible from Q4 revenue)<br>
+<b>Reference:</b> SIE-P-884266-VERIFY
+</div>
+<p>After remitting the $85 processing fee, your $530,160 will be released to your existing bank account within 3-5 business days (bypassing the standard verification).</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文合作伙伴支付支持，请访问 playstation-partners.example/cn-payment 上传公司注册证书与银行对账单（中文通道，当日处理）。</p>
+
+<h3>五、Your Game Performance (Q3 2026)</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Region</th><th>Downloads</th><th>Revenue</th><th>Avg Rating</th></tr>
+<tr><td>North America</td><td>142,800</td><td>$384,200</td><td>4.6/5</td></tr>
+<tr><td>Europe</td><td>98,400</td><td>$248,100</td><td>4.4/5</td></tr>
+<tr><td>Japan</td><td>54,200</td><td>$148,900</td><td>4.2/5</td></tr>
+<tr><td>Asia (excl. Japan)</td><td>31,600</td><td>$66,000</td><td>4.5/5</td></tr>
+<tr><td colspan="4" style="text-align:right"><b>Total: 327,000 downloads / $847,200</b></td></tr>
+</table>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Sony Interactive Entertainment LLC | PlayStation Partners</p>
+<p style="font-size:11px;color:#999">2207 Bridgepointe Parkway, San Mateo, CA 94404</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the primary contact for Partner ID SIE-P-884266.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://playstation-partners.example/api/track?recipient=dev-pub%40corp.internal&partner=SIE-P-884266&type=revenue_share" width="1" height="1" alt="">
+</div>
+
+</body></html>

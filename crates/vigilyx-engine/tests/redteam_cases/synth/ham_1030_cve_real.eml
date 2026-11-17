@@ -1,0 +1,71 @@
+From: "OSS-Sec 委员会 | CNA 服务台" <cna@osscna.example>
+To: ruan.zhaowen@dev.internal
+Date: Fri, 28 Aug 2026 10:10:00 +0800
+Message-ID: <1030-b199@synth.example>
+Subject: =?utf-8?B?44CQ55Sz6K+36L+b5bqm44CRQ1ZF57yW5Y+355Sz6K+35rWB56iL6K+05piO77yI5YWN6LS577yM5peg5LuY6LS55Yqg5oCl6YCa6YGT77yJ?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+阮兆文工程师（vue-tracker 维护者）：
+
+您好。OSS-Sec 委员会（CNAS 认可的 CNA，
+官方域 osscna.example，可在 CVE 官网 CNA
+名录核对）就您提交的漏洞（vue-tracker
+<3.2.1 原型污染，CVSS 3.1 建议 7.4）
+做进度与流程说明。本邮件不涉及任何
+付费项目。
+
+一、当前进度
+您的申请已通过编前审核，编号分配处于
+排队状态。请理解：排队是真实的——漏洞
+提交量确实在涨，编号处理需要人工核对
+字段、重复性检索与评分复核。但排队
+不收费，也不存在缩短排队的付费方式：
+CVE 编号的受理、分配、发布全程免费，
+这是 CVE Program 的基本规则，任何 CNA
+都无权出售排期。
+
+二、关于"抢先公开导致编号被夺"
+编号一经分配即与您的申请绑定，不存在
+"第三方抢先公开、编号重新分配给抢先
+提交方"的机制；您的致谢署名同样随
+申请绑定。您可自行控制披露节奏：
+补丁先发、编号后公开是社区通行做法，
+候选阶段的预留编号不会因他人行为
+失效。若有人在编号发布前公开漏洞
+详情，那属于披露伦理问题，不影响
+您的编号与署名。
+
+三、等待编号期间您能做的（全部免费）
+1. 在 GitHub 仓库发布 Security Advisory
+   （走 GitHub Advisory Database，
+   自带编号互认，下游依赖告警即刻
+   生效，不必等 CVE 队列）；
+2. 在 3.2.2 的 changelog 里写明漏洞
+   影响与升级建议；
+3. 如需催办，回复本邮件即可登记加急
+   标记（免费，按影响面排序，不是
+   付费插队——供应链热门漏洞会
+   被优先处理）。
+
+四、反诈声明
+CNA 不通过"发布协调中心""队列管理组"
+等名义发信，不存在 4,200 元或任何金额的
+"72 小时加急通道"；"用捐赠码钱付加急费
+是社区常规做法"不是事实——开源漏洞
+披露从无付费惯例。凡以此收费的邮件，
+请转发 cna-abuse@osscna.example。
+
+五、您可能会问的问题
+问：要等多久？
+答：当前队列通常 2-6 周；GitHub
+   Advisory 通道更快，两者不冲突。
+问：下游告警要等 CVE 吗？
+答：不用，Advisory 发布即触发依赖
+   告警。
+
+给维护者的一句话：补丁已经把门关上了，
+编号只是门牌——门牌免费，慢慢排。
+
+OSS-Sec 委员会 CNA 服务台
+cna@osscna.example | CVE 官网 CNA 名录可核

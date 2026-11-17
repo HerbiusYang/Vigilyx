@@ -1,0 +1,187 @@
+[
+ {
+  "subject": null,
+  "body": "\u670d\u52a1\u5668 10.1.2.3 \u548c 192.168.0.256.1 \u4e0d\u540c\uff0c\u7248\u672c 1.2.3",
+  "expected": "\u670d\u52a1\u5668 (ip) \u548c 192.168.0.256.1 \u4e0d\u540c,\u7248\u672c 1.2.3"
+ },
+ {
+  "subject": null,
+  "body": "\u8eab\u4efd\u8bc1 11010519491231002X\uff0c\u53e6\u4e00\u4e2a110105194912310021\u53f7",
+  "expected": "\u8eab\u4efd\u8bc1 (number) ,\u53e6\u4e00\u4e2a (number) \u53f7"
+ },
+ {
+  "subject": "\u8ba2\u5355\u901a\u77e5",
+  "body": "\u8ba2\u5355\u53f7 JDFC-ICP-20241105 \u4e0e ab12-cd34\uff0c\u7f16\u53f7JDFC-ICP-20241105\u5df2\u7b7e\u7f72",
+  "expected": "\u8ba2\u5355\u901a\u77e5\n\u8ba2\u5355\u53f7 (code) \u4e0e (code) ,\u7f16\u53f7 (code) \u5df2\u7b7e\u7f72"
+ },
+ {
+  "subject": null,
+  "body": "tracking A1B2C3D4E5 and ABCDEFGH1234, but not ABCDEFGHIJ or 12345678",
+  "expected": "tracking (code) and (code) , but not ABCDEFGHIJ or (number)"
+ },
+ {
+  "subject": null,
+  "body": "\u8054\u7cfb +86 138-1234-5678 \u6216 13912345678\uff0c\u53f7\u7801138 1234 5678",
+  "expected": "\u8054\u7cfb (phone) \u6216 (phone) ,\u53f7\u7801 (phone)"
+ },
+ {
+  "subject": null,
+  "body": "\u70ed\u7ebf 400-820-1234\uff0c800 123 4567",
+  "expected": "\u70ed\u7ebf (phone) , (phone)"
+ },
+ {
+  "subject": null,
+  "body": "\u8bf7\u62e8\u625395588\u6216\u5ba2\u670d\uff1a10086\u54a8\u8be2\uff0c\u81f4\u7535 12315",
+  "expected": "\u8bf7\u62e8\u6253(phone)\u6216\u5ba2\u670d:(phone)\u54a8\u8be2,\u81f4\u7535 (phone)"
+ },
+ {
+  "subject": null,
+  "body": "Call +44 20 7946 0958 or +1 (415) 555-0123 today",
+  "expected": "Call (phone) or (phone) today"
+ },
+ {
+  "subject": null,
+  "body": "US (415) 555-0123, 1-800-555-0199 and 212.555.0147",
+  "expected": "US (phone) , 1- (phone) and (phone)"
+ },
+ {
+  "subject": null,
+  "body": "\u5ea7\u673a(010)12345678 \u6216 0755-87654321",
+  "expected": "\u5ea7\u673a (phone) \u6216 (phone)"
+ },
+ {
+  "subject": null,
+  "body": "\u5361\u53f7 6222 0212 3456 7890 123\uff0c\u53e6 6222-0212-3456-7890",
+  "expected": "\u5361\u53f7 (number) ,\u53e6 (number)"
+ },
+ {
+  "subject": null,
+  "body": "\u8d26\u53f7 1234567890123\uff0c\u91d1\u989d 1,234,567.89 \u5143\uff0c\u6570\u5b57 12345678.",
+  "expected": "\u8d26\u53f7 1234567890123,\u91d1\u989d 1,234,567.89 \u5143,\u6570\u5b57 12345678."
+ },
+ {
+  "subject": null,
+  "body": "visit secure-login.com or EXAMPLE.TOP now; not a.b@c and mail.example.co.uk",
+  "expected": "visit (domain) or (domain) now; not a.b@c and (domain)"
+ },
+ {
+  "subject": null,
+  "body": "Open https://evil.top/x?a=1 or www.foo.cn/bar or HTTP://Up.Case/Path now",
+  "expected": "Open (link) or (link) or (link) now"
+ },
+ {
+  "subject": null,
+  "body": "contact a.b+c@mail.example.co.uk. or m\u00fcller@beispiel.de",
+  "expected": "contact (email) . or (email)"
+ },
+ {
+  "subject": null,
+  "body": "\u738b\u603b\u3001\u674e\u7ecf\u7406\u597d\uff0c\u5f20\u603b\u7ed3\u4e86\u4f1a\u8bae\uff0c\u9648\u8001\u5e08\uff0c\u603b\u90e8\u548c\u603b\u989d\u4e0d\u53d7\u5f71\u54cd",
+  "expected": "(name)\u603b\u3001(name)\u7ecf\u7406\u597d,\u5f20\u603b\u7ed3\u4e86\u4f1a\u8bae,(name)\u8001\u5e08,\u603b\u90e8\u548c\u603b\u989d\u4e0d\u53d7\u5f71\u54cd"
+ },
+ {
+  "subject": null,
+  "body": "\u5218\u5fb7\u534e\u5148\u751f\uff0c\u8d75\u654f\u5973\u58eb\uff0c\u5468\u6770\u5c0f\u59d0",
+  "expected": "(name)\u5148\u751f,(name)\u5973\u58eb,(name)\u5c0f\u59d0"
+ },
+ {
+  "subject": null,
+  "body": "\u5c0f\u738b\uff0c\u4f60\u597d\uff01\u8001\u674e\u60a8\u597d \u5c0f\u5f20\n\u5c0f\u5218",
+  "expected": "(name),\u4f60\u597d!(name)\u60a8\u597d (name)\n(name)"
+ },
+ {
+  "subject": null,
+  "body": "Mrs Smith and Mr. John Brown met Dr Jane and Prof. Anna-Lena O'Neil",
+  "expected": "Mrs (name) and Mr (name) met Dr (name) and Prof (name)"
+ },
+ {
+  "subject": "Dear Alice Wong, urgent",
+  "body": "Dear John Smith,\nHello Anna: Hi team, Liebe Frau M\u00fcller!",
+  "expected": "Dear (name), urgent\nDear (name),\nHello (name): Hi team, Liebe Frau (name)!"
+ },
+ {
+  "subject": null,
+  "body": "pass\u200bword re\u00adset \ufeffBOM\u2060joined\u180espace",
+  "expected": "password reset BOMjoinedspace"
+ },
+ {
+  "subject": null,
+  "body": "Cafe\u0301 a\u0308bc e\u20dd x\u1ab0y",
+  "expected": "Caf\u00e9 \u00e4bc e xy"
+ },
+ {
+  "subject": null,
+  "body": "\uff21\uff22\uff23\uff11\uff12\uff13\u3000\u5168\u89d2\uff0c\uff28\uff45\uff4c\uff4c\uff4f",
+  "expected": "ABC123 \u5168\u89d2,Hello"
+ },
+ {
+  "subject": null,
+  "body": "line\u001cone\u001ftwo  \u001c\nnext\u001d",
+  "expected": "line\u001cone\u001ftwo\nnext"
+ },
+ {
+  "subject": null,
+  "body": "\u212aelvin.com and \u017ftore.com",
+  "expected": "(domain) and (domain)"
+ },
+ {
+  "subject": "  Subject \t line  ",
+  "body": "a\r\n\r\n  b \t c\n\n\n",
+  "expected": "Subject line\na\nb c"
+ },
+ {
+  "subject": null,
+  "body": "x\u00a0\u00a0y\u3000z\u2003w\u202fv",
+  "expected": "x y z w v"
+ },
+ {
+  "subject": null,
+  "body": "",
+  "expected": ""
+ },
+ {
+  "subject": null,
+  "body": "   \n \t \n",
+  "expected": ""
+ },
+ {
+  "subject": null,
+  "body": "\u093ehttps://x.top/a and \u203fwww.y.top and \u00b2https://z.top",
+  "expected": "\u093e (link) and \u203f (link) and 2https:// (domain)"
+ },
+ {
+  "subject": null,
+  "body": "word_https://u.top a1https://v.top",
+  "expected": "word_https:// (domain) a1https:// (domain)"
+ },
+ {
+  "subject": "\u3010\u534e\u5cb3\u94f6\u884c\u3011\u8d26\u6237\u5b89\u5168\u63d0\u9192",
+  "body": "\u5c0a\u656c\u7684\u5ba2\u6237\uff1a\u60a8\u7684\u8d26\u6237\u5c06\u4e8e24\u5c0f\u65f6\u5185\u51bb\u7ed3\uff0c\u8bf7\u8bbf\u95ee https://hy-bank.top/verify \u5e76\u8f93\u5165\u9a8c\u8bc1\u7801\u3002",
+  "expected": "\u3010\u534e\u5cb3\u94f6\u884c\u3011\u8d26\u6237\u5b89\u5168\u63d0\u9192\n\u5c0a\u656c\u7684\u5ba2\u6237:\u60a8\u7684\u8d26\u6237\u5c06\u4e8e24\u5c0f\u65f6\u5185\u51bb\u7ed3,\u8bf7\u8bbf\u95ee (link) \u5e76\u8f93\u5165\u9a8c\u8bc1\u7801\u3002"
+ },
+ {
+  "subject": "Your account",
+  "body": "Hello,\nWe noticed a sign-in from 203.0.113.7. If this wasn't you, reply to support@bank-help.com.",
+  "expected": "Your account\nHello,\nWe noticed a sign-in from 203.0.113.7. If this wasn't you, reply to (email) ."
+ },
+ {
+  "subject": null,
+  "body": "Gr\u00fc\u00dfe aus M\u00fcnchen, Ihre Rechnung Nr. RE-2024-0042 \u00fcber 1.250,00 EUR an IBAN DE89370400440532013000.",
+  "expected": "Gr\u00fc\u00dfe aus M\u00fcnchen, Ihre Rechnung Nr. (code) \u00fcber 1.250,00 EUR an IBAN (code) ."
+ },
+ {
+  "subject": null,
+  "body": "Gentile Mario Rossi, la fattura FT2024/118 \u00e8 disponibile su www.esempio.it/fatture",
+  "expected": "Gentile (name), la fattura FT2024/118 \u00e8 disponibile su (link)"
+ },
+ {
+  "subject": null,
+  "body": "\u7535\u8bdd:13800138000,\u7535\u8bdd\uff1a021-62345678\uff0c\u70ed\u7ebf95533",
+  "expected": "\u7535\u8bdd: (phone) ,\u7535\u8bdd: (phone) ,\u70ed\u7ebf(phone)"
+ },
+ {
+  "subject": null,
+  "body": "Mixed \u4e2d\u6587English123\u6df7\u6392 test@\u4f8b\u5b50.com \u548c a@b.cn",
+  "expected": "Mixed \u4e2d\u6587English123\u6df7\u6392 (email) \u548c (email)"
+ }
+]

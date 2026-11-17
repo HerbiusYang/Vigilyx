@@ -1,0 +1,10 @@
+From: =?utf-8?B?572R57uc5pyN5Yqh?= <vpn@net-ops3.example>
+To: remote@corp.internal
+Date: Tue, 15 Sep 2026 09:12:00 +0800
+Message-ID: <0002-b22@synth.example>
+Subject: VPN 账号因'异地登录'冻结
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+解冻需重置密码并验证：https://vpn-jd3.example.info/f
+（域账号+旧密码+动态码）

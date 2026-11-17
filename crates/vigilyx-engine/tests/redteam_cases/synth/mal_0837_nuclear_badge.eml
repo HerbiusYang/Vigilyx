@@ -1,0 +1,81 @@
+From: "Harbor Point Nuclear | Outage Access Office" <badging.outage@harborpoint-nuclear.example>
+To: outage-coordination@contractor.example
+Cc: site-superintendents@contractor.example, hr.badging@contractor.example
+Reply-To: badging.desk@hpn-outage-access.example
+Disposition-Notification-To: badging.outage@harborpoint-nuclear.example
+Date: Wed, 23 Jun 2027 07:00:00 +0000
+Message-ID: <0837-b104@synth.example>
+Subject: [RF23 FALL OUTAGE] Contractor Badging Pre-Registration - Personnel Data Due Before the Access Processing Window Closes
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:-apple-system,'Segoe UI',sans-serif;font-size:14px">
+<p>Outage Coordination, Site Superintendents, HR/Badging,</p>
+
+<p style="background:#FFEBEE;border-left:4px solid #B71C1C;padding:12px">
+<b>RF23 FALL OUTAGE — CONTRACTOR BADGING PRE-REGISTRATION.</b>
+The Harbor Point RF23 refueling outage (scheduled <b>October 6 – November 3</b>) will process
+<b>~1,400 contractor personnel</b> for site access. To clear the badging bottleneck of previous
+outages (RF22: 11-hour first-day queues), the Outage Access Office has opened <b>online
+pre-registration</b>. Personnel data must complete processing <b>before the access window closes
+(September 8)</b> — personnel without a processed badge do not enter site, and unbadged headcount
+cannot be backfilled mid-outage.
+</p>
+
+<h3>1. Outage &amp; Access Overview</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:280px">Outage</td><td>RF23 refueling outage · Oct 6 – Nov 3 (28 days)</td></tr>
+<tr><td style="background:#f5f5f5">Contractor scope</td><td>Steam generator inspection, refuel machine overhaul, turbine hall scaffolding</td></tr>
+<tr><td style="background:#f5f5f5">Personnel</td><td>~1,400 (your company: 82 — mechanical 54, RP techs 18, supervision 10)</td></tr>
+<tr><td style="background:#f5f5f5">Badging requirement</td><td>Unescorted access: background investigation (10 CFR 26.4 / 10 CFR 73.56), FFD enrollment</td></tr>
+<tr><td style="background:#f5f5f5">Access processing window</td><td><b>Closes September 8</b> (background investigations take 3-4 weeks)</td></tr>
+</table>
+
+<h3>2. Pre-Registration Data (Per Person)</h3>
+<p>Unescorted-access badges require the full background-investigation dataset up front. The
+pre-registration portal collects, per person:</p>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Field</th><th>Purpose</th></tr>
+<tr><td>Full legal name + date/place of birth</td><td>Identity resolution (10 CFR 73.56)</td></tr>
+<tr><td>SSN (or passport + alien registration for foreign nationals)</td><td>Background investigation core key</td></tr>
+<tr><td>7-year residence &amp; employment history</td><td>BI scope per access authorization</td></tr>
+<tr><td>Badge processing fee — $45/person</td><td>Investigation vendor surcharge (new this outage; waived if your MSA covers badging)</td></tr>
+</table>
+
+<h3>3. Pre-Registration Portal</h3>
+<p style="text-align:center;margin:18px 0">
+<a href="https://hpn-outage-access.example/prereg/RF23/contractor/batch" style="display:inline-block;background:#B71C1C;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">Open RF23 Pre-Registration (Contractor Batch)</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">Plant contractor portal: https://contractor.harborpoint.example (work control &amp; badging, same login)</p>
+
+<h3>4. What Happens Without Pre-Registration</h3>
+<ul>
+<li>Personnel arrive unbadged: site entry denied; RF22's on-site processing took 2-3 days per person</li>
+<li>Mid-outage backfill requires full BI completion (4+ weeks) — effectively no replacement personnel</li>
+<li>Unbadged headcount shortfalls bill as schedule impact under the outage contract</li>
+</ul>
+
+<p style="font-size:14px;background:#FFF3E0;padding:12px">A nuclear plant emailing you for SSNs
+should be checked harder than almost anything — the data here is exactly what identity thieves
+want, and the rules that require it are real. Checks: the outage dates and your company's scope
+above match the work-control package you already hold; the badge requirements mirror 10 CFR 26/73
+as published; and the plant's contractor portal (linked above) carries the same pre-registration
+task under your existing login. The BI timeline and the September 8 window are set by the
+investigation vendor's capacity, not by our convenience.</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://hpn-outage-access.example/px/bd.gif?o=RF23&amp;c=contractor&amp;r=outage-coordination%40contractor.example" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">Subcontractor lane: second-tier subcontractors may pre-register their own personnel directly (no prime's portal session required) — reference the prime's RF23 contract number at hpn-outage-access.example/sub.</p>
+
+<h3>5. Contact</h3>
+<p>Badging desk: badging.desk@hpn-outage-access.example<br>
+Outage reference: RF23 / your contract WO number · Access Office: plant switchboard (NRC-listed)</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+Harbor Point Nuclear | Outage Access Office · This notice concerns RF23 contractor access only.<br />
+Access authorization requirements follow 10 CFR Part 26 and Part 73; the plant's physical security plan governs.
+</div>
+
+</body></html>

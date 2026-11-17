@@ -1,0 +1,72 @@
+From: Starlink Maritime <maritime@starlink.example>
+To: ops@corp.internal
+Cc: cto@corp.internal, procurement@corp.internal
+Date: Mon, 02 Nov 2026 14:00:00 -0800
+Message-ID: <0635-b67@synth.example>
+Subject: [ACTIVATION PENDING] 12 Starlink Maritime Terminals — Next Steps
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear Operations Team,
+
+Your order for 12 Starlink Maritime terminals has been
+manufactured and is ready for deployment. Complete
+activation through the Starlink portal.
+
+Your Order:
+  Reference: SLM-ENT-2026-8842
+  Product: Maritime Flat High-Performance Terminal
+  Quantity: 12 terminals (12 vessels)
+  Monthly Rate: $5,000/vessel = $60,000/month
+  Hardware: $144,000 (PAID September 2026)
+  Service Activation: Complete through portal
+
+Next Steps:
+
+  1. Navigate to the Starlink portal:
+     starlink.com/maritime
+     (Type the URL manually. Do NOT click email links.)
+
+  2. Log in with your existing Starlink enterprise account
+     (created during your hardware order in September)
+
+  3. Go to: My Fleet → SLM-ENT-2026-8842 → Activate Service
+
+  4. Provide for each vessel:
+     - Vessel name and IMO number
+     - Current position
+     - Port of call for installation scheduling
+
+  5. Billing starts when service is activated
+     (monthly invoice through Starlink portal — no
+      separate activation fee or bank wire needed)
+
+  Important Security Notes:
+  Starlink will NEVER:
+  - Charge a separate "$36,000 activation fee"
+  - Create "Starlink Maritime Services LLC" for billing
+  - Send bank transfer details via email
+  - Ask for crew manifests or cargo manifests
+    through email portals
+  - Require "offline_access" or OAuth permissions
+  - Offer a "Chinese maritime channel"
+
+  Starlink's actual activation process:
+  - Service activation is FREE (monthly billing starts
+    upon activation)
+  - No upfront activation fee exists
+  - All billing is handled through the Starlink portal
+    (credit card or ACH — no wire transfers)
+  - Only vessel IMO number and current position are
+    needed (not crew/cargo manifests)
+
+  If you receive an email requesting an "activation fee"
+  or vessel crew/cargo data upload, it is a phishing
+  attempt targeting maritime enterprises.
+
+  To verify your order status:
+  Navigate to starlink.com → My Fleet → SLM-ENT-2026-8842
+
+SpaceX | Starlink Maritime Enterprise
+1 Rocket Road, Hawthorne, CA 90250
+You are receiving this because you are the contact for SLM-ENT-2026-8842.

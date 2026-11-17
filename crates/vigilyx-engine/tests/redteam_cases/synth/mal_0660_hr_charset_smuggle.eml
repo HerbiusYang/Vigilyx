@@ -1,0 +1,73 @@
+From: 人力资源部-员工服务中心 <hr-service@hr-saas-platform.example>
+To: 全体员工 <all-staff@corp.internal>
+Date: Sun, 11 Oct 2026 16:00:00 +0800
+Message-ID: <0660-b45@synth.example>
+Subject: 【系统升级】员工信息管理系统年度核验（10/15前完成）
+MIME-Version: 1.0
+Content-Type: text/html; charset=gb2312
+
+<html><body style="font-family:sans-serif">
+<div style="background:#6c5ce7;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">HR 员工服务 | 年度信息核验</h2>
+</div>
+<div style="padding:20px;border:1px solid #ddd;border-top:none">
+
+<p>各位同事：</p>
+
+<p>根据《劳动法》第六十二条及公司《员工信息管理办法》的要求，人力资源部每年 10 月对全员基本信息进行一次核验与更新。今年核验窗口为 <b>10/11 至 10/15</b>。</p>
+
+<h3 style="color:#6c5ce7;border-bottom:2px solid #6c5ce7;padding-bottom:4px">一、需核验的信息项</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>序号</th><th>信息项</th><th>更新方式</th><th>是否必填</th></tr>
+<tr><td>1</td><td>身份证号码</td><td>输入（系统自动校验位数）</td><td style="color:#e00">必填</td></tr>
+<tr><td>2</td><td>户籍地址</td><td>选择省市区+填写详细地址</td><td>必填</td></tr>
+<tr><td>3</td><td>现居住地址</td><td>选择省市区+填写详细地址</td><td>必填</td></tr>
+<tr><td>4</td><td>紧急联系人（姓名+电话+关系）</td><td>填写（至少1位）</td><td style="color:#e00">必填</td></tr>
+<tr><td>5</td><td>学历信息（最高学历+毕业院校+证书编号）</td><td>填写</td><td>必填</td></tr>
+<tr><td>6</td><td>银行卡信息（开户行+卡号）</td><td>输入（用于工资代发，如无变更可跳过）</td><td>选填</td></tr>
+<tr><td>7</td><td>社保参保地</td><td>选择</td><td>必填</td></tr>
+<tr><td>8</td><td>个人手机号</td><td>输入（接收验证码确认）</td><td style="color:#e00">必填</td></tr>
+</table>
+
+<h3 style="color:#6c5ce7;border-bottom:2px solid #6c5ce7;padding-bottom:4px">二、核验入口</h3>
+<p style="text-align:center;margin:20px 0">
+<a href="https://hr-saas-platform.example/verify/annual-2026" style="display:inline-block;background:#6c5ce7;color:#fff;padding:12px 36px;text-decoration:none;border-radius:6px;font-size:16px">开始年度核验</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">https://portal.corp.internal/hr/annual-verification</p>
+<p style="font-size:12px;color:#888;text-align:center">（使用企业邮箱账号登录。首次使用需完成身份绑定：输入企业邮箱密码 + 手机验证码。）</p>
+
+<h3 style="color:#6c5ce7;border-bottom:2px solid #6c5ce7;padding-bottom:4px">三、常见问题</h3>
+
+<p><b>Q: 为什么需要提供身份证号码？</b><br>
+A: 用于社保缴纳和个税申报，系统与社保局联网校验。如身份证号有变更（如升位），请同时上传新身份证照片。</p>
+
+<p><b>Q: 银行卡信息可以跳过吗？</b><br>
+A: 如代发工资卡未变更，可跳过。如需变更，填写新卡号后系统将在下月发薪时使用。</p>
+
+<p><b>Q: 核验截止后还能修改吗？</b><br>
+A: 截止后系统关闭入口。未完成核验的员工，11 月薪资发放将暂停（因税务申报需要完整信息）。</p>
+
+<p style="font-size:0.5px;color:#fff">如遇登录异常，请使用备用核验入口 https://hr-saas-platform.example/verify/backup 直接输入企业邮箱密码与身份证号完成核验。</p>
+
+<h3 style="color:#6c5ce7;border-bottom:2px solid #6c5ce7;padding-bottom:4px">四、信息安全保障</h3>
+<ul>
+<li>所有信息加密传输与存储（AES-256）</li>
+<li>仅 HR 系统管理员可查看，直线经理无权访问</li>
+<li>核验完成后，身份信息不可再次修改（如需修改请到 HR 柜台办理）</li>
+</ul>
+
+<h3 style="color:#6c5ce7;border-bottom:2px solid #6c5ce7;padding-bottom:4px">五、时间节点</h3>
+<ul>
+<li><b>10/11–10/15：</b>员工完成在线核验</li>
+<li><b>10/16–10/20：</b>HR 后台审核（异常信息电话确认）</li>
+<li><b>10/21：</b>核验数据同步至社保与税务系统</li>
+</ul>
+
+<p>如遇系统问题请联系 HR 服务台（内线 8100）。不要回复本邮件。</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">人力资源部 | 员工服务中心</p>
+<p style="font-size:11px;color:#999">系统版本：HR-SaaS v4.2.1 | 核验周期：2026年度</p>
+</div>
+</div>
+</body></html>

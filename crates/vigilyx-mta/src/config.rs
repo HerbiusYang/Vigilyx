@@ -3,8 +3,10 @@
 use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::Semaphore;
 use vigilyx_core::security::ThreatLevel;
 use vigilyx_core::validate_mta_hostname;
 
@@ -12,9 +14,35 @@ pub const MTA_INLINE_TIMEOUT_MIN_SECS: u32 = 1;
 pub const MTA_INLINE_TIMEOUT_MAX_SECS: u32 = 60;
 pub const MTA_MAX_CONNECTIONS_MIN: usize = 1;
 pub const MTA_MAX_CONNECTIONS_MAX: usize = 1000;
+/// Default per-source-IP connection cap. Keep the conservative DoS guard in
+/// place unless an operator explicitly raises it for a trusted submission
+/// relay that multiplexes many SMTP sessions behind one address.
+pub const MTA_MAX_CONNECTIONS_PER_IP_DEFAULT: usize = 10;
+pub const MTA_MAX_CONNECTIONS_PER_IP_MAX: usize = 1000;
 pub const MTA_MAX_RECIPIENTS_MIN: usize = 1;
 pub const MTA_MAX_RECIPIENTS_MAX: usize = 10_000;
 pub const MTA_MAX_RECIPIENTS_DEFAULT: usize = 50;
+/// Shared byte budget across all in-flight SMTP DATA/BDAT buffers. A
+/// connection cap alone still permits a synchronized allocation burst.
+pub const MTA_MESSAGE_MEMORY_BUDGET_MIN_BYTES: usize = 32 * 1024 * 1024;
+pub const MTA_MESSAGE_MEMORY_BUDGET_DEFAULT_BYTES: usize = 256 * 1024 * 1024;
+pub const MTA_MESSAGE_MEMORY_BUDGET_MAX_BYTES: usize = 1024 * 1024 * 1024;
+
+fn default_message_memory_budget() -> Arc<Semaphore> {
+    Arc::new(Semaphore::new(MTA_MESSAGE_MEMORY_BUDGET_DEFAULT_BYTES))
+}
+
+fn message_memory_budget_from_env() -> Arc<Semaphore> {
+    let megabytes = std::env::var("MTA_MESSAGE_MEMORY_BUDGET_MB")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(MTA_MESSAGE_MEMORY_BUDGET_DEFAULT_BYTES / (1024 * 1024));
+    let bytes = megabytes.saturating_mul(1024 * 1024).clamp(
+        MTA_MESSAGE_MEMORY_BUDGET_MIN_BYTES,
+        MTA_MESSAGE_MEMORY_BUDGET_MAX_BYTES,
+    );
+    Arc::new(Semaphore::new(bytes))
+}
 
 fn normalize_optional_outbound_host(value: Option<String>) -> Option<String> {
     value
@@ -62,6 +90,11 @@ pub struct MtaConfig {
     pub reject_threshold: ThreatLevel,
 
     pub max_message_size: usize,
+
+    /// Shared in-flight message byte budget. Permits are held only while a
+    /// connection owns the corresponding DATA/BDAT buffer bytes.
+    #[serde(skip, default = "default_message_memory_budget")]
+    pub message_memory_budget: Arc<Semaphore>,
 
     pub max_recipients: usize,
 
@@ -157,6 +190,51 @@ impl MtaConfig {
             if let Some(s) = val.get("mta_starttls").and_then(|v| v.as_bool()) {
                 self.downstream.starttls = s;
             }
+            // Outbound routing is a separate trust boundary from the inbound
+            // downstream. Keep the environment value as the default, but let
+            // the deployment API override it without silently reusing the
+            // inbound relay when an explicit empty value disables outbound.
+            if let Some(host) = val.get("mta_outbound_host").and_then(|v| v.as_str()) {
+                let host = host.trim();
+                if host.is_empty() {
+                    self.outbound = None;
+                } else {
+                    let port = val
+                        .get("mta_outbound_port")
+                        .and_then(|v| v.as_u64())
+                        .and_then(|v| u16::try_from(v).ok())
+                        .filter(|port| *port > 0)
+                        .or_else(|| self.outbound.as_ref().map(|relay| relay.port))
+                        .unwrap_or(25);
+                    let starttls = val
+                        .get("mta_outbound_starttls")
+                        .and_then(|v| v.as_bool())
+                        .or_else(|| self.outbound.as_ref().map(|relay| relay.starttls))
+                        .unwrap_or(true);
+                    self.outbound = Some(DownstreamConfig {
+                        host: host.to_string(),
+                        port,
+                        starttls,
+                        timeout_secs: self
+                            .outbound
+                            .as_ref()
+                            .map(|relay| relay.timeout_secs)
+                            .unwrap_or(30),
+                    });
+                }
+            } else if let Some(outbound) = self.outbound.as_mut() {
+                if let Some(port) = val
+                    .get("mta_outbound_port")
+                    .and_then(|v| v.as_u64())
+                    .and_then(|v| u16::try_from(v).ok())
+                    .filter(|port| *port > 0)
+                {
+                    outbound.port = port;
+                }
+                if let Some(starttls) = val.get("mta_outbound_starttls").and_then(|v| v.as_bool()) {
+                    outbound.starttls = starttls;
+                }
+            }
             if let Some(f) = val.get("mta_fail_open").and_then(|v| v.as_bool()) {
                 self.fail_open = f;
             }
@@ -229,8 +307,22 @@ impl MtaConfig {
                 cert_path: PathBuf::from(cert),
                 key_path: PathBuf::from(key),
             }),
-            _ => None,
+            (None, None) => None,
+            _ => anyhow::bail!(
+                "MTA_TLS_CERT and MTA_TLS_KEY must either both be configured or both be empty"
+            ),
         };
+        let require_starttls: bool = std::env::var("MTA_REQUIRE_STARTTLS")
+            .unwrap_or_else(|_| "true".into())
+            .parse()?;
+        if require_starttls && tls.is_none() {
+            anyhow::bail!(
+                "MTA_REQUIRE_STARTTLS=true requires MTA_TLS_CERT and MTA_TLS_KEY; refusing to start a listener that cannot accept mail"
+            );
+        }
+        if smtps_port.is_some() && tls.is_none() {
+            anyhow::bail!("MTA_SMTPS_PORT requires MTA_TLS_CERT and MTA_TLS_KEY");
+        }
 
         let downstream_host =
             std::env::var("MTA_DOWNSTREAM_HOST").unwrap_or_else(|_| "127.0.0.1".into());
@@ -305,12 +397,11 @@ impl MtaConfig {
             // SEC: require TLS by default for inbound SMTP. Deployments that
             // intentionally accept plaintext must opt out explicitly with
             // MTA_REQUIRE_STARTTLS=false.
-            require_starttls: std::env::var("MTA_REQUIRE_STARTTLS")
-                .unwrap_or_else(|_| "true".into())
-                .parse()?,
+            require_starttls,
             quarantine_threshold: ThreatLevel::Medium,
             reject_threshold: ThreatLevel::Critical,
             max_message_size: 25 * 1024 * 1024, // 25MB (OOM)
+            message_memory_budget: message_memory_budget_from_env(),
             max_recipients: clamp_max_recipients(
                 std::env::var("MTA_MAX_RECIPIENTS")
                     .unwrap_or_else(|_| MTA_MAX_RECIPIENTS_DEFAULT.to_string())
@@ -335,6 +426,18 @@ pub fn clamp_max_connections(value: usize) -> usize {
     value.clamp(MTA_MAX_CONNECTIONS_MIN, MTA_MAX_CONNECTIONS_MAX)
 }
 
+pub fn clamp_max_connections_per_ip(value: usize) -> usize {
+    value.clamp(1, MTA_MAX_CONNECTIONS_PER_IP_MAX)
+}
+
+pub fn max_connections_per_ip_from_env() -> usize {
+    std::env::var("MTA_MAX_CONNECTIONS_PER_IP")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .map(clamp_max_connections_per_ip)
+        .unwrap_or(MTA_MAX_CONNECTIONS_PER_IP_DEFAULT)
+}
+
 pub fn clamp_max_recipients(value: usize) -> usize {
     value.clamp(MTA_MAX_RECIPIENTS_MIN, MTA_MAX_RECIPIENTS_MAX)
 }
@@ -343,9 +446,7 @@ fn max_recipients_db_override(value: &serde_json::Value) -> Option<usize> {
     value
         .get("mta_max_recipients")
         .and_then(serde_json::Value::as_u64)
-        .map(|value| {
-            clamp_max_recipients(usize::try_from(value).unwrap_or(MTA_MAX_RECIPIENTS_MAX))
-        })
+        .map(|value| clamp_max_recipients(usize::try_from(value).unwrap_or(MTA_MAX_RECIPIENTS_MAX)))
 }
 
 fn valid_mta_port(value: u64) -> Option<u16> {
@@ -433,6 +534,16 @@ mod tests {
         assert!(ThreatLevel::High >= ThreatLevel::Medium);
         assert!(ThreatLevel::Critical >= ThreatLevel::Critical);
         assert!(ThreatLevel::Low < ThreatLevel::Medium);
+    }
+
+    #[test]
+    fn test_clamp_max_connections_per_ip() {
+        assert_eq!(clamp_max_connections_per_ip(0), 1);
+        assert_eq!(clamp_max_connections_per_ip(64), 64);
+        assert_eq!(
+            clamp_max_connections_per_ip(10_000),
+            MTA_MAX_CONNECTIONS_PER_IP_MAX
+        );
     }
 
     #[test]
@@ -546,9 +657,7 @@ mod tests {
             Some(MTA_MAX_RECIPIENTS_MIN)
         );
         assert_eq!(
-            max_recipients_db_override(
-                &serde_json::json!({ "mta_max_recipients": 50_000 })
-            ),
+            max_recipients_db_override(&serde_json::json!({ "mta_max_recipients": 50_000 })),
             Some(MTA_MAX_RECIPIENTS_MAX)
         );
     }

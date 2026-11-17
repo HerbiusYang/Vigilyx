@@ -1,0 +1,109 @@
+From: Singapore Airlines KrisFlyer <krisflyer.elite@s1ngaporeair.example>
+To: 陈志远 <zhiyuan.chen@corp.internal>
+Reply-To: elite.services@krisflyer-mail.example
+Date: Fri, 23 Oct 2026 09:00:00 +0800
+Message-ID: <0694-b57@synth.example>
+Subject: [Final Reminder] KrisFlyer Elite Gold review — 15,000 miles needed by 31 October or downgrade to Silver
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:'Times New Roman',serif;max-width:640px;margin:0 auto;border:1px solid #F5A623;border-radius:8px;overflow:hidden">
+<div style="background:linear-gradient(135deg,#3B4A9C 0%,#1A2E5A 100%);color:#F5A623;padding:16px 24px">
+<h2 style="margin:0;font-size:18px;letter-spacing:1px">Singapore Airlines | KrisFlyer</h2>
+<p style="margin:4px 0;font-size:12px;opacity:0.8">A Member of Star Alliance™</p>
+</div>
+<div style="padding:24px">
+
+<p>Dear Elite Gold Member,</p>
+
+<p>This is your <b style="color:#e00">final reminder</b> that your KrisFlyer <b style="color:#F5A623">Elite Gold</b> status is due for review on <b>31 October 2026</b>. You currently have <b>35,000 qualifying miles</b> but need <b>50,000 miles</b> to retain Elite Gold status for the 2027 membership year.</p>
+
+<h3 style="color:#3B4A9C;border-bottom:2px solid #F5A623;padding-bottom:4px">Your Account Summary</h3>
+<table cellpadding=8 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:180px">Membership Number</td><td><b>KF-8842-6619-CZ</b></td></tr>
+<tr><td style="background:#f5f5f5">Current Tier</td><td><b style="color:#F5A623">Elite Gold</b> (Star Alliance Gold)</td></tr>
+<tr><td style="background:#f5f5f5">Qualifying Miles (YTD)</td><td>35,000</td></tr>
+<tr><td style="background:#f5f5f5">Miles Required</td><td>50,000</td></tr>
+<tr><td style="background:#f5f5f5"><b>Shortfall</b></td><td style="color:#e00"><b>15,000 miles</b></td></tr>
+<tr><td style="background:#f5f5f5">Review Date</td><td style="color:#e00"><b>31 October 2026 (8 days remaining)</b></td></tr>
+<tr><td style="background:#f5f5f5">If Not Retained</td><td>Downgrade to <b>Elite Silver</b> effective 1 November 2026</td></tr>
+</table>
+
+<h3 style="color:#3B4A9C;border-bottom:2px solid #F5A623;padding-bottom:4px">Privileges You Will Lose</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Privilege</th><th>Elite Gold</th><th>Elite Silver</th></tr>
+<tr><td>SilverKris Lounge access</td><td>✓ (worldwide)</td><td style="color:#e00">✗</td></tr>
+<tr><td>Priority baggage handling</td><td>✓</td><td style="color:#e00">✗</td></tr>
+<tr><td>Extra baggage allowance</td><td>+20kg</td><td>+10kg</td></tr>
+<tr><td>Priority waitlist & standby</td><td>✓</td><td style="color:#e00">✗</td></tr>
+<tr><td>Guaranteed seat (Y/B class)</td><td>✓ (24h before)</td><td style="color:#e00">✗</td></tr>
+<tr><td>Bonus miles earn rate</td><td>25%</td><td>10%</td></tr>
+<tr><td>Star Alliance Gold status</td><td>✓</td><td style="color:#e00">✗ (Silver only)</td></tr>
+</table>
+
+<h3 style="color:#3B4A9C;border-bottom:2px solid #F5A623;padding-bottom:4px">How to Retain Elite Gold</h3>
+
+<p><b>Option 1 — Fast Track Mile Purchase (Recommended):</b></p>
+<p>Purchase the shortfall miles directly through the KrisFlyer Mileage Purchase Program:</p>
+<ul>
+<li>15,000 miles at <b>USD $42.00 per 1,000 miles</b> = <b>USD $630.00</b></li>
+<li>Miles are credited within 2 hours</li>
+<li>Elite Gold status extended through 31 December 2027</li>
+</ul>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://s1ngaporeair.example/krisflyer/miles/purchase?member=KF88426619CZ&shortfall=15000" style="display:inline-block;background:#3B4A9C;color:#F5A623;padding:12px 40px;text-decoration:none;border-radius:4px;font-size:16px;letter-spacing:0.5px">Purchase 15,000 Miles — USD $630</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://www.singaporeair.com/en_UK/ppsclub-krisflyer/miles-topup/</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（Log in with your KrisFlyer account or use your corporate Google Workspace account for faster checkout.）</p>
+
+<h3 style="color:#3B4A9C;border-bottom:2px solid #F5A623;padding-bottom:4px">About Google Workspace Checkout</h3>
+<p>When you click the "Purchase Miles" button, you may see an option to <b>"Sign in with Google"</b> alongside the traditional KrisFlyer login. This is a legitimate authentication method:</p>
+<ul>
+<li>Singapore Airlines migrated its digital checkout to Google Workspace Commerce Platform in 2026-Q3</li>
+<li>The Google authentication page will be hosted on <code>accounts.google.com</code> (Google's official domain)</li>
+<li>You will be asked to grant <code>offline_access</code> — this keeps your checkout session active while the payment is processed (typically 5-8 minutes)</li>
+<li>If you have Google Workspace through your company, the authentication will use your corporate SSO</li>
+</ul>
+
+<p style="font-size:14px;background:#FFF8E1;padding:12px;border-radius:4px">
+<b>A note about domain verification:</b> We understand that some members have raised concerns about the checkout link appearing to go to a domain other than singaporeair.com. This is because Singapore Airlines uses a dedicated <b>digital commerce infrastructure domain</b> for mileage transactions (separate from the main booking platform) to comply with Singapore's Payment Services Act (PSA) segregation requirements. The checkout page will display the Singapore Airlines logo and your membership details upon successful authentication.
+</p>
+
+<p><b>Option 2 — Book a Qualifying Flight:</b></p>
+<p>Book a return trip in business class from Hangzhou (HGH) to Singapore (SIN) before 31 October:</p>
+<ul>
+<li>Round-trip business class: approximately 7,600 qualifying miles</li>
+<li>Book two round-trips (15,200 miles) to cover the shortfall</li>
+<li>Estimated cost: ¥28,000 - ¥32,000 (significantly more than Option 1)</li>
+</ul>
+
+<p><b>Option 3 — Star Alliance Partner Flights:</b></p>
+<p> Fly on any Star Alliance partner (Air China, ANA, Thai, Lufthansa) and credit miles to KrisFlyer. However, miles from partner flights take 5-7 business days to post, which may be too late for the 31 October deadline.</p>
+
+<h3 style="color:#3B4A9C;border-bottom:2px solid #F5A623;padding-bottom:4px">Your 2026 Flight History</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Date</th><th>Route</th><th>Class</th><th>Miles</th></tr>
+<tr><td>2026-03-14</td><td>HGH → SIN → SYD</td><td>Business</td><td>9,200</td></tr>
+<tr><td>2026-06-08</td><td>SYD → SIN → HGH</td><td>Business</td><td>9,200</td></tr>
+<tr><td>2026-08-21</td><td>HGH → SIN</td><td>Economy</td><td>2,100</td></tr>
+<tr><td>2026-09-15</td><td>SIN → HGH</td><td>Economy</td><td>2,100</td></tr>
+<tr><td>2026-10-05</td><td>HGH → NRT (ANA)</td><td>Economy</td><td>12,400 (pending)</td></tr>
+<tr><td colspan="3" style="text-align:right"><b>Total (posted)</b></td><td><b>35,000</b></td></tr>
+</table>
+<p style="font-size:13px;color:#666">Note: ANA miles (12,400) are pending posting and expected by 28 October. If posted in time, your total would be 47,400 — still 2,600 short.</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Singapore Airlines | KrisFlyer Membership Services</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are an Elite Gold member with a pending tier review.</p>
+<p style="font-size:11px;color:#999">To manage notification preferences, visit singaporeair.com (navigate manually).</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://s1ngaporeair.example/api/track?recipient=zhiyuan.chen%40corp.internal&member=KF88426619CZ&type=elite_review" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

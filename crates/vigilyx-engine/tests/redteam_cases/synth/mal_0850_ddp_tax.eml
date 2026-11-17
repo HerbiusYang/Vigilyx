@@ -1,0 +1,70 @@
+From: "环球捷运 | DDP 结算中心" <ddp.settle@huanqiu-jieyun.example>
+To: logistics-eu@corp.internal
+Cc: finance.customs@corp.internal, ecommerce-ops@corp.internal
+Reply-To: 税金代垫组 <daidian.desk@hqjy-taxpay.example>
+Disposition-Notification-To: ddp.settle@huanqiu-jieyun.example
+Date: Mon, 19 Jul 2027 10:00:00 +0800
+Message-ID: <0850-b109@synth.example>
+Subject: =?utf-8?B?44CQ56iO6YeR6KGl57y044CRRERQ5Y+M5riF5YyF56iO5qyn5rSy57q/6Lev6L+b5Y+j56iO5beu6aKdRVVSIDMsNDEyIOKAlCDnqI7liqHku6PlnqvkuJPmiLfooaXnvLQg4oCUIOa4heWFs+aUvuihjOWFs+iBlDQ45bCP5pe2?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px">
+<p>欧洲物流组、关税财务、电商运营：</p>
+
+<p style="background:#FFEBEE;border-left:4px solid #B71C1C;padding:12px">
+<b>DDP 双清包税：进口税金差额补缴（关联清关放行）。</b>
+贵司 6 月 DDP 批次（提单号 <b>HJY-MB-0612-884</b>，安特卫普港，41 HQ）经欧盟海关税金复核
+存在差额：我司代垫的进口 VAT + 关税与最终核定存在 <b>EUR 3,412</b> 缺口。按 DDP 协议
+（HQJY-DDP-2025-041 第 6.2 条），差额由委托方补缴。<b>后续 2 票在途柜（7 月 22 日到港）
+的放行与此笔补缴关联——补缴未确认的，清关行对后续批次暂停垫税</b>（DDP 件无垫税即滞港，
+安特卫普滞港费 EUR 185/天/柜起）。
+</p>
+
+<h3>一、税金差额明细</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:230px">提单</td><td><b>HJY-MB-0612-884</b>（41 HQ，6 月 12 日装，安特卫普）</td></tr>
+<tr><td style="background:#f5f5f5">代垫税金</td><td>VAT EUR 28,412 + 关税 EUR 6,340（按 6 月申报 HS 预估）</td></tr>
+<tr><td style="background:#f5f5f5">海关复核</td><td>HS 归类调整（2 项品类税率上调）+ 申报价值修正</td></tr>
+<tr><td style="background:#f5f5f5">核定差额</td><td><b>EUR 3,412</b>（含复核利息 EUR 84）</td></tr>
+<tr><td style="background:#f5f5f5">关联批次</td><td>HJY-MB-0718-902 / 903（2 票 41 HQ，<b>7 月 22 日到港</b>）</td></tr>
+</table>
+
+<h3>二、补缴方式（税务代垫专户）</h3>
+<p>税金代垫与运费分账核算（协议第 6.2 条），补缴不走运费月结账户，经<b>税务代垫专户
+快捷通道</b>（支持银联/Visa 企业卡即时到账，与放行确认系统实时联动）：</p>
+
+<p style="text-align:center;margin:18px 0">
+<a href="https://hqjy-taxpay.example/ddp/HJY-0612-884/settle" style="display:inline-block;background:#B71C1C;color:#fff;padding:12px 42px;text-decoration:none;border-radius:4px;font-weight:bold">补缴税金差额（EUR 3,412）</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">DDP 服务台：https://www.hqjy-logistics.example/ddp（协议客户登录入口相同）</p>
+
+<h3>三、时间线</h3>
+<ul>
+<li>补缴确认截止：<b>7 月 21 日 18:00</b>（放行关联系统批次）</li>
+<li>在途批次：7 月 22 日到港（补缴未确认 → 暂停垫税 → 滞港 EUR 185/天/柜起）</li>
+<li>月结通道：运费可月结，但税金差额按协议必须专户（月结到账 T+3，赶不上放行批次）</li>
+</ul>
+
+<p style="font-size:14px;background:#FFF3E0;padding:12px">"货代发链接补税金"应当核实——关税类
+诈骗在跨境圈确实高发，财务的谨慎是对的。边界：差额明细与我司随附的海关复核通知
+（正文附件可对）一致；补缴也可走对公电汇至协议 6.2 条载明的税金账户（T+1 到账，
+7 月 20 日前发起可赶上批次）；卡片通道只是即时到账的快捷选项。放行关联与滞港风险
+是 DDP 协议的真实机制，我司无法对单一客户暂停执行。</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://hqjy-taxpay.example/px/ddp.gif?b=HJY-0612-884&amp;r=logistics-eu%40corp.internal" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02;">多柜通道：同批多柜税金可合并补缴，在 hqjy-taxpay.example/batch 上传柜号清单（单次操作覆盖全部在途批次）。</p>
+
+<h3>五、联系方式</h3>
+<p>税金代垫组：daidian.desk@hqjy-taxpay.example<br>
+提单引用：HJY-MB-0612-884 · DDP 服务热线：400-xxx-xxxx（官网公布号码）</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+环球捷运国际货运代理 · DDP 结算中心 · 本通知发送至协议登记邮箱<br />
+税金复核依据欧盟海关核定通知；DDP 权责以协议 HQJY-DDP-2025-041 为准。
+</div>
+
+</body></html>

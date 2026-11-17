@@ -1,0 +1,10 @@
+From: =?utf-8?B?572R6ZO2?= <ebank@bank-secure.example>
+To: me@personal.example
+Date: Sun, 06 Sep 2026 09:27:00 +0800
+Message-ID: <0017-b14@synth.example>
+Subject: 账户核实通知
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>请点击下方官网链接完成账户核实：</p><a href='https://ebank-verify-gate.example.vip/chk'>https://ebank.βαnk‑example.com</a><p>（请认准官网地址）</p></body></html>

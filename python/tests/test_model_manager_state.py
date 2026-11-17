@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import time
 
-import pytest
-
 from vigilyx_ai.nlp_phishing import ModelManager, ZEROSHOT_MODEL_REVISIONS
 
 

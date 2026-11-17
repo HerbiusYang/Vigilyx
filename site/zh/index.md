@@ -3,12 +3,12 @@ layout: home
 
 title: Vigilyx
 titleTemplate: Rust 驱动的邮件安全网关
-description: 开源的 Rust 邮件安全网关。不是黑盒——一套能读、能跑测试、能扩展的检测栈。旁路镜像或 Inline MTA 同一套引擎。
+description: 快、好用、可解释的邮件安全。Rust 核心，旁路或 Inline 部署，识别当前的钓鱼、BEC 和语义威胁。
 
 hero:
   name: Vigilyx
-  text: 在核心实现层面真正不一样的邮件安全网关
-  tagline: 开源的 Rust 邮件安全网关。不是黑盒——一套能读、能跑测试、能扩展的检测栈。
+  text: 更快看清邮件，拦住眼前的威胁。
+  tagline: Rust 做检测，控制台直接复核，覆盖当前的钓鱼、BEC、二维码和语义攻击。
   actions:
     - theme: brand
       text: 快速开始

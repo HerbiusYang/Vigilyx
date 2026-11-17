@@ -12,9 +12,39 @@ pub async fn store_quarantine(
     subject: Option<&str>,
     raw_eml: &[u8],
     threat_level: &str,
+    direction: &str,
     reason: &str,
     client_ip: Option<&str>,
 ) -> bool {
+    store_quarantine_id(
+        db,
+        session_id,
+        mail_from,
+        rcpt_to,
+        subject,
+        raw_eml,
+        threat_level,
+        direction,
+        reason,
+        client_ip,
+    )
+    .await
+    .is_some()
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn store_quarantine_id(
+    db: &VigilDb,
+    session_id: &Uuid,
+    mail_from: Option<&str>,
+    rcpt_to: &[String],
+    subject: Option<&str>,
+    raw_eml: &[u8],
+    threat_level: &str,
+    direction: &str,
+    reason: &str,
+    client_ip: Option<&str>,
+) -> Option<String> {
     let req = QuarantineStoreRequest {
         session_id,
         verdict_id: None,
@@ -23,6 +53,7 @@ pub async fn store_quarantine(
         subject,
         raw_eml,
         threat_level,
+        direction,
         reason: Some(reason),
         client_ip,
     };
@@ -35,7 +66,7 @@ pub async fn store_quarantine(
                 threat_level,
                 "Email quarantined"
             );
-            true
+            Some(id)
         }
         Err(e) => {
             error!(
@@ -43,7 +74,7 @@ pub async fn store_quarantine(
                 error = %e,
                 "Failed to quarantine email"
             );
-            false
+            None
         }
     }
 }

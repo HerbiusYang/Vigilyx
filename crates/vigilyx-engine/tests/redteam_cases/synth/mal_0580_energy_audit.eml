@@ -1,0 +1,9 @@
+From: =?utf-8?B?6IO96ICX5Y+M5o6n?= <nh@energy-audit25.example>
+To: facility@corp.internal
+Date: Sun, 27 Sep 2026 09:19:00 +0800
+Message-ID: <0009-b33@synth.example>
+Subject: 能耗数据补报（导出模板宏）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+模板模板见附件，启用宏后自动汇总上报。

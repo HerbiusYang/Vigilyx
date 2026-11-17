@@ -1,6 +1,12 @@
 import { useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import type { SecurityVerdict, ModuleResult } from '../../types'
+import type {
+  EpistemicState,
+  ModuleResult,
+  SecurityVerdict,
+  ShadowFusionResult,
+} from '../../types'
+import { formatDurationMs } from '../../utils/format'
 import { MODULE_NAME_KEYS } from './moduleI18n'
 import { categoryLabel } from './categoryLabels'
 
@@ -13,13 +19,7 @@ interface SecurityAnalysisViewProps {
   moduleResults: ModuleResult[]
   expandedModules: Set<string> | null
   toggleModuleExpand: (id: string) => void
-  feedbackDone: boolean
-  feedbackType: string | null
-  feedbackComment: string
-  feedbackSubmitting: boolean
-  setFeedbackType: (t: any) => void
-  setFeedbackComment: (c: string) => void
-  submitFeedback: () => void
+  onOpenFeedback?: () => void
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -65,6 +65,17 @@ const ENGINE_CN_KEYS: Record<string, string> = {
   transaction_correlation: 'emailSecurity.engineTransaction',
 }
 
+const EVIDENCE_CLUSTER_NAME_KEYS: Record<string, string> = {
+  inherited_gateway_prior: 'emailSecurity.clusterInheritedGatewayPrior',
+  delivery_integrity: 'emailSecurity.clusterDeliveryIntegrity',
+  sender_identity_authenticity: 'emailSecurity.clusterSenderIdentityAuthenticity',
+  link_and_html_deception: 'emailSecurity.clusterLinkAndHtmlDeception',
+  payload_malware: 'emailSecurity.clusterPayloadMalware',
+  external_reputation_ioc: 'emailSecurity.clusterExternalReputationIoc',
+  social_engineering_intent: 'emailSecurity.clusterSocialEngineeringIntent',
+  business_sensitivity: 'emailSecurity.clusterBusinessSensitivity',
+}
+
 const THREAT_CN_KEYS: Record<string, string> = {
   safe: 'emailSecurity.threatSafe',
   low: 'emailSecurity.threatLow',
@@ -105,20 +116,22 @@ function threatColor(level: string): string {
   }
 }
 
-function engineScore(bpa: { b: number; d: number; u: number } | undefined): number {
-  if (!bpa) return 0
+function engineScore(bpa: { b: number; d: number; u: number } | undefined): number | null {
+  if (!bpa) return null
   const denom = bpa.b + bpa.d + bpa.u
-  if (denom === 0) return 0
+  if (denom === 0) return null
   return Math.round((bpa.b / denom) * 100)
 }
 
-function scoreIndicatorColor(score: number): string {
+function scoreIndicatorColor(score: number | null): string {
+  if (score === null) return '#6b7280'
   if (score === 0) return '#16a34a'
   if (score < 30) return '#ca8a04'
   return '#dc2626'
 }
 
-function scoreIndicatorLabel(score: number): string {
+function scoreIndicatorLabel(score: number | null): string {
+  if (score === null) return '–'
   if (score === 0) return '\u2713'
   return String(score)
 }
@@ -142,13 +155,17 @@ function readBoolean(value: unknown): boolean {
   return value === true
 }
 
-export type ModuleExecutionState = 'timeout' | 'failed'
+export type ModuleExecutionState = 'timeout' | 'failed' | 'dependency_unavailable'
 
 export function getModuleExecutionState(mr: ModuleResult): ModuleExecutionState | null {
   const details = asRecord(mr.details)
   const status = readString(details?.execution_status)
   if (status === 'timeout' || mr.categories.includes('inspection_module_timeout')) return 'timeout'
   if (status === 'failed' || mr.categories.includes('inspection_module_failed')) return 'failed'
+  if (
+    status === 'dependency_unavailable' ||
+    mr.categories.includes('inspection_dependency_unavailable')
+  ) return 'dependency_unavailable'
   return null
 }
 
@@ -158,14 +175,15 @@ export function isModuleUnavailable(mr: ModuleResult): boolean {
 
 function moduleExecutionColor(state: ModuleExecutionState | null, threatLevel: string): string {
   if (state === 'timeout') return '#f59e0b'
+  if (state === 'dependency_unavailable') return '#f59e0b'
   if (state === 'failed') return '#ef4444'
   return threatColor(threatLevel)
 }
 
 function moduleExecutionLabelKey(state: ModuleExecutionState): string {
-  return state === 'timeout'
-    ? 'emailSecurity.moduleStatusTimeout'
-    : 'emailSecurity.moduleStatusFailed'
+  if (state === 'timeout') return 'emailSecurity.moduleStatusTimeout'
+  if (state === 'dependency_unavailable') return 'emailSecurity.moduleStatusDependencyUnavailable'
+  return 'emailSecurity.moduleStatusFailed'
 }
 
 function getSemanticAiState(mr: ModuleResult): {
@@ -371,6 +389,257 @@ function llmVerdictColor(verdict: string | null): string {
   }
 }
 
+interface SemanticClaimObservation {
+  sourceSpanId: string
+  sourcePart: string
+  actorRole: string
+  targetRole: string
+  speechAct: string
+  polarity: string
+  quoteStatus: string
+  actions: string[]
+  objects: string[]
+  linkCount: number
+  counterContextCount: number
+}
+
+interface SemanticScenarioObservation {
+  scenarioId: string
+  resolution: string
+  resolutionReason: string | null
+  coverage: string
+  claimCount: number
+  linkCount: number
+  counterContextCount: number
+}
+
+interface SemanticLinkObservation {
+  linkId: string
+  extractionSource: string
+  transportStatus: string
+  contentStatus: string
+  ownershipStatus: string
+}
+
+interface SemanticObservationData {
+  schemaVersion: number | null
+  coverage: string
+  coverageReason: string | null
+  claims: SemanticClaimObservation[]
+  scenarios: SemanticScenarioObservation[]
+  links: SemanticLinkObservation[]
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === 'string' && item.length > 0)
+}
+
+function readRecordArray(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return []
+  return value.map(asRecord).filter((item): item is Record<string, unknown> => item !== null)
+}
+
+/** Read observation-only semantic facts without treating them as a verdict. */
+function getSemanticObservationData(mr: ModuleResult): SemanticObservationData | null {
+  if (mr.module_id !== 'semantic_scan') return null
+  const details = asRecord(mr.details)
+  const context = asRecord(details?.semantic_context)
+  if (!context) return null
+
+  const claims = readRecordArray(context.claims).map(claim => ({
+    sourceSpanId: readString(claim.source_span_id) ?? 'unknown',
+    sourcePart: readString(claim.source_part) ?? 'unknown',
+    actorRole: readString(claim.actor_role) ?? 'unknown',
+    targetRole: readString(claim.target_role) ?? 'unknown',
+    speechAct: readString(claim.speech_act) ?? 'unknown',
+    polarity: readString(claim.polarity) ?? 'unknown',
+    quoteStatus: readString(claim.quote_or_forward_status) ?? 'unknown',
+    actions: readStringArray(claim.actions),
+    objects: readStringArray(claim.objects),
+    linkCount: readStringArray(claim.link_ids).length,
+    counterContextCount: readStringArray(claim.counter_context_ids).length,
+  })).sort((left, right) => Number(right.sourcePart === 'header') - Number(left.sourcePart === 'header'))
+
+  const scenarios = readRecordArray(details?.semantic_scenarios).map(scenario => ({
+    scenarioId: readString(scenario.scenario_id) ?? 'unknown',
+    resolution: readString(scenario.resolution) ?? 'candidate',
+    resolutionReason: readString(scenario.resolution_reason),
+    coverage: readString(scenario.coverage) ?? 'unknown',
+    claimCount: readStringArray(scenario.claim_ids).length,
+    linkCount: readStringArray(scenario.link_ids).length,
+    counterContextCount: readStringArray(scenario.counter_context_ids).length,
+  }))
+
+  const links = readRecordArray(context.links).map(link => ({
+    linkId: readString(link.link_id) ?? 'unknown',
+    extractionSource: readString(link.extraction_source) ?? 'unknown',
+    transportStatus: readString(link.transport_status) ?? 'unknown',
+    contentStatus: readString(link.content_status) ?? 'unknown',
+    ownershipStatus: readString(link.ownership_status) ?? 'unknown',
+  }))
+
+  return {
+    schemaVersion: readNumber(context.schema_version),
+    coverage: readString(context.coverage) ?? 'unknown',
+    coverageReason: readString(context.coverage_reason),
+    claims,
+    scenarios,
+    links,
+  }
+}
+
+interface TextClassifierData {
+  status: string
+  modelId: string | null
+  route: string | null
+  probability: number | null
+  threshold: number | null
+  fired: boolean
+  shadow: boolean
+  textUnits: number | null
+  activeFeatures: number | null
+  belowTrainingLength: boolean
+  diagnostic: string | null
+}
+
+/**
+ * Read one compiled local text classifier outcome.
+ * Feature names are email tokens, so top_features is intentionally not read.
+ */
+function readTextClassifierOutcome(value: unknown): TextClassifierData | null {
+  const outcome = asRecord(value)
+  const status = readString(outcome?.status)
+  if (!outcome || !status) return null
+
+  return {
+    status,
+    modelId: readString(outcome.model_id),
+    route: readString(outcome.route),
+    probability: readNumber(outcome.probability),
+    threshold: readNumber(outcome.threshold),
+    fired: readBoolean(outcome.fired),
+    shadow: readBoolean(outcome.shadow),
+    textUnits: readNumber(outcome.text_units),
+    activeFeatures: readNumber(outcome.active_features),
+    belowTrainingLength: readBoolean(outcome.below_training_length),
+    diagnostic: readString(outcome.diagnostic),
+  }
+}
+
+function getTextClassifierData(mr: ModuleResult): TextClassifierData | null {
+  if (mr.module_id !== 'semantic_scan') return null
+  return readTextClassifierOutcome(asRecord(mr.details)?.semantic_text_classifier)
+}
+
+interface IntentModelData {
+  status: string
+  /** `scored`: the model alone judges semantics and its hits enter the verdict. */
+  scored: boolean
+  modelVersion: string | null
+  score: number | null
+  threshold: number | null
+  flagged: boolean
+  members: { name: string; logit: number }[]
+  roundTripMs: number | null
+  inputTruncated: boolean
+  reason: string | null
+}
+
+/** Intent ensemble outcome recorded by semantic_scan, in shadow or scored mode. */
+function getIntentModelData(mr: ModuleResult): IntentModelData | null {
+  if (mr.module_id !== 'semantic_scan') return null
+  const outcome = asRecord(asRecord(mr.details)?.semantic_intent_model)
+  const status = readString(outcome?.status)
+  if (!outcome || !status) return null
+  const members = Object.entries(asRecord(outcome.members) ?? {}).flatMap(([name, value]) => {
+    const logit = readNumber(value)
+    return logit == null ? [] : [{ name, logit }]
+  })
+  return {
+    status,
+    scored: readString(outcome.mode) === 'scored',
+    modelVersion: readString(outcome.model_version),
+    score: readNumber(outcome.score),
+    threshold: readNumber(outcome.threshold),
+    flagged: readBoolean(outcome.flagged),
+    members,
+    roundTripMs: readNumber(outcome.round_trip_ms),
+    inputTruncated: readBoolean(outcome.input_truncated),
+    reason: readString(outcome.reason),
+  }
+}
+
+/** Compact score tag on the semantic_scan row; amber when a scored hit raised the module. */
+const IntentModelTag = ({ mr }: { mr: ModuleResult }) => {
+  const { t } = useTranslation()
+  const intentModel = getIntentModelData(mr)
+  if (!intentModel || intentModel.status !== 'ok' || intentModel.score == null) return null
+  const hit = intentModel.scored && intentModel.flagged
+  const color = hit ? '#f59e0b' : '#38bdf8'
+  return (
+    <span
+      data-testid="semantic-intent-tag"
+      title={t(intentModel.scored ? 'emailSecurity.intentModelBadgeScored' : 'emailSecurity.intentModelBadgeShadow')}
+      style={{
+        fontSize: 10,
+        color,
+        background: hit ? 'rgba(245,158,11,0.12)' : 'rgba(56,189,248,0.08)',
+        border: `1px solid ${hit ? 'rgba(245,158,11,0.32)' : 'rgba(56,189,248,0.28)'}`,
+        padding: '1px 6px',
+        borderRadius: 999,
+        flexShrink: 0,
+        fontFamily: MONO,
+      }}
+    >
+      {t('emailSecurity.intentModelTag', { score: intentModel.score.toFixed(2) })}
+    </span>
+  )
+}
+
+interface AttachmentSemanticSource {
+  filename: string
+  findingCount: number
+  classifier: TextClassifierData | null
+}
+
+interface AttachmentSemanticData {
+  sources: AttachmentSemanticSource[]
+  skipped: { filename: string; reason: string }[]
+}
+
+/** Read attachment text analyzed by the semantic engine. */
+function getAttachmentSemanticData(mr: ModuleResult): AttachmentSemanticData | null {
+  if (mr.module_id !== 'semantic_scan') return null
+  const attachments = asRecord(asRecord(mr.details)?.semantic_attachment_sources)
+  if (!attachments) return null
+  const sources = readRecordArray(attachments.sources).map(source => ({
+    filename: readString(source.filename) ?? 'unknown',
+    findingCount: readNumber(source.finding_count) ?? 0,
+    classifier: readTextClassifierOutcome(source.text_classifier),
+  }))
+  const skipped = readRecordArray(attachments.skipped).map(entry => ({
+    filename: readString(entry.filename) ?? 'unknown',
+    reason: readString(entry.reason) ?? 'unknown',
+  }))
+  if (sources.length === 0 && skipped.length === 0) return null
+  return { sources, skipped }
+}
+
+const SEMANTIC_DISPLAY_LIMIT = 8
+
+function semanticValueKey(value: string): string {
+  return `emailSecurity.semanticValue.${value}`
+}
+
+function semanticScenarioKey(value: string): string {
+  return `emailSecurity.semanticScenario.${value}`
+}
+
+function semanticResolutionReasonKey(value: string): string {
+  return `emailSecurity.semanticResolutionReason.${value}`
+}
+
 // ════════════════════════════════════════════════════════════════
 // Styles
 // ════════════════════════════════════════════════════════════════
@@ -528,23 +797,18 @@ export default function SecurityAnalysisView({
   moduleResults,
   expandedModules,
   toggleModuleExpand,
-  feedbackDone,
-  feedbackType,
-  feedbackComment,
-  feedbackSubmitting,
-  setFeedbackType,
-  setFeedbackComment,
-  submitFeedback,
+  onOpenFeedback,
 }: SecurityAnalysisViewProps) {
   const { t } = useTranslation()
   const [selectedEngine, setSelectedEngine] = useState<string | null>(null)
 
-  // Build engine BPA lookup from fusion_details
+  // Only legacy A-H summaries belong in this per-engine lookup. The default
+  // clustered strategy exposes cluster diagnostics under different IDs.
   const engineBpaMap = useMemo(() => {
     const m = new Map<string, { b: number; d: number; u: number }>()
     if (verdict?.fusion_details?.engine_details) {
       for (const ed of verdict.fusion_details.engine_details) {
-        m.set(ed.engine_id, ed.bpa ?? { b: 0, d: 0, u: 1 })
+        if (ENGINE_LETTER[ed.engine_id] && ed.bpa) m.set(ed.engine_id, ed.bpa)
       }
     }
     return m
@@ -564,6 +828,33 @@ export default function SecurityAnalysisView({
   const linkReputationUnavailable = moduleResults.find(
     mr => mr.module_id === 'link_reputation' && isModuleUnavailable(mr),
   )
+
+  if (!verdict && moduleResults.length > 0) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div role="status" style={{
+          ...S.card,
+          padding: '12px 14px',
+          color: 'rgba(255,255,255,0.62)',
+        }}>
+          {t('emailSecurity.verdictUnavailableModulesShown')}
+        </div>
+        <div style={S.card}>
+          <div style={{ ...S.cardTitle, display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+            <span>{t('emailSecurity.detectionModules')}</span>
+            <span style={{ color: 'rgba(255,255,255,0.42)', fontSize: 12, fontWeight: 500 }}>
+              {t('emailSecurity.detectionModulesCount', { count: moduleResults.length })}
+            </span>
+          </div>
+          <ModuleList
+            moduleResults={moduleResults}
+            expandedModules={expandedModules}
+            toggleModuleExpand={toggleModuleExpand}
+          />
+        </div>
+      </div>
+    )
+  }
 
   if (!verdict) {
     return (
@@ -692,7 +983,7 @@ export default function SecurityAnalysisView({
             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
           </svg>
           <span style={{ fontSize: 11, fontWeight: 600, color: threatColor(verdict.threat_level) }}>
-            {THREAT_CN_KEYS[verdict.threat_level] ? t(THREAT_CN_KEYS[verdict.threat_level]) : verdict.threat_level}
+            {verdict.threat_level === 'safe' && (verdict.inspection_coverage === 'limited' || verdict.fusion_details?.primary_result?.epistemic_state === 'unknown') ? t('emailSecurity.threatUncertain') : THREAT_CN_KEYS[verdict.threat_level] ? t(THREAT_CN_KEYS[verdict.threat_level]) : verdict.threat_level}
           </span>
         </div>
       </div>
@@ -742,16 +1033,11 @@ export default function SecurityAnalysisView({
         <FusionPanel fusion={verdict.fusion_details} />
       )}
 
-      {/* ── Feedback ── */}
-      <FeedbackSection
-        feedbackDone={feedbackDone}
-        feedbackType={feedbackType}
-        feedbackComment={feedbackComment}
-        feedbackSubmitting={feedbackSubmitting}
-        setFeedbackType={setFeedbackType}
-        setFeedbackComment={setFeedbackComment}
-        submitFeedback={submitFeedback}
-      />
+      {onOpenFeedback && (
+        <button type="button" style={S.feedbackBtn} onClick={onOpenFeedback}>
+          {t('emailSecurity.feedbackReviewAction')}
+        </button>
+      )}
     </div>
   )
 }
@@ -905,7 +1191,6 @@ function EngineDetail({ engineId, bpa, modules, expandedModules, toggleModuleExp
   const { t } = useTranslation()
   const color = ENGINE_COLORS[engineId] ?? '#6b7280'
   const score = engineScore(bpa)
-  const safeBpa = bpa ?? { b: 0, d: 0, u: 1 }
 
   return (
     <div>
@@ -929,7 +1214,7 @@ function EngineDetail({ engineId, bpa, modules, expandedModules, toggleModuleExp
               {ENGINE_CN_KEYS[engineId] ? t(ENGINE_CN_KEYS[engineId]) : engineId}
             </div>
             <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', fontFamily: MONO }}>
-              score={score} {weight != null && `w=${weight.toFixed(2)}`}
+              score={score ?? '—'} {weight != null && `w=${weight.toFixed(2)}`}
             </div>
           </div>
         </div>
@@ -945,22 +1230,24 @@ function EngineDetail({ engineId, bpa, modules, expandedModules, toggleModuleExp
       </div>
 
       {/* BPA bar */}
-      <div style={{ marginBottom: 12 }}>
+      {bpa ? <div style={{ marginBottom: 12 }}>
         <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 4 }}>{t('emailSecurity.bpaDistribution')}</div>
         <div style={S.bpaBar}>
-          <div style={S.bpaSeg('#dc2626', safeBpa.b * 100)} />
-          <div style={S.bpaSeg('#16a34a', safeBpa.d * 100)} />
-          <div style={S.bpaSeg('#6b7280', safeBpa.u * 100)} />
+          <div style={S.bpaSeg('#dc2626', bpa.b * 100)} />
+          <div style={S.bpaSeg('#16a34a', bpa.d * 100)} />
+          <div style={S.bpaSeg('#6b7280', bpa.u * 100)} />
         </div>
         <div style={{
           display: 'flex', gap: 12, marginTop: 4, fontSize: 10, fontFamily: MONO,
           color: 'rgba(255,255,255,0.4)',
         }}>
-          <span>B={safeBpa.b.toFixed(2)}</span>
-          <span>D={safeBpa.d.toFixed(2)}</span>
-          <span>U={safeBpa.u.toFixed(2)}</span>
+          <span>B={bpa.b.toFixed(2)}</span>
+          <span>D={bpa.d.toFixed(2)}</span>
+          <span>U={bpa.u.toFixed(2)}</span>
         </div>
-      </div>
+      </div> : <div role="status" style={{ ...S.card, marginBottom: 12, color: 'rgba(255,255,255,0.5)', fontSize: 11 }}>
+        {t('emailSecurity.engineBpaUnavailable')}
+      </div>}
 
       {/* Sub-modules */}
       <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 6 }}>
@@ -1003,6 +1290,7 @@ function EngineDetail({ engineId, bpa, modules, expandedModules, toggleModuleExp
                     {t(semanticAiState.labelKey)}
                   </span>
                 )}
+                <IntentModelTag mr={mr} />
               </div>
               <div style={S.moduleRowRight}>
                 <span style={{ fontSize: 10, color: displayColor, fontWeight: 500 }}>
@@ -1011,7 +1299,7 @@ function EngineDetail({ engineId, bpa, modules, expandedModules, toggleModuleExp
                     : (THREAT_CN_KEYS[mr.threat_level] ? t(THREAT_CN_KEYS[mr.threat_level]) : mr.threat_level)}
                 </span>
                 <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', fontFamily: MONO }}>
-                  {mr.duration_ms}ms
+                  {formatDurationMs(mr.duration_ms)}
                 </span>
                 <svg
                   width="10" height="10" viewBox="0 0 24 24" fill="none"
@@ -1085,6 +1373,7 @@ function ModuleList({ moduleResults, expandedModules, toggleModuleExpand }: {
                     {t(semanticAiState.labelKey)}
                   </span>
                 )}
+                <IntentModelTag mr={mr} />
                 <span style={{
                   fontSize: 10, color: 'rgba(255,255,255,0.3)',
                   background: 'rgba(255,255,255,0.04)', padding: '2px 6px', borderRadius: 4,
@@ -1104,7 +1393,7 @@ function ModuleList({ moduleResults, expandedModules, toggleModuleExpand }: {
                     : (THREAT_CN_KEYS[mr.threat_level] ? t(THREAT_CN_KEYS[mr.threat_level]) : mr.threat_level)}
                 </span>
                 <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', fontFamily: MONO }}>
-                  {mr.duration_ms > 999 ? `${(mr.duration_ms / 1000).toFixed(1)}s` : `${mr.duration_ms}ms`}
+                  {formatDurationMs(mr.duration_ms)}
                 </span>
                 <svg
                   width="12" height="12" viewBox="0 0 24 24" fill="none"
@@ -1132,6 +1421,10 @@ function ModuleExpandedContent({ mr }: { mr: ModuleResult }) {
   const semanticAiState = getSemanticAiState(mr)
   const nlpVisualData = getNlpVisualData(mr)
   const llmAnalysis = getLlmAnalysis(mr)
+  const semanticObservation = getSemanticObservationData(mr)
+  const textClassifier = getTextClassifierData(mr)
+  const intentModel = getIntentModelData(mr)
+  const attachmentSemantics = getAttachmentSemanticData(mr)
 
   return (
     <div style={{ padding: '4px 12px 10px 26px' }}>
@@ -1199,6 +1492,340 @@ function ModuleExpandedContent({ mr }: { mr: ModuleResult }) {
             </div>
           )}
         </div>
+      )}
+
+      {semanticObservation && (
+        <section
+          aria-label={t('emailSecurity.semanticObservationTitle')}
+          data-testid="semantic-observation"
+          style={{
+            ...S.evidenceItem,
+            marginBottom: 6,
+            border: '1px solid rgba(59,130,246,0.25)',
+            background: 'rgba(59,130,246,0.06)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.75)' }}>
+              {t('emailSecurity.semanticObservationTitle')}
+            </span>
+            <span style={{
+              fontSize: 10,
+              color: '#60a5fa',
+              border: '1px solid rgba(96,165,250,0.4)',
+              padding: '1px 6px',
+              borderRadius: 999,
+            }}>
+              {t('emailSecurity.semanticObservationBadge')}
+            </span>
+            {semanticObservation.schemaVersion != null && (
+              <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', fontFamily: MONO }}>
+                schema-v{semanticObservation.schemaVersion}
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 5, lineHeight: 1.5 }}>
+            {t('emailSecurity.semanticObservationAdvisory')}
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 6, fontSize: 10 }}>
+            <span>{t('emailSecurity.semanticCoverage')}: {t(semanticValueKey(semanticObservation.coverage), semanticObservation.coverage)}</span>
+            <span>{t('emailSecurity.semanticClaims')}: {semanticObservation.claims.length}</span>
+            <span>{t('emailSecurity.semanticScenarios')}: {semanticObservation.scenarios.length}</span>
+            <span>{t('emailSecurity.semanticLinks')}: {semanticObservation.links.length}</span>
+          </div>
+          {semanticObservation.coverageReason && (
+            <div style={{ fontSize: 10, color: '#f59e0b', marginTop: 5, lineHeight: 1.5 }}>
+              {t('emailSecurity.semanticCoverageReason')}: {semanticObservation.coverageReason}
+            </div>
+          )}
+
+          {semanticObservation.claims.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)', marginBottom: 4 }}>
+                {t('emailSecurity.semanticClaims')}
+              </div>
+              {semanticObservation.claims.slice(0, SEMANTIC_DISPLAY_LIMIT).map((claim, index) => (
+                <div key={`${claim.sourceSpanId}-${index}`} style={{
+                  fontSize: 10,
+                  color: 'rgba(255,255,255,0.55)',
+                  padding: '4px 6px',
+                  marginBottom: 3,
+                  background: 'rgba(0,0,0,0.12)',
+                  borderRadius: 4,
+                  lineHeight: 1.5,
+                }}>
+                  <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
+                    <span>#{index + 1}</span>
+                    <span>{t('emailSecurity.semanticSource')}: {t(semanticValueKey(claim.sourcePart), claim.sourcePart)}</span>
+                    <span>{t('emailSecurity.semanticActor')}: {t(semanticValueKey(claim.actorRole), claim.actorRole)}</span>
+                    <span>{t('emailSecurity.semanticTarget')}: {t(semanticValueKey(claim.targetRole), claim.targetRole)}</span>
+                    <span>{t('emailSecurity.semanticSpeechAct')}: {t(semanticValueKey(claim.speechAct), claim.speechAct)}</span>
+                    <span>{t('emailSecurity.semanticPolarity')}: {t(semanticValueKey(claim.polarity), claim.polarity)}</span>
+                    <span>{t('emailSecurity.semanticQuoteState')}: {t(semanticValueKey(claim.quoteStatus), claim.quoteStatus)}</span>
+                  </div>
+                  {(claim.actions.length > 0 || claim.objects.length > 0) && (
+                    <div style={{ color: 'rgba(255,255,255,0.38)', fontFamily: MONO }}>
+                      {claim.actions.length > 0 && `${t('emailSecurity.semanticAction')}: ${claim.actions.join(', ')}`}
+                      {claim.actions.length > 0 && claim.objects.length > 0 && ' · '}
+                      {claim.objects.length > 0 && `${t('emailSecurity.semanticObject')}: ${claim.objects.join(', ')}`}
+                    </div>
+                  )}
+                  {(claim.linkCount > 0 || claim.counterContextCount > 0) && (
+                    <div style={{ color: 'rgba(255,255,255,0.32)' }}>
+                      {t('emailSecurity.semanticLinkedEvidence')}: {claim.linkCount}
+                      {' · '}{t('emailSecurity.semanticCounterContext')}: {claim.counterContextCount}
+                    </div>
+                  )}
+                </div>
+              ))}
+              {semanticObservation.claims.length > SEMANTIC_DISPLAY_LIMIT && (
+                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)' }}>
+                  {t('emailSecurity.semanticMoreItems', { count: semanticObservation.claims.length - SEMANTIC_DISPLAY_LIMIT })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {semanticObservation.scenarios.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)', marginBottom: 4 }}>
+                {t('emailSecurity.semanticScenarios')}
+              </div>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {semanticObservation.scenarios.slice(0, SEMANTIC_DISPLAY_LIMIT).map((scenario, index) => (
+                  <span key={`${scenario.scenarioId}-${index}`} title={scenario.scenarioId} style={{
+                    fontSize: 10,
+                    color: 'rgba(255,255,255,0.6)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    padding: '2px 6px',
+                    borderRadius: 999,
+                  }}>
+                    {t(semanticScenarioKey(scenario.scenarioId), scenario.scenarioId)} · {t(`emailSecurity.semanticResolution.${scenario.resolution}`, scenario.resolution)}
+                    {' · '}{t(semanticValueKey(scenario.coverage), scenario.coverage)}
+                    {' · '}{t('emailSecurity.semanticSupportingClaims')}: {scenario.claimCount}
+                    {' · '}{t('emailSecurity.semanticLinkedEvidence')}: {scenario.linkCount}
+                    {scenario.counterContextCount > 0 && (
+                      <> · {t('emailSecurity.semanticCounterContext')}: {scenario.counterContextCount}</>
+                    )}
+                    {scenario.resolutionReason && (
+                      <> · {t(semanticResolutionReasonKey(scenario.resolutionReason), scenario.resolutionReason)}</>
+                    )}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {semanticObservation.links.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)', marginBottom: 4 }}>
+                {t('emailSecurity.semanticLinkVerification')}
+              </div>
+              {semanticObservation.links.slice(0, SEMANTIC_DISPLAY_LIMIT).map((link, index) => (
+                <div key={`${link.linkId}-${index}`} style={{
+                  display: 'flex', gap: 7, flexWrap: 'wrap', fontSize: 10,
+                  color: 'rgba(255,255,255,0.45)', lineHeight: 1.5,
+                }}>
+                  <span style={{ fontFamily: MONO }}>link-{link.linkId.slice(0, 8)}</span>
+                  <span>{t('emailSecurity.semanticExtraction')}: {t(semanticValueKey(link.extractionSource), link.extractionSource)}</span>
+                  <span>{t('emailSecurity.semanticTransport')}: {t(semanticValueKey(link.transportStatus), link.transportStatus)}</span>
+                  <span>{t('emailSecurity.semanticContent')}: {t(semanticValueKey(link.contentStatus), link.contentStatus)}</span>
+                  <span>{t('emailSecurity.semanticOwnership')}: {t(semanticValueKey(link.ownershipStatus), link.ownershipStatus)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {textClassifier && (
+        <section
+          aria-label={t('emailSecurity.textClassifierTitle')}
+          data-testid="semantic-text-classifier"
+          style={{
+            ...S.evidenceItem,
+            marginBottom: 6,
+            border: '1px solid rgba(168,85,247,0.25)',
+            background: 'rgba(168,85,247,0.06)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.75)' }}>
+              {t('emailSecurity.textClassifierTitle')}
+            </span>
+            {textClassifier.status === 'scored' && (
+              <span style={{
+                fontSize: 10,
+                color: '#c084fc',
+                border: '1px solid rgba(192,132,252,0.4)',
+                padding: '1px 6px',
+                borderRadius: 999,
+              }}>
+                {t(textClassifier.shadow ? 'emailSecurity.textClassifierBadgeShadow' : 'emailSecurity.textClassifierBadgeReview')}
+              </span>
+            )}
+            {textClassifier.modelId && (
+              <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', fontFamily: MONO }}>
+                {textClassifier.modelId}
+              </span>
+            )}
+          </div>
+          {textClassifier.status === 'scored' && (
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 5, lineHeight: 1.5 }}>
+              {t(textClassifier.shadow ? 'emailSecurity.textClassifierShadowAdvisory' : 'emailSecurity.textClassifierReviewAdvisory')}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 6, fontSize: 10 }}>
+            <span>{t('emailSecurity.textClassifierStatusLabel')}: {t(`emailSecurity.textClassifierStatus.${textClassifier.status}`, textClassifier.status)}</span>
+            {textClassifier.status === 'scored' && (
+              <span style={{ color: textClassifier.fired ? '#f59e0b' : undefined }}>
+                {t('emailSecurity.textClassifierResult')}: {t(textClassifier.fired ? 'emailSecurity.textClassifierFired' : 'emailSecurity.textClassifierNotFired')}
+              </span>
+            )}
+            {textClassifier.probability != null && (
+              <span style={{ fontFamily: MONO }}>
+                {t('emailSecurity.textClassifierProbability')}: {(textClassifier.probability * 100).toFixed(1)}%
+                {textClassifier.threshold != null && ` / ${t('emailSecurity.textClassifierThreshold')} ${(textClassifier.threshold * 100).toFixed(1)}%`}
+              </span>
+            )}
+            {textClassifier.route && (
+              <span>{t('emailSecurity.textClassifierRouteLabel')}: {t(`emailSecurity.textClassifierRoute.${textClassifier.route}`, textClassifier.route)}</span>
+            )}
+            {textClassifier.textUnits != null && (
+              <span>{t('emailSecurity.textClassifierTextUnits')}: {textClassifier.textUnits}</span>
+            )}
+            {textClassifier.status === 'scored' && textClassifier.activeFeatures != null && (
+              <span>{t('emailSecurity.textClassifierActiveFeatures')}: {textClassifier.activeFeatures}</span>
+            )}
+          </div>
+          {textClassifier.belowTrainingLength && (
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 5, lineHeight: 1.5 }}>
+              {t('emailSecurity.textClassifierBelowTrainingLength')}
+            </div>
+          )}
+          {textClassifier.diagnostic && (
+            <div style={{ fontSize: 10, color: '#f59e0b', marginTop: 5, lineHeight: 1.5 }}>
+              {t('emailSecurity.textClassifierDiagnostic')}: {textClassifier.diagnostic}
+            </div>
+          )}
+        </section>
+      )}
+
+      {intentModel && (
+        <section
+          aria-label={t('emailSecurity.intentModelTitle')}
+          data-testid="semantic-intent-model"
+          style={{
+            ...S.evidenceItem,
+            marginBottom: 6,
+            border: '1px solid rgba(56,189,248,0.25)',
+            background: 'rgba(56,189,248,0.06)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.75)' }}>
+              {t('emailSecurity.intentModelTitle')}
+            </span>
+            <span style={{
+              fontSize: 10,
+              color: intentModel.scored ? '#f59e0b' : '#38bdf8',
+              border: `1px solid ${intentModel.scored ? 'rgba(245,158,11,0.4)' : 'rgba(56,189,248,0.4)'}`,
+              padding: '1px 6px',
+              borderRadius: 999,
+            }}>
+              {t(intentModel.scored ? 'emailSecurity.intentModelBadgeScored' : 'emailSecurity.intentModelBadgeShadow')}
+            </span>
+            {intentModel.modelVersion && (
+              <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', fontFamily: MONO }}>
+                {intentModel.modelVersion}
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 5, lineHeight: 1.5 }}>
+            {t(intentModel.scored ? 'emailSecurity.intentModelAdvisoryScored' : 'emailSecurity.intentModelAdvisory')}
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 6, fontSize: 10 }}>
+            <span>{t('emailSecurity.intentModelStatusLabel')}: {t(`emailSecurity.intentModelStatus.${intentModel.status}`, intentModel.status)}</span>
+            {intentModel.status === 'ok' && (
+              <span style={{ color: intentModel.flagged ? '#f59e0b' : undefined }}>
+                {t('emailSecurity.intentModelResult')}: {t(intentModel.flagged ? 'emailSecurity.intentModelFlagged' : 'emailSecurity.intentModelNotFlagged')}
+              </span>
+            )}
+            {intentModel.score != null && (
+              <span style={{ fontFamily: MONO }}>
+                {t('emailSecurity.intentModelScore')}: {intentModel.score.toFixed(2)}
+                {intentModel.threshold != null && ` / ${t('emailSecurity.intentModelThreshold')} ${intentModel.threshold.toFixed(2)}`}
+              </span>
+            )}
+            {intentModel.members.length > 0 && (
+              <span style={{ fontFamily: MONO }}>
+                {t('emailSecurity.intentModelMembers')}: {intentModel.members.map(member => `${member.name} ${member.logit.toFixed(2)}`).join(' · ')}
+              </span>
+            )}
+            {intentModel.roundTripMs != null && (
+              <span>{t('emailSecurity.intentModelLatency')}: {intentModel.roundTripMs} ms</span>
+            )}
+          </div>
+          {intentModel.inputTruncated && (
+            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginTop: 5, lineHeight: 1.5 }}>
+              {t('emailSecurity.intentModelTruncated')}
+            </div>
+          )}
+          {intentModel.reason && (
+            <div style={{ fontSize: 10, color: '#f59e0b', marginTop: 5, lineHeight: 1.5 }}>
+              {t('emailSecurity.intentModelReason')}: {intentModel.reason}
+            </div>
+          )}
+        </section>
+      )}
+
+      {attachmentSemantics && (
+        <section
+          aria-label={t('emailSecurity.attachmentSemanticTitle')}
+          data-testid="semantic-attachments"
+          style={{
+            ...S.evidenceItem,
+            marginBottom: 6,
+            border: '1px solid rgba(20,184,166,0.25)',
+            background: 'rgba(20,184,166,0.06)',
+          }}
+        >
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.75)' }}>
+            {t('emailSecurity.attachmentSemanticTitle')}
+          </div>
+          {attachmentSemantics.sources.map((source, index) => (
+            <div key={`${source.filename}-${index}`} style={{
+              display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 6, fontSize: 10,
+              color: 'rgba(255,255,255,0.6)', lineHeight: 1.5,
+            }}>
+              <span style={{ fontFamily: MONO, color: 'rgba(255,255,255,0.75)' }} title={source.filename}>
+                {source.filename}
+              </span>
+              <span style={{ color: source.findingCount > 0 ? '#f59e0b' : undefined }}>
+                {t('emailSecurity.attachmentSemanticFindings')}: {source.findingCount}
+              </span>
+              {source.classifier && (
+                <span>
+                  {t('emailSecurity.textClassifierTitle')}: {t(`emailSecurity.textClassifierStatus.${source.classifier.status}`, source.classifier.status)}
+                  {source.classifier.status === 'scored' && (
+                    <>
+                      {' · '}{t(source.classifier.fired ? 'emailSecurity.textClassifierFired' : 'emailSecurity.textClassifierNotFired')}
+                      {source.classifier.probability != null && ` · ${(source.classifier.probability * 100).toFixed(1)}%`}
+                    </>
+                  )}
+                </span>
+              )}
+            </div>
+          ))}
+          {attachmentSemantics.skipped.length > 0 && (
+            <div style={{ marginTop: 6, fontSize: 10, color: 'rgba(255,255,255,0.4)', lineHeight: 1.5 }}>
+              {t('emailSecurity.attachmentSemanticSkipped')}:{' '}
+              {attachmentSemantics.skipped.map(entry => (
+                `${entry.filename} (${t(`emailSecurity.attachmentSemanticSkipReason.${entry.reason}`, entry.reason)})`
+              )).join(', ')}
+            </div>
+          )}
+        </section>
       )}
 
       {/* NLP label probabilities */}
@@ -1363,50 +1990,122 @@ function ModuleExpandedContent({ mr }: { mr: ModuleResult }) {
 // FusionPanel
 // ════════════════════════════════════════════════════════════════
 
+const EPISTEMIC_STATE_KEYS: Record<EpistemicState, string> = {
+  unknown: 'emailSecurity.fusionStateUnknown',
+  threat_supported: 'emailSecurity.fusionStateThreatSupported',
+  normal_supported: 'emailSecurity.fusionStateNormalSupported',
+  conflicted: 'emailSecurity.fusionStateConflicted',
+}
+
+function latestClusteredDsV2(
+  shadowResults: ShadowFusionResult[] | undefined,
+): ShadowFusionResult | null {
+  if (!Array.isArray(shadowResults)) return null
+
+  let latest: ShadowFusionResult | null = null
+  for (const result of shadowResults) {
+    if (result?.model === 'clustered_ds_v2') latest = result
+  }
+  return latest
+}
+
 function FusionPanel({ fusion }: { fusion: NonNullable<SecurityVerdict['fusion_details']> }) {
+  const primary = fusion.primary_result
+  return <FusionModelPanel
+    shadow={primary ?? latestClusteredDsV2(fusion.shadow_results)}
+    authoritative={primary?.model === 'clustered_ds_v2'}
+  />
+}
+
+function FusionModelPanel({ shadow, authoritative = false }: { shadow: ShadowFusionResult | null; authoritative?: boolean }) {
   const { t } = useTranslation()
-  const bpa = fusion.fused_bpa
-  const kConflict = fusion.k_conflict ?? 0
-  const riskSingle = fusion.risk_single ?? 0
-  const eta = fusion.eta ?? 0
-  const engines = Array.isArray(fusion.engine_details) ? fusion.engine_details : []
-  const weights = fusion.credibility_weights ?? {}
+
+  if (!shadow) {
+    return (
+      <section
+        aria-label={t(authoritative ? 'emailSecurity.fusionV2Authoritative' : 'emailSecurity.fusionV2Experimental')}
+        data-testid="fusion-v2-empty"
+        style={{
+          ...S.card,
+          marginBottom: 0,
+          paddingTop: 16,
+          paddingBottom: 16,
+          borderStyle: 'dashed',
+          background: 'rgba(139,92,246,0.025)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ ...S.cardTitle, marginBottom: 0 }}>{t(authoritative ? 'emailSecurity.fusionV2PrimaryTitle' : 'emailSecurity.fusionV2Latest')}</span>
+          <span style={{
+            fontSize: 10, color: '#a78bfa', fontWeight: 600,
+            background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.22)',
+            padding: '2px 8px', borderRadius: 999,
+          }}>
+            {t(authoritative ? 'emailSecurity.fusionV2Authoritative' : 'emailSecurity.fusionV2Experimental')}
+          </span>
+        </div>
+        <p style={{ margin: '9px 0 0', fontSize: 12, color: 'rgba(255,255,255,0.38)' }}>
+          {t('emailSecurity.fusionV2Unavailable')}
+        </p>
+      </section>
+    )
+  }
+
+  const bpa = shadow.fused_bpa
   const eps = bpa.epsilon ?? 0
-
-  // Sort engines by bel descending for comparison
-  const sortedEngines = useMemo(() => {
-    return [...engines].sort((a, b) => (b.bpa?.b ?? 0) - (a.bpa?.b ?? 0))
-  }, [engines])
-
-  function kColor(k: number): string {
-    if (k < 0.1) return '#16a34a'
-    if (k <= 0.3) return '#ca8a04'
-    return '#dc2626'
-  }
-
-  function kLabel(k: number): string {
-    if (k < 0.1) return t('emailSecurity.conflictLow')
-    if (k <= 0.3) return t('emailSecurity.conflictMedium')
-    return t('emailSecurity.conflictHigh')
-  }
+  const constraints = Array.isArray(shadow.active_constraints) ? shadow.active_constraints : []
+  const epistemicKey = EPISTEMIC_STATE_KEYS[shadow.epistemic_state] ?? EPISTEMIC_STATE_KEYS.unknown
+  const artifacts = Math.max(0, shadow.artifact_count ?? 0)
+  const fallbackArtifacts = Math.max(0, shadow.fallback_artifact_count ?? 0)
 
   return (
-    <div style={S.card}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-        <span style={S.cardTitle}>{t('emailSecurity.dsFusion')}</span>
-        {fusion.fusion_method && (
-          <span style={{
-            fontSize: 10, color: 'rgba(255,255,255,0.3)',
-            background: 'rgba(255,255,255,0.04)', padding: '2px 8px', borderRadius: 4,
-          }}>
-            {fusion.fusion_method}
-          </span>
-        )}
+    <section
+      aria-label={t(authoritative ? 'emailSecurity.fusionV2Authoritative' : 'emailSecurity.fusionV2Experimental')}
+      data-testid={authoritative ? "fusion-v2-primary" : "fusion-v2"}
+      style={{
+        ...S.card,
+        marginBottom: 0,
+        borderColor: 'rgba(139,92,246,0.22)',
+        background: 'linear-gradient(135deg, rgba(139,92,246,0.055), rgba(255,255,255,0.018))',
+      }}
+    >
+      <div style={{
+        display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+        gap: 14, marginBottom: 14, flexWrap: 'wrap',
+      }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ ...S.cardTitle, marginBottom: 0 }}>{t(authoritative ? 'emailSecurity.fusionV2PrimaryTitle' : 'emailSecurity.fusionV2Latest')}</span>
+            <span style={{
+              fontSize: 10, color: '#a78bfa', fontWeight: 600,
+              background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.22)',
+              padding: '2px 8px', borderRadius: 999,
+            }}>
+              {t(authoritative ? 'emailSecurity.fusionV2Authoritative' : 'emailSecurity.fusionV2Experimental')}
+            </span>
+          </div>
+          <div style={{ marginTop: 6, fontSize: 11, color: 'rgba(255,255,255,0.35)' }}>
+            {t(authoritative ? 'emailSecurity.fusionV2PrimaryDescription' : 'emailSecurity.fusionV2Disclaimer')}
+          </div>
+        </div>
+        <span style={{
+          fontFamily: MONO, fontSize: 10, color: 'rgba(255,255,255,0.32)',
+          background: 'rgba(255,255,255,0.035)', padding: '3px 8px', borderRadius: 5,
+        }}>
+          {shadow.model} · v{shadow.model_version}
+        </span>
       </div>
 
-      {/* Fused BPA bar */}
-      <div style={{ marginBottom: 16 }}>
-        <div style={S.bpaBar}>
+      <div
+        role="img"
+        aria-label={t('emailSecurity.fusionBpaAria', {
+          belief: (bpa.b * 100).toFixed(1),
+          disbelief: (bpa.d * 100).toFixed(1),
+          uncertainty: (bpa.u * 100).toFixed(1),
+        })}
+        style={{ marginBottom: 15 }}
+      >
+        <div style={{ ...S.bpaBar, height: 10 }}>
           <div style={S.bpaSeg('#dc2626', bpa.b * 100)} title={`Belief: ${(bpa.b * 100).toFixed(1)}%`} />
           <div style={S.bpaSeg('#16a34a', bpa.d * 100)} title={`Disbelief: ${(bpa.d * 100).toFixed(1)}%`} />
           <div style={S.bpaSeg('#6b7280', bpa.u * 100)} title={`Uncertainty: ${(bpa.u * 100).toFixed(1)}%`} />
@@ -1418,232 +2117,110 @@ function FusionPanel({ fusion }: { fusion: NonNullable<SecurityVerdict['fusion_d
           display: 'flex', flexWrap: 'wrap', gap: 14, marginTop: 6,
           fontSize: 11, color: 'rgba(255,255,255,0.45)',
         }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: '#dc2626', flexShrink: 0 }} />
-            Bel ({t('emailSecurity.bpaMalicious')}) <span style={{ fontFamily: MONO }}>{(bpa.b * 100).toFixed(1)}%</span>
-          </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: '#16a34a', flexShrink: 0 }} />
-            Dis ({t('emailSecurity.bpaNormal')}) <span style={{ fontFamily: MONO }}>{(bpa.d * 100).toFixed(1)}%</span>
-          </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 8, height: 8, borderRadius: 2, background: '#6b7280', flexShrink: 0 }} />
-            Unc ({t('emailSecurity.bpaUncertain')}) <span style={{ fontFamily: MONO }}>{(bpa.u * 100).toFixed(1)}%</span>
-          </span>
-          {eps > 0.001 && (
-            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ width: 8, height: 8, borderRadius: 2, background: '#4c1d95', flexShrink: 0 }} />
-              m(empty) <span style={{ fontFamily: MONO }}>{(eps * 100).toFixed(2)}%</span>
-            </span>
-          )}
+          <span>Bel ({t('emailSecurity.bpaMalicious')}) <b style={{ fontFamily: MONO }}>{(bpa.b * 100).toFixed(1)}%</b></span>
+          <span>Dis ({t('emailSecurity.bpaNormal')}) <b style={{ fontFamily: MONO }}>{(bpa.d * 100).toFixed(1)}%</b></span>
+          <span>Unc ({t('emailSecurity.bpaUncertain')}) <b style={{ fontFamily: MONO }}>{(bpa.u * 100).toFixed(1)}%</b></span>
         </div>
       </div>
 
-      {/* Key Metrics — compact inline row */}
       <div style={{
-        display: 'flex', gap: 16, marginBottom: 14, flexWrap: 'wrap',
-        fontSize: 12, color: 'rgba(255,255,255,0.45)', alignItems: 'baseline',
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(132px, 1fr))',
+        gap: 8, marginBottom: constraints.length > 0 || shadow.constraint_conflict ? 14 : 0,
       }}>
-        <span>
-          {t('emailSecurity.conflictK')} <span style={{ fontFamily: MONO, fontWeight: 600, color: kColor(kConflict), fontSize: 13 }}>{kConflict.toFixed(3)}</span>
-          <span style={{ fontSize: 10, marginLeft: 4, color: kColor(kConflict) }}>{kLabel(kConflict)}</span>
-        </span>
-        <span style={{ color: 'rgba(255,255,255,0.1)' }}>|</span>
-        <span>
-          {t('emailSecurity.riskR')} <span style={{ fontFamily: MONO, fontWeight: 600, color: riskSingle >= eta ? '#f87171' : '#4ade80', fontSize: 13 }}>{riskSingle.toFixed(3)}</span>
-        </span>
-        <span style={{ color: 'rgba(255,255,255,0.1)' }}>|</span>
-        <span>
-          {t('emailSecurity.thresholdEta')} <span style={{ fontFamily: MONO, fontWeight: 600, color: 'rgba(255,255,255,0.55)', fontSize: 13 }}>{eta.toFixed(3)}</span>
-        </span>
+        <ShadowMetric
+          label={t('emailSecurity.fusionRiskConstrained')}
+          value={`${(shadow.risk_constrained * 100).toFixed(1)}%`}
+          accent="#c4b5fd"
+        />
+        <ShadowMetric
+          label={t('emailSecurity.fusionRiskBase')}
+          value={`${(shadow.risk_base * 100).toFixed(1)}%`}
+        />
+        <ShadowMetric label={t('emailSecurity.fusionEpistemicState')} value={t(epistemicKey)} />
+        <ShadowMetric label={t('emailSecurity.conflictK')} value={(shadow.k_conflict ?? 0).toFixed(3)} />
+        <ShadowMetric
+          label={t('emailSecurity.fusionArtifacts')}
+          value={String(artifacts)}
+          hint={fallbackArtifacts > 0
+            ? t('emailSecurity.fusionFallbackArtifacts', { count: fallbackArtifacts })
+            : undefined}
+        />
+        <ShadowMetric label={t('emailSecurity.fusionConstraints')} value={String(constraints.length)} />
       </div>
 
-      {/* Circuit breaker alerts */}
-      {fusion.circuit_breaker && (
-        <div style={{
-          ...S.breakerAlert,
-          background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.2)',
-        }}>
-          <span style={{ fontSize: 14, flexShrink: 0 }}>&#9889;</span>
-          <div style={{ color: 'rgba(255,255,255,0.6)' }}>
-            <strong style={{ color: '#dc2626' }}>{t('emailSecurity.circuitBreakerActivated')}</strong>
-            : {t('emailSecurity.circuitBreakerModule')} <strong>{MODULE_NAME_KEYS[fusion.circuit_breaker.trigger_module_id] ? t(MODULE_NAME_KEYS[fusion.circuit_breaker.trigger_module_id]) : fusion.circuit_breaker.trigger_module_id}</strong>
-            {' '}{t('emailSecurity.circuitBreakerBelief')} <span style={{ fontFamily: MONO }}>{fusion.circuit_breaker.trigger_belief.toFixed(2)}</span>
-            {' '}{t('emailSecurity.circuitBreakerSuppressed')} (<span style={{ fontFamily: MONO }}>{fusion.circuit_breaker.original_risk.toFixed(4)}</span>)
-            {t('emailSecurity.circuitBreakerRaisedTo')} <span style={{ fontFamily: MONO, color: '#dc2626' }}>{fusion.circuit_breaker.floor_value.toFixed(2)}</span>
+      {authoritative && <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', margin: '0 0 12px' }}>
+        {t('emailSecurity.fusionSeverityThresholds')}
+      </p>}
+      {authoritative && constraints.some(c => c.id === 'operator_identity_review_minimum') && <div role="note" style={{ ...S.breakerAlert, color: '#fbbf24', marginBottom: 12 }}>
+        {t('emailSecurity.identityReviewMinimumExplanation')}
+      </div>}
+      {authoritative && shadow.source_details.length > 0 && <div style={{ marginBottom: 12 }}>
+        {shadow.source_details.map(source => <div key={source.engine_id} style={{ display: 'flex', gap: 10, fontSize: 11, marginBottom: 5 }}>
+          <span>{EVIDENCE_CLUSTER_NAME_KEYS[source.engine_id] ? t(EVIDENCE_CLUSTER_NAME_KEYS[source.engine_id]) : source.engine_name}</span>
+          <span style={{ fontFamily: MONO }}>Bel {(source.bpa.b * 100).toFixed(1)}%</span>
+        </div>)}
+      </div>}
+      {constraints.length > 0 && (
+        <div style={{ marginTop: 2 }}>
+          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.34)', marginBottom: 7 }}>
+            {t('emailSecurity.fusionActiveConstraints')}
           </div>
-        </div>
-      )}
-
-      {fusion.convergence_breaker && (
-        <div style={{
-          ...S.breakerAlert,
-          background: 'rgba(234,179,8,0.08)', border: '1px solid rgba(234,179,8,0.2)',
-        }}>
-          <span style={{ fontSize: 14, flexShrink: 0 }}>&#9888;</span>
-          <div style={{ color: 'rgba(255,255,255,0.6)' }}>
-            <strong style={{ color: '#ca8a04' }}>{t('emailSecurity.convergenceBreakerActivated')}</strong>
-            : {t('emailSecurity.convergenceBreakerDesc', { count: fusion.convergence_breaker.modules_flagged })}
-            (<span style={{ fontFamily: MONO }}>{fusion.convergence_breaker.original_risk.toFixed(4)}</span>)
-            {t('emailSecurity.convergenceBreakerRaisedTo')} <span style={{ fontFamily: MONO, color: '#ca8a04' }}>{fusion.convergence_breaker.floor_value.toFixed(2)}</span>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
-              {fusion.convergence_breaker.flagged_modules.map(mid => (
-                <span key={mid} style={{
-                  fontSize: 10, padding: '1px 6px', borderRadius: 4,
-                  background: 'rgba(234,179,8,0.12)', color: '#ca8a04',
-                }}>
-                  {MODULE_NAME_KEYS[mid] ? t(MODULE_NAME_KEYS[mid]) : mid}
-                </span>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Engine BPA comparison */}
-      {sortedEngines.length > 0 && (
-        <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginBottom: 8 }}>
-            {t('emailSecurity.engineBpaComparison')}
-          </div>
-          {sortedEngines.map(eng => {
-            const eBpa = eng.bpa ?? { b: 0, d: 0, u: 1 }
-            const color = ENGINE_COLORS[eng.engine_id] ?? '#6b7280'
-            const w = weights[eng.engine_id]
-            return (
-              <div key={eng.engine_id} style={{
-                display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6,
-              }}>
-                {/* ID badge */}
-                <span style={{
-                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                  width: 22, height: 22, borderRadius: 5, flexShrink: 0,
-                  background: `${color}20`, color, fontFamily: MONO, fontWeight: 700, fontSize: 11,
-                }}>
-                  {ENGINE_LETTER[eng.engine_id] ?? '?'}
-                </span>
-                {/* Mini BPA bar */}
-                <div style={{ flex: 1 }}>
-                  <div style={S.bpaBarThin}>
-                    <div style={S.bpaSeg('#dc2626', eBpa.b * 100)} />
-                    <div style={S.bpaSeg('#16a34a', eBpa.d * 100)} />
-                    <div style={S.bpaSeg('#6b7280', eBpa.u * 100)} />
-                  </div>
-                </div>
-                {/* Bel percentage */}
-                <span style={{
-                  fontSize: 10, fontFamily: MONO, color: 'rgba(255,255,255,0.45)',
-                  width: 38, textAlign: 'right', flexShrink: 0,
-                }}>
-                  {(eBpa.b * 100).toFixed(0)}%
-                </span>
-                {w != null && (
-                  <span style={{
-                    fontSize: 9, color: 'rgba(255,255,255,0.2)', fontFamily: MONO,
-                    width: 36, textAlign: 'right', flexShrink: 0,
-                  }}>
-                    w={w.toFixed(2)}
-                  </span>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ════════════════════════════════════════════════════════════════
-// FeedbackSection
-// ════════════════════════════════════════════════════════════════
-
-function FeedbackSection({
-  feedbackDone, feedbackType, feedbackComment, feedbackSubmitting,
-  setFeedbackType, setFeedbackComment, submitFeedback,
-}: {
-  feedbackDone: boolean
-  feedbackType: string | null
-  feedbackComment: string
-  feedbackSubmitting: boolean
-  setFeedbackType: (t: any) => void
-  setFeedbackComment: (c: string) => void
-  submitFeedback: () => void
-}) {
-  const { t } = useTranslation()
-
-  const FEEDBACK_MAP_KEYS: Record<string, string> = {
-    legitimate: 'emailSecurity.feedbackLegitimate',
-    phishing: 'emailSecurity.feedbackPhishing',
-    spoofing: 'emailSecurity.feedbackSpoofing',
-    social_engineering: 'emailSecurity.feedbackSocialEng',
-    other_threat: 'emailSecurity.feedbackOther',
-  }
-
-  return (
-    <div style={{ ...S.card, paddingTop: 14, paddingBottom: 14 }}>
-      {feedbackDone ? (
-        <div style={{ textAlign: 'center', color: '#16a34a', fontSize: 13 }}>
-          {t('emailSecurity.feedbackSubmitted')}
-        </div>
-      ) : feedbackType ? (
-        <div>
-          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginBottom: 8 }}>
-            {t('emailSecurity.feedbackMarkedAs')}: <strong style={{ color: 'rgba(255,255,255,0.7)' }}>{FEEDBACK_MAP_KEYS[feedbackType] ? t(FEEDBACK_MAP_KEYS[feedbackType]) : feedbackType}</strong> -- {t('emailSecurity.feedbackAddNote')}:
-          </div>
-          <textarea
-            value={feedbackComment}
-            onChange={(e) => setFeedbackComment(e.target.value)}
-            placeholder={t('emailSecurity.feedbackPlaceholder')}
-            rows={2}
-            style={{
-              width: '100%', background: 'rgba(255,255,255,0.03)',
-              border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8,
-              color: 'rgba(255,255,255,0.7)', fontSize: 12, padding: '8px 10px',
-              resize: 'vertical', outline: 'none',
-            }}
-          />
-          <div style={{ display: 'flex', gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
-            <button
-              style={{
-                ...S.feedbackBtn,
-                opacity: feedbackSubmitting ? 0.5 : 1,
-              }}
-              disabled={feedbackSubmitting}
-              onClick={submitFeedback}
-            >
-              {feedbackSubmitting ? t('emailSecurity.feedbackSubmitting') : t('emailSecurity.feedbackSubmit')}
-            </button>
-            <button
-              style={S.feedbackBtn}
-              onClick={() => { setFeedbackType(null); setFeedbackComment('') }}
-            >
-              {t('emailSecurity.feedbackCancel')}
-            </button>
-          </div>
-        </div>
-      ) : (
-        <div>
-          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginBottom: 10 }}>
-            {t('emailSecurity.feedbackQuestion')}
-          </div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {Object.entries(FEEDBACK_MAP_KEYS).map(([key, labelKey]) => (
-              <button
-                key={key}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {constraints.map(constraint => (
+              <span
+                key={constraint.id}
+                title={constraint.basis.join(', ')}
                 style={{
-                  ...S.feedbackBtn,
-                  borderColor: key === 'legitimate' ? 'rgba(22,163,74,0.3)' : 'rgba(255,255,255,0.1)',
-                  color: key === 'legitimate' ? '#16a34a' : 'rgba(255,255,255,0.6)',
+                  fontSize: 10, fontFamily: MONO, color: '#c4b5fd',
+                  background: 'rgba(139,92,246,0.09)', border: '1px solid rgba(139,92,246,0.18)',
+                  padding: '3px 7px', borderRadius: 5,
                 }}
-                onClick={() => setFeedbackType(key)}
               >
-                {t(labelKey)}
-              </button>
+                {constraint.id} [{constraint.lower.toFixed(2)}, {constraint.upper.toFixed(2)}]
+              </span>
             ))}
           </div>
         </div>
       )}
+
+      {shadow.constraint_conflict && (
+        <div role="alert" style={{
+          ...S.breakerAlert,
+          background: 'rgba(234,88,12,0.08)', border: '1px solid rgba(234,88,12,0.22)',
+          color: 'rgba(255,255,255,0.6)',
+        }}>
+          <span aria-hidden="true">&#9888;</span>
+          <span>
+            <strong style={{ color: '#fb923c' }}>{t('emailSecurity.fusionConstraintConflict')}</strong>
+            {' '}{shadow.constraint_conflict.constraint_ids.join(', ')}
+            {' '}[{shadow.constraint_conflict.effective_lower.toFixed(2)}, {shadow.constraint_conflict.effective_upper.toFixed(2)}]
+          </span>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function ShadowMetric({ label, value, hint, accent }: {
+  label: string
+  value: string
+  hint?: string
+  accent?: string
+}) {
+  return (
+    <div style={{
+      background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.055)',
+      borderRadius: 8, padding: '9px 10px', minWidth: 0,
+    }}>
+      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.34)', marginBottom: 4 }}>{label}</div>
+      <div style={{
+        fontFamily: MONO, fontSize: 14, fontWeight: 650,
+        color: accent ?? 'rgba(255,255,255,0.68)', overflowWrap: 'anywhere',
+      }}>
+        {value}
+      </div>
+      {hint && <div style={{ marginTop: 3, fontSize: 9, color: '#f59e0b' }}>{hint}</div>}
     </div>
   )
 }
+

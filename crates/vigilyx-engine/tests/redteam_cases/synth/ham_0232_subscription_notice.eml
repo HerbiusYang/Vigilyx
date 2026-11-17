@@ -1,0 +1,10 @@
+From: =?utf-8?B?5LqR6Z+z5LmQ?= <service@music.example>
+To: me@personal.example
+Date: Sun, 06 Sep 2026 09:41:00 +0800
+Message-ID: <0031-b14@synth.example>
+Subject: 您的黑胶会员还有 7 天到期
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>会员权益到期后将恢复免费模式，已下载歌曲保留。</p><a href='https://music.example/vip/renew' style='color:#fff;background:#c20c0c;padding:10px 28px;text-decoration:none'>续费</a> &nbsp;<a href='https://music.example/vip/cancel' style='color:#888'>取消自动续费</a></body></html>

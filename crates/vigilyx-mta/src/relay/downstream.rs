@@ -458,7 +458,7 @@ mod tests {
     #[test]
     fn test_validate_allows_private_ipv4_relay() {
         assert!(
-            validate_mail_relay_host("10.1.246.33", DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES).is_ok()
+            validate_mail_relay_host("10.0.0.33", DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES).is_ok()
         );
     }
 
@@ -484,7 +484,7 @@ mod tests {
     #[test]
     fn test_resolve_relay_target_uses_private_ipv4_socket_addr() {
         let config = DownstreamConfig {
-            host: "10.1.246.33".into(),
+            host: "10.0.0.33".into(),
             port: 2525,
             starttls: true,
             timeout_secs: 30,
@@ -493,9 +493,9 @@ mod tests {
         let target = resolve_relay_target(&config).expect("private relay IP should be allowed");
         assert_eq!(
             target.connect_addr,
-            "10.1.246.33:2525".parse().expect("valid socket addr")
+            "10.0.0.33:2525".parse().expect("valid socket addr")
         );
-        assert_eq!(target.tls_host, "10.1.246.33");
+        assert_eq!(target.tls_host, "10.0.0.33");
     }
 
     #[test]

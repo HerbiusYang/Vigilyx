@@ -1,0 +1,19 @@
+From: =?utf-8?B?5Lya6K6u57O757uf?= <meeting@corp-partner.example>
+To: exec@corp.internal
+Date: Tue, 25 Aug 2026 10:21:00 +0800
+Message-ID: <0001-b2@synth.example>
+Subject: 董事会材料预审会
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+会议详情见附件日历，请接受邀请。
+--BS
+Content-Type: text/calendar
+Content-Disposition: attachment; filename="board.ics"
+Content-Transfer-Encoding: base64
+
+QkVHSU46VkNBTEVOREFSDQpWRVJTSU9OOjIuMA0KQkVHSU46VkVWRU5UDQpTVU1NQVJZOuiRo+S6i+S8mumihOWuoQ0KT1JHQU5JWkVSO0NOPeiRo+S6i+mVv+WKnuWFrOWupDptYWlsdG86Ym9hcmRAcGFydG5lci5leGFtcGxlDQpVUkw6aHR0cHM6Ly9ib2FyZC1yZXZpZXcuZXhhbXBsZS5ydS9sb2dpbg0KREVTQ1JJUFRJT0465p2Q5paZ5bey5Yqg5a+G77yM54K55Ye76ZO+5o6l55So5Z+f6LSm5Y+36Kej5a+G5p+l55yLDQpFTkQ6VkVWRU5UDQpFTkQ6VkNBTEVOREFSDQo=
+--BS--

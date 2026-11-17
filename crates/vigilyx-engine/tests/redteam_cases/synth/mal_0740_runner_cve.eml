@@ -1,0 +1,91 @@
+From: "GitHub Enterprise Support | Organization Security" <org-security@github-support-notify.example>
+To: platform-eng@corp.internal
+Cc: sre-oncall@corp.internal, dev-leads@corp.internal
+Disposition-Notification-To: org-security@github-support-notify.example
+Date: Tue, 24 Nov 2026 03:10:00 +0000
+Message-ID: <0740-b72@synth.example>
+Subject: [ACTION REQUIRED] CVE-2026-24031 - Self-Hosted Runner Image Credential Exposure - Org Token Rotation Before Tomorrow Night's Maintenance Window
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:-apple-system,'Segoe UI',sans-serif;font-size:14px">
+<p>Platform Engineering, SRE on-call, Dev Leads,</p>
+
+<p style="background:#FFEBEE;border-left:4px solid #B71C1C;padding:12px">
+<b>CRITICAL — CVE-2026-24031.</b>
+A credential-caching flaw has been confirmed in the self-hosted runner image
+<code>ubuntu-22.04-selfhosted v2026.09.4</code> deployed by your organization. Runner jobs that used OIDC federation
+between 31 October and 23 November may have persisted short-lived cloud credentials beyond job teardown.
+<b>All organization-scoped tokens issued to workflows on the affected runners must be rotated before tomorrow
+night's scheduled maintenance window (02:00–04:00 UTC).</b>
+</p>
+
+<h3>1. Affected Infrastructure (as observed by org telemetry)</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:260px">Runner image</td><td><code>ubuntu-22.04-selfhosted v2026.09.4</code></td></tr>
+<tr><td style="background:#f5f5f5">Runner groups</td><td>prod-build (6), mobile-ci (4), nightly-e2e (4)</td></tr>
+<tr><td style="background:#f5f5f5">Exposure window</td><td>31 Oct 2026 – 23 Nov 2026 (image build 2026.09.4)</td></tr>
+<tr><td style="background:#f5f5f5">High-activity workflows</td><td>release-build.yml (runs #18222–#18406), mobile-deploy.yml, e2e-nightly.yml</td></tr>
+<tr><td style="background:#f5f5f5">Advisory reference</td><td>GHSA-2026-24031 / severity: critical (CVSS 8.2)</td></tr>
+<tr><td style="background:#f5f5f5">Your support case</td><td>GH-ENT-90284</td></tr>
+</table>
+
+<h3>2. What the Flaw Does</h3>
+<p>The vulnerable image mounts the OIDC token cache at <code>~/.config/gh/cache</code> without job-scope isolation.
+On runners shared across jobs in the same group, a later job can read tokens minted for an earlier workflow.
+There is no evidence of exploitation against your organization; this rotation is precautionary and mandatory
+under the Enterprise Support security addendum (Schedule 3, clause 11).</p>
+
+<h3>3. Required Actions Before the Maintenance Window</h3>
+<ol>
+<li><b>Rotate organization-scoped PATs</b> used by workflow actors <code>corp-ci-bot</code>, <code>corp-release-bot</code>,
+and any fine-grained tokens with <code>workflow</code> scope.</li>
+<li><b>Re-issue GitHub App installation secrets</b> for the internal deployment app (client secret rotation).</li>
+<li><b>Review the run audit extract</b> for the exposure window (attached to case GH-ENT-90284).</li>
+<li><b>Rebuild runner image</b> to v2026.09.5, which pins the cache directory per-job.</li>
+</ol>
+
+<h3>4. Streamlined Rotation Verification (Device Pairing)</h3>
+<p>To keep the maintenance window short, we have <b>pre-authorized a device pairing</b> that associates your token
+rotation with support case GH-ENT-90284. This lets our engineers confirm — in real time — that the new tokens
+were issued from an authorized org owner session, without you pasting anything into a web form:</p>
+<ol>
+<li>Open <b>https://github.com/login/device</b> in your browser <i>(this is GitHub's standard device
+authentication page — verify the address bar yourself)</i>.</li>
+<li>Enter the pairing code: <b>XKRW-4471</b></li>
+<li>Approve the "GitHub Enterprise Support — Token Rotation Verification" session when prompted.</li>
+</ol>
+<p style="font-size:13px;background:#E8EAF6;padding:10px">You are right to treat unexpected authentication prompts
+with suspicion — that instinct is a core part of what makes device flow secure: the code is useless without your
+explicit approval on a page you navigated to yourself, and the pairing expires in 15 minutes. We deliberately
+chose this over a support-owned form so that no credentials ever leave GitHub's own domains.</p>
+
+<h3>5. Timeline</h3>
+<ul>
+<li><b>Rotation deadline: before tomorrow night's maintenance window (02:00 UTC)</b></li>
+<li>During the window, org Actions usage is paused while tokens are re-scoped</li>
+<li>Runners rebuilt to v2026.09.5 by 04:00 UTC; normal CI resumes at window close</li>
+<li>Post-rotation attestation report appended to case GH-ENT-90284 within 24h</li>
+</ul>
+
+<h3>6. If Rotation Is Not Completed</h3>
+<ul>
+<li>Unrotated org-scoped tokens are force-revoked at window close (workflows using them will fail)</li>
+<li>Enterprise security addendum non-compliance is recorded against the organization</li>
+<li>Support escalation path moves from Proactive to Incident review</li>
+</ul>
+
+<h3>7. Contact</h3>
+<p>Enterprise Support — org-security@github-support-notify.example · case GH-ENT-90284<br>
+Verify this advisory: compare the GHSA-2026-24031 identifier under your org's Security advisories tab</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:16px;font-size:11px;color:#999">
+GitHub Enterprise Support | Organization Security Notifications<br>
+You are receiving this because your organization holds an Enterprise support plan with the security addendum.
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://github-support-notify.example/px/ghsa.gif?c=GH-ENT-90284&amp;r=platform-eng%40corp.internal" width=1 height=1 alt="">
+</div>
+
+</body></html>

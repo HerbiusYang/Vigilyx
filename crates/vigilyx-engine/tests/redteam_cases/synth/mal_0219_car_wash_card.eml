@@ -1,0 +1,11 @@
+From: =?utf-8?B?5rSX6L2m6KGM?= <card@wash-svc.example>
+To: driver@personal.example
+Date: Sat, 05 Sep 2026 10:18:00 +0800
+Message-ID: <0008-b13@synth.example>
+Subject: 储值卡迁移（老系统停用）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+老卡余额需迁移到新系统：
+https://wash-migrate.example.info/m
+（卡号+手机号+支付密码）

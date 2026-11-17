@@ -6,7 +6,7 @@
 //!
 //! Run: cargo test --release -p vigilyx-parser --test redteam_fuzz -- --nocapture
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 
 use vigilyx_parser::MimeParser;
@@ -85,36 +85,58 @@ fn mutate(raw: &[u8], rng: &mut Rng) -> Vec<u8> {
     data
 }
 
+fn fuzz_seed() -> u64 {
+    if let Ok(value) = std::env::var("FUZZ_SEED") {
+        let value = value.trim();
+        if let Some(normalized) = value.strip_prefix("0x")
+            && let Ok(seed) = u64::from_str_radix(normalized, 16)
+        {
+            return seed;
+        }
+        if let Ok(seed) = value.parse::<u64>() {
+            return seed;
+        }
+        panic!("FUZZ_SEED must be a decimal or hexadecimal u64");
+    }
+
+    0x853c49e6748fea9b
+        ^ std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before Unix epoch")
+            .as_nanos() as u64
+}
+
 #[test]
 fn fuzz_mime_parser_no_panics() {
-    let seed_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../vigilyx-engine/tests/redteam_cases");
+    let seed_dir =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../vigilyx-engine/tests/redteam_cases");
     let mut seeds: Vec<Vec<u8>> = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&seed_dir) {
         for e in entries.flatten() {
             let p = e.path();
-            if p.extension().is_some_and(|x| x == "eml") {
-                if let Ok(raw) = std::fs::read(&p) {
-                    seeds.push(raw);
-                }
+            if p.extension().is_some_and(|x| x == "eml")
+                && let Ok(raw) = std::fs::read(&p)
+            {
+                seeds.push(raw);
             }
         }
     }
     if seeds.is_empty() {
-        seeds.push(b"From: a@b.c\r\nTo: d@e.f\r\nSubject: s\r\n\
+        seeds.push(
+            b"From: alice@example.com\r\nTo: recipient@example.net\r\nSubject: s\r\n\
 MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"X\"\r\n\r\n\
 --X\r\nContent-Type: text/plain\r\n\r\nhi\r\n--X--\r\n"
-            .to_vec());
+                .to_vec(),
+        );
     }
 
     let iterations: usize = std::env::var("FUZZ_ITERS")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(200_000);
-    let mut rng = Rng(0x853c49e6748fea9b ^ std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos() as u64);
+    let seed = fuzz_seed();
+    println!("fuzz seed: 0x{seed:016x}");
+    let mut rng = Rng(seed);
 
     let parser = MimeParser::new();
     let mut panics: Vec<String> = Vec::new();
@@ -136,7 +158,10 @@ MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"X\"\r\n\r\n\
                 // Persist the exact input for the report.
                 let path = std::env::temp_dir().join(format!("vigilyx_fuzz_panic_{i}.bin"));
                 std::fs::write(&path, &input).expect("write crash input");
-                eprintln!("PANIC at iter {i}: {msg} — input saved to {}", path.display());
+                eprintln!(
+                    "PANIC at iter {i}: {msg} — input saved to {}",
+                    path.display()
+                );
                 panics.push(format!("iter {i}: {msg} ({})", path.display()));
                 if panics.len() >= 10 {
                     break;

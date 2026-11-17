@@ -1,0 +1,9 @@
+From: =?utf-8?B?56Wo5o2u?= <pj@bank.example>
+To: treasury@corp.internal
+Date: Thu, 17 Sep 2026 09:39:00 +0800
+Message-ID: <0029-b24@synth.example>
+Subject: 票据到期托收
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+到期票已托收，款项 T+1 入账。

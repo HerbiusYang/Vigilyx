@@ -1,0 +1,107 @@
+From: "FDA | Electronic Submissions Gateway (ESG)" <ESGNotifications@fda.hhs.example>
+To: regulatory-affairs@corp.internal
+Cc: qa-director@corp.internal, suzhou-site@corp.internal
+Date: Mon, 16 Nov 2026 07:45:00 -0500
+Message-ID: <0647-b71@synth.example>
+Subject: Pre-Approval Inspection Readiness - ANDA 212845 - Suzhou Facility - Records Preparation Notice
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear Regulatory Affairs, Quality Director, Suzhou Site Team,
+
+PRE-APPROVAL INSPECTION (PAI) READINESS.
+ANDA 212845 has reached the inspection-decision stage.
+An inspection team from CDER's Office of Manufacturing
+Quality (OMQ) has been assigned to your Suzhou
+facility. This notice summarizes the records that
+should be retrievable on-site when investigators
+arrive.
+
+1. APPLICATION & FACILITY DETAILS
+
+  Application:       ANDA 212845
+  Product:           Metformin HCl Extended-Release
+                     Tablets, 500 mg
+  Reference Listed
+    Drug:            Glucophage XR (NDA 021202)
+  Applicant:         Your company, acting through
+                     US agent
+  Facility:          Suzhou Site (FEI 3011794402)
+                     drug product manufacturing
+                     & packaging
+  Inspection type:   PAI, 4 investigator-days
+                     anticipated, OMQ Team 32
+  GxP systems in
+    scope:           LIMS (Empower 3), MES, batch
+                     records (EBR), audit trail
+                     review program
+  Prior
+    correspondence:  IR letter dated 3 Aug 2026;
+                     deficiency response submitted
+                     29 Sep 2026
+
+2. RECORDS THAT SHOULD BE RETRIEVABLE ON-SITE
+
+  - Batch production & control records,
+    exhibit batches 26S-081, 26S-082, 26S-083
+  - Audit trail exports (LIMS & EBR,
+    1 Jan 2026 - present, unfiltered)
+  - Method validation package (assay &
+    dissolution, including failed runs)
+  - CAPA log (open + closed in last 12 months)
+  - Stability data summary (40C/75% RH
+    through month 9)
+
+3. HOW THE INSPECTION IS ACTUALLY SCHEDULED
+
+  FDA communicates inspection assignments
+  through official written correspondence
+  delivered to the applicant's US agent
+  (Form FDA 2110 inspection notice and, at
+  opening, Form FDA 482 Notice of Inspection).
+  Investigators review records ON-SITE in your
+  document room with your site personnel.
+
+4. IMPORTANT SECURITY NOTES
+
+  The FDA will NEVER:
+  - Ask you to upload batch records, audit
+    trails, or any GxP records to a link
+    provided in an email
+  - Operate a "pre-upload queue", "evidence
+    portal", or "PAI pre-review channel"
+    outside the Electronic Submissions Gateway
+  - Send submission instructions that bypass
+    your US agent
+  - Cite a "Data Integrity Remediation
+    Framework" requiring pre-arrival uploads
+  - Threaten refuse-to-receive action based
+    on failure to click an email link
+
+  The Electronic Submissions Gateway is
+  accessed ONLY by typing the address
+  yourself:  accessdata.fda.gov
+  (Do not use links from emails. Do not rely
+  on the URL shown in a message body.)
+
+  Any message claiming investigators arrive
+  "the day after tomorrow" and demanding
+  records be uploaded through a portal link
+  is a phishing attempt targeting pharma
+  regulatory teams before announced
+  inspections.
+
+5. IF YOU RECEIVED SUCH A MESSAGE
+
+  - Do not click any link or open any
+    attachment
+  - Verify inspection scheduling with your
+    US agent and your corporate quality office
+  - Report suspicious messages to your
+    security team and to FDA at
+    FDA-OCI@fda.hhs.example
+
+U.S. Food and Drug Administration
+Center for Drug Evaluation and Research
+Office of Manufacturing Quality
+This notice concerns ANDA 212845 only.

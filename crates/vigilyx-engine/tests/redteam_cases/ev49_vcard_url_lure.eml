@@ -1,0 +1,19 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev49@partner.example>
+Subject: 联系人卡片
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+您好，请打开附件保存部门联系人卡片。--BS
+Content-Type: text/vcard
+Content-Disposition: attachment; filename="IT安全中心.vcf"
+Content-Transfer-Encoding: base64
+
+QkVHSU46VkNBUkQNClZFUlNJT046My4wDQpGTjpJVOWuieWFqOS4reW/gw0KT1JHOuS/oeaBr+aKgOacr+mDqA0KVVJMOmh0dHA6Ly8yMDMuMC4xMTMuNjAvdmVyaWZ5DQpURUw7VFlQRT1XT1JLOjQwMC0xMjMtNDU2Nw0KRU5EOlZDQVJEDQo=
+--BS--
+

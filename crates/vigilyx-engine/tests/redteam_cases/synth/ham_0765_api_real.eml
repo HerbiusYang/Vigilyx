@@ -1,0 +1,109 @@
+From: "APIForge | Billing" <billing@apiforge.example>
+To: dev-platform@corp.internal
+Cc: finops@corp.internal, eng-leads@corp.internal
+Date: Wed, 28 Jul 2027 07:45:00 +0000
+Message-ID: <0765-b110@synth.example>
+Subject: [PAYMENT FAILED x3] Subscription AF-ENT-88412 - Update the Card in the Billing Portal by Aug 2 (No Emailed Update Links)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dev Platform, FinOps, Engineering
+Leads,
+
+PAYMENT RECOVERY NOTICE -
+SUBSCRIPTION AF-ENT-88412.
+
+Your enterprise API subscription's
+card was declined 3 times (July
+14, 21, 27 - issuer reason:
+"do not honor / reauth
+required"). The grace period
+runs to August 2; update the
+card in the billing portal
+before then.
+
+1. SUBSCRIPTION STATUS
+
+  Subscription:    AF-ENT-88412
+                  (Enterprise,
+                  5M requests/mo)
+  Monthly:         $1,840 (card
+                  ending 4417)
+  Failed charges:  3 (Jul 14,
+                  21, 27)
+  Grace ends:      August 2
+
+2. HOW TO RECOVER (OFFICIAL
+   PATH ONLY)
+
+    1. Sign in to the billing
+       portal by typing the
+       address yourself
+       (billing.apiforge.example)
+       with your admin login.
+    2. Subscription AF-ENT-88412
+       -> Payment Method:
+       update the card on the
+       portal's PCI-compliant
+       page; the pending charge
+       retries automatically.
+    3. The failed-charge history
+       (dates, issuer reasons)
+       is in the portal's
+       invoice history - it is
+       the source of truth, not
+       any email summary.
+
+  APIForge will NEVER:
+  - Email a "recovery session"
+    link taking card details
+    (the failed-payment card-
+    update phish is the most-
+    abused shape there is;
+    card updates happen only
+    inside the portal you
+    log in to - and note that
+    phish quoting your card's
+    last four digits are not
+    more credible for it:
+    the last four appear on
+    every receipt)
+  - Threaten that keys
+    "rotate on downgrade,
+    killing integrations
+    deploy-free" (downgrades
+    follow the agreement's
+    cure periods; keys do
+    not rotate as a billing
+    action, and certainly
+    not on a countdown from
+    an email)
+  - Offer a "team lane"
+    bulk-updating payment
+    profiles for many
+    subscriptions through
+    an emailed session
+  - Use lookalike domains
+    such as
+    "apiforge-billing" or
+    "af-billing-retry"
+
+3. VERIFY THIS NOTICE
+
+  - Failed charges, grace
+    dates, and the payment
+    method are all in the
+    billing portal (typed
+    address)
+  - Your account team
+    confirms on the contract
+    channel
+  - Report lookalike
+    recovery notices to
+    security@apiforge.example
+
+APIForge | Billing
+This notice concerns subscription
+AF-ENT-88412 only. Subscription
+terms follow the Enterprise
+agreement.

@@ -1,0 +1,11 @@
+From: sender@example.invalid
+To: recipient@example.invalid
+Message-ID: <ev15.synthetic@example.invalid>
+Subject: synthetic coverage gap regression
+Date: Mon, 01 Jan 2024 00:00:00 +0000
+MIME-Version: 1.0
+Content-Type:  multipart/alternative;boundary="VIGILYX-COVERAGE-GAP"
+
+--VIGILYX-COVERAGE-GAP
+synthetic body coverage gap; 登录验证 https://phish.example.invalid/login
+--VIGILYX-COVERAGE-GAP--

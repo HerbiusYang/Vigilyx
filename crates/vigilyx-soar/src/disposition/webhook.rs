@@ -82,7 +82,12 @@ impl DispositionEngine {
 
         let mut client_builder = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
-            .redirect(reqwest::redirect::Policy::none());
+            .redirect(reqwest::redirect::Policy::none())
+            // DNS pinning is ineffective when an ambient HTTP(S) proxy
+            // resolves the hostname on our behalf. Webhook egress is a direct,
+            // policy-checked connection; an explicit egress broker must be a
+            // separately authenticated integration rather than inherited env.
+            .no_proxy();
         if let Some(host) = parsed.host_str()
             && host.parse::<std::net::IpAddr>().is_err()
         {

@@ -70,16 +70,18 @@ impl SmtpParser {
             "QUIT" => "QUIT".to_string(),
             "RSET" => "RSET".to_string(),
             "NOOP" => "NOOP".to_string(),
-            "AUTH" => format!("AUTH {}", arg),
-            "STARTTLS" => "STARTTLS".to_string(),
-            _ => {
-                // Checkwhether emailContent
-                if text.len() > 50 {
-                    format!("[DATA: {} bytes]", text.len())
+            "AUTH" => {
+                let method = arg.split_whitespace().next().unwrap_or_default();
+                if method.is_empty() {
+                    "AUTH".to_string()
                 } else {
-                    format!("[CMD: {}]", text.chars().take(30).collect::<String>())
+                    format!("AUTH {method} [REDACTED]")
                 }
             }
+            "STARTTLS" => "STARTTLS".to_string(),
+            // Unknown lines include AUTH challenge responses and short DATA
+            // fragments. Never persist their bytes in the SMTP dialogue.
+            _ => format!("[UNCLASSIFIED: {} bytes]", text.len()),
         };
 
         Some(parsed)
@@ -148,5 +150,34 @@ impl SmtpParser {
 impl Default for SmtpParser {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SmtpParser;
+
+    #[test]
+    fn authentication_material_never_enters_dialogue_summary() {
+        let parser = SmtpParser::new();
+        let credential = "AHVzZXJAZXhhbXBsZS5jb20AbXlwYXNzd29yZA==";
+        let command = parser
+            .parse(format!("AUTH PLAIN {credential}\r\n").as_bytes())
+            .unwrap();
+        assert_eq!(command, "AUTH PLAIN [REDACTED]");
+        assert!(!command.contains(credential));
+
+        let challenge_response = parser.parse(credential.as_bytes()).unwrap();
+        assert!(!challenge_response.contains(credential));
+        assert_eq!(
+            challenge_response,
+            format!("[UNCLASSIFIED: {} bytes]", credential.len())
+        );
+    }
+
+    #[test]
+    fn short_message_content_never_enters_dialogue_summary() {
+        let summary = SmtpParser::new().parse(b"secret body\r\n").unwrap();
+        assert!(!summary.contains("secret body"));
     }
 }

@@ -1,0 +1,41 @@
+From: RustSec <advisory@rustsec.example>
+To: dev@corp.internal
+Date: Sat, 10 Oct 2026 13:45:00 +0800
+Message-ID: <0567-b44@synth.example>
+Subject: [RUSTSEC-2026-0042] Typosquat of 'smtp-pool' crate with malicious build script
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear crate maintainer,
+
+A typosquatted crate named `smtp-pool\u202e` (with an appended Unicode U+202E Right-to-Left Override character) was published to crates.io on October 8, 2026. This crate is visually identical to the legitimate `smtp-pool` crate but contains a malicious `build.rs` script.
+
+Technical details:
+- The malicious crate name contains U+202E (RIGHT-TO-LEFT OVERRIDE), making it appear identical to `smtp-pool` in most terminals and editors
+- The build.rs script downloads and executes a payload from an external server
+- Downloaded 4,219 times before removal from the index
+- CVSS 3.1: 9.8 (AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H)
+
+Your crate `tower-lsp` lists `smtp-pool = "0.4"` as a dependency. If your users ran `cargo update` after October 8, they may have resolved to the malicious version.
+
+What to do:
+1. Pin to the known-safe version in your Cargo.toml:
+     [dependencies]
+     smtp-pool = "=0.4.2"
+2. Check your local cache:
+     ls ~/.cargo/registry/cache/*/smtp-pool-0.4.3*
+   If present, delete and run `cargo clean`.
+3. Verify with:
+     cargo tree -d | grep smtp-pool
+
+Registry status: The malicious crate has been removed and the publisher account revoked. Cached copies may persist in CI build caches.
+
+Full advisory with complete IOC list:
+  https://rustsec.example/advisories/RUSTSEC-2026-0042
+
+(Please navigate to rustsec.example manually in your browser. We never send direct links to advisory pages in email.)
+
+Security note: RustSec advisories are always sent from the @rustsec.example domain and published at rustsec.example/advisories. We never ask you to authenticate through a third-party portal, provide registry credentials, or click through to a non-rustsec.example domain.
+
+Advisory ID: RUSTSEC-2026-0042 | Published: 2026-10-10
+crates.io Security Team | Rust Foundation

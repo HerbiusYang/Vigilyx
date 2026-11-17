@@ -1,0 +1,10 @@
+From: =?utf-8?B?UEIg5Lia5Yqh?= <pb@prime-broker22.example>
+To: quant@corp.internal
+Date: Thu, 24 Sep 2026 09:26:00 +0800
+Message-ID: <0016-b31@synth.example>
+Subject: 主经纪商账户安全策略更新
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+策略生效需重新绑定令牌：https://pb-bd22.example.info/t
+（交易账号+密码）

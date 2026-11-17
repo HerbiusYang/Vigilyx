@@ -1,0 +1,9 @@
+From: =?utf-8?B?SVQg5a6J5YWo6YOo?= <mfa@corp.internal>
+To: all-staff@corp.internal
+Date: Tue, 22 Sep 2026 10:43:00 +0800
+Message-ID: <0033-b29@synth.example>
+Subject: 数字匹配上线：核对数字再批准
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+下周起登录需核对 Authenticator 两位数字。我们绝不通过邮件/电话索要该数字。

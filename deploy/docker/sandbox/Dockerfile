@@ -6,7 +6,7 @@
 # Uses KVM/QEMU instead of VirtualBox
 #
 # Build:
-#   docker build --build-arg CAPEV2_REF=<tag-or-commit> \
+#   docker build --build-arg CAPEV2_REF=<40-char-commit-sha> \
 #     -t vigilyx-sandbox -f deploy/docker/sandbox/Dockerfile deploy/docker/sandbox/
 #
 # Run:
@@ -23,6 +23,8 @@
 
 FROM ubuntu:22.04@sha256:3b06811b2afd352be909dd088a004166d665dc76d38b13eada33522a9d915c6f
 
+# Do not allow a caller to substitute an arbitrary repository while relying on
+# CAPEV2_REF for provenance. A commit SHA is only immutable within its own repo.
 ARG CAPEV2_REPO=https://github.com/kevoreilly/CAPEv2.git
 ARG CAPEV2_REF
 
@@ -61,10 +63,15 @@ RUN useradd -m -s /bin/bash -G kvm,libvirt ${CAPE_USER} && \
     echo "${CAPE_USER} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
 # -- Install CAPEv2 --
-RUN test -n "${CAPEV2_REF}" || (echo "CAPEV2_REF must pin an immutable CAPEv2 tag or commit" >&2; exit 1) && \
-    git clone "${CAPEV2_REPO}" ${CAPE_ROOT} && \
+RUN test "${CAPEV2_REPO}" = "https://github.com/kevoreilly/CAPEv2.git" && \
+    test -n "${CAPEV2_REF}" && \
+    printf '%s' "${CAPEV2_REF}" | grep -Eq '^[0-9a-fA-F]{40}$' || \
+    (echo "CAPEV2_REPO must be the trusted CAPEv2 repository and CAPEV2_REF must be a full 40-character commit SHA" >&2; exit 1)
+
+RUN git clone "${CAPEV2_REPO}" ${CAPE_ROOT} && \
     cd ${CAPE_ROOT} && \
     git -c advice.detachedHead=false checkout --detach "${CAPEV2_REF}" && \
+    test "$(git rev-parse HEAD)" = "$(printf '%s' "${CAPEV2_REF}" | tr '[:upper:]' '[:lower:]')" && \
     chown -R ${CAPE_USER}:${CAPE_USER} ${CAPE_ROOT}
 
 WORKDIR ${CAPE_ROOT}

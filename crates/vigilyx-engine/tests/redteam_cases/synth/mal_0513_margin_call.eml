@@ -1,0 +1,11 @@
+From: =?utf-8?B?6J6N6LWE6J6N5Yi4?= <rz@broker-margin21.example>
+To: investor@personal.example
+Date: Wed, 23 Sep 2026 09:12:00 +0800
+Message-ID: <0002-b30@synth.example>
+Subject: 维持担保比例 128%，请于今日收盘前追加担保
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+追保直付通道：https://rz-zb21.example.info/p
+（银证转账+银行卡密码）
+未追加将于明日上午强制平仓。

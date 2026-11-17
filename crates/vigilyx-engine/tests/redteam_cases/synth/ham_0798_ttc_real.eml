@@ -1,0 +1,106 @@
+From: "OrbitLink | Customer Accounts" <accounts@orbitlink.example>
+To: constellation-ops@spacetech.example
+Cc: finance@spacetech.example, mission.director@spacetech.example
+Date: Wed, 13 Oct 2027 04:00:00 +0000
+Message-ID: <0798-b121@synth.example>
+Subject: [TT&C RENEWAL] Contract OL-TTC-88412 2028 Service Year - Renew in the Service Portal (Billing Entity Unchanged)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Constellation Ops, Finance, Mission
+Director,
+
+TT&C SERVICE RENEWAL - CONTRACT
+OL-TTC-88412.
+
+Your telemetry, tracking & command
+support contract renews January 1
+(2028 service year). Renew in the
+service portal; the billing entity
+is unchanged.
+
+1. CONTRACT SUMMARY
+
+  Contract:      OL-TTC-88412
+                 (TT&C, 14
+                 stations, 6
+                 satellites)
+  2027 year:      USD 1,716,000
+                 (quarterly)
+  2028 year:      USD 1,842,000
+                 (+7.3%, APAC
+                 expansion)
+  Renewal window: closes
+                 November 15
+
+2. HOW RENEWAL WORKS
+   (OFFICIAL PATH)
+
+    1. The service portal
+       (typed address, your
+       ops login) shows the
+       2028 renewal under
+       Contracts ->
+       OL-TTC-88412: approve,
+       and the annual invoice
+       issues from the same
+       entity and account as
+       every 2027 quarter.
+    2. Station lists, pass
+       volumes, and invoice
+       history are all in
+       the portal - compare
+       there.
+
+  OrbitLink will NEVER:
+  - Announce that network
+    expansion moves billing
+    to "OrbitLink Ground
+    Networks Pte. Ltd."
+    (a Singapore entity)
+    for the renewal while
+    "Q4 still bills from
+    the original" (split-
+    routing legitimacy
+    detail - cf. the 117
+    batch engine redelivery:
+    a real-looking detail
+    carried by a fake
+    branch; ground network
+    expansion, if it ever
+    changed the contracting
+    entity, would be a
+    novation with notice
+    and signatures, not
+    an emailed IBAN)
+  - Threaten best-effort
+    scheduling + spot-rate
+    re-entry (+30-40%) to
+    push payment to a new
+    entity (the renewal
+    deadline is real; the
+    new-entity routing is
+    the fraud)
+  - Use lookalike domains
+    such as
+    "orbitlink-space" or
+    "ol-ttc-pay"
+
+3. VERIFY THIS NOTICE
+
+  - Renewal terms and
+    invoice history in the
+    service portal (typed
+    address)
+  - Account director on
+    your usual channel
+  - Report lookalike
+    renewal notices to
+    security@orbitlink.example
+    and mission assurance
+    jointly
+
+OrbitLink | Customer Accounts
+This notice concerns contract
+OL-TTC-88412 only. Service terms
+follow the TT&C support agreement.

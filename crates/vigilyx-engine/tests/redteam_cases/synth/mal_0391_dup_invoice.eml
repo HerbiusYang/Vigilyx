@@ -1,0 +1,10 @@
+From: =?utf-8?B?5a+56LSm?= <dz@vendor-relay5.example>
+To: ap@corp.internal
+Date: Thu, 17 Sep 2026 09:15:00 +0800
+Message-ID: <0005-b24@synth.example>
+Subject: 发票重开（旧作废，请按新金额付）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+旧发票税率开错已作废，新票金额 48,300，收款账户同步变更：
+6225 0091 2280 6611

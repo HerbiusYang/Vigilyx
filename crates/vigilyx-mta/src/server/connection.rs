@@ -5,12 +5,14 @@
 //! 2. MAIL FROM -> RCPT TO -> DATA
 //! 3. DATA -> MIME -> EmailSession -> inline
 
+use core::fmt::NumBuffer;
 use std::io::{self, ErrorKind};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt};
+use tokio::sync::OwnedSemaphorePermit;
 use tracing::{debug, error, warn};
 
 use vigilyx_core::models::{EmailSession, Protocol, SessionSource, SessionStatus};
@@ -35,6 +37,11 @@ const MAX_DATA_TRANSACTION_SECS: u64 = 300; // 5 minutes
 /// RFC 3030: Maximum size for a single BDAT chunk (64 MB).
 const MAX_BDAT_CHUNK_SIZE: usize = 64 * 1024 * 1024;
 
+/// DATA/BDAT message-buffer capacity is charged to the shared semaphore in
+/// bounded increments. Charging each DATA line exactly is safe but turns a
+/// large message into repeated reallocations and full-buffer copies.
+const MESSAGE_MEMORY_RESERVATION_CHUNK: usize = 16 * 1024;
+
 /// SMTP
 pub struct SmtpConnection {
     /// IP
@@ -49,8 +56,13 @@ pub struct SmtpConnection {
     mail_from: Option<String>,
     /// RCPT TO
     rcpt_to: Vec<String>,
+    /// Last syntactically valid EHLO/HELO identity for SPF MAIL-FROM checks.
+    helo_domain: Option<String>,
     /// DATA / BDAT accumulated message buffer
     data_buffer: Vec<u8>,
+    /// Shared byte-budget permits corresponding to `data_buffer` capacity.
+    /// Each permit covers one amortized capacity reservation chunk.
+    message_memory_permits: Vec<OwnedSemaphorePermit>,
 
     config: Arc<MtaConfig>,
     /// TLS
@@ -103,6 +115,7 @@ enum DataLineResult {
     Continue,
     Complete(Vec<u8>),
     TooLarge,
+    MemoryExhausted,
 }
 
 impl SmtpConnection {
@@ -122,7 +135,9 @@ impl SmtpConnection {
             state: SmtpState::Connected,
             mail_from: None,
             rcpt_to: Vec::new(),
+            helo_domain: None,
             data_buffer: Vec::new(),
+            message_memory_permits: Vec::new(),
             config,
             tls_active,
             session_started: Instant::now(),
@@ -153,11 +168,81 @@ impl SmtpConnection {
         self.state = SmtpState::Ready;
         self.mail_from = None;
         self.rcpt_to.clear();
-        self.data_buffer.clear();
+        // Drop the allocation as well as the bytes. Otherwise an attacker
+        // can fill a connection once, trigger a reset, and leave the former
+        // 25 MiB capacity resident while the semaphore permits are returned.
+        self.data_buffer = Vec::new();
+        self.message_memory_permits.clear();
         self.data_phase_started = None;
         self.bdat_remaining = 0;
         self.bdat_is_last = false;
         self.bdat_pending_cr = false;
+    }
+
+    fn reserve_message_capacity(&mut self, bytes: usize) -> bool {
+        if bytes == 0 {
+            return true;
+        }
+
+        let Some(required_len) = self.data_buffer.len().checked_add(bytes) else {
+            return false;
+        };
+
+        if required_len <= self.data_buffer.capacity() {
+            return true;
+        }
+
+        let additional = required_len - self.data_buffer.capacity();
+        let max_additional = self
+            .config
+            .max_message_size
+            .saturating_sub(self.data_buffer.capacity());
+        if additional > max_additional {
+            return false;
+        }
+
+        // Keep the allocation bounded by max_message_size while avoiding one
+        // allocation per DATA line. Under a deliberately tiny test budget (or
+        // when the shared budget is nearly exhausted), fall back to the exact
+        // increment so the memory-pressure response remains deterministic.
+        let rounded = additional.saturating_add(MESSAGE_MEMORY_RESERVATION_CHUNK - 1)
+            / MESSAGE_MEMORY_RESERVATION_CHUNK
+            * MESSAGE_MEMORY_RESERVATION_CHUNK;
+        let reservation = rounded.min(max_additional);
+        let acquire = |bytes: usize| {
+            u32::try_from(bytes).ok().and_then(|bytes| {
+                self.config
+                    .message_memory_budget
+                    .clone()
+                    .try_acquire_many_owned(bytes)
+                    .ok()
+            })
+        };
+        let (permit, reserved_bytes) = match acquire(reservation) {
+            Some(permit) => (permit, reservation),
+            None if reservation != additional => {
+                let Some(permit) = acquire(additional) else {
+                    return false;
+                };
+                (permit, additional)
+            }
+            None => return false,
+        };
+
+        if self.data_buffer.try_reserve_exact(reserved_bytes).is_err() {
+            drop(permit);
+            return false;
+        }
+        self.message_memory_permits.push(permit);
+        true
+    }
+
+    fn append_message_bytes(&mut self, bytes: &[u8]) -> bool {
+        if !self.reserve_message_capacity(bytes.len()) {
+            return false;
+        }
+        self.data_buffer.extend_from_slice(bytes);
+        true
     }
 
     fn append_data_line(&mut self, line: &[u8]) -> DataLineResult {
@@ -183,7 +268,9 @@ impl SmtpConnection {
             return DataLineResult::TooLarge;
         }
 
-        self.data_buffer.extend_from_slice(payload);
+        if !self.append_message_bytes(payload) {
+            return DataLineResult::MemoryExhausted;
+        }
         DataLineResult::Continue
     }
 
@@ -213,7 +300,20 @@ impl SmtpConnection {
                     .any(|local| local.eq_ignore_ascii_case(domain))
             });
         sender_is_local
+            && self.config.outbound.is_some()
             && is_trusted_upstream_ip(&self.client_ip, &self.config.trusted_upstream_cidrs)
+    }
+
+    /// A single SMTP transaction currently has one downstream relay. Reject
+    /// local+external recipient mixtures instead of sending the complete
+    /// envelope through the outbound relay and potentially leaking internal
+    /// recipients. The future recipient-group delivery path can replace this
+    /// guard once it has independent per-group delivery state.
+    fn would_mix_local_and_external_recipients(&self, addr: &str) -> bool {
+        let new_is_local = self.is_local_recipient(addr);
+        self.rcpt_to
+            .iter()
+            .any(|existing| self.is_local_recipient(existing) != new_is_local)
     }
 
     fn complete_message(&mut self, raw_email: Vec<u8>, event: &'static str) -> HandleResult {
@@ -299,6 +399,7 @@ impl SmtpConnection {
                 // Read exactly `remaining` bytes in chunks via the BufReader
                 let mut bytes_left = remaining;
                 let mut chunk_error = false;
+                let mut memory_budget_exhausted = false;
                 // SEC: set when the chunk violated the CRLF-only rule (F-1);
                 // handled after the loop because the fill_buf borrow of the
                 // stream must end before we can write the rejection reply.
@@ -335,7 +436,11 @@ impl SmtpConnection {
                                 chunk_error = true;
                                 break;
                             }
-                            self.data_buffer.extend_from_slice(&buf[..take]);
+                            if !self.append_message_bytes(&buf[..take]) {
+                                memory_budget_exhausted = true;
+                                chunk_error = true;
+                                break;
+                            }
                             stream.consume(take);
                             bytes_left -= take;
                         }
@@ -365,6 +470,14 @@ impl SmtpConnection {
                     warn!(client_ip = %self.client_ip, "BDAT chunk rejected: bare CR/LF (possible SMTP smuggling)");
                     let _ = stream
                         .write_all(b"554 5.6.0 BDAT chunk must use CRLF line endings\r\n")
+                        .await;
+                    let _ = stream.flush().await;
+                }
+
+                if memory_budget_exhausted {
+                    warn!(client_ip = %self.client_ip, "BDAT rejected: shared message memory budget exhausted");
+                    let _ = stream
+                        .write_all(b"452 4.3.1 Insufficient system storage\r\n")
                         .await;
                     let _ = stream.flush().await;
                 }
@@ -455,6 +568,14 @@ impl SmtpConnection {
                         let _ = stream.flush().await;
                         self.reset_transaction();
                     }
+                    DataLineResult::MemoryExhausted => {
+                        warn!(client_ip = %self.client_ip, "DATA rejected: shared message memory budget exhausted");
+                        let _ = stream
+                            .write_all(b"452 4.3.1 Insufficient system storage\r\n")
+                            .await;
+                        let _ = stream.flush().await;
+                        self.reset_transaction();
+                    }
                 }
                 continue;
             }
@@ -485,7 +606,7 @@ impl SmtpConnection {
             // after consuming the chunk bytes". Skip sending anything for code 0.
             match response {
                 CmdResponse::Reply(code, msg) if code > 0 => {
-                    let reply = format!("{code} {msg}\r\n");
+                    let reply = format_smtp_reply(code, &msg);
                     if let Err(e) = stream.write_all(reply.as_bytes()).await {
                         error!("Write error: {e}");
                         break;
@@ -543,11 +664,15 @@ impl SmtpConnection {
         match self.state {
             SmtpState::Connected => {
                 if smtp_command_keyword(upper, "EHLO") || smtp_command_keyword(upper, "HELO") {
+                    let Some(identity) = parse_helo_identity(original) else {
+                        return CmdResponse::Reply(501, "5.5.4 Invalid EHLO/HELO identity".into());
+                    };
+                    self.helo_domain = Some(identity);
                     self.state = SmtpState::Ready;
                     let mut lines = vec![
                         format!("250-{} Hello", self.config.hostname),
                         "250-PIPELINING".into(),
-                        format!("250-SIZE {}", self.config.max_message_size),
+                        format_smtp_size_line(self.config.max_message_size),
                         "250-8BITMIME".into(),
                         "250-CHUNKING".into(),
                     ];
@@ -572,12 +697,16 @@ impl SmtpConnection {
                 }
 
                 if smtp_command_keyword(upper, "EHLO") || smtp_command_keyword(upper, "HELO") {
+                    let Some(identity) = parse_helo_identity(original) else {
+                        return CmdResponse::Reply(501, "5.5.4 Invalid EHLO/HELO identity".into());
+                    };
                     // EHLO (TLS)
                     self.reset_transaction();
+                    self.helo_domain = Some(identity);
                     let mut lines = vec![
                         format!("250-{} Hello", self.config.hostname),
                         "250-PIPELINING".into(),
-                        format!("250-SIZE {}", self.config.max_message_size),
+                        format_smtp_size_line(self.config.max_message_size),
                         "250-8BITMIME".into(),
                         "250-CHUNKING".into(),
                     ];
@@ -642,6 +771,12 @@ impl SmtpConnection {
                     if !self.may_relay_to_recipient(&addr) {
                         return CmdResponse::Reply(554, "5.7.1 Relay access denied".into());
                     }
+                    if self.would_mix_local_and_external_recipients(&addr) {
+                        return CmdResponse::Reply(
+                            553,
+                            "5.7.1 Mixed local and external recipients are not supported".into(),
+                        );
+                    }
                     let rcpt_domain = addr.rsplit('@').next().unwrap_or("<>");
                     tracing::info!(rcpt_domain = %rcpt_domain, rcpt_count = self.rcpt_to.len() + 1, "RCPT TO accepted");
                     self.rcpt_to.push(addr);
@@ -655,7 +790,10 @@ impl SmtpConnection {
                     }
                     self.state = SmtpState::Data;
                     self.data_phase_started = Some(Instant::now());
-                    self.data_buffer.clear();
+                    // DATA starts a fresh transaction; release any capacity
+                    // retained by a previous rejected/partial transaction.
+                    self.data_buffer = Vec::new();
+                    self.message_memory_permits.clear();
                     return CmdResponse::Reply(
                         354,
                         "Start mail input; end with <CRLF>.<CRLF>".into(),
@@ -718,6 +856,7 @@ impl SmtpConnection {
         );
 
         session.source = SessionSource::MtaProxy;
+        session.smtp_helo = self.helo_domain.clone();
         session.status = SessionStatus::Completed;
         session.ended_at = Some(Utc::now());
         session.mail_from = self.mail_from.clone();
@@ -730,7 +869,11 @@ impl SmtpConnection {
         session.content = parser
             .parse(raw_email)
             .map_err(|e| format!("MIME parse error: {e:?}"))?;
-        session.content.is_complete = true;
+        // MIME completeness is independent from SMTP DATA completion. Do not
+        // overwrite a parser-detected coverage gap on the inline path.
+        if !session.content.is_complete {
+            session.error_reason = Some("inspection:mime_content_incomplete".to_string());
+        }
 
         // headers subject message_id
         // Mirror the sniffer path (smtp_process.rs): RFC 2047 encoded-words
@@ -785,6 +928,31 @@ impl SmtpConnection {
     }
 }
 
+/// Parse and bound the RFC 5321 EHLO/HELO identity before it is used in DNS
+/// lookups or Authentication-Results. Domain names and address literals are
+/// accepted; whitespace, control characters, and additional arguments are
+/// rejected.
+fn parse_helo_identity(command: &str) -> Option<String> {
+    let mut parts = command.split_ascii_whitespace();
+    let verb = parts.next()?;
+    if !verb.eq_ignore_ascii_case("EHLO") && !verb.eq_ignore_ascii_case("HELO") {
+        return None;
+    }
+    let identity = parts.next()?;
+    if parts.next().is_some()
+        || identity.is_empty()
+        || identity.len() > 255
+        || !identity.is_ascii()
+        || !identity.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'[' | b']' | b':')
+        })
+    {
+        return None;
+    }
+    let normalized = identity.trim_end_matches('.').to_ascii_lowercase();
+    (!normalized.is_empty()).then_some(normalized)
+}
+
 /// SEC: RFC 5321 strict line endings for BDAT chunk bytes (CWE-444).
 /// This helper is shared by every BDAT read chunk so a CRLF split across
 /// buffer boundaries is validated exactly once.
@@ -816,6 +984,29 @@ enum CmdResponse {
     MultiLine(Vec<String>),
     Quit,
     StartTls,
+}
+
+/// Format the common SMTP reply without routing the numeric status through
+/// the general-purpose formatting machinery. Rust 1.98's `NumBuffer` writes
+/// the decimal representation into a caller-owned fixed-size buffer and
+/// returns a borrowed `&str`; the only allocation left here is the reply
+/// string that must be handed to async I/O.
+fn format_smtp_reply(code: u16, msg: &str) -> String {
+    let mut reply = String::with_capacity(4 + msg.len() + 2);
+    let mut number = NumBuffer::<u16>::new();
+    reply.push_str(code.format_into(&mut number));
+    reply.push(' ');
+    reply.push_str(msg);
+    reply.push_str("\r\n");
+    reply
+}
+
+fn format_smtp_size_line(max_message_size: usize) -> String {
+    let mut line = String::with_capacity(10 + usize::MAX.ilog10() as usize + 1);
+    let mut number = NumBuffer::<usize>::new();
+    line.push_str("250-SIZE ");
+    line.push_str(max_message_size.format_into(&mut number));
+    line
 }
 
 async fn read_smtp_line<R>(reader: &mut R, max_len: usize) -> io::Result<Option<Vec<u8>>>
@@ -1081,6 +1272,7 @@ mod tests {
             quarantine_threshold: vigilyx_core::security::ThreatLevel::Medium,
             reject_threshold: vigilyx_core::security::ThreatLevel::Critical,
             max_message_size: 1024 * 1024,
+            message_memory_budget: Arc::new(tokio::sync::Semaphore::new(16 * 1024 * 1024)),
             max_recipients: 10,
             database_url: String::new(),
             redis_url: None,
@@ -1104,6 +1296,53 @@ mod tests {
             max_message_size,
             ..(*test_config()).clone()
         })
+    }
+
+    #[test]
+    fn shared_message_memory_budget_is_released_after_transaction_reset() {
+        let config = Arc::new(MtaConfig {
+            message_memory_budget: Arc::new(tokio::sync::Semaphore::new(4)),
+            ..(*test_config()).clone()
+        });
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
+
+        assert!(conn.append_message_bytes(b"1234"));
+        assert!(!conn.append_message_bytes(b"5"));
+        conn.reset_transaction();
+        assert_eq!(conn.data_buffer.capacity(), 0);
+        assert!(conn.append_message_bytes(b"5678"));
+    }
+
+    #[test]
+    fn message_buffer_reserves_capacity_in_amortized_chunks() {
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            test_config(),
+            false,
+        );
+        let line = vec![b'x'; 1024];
+
+        for _ in 0..64 {
+            assert!(conn.append_message_bytes(&line));
+        }
+
+        assert_eq!(conn.data_buffer.len(), 64 * 1024);
+        assert!(conn.data_buffer.capacity() >= conn.data_buffer.len());
+        assert!(
+            conn.message_memory_permits.len() <= 5,
+            "capacity should be reserved in chunks, got {} permits",
+            conn.message_memory_permits.len()
+        );
     }
 
     /// : process_command (I/O,)
@@ -1151,6 +1390,24 @@ mod tests {
         assert!(resp.contains("PIPELINING"));
         assert!(resp.contains("8BITMIME"));
         assert_eq!(conn.state, SmtpState::Ready);
+        assert_eq!(conn.helo_domain.as_deref(), Some("client.test"));
+    }
+
+    #[test]
+    fn test_smtp_ehlo_rejects_missing_or_injectable_identity() {
+        let config = test_config();
+        let mut conn = SmtpConnection::new(
+            "127.0.0.1".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            config,
+            false,
+        );
+        assert!(cmd(&mut conn, "EHLO").contains("501"));
+        assert!(cmd(&mut conn, "EHLO good.example extra").contains("501"));
+        assert!(cmd(&mut conn, "EHLO evil;spf=pass").contains("501"));
+        assert_eq!(conn.state, SmtpState::Connected);
     }
 
     #[test]
@@ -1352,7 +1609,11 @@ mod tests {
         }
         let r = cmd(&mut conn, "RCPT TO:<overflow@test.com>");
         assert!(r.contains("452"), "Should reject excess recipients: {r}");
-        assert_eq!(conn.rcpt_to.len(), 10, "rejected recipient must not be retained");
+        assert_eq!(
+            conn.rcpt_to.len(),
+            10,
+            "rejected recipient must not be retained"
+        );
     }
 
     #[test]
@@ -1548,6 +1809,12 @@ mod tests {
     #[test]
     fn test_trusted_submission_relay_accepts_external_recipient_for_outbound_dlp() {
         let mut config = (*test_config()).clone();
+        config.outbound = Some(crate::config::DownstreamConfig {
+            host: "127.0.0.1".to_string(),
+            port: 2526,
+            starttls: false,
+            timeout_secs: 5,
+        });
         config.trusted_upstream_cidrs = vec!["10.20.30.0/24".to_string()];
         let mut conn = SmtpConnection::new(
             "10.20.30.40".into(),
@@ -1566,6 +1833,60 @@ mod tests {
             response.contains("250"),
             "Trusted submission relay must reach outbound DLP path: {response}"
         );
+    }
+
+    #[test]
+    fn test_trusted_submission_rejects_external_recipient_when_outbound_is_disabled() {
+        let mut config = (*test_config()).clone();
+        config.trusted_upstream_cidrs = vec!["10.20.30.0/24".to_string()];
+        let mut conn = SmtpConnection::new(
+            "10.20.30.40".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            Arc::new(config),
+            false,
+        );
+        cmd(&mut conn, "EHLO test");
+        cmd(&mut conn, "MAIL FROM:<sender@test.com>");
+
+        let response = cmd(&mut conn, "RCPT TO:<user@external.net>");
+
+        assert!(
+            response.contains("554"),
+            "disabled outbound must deny relay: {response}"
+        );
+    }
+
+    #[test]
+    fn test_trusted_submission_rejects_mixed_local_and_external_recipients() {
+        let mut config = (*test_config()).clone();
+        config.outbound = Some(crate::config::DownstreamConfig {
+            host: "127.0.0.1".to_string(),
+            port: 2526,
+            starttls: false,
+            timeout_secs: 5,
+        });
+        config.trusted_upstream_cidrs = vec!["10.20.30.0/24".to_string()];
+        let mut conn = SmtpConnection::new(
+            "10.20.30.40".into(),
+            9999,
+            "0.0.0.0".into(),
+            25,
+            Arc::new(config),
+            false,
+        );
+        cmd(&mut conn, "EHLO test");
+        cmd(&mut conn, "MAIL FROM:<sender@test.com>");
+        assert!(cmd(&mut conn, "RCPT TO:<local@corp.com>").contains("250"));
+
+        let response = cmd(&mut conn, "RCPT TO:<user@external.net>");
+
+        assert!(
+            response.contains("553"),
+            "mixed route must be rejected: {response}"
+        );
+        assert_eq!(conn.rcpt_to, vec!["local@corp.com"]);
     }
 
     #[test]
@@ -1780,11 +2101,7 @@ mod tests {
             .iter()
             .map(|link| link.url.as_str())
             .collect();
-        let direct_urls: Vec<&str> = direct
-            .links
-            .iter()
-            .map(|link| link.url.as_str())
-            .collect();
+        let direct_urls: Vec<&str> = direct.links.iter().map(|link| link.url.as_str()).collect();
         assert_eq!(session_urls, direct_urls);
         assert!(session_urls.contains(&"http://198.51.100.7/login"));
         assert!(session_urls.contains(&"http://198.51.100.7/banner.png"));
@@ -2651,7 +2968,7 @@ mod tests {
                             "\r\n",
                             "BDAT body {}\r\n"
                         ),
-                        &subject, &message_id, idx
+                        subject, message_id, idx
                     );
                     input.extend_from_slice(format!("BDAT {} LAST\r\n", body.len()).as_bytes());
                     input.extend_from_slice(body.as_bytes());
@@ -2668,7 +2985,7 @@ mod tests {
                                 "DATA body {}\r\n",
                                 ".\r\n"
                             ),
-                            &subject, &message_id, idx
+                            subject, message_id, idx
                         )
                         .as_bytes(),
                     );
@@ -2790,7 +3107,7 @@ mod tests {
                             "Clean body {}\r\n",
                             ".\r\n"
                         ),
-                        &valid_subject, idx, idx
+                        valid_subject, idx, idx
                     )
                     .into_bytes(),
                 };
@@ -3481,8 +3798,7 @@ mod tests {
         // passed through to the downstream MTA verbatim, where a lenient
         // parser treats `\n.\n` as end-of-DATA — a second, uninspected
         // message is smuggled past inline verdict (CWE-444).
-        let attack =
-            b"From: sender@test.com\r\n\r\nbody\n.\nMAIL FROM:<evil@attacker.example>\r\n";
+        let attack = b"From: sender@test.com\r\n\r\nbody\n.\nMAIL FROM:<evil@attacker.example>\r\n";
         let mut pending = false;
         assert!(
             !bdat_chunk_has_only_crlf(attack, &mut pending),
@@ -3757,6 +4073,9 @@ mod tests {
         );
         cmd(&mut conn, "EHLO client.test");
         let r = cmd(&mut conn, "MAIL FROM:<sender@test.com>");
-        assert!(r.contains("250"), "explicit opt-out must allow plaintext: {r}");
+        assert!(
+            r.contains("250"),
+            "explicit opt-out must allow plaintext: {r}"
+        );
     }
 }

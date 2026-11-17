@@ -138,15 +138,7 @@ fn is_internal_domain(domain: &str) -> bool {
             .iter()
             .any(|suffix| normalized == *suffix || normalized.ends_with(&format!(".{suffix}")))
         || [
-            "local",
-            "internal",
-            "intranet",
-            "lan",
-            "corp",
-            "home",
-            "test",
-            "example",
-            "invalid",
+            "local", "internal", "intranet", "lan", "corp", "home", "test", "example", "invalid",
         ]
         .iter()
         .any(|suffix| normalized == *suffix || normalized.ends_with(&format!(".{suffix}")))
@@ -156,14 +148,16 @@ fn external_intel_blocked(indicator: &str, ioc_type: &str) -> bool {
     match ioc_type {
         "ip" => is_non_public_ip(indicator),
         "domain" => is_internal_domain(indicator),
-        "url" => url::Url::parse(indicator)
-            .ok()
-            .and_then(|parsed| parsed.host_str().map(is_internal_domain))
-            .unwrap_or(false)
-            || url::Url::parse(indicator)
+        "url" => {
+            url::Url::parse(indicator)
                 .ok()
-                .and_then(|parsed| parsed.host_str().map(is_non_public_ip))
-                .unwrap_or(false),
+                .and_then(|parsed| parsed.host_str().map(is_internal_domain))
+                .unwrap_or(false)
+                || url::Url::parse(indicator)
+                    .ok()
+                    .and_then(|parsed| parsed.host_str().map(is_non_public_ip))
+                    .unwrap_or(false)
+        }
         _ => false,
     }
 }
@@ -621,14 +615,18 @@ impl IntelLayer {
 
     /// Query URL reputation (VT Scrape).
     pub async fn query_url(&self, url: &str) -> IntelResult {
+        // Private/internal URLs are local management or service endpoints, not
+        // public reputation subjects. Apply this boundary before IOC lookup so
+        // a weak auto_reference from an earlier verdict cannot turn the same
+        // private URL into self-reinforcing threat evidence.
+        if external_intel_blocked(url, "url") {
+            warn!(indicator = %url, "SEC: blocked local URL reputation lookup");
+            return IntelResult::not_found(url, "url");
+        }
+
         // Exclude auto source to prevent amplification loops
         if let Some(ioc) = self.ioc.check_indicator_external_only("url", url).await {
             return IntelResult::from_ioc(&ioc);
-        }
-
-        if external_intel_blocked(url, "url") {
-            warn!(indicator = %url, "SEC: blocked third-party intel lookup for internal URL");
-            return IntelResult::not_found(url, "url");
         }
 
         let vt_scrape = self.query_vt_scrape_if_enabled(url, "url").await;
@@ -809,7 +807,7 @@ impl IntelLayer {
     /// - suspicious / unknown -> 1 day
     ///
     /// Protection: an external feed result never overwrites an entry recorded
-    /// by a non-external source (auto/manual/import/admin_clean/system), and
+    /// by a non-external source (auto/auto_reference/manual/import/admin_clean/system), and
     /// never downgrades a cached verdict of higher severity (a weak "clean"
     /// must not erase a cached "malicious"). In both cases only
     /// last_seen/hit_count are refreshed.
@@ -1052,7 +1050,7 @@ mod tests {
         );
 
         let single = Some(IntelResult {
-            indicator: "1.2.3.4".into(),
+            indicator: "198.51.100.4".into(),
             ioc_type: "ip".into(),
             found: true,
             verdict: "clean".into(),
@@ -1061,7 +1059,9 @@ mod tests {
             details: Some("OTX: 0 threat pulses linked".into()),
         });
 
-        let fused = layer.fuse_and_cache("1.2.3.4", "ip", &[single, None]).await;
+        let fused = layer
+            .fuse_and_cache("198.51.100.4", "ip", &[single, None])
+            .await;
 
         assert_eq!(fused.verdict, "clean");
         assert_eq!(fused.source, "otx");
@@ -1116,6 +1116,52 @@ mod tests {
         assert!(result.found);
         assert_eq!(result.verdict, "malicious");
         assert_eq!(result.source, "otx");
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "infra-tests")]
+    async fn test_query_domain_does_not_reuse_low_risk_reference_as_threat_intel() {
+        let db = vigilyx_db::VigilDb::new(
+            &std::env::var("TEST_DATABASE_URL")
+                .expect("TEST_DATABASE_URL must be set to run integration tests"),
+        )
+        .await
+        .unwrap();
+        db.init_security_tables().await.unwrap();
+
+        let now = chrono::Utc::now();
+        db.upsert_ioc(&IocEntry {
+            id: uuid::Uuid::new_v4(),
+            indicator: "low-reference.example".to_string(),
+            ioc_type: "domain".to_string(),
+            source: "auto_reference".to_string(),
+            verdict: "suspicious".to_string(),
+            confidence: 0.55,
+            attack_type: "phishing".to_string(),
+            first_seen: now,
+            last_seen: now,
+            hit_count: 1,
+            context: Some("reference_only=true".to_string()),
+            expires_at: Some(now + chrono::Duration::hours(24)),
+            created_at: now,
+            updated_at: now,
+        })
+        .await
+        .unwrap();
+
+        let layer = IntelLayer::new(
+            IocManager::new(db),
+            IntelSourceConfig {
+                otx_enabled: false,
+                vt_scrape_enabled: false,
+                abuseipdb_enabled: false,
+                ..Default::default()
+            },
+            Arc::new(StdRwLock::new(HashSet::new())),
+        );
+
+        let result = layer.query_domain("low-reference.example").await;
+        assert!(!result.found);
     }
 
     #[tokio::test]

@@ -2,7 +2,7 @@ import { englishTopics } from './knowledgeEnglish'
 
 export type TopicId = 'mta' | 'opportunistic-tls' | 'mandatory-tls' | 'starttls' | 'spf-dkim-dmarc' | 'ds-fusion' | 'temporal-evt' | 'module-pipeline' | 'phishing-detection' | 'ioc-intel' | 'ai-nlp' | 'soar-alerts' | 'data-security' | 'mirror-vs-mta' | 'message-bus' | 'mta-quarantine' | 'bec-attack' | 'social-engineering' | 'attachment-weaponization' | 'link-obfuscation'
 
-export interface TopicSection {
+interface TopicSection {
   heading: string
   plainText: string
   headingEn?: string
@@ -178,8 +178,8 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
   {
     id: 'ds-fusion',
     title: 'D-S 证据理论与多引擎融合',
-    subtitle: 'Dempster-Shafer Evidence Theory & Murphy Correction',
-    lead: '传统贝叶斯方法用单一概率 P(threat) 表示威胁程度，无法区分"确定安全"和"不确定"。D-S 证据理论通过三元组 (b, d, u) 显式建模不确定性，结合 Murphy 修正融合解决多源证据冲突，构成 Vigilyx 风险引擎的数学基础。',
+    subtitle: 'D-S uncertainty theory, clustered fusion & legacy Murphy',
+    lead: 'Vigilyx 的默认邮件管线通过 DAG 编排检测模块与最终判定阶段。正式融合使用 clustered_ds_v2：先执行证据准入和因果物件去重，再做单边 BPA 融合及具名约束。旧版 V1/Murphy 实现已移除，历史配置名加载时迁移到 V2。模块是否执行仍取决于条件、外部服务及显式启用配置。',
     tag: '风险模型',
     tagClass: 'sk-tag-red',
     iconType: 'analytics',
@@ -192,27 +192,27 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
       },
       {
         heading: 'BPA 三元组：显式不确定性建模',
-        plainText: '在辨识框架 Θ = {Threat, Normal} 上定义基本概率赋值 Basic Probability Assignment BPA 简化为三元组 b d u。b belief 对 Threat 的信度 即恶意信度。d disbelief 对 Normal 的信度 即正常信度。u uncertainty 分配给整个框架 Θ 的质量 表示不确定度。约束条件 b + d + u = 1。从传统评分转换：给定模块输出 score confidence，b = score × confidence，d = (1-score) × confidence，u = 1 - confidence。风险分数计算 Risk = b + η × u，η 称为风险态度参数 取 0.7 表示将 70% 的不确定性视为威胁。Pignistic 概率：P_bet(Threat) = b + u/2，将不确定性均匀分配',
+        plainText: '在辨识框架 Θ = {Threat, Normal} 上定义基本概率赋值 Basic Probability Assignment BPA 简化为三元组 b d u。b belief 对 Threat 的信度 即恶意信度。d disbelief 对 Normal 的信度 即正常信度。u uncertainty 分配给整个框架 Θ 的质量 表示不确定度。约束条件 b + d + u = 1。从传统评分转换：给定模块输出 score confidence，b = score × confidence，d = (1-score) × confidence，u = 1 - confidence。风险分数计算 Risk = b + η × u，η 是可配置的风险态度参数；Vigilyx 当前编译默认值为 0.30。Pignistic 概率：P_bet(Threat) = b + u/2，将不确定性均匀分配',
       },
       {
         heading: 'Dempster 合成规则与 Zadeh 悖论',
         plainText: '给定两个 BPA m₁ 和 m₂ Dempster 合成规则通过正交和计算联合信度。冲突因子 K = m₁(T)·m₂(N) + m₁(N)·m₂(T)。合成结果 m(T) = [m₁(T)·m₂(T) + m₁(T)·m₂(Θ) + m₁(Θ)·m₂(T)] / (1-K)。m(N) = [m₁(N)·m₂(N) + m₁(N)·m₂(Θ) + m₁(Θ)·m₂(N)] / (1-K)。m(Θ) = m₁(Θ)·m₂(Θ) / (1-K)。Zadeh 悖论：当两个证据源高度冲突时 K 接近 1 分母趋近于零 合成结果将少量一致证据放大到极端 产生反直觉结论。例如传感器A说99%是Threat 传感器B说99%是Normal K=0.98 合成后可能给出一个荒谬的高确信结果。需要在融合前进行冲突预处理',
       },
       {
-        heading: 'Murphy 修正融合算法',
-        plainText: 'Murphy 修正通过证据距离加权平均预处理解决 Zadeh 悖论。第一步 Jousselme 证据距离。d_J(m₁, m₂) = sqrt(0.5 · (m₁-m₂)ᵀ · D · (m₁-m₂))，D 矩阵基于焦元的 Jaccard 相似度。对于二元框架 D 为 3×3 矩阵 对角线为 1 |T∩N|/|T∪N|=0 |T∩Θ|/|T∪Θ|=0.5。第二步 相似度与可信度。sim(i,j) = 1 - d_J(i,j)。crd(i) = Σⱼ≠ᵢ sim(i,j) 可信度等于与其他所有证据的相似度之和。w_i = crd(i) / Σ crd(j) 归一化权重。第三步 加权平均。m_avg = Σ w_i · m_i 得到消除冲突后的平均证据。第四步 自合成。m_final = m_avg ⊕ m_avg ⊕ ... 共 N-1 次 Dempster 合成 N 为引擎数量 多次自合成增强证据收敛性',
+        heading: '旧版 Murphy 修正融合算法（已移除的 Murphy）',
+        plainText: '以下算法仅作历史数学背景；旧版 Murphy 运行实现已经移除。Murphy 修正通过证据距离加权平均预处理解决 Zadeh 悖论。第一步 Jousselme 证据距离。d_J(m₁, m₂) = sqrt(0.5 · (m₁-m₂)ᵀ · D · (m₁-m₂))，D 矩阵基于焦元的 Jaccard 相似度。对于二元框架 D 为 3×3 矩阵 对角线为 1 |T∩N|/|T∪N|=0 |T∩Θ|/|T∪Θ|=0.5。第二步 相似度与可信度。sim(i,j) = 1 - d_J(i,j)。crd(i) = Σⱼ≠ᵢ sim(i,j) 可信度等于与其他所有证据的相似度之和。w_i = crd(i) / Σ crd(j) 归一化权重。第三步 加权平均。m_avg = Σ w_i · m_i 得到消除冲突后的平均证据。第四步 自合成。m_final = m_avg ⊕ m_avg ⊕ ... 共 N-1 次 Dempster 合成 N 为引擎数量 多次自合成增强证据收敛性',
       },
       {
-        heading: 'Copula 依赖校正',
-        plainText: 'Dempster 合成规则假设证据源之间相互独立。但实际系统中 内容分析引擎与语义意图引擎可能共享文本特征 URL 分析与内容分析可能观察到相同的钓鱼 URL 这种相关性会导致证据被重复计算。Copula 依赖校正通过相关系数矩阵 R 量化引擎间相关性。对于相关系数 ρ_ij 较高的引擎对 在融合前注入不确定性：b_i_new = b_i × (1 - ρ_ij)，u_i_new = u_i + (b_i + d_i) × ρ_ij。直觉是 相关的引擎给出的证据要打折扣 因为它们不是真正独立的信息源。默认相关系数矩阵 内容B与语义F相关 0.30 URL分析D与内容B相关 0.20 其余引擎对间 ρ ≤ 0.15',
+        heading: '旧版路径中的 Copula 依赖校正',
+        plainText: 'Dempster 合成规则假设证据源之间相互独立。但实际系统中 内容分析引擎与语义意图引擎可能共享文本特征 URL 分析与内容分析可能观察到相同的钓鱼 URL 这种相关性会导致证据被重复计算。旧版 已移除的 Murphy 路径的 Copula 依赖校正通过相关系数矩阵 R 量化引擎间相关性；当前默认 clustered_ds_v2 不执行此步骤。对于相关系数 ρ_ij 较高的引擎对 在融合前注入不确定性：b_i_new = b_i × (1 - ρ_ij)，u_i_new = u_i + (b_i + d_i) × ρ_ij。直觉是 相关的引擎给出的证据要打折扣 因为它们不是真正独立的信息源。这些相关系数示例属于旧版 A–H 引擎配置，不是默认 clustered_ds_v2 的参数。',
       },
       {
-        heading: '八引擎架构设计',
-        plainText: '系统采用八个互补引擎覆盖邮件威胁的不同维度。引擎A 发件人信誉 SPF DKIM 验证结果 域名信誉 发送历史。引擎B 内容分析 JS散度字符分布 紧迫性语义 附件风险 HTML 结构异常。引擎C 行为基线 GMM 高斯混合模型 建模正常行为 孤立森林检测异常偏离。引擎D URL分析 链接信誉 重定向链分析 QR码URL提取 LOTS Living-off-Trusted-Sites 检测。引擎E 协议合规 邮件头完整性 MIME结构 Received链路一致性。引擎F 语义意图 通过 LLM 或规则分析邮件业务意图 付款转账 凭据索取等高风险操作识别。引擎G 身份异常 首次通信检测 通信模式突变 回复链异常 客户端指纹变化。引擎H 交易关联 提取银行账号 金额等业务实体 与已知模式比对 验证操作合理性。最终风险分数 Risk_single = b_final + η × u_final 其中 η = 0.7',
+        heading: '当前默认路径的八个证据簇',
+        plainText: '默认路径把归一化检测信号归入八个 EvidenceClusterId：inherited_gateway_prior（继承的网关先验）、delivery_integrity（投递完整性）、sender_identity_authenticity（发件人身份真实性）、link_and_html_deception（链接与 HTML 欺骗）、payload_malware（载荷恶意软件）、external_reputation_ioc（外部信誉与 IOC）、social_engineering_intent（社会工程意图）和 business_sensitivity（业务敏感度）。系统先按稳定因果键去重，将每个物件归入一个融合簇。簇内合并物件质量，再将各簇与合格正常证据组合一次；场景规则另行使用归一化来源和因果键。',
       },
       {
-        heading: '对抗鲁棒性约束',
-        plainText: '攻击者可能针对性地规避某个引擎。多样性约束确保系统不过度依赖任何单一引擎。约束条件 w_i ≤ 0.4 × Σw_j 任何单引擎权重不超过总权重的 40%。降级分析 模拟移除每个引擎后的最差情况检测率 确保去掉任何一个引擎后系统仍能有效检测。如果某引擎权重超过阈值 多余部分重新分配给其余引擎 按原有比例分配',
+        heading: '旧版融合的多样性约束',
+        plainText: '旧版 已移除的 Murphy 路径包含引擎多样性权重约束；当前默认 clustered_ds_v2 不使用 40% 单引擎权重上限。默认路径通过因果键去重、物件级单边融合和具备独立证据准入条件的风险地板处理多源重复与融合稀释。',
       },
     ],
   },
@@ -241,23 +241,23 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
       },
       {
         heading: '实体风险累积模型',
-        plainText: '为每个发件人和域名维护一个持续衰减的风险累积值。R_entity(t) = α × R_entity(t-1) + (1-α) × r_new 其中 α = 0.92 衰减因子。这意味着每封新邮件的风险以 8% 的权重融入历史 同时历史风险以 92% 的速度衰减。当 R_entity 超过观察名单阈值 默认 0.3 时 该实体被列入持续监控名单。被监控的实体其后续邮件在时序分析中获得额外风险加成。衰减机制确保良性实体不会因为偶尔一封误报而永久受影响',
+        plainText: '每封邮件只更新一个长期基线键：普通域名按注册域聚合，公共邮箱服务商（如 qq.com、gmail.com）按完整发件地址隔离用户基线。风险值默认 α=0.92；风险上升时，新观测以 8% 权重融入历史；风险下降时，良性观测的权重减半为 4%，实体仍在观察名单（默认阈值 0.30）时再降为 2%，避免短暂的干净流量迅速洗掉风险。首次观测直接初始化风险值。',
       },
       {
         heading: 'HMM 五状态攻击阶段推断',
-        plainText: '隐马尔可夫模型 Hidden Markov Model 用于推断发件人-收件人对之间的攻击阶段。五个隐状态 S0 正常通信 S1 侦察阶段 S2 信任建立 S3 攻击实施 S4 收割获利。转移矩阵反映攻击的典型进程 正常状态自转移概率最高 0.97 偶尔转向侦察 0.02。侦察可转向信任建立 0.08。信任建立可升级为攻击实施 0.06。攻击实施可进入收割 0.15。观测向量 O = (risk_single, u_final, K_conflict, 时间间隔, 内容相似度变化)。每个状态有对应的发射概率分布 正常状态期望低风险低冲突 攻击状态期望高风险高冲突。前向算法在线推断后验概率 γ_t(s) = P(S_t=s | O₁...O_t)。时序风险 Risk_temporal = Σ γ_t(s) × w_s 其中权重 w = {0.0, 0.3, 0.5, 1.0, 1.0} 对应五个状态',
+        plainText: '隐马尔可夫模型 Hidden Markov Model 用于推断发件人-收件人对之间的攻击阶段。五个隐状态 S0 正常通信 S1 侦察阶段 S2 信任建立 S3 攻击实施 S4 收割获利。默认转移矩阵中 S0→S0 为 0.990、S0→S1 为 0.008、S1→S2 为 0.050、S2→S3 为 0.030、S3→S4 为 0.100；其余概率分配给其他转移和自循环。模型支持观测 (risk_single, u_final, K_conflict, 时间间隔, 内容相似度变化)，但当前生产路径将内容相似度变化固定传入 0.0，因此该特征尚未参与线上推断。每个状态有对应的发射概率分布。前向算法在线推断后验概率 γ_t(s) = P(S_t=s | O₁...O_t)。时序风险 Risk_temporal = Σ γ_t(s) × w_s 其中权重 w = {0.0, 0.3, 0.5, 1.0, 1.0} 对应五个状态',
       },
       {
         heading: '通信图谱异常检测',
-        plainText: '维护一个有向加权图 节点为邮箱地址 边为通信记录 包含频率和风险历史。三种异常模式。模式一 新发件人群发 一个首次出现的发件人短时间内向大量收件人发送邮件 典型的群发钓鱼。检测条件 发件人邮件数 < 阈值 且 出度 (唯一收件人数) > 阈值。模式二 已知发件人新增高风险边 一个历史正常的发件人突然向新收件人发送高风险邮件 疑似 BEC 横向移动。检测条件 发件人邮件数 > 阈值 且 新边风险 > 0.5。模式三 出度突增 已有发件人的唯一收件人数突然爆增 可能是数据外泄或账户被盗。检测条件 新出度 / 旧出度 > 突增比率阈值',
+        plainText: '维护一个有向加权图 节点为邮箱地址 边为通信记录 包含频率和风险历史。三种异常模式。模式一 新发件人群发 一个首次出现的发件人短时间内向大量收件人发送邮件 典型的群发钓鱼。默认条件是：首次观测不超过 24 小时的发件人出度达到 10；已观测超过 24 小时的发件人出现风险分数高于 0.5 的新边；或历史出度大于 3 且新增收件人后，新旧出度比超过默认 3 倍。图谱参数可配置。',
       },
       {
         heading: 'GPD 极值理论与尾部风险',
-        plainText: '广义帕累托分布 Generalized Pareto Distribution 用于建模风险分数的极端尾部行为。仅对超过阈值 u 的观测值拟合 P(X > x | X > u) = (1 + ξ(x-u)/σ)^{-1/ξ}。阈值 u 取历史风险分数的 95 分位数。形状参数 ξ 决定尾部厚度 ξ > 0 为重尾 Frechet 分布 ξ = 0 为指数尾。尺度参数 σ 决定尾部展宽程度。参数通过 PWM 概率加权矩方法拟合。重现期 T 对应的 VaR VaR_T = u + (σ/ξ) × [(n/N_u × T)^ξ - 1]。条件风险价值 CVaR = VaR_T × (1 + (σ - ξ×u) / ((1-ξ) × VaR_T)) 是超越 VaR 的期望损失。高重现期意味着该风险水平在正常流量中极为罕见 T > 10000 表示万封邮件一遇',
+        plainText: '广义帕累托分布 Generalized Pareto Distribution 用于建模风险分数的极端尾部行为。仅对超过阈值 u 的观测值拟合 P(X > x | X > u) = (1 + ξ(x-u)/σ)^{-1/ξ}。阈值 u 取历史风险分数的 95 分位数。形状参数 ξ 决定尾部厚度 ξ > 0 为重尾 Frechet 分布 ξ = 0 为指数尾。尺度参数 σ 决定尾部展宽程度。参数通过 PWM 概率加权矩方法拟合。令 N 为窗口样本数、N_u 为超过阈值 u 的样本数，超阈值率 p_u=N_u/N；代码用 T=1/(p_u×P(X>x|X>u)) 计算以样本数计的重现期。反解得到 VaR_T=u+(σ/ξ)×[(p_u×T)^ξ−1]（ξ 接近 0 时取指数极限）。对 ξ<1，超越 VaR_T 的条件期望为 CVaR_T=VaR_T+[σ+ξ(VaR_T−u)]/(1−ξ)。T 表示观测样本间隔，不是年份。',
       },
       {
         heading: 'P0-P3 动态告警分级',
-        plainText: '基于期望损失和多维信号的四级告警体系。期望损失 EL = Risk_final × Impact_target 其中 Impact 根据收件人角色加权 高管 5.0 财务 4.5 IT管理 4.0。P0 最高优先级 触发条件 EL ≥ 3.0 或 K_conflict > 0.7 或 CUSUM + HMM 攻击阶段同时触发 或 EVT 重现期 T ≥ 10000。P1 高优先级 触发条件 EL ∈ [1.5, 3.0) 或 K_conflict > 0.6 或 EVT T ∈ [1000, 10000)。P2 中优先级 触发条件 EL ∈ [0.5, 1.5) 或 u_final > 0.6 或 CUSUM 单独报警。P3 低优先级 触发条件 Risk_final ≥ 0.15。告警级别从高到低取最严格级别。每个告警记录包含判定依据和相关联的 verdict 信息 支持分析人员快速定位和确认',
+        plainText: '仅当 Risk_final≥0.15 才生成告警。EL=Risk_final×收件人影响权重，默认权重 1.0；匹配 ceo@ 为 5.0、cfo@/finance@ 为 4.5、it-admin@ 为 4.0、admin@ 为 3.5，并取所有收件人中的最高值。P0 条件：EL≥3、K_conflict>0.7、EVT T≥10000，或 Risk_final≥0.4 时 CUSUM 告警 / Hawkes 比率>5。P1 条件：EL≥1.5、EVT T≥1000、HMM 攻击阶段 γ(S3)>0.3、Hawkes 比率>3、Novelty>0.6 或 K_cross>0.5。P2 条件：EL≥0.5、u_final>0.6、EVT T≥100、HMM 信任建立阶段 γ(S2)>0.25、通信图异常、Novelty>0.3，或 Risk_final<0.4 时的 CUSUM 告警。没有更高等级信号时，达到 Risk_final≥0.15 的邮件为 P3；P3 记录受全局每分钟 30 条限流，超额单条告警会被抑制并在后续窗口生成汇总告警。系统按最严重的匹配条件定级。EVT 的 T 以样本数计。',
       },
     ],
   },
@@ -265,7 +265,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     id: 'module-pipeline',
     title: '安全模块管线与融合实现',
     subtitle: 'Security Module Pipeline & D-S Fusion Integration',
-    lead: 'Vigilyx 的默认邮件分析管线包含 20 个条目，其中 19 个是分析模块，1 个是 verdict 汇总模块。它们通过 DAG 并行编排执行，模块输出 (score, confidence) 后再进入八引擎 D-S Murphy 融合。运行时还可按配置注册 QR 扫描、落地页扫描、AITM、沙箱等扩展模块。',
+    lead: 'Vigilyx 的默认邮件管线通过 DAG 编排检测模块与最终判定阶段。正式融合使用 clustered_ds_v2：先执行证据准入和因果物件去重，再做单边 BPA 融合及具名约束。旧版 V1/Murphy 实现已移除，历史配置名加载时迁移到 V2。模块是否执行仍取决于条件、外部服务及显式启用配置。',
     tag: '风险模型',
     tagClass: 'sk-tag-red',
     iconType: 'analytics',
@@ -274,35 +274,35 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     sections: [
       {
         heading: '模块系统架构',
-        plainText: '每个安全模块实现 SecurityModule trait 包含三个核心方法。metadata 返回模块元数据包括 ID 名称 所属支柱 依赖列表和超时配置。analyze 接收 SecurityContext 执行分析返回 ModuleResult。should_run 可选的前置过滤器决定是否执行。SecurityContext 上下文包含完整的邮件会话数据 EmailSession 含邮件头 正文 附件 链接等 以及已完成模块的结果缓存 允许后续模块引用前序模块的输出。ModuleResult 是所有模块统一的输出结构 包含 module_id 模块标识 threat_level 威胁等级 confidence 置信度 categories 威胁分类标签 summary 人类可读摘要 evidence 详细证据列表 details JSON 扩展信息含 score 原始评分',
+        plainText: '模块的 score 和 confidence 仍显示原始检测结果。正式 D-S V2 按因果物件去重，再用强度、置信度与证据簇可靠性形成单边恶意质量 b；没有独立的正常证据时 d=0，其余质量保留为 u。低模块分数不会自动成为正常证据，原始模块 BPA 与 V2 物件 BPA 需要分别解读。',
       },
       {
         heading: '默认管线与扩展模块',
-        plainText: '默认管线的核心条目包括 content_scan、html_scan、html_pixel_art、attach_scan、attach_content、attach_hash、mime_scan、header_scan、link_scan、link_reputation、link_content、anomaly_detect、semantic_scan、domain_verify、identity_anomaly、transaction_correlation、av_eml_scan、av_attach_scan、yara_scan 与 verdict。运行时注册表还可按环境启用 attachment_qr_scan、landing_page_scan、aitm_detect 与 sandbox_scan 等扩展模块。换句话说，20 条目是默认管线快照，不是系统能力上限；verdict 负责汇总判定，不应与前面的分析模块混为一谈。',
+        plainText: '编译默认配置包含 29 个条目：content_scan、html_scan、html_pixel_art、attach_scan、attach_content、attach_qr_scan、attach_hash、mime_scan、header_scan、link_scan、link_reputation、link_content、landing_page_scan、url_sandbox_scan、process_sandbox_scan、anomaly_detect、aitm_detect、rmm_detect、prompt_injection_scan、toad_detect、semantic_scan、domain_verify、identity_anomaly、transaction_correlation、av_eml_scan、av_attach_scan、sandbox_scan、yara_scan 与 verdict。QR、落地页、AITM 和沙箱模块已在默认配置中；部分模块受依赖条件、外部服务或显式 opt-in 门控，因此“有配置项”不代表每封邮件都会执行。verdict 是最终汇总阶段，不是独立检测模块。',
       },
       {
-        heading: '管线编排器：DAG 并行分层执行',
-        plainText: '编排器使用 Kahn 拓扑排序算法将模块依赖关系构建为有向无环图 DAG 然后分层执行。每一层中的模块无依赖关系 可以并行执行。层间是串行的，确保前层结果对后层可用。第 0 层通常包含大多数基础分析模块，如内容 链接 协议 身份与行为模块；末端的 verdict 以及部分依赖前序结果的扩展模块在后续层执行。每个模块有独立超时配置，超时后返回安全占位结果并记录状态，不阻塞整条流水线。ConditionConfig 支持基于前序发现动态启停高级分析，例如仅在发现可疑链接后再启用更昂贵的落地页或沙箱检查。',
+        heading: '管线编排器：事件驱动的 DAG 调度',
+        plainText: '完整异步管线根据模块元数据中的 depends_on 和配置中的 ConditionConfig 构建 DAG，并用拓扑排序检查是否存在循环依赖。运行时采用事件驱动调度：所有根节点立即并发启动；节点完成后，其后继节点只要所有依赖都已完成，就会立即启动，不等待其他节点或整层结束。条件中的 depends_module 用于建立依赖，并指定 min_threat_level 检查的模块；若硬依赖因禁用而没有结果，节点会跳过并标记检查不完整。MTA inline 中，检测模块若依赖被延后的模块也会跳过并标记不完整；最终 verdict 只等待已选入 inline 管线的依赖。阻断判定的模块执行失败/超时或必需依赖不可用时，MTA 返回临时失败（默认 451；启用 fail-open 时可能继续转发，且仍执行出站 DLP 处置）。遇到依赖缺失且没有仍在超时中的 inline 模块时，系统会先把 inline 判定结果交给 MTA 处理流程，再启动完整管线记录诊断；后续结果只用于审计和界面展示，不改变处理流程根据 inline 判定选择的投递动作。判定已完成但 Safe/Low 结果带有覆盖不完整标记时，会转入隔离。link_reputation 的外部情报失败属于非阻断可用性问题，不会单独阻止放行。重复或未知启用模块 ID、依赖环，以及未绑定 depends_module 的 min_threat_level 都会被配置接口拒绝，避免判断受并发完成顺序影响。should_run 与 ConditionConfig 也可跳过当前消息不适用的模块；每个执行中的模块有独立超时，失败或超时会记录占位结果和状态。MTA inline 判定另有受限模块集合与优先级，不等同于完整异步管线。',
       },
       {
         heading: '从评分到三元组：模块输出转换',
-        plainText: '每个模块输出 score 原始风险评分 0-1 和 confidence 置信度 0-1。管线末端需要将这些传统评分转换为 D-S 三元组 BPA。转换公式 b = score × confidence 表示有多少证据支持 Threat。d = (1 - score) × confidence 表示有多少证据支持 Normal。u = 1 - confidence 表示模块对自己判断的不确定程度。举例 content_scan 发现多个钓鱼关键词 score=0.70 confidence=0.85 则 b=0.595 d=0.255 u=0.150 高信度高风险。domain_verify 域名验证通过 score=0.10 confidence=0.90 则 b=0.09 d=0.81 u=0.10 高信度低风险。semantic_scan 文本太短无法判断 score=0.30 confidence=0.20 则 b=0.06 d=0.14 u=0.80 低信度高不确定。第三个例子的关键价值 传统系统中 score=0.30 被视为低风险可忽略 但 D-S 框架下 u=0.80 意味着该模块基本没有有效信息 不应影响最终判定 由其他引擎主导',
+        plainText: '模块的 score 和 confidence 仍显示原始检测结果。正式 D-S V2 按因果物件去重，再用强度、置信度与证据簇可靠性形成单边恶意质量 b；没有独立的正常证据时 d=0，其余质量保留为 u。低模块分数不会自动成为正常证据，原始模块 BPA 与 V2 物件 BPA 需要分别解读。',
       },
       {
-        heading: '八引擎映射与引擎内合成',
-        plainText: '默认检测证据主要映射到 8 个概念引擎。引擎A 对应 domain_verify。引擎B 聚合 content_scan、html_scan、html_pixel_art、attach_scan、attach_content、attach_hash，以及按配置启用的 attachment_qr_scan。引擎C 对应 anomaly_detect。引擎D 聚合 link_scan、link_reputation、link_content，以及按配置启用的 landing_page_scan 与 aitm_detect。引擎E 包含 header_scan 与 mime_scan。引擎F 对应 semantic_scan。引擎G 对应 identity_anomaly。引擎H 对应 transaction_correlation。av_eml_scan、av_attach_scan、yara_scan 是独立高价值检测源，参与最终融合；verdict 是末端汇总模块，不作为独立证据引擎。对于多模块引擎，如 B 和 D，需要先进行引擎内 Dempster 合成。',
+        heading: '八个证据簇与因果来源',
+        plainText: '当前默认路径先将归一化信号映射到八个 EvidenceClusterId：inherited_gateway_prior、delivery_integrity、sender_identity_authenticity、link_and_html_deception、payload_malware、external_reputation_ioc、social_engineering_intent 和 business_sensitivity。V2 先按稳定因果键去重，每个物件保留最强的完整强度/可靠性组合，簇内合并后将各簇与合格正常证据组合一次。具名场景约束另行检查归一化来源及因果键。模块 ID 属于配置和分析结果；配置存在不代表每封邮件都会执行，也不代表模块会按 A–H 引擎分组直接投票。',
       },
       {
-        heading: 'Copula 折扣与 Murphy 融合',
-        plainText: '引擎内合成完成后 进入跨引擎 Murphy 融合管线。第一步 Copula 依赖折扣 对每个引擎找到与之最相关的引擎的相关系数 max_ρ 如果 max_ρ 大于 0.1 则对该引擎的 BPA 进行折扣 b_new = b × (1-max_ρ) d_new = d × (1-max_ρ) u_new = 1 - b_new - d_new 即将 (1-α) 的质量转移到不确定性。第二步 Jousselme 距离矩阵 计算每对引擎 BPA 之间的距离。第三步 可信度权重 similarity = 1 - distance 可信度 = 与其他引擎的相似度之和 权重 = 归一化可信度。第四步 多样性约束 对抗鲁棒性 任何单引擎权重不超过总权重 40% 超出部分按比例重分配。第五步 加权平均 m_avg = Σ w_i × m_i。第六步 自合成 N-1 次 m_final = m_avg ⊕ m_avg ⊕ ... 多次自合成增强一致证据的收敛',
+        heading: '默认 clustered_ds_v2 来源融合',
+        plainText: '正式 clustered_ds_v2 对每个物件保留最强的完整强度/可靠性组合，同一物件的多个检测器不会重复投票。不同物件在簇内合并，再对簇与有来源依据的正常证据执行一次对称多元组合；恶意与正常的冲突进入不确定性，不做加权均值的重复自合成。只有完整覆盖及经过密码学验证的对齐身份等合格来源能够提供正常质量。',
       },
       {
-        heading: '信任信号折扣机制',
-        plainText: 'domain_verify 模块输出的 trust_score 0-1 作为特殊的信任信号 独立于 D-S 融合管线。当域名验证完全通过 SPF pass DKIM valid 域名一致 trust_score 接近 1.0 时 最终风险分数会被折扣。折扣公式 final_score = risk_score × (1 - trust_score × 0.4)。举例 risk_score=0.60 trust_score=1.0 则 final_score = 0.60 × 0.60 = 0.36 从 Medium 降级为 Low。直觉 如果发件人身份完全可信 SPF DKIM 都通过 域名未伪造 那么内容层面的风险需要打折。但折扣上限为 40% 即使完全可信也只能降低 40% 的风险 确保高风险内容仍能触发告警',
+        heading: '默认路径中的身份与场景修正',
+        plainText: '默认路径将发件人身份、投递完整性等信号映射到证据簇，在物件去重及簇内合并后执行一次组合；风险地板和上限基于经准入的唯一因果来源与邮件场景执行。它不会对所有邮件统一应用 trust_score×0.4。该乘法折扣属于 noisy_or 聚合路径，不能套用于默认 clustered_ds_v2。',
       },
       {
-        heading: '最终判定：风险分数与威胁等级',
-        plainText: '经过 D-S Murphy 融合和信任折扣后，最终风险分数通过固定阈值映射到五级威胁等级。Risk_single = b_final + η × u_final，其中 η=0.3。Critical 危急 risk ≥ 0.85。High 高危 risk ≥ 0.65。Medium 中危 risk ≥ 0.40。Low 低危 risk ≥ 0.15。Safe 安全 risk 小于 0.15。完整端到端流程是 默认 20 条目按依赖并行分析 → 各模块输出 score confidence → 转换为 BPA 三元组 → 按引擎或检测域聚合 → 引擎内 Dempster 合成 → Copula 依赖折扣 → Murphy 加权平均 → 多样性约束 → 自合成 N-1 次 → 计算 Risk_single → 信任折扣 → verdict 汇总写入记录并通过 WebSocket 广播。',
+        heading: '最终判定：默认路径的风险分数与威胁等级',
+        plainText: 'V2 基础风险为 Bel(恶意)，不把未知质量按 η 转为恶意。最终综合风险应用具名攻击约束和显式核查策略。分级为严重≥85%、高危≥65%、中危≥40%、低危≥15%。单个随机发件域名或 From/Reply-To 域名不匹配按身份核查策略至少中危；这不会改写原始 Bel。未知表示证据不足，不能理解为已确认安全。',
       },
     ],
   },
@@ -310,8 +310,8 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
   {
     id: 'phishing-detection' as TopicId,
     title: '钓鱼邮件检测技术',
-    subtitle: '默认 20 条目管线与扩展检测模块的协作',
-    lead: 'Vigilyx 的默认邮件分析管线包含 20 个条目，并可按配置启用 QR 扫描、落地页扫描、AITM、沙箱等扩展模块，从内容、附件、链接、协议、语义、身份、行为多个维度分析邮件。',
+    subtitle: '默认配置条目覆盖多维检测与来源融合',
+    lead: 'Vigilyx 的编译默认邮件分析管线包含 29 个配置条目，覆盖内容、附件、链接、协议、语义、身份和行为分析；条件门控、外部服务和显式 opt-in 决定其中哪些模块实际运行。',
     tag: '检测',
     tagClass: 'sk-tag-red',
     iconType: 'shield' as const,
@@ -319,11 +319,11 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     sections: [
       {
         heading: '多维检测架构',
-        plainText: '邮件威胁不是单一维度能捕获的。一封精心制作的钓鱼邮件可能通过了 SPF/DKIM 验证，使用了看似正常的发件域名，但在正文中包含紧迫性话术、在附件中夹带二维码或在链接目标页中暴露 OAuth 设备码诱导。Vigilyx 的默认 20 条目管线分布在 8 个概念引擎中，每个引擎独立输出证据，最终通过 D-S Murphy 融合产生裁决；落地页扫描 AITM 与沙箱等扩展模块则作为更昂贵的二级分析补充证据。',
+        plainText: '邮件威胁不是单一维度能捕获的。一封精心制作的钓鱼邮件可能通过了 SPF/DKIM 验证，使用了看似正常的发件域名，但在正文中包含紧迫性话术、在附件中夹带二维码或在链接目标页中暴露 OAuth 设备码诱导。Vigilyx 的默认 29 个配置条目包含检测模块和最终 verdict 阶段。运行时先按稳定因果键去重，再将物件归入八个证据簇，簇内合并后执行一次 clustered_ds_v2 组合。配置中的 A-H engine_id 只是模块分类。落地页、AITM 与沙箱模块已在默认配置中，但是否执行取决于上游条件、外部服务和显式 opt-in。',
       },
       {
         heading: '内容分析引擎 (B)',
-        plainText: 'content_scan 是核心规则模块，维护钓鱼关键词 BEC 短语与 DLP 模式等规则库。html_scan 检测隐藏表单 脚本注入 事件处理器与 data URI 等 HTML 威胁。html_pixel_art 识别 1px 追踪信标与像素伪装。attach_scan 通过扩展名和 magic bytes 识别危险文件类型。attach_content 负责解压和提取附件文本进行深度分析。attach_hash 对附件 SHA256 做本地与外部情报比对。若运行时启用 attachment_qr_scan，系统还会解析图片附件中的二维码并进一步评估其是否指向设备码钓鱼或伪造登录页。',
+        plainText: 'content_scan 是核心规则模块，维护钓鱼关键词 BEC 短语与 DLP 模式等规则库。html_scan 检测隐藏表单 脚本注入 事件处理器与 data URI 等 HTML 威胁。html_pixel_art 识别 1px 追踪信标与像素伪装。attach_scan 通过扩展名和 magic bytes 识别危险文件类型。attach_content 负责解压和提取附件文本进行深度分析。attach_hash 对附件 SHA256 做本地与外部情报比对。默认配置包含 attach_qr_scan，用于解析图片附件中的二维码并评估其是否指向设备码钓鱼或伪造登录页；具体执行仍受条件门控。',
       },
       {
         heading: 'URL 链接分析引擎 (D)',
@@ -331,11 +331,11 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
       },
       {
         heading: '语义与行为分析 (F/G/H)',
-        plainText: 'semantic_scan 采用双层架构：Rust 本地引擎负责 CJK 稀有字符比例 Shannon 熵与双字符唯一性分析，Python AI 服务在启用时执行 NLP 语义分类。零样本路径使用 phishing scam bec spam legitimate 五个候选标签；微调路径则使用 legitimate phishing spoofing social_engineering other_threat 五类标签。identity_anomaly 检测首次联系人 显示名与域名不匹配 回复链异常与通信模式突变。transaction_correlation 识别银行账号 商业实体 紧迫性关键词与金融实体同时出现的 BEC 风险信号。',
+        plainText: 'semantic_scan 默认运行 Rust 本地语义规则，保留来源、言语行为、请求对象和有界关系证明。可选 CPU ONNX bge/e5 意图模型通过 SEMANTIC_INTENT_MODEL_DIR 加载，默认只写影子诊断；显式配置 SEMANTIC_INTENT_SCORE_THRESHOLD 后替代本地规则及后续 Python NLP/OCR 路径，命中以 Low 模块分数 0.20 进入融合，不保证最终等级或处置。Python AI 是单独的可选 NLP/OCR 服务。identity_anomaly 分析首次联系与身份变化，transaction_correlation 提供跨会话业务风险线索。',
       },
       {
         heading: '安全熔断器：防止融合漏报',
-        plainText: 'D-S Murphy 融合可能将少数派引擎的威胁信号稀释。例如 content_scan 强烈报警但其余 7 个引擎均为安全→融合后风险≈0。熔断器机制：当任一规则模块的 belief ≥ 0.20 且 confidence ≥ 0.80 时，将融合后的风险拉回该模块 belief 值。当 3+ 独立模块同时报警时，按 1+0.15×(n-2) 放大地板值。当 2+ 高信念模块收敛时，至少保证 Medium 级别(0.40)。这确保了高信度的单引擎检测不会被多数"无信号"引擎完全压制。',
+        plainText: '默认 clustered_ds_v2 的通用 circuit breaker 只接受被标记为可触发地板的原生来源：来源分数至少 0.55、置信度至少 0.70，地板为来源分数×alert_floor_factor（默认 1.0，配置验证不允许折减）。Convergence breaker 默认要求至少 2 个来源分数达到 `convergence_belief_threshold=0.10` 的独立因果键、分属至少 2 个证据簇，且至少有一个可触发地板的原生来源；基准地板为 0.40，每多一个独立来源增加 0.05，最多增加 0.15。已验证身份且只有低置信上下文信号时还有专门上限，因此不能概括为任意两个模块都保证 Medium。',
       },
     ],
     keywords: ['钓鱼', 'phishing', 'BEC', '商务欺诈', 'DLP', '内容检测', 'URL', '链接', '附件', '同形字', 'homograph', 'NLP', '语义', '熔断器', 'circuit breaker', '关键词', '魔数', 'magic bytes', '短链', '信标', 'pixel tracking'],
@@ -352,15 +352,15 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     sections: [
       {
         heading: 'IOC 类型与来源',
-        plainText: '系统支持 6 种 IOC 类型：IP 地址（Received 头中的外部 IP）、邮箱地址（mail_from 发件人）、域名（发件域名）、文件哈希（附件 SHA256）、URL（link_scan 标记的可疑链接）、邮件主题（特征主题模式）。每个 IOC 记录包含：indicator 值、类型、来源（auto/manual/admin_clean）、判定（malicious/suspicious/clean）、置信度 0-1、攻击类型推断、命中计数、过期时间。IOC 来源分三类：auto（引擎自动写入）、manual（管理员手动添加）、admin_clean（白名单保护，不被自动覆盖）。',
+        plainText: '系统支持 6 种 IOC 类型：IP 地址（Received 头中的外部 IP）、邮箱地址（mail_from 发件人）、域名（发件域名）、文件哈希（附件 SHA256）、URL（link_scan 标记的可疑链接）、邮件主题（可手工维护的特征主题模式）。自动 IOC 提取不记录主题。每个 IOC 记录包含：indicator 值、类型、来源（auto/auto_reference/manual/admin_clean）、判定（malicious/suspicious/clean）、置信度 0-1、攻击类型推断、命中计数、过期时间。auto_reference 是由 Low 及以上邮件裁决产生的短期可疑观察，只作为下一封邮件的弱威胁参考，不是白名单；admin_clean 才是明确的白名单保护来源。',
       },
       {
         heading: '自动记录与正反馈循环防护',
-        plainText: '当邮件裁决达到 High 级别时，引擎自动从该邮件提取 IOC（IP、域名、哈希、URL、邮箱）并写入数据库。阈值设计原则：不能低于 High。原因：如果阈值是 Medium，一封 Medium 风险邮件的域名被写入 IOC → 后续该域名的正常邮件命中 IOC 加分 → 风险升到 High → UPSERT 提高置信度 → 循环放大。UPSERT 策略：新值直接覆盖旧值（不再用 MAX 只升不降），admin_clean 来源的条目受保护不被自动覆盖。IOC 默认 TTL 30 天，过期后不再命中。',
+        plainText: '当邮件裁决达到 Low 及以上时，引擎会提取 IOC（IP、域名、哈希、URL、邮箱）并以 auto_reference/suspicious 写入短期参考。下一封邮件命中后仍需完整重判，IOC 只提供弱威胁信号；Critical 可沿通用路径写入 auto/malicious。仿冒域名专用路径是例外：命中相似度门槛且整体裁决达到 High 时即写入 malicious IOC；Safe 不写入通用自动 IOC。为避免正反馈，参考 TTL 为 24 小时，外部 IP 仍需多个独立会话出现，且强 malicious 条目不能被低危参考降级。',
       },
       {
         heading: '外部情报源查询',
-        plainText: '每封邮件检测时，intel 模块并行查询三个外部源：OTX AlienVault（10 次/分钟速率限制，通过 pulse_count 判定：≥10 脉冲→malicious，3-9→suspicious，<3→clean）；VirusTotal（6 次/分钟，通过 Playwright 抓取页面获取引擎检测共识：≥30% 检出→malicious，≥10%→suspicious）；AbuseIPDB（可选，IP 滥用分数）。查询结果缓存到本地 IOC 表，TTL：malicious 3天、suspicious 1天、clean 7天。Intel 查询先查本地 IOC 缓存，命中则直接返回不发起外部请求。',
+        plainText: 'IP 情报查询可并行使用 OTX AlienVault、VirusTotal 与可选的 AbuseIPDB；域名查询使用 OTX 与 VirusTotal。OTX 限速 10 次/分钟，脉冲数 ≥25 或 3–24 都只返回 suspicious（置信度分别为 0.45 或 0.31–0.38），少于 3 返回 clean；OTX 单独不会判 malicious。VirusTotal 配置官方 API key 时优先使用官方 API（4 次/分钟、每日 500 次配额）：malicious 引擎数 ≥3 判 malicious，至少 1 个 malicious 或 ≥3 个 suspicious 判 suspicious。若官方 API 因非配额原因失败，且已启用 Playwright 抓取，则会回退到抓取路径（6 次/分钟）；未配置 API key 时也只有显式启用抓取才会查询 VT。抓取路径以 malicious 占比 ≥30% 或数量 ≥5 判 malicious，以占比 ≥10% 或数量 ≥2 判 suspicious。外部结果缓存在本地 IOC 表，TTL 为 malicious 30 天、suspicious/unknown 1 天、clean/safe 3 天。常规查询优先使用本地外部情报缓存；已有本地检测信号时，调用方会重新验证外部 clean 缓存，admin_clean/system 白名单仍优先。',
       },
       {
         heading: '白名单与情报放行',
@@ -373,7 +373,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     id: 'ai-nlp' as TopicId,
     title: 'AI/NLP 钓鱼检测模型',
     subtitle: '双模型架构：零样本 + Fine-Tuned 微调',
-    lead: 'Vigilyx 的 AI 服务使用 mDeBERTa 多语言预训练模型，支持零样本分类和基于分析师反馈的 LoRA 微调训练。',
+    lead: '可选 Python AI 服务支持零样本分类与审批后的微调模型推理；训练在服务外离线完成。Rust CPU ONNX 意图模型是独立集成。',
     tag: 'AI',
     tagClass: 'sk-tag-purple',
     iconType: 'analytics' as const,
@@ -388,12 +388,12 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
         plainText: '零样本分类将邮件内容与 5 个候选标签组成前提-假设对，通过 NLI 模型判断蕴含关系。候选标签分为 phishing scam bec spam legitimate 五类，CJK 字符占比大于 30% 时使用中文标签集，否则使用英文标签集。系统将 phishing scam bec 三类概率累加为恶意概率。需要注意的是，这套标签与微调模型并不完全相同；微调模型使用 legitimate phishing spoofing social_engineering other_threat 五类，更贴近平台中的分析师标注任务。',
       },
       {
-        heading: 'LoRA 微调训练',
-        plainText: '管理员通过分析师反馈（在邮件详情页标记正确类别）积累训练样本。样本达到 30 条后可触发训练。训练使用 LoRA（低秩适配）技术：仅训练 DeBERTa 注意力层的 query_proj 和 value_proj（约 1.5% 参数），其余 98.5% 冻结。高级训练技巧：Focal Loss 聚焦难分样本（γ=2.0）；R-Drop 正则化（同一输入两次 forward pass 的 KL 散度约束）；自动类别加权平衡；稀有类别数据增强（词删除 + 词交换）。K-Fold 交叉验证评估质量，balanced_accuracy ≥ 0.50 且 macro_F1 ≥ 0.40 才通过。训练完成后模型热替换：零停机切换到新模型。',
+        heading: '离线训练与模型审批',
+        plainText: '管理员可通过分析师反馈积累样本并导出数据用于离线训练。当前 AI 服务已移除在线训练，旧 POST /training/train 返回 410 TRAINING_REMOVED，不存在达到 30 条样本即在线启动的流程。离线产物经验证并暂存为 pending 后，仍需管理员显式调用 POST /api/admin/nlp/approve（内部 POST /model/approve）才会热加载；审批前继续使用原模型。Python NLP 的审批流程与 Rust ONNX 意图模型的独立打包、配置及重启流程不同。',
       },
       {
         heading: 'NLP 与规则引擎的协作',
-        plainText: 'semantic_scan 模块中，NLP 结果会与 Rust 本地规则结果融合。NLP 模块在断路器逻辑中被标记为非规则模块，不能单独触发安全地板；否则会让大量规则模块形成的安全共识被单个噪音传感器否决。但 NLP 信号仍然参与 D-S 融合和收敛断路器。当 NLP 与内容 链接 身份等规则模块同时检出风险时，系统会自然提高最终风险分数，从而在保留语义信息的同时控制误报。',
+        plainText: '本地规则路径可接入 Python NLP，模型结果作为辅助证据处理；场景观察、覆盖缺口与恶意证据需要分别解读，风险等级由整体融合和策略决定。ONNX 意图模型默认影子运行，不改变结果；显式计分模式则替代本地规则及后续 Python NLP/OCR 路径，而不是同时把所有模型结果叠加。模型分数不能单独保证邮件恶意或最终处置。',
       },
     ],
     keywords: ['AI', 'NLP', 'mDeBERTa', '零样本', 'zero-shot', 'LoRA', '微调', 'fine-tune', '钓鱼检测', 'Focal Loss', 'R-Drop', '交叉验证', '热替换', '训练', 'NLI', '自然语言推理', '语义', '多语言', '分类'],
@@ -410,11 +410,11 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     sections: [
       {
         heading: 'P0-P3 四级告警',
-        plainText: 'P0 (Critical)：EL ≥ 3.0 或 K_conflict > 0.7 或 CUSUM alarm 或 EVT 回归期 T ≥ 10000 年。含义：确认的高危攻击或引擎严重矛盾，需立即处理。P1 (High)：EL ∈ [1.5, 3.0) 或 K_conflict > 0.6 或 EVT T ∈ [1000, 10000)。含义：多引擎交叉确认的威胁，需优先调查。P2 (Medium)：EL ∈ [0.5, 1.5) 或 u_final > 0.6 或 EVT T ∈ [100, 1000)。含义：部分引擎标记，建议常规审查。P3 (Low)：EL ∈ [0.2, 0.5) 或 Risk_final ≥ 0.15。含义：轻微可疑但不足以告警，低优先级。',
+        plainText: 'Risk_final<0.15 不生成告警。P0 (Critical)：EL≥3.0、K_conflict>0.7、EVT T≥10000，或风险分数≥0.4 时 CUSUM 告警 / Hawkes 比率>5。P1 (High)：EL≥1.5、EVT T≥1000、HMM 攻击阶段 γ(S3)>0.3、Hawkes 比率>3、Novelty>0.6 或 K_cross>0.5。P2 (Medium)：EL≥0.5、u_final>0.6、EVT T≥100、HMM 信任建立阶段 γ(S2)>0.25、通信图异常、Novelty>0.3，或风险分数<0.4 时的 CUSUM 告警。其余已生成的告警为 P3 (Low)；P3 数据库记录受全局 30 条/分钟限流，超额单条记录会被抑制并在后续窗口生成汇总告警。系统采用最严重的匹配等级，EVT T 以样本数计。',
       },
       {
         heading: '期望损失与极值理论',
-        plainText: 'EL（Expected Loss）是模块置信度加权的期望损失，综合考虑威胁严重程度和检测确定性。EVT（Extreme Value Theory）使用 GPD（广义 Pareto 分布）对风险尾部建模：收集最近 2000 个样本的超阈值（95 分位数以上）的超出量，通过概率加权矩法估计 GPD 参数（形状参数 ξ 和尺度参数 σ），计算 VaR（在险值）、CVaR（条件在险值，95 分位数以上的平均损失）和回归期 T（同等严重事件的平均间隔）。回归期 T 越大，该事件越罕见、越值得关注。',
+        plainText: 'EL（Expected Loss）是最终风险分数乘以最高收件人影响权重，不是模块置信度加权值。EVT（Extreme Value Theory）用 GPD（广义 Pareto 分布）拟合风险分数尾部：当前实现从滚动风险窗口取样，以阈值以上的超越值估计参数，并计算返回期 T 与 CVaR。T 是以样本数计的重现间隔；更大的 T 表示在该窗口模型下更罕见。',
       },
       {
         heading: 'SOAR 处置规则引擎',
@@ -425,9 +425,9 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
   },
   {
     id: 'data-security' as TopicId,
-    title: '数据安全与 HTTP 会话检测',
-    subtitle: 'Webmail 流量捕获与数据泄露检测',
-    lead: 'Vigilyx 除了分析 SMTP/POP3/IMAP 邮件协议外，还捕获 HTTP Webmail 流量，检测通过网页邮箱进行的数据泄露行为。',
+    title: '数据安全与外发邮件审查',
+    subtitle: 'HTTP/Webmail DLP、SMTP 外发审查与隐私访问',
+    lead: 'HTTP/Webmail 事件与 SMTP 外发审查分别记录敏感数据风险；旁路只能审计，MTA 可按策略对待中继邮件执行出站 DLP。POP3/IMAP 当前仅提供元数据和覆盖信号。',
     tag: '数据安全',
     tagClass: 'sk-tag-green',
     iconType: 'lock-closed' as const,
@@ -435,7 +435,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     sections: [
       {
         heading: 'HTTP 流量捕获',
-        plainText: 'Sniffer 通过 WEBMAIL_SERVERS 环境变量配置需要监控的 Webmail 服务器 IP。当捕获到目标 IP 的 HTTP 流量时，解析请求方法 URI Host Content-Type Cookie，并提取请求体前 64KB 中的邮件字段（from/to/subject）。支持 URL-encoded JSON 和 Coremail 嵌套 JSON 三种格式。HTTP 会话通过 Redis Streams 写入 vigilyx:stream:http_sessions，由引擎侧使用 consumer groups 读取并执行数据安全检测。',
+        plainText: 'Sniffer 启动时先读取环境值，再从 API 加载配置；API 返回 PostgreSQL 中已保存设置或内置默认值，并覆盖响应中存在的环境字段。标准 Compose 不传入 WEBMAIL_SERVERS，API 默认 Webmail 列表为空，因此需通过 UI/API 配置非空服务器列表才能启用 HTTP 捕获。非空 API 端口列表会替换环境端口列表。匹配流量会解析请求方法、URI、Host、Content-Type、Cookie，并从请求体前 64KB 提取邮件字段（from/to/subject）。支持 URL-encoded、JSON 和 Coremail 嵌套 JSON。HTTP 会话写入 Redis Stream vigilyx:stream:http_sessions，由引擎 consumer group 读取并执行数据安全检测。',
       },
       {
         heading: '三类数据泄露检测模式',
@@ -444,6 +444,14 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
       {
         heading: 'DLP 敏感数据扫描',
         plainText: '数据安全引擎对 HTTP 会话的请求体和上传文件执行 DLP 扫描，检测：银行卡号（16-19 位数字，Luhn 校验）、身份证号（18 位，含校验位验证）、手机号（中国大陆 11 位格式）、合同编号/发票号（特定格式模式）、金额数据（大于阈值的金融数字）。事件按严重程度分级：info（仅记录）、low（低风险）、medium（中等，可能需要审查）、high（高风险，建议阻断）、critical（严重，立即告警）。所有事件持久化到 data_security_incidents 表，通过 API 和 WebSocket 实时推送到前端展示。',
+      },
+      {
+        heading: 'SMTP 外发审查与模式边界',
+        plainText: 'SMTP 外发审查独立于 HTTP 事件和邮件威胁判定，列表、统计和详情使用 /api/data-security/email-reviews。旁路仅审计可检查载荷；MTA 按出站 DLP 策略对原本会中继的邮件告警、隔离或阻断。方向需要可信来源、域名及收件人证据，仅有本地 MAIL FROM 不足以认定外发。加密、方向未知、载荷不完整和检查失败保留未知状态。',
+      },
+      {
+        heading: '隐私与临时内容访问',
+        plainText: '隐私模式默认遮罩内容并保留安全分析。管理员填写具体资源、访问范围和用途，使用本人验证因子申请；独立 audit 用户使用单独因子审批。申请人随后获取绑定用户、JWT 会话、精确资源和范围的租约，最长五分钟。系统设置的隐私页管理策略和申请；策略缺失或不可读取时默认遮罩。关闭隐私后凭据仍被遮罩，已脱敏持久化的审查证据不能还原。',
       },
     ],
     keywords: ['数据安全', 'HTTP', 'Webmail', 'DLP', '数据泄露', '草稿箱', '文件中转', '自发送', 'Coremail', '银行卡', '身份证', '敏感数据', '分块上传', 'chunked', 'DataSecurityEngine', '请求体'],
@@ -477,7 +485,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     id: 'message-bus' as TopicId,
     title: '消息总线与可靠投递',
     subtitle: 'Redis Streams 数据面与 Pub/Sub 控制面',
-    lead: 'Vigilyx 的消息层不是单一通道。会话数据走 Redis Streams，控制命令和通知走 Pub/Sub，这样才能兼顾可靠投递与实时广播。',
+    lead: 'Vigilyx 的消息层按用途使用不同通道：会话和当前重扫请求走 Redis Streams，统计、判定通知与 reload 等控制信号走 Pub/Sub。Streams 支持 ACK 和失败恢复，但发布失败重试耗尽或近似长度修剪仍可能造成消息丢失。',
     tag: '架构',
     tagClass: 'sk-tag-purple',
     iconType: 'analytics' as const,
@@ -485,15 +493,15 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     sections: [
       {
         heading: '数据面：Redis Streams',
-        plainText: 'Sniffer 把邮件会话写入 vigilyx:stream:sessions，把 HTTP 会话写入 vigilyx:stream:http_sessions。Engine 侧使用 consumer groups 读取这些流，成功处理后再执行 XACK，因此具备 at-least-once 交付语义。相比单纯 Pub/Sub，Streams 更适合承载不能丢的原始分析数据。',
+        plainText: 'Sniffer 把邮件会话和 HTTP 会话分别写入 vigilyx:stream:sessions 与 vigilyx:stream:http_sessions；API 的历史重扫请求也写入 vigilyx:stream:rescan_requests。Engine 通过 consumer groups 读取，并在成功处理后执行 XACK。对成功写入且尚未被 MAXLEN 修剪的条目，这提供 at-least-once 处理；Sniffer 发布重试耗尽、队列满或近似长度修剪仍可能导致消息丢失。',
       },
       {
         heading: '失败恢复：PEL 与 XAUTOCLAIM',
-        plainText: '如果消费者在处理过程中崩溃，未 ACK 的消息会留在 Pending Entries List 中。Engine 启动后会通过 XAUTOCLAIM 回收闲置超过阈值的消息，从而继续处理先前中断的工作。这个机制让会话摄取在异常重启后仍然具备恢复能力。',
+        plainText: '如果消费者在处理过程中崩溃，仍保留在 Stream 中的未 ACK 条目会留在 Pending Entries List。Engine 可通过 XAUTOCLAIM 回收闲置超过阈值的条目并继续处理；已被 MAXLEN 修剪的条目无法通过 PEL 恢复。',
       },
       {
         heading: '控制面：Pub/Sub',
-        plainText: '控制面命令例如 reload rescan，以及 verdict status heartbeat 等广播通知，仍然使用 Pub/Sub。原因是这些消息更偏实时通知或幂等命令，fire-and-forget 可以接受，而且 Pub/Sub 更适合广播到 API WebSocket 和多个内部组件。当前架构的核心原则是 数据面求可靠 控制面求轻量。',
+        plainText: 'reload 命令以及 Sniffer 统计、verdict、alert、数据安全 incident 和 engine status 通知使用 Pub/Sub。当前单条、批量和隔离区释放重扫请求使用 Redis Streams；Engine 仍保留旧版 Pub/Sub rescan 订阅用于兼容。Pub/Sub 不保留订阅者离线期间的消息，因此适合通知广播，不提供队列式重试。',
       },
     ],
     keywords: ['Redis Streams', 'Pub/Sub', 'consumer groups', 'XREADGROUP', 'XAUTOCLAIM', 'XACK', '消息总线', '数据面', '控制面', 'at-least-once', 'vigilyx:stream:sessions'],
@@ -510,7 +518,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
     sections: [
       {
         heading: '何时进入隔离区',
-        plainText: 'MTA 代理模式下，内联引擎会在 DATA 阶段后对邮件执行快速判定。典型策略是 Safe 和 Low 直接转发，Medium 和 High 写入 quarantine 表并向发件方返回成功，从而避免把检测细节暴露给攻击者；Critical 则直接拒绝。这样既保留实时处置能力，也能给分析师留下复核空间。',
+        plainText: 'MTA 代理模式下，内联引擎会在 DATA 完成或 BDAT LAST 后对邮件执行快速判定。默认情况下，检查完整的 Safe 和 Low 邮件进入下游中继；判定已完成但覆盖不完整时，原本可接受的结果会转入隔离。阻断判定的模块失败/超时或必需依赖不可用时则返回临时失败（默认 451）；启用 fail-open 后可能继续尝试中继。Medium 和 High 写入 quarantine 表并向发件方返回成功，Critical 则直接拒绝。出站 DLP 会扫描邮件并记录审计；只有投递计划原本要中继（包括 fail-open 中继）时，才执行 allow_and_alert、quarantine 或 block 处置。allow_and_alert 继续中继，quarantine 隔离，block 拒绝；威胁判定已隔离或拒绝的邮件不会再被 DLP 处置改变投递结果。这样既保留实时处置能力，也能给分析师留下复核空间。',
       },
       {
         heading: '隔离区保存了什么',
@@ -630,7 +638,7 @@ const rawTopics: Omit<TopicEntry, 'searchableText' | 'readingTime'>[] = [
   },
 ]
 
-export interface LocalizedTopicSection {
+interface LocalizedTopicSection {
   heading: string
   plainText: string
 }

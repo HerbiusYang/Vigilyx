@@ -1,0 +1,10 @@
+From: =?utf-8?B?5a6J5YWo5o+Q6YaS?= <sec@pwd-mgr.example>
+To: me@personal.example
+Date: Sat, 05 Sep 2026 10:23:00 +0800
+Message-ID: <0013-b13@synth.example>
+Subject: 密码管家：1 个站点泄露提醒
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您保存的某站点凭据出现在公开泄露库，建议在站内改密。
+我们永远不会索要您的密码明文。

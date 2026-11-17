@@ -1,0 +1,82 @@
+From: "npm (registry 官方) | 开源可持续性与安全处置通告" <sustain@npmjs-official.example>
+To: pu.shaojie@indie.dev.example
+Cc: security@npmjs-official.example
+Date: Thu, 08 Oct 2026 15:20:00 +0800
+Message-ID: <1154-b240@synth.example>
+Subject: =?utf-8?B?44CQ5YyF5ZCN5LqJ6K6u44CRbnBt5ZCN56ew5aSE572u5LiO5a6Y5pa555Sz6K+J5oyH5byV77yIc3VwcG9ydOWFjei0ue+8jOaKleavkuWumOaWueS4i+aetu+8iQ==?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+蒲少杰开发者（pug-node-utils
+原作者，本通告由 npm 官方
+sustain@ 与 security@ 联合发出，
+官方域 npmjs-official.example，
+与 registry 站内通知一致）：
+
+您好。有作者收到"包名赎回 800
+美元"的邮件，就包名处置与安全
+事件的官方规则说明如下——
+您需要的每一步都是免费的。
+
+一、先核对事实（registry 可查）
+1. npm 的包名不存在"inactive
+   name 第三方接管政策"：
+   包名与发布权限归属首次
+   发布者，18 个月不更新
+   不会转移所有权——
+   "依据 inactive 政策接管"
+   的机制 registry 里没有；
+2. pug-node-utils 当前最新
+   版本仍是您的 1.2.4，
+   不存在"10 月 2 日的
+   2.0.0"——该邮件描述的
+   接管事件本身是虚构的
+   （您可登录 npmjs.com
+   自查包页面与版本历史）。
+
+二、真实的官方规则（都免费）
+1. 若您的包真的被仿冒/抢注：
+   向 npm support（官网
+   support 表单，免费）提交
+   name dispute，original
+   author 证明由 registry
+   记录直接核对——不存在
+   "排队 6-8 周"的常规，
+   抢注与仿冒属优先处理；
+2. 若任何版本真的含恶意
+   代码：security@ 与自动
+   分析会下架（version
+   yank，免费），下游的
+   告警由官方公告发布——
+   安全处置从不需要作者
+   付费；
+3. repository 字段指向您
+   的 GitHub 只说明您仍是
+   作者——这不构成"声誉
+   在受损"的事实。
+
+三、关于"背景调查时谁听你解释"
+registry 的发布记录就是
+您的解释：版本历史、发布
+时间、ownership，全部公开
+可查——真实的记录不需要
+800 美元维护。
+
+四、您需要做的
+登录 npmjs.com 核对包状态
+（一切如常）；将"赎回"
+邮件转发 security@（本域）；
+若您确实不再维护该包，
+可在 package 页面声明
+deprecated 或考虑移交——
+都是免费的自助操作。
+
+给开源作者的话：包是您
+三年前写的，名字一直在
+您手里——800 美元买回的
+不是署名，是焦虑。
+
+npm registry 官方 sustain@
+与 security@（包状态：
+npmjs.com 包页面；举报：
+security@）

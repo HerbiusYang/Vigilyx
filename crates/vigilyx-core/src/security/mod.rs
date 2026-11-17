@@ -12,6 +12,24 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub mod ds_learning;
+pub mod ioc_shadow;
+pub mod relational;
+pub mod semantic;
+
+pub use ds_learning::{
+    DsCalibration, DsLearningDiagnostics, DsLearningEvidence, DsModelParameters, DsSourceParameters,
+};
+
+pub use semantic::{
+    SemanticActionDestination, SemanticActorRole, SemanticClaim, SemanticCoverageStatus,
+    SemanticLinkContentStatus, SemanticLinkExtractionSource, SemanticLinkObservation,
+    SemanticLinkOwnershipStatus, SemanticLinkTransportStatus, SemanticMessageContext,
+    SemanticPolarity, SemanticQuoteStatus, SemanticScenarioFinding, SemanticScenarioId,
+    SemanticScenarioResolution, SemanticSourcePart, SemanticSpan, SemanticSpeechAct,
+    SemanticTargetRole,
+};
+
 // Pillar - Securityanalyze
 
 /// Security analysis pillar
@@ -108,6 +126,424 @@ impl std::fmt::Display for ThreatLevel {
             ThreatLevel::Critical => write!(f, "critical"),
         }
     }
+}
+
+// ============================================================================
+// ThreatType - Primary malicious-email classification
+// ============================================================================
+
+/// Primary threat family for an email verdict.
+///
+/// Detection `categories` remain the detailed module evidence; this field is
+/// the single operator-facing malicious classification.  The final verdict
+/// may expose it only at Medium or above, so a Safe/Low observation cannot be
+/// presented as an established phishing, BEC, malware, or enumeration
+/// classification.
+///
+/// Spam, bulk mail, marketing, and nonsensical content are deliberately not
+/// threat types.  They may remain raw detector categories, but do not receive
+/// a malicious-email classification by themselves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThreatType {
+    Phishing,
+    BecFraud,
+    MalwareDelivery,
+    MailboxEnumeration,
+    SocialEngineering,
+    InjectionAbuse,
+    MaliciousOther,
+}
+
+impl ThreatType {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Phishing => "phishing",
+            Self::BecFraud => "bec_fraud",
+            Self::MalwareDelivery => "malware_delivery",
+            Self::MailboxEnumeration => "mailbox_enumeration",
+            Self::SocialEngineering => "social_engineering",
+            Self::InjectionAbuse => "injection_abuse",
+            Self::MaliciousOther => "malicious_other",
+        }
+    }
+}
+
+impl std::fmt::Display for ThreatType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Derive one primary threat type from normalized detector categories.
+///
+/// The function deliberately ignores anomaly/coverage-only categories such as
+/// `random_domain` and `inspection_incomplete`, and it never maps spam-like
+/// labels to a threat type.  The first matching family in this ordered list
+/// wins, making the result stable when a message carries multiple findings.
+pub fn classify_threat_type(categories: &[String]) -> Option<ThreatType> {
+    const FAMILY_RULES: &[(ThreatType, &[&str])] = &[
+        (
+            ThreatType::MalwareDelivery,
+            &[
+                "malware",
+                "virus_detected",
+                "malware_hash",
+                "sandbox_malicious",
+                "sandbox_c2_detected",
+                "verified_executable_payload",
+                "verified_payload_anchor",
+                "verified_yara_signature",
+                "executable_disguise",
+                "malicious_document",
+                "webshell",
+            ],
+        ),
+        (
+            ThreatType::BecFraud,
+            &[
+                "bec",
+                "payment_change",
+                "wire_transfer",
+                "invoice_fraud",
+                "giftcard",
+                "executive_impersonation",
+                "ceo_impersonation",
+            ],
+        ),
+        (
+            ThreatType::MailboxEnumeration,
+            &["mailbox_enumeration_probe"],
+        ),
+        (
+            ThreatType::Phishing,
+            &[
+                "phishing",
+                "phishing_subject",
+                "nlp_phishing",
+                "attachment_phishing",
+                "credential_link_lure",
+                "attachment_credential_form",
+                "high_risk_credential_target",
+                "targeted_credential_phishing",
+                "account_security_phishing",
+                "qr_targeted_phishing",
+                "qr_targeted",
+                "qr_lure",
+                "device_code_phishing",
+                "callback_phishing",
+                "brand_impersonation",
+                "brand_spoof_reply_to",
+                "protected_domain_spoof",
+                "envelope_spoofing",
+                "display_name_spoof",
+                "www_impersonation",
+                "domain_impersonation_brand_typosquatting",
+                "gateway_unwrapped_risky_target",
+                "double_encoded_payload",
+                "url_typo",
+                "aitm",
+                "credential_theft",
+            ],
+        ),
+        (
+            ThreatType::SocialEngineering,
+            &[
+                "social_engineering",
+                "social_engineering_lure",
+                "nlp_scam",
+                "rmm",
+                "remote_management",
+                "toad",
+                "romance_scam",
+                "investment_scam",
+                "sexual_inducement",
+                "sexual_extortion",
+                "sextortion",
+                "subsidy_fraud",
+                "crypto_wallet",
+                "urgency_financial_combo",
+                "obfuscated_domain_lure",
+                "extortion_threat",
+                "extortion",
+                "scam",
+            ],
+        ),
+        (
+            ThreatType::InjectionAbuse,
+            &[
+                "prompt_injection",
+                "header_injection",
+                "html_injection",
+                "xss",
+                "protocol_injection",
+            ],
+        ),
+        (ThreatType::MaliciousOther, &["malicious", "other_threat"]),
+    ];
+
+    for (threat_type, needles) in FAMILY_RULES {
+        if categories.iter().any(|category| {
+            let normalized = category.to_ascii_lowercase();
+            needles.iter().any(|needle| {
+                normalized == *needle
+                    || normalized
+                        .strip_prefix(needle)
+                        .is_some_and(|suffix| suffix.starts_with('_'))
+            })
+        }) {
+            return Some(*threat_type);
+        }
+    }
+    None
+}
+
+/// Derive the public malicious classification while enforcing the final
+/// result contract: malicious families require an actionable Medium-or-higher
+/// threat verdict. Category-only callers can still use [`classify_threat_type`]
+/// while evidence is being normalized.
+pub fn classify_verdict_threat_type(
+    threat_level: ThreatLevel,
+    categories: &[String],
+) -> Option<ThreatType> {
+    (threat_level >= ThreatLevel::Medium)
+        .then(|| classify_threat_type(categories))
+        .flatten()
+}
+
+// ============================================================================
+// EmailClassification - non-exclusive operator classification axis
+// ============================================================================
+
+/// Operator-facing mail classification, kept separate from malicious threat
+/// family and severity.  In particular, spam is a classification outcome and
+/// is not a malicious threat type by itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmailClassification {
+    Undetermined,
+    Spam,
+    Business,
+    Transactional,
+    Marketing,
+    Scam,
+    Phishing,
+    Impersonation,
+    SocialEngineering,
+    Bec,
+    Malware,
+}
+
+impl EmailClassification {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Undetermined => "undetermined",
+            Self::Spam => "spam",
+            Self::Business => "business",
+            Self::Transactional => "transactional",
+            Self::Marketing => "marketing",
+            Self::Scam => "scam",
+            Self::Phishing => "phishing",
+            Self::Impersonation => "impersonation",
+            Self::SocialEngineering => "social_engineering",
+            Self::Bec => "bec",
+            Self::Malware => "malware",
+        }
+    }
+}
+
+impl std::fmt::Display for EmailClassification {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Derive the operator classification from detailed detector categories.
+/// Classification is intentionally independent of the Medium/Low boundary:
+/// a Low `spam` or `transactional` observation is still classified correctly,
+/// while `ThreatType` remains restricted to actionable malicious families.
+pub fn classify_email_classification(categories: &[String]) -> EmailClassification {
+    const HAS: &[&str] = &[
+        "malware",
+        "virus_detected",
+        "malware_hash",
+        "sandbox_malicious",
+        "sandbox_c2_detected",
+        "verified_executable_payload",
+        "verified_payload_anchor",
+        "verified_yara_signature",
+        "malicious_document",
+        "dangerous_document_lure",
+        "dangerous_container_lure",
+        "clickfix_lure",
+        "html_smuggling",
+    ];
+    if categories
+        .iter()
+        .any(|category| category_matches(category, HAS))
+    {
+        return EmailClassification::Malware;
+    }
+
+    if categories.iter().any(|category| {
+        category_matches(
+            category,
+            &[
+                "phishing",
+                "phishing_subject",
+                "nlp_phishing",
+                "attachment_phishing",
+                "credential_link_lure",
+                "attachment_credential_form",
+                "credential_exfiltration_form",
+                "high_risk_credential_target",
+                "targeted_credential_phishing",
+                "account_security_phishing",
+                "qr_targeted_phishing",
+                "qr_targeted",
+                "qr_lure",
+                "device_code_phishing",
+                "credential_theft",
+                "qr_text_lure",
+                "ics_url_credential_lure",
+                "attachment_contact_redirect",
+                "image_alt_phishing",
+                "pii_collection_lure",
+                "external_action_link_lure",
+                "credential_exfiltration_lure",
+                "base_href_action_lure",
+                "targeted_recruitment_lure",
+                "sandbox_url_malicious",
+            ],
+        )
+    }) {
+        return EmailClassification::Phishing;
+    }
+
+    if categories.iter().any(|category| {
+        category_matches(
+            category,
+            &[
+                "bec",
+                "bec_no_ioc_social",
+                "payment_change",
+                "wire_transfer",
+                "invoice_fraud",
+                "giftcard",
+                "executive_impersonation",
+                "ceo_impersonation",
+                "bec_external_compound",
+            ],
+        )
+    }) {
+        return EmailClassification::Bec;
+    }
+
+    if categories.iter().any(|category| {
+        category_matches(
+            category,
+            &[
+                "impersonation",
+                "brand_impersonation",
+                "brand_spoof_reply_to",
+                "protected_domain_spoof",
+                "display_name_spoof",
+                "domain_impersonation_brand_typosquatting",
+                "envelope_spoofing",
+            ],
+        )
+    }) {
+        return EmailClassification::Impersonation;
+    }
+
+    if categories.iter().any(|category| {
+        category_matches(
+            category,
+            &[
+                "scam",
+                "subsidy_fraud",
+                "investment_scam",
+                "romance_scam",
+                "sextortion",
+                "extortion",
+                "crypto_wallet",
+            ],
+        )
+    }) {
+        return EmailClassification::Scam;
+    }
+
+    if categories.iter().any(|category| {
+        category_matches(
+            category,
+            &[
+                "social_engineering",
+                "social_engineering_lure",
+                "nlp_scam",
+                "toad",
+                "adult_content_lure",
+                "obfuscated_domain_lure",
+                "social_trust_lure",
+            ],
+        )
+    }) {
+        return EmailClassification::SocialEngineering;
+    }
+
+    if categories.iter().any(|category| {
+        category_matches(
+            category,
+            &[
+                "spam",
+                "gateway_spam_classified",
+                "nlp_spam",
+                "nonsensical_spam",
+                "invoice_spam",
+                "spam_cannon",
+            ],
+        )
+    }) {
+        return EmailClassification::Spam;
+    }
+
+    if categories.iter().any(|category| {
+        category_matches(
+            category,
+            &[
+                "transactional_notice",
+                "delivery_report",
+                "password_reset_notice",
+            ],
+        )
+    }) {
+        return EmailClassification::Transactional;
+    }
+
+    if categories
+        .iter()
+        .any(|category| category_matches(category, &["marketing", "preference_link", "campaign"]))
+    {
+        return EmailClassification::Marketing;
+    }
+
+    if categories
+        .iter()
+        .any(|category| category_matches(category, &["business"]))
+    {
+        return EmailClassification::Business;
+    }
+
+    EmailClassification::Undetermined
+}
+
+fn category_matches(category: &str, needles: &[&str]) -> bool {
+    let normalized = category.to_ascii_lowercase();
+    needles.iter().any(|needle| {
+        normalized == *needle
+            || normalized
+                .strip_prefix(needle)
+                .is_some_and(|suffix| suffix.starts_with('_'))
+    })
 }
 
 // BPA - Dempster-Shafer Basic Probability Assignment
@@ -461,6 +897,32 @@ impl ModuleResult {
         }
     }
 
+    /// Remove a safe module's false certainty when the message had an
+    /// inspection-coverage gap. Threat-bearing results keep their evidence;
+    /// safe results become vacuous so they cannot dilute an independent threat
+    /// signal during fusion.
+    pub fn mark_inspection_incomplete(&mut self, reason: &str) {
+        if !self
+            .categories
+            .iter()
+            .any(|category| category == "inspection_coverage_incomplete")
+        {
+            self.categories
+                .push("inspection_coverage_incomplete".to_string());
+        }
+        if self.threat_level == ThreatLevel::Safe {
+            self.confidence = self.confidence.min(0.50);
+            self.bpa = Some(Bpa::vacuous());
+            self.summary =
+                format!("Inspection incomplete ({reason}); module result is not a safety claim");
+        } else {
+            self.summary = format!(
+                "Inspection incomplete ({reason}); threat evidence retained. {}",
+                self.summary
+            );
+        }
+    }
+
     /// Create a safe (no threat) result.
     #[deprecated(note = "use safe_analyzed() or not_applicable() instead")]
     pub fn safe(
@@ -506,7 +968,11 @@ impl ModuleResult {
 
 // SecurityVerdict - Security
 
-/// Per-engine BPA detail for the verdict output.
+/// Strategy-specific diagnostic BPA summary for the verdict output.
+///
+/// Depending on the aggregation strategy, `engine_id` can identify a legacy
+/// A-H engine or a default-path evidence cluster. These summaries are not
+/// necessarily the individual evidence units consumed by fusion.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EngineBpaDetail {
     pub engine_id: String,
@@ -519,14 +985,15 @@ pub struct EngineBpaDetail {
 
 /// Post-fusion safety circuit breaker activation record.
 ///
-/// When a single module's raw BPA belief exceeds the alert threshold but D-S
-/// Murphy fusion suppresses it (treating the module as an outlier), the circuit
-/// breaker applies a minimum risk floor to prevent complete suppression.
+/// Records a post-fusion risk floor activation. The triggering ID and score
+/// semantics depend on the selected aggregation strategy: legacy Murphy stores
+/// a module and BPA belief, while clustered_ds_v2 stores an eligible source's
+/// evidence cluster and normalized source score.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CircuitBreakerInfo {
-    /// The module that triggered the circuit breaker.
+    /// The module or evidence-cluster label that triggered the breaker.
     pub trigger_module_id: String,
-    /// The raw belief value of the triggering module's BPA.
+    /// The triggering module belief or normalized source score.
     pub trigger_belief: f64,
     /// The computed floor value: `trigger_belief * alert_floor_factor`.
     pub floor_value: f64,
@@ -536,22 +1003,82 @@ pub struct CircuitBreakerInfo {
 
 /// Multi-signal convergence breaker activation record.
 ///
-/// When 3+ independent modules flag threats (even at Low level), their
-/// convergence is treated as strong evidence that D-S fusion should not
-/// suppress. This addresses the "intra-engine dilution" problem where
-/// Safe modules with confidence=1.0 act as absorbing elements in Dempster
-/// combination, zeroing out threat signals.
+/// Records a qualified clustered_ds_v2 convergence floor. The serialized
+/// compatibility fields retain their historical modules_* names:
+/// modules_flagged counts distinct runtime causal keys, while flagged_modules
+/// contains the participating evidence-cluster labels. Qualification also
+/// requires at least two distinct clusters and an eligible native source.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConvergenceBreakerInfo {
-    /// Number of modules that flagged threats.
+    /// Number of distinct runtime causal keys (serialized under a legacy name).
     pub modules_flagged: u32,
     /// The applied floor value.
     pub floor_value: f64,
     /// The original `risk_single` before floor application.
     pub original_risk: f64,
-    /// IDs of modules that flagged threats.
+    /// Evidence-cluster labels (serialized under a legacy name).
     pub flagged_modules: Vec<String>,
 }
+
+/// Epistemic interpretation independent of policy risk and threat severity.
+///
+/// Unknown evidence and positively supported normal evidence remain distinct,
+/// including when an explicit review policy raises the final risk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EpistemicState {
+    Unknown,
+    ThreatSupported,
+    NormalSupported,
+    Conflicted,
+}
+
+/// One declarative risk interval activated by a versioned fusion model.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RiskConstraintTrace {
+    pub id: String,
+    pub lower: f64,
+    pub upper: f64,
+    /// Stable causal evidence keys that satisfied the guard.
+    pub basis: Vec<String>,
+}
+
+/// Diagnostics for an impossible intersection of active risk intervals.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RiskConstraintConflict {
+    pub effective_lower: f64,
+    pub effective_upper: f64,
+    pub constraint_ids: Vec<String>,
+}
+
+/// Evidence and constraints from a versioned fusion model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FusionModelResult {
+    pub model: String,
+    pub model_version: u32,
+    pub fused_bpa: Bpa,
+    pub k_conflict: f64,
+    pub risk_base: f64,
+    pub risk_constrained: f64,
+    pub epistemic_state: EpistemicState,
+    pub source_details: Vec<EngineBpaDetail>,
+    pub active_constraints: Vec<RiskConstraintTrace>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub constraint_conflict: Option<RiskConstraintConflict>,
+    pub artifact_count: u32,
+    pub fallback_artifact_count: u32,
+    /// Exact admitted inputs before learned mapping, deduplication and policy.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub learning_evidence: Vec<DsLearningEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub learning_model: Option<DsLearningDiagnostics>,
+    /// Exact retained input bytes used at analysis time, never reconstructed later.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_content_sha256: Option<String>,
+}
+
+/// Historical shadow records retain the same wire format.
+pub type ShadowFusionResult = FusionModelResult;
 
 /// Full D-S fusion diagnostics attached to the verdict.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -560,6 +1087,8 @@ pub struct FusionDetails {
     pub k_conflict: f64,
     pub risk_single: f64,
     pub eta: f64,
+    /// Strategy-specific diagnostics; clustered_ds_v2 entries describe the
+    /// cluster BPA values combined once after causal-artifact deduplication.
     pub engine_details: Vec<EngineBpaDetail>,
     pub credibility_weights: HashMap<String, f64>,
     /// v5.0 TBM: Novelty = 1 - (1-). None for closed-world paths.
@@ -571,7 +1100,7 @@ pub struct FusionDetails {
     /// v5.0 TBM: Pignistic probability BetP(Threat).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub betp: Option<f64>,
-    /// Fusion method used: "ds_murphy" | "tbm_v5" | "noisy_or" | "weighted_max".
+    /// Fusion method used: "clustered_ds_v2" | "tbm_v5" | "noisy_or" | "weighted_max".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fusion_method: Option<String>,
     /// Post-fusion safety circuit breaker: activated when D-S fusion suppresses
@@ -582,14 +1111,66 @@ pub struct FusionDetails {
     /// but D-S fusion dilutes them all. None = no activation needed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub convergence_breaker: Option<ConvergenceBreakerInfo>,
+    /// Experimental models evaluated from the same immutable module results.
+    /// These values never participate in the authoritative verdict.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shadow_results: Vec<ShadowFusionResult>,
+    /// Model whose constrained risk supplies the authoritative verdict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_result: Option<FusionModelResult>,
+    /// Non-additive relational V2 assessment. This is shadow-only: it never
+    /// changes the authoritative threat, classification, or disposition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relational_shadow: Option<relational::RelationalAssessment>,
+}
+
+/// Inspection coverage is independent of malicious belief and delivery policy.
+/// Unknown preserves the meaning of verdicts written before this field existed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InspectionCoverage {
+    #[default]
+    Unknown,
+    Complete,
+    Limited,
+}
+
+impl InspectionCoverage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::Complete => "complete",
+            Self::Limited => "limited",
+        }
+    }
+
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "complete" => Self::Complete,
+            "limited" => Self::Limited,
+            _ => Self::Unknown,
+        }
+    }
 }
 
 /// Aggregated security verdict for an email session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityVerdict {
+    #[serde(default)]
+    pub inspection_coverage: InspectionCoverage,
+    #[serde(default)]
+    pub coverage_reasons: Vec<String>,
     pub id: Uuid,
     pub session_id: Uuid,
     pub threat_level: ThreatLevel,
+    /// Primary malicious-email family. None means no actionable threat family
+    /// was established; malicious families require Medium-or-higher severity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub threat_type: Option<ThreatType>,
+    /// Separate business/mail classification. This must not be inferred from
+    /// `threat_type`: spam and transactional notices are not malicious types.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classification: Option<EmailClassification>,
     pub confidence: f64,
     pub categories: Vec<String>,
     pub summary: String,
@@ -600,6 +1181,22 @@ pub struct SecurityVerdict {
     pub created_at: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fusion_details: Option<FusionDetails>,
+}
+
+impl SecurityVerdict {
+    /// Legacy category markers remain readable during rolling upgrades.
+    pub fn has_incomplete_inspection(&self) -> bool {
+        self.inspection_coverage == InspectionCoverage::Limited
+            || self.categories.iter().any(|category| {
+                matches!(
+                    category.as_str(),
+                    "inspection_incomplete"
+                        | "inspection_coverage_incomplete"
+                        | "inspection_execution_incomplete"
+                        | "inspection_quarantine_required"
+                )
+            })
+    }
 }
 
 // AlertLevel / AlertRecord - Alert Level record
@@ -752,12 +1349,142 @@ impl EntityRiskState {
 // SecurityStats - SecurityStatistics
 // ============================================================================
 
+/// A pass-through/blocked comparison for one automatically discovered
+/// delivery node in the passive SMTP mirror path.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeliveryNodeComparisonStats {
+    /// Stable display index for the discovered node list.  The actual node
+    /// identity is carried in `server_ips`; this must not be interpreted as a
+    /// hop number because capture can begin after an upstream gateway.
+    pub node_index: u32,
+    /// Destination IPs observed at this node across retained delivery history.  The
+    /// mirror has no trustworthy vendor name in the packet stream, so IPs are
+    /// retained as the auditable identity instead of guessing a product name.
+    #[serde(default)]
+    pub server_ips: Vec<String>,
+    /// Settled messages entering this node with a usable Vigilyx verdict and
+    /// a classified action: an observed downstream hop, a post-message SMTP
+    /// security-policy rejection, or path termination when terminal policy is
+    /// configured. Without terminal policy, a missing next hop is excluded.
+    pub comparable_total: u64,
+    /// Messages classified as blocked by the node policy: either a completed
+    /// DATA/BDAT transaction rejected by SMTP 550-554 with an RFC 3463 5.7.x
+    /// status, or a settled non-terminal node with no observed next hop when
+    /// terminal-mail-server policy is configured. The detail API distinguishes
+    /// these as `explicit_rejection` and `path_termination`.
+    pub vendor_blocked_total: u64,
+    /// Messages for which a downstream hop was observed. This means the node
+    /// continued the message, not that a vendor verdict API was consulted.
+    pub vendor_passed_total: u64,
+    /// Messages whose observed next hop is a configured terminal mail server.
+    /// This is confirmed terminal delivery, not merely an intermediate
+    /// forwarding observation.
+    #[serde(default)]
+    pub terminal_delivered_total: u64,
+    /// Messages with neither a configured terminal policy nor explicit
+    /// rejection nor an observed downstream hop after settlement. These remain
+    /// an observation gap and are excluded from the comparison denominator.
+    #[serde(default)]
+    pub vendor_unconfirmed_total: u64,
+    /// Messages this node observed for which Vigilyx classified the first hop
+    /// as Low or higher, regardless of whether the vendor action is known.
+    #[serde(default)]
+    pub vigilyx_risky_total: u64,
+    /// Node was classified as blocked (explicit rejection or path termination)
+    /// and Vigilyx classified the message as Low or higher.
+    pub both_threat_total: u64,
+    /// Node continued the message and Vigilyx classified it as Low or higher.
+    pub vigilyx_only_threat_total: u64,
+    /// Node was classified as blocked (explicit rejection or path termination)
+    /// and Vigilyx classified the message as Safe.
+    pub vendor_only_threat_total: u64,
+    /// `both_threat_total / vendor_blocked_total`.
+    pub both_threat_rate: f64,
+    /// `vigilyx_only_threat_total / vendor_passed_total`.
+    pub vigilyx_only_threat_rate: f64,
+    /// `vendor_only_threat_total / vendor_blocked_total`.
+    pub vendor_only_threat_rate: f64,
+    /// Unconfirmed action divided by all settled observations for this node.
+    #[serde(default)]
+    pub vendor_unconfirmed_rate: f64,
+}
+
+/// One mail/hop behind a clickable delivery-risk counter. The item contains
+/// only list metadata; message bodies and attachment payloads are never part
+/// of this response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeliveryRiskDetailItem {
+    pub chain_id: String,
+    pub session_id: String,
+    pub hop_index: u32,
+    pub server_ip: String,
+    pub observed_at: String,
+    pub threat_level: Option<String>,
+    pub action_evidence: String,
+    pub message_id: Option<String>,
+    pub mail_from: Option<String>,
+    #[serde(default)]
+    pub rcpt_to: Vec<String>,
+    pub subject: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityStats {
+    /// Historical total: one current verdict per qualifying email session.
     pub total_scanned: u64,
+    /// Historical distribution, keyed by `safe` / `low` / `medium` / `high` / `critical`.
     pub level_counts: HashMap<String, u64>,
+    /// High + critical qualifying email verdicts produced in the most recent 24 hours.
     pub high_threats_24h: u64,
+    /// Current IOC library inventory. This is deliberately not an IOC-hit count.
     pub ioc_count: u64,
+    /// Distribution for the most recent 24-hour window. Optional for wire compatibility
+    /// with older API instances during a rolling deployment.
+    #[serde(default)]
+    pub level_counts_24h: HashMap<String, u64>,
+    #[serde(default)]
+    pub analyzed_24h: u64,
+    #[serde(default)]
+    pub analyzed_previous_24h: u64,
+    #[serde(default)]
+    pub high_threats_previous_24h: u64,
+    /// Alert records created in the most recent 24 hours; acknowledgement state is not
+    /// part of this metric.
+    #[serde(default)]
+    pub alerts_24h: u64,
+    /// Messages persisted in the MTA quarantine in the most recent 24 hours. Mirror
+    /// mode naturally reports zero because it cannot intercept mail.
+    #[serde(default)]
+    pub quarantined_24h: u64,
+    /// All retained inbound chains correlated with a stable Message-ID/content key.
+    #[serde(default)]
+    pub first_hop_emails_total: u64,
+    /// All retained first-hop Low/Medium/High/Critical message chains.
+    #[serde(default)]
+    pub first_hop_dangerous_total: u64,
+    /// All retained downstream hops that reused the first-hop verdict.
+    #[serde(default)]
+    pub downstream_reused_hops_total: u64,
+    /// Distinct dangerous chains that were observed again downstream.
+    #[serde(default)]
+    pub dangerous_forwarded_total: u64,
+    /// Dangerous downstream chains divided by first-hop dangerous chains.
+    #[serde(default)]
+    pub dangerous_forwarded_rate: f64,
+    /// Automatically discovered security-node comparisons across all retained
+    /// history. Empty means no settled, comparable delivery nodes.
+    #[serde(default)]
+    pub delivery_node_comparisons: Vec<DeliveryNodeComparisonStats>,
+    /// Terminal mail-server IPs taken from the capture inbound-destination
+    /// configuration. They are shown as delivery endpoints, never vendors.
+    #[serde(default)]
+    pub terminal_mail_servers: Vec<String>,
+    /// PostgreSQL transaction time bounding the complete historical delivery
+    /// snapshot. Detail requests use the same upper bound without a start date.
+    #[serde(default)]
+    pub delivery_stats_as_of: String,
+    /// Required payload marker so old 24-hour cache entries are rejected.
+    pub delivery_stats_scope: String,
 }
 
 // ============================================================================
@@ -847,6 +1574,37 @@ impl IocEntry {
             updated_at: now,
         }
     }
+
+    /// Create a short-lived suspicious reference from a low-to-high verdict.
+    ///
+    /// This is deliberately distinct from the Critical-only automatic IOC
+    /// path: a reference can inform the next message, but must not be treated
+    /// as a confirmed malicious IOC or an allowlist entry.
+    pub fn auto_reference_from_indicator(
+        indicator: String,
+        ioc_type: String,
+        confidence: f64,
+        context: String,
+        attack_type: String,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            indicator,
+            ioc_type,
+            source: "auto_reference".to_string(),
+            verdict: "suspicious".to_string(),
+            confidence,
+            attack_type,
+            first_seen: now,
+            last_seen: now,
+            hit_count: 1,
+            context: Some(context),
+            expires_at: Some(now + chrono::Duration::hours(24)),
+            created_at: now,
+            updated_at: now,
+        }
+    }
 }
 
 // ============================================================================
@@ -920,6 +1678,13 @@ pub struct TrainingSample {
     pub original_threat_level: String,
     pub verdict_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
+    /// Provenance of the label: analyst feedback or an existing engine verdict.
+    /// Empty values remain valid when deserializing exports from older releases.
+    #[serde(default)]
+    pub label_source: String,
+    /// Original engine threat family when the label was derived automatically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_threat_type: Option<String>,
 }
 
 // FeedbackEntry - items
@@ -938,6 +1703,19 @@ pub struct FeedbackEntry {
     pub user_comment: Option<String>,
     pub status: String,
     pub created_at: DateTime<Utc>,
+    /// Explicit analyst severity, independent of the classification label.
+    /// Legacy feedback intentionally has no inferred severity.
+    #[serde(default)]
+    pub corrected_threat_level: Option<String>,
+    /// Immutable, content-free evidence captured for this exact verdict.
+    #[serde(default)]
+    pub evidence_snapshot: serde_json::Value,
+    #[serde(default)]
+    pub snapshot_sha256: Option<String>,
+    #[serde(default)]
+    pub learning_status: String,
+    #[serde(default)]
+    pub learning_reason: Option<String>,
 }
 
 // FeedbackStat - Statistics
@@ -997,6 +1775,153 @@ mod tests {
         assert!(ThreatLevel::Low < ThreatLevel::Medium);
         assert!(ThreatLevel::Medium < ThreatLevel::High);
         assert!(ThreatLevel::High < ThreatLevel::Critical);
+    }
+
+    #[test]
+    fn threat_type_classification_is_separate_from_risk_categories() {
+        let phishing = vec![
+            "credential_link_lure".to_string(),
+            "random_domain".to_string(),
+        ];
+        assert_eq!(classify_threat_type(&phishing), Some(ThreatType::Phishing));
+
+        let anomaly_only = vec![
+            "random_domain".to_string(),
+            "inspection_incomplete".to_string(),
+            "nonsensical_spam".to_string(),
+        ];
+        assert_eq!(classify_threat_type(&anomaly_only), None);
+    }
+
+    #[test]
+    fn explicit_spam_categories_are_mail_classification_not_malicious_threat() {
+        let categories = vec!["gateway_spam_classified".to_string()];
+
+        assert_eq!(
+            classify_email_classification(&categories),
+            EmailClassification::Spam
+        );
+        assert_eq!(classify_threat_type(&categories), None);
+    }
+
+    #[test]
+    fn mailbox_enumeration_category_maps_to_probe_type() {
+        let categories = vec![
+            "mailbox_enumeration_probe".to_string(),
+            "random_domain".to_string(),
+        ];
+
+        assert_eq!(
+            classify_threat_type(&categories),
+            Some(ThreatType::MailboxEnumeration)
+        );
+        assert_eq!(
+            classify_verdict_threat_type(ThreatLevel::Medium, &categories),
+            Some(ThreatType::MailboxEnumeration)
+        );
+    }
+
+    #[test]
+    fn public_threat_type_requires_medium_or_higher_verdict() {
+        let categories = vec!["credential_link_lure".to_string()];
+
+        assert_eq!(
+            classify_verdict_threat_type(ThreatLevel::Safe, &categories),
+            None
+        );
+        assert_eq!(
+            classify_verdict_threat_type(ThreatLevel::Low, &categories),
+            None
+        );
+        assert_eq!(
+            classify_verdict_threat_type(ThreatLevel::Medium, &categories),
+            Some(ThreatType::Phishing)
+        );
+    }
+
+    #[test]
+    fn threat_type_priority_prefers_malware_over_other_findings() {
+        let categories = vec![
+            "phishing".to_string(),
+            "verified_executable_payload".to_string(),
+        ];
+        assert_eq!(
+            classify_threat_type(&categories),
+            Some(ThreatType::MalwareDelivery)
+        );
+    }
+
+    #[test]
+    fn declared_executable_observations_do_not_claim_malware_delivery() {
+        let observations = vec![
+            "dangerous_extension".to_string(),
+            "executable_attachment".to_string(),
+        ];
+        assert_eq!(classify_threat_type(&observations), None);
+
+        assert_eq!(
+            classify_threat_type(&["verified_executable_payload".to_string()]),
+            Some(ThreatType::MalwareDelivery)
+        );
+        assert_eq!(
+            classify_threat_type(&["executable_disguise".to_string()]),
+            Some(ThreatType::MalwareDelivery)
+        );
+    }
+
+    #[test]
+    fn sextortion_category_maps_to_social_engineering() {
+        assert_eq!(
+            classify_threat_type(&["sextortion".to_string()]),
+            Some(ThreatType::SocialEngineering)
+        );
+    }
+
+    #[test]
+    fn subsidy_fraud_category_maps_to_social_engineering() {
+        assert_eq!(
+            classify_threat_type(&["subsidy_fraud".to_string()]),
+            Some(ThreatType::SocialEngineering)
+        );
+    }
+
+    #[test]
+    fn dlp_categories_do_not_create_email_threat_type() {
+        for category in ["data_leak", "dlp", "sensitive_data_exfiltration"] {
+            assert_eq!(
+                classify_threat_type(&[category.to_string()]),
+                None,
+                "DLP category must remain on the data-security axis: {category}"
+            );
+        }
+    }
+
+    #[test]
+    fn actionable_legacy_aliases_map_to_primary_families() {
+        for category in [
+            "crypto_wallet",
+            "urgency_financial_combo",
+            "obfuscated_domain_lure",
+            "extortion_threat",
+        ] {
+            assert_eq!(
+                classify_threat_type(&[category.to_string()]),
+                Some(ThreatType::SocialEngineering),
+                "missing social-engineering mapping for {category}"
+            );
+        }
+        for category in [
+            "www_impersonation",
+            "domain_impersonation_brand_typosquatting",
+            "gateway_unwrapped_risky_target",
+            "double_encoded_payload",
+        ] {
+            assert_eq!(
+                classify_threat_type(&[category.to_string()]),
+                Some(ThreatType::Phishing),
+                "missing phishing mapping for {category}"
+            );
+        }
     }
 
     #[test]
@@ -1095,6 +2020,53 @@ mod tests {
     }
 
     #[test]
+    fn incomplete_inspection_removes_safe_certainty_but_keeps_threat_evidence() {
+        let mut safe = ModuleResult::safe_analyzed(
+            "content_scan",
+            "Content scan",
+            Pillar::Content,
+            "no suspicious content",
+            1,
+        );
+        safe.mark_inspection_incomplete("body was not retained");
+        assert!(safe.effective_bpa().is_vacuous());
+        assert!(safe.confidence <= 0.50);
+        assert!(
+            safe.categories
+                .iter()
+                .any(|c| c == "inspection_coverage_incomplete")
+        );
+        assert!(safe.summary.contains("not a safety claim"));
+
+        let mut threat = ModuleResult::safe_analyzed(
+            "identity_anomaly",
+            "Identity anomaly",
+            Pillar::Package,
+            "random sender domain",
+            1,
+        );
+        threat.threat_level = ThreatLevel::Low;
+        threat.bpa = Some(Bpa::from_score_confidence(0.25, 0.70));
+        let original_confidence = threat.confidence;
+        let original_bpa = threat.effective_bpa();
+        threat.mark_inspection_incomplete("body was not retained");
+        assert!(threat.effective_bpa().b > 0.0);
+        assert_eq!(threat.confidence, original_confidence);
+        assert_eq!(threat.effective_bpa(), original_bpa);
+        assert!(threat.summary.contains("threat evidence retained"));
+
+        // Legacy native modules derive their BPA from confidence at fusion
+        // time; preserving only an explicit BPA would still weaken these.
+        threat.threat_level = ThreatLevel::High;
+        threat.details = serde_json::json!({ "score": 0.90 });
+        threat.bpa = None;
+        let native_bpa = threat.effective_bpa();
+        threat.mark_inspection_incomplete("unrelated MIME bytes were omitted");
+        assert_eq!(threat.confidence, original_confidence);
+        assert_eq!(threat.effective_bpa(), native_bpa);
+    }
+
+    #[test]
     fn test_feedback_type_to_label_valid_types() {
         assert_eq!(
             feedback_type_to_label("legitimate"),
@@ -1136,6 +2108,26 @@ mod tests {
     }
 
     #[test]
+    fn legacy_verdict_does_not_claim_complete_inspection() {
+        let raw = serde_json::json!({
+            "id": Uuid::new_v4(), "session_id": Uuid::new_v4(),
+            "threat_level": "safe", "confidence": 1.0,
+            "categories": [], "summary": "legacy result", "pillar_scores": {},
+            "modules_run": 1, "modules_flagged": 0, "total_duration_ms": 1,
+            "created_at": Utc::now()
+        });
+        let verdict: SecurityVerdict = serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(verdict.inspection_coverage, InspectionCoverage::Unknown);
+        assert!(!verdict.has_incomplete_inspection());
+        let mut incomplete = raw;
+        incomplete["categories"] = serde_json::json!(["inspection_coverage_incomplete"]);
+        let verdict: SecurityVerdict = serde_json::from_value(incomplete).unwrap();
+        assert_eq!(verdict.inspection_coverage, InspectionCoverage::Unknown);
+        assert!(verdict.has_incomplete_inspection());
+        assert_eq!(verdict.threat_level, ThreatLevel::Safe);
+    }
+
+    #[test]
     fn test_training_sample_serde_roundtrip() {
         let sample = TrainingSample {
             id: Uuid::new_v4(),
@@ -1151,6 +2143,8 @@ mod tests {
             original_threat_level: "high".to_string(),
             verdict_id: Some(Uuid::new_v4()),
             created_at: Utc::now(),
+            label_source: "analyst_feedback".to_string(),
+            source_threat_type: None,
         };
         let json = serde_json::to_string(&sample).expect("serialize");
         let deser: TrainingSample = serde_json::from_str(&json).expect("deserialize");
@@ -1181,6 +2175,21 @@ pub enum VerdictDisposition {
 }
 
 impl VerdictDisposition {
+    /// Decide delivery last; omitted inspection does not manufacture threat.
+    pub fn from_threat_and_coverage(
+        level: ThreatLevel,
+        inspection_incomplete: bool,
+        quarantine_threshold: ThreatLevel,
+        reject_threshold: ThreatLevel,
+    ) -> Self {
+        let disposition = Self::from_threat_level(level, quarantine_threshold, reject_threshold);
+        if inspection_incomplete && matches!(disposition, Self::Accept) {
+            Self::Quarantine
+        } else {
+            disposition
+        }
+    }
+
     pub fn from_threat_level(
         level: ThreatLevel,
         quarantine_threshold: ThreatLevel,
@@ -1406,6 +2415,28 @@ impl Default for BulkMailingConfig {
     }
 }
 
+impl BulkMailingConfig {
+    /// Validate operator-supplied scene settings before they reach the
+    /// background detector.  The upper bounds keep a malformed rule from
+    /// turning a periodic scan into an unbounded historical query.
+    pub fn validate(&self) -> Result<(), String> {
+        validate_scene_window(self.time_window_hours)?;
+        validate_positive_threshold("min_emails", self.min_emails, 1_000_000)?;
+        validate_positive_threshold(
+            "min_unique_internal_recipients",
+            self.min_unique_internal_recipients,
+            1_000_000,
+        )?;
+        validate_positive_threshold(
+            "auto_block_recipient_threshold",
+            self.auto_block_recipient_threshold,
+            1_000_000,
+        )?;
+        validate_scene_duration(self.auto_block_duration_hours)?;
+        Ok(())
+    }
+}
+
 /// Bounce-harvest detection configuration (deserialized from JSON).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BounceHarvestConfig {
@@ -1415,6 +2446,9 @@ pub struct BounceHarvestConfig {
     pub min_bounces: i64,
     #[serde(default = "default_5")]
     pub min_unique_targets: i64,
+    /// Optional low-volume reported-pattern observation; never auto-blocks.
+    #[serde(default)]
+    pub sparse_report_enabled: bool,
     #[serde(default)]
     pub auto_block_enabled: bool,
     #[serde(default = "default_20")]
@@ -1429,10 +2463,26 @@ impl Default for BounceHarvestConfig {
             time_window_hours: 24,
             min_bounces: 10,
             min_unique_targets: 5,
+            sparse_report_enabled: false,
             auto_block_enabled: false,
             auto_block_bounce_threshold: 20,
             auto_block_duration_hours: 72,
         }
+    }
+}
+
+impl BounceHarvestConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_scene_window(self.time_window_hours)?;
+        validate_positive_threshold("min_bounces", self.min_bounces, 1_000_000)?;
+        validate_positive_threshold("min_unique_targets", self.min_unique_targets, 1_000_000)?;
+        validate_positive_threshold(
+            "auto_block_bounce_threshold",
+            self.auto_block_bounce_threshold,
+            1_000_000,
+        )?;
+        validate_scene_duration(self.auto_block_duration_hours)?;
+        Ok(())
     }
 }
 
@@ -1472,6 +2522,45 @@ impl Default for InternalDomainImpersonationConfig {
     }
 }
 
+impl InternalDomainImpersonationConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_scene_window(self.time_window_hours)?;
+        validate_positive_threshold("min_emails", self.min_emails, 1_000_000)?;
+        validate_scene_duration(self.auto_block_duration_hours)?;
+        validate_positive_threshold(
+            "auto_block_min_emails",
+            self.auto_block_min_emails,
+            1_000_000,
+        )?;
+        Ok(())
+    }
+}
+
+fn validate_scene_window(hours: i64) -> Result<(), String> {
+    if !(1..=24 * 30).contains(&hours) {
+        return Err(format!(
+            "time_window_hours must be between 1 and 720, got {hours}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_scene_duration(hours: i64) -> Result<(), String> {
+    if !(1..=24 * 365).contains(&hours) {
+        return Err(format!(
+            "auto_block_duration_hours must be between 1 and 8760, got {hours}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_positive_threshold(name: &str, value: i64, max: i64) -> Result<(), String> {
+    if !(1..=max).contains(&value) {
+        return Err(format!("{name} must be between 1 and {max}, got {value}"));
+    }
+    Ok(())
+}
+
 fn default_true() -> bool {
     true
 }
@@ -1495,4 +2584,56 @@ fn default_48() -> i64 {
 }
 fn default_72() -> i64 {
     72
+}
+
+#[cfg(test)]
+mod threat_scene_config_tests {
+    use super::{BounceHarvestConfig, BulkMailingConfig, InternalDomainImpersonationConfig};
+
+    #[test]
+    fn default_scene_configs_are_valid() {
+        assert!(BulkMailingConfig::default().validate().is_ok());
+        assert!(BounceHarvestConfig::default().validate().is_ok());
+        assert!(
+            InternalDomainImpersonationConfig::default()
+                .validate()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn scene_configs_reject_zero_thresholds() {
+        let bulk = BulkMailingConfig {
+            min_emails: 0,
+            ..Default::default()
+        };
+        assert!(bulk.validate().is_err());
+
+        let bounce = BounceHarvestConfig {
+            auto_block_bounce_threshold: 0,
+            ..Default::default()
+        };
+        assert!(bounce.validate().is_err());
+
+        let impersonation = InternalDomainImpersonationConfig {
+            auto_block_min_emails: 0,
+            ..Default::default()
+        };
+        assert!(impersonation.validate().is_err());
+    }
+
+    #[test]
+    fn scene_configs_reject_unbounded_windows_and_durations() {
+        let bulk = BulkMailingConfig {
+            time_window_hours: 0,
+            ..Default::default()
+        };
+        assert!(bulk.validate().is_err());
+
+        let bounce = BounceHarvestConfig {
+            auto_block_duration_hours: 24 * 365 + 1,
+            ..Default::default()
+        };
+        assert!(bounce.validate().is_err());
+    }
 }

@@ -1,0 +1,10 @@
+From: =?utf-8?B?57uf5LiA6K6k6K+B?= <sso@sso‑gw.example>
+To: staff@corp.internal
+Date: Thu, 10 Sep 2026 08:13:00 +0800
+Message-ID: <0003-b18@synth.example>
+Subject: SSO 网关升级通知
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+SSO 网关升级后需重新激活会话：
+https://xn--sso-gw-9g9b.example/activate

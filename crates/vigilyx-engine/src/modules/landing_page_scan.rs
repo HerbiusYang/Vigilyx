@@ -10,6 +10,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::future::join_all;
+use vigilyx_core::models::EmailLinkExtractionSource;
 
 use super::common::{
     extract_domain_from_url, is_probable_cloud_asset_url, is_probable_opaque_mail_callback_url,
@@ -193,8 +194,9 @@ fn candidate_priority(url: &str, signals: &LureSignals) -> u8 {
 fn collect_candidate_urls(ctx: &SecurityContext, signals: &LureSignals) -> Vec<String> {
     let mut ranked = Vec::new();
     let mut seen = std::collections::HashSet::new();
+    let links = ctx.analysis_links();
 
-    for link in &ctx.session.content.links {
+    for link in &links {
         let Some(url) = unwrap_candidate_url(&link.url) else {
             continue;
         };
@@ -217,6 +219,72 @@ fn collect_candidate_urls(ctx: &SecurityContext, signals: &LureSignals) -> Vec<S
         .take(MAX_CANDIDATE_URLS)
         .map(|(_, url)| url)
         .collect()
+}
+
+fn candidate_link_provenance(
+    ctx: &SecurityContext,
+    candidate_url: &str,
+) -> (String, EmailLinkExtractionSource) {
+    ctx.analysis_link_observations()
+        .into_iter()
+        .find_map(|observation| {
+            (unwrap_candidate_url(&observation.link.url).as_deref() == Some(candidate_url))
+                .then_some((observation.link.url, observation.extraction_source))
+        })
+        .unwrap_or_else(|| {
+            (
+                candidate_url.to_string(),
+                EmailLinkExtractionSource::Unknown,
+            )
+        })
+}
+
+fn fetch_transport_status(error: &str) -> &'static str {
+    let lower = error.to_ascii_lowercase();
+    if ["blocked", "private", "loopback", "reserved", "ssrf"]
+        .iter()
+        .any(|marker| lower.contains(marker))
+    {
+        "blocked"
+    } else {
+        "failed"
+    }
+}
+
+fn link_source_part(source: EmailLinkExtractionSource) -> &'static str {
+    match source {
+        EmailLinkExtractionSource::HtmlHref | EmailLinkExtractionSource::HtmlText => "html",
+        EmailLinkExtractionSource::PlainText => "plain_text",
+        EmailLinkExtractionSource::Qr => "qr",
+        EmailLinkExtractionSource::Attachment => "attachment",
+        EmailLinkExtractionSource::Unknown => "unknown",
+    }
+}
+
+fn attach_landing_page_coverage(
+    result: &mut ModuleResult,
+    score: f64,
+    attempted_pages: usize,
+    fetched_pages: usize,
+    candidate_urls: &[String],
+    link_observations: Vec<serde_json::Value>,
+    fetch_errors: Vec<String>,
+) {
+    let failed_pages = fetch_errors.len();
+    result.details = serde_json::json!({
+        "score": score,
+        "attempted_pages": attempted_pages,
+        "fetched_pages": fetched_pages,
+        "candidate_urls": candidate_urls,
+        "landing_page_links": link_observations,
+        "fetch_errors": fetch_errors,
+    });
+    if failed_pages > 0 {
+        result.mark_inspection_incomplete(&format!(
+            "{} of {} landing-page fetches failed or were blocked",
+            failed_pages, attempted_pages
+        ));
+    }
 }
 
 fn assess_fetched_page(
@@ -334,16 +402,15 @@ impl SecurityModule for LandingPageScanModule {
     }
 
     fn should_run(&self, ctx: &SecurityContext) -> bool {
-        if ctx.session.content.links.is_empty() {
+        let links = ctx.analysis_links();
+        if links.is_empty() {
             return false;
         }
         let signals = derive_lure_signals(ctx, &self.phishing_keywords);
         if signals.keyword_context {
             return true;
         }
-        ctx.session
-            .content
-            .links
+        links
             .iter()
             .filter_map(|link| unwrap_candidate_url(&link.url))
             .any(|url| candidate_priority(&url, &signals) >= 2)
@@ -373,17 +440,52 @@ impl SecurityModule for LandingPageScanModule {
         let mut total_score = 0.0_f64;
         let mut categories = Vec::new();
         let mut evidence = Vec::new();
+        let attempted_pages = candidates.len();
         let mut fetched_pages = 0usize;
         let mut fetch_errors = Vec::new();
+        let mut link_observations = Vec::new();
 
         let fetches = join_all(candidates.iter().map(|url| fetcher.fetch(url))).await;
         for (url, fetch) in candidates.iter().zip(fetches) {
-            fetched_pages += 1;
+            let (original_url, extraction_source) = candidate_link_provenance(ctx, url);
             if let Some(error) = fetch.error.as_ref() {
                 fetch_errors.push(format!("{}: {}", url, error));
+                link_observations.push(serde_json::json!({
+                    "original_url": original_url,
+                    "effective_url": &fetch.final_url,
+                    "extraction_source": extraction_source.as_str(),
+                    "source_part": link_source_part(extraction_source),
+                    "actor_role": "unknown",
+                    "target_role": "unknown",
+                    "speech_act": "unknown",
+                    "polarity": "unknown",
+                    "quote_or_forward_status": "unknown",
+                    "transport_status": fetch_transport_status(error),
+                    "content_status": "not_observed",
+                    "ownership_status": "unknown",
+                    "verification_status": "coverage_incomplete",
+                    "coverage_reason": error,
+                }));
                 continue;
             }
 
+            fetched_pages += 1;
+            link_observations.push(serde_json::json!({
+                "original_url": original_url,
+                "effective_url": &fetch.final_url,
+                "extraction_source": extraction_source.as_str(),
+                "source_part": link_source_part(extraction_source),
+                "actor_role": "unknown",
+                "target_role": "unknown",
+                "speech_act": "unknown",
+                "polarity": "unknown",
+                "quote_or_forward_status": "unknown",
+                "transport_status": "reachable",
+                "content_status": "observed",
+                "ownership_status": "unproven",
+                "verification_status": "content_observed_ownership_unproven",
+                "status_code": fetch.status_code,
+            }));
             let assessment = assess_fetched_page(url, &fetch, &signals);
             if assessment.score <= 0.0 {
                 continue;
@@ -399,43 +501,49 @@ impl SecurityModule for LandingPageScanModule {
 
         let duration_ms = start.elapsed().as_millis() as u64;
         let threat_level = ThreatLevel::from_score(total_score);
-        if threat_level == ThreatLevel::Safe {
-            return Ok(ModuleResult::safe_analyzed(
+        let mut result = if threat_level == ThreatLevel::Safe {
+            ModuleResult::safe_analyzed(
                 &self.meta.id,
                 &self.meta.name,
                 self.meta.pillar,
                 &format!(
-                    "Fetched {} landing page(s), no gated phishing indicators found",
-                    fetched_pages
+                    "Fetched {} of {} landing page(s), no gated phishing indicators found",
+                    fetched_pages, attempted_pages
                 ),
                 duration_ms,
-            ));
-        }
+            )
+        } else {
+            ModuleResult {
+                module_id: self.meta.id.clone(),
+                module_name: self.meta.name.clone(),
+                pillar: self.meta.pillar,
+                threat_level,
+                confidence: 0.82,
+                categories,
+                summary: format!(
+                    "Landing-page scan found {} findings across {} fetched page(s)",
+                    evidence.len(),
+                    fetched_pages
+                ),
+                evidence,
+                details: serde_json::Value::Null,
+                duration_ms,
+                analyzed_at: Utc::now(),
+                bpa: None,
+                engine_id: None,
+            }
+        };
 
-        Ok(ModuleResult {
-            module_id: self.meta.id.clone(),
-            module_name: self.meta.name.clone(),
-            pillar: self.meta.pillar,
-            threat_level,
-            confidence: 0.82,
-            categories,
-            summary: format!(
-                "Landing-page scan found {} findings across {} fetched page(s)",
-                evidence.len(),
-                fetched_pages
-            ),
-            evidence,
-            details: serde_json::json!({
-                "score": total_score,
-                "fetched_pages": fetched_pages,
-                "candidate_urls": candidates,
-                "fetch_errors": fetch_errors,
-            }),
-            duration_ms,
-            analyzed_at: Utc::now(),
-            bpa: None,
-            engine_id: None,
-        })
+        attach_landing_page_coverage(
+            &mut result,
+            total_score,
+            attempted_pages,
+            fetched_pages,
+            &candidates,
+            link_observations,
+            fetch_errors,
+        );
+        Ok(result)
     }
 }
 
@@ -548,6 +656,42 @@ mod tests {
 
         let assessment = assess_fetched_page("https://example.com/news", &fetch, &signals);
         assert_eq!(assessment.score, 0.0);
+    }
+
+    #[test]
+    fn failed_landing_fetch_is_visible_as_coverage_not_clean_analysis() {
+        let mut result = ModuleResult::safe_analyzed(
+            "landing_page_scan",
+            "Landing Page Scan",
+            Pillar::Link,
+            "no indicators",
+            1,
+        );
+        attach_landing_page_coverage(
+            &mut result,
+            0.0,
+            1,
+            0,
+            &["https://example.invalid/login".to_string()],
+            vec![serde_json::json!({
+                "transport_status": "failed",
+                "content_status": "not_observed",
+                "ownership_status": "unknown",
+            })],
+            vec!["https://example.invalid/login: timeout".to_string()],
+        );
+
+        assert!(
+            result
+                .categories
+                .contains(&"inspection_coverage_incomplete".to_string())
+        );
+        assert_eq!(
+            result.details["fetch_errors"].as_array().map(Vec::len),
+            Some(1)
+        );
+        assert!(result.bpa.as_ref().is_some_and(|bpa| bpa.u > 0.99));
+        assert!(result.summary.contains("not a safety claim"));
     }
 
     #[test]

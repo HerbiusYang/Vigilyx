@@ -1,0 +1,10 @@
+From: =?utf-8?B?5Lit6YCa5b+r6YCS?= <notify@zto-delivery.example>
+To: me@personal.example
+Date: Sun, 06 Sep 2026 09:15:00 +0800
+Message-ID: <0005-b14@synth.example>
+Subject: 包裹派送异常，请确认地址
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body style='font-family:sans-serif'><p>您的包裹 <b>7831-6642-0091</b> 派送失败（地址不详）。</p><p><a href='https://zto-readdress.example.info/fix' style='color:#009fe8'>修改派送地址（需支付 1 元信息费）</a></p><p style='font-size:12px;color:#999'>两日内未确认将退回发件人。</p></body></html>

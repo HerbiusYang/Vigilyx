@@ -1,0 +1,78 @@
+From: Boeing Supplier Quality <sqa@boeing.example>
+To: quality@corp.internal
+Cc: plant.mgr@corp.internal, legal@corp.internal, cto@corp.internal
+Date: Wed, 04 Nov 2026 06:00:00 -0800
+Message-ID: <0640-b69@synth.example>
+Subject: ASLAMO QUALITY FINDINGS — Supplier 88-2241 — Process Capability Decline
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Quality Team, Plant Manager, Legal, CTO:
+
+Boeing SQA has identified a process capability decline at
+your Hangzhou manufacturing facility.
+
+Audit Details:
+  SQA Audit Number: SQA-8842-2026-AS1
+  Supplier Code: 88-2241-CERT
+  Products: Gateway Enclosures (BCA-8842-7 series)
+  Audit Type: AS9100D Process Surveillance (unannounced)
+  Audit Date: October 28-29, 2026
+  Finding: ASLAMO Level 1 — Airworthiness affecting
+  Parts Affected: 18,422 units (2026 YTD)
+
+Finding Details:
+  CanEl (Sealing): 0.82 (spec: >= 1.33)
+  PPM Defects: 1,840 (spec: < 500)
+  Escape Rate: 0.34% (spec: < 0.1%)
+  Root Cause: Operators using obsolete BSS-7420 Rev C
+
+Required Response:
+
+  1. Submit 8D Report (Root Cause Analysis):
+     Through your Boeing Procurement contact
+     (same channel as regular supplier communications)
+
+  2. Implement containment immediately:
+     Quarantine affected lots
+     100% inspection of in-transit parts
+
+  3. Corrective action plan:
+     Retrain operators to BSS-7420 Rev D
+     Re-validate process capability (CanEl >= 1.33)
+
+  Important Security Notes:
+  Boeing will NEVER:
+  - Charge a "Corrective Action Contribution" payment
+  - Create "Boeing Global Partners Quality Services LLC"
+    for quality cost collection
+  - Request manufacturing documentation through
+    email portals
+  - Ask for PFMEA, control plans, or operator training
+    records through online links
+  - Offer a "Chinese SQA channel"
+
+  Boeing's actual quality process:
+  - ASLAMO findings require an 8D report submitted
+    through your Boeing Procurement contact
+  - Quality costs are NEGOTIATED between Boeing
+    Procurement and your sales team — never demanded
+    via email with bank details
+  - Manufacturing documentation (PFMEA, control plans)
+    is shared through Boeing's secure Exostar collaboration
+    workspace, NOT through email portal links
+  - You have 60 days to respond (not 16 days)
+
+  If you receive an email requesting $249,000 payment
+  to a "Boeing Global Partners" entity or asking for
+  manufacturing documentation upload through a portal,
+  it is a phishing attempt targeting aerospace suppliers.
+
+Your Rights:
+  60 days to respond to ASLAMO findings (not 16 days)
+  Quality costs are negotiated, not unilaterally demanded
+  Documentation shared through secure Exostar workspace
+
+The Boeing Company | Supplier Quality Assurance
+P.O. Box 3707, Seattle, WA 98124-2207
+You are receiving this because you are the quality contact for Supplier 88-2241-CERT.

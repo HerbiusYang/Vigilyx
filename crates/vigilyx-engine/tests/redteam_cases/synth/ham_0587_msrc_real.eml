@@ -1,0 +1,80 @@
+From: 微软安全响应中心(MSRC) <msrc@microsoft.example>
+To: soc@corp.internal
+Cc: CISO <ciso@corp.internal>
+Date: Sat, 17 Oct 2026 14:20:00 +0800
+Message-ID: <0587-b51@synth.example>
+Subject: Re: [MSRC-2026-4471] Azure AD异常登录活动升级——建议立即启动联合威胁狩猎
+In-Reply-To: <soc-ticket-8842@corp.internal>
+References: <soc-ticket-8842@corp.internal>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+SOC 团队、CISO：
+
+关于贵司 Azure AD 租户的异常登录活动，我方监测已升级至 P2 级别。建议贵司 SOC 团队立即与我们启动联合威胁狩猎。
+
+一、事件时间线
+  10/14 03:22   Impossible Travel 检测（杭州 + 圣保罗，3分钟内）
+  10/14 03:24   MFA 挑战通过
+  10/14 03:25   OAuth 同意：第三方应用 "ProductivitySuite Pro"
+                获得 Mail.Read + User.Read.All
+  10/14 14:30   贵司 SOC 提交工单（#8842）
+  10/15 08:00   我方冻结该应用并撤销同意
+  10/16 22:41   第二个应用 "TeamsBoost" 被策略阻止
+  10/17 06:00   密码喷射尝试（16 个账号，均失败）
+
+二、当前风险等级：P2（高）
+
+攻击者已获得：Mail.Read + User.Read.All
+尚未获得：邮件发送、文件写入、管理员权限
+
+攻击者可能持有的持久化：
+  OAuth 同意撤销后，已颁发的 refresh token 可能仍有效（最长90天）
+
+三、建议立即执行的操作
+
+  1. 撤销所有 OAuth refresh token：
+     Connect-MsolService
+     Get-MsolUser -All | Revoke-MsolUserAllRefreshToken
+
+  2. 重置受影响账号密码（16个目标 + 1个已确认妥协）
+
+  3. 启动联合威胁狩猎
+
+四、联合威胁狩猎
+
+  我方安全团队可通过 Microsoft 365 Defender 与贵司 SOC 协作：
+
+  操作方式：请贵司全局管理员在浏览器中手动打开
+  portal.azure.com → Microsoft Defender for Cloud → Settings →
+  Partner Collaboration → Add MSRC
+
+  或在 Azure Portal 中将以下服务账号添加为"安全读取者"：
+  msrc-hunt@msrc.onmicrosoft.com
+
+  重要安全提醒：
+  MSRC 在任何情况下都不会：
+  - 通过邮件发送设备码、授权链接或 OAuth URL
+  - 要求贵司管理员通过邮件中的链接完成任何授权
+  - 要求使用全局管理员凭据通过非Azure Portal渠道登录
+
+  所有协作配置均在 Azure Portal 内完成（贵司管理员自行操作）。
+  如收到包含"设备码"或"授权链接"的邮件，即使声称来自微软，
+  也请视为钓鱼并报告至 msrc@microsoft.example。
+
+五、时间紧迫性
+
+攻击者已持有 Mail.Read 权限超过72小时。建议尽快完成上述操作。
+
+六、联系方式
+
+  MSRC 亚太区值班经理：David Wong
+  电话：+86 10-5917-****（可通过 microsoft.com/msrc 核实）
+  加密邮箱：msrc-pgp@microsoft.example
+
+--
+Microsoft Security Response Center (MSRC)
+msrc@microsoft.example
+
+(You are receiving this because your organization has a Premier Support
+contract with Microsoft and has opted into security incident notifications.)

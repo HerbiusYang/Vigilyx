@@ -1,0 +1,19 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev51@partner.example>
+Subject: 系统通知
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+您好，详情见附件说明文件。--BS
+Content-Type: text/plain
+Content-Disposition: attachment; filename="您的账户存在异常登录请立即验证.txt"
+Content-Transfer-Encoding: base64
+
+5pys5paH5Lu25Li657O757uf6Ieq5Yqo55Sf5oiQ77yM5peg5YW25LuW5YaF5a6544CC
+--BS--
+

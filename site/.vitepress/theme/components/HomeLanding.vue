@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
+import { withBase } from "vitepress";
 import SharePanel from "./SharePanel.vue";
 import HeroBackdrop from "./HeroBackdrop.vue";
 
@@ -24,6 +25,7 @@ type LandingCopy = {
       title: string;
       stages: Array<{ name: string; verdict: "safe" | "suspicious" | "malicious" | "clean" }>;
     };
+    ribbon: string[];
   };
   deployment: {
     kicker: string;
@@ -130,21 +132,21 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
     hero: {
       badge: "Open source · Rust core · Mirror + Inline",
       stats: [
-        { value: "D-S + Murphy", label: "evidence fusion" },
-        { value: "5-state HMM", label: "BEC phase tracking" },
-        { value: "Hawkes", label: "self-exciting time series" },
+        { value: "Rust", label: "inspection without waiting on a model" },
+        { value: "Semantic", label: "intent, not just keywords" },
+        { value: "Current", label: "QR, AiTM, callback, BEC" },
       ],
       terminal: {
         title: "verdict.jsonl",
         lines: [
-          { kind: "muted", text: "# live verdict stream — mirror mode" },
-          { kind: "prompt", text: "vigilyx tail --stream verdicts" },
+          { kind: "muted", text: "# illustrative verdicts — mirror mode" },
+          { kind: "prompt", text: "# console/API output illustration" },
           { kind: "out", text: "[SMTP] mail-01 → alice@corp · subject: \"Invoice 2026-Q1\"" },
-          { kind: "ok", text: "verdict: safe    score 0.08  modules 0/15  dlp ok" },
+          { kind: "ok", text: "verdict: safe    score 0.08  modules 0/25  dlp ok" },
           { kind: "out", text: "[SMTP] mx-2 → bob@corp · subject: \"Account verification\"" },
-          { kind: "warn", text: "verdict: medium  score 0.52  modules 4/15  nlp phishing=0.71" },
+          { kind: "warn", text: "verdict: medium  score 0.52  modules 4/25  nlp phishing=0.71" },
           { kind: "bad", text: "verdict: high    score 0.81  ioc=sender_ip content=urgency yara=phish_01" },
-          { kind: "muted", text: "# action: quarantined · session replayable · explain trail saved" },
+          { kind: "muted", text: "# action: alert/audit · mirror mode cannot quarantine" },
         ],
       },
       pipeline: {
@@ -159,6 +161,14 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           { name: "Fuse", verdict: "malicious" },
         ],
       },
+      ribbon: [
+        "QR phishing",
+        "HTML smuggling",
+        "AiTM sign-in",
+        "Callback scam",
+        "BEC payment change",
+        "Semantic intent",
+      ],
     },
     deployment: {
       kicker: "Two independent deployment shapes",
@@ -170,7 +180,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           label: "Mirror deployment",
           title: "Passive analysis next to the mail system",
           body:
-            "Vigilyx receives a copy of the traffic from a mirror / SPAN port. It reconstructs SMTP, POP3, IMAP, and webmail sessions and produces verdicts after delivery. The mail path is never touched, so the detection stack can never block mail.",
+            "Vigilyx receives mirrored traffic and reconstructs inspectable SMTP and configured HTTP/Webmail content. POP3/IMAP currently provide metadata and coverage signals. Encrypted or incomplete payloads remain coverage gaps; mirror mode alerts and audits after delivery.",
           points: [
             "Zero-touch — no change to MX records or SMTP routing",
             "Verdicts are advisory: alert, audit, replay, tune",
@@ -182,7 +192,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           label: "MTA deployment",
           title: "Inline SMTP proxy that enforces before delivery",
           body:
-            "Vigilyx runs as an SMTP relay in front of the final mail server. Every message goes through it, is inspected synchronously, and is then accepted, quarantined, or rejected before delivery. Typical inline verdict <2s, with configurable fail-open.",
+            "Vigilyx relays SMTP through an embedded engine. Policy can relay, quarantine, reject, or return a temporary failure. The default inline timeout is 8 seconds; fail-open is optional and outbound DLP still applies to relay candidates.",
           points: [
             "Enforcing — mail actually does not reach users until Vigilyx decides",
             "Accept / quarantine / reject, with fail-open safety valve",
@@ -194,9 +204,9 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
     },
     flow: {
       kicker: "Detection flow",
-      title: "Structured to be tuned like an engineering system, not sold like a black box.",
+      title: "See the threat, see why, and act before the mailbox does.",
       body:
-        "The product surface is intentionally opinionated: collect enough signal, keep the fusion explainable, and make the response layer auditable. That makes it easier to reduce false positives without losing the trail.",
+        "Mail is parsed, checked across headers, links, attachments, and language, then fused into one explainable verdict. Analysts get the evidence. Users get a faster decision.",
       cards: [
         {
           step: "01",
@@ -219,93 +229,93 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
       ],
     },
     product: {
-      kicker: "Product shape",
-      title: "More than a mailbox list with a risk badge.",
+      kicker: "Why teams use it",
+      title: "Fast to run. Clear to operate. Harder to slip a modern lure past.",
       body:
-        "The current project already covers the pieces teams usually end up stitching together manually: parsers, verdict fusion, content controls, operational workflows, and a UI that can actually be used for review.",
+        "The same engine watches passive traffic or stops mail inline. Analysts review evidence in one console instead of stitching parsers, scanners, and a quarantine tool together.",
       cards: [
         {
-          value: "20",
-          label: "default pipeline entries",
-          body: "Detection stages for content, identity, link, attachment, YARA, DLP, and verdicting.",
+          value: "Fast",
+          label: "Rust on the hot path",
+          body: "Parsing, detection, and the inline decision stay in one runtime, so the gateway does not wait on an external model to have an opinion.",
+          icon: "rust",
+        },
+        {
+          value: "Clear",
+          label: "a console for the verdict",
+          body: "Each check names what it saw. Quarantine, release, rescan, and audit stay on the same message.",
           icon: "pipeline",
         },
         {
-          value: "30",
-          label: "DLP patterns",
-          body: "Data-security inspection paths for sensitive content and suspicious transfer behavior.",
+          value: "Current",
+          label: "threats in use now",
+          body: "QR codes, HTML smuggling, AiTM sign-in proxies, callback scams, and BEC payment changes, not only yesterday's attachment signatures.",
           icon: "shield",
         },
         {
-          value: "2",
-          label: "deployment modes",
-          body: "Two independent shapes — mirror deployment for passive visibility, MTA deployment for inline enforcement. Pick one per environment.",
+          value: "Semantic",
+          label: "what the mail is asking",
+          body: "Urgency, payment, and identity language are read as intent. Rules still run if the semantic model is off.",
           icon: "deploy",
-        },
-        {
-          value: "Rust",
-          label: "core runtime",
-          body: "Parsing, detection, API, sniffer, and MTA code paths stay in one performance-oriented stack.",
-          icon: "rust",
         },
       ],
     },
     ai: {
-      kicker: "AI support",
-      title: "Use AI as an extra lens, not as a single point of failure.",
+      kicker: "Semantic threats",
+      title: "Catch the ask, not only the signature.",
       body:
-        "Vigilyx can layer semantic and NLP analysis on top of deterministic detection, but the core pipeline still works when AI is disabled. That keeps operations stable while giving analysts another review lens when it is useful.",
+        "A lot of current mail is plain language: a vendor changing bank details, a deadline, a login that looks routine. Semantic review reads that intent and sits beside links, identity, and attachments.",
       cards: [
         {
-          title: "AI-assisted semantic review",
-          body: "Optional NLP analysis for phishing semantics, intent, and persuasion patterns — runs on pure CPU hosts with no GPU required, and can optionally call external LLMs (Claude / OpenAI) for analyst review.",
+          title: "Intent in the message",
+          body: "Payment pressure, credential requests, and urgency are scored as meaning. A familiar template is not a free pass.",
         },
         {
-          title: "Core pipeline still stands alone",
-          body: "Parsing, link checks, YARA, DLP, identity analysis, and verdict fusion do not depend on any single AI model.",
+          title: "Optional, not required",
+          body: "An on-box intent model and external NLP can be turned on for review. Headers, links, YARA, and DLP still decide when they are off.",
         },
         {
-          title: "Safer for production operations",
-          body: "Turn AI on where it improves analyst productivity, not because the product would stop making decisions without it.",
+          title: "Evidence you can read",
+          body: "The verdict says which check fired. Analysts can rescan, release, or keep the message without guessing at a single score.",
         },
       ],
     },
     highlights: {
-      kicker: "Under the hood",
-      title: "Four things most email-security products do not actually have.",
+      kicker: "What it catches",
+      title: "The attacks that no longer look like a bad attachment.",
       body:
-        "These are not marketing bullet points — each one is implemented in the repository and you can read it. We are only listing the detection surfaces where Vigilyx is meaningfully different from a typical mail gateway, not the table-stakes features every product in this space already ships.",
+        "Newer mail hides the payload in a sign-in proxy, a QR code, a callback number, or a weeks-long payment thread. These are the paths built for that.",
       cards: [
         {
-          tag: "Evidence fusion",
-          title: "Murphy-corrected D-S fusion with Copula discount",
+          tag: "One verdict",
+          title: "Several checks, one explainable result",
           body:
-            "Not weighted-sum scoring, not a black-box classifier. A proper Dempster–Shafer implementation with Murphy's weighted-average correction and Copula-based discount for correlated detectors — so same-family signals do not amplify each other, and every verdict is explainable per-engine. Built in Rust, not a wrapper around someone else's commercial library.",
-          why: "Avoids Zadeh's paradox, handles correlated evidence explicitly, and the verdict trail is explainable per-engine instead of a single mystery score.",
-          source: "crates/vigilyx-engine/src/fusion/murphy.rs",
+            "Stable causal keys deduplicate repeated views of the same evidence before it is fused into a verdict.",
+          why: "Preserves evidence provenance and limits repeated votes from the same causal source.",
+          source: "crates/vigilyx-engine/src/pipeline/verdict/clustered_ds_v2.rs",
         },
         {
-          tag: "Temporal layer",
-          title: "Full temporal layer on top of single-email verdicts",
+          tag: "BEC over time",
+          title: "A payment scam that takes days, not one message",
           body:
             "CUSUM for shift detection, dual-speed EWMA for baseline drift, a marked Hawkes self-excitation process for attack-campaign tempo, a 5-state HMM that infers BEC / ATO phases (recon → trust-build → execute → exfil), plus a directed communication graph. Most mail-security products judge each email in isolation — this one doesn't.",
-          why: "Catches campaigns, slow-burn BEC, and exfil bursts that look fine one email at a time.",
+          why: "Provides cross-message diagnostics for analyst review; inferred phases are not proof of an attack.",
           source: "crates/vigilyx-engine/src/temporal/",
         },
         {
-          tag: "AitM phishing",
-          title: "Reverse-proxy MFA-bypass kit fingerprinting",
+          tag: "Sign-in proxies",
+          title: "AiTM kits that steal the session after MFA",
           body:
-            "Fingerprints the MFA-bypass tooling actually used in the wild from 2024 on — Tycoon2FA, EvilProxy, Evilginx3 — via DGA hosting on Cloudflare Workers / Pages, OAuth redirect_uri mismatches, Turnstile CAPTCHA toolkit fingerprints, and Latin/Cyrillic mixed-script brand homographs. This class of phishing bypasses traditional link reputation and attachment scanning entirely.",
-          why: "The reverse-proxy phishing surface is invisible to classic URL-reputation and sandbox-on-link stacks.",
+            "Analyzes AitM-related clues such as hosted-platform URLs, OAuth redirect mismatches, MFA/CAPTCHA language, and mixed-script brand domains. A hosting platform or CAPTCHA alone does not establish a phishing toolkit.",
+          why: "Adds contextual clues for reviewing reverse-proxy phishing alongside other evidence.",
           source: "crates/vigilyx-engine/src/modules/aitm_detect.rs",
         },
         {
-          tag: "HTML pixel art",
-          title: "HTML pixel art & table-cell QR detection",
+          tag: "Hidden QR",
+          title: "QR codes drawn in HTML, not attached as images",
           body:
             "Attackers \"draw\" QR codes with <table> bgcolor cells, or assemble phishing text from floated <div>s with background-color — specifically to bypass OCR and sandbox image scanning. Vigilyx reconstructs the bitmap from DOM structure and decodes with rqrr. Unicode block-character ASCII-art QR codes in body text are decoded through the same pipeline.",
-          why: "The usual \"scan images with OCR\" toolchain does not see these at all.",
+          why: "Complements image scanning with DOM-derived graphical evidence.",
           source: "crates/vigilyx-engine/src/modules/html_pixel_art.rs",
         },
       ],
@@ -314,10 +324,10 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
       kicker: "Layer by layer",
       title: "Open one email. Watch every layer flag it.",
       body:
-        "Pick a scenario. Scroll. Each line is a real detection Vigilyx runs against the captured email — from wire bytes to fused verdict. No stock imagery, no composite screenshot: the exact fields your engineers would see in a SOC triage.",
+        "These fictional scenarios illustrate analysis concepts. Fields, scores, and histories are illustrative, not captured output or benchmark results. Mail threat verdicts and HTTP data-security incidents use separate paths; final actions depend on mode and policy.",
       selectorLabel: "Scenario",
       captureLabel: "captured",
-      verdictLabel: "Fused verdict",
+      verdictLabel: "Illustrative result",
       actionLabelPrefix: "Action",
       hoverHint: "Hover any line to see why Vigilyx flagged it.",
       layerNames: ["Sniffer", "Parser", "Engine", "Fusion", "Temporal"],
@@ -360,8 +370,8 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           ],
           verdict: {
             level: "HIGH",
-            score: "0.87",
-            action: "Quarantine + notify finance approver via SOAR playbook",
+            score: "0.81",
+            action: "MTA: policy quarantine; mirror: alert and audit",
             className: "verdict-high",
           },
         },
@@ -374,7 +384,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
               label: "L1 · pcap",
               content: "HTTPS 104.21.48.11  ·  SNI=m1crosoft-auth.workers.dev",
               tag: "CLOUDFLARE DGA",
-              why: "Hostname matches the Tycoon2FA / EvilProxy DGA pattern on Cloudflare Workers. Registered < 72h ago.",
+              why: "A hosted-platform URL is a contextual clue; it does not establish domain age or identify a toolkit.",
             },
             {
               label: "L2 · link_scan",
@@ -390,40 +400,40 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
             },
             {
               label: "L4 · aitm_detect",
-              content: "turnstile_fingerprint=true  kit=\"Tycoon2FA\"",
+              content: "MFA/CAPTCHA context + URL observations",
               tag: "TYCOON2FA",
-              why: "Turnstile CAPTCHA toolkit fingerprint + URI shape matches published Tycoon2FA samples. Reverse-proxy MFA bypass.",
+              why: "MFA/CAPTCHA and URL clues need independent corroboration; they do not prove toolkit identity.",
             },
             {
               label: "L5 · fusion",
-              content: "D-S belief=0.91  ·  Copula discount applied to 2 link-family engines",
-              tag: "D-S + COPULA",
-              why: "Murphy-corrected D-S fuses 4 independent detectors. Copula discount stops link_scan + aitm_detect from double-counting.",
+              content: "clustered_ds_v2 · repeated causal source views deduplicated",
+              tag: "CLUSTERED D-S",
+              why: "The default path deduplicates stable causal keys before fusion; cluster summaries do not cast extra votes.",
             },
           ],
           verdict: {
             level: "CRITICAL",
             score: "0.94",
-            action: "Block delivery  +  rewrite links  +  alert SOC on-call",
+            action: "MTA: policy rejection; mirror: alert and audit",
             className: "verdict-critical",
           },
         },
         {
           id: "exfil",
           name: "Webmail data exfil",
-          headline: "HTTP POST /webmail/compose.jsp  ·  internal user → external @gmail.com  ·  Thu 18:22",
+          headline: "HTTP POST /webmail/compose.jsp · sensitive self-send illustration",
           lines: [
             {
               label: "L1 · pcap",
-              content: "HTTP mirror  ·  multipart/form-data  ·  3 attachments, 42 MB total",
-              tag: "OFF-HOURS",
-              why: "Capture time is outside the user's baseline working hours (09:00–18:00) by dual-EWMA.",
+              content: "HTTP mirror · configured Webmail host · multipart/form-data",
+              tag: "HTTP CAPTURE",
+              why: "HTTP capture requires configured Webmail targets and inspectable traffic.",
             },
             {
               label: "L2 · webmail",
               content: "reassembled body extracted from compose.jsp action payload",
               tag: "WEBMAIL RECON",
-              why: "data_security/webmail.rs rebuilds the outbound MIME object from the HTTP multipart — not just URL filtering.",
+              why: "Coremail field extraction and bounded multipart/file inspection provide HTTP data-security inputs.",
             },
             {
               label: "L3 · dlp",
@@ -433,21 +443,21 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
             },
             {
               label: "L4 · recipient",
-              content: "to=user+backup@gmail.com  first_external_send=true",
-              tag: "FIRST EXTERNAL",
-              why: "Communication graph: user has never emailed this external domain. Classic pre-resignation exfil pattern.",
+              content: "from=user@corp · to=user@corp · sensitive content",
+              tag: "SELF-SEND",
+              why: "Self-send analysis compares sender and recipient; sensitive-data findings require analyst review.",
             },
             {
-              label: "L5 · temporal",
-              content: "Hawkes intensity λ(t) spiked 6.1× baseline over last 48h",
-              tag: "HAWKES BURST",
-              why: "Marked Hawkes self-excitation shows a staging burst: 14 large uploads in 48h vs. weekly average of 2.",
+              label: "L5 · coverage",
+              content: "bounded scan · explicit incomplete-inspection reasons",
+              tag: "DLP COVERAGE",
+              why: "Size and time limits bound DLP inspection. An incomplete scan is not a clean result.",
             },
           ],
           verdict: {
             level: "HIGH",
             score: "0.82",
-            action: "Hold transfer  +  open DLP case  +  notify data-owner",
+            action: "Record HTTP DLP incident for review; mirror cannot block",
             className: "verdict-high",
           },
         },
@@ -456,22 +466,25 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
     cta: {
       title: "Built for engineering-led security teams. Just clone it.",
       body:
-        "If you'd rather own the detection logic than rent a black box, Vigilyx is ready to run. Three commands, mirror or inline on the same engine. AGPL-3.0, no telemetry, no license server.",
+        "Configure a remote build host, initialize it, review runtime settings, then deploy mirror or MTA mode. AGPL-3.0, with no network license requirement. HTTPS requires a TLS entry point.",
       terminal: {
         title: "deploy.sh",
         commands: [
           { kind: "comment", text: "# 1. Clone the repo" },
           { kind: "prompt", text: "git clone https://github.com/HerbiusYang/Vigilyx.git" },
           { kind: "prompt", text: "cd Vigilyx" },
-          { kind: "comment", text: "# 2. Initialize remote build environment (one-off)" },
+          { kind: "comment", text: "# 2. Configure the remote host" },
+          { kind: "prompt", text: "cp deploy.conf.example deploy.conf && chmod 600 deploy.conf" },
+          { kind: "prompt", text: "$EDITOR deploy.conf" },
           { kind: "prompt", text: "./deploy.sh --init" },
-          { kind: "comment", text: "# 3. Open the dashboard" },
-          { kind: "hint", text: "→ https://localhost:8088" },
+          { kind: "comment", text: "# 3. Review remote deploy/docker/.env, then deploy" },
+          { kind: "prompt", text: "./deploy.sh" },
+          { kind: "hint", text: "→ HTTP: remote 127.0.0.1:8088 via SSH tunnel; HTTPS: configured host :443" },
         ],
         copyLabel: "Copy",
         copiedLabel: "Copied",
         copyPayload:
-          "git clone https://github.com/HerbiusYang/Vigilyx.git\ncd Vigilyx\n./deploy.sh --init",
+          "git clone https://github.com/HerbiusYang/Vigilyx.git\ncd Vigilyx\ncp deploy.conf.example deploy.conf\nchmod 600 deploy.conf\n$EDITOR deploy.conf\n./deploy.sh --init\n# Review remote deploy/docker/.env before continuing\n./deploy.sh",
       },
       actions: [
         { text: "Read Quick Start", href: "/docs/quick-start", primary: true },
@@ -487,21 +500,21 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
     hero: {
       badge: "开源 · Rust 核心 · 旁路 + Inline",
       stats: [
-        { value: "D-S + Murphy", label: "证据融合" },
-        { value: "5 状态 HMM", label: "BEC 阶段推断" },
-        { value: "Hawkes", label: "自激时序建模" },
+        { value: "Rust", label: "检测不必等外部模型" },
+        { value: "语义", label: "看意图，不只看关键词" },
+        { value: "当下", label: "二维码、AiTM、回拨、BEC" },
       ],
       terminal: {
         title: "verdict.jsonl",
         lines: [
-          { kind: "muted", text: "# 实时 verdict 数据流 · 旁路镜像模式" },
-          { kind: "prompt", text: "vigilyx tail --stream verdicts" },
+          { kind: "muted", text: "# 判定示意 · 旁路镜像模式" },
+          { kind: "prompt", text: "# 控制台/API 输出示意" },
           { kind: "out", text: "[SMTP] mail-01 → alice@corp · 主题：\"发票 2026-Q1\"" },
-          { kind: "ok", text: "verdict: safe    score 0.08  modules 0/15  dlp ok" },
+          { kind: "ok", text: "verdict: safe    score 0.08  modules 0/25  dlp ok" },
           { kind: "out", text: "[SMTP] mx-2 → bob@corp · 主题：\"账户验证提醒\"" },
-          { kind: "warn", text: "verdict: medium  score 0.52  modules 4/15  nlp phishing=0.71" },
+          { kind: "warn", text: "verdict: medium  score 0.52  modules 4/25  nlp phishing=0.71" },
           { kind: "bad", text: "verdict: high    score 0.81  ioc=sender_ip content=urgency yara=phish_01" },
-          { kind: "muted", text: "# action: 已隔离 · 会话可复盘 · 解释链已保存" },
+          { kind: "muted", text: "# 处置：告警与审计 · 旁路不能隔离" },
         ],
       },
       pipeline: {
@@ -516,6 +529,14 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           { name: "融合", verdict: "malicious" },
         ],
       },
+      ribbon: [
+        "二维码钓鱼",
+        "HTML 走私",
+        "登录中间人",
+        "回拨诈骗",
+        "BEC 改账",
+        "语义意图",
+      ],
     },
     deployment: {
       kicker: "两种独立的部署形态",
@@ -527,7 +548,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           label: "旁路镜像部署",
           title: "部署在邮件系统旁边做被动分析",
           body:
-            "Vigilyx 从镜像口 / SPAN 口收到一份流量副本，重组 SMTP、POP3、IMAP 与 Webmail 会话，在投递完成后产出判定。邮件路径完全不动，检测栈永远不会阻塞邮件。",
+            "Vigilyx 从镜像口 / SPAN 口接收流量，重建可检查的 SMTP 及已配置的 HTTP/Webmail 内容。POP3/IMAP 当前只提供元数据和覆盖信号；加密或不完整载荷保留覆盖缺口，旁路只做事后告警与审计。",
           points: [
             "零侵入——不需要改 MX、不需要调整 SMTP 路由",
             "判定是事后参考：告警、审计、复盘、调参",
@@ -539,7 +560,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           label: "MTA 代理部署",
           title: "作为 Inline SMTP 代理在投递前做决策",
           body:
-            "Vigilyx 作为 SMTP 中继放在最终邮件服务器之前，每一封邮件都会经过它做同步检查，然后在投递前被 accept / quarantine / reject。Inline 判定典型耗时 <2s，支持可配置的 fail-open。",
+            "Vigilyx 通过内嵌引擎检查 SMTP 中继邮件，按策略转发、隔离、拒收或返回临时失败。默认 inline 超时为 8 秒，可配置 fail-open；待中继邮件仍受出站 DLP 约束。",
           points: [
             "真正的拦截——邮件在 Vigilyx 决策之前不会到达用户",
             "支持 accept / quarantine / reject，并配 fail-open 作为安全阀",
@@ -551,9 +572,9 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
     },
     flow: {
       kicker: "检测流程",
-      title: "按工程系统去打磨，而不是按“命中一个模型就下结论”的黑盒思路。",
+      title: "先看清这封邮件在要什么，再决定放不放行。",
       body:
-        "产品形态是有明确取向的：先收足信号，再做可解释的融合，最后把响应和审计链路补完整。这样才方便在压误报时不把取证能力一起牺牲掉。",
+        "邮件先被解析，再同时看头部、链接、附件和话术，最后合成一个说得清理由的判定。分析师能复核，用户侧的决策也更快。",
       cards: [
         {
           step: "01",
@@ -576,93 +597,93 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
       ],
     },
     product: {
-      kicker: "产品形态",
-      title: "不是一个只有列表页和风险标签的“邮件控制台”。",
+      kicker: "为什么用它",
+      title: "跑得快，看得懂，新型诱饵更难混过去。",
       body:
-        "当前项目已经覆盖了很多团队通常需要自己拼起来的部分：解析器、证据融合、内容控制、处置流以及一套能实际用于分析的前端界面。",
+        "同一套引擎可以旁路观察，也可以在投递前拦住。分析师在一个控制台里看证据、隔离和放行，不用自己拼解析器、扫描器和隔离工具。",
       cards: [
         {
-          value: "20",
-          label: "默认 pipeline entries",
-          body: "覆盖内容、身份、链接、附件、YARA、DLP 与 verdict 的检测链路。",
+          value: "快",
+          label: "热路径用 Rust",
+          body: "解析、检测和 Inline 决策在同一套运行时里完成，网关不必等外部模型才给出意见。",
+          icon: "rust",
+        },
+        {
+          value: "清楚",
+          label: "一个控制台看判定",
+          body: "每一项检查都写明看到了什么。隔离、放行、重扫和审计都挂在同一封邮件上。",
           icon: "pipeline",
         },
         {
-          value: "30",
-          label: "DLP patterns",
-          body: "覆盖敏感内容识别与可疑传输行为的数据安全检测路径。",
+          value: "当下",
+          label: "正在流行的威胁",
+          body: "二维码、HTML 走私、登录中间人、回拨诈骗和 BEC 改账，不只是昨天的附件特征。",
           icon: "shield",
         },
         {
-          value: "2",
-          label: "deployment modes",
-          body: "两种独立形态——旁路镜像做被动可见性，MTA 代理做 Inline 拦截。每个环境选一种。",
+          value: "语义",
+          label: "这封邮件在要求什么",
+          body: "催款、要凭据和紧迫话术按意图来看。语义模型关掉时，规则检测照样工作。",
           icon: "deploy",
-        },
-        {
-          value: "Rust",
-          label: "core runtime",
-          body: "抓包、解析、检测、API 与 MTA 逻辑都维持在同一套高性能栈里。",
-          icon: "rust",
         },
       ],
     },
     ai: {
-      kicker: "AI 支持",
-      title: "AI 是额外视角，不是单点依赖。",
+      kicker: "语义威胁",
+      title: "拦住它在要求什么，不只是拦住一个特征。",
       body:
-        "Vigilyx 可以在确定性检测链上叠加语义和 NLP 分析，但就算关闭 AI，核心检测流水线仍然可以独立工作。这更适合真实生产环境。",
+        "现在很多邮件就是普通句子：供应商改收款账户、一个截止时间、一次看起来很平常的登录。语义复核读的是这个意图，并和链接、身份、附件放在一起看。",
       cards: [
         {
-          title: "AI 辅助语义分析",
-          body: "可选接入 NLP 检测，用于钓鱼语义、意图分析和说服话术识别——可以在纯 CPU 环境运行，不依赖 GPU，也可以接入外部大模型（Claude / OpenAI）辅助分析师复核。",
+          title: "正文里的意图",
+          body: "付款压力、索要凭据和紧迫语气按意思来打分。模板眼熟，不等于可以放行。",
         },
         {
-          title: "核心系统不依赖 AI",
-          body: "解析、链接检测、YARA、DLP、身份异常和 verdict fusion 不依赖任何单一模型。",
+          title: "可选，不是前提",
+          body: "本机意图模型和外部 NLP 可以打开做复核。关掉之后，头部、链接、YARA 和 DLP 仍然出判定。",
         },
         {
-          title: "更适合生产运维",
-          body: "只有当 AI 真正提升分析效率时才启用，而不是「不开 AI 就没法工作」。",
+          title: "证据能读",
+          body: "判定写明是哪一项检查命中。分析师可以重扫、放行或留下，不用猜一个孤立的分数。",
         },
       ],
     },
     highlights: {
-      kicker: "真正不一样的地方",
-      title: "四件邮件安全产品里几乎看不到的实现。",
+      kicker: "它在抓什么",
+      title: "已经不像一封坏附件的攻击。",
       body:
-        "下面这些不是市场话术，而是仓库里真实存在的代码。我们只列那些相对于主流邮件网关确实不一样的检测面，而不是所有邮件安全产品都已经做的基础功能。",
+        "新的邮件把载荷藏在登录代理、二维码、回拨号码，或者一连几天的付款往来里。下面这些就是对着这类威胁做的。",
       cards: [
         {
-          tag: "证据融合",
-          title: "Murphy 修正的 D-S 证据融合",
+          tag: "一个判定",
+          title: "多项检查，一个说得清的结果",
           body:
-            "不是加权求和，不是黑盒分类器。一套正经的 Dempster–Shafer 实现，配合 Murphy 权重平均修正和针对相关检测器的 Copula 折扣——同源同族的信号不会互相放大，每个 verdict 都能按引擎单独解释。用 Rust 自研，不是继承某个商用库。",
-          why: "规避 Zadeh 悖论，显式建模相关性，每个引擎的判定贡献都可以单独解释，而不是只给一个神秘分数。",
-          source: "crates/vigilyx-engine/src/fusion/murphy.rs",
+            "稳定因果键会在融合前去掉同一证据的重复视图。",
+          why: "保留证据来源，限制同一因果来源重复投票。",
+          source: "crates/vigilyx-engine/src/pipeline/verdict/clustered_ds_v2.rs",
         },
         {
-          tag: "时序层",
-          title: "在单邮件判定之上的完整时序层",
+          tag: "跨天的 BEC",
+          title: "改账诈骗往往不止一封邮件",
           body:
             "CUSUM 累计漂移检测、双速 EWMA 基线漂移、带 mark 的 Hawkes 自激过程建模攻击期节奏、5 状态 HMM 推断 BEC / ATO 阶段（侦察 → 建信 → 执行 → 收割），还叠了一张有向通信图。多数邮件安全产品按「单封邮件」孤立判定——这套不是。",
-          why: "可以抓到那些「单封看起来没问题」的营销期攻击、慢速 BEC 和外泄 burst。",
+          why: "提供跨邮件诊断供分析师复核；推断阶段不等于已证实攻击。",
           source: "crates/vigilyx-engine/src/temporal/",
         },
         {
-          tag: "AitM 钓鱼",
-          title: "AitM 反向代理钓鱼检测",
+          tag: "登录代理",
+          title: "过了验证码之后仍可能丢会话的 AiTM",
           body:
-            "专门针对 2024 年起实战里真在用的 MFA 绕过工具（Tycoon2FA、EvilProxy、Evilginx3）做指纹——Cloudflare Workers / Pages 上的 DGA 托管、OAuth redirect_uri 不一致、Turnstile 验证码工具包指纹、Latin-Cyrillic 同形异义做品牌冒充。这一类钓鱼会完全绕过传统链接信誉库和附件扫描。",
-          why: "反向代理钓鱼这条攻击面对传统「URL 信誉 + 沙箱扫链接」的栈完全不可见。",
+            "分析托管平台 URL、OAuth 回调不一致、MFA/验证码话术及混合字符品牌域名等 AitM 线索。仅凭托管平台或 CAPTCHA 不能确认钓鱼工具包。",
+          why: "为反向代理钓鱼复核补充上下文，并与其他证据共同判断。",
           source: "crates/vigilyx-engine/src/modules/aitm_detect.rs",
         },
         {
-          tag: "HTML 像素艺术",
-          title: "HTML 像素艺术与表格二维码检测",
+          tag: "藏起来的二维码",
+          title: "用网页表格画出来的二维码，不是图片附件",
           body:
             "攻击者用 <table> 的 bgcolor 单元格「画」二维码、用浮动 <div> 配 background-color 拼出钓鱼文字——就是为了绕开 OCR 和沙箱图片扫描。Vigilyx 从 DOM 结构重建位图并用 rqrr 解码。正文里用 Unicode 方块字符拼出来的 ASCII-art 二维码用同一套流程解出来。",
-          why: "常见「用 OCR 扫图片」的工具链一个都看不到这些东西。",
+          why: "以 DOM 图形证据补充图片扫描。",
           source: "crates/vigilyx-engine/src/modules/html_pixel_art.rs",
         },
       ],
@@ -671,10 +692,10 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
       kicker: "逐层剖析",
       title: "打开一封邮件，看每一层是怎么识破它的。",
       body:
-        "选一个场景，然后滚。每一行都是 Vigilyx 对这封捕获邮件真实跑过的一个检测——从网线字节一路到融合 verdict。不是示意图、不是拼接截图：就是你工程师在 SOC 排查时会看到的实际字段。",
+        "以下虚构场景仅用于解释分析概念；字段、分数和历史均为示意，并非抓包输出或实测结果。邮件威胁 verdict 与 HTTP 数据安全事件使用独立路径，最终动作取决于模式和策略。",
       selectorLabel: "场景",
       captureLabel: "已捕获",
-      verdictLabel: "融合判定",
+      verdictLabel: "分析结果示意",
       actionLabelPrefix: "处置",
       hoverHint: "悬停任意一行可查看为什么被标记。",
       layerNames: ["抓包层", "解析层", "检测层", "融合层", "时序层"],
@@ -717,8 +738,8 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
           ],
           verdict: {
             level: "HIGH",
-            score: "0.87",
-            action: "隔离 + 通过 SOAR playbook 通知财务审批人",
+            score: "0.81",
+            action: "MTA 按策略隔离；旁路告警与审计",
             className: "verdict-high",
           },
         },
@@ -731,7 +752,7 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
               label: "L1 · 抓包",
               content: "HTTPS 104.21.48.11  ·  SNI=m1crosoft-auth.workers.dev",
               tag: "CLOUDFLARE DGA",
-              why: "主机名命中 Tycoon2FA / EvilProxy 在 Cloudflare Workers 上的 DGA 模式。域名注册不到 72 小时。",
+              why: "托管平台 URL 是上下文线索，不能据此推断域名年龄或确认工具包。",
             },
             {
               label: "L2 · 链接扫描",
@@ -747,40 +768,40 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
             },
             {
               label: "L4 · AitM 检测",
-              content: "turnstile_fingerprint=true  kit=\"Tycoon2FA\"",
+              content: "MFA/CAPTCHA context + URL observations",
               tag: "TYCOON2FA",
-              why: "Turnstile 工具包指纹 + URI 形态和已公开的 Tycoon2FA 样本吻合。反向代理 MFA 绕过确定。",
+              why: "MFA/验证码及 URL 线索需要独立佐证，不能单独确认工具包身份。",
             },
             {
               label: "L5 · 融合",
-              content: "D-S belief=0.91  ·  2 个链接家族引擎被 Copula 折扣",
-              tag: "D-S + COPULA",
-              why: "Murphy 修正的 D-S 融合 4 个独立检测器；Copula 折扣避免 link_scan 和 aitm_detect 因同源而重复计分。",
+              content: "clustered_ds_v2 · 同因果来源视图已去重",
+              tag: "CLUSTERED D-S",
+              why: "默认路径先按稳定因果键去重再融合；证据簇摘要不额外投票。",
             },
           ],
           verdict: {
             level: "CRITICAL",
             score: "0.94",
-            action: "拦截投递  +  改写链接  +  告警 SOC on-call",
+            action: "MTA 按策略拒收；旁路告警与审计",
             className: "verdict-critical",
           },
         },
         {
           id: "exfil",
           name: "Webmail 数据外泄",
-          headline: "HTTP POST /webmail/compose.jsp  ·  内部员工 → 外部 @gmail.com  ·  周四 18:22",
+          headline: "HTTP POST /webmail/compose.jsp · 敏感内容自发送示意",
           lines: [
             {
               label: "L1 · 抓包",
-              content: "HTTP 镜像  ·  multipart/form-data  ·  3 个附件，42 MB 合计",
-              tag: "非工作时段",
-              why: "捕获时刻超出该用户的基线工作时段（09:00–18:00），双速 EWMA 偏差显著。",
+              content: "HTTP 镜像 · 已配置 Webmail 主机 · multipart/form-data",
+              tag: "HTTP 捕获",
+              why: "HTTP 捕获依赖已配置的 Webmail 目标和可检查流量。",
             },
             {
               label: "L2 · Webmail",
               content: "从 compose.jsp 的 action payload 中重组出发件 body",
               tag: "WEBMAIL 还原",
-              why: "data_security/webmail.rs 从 HTTP multipart 重建出站 MIME 对象——不是简单做 URL 过滤。",
+              why: "Coremail 字段抽取与有界 multipart/文件检查为 HTTP 数据安全提供输入。",
             },
             {
               label: "L3 · DLP",
@@ -790,21 +811,21 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
             },
             {
               label: "L4 · 收件人",
-              content: "to=user+backup@gmail.com  first_external_send=true",
-              tag: "首次外发",
-              why: "通信图：该员工从未给这个外部域名发过邮件。经典离职前外泄模式。",
+              content: "from=user@corp · to=user@corp · sensitive content",
+              tag: "自发送",
+              why: "自发送分析比较发件人与收件人，敏感数据命中需要结合业务复核。",
             },
             {
-              label: "L5 · 时序",
-              content: "Hawkes 强度 λ(t) 过去 48 小时冲高到基线的 6.1 倍",
-              tag: "HAWKES BURST",
-              why: "带 mark 的 Hawkes 自激过程捕捉到外泄阶段性 burst：48 小时内 14 次大文件上传，周均仅 2 次。",
+              label: "L5 · 覆盖",
+              content: "有界扫描 · 显式记录检查不完整原因",
+              tag: "DLP 覆盖",
+              why: "DLP 检查受大小和时间预算限制，不完整检查不能视为安全。",
             },
           ],
           verdict: {
             level: "HIGH",
             score: "0.82",
-            action: "阻断外发  +  建 DLP 工单  +  通知数据 owner",
+            action: "记录 HTTP DLP 事件供复核；旁路不能阻断",
             className: "verdict-high",
           },
         },
@@ -813,22 +834,25 @@ const landingCopy: Record<"en" | "zh", LandingCopy> = {
     cta: {
       title: "给工程驱动的安全团队。直接 clone 就行。",
       body:
-        "如果你更想自己掌控检测逻辑、而不是租一个黑盒，Vigilyx 已经可以跑起来。三条命令，旁路镜像或 Inline MTA 同一套引擎。AGPL-3.0，不回传任何遥测，不需要联网授权。",
+        "配置远程构建主机并初始化，检查运行参数后部署旁路或 MTA。AGPL-3.0，无需联网授权；HTTPS 需另行配置 TLS 入口。",
       terminal: {
         title: "deploy.sh",
         commands: [
           { kind: "comment", text: "# 1. 拉取仓库" },
           { kind: "prompt", text: "git clone https://github.com/HerbiusYang/Vigilyx.git" },
           { kind: "prompt", text: "cd Vigilyx" },
-          { kind: "comment", text: "# 2. 初始化远程构建环境（一次性）" },
+          { kind: "comment", text: "# 2. 配置远程主机" },
+          { kind: "prompt", text: "cp deploy.conf.example deploy.conf && chmod 600 deploy.conf" },
+          { kind: "prompt", text: "$EDITOR deploy.conf" },
           { kind: "prompt", text: "./deploy.sh --init" },
-          { kind: "comment", text: "# 3. 打开控制台" },
-          { kind: "hint", text: "→ https://localhost:8088" },
+          { kind: "comment", text: "# 3. 检查远程 deploy/docker/.env，再部署" },
+          { kind: "prompt", text: "./deploy.sh" },
+          { kind: "hint", text: "→ HTTP: SSH 隧道访问远程 127.0.0.1:8088；HTTPS: 已配置的主机 :443" },
         ],
         copyLabel: "复制",
         copiedLabel: "已复制",
         copyPayload:
-          "git clone https://github.com/HerbiusYang/Vigilyx.git\ncd Vigilyx\n./deploy.sh --init",
+          "git clone https://github.com/HerbiusYang/Vigilyx.git\ncd Vigilyx\ncp deploy.conf.example deploy.conf\nchmod 600 deploy.conf\n$EDITOR deploy.conf\n./deploy.sh --init\n# 继续前检查远程 deploy/docker/.env\n./deploy.sh",
       },
       actions: [
         { text: "查看快速开始", href: "/zh/docs/quick-start", primary: true },
@@ -896,61 +920,61 @@ const TERM_FEED_POOL: Record<"en" | "zh", TermLine[][]> = {
   en: [
     [
       { kind: "out", text: "[SMTP] edge-03 → carol@corp · subject: \"Re: purchase order\"" },
-      { kind: "ok", text: "verdict: safe    score 0.11  modules 0/15  dlp ok" },
+      { kind: "ok", text: "verdict: safe    score 0.11  modules 0/25  dlp ok" },
     ],
     [
       { kind: "out", text: "[IMAP] webmail → dave@corp · subject: \"wire transfer update\"" },
-      { kind: "warn", text: "verdict: low     score 0.28  modules 2/15  intel sender_domain=new" },
+      { kind: "warn", text: "verdict: low     score 0.28  modules 2/25  intel sender_domain=new" },
     ],
     [
       { kind: "out", text: "[SMTP] mx-4 → finance@corp · subject: \"Microsoft 365 security alert\"" },
-      { kind: "bad", text: "verdict: critical score 0.92 modules 7/15  aitm=evilproxy oauth_abuse=1" },
+      { kind: "bad", text: "verdict: critical score 0.92 modules 7/25  aitm=evilproxy oauth_abuse=1" },
     ],
     [
       { kind: "out", text: "[HTTP] webmail upload · user=eve@corp · file=\"Q4_report.xlsx\"" },
-      { kind: "warn", text: "verdict: medium  score 0.48  modules 3/15  dlp=id_card hits=2" },
+      { kind: "warn", text: "verdict: medium  score 0.48  modules 3/25  dlp=id_card hits=2" },
     ],
     [
       { kind: "out", text: "[SMTP] mail-02 → ops@corp · subject: \"invoice reminder #7821\"" },
-      { kind: "ok", text: "verdict: safe    score 0.09  modules 0/15  dlp ok" },
+      { kind: "ok", text: "verdict: safe    score 0.09  modules 0/25  dlp ok" },
     ],
     [
       { kind: "out", text: "[SMTP] mx-1 → hr@corp · subject: \"urgent: payroll change\"" },
-      { kind: "bad", text: "verdict: high    score 0.78  modules 5/15  nlp bec=0.83 spoof=display_name" },
+      { kind: "bad", text: "verdict: high    score 0.78  modules 5/25  nlp bec=0.83 spoof=display_name" },
     ],
     [
       { kind: "out", text: "[SMTP] edge-02 → team@corp · subject: \"shared document\"" },
-      { kind: "warn", text: "verdict: medium  score 0.41  modules 3/15  url=redirect_chain yara=phish_kit" },
+      { kind: "warn", text: "verdict: medium  score 0.41  modules 3/25  url=redirect_chain yara=phish_kit" },
     ],
   ],
   zh: [
     [
       { kind: "out", text: "[SMTP] edge-03 → carol@corp · 主题：\"Re: 采购订单\"" },
-      { kind: "ok", text: "verdict: safe    score 0.11  modules 0/15  dlp ok" },
+      { kind: "ok", text: "verdict: safe    score 0.11  modules 0/25  dlp ok" },
     ],
     [
       { kind: "out", text: "[IMAP] webmail → dave@corp · 主题：\"电汇信息更新\"" },
-      { kind: "warn", text: "verdict: low     score 0.28  modules 2/15  intel sender_domain=new" },
+      { kind: "warn", text: "verdict: low     score 0.28  modules 2/25  intel sender_domain=new" },
     ],
     [
       { kind: "out", text: "[SMTP] mx-4 → finance@corp · 主题：\"Microsoft 365 安全警报\"" },
-      { kind: "bad", text: "verdict: critical score 0.92 modules 7/15  aitm=evilproxy oauth_abuse=1" },
+      { kind: "bad", text: "verdict: critical score 0.92 modules 7/25  aitm=evilproxy oauth_abuse=1" },
     ],
     [
       { kind: "out", text: "[HTTP] webmail 上传 · user=eve@corp · file=\"Q4_report.xlsx\"" },
-      { kind: "warn", text: "verdict: medium  score 0.48  modules 3/15  dlp=id_card hits=2" },
+      { kind: "warn", text: "verdict: medium  score 0.48  modules 3/25  dlp=id_card hits=2" },
     ],
     [
       { kind: "out", text: "[SMTP] mail-02 → ops@corp · 主题：\"发票提醒 #7821\"" },
-      { kind: "ok", text: "verdict: safe    score 0.09  modules 0/15  dlp ok" },
+      { kind: "ok", text: "verdict: safe    score 0.09  modules 0/25  dlp ok" },
     ],
     [
       { kind: "out", text: "[SMTP] mx-1 → hr@corp · 主题：\"紧急：薪资变更\"" },
-      { kind: "bad", text: "verdict: high    score 0.78  modules 5/15  nlp bec=0.83 spoof=display_name" },
+      { kind: "bad", text: "verdict: high    score 0.78  modules 5/25  nlp bec=0.83 spoof=display_name" },
     ],
     [
       { kind: "out", text: "[SMTP] edge-02 → team@corp · 主题：\"共享文档\"" },
-      { kind: "warn", text: "verdict: medium  score 0.41  modules 3/15  url=redirect_chain yara=phish_kit" },
+      { kind: "warn", text: "verdict: medium  score 0.41  modules 3/25  url=redirect_chain yara=phish_kit" },
     ],
   ],
 };
@@ -1194,13 +1218,78 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="rootRef" class="home-landing">
+    <section class="home-section home-lead">
+      <div class="home-section-heading">
+        <p class="home-kicker">{{ copy.product.kicker }}</p>
+        <h2>{{ copy.product.title }}</h2>
+        <p>{{ copy.product.body }}</p>
+      </div>
+      <div class="home-metric-grid">
+        <article
+          v-for="card in copy.product.cards"
+          :key="card.label"
+          class="home-surface metric-card"
+        >
+          <span class="metric-card__icon" aria-hidden="true">
+            <svg v-if="card.icon === 'pipeline'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="5" cy="6" r="2" />
+              <circle cx="5" cy="18" r="2" />
+              <circle cx="19" cy="12" r="2" />
+              <path d="M7 6h4a4 4 0 0 1 4 4v0a4 4 0 0 1-4 4H7" />
+              <path d="M7 18h4a4 4 0 0 0 4-4" opacity=".55" />
+            </svg>
+            <svg v-else-if="card.icon === 'shield'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3l8 3v6c0 4.5-3.2 8.5-8 10-4.8-1.5-8-5.5-8-10V6l8-3z" />
+              <path d="M9 12l2 2 4-4" />
+            </svg>
+            <svg v-else-if="card.icon === 'deploy'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="6" rx="1.5" />
+              <rect x="3" y="14" width="18" height="6" rx="1.5" />
+              <path d="M7 7h.01M7 17h.01" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="8" />
+              <path d="M8 8h5a2.5 2.5 0 0 1 0 5H8z" />
+              <path d="M11 13l3 5" />
+              <path d="M8 13v5" />
+            </svg>
+          </span>
+          <strong>{{ card.value }}</strong>
+          <span class="metric-card__label">{{ card.label }}</span>
+          <p>{{ card.body }}</p>
+        </article>
+      </div>
+      <p class="home-corpus-link">
+        <a :href="withBase(props.locale === 'zh' ? '/zh/docs/training-data' : '/docs/training-data')">
+          {{ props.locale === "zh" ? "训练邮件已开源：VIGILYX-Training-Data" : "Training mail is open: VIGILYX-Training-Data" }}
+        </a>
+        <span class="home-corpus-link__sep" aria-hidden="true">·</span>
+        <a href="https://fells.dev" target="_blank" rel="noopener noreferrer">
+          {{ props.locale === "zh" ? "鸣谢 AI 技术支持：fells.dev" : "AI support: fells.dev" }}
+        </a>
+      </p>
+    </section>
+
     <!-- HERO VISUAL: backdrop + terminal + pipeline -->
     <section class="hero-visual">
+      <span class="hero-visual__frame" aria-hidden="true"></span>
+      <div class="hud" aria-hidden="true">
+        <span class="hud__corner hud__corner--tl"></span>
+        <span class="hud__corner hud__corner--tr"></span>
+        <span class="hud__corner hud__corner--bl"></span>
+        <span class="hud__corner hud__corner--br"></span>
+        <span class="hud__readout">{{ props.locale === "zh" ? "系统 · INLINE" : "SYS · INLINE" }}</span>
+      </div>
       <HeroBackdrop />
       <div class="hero-visual__inner">
         <div class="hero-visual__badge">
           <span class="hero-visual__dot"></span>
           {{ copy.hero.badge }}
+        </div>
+        <div class="threat-marquee" aria-hidden="true">
+          <div class="threat-marquee__track">
+            <span v-for="(item, idx) in copy.hero.ribbon.concat(copy.hero.ribbon)" :key="idx">{{ item }}</span>
+          </div>
         </div>
 
         <div class="hero-visual__grid">
@@ -1419,54 +1508,6 @@ onBeforeUnmount(() => {
         >
           <span class="stack-step">{{ card.step }}</span>
           <h3>{{ card.title }}</h3>
-          <p>{{ card.body }}</p>
-        </article>
-      </div>
-    </section>
-
-    <section class="home-section">
-      <div class="home-section-heading">
-        <p class="home-kicker">{{ copy.product.kicker }}</p>
-        <h2>{{ copy.product.title }}</h2>
-        <p>{{ copy.product.body }}</p>
-      </div>
-
-      <div class="home-metric-grid">
-        <article
-          v-for="card in copy.product.cards"
-          :key="card.label"
-          class="home-surface metric-card"
-        >
-          <span class="metric-card__icon" aria-hidden="true">
-            <!-- pipeline -->
-            <svg v-if="card.icon === 'pipeline'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="5" cy="6" r="2" />
-              <circle cx="5" cy="18" r="2" />
-              <circle cx="19" cy="12" r="2" />
-              <path d="M7 6h4a4 4 0 0 1 4 4v0a4 4 0 0 1-4 4H7" />
-              <path d="M7 18h4a4 4 0 0 0 4-4" opacity=".55" />
-            </svg>
-            <!-- shield -->
-            <svg v-else-if="card.icon === 'shield'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 3l8 3v6c0 4.5-3.2 8.5-8 10-4.8-1.5-8-5.5-8-10V6l8-3z" />
-              <path d="M9 12l2 2 4-4" />
-            </svg>
-            <!-- deploy -->
-            <svg v-else-if="card.icon === 'deploy'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="4" width="18" height="6" rx="1.5" />
-              <rect x="3" y="14" width="18" height="6" rx="1.5" />
-              <path d="M7 7h.01M7 17h.01" />
-            </svg>
-            <!-- rust -->
-            <svg v-else-if="card.icon === 'rust'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="12" r="8" />
-              <path d="M8 8h5a2.5 2.5 0 0 1 0 5H8z" />
-              <path d="M11 13l3 5" />
-              <path d="M8 13v5" />
-            </svg>
-          </span>
-          <strong>{{ card.value }}</strong>
-          <span class="metric-card__label">{{ card.label }}</span>
           <p>{{ card.body }}</p>
         </article>
       </div>

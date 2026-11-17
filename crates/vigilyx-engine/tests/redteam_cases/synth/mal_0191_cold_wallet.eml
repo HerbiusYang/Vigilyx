@@ -1,0 +1,10 @@
+From: =?utf-8?B?5a6J5YWo5YWs5ZGK?= <sec@wallet-notice.example>
+To: me@personal.example
+Date: Fri, 04 Sep 2026 10:10:00 +0800
+Message-ID: <0000-b12@synth.example>
+Subject: 检测到异常提币请求
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您的钱包有一笔待确认提币。非本人操作请立即冻结并验证助记词备份状态：
+https://wallet-safe-check.example.vip/f

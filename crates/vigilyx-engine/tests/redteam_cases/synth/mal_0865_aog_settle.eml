@@ -1,0 +1,75 @@
+From: "AeroSpares Global | AOG Desk" <aog.settlement@aerospares-aog.example>
+To: materials-control@airline.example
+Cc: fleet-director@airline.example, finance.ops@airline.example
+Reply-To: aog.desk@asg-aog-pay.example
+Disposition-Notification-To: aog.settlement@aerospares-aog.example
+Date: Mon, 23 Aug 2027 04:20:00 +0000
+Message-ID: <0865-b114@synth.example>
+Subject: [AOG SETTLEMENT] B-32XQ Wheel & Brake Exchange - PO AOG-884-17 Delivered FLL - USD 86,400 - Payment Session Before Credit Hold Applies to Next AOG
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:-apple-system,'Segoe UI',sans-serif;font-size:14px">
+<p>Materials Control, Fleet Director, Finance Ops,</p>
+
+<p style="background:#FFEBEE;border-left:4px solid #B71C1C;padding:12px">
+<b>AOG SETTLEMENT — PO AOG-884-17 (B-32XQ, FLL).</b>
+The AOG wheel &amp; brake exchange delivered yesterday in Fort Lauderdale (aircraft released
+to service 23:40 UTC — 14h20m ground time) settles at <b>USD 86,400</b> (exchange + core
+deposit + AOG premium). Your account terms require AOG settlements to clear <b>within 72
+hours of delivery</b>; settlements left open past the window place the account on <b>credit
+hold for the next AOG</b> — meaning the next grounded aircraft ships parts only against a
+card authorization at release time. With your fleet running 4 rotations through MRO-heavy
+stations this week, we flag it early.
+</p>
+
+<h3>1. Settlement Detail (PO AOG-884-17)</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:280px">AOG event</td><td>B-32XQ main wheel #2 brake overheat, FLL (Aug 21)</td></tr>
+<tr><td style="background:#f5f5f5">Ground time</td><td>14h20m (parts release to RTS)</td></tr>
+<tr><td style="background:#f5f5f5">Items</td><td>Main wheel assembly x2 (exchange) + brake stack x2 + core deposit</td></tr>
+<tr><td style="background:#f5f5f5">Total</td><td><b>USD 86,400</b> (AOG premium included per rate card)</td></tr>
+<tr><td style="background:#f5f5f5">Window</td><td><b>72h from delivery</b> (closes Aug 25, 22:00 UTC)</td></tr>
+</table>
+
+<h3>2. Express Payment Session</h3>
+<p>To clear the settlement immediately (and lift the hold risk before your MRO-station
+rotations), the AOG desk's express session takes corporate card and posts to the exchange
+pool in real time:</p>
+
+<p style="text-align:center;margin:18px 0">
+<a href="https://asg-aog-pay.example/settle/AOG-884-17/express" style="display:inline-block;background:#D32F2F;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">Settle AOG-884-17 (USD 86,400)</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">Customer portal: https://portal.aerosparesglobal.example (PO history & invoices, same login)</p>
+
+<h3>3. The 72-Hour Window</h3>
+<ul>
+<li>Bank transfer works too (your usual terms) — but crosses the weekend cut-off, arriving Aug 26</li>
+<li>Open settlement past the window: account flagged credit-hold for AOG dispatches</li>
+<li>Next AOG on hold ships against card authorization at release — hours matter when an aircraft is down</li>
+</ul>
+
+<p style="font-size:14px;background:#FFF3E0;padding:12px">AOG follow-ups asking for card details
+are a known fraud lane — the urgency of a grounded aircraft is exactly what attackers borrow,
+and your skepticism has saved operators before. Checks: the PO number, aircraft, and ground
+time match your tech-log and the delivery receipt you signed in FLL; the invoice for
+AOG-884-17 is in the customer portal; and your account manager (the one who answered the
+AOG call at 02:00) confirms the settlement terms. The 72-hour rule is our rate-card terms
+— but the card session is a convenience, not the only path.</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://asg-aog-pay.example/px/aog.gif?p=AOG-884-17&amp;r=materials-control%40airline.example" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02;">Fleet lane: multi-airline operators may settle pooled AOG balances monthly at asg-aog-pay.example/fleet (single session covers the fleet's open POs).</p>
+
+<h3>4. Contact</h3>
+<p>AOG desk: aog.desk@asg-aog-pay.example<br>
+PO reference: AOG-884-17 · Account manager: the number that answered your AOG call</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+AeroSpares Global | AOG Desk · This notice concerns PO AOG-884-17 only.<br />
+AOG premiums and settlement terms follow the exchange agreement rate card.
+</div>
+
+</body></html>

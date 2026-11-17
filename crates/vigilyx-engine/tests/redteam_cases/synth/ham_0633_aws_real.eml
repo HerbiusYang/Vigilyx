@@ -1,0 +1,88 @@
+From: AWS Marketplace <seller-ops@aws.example>
+To: product@corp.internal
+Cc: legal@corp.internal, cto@corp.internal, finance@corp.internal
+Date: Sun, 01 Nov 2026 20:00:00 +0000
+Message-ID: <0633-b66@synth.example>
+Subject: AWS MARKETPLACE LISTING SUSPENSION — Vigilyx Gateway — Compliance Review Required
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Product Team, Legal, CTO, Finance:
+
+Your AWS Marketplace listing for Vigilyx Email Security
+Gateway has been suspended following a buyer complaint and
+compliance review.
+
+Listing Details:
+  Product ID: prod-8842-vigilyx-gw
+  Seller ID: A1B2C3D4E5F6G7
+  Monthly Revenue: $42,800
+  Active Subscriptions: 38 enterprise customers
+  Current Status: SUSPENDED — Compliance review required
+
+Violations Identified:
+  1. Misleading performance claims (Section 3.2)
+     "99.7% blocking" not verifiable
+  2. Missing Data Processing Agreement (Section 5.1)
+     No AWS DPA addendum on listing
+  3. Competitive comparison without substantiation (Section 3.7)
+
+How to Reinstate Your Listing:
+
+  1. Navigate to AWS Marketplace Management Portal:
+     Navigate to aws.amazon.com/marketplace/management
+     (Type the URL manually. Do NOT click email links.)
+
+  2. Log in with your AWS account (root or IAM with
+     Marketplace permissions)
+
+  3. Go to: Listings → prod-8842-vigilyx-gw → Compliance
+
+  4. Review the violation details and upload corrections
+
+  5. Corrective actions:
+     a. Revise listing copy (remove or substantiate claims)
+     b. Sign the AWS Marketplace DPA addendum
+     c. Remove or cite comparison benchmarks
+     d. Respond to the buyer complaint
+
+  Important Security Notes:
+  AWS will NEVER:
+  - Charge a "Compliance Review Fee" for listing reinstatement
+  - Create an "AWS Marketplace Seller Compliance SARL" in
+    Luxembourg for payment collection
+  - Send bank transfer details via email
+  - Offer a "Chinese seller compliance channel"
+  - Cite "EU Digital Services Act" for Luxembourg payments
+
+  AWS's actual compliance process:
+  - Listing reinstatement is FREE — you fix the violations
+    and resubmit through the Management Portal
+  - No fee exists for compliance review or re-activation
+  - Payments are handled through your AWS account billing
+    (credit card or invoice), never through bank transfers
+    to third-party entities
+
+  If you receive an email requesting a "compliance fee"
+  or bank transfer for listing reinstatement, it is a
+  phishing attempt targeting AWS Marketplace sellers.
+
+  To verify this suspension:
+  1. Navigate to aws.amazon.com/marketplace/management
+  2. Check your listing status
+  3. Or contact AWS Marketplace Seller Support:
+     Available through the Management Portal
+
+What Happens If You Don't Fix Violations:
+  Permanent delisting from AWS Marketplace
+  Revenue loss: $42,800/month
+  38 enterprise customers affected
+  Other listings may also be reviewed
+
+  Note: These consequences apply to failure to FIX the
+  violations (revise listing copy, sign DPA, remove
+  comparison chart), NOT to failure to pay a fee.
+
+Amazon Web Services, Inc. | Marketplace Seller Operations
+410 Terry Avenue North, Seattle, WA 98109
+You are receiving this because you are the registered seller for A1B2C3D4E5F6G7.

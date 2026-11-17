@@ -1,0 +1,95 @@
+From: "Vulpecula Threat Intelligence | Customer Success" <renewals@vulpecula.example>
+To: soc-director@corp.internal
+Cc: threat-intel@corp.internal, procurement@corp.internal
+Date: Mon, 04 Jan 2027 08:30:00 +0000
+Message-ID: <0670-b79@synth.example>
+Subject: [RENEWAL] 2027 Feed Subscription - Renewal PO Due January 24 (No Portal Changes Required)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+SOC Director, Threat Intelligence, Procurement,
+
+2027 SUBSCRIPTION RENEWAL NOTICE.
+Your feed subscription (Record, Package:
+Enterprise-5) renews this month. This
+message covers renewal logistics only -
+no portal changes are required.
+
+1. SUBSCRIPTION DETAILS
+
+  Account:       Your company
+                 (Enterprise-5, 5 seats)
+  Feeds in
+    package:     Commodity malware
+                 indicators, APT campaign
+                 reports, underground
+                 monitoring (2 sources),
+                 YARA rule feed
+  Delivery:      TAXII 2.1 collection +
+                 portal API
+  Renewal term:  2027-01-31 ->
+                 2028-01-31
+                 USD 84,000 (unchanged
+                 pricing held from 2025)
+  Seat usage:    5/5 - seat
+                 reassignments available
+                 at renewal
+  Reference:     REN-2027-04412
+
+2. RENEWAL STEPS (OFFICIAL PATH)
+
+    1. Procurement issues the PO to the
+       address on your 2026 invoice.
+    2. The portal, API keys, and TAXII
+       delivery continue unchanged -
+       there is no "SSO migration" this
+       year and no cutover date.
+
+3. ABOUT SSO AND CONSENT REQUESTS
+   (IMPORTANT SECURITY NOTE)
+
+  Vulpecula will NEVER:
+  - Email a button that starts a
+    Microsoft OAuth consent flow
+    (or Google/Okta/any IdP)
+  - Request offline_access or
+    Mail.Read permissions to your
+    corporate tenant - mail delivery
+    of digests is plain SMTP, it
+    needs no mailbox access
+  - Use lookalike domains such as
+    "vulpecula-ti" or
+    "vulpecula-customers"
+
+  If your organization wants SSO for
+  the vendor portal, it is configured
+  by YOUR identity team in your
+  admin console (enterprise app
+  registration), and the vendor only
+  receives a metadata URL from you.
+  An emailed "migration wizard" that
+  consents to Mail.Read +
+  offline_access is an account-
+  takeover attempt dressed as a
+  renewal notice: the sign-in page
+  is real Microsoft, but the
+  application receiving the token
+  belongs to the attacker.
+
+4. VERIFY THIS NOTICE
+
+  - Sign in to the portal by typing
+    portal.vulpecula.example; your
+    renewal status is on the account
+    page
+  - Reach customer success through
+    the address in your 2026
+    invoice footer
+  - Report suspicious renewal emails
+    to your security team and to
+    fraud@vulpecula.example
+
+Vulpecula Threat Intelligence |
+Customer Success
+You are receiving this as the listed
+account owner.

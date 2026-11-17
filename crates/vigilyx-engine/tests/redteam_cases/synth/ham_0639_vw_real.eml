@@ -1,0 +1,79 @@
+From: Volkswagen AG <recall@vw.example>
+To: legal@corp.internal
+Cc: cto@corp.internal, compliance@corp.internal, ceo@corp.internal
+Date: Tue, 03 Nov 2026 14:00:00 +0100
+Message-ID: <0639-b68@synst.example>
+Subject: VW SOFTWARE RECALL — Gateway Software Integration — Supplier Response Required
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Legal Team, CTO, Compliance, CEO:
+
+Volkswagen AG has identified a software defect in the
+gateway software supplied by your company for VW ID.7
+and ID. Buzz platforms. A formal recall has been initiated.
+
+Recall Details:
+  VW Recall Number: 9148-B2-2026
+  Component: Central Gateway Module (CGM) software
+  Platform: MEB (ID.7, ID. Buzz, ID.4, ID.5)
+  Affected Vehicles: 184,224 worldwide
+  Software Version: v2.3.1 - v2.4.7
+  Defect: Email filtering failure in connected services
+  Risk: HIGH — Credential theft in connected services
+  Initiated: October 28, 2026
+  KBA Notified: October 30, 2026
+
+Supplier Response Process:
+
+  1. VW will send a formal recall notification letter
+     by REGISTERED MAIL to your legal department
+
+  2. You have 60 days to respond with:
+     - Root cause analysis (8D report)
+     - Corrective action plan
+     - Software fix timeline
+
+  3. Cost sharing is negotiated between VW Procurement
+     and your sales team — NOT paid through email bank
+     transfers
+
+  4. FRSU compliance documentation is submitted through
+     your VW Procurement contact (same channel as your
+     normal supplier communications)
+
+  Important Security Notes:
+  VW will NEVER:
+  - Send bank details for "supplier contribution" via email
+  - Create "CARIAD Software Services GmbH" for supplier
+    recall payments
+  - Require source code submission through email portals
+  - Ask for ECU firmware through online links
+  - Offer a "Chinese supplier channel"
+  - Set a "November 30 deadline" for €2.2M payment
+
+  VW's actual recall process:
+  - Formal notification by registered mail
+  - Technical response through your VW Procurement
+    contact (email or phone — but never with bank
+    details or source code requests)
+  - Source code is shared only under NDA through
+    VW's secure development infrastructure, not
+    through email portals
+  - Cost sharing is negotiated, not demanded via
+    email with bank details
+  - You have 60 days (not 27 days)
+
+  If you receive an email requesting €2.2M payment
+  to a "CARIAD" entity or asking for ECU source code
+  upload through a portal link, it is a phishing
+  attempt targeting automotive suppliers.
+
+Your Rights:
+  60 days to respond (not 27 days)
+  Cost sharing is negotiable, not unilateral
+  Source code shared under NDA through secure channels
+
+Volkswagen AG | Recall Management
+Berliner Ring 2, 38440 Wolfsburg, Germany
+You are receiving this because you are the software supplier contact.

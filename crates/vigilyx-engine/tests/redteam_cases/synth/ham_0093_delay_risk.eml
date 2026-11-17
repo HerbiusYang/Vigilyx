@@ -1,0 +1,10 @@
+From: =?utf-8?B?6aG555uuLeiLj+m7jg==?= <su.li@corp.internal>
+To: pmo@corp.internal
+Date: Fri, 28 Aug 2026 14:42:00 +0800
+Message-ID: <0032-b5@synth.example>
+Subject: 灰度计划延一周的风险报备
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+上游网关发布窗口变了，灰度顺延一周。对外承诺我没改，
+先内部报备，若周四前窗口恢复则按原计划。

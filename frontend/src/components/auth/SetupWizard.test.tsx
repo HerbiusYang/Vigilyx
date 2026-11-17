@@ -114,7 +114,7 @@ describe('SetupWizard', () => {
     expect(await screen.findByRole('heading', { name: 'MTA 网关网络配置' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '跳过' })).not.toBeInTheDocument()
 
-    await user.type(screen.getByLabelText(/下游 MTA 地址/), '10.1.246.33')
+    await user.type(screen.getByLabelText(/下游 MTA 地址/), '192.0.2.33')
     const port = screen.getByRole('spinbutton', { name: '下游 MTA 端口' })
     await user.clear(port)
     await user.type(port, '2525')
@@ -132,7 +132,7 @@ describe('SetupWizard', () => {
 
     expect(deploymentWrites).toContainEqual({ mode: 'mta' })
     expect(deploymentWrites).toContainEqual({
-      mta_downstream_host: '10.1.246.33',
+      mta_downstream_host: '192.0.2.33',
       mta_downstream_port: 2525,
     })
     expect(deploymentWrites).toContainEqual({ mta_local_domains: 'corp.example.com' })

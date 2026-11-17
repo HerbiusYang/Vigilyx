@@ -1,0 +1,63 @@
+From: Arbitrum DAO Governance <governance@arbitrum.foundation.example>
+To: blockchain@corp.internal>
+Date: Tue, 13 Oct 2026 15:30:00 +0800
+Message-ID: <0576-b47@synth.example>
+Subject: [AIP-42] On-chain Voting Open: "Security Fund Allocation for Q4 2026" — Voting ends in 48h
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear ARB token holder,
+
+Arbitrum Improvement Proposal 42 (AIP-42) is now open for on-chain voting.
+
+Proposal Title: "Security Fund Allocation for Q4 2026"
+
+Proposal Summary:
+Allocate 2,500,000 ARB (~$2.8M) from the Arbitrum Security Fund to
+continue funding bug bounty programs and security audits for the
+ecosystem's top 20 DeFi protocols by TVL, for Q4 2026 through Q1 2027.
+
+Key Details:
+  Proposal ID: AIP-42
+  Voting Platform: Snapshot (off-chain) + Tally (on-chain)
+  Voting Period: October 13-15, 2026 (48 hours)
+  Minimum Quorum: 5M ARB
+  Current Votes: FOR 62.3% | AGAINST 31.1% | ABSTAIN 6.6%
+  Your Voting Power: 184,200 ARB
+
+HOW TO VOTE:
+
+Please navigate to the voting platforms manually in your browser:
+
+  On-chain voting: Open tally.xyz in your browser, then navigate to
+  Governance → Arbitrum → Proposal 42
+
+  Gasless voting: Open snapshot.org in your browser, then navigate to
+  arbitrum.eth → Active Proposals → AIP-42
+
+  Connect your wallet when prompted, then cast your vote.
+
+Security note:
+The Arbitrum DAO and its governance platforms (Tally, Snapshot) will
+NEVER send you a device code, a connection link, or ask you to
+authorize anything through an email. All wallet connections happen
+when you manually visit the official websites (tally.xyz or
+snapshot.org) in your browser.
+
+If you receive an email containing:
+  - A device code to "authorize your vote"
+  - A direct link to connect your wallet
+  - A claim that a code from an email is "Tally's official device
+    authorization flow"
+...it is a phishing attempt targeting DAO token holders. Please
+report it to the Arbitrum Foundation security team.
+
+Voting ends: October 15, 2026 at 15:30 UTC (48 hours from now)
+
+--
+Arbitrum DAO Governance
+governance@arbitrum.foundation.example
+
+You are receiving this because your address holds ≥100,000 ARB tokens.
+To opt out of governance notifications, visit snapshot.org in your
+browser and adjust settings.

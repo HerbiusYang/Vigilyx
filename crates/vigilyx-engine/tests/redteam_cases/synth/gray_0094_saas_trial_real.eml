@@ -1,0 +1,10 @@
+From: =?utf-8?B?U2FhUyBCaWxsaW5n?= <billing@saas-vendor.example>
+To: ops@corp.internal
+Date: Fri, 18 Sep 2026 09:48:00 +0800
+Message-ID: <0038-b25@synth.example>
+Subject: Trial ending soon
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Add a payment method in the console (existing login):
+https://console.saas-vendor.example/billing

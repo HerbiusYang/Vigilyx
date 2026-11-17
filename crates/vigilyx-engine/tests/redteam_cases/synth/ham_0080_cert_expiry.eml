@@ -1,0 +1,10 @@
+From: =?utf-8?B?6K+B5Lmm5beh5qOA?= <certbot@corp.internal>
+To: ops@corp.internal
+Date: Thu, 27 Aug 2026 09:54:00 +0800
+Message-ID: <0039-b4@synth.example>
+Subject: api.corp.internal 证书 14 天后到期
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+ACME 自动续期上次失败（DNS 超时），请手工触发：
+运维手册 runbook 第 7 节。逾期影响小程序端接口。

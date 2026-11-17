@@ -7,10 +7,12 @@ export type UiMessage = { type: 'ok' | 'err'; text: string }
 export type RuleActionType = 'email_alert' | 'wechat_alert' | 'webhook' | 'log' | 'alert'
 
 export interface DispositionConditionValue {
+  event_source?: 'message_verdict' | 'threat_scene'
   min_threat_level?: string
   mail_direction?: string
   categories?: string[]
   flagged_modules?: string[]
+  scene_types?: string[]
 }
 
 export interface DispositionActionValue {
@@ -26,10 +28,12 @@ export interface RuleForm {
   description: string
   enabled: boolean
   priority: number
+  eventSource: 'message_verdict' | 'threat_scene'
   minThreatLevel: string
   mailDirection: string
   categoriesText: string
   flaggedModulesText: string
+  sceneTypesText: string
   sendEmail: boolean
   sendWechat: boolean
   sendWebhook: boolean

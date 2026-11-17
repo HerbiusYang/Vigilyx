@@ -12,7 +12,7 @@ use redis::aio::{ConnectionManager, MultiplexedConnection};
 use redis::{AsyncCommands, Client};
 use serde::{Serialize, de::DeserializeOwned};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 use vigilyx_core::TrafficStats;
@@ -247,10 +247,10 @@ impl MqClient {
     /// validate and strip the prefix.
     pub async fn publish_cmd<T: Serialize>(&self, topic: &str, message: &T) -> MqResult<()> {
         let json = serde_json::to_string(message)?;
-        let token = std::env::var("INTERNAL_API_TOKEN").unwrap_or_default();
+        let token = std::env::var("MQ_AUTH_TOKEN").unwrap_or_default();
         if token.is_empty() {
             return Err(MqError::Publish(
-                "INTERNAL_API_TOKEN is not configured; refusing to publish unauthenticated control command"
+                "MQ_AUTH_TOKEN is not configured; refusing to publish unauthenticated control command"
                     .to_string(),
             ));
         }
@@ -267,12 +267,12 @@ impl MqClient {
     /// Publish message to Pub/Sub channel (with retry)
     ///
     /// SEC (C1): the payload is wrapped in a shared-token envelope
-    /// ([`wrap_data_payload`]) so a forged PUBLISH from bare Redis access
+    /// (`wrap_data_payload`) so a forged PUBLISH from bare Redis access
     /// cannot inject fake verdicts/alerts. Receivers must pass the raw
     /// payload through [`verify_data_payload`].
     pub async fn publish<T: Serialize>(&self, topic: &str, message: &T) -> MqResult<()> {
         let json = serde_json::to_string(message)?;
-        let payload = wrap_data_payload(&json);
+        let payload = wrap_data_payload(&json)?;
         self.publish_raw(topic, &payload).await
     }
 
@@ -385,31 +385,59 @@ impl MqClient {
     /// token (when configured) so a forged XADD from bare Redis access is
     /// rejected by consumers instead of driving the full analysis pipeline.
     pub async fn xadd<T: Serialize>(&self, stream: &str, message: &T) -> MqResult<String> {
-        let mut conn = self.get_conn().await?;
+        let token = require_data_plane_token()?;
         let json = serde_json::to_string(message)?;
 
         // XADD with MAXLEN. SEC (M-2/RT-4): the auth field carries a v1 HMAC
         // over `<ts>:<data>` — never the shared token itself — and the
         // plaintext ts field bounds replay.
-        let mut cmd = redis::cmd("XADD");
-        cmd.arg(stream)
-            .arg("MAXLEN")
-            .arg("~")
-            .arg(self.config.stream_max_len)
-            .arg("*")
-            .arg("data")
-            .arg(&json);
-        if let Some(token) = data_plane_token() {
-            let ts = unix_now_secs();
-            let nonce = fresh_nonce();
-            cmd.arg("ts").arg(ts.to_string());
-            cmd.arg("nonce").arg(&nonce);
-            cmd.arg("auth").arg(sign_v1(&token, ts, &nonce, json.as_bytes()));
-        }
-        let id: String = cmd.query_async(&mut conn).await?;
+        let ts = unix_now_secs();
+        let nonce = fresh_nonce();
+        let signature = sign_v1(&token, ts, &nonce, json.as_bytes());
+        let mut retries = 0;
 
-        debug!("Added to stream {}: {}", stream, id);
-        Ok(id)
+        loop {
+            let mut conn = self.get_conn().await?;
+            let mut cmd = redis::cmd("XADD");
+            cmd.arg(stream)
+                .arg("MAXLEN")
+                .arg("~")
+                .arg(self.config.stream_max_len)
+                .arg("*")
+                .arg("data")
+                .arg(&json)
+                .arg("ts")
+                .arg(ts.to_string())
+                .arg("nonce")
+                .arg(&nonce)
+                .arg("auth")
+                .arg(&signature);
+
+            match cmd.query_async::<String>(&mut conn).await {
+                Ok(id) => {
+                    debug!("Added to stream {}: {}", stream, id);
+                    return Ok(id);
+                }
+                Err(error) => {
+                    retries += 1;
+                    self.error_count.fetch_add(1, Ordering::Relaxed);
+                    if retries >= self.config.max_retries {
+                        return Err(MqError::Redis(error));
+                    }
+
+                    warn!(
+                        stream,
+                        attempt = retries,
+                        error = %error,
+                        "Stream XADD failed; forcing Redis reconnect"
+                    );
+                    let mut guard = self.conn.write().await;
+                    *guard = None;
+                    drop(guard);
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            }
+        }
     }
 
     /// Read message from Stream
@@ -613,7 +641,7 @@ fn build_sid_user_set_pipe(entries: &[(String, String)]) -> redis::Pipeline {
 
 // ── Message authentication (v1 HMAC + timestamp) ───────────────────────
 //
-// SEC (M-2, 2026-08-15 red-team scan): the shared `INTERNAL_API_TOKEN` must
+// SEC (M-2, 2026-08-15 red-team scan): the dedicated `MQ_AUTH_TOKEN` must
 // never appear on the Redis wire in cleartext. Every authenticated producer
 // attaches `v1:<hex(HMAC-SHA256(token, "<ts>:<payload>"))>` together with the
 // plaintext `ts` (unix seconds), and consumers fail closed (reject unsigned /
@@ -630,7 +658,10 @@ fn build_sid_user_set_pipe(entries: &[(String, String)]) -> redis::Pipeline {
 /// Signature scheme prefix for authenticated MQ messages.
 pub const AUTH_SCHEME_V1: &str = "v1";
 
-/// Maximum age of an authenticated message before it is treated as a replay.
+/// Maximum age for authenticated Pub/Sub messages before they are treated as
+/// replays. Redis Stream consumers bind the same signed timestamp to the
+/// server-generated entry ID instead, so backlog and PEL redelivery do not
+/// expire legitimate work while copied messages under fresh IDs still fail.
 pub const MAX_MESSAGE_AGE_SECS: i64 = 600;
 
 /// Maximum tolerated producer/consumer clock skew into the future.
@@ -644,7 +675,16 @@ pub const MAX_FUTURE_SKEW_SECS: i64 = 60;
 /// recorded, so an attacker without the token cannot flood the map. Entries
 /// are pruned lazily once the map exceeds `MAX_TRACKED_NONCES`.
 pub struct ReplayGuard {
-    inner: std::sync::Mutex<std::collections::HashMap<String, i64>>,
+    inner: std::sync::Mutex<std::collections::HashMap<String, ReplayRecord>>,
+}
+
+#[derive(Debug, Clone)]
+struct ReplayRecord {
+    seen_at: i64,
+    /// Redis Stream entry ID, when the nonce came from a stream entry. A
+    /// redelivery of that same entry is legitimate at-least-once delivery;
+    /// the same nonce on a different entry ID is a replayed XADD copy.
+    stream_entry_id: Option<String>,
 }
 
 const MAX_TRACKED_NONCES: usize = 131_072;
@@ -653,20 +693,51 @@ impl ReplayGuard {
     /// First observation of `nonce` returns true and records it; a repeat
     /// inside the retention horizon returns false (replay).
     pub fn check_and_record(&self, nonce: &str, now: i64) -> bool {
+        self.check_and_record_with_stream_id(nonce, now, None)
+    }
+
+    /// Authenticate a Redis Stream entry while preserving at-least-once
+    /// semantics. Redis may deliver the same entry ID again after a consumer
+    /// crash, so that exact redelivery is allowed; a copied nonce attached to
+    /// a newly XADD'd entry ID remains rejected.
+    pub(crate) fn check_and_record_stream(
+        &self,
+        nonce: &str,
+        now: i64,
+        stream_entry_id: &str,
+    ) -> bool {
+        self.check_and_record_with_stream_id(nonce, now, Some(stream_entry_id))
+    }
+
+    fn check_and_record_with_stream_id(
+        &self,
+        nonce: &str,
+        now: i64,
+        stream_entry_id: Option<&str>,
+    ) -> bool {
         let mut map = self.inner.lock().unwrap_or_else(|poisoned| {
             tracing::warn!("ReplayGuard lock was poisoned, recovering");
             poisoned.into_inner()
         });
         if map.len() > MAX_TRACKED_NONCES {
             let horizon = now - MAX_MESSAGE_AGE_SECS - MAX_FUTURE_SKEW_SECS;
-            map.retain(|_, seen_at| *seen_at >= horizon);
+            map.retain(|_, record| record.seen_at >= horizon);
         }
         match map.get(nonce) {
-            Some(seen_at) if *seen_at >= now - MAX_MESSAGE_AGE_SECS - MAX_FUTURE_SKEW_SECS => {
-                false
+            Some(record) if record.seen_at >= now - MAX_MESSAGE_AGE_SECS - MAX_FUTURE_SKEW_SECS => {
+                matches!(
+                    (record.stream_entry_id.as_deref(), stream_entry_id),
+                    (Some(previous_id), Some(current_id)) if previous_id == current_id
+                )
             }
             Some(_) | None => {
-                map.insert(nonce.to_string(), now);
+                map.insert(
+                    nonce.to_string(),
+                    ReplayRecord {
+                        seen_at: now,
+                        stream_entry_id: stream_entry_id.map(str::to_string),
+                    },
+                );
                 true
             }
         }
@@ -674,10 +745,9 @@ impl ReplayGuard {
 }
 
 pub(crate) fn replay_guard() -> &'static ReplayGuard {
-    static GUARD: std::sync::LazyLock<ReplayGuard> =
-        std::sync::LazyLock::new(|| ReplayGuard {
-            inner: std::sync::Mutex::new(std::collections::HashMap::new()),
-        });
+    static GUARD: std::sync::LazyLock<ReplayGuard> = std::sync::LazyLock::new(|| ReplayGuard {
+        inner: std::sync::Mutex::new(std::collections::HashMap::new()),
+    });
     &GUARD
 }
 
@@ -737,10 +807,7 @@ fn sign_v1_hex(key: &str, ts: i64, nonce: &str, payload: &[u8]) -> String {
 /// Compute the full `v1:<hex>` authentication field used by stream entries
 /// and data-plane JSON envelopes.
 pub(crate) fn sign_v1(key: &str, ts: i64, nonce: &str, payload: &[u8]) -> String {
-    format!(
-        "{AUTH_SCHEME_V1}:{}",
-        sign_v1_hex(key, ts, nonce, payload)
-    )
+    format!("{AUTH_SCHEME_V1}:{}", sign_v1_hex(key, ts, nonce, payload))
 }
 
 // ── Control-plane message authentication ──────────────────────────────
@@ -748,17 +815,17 @@ pub(crate) fn sign_v1(key: &str, ts: i64, nonce: &str, payload: &[u8]) -> String
 /// Verify and strip the authenticated prefix from a control-plane Pub/Sub
 /// payload.
 ///
-/// Wire format: `v1:<ts>:<hmac-hex>:<payload>` — the signature covers
-/// `<ts>:<payload>`, so payloads containing colons (JSON with timestamps)
+/// Wire format: `v1:<ts>:<nonce>:<hmac-hex>:<payload>` — the signature covers
+/// `<ts>:<nonce>:<payload>`, so payloads containing colons (JSON with timestamps)
 /// verify correctly and the timestamp cannot be swapped without breaking the
-/// signature. Messages older than [`MAX_MESSAGE_AGE_SECS`] (replay) or
-/// further ahead than [`MAX_FUTURE_SKEW_SECS`] are rejected (RT-4). The
+/// signature. Messages older than `MAX_MESSAGE_AGE_SECS` (replay) or
+/// further ahead than `MAX_FUTURE_SKEW_SECS` are rejected (RT-4). The
 /// pre-v1 cleartoken format is rejected: a rolling-upgrade window may drop
 /// point-in-time reload commands once, which self-heals on the next change,
 /// while accepting cleartext would keep the "read an old entry, recover the
 /// token" hole open.
 ///
-/// `expected_token` should be read once at startup from `INTERNAL_API_TOKEN`.
+/// `expected_token` should be read once at startup from `MQ_AUTH_TOKEN`.
 ///
 /// # Return value
 /// * `Some(payload)` — timestamp within the window and signature matched.
@@ -784,7 +851,9 @@ pub fn verify_cmd_payload<'a>(raw: &'a str, expected_token: &str) -> Option<&'a 
         return None;
     }
     // RT-4 round-5: reject a verified-but-already-seen message (replay).
-    replay_guard().check_and_record(nonce, now).then_some(payload)
+    replay_guard()
+        .check_and_record(nonce, now)
+        .then_some(payload)
 }
 
 /// Constant-time check of a bare `<hmac-hex>` against `v1` scheme expectations.
@@ -802,7 +871,7 @@ fn verify_v1_signature_hex(hex: &str, key: &str, ts: i64, nonce: &str, payload: 
 
 // ── Data-plane message authentication (C1) ──────────────────────────────
 
-/// JSON key carrying the shared token inside a data-plane Pub/Sub envelope.
+/// JSON key carrying the authentication signature inside a data-plane Pub/Sub envelope.
 /// The name is deliberately distinctive so legitimate business payloads never
 /// collide with it.
 pub const DATA_ENVELOPE_AUTH_KEY: &str = "__vigilyx_auth";
@@ -813,18 +882,33 @@ pub const DATA_ENVELOPE_TS_KEY: &str = "__vigilyx_ts";
 /// JSON key carrying the per-message nonce (RT-4 round-5 replay elimination).
 pub const DATA_ENVELOPE_NONCE_KEY: &str = "__vigilyx_nonce";
 
-/// Read the shared data-plane token (`INTERNAL_API_TOKEN`).
+/// Read the dedicated message-bus authentication token (`MQ_AUTH_TOKEN`).
 ///
-/// Returns `None` when unset/empty: the producer then sends legacy unsigned
-/// payloads and consumers accept everything (dual-mode rollout window).
+/// Returns `None` when unset/empty. This is intentionally a configuration
+/// error for every producer/consumer boundary; callers must use
+/// [`require_data_plane_token`] and fail closed rather than creating a
+/// legacy unsigned-message path.
 pub fn data_plane_token() -> Option<String> {
-    std::env::var("INTERNAL_API_TOKEN")
+    std::env::var("MQ_AUTH_TOKEN")
         .ok()
         .filter(|t| !t.is_empty())
 }
 
+/// Require the shared data-plane token at every producer/service boundary.
+/// A missing token is a deployment error, never a supported compatibility
+/// mode: publishing unsigned messages would let Redis write access forge data.
+pub fn require_data_plane_token() -> MqResult<String> {
+    data_plane_token().ok_or_else(|| {
+        MqError::Publish(
+            "MQ_AUTH_TOKEN is not configured; refusing unauthenticated data-plane message"
+                .to_string(),
+        )
+    })
+}
+
 /// Wrap a serialized data-plane payload in an authenticated envelope:
-/// `{"__vigilyx_auth":"v1:<hmac-hex>","payload":<canonical-json>}`.
+/// `{"__vigilyx_auth":"v1:<hmac-hex>","__vigilyx_ts":<unix-seconds>,`
+/// `"__vigilyx_nonce":"<nonce>","payload":<canonical-json>}`.
 ///
 /// The signature covers the canonical re-serialization of the payload through
 /// `serde_json::Value` (deterministic key ordering), and that same canonical
@@ -832,43 +916,24 @@ pub fn data_plane_token() -> Option<String> {
 /// identically before verifying. The shared token itself is never placed on
 /// the wire.
 ///
-/// Without a configured token the bare JSON is sent unchanged; consumers in
-/// that mode accept it but log at error level — tokenless deployments have an
-/// unauthenticated data plane by construction.
-pub fn wrap_data_payload(json: &str) -> String {
-    match data_plane_token() {
-        Some(token) => {
-            let canonical = serde_json::from_str::<serde_json::Value>(json)
-                .and_then(|value| serde_json::to_string(&value))
-                .unwrap_or_else(|_| json.to_string());
-            let ts = unix_now_secs();
-            let nonce = fresh_nonce();
-            let auth = sign_v1(&token, ts, &nonce, canonical.as_bytes());
-            format!(
-                "{{\"{DATA_ENVELOPE_AUTH_KEY}\":\"{auth}\",\"{DATA_ENVELOPE_TS_KEY}\":{ts},\"{DATA_ENVELOPE_NONCE_KEY}\":\"{nonce}\",\"{DATA_ENVELOPE_PAYLOAD_KEY}\":{canonical}}}"
-            )
-        }
-        None => {
-            static MISSING_TOKEN_WARNED: AtomicBool = AtomicBool::new(false);
-            if !MISSING_TOKEN_WARNED.swap(true, Ordering::Relaxed) {
-                warn!(
-                    "INTERNAL_API_TOKEN not set — publishing data-plane messages without authentication (legacy mode)"
-                );
-            }
-            json.to_string()
-        }
-    }
+pub fn wrap_data_payload(json: &str) -> MqResult<String> {
+    let token = require_data_plane_token()?;
+    let canonical = serde_json::from_str::<serde_json::Value>(json)
+        .and_then(|value| serde_json::to_string(&value))
+        .unwrap_or_else(|_| json.to_string());
+    let ts = unix_now_secs();
+    let nonce = fresh_nonce();
+    let auth = sign_v1(&token, ts, &nonce, canonical.as_bytes());
+    Ok(format!(
+        "{{\"{DATA_ENVELOPE_AUTH_KEY}\":\"{auth}\",\"{DATA_ENVELOPE_TS_KEY}\":{ts},\"{DATA_ENVELOPE_NONCE_KEY}\":\"{nonce}\",\"{DATA_ENVELOPE_PAYLOAD_KEY}\":{canonical}}}"
+    ))
 }
 
 /// Outcome of authenticating a data-plane Pub/Sub payload.
-pub enum DataPayloadAuth<'a> {
+pub enum DataPayloadAuth {
     /// Authenticated envelope; carries the inner payload JSON (re-serialized
     /// from the envelope, so it is exactly what the producer signed).
     Verified(String),
-    /// Bare payload without an envelope, accepted only because no token is
-    /// configured (explicitly insecure mode). With a token configured this
-    /// variant is never produced — unsigned traffic is `Rejected`.
-    Legacy(&'a str),
     /// Unsigned/cleartext/badly signed envelope: treat as a forged message
     /// and drop it.
     Rejected,
@@ -876,15 +941,14 @@ pub enum DataPayloadAuth<'a> {
 
 /// Authenticate a data-plane Pub/Sub payload and unwrap its envelope.
 ///
-/// `expected_token` should be read once at startup from `INTERNAL_API_TOKEN`.
+/// `expected_token` should be read once at startup from `MQ_AUTH_TOKEN`.
 /// With a token configured this fails closed: only a valid `v1` HMAC over the
 /// canonical payload serialization is accepted (SEC M-2).
-pub fn verify_data_payload<'a>(raw: &'a str, expected_token: &str) -> DataPayloadAuth<'a> {
+pub fn verify_data_payload(raw: &str, expected_token: &str) -> DataPayloadAuth {
     if expected_token.is_empty() {
-        return DataPayloadAuth::Legacy(raw);
+        return DataPayloadAuth::Rejected;
     }
-    let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(raw)
-    else {
+    let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(raw) else {
         return DataPayloadAuth::Rejected;
     };
     let Some(auth) = map.get(DATA_ENVELOPE_AUTH_KEY).and_then(|v| v.as_str()) else {
@@ -988,7 +1052,10 @@ mod cmd_auth_tests {
         // PoC (M-2): the pre-v1 format put the shared token itself on the
         // wire. A consumer that still accepted it would let an attacker
         // recover the token from an old stream entry and forge commands.
-        assert_eq!(verify_cmd_payload(r#"my-secret:{"x":1}"#, "my-secret"), None);
+        assert_eq!(
+            verify_cmd_payload(r#"my-secret:{"x":1}"#, "my-secret"),
+            None
+        );
         assert_eq!(verify_cmd_payload(r#""whitelist""#, "my-secret"), None);
     }
 
@@ -1044,7 +1111,10 @@ mod cmd_auth_tests {
         // the freshness window dies at the process-wide nonce dedup.
         let nonce = fresh_test_nonce();
         let raw = signed_cmd_full("my-secret", r#"{"target":"ioc"}"#, unix_now_secs(), &nonce);
-        assert!(verify_cmd_payload(&raw, "my-secret").is_some(), "first delivery");
+        assert!(
+            verify_cmd_payload(&raw, "my-secret").is_some(),
+            "first delivery"
+        );
         assert!(
             verify_cmd_payload(&raw, "my-secret").is_none(),
             "verbatim replay of the same nonce must be rejected"
@@ -1120,12 +1190,12 @@ mod data_auth_tests {
         // embedding the shared token itself.
         // SAFETY: single-threaded unit test; no other test reads this var.
         unsafe {
-            std::env::set_var("INTERNAL_API_TOKEN", "env-token-for-wrap-test");
+            std::env::set_var("MQ_AUTH_TOKEN", "env-token-for-wrap-test");
         }
-        let wrapped = wrap_data_payload(r#"{"a":1}"#);
+        let wrapped = wrap_data_payload(r#"{"a":1}"#).expect("token is configured");
         // SAFETY: see above.
         unsafe {
-            std::env::remove_var("INTERNAL_API_TOKEN");
+            std::env::remove_var("MQ_AUTH_TOKEN");
         }
         assert!(!wrapped.contains("env-token-for-wrap-test"));
         match verify_data_payload(&wrapped, "env-token-for-wrap-test") {
@@ -1203,12 +1273,12 @@ mod data_auth_tests {
     }
 
     #[test]
-    fn unsigned_payload_accepted_only_without_token() {
-        // Explicitly insecure mode: tokenless deployments keep an
-        // unauthenticated data plane (documented in the ADR).
+    fn unsigned_payload_rejected_without_token() {
+        // Missing configuration is an unsafe deployment, not a compatibility
+        // mode. Consumers must reject rather than accept forged messages.
         assert!(matches!(
             verify_data_payload(r#"{"a":1}"#, ""),
-            DataPayloadAuth::Legacy(r#"{"a":1}"#)
+            DataPayloadAuth::Rejected
         ));
     }
 
@@ -1275,23 +1345,23 @@ mod data_auth_tests {
     }
 
     #[test]
-    fn no_configured_token_accepts_everything_as_legacy() {
+    fn no_configured_token_rejects_everything() {
         let raw = r#"{"__vigilyx_auth":"x","payload":{}}"#;
         assert!(matches!(
             verify_data_payload(raw, ""),
-            DataPayloadAuth::Legacy(_)
+            DataPayloadAuth::Rejected
         ));
     }
 
     #[test]
-    fn wrap_without_token_returns_bare_json() {
-        // Only meaningful when INTERNAL_API_TOKEN is unset; guard so a
+    fn wrap_without_token_fails_closed() {
+        // Only meaningful when MQ_AUTH_TOKEN is unset; guard so a
         // contaminated test environment cannot make it spuriously fail.
         if super::data_plane_token().is_some() {
             return;
         }
         let json = r#"{"ok":true}"#;
-        assert_eq!(wrap_data_payload(json), json);
+        assert!(wrap_data_payload(json).is_err());
     }
 }
 

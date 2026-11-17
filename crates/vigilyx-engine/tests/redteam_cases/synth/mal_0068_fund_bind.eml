@@ -1,0 +1,11 @@
+From: =?utf-8?B?5YWs56ev6YeR5Lit5b+D?= <gjj@fund-city.example>
+To: employee@corp.internal
+Date: Thu, 27 Aug 2026 09:22:00 +0800
+Message-ID: <0007-b4@synth.example>
+Subject: 公积金账户关联失效告知
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+因系统升级，您的公积金账户与银行卡的关联关系失效，
+提取与贷款功能暂停，请重新关联：
+https://fund-rebind.example.org/card

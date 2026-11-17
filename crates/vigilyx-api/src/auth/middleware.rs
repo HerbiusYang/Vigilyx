@@ -5,23 +5,39 @@ use axum::{
     http::HeaderMap,
     http::request::Parts,
 };
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tracing::warn;
+use uuid::Uuid;
+use vigilyx_db::{ADMIN_ROLE_ID, AUDIT_ROLE_ID};
 
-use super::{AuthError, jwt::verify_token};
 #[cfg(test)]
 use super::AuthState;
+use super::{AuthError, jwt::verify_token};
 
 /// Authenticated user extracted from a verified JWT.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct AuthenticatedUser {
     pub id: String,
+    /// Immutable RBAC role identifier. Authorization decisions must use this
+    /// stable identity rather than the user-editable role display name.
+    pub role_id: String,
     pub username: String,
     pub display_name: String,
     pub role: String,
     pub permissions: Vec<String>,
     pub must_change_password: bool,
+    /// One-way fingerprint of the presented JWT.  It binds privacy leases to
+    /// this authenticated session without exposing the token to handlers.
+    pub session_id: String,
+}
+
+fn fingerprint_auth_session(token: &str) -> String {
+    Sha256::digest(token.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 impl AuthenticatedUser {
@@ -91,6 +107,50 @@ pub(crate) fn is_admin_role(role: &str) -> bool {
     role.eq_ignore_ascii_case("admin")
 }
 
+fn audit_request_is_allowed(method: &axum::http::Method, path: &str) -> bool {
+    if method == axum::http::Method::GET
+        || method == axum::http::Method::HEAD
+        || method == axum::http::Method::OPTIONS
+    {
+        return true;
+    }
+
+    // These are all registered as POST routes.  Checking the method here is
+    // essential: a path-only exception would accidentally allow TRACE,
+    // CONNECT, or another future write verb through the audit read-only wall.
+    if method != axum::http::Method::POST {
+        return false;
+    }
+
+    // The only non-lifecycle write available to audit is the exact privacy
+    // approval/rejection route. The handler still checks the persisted role,
+    // permission, factor, ownership, scope and request state.
+    let privacy_segments: Vec<&str> = path.split('/').collect();
+    if privacy_segments.len() == 6
+        && privacy_segments[1] == "api"
+        && privacy_segments[2] == "privacy"
+        && privacy_segments[3] == "access-requests"
+        && Uuid::parse_str(privacy_segments[4]).is_ok()
+        && matches!(privacy_segments[5], "approve" | "reject")
+    {
+        return true;
+    }
+
+    // Self-service factor enrollment/rotation is the only other audit write;
+    // the handler restricts it to the caller's own factor and never exposes
+    // system configuration.
+    if path == "/api/privacy/factor" {
+        return true;
+    }
+
+    // Session lifecycle operations do not modify system configuration. An
+    // audit user may log out, obtain a WebSocket ticket, or change their own
+    // password while all other write methods remain denied.
+    path.ends_with("/auth/logout")
+        || path.ends_with("/auth/change-password")
+        || path.ends_with("/auth/ws-ticket")
+}
+
 #[cfg(test)]
 fn validate_admin_request(headers: &HeaderMap, auth_state: &AuthState) -> Result<(), AuthError> {
     let token = extract_jwt_token(headers).ok_or(AuthError::MissingToken)?;
@@ -144,11 +204,13 @@ pub async fn require_auth(
     }
     let user = AuthenticatedUser {
         id: platform_user.id,
+        role_id: platform_user.role_id,
         username: platform_user.username,
         display_name: platform_user.display_name,
         role: platform_user.role,
         permissions: platform_user.permissions,
         must_change_password: platform_user.must_change_password,
+        session_id: fingerprint_auth_session(token),
     };
     req.extensions_mut().insert(user.clone());
 
@@ -169,6 +231,16 @@ pub async fn require_auth(
         }
     }
 
+    if user.role_id == AUDIT_ROLE_ID && !audit_request_is_allowed(req.method(), req.uri().path()) {
+        warn!(
+            user = %user.username,
+            method = %req.method(),
+            path = %req.uri().path(),
+            "SEC: audit account attempted a write operation; request denied"
+        );
+        return Err(AuthError::Forbidden);
+    }
+
     Ok(next.run(req).await)
 }
 
@@ -186,11 +258,78 @@ pub async fn require_admin(
         .ok_or(AuthError::InternalError(
             "AuthenticatedUser not found".into(),
         ))?;
-    if !user.has_permission("platform.manage") {
+    if user.role_id != ADMIN_ROLE_ID || !user.has_permission("platform.manage") {
         return Err(AuthError::Forbidden);
     }
 
     Ok(next.run(req).await)
+}
+
+/// Enforce read-only access to audit and login history.
+///
+/// This is intentionally permission-based so the dedicated `audit` role can
+/// review the audit surface without receiving the broader `platform.manage`
+/// capability used by administrative routes.
+pub async fn require_audit_read(
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> Result<axum::response::Response, AuthError> {
+    let user = req
+        .extensions()
+        .get::<AuthenticatedUser>()
+        .ok_or(AuthError::InternalError(
+            "AuthenticatedUser not found".into(),
+        ))?;
+    if !user.has_permission("audit.read") {
+        return Err(AuthError::Forbidden);
+    }
+
+    Ok(next.run(req).await)
+}
+
+async fn require_permission(
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+    permission: &'static str,
+) -> Result<axum::response::Response, AuthError> {
+    let user = req
+        .extensions()
+        .get::<AuthenticatedUser>()
+        .ok_or(AuthError::InternalError(
+            "AuthenticatedUser not found".into(),
+        ))?;
+    if !user.has_permission(permission) {
+        return Err(AuthError::Forbidden);
+    }
+    Ok(next.run(req).await)
+}
+
+pub async fn require_sessions_read(
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> Result<axum::response::Response, AuthError> {
+    require_permission(req, next, "sessions.read").await
+}
+
+pub async fn require_security_read(
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> Result<axum::response::Response, AuthError> {
+    require_permission(req, next, "security.read").await
+}
+
+pub async fn require_data_security_read(
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> Result<axum::response::Response, AuthError> {
+    require_permission(req, next, "data_security.read").await
+}
+
+pub async fn require_system_read(
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> Result<axum::response::Response, AuthError> {
+    require_permission(req, next, "system.read").await
 }
 
 /// Enforce the persisted permission for analyst feedback submissions.
@@ -254,14 +393,39 @@ pub async fn require_platform_roles_access(
 }
 
 /// Enforce `X-Internal-Token` authentication for internal service routes.
+fn internal_token_env_for_path(path: &str) -> &'static str {
+    match path {
+        // Axum removes the outer `/api` prefix before running middleware on
+        // a nested Router.  Keep the full forms as well so this helper remains
+        // correct if the internal router is mounted without `nest()` in tests
+        // or another binary.
+        "/system/mta" | "/api/system/mta" => "MTA_API_TOKEN",
+        "/system/sniffer"
+        | "/api/system/sniffer"
+        | "/import/sessions"
+        | "/api/import/sessions"
+        | "/import/stats"
+        | "/api/import/stats"
+        | "/data-security/import/http-sessions"
+        | "/api/data-security/import/http-sessions"
+        | "/internal/sniffer-config"
+        | "/api/internal/sniffer-config" => "SNIFFER_API_TOKEN",
+        _ => "INTERNAL_API_TOKEN",
+    }
+}
+
 pub async fn require_internal_token(
     req: axum::http::Request<axum::body::Body>,
     next: axum::middleware::Next,
 ) -> Result<axum::response::Response, AuthError> {
-    let expected = std::env::var("INTERNAL_API_TOKEN").unwrap_or_default();
+    let token_env = internal_token_env_for_path(req.uri().path());
+    let expected = std::env::var(token_env).unwrap_or_default();
     if expected.is_empty() {
         // Fail closed when the internal token is not configured.
-        warn!("INTERNAL_API_TOKEN is not configured; rejecting internal API request");
+        warn!(
+            token_env,
+            "Internal API token is not configured; rejecting request"
+        );
         return Err(AuthError::MissingToken);
     }
 
@@ -310,7 +474,14 @@ pub async fn require_internal_origin(
 mod tests {
     use super::*;
     use crate::auth::{AuthConfig, AuthState, LoginRateLimiter, jwt::generate_token};
-    use axum::http::{HeaderValue, header};
+    use axum::{
+        Extension, Router,
+        body::Body,
+        http::{HeaderValue, Request, StatusCode, header},
+        middleware,
+        routing::get,
+    };
+    use tower::ServiceExt;
 
     const TEST_ADMIN_PASSWORD: &str = "TestAdmin!2345";
 
@@ -329,6 +500,195 @@ mod tests {
     }
 
     #[test]
+    fn internal_service_tokens_are_endpoint_scoped() {
+        for path in ["/system/mta", "/api/system/mta"] {
+            assert_eq!(internal_token_env_for_path(path), "MTA_API_TOKEN");
+        }
+        for path in [
+            "/system/sniffer",
+            "/api/system/sniffer",
+            "/import/sessions",
+            "/api/import/sessions",
+            "/import/stats",
+            "/api/import/stats",
+            "/data-security/import/http-sessions",
+            "/api/data-security/import/http-sessions",
+            "/internal/sniffer-config",
+            "/api/internal/sniffer-config",
+        ] {
+            assert_eq!(internal_token_env_for_path(path), "SNIFFER_API_TOKEN");
+        }
+        assert_eq!(
+            internal_token_env_for_path("/api/metrics"),
+            "INTERNAL_API_TOKEN"
+        );
+        assert_eq!(
+            internal_token_env_for_path("/api/system/mta/extra"),
+            "INTERNAL_API_TOKEN"
+        );
+    }
+
+    #[test]
+    fn a_custom_role_named_admin_does_not_become_a_system_admin() {
+        let user = AuthenticatedUser {
+            id: "u".into(),
+            role_id: "role-custom".into(),
+            username: "operator".into(),
+            display_name: "Operator".into(),
+            role: "ADMIN".into(),
+            permissions: vec!["sessions.read".into()],
+            must_change_password: false,
+            session_id: "session".into(),
+        };
+        assert_ne!(user.role_id, "role-admin");
+        assert!(user.has_permission("sessions.read"));
+        assert!(!user.has_permission("platform.manage"));
+    }
+
+    fn route_test_user(permissions: &[&str]) -> AuthenticatedUser {
+        AuthenticatedUser {
+            id: "u-route-test".into(),
+            role_id: "role-custom".into(),
+            username: "route-test".into(),
+            display_name: "Route Test".into(),
+            role: "viewer".into(),
+            permissions: permissions
+                .iter()
+                .map(|permission| (*permission).into())
+                .collect(),
+            must_change_password: false,
+            session_id: "route-test-session".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn sessions_read_route_rejects_authenticated_user_without_permission() {
+        let app = Router::new()
+            .route(
+                "/",
+                get(|| async { "ok" }).route_layer(middleware::from_fn(require_sessions_read)),
+            )
+            .layer(Extension(route_test_user(&["security.read"])));
+
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn sessions_read_route_allows_authenticated_user_with_permission() {
+        let app = Router::new()
+            .route(
+                "/",
+                get(|| async { "ok" }).route_layer(middleware::from_fn(require_sessions_read)),
+            )
+            .layer(Extension(route_test_user(&["sessions.read"])));
+
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn admin_route_rejects_non_admin_role_even_with_platform_permission() {
+        let app = Router::new()
+            .route(
+                "/",
+                get(|| async { "ok" }).route_layer(middleware::from_fn(require_admin)),
+            )
+            .layer(Extension(route_test_user(&["platform.manage"])));
+
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn admin_route_allows_exact_admin_role_with_platform_permission() {
+        let mut user = route_test_user(&["platform.manage"]);
+        user.role_id = ADMIN_ROLE_ID.to_string();
+        let app = Router::new()
+            .route(
+                "/",
+                get(|| async { "ok" }).route_layer(middleware::from_fn(require_admin)),
+            )
+            .layer(Extension(user));
+
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    macro_rules! assert_read_guard_denies_missing_permission {
+        ($test_name:ident, $guard:ident, $unrelated_permission:literal) => {
+            #[tokio::test]
+            async fn $test_name() {
+                let app = Router::new()
+                    .route(
+                        "/",
+                        get(|| async { "ok" }).route_layer(middleware::from_fn($guard)),
+                    )
+                    .layer(Extension(route_test_user(&[$unrelated_permission])));
+
+                let response = app
+                    .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+
+                assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            }
+        };
+    }
+
+    assert_read_guard_denies_missing_permission!(
+        security_read_route_rejects_without_permission,
+        require_security_read,
+        "sessions.read"
+    );
+    assert_read_guard_denies_missing_permission!(
+        data_security_read_route_rejects_without_permission,
+        require_data_security_read,
+        "sessions.read"
+    );
+    assert_read_guard_denies_missing_permission!(
+        system_read_route_rejects_without_permission,
+        require_system_read,
+        "sessions.read"
+    );
+
+    #[test]
+    fn audit_accounts_are_read_only_except_for_session_lifecycle() {
+        assert!(audit_request_is_allowed(
+            &axum::http::Method::GET,
+            "/api/security/config"
+        ));
+        assert!(!audit_request_is_allowed(
+            &axum::http::Method::PUT,
+            "/api/security/config"
+        ));
+        assert!(audit_request_is_allowed(
+            &axum::http::Method::POST,
+            "/api/auth/change-password"
+        ));
+        assert!(audit_request_is_allowed(
+            &axum::http::Method::POST,
+            "/api/auth/logout"
+        ));
+    }
+
+    #[test]
     fn validate_admin_request_accepts_admin_token() {
         let auth_state = test_auth_state();
         let token = generate_token(&auth_state.config, "admin", "admin", 0).expect("admin token");
@@ -344,7 +704,8 @@ mod tests {
     #[test]
     fn validate_admin_request_rejects_non_admin_token() {
         let auth_state = test_auth_state();
-        let token = generate_token(&auth_state.config, "viewer", "viewer", 0).expect("viewer token");
+        let token =
+            generate_token(&auth_state.config, "viewer", "viewer", 0).expect("viewer token");
         let mut headers = HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,
@@ -354,6 +715,174 @@ mod tests {
         assert!(matches!(
             validate_admin_request(&headers, &auth_state),
             Err(AuthError::Forbidden)
+        ));
+    }
+
+    #[test]
+    fn deep_audit_get_system_config_is_allowed() {
+        assert!(audit_request_is_allowed(
+            &axum::http::Method::GET,
+            "/api/config"
+        ));
+    }
+
+    #[test]
+    fn deep_audit_head_system_config_is_allowed() {
+        assert!(audit_request_is_allowed(
+            &axum::http::Method::HEAD,
+            "/api/config"
+        ));
+    }
+
+    #[test]
+    fn deep_audit_options_system_config_is_allowed() {
+        assert!(audit_request_is_allowed(
+            &axum::http::Method::OPTIONS,
+            "/api/config"
+        ));
+    }
+
+    #[test]
+    fn deep_audit_get_audit_logs_is_allowed() {
+        assert!(audit_request_is_allowed(
+            &axum::http::Method::GET,
+            "/api/audit/logs"
+        ));
+    }
+
+    #[test]
+    fn deep_audit_get_platform_users_is_allowed() {
+        assert!(audit_request_is_allowed(
+            &axum::http::Method::GET,
+            "/api/platform/users"
+        ));
+    }
+
+    #[test]
+    fn deep_audit_get_data_security_is_allowed() {
+        assert!(audit_request_is_allowed(
+            &axum::http::Method::GET,
+            "/api/security/data"
+        ));
+    }
+
+    #[test]
+    fn deep_audit_get_sessions_is_allowed() {
+        assert!(audit_request_is_allowed(
+            &axum::http::Method::GET,
+            "/api/sessions"
+        ));
+    }
+
+    #[test]
+    fn deep_audit_get_unknown_read_path_is_allowed() {
+        assert!(audit_request_is_allowed(
+            &axum::http::Method::GET,
+            "/api/read-only-extension"
+        ));
+    }
+
+    #[test]
+    fn deep_audit_post_system_config_is_denied() {
+        assert!(!audit_request_is_allowed(
+            &axum::http::Method::POST,
+            "/api/config"
+        ));
+    }
+
+    #[test]
+    fn deep_audit_put_security_config_is_denied() {
+        assert!(!audit_request_is_allowed(
+            &axum::http::Method::PUT,
+            "/api/security/config"
+        ));
+    }
+
+    #[test]
+    fn deep_audit_patch_platform_users_is_denied() {
+        assert!(!audit_request_is_allowed(
+            &axum::http::Method::PATCH,
+            "/api/platform/users/user-1"
+        ));
+    }
+
+    #[test]
+    fn deep_audit_delete_platform_role_is_denied() {
+        assert!(!audit_request_is_allowed(
+            &axum::http::Method::DELETE,
+            "/api/platform/roles/role-1"
+        ));
+    }
+
+    #[test]
+    fn deep_audit_post_audit_logs_is_denied() {
+        assert!(!audit_request_is_allowed(
+            &axum::http::Method::POST,
+            "/api/audit/logs"
+        ));
+    }
+
+    #[test]
+    fn deep_audit_post_data_security_is_denied() {
+        assert!(!audit_request_is_allowed(
+            &axum::http::Method::POST,
+            "/api/security/data/import"
+        ));
+    }
+
+    #[test]
+    fn deep_audit_post_sessions_feedback_is_denied() {
+        assert!(!audit_request_is_allowed(
+            &axum::http::Method::POST,
+            "/api/sessions/session-1/feedback"
+        ));
+    }
+
+    #[test]
+    fn deep_audit_post_logout_is_allowed() {
+        assert!(audit_request_is_allowed(
+            &axum::http::Method::POST,
+            "/api/auth/logout"
+        ));
+    }
+
+    #[test]
+    fn deep_audit_post_change_password_is_allowed() {
+        assert!(audit_request_is_allowed(
+            &axum::http::Method::POST,
+            "/api/auth/change-password"
+        ));
+    }
+
+    #[test]
+    fn deep_audit_post_ws_ticket_is_allowed() {
+        assert!(audit_request_is_allowed(
+            &axum::http::Method::POST,
+            "/api/auth/ws-ticket"
+        ));
+    }
+
+    #[test]
+    fn deep_audit_nonstandard_methods_are_denied() {
+        assert!(!audit_request_is_allowed(
+            &axum::http::Method::TRACE,
+            "/api/auth/logout"
+        ));
+        assert!(!audit_request_is_allowed(
+            &axum::http::Method::CONNECT,
+            "/api/auth/logout"
+        ));
+    }
+
+    #[test]
+    fn deep_audit_lifecycle_path_must_match_exact_suffix() {
+        assert!(audit_request_is_allowed(
+            &axum::http::Method::POST,
+            "/api/auth/logout"
+        ));
+        assert!(!audit_request_is_allowed(
+            &axum::http::Method::POST,
+            "/api/auth/logout/extra"
         ));
     }
 }

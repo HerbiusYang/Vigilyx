@@ -1,0 +1,10 @@
+From: =?utf-8?B?VGltIEtlYW1hbmFu?= <sec@id-notice.example>
+To: budi@corp.internal
+Date: Wed, 26 Aug 2026 11:16:00 +0800
+Message-ID: <0006-b3@synth.example>
+Subject: Pemberitahuan akun
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Akun Anda akan dinonaktifkan karena aktivitas login yang mencurigakan.
+Verifikasi sekarang dalam 24 jam: https://id-verify.example.org/cek

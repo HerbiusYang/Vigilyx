@@ -1,0 +1,64 @@
+From: "市热力集团 | 供热费退费服务中心" <refund.heat@relire-corp.example>
+To: household.han@mymail.example
+Cc: (none)
+Reply-To: 退费受理组 <tuifei.desk@rl-tf-pay.example>
+Disposition-Notification-To: refund.heat@relire-corp.example
+Date: Tue, 07 Dec 2027 10:00:00 +0800
+Message-ID: <0911-b129@synth.example>
+Subject: =?utf-8?B?44CQ6YCA6LS56YCa55+l44CRMjAyNi0yMDI36YeH5pqW5a2j5L6b54Ot6LS55L2Z6aKd6YCA6LS577yI55So5oi357yW5Y+3R1ItODg0Mu+8iSDigJQg6YCA6LS56LSm5oi35qC46aqMIOKAlCDpgIDotLnnqpflj6MxMuaciDIw5pel?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px">
+<p>韩女士：</p>
+
+<p style="background:#E0F2F1;border-left:4px solid #00695C;padding:12px">
+<b>2026-2027 采暖季供热费余额退费通知（退费窗口 12 月 20 日）。</b>
+您（用户编号 <b>GR-8842</b>，阳光锦城 3-2-501）因<b>报停复供天数调整</b>产生供热费余额
+<b>1,842.60 元</b>。<b>退费窗口 12 月 20 日关闭</b>——逾期未申领的余额转入供热调节基金
+（按《供热条例》第 34 条，视为放弃本季退费）。退费需完成<b>退费账户核验</b>。
+</p>
+
+<h3>一、退费构成</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:220px">用户编号</td><td><b>GR-8842</b>（阳光锦城 3-2-501）</td></tr>
+<tr><td style="background:#f5f5f5">退费原因</td><td>报停复供天数调整（11 月 20 日起复供，按日折算）</td></tr>
+<tr><td style="background:#f5f5f5">已缴供热费</td><td>2,640 元（整季预缴）</td></tr>
+<tr><td style="background:#f5f5f5">实际应缴</td><td>797.40 元（按 54 天折算）</td></tr>
+<tr><td style="background:#f5f5f0">应退余额</td><td><b>1,842.60 元</b></td></tr>
+</table>
+
+<h3>二、退费账户核验（退费直发银行卡）</h3>
+<p>余额退费直发用户银行卡（原路退回通道已关闭——缴费商户号变更），需核验：</p>
+
+<p style="text-align:center;margin:18px 0">
+<a href="https://rl-tf-pay.example/refund/GR-8842/verify" style="display:inline-block;background:#00695C;color:#fff;padding:12px 42px;text-decoration:none;border-radius:4px;font-weight:bold">核验退费账户（1,842.60 元）</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">核验需：户主身份证号 + 银行卡号 + 预留手机短信验证码 · 官方入口：https://www.relire.example/service</p>
+
+<h3>三、退费时限</h3>
+<ul>
+<li>核验完成：3 个工作日到账</li>
+<li><b>窗口 12 月 20 日 17:00 关闭</b>：逾期余额转入供热调节基金（视为放弃）</li>
+</ul>
+
+<p style="font-size:14px;background:#E0F2F1;padding:12px">"退费要身份证银行卡验证码"请多想一步
+——退费类诈骗确实常见，您的谨慎是对的。边界：也可到热力营业厅（柜台）凭缴费凭证当面办理
+退费（现金或刷卡）；退费金额以营业厅系统核算为准。12 月 20 日是财务年度结转节点。</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://rl-tf-pay.example/px/tf.gif?c=GR-8842&amp;r=household.han%40mymail.example" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02;">代办通道：家属凭双方身份证照片可代办退费核验（免户主短信码，当日生效）。</p>
+
+<h3>四、联系方式</h3>
+<p>退费受理组：tuifei.desk@rl-tf-pay.example<br>
+用户引用：GR-8842 · 客服热线：96xxx（官网公布号码）</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+市热力集团 · 供热费退费服务中心 · 本通知发送至用户登记邮箱<br />
+退费依据《供热条例》与用户供用热合同执行。
+</div>
+
+</body></html>

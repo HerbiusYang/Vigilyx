@@ -7,7 +7,8 @@
 //! # Architecture
 //!
 //! ```text
-//! shared/schemas/engine_module_data_seed.json
+//! shared/schemas/engine_module_data_seed.json + semantic/data/*.json
+//!   → vigilyx_db::security::embedded_module_data_seed() (one composed seed)
 //!   → migration seeds to config table (key = "engine_module_data_seed")
 //!   → engine startup: load seed + overrides → ModuleDataRegistry
 //!   → modules call module_data().contains("list_name", value)
@@ -20,6 +21,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
+use vigilyx_db::security::embedded_module_data_seed;
 
 /// Monotonically increasing version of the global registry.
 ///
@@ -36,11 +38,8 @@ pub fn module_data_epoch() -> u64 {
 
 // ── Global singleton ────────────────────────────────────────────────
 
-/// Embedded seed JSON — compiled into the binary so that `module_data()` can
-/// self-initialize with sensible defaults even when the DB is unavailable
-/// (e.g. in unit tests or if called before `init_module_data_from_db`).
-const EMBEDDED_SEED_JSON: &str =
-    include_str!("../../../shared/schemas/engine_module_data_seed.json");
+// The database seed composer embeds both shared and semantic-owned files.
+// Bootstrap, migrations and reloads consume that same compiled default.
 
 // Keep an immutable registry behind the lock and hand callers an `Arc`
 // snapshot. Returning a live `RwLockReadGuard` here used to make seemingly
@@ -70,7 +69,7 @@ pub fn set_module_data(registry: ModuleDataRegistry) {
 pub fn module_data() -> Arc<ModuleDataRegistry> {
     let shared = MODULE_DATA.get_or_init(|| {
         let registry = ModuleDataRegistry::from_seed_and_overrides(
-            EMBEDDED_SEED_JSON,
+            embedded_module_data_seed(),
             &ModuleDataOverrides::default(),
         )
         .unwrap_or_else(|e| {
@@ -260,6 +259,59 @@ pub struct ListOverride {
 
 // ── DB helpers (called from registry.rs / engine binary) ────────────
 
+fn backfill_compiled_json_defaults(compiled: &serde_json::Value, merged: &mut serde_json::Value) {
+    match (compiled, merged) {
+        (serde_json::Value::Object(compiled_map), serde_json::Value::Object(merged_map)) => {
+            for (key, compiled_value) in compiled_map {
+                match merged_map.get_mut(key) {
+                    Some(merged_value) => {
+                        backfill_compiled_json_defaults(compiled_value, merged_value)
+                    }
+                    None => {
+                        merged_map.insert(key.clone(), compiled_value.clone());
+                    }
+                }
+            }
+        }
+        (serde_json::Value::Array(compiled_items), serde_json::Value::Array(merged_items))
+            if compiled_items.iter().all(serde_json::Value::is_string)
+                && merged_items.iter().all(serde_json::Value::is_string) =>
+        {
+            let mut existing: HashSet<String> = merged_items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_lowercase)
+                .collect();
+            for compiled_item in compiled_items.iter().filter_map(serde_json::Value::as_str) {
+                if existing.insert(compiled_item.to_lowercase()) {
+                    merged_items.push(serde_json::Value::String(compiled_item.to_string()));
+                }
+            }
+        }
+        (serde_json::Value::Array(compiled_items), serde_json::Value::Array(merged_items)) => {
+            // Structured seed arrays use a stable `brand` identifier. Preserve
+            // existing DB values, backfill new fields into matching profiles,
+            // and append profiles introduced by a newer binary.
+            for compiled_item in compiled_items {
+                let compiled_brand = compiled_item
+                    .get("brand")
+                    .and_then(serde_json::Value::as_str);
+                let Some(compiled_brand) = compiled_brand else {
+                    continue;
+                };
+                if let Some(merged_item) = merged_items.iter_mut().find(|item| {
+                    item.get("brand").and_then(serde_json::Value::as_str) == Some(compiled_brand)
+                }) {
+                    backfill_compiled_json_defaults(compiled_item, merged_item);
+                } else {
+                    merged_items.push(compiled_item.clone());
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 fn merge_seed_json(compiled_seed_json: &str, db_seed_json: &str) -> String {
     let Ok(compiled_seed) = serde_json::from_str::<serde_json::Value>(compiled_seed_json) else {
         return db_seed_json.to_string();
@@ -282,44 +334,11 @@ fn merge_seed_json(compiled_seed_json: &str, db_seed_json: &str) -> String {
     };
 
     for (list_name, compiled_entry) in compiled_lists {
-        let Some(compiled_items) = compiled_entry
-            .get("items")
-            .and_then(|value| value.as_array())
-        else {
-            merged_lists
-                .entry(list_name.clone())
-                .or_insert_with(|| compiled_entry.clone());
-            continue;
-        };
-
         let Some(merged_entry) = merged_lists.get_mut(list_name) else {
             merged_lists.insert(list_name.clone(), compiled_entry.clone());
             continue;
         };
-
-        let Some(merged_items) = merged_entry
-            .get_mut("items")
-            .and_then(|value| value.as_array_mut())
-        else {
-            continue;
-        };
-
-        let simple_compiled = compiled_items.iter().all(serde_json::Value::is_string);
-        let simple_merged = merged_items.iter().all(serde_json::Value::is_string);
-        if !simple_compiled || !simple_merged {
-            continue;
-        }
-
-        let mut existing: HashSet<String> = merged_items
-            .iter()
-            .filter_map(|value| value.as_str())
-            .map(|value| value.to_lowercase())
-            .collect();
-        for compiled_item in compiled_items.iter().filter_map(|value| value.as_str()) {
-            if existing.insert(compiled_item.to_lowercase()) {
-                merged_items.push(serde_json::Value::String(compiled_item.to_string()));
-            }
-        }
+        backfill_compiled_json_defaults(compiled_entry, merged_entry);
     }
 
     serde_json::to_string(&merged_seed).unwrap_or_else(|_| db_seed_json.to_string())
@@ -328,14 +347,14 @@ fn merge_seed_json(compiled_seed_json: &str, db_seed_json: &str) -> String {
 /// Load module data seed JSON from config table.
 pub async fn load_module_data_seed(db: &vigilyx_db::VigilDb) -> String {
     match db.get_config("engine_module_data_seed").await {
-        Ok(Some(json)) => merge_seed_json(EMBEDDED_SEED_JSON, &json),
+        Ok(Some(json)) => merge_seed_json(embedded_module_data_seed(), &json),
         Ok(None) => {
             warn!("engine_module_data_seed not found in config table — using compiled fallback");
-            include_str!("../../../shared/schemas/engine_module_data_seed.json").to_string()
+            embedded_module_data_seed().to_string()
         }
         Err(e) => {
             warn!("Failed to load engine_module_data_seed: {e} — using compiled fallback");
-            include_str!("../../../shared/schemas/engine_module_data_seed.json").to_string()
+            embedded_module_data_seed().to_string()
         }
     }
 }
@@ -376,6 +395,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn semantic_datasets_use_the_shared_registry_and_administrator_overrides() {
+        let overrides = ModuleDataOverrides {
+            overrides: HashMap::from([(
+                "semantic_request_markers_v1".to_string(),
+                ListOverride {
+                    added: vec!["fixture recipient request".to_string()],
+                    removed: vec!["请".to_string()],
+                },
+            )]),
+        };
+        let registry =
+            ModuleDataRegistry::from_seed_and_overrides(embedded_module_data_seed(), &overrides)
+                .unwrap();
+        assert!(registry.contains("semantic_request_markers_v1", "fixture recipient request"));
+        assert!(!registry.contains("semantic_request_markers_v1", "请"));
+        assert!(registry.contains("semantic_object_markers_v1", "密码"));
+        assert!(
+            registry
+                .get_structured("semantic_scenario_policy_v1")
+                .is_some()
+        );
+        assert!(
+            registry
+                .get_structured("semantic_cross_claim_candidate_policy_v1")
+                .is_some()
+        );
+        assert!(
+            registry
+                .get_structured("semantic_extortion_policy_v2")
+                .is_some()
+        );
+        assert!(!registry.get_list("suspicious_tlds").is_empty());
+    }
+
+    #[test]
     fn merge_seed_json_backfills_new_compiled_string_items() {
         let compiled = r#"{
             "lists": {
@@ -402,6 +456,52 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(items, vec!["xyz", "lol", "top"]);
+    }
+
+    #[test]
+    fn merge_seed_json_backfills_structured_policy_and_profile_fields() {
+        let compiled = r#"{
+            "lists": {
+                "fixture_policy": {
+                    "items": {"enabled": true, "score": 0.4, "new_floor": 0.7}
+                },
+                "fixture_profiles": {
+                    "items": [
+                        {"brand": "fixture_brand", "aliases": ["fixture"], "sender_domains": ["sender.example"], "landing_domains": ["landing.example"]},
+                        {"brand": "new_brand", "aliases": ["new fixture"], "sender_domains": ["new-sender.example"], "landing_domains": ["new-landing.example"]}
+                    ]
+                }
+            }
+        }"#;
+        let db = r#"{
+            "lists": {
+                "fixture_policy": {
+                    "items": {"enabled": true, "score": 0.3}
+                },
+                "fixture_profiles": {
+                    "items": [
+                        {"brand": "fixture_brand", "aliases": ["operator override"]}
+                    ]
+                }
+            }
+        }"#;
+
+        let merged: serde_json::Value =
+            serde_json::from_str(&merge_seed_json(compiled, db)).unwrap();
+        assert_eq!(merged["lists"]["fixture_policy"]["items"]["score"], 0.3);
+        assert_eq!(merged["lists"]["fixture_policy"]["items"]["new_floor"], 0.7);
+        assert_eq!(
+            merged["lists"]["fixture_profiles"]["items"][0]["aliases"][0],
+            "operator override"
+        );
+        assert_eq!(
+            merged["lists"]["fixture_profiles"]["items"][0]["sender_domains"][0],
+            "sender.example"
+        );
+        assert_eq!(
+            merged["lists"]["fixture_profiles"]["items"][1]["brand"],
+            "new_brand"
+        );
     }
 
     #[test]
@@ -451,5 +551,50 @@ mod tests {
         // Non-existent list
         assert!(!registry.contains("nonexistent", "foo"));
         assert!(registry.get_list("nonexistent").is_empty());
+    }
+
+    #[test]
+    fn false_positive_calibration_lists_are_managed_by_module_data() {
+        let registry = ModuleDataRegistry::from_seed_and_overrides(
+            embedded_module_data_seed(),
+            &ModuleDataOverrides::default(),
+        )
+        .expect("embedded module-data seed must be valid");
+
+        for list_name in [
+            "token_boundary_path_keywords",
+            "invoice_spam_direct_contact_markers",
+            "invoice_spam_context_only_contact_markers",
+            "invoice_spam_contextual_solicitation_markers",
+            "subsidy_portal_action_phrases",
+            "subsidy_portal_target_phrases",
+            "subject_phone_lure_markers",
+            "subject_phone_benign_context_markers",
+            "adult_content_observation_phrases",
+            "adult_content_lure_action_markers",
+            "generic_lure_urgency_markers",
+            "generic_lure_action_markers",
+            "benign_forwarded_message_subject_markers",
+            "bec_context_required_phrases",
+            "bec_always_weak_phrases",
+            "bec_local_pressure_markers",
+            "payment_change_context_only_terms",
+            "payment_change_explicit_redirect_terms",
+            "attachment_context_required_phishing_keywords",
+            "attachment_phishing_action_markers",
+            "contextual_query_params",
+            "reputation_noise_tolerant_domains",
+            "footer_disclaimer_markers",
+            "benign_mailer_vendor_markers",
+            "benign_mailer_product_markers",
+            "dangerous_attachment_document_lure_tokens",
+            "active_script_risk_ops",
+            "dangerous_inline_event_handler_ops",
+        ] {
+            assert!(
+                !registry.get_list(list_name).is_empty(),
+                "required managed module-data list is missing or empty: {list_name}"
+            );
+        }
     }
 }

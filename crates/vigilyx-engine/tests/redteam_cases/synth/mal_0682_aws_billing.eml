@@ -1,0 +1,89 @@
+From: Amazon Web Services <no-reply@arnazon-billing.example>
+To: ops@corp.internal
+Cc: cto@corp.internal
+Date: Mon, 19 Oct 2026 06:15:00 +0800
+Message-ID: <0682-b53@synth.example>
+Subject: [Urgent] Unusual billing activity detected on account 4471-8842-9930 — Root account security review required
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif;max-width:640px;margin:0 auto;border:1px solid #ff9900;border-radius:8px;overflow:hidden">
+<div style="background:#ff9900;color:#000;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">Amazon Web Services | Billing Alert</h2>
+</div>
+<div style="padding:24px">
+
+<p>Dear AWS Customer,</p>
+
+<p>We have detected <b style="color:#e00">unusual billing activity</b> on your AWS account. Your account has been temporarily restricted pending a security review.</p>
+
+<h3 style="color:#e47911;border-bottom:2px solid #e47911;padding-bottom:4px">Detected Anomalies</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:160px">Account ID</td><td><b>4471-8842-9930</b></td></tr>
+<tr><td style="background:#f5f5f5">Normal monthly spend</td><td>$2,400 - $3,100</td></tr>
+<tr><td style="background:#f5f5f5">Current month-to-date</td><td style="color:#e00"><b>$28,740</b> (932% increase)</td></tr>
+<tr><td style="background:#f5f5f5">Anomalous services</td><td>EC2 P3.8xlarge × 16 (GPU instances, $24,180)</td></tr>
+<tr><td style="background:#f5f5f5">Region</td><td>us-east-1 (your usual region: cn-northwest-1)</td></tr>
+<tr><td style="background:#f5f5f5">Started</td><td>October 14, 2026 03:22 UTC</td></tr>
+<tr><td style="background:#f5f5f5">Root cause</td><td style="color:#e00">Compromised access key (AKIA...4F2A)</td></tr>
+</table>
+
+<h3 style="color:#e47911;border-bottom:2px solid #e47911;padding-bottom:4px">Immediate Action Required</h3>
+<p>Your account will be <b>suspended in 24 hours</b> unless you complete a root account security review. Suspension will result in:</p>
+<ul>
+<li>Termination of ALL running EC2 instances (including production)</li>
+<li>Deletion of all EBS volumes after 7 days</li>
+<li>S3 buckets entering read-only mode</li>
+<li>RDS databases entering snapshot-only mode</li>
+</ul>
+
+<h3 style="color:#e47911;border-bottom:2px solid #e47911;padding-bottom:4px">How to Complete Security Review</h3>
+<p>Due to the severity of this incident (root account compromise), we require identity verification through our enhanced security portal:</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://arnazon-billing.example/security/review?account=4471-8842-9930" style="display:inline-block;background:#ff9900;color:#000;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Start Security Review</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://console.aws.amazon.com/security/review</p>
+
+<p style="font-size:12px;color:#888;text-align:center">You will be redirected to AWS Single Sign-On (AWS SSO) for identity verification.</p>
+
+<h3 style="color:#e47911;border-bottom:2px solid #e47911;padding-bottom:4px">Why Am I Being Redirected to SSO?</h3>
+<p>We understand you may be wondering why the security review redirects through AWS SSO rather than the standard IAM console. This is a fair question.</p>
+
+<p>In October 2026, AWS introduced <b>Enhanced Root Account Protection</b> as part of our commitment to zero-trust security. Under this program:</p>
+<ul>
+<li>Root account security reviews must go through AWS SSO (not the IAM console directly)</li>
+<li>This ensures that only the actual root account holder can complete the review</li>
+<li>During the SSO flow, you will be asked to grant a temporary <code>offline_access</code> token — this allows the security review session to persist while you review the anomalous billing details</li>
+<li>The token is scoped to read-only security audit permissions and expires in 1 hour</li>
+</ul>
+
+<p>If you prefer not to use SSO, you may also:
+  1. Log in to the AWS Console directly (navigate to <b>console.aws.amazon.com</b> in your browser)
+  2. Go to IAM → Security Credentials → Access Keys
+  3. Manually revoke the compromised key (AKIA...4F2A)</p>
+
+<p>However, <b>manual key revocation alone will not prevent account suspension</b>. You must still complete the SSO security review to restore full account access.</p>
+
+<h3 style="color:#e47911;border-bottom:2px solid #e47911;padding-bottom:4px">Cost Breakdown (Anomalous Charges)</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Service</th><th>Instance Type</th><th>Quantity</th><th>Hours</th><th>Cost</th></tr>
+<tr><td>EC2</td><td>p3.8xlarge</td><td>16</td><td>112</td><td>$24,180.00</td></tr>
+<tr><td>EBS</td><td>gp3 500GB</td><td>16</td><td>—</td><td>$1,920.00</td></tr>
+<tr><td>Data Transfer</td><td>Outbound</td><td>—</td><td>4.2TB</td><td>$2,640.00</td></tr>
+<tr><td colspan="4" style="text-align:right"><b>Total</b></td><td><b>$28,740.00</b></td></tr>
+</table>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Amazon Web Services, Inc. | Billing & Security Team</p>
+<p style="font-size:11px;color:#999">Reference: AWS-SEC-2026-4471-8842</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the registered root account contact.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://arnazon-billing.example/api/track?recipient=ops%40corp.internal&account=4471-8842-9930&type=billing_alert" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

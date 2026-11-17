@@ -1,0 +1,59 @@
+From: Trail of Bits | Blockchain Security Team <audit@trailofbits.example>
+To: blockchain@corp.internal
+Cc: CTO <cto@corp.internal>
+Date: Fri, 09 Oct 2026 16:45:00 +0800
+Message-ID: <0564-b43@synth.example>
+Subject: [Confidential] Smart Contract Audit Report Delivery - VaultFactory.sol (Audit #TB-2026-0884)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+CTO、区块链团队：
+
+贵司委托的 VaultFactory.sol 智能合约安全审计已完成。按审计合同约定，报告通过 PGP 加密邮件交付。
+
+一、审计概况
+  审计对象：VaultFactory.sol（0x7a3F...e21B，Ethereum Mainnet）
+  合约功能：多签金库工厂合约
+  审计周期：2026-09-20 至 2026-10-05
+  审计范围：Solidity 0.8.19，3 个合约，共 1,847 行
+  审计工具：Slither / Echidna / Mythril（自动化）+ 2 名高级审计师人工审阅
+
+二、发现概要
+  严重（Critical）：1 项
+  高危（High）：2 项
+  中危（Medium）：3 项
+  低危（Low）：4 项
+  信息（Informational）：7 项
+
+最严重发现概述：
+  C-01（Critical）：VaultFactory.createVault() 中的初始 owner 设置存在 front-running 风险。
+  建议使用 CREATE2 + commit-reveal 模式。
+
+  H-01（High）：Vault.withdraw() 缺少重入保护。建议添加 nonReentrant 修饰符。
+
+三、报告交付方式
+审计报告以 PGP 加密附件形式随本邮件发送（加密至贵司 CTO 的公钥 0x4F2A 91C3）。密码为审计合同编号后 6 位（TB-0884 → 088420）。
+
+如需报告的明文版本（供内部审计使用），请安排专人到我们杭州办公室现场查阅（NDA 条款约定）。
+
+四、修复建议时间线
+  C-01：48 小时内修复
+  H-01/H-02：7 天内
+  其余：下一版本迭代
+
+修复后提供免费复审（1 轮），请将修复后的合约地址发至本邮箱。
+
+五、安全声明
+我们只通过以下方式交付审计报告：
+  1. PGP 加密邮件附件
+  2. 客户现场查阅
+我们不会通过设备码、OAuth 授权、第三方门户或任何需要您提供凭据的方式交付报告。如收到此类邮件，请视为假冒并通知我们。
+
+六、联系
+审计师：Dimitris (dimitris@trailofbits.example)
+紧急联系：PGP 加密邮件
+
+--
+Trail of Bits | Blockchain Security Practice
+audit@trailofbits.example
+（本邮件含审计保密信息，请勿转发。）

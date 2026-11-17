@@ -30,6 +30,7 @@ use crate::module::{ModuleResult, SecurityModule};
 
 pub(crate) const MODULE_EXECUTION_FAILED_CATEGORY: &str = "inspection_module_failed";
 pub(crate) const MODULE_EXECUTION_TIMEOUT_CATEGORY: &str = "inspection_module_timeout";
+pub(crate) const MODULE_DEPENDENCY_UNAVAILABLE_CATEGORY: &str = "inspection_dependency_unavailable";
 
 /// Availability failures in these advisory modules remain visible in module
 /// results and metrics, but do not by themselves block a safe disposition.
@@ -50,7 +51,15 @@ impl PipelineExecutionOutcome {
     /// True only when the configured pipeline reached a terminal result for
     /// every scheduled module without an execution error or timeout.
     pub fn inspection_complete(&self) -> bool {
-        !self.timed_out && self.failed_modules.is_empty() && self.timed_out_modules.is_empty()
+        !self.timed_out
+            && self.failed_modules.is_empty()
+            && self.timed_out_modules.is_empty()
+            && !self.results.values().any(|result| {
+                result
+                    .categories
+                    .iter()
+                    .any(|category| category == MODULE_DEPENDENCY_UNAVAILABLE_CATEGORY)
+            })
     }
 
     /// Human-readable execution failures that must block a safe disposition.
@@ -71,6 +80,18 @@ impl PipelineExecutionOutcome {
             .filter(|module| !NON_BLOCKING_DISPOSITION_MODULES.contains(&module.as_str()))
             .cloned()
             .collect::<Vec<_>>();
+        let mut dependency_blocked_modules = self
+            .results
+            .iter()
+            .filter(|(_, result)| {
+                result
+                    .categories
+                    .iter()
+                    .any(|category| category == MODULE_DEPENDENCY_UNAVAILABLE_CATEGORY)
+            })
+            .map(|(module, _)| module.clone())
+            .collect::<Vec<_>>();
+        dependency_blocked_modules.sort_unstable();
 
         let mut reasons = Vec::new();
         if self.timed_out {
@@ -88,6 +109,12 @@ impl PipelineExecutionOutcome {
                 blocking_failed_modules.join(", ")
             ));
         }
+        if !dependency_blocked_modules.is_empty() {
+            reasons.push(format!(
+                "required module dependency unavailable: {}",
+                dependency_blocked_modules.join(", ")
+            ));
+        }
         (!reasons.is_empty()).then(|| reasons.join("; "))
     }
 }
@@ -97,6 +124,10 @@ struct DagNode {
     module_id: String,
     module: Arc<dyn SecurityModule>,
     condition: Option<ConditionConfig>,
+    /// Hard module dependencies plus any configured conditional dependency.
+    /// Dependencies omitted from the active DAG (disabled/deferred modules)
+    /// remain here so the node is skipped instead of becoming a false root.
+    required_dependencies: Vec<String>,
     timeout: Duration,
     /// If true, analyze() runs on the blocking thread pool via spawn_blocking.
     cpu_bound: bool,
@@ -109,9 +140,6 @@ struct DagNode {
 pub struct PipelineOrchestrator {
     /// DAG: edge A -> B means "A must complete before B can start".
     graph: StableDiGraph<DagNode, ()>,
-    /// module_id -> NodeIndex lookup (retained for future introspection).
-    #[allow(dead_code)]
-    node_index: HashMap<String, NodeIndex>,
     /// Root nodes (in-degree 0) - scheduled immediately on execute().
     roots: Vec<NodeIndex>,
     /// Total number of nodes to execute.
@@ -166,12 +194,23 @@ impl PipelineOrchestrator {
             .map(|(id, module)| (id.clone(), Arc::clone(module)))
             .collect();
 
+        let omitted_inline_modules: HashSet<String> = config
+            .modules
+            .iter()
+            .filter(|entry| !eligible.contains(&entry.id))
+            .map(|entry| entry.id.clone())
+            .collect();
+
         info!(
             selected = ?eligible,
             max_priority,
             "Built bounded MTA inline pipeline; deferred modules stay in full pipeline"
         );
-        Self::build(&filtered_registry, &filtered_config)
+        Self::build_with_inline_omissions(
+            &filtered_registry,
+            &filtered_config,
+            &omitted_inline_modules,
+        )
     }
 
     /// Build the orchestrator from registered modules and pipeline config.
@@ -179,6 +218,14 @@ impl PipelineOrchestrator {
     pub fn build(
         all_modules: &HashMap<String, Arc<dyn SecurityModule>>,
         config: &PipelineConfig,
+    ) -> Result<Self, EngineError> {
+        Self::build_with_inline_omissions(all_modules, config, &HashSet::new())
+    }
+
+    fn build_with_inline_omissions(
+        all_modules: &HashMap<String, Arc<dyn SecurityModule>>,
+        config: &PipelineConfig,
+        omitted_inline_modules: &HashSet<String>,
     ) -> Result<Self, EngineError> {
         const OPTIONAL_EXTERNAL_MODULES: &[&str] =
             &["av_eml_scan", "av_attach_scan", "sandbox_scan"];
@@ -233,12 +280,33 @@ impl PipelineOrchestrator {
                 .clone();
             let condition = conditions.get(id).cloned();
             let meta = module.metadata();
+            // The inline aggregate represents the selected bounded tier, so
+            // configured detectors omitted by the priority filter are not
+            // prerequisites for its verdict node. Explicit verdict conditions
+            // are added below and remain required.
+            let mut required_dependencies = meta
+                .depends_on
+                .iter()
+                .filter(|dependency| {
+                    dependency.as_str() != "*"
+                        && !(id.as_str() == "verdict"
+                            && omitted_inline_modules.contains(*dependency))
+                })
+                .cloned()
+                .collect::<HashSet<_>>();
+            if let Some(dependency) = condition
+                .as_ref()
+                .and_then(|condition| condition.depends_module.as_ref())
+            {
+                required_dependencies.insert(dependency.clone());
+            }
             let timeout_ms = meta.timeout_ms;
             let cpu_bound = meta.cpu_bound;
             let idx = graph.add_node(DagNode {
                 module_id: id.clone(),
                 module,
                 condition,
+                required_dependencies: required_dependencies.into_iter().collect(),
                 timeout: Duration::from_millis(timeout_ms),
                 cpu_bound,
             });
@@ -301,7 +369,6 @@ impl PipelineOrchestrator {
 
         Ok(Self {
             graph,
-            node_index,
             roots,
             node_count,
             global_timeout: Duration::from_secs(90),
@@ -455,6 +522,7 @@ impl PipelineOrchestrator {
         let module = node.module.clone();
         let timeout = node.timeout;
         let condition = node.condition.clone();
+        let required_dependencies = node.required_dependencies.clone();
         let cpu_bound = node.cpu_bound;
         let ctx = ctx.clone();
         let done_tx = done_tx.clone();
@@ -463,16 +531,38 @@ impl PipelineOrchestrator {
             let start = Instant::now();
 
             // Conditional execution check
-            if !Self::should_execute_node(&module, &condition, &ctx).await {
-                debug!(module = %module_id, "Node skipped (condition not met)");
+            let missing_dependency =
+                Self::missing_required_dependency(&required_dependencies, &ctx).await;
+            if missing_dependency.is_some()
+                || !Self::should_execute_node(&module, &condition, &ctx).await
+            {
+                let reason = missing_dependency.map_or_else(
+                    || "Condition not met, skipped".to_string(),
+                    |dependency| {
+                        format!(
+                            "Required dependency '{}' produced no result; inspection is incomplete",
+                            dependency
+                        )
+                    },
+                );
+                debug!(module = %module_id, ?missing_dependency, "Node skipped");
                 // hopsofModule Result, first (Status: alreadyhops)
-                let skipped_result = ModuleResult::not_applicable(
+                let mut skipped_result = ModuleResult::not_applicable(
                     &module_id,
                     &module.metadata().name,
                     module.metadata().pillar,
-                    "Condition not met, skipped",
+                    &reason,
                     0,
                 );
+                if let Some(dependency) = missing_dependency {
+                    skipped_result
+                        .categories
+                        .push(MODULE_DEPENDENCY_UNAVAILABLE_CATEGORY.to_string());
+                    skipped_result.details = serde_json::json!({
+                        "execution_status": "dependency_unavailable",
+                        "missing_dependency": dependency,
+                    });
+                }
                 ctx.insert_result(skipped_result).await;
                 let _ = done_tx.send(node_idx).await;
                 return;
@@ -579,15 +669,32 @@ impl PipelineOrchestrator {
         if let Some(cond) = &condition
             && let Some(min_level) = &cond.min_threat_level
         {
-            let current_max = ctx.max_threat_level().await;
-            if current_max < *min_level {
+            let Some(dependency) = cond.depends_module.as_deref() else {
+                // Invalid persisted configurations are rejected by the API.
+                // Keep the runtime deterministic if an older config bypassed it.
+                return false;
+            };
+            let Some(dependency_result) = ctx.get_result(dependency).await else {
+                return false;
+            };
+            if dependency_result.threat_level < *min_level {
                 return false;
             }
-            // depends_module ordering is guaranteed by the DAG edge,
-            // so no runtime has_result() check is needed.
         }
 
         true
+    }
+
+    async fn missing_required_dependency<'a>(
+        required_dependencies: &'a [String],
+        ctx: &SecurityContext,
+    ) -> Option<&'a str> {
+        for dependency in required_dependencies {
+            if !ctx.has_result(dependency).await {
+                return Some(dependency);
+            }
+        }
+        None
     }
 }
 

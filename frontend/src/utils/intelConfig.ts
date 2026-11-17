@@ -13,7 +13,7 @@ export function normalizeIntelSourceConfig(value: Partial<IntelSourceConfig> | n
   }
 }
 
-export function isMaskedSecretValue(value: string | null | undefined): boolean {
+function isMaskedSecretValue(value: string | null | undefined): boolean {
   return typeof value === 'string' && (value.includes('...') || value === '****')
 }
 

@@ -4,13 +4,50 @@ All notable changes to Vigilyx are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the project follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.9.4] - 2026-11-13
 
-## [0.9.4] - 2026-08-17
+### Added
+
+- Added separate SMTP outbound-email data-security reviews alongside HTTP/Webmail incidents. Mirror mode audits inspectable traffic; the MTA can enforce outbound DLP on relay candidates. Unknown direction or incomplete inspection remains explicit.
+- Added administrator-controlled privacy mode, independent audit approval, user/session/resource/scope-bound access leases of at most five minutes, and audited factor enrollment and access requests.
+- Added an optional CPU ONNX intent-model ensemble to `semantic_scan`. It records shadow diagnostics by default; an explicit `SEMANTIC_INTENT_SCORE_THRESHOLD` enables the scored path instead of local semantic rules.
+- Added a feedback-based D-S model workflow with preserved evidence snapshots, candidate export/training, explicit install/rollback, and signed acceptance certificates. Training does not automatically activate a model.
+- Added separate first-deployment and update guides, including a concrete 0.9.3 → 0.9.4 upgrade and coordinated recovery procedure.
+- Added an explicit release-document list and CI checks for the actual Git tree, unpublished-document links, and local environment details; internal evaluation and decision records remain outside the release source.
 
 ### Changed
 
-- Bumped the Rust workspace, Python AI package, and frontend package metadata to 0.9.4.
+- Upgraded the Rust toolchain to 1.98.0 across the workspace, CI, Docker build images, persistent builder, and deployment documentation.
+- Hardened `deploy.sh`: rsync now preserves source mtimes for incremental Rust builds and excludes VitePress build/cache output, workspace tests retain their real remote exit status, frontend deployments run the test suite and full TypeScript/Vite build, deployment waits for aggregate API readiness, and active MTA topology is resolved before compilation without masking build failures or implicitly repurposing `--sniffer`.
+- Made deployment reconcile PostgreSQL/Valkey before targeted restarts, run schema migration and fixed least-privilege role setup as one-shot jobs, provision an independent audit identity, fail fast when schema locks are held, and preserve a top-level operational `backups/` directory during `rsync --delete`.
+- Audited the public English and Chinese documentation against the current Compose topology, health routes, optional integrations, pipeline registry, MTA policy defaults, DLP limits, frontend toolchain, and authentication behavior.
+- Removed environment-specific GPU host details and task snapshots from the public AI-training guide; GPU selection is now explicit and configurable instead of hard-coded to one server's card layout.
+- Reworked threat-case capability maps to distinguish implemented evidence paths from deployment policy and measured detection quality; removed unsupported fixed-verdict, false-positive, false-negative, and guaranteed-blocking claims.
+- Made `clustered_ds_v2` the default runtime aggregation strategy. Historical `ds_murphy`, `clustered_ds_v1`, and `legacy_ds_murphy` configuration names normalize to that strategy; Noisy-OR, Weighted Max, and TBM remain explicit alternatives.
+- Aligned Rust, frontend, Python package, and AI API version metadata at 0.9.4.
+
+### Fixed
+
+- Separated reported delivery-failure extraction from operational sender trust, deduplicated records across reports, prevented incomplete records from supplying another message's sender, and added an opt-in low-volume rotating-source observation with no automatic blocking.
+- Made multi-hop delivery counters and drill-down lists include all retained history, with a shared snapshot upper bound and no four-node display cap.
+- Removed schema DDL from the least-privilege engine runtime, separated API liveness from aggregate readiness to avoid an API/engine startup cycle, and allowed the sniffer to start without database credentials it does not use.
+- Made the MTA deployment path usable with its secure TLS defaults: a one-shot installer copies mode-`600` host key material into an MTA-only volume, and `deploy.sh --mta` now builds the complete control-plane/MTA topology instead of assuming an API image already exists.
+- Corrected the documented cron backup so it does not require access to the root-owned deployment `.env`, and made full-volume backup instructions stop every Compose profile.
+- Prevented bundled Caddy from appending duplicate security headers to API responses; proxy-level HSTS and related headers now replace upstream values deterministically.
+- Restored large HTTP/Webmail body spooling under read-only containers with a dedicated shared volume: the sniffer can write only the spool, while the engine receives read-only access and the API retains cleanup/download access.
+- Corrected Direct Send authentication handling so explicit authentication failure and an absent result are evaluated separately, while temporary authentication errors do not become a positive detection signal.
+- Added the missing Chinese names and bilingual descriptions for the external URL and process URL sandbox pipeline entries.
+- Corrected website bootstrap/TLS examples, the documented migration interruption for targeted deployments, independent cron schedules, and stale semantic/corpus documentation.
+- Avoided unnecessary external-login aggregate rewrites on session updates and bounded hourly cleanup by an indexable timestamp range.
+- Exposed PostgreSQL memory/logging settings through Compose and deployment templates; deployment verification checks effective settings and waits for mirror queue recovery.
+- Paused application clients before dependency recreation and attempted to restore their prior running state on failures; schema migrations now require a newly built API binary.
+- Shipped the signing tool's validators and synthetic fixtures with the public source, removing a dependency on the maintainer's ignored local skill directory, and added CI checks for deployment/release tools.
+- Updated Rustix to 1.1.6 and removed the obsolete Wasmtime audit exception. The optional SQLx SQLite lockfile advisory is exempted only while all workspace features and targets prove that SQLite is inactive.
+
+### Removed
+
+- Removed unused frontend compatibility maps, helper functions, test factories, and orphan types; retained internally used helpers as private declarations.
+- Removed unused Rust and Python direct dependencies, obsolete API helpers/error constants, unused Python test helpers, and an old cleanup checklist; retained security version pins and regression coverage.
 
 ## [0.9.3] - 2026-08-16
 
@@ -109,7 +146,7 @@ Initial open-source release.
 
 - REST API built on axum with JWT authentication and Prometheus metrics
 - WebSocket real-time push with one-time ticket authentication
-- React 18 SPA for dashboard, email security, data security, automation, knowledge, and settings
+- React SPA for dashboard, email security, data security, automation, knowledge, and settings (current dependency line is React 19)
 - Default `vigilyx` runtime packs API, frontend assets, and the standalone engine in one service
 
 ### SOAR

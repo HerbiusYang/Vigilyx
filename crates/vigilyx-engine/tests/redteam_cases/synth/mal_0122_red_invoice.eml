@@ -1,0 +1,11 @@
+From: =?utf-8?B?56iO5Yqh5pyN5Yqh?= <svc@tax-swap.example>
+To: tax@corp.internal
+Date: Mon, 31 Aug 2026 09:11:00 +0800
+Message-ID: <0001-b8@synth.example>
+Subject: 红字发票信息表待确认（今日闭环）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您上月开具的发票被受票方冲红，需今日确认红字信息表：
+https://tax-red.example.org/confirm
+逾期将转异常凭证并影响申报。

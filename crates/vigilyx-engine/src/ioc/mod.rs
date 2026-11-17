@@ -8,6 +8,7 @@
 //! - Expired cleanup
 
 mod auto_record;
+mod shadow;
 
 use chrono::Utc;
 use tracing::{info, warn};
@@ -15,7 +16,8 @@ use uuid::Uuid;
 
 use vigilyx_core::security::IocEntry;
 use vigilyx_db::VigilDb;
-fn normalize_ioc_indicator(ioc_type: &str, indicator: &str) -> String {
+use vigilyx_db::security::IocMessageObservation;
+pub(crate) fn normalize_ioc_indicator(ioc_type: &str, indicator: &str) -> String {
     let trimmed = indicator.trim();
     match ioc_type {
         // Trailing-dot FQDNs (e.g. "evil.com.") must collapse to the same
@@ -40,9 +42,10 @@ fn normalize_ioc_verdict(verdict: &str) -> String {
 #[derive(Clone)]
 pub struct IocManager {
     pub(crate) db: VigilDb,
-    /// Frequency gate state for auto-recorded IP IOCs: an IP harvested from
-    /// Received headers becomes eligible only after appearing in >= 2 distinct
-    /// Critical sessions within a 24h window (single-mail poisoning defense).
+    /// Frequency gate state for automatically recorded IP IOCs: an IP harvested
+    /// from Received headers becomes eligible only after appearing in >= 2
+    /// distinct threat-bearing sessions within a 24h window (single-mail
+    /// poisoning defense).
     ip_ioc_candidates:
         std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, IpIocCandidate>>>,
 }
@@ -106,11 +109,41 @@ impl IocManager {
         }
     }
 
+    /// Record every normalized indicator seen in an analyzed message. This is
+    /// denominator telemetry only; it deliberately does not change the
+    /// existing IOC row or current verdict score.
+    pub async fn record_traffic_telemetry(
+        &self,
+        session: &vigilyx_core::models::EmailSession,
+        verdict: &vigilyx_core::security::SecurityVerdict,
+        local_domains: &std::collections::HashSet<String>,
+    ) {
+        let indicators = auto_record::collect_ioc_observations(session, verdict, local_domains);
+        let domains = local_domains.iter().cloned().collect::<Vec<_>>();
+        let message = IocMessageObservation {
+            session_id: session.id,
+            verdict_id: verdict.id,
+            direction: auto_record::observation_direction(session, &domains),
+            threat_level: verdict.threat_level.to_string().to_ascii_lowercase(),
+            engine_confidence: verdict.confidence,
+            observed_at: session.ended_at.unwrap_or(session.started_at),
+            capture_coverage: if session.content.is_complete {
+                "complete".to_string()
+            } else {
+                "partial".to_string()
+            },
+        };
+
+        if let Err(error) = self.db.record_ioc_telemetry(&message, &indicators).await {
+            warn!(session_id = %session.id, %error, "Failed to record IOC denominator telemetry");
+        }
+    }
+
     /// Frequency gate for auto-recorded IP IOCs.
     ///
     /// IPs harvested from email headers are attacker-influenceable (forged
-    /// Received chains), so a single Critical mail must not be enough to seed
-    /// a malicious IP IOC. The IP becomes eligible only when observed in at
+    /// Received chains), so a single threat-bearing mail must not be enough to
+    /// seed an IP reference. The IP becomes eligible only when observed in at
     /// least 2 distinct sessions within 24 hours. Returns true when this
     /// observation makes the IP eligible.
     pub(crate) fn note_auto_ip_candidate(&self, ip: &str, session_id: Uuid) -> bool {
@@ -121,12 +154,18 @@ impl IocManager {
         note_auto_ip_candidate_in(&mut guard, ip, session_id)
     }
 
-    /// Check if indicator is whitelisted (verdict=clean)
-    /// Pre-check before auto-recording to avoid overwriting manually added whitelist entries
+    /// Check if indicator is explicitly whitelisted.
+    ///
+    /// An external intel `clean` result is only a reputation observation. It
+    /// must not prevent a later low-risk threat reference from being recorded.
+    /// Only operator/system entries are authoritative for this pre-check.
     pub(crate) async fn is_whitelisted(&self, ioc_type: &str, indicator: &str) -> bool {
         let indicator = normalize_ioc_indicator(ioc_type, indicator);
         match self.db.find_ioc(ioc_type, &indicator).await {
-            Ok(Some(ioc)) => matches!(ioc.verdict.to_ascii_lowercase().as_str(), "clean" | "safe"),
+            Ok(Some(ioc)) => {
+                matches!(ioc.source.as_str(), "admin_clean" | "system")
+                    && matches!(ioc.verdict.to_ascii_lowercase().as_str(), "clean" | "safe")
+            }
             _ => false,
         }
     }
@@ -143,13 +182,16 @@ impl IocManager {
         }
     }
 
-    /// Lookup IOC matches, excluding `source=auto` ofentry(For intel)
+    /// Lookup IOC matches for intel reuse.
 
-    /// source isolation: auto IOCs come from engine auto-recording, allowing them to be hit by intel queries
-    /// Creates positive feedback loop: FP A -> auto IOC -> Email B hits IOC -> FP B -> more IOCs
+    /// Locally generated `auto` and `auto_reference` IOCs are excluded to
+    /// prevent a positive feedback loop: FP A -> local IOC -> Email B hits
+    /// IOC -> FP B. `auto_reference` remains useful for audit/history, but it
+    /// is not independent threat intelligence and must never enter D-S as a
+    /// fresh external signal.
 
-    /// This method only returns IOCs from external intelligence sources (otx, vt_scrape, manual, import, admin_clean)
-    /// Cutting off auto IOC self-reinforcement loops.
+    /// This keeps locally generated IOCs isolated while allowing independent
+    /// external intelligence and operator-managed entries to be consulted.
     pub async fn check_indicator_external_only(
         &self,
         ioc_type: &str,
@@ -157,8 +199,8 @@ impl IocManager {
     ) -> Option<IocEntry> {
         let indicator = normalize_ioc_indicator(ioc_type, indicator);
         match self.db.find_ioc(ioc_type, &indicator).await {
-            Ok(Some(ioc)) if ioc.source != "auto" => Some(ioc),
-            Ok(Some(_)) => None, // auto source -
+            Ok(Some(ioc)) if !matches!(ioc.source.as_str(), "auto" | "auto_reference") => Some(ioc),
+            Ok(Some(_)) => None, // locally generated IOC; not independent evidence
             Ok(None) => None,
             Err(e) => {
                 warn!("IOC lookup failed for {}:{}: {}", ioc_type, indicator, e);
@@ -505,12 +547,12 @@ mod tests {
         // exact-match IOC lookup misses (domain-splitting evasion).
         assert_eq!(normalize_ioc_indicator("domain", "Evil.COM."), "evil.com");
         assert_eq!(normalize_ioc_indicator("domain", "evil.com.."), "evil.com");
-        assert_eq!(normalize_ioc_indicator("helo", "Mail.Evil.COM."), "mail.evil.com");
-        // Non-domain types are untouched.
         assert_eq!(
-            normalize_ioc_indicator("ip", "203.0.113.5"),
-            "203.0.113.5"
+            normalize_ioc_indicator("helo", "Mail.Evil.COM."),
+            "mail.evil.com"
         );
+        // Non-domain types are untouched.
+        assert_eq!(normalize_ioc_indicator("ip", "203.0.113.5"), "203.0.113.5");
         assert_eq!(
             normalize_ioc_indicator("email", "User@Evil.COM"),
             "user@evil.com"
@@ -524,11 +566,23 @@ mod tests {
         let second_mail = Uuid::new_v4();
 
         // Single Critical mail must not be enough to seed an IP IOC.
-        assert!(!note_auto_ip_candidate_in(&mut map, "203.0.113.66", first_mail));
+        assert!(!note_auto_ip_candidate_in(
+            &mut map,
+            "203.0.113.66",
+            first_mail
+        ));
         // Re-evaluating the same session (rescan) must not double-count.
-        assert!(!note_auto_ip_candidate_in(&mut map, "203.0.113.66", first_mail));
+        assert!(!note_auto_ip_candidate_in(
+            &mut map,
+            "203.0.113.66",
+            first_mail
+        ));
         // A second, distinct Critical session makes the IP eligible.
-        assert!(note_auto_ip_candidate_in(&mut map, "203.0.113.66", second_mail));
+        assert!(note_auto_ip_candidate_in(
+            &mut map,
+            "203.0.113.66",
+            second_mail
+        ));
         // Eligibility is consumed (re-armed) after firing.
         assert!(!note_auto_ip_candidate_in(
             &mut map,
@@ -536,6 +590,10 @@ mod tests {
             Uuid::new_v4()
         ));
         // A different IP tracked independently.
-        assert!(!note_auto_ip_candidate_in(&mut map, "198.51.100.9", first_mail));
+        assert!(!note_auto_ip_candidate_in(
+            &mut map,
+            "198.51.100.9",
+            first_mail
+        ));
     }
 }

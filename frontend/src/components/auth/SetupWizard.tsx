@@ -781,7 +781,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
               <div className="setup-row">
                 <input id="setup-mta-downstream-host" className="grok-input" style={{ flex: 1 }}
                   value={mtaDownstreamHost} onChange={e => setMtaDownstreamHost(e.target.value)}
-                  placeholder="10.1.246.33" required />
+                  placeholder="192.0.2.25" required />
                 <input className="grok-input" style={{ width: 88, textAlign: 'center' }}
                   type="number" min="1" max="65535" inputMode="numeric"
                   aria-label={t('setup.downstreamPort')}

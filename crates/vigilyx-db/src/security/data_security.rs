@@ -7,7 +7,9 @@ use chrono::Utc;
 use uuid::Uuid;
 use vigilyx_core::{
     DataSecurityIncident, DataSecurityIncidentType, DataSecuritySeverity, DataSecurityStats,
-    HourlyBucket, HttpMethod, HttpSession, magic_bytes::DetectedFileType,
+    EmailAuditClass, EmailDataSecurityReview, EmailDataSecurityStats, EmailDlpResult,
+    EmailInspectionStatus, EmailReviewAction, EmailReviewDirection, HourlyBucket, HttpMethod,
+    HttpSession, SessionSource, magic_bytes::DetectedFileType,
 };
 
 use crate::VigilDb;
@@ -25,7 +27,49 @@ pub struct HttpSessionFilters {
     pub keyword: Option<String>,
 }
 
+/// Filters for the unified outbound email review workbench.
+#[derive(Debug, Default)]
+pub struct EmailReviewFilters {
+    pub source: Option<String>,
+    pub direction: Option<String>,
+    pub audit_class: Option<String>,
+    pub inspection_status: Option<String>,
+    pub dlp_result: Option<String>,
+    pub action: Option<String>,
+    pub max_jrt_level: Option<u8>,
+    pub sender_or_domain: Option<String>,
+    pub keyword: Option<String>,
+    pub since: Option<String>,
+}
+
 impl VigilDb {
+    /// Return the durable, all-time data-security engine counters.
+    ///
+    /// A successfully stored HTTP session is the durable completion record for
+    /// the data-security pipeline; incidents are counted only after they have
+    /// been persisted. Keeping these counts derived from their source tables
+    /// avoids a second mutable counter that can drift after retries or restarts.
+    pub async fn get_data_security_engine_totals(&self) -> Result<(u64, u64)> {
+        let db = self.clone();
+        self.data_security_totals_cache
+            .get(move || async move { db.query_data_security_engine_totals().await })
+            .await
+    }
+
+    async fn query_data_security_engine_totals(&self) -> Result<(u64, u64)> {
+        let (sessions, incidents): (i64, i64) = sqlx::query_as(
+            r#"
+            SELECT
+                (SELECT COUNT(*) FROM data_security_http_sessions),
+                (SELECT COUNT(*) FROM data_security_incidents)
+            "#,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok((sessions as u64, incidents as u64))
+    }
+
     /// Data security
     pub async fn init_data_security_tables(&self) -> Result<()> {
         // HTTP Session
@@ -94,6 +138,109 @@ impl VigilDb {
         .execute(&self.pool)
         .await?;
 
+        // Unified SMTP outbound review records. This is deliberately separate
+        // from data_security_incidents, whose contract is HTTP-specific.
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS data_security_email_reviews (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                dedupe_key TEXT NOT NULL UNIQUE,
+                source TEXT NOT NULL DEFAULT 'sniffer',
+                mail_direction TEXT NOT NULL DEFAULT 'unknown',
+                audit_class TEXT NOT NULL DEFAULT 'legacy',
+                direction_reason TEXT,
+                inspection_reason TEXT,
+                inspection_status TEXT NOT NULL DEFAULT 'failed',
+                dlp_result TEXT NOT NULL DEFAULT 'unknown',
+                max_jrt_level INTEGER,
+                dlp_matches TEXT NOT NULL DEFAULT '[]',
+                dlp_details TEXT,
+                action TEXT NOT NULL DEFAULT 'audit',
+                delivery_status TEXT,
+                quarantine_id TEXT,
+                verdict_id TEXT,
+                client_ip TEXT NOT NULL DEFAULT '',
+                mail_from TEXT,
+                external_recipient_domains TEXT NOT NULL DEFAULT '[]',
+                recipient_count INTEGER NOT NULL DEFAULT 0,
+                subject TEXT,
+                content_hash TEXT,
+                attachment_count INTEGER NOT NULL DEFAULT 0,
+                attachments_scanned INTEGER NOT NULL DEFAULT 0,
+                attachment_inspection_complete BOOLEAN NOT NULL DEFAULT FALSE,
+                encrypted BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // The audit class is a separate coverage/classification axis.  A
+        // source may be untrusted while its envelope still proves
+        // internal-to-external delivery, so never derive audit coverage from
+        // source trust.
+        sqlx::query(
+            "ALTER TABLE data_security_email_reviews \
+             ADD COLUMN IF NOT EXISTS audit_class TEXT NOT NULL DEFAULT 'legacy'",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "UPDATE data_security_email_reviews \
+             SET audit_class = CASE \
+                 WHEN mail_direction = 'outbound' THEN 'confirmed_outbound' \
+                 WHEN mail_direction = 'unknown' \
+                      AND COALESCE(external_recipient_domains, '[]') NOT IN ('[]', '') \
+                     THEN 'outbound_candidate' \
+                 WHEN mail_direction = 'unknown' THEN 'attribution_pending' \
+                 ELSE 'legacy' \
+             END \
+             WHERE audit_class IS NULL OR audit_class = 'legacy'",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Older mirror rows used `failed` as a placeholder while the full
+        // content scan had not run yet. Keep those records visible, but label
+        // them as incomplete coverage instead of a scanner failure.
+        sqlx::query(
+            "ALTER TABLE data_security_email_reviews \
+             ADD COLUMN IF NOT EXISTS inspection_reason TEXT",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "UPDATE data_security_email_reviews \
+             SET inspection_status = 'incomplete', inspection_reason = COALESCE(inspection_reason, 'content_scan_not_run') \
+             WHERE source = 'sniffer' AND delivery_status = 'mirror_audit' \
+               AND inspection_status = 'failed' AND dlp_result = 'unknown'",
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            "UPDATE data_security_email_reviews \
+             SET inspection_reason = COALESCE(inspection_reason, 'capture_incomplete') \
+             WHERE source = 'sniffer' AND delivery_status = 'mirror_audit' \
+               AND inspection_status = 'incomplete'",
+        )
+        .execute(&self.pool)
+        .await?;
+        // Historical rows could contain an explicit capture/parser coverage
+        // reason while still carrying the old `inspected` label.  Preserve
+        // their DLP evidence, but repair the contradictory coverage axis.
+        sqlx::query(
+            "UPDATE data_security_email_reviews \
+             SET inspection_status = 'incomplete' \
+             WHERE inspection_status = 'inspected' \
+               AND inspection_reason IS NOT NULL \
+               AND TRIM(inspection_reason) <> ''",
+        )
+        .execute(&self.pool)
+        .await?;
+
         // Index
         let indexes = [
             "CREATE INDEX IF NOT EXISTS idx_ds_incidents_type ON data_security_incidents(incident_type)",
@@ -105,6 +252,14 @@ impl VigilDb {
             "CREATE INDEX IF NOT EXISTS idx_ds_incidents_type_sev_created ON data_security_incidents(incident_type, severity, created_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_ds_http_sessions_ts ON data_security_http_sessions(timestamp DESC)",
             "CREATE INDEX IF NOT EXISTS idx_ds_http_sessions_user ON data_security_http_sessions(detected_user)",
+            "CREATE INDEX IF NOT EXISTS idx_ds_email_reviews_created ON data_security_email_reviews(created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_ds_email_reviews_direction_created ON data_security_email_reviews(mail_direction, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_ds_email_reviews_audit_class_created ON data_security_email_reviews(audit_class, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_ds_email_reviews_source_created ON data_security_email_reviews(source, created_at DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_ds_email_reviews_status ON data_security_email_reviews(inspection_status)",
+            "CREATE INDEX IF NOT EXISTS idx_ds_email_reviews_action ON data_security_email_reviews(action)",
+            "CREATE INDEX IF NOT EXISTS idx_ds_email_reviews_session ON data_security_email_reviews(session_id)",
+            "CREATE INDEX IF NOT EXISTS idx_ds_email_reviews_jrt ON data_security_email_reviews(max_jrt_level)",
         ];
 
         for idx_sql in indexes {
@@ -145,7 +300,9 @@ impl VigilDb {
         .bind(&session.server_ip)
         .bind(session.server_port as i64)
         .bind(session.method.to_string())
-        .bind(&session.uri)
+        // Defense in depth: imports and rolling-upgrade producers may not have
+        // applied the capture-boundary sanitizer yet.
+        .bind(vigilyx_core::redact_http_uri(&session.uri))
         .bind(&session.host)
         .bind(&session.content_type)
         .bind(session.request_body_size as i64)
@@ -282,7 +439,8 @@ impl VigilDb {
                ORDER BY timestamp DESC LIMIT ${} OFFSET ${}"#,
             where_sql, limit_idx, offset_idx
         );
-        let mut list_query = sqlx::query_as::<_, HttpSessionListRow>(sqlx::AssertSqlSafe(list_sql.as_str()));
+        let mut list_query =
+            sqlx::query_as::<_, HttpSessionListRow>(sqlx::AssertSqlSafe(list_sql.as_str()));
         for v in &bind_values {
             list_query = list_query.bind(v);
         }
@@ -320,7 +478,7 @@ impl VigilDb {
     pub async fn insert_data_security_incident(
         &self,
         incident: &DataSecurityIncident,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let evidence = serde_json::to_string(&incident.evidence)?;
         let details = incident
             .details
@@ -329,7 +487,7 @@ impl VigilDb {
             .unwrap_or_else(|| "null".to_string());
         let dlp_matches = serde_json::to_string(&incident.dlp_matches)?;
 
-        sqlx::query(
+        let result = sqlx::query(
             r#"
             INSERT INTO data_security_incidents
                 (id, http_session_id, incident_type, severity, confidence,
@@ -350,35 +508,13 @@ impl VigilDb {
         .bind(&dlp_matches)
         .bind(&incident.client_ip)
         .bind(&incident.detected_user)
-        .bind(&incident.request_url)
+        .bind(vigilyx_core::redact_http_uri(&incident.request_url))
         .bind(&incident.host)
         .bind(&incident.method)
         .bind(incident.created_at.to_rfc3339())
         .execute(&self.pool)
         .await?;
-        Ok(())
-    }
-
-    /// Type (DB Level)
-    pub async fn has_recent_incident(
-        &self,
-        user: &str,
-        incident_type: &str,
-        dlp_matches_json: &str,
-        since: &str,
-    ) -> Result<bool> {
-        let row: Option<(i64,)> = sqlx::query_as(
-            "SELECT 1::BIGINT FROM data_security_incidents \
-             WHERE detected_user = $1 AND incident_type = $2 AND dlp_matches = $3 \
-             AND created_at > $4 LIMIT 1",
-        )
-        .bind(user)
-        .bind(incident_type)
-        .bind(dlp_matches_json)
-        .bind(since)
-        .fetch_optional(&self.pool)
-        .await?;
-        Ok(row.is_some())
+        Ok(result.rows_affected() > 0)
     }
 
     /// QueryData security
@@ -461,7 +597,8 @@ impl VigilDb {
         }
         let count_row = count_query.fetch_one(&self.pool).await?;
 
-        let mut list_query = sqlx::query_as::<_, IncidentRow>(sqlx::AssertSqlSafe(list_sql.as_str()));
+        let mut list_query =
+            sqlx::query_as::<_, IncidentRow>(sqlx::AssertSqlSafe(list_sql.as_str()));
         if let Some(it) = incident_type {
             list_query = list_query.bind(it);
         }
@@ -502,10 +639,17 @@ impl VigilDb {
     ///
     /// items SQL Query COUNT Query, Data.
     pub async fn get_data_security_stats(&self) -> Result<DataSecurityStats> {
+        let db = self.clone();
+        self.data_security_stats_cache
+            .get(move || async move { db.query_data_security_stats().await })
+            .await
+    }
+
+    async fn query_data_security_stats(&self) -> Result<DataSecurityStats> {
         let cutoff = (Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
 
         // items Query:According toType + 24h
-        let row: (i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
+        let row: (i64, i64, i64, i64, i64, i64, i64, i64, i64) = sqlx::query_as(
             r#"
             SELECT
                 COUNT(*),
@@ -514,7 +658,9 @@ impl VigilDb {
                 COALESCE(SUM(CASE WHEN incident_type = 'self_sending' THEN 1 ELSE 0 END), 0)::BIGINT,
                 COALESCE(SUM(CASE WHEN incident_type = 'volume_anomaly' THEN 1 ELSE 0 END), 0)::BIGINT,
                 COALESCE(SUM(CASE WHEN severity IN ('high', 'critical') AND created_at >= $1 THEN 1 ELSE 0 END), 0)::BIGINT,
-                COALESCE(SUM(CASE WHEN incident_type = 'jrt_compliance_violation' THEN 1 ELSE 0 END), 0)::BIGINT
+                COALESCE(SUM(CASE WHEN incident_type = 'jrt_compliance_violation' THEN 1 ELSE 0 END), 0)::BIGINT,
+                COUNT(*) FILTER (WHERE incident_type = 'sensitive_data_transfer'),
+                COUNT(*) FILTER (WHERE incident_type = 'bulk_sensitive_transfer')
             FROM data_security_incidents
             "#,
         )
@@ -579,6 +725,31 @@ impl VigilDb {
             })
             .collect();
 
+        // 24h email reviews (same window and Asia/Shanghai labels as the
+        // existing HTTP and incident series). Keep this independent from
+        // HTTP session and incident totals so each line retains its meaning.
+        let hourly_email_review_rows: Vec<(String, i64)> = sqlx::query_as(
+            r#"
+            SELECT TO_CHAR((created_at::timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Shanghai', 'MM-DD HH24:00') as hour, COUNT(*) as cnt
+            FROM data_security_email_reviews
+            WHERE created_at >= $1
+              AND mail_direction IN ('outbound', 'unknown')
+            GROUP BY TO_CHAR((created_at::timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Shanghai', 'MM-DD HH24:00')
+            ORDER BY hour ASC
+            "#,
+        )
+        .bind(&cutoff)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let hourly_email_reviews: Vec<HourlyBucket> = hourly_email_review_rows
+            .into_iter()
+            .map(|(hour, count)| HourlyBucket {
+                hour,
+                count: count as u64,
+            })
+            .collect();
+
         Ok(DataSecurityStats {
             total_incidents: row.0 as u64,
             draft_abuse_count: row.1 as u64,
@@ -586,11 +757,527 @@ impl VigilDb {
             self_send_count: row.3 as u64,
             volume_anomaly_count: row.4 as u64,
             jrt_compliance_count: row.6 as u64,
+            sensitive_transfer_count: row.7 as u64,
+            bulk_transfer_count: row.8 as u64,
             high_severity_24h: row.5 as u64,
             incidents_by_severity,
             hourly_sessions,
+            hourly_email_reviews,
             hourly_incidents,
         })
+    }
+
+    /// Insert or update one email data-security review.
+    ///
+    /// The database boundary applies a second redaction pass so callers cannot
+    /// accidentally persist full mailbox addresses, subjects, or raw DLP
+    /// evidence in the review table.
+    pub async fn upsert_email_data_security_review(
+        &self,
+        review: &EmailDataSecurityReview,
+    ) -> Result<()> {
+        if review.dedupe_key.trim().is_empty() {
+            anyhow::bail!("email review dedupe_key must not be empty");
+        }
+
+        let dlp_matches = serde_json::to_string(&review.dlp_matches)?;
+        let dlp_details = review.dlp_details.as_ref().map(redact_dlp_details);
+        let dlp_details = dlp_details.map(|value| value.to_string());
+        let recipient_domains = serde_json::to_string(
+            &review
+                .external_recipient_domains
+                .iter()
+                .map(|domain| domain.trim().to_ascii_lowercase())
+                .filter(|domain| !domain.is_empty())
+                .take(100)
+                .collect::<Vec<_>>(),
+        )?;
+        let mail_from = review.mail_from.as_deref().map(mask_email_address);
+        let subject = review.subject.as_deref().map(|_| "[REDACTED]".to_string());
+
+        sqlx::query(
+            r#"
+            INSERT INTO data_security_email_reviews (
+                id, session_id, dedupe_key, source, mail_direction, audit_class,
+                direction_reason, inspection_reason, inspection_status, dlp_result, max_jrt_level,
+                dlp_matches, dlp_details, action, delivery_status, quarantine_id,
+                verdict_id, client_ip, mail_from, external_recipient_domains,
+                recipient_count, subject, content_hash, attachment_count,
+                attachments_scanned, attachment_inspection_complete, encrypted,
+                created_at, updated_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+                $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27,
+                $28, $29
+            )
+            ON CONFLICT (dedupe_key) DO UPDATE SET
+                source = EXCLUDED.source,
+                mail_direction = EXCLUDED.mail_direction,
+                audit_class = EXCLUDED.audit_class,
+                direction_reason = EXCLUDED.direction_reason,
+                inspection_reason = EXCLUDED.inspection_reason,
+                inspection_status = EXCLUDED.inspection_status,
+                dlp_result = EXCLUDED.dlp_result,
+                max_jrt_level = EXCLUDED.max_jrt_level,
+                dlp_matches = EXCLUDED.dlp_matches,
+                dlp_details = EXCLUDED.dlp_details,
+                action = EXCLUDED.action,
+                delivery_status = EXCLUDED.delivery_status,
+                quarantine_id = EXCLUDED.quarantine_id,
+                verdict_id = EXCLUDED.verdict_id,
+                client_ip = EXCLUDED.client_ip,
+                mail_from = EXCLUDED.mail_from,
+                external_recipient_domains = EXCLUDED.external_recipient_domains,
+                recipient_count = EXCLUDED.recipient_count,
+                subject = EXCLUDED.subject,
+                content_hash = EXCLUDED.content_hash,
+                attachment_count = EXCLUDED.attachment_count,
+                attachments_scanned = EXCLUDED.attachments_scanned,
+                attachment_inspection_complete = EXCLUDED.attachment_inspection_complete,
+                encrypted = EXCLUDED.encrypted,
+                updated_at = EXCLUDED.updated_at
+            WHERE NOT (
+                COALESCE(EXCLUDED.inspection_reason, '') LIKE '%content_scan_not_run%'
+                AND COALESCE(data_security_email_reviews.inspection_reason, '') NOT LIKE '%content_scan_not_run%'
+                AND data_security_email_reviews.inspection_status <> 'failed'
+            )
+            "#,
+        )
+        .bind(review.id.to_string())
+        .bind(review.session_id.to_string())
+        .bind(&review.dedupe_key)
+        .bind(review.source.to_string())
+        .bind(review.direction.to_string())
+        .bind(review.audit_class.to_string())
+        .bind(&review.direction_reason)
+        .bind(&review.inspection_reason)
+        .bind(review.inspection_status.to_string())
+        .bind(review.dlp_result.to_string())
+        .bind(review.max_jrt_level.map(i32::from))
+        .bind(&dlp_matches)
+        .bind(&dlp_details)
+        .bind(review.action.to_string())
+        .bind(&review.delivery_status)
+        .bind(&review.quarantine_id)
+        .bind(review.verdict_id.map(|id| id.to_string()))
+        .bind(&review.client_ip)
+        .bind(&mail_from)
+        .bind(&recipient_domains)
+        .bind(review.recipient_count as i32)
+        .bind(&subject)
+        .bind(&review.content_hash)
+        .bind(review.attachment_count as i32)
+        .bind(review.attachments_scanned as i32)
+        .bind(review.attachment_inspection_complete)
+        .bind(review.encrypted)
+        .bind(review.created_at.to_rfc3339())
+        .bind(review.updated_at.to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Get one email review by its public identifier.
+    pub async fn get_email_data_security_review(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<EmailDataSecurityReview>> {
+        let row: Option<EmailReviewRow> =
+            sqlx::query_as("SELECT * FROM data_security_email_reviews WHERE id = $1")
+                .bind(id.to_string())
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.map(EmailReviewRow::into_review))
+    }
+
+    /// List outbound email reviews with bounded, parameterized filters.
+    pub async fn list_email_data_security_reviews(
+        &self,
+        filters: &EmailReviewFilters,
+        limit: u32,
+        offset: u32,
+    ) -> Result<(Vec<EmailDataSecurityReview>, u64)> {
+        let mut where_clauses = Vec::<String>::new();
+        let mut bind_values = Vec::<String>::new();
+
+        if let Some(value) = filters.source.as_deref().filter(|v| !v.trim().is_empty()) {
+            bind_values.push(value.trim().to_string());
+            where_clauses.push(format!("source = ${}", bind_values.len()));
+        }
+        if let Some(value) = filters
+            .direction
+            .as_deref()
+            .filter(|v| !v.trim().is_empty())
+        {
+            bind_values.push(value.trim().to_string());
+            where_clauses.push(format!("mail_direction = ${}", bind_values.len()));
+        }
+        if let Some(value) = filters
+            .audit_class
+            .as_deref()
+            .filter(|v| !v.trim().is_empty())
+        {
+            bind_values.push(value.trim().to_string());
+            where_clauses.push(format!("audit_class = ${}", bind_values.len()));
+        }
+        if let Some(value) = filters
+            .inspection_status
+            .as_deref()
+            .filter(|v| !v.trim().is_empty())
+        {
+            bind_values.push(value.trim().to_string());
+            where_clauses.push(format!("inspection_status = ${}", bind_values.len()));
+        }
+        if let Some(value) = filters
+            .dlp_result
+            .as_deref()
+            .filter(|v| !v.trim().is_empty())
+        {
+            bind_values.push(value.trim().to_string());
+            where_clauses.push(format!("dlp_result = ${}", bind_values.len()));
+        }
+        if let Some(value) = filters.action.as_deref().filter(|v| !v.trim().is_empty()) {
+            bind_values.push(value.trim().to_string());
+            where_clauses.push(format!("action = ${}", bind_values.len()));
+        }
+        if let Some(level) = filters.max_jrt_level {
+            bind_values.push(level.to_string());
+            where_clauses.push(format!("max_jrt_level >= ${}::INTEGER", bind_values.len()));
+        }
+        if let Some(value) = filters
+            .sender_or_domain
+            .as_deref()
+            .filter(|v| !v.trim().is_empty())
+        {
+            bind_values.push(format!("%{}%", value.trim()));
+            where_clauses.push(format!(
+                "(mail_from LIKE ${0} OR external_recipient_domains LIKE ${0})",
+                bind_values.len()
+            ));
+        }
+        if let Some(value) = filters.keyword.as_deref().filter(|v| !v.trim().is_empty()) {
+            bind_values.push(format!("%{}%", value.trim()));
+            where_clauses.push(format!(
+                "(client_ip LIKE ${0} OR mail_from LIKE ${0} OR subject LIKE ${0} OR dlp_matches LIKE ${0})",
+                bind_values.len()
+            ));
+        }
+        if let Some(value) = filters.since.as_deref().filter(|v| !v.trim().is_empty()) {
+            bind_values.push(value.trim().to_string());
+            where_clauses.push(format!("created_at >= ${}", bind_values.len()));
+        }
+
+        let where_sql = if where_clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", where_clauses.join(" AND "))
+        };
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM data_security_email_reviews {}",
+            where_sql
+        );
+        let list_param_start = bind_values.len();
+        let list_sql = format!(
+            "SELECT * FROM data_security_email_reviews {} ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
+            where_sql,
+            list_param_start + 1,
+            list_param_start + 2
+        );
+
+        let mut count_query = sqlx::query_as::<_, (i64,)>(sqlx::AssertSqlSafe(count_sql.as_str()));
+        for value in &bind_values {
+            count_query = count_query.bind(value);
+        }
+        let count = count_query.fetch_one(&self.pool).await?.0 as u64;
+
+        let mut list_query =
+            sqlx::query_as::<_, EmailReviewRow>(sqlx::AssertSqlSafe(list_sql.as_str()));
+        for value in &bind_values {
+            list_query = list_query.bind(value);
+        }
+        let rows = list_query
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok((
+            rows.into_iter().map(EmailReviewRow::into_review).collect(),
+            count,
+        ))
+    }
+
+    /// Aggregate outbound email inspection coverage and enforcement outcomes.
+    pub async fn get_email_data_security_stats(&self) -> Result<EmailDataSecurityStats> {
+        let db = self.clone();
+        self.email_review_stats_cache
+            .get(move || async move { db.query_email_data_security_stats().await })
+            .await
+    }
+
+    async fn query_email_data_security_stats(&self) -> Result<EmailDataSecurityStats> {
+        let row: EmailReviewStatsRow = sqlx::query_as(
+            r#"
+            SELECT
+                COUNT(*) AS total,
+                COUNT(*) FILTER (WHERE inspection_status = 'inspected') AS inspected,
+                COUNT(*) FILTER (WHERE inspection_status = 'encrypted') AS encrypted,
+                COUNT(*) FILTER (WHERE inspection_status = 'incomplete') AS incomplete,
+                COUNT(*) FILTER (WHERE inspection_status = 'failed') AS failed,
+                COUNT(*) FILTER (WHERE dlp_result = 'hit') AS dlp_hits,
+                COUNT(*) FILTER (WHERE action = 'quarantine') AS quarantined,
+                COUNT(*) FILTER (WHERE action = 'block') AS blocked,
+                COUNT(*) FILTER (WHERE action = 'reject') AS rejected,
+                COUNT(*) FILTER (WHERE mail_direction = 'unknown') AS unknown_direction,
+                COUNT(*) FILTER (WHERE audit_class = 'confirmed_outbound') AS confirmed_outbound,
+                COUNT(*) FILTER (WHERE audit_class = 'outbound_candidate') AS outbound_candidates,
+                COUNT(*) FILTER (WHERE audit_class = 'attribution_pending') AS attribution_pending,
+                COUNT(*) FILTER (WHERE inspection_status IN ('encrypted', 'incomplete', 'failed')) AS incomplete_sessions
+            FROM data_security_email_reviews
+            WHERE mail_direction IN ('outbound', 'unknown')
+            "#,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(EmailDataSecurityStats {
+            total: row.total as u64,
+            inspected: row.inspected as u64,
+            encrypted: row.encrypted as u64,
+            incomplete: row.incomplete as u64,
+            failed: row.failed as u64,
+            dlp_hits: row.dlp_hits as u64,
+            quarantined: row.quarantined as u64,
+            blocked: row.blocked as u64,
+            rejected: row.rejected as u64,
+            unknown_direction: row.unknown_direction as u64,
+            confirmed_outbound: row.confirmed_outbound as u64,
+            outbound_candidates: row.outbound_candidates as u64,
+            attribution_pending: row.attribution_pending as u64,
+            incomplete_sessions: row.incomplete_sessions as u64,
+        })
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct EmailReviewStatsRow {
+    total: i64,
+    inspected: i64,
+    encrypted: i64,
+    incomplete: i64,
+    failed: i64,
+    dlp_hits: i64,
+    quarantined: i64,
+    blocked: i64,
+    rejected: i64,
+    unknown_direction: i64,
+    confirmed_outbound: i64,
+    outbound_candidates: i64,
+    attribution_pending: i64,
+    incomplete_sessions: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct EmailReviewRow {
+    id: String,
+    session_id: String,
+    dedupe_key: String,
+    source: String,
+    mail_direction: String,
+    audit_class: String,
+    direction_reason: Option<String>,
+    inspection_reason: Option<String>,
+    inspection_status: String,
+    dlp_result: String,
+    max_jrt_level: Option<i32>,
+    dlp_matches: String,
+    dlp_details: Option<String>,
+    action: String,
+    delivery_status: Option<String>,
+    quarantine_id: Option<String>,
+    verdict_id: Option<String>,
+    client_ip: String,
+    mail_from: Option<String>,
+    external_recipient_domains: String,
+    recipient_count: i32,
+    subject: Option<String>,
+    content_hash: Option<String>,
+    attachment_count: i32,
+    attachments_scanned: i32,
+    attachment_inspection_complete: bool,
+    encrypted: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+impl EmailReviewRow {
+    fn into_review(self) -> EmailDataSecurityReview {
+        EmailDataSecurityReview {
+            id: parse_uuid_or_default(&self.id),
+            session_id: parse_uuid_or_default(&self.session_id),
+            dedupe_key: self.dedupe_key,
+            source: parse_review_source(&self.source),
+            direction: parse_email_review_direction(&self.mail_direction),
+            audit_class: parse_email_audit_class(&self.audit_class),
+            direction_reason: self.direction_reason,
+            inspection_reason: self.inspection_reason,
+            inspection_status: parse_email_inspection_status(&self.inspection_status),
+            dlp_result: parse_email_dlp_result(&self.dlp_result),
+            max_jrt_level: self
+                .max_jrt_level
+                .and_then(|value| u8::try_from(value).ok()),
+            dlp_matches: serde_json::from_str(&self.dlp_matches).unwrap_or_default(),
+            dlp_details: self
+                .dlp_details
+                .and_then(|value| serde_json::from_str(&value).ok()),
+            action: parse_email_review_action(&self.action),
+            delivery_status: self.delivery_status,
+            quarantine_id: self.quarantine_id,
+            verdict_id: self
+                .verdict_id
+                .and_then(|value| Uuid::parse_str(&value).ok()),
+            client_ip: self.client_ip,
+            mail_from: self.mail_from,
+            external_recipient_domains: serde_json::from_str(&self.external_recipient_domains)
+                .unwrap_or_default(),
+            recipient_count: self.recipient_count.max(0) as u32,
+            subject: self.subject,
+            content_hash: self.content_hash,
+            attachment_count: self.attachment_count.max(0) as u32,
+            attachments_scanned: self.attachments_scanned.max(0) as u32,
+            attachment_inspection_complete: self.attachment_inspection_complete,
+            encrypted: self.encrypted,
+            created_at: parse_timestamp_or_now(&self.created_at),
+            updated_at: parse_timestamp_or_now(&self.updated_at),
+        }
+    }
+}
+
+fn parse_uuid_or_default(value: &str) -> Uuid {
+    Uuid::parse_str(value).unwrap_or_else(|error| {
+        tracing::warn!(value, %error, "email review UUID parse failed");
+        Uuid::default()
+    })
+}
+
+fn parse_timestamp_or_now(value: &str) -> chrono::DateTime<Utc> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|timestamp| timestamp.with_timezone(&Utc))
+        .unwrap_or_else(|error| {
+            tracing::warn!(value, %error, "email review timestamp parse failed");
+            Utc::now()
+        })
+}
+
+fn parse_email_review_direction(value: &str) -> EmailReviewDirection {
+    match value {
+        "inbound" => EmailReviewDirection::Inbound,
+        "outbound" => EmailReviewDirection::Outbound,
+        "internal" => EmailReviewDirection::Internal,
+        _ => EmailReviewDirection::Unknown,
+    }
+}
+
+fn parse_email_audit_class(value: &str) -> EmailAuditClass {
+    match value {
+        "confirmed_outbound" => EmailAuditClass::ConfirmedOutbound,
+        "outbound_candidate" => EmailAuditClass::OutboundCandidate,
+        "attribution_pending" => EmailAuditClass::AttributionPending,
+        _ => EmailAuditClass::Legacy,
+    }
+}
+
+fn parse_review_source(value: &str) -> SessionSource {
+    match value {
+        "mta_proxy" | "mta" => SessionSource::MtaProxy,
+        "import" => SessionSource::Import,
+        _ => SessionSource::Sniffer,
+    }
+}
+
+fn parse_email_inspection_status(value: &str) -> EmailInspectionStatus {
+    match value {
+        "inspected" => EmailInspectionStatus::Inspected,
+        "encrypted" => EmailInspectionStatus::Encrypted,
+        "incomplete" => EmailInspectionStatus::Incomplete,
+        _ => EmailInspectionStatus::Failed,
+    }
+}
+
+fn parse_email_dlp_result(value: &str) -> EmailDlpResult {
+    match value {
+        "clean" => EmailDlpResult::Clean,
+        "hit" => EmailDlpResult::Hit,
+        _ => EmailDlpResult::Unknown,
+    }
+}
+
+fn parse_email_review_action(value: &str) -> EmailReviewAction {
+    match value {
+        "allow" => EmailReviewAction::Allow,
+        "alert" => EmailReviewAction::Alert,
+        "quarantine" => EmailReviewAction::Quarantine,
+        "block" => EmailReviewAction::Block,
+        "reject" => EmailReviewAction::Reject,
+        "tempfail" => EmailReviewAction::Tempfail,
+        _ => EmailReviewAction::Audit,
+    }
+}
+
+fn mask_email_address(value: &str) -> String {
+    let value = value.trim();
+    let Some((local, domain)) = value.rsplit_once('@') else {
+        return "[REDACTED]".to_string();
+    };
+    let Some(first) = local.chars().next() else {
+        return "[REDACTED]".to_string();
+    };
+    if domain.trim().is_empty() || first.is_control() {
+        return "[REDACTED]".to_string();
+    }
+    format!("{}****@{}", first, domain.trim().to_ascii_lowercase())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mask_email_address;
+
+    #[test]
+    fn persisted_mailbox_mask_keeps_only_first_character_and_domain() {
+        assert_eq!(
+            mask_email_address("analyst@CORP.EXAMPLE"),
+            "a****@corp.example"
+        );
+        assert_eq!(mask_email_address("a@example.com"), "a****@example.com");
+    }
+
+    #[test]
+    fn persisted_mailbox_mask_does_not_expose_malformed_value() {
+        assert_eq!(mask_email_address("synthetic-id"), "[REDACTED]");
+        assert_eq!(mask_email_address(""), "[REDACTED]");
+        assert_eq!(mask_email_address("@example.com"), "[REDACTED]");
+    }
+}
+
+/// Persist only category counts from DLP details; individual matched values
+/// can themselves be personal or regulated data.
+fn redact_dlp_details(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut redacted = serde_json::Map::new();
+            for (key, item) in map {
+                let count = item
+                    .as_array()
+                    .map(|items| items.len())
+                    .or_else(|| item.as_object().map(|object| object.len()))
+                    .unwrap_or(1);
+                redacted.insert(key.clone(), serde_json::json!({ "count": count }));
+            }
+            serde_json::Value::Object(redacted)
+        }
+        serde_json::Value::Array(items) => serde_json::json!({ "count": items.len() }),
+        _ => serde_json::json!({ "present": true }),
     }
 }
 
@@ -663,7 +1350,9 @@ impl From<HttpSessionRow> for HttpSession {
             server_ip: r.server_ip,
             server_port: r.server_port as u16,
             method: parse_http_method(&r.method),
-            uri: r.uri,
+            // Redact historical rows on read so old plaintext query values can
+            // never cross the API boundary while the background cleanup runs.
+            uri: vigilyx_core::redact_http_uri(&r.uri),
             host: r.host,
             content_type: r.content_type,
             request_body_size: r.request_body_size as usize,
@@ -707,7 +1396,7 @@ impl From<HttpSessionListRow> for HttpSession {
             server_ip: r.server_ip,
             server_port: r.server_port as u16,
             method: parse_http_method(&r.method),
-            uri: r.uri,
+            uri: vigilyx_core::redact_http_uri(&r.uri),
             host: r.host,
             content_type: r.content_type,
             request_body_size: r.request_body_size as usize,
@@ -784,7 +1473,7 @@ impl From<IncidentRow> for DataSecurityIncident {
             }),
             client_ip: r.client_ip,
             detected_user: r.detected_user,
-            request_url: r.request_url,
+            request_url: vigilyx_core::redact_http_uri(&r.request_url),
             host: r.host,
             method: r.method,
             created_at: chrono::DateTime::parse_from_rfc3339(&r.created_at)
@@ -817,6 +1506,8 @@ fn parse_incident_type(s: &str) -> DataSecurityIncidentType {
         "self_sending" => DataSecurityIncidentType::SelfSending,
         "volume_anomaly" => DataSecurityIncidentType::VolumeAnomaly,
         "jrt_compliance_violation" => DataSecurityIncidentType::JrtComplianceViolation,
+        "sensitive_data_transfer" => DataSecurityIncidentType::SensitiveDataTransfer,
+        "bulk_sensitive_transfer" => DataSecurityIncidentType::BulkSensitiveTransfer,
         _ => DataSecurityIncidentType::DraftBoxAbuse,
     }
 }

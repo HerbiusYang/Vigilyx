@@ -1,0 +1,10 @@
+From: =?utf-8?B?6LSm5Y+35Lit5b+D?= <no-reply@accounts-svc2.example>
+To: me@personal.example
+Date: Tue, 08 Sep 2026 09:12:00 +0800
+Message-ID: <0002-b16@synth.example>
+Subject: 密码重置请求
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>我们收到了您的密码重置请求，请点击完成：</p><p><a href='https://accounts-svc2-reset.example.info/rst/7f3b' style='color:#fff;background:#333;padding:10px 28px;text-decoration:none'>重置密码</a></p><p style='font-size:12px'>如非本人操作请忽略本邮件。</p></body></html>

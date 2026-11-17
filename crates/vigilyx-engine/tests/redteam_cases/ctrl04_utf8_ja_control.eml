@@ -1,0 +1,18 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ctrl04@partner.example>
+Subject: Notice
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+お客様へ
+
+セキュリティ確認のため、お客様のアカウントが停止されました。
+引き続きご利用いただくには、24時間以内に再ログインしてください。
+アカウント情報の確認とワンタイムパスワードの再設定が必要です。
+
+今すぐログインしてください:
+https://account-verify.example.co.jp/sso/login
+
+48時間以内に確認しない場合、アカウントが永久に停止されます。

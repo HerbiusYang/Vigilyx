@@ -1,0 +1,14 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@spoofed-sender.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev14@spoofed-sender.example>
+Subject: employee
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body>
+<p>尊敬的用户：employee 出现异常</p>
+<p>请验证账户为本人使用，未验证账户将被禁用</p>
+<p>为了保证您的账户正常使用，请及时点击下方按钮进行验证。</p>
+<p><a href="https://nizxw.example/?token=employee%40corp.internal">确认账户</a></p>
+</body></html>

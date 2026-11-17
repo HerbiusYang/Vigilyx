@@ -1,0 +1,106 @@
+From: "NordGrid | Settlement Operations" <settlement.ops@nordgrid-settlement.example>
+To: asset-mgmt@windco.example
+Cc: treasury@windco.example, cfo-office@windco.example
+Reply-To: settlement.desk@ng-clearing.example
+Date: Tue, 25 May 2027 07:00:00 +0000
+Message-ID: <0824-b100@synth.example>
+Subject: [SETTLEMENT CHANGE] May PPA & Curtailment Settlement WF-88412 - EUR 418,640 - Migration to Nordic Clearing Entity Required Before Month-End Cycle
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Asset Management, Treasury, CFO Office,
+
+SETTLEMENT CHANNEL CHANGE NOTICE -
+ASSET WF-88412 (Havsnas Wind Farm).
+
+Your May settlement (PPA energy plus
+curtailment compensation) is due to
+run on the month-end cycle. From this
+cycle, all settlements for
+non-Nordic-registered generators
+migrate to our Nordic clearing entity,
+and the settlement must be confirmed
+against the new clearing account before
+the cycle runs.
+
+1. SETTLEMENT PREVIEW (WF-88412)
+
+  Asset:          Havnas Wind Farm
+                 (41 turbines,
+                 132 MW, asset ID
+                 WF-88412)
+  PPA:            10-year corporate
+                 PPA (2023, off-
+                 taker: industrial
+                 consortium)
+  May energy
+    settlement:  31,840 MWh x
+                 EUR 42.10/MWh =
+                 EUR 1,340,464
+  Curtailment
+    compensation
+    (grid):      EUR 418,640
+                 (May 14-16 storm
+                 curtailment
+                 window, per TSO
+                 curtailment log)
+  Negative
+    balancing:   EUR -88,214
+  ---------------------------------
+  Net May
+  settlement:   EUR 1,670,890
+
+2. THE CLEARING MIGRATION (ACTION)
+
+  Non-Nordic generators settle
+  through the Nordic clearing entity
+  from the May cycle:
+
+    Beneficiary: NordGrid
+                Clearing ApS
+                (Denmark)
+    IBAN: DK50 0040 0440 1166 8841
+    SWIFT: TSTBDKKK
+    Reference: WF-88412 / MAY-2027
+
+  Confirmation of the account
+  (signed settlement confirmation
+  sheet, attached template) must
+  reach the settlement desk before
+  the month-end cycle (May 31,
+  23:59 CET). Unconfirmed
+  settlements hold in the queue
+  and pay in the July cycle
+  (net 30 after hold), and
+  curtailment compensation
+  re-prices to the delayed-
+  settlement tariff (a reduction
+  of about 9% on the EUR 418,640).
+
+3. WHY WE ARE WRITING DIRECTLY
+
+  We know settlement-channel emails
+  are prime fraud territory - your
+  treasury's controls are the
+  reason PPA markets work. Checks:
+  the settlement preview matches
+  your meter data (MDM portal);
+  the curtailment window matches
+  the TSO log; and your portfolio
+  manager can confirm the clearing
+  migration on the monthly call.
+  The migration applies to all
+  non-Nordic generators on the
+  May cycle - it is not
+  negotiable per asset.
+
+4. CONTACT
+
+  Settlement desk: settlement.desk@ng-clearing.example
+  Reference: WF-88412 / MAY-2027
+  Portfolio manager: your usual desk
+
+NordGrid | Settlement Operations
+This notice concerns asset WF-88412
+only. PPA and grid settlement terms
+govern the calculation.

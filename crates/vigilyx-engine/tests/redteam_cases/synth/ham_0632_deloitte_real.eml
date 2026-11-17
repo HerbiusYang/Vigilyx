@@ -1,0 +1,84 @@
+From: Deloitte & Touche LLP <audit@deloitte.example>
+To: finance@corp.internal
+Cc: cfo@corp.internal, auditors@corp.internal, legal@corp.internal
+Date: Sun, 01 Nov 2026 16:00:00 +0000
+Message-ID: <0632-b66@synth.example>
+Subject: [AUDIT 2026] Vigilyx Limited — FY2026 Statutory Audit — Data delivery instructions
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Finance Team, CFO, Auditor Liaison, Legal:
+
+Deloitte is pleased to confirm our engagement as statutory
+auditors for Vigilyx Limited's FY2026 annual audit.
+
+Engagement Details:
+  Client: Vigilyx Limited
+  Engagement Partner: Michael Thompson (FCA)
+  Engagement Manager: Sarah Wong (ACA)
+  Audit Period: FY2026 (January 1 - December 31, 2026)
+  Audit Framework: ISAs (UK) | FRS 102
+  Previous Auditors: PwC (FY2024), KPMG (FY2025)
+  Deliverables Deadline: Friday, November 7, 2026
+  Audit Fee: GBP 180,000
+
+Data Delivery Process:
+
+  All audit deliverables are submitted through Deloitte's
+  secure client portal:
+
+  1. Navigate to the Deloitte client portal:
+     Navigate to deloitte.com/audit-client-portal
+     (Type the URL manually. Do NOT click email links.)
+
+  2. You will receive separate login credentials by
+     REGISTERED MAIL to your registered office address
+     (login credentials are never sent via email)
+
+  3. Log in with the credentials provided by registered mail
+
+  4. Upload deliverables to the "Vigilyx-FY2026" project
+
+  Important Security Notes:
+  Deloitte will NEVER:
+  - Use "Microsoft Azure DevOps" for audit data delivery
+  - Ask clients to authenticate with their corporate
+    Azure AD (@corp.internal) for audit uploads
+  - Request offline_access or any OAuth permission
+  - Send direct upload links via email
+  - Offer a "Chinese audit channel" for data submission
+  - Cite "Project Meridian" or "Big4 Azure hosting"
+
+  Deloitte's actual audit data process:
+  - Uses a proprietary secure portal (not Azure DevOps)
+  - Login credentials are sent by REGISTERED MAIL only
+  - Portal access uses Deloitte's own authentication,
+    NOT the client's corporate Azure AD
+  - PwC uses "Huddle" and KPMG uses "Clara" — both are
+    proprietary platforms, not generic Azure DevOps
+
+  If you receive an email asking you to upload financial
+  data through Azure DevOps using your corporate login,
+  it is a phishing attempt targeting audit clients.
+
+Required Deliverables (summary):
+  Critical: Trial Balance, General Ledger, Sales Ledger,
+            Bank Statements, Payroll Registers
+  High: Management Accounts, Revenue Schedules,
+        Customer Contracts, Bank Reconciliations,
+        Bonus/Equity Schedules
+  Medium: FX Transaction Log, VAT Returns
+
+Consequences of Missing Friday:
+  Audit timeline extended 4-6 weeks
+  Companies House penalty: GBP 1,500
+  Potential audit opinion qualification
+
+Contact:
+  Engagement Partner: Michael Thompson
+  Phone: +44 20 7936 **** (verify at deloitte.com)
+  Email: audit@deloitte.example
+
+Deloitte & Touche LLP | Audit & Assurance
+1 New Street Square, London EC4A 3HQ
+This communication may be privileged and confidential.

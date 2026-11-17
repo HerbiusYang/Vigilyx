@@ -1,0 +1,10 @@
+From: =?utf-8?B?SVTmnI3liqHlj7A=?= <helpdesk@partner.example>
+To: it@corp.internal
+Date: Wed, 26 Aug 2026 11:24:00 +0800
+Message-ID: <0014-b3@synth.example>
+Subject: 密码自助重置入口
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+收到多起重置失败反馈，请使用备用入口重置（微软官方跳转）：
+https://microsoft.commail.redir.example/?u=https://reset-pwd.example.co/r

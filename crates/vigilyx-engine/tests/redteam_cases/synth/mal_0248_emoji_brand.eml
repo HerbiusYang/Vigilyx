@@ -1,0 +1,10 @@
+From: =?utf-8?B?5pSv5LuY5a6d?= <service@alipay-notify2.example>
+To: me@personal.example
+Date: Mon, 07 Sep 2026 09:17:00 +0800
+Message-ID: <0007-b15@synth.example>
+Subject: 账户存在异常登录风险
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>💙 支付宝</p><p>检测到您的账户在陌生设备登录。</p><p><a href='https://alipay-safe-check2.example.co/r' style='color:#1677ff'>立即核实 &gt;</a></p><p style='font-size:11px'>© 支付宝 · 本邮件由系统发出</p></body></html>

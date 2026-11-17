@@ -217,8 +217,19 @@ fn validate_mail_relay_ip(ip: IpAddr) -> Result<(), String> {
             if (v6.segments()[0] & 0xffc0) == 0xfe80 {
                 return Err(format!("Mail relay IP must not be link-local: {v6}"));
             }
+            if (v6.segments()[0] & 0xfe00) == 0xfc00 {
+                return Err(format!("Mail relay IP must not be unique-local: {v6}"));
+            }
+            if v6.is_multicast() {
+                return Err(format!("Mail relay IP must not be multicast: {v6}"));
+            }
             if let Some(v4) = v6.to_ipv4_mapped() {
                 validate_mail_relay_ip(IpAddr::V4(v4))?;
+            }
+            if is_transition_address_sensitive(&v6) {
+                return Err(format!(
+                    "Mail relay IP must not use an IPv6 transition address: {v6}"
+                ));
             }
         }
     }
@@ -407,7 +418,9 @@ mod tests {
 
         // NAT64 well-known prefix 64:ff9b::/96 (RFC 6052), IPv4 in last 32 bits.
         assert!(is_sensitive_ip("64:ff9b::7f00:1".parse().expect("valid"))); // 127.0.0.1
-        assert!(is_sensitive_ip("64:ff9b::a9fe:a9fe".parse().expect("valid"))); // 169.254.169.254
+        assert!(is_sensitive_ip(
+            "64:ff9b::a9fe:a9fe".parse().expect("valid")
+        )); // 169.254.169.254
         assert!(is_sensitive_ip("64:ff9b::ac10:1".parse().expect("valid"))); // 172.16.0.1
         assert!(!is_sensitive_ip("64:ff9b::808:808".parse().expect("valid"))); // 8.8.8.8
 
@@ -420,7 +433,9 @@ mod tests {
         // ~127.0.0.1 = 0x80FFFFFE, ~10.0.0.5 = 0xF5FFFFFA.
         assert!(is_sensitive_ip("2001:0::80ff:fffe".parse().expect("valid")));
         assert!(is_sensitive_ip(
-            "2001:0:4136:e378:8000:63bf:f5ff:fffa".parse().expect("valid")
+            "2001:0:4136:e378:8000:63bf:f5ff:fffa"
+                .parse()
+                .expect("valid")
         ));
 
         // Deprecated IPv4-compatible ::/96: rejected outright.
@@ -431,7 +446,9 @@ mod tests {
         assert!(is_sensitive_ip("::ffff:7f00:1".parse().expect("valid")));
 
         // Ordinary public IPv6 stays allowed.
-        assert!(!is_sensitive_ip("2606:4700:4700::1111".parse().expect("valid")));
+        assert!(!is_sensitive_ip(
+            "2606:4700:4700::1111".parse().expect("valid")
+        ));
     }
 
     #[test]
@@ -493,7 +510,7 @@ mod tests {
     fn mail_relay_validation_allows_private_ipv4_targets() {
         assert!(
             validate_mail_relay_host_resolved(
-                "10.1.246.33",
+                "10.0.0.33",
                 25,
                 DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES
             )
@@ -514,15 +531,40 @@ mod tests {
     }
 
     #[test]
+    fn mail_relay_validation_rejects_private_ipv6_and_transition_addresses() {
+        for host in [
+            "fd00::1",
+            "64:ff9b::a9fe:a9fe",       // NAT64 for 169.254.169.254
+            "2002:a9fe:a9fe::",         // 6to4 for 169.254.169.254
+            "2001:0:0:0:0:0:f5ff:fffe", // Teredo embedding 10.0.0.1
+        ] {
+            assert!(
+                validate_mail_relay_host_resolved(host, 25, DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES)
+                    .is_err(),
+                "private or transition IPv6 target must be rejected: {host}"
+            );
+        }
+    }
+
+    #[test]
+    fn mail_relay_validation_allows_public_ipv6_targets() {
+        assert!(
+            validate_mail_relay_host_resolved(
+                "2001:db8::25",
+                25,
+                DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
     fn mail_relay_resolution_returns_private_ipv4_socket_addr() {
         let addrs =
-            resolve_mail_relay_host("10.1.246.33", 2525, DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES)
+            resolve_mail_relay_host("10.0.0.33", 2525, DEFAULT_BLOCKED_MAIL_RELAY_HOSTNAMES)
                 .expect("private relay IP should be allowed");
 
-        assert_eq!(
-            addrs,
-            vec!["10.1.246.33:2525".parse().expect("valid socket")]
-        );
+        assert_eq!(addrs, vec!["10.0.0.33:2525".parse().expect("valid socket")]);
     }
 
     #[test]

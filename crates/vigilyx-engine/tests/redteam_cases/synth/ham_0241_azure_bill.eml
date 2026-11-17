@@ -1,0 +1,10 @@
+From: =?utf-8?B?TWljcm9zb2Z0IEF6dXJl?= <azure-noreply@microsoft.example>
+To: ops@corp.internal
+Date: Mon, 07 Sep 2026 09:30:00 +0800
+Message-ID: <0020-b15@synth.example>
+Subject: Your invoice is ready (09-2026)
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>Your Azure invoice for September is ready.</p><p><a href='https://portal.azure.example/#blade/invoice' style='color:#0067b8'>View in portal</a></p><p style='font-size:11px'>You are receiving this because you are the account owner.</p></body></html>

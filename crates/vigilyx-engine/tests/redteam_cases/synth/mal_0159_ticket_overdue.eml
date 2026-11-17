@@ -1,0 +1,11 @@
+From: =?utf-8?B?SVTmnI3liqHlj7A=?= <itsm@corp-help.example>
+To: dev@corp.internal
+Date: Tue, 01 Sep 2026 10:28:00 +0800
+Message-ID: <0018-b9@synth.example>
+Subject: 工单 ITSM-8842 超时预警
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+工单即将超时升级，请处理：
+https://itsm-handle.example.net/8842
+（需域账号登录）

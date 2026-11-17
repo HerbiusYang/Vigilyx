@@ -1,0 +1,10 @@
+From: =?utf-8?B?6Zeo5oi36L+Q6JCl?= <ops@portal.corp‑internal.example>
+To: staff@corp.internal
+Date: Thu, 10 Sep 2026 08:12:00 +0800
+Message-ID: <0002-b18@synth.example>
+Subject: 门户登录异常排查通知
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+部分用户反映门户登录异常，请使用备用入口重试：
+https://portal.corp‑internal.example/login2

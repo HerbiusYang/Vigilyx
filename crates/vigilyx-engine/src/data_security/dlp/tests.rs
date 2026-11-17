@@ -1,4 +1,3 @@
-use super::finders::*;
 use super::normalize::normalize_for_dlp;
 use super::*;
 
@@ -180,7 +179,7 @@ fn test_social_credit_code_masking() {
 
 #[test]
 fn test_social_credit_code_wrong_length_rejected() {
-    let codes = find_social_credit_codes("9111000071093109A");
+    let codes = find_social_credit_codes("A000000000000000M");
     assert!(codes.is_empty(), "17-char string should not match");
 }
 
@@ -218,7 +217,7 @@ fn test_credential_masking() {
 
 #[test]
 fn test_scan_text_with_swift_8() {
-    let text = "请汇款至 BKCHCNBJ BankAccount";
+    let text = "请汇款至 TSTBCN00 BankAccount";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"swift_code".to_string()),
@@ -228,7 +227,7 @@ fn test_scan_text_with_swift_8() {
 
 #[test]
 fn test_scan_text_with_swift_11() {
-    let text = "SWIFT代码 BKCHCNBJ100";
+    let text = "SWIFT代码 TSTBCN00100";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"swift_code".to_string()),
@@ -238,9 +237,9 @@ fn test_scan_text_with_swift_11() {
 
 #[test]
 fn test_swift_masking() {
-    let codes = find_swift_codes("BKCHCNBJ");
+    let codes = find_swift_codes("SWIFT: TSTBCN00");
     assert_eq!(codes.len(), 1);
-    assert_eq!(codes[0], "BKCH****");
+    assert_eq!(codes[0], "TSTB****");
 }
 
 // CVV 安全码Test
@@ -359,7 +358,7 @@ fn test_tax_id_wrong_length_rejected() {
 
 #[test]
 fn test_scan_text_with_iban_de() {
-    let text = "请汇款至 DE89370400440532013000";
+    let text = "请汇款至 DE36000000000000000000";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"iban".to_string()),
@@ -369,7 +368,7 @@ fn test_scan_text_with_iban_de() {
 
 #[test]
 fn test_scan_text_with_iban_gb() {
-    let text = "汇款到 GB29NWBK60161331926819";
+    let text = "汇款到 GB50TSTB00000000000000";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"iban".to_string()),
@@ -379,33 +378,33 @@ fn test_scan_text_with_iban_gb() {
 
 #[test]
 fn test_iban_masking() {
-    let ibans = find_ibans("DE89370400440532013000");
+    let ibans = find_ibans("DE36000000000000000000");
     assert_eq!(ibans.len(), 1);
-    assert!(ibans[0].starts_with("DE89"));
+    assert!(ibans[0].starts_with("DE36"));
     assert!(ibans[0].contains("****"));
 }
 
 #[test]
 fn test_iban_invalid_country_rejected() {
-    let ibans = find_ibans("XX89370400440532013000");
+    let ibans = find_ibans("XX36000000000000000000");
     assert!(ibans.is_empty(), "Invalid country code should be rejected");
 }
 
 #[test]
 fn test_iban_invalid_checksum_rejected() {
-    let ibans = find_ibans("DE00370400440532013000");
+    let ibans = find_ibans("DE00000000000000000000");
     assert!(ibans.is_empty(), "Invalid IBAN checksum should be rejected");
 }
 
 #[test]
 fn test_iban_mod97_valid() {
-    assert!(iban_mod97_check("DE89370400440532013000"));
-    assert!(iban_mod97_check("GB29NWBK60161331926819"));
+    assert!(iban_mod97_check("DE36000000000000000000"));
+    assert!(iban_mod97_check("GB50TSTB00000000000000"));
 }
 
 #[test]
 fn test_iban_mod97_invalid() {
-    assert!(!iban_mod97_check("DE00370400440532013000"));
+    assert!(!iban_mod97_check("DE00000000000000000000"));
     assert!(!iban_mod97_check("XXXX"));
 }
 
@@ -605,7 +604,7 @@ fn test_vehicle_info_plate() {
 
 #[test]
 fn test_income_info_hit() {
-    let text = "员工张三月薪: 15000元，公积金缴存: 2400元";
+    let text = "员工测试甲月薪: 15000元，公积金缴存: 2400元";
     let result = scan_text(text);
     assert!(result.matches.contains(&"income_info".to_string()));
 }
@@ -640,7 +639,7 @@ fn test_insurance_hit() {
 
 #[test]
 fn test_family_relation_hit() {
-    let text = "紧急联系人: 张三，配偶: 李四";
+    let text = "紧急联系人: 测试甲，配偶: 测试乙";
     let result = scan_text(text);
     assert!(result.matches.contains(&"family_relation".to_string()));
 }
@@ -724,8 +723,7 @@ fn test_biometric_no_false_positive_on_product() {
 
 #[test]
 fn test_medical_full_record() {
-    let text =
-        "患者诊断 2型糖尿病，处方: 2甲双胍500mg，有青霉素敏史，家族病史Medium有High血压";
+    let text = "患者诊断 2型糖尿病，处方: 2甲双胍500mg，有青霉素敏史，家族病史Medium有High血压";
     let result = scan_text(text);
     assert!(result.matches.contains(&"medical_health".to_string()));
 }
@@ -746,7 +744,7 @@ fn test_medical_surgery_record() {
 
 #[test]
 fn test_vehicle_plate_guangdong() {
-    let text = "车辆Info: VIN WVWZZZ3CZWE654321, 车主张三";
+    let text = "车辆Info: VIN WVWZZZ3CZWE654321, 车主测试甲";
     let result = scan_text(text);
     assert!(result.matches.contains(&"vehicle_info".to_string()));
 }
@@ -948,7 +946,8 @@ fn test_business_license_no_false_positive() {
 
 #[test]
 fn test_combined_c4_c3_data() {
-    let text = "客户Info: 身份证 000000200001010005, Password: secret123, 月薪: 25000元, 配偶: 李芳";
+    let text =
+        "客户Info: 身份证 000000200001010005, Password: secret123, 月薪: 25000元, 配偶: 李芳";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -966,13 +965,13 @@ fn test_combined_c4_c3_data() {
         result.matches.contains(&"family_relation".to_string()),
         "应检出家庭关系"
     );
-    assert!(result.count_items_at_level(4) >= 1, "At least 1 Item C4");
-    assert!(result.count_items_at_level(3) >= 3, "At least 3 Item C3+");
+    assert!(result.count_items_at_level(4) >= 1, "At least 1 Item level-4");
+    assert!(result.count_items_at_level(3) >= 3, "At least 3 Item level-3+");
 }
 
 #[test]
 fn test_combined_financial_data() {
-    let text = "贷款余额: 500000元，逾期金额: 20000元，保单号: PL123456789012，投保人: 张三";
+    let text = "贷款余额: 500000元，逾期金额: 20000元，保单号: PL123456789012，投保人: 测试甲";
     let result = scan_text(text);
     assert!(result.matches.contains(&"loan_credit_info".to_string()));
     assert!(result.matches.contains(&"insurance_policy".to_string()));
@@ -1075,12 +1074,19 @@ fn test_id_number_masking_format() {
 }
 
 #[test]
-fn test_phone_two_numbers_no_alert() {
+fn test_phone_two_numbers_retained() {
     let text = "联系电话: 13800138000, 13900139000";
     let result = scan_text(text);
-    assert!(
-        !result.matches.contains(&"phone_number".to_string()),
-        "Only 2 phone numbers should NOT trigger (threshold is >=3)"
+    assert!(result.matches.contains(&"phone_number".to_string()));
+    assert_eq!(
+        result
+            .details
+            .iter()
+            .find(|(kind, _)| kind == "phone_number")
+            .unwrap()
+            .1
+            .len(),
+        2
     );
 }
 
@@ -1108,9 +1114,16 @@ fn test_phone_invalid_prefix_12x() {
 fn test_phone_duplicate_numbers_deduped() {
     let text = "紧急联系 13800138000 或 13800138000 或 13800138000";
     let result = scan_text(text);
-    assert!(
-        !result.matches.contains(&"phone_number".to_string()),
-        "Same phone repeated 3x should NOT trigger (dedup: only 1 unique number)"
+    assert!(result.matches.contains(&"phone_number".to_string()));
+    assert_eq!(
+        result
+            .details
+            .iter()
+            .find(|(kind, _)| kind == "phone_number")
+            .unwrap()
+            .1
+            .len(),
+        1
     );
 }
 
@@ -1135,12 +1148,19 @@ fn test_phone_masking_format() {
 }
 
 #[test]
-fn test_email_two_addresses_no_alert() {
+fn test_email_two_addresses_retained() {
     let text = "Sendgiving alice@example.com 和 bob@example.net";
     let result = scan_text(text);
-    assert!(
-        !result.matches.contains(&"email_address".to_string()),
-        "Only 2 emails should NOT trigger (threshold is >=3)"
+    assert!(result.matches.contains(&"email_address".to_string()));
+    assert_eq!(
+        result
+            .details
+            .iter()
+            .find(|(kind, _)| kind == "email_address")
+            .unwrap()
+            .1
+            .len(),
+        2
     );
 }
 
@@ -1148,9 +1168,16 @@ fn test_email_two_addresses_no_alert() {
 fn test_email_mixed_system_and_real() {
     let text = "noreply@example.com, admin@example.net, user1@example.org, user2@example.test";
     let result = scan_text(text);
-    assert!(
-        !result.matches.contains(&"email_address".to_string()),
-        "2 real emails + 2 system emails should NOT trigger"
+    assert!(result.matches.contains(&"email_address".to_string()));
+    assert_eq!(
+        result
+            .details
+            .iter()
+            .find(|(kind, _)| kind == "email_address")
+            .unwrap()
+            .1
+            .len(),
+        2
     );
 }
 
@@ -1180,6 +1207,15 @@ fn test_multiple_credit_cards_dedup() {
     let text = "主卡 4111111111111111，副卡 4111111111111111";
     let result = scan_text(text);
     assert!(result.matches.contains(&"credit_card".to_string()));
+    assert_eq!(
+        result
+            .details
+            .iter()
+            .find(|(name, _)| name == "credit_card")
+            .map(|(_, values)| values.len()),
+        Some(1),
+        "repeated card values should be retained once in the details"
+    );
     assert!(
         !result.matches.contains(&"bank_card".to_string()),
         "Same card number appearing twice should NOT create bank_card duplicate"
@@ -1216,13 +1252,13 @@ fn test_passport_wrong_length_rejected() {
 
 #[test]
 fn test_swift_9_digit_rejected() {
-    let codes = find_swift_codes("BKCHCNBJX");
+    let codes = find_swift_codes("SWIFT: TSTBCN00X");
     assert!(codes.is_empty(), "9-char SWIFT should be rejected");
 }
 
 #[test]
 fn test_swift_10_digit_rejected() {
-    let codes = find_swift_codes("BKCHCNBJXX");
+    let codes = find_swift_codes("SWIFT: TSTBCN00XX");
     assert!(codes.is_empty(), "10-char SWIFT should be rejected");
 }
 
@@ -1231,7 +1267,11 @@ fn test_swift_lowercase_detected() {
     // 修复后：小写 SWIFT 大写归一化后应命中（PoC：攻击者用小写绕过）
     // 小写候选需带 swift/bic 上下文, 防止英文散文单词误报
     let codes = find_swift_codes("汇款请使用 SWIFT: bkchcnbj");
-    assert_eq!(codes.len(), 1, "Lowercase SWIFT should be detected after case normalization");
+    assert_eq!(
+        codes.len(),
+        1,
+        "Lowercase SWIFT should be detected after case normalization"
+    );
 }
 
 #[test]
@@ -1276,7 +1316,7 @@ fn test_cvv_card_verification_english() {
 
 #[test]
 fn test_iban_france() {
-    let text = "FR7630006000011234567890189";
+    let text = "FR7600000000000000000000000";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"iban".to_string()),
@@ -1286,7 +1326,7 @@ fn test_iban_france() {
 
 #[test]
 fn test_iban_switzerland() {
-    let text = "CH9300762011623852957";
+    let text = "CH3600000000000000000";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"iban".to_string()),
@@ -1296,7 +1336,7 @@ fn test_iban_switzerland() {
 
 #[test]
 fn test_iban_too_short_rejected() {
-    let ibans = find_ibans("DE89370400440");
+    let ibans = find_ibans("DE36000000000");
     assert!(
         ibans.is_empty(),
         "IBAN shorter than 15 chars should be rejected"
@@ -1305,14 +1345,14 @@ fn test_iban_too_short_rejected() {
 
 #[test]
 fn test_iban_masking_format() {
-    let ibans = find_ibans("DE89370400440532013000");
+    let ibans = find_ibans("DE36000000000000000000");
     assert_eq!(ibans.len(), 1);
     assert!(
-        ibans[0].starts_with("DE89"),
+        ibans[0].starts_with("DE36"),
         "IBAN masking should preserve first 4"
     );
     assert!(
-        ibans[0].ends_with("3000"),
+        ibans[0].ends_with("0000"),
         "IBAN masking should preserve last 4"
     );
     assert!(
@@ -2032,32 +2072,32 @@ fn test_credential_real_password_still_detected() {
 // JRT level tests
 
 #[test]
-fn test_items_by_jrt_level_distribution() {
+fn test_items_by_security_level_distribution() {
     let text = "Password：abc123, 身份证 000000200001010005, 月薪: 25000元, 工号: E001";
     let result = scan_text(text);
-    let levels = result.items_by_jrt_level();
-    assert!(levels.get(&4).unwrap_or(&0) >= &1, "Should have C4 items");
-    assert!(levels.get(&3).unwrap_or(&0) >= &1, "Should have C3 items");
+    let levels = result.items_by_security_level();
+    assert!(levels.get(&4).unwrap_or(&0) >= &1, "Should have level-4 items");
+    assert!(levels.get(&3).unwrap_or(&0) >= &1, "Should have level-3 items");
 }
 
 #[test]
 fn test_count_items_at_level_accumulation() {
-    let text = "身份证 000000200001010005, 月薪: 25000元, 配偶: 李四";
+    let text = "身份证 000000200001010005, 月薪: 25000元, 配偶: 测试乙";
     let result = scan_text(text);
     let c3_plus = result.count_items_at_level(3);
     assert!(
         c3_plus >= 3,
-        "Should count at least 3 items at C3+, got {}",
+        "Should count at least 3 items at level-3+, got {}",
         c3_plus
     );
     let c4_plus = result.count_items_at_level(4);
-    assert!(c4_plus == 0, "Should have 0 C4 items, got {}", c4_plus);
+    assert!(c4_plus == 0, "Should have 0 level-4 items, got {}", c4_plus);
 }
 
 #[test]
-fn test_items_by_jrt_level_empty_on_clean_text() {
+fn test_items_by_security_level_empty_on_clean_text() {
     let result = scan_text("Normal工作emailContent");
-    let levels = result.items_by_jrt_level();
+    let levels = result.items_by_security_level();
     assert!(
         levels.is_empty(),
         "Clean text should have empty JRT level map"
@@ -2102,7 +2142,7 @@ fn test_realistic_loan_approval() {
 fn test_realistic_insurance_claim() {
     let text = "理赔审核通知：\n\
         投保人: 李明\n\
-        被保险人: 张三\n\
+        被保险人: 测试甲\n\
         保单号: PL20260115001234\n\
         出险日期: 2026-03-01\n\
         理赔金额: 85,000元\n\
@@ -2125,11 +2165,11 @@ fn test_realistic_insurance_claim() {
 #[test]
 fn test_realistic_customer_kyc() {
     let text = "KYC 尽调报告：\n\
-        客户: 张三\n\
+        客户: 测试甲\n\
         身份证号: 000000199201010004\n\
         Mobile phone: 13600136000, 15100151000, 15200152000\n\
         Address: 广东省深圳市南山区科技南路88编号\n\
-        配偶: 李四\n\
+        配偶: 测试乙\n\
         公司统1社会信用代码: A00000MA000000000B";
     let result = scan_text(text);
     assert!(
@@ -2155,7 +2195,7 @@ fn test_realistic_customer_kyc() {
     let c3_plus = result.count_items_at_level(3);
     assert!(
         c3_plus >= 5,
-        "KYC email should have >=5 C3+ items, got {}",
+        "KYC email should have >=5 level-3+ items, got {}",
         c3_plus
     );
 }
@@ -2272,30 +2312,31 @@ fn test_combined_all_jrt_levels() {
     let text = "客户Info汇总：\n\
         Password：abc123\n\
         身份证: 000000200001010005\n\
+        合同编号: CT2026010001\n\
         工号: E001\n\
         公司信用代码 A0000000000000000M";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"credential_leak".to_string()),
-        "C4 credential"
+        "level-4 credential"
     );
     assert!(
         result.matches.contains(&"id_number".to_string()),
-        "C3 id_number"
+        "level-3 id_number"
     );
     assert!(
         result.matches.contains(&"employee_info".to_string()),
-        "C2 employee"
+        "level-3 employee"
     );
     assert!(
         result.matches.contains(&"social_credit_code".to_string()),
-        "C1 social_credit"
+        "level-1 social_credit"
     );
-    let levels = result.items_by_jrt_level();
-    assert!(levels.contains_key(&4), "Should have C4 level");
-    assert!(levels.contains_key(&3), "Should have C3 level");
-    assert!(levels.contains_key(&2), "Should have C2 level");
-    assert!(levels.contains_key(&1), "Should have C1 level");
+    let levels = result.items_by_security_level();
+    assert!(levels.contains_key(&4), "Should have level-4 level");
+    assert!(levels.contains_key(&3), "Should have level-3 level");
+    assert!(levels.contains_key(&2), "Should have level-2 level");
+    assert!(levels.contains_key(&1), "Should have level-1 level");
 }
 
 #[test]
@@ -2306,8 +2347,8 @@ fn test_combined_multiple_c4_patterns() {
     assert!(result.matches.contains(&"cvv_code".to_string()));
     assert!(result.matches.contains(&"medical_health".to_string()));
     assert!(
-        result.count_items_at_level(4) >= 3,
-        "Should have >=3 C4 items"
+        result.count_items_at_level(4) == 2,
+        "Only the password and CVV are authentication fields"
     );
 }
 
@@ -2362,15 +2403,28 @@ fn test_masking_id_preserves_region_code() {
 
 #[test]
 fn test_masking_bank_card_19_digit() {
-    let cards = find_bank_cards("6222021234567890123", &HashSet::new());
-    if !cards.is_empty() {
-        assert!(
-            cards[0].starts_with("6222"),
-            "Should preserve first 4 digits"
-        );
-        assert!(cards[0].ends_with("0123"), "Should preserve last 4 digits");
-        assert!(cards[0].contains("****"));
-    }
+    let cards = find_bank_cards("6222021234567890128", &HashSet::new());
+    assert_eq!(cards.len(), 1, "valid UnionPay control must be detected");
+    assert!(
+        cards[0].starts_with("6222"),
+        "Should preserve first 4 digits"
+    );
+    assert!(cards[0].ends_with("0128"), "Should preserve last 4 digits");
+    assert!(cards[0].contains("****"));
+}
+
+#[test]
+fn test_bank_card_rejects_luhn_valid_non_card_url_identifier() {
+    let cards = find_bank_cards(
+        "https://bank.example/invoice?filuqeid=2089000000000000001#download",
+        &HashSet::new(),
+    );
+    assert!(
+        luhn_check("2089000000000000001"),
+        "control must remain Luhn-valid so the test distinguishes BIN validation"
+    );
+    assert!(!is_valid_card_bin("2089000000000000001"));
+    assert!(cards.is_empty());
 }
 
 #[test]
@@ -2387,8 +2441,8 @@ fn test_masking_social_credit_code_format() {
 
 #[test]
 fn test_masking_swift_format() {
-    let swift = find_swift_codes("BKCHCNBJ100");
-    assert_eq!(swift[0], "BKCH****");
+    let swift = find_swift_codes("SWIFT: TSTBCN00100");
+    assert_eq!(swift[0], "TSTB****");
 }
 
 #[test]
@@ -2532,12 +2586,7 @@ fn test_loan_all_keywords_in_prefilter() {
 
 #[test]
 fn test_credential_pin_chinese_variants() {
-    let variants = [
-        "PIN码：1234",
-        "PIN码: 5678",
-        "PIN码=9012",
-        "pin码：abcd",
-    ];
+    let variants = ["PIN码：1234", "PIN码: 5678", "PIN码=9012", "pin码：abcd"];
     for text in variants {
         let result = scan_text(text);
         assert!(
@@ -2633,22 +2682,36 @@ fn test_no_fp_english_business_email() {
 // Phone dedup threshold
 
 #[test]
-fn test_phone_dedup_five_same_no_trigger() {
+fn test_phone_dedup_five_same_retained() {
     let text = "13800138000 13800138000 13800138000 13800138000 13800138000";
     let result = scan_text(text);
-    assert!(
-        !result.matches.contains(&"phone_number".to_string()),
-        "5 duplicates of same phone should NOT trigger (unique count = 1)"
+    assert!(result.matches.contains(&"phone_number".to_string()));
+    assert_eq!(
+        result
+            .details
+            .iter()
+            .find(|(kind, _)| kind == "phone_number")
+            .unwrap()
+            .1
+            .len(),
+        1
     );
 }
 
 #[test]
-fn test_phone_dedup_two_unique_two_dup_no_trigger() {
+fn test_phone_dedup_two_unique_two_dup_retained() {
     let text = "13800138000 13900139000 13800138000 13900139000";
     let result = scan_text(text);
-    assert!(
-        !result.matches.contains(&"phone_number".to_string()),
-        "2 unique phones (with duplicates) should NOT trigger (threshold >=3)"
+    assert!(result.matches.contains(&"phone_number".to_string()));
+    assert_eq!(
+        result
+            .details
+            .iter()
+            .find(|(kind, _)| kind == "phone_number")
+            .unwrap()
+            .1
+            .len(),
+        2
     );
 }
 
@@ -2679,12 +2742,19 @@ fn test_email_dedup_same_address_case_insensitive() {
 }
 
 #[test]
-fn test_email_dedup_all_same_no_trigger() {
+fn test_email_dedup_all_same_retained() {
     let text = "user@ops.example.com user@ops.example.com user@ops.example.com user@ops.example.com user@ops.example.com";
     let result = scan_text(text);
-    assert!(
-        !result.matches.contains(&"email_address".to_string()),
-        "Same email 5 times should NOT trigger (unique count = 1)"
+    assert!(result.matches.contains(&"email_address".to_string()));
+    assert_eq!(
+        result
+            .details
+            .iter()
+            .find(|(kind, _)| kind == "email_address")
+            .unwrap()
+            .1
+            .len(),
+        1
     );
 }
 
@@ -2692,7 +2762,7 @@ fn test_email_dedup_all_same_no_trigger() {
 
 #[test]
 fn test_swift_code_regexset_alignment() {
-    let text = "BKCHCNBJ";
+    let text = "SWIFT: TSTBCN00";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"swift_code".to_string()),
@@ -2702,7 +2772,7 @@ fn test_swift_code_regexset_alignment() {
 
 #[test]
 fn test_swift_code_11_char_with_branch() {
-    let text = "BKCHCNBJ100";
+    let text = "BIC: TSTBCN00100";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"swift_code".to_string()),
@@ -2712,57 +2782,61 @@ fn test_swift_code_11_char_with_branch() {
 
 #[test]
 fn test_swift_code_7_char_rejected() {
-    let codes = find_swift_codes("BKCHCNB");
+    let codes = find_swift_codes("SWIFT: TSTBCN0");
     assert!(codes.is_empty(), "7-char is not valid SWIFT");
 }
 
 #[test]
 fn test_swift_code_12_char_rejected() {
-    let codes = find_swift_codes("BKCHCNBJ1001");
+    let codes = find_swift_codes("SWIFT: TSTBCN001001");
     assert!(codes.is_empty(), "12-char is not valid SWIFT");
 }
 
 #[test]
 fn test_swift_valid_boc_code_detected() {
-    let codes = find_swift_codes("BKCHCNBJ");
+    let codes = find_swift_codes("SWIFT: TSTBCN00");
     assert_eq!(codes.len(), 1, "Bank of China SWIFT should be detected");
-    assert_eq!(codes[0], "BKCH****");
+    assert_eq!(codes[0], "TSTB****");
 }
 
 #[test]
 fn test_swift_valid_11_digit_detected() {
-    let codes = find_swift_codes("BKCHCNBJXXX");
+    let codes = find_swift_codes("SWIFT: TSTBCN00XXX");
     assert_eq!(codes.len(), 1, "11-digit BOC SWIFT should be detected");
 }
 
 #[test]
 fn test_swift_invalid_country_rejected() {
-    let codes = find_swift_codes("PASSAB12");
+    let codes = find_swift_codes("SWIFT: PASSAB12");
     assert!(codes.is_empty(), "PASSAB12: AB is not a valid country code");
 }
 
 #[test]
 fn test_swift_common_word_rejected() {
-    let codes = find_swift_codes("TRUECNBJ");
+    let codes = find_swift_codes("SWIFT: TRUECNBJ");
     assert!(codes.is_empty(), "TRUECNBJ: TRUE is a common word prefix");
 }
 
 #[test]
 fn test_swift_file_prefix_rejected() {
-    let codes = find_swift_codes("FILECNBJ");
+    let codes = find_swift_codes("SWIFT: FILECNBJ");
     assert!(codes.is_empty(), "FILECNBJ: FILE is a common word prefix");
 }
 
 #[test]
 fn test_swift_cert_prefix_rejected() {
-    let codes = find_swift_codes("CERTCNBJ");
+    let codes = find_swift_codes("SWIFT: CERTCNBJ");
     assert!(codes.is_empty(), "CERTCNBJ: CERT is a common word prefix");
 }
 
 #[test]
 fn test_swift_real_hsbc_detected() {
-    let codes = find_swift_codes("HSBCHKHH");
-    assert_eq!(codes.len(), 1, "HSBC Hong Kong SWIFT should be detected");
+    let codes = find_swift_codes("SWIFT: TSTBHK00");
+    assert_eq!(
+        codes.len(),
+        1,
+        "synthetic Hong Kong SWIFT should be detected"
+    );
 }
 
 // DlpScanResult API
@@ -2892,9 +2966,9 @@ fn test_address_multiple_levels() {
 #[test]
 fn test_realistic_payroll_batch() {
     let text = "工资发放通知：\n\
-        张三 工号: E001 月薪: 15000元\n\
-        李四 工号: E002 月薪: 18000元\n\
-        王5 工号: E003 月薪: 22000元";
+        测试甲 工号: E001 月薪: 15000元\n\
+        测试乙 工号: E002 月薪: 18000元\n\
+        测试丙 工号: E003 月薪: 22000元";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"employee_info".to_string()),
@@ -2905,15 +2979,16 @@ fn test_realistic_payroll_batch() {
         "Should detect income info"
     );
     let c3_plus = result.count_items_at_level(3);
-    assert!(c3_plus >= 3, "Should have >=3 C3+ items from income data");
+    assert!(c3_plus >= 3, "Should have >=3 level-3+ items from income data");
 }
 
 #[test]
-fn test_realistic_customer_data_export() {
+fn test_synthetic_customer_data_export() {
+    // All identities below use an invalid 000000 region and explicit test names.
     let text = "客户dataExport（共3Item）：\n\
-        1. Name: 张三, 身份证: 000000200001010005, Mobile phone: 13800138000\n\
-        2. Name: 李四, 身份证: 000000199201010004, Mobile phone: 13900139000\n\
-        3. Name: 王5, 身份证: 000000198805150003, Mobile phone: 14700147000";
+        1. Name: 测试甲, 身份证: 000000200001010005, Mobile phone: 13800138000\n\
+        2. Name: 测试乙, 身份证: 000000199201010004, Mobile phone: 13900139000\n\
+        3. Name: 测试丙, 身份证: 000000198805150003, Mobile phone: 14700147000";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -2940,9 +3015,9 @@ fn test_realistic_customer_data_export() {
 fn test_realistic_wire_transfer() {
     let text = "电汇指令：\n\
         收款人: ABC Corporation\n\
-        Bank: HSBC Hong Kong\n\
-        SWIFT: HSBCHKHH\n\
-        IBAN: GB29NWBK60161331926819\n\
+        Bank: Synthetic Settlement Bank\n\
+        SWIFT: TSTBHK00\n\
+        IBAN: GB50TSTB00000000000000\n\
         Amount: 500,000 USD\n\
         备注: Invoice #2026-003";
     let result = scan_text(text);
@@ -2993,8 +3068,8 @@ fn test_realistic_medical_insurance_claim() {
         "Should detect policy number"
     );
     assert!(
-        result.count_items_at_level(4) >= 1,
-        "Should have C4 items from medical data"
+        result.count_items_at_level(3) >= 1,
+        "Medical data remains sensitive without being classified as authentication data"
     );
 }
 
@@ -3002,7 +3077,7 @@ fn test_realistic_medical_insurance_claim() {
 
 #[test]
 fn test_no_fp_coremail_css_class_numbers() {
-    let text = "class=\"m-compose-panel\" data-id=\"17744180056150\" style=\"width:100%\"";
+    let text = "class=\"m-compose-panel\" data-id=\"10000000000010\" style=\"width:100%\"";
     let result = scan_text(text);
     assert!(
         !result.matches.contains(&"phone_number".to_string()),
@@ -3032,7 +3107,7 @@ fn test_no_fp_uuid_string() {
 
 #[test]
 fn test_no_fp_hash_string() {
-    let text = "SHA256: 38D3670BE3FE34098A8C6E4B7D2F1CAFE0123456789ABCDEF01234567890ABC";
+    let text = "SHA256: 0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF";
     let result = scan_text(text);
     assert!(!result.matches.contains(&"credit_card".to_string()));
 }
@@ -3290,7 +3365,7 @@ fn test_e2e_all_c4_patterns_independent() {
         let result = scan_text(text);
         assert!(
             result.matches.contains(&expected.to_string()),
-            "C4 pattern '{}' should be detected in '{}'",
+            "level-4 pattern '{}' should be detected in '{}'",
             expected,
             text
         );
@@ -3327,12 +3402,7 @@ fn test_e2e_medical_requires_two_distinct() {
 
 #[test]
 fn test_e2e_judicial_requires_two_distinct() {
-    let single = [
-        "失信被执行人",
-        "行政处罚",
-        "判决书",
-        "强制执行",
-    ];
+    let single = ["失信被执行人", "行政处罚", "判决书", "强制执行"];
     for kw in single {
         let text = format!("关于{}of法规解read", kw);
         let result = scan_text(&text);
@@ -3360,17 +3430,17 @@ fn test_coremail_typical_body_no_fp() {
 }
 
 #[test]
-fn test_coremail_signature_no_fp() {
+fn test_contact_signature_is_content_observation_not_proof_of_illegality() {
     let text =
-        "此致\n\n张三\nRiskManagement部\n电话: 13800138000\nemail: zhangsan@example.com";
+        "此致\n\n测试甲\nRiskManagement部\n电话: 13800138000\nemail: fixture-user@example.com";
     let result = scan_text(text);
     assert!(
-        !result.matches.contains(&"phone_number".to_string()),
-        "Single phone in signature should NOT trigger"
+        result.matches.contains(&"phone_number".to_string()),
+        "Single phone must not be discarded by a quantity filter"
     );
     assert!(
-        !result.matches.contains(&"email_address".to_string()),
-        "Single email in signature should NOT trigger"
+        result.matches.contains(&"email_address".to_string()),
+        "Single personal email remains a candidate requiring authorization review"
     );
 }
 
@@ -3378,7 +3448,7 @@ fn test_coremail_signature_no_fp() {
 fn test_coremail_forwarded_customer_data() {
     let text = "-------- 转发Message --------\n\
         客户Infoif下：\n\
-        Name：张三\n\
+        Name：测试甲\n\
         身份证：000000200001010005\n\
         Mobile phone：13800138000, 13900139000, 14700147000\n\
         Address：北京市朝阳区建国路88编号\n\
@@ -3452,9 +3522,9 @@ fn test_scan_many_patterns_no_panic() {
         email a@example.test b@example.test c@example.test\n\
         护照 E12345678\n\
         信用代码 A0000000000000000M\n\
-        SWIFT BKCHCNBJ\n\
+        SWIFT TSTBCN00\n\
         纳税 110108MA12345N9\n\
-        IBAN DE89370400440532013000\n\
+        IBAN DE36000000000000000000\n\
         合同Amount 100万元 首付 30万元\n\
         账号：1234567890\n\
         保单号 PL12345678901234\n\
@@ -3466,8 +3536,9 @@ fn test_scan_many_patterns_no_panic() {
         GPS坐标: 116.39750\n\
         验证码: 582931\n\
         贷款余额: 500000元\n\
-        投保人: 张三\n\
-        配偶: 李四\n\
+        投保人: 测试甲\n\
+        配偶: 测试乙\n\
+        合同编号: CT2026010001\n\
         工号: E001\n\
         失信被执行人和行政处罚\n\
         学历: 本科\n\
@@ -3578,7 +3649,7 @@ fn test_iban_unknown_country_rejected() {
 
 #[test]
 fn test_iban_wrong_length_for_country_rejected() {
-    let ibans = find_ibans("DE8937040044053201");
+    let ibans = find_ibans("DE3600000000000000");
     assert!(
         ibans.is_empty(),
         "DE IBAN with 18 chars (should be 22) should be rejected"
@@ -3587,7 +3658,7 @@ fn test_iban_wrong_length_for_country_rejected() {
 
 #[test]
 fn test_iban_correct_length_detected() {
-    let text = "IBAN DE89370400440532013000";
+    let text = "IBAN DE36000000000000000000";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"iban".to_string()),
@@ -3622,9 +3693,9 @@ fn test_bank_account_payment_transfer_keyword() {
 #[test]
 fn test_attack_scenario_data_exfiltration_draft() {
     let text = "Batch客户data (请速查收):\n\
-        张三 000000200001010005 Card number 4111111111111111 月薪:35000元\n\
-        李四 000000199201010004 Card number 5100000000000008 月薪:28000元\n\
-        王5 000000198501010001 Card number 6200000000000005 月薪:42000元";
+        测试甲 000000200001010005 Card number 4111111111111111 月薪:35000元\n\
+        测试乙 000000199201010004 Card number 5100000000000008 月薪:28000元\n\
+        测试丙 000000198501010001 Card number 6200000000000005 月薪:42000元";
     let result = scan_text(text);
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -3651,9 +3722,9 @@ fn test_attack_scenario_data_exfiltration_draft() {
 fn test_attack_scenario_wire_transfer_fraud() {
     let text = "紧急通知 - 请立immediately转账:\n\
         收款人: International Trading Co.\n\
-        Bank: HSBC Hong Kong\n\
-        SWIFT代码: HSBCHKHH\n\
-        IBAN: GB29NWBK60161331926819\n\
+        Bank: Synthetic Settlement Bank\n\
+        SWIFT代码: TSTBHK00\n\
+        IBAN: GB50TSTB00000000000000\n\
         Amount: 500,000 USD, 手续费 2,000 USD\n\
         请在下午3点firstcomplete，否则合同失效";
     let result = scan_text(text);
@@ -4196,7 +4267,6 @@ fn test_realistic_judicial_report() {
     );
 }
 
-
 // ============================================================
 // PoC 回归测试（绕过手段 → 修复后必须检出）
 // ============================================================
@@ -4250,7 +4320,7 @@ fn test_attack_lowercase_vin() {
 
 #[test]
 fn test_attack_lowercase_iban() {
-    let result = scan_text("iban: de89370400440532013000");
+    let result = scan_text("iban: de36000000000000000000");
     assert!(
         result.matches.contains(&"iban".to_string()),
         "小写 IBAN 应检出"
@@ -4337,18 +4407,14 @@ fn test_credential_traditional_variants() {
     );
     let result2 = scan_text("帳號：admin123");
     assert!(
-        result2.matches.contains(&"credential_leak".to_string()),
-        "繁体 帳號 应命中 credential_leak"
+        !result2.matches.contains(&"credential_leak".to_string()),
+        "An account identifier alone is not an authentication secret"
     );
 }
 
 #[test]
 fn test_bank_account_variants() {
-    for text in [
-        "账号：1234567890",
-        "帐户：1234567890",
-        "帐号：1234567890",
-    ] {
+    for text in ["账号：1234567890", "帐户：1234567890", "帐号：1234567890"] {
         let result = scan_text(text);
         assert!(
             result.matches.contains(&"bank_account".to_string()),
@@ -4519,10 +4585,10 @@ fn test_prefilter_superset_of_detailed_patterns() {
         (6, "E12345678"),
         (7, "A0000000000000000M"),
         (8, "password: hunter2"),
-        (9, "BKCHCNBJ"),
+        (9, "TSTBCN00"),
         (10, "cvv: 123"),
         (11, "110108MA12345N9"),
-        (12, "DE89370400440532013000"),
+        (12, "DE36000000000000000000"),
         (13, "100万元"),
         (14, "账号：1234567890"),
         (15, "合同编号：PL12345678901234"),
@@ -4534,8 +4600,8 @@ fn test_prefilter_superset_of_detailed_patterns() {
         (21, "GPS坐标：116.39750"),
         (22, "验证码：483920"),
         (23, "贷款余额：500000元"),
-        (24, "投保人：张三"),
-        (25, "配偶：李四"),
+        (24, "投保人：测试甲"),
+        (25, "配偶：测试乙"),
         (26, "工号：E001"),
         (27, "失信被执行人"),
         (28, "学历：本科"),
@@ -4552,12 +4618,17 @@ fn test_prefilter_superset_of_detailed_patterns() {
 
 #[test]
 fn test_credential_simplified_account_variants() {
-    // D5: 简体 账号/账户/帐号/帐户 缺口 (原先只有繁体 帳號/帳戶)
-    for text in ["账号：hunter2", "账户：hunter2", "帐号：hunter2", "帐户：hunter2"] {
+    // Account identifiers alone must not be upgraded to authentication secrets.
+    for text in [
+        "账号：hunter2",
+        "账户：hunter2",
+        "帐号：hunter2",
+        "帐户：hunter2",
+    ] {
         let result = scan_text(text);
         assert!(
-            result.matches.contains(&"credential_leak".to_string()),
-            "{text} 应命中 credential_leak"
+            !result.matches.contains(&"credential_leak".to_string()),
+            "{text} alone must not be treated as a password"
         );
     }
 }
@@ -4596,7 +4667,7 @@ fn test_attack_phone_with_two_char_separator() {
 
 #[test]
 fn test_attack_id_number_with_dot_middle_dot_mix() {
-    // D6: 点+间隔号混合分隔的身份证号 (合法校验位 110101199001011237)
+    // D6: 点+间隔号混合分隔的合成身份证号 (校验位合法、地区码无效)
     let result = scan_text("身份证号: 1101.0119.9001.0112·37");
     assert!(
         result.matches.contains(&"id_number".to_string()),
@@ -4638,8 +4709,8 @@ fn test_attack_math_bold_digits_credit_card() {
 
 #[test]
 fn test_attack_circled_digits_id_number() {
-    // D1-1 PoC: 圆圈数字 (①②③ + ⓪) 写法身份证 (合法校验位 110101199001011237)
-    let circled: String = "110101199001011237"
+    // D1-1 PoC: 圆圈数字 (①②③ + ⓪) 写法合成身份证 (校验位合法、地区码无效)
+    let circled: String = "000000200001010005"
         .chars()
         .map(|c| {
             let d = c.to_digit(10).unwrap();
@@ -4672,8 +4743,7 @@ fn test_attack_circled_letters_credential() {
 fn test_attack_base64_encoded_id_number() {
     // D1-2 PoC: base64 编码的身份证号段, 修复前明文扫描对编码串完全失明
     use base64::Engine as _;
-    let encoded =
-        base64::engine::general_purpose::STANDARD.encode("身份证号:110101199001011237");
+    let encoded = base64::engine::general_purpose::STANDARD.encode("身份证号:000000200001010005");
     assert!(encoded.len() >= 40, "测试样例需满足候选段下限");
     let text = format!("附件编码段: {}", encoded);
     let result = scan_text(&text);
@@ -4682,7 +4752,9 @@ fn test_attack_base64_encoded_id_number() {
         "base64 编码的身份证号应解码后检出 id_number"
     );
     assert!(
-        result.matches.contains(&"encoded_sensitive_data".to_string()),
+        result
+            .matches
+            .contains(&"encoded_sensitive_data".to_string()),
         "编码通道命中应附加 encoded_sensitive_data 归因标记"
     );
 }
@@ -4702,7 +4774,9 @@ fn test_attack_hex_encoded_credit_card() {
         "hex 编码的卡号应解码后检出 credit_card"
     );
     assert!(
-        result.matches.contains(&"encoded_sensitive_data".to_string()),
+        result
+            .matches
+            .contains(&"encoded_sensitive_data".to_string()),
         "编码通道命中应附加 encoded_sensitive_data 归因标记"
     );
 }
@@ -4864,4 +4938,32 @@ fn test_merge_dlp_results_caps_and_dedups() {
     }
     assert_eq!(target2.details[0].1.len(), 1, "跨窗重复命中必须去重");
     assert!(!target2.truncated);
+}
+
+#[test]
+fn test_swift_shape_without_field_context_is_not_sensitive_data() {
+    for text in [
+        "ATTACHED",
+        "attached",
+        "TSTBCN00",
+        "font identifier YYYBTL00",
+        "publicity attached",
+        "abcdchbic12",
+    ] {
+        assert!(
+            find_swift_codes(text).is_empty(),
+            "Unattributed BIC shape: {text}"
+        );
+    }
+}
+
+#[test]
+fn test_swift_context_handles_multibyte_window_edges_and_case() {
+    for text in [
+        format!("{}SWIFT: tstbcn00", "中".repeat(30)),
+        "银行识别码：TSTBCN00XXX".to_string(),
+        "tstbhk00 (BIC)".to_string(),
+    ] {
+        assert_eq!(find_swift_codes(&text).len(), 1, "Labeled BIC: {text}");
+    }
 }

@@ -1,0 +1,10 @@
+From: =?utf-8?B?6Lqr5Lu95bmz5Y+w?= <sso@corp.internal>
+To: all@corp.internal
+Date: Tue, 15 Sep 2026 09:40:00 +0800
+Message-ID: <0030-b22@synth.example>
+Subject: 登录异常自助排查上线
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+门户-身份-诊断可自助排查。
+平台不发'Cookie 失效'邮件。

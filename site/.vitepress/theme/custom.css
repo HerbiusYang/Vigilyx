@@ -216,12 +216,10 @@ html.dark body {
 .VPNavBar.has-sidebar .VPNavBarTitle,
 .VPNavBar.has-sidebar .VPNavBarTitle .title,
 .VPNavBar.has-sidebar .container > .title {
+  width: auto !important;
+  max-width: none !important;
   padding-left: 24px !important;
   padding-right: 0 !important;
-}
-.VPNavBar.has-sidebar .title {
-  width: var(--vp-sidebar-width) !important;
-  max-width: var(--vp-sidebar-width) !important;
 }
 
 /* Tighten sidebar: narrower column + flush-left items so the logo,
@@ -645,21 +643,7 @@ html.dark body {
   display: inline-block;
   padding: 0.08em 0 0.14em;
   line-height: 1.18;
-  background: linear-gradient(
-    120deg,
-    var(--vig-text) 0%,
-    var(--vig-text) 30%,
-    #14b8a6 48%,
-    #38bdf8 58%,
-    var(--vig-text) 72%,
-    var(--vig-text) 100%
-  );
-  background-size: 260% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  -webkit-text-fill-color: transparent;
-  animation: vig-brand-sheen 7.5s ease-in-out infinite;
+  color: var(--vig-text);
 }
 
 .VPNavBarTitle .VPImage,
@@ -668,8 +652,6 @@ html.dark body {
   height: 2.15rem;
   border-radius: 8px;
   object-fit: contain;
-  filter: drop-shadow(0 0 10px rgba(20, 184, 166, 0.2));
-  animation: vig-logo-breathe 4.8s ease-in-out infinite;
 }
 
 .VPNavBarMenu .VPNavBarMenuLink {
@@ -913,7 +895,8 @@ html.dark body {
 .VPHomeHero {
   position: relative;
   padding-top: 2.75rem;
-  padding-bottom: 1.5rem;
+  padding-bottom: 2.75rem;
+  overflow: visible;
 }
 
 .VPHomeHero .container {
@@ -930,29 +913,38 @@ html.dark body {
   margin: 0 auto;
   text-align: center;
   position: relative;
+  overflow: visible;
 }
 
 .VPHomeHero .name {
+  display: block;
+  width: 100%;
+  text-align: center;
   font-family: var(--vp-font-family-heading);
-  font-weight: 800;
-  letter-spacing: -0.055em;
-  line-height: 1.1;
-  font-size: clamp(3rem, 7.5vw, 5.5rem);
+  letter-spacing: -0.04em;
+  line-height: 1.25;
+  font-weight: 700;
+  font-size: clamp(2.4rem, 5vw, 3.5rem);
   margin: 0;
-  padding-bottom: 0.08em;
-  background: linear-gradient(
-    135deg,
-    #0f766e 0%,
-    #14b8a6 45%,
-    #5eead4 100%
-  );
+  padding: 0.08em 0 0.16em;
+  overflow: visible;
+  background: linear-gradient(135deg, #0f766e 0%, #14b8a6 48%, #5eead4 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
   -webkit-text-fill-color: transparent;
 }
 
+@keyframes vig-title-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
 .VPHomeHero .name .clip {
+  display: inline-block;
+  line-height: 1.25;
+  padding: 0.06em 0.08em 0.18em;
+  overflow: visible;
   color: inherit;
   background: inherit;
   -webkit-background-clip: inherit;
@@ -961,34 +953,21 @@ html.dark body {
 }
 
 .VPHomeHero .text {
-  max-width: 24ch;
-  margin: 1.25rem auto 0;
+  max-width: 16em;
+  margin: 0.85rem auto 0;
   font-family: var(--vp-font-family-heading);
-  font-size: clamp(1.7rem, 3.2vw, 2.55rem);
-  line-height: 1.25;
-  letter-spacing: -0.025em;
+  font-size: clamp(1.85rem, 3.4vw, 2.7rem);
+  line-height: 1.22;
+  letter-spacing: -0.03em;
   font-weight: 600;
   color: var(--vig-text);
   text-wrap: balance;
   position: relative;
-  padding: 0 1.5rem;
+  padding: 0;
 }
 
-/* Decorative quote glyph hovering top-left of the statement */
 .VPHomeHero .text::before {
-  content: "\201C";
-  position: absolute;
-  top: -2.6rem;
-  left: 50%;
-  transform: translateX(-7.5rem);
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 6.5rem;
-  line-height: 1;
-  font-weight: 400;
-  color: #14b8a6;
-  opacity: 0.22;
-  pointer-events: none;
-  user-select: none;
+  content: none;
 }
 
 /* First line gets a touch more weight; following lines soften into the tagline */
@@ -1042,20 +1021,24 @@ html.dark body {
 
 /* Keyword chips rendered under the actions via ::after on .main */
 .VPHomeHero .main::after {
-  content: "Mirror mode    Inline SMTP    Explainable verdicts";
+  content: "Mirror  ·  Inline  ·  Explainable";
   display: block;
-  margin: 1.25rem auto 0;
-  color: color-mix(in srgb, var(--vig-text-soft) 75%, transparent);
+  position: relative;
+  z-index: 2;
+  margin: 1.35rem auto 0;
+  padding-bottom: 0.35rem;
+  line-height: 1.8;
+  color: color-mix(in srgb, var(--vig-text-soft) 88%, #ffffff);
   font-family: var(--vp-font-family-mono);
-  font-size: 0.78rem;
-  letter-spacing: 0.12em;
+  font-size: 0.82rem;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
-  white-space: pre;
 }
 
-html[lang="zh"] .VPHomeHero .main::after {
-  content: "旁路镜像    Inline SMTP    可解释判定";
-  letter-spacing: 0.08em;
+html[lang^="zh"] .VPHomeHero .main::after {
+  content: "旁路镜像  ·  投递前拦截  ·  可解释判定";
+  letter-spacing: 0.12em;
+  text-transform: none;
 }
 
 @keyframes vig-pulse {
@@ -1064,7 +1047,8 @@ html[lang="zh"] .VPHomeHero .main::after {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .VPHomeHero::before {
+  .VPHomeHero::before,
+  .VPHomeHero .name {
     animation: none;
   }
 }
@@ -1272,6 +1256,12 @@ html.dark .VPHomeHero .VPButton.alt:hover {
    HERO VISUAL — the custom terminal + pipeline block under the fold
    ============================================================================= */
 
+@property --vig-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
 .hero-visual {
   position: relative;
   margin: 2rem auto 4rem;
@@ -1287,6 +1277,105 @@ html.dark .VPHomeHero .VPButton.alt:hover {
     0 16px 36px -12px rgba(0, 0, 0, 0.45),
     0 0 0 1px rgba(94, 234, 212, 0.08);
   isolation: isolate;
+}
+
+.hero-visual__frame {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  border-radius: inherit;
+  padding: 1px;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--vig-angle),
+    transparent 0 68%,
+    rgba(94, 234, 212, 0.95) 82%,
+    rgba(147, 197, 253, 0.9) 90%,
+    transparent 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: vig-angle-spin 8s linear infinite;
+}
+
+@keyframes vig-angle-spin {
+  to { --vig-angle: 360deg; }
+}
+
+.hud {
+  position: absolute;
+  inset: 0.7rem;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.hud__corner {
+  position: absolute;
+  width: 1.15rem;
+  height: 1.15rem;
+  border: 1.5px solid rgba(94, 234, 212, 0.75);
+}
+
+.hud__corner--tl { top: 0; left: 0; border-right: 0; border-bottom: 0; }
+.hud__corner--tr { top: 0; right: 0; border-left: 0; border-bottom: 0; }
+.hud__corner--bl { bottom: 0; left: 0; border-right: 0; border-top: 0; }
+.hud__corner--br { bottom: 0; right: 0; border-left: 0; border-top: 0; }
+
+.hud__readout {
+  position: absolute;
+  top: 0.15rem;
+  right: 1.6rem;
+  color: rgba(203, 233, 229, 0.72);
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.16em;
+}
+
+.orbit {
+  position: absolute;
+  left: 58%;
+  top: 46%;
+  border-radius: 50%;
+  border: 1px solid rgba(94, 234, 212, 0.22);
+  transform: translate(-50%, -50%);
+}
+
+.orbit::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #5eead4;
+  box-shadow: 0 0 10px #5eead4, 0 0 18px rgba(147, 197, 253, 0.8);
+}
+
+.orbit--a { width: 9rem; height: 9rem; animation: vig-orbit 14s linear infinite; }
+.orbit--b { width: 13.5rem; height: 13.5rem; animation: vig-orbit 22s linear infinite reverse; opacity: 0.7; }
+.orbit--c { width: 18rem; height: 18rem; animation: vig-orbit 30s linear infinite; opacity: 0.45; }
+
+@keyframes vig-orbit {
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+.threat-marquee span {
+  animation: vig-chip 4.8s ease-in-out infinite;
+}
+
+.threat-marquee span:nth-child(3n) { animation-delay: 0.4s; }
+.threat-marquee span:nth-child(3n + 1) { animation-delay: 0.9s; }
+
+@keyframes vig-chip {
+  0%, 100% { border-color: rgba(147, 197, 253, 0.22); box-shadow: none; }
+  50% { border-color: rgba(94, 234, 212, 0.7); box-shadow: 0 0 16px rgba(94, 234, 212, 0.28); }
 }
 
 /* Nudge the hero visual off-center (rightward) on wide screens for a more
@@ -1319,11 +1408,83 @@ html.dark .VPHomeHero .VPButton.alt:hover {
 }
 
 .hero-visual__dot {
+  position: relative;
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: #5eead4;
   box-shadow: 0 0 8px rgba(94, 234, 212, 0.7);
+}
+
+.hero-visual__dot::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: inherit;
+  border: 1px solid rgba(94, 234, 212, 0.65);
+  animation: vig-ping 2.4s ease-out infinite;
+}
+
+@keyframes vig-ping {
+  to { transform: scale(2.1); opacity: 0; }
+}
+
+.threat-marquee {
+  margin-top: 0.9rem;
+  overflow: hidden;
+  mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+}
+
+.threat-marquee__track {
+  display: flex;
+  width: max-content;
+  gap: 0.55rem;
+  animation: vig-marquee 28s linear infinite;
+}
+
+.threat-marquee span {
+  padding: 0.28rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(147, 197, 253, 0.22);
+  color: #dbeafe;
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+@keyframes vig-marquee {
+  to { transform: translateX(-50%); }
+}
+
+.hero-terminal::after {
+  content: "";
+  position: absolute;
+  inset: 2.2rem 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(94, 234, 212, 0.8), transparent);
+  animation: vig-term-scan 4.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes vig-term-scan {
+  0% { transform: translateY(0); opacity: 0; }
+  15% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { transform: translateY(11rem); opacity: 0; }
+}
+
+@supports (animation-timeline: view()) {
+  .home-section {
+    animation: vig-section-in both linear;
+    animation-timeline: view();
+    animation-range: entry 0% cover 28%;
+  }
+}
+
+@keyframes vig-section-in {
+  from { opacity: 0.35; transform: translateY(18px); }
+  to { opacity: 1; transform: none; }
 }
 
 .hero-visual__grid {
@@ -1789,7 +1950,17 @@ html.dark .VPHomeHero .VPButton.alt:hover {
   line-height: 1;
   letter-spacing: -0.02em;
   font-weight: 600;
-  color: #edf7ff;
+  background: linear-gradient(100deg, #edf7ff 20%, #5eead4 48%, #edf7ff 76%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: vig-stat-sheen 5.5s ease-in-out infinite;
+}
+
+@keyframes vig-stat-sheen {
+  0%, 100% { background-position: 100% 0; }
+  50% { background-position: 0 0; }
 }
 
 .hero-stat span {
@@ -1811,7 +1982,7 @@ html.dark .VPHomeHero .VPButton.alt:hover {
    scroll into view. Anatomy section is excluded because it has custom scroll-
    driven reveal state that needs continuous measurement. The intrinsic-size
    guess is a "best-effort" height so the scrollbar doesn't jump. */
-.home-section:not(.home-anatomy-section) {
+.home-section:not(.home-anatomy-section):not(.home-lead) {
   content-visibility: auto;
   contain-intrinsic-size: auto 720px;
 }
@@ -2097,7 +2268,71 @@ html.dark .home-surface::before {
 }
 
 /* Metric card — icon + big value */
+.home-lead {
+  position: relative;
+  z-index: 1;
+  margin-top: 1.5rem;
+}
+
+.home-corpus-link {
+  margin: 1.25rem 0 0;
+  text-align: center;
+}
+
+.home-corpus-link a {
+  color: var(--vig-accent);
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.92rem;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--vig-accent) 45%, transparent);
+}
+
+.home-corpus-link a:hover {
+  border-bottom-color: var(--vig-accent);
+}
+
+.home-corpus-link__sep {
+  margin: 0 0.55rem;
+  color: var(--vig-text-soft);
+}
+
+.VPFooter .message a {
+  color: var(--vig-accent);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--vig-accent) 45%, transparent);
+}
+
+.hero-backdrop__scan,
+.hero-backdrop__packet,
+.hero-backdrop__grid,
+.hero-visual__frame,
+.VPHomeHero .name,
+.threat-marquee span {
+  animation: none;
+}
+
+@media (max-width: 760px) {
+  .hud {
+    display: none;
+  }
+}
+
+.home-metric-grid .metric-card {
+  animation: vig-card-rise 0.55s ease both;
+}
+.home-metric-grid .metric-card:nth-child(2) { animation-delay: 0.08s; }
+.home-metric-grid .metric-card:nth-child(3) { animation-delay: 0.16s; }
+.home-metric-grid .metric-card:nth-child(4) { animation-delay: 0.24s; }
+
+@keyframes vig-card-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+
 .metric-card {
+  position: relative;
+  overflow: hidden;
   min-height: 13rem;
   display: flex;
   flex-direction: column;
@@ -2109,6 +2344,24 @@ html.dark .home-surface::before {
     inset 0 -1px 0 rgba(15, 23, 42, 0.05),
     0 12px 28px -12px rgba(15, 23, 42, 0.16),
     0 2px 6px -2px rgba(15, 23, 42, 0.08);
+}
+
+.metric-card::after {
+  content: "";
+  position: absolute;
+  width: 9rem;
+  height: 9rem;
+  right: -2.5rem;
+  bottom: -3rem;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(45, 212, 191, 0.22), transparent 68%);
+  transform: translate(18%, 18%);
+  transition: transform 0.45s ease;
+  pointer-events: none;
+}
+
+.metric-card:hover::after {
+  transform: translate(0, 0);
 }
 
 .metric-card__icon {
@@ -2541,6 +2794,7 @@ html.dark .ai-card:hover {
 
 /* Email "paper" — single focal point */
 .anatomy-paper {
+  position: relative;
   width: min(640px, 100%);
   background: #fafaf7;
   color: #1a1a1a;
@@ -2552,6 +2806,30 @@ html.dark .ai-card:hover {
     0 10px 30px -10px rgba(0, 0, 0, 0.35);
   will-change: transform;
   transform: translateZ(0);
+  animation: vig-paper-in 0.45s ease;
+}
+
+.anatomy-paper::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 28%;
+  top: 0;
+  background: linear-gradient(180deg, transparent, rgba(13, 148, 136, 0.16), transparent);
+  animation: vig-paper-scan 0.9s ease-out 1;
+  pointer-events: none;
+}
+
+@keyframes vig-paper-in {
+  from { opacity: 0.45; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes vig-paper-scan {
+  from { transform: translateY(-30%); opacity: 0; }
+  30% { opacity: 1; }
+  to { transform: translateY(280%); opacity: 0; }
 }
 
 .anatomy-paper__head {
@@ -4172,7 +4450,22 @@ html[lang="zh"] .share-panel__eyebrow {
 
 @media (prefers-reduced-motion: reduce) {
   .term-line,
-  .pipeline-stage {
+  .pipeline-stage,
+  .hero-backdrop__grid,
+  .hero-backdrop__scan,
+  .hero-backdrop__packet,
+  .threat-marquee__track,
+  .hero-stat strong,
+  .hero-terminal::after,
+  .hero-visual__frame,
+  .orbit,
+  .threat-marquee span,
+  .VPHomeHero .name,
+  .hero-visual__dot::after,
+  .home-metric-grid .metric-card,
+  .anatomy-paper,
+  .anatomy-paper::before,
+  .home-section {
     opacity: 1 !important;
     transform: none !important;
     animation: none !important;

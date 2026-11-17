@@ -1,0 +1,10 @@
+From: =?utf-8?B?6IW+6K6v5paH5qGj?= <notify@docs.example>
+To: team@corp.internal
+Date: Sun, 06 Sep 2026 09:39:00 +0800
+Message-ID: <0029-b14@synth.example>
+Subject: 「灰度发布手册 v2」有 3 条新评论
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>文档更新提醒：</p><ul><li>王芳：第 3 步阈值建议改百分比</li><li>李伟：mac 路径需调整</li></ul><a href='https://docs.example/d/gray-release-v2' style='color:#1e6fff'>查看文档</a></body></html>

@@ -1,0 +1,116 @@
+From: NVIDIA Developer Program <gpu.allocation@nv1dia-dev.example>
+To: rd@corp.internal
+Cc: cto@corp.internal, finance@corp.internal
+Reply-To: developer.gpu@nvidia-devmail.example
+Date: Sun, 01 Nov 2026 09:00:00 -0800
+Message-ID: <0721-b66@synth.example>
+Subject: Re: Re: [DEV-8842-GH200] GPU allocation approved — 8x H200 nodes reserved — Activation fee payment required before Tuesday shipping cutoff
+In-Reply-To: <gpu-request-8842@corp.internal>
+References: <gpu-request-8842@corp.internal> <gpu-request-8842-2@corp.internal>
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif;max-width:640px;margin:0 auto;border:1px solid #76B900;border-radius:8px;overflow:hidden">
+<div style="background:#76B900;color:#000;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">NVIDIA | Developer Program — GPU Allocation</h2>
+</div>
+<div style="padding:24px">
+
+<p>Dear Research Team,</p>
+
+<p>Your application for <b>NVIDIA H200 GPU allocation</b> has been approved under the NVIDIA Inception program for AI startups. Your reserved nodes are ready for activation — but an <b>activation fee</b> must be paid before the Tuesday shipping cutoff.</p>
+
+<h3>一、Your Allocation</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:200px">Developer Account</td><td><b>dev_8842_vigilyx</b></td></tr>
+<tr><td style="background:#f5f5f5">Program</td><td>NVIDIA Inception (AI Startup)</td></tr>
+<tr><td style="background:#f5f5f0">Member Since</td><td>March 2025</td></tr>
+<tr><td style="background:#f5f5f5">GPU Model</td><td><b>NVIDIA H200 Tensor Core</b> (141GB HBM3e)</td></tr>
+<tr><td style="background:#f5f5f5">Nodes Allocated</td><td><b>8 nodes × 8 GPUs = 64 H200s</b></td></tr>
+<tr><td style="background:#f5f5f5">Duration</td><td>6 months (Dec 2026 - May 2027)</td></tr>
+<tr><td style="background:#f5f5f5">Market Value</td><td>~$184,000/month (at list price)</td></tr>
+<tr><td style="background:#f5f5f5">Inception Discount</td><td>95% (Startup program rate)</td></tr>
+<tr><td style="background:#f5f5f5"><b>Your Cost</b></td><td><b style="color:#76B900">$9,200/month</b></td></tr>
+<tr><td style="background:#f5f5f5">Activation Fee</td><td style="color:#e00"><b>$4,600 (first month, 50% startup discount)</b></td></tr>
+<tr><td style="background:#f5f5f5">Shipping Cutoff</td><td style="color:#e00"><b>Tuesday, November 4, 2026 at 17:00 PST</b></td></tr>
+</table>
+
+<h3>二、What You'll Build</h3>
+<p>Based on your application, you plan to use the H200 cluster for:</p>
+<ul>
+<li><b>Training email threat detection models</b> — 2.1B parameter multilingual model (zh/en/ja/ru/ko)</li>
+<li><b>Inference for real-time gateway scoring</b> — <15ms latency requirement</li>
+<li><b>Red-team evasion corpus generation</b> — synthetic adversarial email samples</li>
+</ul>
+
+<h3>三、Activation Fee Payment</h3>
+
+<div style="background:#FFF8E1;padding:16px;border-radius:4px;border:2px solid #FFA000">
+<p><b>⚠ Activation Fee Payment — Updated Account ⚠</b></p>
+<p>Due to NVIDIA's migration from SAP Ariba to <b>Oracle NetSuite</b> for developer program billing, the activation fee must be paid to the new processing entity:</p>
+<p style="font-size:15px;line-height:1.8">
+<b>Beneficiary:</b> NVIDIA Developer Program Services LLC<br>
+<b>Bank:</b> Silicon Valley Bank (SVB), Santa Clara, CA<br>
+<b>Account:</b> 3301-4471-8842-66<br>
+<b>Routing (Wire):</b> 123456780<br>
+<b>SWIFT:</b> TSTBUS6S<br>
+<b>Amount:</b> $4,600.00 USD<br>
+<b>Reference:</b> DEV-8842-GH200-ACT
+</div>
+<p>If you need to verify this account, contact our <b>new developer billing desk at +1-408-486-****</b> (the previous +1-408-553-**** has been redirected to the new NetSuite team).</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文开发者支持或使用人民币付款，请访问 nv1dia-dev.example/cn-developer 上传公司注册证书与ML训练数据样本（中文通道，当日处理）。</p>
+
+<h3>四、What Happens If You Miss Tuesday</h3>
+<ul>
+<li>Your 64 H200 nodes will be <b>released to the waitlist</b> (currently 847 companies waiting)</li>
+<li>You'll be placed at the <b>back of the queue</b> for the next allocation cycle (Q1 2027)</li>
+<li>Your Inception discount rate (95%) may be <b>re-evaluated</b></li>
+<li>Your 6-month GPU access will be reduced to 4 months (Dec-Feb instead of Dec-May)</li>
+</ul>
+
+<h3>五、Required Technical Documentation (with payment)</h3>
+<p>To complete activation, submit along with payment confirmation:</p>
+<ol>
+<li><b>Model architecture overview</b> — brief description of your email threat detection model</li>
+<li><b>Training data description</b> — volume, languages, sensitivity level</li>
+<li><b>Sample training corpus</b> — 100-500 representative email samples (for NVIDIA's responsible AI review)</li>
+<li><b>Expected GPU utilization</b> — estimated hours/node/month</li>
+</ol>
+
+<p>Submit through the NVIDIA Developer Portal:</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://nv1dia-dev.example/portal/activation/DEV-8842/documents" style="display:inline-block;background:#76B900;color:#000;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Submit Technical Documentation</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://developer.nvidia.com/activation/DEV-8842</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（NVIDIA Developer account authentication required）</p>
+
+<h3>六、About NVIDIA's Responsible AI Review</h3>
+<p style="font-size:14px;background:#F1F8E9;padding:12px;border-radius:4px">
+<b>Why we need your training data samples:</b> NVIDIA's Responsible AI program reviews all Inception allocations to ensure GPU resources are not used for harmful purposes (deepfake generation, disinformation, etc.). Your training corpus of email samples will be reviewed by our AI Ethics team to confirm the data is used for defensive security (not for generating phishing emails). This is a standard requirement for all security-focused AI startups in the Inception program. The review typically takes 24-48 hours after submission.
+</p>
+
+<h3>七、Your NVIDIA Inception Benefits</h3>
+<ul>
+<li>95% GPU discount (H200, A100, L40S)</li>
+<li>DGX Cloud credits: $25,000/year</li>
+<li>Dedicated Deep Learning Engineer (monthly calls)</li>
+<li>NVIDIA GTC free passes (3/team/year)</li>
+<li>Marketing co-branding opportunities</li>
+</ul>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">NVIDIA Corporation | Developer Programs</p>
+<p style="font-size:11px;color:#999">2788 San Tomas Expressway, Santa Clara, CA 95051</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the primary contact for dev_8842_vigilyx.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://nv1dia-dev.example/api/track?recipient=rd%40corp.internal&dev=dev_8842&type=gpu_allocation" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

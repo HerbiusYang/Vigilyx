@@ -1,0 +1,9 @@
+From: Security Center <sender@partner.example>
+To: employee@corp.internal
+Date: Sun, 23 Aug 2026 20:22:34 +0800
+Message-ID: <inc01@sender.invalid>
+Subject: =?UTF-8?B?5a6J5YWo5qC46aqM6K+35rGC77ya56Gu6K6k5oKo55qE6LSm5Y+356m75b2V6KGM5Li6?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>企业邮箱已启用新版账号安全认证机制。请您按页面提示完成安全状态确认，用于核实账号身份。</p><p><a href="https://verify-account.sender.invalid/?token=FixtureToken1234567890">立即完成安全验证</a></p></body></html>

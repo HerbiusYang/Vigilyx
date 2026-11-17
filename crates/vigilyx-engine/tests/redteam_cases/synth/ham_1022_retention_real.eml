@@ -1,0 +1,68 @@
+From: "MetricsKeep 客户成功" <support@metricskeep.example>
+To: shao.yanzhou@yunchipay.example
+Date: Tue, 25 Aug 2026 15:00:00 +0800
+Message-ID: <1022-b196@synth.example>
+Subject: =?utf-8?B?44CQ5a+85Ye65o+Q6YaS44CRSU5DLTIwMjYtMDgxN+S6i+aVheaVsOaNruS/neeVmeacn+ivtOaYjuS4juiHquWKqeWvvOWHuuaMh+W8le+8iOWFjei0ue+8iQ==?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+邵砚舟总监（云驰支付 SRE 与运维部）：
+
+您好。MetricsKeep 客户成功团队。关于贵司
+5 月 26 日 P1 事故（INC-2026-0817）的
+数据保留期，向您做一次例行说明与导出
+提醒。本邮件为免费服务通知，不涉及
+任何付费项目，请留意文末反诈声明。
+
+一、保留策略（贵司合同版本，可在控制台
+"租户设置-数据策略"自行查看）
+- 热存储（秒级检索）：保留 90 天，
+  至 8 月 28 日；
+- 冷存储（对象存储归档）：此后自动
+  转入，保留 12 个月，检索为分钟级，
+  span 级明细无损；
+- 冷热只是存储介质与检索速度的差别，
+  转入冷存储后仍可随时检索、随时
+  导出，不收取任何恢复费，"采样
+  损失"的说法不存在。
+
+二、建议：8 月 28 日前完成归档导出
+最佳实践是事故关闭后即将根因分析所需
+数据导出到贵司自己的对象存储：
+1. 控制台"事故档案"页选中 INC-2026-
+   0817 → 导出（支持 trace 明细、
+   指标切片、告警时间线，Parquet＋CSV，
+   无窗口限制，96 分钟全量约 220GB
+   可分时段分批）；
+2. 或走 API（限速 50 并发），文档见
+   docs.metricskeep.example/export；
+3. 导出与 API 拉取均免费、不限次数。
+
+三、反诈声明（重要）
+MetricsKeep 不存在任何名义的"冷归档
+恢复费""热数据续保留包""恢复包"收费
+项；"保留策略统一调度、无人可延期"
+不是事实——保留窗口由贵司管理员在
+控制台自行调整（30/60/90/180 天可选）；
+我们不会通过邮件索要 API Key、租户
+凭据或对公转账信息。若收到署名"数据
+保留中心"并要求转账的邮件，请转发
+abuse@metricskeep.example，我们从未
+外包该职能发信。
+
+四、您可能会问的问题
+问：SLA 举证需要原始数据怎么办？
+答：冷存储明细无损，之后随时可再
+   导出，不影响举证与审计。
+问：导出中断了怎么办？
+答：分时段分批即可，或让客户成功
+   工程师陪同跑一次，免费。
+
+给 SRE 负责人的一句话：数据是贵司的，
+保留与导出是租户自己的权利，任何把它
+做成付费墙的，都是骗局。
+
+MetricsKeep 客户成功
+support@metricskeep.example
+（官方域名 metricskeep.example，无后缀
+变体；凡 -cloud、-coldstore 域均非本司）

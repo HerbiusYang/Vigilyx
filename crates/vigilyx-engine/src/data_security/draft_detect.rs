@@ -107,10 +107,9 @@ impl DataSecurityDetector for DraftBoxDetector {
         dlp_result
             .details
             .retain(|(dtype, _)| dtype != "email_address");
-        if dlp_result.is_empty() {
+        if super::financial_policy::max_security_level(&dlp_result.matches) <= 1 {
             return None;
         }
-        let dlp_for_jrt = dlp_result.clone();
 
         // Build evidence
         let mut evidence = Vec::new();
@@ -121,21 +120,22 @@ impl DataSecurityDetector for DraftBoxDetector {
         });
 
         for (dtype, values) in &dlp_result.details {
-            let snippet = extract_snippet(&dlp_text, values);
+            let snippet = (super::financial_policy::match_level(dtype, &dlp_result.matches) < 4)
+                .then(|| extract_snippet(&dlp_text, values))
+                .flatten();
             evidence.push(Evidence {
                 description: format!(
-                    "Detected {} ({} occurrences): {}",
+                    "Detected {} ({} field matches)",
                     super::dlp_type_cn(dtype),
-                    values.len(),
-                    values.join(", ")
+                    values.len()
                 ),
                 location: Some("draft content".to_string()),
                 snippet,
             });
         }
 
-        // Determine severity by highest JR/T classification level (JR/T 0197-2020)
-        let severity = super::jrt::severity_from_max_jrt_level(&dlp_result.matches);
+        // A saved draft is an observation, not a confirmed external transfer.
+        let severity = super::financial_policy::observation_severity(&dlp_result.matches);
         let user = dlp::extract_user(session);
 
         let matches_cn: Vec<&str> = dlp_result
@@ -144,7 +144,7 @@ impl DataSecurityDetector for DraftBoxDetector {
             .map(|m| super::dlp_type_cn(m))
             .collect();
         let summary = format!(
-            "Draft box abuse: {} from {} saved a draft containing {}",
+            "Sensitive draft content: {} from {} saved a draft containing {}",
             user.as_deref().unwrap_or("unknown user"),
             session.client_ip,
             matches_cn.join(", ")
@@ -159,7 +159,9 @@ impl DataSecurityDetector for DraftBoxDetector {
                 confidence: 0.85,
                 summary,
                 evidence,
-                details: None,
+                details: Some(
+                    serde_json::json!({"observation": "draft_save", "delivery_confirmed": false, "legal_assessment": "not_determined"}),
+                ),
                 dlp_matches: dlp_result.matches,
                 client_ip: session.client_ip.clone(),
                 detected_user: user,
@@ -168,7 +170,7 @@ impl DataSecurityDetector for DraftBoxDetector {
                 method: session.method.to_string(),
                 created_at: Utc::now(),
             },
-            Some(dlp_for_jrt),
+            None,
         ))
     }
 }
@@ -189,6 +191,22 @@ mod tests {
         );
         s.request_body = body.map(|b| b.to_string());
         s
+    }
+
+    #[test]
+    fn test_business_budget_draft_is_a_sensitivity_observation() {
+        let session = make_session(
+            "/coremail/common/mbox/compose.jsp",
+            HttpMethod::Post,
+            Some(
+                r#"{"action":"save","attrs":{"to":[],"subject":"活动预算","content":"单场费用0.5万元，全年预算20万元。"}}"#,
+            ),
+        );
+        let (incident, _) = DraftBoxDetector::new().analyze(&session).unwrap();
+        assert_eq!(incident.severity, vigilyx_core::DataSecuritySeverity::Low);
+        assert_eq!(incident.dlp_matches, vec!["large_amount"]);
+        assert!(incident.summary.starts_with("Sensitive draft content:"));
+        assert!(!incident.summary.contains("abuse"));
     }
 
     #[test]
@@ -216,7 +234,7 @@ mod tests {
         let session = make_session(
             "/api/draft",
             HttpMethod::Put,
-            Some("ID cardNumber: 110101199001011237"),
+            Some("ID cardNumber: 000000200001010005"),
         );
         let result = detector.analyze(&session);
         assert!(result.is_some());
@@ -286,7 +304,7 @@ mod tests {
     #[test]
     fn test_draft_detect_coremail_compose_jsp_autosave() {
         let detector = DraftBoxDetector::new();
-        let body = r#"{"attrs":{"account":"user@corp.com","subject":"test","content":"ID card: 110101199001011237"},"action":"autosave"}"#;
+        let body = r#"{"attrs":{"account":"user@corp.example","subject":"test","content":"ID card: 000000200001010005"},"action":"autosave"}"#;
         let session = make_session(
             "/coremail/common/mbox/compose.jsp?sid=xyz",
             HttpMethod::Post,
@@ -356,7 +374,7 @@ mod tests {
     fn test_draft_detect_email_plus_other_still_alerts() {
         // email + ID card -> email But id_number
         let detector = DraftBoxDetector::new();
-        let body = r#"{"attrs":{"subject":"info","content":"联系人 a@t.com, b@t.com, c@t.com ID card 110101199001011237"},"action":"save"}"#;
+        let body = r#"{"attrs":{"subject":"info","content":"联系人 a@fixture.example, b@fixture.example, c@fixture.example ID card 000000200001010005"},"action":"save"}"#;
         let session = make_session(
             "/coremail/common/mbox/compose.jsp?sid=abc",
             HttpMethod::Post,
@@ -413,7 +431,7 @@ mod tests {
     #[test]
     fn test_draft_detect_severity_c4_high() {
         let detector = DraftBoxDetector::new();
-        // C4 leveldata (credential_leak) -> severity should be High
+        // level-4 leveldata (credential_leak) -> severity should be High
         let body = r#"{"attrs":{"subject":"info","content":"Password：admin123"},"action":"save"}"#;
         let session = make_session(
             "/coremail/common/mbox/compose.jsp?sid=abc",
@@ -426,7 +444,7 @@ mod tests {
         assert_eq!(
             inc.severity,
             DataSecuritySeverity::High,
-            "C4 level data should produce High severity"
+            "level-4 level data should produce High severity"
         );
     }
 
@@ -447,9 +465,9 @@ mod tests {
     }
 
     #[test]
-    fn test_draft_detect_returns_dlp_result_for_jrt() {
+    fn draft_observation_does_not_feed_transfer_aggregation() {
         let detector = DraftBoxDetector::new();
-        let body = r#"{"attrs":{"content":"ID card 110101199001011237"},"action":"save"}"#;
+        let body = r#"{"attrs":{"content":"ID card 000000200001010005"},"action":"save"}"#;
         let session = make_session(
             "/coremail/common/mbox/compose.jsp?sid=abc",
             HttpMethod::Post,
@@ -458,11 +476,6 @@ mod tests {
         let result = detector.analyze(&session);
         assert!(result.is_some());
         let (_inc, dlp_opt) = result.unwrap();
-        assert!(
-            dlp_opt.is_some(),
-            "Should return DLP result for JRT compliance tracking"
-        );
-        let dlp = dlp_opt.unwrap();
-        assert!(!dlp.is_empty(), "DLP result should not be empty");
+        assert!(dlp_opt.is_none(), "Draft saves must not count as transfers");
     }
 }

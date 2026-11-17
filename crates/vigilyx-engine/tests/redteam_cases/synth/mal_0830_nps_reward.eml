@@ -1,0 +1,78 @@
+From: "FlowMetrics | Customer Experience Rewards" <nps.gifts@flowmetrics-rewards.example>
+To: ops-manager@corp.internal
+Cc: (none)
+Reply-To: rewards.desk@fm-incentives.example
+Disposition-Notification-To: nps.gifts@flowmetrics-rewards.example
+Date: Tue, 08 Jun 2027 07:30:00 +0000
+Message-ID: <0830-b102@synth.example>
+Subject: [Your Reward] NPS 2027 Survey Completed - $50 Digital Gift Card Ready - Activation Verification Required Within 5 Days
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:-apple-system,'Segoe UI',sans-serif;font-size:14px">
+<p>Operations Manager,</p>
+
+<p style="background:#E8F5E9;border-left:4px solid #1B5E20;padding:12px">
+<b>YOUR NPS SURVEY REWARD IS READY.</b>
+Thank you for completing the FlowMetrics 2027 NPS survey (submitted 5 June, response ID
+<b>NPS-88412-0625</b> — your score of 8 with detailed feedback earned the "Quality Response"
+tier). Your <b>$50 digital gift card</b> is reserved. Because reward cards are issued against
+company billing entities (anti-fraud rules for B2B incentives), the card requires
+<b>activation verification within 5 days</b> before delivery; unverified reservations
+release back to the reward pool.
+</p>
+
+<h3>1. Your Reward Status</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:260px">Survey response</td><td>NPS-88412-0625 (5 June, score 8, Quality Response tier)</td></tr>
+<tr><td style="background:#f5f5f5">Reward</td><td><b>$50 digital gift card</b> (major-brand, email delivery)</td></tr>
+<tr><td style="background:#f5f5f5">Reservation status</td><td>Held - <b>activation verification pending</b></td></tr>
+<tr><td style="background:#f5f5f5">Verification window</td><td><b>5 days</b> (reserved rewards release after)</td></tr>
+</table>
+
+<h3>2. Activation Verification (Why and What)</h3>
+<p>B2B incentive cards must be issued to a verified billing-entity contact (the survey taker's
+corporate identity). Activation verification confirms the card goes to you, not to someone
+who intercepted the reward email:</p>
+
+<p style="text-align:center;margin:18px 0">
+<a href="https://fm-incentives.example/activate/NPS-88412-0625" style="display:inline-block;background:#43A047;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">Activate &amp; Verify Reward Card</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">Customer portal: https://www.flowmetrics.example/rewards (your survey history and reward status)</p>
+
+<p>The activation page asks for: your <b>work email + employee ID</b>, and — because the card
+carries a cash value — a <b>verification card for identity matching</b> (card number and expiry;
+a $0.00 authorization check, like checking into a hotel). This confirms the reward lands with
+the person who took the survey.</p>
+
+<h3>3. Timeline</h3>
+<ul>
+<li>Verification window: <b>5 days</b> (unverified reservations release to the pool)</li>
+<li>Card delivery: within 24h of verification, by email</li>
+<li>Expiry of delivered card: 12 months</li>
+</ul>
+
+<p style="font-size:14px;background:#E8F5E9;padding:12px">A reward email asking for card details
+should make you stop and check — reward scams are everywhere, and your caution fits your role.
+Checks: your survey response ID appears in the FlowMetrics portal's survey history; the reward
+program (and its terms) are on the rewards page linked above; and if the verification step
+doesn't suit you, reply to this email and the desk can verify you against your portal account
+instead. The 5-day window is the reward pool's reservation policy — not negotiable per
+recipient.</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://fm-incentives.example/px/rw.gif?r=NPS-88412-0625&amp;u=ops-manager%40corp.internal" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">Team lane: administrators who completed team surveys may activate multiple team members' cards at fm-incentives.example/team (batch upload, single verification for the whole team).</p>
+
+<h3>4. Contact</h3>
+<p>Rewards desk: rewards.desk@fm-incentives.example<br>
+Response reference: NPS-88412-0625</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+FlowMetrics | Customer Experience Rewards · This notice concerns response NPS-88412-0625 only.<br>
+Reward program terms are published on the customer portal rewards page.
+</div>
+
+</body></html>

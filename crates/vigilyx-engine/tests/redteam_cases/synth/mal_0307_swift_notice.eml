@@ -1,0 +1,13 @@
+From: =?utf-8?B?U1dJRlQgU3VwcG9ydA==?= <noreply@swift-notify-gateway.example>
+To: treasury@corp.internal
+Date: Fri, 11 Sep 2026 08:11:00 +0800
+Message-ID: <0001-b19@synth.example>
+Subject: MT103 field update acknowledgement required
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear customer,
+
+Field 57A amendments on your recent MT103s need acknowledgement before
+cut-off. Acknowledge via: https://swift-notify-gateway.example/ack/mt103
+(Use your SWIFT credentials.)

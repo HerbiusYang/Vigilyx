@@ -1,0 +1,10 @@
+From: =?utf-8?B?55S15a2Q5Y+R56Wo?= <invoice@fp-delivery.example>
+To: finance@corp.internal
+Date: Sun, 06 Sep 2026 09:14:00 +0800
+Message-ID: <0004-b14@synth.example>
+Subject: 您的电子发票 IN2026-0912 已开具
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body style='font-family:sans-serif'><p>您的发票已开具，金额 ¥4,280.00。</p><p><a href='http://203.0.113.66/invoice/view?id=IN2026-0912' style='background:#0a7d38;color:#fff;padding:10px 28px;text-decoration:none'>查看并下载发票</a></p><p style='font-size:12px;color:#888'>本邮件由系统发送，请勿回复。</p></body></html>

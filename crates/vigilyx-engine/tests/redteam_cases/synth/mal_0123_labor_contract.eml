@@ -1,0 +1,11 @@
+From: =?utf-8?B?5Lq65LqL57O757uf?= <ehr@sign-flow.example>
+To: newhire@corp.internal
+Date: Mon, 31 Aug 2026 09:12:00 +0800
+Message-ID: <0002-b8@synth.example>
+Subject: 电子劳动合同待签署（3日有效）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您的劳动合同已生成，请在线签署：
+https://ehr-sign.example.net/ct
+（需实名+人脸核身后方可签署）

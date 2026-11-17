@@ -1,0 +1,11 @@
+From: =?utf-8?B?R2l0SHViIEFjdGlvbnM=?= <actions@github.example>
+To: dev@corp.internal
+Date: Thu, 27 Aug 2026 09:51:00 +0800
+Message-ID: <0036-b4@synth.example>
+Subject: [ci] workflow run failed: e2e
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+e2e (chrome) run #2214 failed at step "login spec" (exit 1).
+Log: https://git.corp.internal/vigilyx/actions/runs/2214
+Re-run or bisect at the link above.

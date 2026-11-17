@@ -1,0 +1,9 @@
+From: =?utf-8?B?5oql5YWz6KGM?= <hg@forwarder.example>
+To: trade@corp.internal
+Date: Mon, 21 Sep 2026 09:32:00 +0800
+Message-ID: <0022-b28@synth.example>
+Subject: 报关已放行
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+放行信息在单一窗口查询。

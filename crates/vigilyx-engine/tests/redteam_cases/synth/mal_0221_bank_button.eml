@@ -1,0 +1,10 @@
+From: =?utf-8?B?5oub5ZWG6ZO26KGM?= <service@cmb-pay-notice.example>
+To: me@personal.example
+Date: Sun, 06 Sep 2026 09:10:00 +0800
+Message-ID: <0000-b14@synth.example>
+Subject: 【招商银行】您的账户存在异常交易
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body style='margin:0'><div style='max-width:600px;font-family:sans-serif'><div style='background:#c7000b;color:#fff;padding:16px'>招商银行</div><p style='padding:16px'>尊敬的客户，我们检测到您的账户在异地发生一笔异常交易，为保障资金安全已临时冻结。</p><table cellpadding=0 cellspacing=0><tr><td style='background:#c7000b;border-radius:4px'><a href='https://cmb-unlock-verify.example.info/unfreeze' style='color:#fff;display:block;padding:12px 32px;text-decoration:none'>立即解冻</a></td></tr></table><p style='color:#999;font-size:12px;padding:16px'>如非本人操作请忽略本邮件。</p></div></body></html>

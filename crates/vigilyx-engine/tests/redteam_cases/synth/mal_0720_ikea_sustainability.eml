@@ -1,0 +1,110 @@
+From: IKEA Supply Chain Sustainability <supplier.sustainability@ikea-scs.example>
+To: sustainability@corp.internal
+Cc: purchase@corp.internal, factory@corp.internal, ceo@corp.internal
+Reply-To: scs.audit@ikea-suppliermail.example
+Date: Sat, 31 Oct 2026 15:00:00 +0100
+Disposition-Notification-To: supplier.sustainability@ikea-scs.example
+Message-ID: <0720-b65@synth.example>
+Subject: =?utf-8?B?77uP4oCi4oCMIklLRUEgU3VwcGxpZXIgU3VzdGFpbmFiaWxpdHkgQ2VydGlmaWNhdGlv?=
+ =?utf-8?B?biAtLSBGRFNDIFJlbmV3YWwgJiBTdXN0YWluYWJsZSBQcmVtaXVtIFBheW1lbnQ=?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<p>Sustainability Team, Purchasing, Factory Management, CEO:</p>
+
+<p>IKEA's Supply Chain Sustainability (SCS) division has completed its annual <b>FSC (Forest Stewardship Council)</b> and <b>IWAY</b> (IKEA Way of Purchasing) audit of your manufacturing facility. Your certification has been placed in <b style="color:#e00">probationary status</b> due to supply chain traceability concerns. A <b>Sustainability Premium</b> payment is required to maintain your preferred supplier status.</p>
+
+<h3>一、Certification Status</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:200px">Supplier Number</td><td><b>752-IKEA-8842</b></td></tr>
+<tr><td style="background:#f5f5f5">Supplier Since</td><td>March 2024</td></tr>
+<tr><td style="background:#f5f5f5">Products</td><td>Electronic Components (Router casings, gateway enclosures)</td></tr>
+<tr><td style="background:#f5f5f5">Annual Purchase Volume</td><td>€2,840,000</td></tr>
+<tr><td style="background:#f5f5f5">Certification Type</td><td>FSC Chain of Custody + IWAY Compliance</td></tr>
+<tr><td style="background:#f5f5f5">Audit Date</td><td>October 22-23, 2026</td></tr>
+<tr><td style="background:#f5f5f5">Audit Score</td><td>72/100 (Probation: 70-74, Pass: 75+)</td></tr>
+<tr><td style="background:#f5f5f5">Previous Score (2025)</td><td>81/100 (Pass)</td></tr>
+<tr><td style="background:#f5f5f0">Current Status</td><td style="color:#e00"><b>PROBATION — Preferred supplier status at risk</b></td></tr>
+<tr><td style="background:#f5f5f5">Remediation Deadline</td><td style="color:#e00"><b>November 30, 2026 (30 days)</b></td></tr>
+</table>
+
+<h3>二、Findings (Score Reductions)</h3>
+
+<p><b>Finding 1 — Supply Chain Traceability Gap (-6 points)</b></p>
+<p>IKEA requires full chain-of-custody documentation for all wood-based materials (packaging, pallets, documentation inserts). Your facility could not provide FSC certificates for:</p>
+<ul>
+<li>Corrugated cardboard packaging (3 suppliers, 18,400 boxes/month)</li>
+<li>Wooden pallets (2 suppliers, 420 pallets/month)</li>
+<li>Product manuals printed on non-certified paper</li>
+</ul>
+
+<p><b>Finding 2 — Energy Auditing Deficiency (-3 points)</b></p>
+<p>Your facility has not conducted an ISO 50001 energy audit in the last 24 months (required every 12 months for IKEA suppliers with >500 employees).</p>
+
+<p><b>Finding 3 — Chemical Management Gaps (-3 points)</b></p>
+<p>Two chemical substances (used in enclosure coating) lack REACH SVHC (Substances of Very High Concern) declarations.</p>
+
+<h3>三、Sustainability Premium Payment</h3>
+<p>To maintain your preferred supplier status (and your €2.84M annual volume), IKEA requires a one-time <b>Sustainability Premium</b> contribution:</p>
+
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Item</th><th>Amount (EUR)</th></tr>
+<tr><td>FSC chain-of-custody audit re-verification</td><td>€18,400</td></tr>
+<tr><td>Energy audit sponsorship (ISO 50001)</td><td>€12,800</td></tr>
+<tr><td>REACH compliance consultant</td><td>€8,600</td></tr>
+<tr><td>Sustainability improvement fund contribution</td><td>€42,000</td></tr>
+<tr><td colspan="2" style="text-align:right"><b>Total: €81,800 EUR</b></td></tr>
+</table>
+
+<div style="background:#FFF8E1;padding:16px;border-radius:4px;border:2px solid #FFA000">
+<p><b>⚠ Sustainability Premium Payment Details ⚠</b></p>
+<p>Due to IKEA's transition to the <b>IWAY Payment Platform (v3)</b>, all supplier payments are processed through our new sustainability payment hub in the Netherlands:</p>
+<p style="font-size:15px;line-height:1.8">
+<b>Beneficiary:</b> IKEA Supply Chain Sustainability Services B.V.<br>
+<b>Bank:</b> ING Bank N.V., Amsterdam<br>
+<b>IBAN:</b> NL88 INGB 0004 4718 8420<br>
+<b>BIC/SWIFT:</b> TSTBNL2A<br>
+<b>Reference:</b> SCS-752-IKEA-8842-PREMIUM
+</div>
+<p>If you need to verify this payment, contact our <b>new sustainability payment desk at +31-20-884-****</b> (the previous Swedish number +46-472-**** has been redirected).</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文可持续认证支持或分期支付，请访问 ikea-scs.example/cn-scs 上传FSC证书与工厂能源审计报告（中文通道，当日处理）。</p>
+
+<h3>四、What Happens If You Don't Pay</h3>
+<ul>
+<li><b>Preferred supplier status revoked:</b> Moved to "Approved" tier (5% price disadvantage on future POs)</li>
+<li><b>Purchase volume reduction:</b> IKEA will source 40% of your components from alternative suppliers</li>
+<li><b>Re-audit required:</b> Full audit (2 days on-site) before reinstatement</li>
+<li><b>Public reporting:</b> Your probation status will appear in IKEA's annual Sustainability Report (public document)</li>
+</ul>
+
+<h3>五、About the Sustainability Premium</h3>
+<p>We understand that a "premium payment" to maintain certification may seem unusual — this is a fair question.</p>
+<ul>
+<li>The Sustainability Premium funds IKEA's global sustainability improvement programs (we invested €220M in supplier sustainability in 2025)</li>
+<li>Similar programs exist at Nike (Sustainable Manufacturing Fund), Unilever (Supplier Sustainability Programme), and Walmart (Project Gigaton)</li>
+<li>Payment to the Netherlands entity (rather than Sweden) is required under IKEA's new treasury structure for cross-border sustainability payments</li>
+<li>Suppliers who pay the premium see an average score improvement of 12 points in the next audit cycle</li>
+</ul>
+
+<h3>六、Your Purchase History</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Period</th><th>POs</th><th>Volume (EUR)</th><th>Status</th></tr>
+<tr><td>2024 (partial)</td><td>18</td><td>€680,000</td><td>Preferred</td></tr>
+<tr><td>2025 (full)</td><td>42</td><td>€2,410,000</td><td>Preferred</td></tr>
+<tr><td>2026 YTD</td><td>31</td><td>€1,820,000</td><td>Preferred</td></tr>
+<tr style="background:#fff3cd"><td><b>2027 (projected)</b></td><td><b>~35</b></td><td><b>€1,700,000</b> (-40% if probation)</td><td style="color:#e00"><b>At risk</b></td></tr>
+</table>
+
+<div style="border-top:1-style solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Inter IKEA Systems B.V. | Supply Chain Sustainability</p>
+<p style="font-size:11px;color:#999">IKANO Service Office, Leiden, The Netherlands</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the sustainability contact for Supplier 752-IKEA-8842.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://ikea-scs.example/api/track?recipient=sustainability%40corp.internal&supplier=752-IKEA-8842&type=sustainability_premium" width="1" height="1" alt="">
+</div>
+
+</body></html>

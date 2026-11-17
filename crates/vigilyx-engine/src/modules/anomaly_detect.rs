@@ -29,7 +29,7 @@ impl AnomalyDetectModule {
             meta: ModuleMetadata {
                 id: "anomaly_detect".to_string(),
                 name: "Anomaly Detection".to_string(),
-                description: "Detects abnormal email patterns: mass mailing, empty subject with attachments, all-caps subjects, etc.".to_string(),
+                description: "Detects abnormal email patterns: mass mailing, recipient enumeration probes, empty subject with attachments, all-caps subjects, etc.".to_string(),
                 pillar: Pillar::Package,
                 depends_on: vec![],
                 timeout_ms: 5000,
@@ -66,28 +66,148 @@ fn is_high_risk_empty_subject_attachment(att: &EmailAttachment) -> bool {
         || content_type.contains("javascript")
 }
 
-fn is_common_business_attachment(att: &EmailAttachment) -> bool {
-    attachment_extension(att)
-        .as_deref()
-        .is_some_and(|ext| module_data().contains("common_business_attachment_extensions", ext))
-}
-
-fn is_archive_attachment(att: &EmailAttachment) -> bool {
-    let ext = attachment_extension(att);
-    let content_type = att.content_type.to_ascii_lowercase();
-    ext.as_deref()
-        .is_some_and(|ext| matches!(ext, "zip" | "rar" | "7z"))
-        || content_type.contains("zip")
-        || content_type.contains("rar")
-        || content_type.contains("7z")
-}
-
 fn is_public_mail_sender(mail_from: Option<&str>) -> bool {
     mail_from
         .and_then(|value| value.rsplit('@').next())
         .is_some_and(|domain| {
             crate::pipeline::internal_domains::is_public_mail_domain(&domain.to_ascii_lowercase())
         })
+}
+
+/// Split an SMTP mailbox into its local part and domain without accepting a
+/// malformed address as a behavioral signal.  The parser normally stores
+/// bare addresses, but tolerating angle brackets keeps rescans and imported
+/// sessions on the same path.
+fn mailbox_parts(address: &str) -> Option<(&str, &str)> {
+    let address = address.trim().trim_start_matches('<').trim_end_matches('>');
+    let (local_part, domain) = address.rsplit_once('@')?;
+    let domain = domain.trim_end_matches('.');
+    if local_part.is_empty() || domain.is_empty() {
+        return None;
+    }
+    Some((local_part, domain))
+}
+
+/// Generated mailbox probes commonly use a short ASCII alphanumeric token
+/// containing several digits and consonant-heavy filler (for example
+/// `u0001hzzhw` or `h525266r`).  This deliberately rejects ordinary words and
+/// long order/reference strings; exact subject/local-part equality is still
+/// required by the caller.
+fn looks_like_generated_mailbox_token(value: &str) -> bool {
+    let value = value.trim();
+    if !(8..=32).contains(&value.len())
+        || !value.is_ascii()
+        || !value.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    {
+        return false;
+    }
+
+    let digit_count = value.bytes().filter(u8::is_ascii_digit).count();
+    let letter_count = value.bytes().filter(u8::is_ascii_alphabetic).count();
+    let consonant_count = value
+        .bytes()
+        .filter(|byte| byte.is_ascii_alphabetic() && !b"aeiouAEIOU".contains(byte))
+        .count();
+
+    digit_count >= 2
+        && letter_count >= 2
+        && consonant_count.saturating_mul(5) >= letter_count.saturating_mul(3)
+        && digit_count < value.len().saturating_sub(1)
+}
+
+/// Automated probes may put the generated token after a descriptive sender
+/// prefix, such as `notify-vjbgfvqm92cae9q`.  Check each alphanumeric run so
+/// the prefix itself does not hide the random token from the detector.
+fn looks_like_generated_sender_local_part(value: &str) -> bool {
+    value
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .any(|part| {
+            if looks_like_generated_mailbox_token(part) {
+                return true;
+            }
+
+            // Shorter sender tokens are also common (`notify-jspe6g`).  Keep
+            // this fallback stricter than a generic alphanumeric check: it
+            // needs a digit, several letters, and consonant-heavy filler.
+            if !(6..=24).contains(&part.len())
+                || !part.is_ascii()
+                || !part.bytes().all(|byte| byte.is_ascii_alphanumeric())
+            {
+                return false;
+            }
+            let digit_count = part.bytes().filter(u8::is_ascii_digit).count();
+            let letter_count = part.bytes().filter(u8::is_ascii_alphabetic).count();
+            let consonant_count = part
+                .bytes()
+                .filter(|byte| byte.is_ascii_alphabetic() && !b"aeiouAEIOU".contains(byte))
+                .count();
+            digit_count >= 1
+                && letter_count >= 3
+                && consonant_count.saturating_mul(5) >= letter_count.saturating_mul(3)
+        })
+}
+
+/// Some campaign senders are short consonant-heavy tokens without digits,
+/// such as `snxvrvc` or `isbqgwm`.  Keep this separate from the generated
+/// mailbox-token heuristic so ordinary names and the existing token contract
+/// remain unchanged.
+fn looks_like_short_random_sender_token(value: &str) -> bool {
+    let value = value.trim();
+    if !(6..=12).contains(&value.len())
+        || !value.is_ascii()
+        || !value.bytes().all(|byte| byte.is_ascii_alphabetic())
+    {
+        return false;
+    }
+
+    let consonant_count = value
+        .bytes()
+        .filter(|byte| !b"aeiouAEIOU".contains(byte))
+        .count();
+    consonant_count >= 5 && consonant_count.saturating_mul(5) >= value.len().saturating_mul(4)
+}
+
+/// Detect a single-message mailbox-enumeration candidate.
+///
+/// This is intentionally a narrow, per-message signal.  The full composite is
+/// strong enough for a Medium triage verdict, while confirmation that an actor
+/// is enumerating a directory still benefits from correlation across sessions.
+fn detect_mailbox_enumeration_probe(ctx: &SecurityContext, subject: &str) -> Option<String> {
+    if ctx.session.rcpt_to.len() != 1 {
+        return None;
+    }
+
+    let (sender_local_part, sender_domain) =
+        ctx.session.mail_from.as_deref().and_then(mailbox_parts)?;
+    if ctx.is_internal_domain(sender_domain) {
+        return None;
+    }
+
+    let (recipient_local_part, recipient_domain) = mailbox_parts(&ctx.session.rcpt_to[0])?;
+    if !ctx.is_internal_domain(recipient_domain) {
+        return None;
+    }
+
+    let subject = subject.trim();
+    if !subject.eq_ignore_ascii_case(recipient_local_part) {
+        return None;
+    }
+
+    // The target can itself be a generated token (the `u0001hzzhw` /
+    // `h525266r` family), or the sender can carry a generated/random token
+    // after a prefix while probing a normal-looking internal mailbox such as
+    // `boardoffice`. Public-mail senders are included because the observed
+    // campaign also uses ordinary-looking local-parts from free mailboxes;
+    // exact subject/local-part equality remains mandatory.
+    if !looks_like_generated_mailbox_token(recipient_local_part)
+        && !looks_like_generated_sender_local_part(sender_local_part)
+        && !looks_like_short_random_sender_token(sender_local_part)
+        && !is_public_mail_sender(ctx.session.mail_from.as_deref())
+    {
+        return None;
+    }
+
+    Some(recipient_local_part.to_string())
 }
 
 fn looks_like_filename_subject(subject: &str) -> bool {
@@ -154,6 +274,22 @@ impl SecurityModule for AnomalyDetectModule {
         let subject = subject_decoded.as_str();
         let has_attachments = !ctx.session.content.attachments.is_empty();
 
+        // --- 1b. Single-recipient mailbox enumeration probe ---
+        // A subject copied exactly from the internal mailbox local-part, with
+        // one external-to-internal envelope and either a generated/random
+        // sender/target or a public-mail sender, is a named Medium triage
+        // scenario. Cross-session correlation can still confirm whether the
+        // actor is running a broader directory scan.
+        if let Some(recipient_local_part) = detect_mailbox_enumeration_probe(ctx, subject) {
+            total_score += 0.45;
+            categories.push("mailbox_enumeration_probe".to_string());
+            evidence.push(Evidence {
+                description: "External sender addressed one internal mailbox from a generated/random or public-mail sender, with a subject exactly matching the recipient local-part — possible mailbox enumeration probe".to_string(),
+                location: Some("subject + envelope recipient".to_string()),
+                snippet: Some(recipient_local_part),
+            });
+        }
+
         // --- 1. Mass mailing: recipient count> 10 ---
         if recipient_count > 10 {
             total_score += 0.25;
@@ -194,41 +330,15 @@ impl SecurityModule for AnomalyDetectModule {
                 .iter()
                 .filter(|att| is_high_risk_empty_subject_attachment(att))
                 .count();
-            let archive_count = ctx
-                .session
-                .content
-                .attachments
-                .iter()
-                .filter(|att| is_archive_attachment(att))
-                .count();
-            let common_business_count = ctx
-                .session
-                .content
-                .attachments
-                .iter()
-                .filter(|att| is_common_business_attachment(att))
-                .count();
-            let sender_is_public_mail = is_public_mail_sender(ctx.session.mail_from.as_deref());
 
-            // Empty-subject attachments are common for business and mobile-sharing workflows.
-            // A single archive from a public mailbox is usually just file sharing, not a
-            // standalone anomaly strong enough to create a verdict.
-            let empty_subject_score = if high_risk_count > 0 {
-                0.20
-            } else if attachment_count > 1 {
-                0.16
-            } else if sender_is_public_mail && attachment_count == 1 && archive_count == 1 {
-                0.08
-            } else if archive_count == attachment_count {
-                0.10
-            } else if common_business_count == attachment_count {
-                0.08
-            } else {
-                0.12
-            };
+            // Mobile sharing, scanners and plain file forwarding send attachments
+            // without a subject every day, whatever the number or type of files.
+            // The pattern is corroboration only and stays below Low on its own;
+            // a high-risk attachment type (HTML, script, executable) adds weight.
+            let empty_subject_score = if high_risk_count > 0 { 0.10 } else { 0.05 };
 
             total_score += empty_subject_score;
-            if empty_subject_score >= 0.15 {
+            if high_risk_count > 0 {
                 categories.push("empty_subject_with_attachment".to_string());
             }
             evidence.push(Evidence {
@@ -264,9 +374,16 @@ impl SecurityModule for AnomalyDetectModule {
             let has_cjk = subject.chars().any(|c| {
                 ('\u{4E00}'..='\u{9FFF}').contains(&c) || ('\u{3400}'..='\u{4DBF}').contains(&c)
             });
+            // Shouting is a phrase. A single token such as a camera or scanner
+            // file name (`RETOUCH_IMG_20261112_161912`) is an identifier.
+            let word_count = subject
+                .split_whitespace()
+                .filter(|word| word.chars().filter(|c| c.is_ascii_alphabetic()).count() >= 2)
+                .count();
             if latin_chars.len() >= 5
                 && latin_chars == latin_chars.to_uppercase()
                 && letter_ratio >= 0.4
+                && word_count >= 2
                 && !has_cjk
                 && !looks_like_filename_subject(subject)
             {
@@ -284,30 +401,34 @@ impl SecurityModule for AnomalyDetectModule {
         // Detect 3+ Unicode scripts mixed (e.g. Latin + CJK + Thai) indicating gibberish
         // Example: "Sq45HQSOHAR Add 3 45HQ"
         if !subject.is_empty() {
-            let mut has_latin = false;
-            let mut has_cjk = false;
-            let mut has_other_script = false;
+            // A script counts only with at least two letters: decorated
+            // nicknames ("༺ꦾ随🥀心҉࿐") borrow single combining marks and symbols
+            // from other blocks, which says nothing about the text itself.
+            let mut latin = 0usize;
+            let mut cjk = 0usize;
+            let mut other_script = 0usize;
             for ch in subject.chars() {
                 if ch.is_ascii_alphabetic() {
-                    has_latin = true;
+                    latin += 1;
                 } else if ('\u{4E00}'..='\u{9FFF}').contains(&ch)
                     || ('\u{3400}'..='\u{4DBF}').contains(&ch)
                 {
-                    has_cjk = true;
+                    cjk += 1;
                 } else if ('\u{0E00}'..='\u{0E7F}').contains(&ch)    // Thai
                     || ('\u{1000}'..='\u{109F}').contains(&ch)        // Myanmar
                     || ('\u{0900}'..='\u{097F}').contains(&ch)        // Devanagari
                     || ('\u{0600}'..='\u{06FF}').contains(&ch)        // Arabic
-                    || ('\u{0400}'..='\u{04FF}').contains(&ch)        // Cyrillic
+                    || ('\u{0400}'..='\u{0482}').contains(&ch)        // Cyrillic letters (not combining marks)
+                    || ('\u{048A}'..='\u{04FF}').contains(&ch)
                     || ('\u{AC00}'..='\u{D7AF}').contains(&ch)        // Korean
                     || ('\u{3040}'..='\u{309F}').contains(&ch)        // Hiragana
                     || ('\u{30A0}'..='\u{30FF}').contains(&ch)
                 // Katakana
                 {
-                    has_other_script = true;
+                    other_script += 1;
                 }
             }
-            let script_count = has_latin as u8 + has_cjk as u8 + has_other_script as u8;
+            let script_count = (latin >= 2) as u8 + (cjk >= 2) as u8 + (other_script >= 2) as u8;
             if script_count >= 3 {
                 total_score += 0.35;
                 categories.push("multilingual_gibberish".to_string());
@@ -328,7 +449,9 @@ impl SecurityModule for AnomalyDetectModule {
             // RCPT TO.  Keep this as a metadata note, never threat evidence.
             categories.push("recipient_metadata_incomplete".to_string());
             evidence.push(Evidence {
-                description: "RCPT TO list is empty (possibly all BCC or capture metadata unavailable)".to_string(),
+                description:
+                    "RCPT TO list is empty (possibly all BCC or capture metadata unavailable)"
+                        .to_string(),
                 location: Some("rcpt_to".to_string()),
                 snippet: None,
             });
@@ -479,6 +602,7 @@ impl SecurityModule for AnomalyDetectModule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
     use std::sync::Arc;
     use vigilyx_core::models::{EmailAttachment, EmailContent, EmailSession, Protocol};
 
@@ -541,13 +665,256 @@ mod tests {
     async fn test_empty_subject_public_mail_archive_attachment_is_treated_as_safe() {
         let module = AnomalyDetectModule::new();
         let ctx = make_ctx_with_sender(
-            "805586401@qq.com",
+            "fixture-archive@qq.com",
             vec![attachment("invoice.zip", "application/zip")],
         );
 
         let result = module.analyze(&ctx).await.unwrap();
 
         assert_eq!(result.threat_level, ThreatLevel::Safe);
+    }
+
+    /// Production false positive (2026-11-13): a script document plus an
+    /// unnamed part from a personal mailbox, no subject, rated Low alone.
+    #[tokio::test]
+    async fn empty_subject_with_several_attachments_is_not_a_standalone_risk() {
+        let module = AnomalyDetectModule::new();
+        for attachments in [
+            vec![
+                attachment(
+                    "副本台词(2)(4).docx",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ),
+                attachment("attachment_0", "application/octet-stream"),
+            ],
+            vec![
+                attachment("image0.jpeg", "image/jpeg"),
+                attachment("image1.jpeg", "image/jpeg"),
+            ],
+            vec![
+                attachment("中电三季度维保发票.pdf", "application/pdf"),
+                attachment("attachment_0", "application/octet-stream"),
+            ],
+        ] {
+            let ctx = make_ctx_with_sender("fixture-user@163.com", attachments);
+            let result = module.analyze(&ctx).await.unwrap();
+            assert_eq!(result.threat_level, ThreatLevel::Safe);
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_subject_with_html_attachment_alone_stays_below_low() {
+        let module = AnomalyDetectModule::new();
+        let ctx = make_ctx(vec![attachment("invoice.html", "text/html")]);
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+    }
+
+    #[tokio::test]
+    async fn identifier_subject_is_not_shouting() {
+        let module = AnomalyDetectModule::new();
+        let ctx = make_ctx_with_subject("RETOUCH_IMG_20261112_161912", vec![]);
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+    }
+
+    #[tokio::test]
+    async fn decorated_nickname_is_not_multilingual_gibberish() {
+        let module = AnomalyDetectModule::new();
+        let ctx = make_ctx_with_subject("༺ꦾ随🥀心້໌ᮨꦿ҉࿐ 和 W🥑。 的聊天记录", vec![]);
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+    }
+
+    #[tokio::test]
+    async fn japanese_brand_subject_with_latin_is_still_mixed_script() {
+        let module = AnomalyDetectModule::new();
+        let ctx = make_ctx_with_subject(
+            "【 至 急 】SMBC IDが変更されました — 三井住友カード",
+            vec![],
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert!(
+            result
+                .categories
+                .contains(&"multilingual_gibberish".to_string())
+        );
+    }
+
+    fn make_mailbox_probe_ctx(
+        subject: &str,
+        sender: &str,
+        recipient: &str,
+        internal_domain: &str,
+    ) -> SecurityContext {
+        let mut session = EmailSession::new(
+            Protocol::Smtp,
+            "10.0.0.1".to_string(),
+            12345,
+            "10.0.0.2".to_string(),
+            25,
+        );
+        session.subject = Some(subject.to_string());
+        session.mail_from = Some(sender.to_string());
+        session.rcpt_to.push(recipient.to_string());
+        SecurityContext::with_internal_domains(
+            Arc::new(session),
+            Arc::new(HashSet::from([internal_domain.to_string()])),
+        )
+    }
+
+    #[test]
+    fn generated_mailbox_token_shape_keeps_human_references_out() {
+        assert!(looks_like_generated_mailbox_token("u0001hzzhw"));
+        assert!(looks_like_generated_mailbox_token("h525266r"));
+        assert!(!looks_like_generated_mailbox_token("employee2024"));
+        assert!(!looks_like_generated_mailbox_token("short"));
+        assert!(looks_like_generated_sender_local_part(
+            "notify-vjbgfvqm92cae9q"
+        ));
+        assert!(looks_like_generated_sender_local_part("notify-jspe6g"));
+        assert!(!looks_like_generated_sender_local_part("notify"));
+        assert!(!looks_like_generated_sender_local_part("notify-john2"));
+        assert!(looks_like_short_random_sender_token("snxvrvc"));
+        assert!(looks_like_short_random_sender_token("isbqgwm"));
+        assert!(!looks_like_short_random_sender_token("notify"));
+        assert!(!looks_like_short_random_sender_token("shuiwudaikai"));
+    }
+
+    #[tokio::test]
+    async fn exact_generated_subject_and_internal_recipient_are_flagged() {
+        let module = AnomalyDetectModule::new();
+        let ctx = make_mailbox_probe_ctx(
+            "u0001hzzhw",
+            "notify@random-sender.example",
+            "u0001hzzhw@ccabchina.com.example",
+            "ccabchina.com.example",
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Medium);
+        assert!(
+            result
+                .categories
+                .contains(&"mailbox_enumeration_probe".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn mailbox_probe_requires_external_sender_and_internal_recipient() {
+        let module = AnomalyDetectModule::new();
+
+        let internal_sender = make_mailbox_probe_ctx(
+            "synthetic-user",
+            "service@corp.example",
+            "synthetic-user@corp.example",
+            "corp.example",
+        );
+        let external_recipient = make_mailbox_probe_ctx(
+            "synthetic-user",
+            "notify@random-sender.example",
+            "h525266r@external.example",
+            "corp.example",
+        );
+
+        for ctx in [&internal_sender, &external_recipient] {
+            let result = module.analyze(ctx).await.unwrap();
+            assert_eq!(result.threat_level, ThreatLevel::Safe);
+            assert!(
+                !result
+                    .categories
+                    .contains(&"mailbox_enumeration_probe".to_string())
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn human_readable_subject_matching_recipient_is_not_probe_evidence() {
+        let module = AnomalyDetectModule::new();
+        let ctx = make_mailbox_probe_ctx(
+            "employee2024",
+            "notify@random-sender.example",
+            "employee2024@ccabchina.com.example",
+            "ccabchina.com.example",
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe);
+        assert!(
+            !result
+                .categories
+                .contains(&"mailbox_enumeration_probe".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn generated_sender_can_probe_a_human_named_internal_mailbox() {
+        let module = AnomalyDetectModule::new();
+        let ctx = make_mailbox_probe_ctx(
+            "boardoffice",
+            "notify-vjbgfvqm92cae9q@nj.cn.example",
+            "boardoffice@ccabchina.com.example",
+            "ccabchina.com.example",
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Medium);
+        assert!(
+            result
+                .categories
+                .contains(&"mailbox_enumeration_probe".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn short_generated_sender_can_probe_a_human_named_internal_mailbox() {
+        let module = AnomalyDetectModule::new();
+        let ctx = make_mailbox_probe_ctx(
+            "bqzhanglu",
+            "notify-jspe6g@vkobxk.cn.example",
+            "bqzhanglu@ccabchina.com.example",
+            "ccabchina.com.example",
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Medium);
+        assert!(
+            result
+                .categories
+                .contains(&"mailbox_enumeration_probe".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn public_mail_sender_with_exact_recipient_subject_is_flagged() {
+        let module = AnomalyDetectModule::new();
+        let ctx = make_mailbox_probe_ctx(
+            "songsongjun",
+            "shuiwudaikai1@hotmail.com",
+            "songsongjun@ccabchina.com.example",
+            "ccabchina.com.example",
+        );
+
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Medium);
+        assert!(
+            result
+                .categories
+                .contains(&"mailbox_enumeration_probe".to_string())
+        );
     }
 
     // ─── P2-1: all_caps_subject CJK skip regression tests ───

@@ -15,12 +15,12 @@ use vigilyx_core::{DataSecurityIncident, HttpSession, WsMessage};
 use vigilyx_db::VigilDb;
 
 use super::DataSecurityDetector;
+use super::bulk_transfer::BulkTransferTracker;
 use super::chunked_upload::ChunkedUploadTracker;
 use super::dlp::DlpScanResult;
 use super::draft_detect::DraftBoxDetector;
 use super::file_transit_detect::FileTransitDetector;
-use super::jrt_compliance::JrtComplianceTracker;
-use super::self_send_detect::SelfSendDetector;
+use super::mail_transfer_detect::MailTransferDetector;
 use super::time_policy;
 use super::volume_anomaly::VolumeAnomalyTracker;
 use crate::syslog::{SyslogForwardConfig, SyslogForwarder};
@@ -28,9 +28,6 @@ use crate::syslog::{SyslogForwardConfig, SyslogForwarder};
 /// SessionlevelDeduplicate () - Same1 timestamp onlyProcess1Time/Count
 /// 300 override Coremail largeFileChunkedUpload minuteofScenario
 const DEDUP_WINDOW_SECS: i64 = 300;
-/// levelDeduplicate () - Same1 (user, FileName, DLPmatch) timestamp only 1Time/Count
-/// SessionlevelDeduplicate,prevent SameSessionID(ifChunkedUploadreassemble, NewLogin) Same
-const INCIDENT_DEDUP_WINDOW_SECS: i64 = 300;
 /// Deduplicatetable largeCapacity, CleanupExpiredentry
 const DEDUP_MAX_ENTRIES: usize = 50_000;
 
@@ -133,63 +130,14 @@ impl DataSecurityEngine {
 
     /// HTTP SessionofDeduplicate
 
-    /// client_ip + method + NormalizeURI + filename + body generateHash.
-    /// Coremail ChunkedUploadof Same chunk(offset Same) Merge Same1,
-    /// due to URI Mediumof offset/attachmentId Parameter.
-    /// body 维度 (大小 + 内容哈希) 防止 "诱饵先行" 攻击:
-    /// 先发一封同 URI/文件名的无害会话, 不能再压制后续同指纹的真实敏感文件。
+    /// Deduplicate only retries of the same captured session. Identical data in
+    /// a new session is a new transfer and must remain observable.
     fn session_fingerprint(session: &HttpSession) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        session.client_ip.hash(&mut hasher);
-        session.method.hash(&mut hasher);
-
-        // Normalize URI: offset/attachmentId Parameter(Coremail ChunkedUploadDeduplicate)
-        let normalized_uri = Self::normalize_uri_for_dedup(&session.uri);
-        normalized_uri.hash(&mut hasher);
-
-        if let Some(ref filename) = session.uploaded_filename {
-            filename.hash(&mut hasher);
-        }
-
-        // body 维度: 大小总是可用 (含临时文件 body), 内存 body 再叠内容哈希
-        session.request_body_size.hash(&mut hasher);
-        if let Some(ref body) = session.request_body {
-            body.hash(&mut hasher);
-        } else if let Some(ref temp_path) = session.body_temp_file {
-            // temp-file body: 前 64KiB 内容哈希纳入指纹。
-            // 否则大 body 只有 size 维度, 诱饵先行攻击发同 URI/同大小无害文件后,
-            // 真实敏感文件会被会话级去重压制 (同指纹误判为重复)
-            if let Some(prefix) = super::read_temp_path_limited(temp_path, 64 * 1024) {
-                prefix.hash(&mut hasher);
-            }
-        }
+        session.id.hash(&mut hasher);
         hasher.finish()
     }
 
-    /// URI MediumofChunkedUploadParameter (offset, attachmentId),keep composeId/sid/func
-    fn normalize_uri_for_dedup(uri: &str) -> String {
-        if let Some(query_start) = uri.find('?') {
-            let path = &uri[..query_start];
-            let query = &uri[query_start + 1..];
-            let filtered: Vec<&str> = query
-                .split('&')
-                .filter(|param| {
-                    let key = param.split('=').next().unwrap_or("");
-                    // keep "Same1UploadOperations"ofParameter, Chunked Parameter
-                    key != "offset" && key != "attachmentId"
-                })
-                .collect();
-            if filtered.is_empty() {
-                path.to_string()
-            } else {
-                format!("{}?{}", path, filtered.join("&"))
-            }
-        } else {
-            uri.to_string()
-        }
-    }
-
-    /// CleanupDeduplicatetableMediumExpiredentry
     fn cleanup_dedup_table(table: &mut HashMap<u64, DateTime<Utc>>, now: DateTime<Utc>) {
         table.retain(|_, ts| (now - *ts).num_seconds() < DEDUP_WINDOW_SECS);
     }
@@ -215,27 +163,6 @@ impl DataSecurityEngine {
         None
     }
 
-    /// levelDeduplicate
-
-    /// (user IP, FileName, severity, ofDLPmatchType) generateHash.
-    /// severity 维度防止低危诱饵事件压制同指纹的高危真实事件。
-    /// overrideSessionlevelDeduplicate CaptureofScenario(ifChunkedreassemble ofCompositionSession, SID of Upload).
-    fn incident_fingerprint(
-        user_or_ip: &str,
-        filename: Option<&str>,
-        dlp_matches: &[String],
-        severity: &str,
-    ) -> u64 {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        user_or_ip.hash(&mut hasher);
-        filename.unwrap_or("").hash(&mut hasher);
-        severity.hash(&mut hasher);
-        let mut sorted = dlp_matches.to_vec();
-        sorted.sort();
-        sorted.hash(&mut hasher);
-        hasher.finish()
-    }
-
     /// ProcessLoop
 
     /// Use tokio::select! Same:
@@ -254,7 +181,7 @@ impl DataSecurityEngine {
         let detectors: Arc<Vec<Box<dyn DataSecurityDetector>>> = Arc::new(vec![
             Box::new(DraftBoxDetector::new()),
             Box::new(FileTransitDetector::new()),
-            Box::new(SelfSendDetector::new()),
+            Box::new(MailTransferDetector::new()),
         ]);
 
         // LoadtimestampstrategyConfiguration (From DB, Failed Defaultvalue)
@@ -327,8 +254,8 @@ impl DataSecurityEngine {
         // Stream Abnormaltracinghandler
         let mut volume_tracker = VolumeAnomalyTracker::new();
 
-        // JR/T 0197-2020 Compliancetracinghandler
-        let mut jrt_tracker = JrtComplianceTracker::new();
+        // Product bulk-transfer escalation (not a statutory allowance).
+        let mut bulk_tracker = BulkTransferTracker::new();
 
         // ChunkedCheck handler (5 Check1Time/Count)
         let mut tick_interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
@@ -339,8 +266,6 @@ impl DataSecurityEngine {
 
         // SessionlevelDeduplicatetable: fingerprint -> First foundtimestamp
         let mut dedup_table: HashMap<u64, DateTime<Utc>> = HashMap::with_capacity(1024);
-        // levelDeduplicatetable: incident_fingerprint -> First foundtimestamp
-        let mut incident_dedup_table: HashMap<u64, DateTime<Utc>> = HashMap::with_capacity(256);
         let mut cleanup_counter: u64 = 0;
 
         // Engine Statisticscounter
@@ -379,7 +304,7 @@ impl DataSecurityEngine {
 
                     info!(
                         session_id = %session.id,
-                        uri = %session.uri,
+                        uri = %vigilyx_core::redact_http_uri(&session.uri),
                         method = ?session.method,
                         host = ?session.host,
                         client_ip = %session.client_ip,
@@ -399,7 +324,7 @@ impl DataSecurityEngine {
                             engine_dedup_skipped += 1;
                             debug!(
                                 fingerprint = fingerprint,
-                                uri = %session.uri,
+                                uri = %vigilyx_core::redact_http_uri(&session.uri),
                                 ip = %session.client_ip,
                                 dedup_skipped_total = engine_dedup_skipped,
                                 "Duplicate HTTP session skipped (dedup)"
@@ -413,7 +338,6 @@ impl DataSecurityEngine {
                     if cleanup_counter.is_multiple_of(500) || dedup_table.len() > DEDUP_MAX_ENTRIES {
                         Self::cleanup_dedup_table(&mut dedup_table, now);
                        // 1 Cleanup levelDeduplicatetable
-                        incident_dedup_table.retain(|_, ts| (now - *ts).num_seconds() < INCIDENT_DEDUP_WINDOW_SECS);
                     }
 
                    // store HTTP Session (F4: 含敏感键的 request_body 落库前脱敏)
@@ -492,7 +416,7 @@ impl DataSecurityEngine {
                    // line detecthandler (spawn_blocking MediumExecuteline,Avoid DLP async Loop)
                     engine_analyzed += 1;
                     let session = Arc::new(session);
-                    Self::run_detectors(&detectors, &session, &db, &ws_tx, &incidents_counter, &mut volume_tracker, &mut jrt_tracker, &time_policy_config, &syslog_forwarder, &mut incident_dedup_table).await;
+                    Self::run_detectors(&detectors, &session, &db, &ws_tx, &incidents_counter, &mut volume_tracker, &mut bulk_tracker, &time_policy_config, &syslog_forwarder).await;
                 }
                 _ = tick_interval.tick() => {
                    // CheckChunkedUploadwhethercomplete
@@ -530,7 +454,7 @@ impl DataSecurityEngine {
                        // linedetecthandler
                         engine_analyzed += 1;
                         let synthetic = Arc::new(synthetic);
-                        Self::run_detectors(&detectors, &synthetic, &db, &ws_tx, &incidents_counter, &mut volume_tracker, &mut jrt_tracker, &time_policy_config, &syslog_forwarder, &mut incident_dedup_table).await;
+                        Self::run_detectors(&detectors, &synthetic, &db, &ws_tx, &incidents_counter, &mut volume_tracker, &mut bulk_tracker, &time_policy_config, &syslog_forwarder).await;
                     }
                 }
                 _ = stats_interval.tick() => {
@@ -572,8 +496,7 @@ impl DataSecurityEngine {
     /// 返回 None 表示无敏感键, 调用方直接用原 session 落库 (零拷贝)。
     fn redacted_session_for_storage(session: &HttpSession) -> Option<HttpSession> {
         let body = session.request_body.as_deref()?;
-        let redacted =
-            super::redact::redact_request_body(body, session.content_type.as_deref());
+        let redacted = super::redact::redact_request_body(body, session.content_type.as_deref());
         if redacted == body {
             return None;
         }
@@ -619,7 +542,6 @@ impl DataSecurityEngine {
     /// Process:
     /// 1. timestampstrategy (Non-workingtimestampCritical +1)
     /// 2. Stream Abnormaltracing (user/IP)
-    #[allow(clippy::too_many_arguments)] // InternalMethod, Parameterall independentfocus on
     #[allow(clippy::too_many_arguments)]
     async fn run_detectors(
         detectors: &Arc<Vec<Box<dyn DataSecurityDetector>>>,
@@ -628,10 +550,9 @@ impl DataSecurityEngine {
         ws_tx: &broadcast::Sender<WsMessage>,
         incidents_counter: &Arc<AtomicU64>,
         volume_tracker: &mut VolumeAnomalyTracker,
-        jrt_tracker: &mut JrtComplianceTracker,
+        bulk_tracker: &mut BulkTransferTracker,
         tp_config: &time_policy::TimePolicyConfig,
         syslog_forwarder: &Option<SyslogForwarder>,
-        incident_dedup: &mut HashMap<u64, DateTime<Utc>>,
     ) {
         let detectors = Arc::clone(detectors);
         let session_arc = Arc::clone(session); // Arc reference counting +1,
@@ -653,16 +574,19 @@ impl DataSecurityEngine {
                 Vec::new()
             });
 
-        // DLP Result Used for JR/T Compliancetracing
-        let mut all_dlp_results: Vec<DlpScanResult> = Vec::new();
+        // Merge field counts once per newly persisted transfer.
+        let mut transfer_dlp = DlpScanResult::default();
         let mut incidents: Vec<DataSecurityIncident> = Vec::new();
         for (incident, dlp_result) in results {
-            if let Some(dlp) = dlp_result {
-                all_dlp_results.push(dlp);
+            if let Some(dlp) = dlp_result
+                && incident.incident_type != vigilyx_core::DataSecurityIncidentType::DraftBoxAbuse
+            {
+                transfer_dlp.merge(dlp);
             }
             incidents.push(incident);
         }
 
+        let mut new_transfer_observed = false;
         for mut incident in incidents {
             // P0: user - When Cookie/body Extract user, Same IP of Session
             if incident.detected_user.is_none() {
@@ -680,58 +604,7 @@ impl DataSecurityEngine {
                 }
             }
 
-            // levelDeduplicate(level):
-            // L1: MemoryDeduplicate - Same1 (user/IP, FileName, DLPmatch) 300s only 1Time/Count
-            let user_or_ip = incident
-                .detected_user
-                .as_deref()
-                .unwrap_or(&incident.client_ip);
-            let inc_fp = Self::incident_fingerprint(
-                user_or_ip,
-                session.uploaded_filename.as_deref(),
-                &incident.dlp_matches,
-                &incident.severity.to_string(),
-            );
-            let now_inc = Utc::now();
-            if let Some(first_seen) = incident_dedup.get(&inc_fp)
-                && (now_inc - *first_seen).num_seconds() < INCIDENT_DEDUP_WINDOW_SECS
-            {
-                debug!(
-                    user = user_or_ip,
-                    filename = ?session.uploaded_filename,
-                    incident_type = %incident.incident_type,
-                    "Duplicate incident suppressed (memory dedup)"
-                );
-                continue;
-            }
-            incident_dedup.insert(inc_fp, now_inc);
-
-            // L2: DB Deduplicate - preventEngine Memory (1 small)
-            // Same1user + Same1 Type + Same1 DLP match -> 1 small
-            {
-                let since = (now_inc - chrono::Duration::hours(1)).to_rfc3339();
-                let mut sorted_dlp = incident.dlp_matches.clone();
-                sorted_dlp.sort();
-                let dlp_json = serde_json::to_string(&sorted_dlp).unwrap_or_default();
-                if db
-                    .has_recent_incident(
-                        user_or_ip,
-                        &incident.incident_type.to_string(),
-                        &dlp_json,
-                        &since,
-                    )
-                    .await
-                    .unwrap_or(false)
-                {
-                    debug!(
-                        user = user_or_ip,
-                        incident_type = %incident.incident_type,
-                        "Duplicate incident suppressed (DB dedup, 1h window)"
-                    );
-                    continue;
-                }
-            }
-
+            super::financial_policy::assign_incident_id(&mut incident);
             // P2.1: Non-workingtimestampCritical (Configuration)
             incident.severity = time_policy::apply_time_policy_with_config(
                 incident.severity,
@@ -747,6 +620,18 @@ impl DataSecurityEngine {
                 incident.client_ip
             );
 
+            match db.insert_data_security_incident(&incident).await {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(error) => {
+                    error!(%error, "Failed to store data security incident");
+                    continue;
+                }
+            }
+
+            if incident.incident_type != vigilyx_core::DataSecurityIncidentType::DraftBoxAbuse {
+                new_transfer_observed = true;
+            }
             incidents_counter.fetch_add(1, Ordering::Relaxed);
 
             // P2.2: Stream Abnormaltracing - user IP key
@@ -754,14 +639,16 @@ impl DataSecurityEngine {
                 .detected_user
                 .as_deref()
                 .unwrap_or(&incident.client_ip);
-            if let Some(volume_incident) = volume_tracker.record_incident(
-                volume_key,
-                &incident.client_ip,
-                incident.detected_user.as_deref(),
-                incident.http_session_id,
-                &incident.request_url,
-                incident.host.as_deref(),
-            ) {
+            if incident.incident_type != vigilyx_core::DataSecurityIncidentType::DraftBoxAbuse
+                && let Some(volume_incident) = volume_tracker.record_incident(
+                    volume_key,
+                    &incident.client_ip,
+                    incident.detected_user.as_deref(),
+                    incident.http_session_id,
+                    &incident.request_url,
+                    incident.host.as_deref(),
+                )
+            {
                 // Stream Abnormal timestampstrategy
                 let mut vi = volume_incident;
                 vi.severity = time_policy::apply_time_policy_with_config(
@@ -785,32 +672,29 @@ impl DataSecurityEngine {
                 Self::broadcast_incident(ws_tx, vi);
             }
 
-            if let Err(e) = db.insert_data_security_incident(&incident).await {
-                error!("Failed to store data security incident: {}", e);
-            }
             if let Some(fwd) = syslog_forwarder.as_ref() {
                 fwd.try_forward(&incident);
             }
             Self::broadcast_incident(ws_tx, incident);
         }
 
-        // P3: JR/T 0197-2020 Compliancetracing - DLP Result According tolevel Cumulative
-        if !all_dlp_results.is_empty() {
+        // Additional bulk escalation: merged once per observed transfer, excluding drafts.
+        if new_transfer_observed && !transfer_dlp.is_empty() {
             let jrt_key = session
                 .detected_user
                 .as_deref()
                 .unwrap_or(&session.client_ip);
-            for dlp in &all_dlp_results {
-                let jrt_incidents = jrt_tracker.record_dlp_result(
+            {
+                let bulk_incidents = bulk_tracker.record_dlp_result(
                     jrt_key,
-                    dlp,
+                    &transfer_dlp,
                     &session.client_ip,
                     session.detected_user.as_deref(),
                     session.id,
                     &session.uri,
                     session.host.as_deref(),
                 );
-                for mut ji in jrt_incidents {
+                for mut ji in bulk_incidents {
                     ji.severity = time_policy::apply_time_policy_with_config(
                         ji.severity,
                         ji.created_at,
@@ -818,7 +702,7 @@ impl DataSecurityEngine {
                     );
                     incidents_counter.fetch_add(1, Ordering::Relaxed);
                     if let Err(e) = db.insert_data_security_incident(&ji).await {
-                        error!("Failed to store JR/T compliance incident: {}", e);
+                        error!("Failed to store bulk transfer incident: {}", e);
                     }
                     if let Some(fwd) = syslog_forwarder.as_ref() {
                         fwd.try_forward(&ji);
@@ -932,161 +816,6 @@ mod tests {
     }
 
     #[test]
-    fn test_session_fingerprint_decoy_first_different_body() {
-        // 诱饵先行攻击: 同 IP/URI/文件名, 先发无害 body 再发敏感 body,
-        // 两者指纹必须不同, 否则真实敏感文件会被会话级去重压制
-        let mut decoy = make_http_session();
-        decoy.client_ip = "10.0.0.1".to_string();
-        decoy.uri = "/upload.jsp?func=directdata&composeId=c1".to_string();
-        decoy.uploaded_filename = Some("report.xlsx".to_string());
-        decoy.request_body_size = 5;
-        decoy.request_body = Some("hello".to_string());
-
-        let mut real = decoy.clone();
-        real.request_body_size = 64;
-        real.request_body = Some("客户身份证 000000200001010005 月薪 25000元 合同金额 100万元".to_string());
-
-        assert_ne!(
-            DataSecurityEngine::session_fingerprint(&decoy),
-            DataSecurityEngine::session_fingerprint(&real),
-            "Decoy session must not suppress a sensitive session with the same URI/filename"
-        );
-    }
-
-    #[test]
-    fn test_session_fingerprint_body_size_only_differs() {
-        // body 在临时文件 (request_body=None) 时, 至少大小不同也要区分指纹
-        let mut s1 = make_http_session();
-        s1.uri = "/upload".to_string();
-        s1.request_body = None;
-        s1.request_body_size = 128;
-
-        let mut s2 = make_http_session();
-        s2.uri = "/upload".to_string();
-        s2.request_body = None;
-        s2.request_body_size = 4096;
-
-        assert_ne!(
-            DataSecurityEngine::session_fingerprint(&s1),
-            DataSecurityEngine::session_fingerprint(&s2),
-            "Different body sizes should produce different fingerprints"
-        );
-    }
-
-    #[test]
-    fn test_session_fingerprint_temp_file_different_content_differs() {
-        // temp-file body 诱饵先行: 同 IP/URI/文件名/大小, 仅内容不同 -> 指纹必须不同,
-        // 否则先发无害大文件即可压制后续真实敏感文件的告警 (会话级去重误判)
-        let dir = std::path::Path::new("data/tmp/http");
-        std::fs::create_dir_all(dir).expect("create allowed temp dir");
-        let p1 = dir.join("fp_temp_a.bin");
-        let p2 = dir.join("fp_temp_b.bin");
-        std::fs::write(&p1, b"aaaaaaaaaaaaaaaaaaaaaa").expect("write temp body a");
-        std::fs::write(&p2, b"bbbbbbbbbbbbbbbbbbbbbb").expect("write temp body b");
-
-        let mut s1 = make_http_session();
-        s1.client_ip = "10.0.0.1".to_string();
-        s1.uri = "/upload.jsp?func=directdata&composeId=c1".to_string();
-        s1.uploaded_filename = Some("report.xlsx".to_string());
-        s1.request_body = None;
-        s1.request_body_size = 22;
-        s1.body_temp_file = Some(p1.to_string_lossy().to_string());
-
-        let mut s2 = s1.clone();
-        s2.body_temp_file = Some(p2.to_string_lossy().to_string());
-
-        assert_ne!(
-            DataSecurityEngine::session_fingerprint(&s1),
-            DataSecurityEngine::session_fingerprint(&s2),
-            "Temp-file bodies with different content must produce different fingerprints"
-        );
-
-        let _ = std::fs::remove_file(p1);
-        let _ = std::fs::remove_file(p2);
-    }
-
-    #[test]
-    fn test_session_fingerprint_temp_file_same_content_same_hash() {
-        // temp-file body 内容相同 -> 指纹相同 (重复上传仍被去重)
-        let dir = std::path::Path::new("data/tmp/http");
-        std::fs::create_dir_all(dir).expect("create allowed temp dir");
-        let p1 = dir.join("fp_temp_same_a.bin");
-        let p2 = dir.join("fp_temp_same_b.bin");
-        std::fs::write(&p1, b"identical-temp-body").expect("write temp body a");
-        std::fs::write(&p2, b"identical-temp-body").expect("write temp body b");
-
-        let mut s1 = make_http_session();
-        s1.client_ip = "10.0.0.1".to_string();
-        s1.uri = "/upload.jsp?func=directdata&composeId=c1".to_string();
-        s1.request_body = None;
-        s1.request_body_size = 19;
-        s1.body_temp_file = Some(p1.to_string_lossy().to_string());
-
-        let mut s2 = s1.clone();
-        s2.body_temp_file = Some(p2.to_string_lossy().to_string());
-
-        assert_eq!(
-            DataSecurityEngine::session_fingerprint(&s1),
-            DataSecurityEngine::session_fingerprint(&s2),
-            "Temp-file bodies with identical content should produce same fingerprint"
-        );
-
-        let _ = std::fs::remove_file(p1);
-        let _ = std::fs::remove_file(p2);
-    }
-
-    #[test]
-    fn test_session_fingerprint_same_content_same_hash() {
-        let mut s1 = make_http_session();
-        s1.client_ip = "10.0.0.1".to_string();
-        s1.uri = "/compose/send".to_string();
-        s1.request_body = Some("hello world".to_string());
-
-        let mut s2 = make_http_session();
-        s2.client_ip = "10.0.0.1".to_string();
-        s2.uri = "/compose/send".to_string();
-        s2.request_body = Some("hello world".to_string());
-
-        assert_eq!(
-            DataSecurityEngine::session_fingerprint(&s1),
-            DataSecurityEngine::session_fingerprint(&s2),
-            "Same content should produce same fingerprint"
-        );
-    }
-
-    #[test]
-    fn test_session_fingerprint_different_uri_different_hash() {
-        let mut s1 = make_http_session();
-        s1.uri = "/compose/send".to_string();
-
-        let mut s2 = make_http_session();
-        s2.uri = "/draft/save".to_string();
-
-        assert_ne!(
-            DataSecurityEngine::session_fingerprint(&s1),
-            DataSecurityEngine::session_fingerprint(&s2),
-            "Different URIs should produce different fingerprints"
-        );
-    }
-
-    #[test]
-    fn test_session_fingerprint_different_ip_different_hash() {
-        let mut s1 = make_http_session();
-        s1.client_ip = "10.0.0.1".to_string();
-        s1.uri = "/compose/send".to_string();
-
-        let mut s2 = make_http_session();
-        s2.client_ip = "10.0.0.2".to_string();
-        s2.uri = "/compose/send".to_string();
-
-        assert_ne!(
-            DataSecurityEngine::session_fingerprint(&s1),
-            DataSecurityEngine::session_fingerprint(&s2),
-            "Different IPs should produce different fingerprints"
-        );
-    }
-
-    #[test]
     fn test_dedup_table_cleanup_removes_old_entries() {
         let mut table = HashMap::new();
         let now = Utc::now();
@@ -1104,115 +833,19 @@ mod tests {
         assert!(table.contains_key(&333), "Current entry should remain");
     }
 
-    // Test: URI NormalizeDeduplicate
-
     #[test]
-    fn test_normalize_uri_strips_offset() {
-        let uri = "/upload.jsp?sid=abc&func=directdata&composeId=c%3Anf%3A9&attachmentId=1&offset=2097152";
-        let normalized = DataSecurityEngine::normalize_uri_for_dedup(uri);
-        assert!(!normalized.contains("offset"), "offset should be stripped");
-        assert!(
-            !normalized.contains("attachmentId"),
-            "attachmentId should be stripped"
-        );
-        assert!(normalized.contains("sid=abc"), "sid should be kept");
-        assert!(normalized.contains("composeId"), "composeId should be kept");
-    }
-
-    #[test]
-    fn test_normalize_uri_no_query() {
-        let uri = "/compose/send";
-        let normalized = DataSecurityEngine::normalize_uri_for_dedup(uri);
-        assert_eq!(normalized, "/compose/send");
-    }
-
-    #[test]
-    fn test_normalize_uri_all_params_stripped() {
-        let uri = "/upload?offset=0&attachmentId=1";
-        let normalized = DataSecurityEngine::normalize_uri_for_dedup(uri);
+    fn retries_keep_identity_but_separate_sends_do_not_merge() {
+        let first = make_http_session();
+        let retry = first.clone();
+        let mut second = first.clone();
+        second.id = uuid::Uuid::new_v4();
         assert_eq!(
-            normalized, "/upload",
-            "Should return path only when all params stripped"
+            DataSecurityEngine::session_fingerprint(&first),
+            DataSecurityEngine::session_fingerprint(&retry)
         );
-    }
-
-    #[test]
-    fn test_normalize_uri_keeps_non_chunk_params() {
-        let uri = "/api?func=directdata&sid=xyz&offset=0";
-        let normalized = DataSecurityEngine::normalize_uri_for_dedup(uri);
-        assert!(normalized.contains("func=directdata"));
-        assert!(normalized.contains("sid=xyz"));
-        assert!(!normalized.contains("offset"));
-    }
-
-    #[test]
-    fn test_fingerprint_coremail_chunks_same_file_same_hash() {
-        // Same1Fileof SameChunked (only offset/attachmentId Same) -> Same
-        let mut s1 = make_http_session();
-        s1.client_ip = "10.0.0.1".to_string();
-        s1.uri = "/upload.jsp?func=directdata&composeId=c1&attachmentId=1&offset=0".to_string();
-
-        let mut s2 = make_http_session();
-        s2.client_ip = "10.0.0.1".to_string();
-        s2.uri =
-            "/upload.jsp?func=directdata&composeId=c1&attachmentId=1&offset=2097152".to_string();
-
-        assert_eq!(
-            DataSecurityEngine::session_fingerprint(&s1),
-            DataSecurityEngine::session_fingerprint(&s2),
-            "Same file different offsets should produce same fingerprint"
-        );
-    }
-
-    #[test]
-    fn test_fingerprint_different_compose_different_hash() {
-        // Same composeId -> Same
-        let mut s1 = make_http_session();
-        s1.client_ip = "10.0.0.1".to_string();
-        s1.uri = "/upload.jsp?func=directdata&composeId=compose1&offset=0".to_string();
-
-        let mut s2 = make_http_session();
-        s2.client_ip = "10.0.0.1".to_string();
-        s2.uri = "/upload.jsp?func=directdata&composeId=compose2&offset=0".to_string();
-
         assert_ne!(
-            DataSecurityEngine::session_fingerprint(&s1),
-            DataSecurityEngine::session_fingerprint(&s2),
-            "Different composeId should produce different fingerprints"
-        );
-    }
-
-    #[test]
-    fn test_fingerprint_includes_filename() {
-        let mut s1 = make_http_session();
-        s1.uri = "/upload".to_string();
-        s1.uploaded_filename = Some("file_a.xlsx".to_string());
-
-        let mut s2 = make_http_session();
-        s2.uri = "/upload".to_string();
-        s2.uploaded_filename = Some("file_b.xlsx".to_string());
-
-        assert_ne!(
-            DataSecurityEngine::session_fingerprint(&s1),
-            DataSecurityEngine::session_fingerprint(&s2),
-            "Different filenames should produce different fingerprints"
-        );
-    }
-
-    #[test]
-    fn test_fingerprint_none_filename_consistent() {
-        let mut s1 = make_http_session();
-        s1.uri = "/compose/send".to_string();
-        s1.uploaded_filename = None;
-
-        let mut s2 = make_http_session();
-        s2.uri = "/compose/send".to_string();
-        s2.uploaded_filename = None;
-
-        assert_eq!(
-            DataSecurityEngine::session_fingerprint(&s1),
-            DataSecurityEngine::session_fingerprint(&s2),
-            "Both None filenames should produce same fingerprint"
+            DataSecurityEngine::session_fingerprint(&first),
+            DataSecurityEngine::session_fingerprint(&second)
         );
     }
 
@@ -1237,103 +870,6 @@ mod tests {
     }
 
     // levelDeduplicate Test
-
-    #[test]
-    fn test_incident_fingerprint_deterministic() {
-        let fp1 = DataSecurityEngine::incident_fingerprint(
-            "user@test.com",
-            Some("file.txt"),
-            &["credit_card".to_string()],
-            "high",
-        );
-        let fp2 = DataSecurityEngine::incident_fingerprint(
-            "user@test.com",
-            Some("file.txt"),
-            &["credit_card".to_string()],
-            "high",
-        );
-        assert_eq!(fp1, fp2, "Same inputs should produce same fingerprint");
-    }
-
-    #[test]
-    fn test_incident_fingerprint_different_user() {
-        let fp1 = DataSecurityEngine::incident_fingerprint(
-            "user_a@test.com",
-            Some("file.txt"),
-            &["credit_card".to_string()],
-            "high",
-        );
-        let fp2 = DataSecurityEngine::incident_fingerprint(
-            "user_b@test.com",
-            Some("file.txt"),
-            &["credit_card".to_string()],
-            "high",
-        );
-        assert_ne!(
-            fp1, fp2,
-            "Different users should produce different fingerprints"
-        );
-    }
-
-    #[test]
-    fn test_incident_fingerprint_different_dlp() {
-        let fp1 = DataSecurityEngine::incident_fingerprint(
-            "user@test.com",
-            Some("file.txt"),
-            &["credit_card".to_string()],
-            "high",
-        );
-        let fp2 = DataSecurityEngine::incident_fingerprint(
-            "user@test.com",
-            Some("file.txt"),
-            &["phone_number".to_string()],
-            "high",
-        );
-        assert_ne!(
-            fp1, fp2,
-            "Different DLP matches should produce different fingerprints"
-        );
-    }
-
-    #[test]
-    fn test_incident_fingerprint_different_severity() {
-        // 低危诱饵事件不能压制同指纹的高危真实事件
-        let fp1 = DataSecurityEngine::incident_fingerprint(
-            "user@test.com",
-            Some("file.txt"),
-            &["credit_card".to_string()],
-            "low",
-        );
-        let fp2 = DataSecurityEngine::incident_fingerprint(
-            "user@test.com",
-            Some("file.txt"),
-            &["credit_card".to_string()],
-            "high",
-        );
-        assert_ne!(
-            fp1, fp2,
-            "Different severities should produce different fingerprints"
-        );
-    }
-
-    #[test]
-    fn test_incident_fingerprint_order_independent() {
-        let fp1 = DataSecurityEngine::incident_fingerprint(
-            "user@test.com",
-            Some("file.txt"),
-            &["credit_card".to_string(), "phone_number".to_string()],
-            "high",
-        );
-        let fp2 = DataSecurityEngine::incident_fingerprint(
-            "user@test.com",
-            Some("file.txt"),
-            &["phone_number".to_string(), "credit_card".to_string()],
-            "high",
-        );
-        assert_eq!(fp1, fp2, "DLP match order should not affect fingerprint");
-    }
-
-    // extract_compose_id_from_uri
 
     #[test]
     fn test_extract_compose_id_numeric() {

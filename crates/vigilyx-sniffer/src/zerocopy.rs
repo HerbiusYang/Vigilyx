@@ -9,9 +9,6 @@
 pub struct BatchConfig {
     /// Batch size
     pub batch_size: usize,
-    /// timeout duration (microseconds)
-    #[allow(dead_code)]
-    pub timeout_us: u64,
     /// Whether to enable adaptive Batch
     pub adaptive: bool,
 }
@@ -20,7 +17,6 @@ impl Default for BatchConfig {
     fn default() -> Self {
         Self {
             batch_size: 256,
-            timeout_us: 5000, // 5ms
             adaptive: true,
         }
     }
@@ -31,8 +27,6 @@ pub struct AdaptiveBatcher {
     config: BatchConfig,
     /// When first recommended batch size
     current_batch_size: usize,
-    /// previous batch process timestamp (nanoseconds)
-    last_batch_time_ns: u64,
     /// average per packet process timestamp (nanoseconds)
     avg_packet_time_ns: u64,
 }
@@ -42,7 +36,6 @@ impl AdaptiveBatcher {
         Self {
             current_batch_size: config.batch_size,
             config,
-            last_batch_time_ns: 0,
             avg_packet_time_ns: 1000, // initial assumption 1s/packet
         }
     }
@@ -77,15 +70,6 @@ impl AdaptiveBatcher {
                 self.current_batch_size = (self.current_batch_size + 16).min(1024);
             }
         }
-
-        self.last_batch_time_ns = elapsed_ns;
-    }
-
-    /// Get current batch size (alias for recommended_batch_size)
-    #[inline]
-    #[allow(dead_code)]
-    pub fn batch_size(&self) -> usize {
-        self.current_batch_size
     }
 
     /// Get final statistics: (current_batch_size, avg_packet_time_ns)

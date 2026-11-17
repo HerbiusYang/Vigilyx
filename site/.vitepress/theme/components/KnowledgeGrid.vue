@@ -113,8 +113,8 @@ const cards: Card[] = [
     slug: "html-text-cloaking",
     title: { zh: "HTML 拼凑文字 / 同形混淆绕过", en: "HTML text cloaking & homoglyph evasion" },
     sub: {
-      zh: "零宽字符 + HTML 实体 + display:none 让关键词扫描全失。",
-      en: "Zero-width chars + HTML entities + display:none make every keyword regex miss.",
+      zh: "零宽字符、HTML 实体与隐藏元素可干扰未经归一化的文本扫描。",
+      en: "Zero-width characters, HTML entities, and hidden elements can interfere with unnormalized text scanning.",
     },
     tags: ["zerowidth", "homoglyph", "obfusc"],
     source: "Microsoft · Cofense · Sophos",
@@ -177,11 +177,11 @@ const cards: Card[] = [
 
 function hrefFor(slug: string): string {
   // VitePress withBase prepends /Vigilyx/. Locale prefix is added by
-  // checking the current language: zh keeps /zh/docs/knowledge/<slug>,
-  // en uses /docs/knowledge/<slug>.
+  // checking the current language; case cards point to anchors on the
+  // maintained knowledge overview page.
   const path = isZh.value
-    ? `/zh/docs/knowledge/${slug}`
-    : `/docs/knowledge/${slug}`;
+    ? `/zh/docs/knowledge/#${slug}`
+    : `/docs/knowledge/#${slug}`;
   return withBase(path);
 }
 

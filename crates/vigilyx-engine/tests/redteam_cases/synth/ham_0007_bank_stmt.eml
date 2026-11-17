@@ -1,0 +1,11 @@
+From: =?utf-8?B?5a6i5oi35pyN5Yqh?= <service@bank.example>
+To: finance@corp.internal
+Date: Mon, 24 Aug 2026 09:38:00 +0800
+Message-ID: <0027-b1@synth.example>
+Subject: 8月对账单可查询
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+尊敬的客户：您单位账户 8 月对账单已生成。
+请登录企业手机银行在"账户-对账单"栏目查询或下载。
+本行不会以任何形式索要密码、验证码；本邮件不含链接。

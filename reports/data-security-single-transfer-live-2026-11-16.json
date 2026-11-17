@@ -1,0 +1,116 @@
+{
+  "live_chain": {
+    "run_id": "synthetic-policy-bad429852ddf",
+    "fixtures": [
+      {
+        "case": "phone_first",
+        "incidents": 1,
+        "type": "sensitive_data_transfer",
+        "additional_types": []
+      },
+      {
+        "case": "phone_separate_send",
+        "incidents": 1,
+        "type": "sensitive_data_transfer",
+        "additional_types": []
+      },
+      {
+        "case": "single_id",
+        "incidents": 1,
+        "type": "sensitive_data_transfer",
+        "additional_types": []
+      },
+      {
+        "case": "single_cvv",
+        "incidents": 1,
+        "type": "sensitive_data_transfer",
+        "additional_types": []
+      },
+      {
+        "case": "single_bank_account",
+        "incidents": 1,
+        "type": "sensitive_data_transfer",
+        "additional_types": [
+          "volume_anomaly"
+        ]
+      },
+      {
+        "case": "account_otp",
+        "incidents": 1,
+        "type": "sensitive_data_transfer",
+        "additional_types": []
+      },
+      {
+        "case": "public_swift",
+        "incidents": 0,
+        "type": null,
+        "additional_types": []
+      },
+      {
+        "case": "metadata_only",
+        "incidents": 0,
+        "type": null,
+        "additional_types": []
+      },
+      {
+        "case": "owa_save",
+        "incidents": 1,
+        "type": "draft_box_abuse",
+        "additional_types": []
+      },
+      {
+        "case": "login",
+        "incidents": 0,
+        "type": null,
+        "additional_types": []
+      },
+      {
+        "case": "public_swift_pdf",
+        "incidents": 0,
+        "type": null,
+        "additional_types": []
+      },
+      {
+        "case": "draft_last",
+        "incidents": 1,
+        "type": "draft_box_abuse",
+        "additional_types": []
+      }
+    ],
+    "same_session_retry_incidents": 1,
+    "authentication_secret_leaks": 0,
+    "fixtures_cleaned": true
+  },
+  "api_timings_ms": {
+    "/api/data-security/stats": {
+      "first": 4.29,
+      "median": 2.69,
+      "max": 4.29
+    },
+    "/api/data-security/engine-status": {
+      "first": 3.47,
+      "median": 2.94,
+      "max": 3.47
+    },
+    "/api/data-security/email-reviews/stats": {
+      "first": 2.55,
+      "median": 2.26,
+      "max": 2.55
+    },
+    "/api/stats/external-logins": {
+      "first": 2.24,
+      "median": 2.24,
+      "max": 2.42
+    },
+    "/api/data-security/incidents?limit=20": {
+      "first": 5.49,
+      "median": 4.17,
+      "max": 5.49
+    }
+  },
+  "parallel_external_stats": {
+    "requests": 12,
+    "all_success": true,
+    "max_ms": 12.84
+  }
+}

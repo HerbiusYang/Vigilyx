@@ -7,7 +7,7 @@
 mod data;
 mod heuristics;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -33,8 +33,49 @@ use crate::module::{
 use crate::module_data::module_data;
 
 use heuristics::{
-    analyze_domain_heuristics, extract_redirect_target_urls_full, get_registered_domain, get_tld,
+    analyze_domain_heuristics, analyze_domain_heuristics_scored, extract_redirect_target_urls_full,
+    get_registered_domain, get_tld,
 };
+
+type CausalScores = BTreeMap<(String, String, String), f64>;
+
+/// Retain both the concrete object and the source that supplied its score.
+/// In particular, an auto-reference observation cannot inherit the provenance
+/// of a separate external lookup or overwrite that lookup's item strength.
+fn record_causal_finding(
+    scores: &mut CausalScores,
+    causal_key: String,
+    category: &str,
+    score: f64,
+    source: &str,
+) {
+    let current = scores
+        .entry((causal_key, category.to_string(), source.to_string()))
+        .or_default();
+    *current = current.max(score.clamp(0.0, 1.0));
+}
+
+fn causal_findings_json(scores: CausalScores) -> Vec<serde_json::Value> {
+    scores
+        .into_iter()
+        .map(|((causal_key, category, source), score)| {
+            serde_json::json!({
+                "causal_key": causal_key,
+                "categories": [category],
+                "score": score,
+                "confidence": 0.80,
+                "source": source,
+            })
+        })
+        .collect()
+}
+
+fn url_causal_key(value: &str) -> String {
+    use sha2::{Digest, Sha256};
+    extract_domain_from_url(value)
+        .map(|host| format!("host:{host}"))
+        .unwrap_or_else(|| format!("url:{}", hex::encode(Sha256::digest(value.as_bytes()))))
+}
 
 /// NS cacheentry
 struct NsCacheEntry {
@@ -83,60 +124,9 @@ fn should_skip_registered_domain_intel_for_host(domain: &str, registered_domain:
         && is_probable_cloud_asset_host(domain)
 }
 
-const REPUTATION_NOISE_TOLERANT_DOMAINS: &[&str] = &[
-    // Social / collaboration platforms that often accumulate noisy public intel pulses.
-    "facebook.com",
-    "fb.com",
-    "youtube.com",
-    "youtu.be",
-    "linkedin.com",
-    "twitter.com",
-    "x.com",
-    "instagram.com",
-    // Microsoft / Office / Teams / Microsoft-owned short links.
-    "microsoft.com",
-    "microsoftonline.com",
-    "office.com",
-    "office365.com",
-    "sharepoint.com",
-    "live.com",
-    "outlook.com",
-    "aka.ms",
-    "teams.microsoft.com",
-    // SWIFT and Salesforce-hosted SWIFT service portals seen in customer mail.
-    "swift.com",
-    "swift.my.site.com",
-    // WTW / Willis Towers Watson benefit and survey services.
-    "wtwco.com",
-    "willistowerswatson.com",
-    "wtwrewardsdataintel.com",
-    "wtwdataservices.com",
-    // Tongcheng marketing/invoice infrastructure. Only OTX-only pulse noise is
-    // suppressed; blacklist and non-OTX malicious intelligence remain active.
-    "bootcdn.net",
-    "17u.cn",
-    "40017.cn",
-    // Official banking / payment / fund domains. These should not become
-    // high-confidence malicious solely from weak domain reputation noise.
-    "cmbchina.com",
-    "ccb.com",
-    "abchina.com",
-    "boc.cn",
-    "bankofchina.com",
-    "icbc.com.cn",
-    "psbc.com",
-    "bankcomm.com",
-    "unionpay.com",
-    "chinaunionpay.com",
-    "southernfund.com",
-    "efunds.com.cn",
-    "bosera.com",
-    "chinaamc.com",
-    "htsc.com",
-];
-
 fn is_reputation_noise_tolerant_domain(domain: &str) -> bool {
-    REPUTATION_NOISE_TOLERANT_DOMAINS
+    module_data()
+        .get_list("reputation_noise_tolerant_domains")
         .iter()
         .any(|trusted| host_matches_domain_or_subdomain(domain, trusted))
 }
@@ -167,24 +157,15 @@ fn is_otx_only_source(source: &str) -> bool {
 fn suspicious_domain_intel_score(
     source: &str,
     registered_domain: &str,
-    sender_reg_domain: Option<&str>,
+    _sender_reg_domain: Option<&str>,
 ) -> Option<f64> {
-    let same_org_family = sender_reg_domain.is_some_and(|sender| {
-        let sender_registered = get_registered_domain(sender);
-        let sender_stem = sender_registered.split('.').next().unwrap_or("");
-        let domain_registered = get_registered_domain(registered_domain);
-        let domain_stem = domain_registered.split('.').next().unwrap_or("");
-        !sender_stem.is_empty() && sender_stem == domain_stem
-    });
-
     let reputation_tolerant = is_reputation_noise_tolerant_domain(registered_domain);
 
     if is_otx_only_source(source) {
-        if reputation_tolerant || sender_reg_domain == Some(registered_domain) || same_org_family {
-            None
-        } else {
-            Some(0.10)
-        }
+        // OTX pulse association alone is noisy historical context. A
+        // "suspicious" verdict without corroborating VT/IOC evidence remains
+        // visible in evidence but cannot assign a threat level.
+        None
     } else if reputation_tolerant {
         Some(0.05)
     } else {
@@ -215,6 +196,14 @@ fn url_intel_score(verdict: &str, source: &str, url: &str) -> Option<f64> {
     }
 }
 
+fn qualified_total_score(total_score: f64, categories: &[String]) -> f64 {
+    if categories.is_empty() {
+        0.0
+    } else {
+        total_score.clamp(0.0, 1.0)
+    }
+}
+
 /// NS cache TTL: 1 small
 const NS_CACHE_TTL: Duration = Duration::from_secs(3600);
 /// DNS QueryTimeout: 2
@@ -232,18 +221,12 @@ pub struct LinkReputationModule {
 
 impl LinkReputationModule {
     pub fn new(intel: Option<IntelLayer>) -> Self {
-        let mut opts = ResolverOpts::default();
-        opts.timeout = DNS_TIMEOUT;
-        opts.attempts = 1;
-        let mut resolver_builder = TokioResolver::builder_with_config(
-            ResolverConfig::default(),
-            TokioRuntimeProvider::default(),
-        );
-        *resolver_builder.options_mut() = opts;
-        let resolver = resolver_builder
-            .build()
-            .expect("default DNS resolver configuration must be valid");
+        let (config, opts) = hickory_resolver::system_conf::read_system_conf()
+            .expect("link reputation requires a readable system DNS configuration");
+        Self::with_resolver(intel, build_dns_resolver(config, opts))
+    }
 
+    fn with_resolver(intel: Option<IntelLayer>, resolver: TokioResolver) -> Self {
         let timeout_ms = intel
             .as_ref()
             .map(IntelLayer::link_reputation_timeout_ms)
@@ -272,19 +255,23 @@ impl LinkReputationModule {
     }
 
     /// QueryDomainof NS Recording,Return nameserver ofRegisterDomainSet(withcache)
-    async fn resolve_ns_base_domains(&self, domain: &str) -> Option<HashSet<String>> {
+    async fn resolve_ns_base_domains(&self, domain: &str) -> Result<HashSet<String>, String> {
         // cache
         {
             let cache = self.ns_cache.read().await;
             if let Some(entry) = cache.get(domain)
                 && entry.created_at.elapsed() < NS_CACHE_TTL
             {
-                return Some(entry.ns_base_domains.clone());
+                return Ok(entry.ns_base_domains.clone());
             }
         }
 
         // DNS NS Query
-        let ns_response = self.resolver.ns_lookup(domain).await.ok()?;
+        let ns_response = self
+            .resolver
+            .ns_lookup(domain)
+            .await
+            .map_err(|_| "dns_ns_lookup_failed".to_string())?;
         let ns_domains: HashSet<String> = ns_response
             .answers()
             .iter()
@@ -299,7 +286,7 @@ impl LinkReputationModule {
             .collect();
 
         if ns_domains.is_empty() {
-            return None;
+            return Err("dns_ns_records_missing".to_string());
         }
 
         // writecache
@@ -314,19 +301,23 @@ impl LinkReputationModule {
             );
         }
 
-        Some(ns_domains)
+        Ok(ns_domains)
     }
 
     /// DNS NS JudgeDomainwhether Official
     /// Return: Some(true) = Same1, Some(false) = Same, None = Judge
-    async fn is_same_org_by_ns(&self, domain_reg: &str, brand_anchor: &str) -> Option<bool> {
+    async fn is_same_org_by_ns(
+        &self,
+        domain_reg: &str,
+        brand_anchor: &str,
+    ) -> Result<Option<bool>, String> {
         let domain_ns = self.resolve_ns_base_domains(domain_reg).await?;
         let brand_ns = self.resolve_ns_base_domains(brand_anchor).await?;
 
         // NS
         let overlap: HashSet<_> = domain_ns.intersection(&brand_ns).cloned().collect();
         if overlap.is_empty() {
-            return Some(false); // NS Same -> Same
+            return Ok(Some(false)); // Different nameserver infrastructure.
         }
 
         // DNS providers (Shared DNS providers do not prove ownership)
@@ -337,12 +328,26 @@ impl LinkReputationModule {
 
         if !meaningful.is_empty() {
             // Shared NS -> Same1 (if NS all qq.com ofServicehandler)
-            return Some(true);
+            return Ok(Some(true));
         }
 
         // allUse DNS For -> NS Judge
-        None
+        Ok(None)
     }
+}
+
+fn build_dns_resolver(config: ResolverConfig, mut opts: ResolverOpts) -> TokioResolver {
+    assert!(
+        !config.name_servers().is_empty(),
+        "link reputation DNS configuration must contain an upstream nameserver"
+    );
+    opts.timeout = DNS_TIMEOUT;
+    opts.attempts = 1;
+    let mut builder = TokioResolver::builder_with_config(config, TokioRuntimeProvider::default());
+    *builder.options_mut() = opts;
+    builder
+        .build()
+        .expect("link reputation DNS configuration must be valid")
 }
 
 #[async_trait]
@@ -353,7 +358,7 @@ impl SecurityModule for LinkReputationModule {
 
     async fn analyze(&self, ctx: &SecurityContext) -> Result<ModuleResult, EngineError> {
         let start = Instant::now();
-        let links = &ctx.session.content.links;
+        let links = ctx.analysis_links();
         let sender_reg_domain = sender_registered_domain(ctx);
 
         if links.is_empty() {
@@ -385,7 +390,7 @@ impl SecurityModule for LinkReputationModule {
         let mut untrusted_redirect_target_urls: HashSet<String> = HashSet::new();
         let mut redirect_exempt_outer: HashSet<String> = HashSet::new(); // already ServiceofOuter layerDomain (Analyze)
         let mut domain_profiles: HashMap<String, DomainUrlProfile> = HashMap::new();
-        for link in links {
+        for link in &links {
             if is_probable_schema_reference_url(&link.url)
                 || is_probable_opaque_mail_callback_url(&link.url)
             {
@@ -451,8 +456,11 @@ impl SecurityModule for LinkReputationModule {
 
         let mut evidence = Vec::new();
         let mut categories = Vec::new();
+        let mut dns_coverage_failures = Vec::new();
         let mut total_score: f64 = 0.0;
         let mut suspicious_domains: Vec<String> = Vec::new();
+        let mut seen_registered_lexical_domains: HashSet<String> = HashSet::new();
+        let mut causal_findings = CausalScores::new();
         // A decoded target from a trusted security/marketing rewrite is
         // provenance, not an independent threat. The target domain is still
         // analyzed below. Generic, untrusted redirect parameters retain the
@@ -480,6 +488,13 @@ impl SecurityModule for LinkReputationModule {
             });
             if untrusted {
                 categories.push("redirect_target".to_string());
+                record_causal_finding(
+                    &mut causal_findings,
+                    url_causal_key(target_url),
+                    "redirect_target",
+                    0.0,
+                    "redirect_parameter",
+                );
             }
         }
 
@@ -503,6 +518,13 @@ impl SecurityModule for LinkReputationModule {
             if self.domain_blacklist.contains(domain) {
                 total_score += 0.80;
                 categories.push("blacklisted_domain".to_string());
+                record_causal_finding(
+                    &mut causal_findings,
+                    format!("host:{domain}"),
+                    "blacklisted_domain",
+                    0.80,
+                    "local_domain_blacklist",
+                );
                 suspicious_domains.push(domain.clone());
                 evidence.push(Evidence {
                     description: format!("Domain {} matched malicious domain blocklist", domain),
@@ -515,6 +537,13 @@ impl SecurityModule for LinkReputationModule {
             if domain != &reg_domain && self.domain_blacklist.contains(&reg_domain) {
                 total_score += 0.70;
                 categories.push("blacklisted_parent_domain".to_string());
+                record_causal_finding(
+                    &mut causal_findings,
+                    format!("host:{reg_domain}"),
+                    "blacklisted_parent_domain",
+                    0.70,
+                    "local_domain_blacklist",
+                );
                 suspicious_domains.push(domain.clone());
                 evidence.push(Evidence {
                     description: format!(
@@ -551,6 +580,13 @@ impl SecurityModule for LinkReputationModule {
                 // from the score and from external reputation lookups.
                 let (_, findings) = analyze_domain_heuristics(domain);
                 for (description, category) in findings {
+                    record_causal_finding(
+                        &mut causal_findings,
+                        format!("host:{domain}"),
+                        &category,
+                        0.0,
+                        "domain_heuristic_exempt",
+                    );
                     categories.push(category);
                     evidence.push(Evidence {
                         description: format!(
@@ -573,12 +609,22 @@ impl SecurityModule for LinkReputationModule {
             }
 
             // --- HeuristicAnalyze (Contains detect) ---
-            let (domain_score, findings) = analyze_domain_heuristics(domain);
+            let include_registered_lexical =
+                seen_registered_lexical_domains.insert(reg_domain.clone());
+            let (domain_score, findings, category_scores) =
+                analyze_domain_heuristics_scored(domain, include_registered_lexical);
             if domain_score > 0.0 {
                 total_score += domain_score;
                 suspicious_domains.push(domain.clone());
                 for (desc, category) in findings {
-                    categories.push(category);
+                    categories.push(category.clone());
+                    record_causal_finding(
+                        &mut causal_findings,
+                        format!("host:{domain}"),
+                        &category,
+                        category_scores.get(&category).copied().unwrap_or(0.0),
+                        "domain_heuristic",
+                    );
                     evidence.push(Evidence {
                         description: format!("{} ({})", desc, domain),
                         location: Some("links".to_string()),
@@ -621,14 +667,21 @@ impl SecurityModule for LinkReputationModule {
                 }
                 // DNS NS comparison: query NS records to determine if same org
                 match self.is_same_org_by_ns(&reg_domain, anchor).await {
-                    Some(true) => {
+                    Ok(Some(true)) => {
                         // NS matches -> same org, not suspicious
                         break;
                     }
-                    Some(false) => {
+                    Ok(Some(false)) => {
                         // NS differs -> likely impersonation
                         total_score += 0.35;
                         categories.push("brand_impersonation".to_string());
+                        record_causal_finding(
+                            &mut causal_findings,
+                            format!("host:{domain}"),
+                            "brand_impersonation",
+                            0.35,
+                            "dns_ns_comparison",
+                        );
                         suspicious_domains.push(domain.clone());
                         evidence.push(Evidence {
                             description: format!(
@@ -640,8 +693,21 @@ impl SecurityModule for LinkReputationModule {
                         });
                         break;
                     }
-                    None => {
-                        // DNS query failed or all using shared DNS -> cannot determine
+                    Err(reason) => {
+                        categories.push("inspection_coverage_incomplete".to_string());
+                        dns_coverage_failures.push(serde_json::json!({
+                            "domain": domain, "anchor": anchor, "reason": reason,
+                        }));
+                        evidence.push(Evidence {
+                            description: "DNS NS ownership comparison could not be completed"
+                                .to_string(),
+                            location: Some("links:dns".to_string()),
+                            snippet: Some(domain.clone()),
+                        });
+                        break;
+                    }
+                    Ok(None) => {
+                        // Shared DNS infrastructure cannot establish ownership.
                         break;
                     }
                 }
@@ -763,8 +829,22 @@ impl SecurityModule for LinkReputationModule {
                             total_score += score;
                             if score >= 0.60 {
                                 categories.push("intel_malicious".to_string());
+                                record_causal_finding(
+                                    &mut causal_findings,
+                                    format!("host:{domain}"),
+                                    "intel_malicious",
+                                    score,
+                                    &intel_result.source,
+                                );
                             } else {
                                 categories.push("intel_malicious_reduced".to_string());
+                                record_causal_finding(
+                                    &mut causal_findings,
+                                    format!("host:{domain}"),
+                                    "intel_malicious_reduced",
+                                    score,
+                                    &intel_result.source,
+                                );
                             }
                             suspicious_domains.push(domain.clone());
                             evidence.push(Evidence {
@@ -797,7 +877,7 @@ impl SecurityModule for LinkReputationModule {
                             if suspicious_score.is_none() {
                                 evidence.push(Evidence {
                                     description: format!(
-                                        "Ignoring OTX-only weak intel hit on sender-owned or reputation-tolerant domain: {} ({})",
+                                        "Recording OTX-only suspicious pulse as diagnostic context without risk: {} ({})",
                                         domain,
                                         intel_result.details.as_deref().unwrap_or("no additional details")
                                     ),
@@ -811,8 +891,22 @@ impl SecurityModule for LinkReputationModule {
                             total_score += score;
                             if !otx_only && score >= 0.25 {
                                 categories.push("intel_suspicious".to_string());
+                                record_causal_finding(
+                                    &mut causal_findings,
+                                    format!("host:{domain}"),
+                                    "intel_suspicious",
+                                    score,
+                                    &intel_result.source,
+                                );
                             } else if !otx_only {
                                 categories.push("intel_suspicious_reduced".to_string());
+                                record_causal_finding(
+                                    &mut causal_findings,
+                                    format!("host:{domain}"),
+                                    "intel_suspicious_reduced",
+                                    score,
+                                    &intel_result.source,
+                                );
                             }
                             suspicious_domains.push(domain.clone());
                             evidence.push(Evidence {
@@ -893,7 +987,7 @@ impl SecurityModule for LinkReputationModule {
             let mut intel_urls = Vec::new();
             let query_timeout = intel.link_reputation_query_timeout();
 
-            for link in links {
+            for link in &links {
                 let link_domain = extract_domain_from_url(&link.url);
                 let is_redirect_service = link_domain
                     .as_ref()
@@ -981,8 +1075,22 @@ impl SecurityModule for LinkReputationModule {
                             total_score += score;
                             if score >= 0.65 {
                                 categories.push("url_intel_malicious".to_string());
+                                record_causal_finding(
+                                    &mut causal_findings,
+                                    url_causal_key(&url),
+                                    "url_intel_malicious",
+                                    score,
+                                    &intel_result.source,
+                                );
                             } else {
                                 categories.push("url_intel_malicious_reduced".to_string());
+                                record_causal_finding(
+                                    &mut causal_findings,
+                                    url_causal_key(&url),
+                                    "url_intel_malicious_reduced",
+                                    score,
+                                    &intel_result.source,
+                                );
                             }
                             suspicious_domains.push(url.clone());
                             evidence.push(Evidence {
@@ -1026,8 +1134,22 @@ impl SecurityModule for LinkReputationModule {
                             total_score += score;
                             if score >= 0.30 {
                                 categories.push("url_intel_suspicious".to_string());
+                                record_causal_finding(
+                                    &mut causal_findings,
+                                    url_causal_key(&url),
+                                    "url_intel_suspicious",
+                                    score,
+                                    &intel_result.source,
+                                );
                             } else {
                                 categories.push("url_intel_suspicious_reduced".to_string());
+                                record_causal_finding(
+                                    &mut causal_findings,
+                                    url_causal_key(&url),
+                                    "url_intel_suspicious_reduced",
+                                    score,
+                                    &intel_result.source,
+                                );
                             }
                             suspicious_domains.push(url.clone());
                             evidence.push(Evidence {
@@ -1078,6 +1200,13 @@ impl SecurityModule for LinkReputationModule {
                     if val_lower.contains(sus_domain) {
                         total_score += 0.15;
                         categories.push("suspicious_sender_domain".to_string());
+                        record_causal_finding(
+                            &mut causal_findings,
+                            format!("host:{sus_domain}"),
+                            "suspicious_sender_domain",
+                            0.15,
+                            "received_domain_heuristic",
+                        );
                         evidence.push(Evidence {
                             description: format!(
                                 "Suspicious sending service domain: {}",
@@ -1091,11 +1220,12 @@ impl SecurityModule for LinkReputationModule {
             }
         }
 
-        total_score = total_score.min(1.0);
         categories.sort();
         categories.dedup();
+        total_score = qualified_total_score(total_score, &categories);
 
         let domain_list: Vec<String> = unique_domains.into_iter().collect();
+        let causal_findings = causal_findings_json(causal_findings);
         let duration_ms = start.elapsed().as_millis() as u64;
         let threat_level = ThreatLevel::from_score(total_score);
 
@@ -1111,7 +1241,11 @@ impl SecurityModule for LinkReputationModule {
                 module_name: self.meta.name.clone(),
                 pillar: self.meta.pillar,
                 threat_level: ThreatLevel::Safe,
-                confidence: 0.85,
+                confidence: if dns_coverage_failures.is_empty() {
+                    0.85
+                } else {
+                    0.0
+                },
                 // Preserve non-actionable shape observations for analysts and
                 // telemetry. Fusion excludes Safe module results, so these do
                 // not become threat evidence until another fact corroborates
@@ -1126,14 +1260,23 @@ impl SecurityModule for LinkReputationModule {
                 details: serde_json::json!({
                     "score": total_score,
                     "unique_domains": domain_list,
+                    "qr_decoded_links": ctx.decoded_qr_urls().len(),
                     "suspicious_domains": suspicious_domains,
                     "blacklist_size": self.domain_blacklist.len(),
                     "intel_enabled": self.intel.is_some(),
                     "heuristic_observations": heuristic_observations,
+                    "evidence_items_version": 1,
+                "causal_findings": causal_findings,
+                    "coverage": if dns_coverage_failures.is_empty() { "complete" } else { "limited" },
+                    "dns_coverage_failures": dns_coverage_failures,
                 }),
                 duration_ms,
                 analyzed_at: Utc::now(),
-                bpa: Some(Bpa::safe_analyzed()),
+                bpa: Some(if dns_coverage_failures.is_empty() {
+                    Bpa::safe_analyzed()
+                } else {
+                    Bpa::vacuous()
+                }),
                 engine_id: None,
             });
         }
@@ -1154,9 +1297,14 @@ impl SecurityModule for LinkReputationModule {
             details: serde_json::json!({
                 "score": total_score,
                 "unique_domains": domain_list,
+                "qr_decoded_links": ctx.decoded_qr_urls().len(),
                 "suspicious_domains": suspicious_domains,
                 "blacklist_size": self.domain_blacklist.len(),
                 "intel_enabled": self.intel.is_some(),
+                "evidence_items_version": 1,
+                "causal_findings": causal_findings,
+                "coverage": if dns_coverage_failures.is_empty() { "complete" } else { "limited" },
+                "dns_coverage_failures": dns_coverage_failures,
             }),
             duration_ms,
             analyzed_at: Utc::now(),
@@ -1177,6 +1325,217 @@ mod tests {
 
     // Re-import heuristic helpers for unit tests
     use super::heuristics::{analyze_domain_heuristics, get_registered_domain, get_tld};
+
+    fn causal_item<'a>(
+        result: &'a ModuleResult,
+        key: &str,
+        category: &str,
+    ) -> &'a serde_json::Value {
+        result.details["causal_findings"]
+            .as_array()
+            .expect("scored evidence items")
+            .iter()
+            .find(|item| {
+                item["causal_key"] == key && item["categories"] == serde_json::json!([category])
+            })
+            .expect("concrete category and target")
+    }
+
+    #[tokio::test]
+    async fn independent_reputation_targets_keep_their_own_strength() {
+        let module = LinkReputationModule::new(None);
+        let one = module
+            .analyze(&make_ctx(&["https://www-one.vendor.example/"]))
+            .await
+            .unwrap();
+        let two = module
+            .analyze(&make_ctx(&[
+                "https://www-one.vendor.example/",
+                "https://www-two.publisher.example/",
+            ]))
+            .await
+            .unwrap();
+        assert!(two.raw_score() > one.raw_score());
+        assert_eq!(two.details["evidence_items_version"], 1);
+        let first = causal_item(&one, "host:www-one.vendor.example", "www_impersonation");
+        assert_eq!(first["score"], 0.25);
+        assert_eq!(first["confidence"], 0.80);
+        assert_eq!(first["source"], "domain_heuristic");
+        assert_eq!(
+            first,
+            causal_item(&two, "host:www-one.vendor.example", "www_impersonation"),
+            "another target cannot amplify the first target's evidence"
+        );
+        assert_eq!(
+            causal_item(&two, "host:www-two.publisher.example", "www_impersonation")["score"],
+            0.25
+        );
+    }
+
+    #[tokio::test]
+    async fn parent_blacklist_hit_keeps_one_cause_and_its_own_score() {
+        let mut module = LinkReputationModule::new(None);
+        module.domain_blacklist.insert("payload.example".into());
+        let result = module
+            .analyze(&make_ctx(&[
+                "https://one.payload.example/",
+                "https://two.payload.example/",
+                "https://www-one.vendor.example/",
+            ]))
+            .await
+            .unwrap();
+        assert_eq!(result.raw_score(), 1.0);
+        let matches = result.details["causal_findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["categories"] == serde_json::json!(["blacklisted_parent_domain"]))
+            .collect::<Vec<_>>();
+        assert_eq!(matches.len(), 1, "one parent blacklist entry is one cause");
+        assert_eq!(matches[0]["causal_key"], "host:payload.example");
+        assert_eq!(matches[0]["score"], 0.70);
+        assert_eq!(matches[0]["source"], "local_domain_blacklist");
+    }
+
+    #[test]
+    fn provenance_and_strength_remain_bound_to_the_same_reputation_item() {
+        let mut scores = CausalScores::new();
+        for (source, score) in [
+            ("virustotal", 0.30),
+            ("auto_reference", 0.90),
+            ("virustotal", 0.20),
+        ] {
+            record_causal_finding(
+                &mut scores,
+                "host:target.example".into(),
+                "url_intel_suspicious",
+                score,
+                source,
+            );
+        }
+        let items = causal_findings_json(scores);
+        assert_eq!(items.len(), 2);
+        let provider = items
+            .iter()
+            .find(|item| item["source"] == "virustotal")
+            .unwrap();
+        let reference = items
+            .iter()
+            .find(|item| item["source"] == "auto_reference")
+            .unwrap();
+        assert_eq!(provider["score"], 0.30);
+        assert_eq!(reference["score"], 0.90);
+        assert_eq!(provider["causal_key"], reference["causal_key"]);
+        assert_eq!(provider["categories"], reference["categories"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "upstream nameserver")]
+    fn dns_configuration_rejects_empty_upstreams() {
+        build_dns_resolver(ResolverConfig::default(), ResolverOpts::default());
+    }
+
+    async fn dns_fixture(fail: bool) -> (TokioResolver, tokio::task::JoinHandle<()>) {
+        use hickory_resolver::config::{ConnectionConfig, NameServerConfig};
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let addr = socket.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let mut buffer = [0u8; 4096];
+            loop {
+                let (len, peer) = socket.recv_from(&mut buffer).await.unwrap();
+                let query = &buffer[..len];
+                let mut end = 12;
+                let mut labels = Vec::new();
+                while query[end] != 0 {
+                    let count = query[end] as usize;
+                    end += 1;
+                    labels.push(std::str::from_utf8(&query[end..end + count]).unwrap());
+                    end += count;
+                }
+                end += 1;
+                let name = labels.join(".");
+                assert_eq!(u16::from_be_bytes([query[end], query[end + 1]]), 2);
+                let mut response = query[..end + 4].to_vec();
+                response[2..12].copy_from_slice(if fail {
+                    &[0x81, 0x82, 0, 1, 0, 0, 0, 0, 0, 0]
+                } else {
+                    &[0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]
+                });
+                if !fail {
+                    let target = if name == "candidate.example" || name.contains('-') {
+                        "ns.candidate.example"
+                    } else {
+                        "ns.brand.example"
+                    };
+                    let mut data = Vec::new();
+                    for label in target.split('.') {
+                        data.push(label.len() as u8);
+                        data.extend_from_slice(label.as_bytes());
+                    }
+                    data.push(0);
+                    response.extend_from_slice(&[0xc0, 0x0c, 0, 2, 0, 1, 0, 0, 0, 60]);
+                    response.extend_from_slice(&(data.len() as u16).to_be_bytes());
+                    response.extend_from_slice(&data);
+                }
+                socket.send_to(&response, peer).await.unwrap();
+            }
+        });
+        let mut connection = ConnectionConfig::udp();
+        connection.port = addr.port();
+        let config = ResolverConfig::from_parts(
+            None,
+            vec![],
+            vec![NameServerConfig::new(addr.ip(), true, vec![connection])],
+        );
+        (build_dns_resolver(config, ResolverOpts::default()), server)
+    }
+
+    #[tokio::test]
+    async fn configured_dns_compares_ns_and_preserves_query_failure_coverage() {
+        let (resolver, server) = dns_fixture(false).await;
+        let module = LinkReputationModule::with_resolver(None, resolver);
+        let comparison = tokio::time::timeout(
+            Duration::from_secs(3),
+            module.is_same_org_by_ns("candidate.example", "brand.example"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(comparison, Some(false));
+        let ctx = make_ctx(&["https://microsoft-notice.example"]);
+        let verified = module.analyze(&ctx).await.unwrap();
+        assert!(
+            verified
+                .categories
+                .contains(&"brand_impersonation".to_string())
+        );
+        assert!(
+            !verified
+                .categories
+                .contains(&"inspection_coverage_incomplete".to_string())
+        );
+        server.abort();
+
+        let (resolver, server) = dns_fixture(true).await;
+        let module = LinkReputationModule::with_resolver(None, resolver);
+        let incomplete = module.analyze(&ctx).await.unwrap();
+        assert!(
+            incomplete
+                .categories
+                .contains(&"inspection_coverage_incomplete".to_string())
+        );
+        assert!(
+            !incomplete
+                .categories
+                .contains(&"brand_impersonation".to_string())
+        );
+        assert_eq!(incomplete.details["coverage"], "limited");
+        assert_eq!(
+            incomplete.details["dns_coverage_failures"][0]["reason"],
+            "dns_ns_lookup_failed"
+        );
+        server.abort();
+    }
 
     /// BuildTest SecurityContext,packetContains of URL linkConnectList
     fn make_ctx(urls: &[&str]) -> SecurityContext {
@@ -1306,7 +1665,7 @@ mod tests {
     async fn test_object_storage_static_asset_domain_is_skipped() {
         let module = LinkReputationModule::new(None);
         let ctx = make_ctx(&[
-            "https://qfk-files.oss-cn-hangzhou.aliyuncs.com/assets/login-banner.png?x-oss-process=image/resize,w_600",
+            "https://fixture-bucket.oss-cn-hangzhou.aliyuncs.com/assets/banner.png?x-oss-process=image/resize,w_600",
         ]);
         let result = module.analyze(&ctx).await.unwrap();
 
@@ -1399,31 +1758,68 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_legitimate_hundsun_domain_is_not_random() {
+    async fn synthetic_consonant_heavy_service_label_is_not_random() {
         let module = LinkReputationModule::new(None);
-        let ctx = make_ctx(&["https://rep.hundsun.cn/report/clearance"]);
+        let ctx = make_ctx(&[
+            "https://stmt.cupdapp.invalid/open",
+            "https://img.cupdapp.invalid/render",
+        ]);
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert_eq!(result.threat_level, ThreatLevel::Safe, "{result:?}");
+        assert!(
+            !result.categories.contains(&"random_domain".to_string()),
+            "a JSON-qualified human-readable label suppresses lexical DGA only: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn one_synthetic_dga_root_emits_one_lexical_observation() {
+        let module = LinkReputationModule::new(None);
+        let ctx = make_ctx(&[
+            "https://first.xvkrnbstq.invalid/open",
+            "https://second.xvkrnbstq.invalid/render",
+        ]);
+        let result = module.analyze(&ctx).await.unwrap();
+
+        assert!(result.categories.contains(&"random_domain".to_string()));
+        assert_eq!(
+            result
+                .evidence
+                .iter()
+                .filter(|item| item.description.contains("random character sequence"))
+                .count(),
+            1,
+            "subdomains of one registrable root are not independent DGA evidence: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_human_readable_service_domain_is_not_random() {
+        let module = LinkReputationModule::new(None);
+        let ctx = make_ctx(&["https://portal.mailservice.example/report/clearance"]);
         let result = module.analyze(&ctx).await.unwrap();
         assert!(
             !result.categories.contains(&"random_domain".to_string()),
-            "Brand-like business domains should not be marked as random: {:?}",
+            "human-readable service domains should not be marked as random: {:?}",
             result.categories
         );
     }
 
     #[tokio::test]
-    async fn test_seeded_safe_sendcloud_domain_skips_reputation_heuristics() {
+    async fn test_seeded_safe_mailer_domain_skips_reputation_heuristics() {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard_async().await;
         crate::modules::link_scan::set_well_known_safe_domains(Arc::new(HashSet::from([
-            "sendcloud.net".to_string(),
+            "mailer.vendor.example".to_string(),
         ])));
         let module = LinkReputationModule::new(None);
-        let ctx = make_ctx(&["https://sctrack.sendcloud.net/track/open2/test.gif"]);
+        let ctx = make_ctx(&["https://track.mailer.vendor.example/track/open/fixture.gif"]);
         let result = module.analyze(&ctx).await.unwrap();
 
         assert_eq!(result.threat_level, ThreatLevel::Safe);
         assert!(
             !result.categories.contains(&"random_domain".to_string()),
-            "seeded safe domains should skip sendcloud tracking heuristics: {:?}",
+            "seeded safe domains should skip mailer tracking heuristics: {:?}",
             result.categories
         );
         crate::modules::link_scan::set_well_known_safe_domains(Arc::new(HashSet::new()));
@@ -1433,14 +1829,13 @@ mod tests {
     async fn test_trusted_url_domain_skips_reputation_heuristics_even_without_safe_domain_seed() {
         let _guard = crate::modules::link_scan::lock_url_domain_set_test_guard_async().await;
         crate::modules::link_scan::set_trusted_url_domains(Arc::new(HashSet::from([
-            "aliyuncs.com".to_string(),
+            "storage.example".to_string(),
         ])));
         crate::modules::link_scan::set_well_known_safe_domains(Arc::new(HashSet::new()));
 
         let module = LinkReputationModule::new(None);
-        let ctx = make_ctx(&[
-            "https://qfk-files.oss-cn-hangzhou.aliyuncs.com/offline-export?id=116eb8a2&token=aa6d62d9ef98b077a3fd3cc6ddbff7e3",
-        ]);
+        let ctx =
+            make_ctx(&["https://bucket.storage.example/offline-export?id=fixture&token=fixture"]);
         let result = module.analyze(&ctx).await.unwrap();
 
         assert_eq!(result.threat_level, ThreatLevel::Safe);
@@ -1461,7 +1856,7 @@ mod tests {
         ])));
 
         assert!(should_skip_registered_domain_intel_for_host(
-            "qfk-files.oss-cn-hangzhou.aliyuncs.com",
+            "fixture-bucket.oss-cn-test.aliyuncs.com",
             "aliyuncs.com"
         ));
         assert!(!should_skip_registered_domain_intel_for_host(
@@ -1494,7 +1889,7 @@ mod tests {
     #[tokio::test]
     async fn test_embedded_ip_in_domain() {
         let module = LinkReputationModule::new(None);
-        let ctx = make_ctx(&["http://192-168-1-1.evil.com/admin"]);
+        let ctx = make_ctx(&["http://192-168-1-1.evil.example/admin"]);
         let result = module.analyze(&ctx).await.unwrap();
         assert_ne!(result.threat_level, ThreatLevel::Safe);
         assert!(result.categories.contains(&"embedded_ip".to_string()));
@@ -1503,7 +1898,7 @@ mod tests {
     #[tokio::test]
     async fn test_numeric_domain() {
         let module = LinkReputationModule::new(None);
-        let ctx = make_ctx(&["http://88889999.com/transfer"]);
+        let ctx = make_ctx(&["http://88889999.invalid/transfer"]);
         let result = module.analyze(&ctx).await.unwrap();
         assert_eq!(result.threat_level, ThreatLevel::Safe);
     }
@@ -1511,7 +1906,7 @@ mod tests {
     #[tokio::test]
     async fn test_known_numeric_brand_domain_is_not_flagged() {
         let module = LinkReputationModule::new(None);
-        let ctx = make_ctx(&["https://www.12306.cn"]);
+        let ctx = make_ctx(&["https://www.123456.example"]);
         let result = module.analyze(&ctx).await.unwrap();
 
         assert!(
@@ -1630,23 +2025,36 @@ mod tests {
     #[test]
     fn test_otx_only_sender_owned_domain_is_ignored() {
         assert_eq!(
-            suspicious_domain_intel_score("otx", "swift.com", Some("swift.com")),
+            suspicious_domain_intel_score("otx", "sender.example", Some("sender.example")),
             None
         );
     }
 
     #[test]
-    fn test_otx_only_non_sender_domain_is_only_weak_signal() {
+    fn test_otx_only_suspicious_domain_is_diagnostic_only() {
         assert_eq!(
-            suspicious_domain_intel_score("otx", "12306.cn", Some("rails.com.cn")),
-            Some(0.10)
+            suspicious_domain_intel_score(
+                "otx",
+                "unrelated-service.example",
+                Some("sender-brand.test")
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_empty_actionable_category_set_forces_safe_score() {
+        assert_eq!(qualified_total_score(0.95, &[]), 0.0);
+        assert_eq!(
+            qualified_total_score(0.25, &["intel_suspicious".to_string()]),
+            0.25
         );
     }
 
     #[test]
     fn test_otx_only_same_brand_cross_tld_is_ignored() {
         assert_eq!(
-            suspicious_domain_intel_score("otx", "hundsun.com", Some("hundsun.cn")),
+            suspicious_domain_intel_score("otx", "fixturebrand.example", Some("fixturebrand.test")),
             None
         );
     }
@@ -1659,10 +2067,9 @@ mod tests {
         assert!(is_reputation_noise_tolerant_domain("swift.my.site.com"));
         assert!(is_reputation_noise_tolerant_domain("survey.wtwco.com"));
         assert!(is_reputation_noise_tolerant_domain("static.linkedin.com"));
-        assert!(is_reputation_noise_tolerant_domain("service.cmbchina.com"));
-        assert!(is_reputation_noise_tolerant_domain("cdn.bootcdn.net"));
-        assert!(is_reputation_noise_tolerant_domain("finance.17u.cn"));
-        assert!(is_reputation_noise_tolerant_domain("file.40017.cn"));
+        assert!(is_reputation_noise_tolerant_domain(
+            "service.platform.vendor.example"
+        ));
         assert!(!is_reputation_noise_tolerant_domain(
             "microsoft-login.evil.example"
         ));
@@ -1808,6 +2215,11 @@ mod tests {
         let ctx = make_ctx(&["http://xred.mooo.com/VNRecycler/VNRecycler.exe"]);
         let result = module.analyze(&ctx).await.unwrap();
 
+        let domain_item = causal_item(&result, "host:mooo.com", "intel_malicious");
+        assert_eq!(domain_item["source"], "virustotal");
+        assert_eq!(domain_item["score"], 0.60);
+        assert_eq!(domain_item["confidence"], 0.80);
+
         // 5. OutputcompleteResult
         println!("\n{}", "=".repeat(80));
         println!("  端到端Test: xred.mooo.com (Heuristic + VT 情报)");
@@ -1935,7 +2347,7 @@ mod tests {
             ),
             (
                 "Attack: 纯 IP 数字Domain",
-                vec!["http://88889999.com/transfer"],
+                vec!["http://88889999.invalid/transfer"],
             ),
             (
                 "Attack: Wix 免费建站仿冒",
@@ -2024,12 +2436,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tongcheng_invoice_asset_domains_do_not_create_structural_findings() {
+    async fn test_seeded_invoice_asset_labels_do_not_create_structural_findings() {
         let module = LinkReputationModule::new(None);
         let ctx = make_ctx(&[
-            "https://finance.17u.cn/einvoice/download?id=example",
-            "https://file.40017.cn/tcservice/post/picture/post-title.png",
-            "https://ddei3-0-ctp.asiainfo-sec.com/wis/clicktime/v1/query?url=https%3A%2F%2Fcdn.bootcdn.net%2Fajax%2Flibs%2Fnormalize%2F8.0.1%2Fnormalize.min.css",
+            "https://cdn.bootcdn.invalid/library/normalize/8.0.1",
+            "https://img.cupdapp.invalid/render",
         ]);
         let result = module.analyze(&ctx).await.unwrap();
 
@@ -2037,7 +2448,7 @@ mod tests {
         for category in ["numeric_domain", "random_domain", "redirect_target"] {
             assert!(
                 !result.categories.contains(&category.to_string()),
-                "Tongcheng invoice infrastructure should not emit {category}: {:?}",
+                "seeded synthetic invoice infrastructure should not emit {category}: {:?}",
                 result.categories
             );
         }
@@ -2126,7 +2537,7 @@ mod tests {
     async fn test_gateway_wrapped_showimg_asset_is_ignored() {
         let module = LinkReputationModule::new(None);
         let ctx = make_ctx(&[
-            "https://ddei3-0-ctp.asiainfo-sec.com:443/wis/clicktime/v1/query?url=http%3a%2f%2fhome.sumscope.com%3a8050%2fportal%2fsendcloud%2fshowImg%3fid%3d74916bf1ba5d4f7f9731941883c1ffc0&umid=test&auth=test",
+            "https://urldefense.proofpoint.com/v2/url?url=https%3A%2F%2Fassets.vendor.example%2Frender%2FshowImg%3Fid%3Dfixture-image",
         ]);
         let result = module.analyze(&ctx).await.unwrap();
 

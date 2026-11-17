@@ -1,0 +1,15 @@
+From: =?utf-8?B?5a6J5YWo5Lit5b+D?= <alert@id-protect.example>
+To: liu.yang@corp.internal
+Date: Mon, 24 Aug 2026 09:13:00 +0800
+Message-ID: <0002-b1@synth.example>
+Subject: 检测到新的登录地点
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+刘洋，你好：
+
+你的账号今天凌晨在陌生设备上有一次成功登录。
+如果不是你本人操作，请尽快确认账号归属并重置凭证：
+http://203.0.113.60/confirm/identity
+
+—— 安全中心自动告警

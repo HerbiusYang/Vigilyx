@@ -1,0 +1,124 @@
+From: TÜV Rheinland Group <certification.renewal@tuv-rheinland-cert.example>
+To: quality@corp.internal
+Cc: rd@corp.internal, legal@corp.internal
+Date: Sat, 24 Oct 2026 14:00:00 +0800
+Message-ID: <0698-b58@synth.example>
+Subject: [Expiring] CE Certification for Gateway Product Family (Certificate No. DE-CA-2024-8842) — Renewal required by 15 November
+MIME-Version: 1.0
+Content-Type: text/html; charset=gb2312
+
+<html><body style="font-family:sans-serif;max-width:640px;margin:0 auto;border:1px solid #0055A5;border-radius:8px;overflow:hidden">
+<div style="background:#0055A5;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">TÜV Rheinland | Product Safety & Certification</h2>
+<p style="margin:4px 0;font-size:12px;opacity:0.8">Precisely Right.</p>
+</div>
+<div style="padding:24px">
+
+<p>Dear Quality Management Team,</p>
+
+<p>Your CE certification for the <b>Gateway Product Family</b> (Certificate No. <b>DE-CA-2024-8842</b>) will expire on <b>15 November 2026</b>. Without a valid CE mark, your products cannot be sold in the European Economic Area (EEA).</p>
+
+<h3 style="color:#0055A5;border-bottom:2px solid #0055A5;padding-bottom:4px">Certificate Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:180px">Certificate Number</td><td><b>DE-CA-2024-8842</b></td></tr>
+<tr><td style="background:#f5f5f5">Certificate Type</td><td>CE Marking — Low Voltage Directive (LVD) 2014/35/EU</td></tr>
+<tr><td style="background:#f5f5f5">Product Family</td><td>Email Security Gateway (Models: GW-1000, GW-2000, GW-5000)</td></tr>
+<tr><td style="background:#f5f5f5">Standards Applied</td><td>EN 62368-1:2020 (Audio/video & IT equipment safety)</td></tr>
+<tr><td style="background:#f5f5f5">Notified Body</td><td>TÜV Rheinland LGA Products GmbH (NB 0197)</td></tr>
+<tr><td style="background:#f5f5f5">Issue Date</td><td>2024-11-15</td></tr>
+<tr><td style="background:#f5f5f5">Expiry Date</td><td style="color:#e00"><b>2026-11-15 (22 days remaining)</b></td></tr>
+<tr><td style="background:#f5f5f5">Manufacturer</td><td>Your Company (Hangzhou, China)</td></tr>
+<tr><td style="background:#f5f5f5">Factory Inspection</td><td>Last: 2025-08-20 (Passed)</td></tr>
+</table>
+
+<h3 style="color:#0055A5;border-bottom:2px solid #0055A5;padding-bottom:4px">Consequences of Expiry</h3>
+<ul>
+<li><b>Immediate sales ban</b> in all 30 EEA countries</li>
+<li><b>Customs seizure</b> of products at EU borders</li>
+<li><b>Recall obligation</b> for products already placed on the market</li>
+<li><b>Market surveillance authorities</b> may impose fines (up to €500,000 per violation)</li>
+<li><b>Distributor liability</b> — EU distributors will refuse to stock un-certified products</li>
+<li><b>Loss of existing contracts</b> with EU customers requiring CE compliance</li>
+</ul>
+
+<h3 style="color:#0055A5;border-bottom:2px solid #0055A5;padding-bottom:4px">Renewal Process</h3>
+<p>To renew your CE certification, we require:</p>
+
+<p><b>Step 1 — Submit Technical Documentation:</b></p>
+<p>Upload the following documents through our <b>Certification Client Portal</b>:</p>
+<ol>
+<li><b>Updated Risk Assessment</b> — per EN 62368-1:2020 Annex B</li>
+<li><b>Technical Construction File (TCF)</b> — updated for latest product revisions (v1.9.5)</li>
+<li><b>Schematics & PCB layouts</b> — for all three models</li>
+<li><b>Bill of Materials (BOM)</b> — with safety-critical components highlighted</li>
+<li><b>Test Reports</b> — updated EMC & Safety test reports (from accredited lab)</li>
+<li><b>User Manual</b> — in all EU languages currently supported</li>
+<li><b>Declaration of Conformity (DoC)</b> — draft for our review</li>
+<li><b>Factory Production Control (FPC)</b> — updated quality management documentation</li>
+</ol>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://tuv-rheinland-cert.example/portal/client/DE-CA-2024-8842/upload" style="display:inline-block;background:#0055A5;color:#fff;padding:10px 30px;text-decoration:none;border-radius:4px">Upload Technical Documentation</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://www.certipedia.com/clients/certificate/DE-CA-2024-8842</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（Client Portal authentication required）</p>
+
+<h3 style="color:#0055A5;border-bottom:2px solid #0055A5;padding-bottom:4px">About Client Portal Authentication</h3>
+<p>When you click the upload button, you will be redirected to our Certification Client Portal. For security reasons, the portal uses <b>Microsoft Azure AD B2B</b> for identity management:</p>
+<ol>
+<li>Click the upload button above</li>
+<li>You will be redirected to <b>login.microsoftonline.com</b> (Microsoft's official identity endpoint)</li>
+<li>Sign in with your corporate Azure AD credentials</li>
+<li>Grant the requested permissions (openid, profile, offline_access)</li>
+<li>You will be redirected back to the TÜV Rheinland portal</li>
+</ol>
+
+<p style="font-size:14px;background:#E3F2FD;padding:12px;border-radius:4px">
+<b>About offline_access:</b> The portal requests offline_access to maintain your session during large file uploads (technical documentation packages are typically 200-500MB and take 10-30 minutes to upload depending on connection speed). Without this permission, you would need to re-authenticate every 5 minutes during upload. The token is scoped only to the TÜV Rheinland B2B application and cannot be used to access other Microsoft services.
+</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文技术支持或紧急加急处理，请访问 tuv-rheinland-cert.example/cn-support 直接上传产品技术文档与营业执照（中文服务通道，5个工作日加急）。</p>
+
+<h3 style="color:#0055A5;border-bottom:2px solid #0055A5;padding-bottom:4px">Step 2 — Schedule Factory Inspection</h3>
+<p>After document review, we will conduct a factory inspection at your Hangzhou facility:</p>
+<ul>
+<li>Duration: 1-2 days</li>
+<li>Scope: Production line, QC processes, FPC compliance</li>
+<li>Inspector: TBD (English or Mandarin speaking)</li>
+<li>Cost: €2,800 (included in renewal fee)</li>
+</ul>
+
+<h3 style="color:#0055A5;border-bottom:2px solid #0055A5;padding-bottom:4px">Step 3 — Renewal Fee</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Item</th><th>Cost (EUR)</th></tr>
+<tr><td>Certification renewal (3 models)</td><td>€6,500</td></tr>
+<tr><td>Factory inspection</td><td>€2,800</td></tr>
+<tr><td>Document review</td><td>€1,200</td></tr>
+<tr><td>Express processing (optional, -10 days)</td><td>€800</td></tr>
+<tr><td colspan="2" style="text-align:right"><b>Total (standard): €10,500</b></td></tr>
+</table>
+
+<h3 style="color:#0055A5;border-bottom:2px solid #0055A5;padding-bottom:4px">Timeline</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td><b>10/24 (today)</b></td><td>Submit technical documentation</td></tr>
+<tr><td>10/25 - 11/01</td><td>Document review by TÜV engineers</td></tr>
+<tr><td>11/04 - 11/06</td><td>Factory inspection at Hangzhou facility</td></tr>
+<tr><td>11/08</td><td>Review results & corrective actions (if any)</td></tr>
+<tr><td>11/12</td><td>Certificate issuance (target)</td></tr>
+<tr><td>11/15</td><td>Current certificate expires</td></tr>
+</table>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">TÜV Rheinland Group | Product Safety & Certification</p>
+<p style="font-size:11px;color:#999">Am Grauen Stein, 51105 Cologne, Germany</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the certificate holder's designated contact.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://tuv-rheinland-cert.example/api/track?recipient=quality%40corp.internal&cert=DE-CA-2024-8842&type=renewal_notice" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

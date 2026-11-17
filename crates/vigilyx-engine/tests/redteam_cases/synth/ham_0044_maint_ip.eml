@@ -1,0 +1,10 @@
+From: =?utf-8?B?6L+Q57u05bmz5Y+w?= <ops@corp.internal>
+To: sre@corp.internal
+Date: Wed, 26 Aug 2026 11:31:00 +0800
+Message-ID: <0021-b3@synth.example>
+Subject: 今晚灰度发布窗口
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+今晚 23:00-01:00 网关灰度，控制台 http://10.20.31.7:8080/gray 可看实时比例。
+出问题直接停，预案在 runbook 第 4 节。

@@ -66,11 +66,14 @@ fi
 # -- Generate the reusable security-header block --
 write_security_headers() {
     echo "    header {"
-    echo "        Strict-Transport-Security \"max-age=31536000; includeSubDomains; preload\""
-    echo "        X-Content-Type-Options \"nosniff\""
-    echo "        X-Frame-Options \"DENY\""
-    echo "        Referrer-Policy \"strict-origin-when-cross-origin\""
-    echo "        Permissions-Policy \"camera=(), microphone=(), geolocation=()\""
+    # Defer these assignments until after reverse_proxy has copied upstream
+    # headers. The `>` prefix replaces API-provided values instead of
+    # appending duplicates (especially conflicting HSTS max-age policies).
+    echo "        >Strict-Transport-Security \"max-age=31536000; includeSubDomains; preload\""
+    echo "        >X-Content-Type-Options \"nosniff\""
+    echo "        >X-Frame-Options \"DENY\""
+    echo "        >Referrer-Policy \"strict-origin-when-cross-origin\""
+    echo "        >Permissions-Policy \"camera=(), microphone=(), geolocation=()\""
     echo "    }"
 }
 
@@ -150,9 +153,36 @@ case "$tls_mode" in
             echo "WARNING: Self-signed certificate not found at $cert_dir/; using Caddy internal CA"
         fi
         {
-            # Use :443 catch-all instead of IP-based site address.
-            # IP addresses don't use TLS SNI, so Caddy can't match by IP.
-            echo ":443 {"
+            # curl and several embedded clients deliberately omit SNI when the
+            # URL host is a numeric IP.  Without a default ServerName, Caddy
+            # cannot select the internally managed IP certificate and aborts
+            # the handshake before the HTTP Host header is available.
+            if [ "$tls_directive" = "tls internal" ]; then
+                echo "{"
+                printf "    default_sni %s\n" "$domain"
+                echo "}"
+                echo
+            fi
+            # A raw public IPv4 can be NATed before it reaches the host. In
+            # that case Caddy's IP-based certificate selection can emit a TLS
+            # internal-error alert to browsers even when a valid certificate
+            # file is loaded. A catch-all listener avoids that selector path;
+            # keep the named site only for the internal-CA fallback, where it
+            # is needed to mint a certificate name.
+            if [ "$tls_directive" = "tls internal" ]; then
+                case "$domain" in
+                    *:*)
+                        case "$domain" in
+                            \[*\]) tls_site="${domain}:443" ;;
+                            *) tls_site="[${domain}]:443" ;;
+                        esac
+                        ;;
+                    *) tls_site="${domain}:443" ;;
+                esac
+                printf "%s {\n" "$tls_site"
+            else
+                echo ":443 {"
+            fi
             printf "    %s\n" "$tls_directive"
             write_access_log
             write_reverse_proxy

@@ -1,0 +1,66 @@
+From: 方达律师事务所-并购团队 <project.fd@fada-dataroom.example>
+To: 法务部 <legal@corp.internal>
+Cc: 董事会秘书 <boardsec@corp.internal>
+Date: Wed, 07 Oct 2026 10:20:00 +0800
+Message-ID: <0646-b41@synth.example>
+Subject: 项目 Phoenix —— 第二轮尽调数据室已迁移（10/11 前完成授权）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+法务部、董事会秘书：
+
+关于 Phoenix 项目（TW Partners 收购贵司子公司 100% 股权），因第一轮数据室（Intralinks）的保密协议条款争议，买方坚持迁移至其指定的 Datasite 平台。现将第二轮数据室安排通知如下。
+
+一、项目进度速览
+  签署日（拟）：10/25
+  交割日（拟）：11/30
+  先决条件完成度：税务健康证明 ✓ / 核心客户同意函 13/13 ✓ / 第三方法律尽调第二轮进行中
+  当前阻塞项：第二轮数据室授权（本文）
+
+二、数据室迁移说明
+第一轮数据室（Intralinks）将于 10/12 关闭。第二轮使用 Datasite Diligence，买方为该项目开通了专用子域：
+
+    https://phoenix-tw.datasite-diligence.example
+
+因买方内控要求（理由：避免数据室访问权限扩散至非项目人员），本轮不开放"邮箱+临时密码"注册，改为 OAuth 2.0 授权码模式联合登录——即使用贵司企业邮箱账号在数据室登录页完成一次 OAuth 授权，系统自动将贵司企业身份与数据室账号绑定。
+
+授权时系统会请求以下权限（只读，不会写入）：
+  - 读取用户邮箱地址（用于身份标识）
+  - 读取用户显示名称（用于审计日志）
+  - 离线访问（refresh_token，用于会话保持，避免每次重新登录）
+
+请贵司 IT 部门确认企业身份平台（IdP）已开启 OAuth 联合能力。如使用 Azure AD / Okta / 自建 Keycloak，默认均支持。
+
+授权入口（推荐使用 Chrome 或 Edge，Safari 偶尔有 iframe 嵌套问题）：
+
+    https://phoenix-tw.datasite-diligence.example/oauth/authorize?client_id=phoenix_rd&scope=openid+email+profile+offline_access&redirect_uri=https://phoenix-tw.datasite-diligence.example/callback
+
+三、需上传的文件（第二轮补正，10/11 截止）
+1. 目标公司近三年社保缴纳基数明细表（第 5 项更新件）
+2. 核心技术专利的法律状态检索报告（第 8 项新增）
+3. 2026 年 Q3 管理层报表（合并口径+单体口径各一份）
+4. 数据出境安全评估申报回执（如已提交）
+5. 员工持股平台（ESOP）的合伙协议与减持约定
+
+单文件 ≤ 500MB，PDF 优先。Excel 请去密码（数据室自带加密）。
+
+四、时间节点
+  10/08（明天）17:00    IT 部门确认 OAuth 联合能力
+  10/09                各授权人完成 OAuth 绑定
+  10/11                文件上传截止
+  10/12                第一轮数据室（Intralinks）关闭
+  10/14                买方顾问团队开始第二轮审阅
+
+五、常见问题
+Q：OAuth 授权后我的邮箱内容会被看到吗？
+A：不会。scope 中的 openid/email/profile 只返回邮箱地址和姓名，不含邮件内容。offline_access 产生的 refresh_token 仅用于维持数据室会话，不会用于读取邮件。
+
+Q：如果我们 IT 部门不允许 OAuth 授权怎么办？
+A：请立即通知我，我协调买方接受备选方案（P12 证书登录），但需要额外 3 个工作日配置，可能影响 10/25 签署日。
+
+如有技术问题请联系数据室技术支持（support@datasite.example），不要回复本邮件。
+
+周律
+方达律师事务所 | 并购与重组部
+project.fd@fada-dataroom.example | 021-5388-****
+（本邮件受律师-委托人特权保护。若误收请立即删除并通知发件人。）

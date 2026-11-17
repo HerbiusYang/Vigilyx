@@ -10,7 +10,7 @@ use axum::{
     Json,
     body::Body,
     extract::{Path, Query, State},
-    http::header,
+    http::{HeaderMap, StatusCode, header},
     response::IntoResponse,
 };
 use regex::{Captures, Regex};
@@ -19,10 +19,14 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
-use vigilyx_core::{DataSecurityIncident, DataSecurityStats, HttpSession};
+use vigilyx_core::{
+    DataSecurityIncident, DataSecurityStats, EmailDataSecurityReview, EmailDataSecurityStats,
+    HttpSession,
+};
 
-use super::{ApiResponse, PaginatedResponse};
+use super::{ApiResponse, PaginatedResponse, privacy};
 use crate::AppState;
+use crate::auth::AuthenticatedUser;
 
 // Query parameters
 
@@ -55,6 +59,42 @@ fn default_limit() -> u32 {
 
 const MAX_HTTP_BODY_DOWNLOAD_BYTES: usize = 5 * 1024 * 1024;
 
+fn redact_incident(mut incident: DataSecurityIncident) -> DataSecurityIncident {
+    incident.evidence.clear();
+    // Operational policy facts stay visible without exposing content evidence.
+    incident.details = incident.details.and_then(|value| {
+        let fields = value.as_object()?;
+        let safe: serde_json::Map<String, serde_json::Value> = fields
+            .iter()
+            .filter(|(key, _)| {
+                matches!(
+                    key.as_str(),
+                    "policy_version"
+                        | "security_level_candidate"
+                        | "authorization_status"
+                        | "observation"
+                        | "delivery_confirmed"
+                        | "source"
+                        | "legal_assessment"
+                        | "scan_complete"
+                        | "coverage_only"
+                        | "counter_scope"
+                        | "counter_durability"
+                        | "email_review_id"
+                        | "direction"
+                        | "audit_class"
+                        | "action"
+                        | "delivery_status"
+                )
+            })
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        (!safe.is_empty()).then_some(serde_json::Value::Object(safe))
+    });
+    incident.detected_user = None;
+    incident
+}
+
 // Statistics API
 
 /// Get data security statistics
@@ -62,6 +102,191 @@ pub async fn get_data_security_stats(State(state): State<Arc<AppState>>) -> impl
     match state.db.get_data_security_stats().await {
         Ok(stats) => ApiResponse::ok(stats),
         Err(e) => ApiResponse::<DataSecurityStats>::internal_err(&e, "Operation failed"),
+    }
+}
+
+/// Outbound email data-security query parameters.
+#[derive(Debug, Deserialize)]
+pub struct EmailReviewQueryParams {
+    #[serde(default = "default_page")]
+    pub page: u32,
+    #[serde(default = "default_limit")]
+    pub limit: u32,
+    /// sniffer | mta_proxy | import
+    pub source: Option<String>,
+    /// outbound | unknown; omitted returns outbound plus unknown candidates
+    pub direction: Option<String>,
+    /// confirmed_outbound | outbound_candidate | attribution_pending | legacy
+    pub audit_class: Option<String>,
+    /// inspected | encrypted | incomplete | failed
+    pub inspection_status: Option<String>,
+    /// clean | hit | unknown
+    pub dlp_result: Option<String>,
+    /// audit | allow | alert | quarantine | block | reject | tempfail
+    pub action: Option<String>,
+    pub max_jrt_level: Option<u8>,
+    pub sender_or_domain: Option<String>,
+    pub keyword: Option<String>,
+    pub since: Option<String>,
+}
+
+fn valid_email_review_param(value: &str, allowed: &[&str]) -> bool {
+    allowed.contains(&value)
+}
+
+fn validate_email_review_query(params: &EmailReviewQueryParams) -> Option<String> {
+    if let Some(value) = params.source.as_deref()
+        && !valid_email_review_param(value, &["sniffer", "mta_proxy", "import"])
+    {
+        return Some(format!("无效外发邮件来源: {value}"));
+    }
+    if let Some(value) = params.direction.as_deref()
+        && !valid_email_review_param(value, &["outbound", "unknown"])
+    {
+        return Some(format!("无效邮件方向: {value}"));
+    }
+    if let Some(value) = params.audit_class.as_deref()
+        && !valid_email_review_param(
+            value,
+            &[
+                "confirmed_outbound",
+                "outbound_candidate",
+                "attribution_pending",
+                "legacy",
+            ],
+        )
+    {
+        return Some(format!("无效外发邮件审计分类: {value}"));
+    }
+    if let Some(value) = params.inspection_status.as_deref()
+        && !valid_email_review_param(value, &["inspected", "encrypted", "incomplete", "failed"])
+    {
+        return Some(format!("无效检查状态: {value}"));
+    }
+    if let Some(value) = params.dlp_result.as_deref()
+        && !valid_email_review_param(value, &["clean", "hit", "unknown"])
+    {
+        return Some(format!("无效 DLP 结果: {value}"));
+    }
+    if let Some(value) = params.action.as_deref()
+        && !valid_email_review_param(
+            value,
+            &[
+                "audit",
+                "allow",
+                "alert",
+                "quarantine",
+                "block",
+                "reject",
+                "tempfail",
+            ],
+        )
+    {
+        return Some(format!("无效处理动作: {value}"));
+    }
+    if let Some(level) = params.max_jrt_level
+        && !(1..=5).contains(&level)
+    {
+        return Some("max_jrt_level 必须在 1 到 5 之间".to_string());
+    }
+    None
+}
+
+/// Get outbound email coverage and enforcement statistics.
+pub async fn get_outbound_email_review_stats(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    match state.db.get_email_data_security_stats().await {
+        Ok(stats) => ApiResponse::ok(stats),
+        Err(error) => {
+            ApiResponse::<EmailDataSecurityStats>::internal_err(&error, "Operation failed")
+        }
+    }
+}
+
+/// List outbound email data-security reviews.
+pub async fn list_outbound_email_reviews(
+    State(state): State<Arc<AppState>>,
+    Query(mut params): Query<EmailReviewQueryParams>,
+) -> axum::response::Response {
+    params.limit = params.limit.clamp(1, 1000);
+    if let Some(error) = validate_email_review_query(&params) {
+        return ApiResponse::<PaginatedResponse<EmailDataSecurityReview>>::bad_request(error)
+            .into_response();
+    }
+
+    let offset = (params.page.saturating_sub(1)) * params.limit;
+    let filters = vigilyx_db::EmailReviewFilters {
+        source: params.source.filter(|value| !value.trim().is_empty()),
+        direction: params.direction.filter(|value| !value.trim().is_empty()),
+        audit_class: params.audit_class.filter(|value| !value.trim().is_empty()),
+        inspection_status: params
+            .inspection_status
+            .filter(|value| !value.trim().is_empty()),
+        dlp_result: params.dlp_result.filter(|value| !value.trim().is_empty()),
+        action: params.action.filter(|value| !value.trim().is_empty()),
+        max_jrt_level: params.max_jrt_level,
+        sender_or_domain: params
+            .sender_or_domain
+            .filter(|value| !value.trim().is_empty()),
+        keyword: params.keyword.filter(|value| !value.trim().is_empty()),
+        since: params.since.filter(|value| !value.trim().is_empty()),
+    };
+
+    match state
+        .db
+        .list_email_data_security_reviews(&filters, params.limit, offset)
+        .await
+    {
+        Ok((items, total)) => ApiResponse::ok(PaginatedResponse {
+            items,
+            total,
+            page: params.page,
+            limit: params.limit,
+            total_pages: ((total as f64) / (params.limit as f64)).ceil() as u32,
+        })
+        .into_response(),
+        Err(error) => ApiResponse::<PaginatedResponse<EmailDataSecurityReview>>::server_error(
+            &error,
+            "Operation failed",
+        )
+        .into_response(),
+    }
+}
+
+/// Get one outbound email review. The persisted record is already redacted;
+/// raw message content is intentionally not returned from this endpoint.
+pub async fn get_outbound_email_review(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let uuid = match Uuid::parse_str(&id) {
+        Ok(uuid) => uuid,
+        Err(_) => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                ApiResponse::<EmailDataSecurityReview>::err("Invalid UUID"),
+            )
+                .into_response();
+        }
+    };
+
+    match state.db.get_email_data_security_review(uuid).await {
+        Ok(Some(review)) => (
+            axum::http::StatusCode::OK,
+            ApiResponse::<EmailDataSecurityReview>::ok(review),
+        )
+            .into_response(),
+        Ok(None) => (
+            axum::http::StatusCode::NOT_FOUND,
+            ApiResponse::<EmailDataSecurityReview>::err("Outbound email review not found"),
+        )
+            .into_response(),
+        Err(error) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            ApiResponse::<EmailDataSecurityReview>::internal_err(&error, "Operation failed"),
+        )
+            .into_response(),
     }
 }
 
@@ -76,6 +301,8 @@ fn validate_incident_type(t: &str) -> bool {
             | "self_sending"
             | "volume_anomaly"
             | "jrt_compliance_violation"
+            | "sensitive_data_transfer"
+            | "bulk_sensitive_transfer"
     )
 }
 
@@ -126,13 +353,23 @@ pub async fn list_data_security_incidents(
         .await
     {
         Ok((incidents, total)) => {
+            let scopes = privacy::default_scopes(&state).await;
             let total_pages = if params.limit > 0 {
                 ((total as f64) / (params.limit as f64)).ceil() as u32
             } else {
                 0
             };
             ApiResponse::ok(PaginatedResponse {
-                items: incidents,
+                items: incidents
+                    .into_iter()
+                    .map(|incident| {
+                        if privacy::is_privacy_disabled(&scopes) {
+                            incident
+                        } else {
+                            redact_incident(incident)
+                        }
+                    })
+                    .collect(),
                 total,
                 page: params.page,
                 limit: params.limit,
@@ -152,6 +389,8 @@ pub async fn list_data_security_incidents(
 pub async fn get_data_security_incident(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    headers: HeaderMap,
+    user: AuthenticatedUser,
 ) -> impl IntoResponse {
     let uuid = match Uuid::parse_str(&id) {
         Ok(u) => u,
@@ -164,7 +403,33 @@ pub async fn get_data_security_incident(
     };
 
     match state.db.get_data_security_incident(uuid).await {
-        Ok(Some(incident)) => (axum::http::StatusCode::OK, ApiResponse::ok(incident)),
+        Ok(Some(incident)) => {
+            let scopes = match privacy::active_scopes(
+                &state,
+                &user,
+                privacy::request_id_header(&headers),
+                "http_session",
+                &incident.http_session_id.to_string(),
+            )
+            .await
+            {
+                Ok(scopes) => scopes,
+                Err(error) => {
+                    return ApiResponse::<DataSecurityIncident>::server_error(
+                        &error,
+                        "Privacy lease validation failed",
+                    );
+                }
+            };
+            if privacy::can_reveal(&user, &scopes, "http_body") {
+                (axum::http::StatusCode::OK, ApiResponse::ok(incident))
+            } else {
+                (
+                    axum::http::StatusCode::OK,
+                    ApiResponse::ok(redact_incident(incident)),
+                )
+            }
+        }
         Ok(None) => (
             axum::http::StatusCode::NOT_FOUND,
             ApiResponse::err("Incident not found"),
@@ -240,6 +505,8 @@ pub async fn list_http_sessions(
 pub async fn get_http_session(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    headers: HeaderMap,
+    user: AuthenticatedUser,
 ) -> impl IntoResponse {
     let uuid = match Uuid::parse_str(&id) {
         Ok(u) => u,
@@ -247,27 +514,65 @@ pub async fn get_http_session(
             return (
                 axum::http::StatusCode::BAD_REQUEST,
                 ApiResponse::<HttpSession>::err("Invalid UUID"),
-            );
+            )
+                .into_response();
+        }
+    };
+
+    let scopes = match privacy::active_scopes(
+        &state,
+        &user,
+        privacy::request_id_header(&headers),
+        "http_session",
+        &id,
+    )
+    .await
+    {
+        Ok(scopes) => scopes,
+        Err(error) => {
+            return ApiResponse::<HttpSession>::server_error(
+                &error,
+                "Privacy lease validation failed",
+            )
+            .into_response();
         }
     };
 
     match state.db.get_http_session(uuid).await {
         Ok(Some(mut session)) => {
+            let body_revealed = privacy::can_reveal(&user, &scopes, "http_body");
+            if !body_revealed {
+                session.request_body = None;
+            }
             // SEC: Redact password-like fields from request_body before API delivery (CWE-312)
             if let Some(ref body) = session.request_body {
                 session.request_body =
                     Some(redact_request_body(body, session.content_type.as_deref()));
             }
-            (axum::http::StatusCode::OK, ApiResponse::ok(session))
+            let mut payload =
+                serde_json::to_value(session).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(object) = payload.as_object_mut() {
+                object.insert(
+                    "privacy".to_string(),
+                    serde_json::json!({ "state": if body_revealed { "revealed" } else { "redacted" } }),
+                );
+            }
+            (
+                axum::http::StatusCode::OK,
+                ApiResponse::<serde_json::Value>::ok(payload),
+            )
+                .into_response()
         }
         Ok(None) => (
             axum::http::StatusCode::NOT_FOUND,
-            ApiResponse::err("HTTP session not found"),
-        ),
+            ApiResponse::<serde_json::Value>::err("HTTP session not found"),
+        )
+            .into_response(),
         Err(e) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            ApiResponse::internal_err(&e, "Operation failed"),
-        ),
+            ApiResponse::<serde_json::Value>::internal_err(&e, "Operation failed"),
+        )
+            .into_response(),
     }
 }
 
@@ -307,7 +612,9 @@ pub async fn import_http_sessions(
 
 /// Get data security engine status.
 ///
-/// Reads engine heartbeat from Redis/file and extracts DS counters.
+/// Reads engine liveness from Redis/file and derives DS counters from durable
+/// records. If PostgreSQL is temporarily unavailable, preserve the prior
+/// runtime-counter behavior rather than making the status endpoint fail.
 pub async fn get_data_security_engine_status(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
@@ -316,45 +623,80 @@ pub async fn get_data_security_engine_status(
         .filter(|snapshot| snapshot.heartbeat_secs < 30)
         .map(|snapshot| snapshot.status);
 
-    match engine_status.as_ref() {
-        Some(status) => {
-            let ds_sessions = status
-                .get("ds_sessions_processed")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            let ds_incidents = status
-                .get("ds_incidents_detected")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            ApiResponse::ok(serde_json::json!({
-                "running": true,
-                "http_sessions_processed": ds_sessions,
-                "incidents_detected": ds_incidents
-            }))
+    let persisted_totals = match state.db.get_data_security_engine_totals().await {
+        Ok(totals) => Some(totals),
+        Err(error) => {
+            tracing::warn!(%error, "Failed to load durable data-security engine totals");
+            None
         }
-        None => ApiResponse::ok(serde_json::json!({
-            "running": false,
-            "http_sessions_processed": 0,
-            "incidents_detected": 0
-        })),
-    }
+    };
+
+    ApiResponse::ok(data_security_engine_status_payload(
+        engine_status.as_ref(),
+        persisted_totals,
+    ))
+}
+
+fn data_security_engine_status_payload(
+    runtime_status: Option<&serde_json::Value>,
+    persisted_totals: Option<(u64, u64)>,
+) -> serde_json::Value {
+    let runtime_sessions = runtime_status
+        .and_then(|status| status.get("ds_sessions_processed"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    let runtime_incidents = runtime_status
+        .and_then(|status| status.get("ds_incidents_detected"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    let (http_sessions_processed, incidents_detected) =
+        persisted_totals.unwrap_or((runtime_sessions, runtime_incidents));
+
+    serde_json::json!({
+        "running": runtime_status.is_some(),
+        "http_sessions_processed": http_sessions_processed,
+        "incidents_detected": incidents_detected,
+    })
 }
 
 // HTTP session body download
 
 /// Download HTTP session body file.
 ///
-/// Large bodies (>256KB) are stored by sniffer at data/tmp/http/{session_id}.bin.
+/// Bodies larger than 16 KiB are stored by the sniffer at
+/// data/tmp/http/{session_id}.bin so analysis is not limited to the preview.
 /// Security analysis temp files are cleaned up after 2 hours.
 pub async fn download_http_session_body(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    headers: HeaderMap,
+    user: AuthenticatedUser,
 ) -> impl IntoResponse {
     // Validate UUID
     let uuid = match Uuid::parse_str(&id) {
         Ok(u) => u,
         Err(_) => return (axum::http::StatusCode::BAD_REQUEST, "Invalid UUID").into_response(),
     };
+
+    let allowed = match privacy::consume_scope(
+        &state,
+        &user,
+        privacy::request_id_header(&headers),
+        "http_session",
+        &id,
+        "http_body",
+    )
+    .await
+    {
+        Ok(allowed) => allowed,
+        Err(error) => {
+            tracing::error!(error = %error, "Privacy HTTP body lease validation failed");
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response();
+        }
+    };
+    if !allowed {
+        return (StatusCode::FORBIDDEN, "Privacy approval required").into_response();
+    }
 
     // Query session to get body_temp_file path
     let session = match state.db.get_http_session(uuid).await {
@@ -454,31 +796,28 @@ pub async fn download_http_session_body(
             .into_response();
     }
 
-    let raw_ct = session
-        .content_type
-        .unwrap_or_else(|| "application/octet-stream".to_string());
-
-    let data =
-        match build_redacted_download_payload(&raw_data, Some(&raw_ct), session.body_is_binary) {
-            Ok(data) => data,
-            Err(message) => {
-                tracing::warn!(
-                    session_id = %uuid,
-                    body_is_binary = session.body_is_binary,
-                    content_type = %raw_ct,
-                    "Blocked unsafe HTTP body download: {}",
-                    message
-                );
-                return (axum::http::StatusCode::FORBIDDEN, message).into_response();
-            }
-        };
+    // Privacy approval authorizes access to this exact resource and scope; it
+    // does not turn the export endpoint into a raw-evidence exfiltration path.
+    // Keep the on-disk capture bytes behind the same redaction contract used by
+    // the UI and reject binary/non-UTF-8 bodies rather than relabeling them as
+    // a redacted text attachment.
+    let data = match build_redacted_download_payload(
+        &raw_data,
+        session.content_type.as_deref(),
+        session.body_is_binary,
+    ) {
+        Ok(data) => data,
+        Err(message) => return (StatusCode::UNPROCESSABLE_ENTITY, message).into_response(),
+    };
     let download_name =
         build_redacted_download_name(session.uploaded_filename.as_deref(), &uuid.to_string());
 
     axum::http::Response::builder()
         .status(axum::http::StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-        .header(header::CACHE_CONTROL, "no-store")
+        .header(header::CACHE_CONTROL, "no-store, no-cache")
+        .header(header::PRAGMA, "no-cache")
+        .header("x-content-type-options", "nosniff")
         .header(
             header::CONTENT_DISPOSITION,
             format!("attachment; filename=\"{}\"", download_name),
@@ -494,13 +833,17 @@ pub async fn download_http_session_body(
 }
 
 const REDACTED_VALUE: &str = "[REDACTED]";
-const SENSITIVE_KEY_EXACT: &[&str] = &["auth", "otp", "pass", "pwd", "secret", "token"];
+const SENSITIVE_KEY_EXACT: &[&str] = &[
+    "auth", "otp", "pass", "pwd", "secret", "token", "cvv", "cvv2", "cvc", "cvc2", "pin",
+];
 const SENSITIVE_KEY_FRAGMENTS: &[&str] = &[
     "accesstoken",
     "apikey",
     "authorization",
     "clientsecret",
     "credential",
+    "cardverification",
+    "securitycode",
     "passwd",
     "passcode",
     "passphrase",
@@ -556,6 +899,9 @@ fn redact_json_value(value: &mut serde_json::Value) {
             for item in items {
                 redact_json_value(item);
             }
+        }
+        serde_json::Value::String(text) => {
+            *text = redact_xml_tag_credentials(&redact_key_value_credentials(text));
         }
         _ => {}
     }
@@ -703,9 +1049,21 @@ fn xml_tag_regex() -> &'static Regex {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_redacted_download_name, build_redacted_download_payload, redact_request_body,
+        build_redacted_download_name, build_redacted_download_payload,
+        data_security_engine_status_payload, redact_request_body,
     };
+    use proptest::prelude::*;
     use serde_json::Value;
+
+    #[test]
+    fn redacts_cvv_and_credentials_inside_compose_content() {
+        let raw = r#"{"cvv":"731","attrs":{"content":"CVV: 732 Password: SyntheticOnly729!"}}"#;
+        let redacted = redact_request_body(raw, Some("application/json"));
+        assert!(!redacted.contains("731"));
+        assert!(!redacted.contains("732"));
+        assert!(!redacted.contains("SyntheticOnly729"));
+        assert!(redacted.contains("REDACTED"));
+    }
 
     #[test]
     fn redacts_form_credentials() {
@@ -792,5 +1150,100 @@ mod tests {
     fn marks_download_name_as_redacted() {
         let filename = build_redacted_download_name(Some("invoice.pdf"), "fallback");
         assert_eq!(filename, "invoice.pdf.redacted.txt");
+    }
+
+    #[test]
+    fn engine_status_uses_durable_totals_after_a_restart() {
+        let runtime_status = serde_json::json!({
+            "ds_sessions_processed": 0,
+            "ds_incidents_detected": 0,
+        });
+
+        let payload = data_security_engine_status_payload(Some(&runtime_status), Some((8_953, 1)));
+
+        assert_eq!(payload["running"], true);
+        assert_eq!(payload["http_sessions_processed"], 8_953);
+        assert_eq!(payload["incidents_detected"], 1);
+    }
+
+    #[test]
+    fn engine_status_falls_back_to_runtime_totals_when_database_is_unavailable() {
+        let runtime_status = serde_json::json!({
+            "ds_sessions_processed": 1_698,
+            "ds_incidents_detected": 0,
+        });
+
+        let payload = data_security_engine_status_payload(Some(&runtime_status), None);
+
+        assert_eq!(payload["running"], true);
+        assert_eq!(payload["http_sessions_processed"], 1_698);
+        assert_eq!(payload["incidents_detected"], 0);
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 128, .. ProptestConfig::default() })]
+
+        #[test]
+        fn request_body_redaction_is_total_for_arbitrary_text(
+            body_chars in prop::collection::vec(any::<char>(), 0..=8192),
+            content_type_chars in prop::collection::vec(any::<char>(), 0..=96),
+        ) {
+            let body: String = body_chars.into_iter().collect();
+            let content_type: String = content_type_chars.into_iter().collect();
+
+            let _ = redact_request_body(&body, Some(&content_type));
+        }
+
+        #[test]
+        fn generated_json_credentials_never_survive_redaction(
+            secret_chars in prop::collection::vec(prop::char::range('a', 'z'), 1..=96),
+        ) {
+            let secret: String = secret_chars.into_iter().collect();
+            let body = format!(
+                r#"{{"password":"{secret}","nested":{{"apiKey":"{secret}"}}}}"#
+            );
+            let redacted = redact_request_body(&body, Some("application/json"));
+            let value: Value = serde_json::from_str(&redacted).expect("redacted JSON remains valid");
+
+            let password = value["password"].as_str();
+            let nested_api_key = value["nested"]["apiKey"].as_str();
+            prop_assert_eq!(password, Some("[REDACTED]"));
+            prop_assert_eq!(nested_api_key, Some("[REDACTED]"));
+            prop_assert_ne!(password, Some(secret.as_str()));
+            prop_assert_ne!(nested_api_key, Some(secret.as_str()));
+        }
+
+        #[test]
+        fn redacted_download_names_cannot_escape_as_paths(
+            raw_name_chars in prop::collection::vec(any::<char>(), 0..=512),
+        ) {
+            let raw_name: String = raw_name_chars.into_iter().collect();
+            let name = build_redacted_download_name(Some(&raw_name), "fallback");
+            let stem = name.strip_suffix(".redacted.txt").expect("redacted suffix");
+            let has_path_control = stem
+                .chars()
+                .any(|ch| ch.is_control() || ch == '"' || ch == '/' || ch == '\\');
+
+            prop_assert!(!has_path_control);
+            prop_assert!(name.ends_with(".redacted.txt"));
+        }
+
+        #[test]
+        fn download_payload_never_panics_on_arbitrary_bytes(
+            raw_data in prop::collection::vec(any::<u8>(), 0..=8192),
+            body_is_binary: bool,
+        ) {
+            let result = build_redacted_download_payload(
+                &raw_data,
+                Some("application/octet-stream"),
+                body_is_binary,
+            );
+
+            if body_is_binary {
+                prop_assert!(result.is_err());
+            } else if let Ok(payload) = result {
+                prop_assert!(std::str::from_utf8(&payload).is_ok());
+            }
+        }
     }
 }

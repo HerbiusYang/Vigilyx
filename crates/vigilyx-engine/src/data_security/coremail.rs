@@ -16,6 +16,82 @@ pub fn is_coremail_compose_uri(uri: &str) -> bool {
         .any(|pattern| uri_lower.contains(pattern))
 }
 
+/// Return whether an HTTP request is an actual Webmail delivery operation.
+///
+/// Send and draft/autosave requests often share the same compose endpoint.
+/// Keep this predicate shared by the email audit path and the existing HTTP
+/// detector so a draft cannot be counted as an outbound email, while a send
+/// request cannot be missed because the two paths used different URI lists.
+pub fn is_delivery_request(uri: &str, body: Option<&str>) -> bool {
+    let uri_lower = uri.to_ascii_lowercase();
+    if is_coremail_compose_uri(uri) {
+        return body
+            .and_then(extract_body_action)
+            .is_some_and(|action| action == "deliver");
+    }
+
+    let parsed = url::Url::parse(&format!("http://webmail.invalid{uri}"));
+    let path = uri_lower.split('?').next().unwrap_or(&uri_lower);
+    let query_action = parsed.as_ref().ok().and_then(|url| {
+        url.query_pairs()
+            .find(|(key, _)| key.eq_ignore_ascii_case("action"))
+            .map(|(_, value)| value.to_ascii_lowercase())
+    });
+    if path.ends_with("/owa/service.svc") {
+        if query_action
+            .as_deref()
+            .is_some_and(|a| matches!(a, "senditem" | "sendmessage"))
+        {
+            return true;
+        }
+        fn sends(value: &serde_json::Value) -> bool {
+            match value {
+                serde_json::Value::Object(fields) => fields.iter().any(|(key, value)| {
+                    let explicit = value.as_str().is_some_and(|v| match key.as_str() {
+                        "MessageDisposition" => matches!(v, "SendOnly" | "SendAndSaveCopy"),
+                        "Action" | "action" => {
+                            matches!(v.to_ascii_lowercase().as_str(), "senditem" | "sendmessage")
+                        }
+                        "__type" => v.starts_with("SendItemRequest:"),
+                        _ => false,
+                    });
+                    explicit
+                        || (key != "Content" && key != "content" && sends(value))
+                }),
+                serde_json::Value::Array(values) => values.iter().any(sends),
+                _ => false,
+            }
+        }
+        return body
+            .and_then(|b| serde_json::from_str::<serde_json::Value>(b).ok())
+            .is_some_and(|value| sends(&value));
+    }
+    if path.ends_with("/coremail/xt5/proxy/compose") {
+        return body
+            .and_then(extract_body_action)
+            .is_some_and(|action| action == "deliver")
+            || query_action.as_deref() == Some("deliver");
+    }
+    if parsed.as_ref().ok().is_some_and(|url| {
+        url.query_pairs().any(|(key, value)| {
+            key.eq_ignore_ascii_case("func") && value.eq_ignore_ascii_case("mbox:deliver")
+        })
+    }) {
+        return true;
+    }
+    [
+        "/compose/send",
+        "/sendmail",
+        "/send_mail",
+        "/api/mail/send",
+        "/api/compose/send",
+        "/mail/send",
+        "/webmail/send",
+    ]
+    .iter()
+    .any(|suffix| path.ends_with(suffix))
+}
+
 /// Extract email content from Coremail compose JSON body for DLP scanning.
 ///
 /// Coremail compose.jsp POST body structure:
@@ -244,6 +320,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn shared_owa_endpoint_requires_an_explicit_send_operation() {
+        assert!(!is_delivery_request(
+            "/owa/service.svc",
+            Some(r#"{"Body":{"Content":"SendItem"}}"#)
+        ));
+        assert!(!is_delivery_request(
+            "/owa/service.svc?action=CreateItem",
+            Some(r#"{"Body":{"MessageDisposition":"SaveOnly"}}"#)
+        ));
+        assert!(is_delivery_request(
+            "/owa/service.svc?action=SendItem",
+            None
+        ));
+        assert!(is_delivery_request(
+            "/owa/service.svc",
+            Some(r#"{"Body":{"MessageDisposition":"SendAndSaveCopy"}}"#)
+        ));
+        assert!(!is_delivery_request(
+            "/login?next=/mail/send",
+            Some("password=example")
+        ));
+    }
+
+    #[test]
     fn test_is_coremail_compose_uri_match() {
         assert!(is_coremail_compose_uri(
             "/coremail/common/mbox/compose.jsp?sid=abc"
@@ -255,6 +355,19 @@ mod tests {
     fn test_is_coremail_compose_uri_no_match() {
         assert!(!is_coremail_compose_uri("/inbox/list"));
         assert!(!is_coremail_compose_uri("/compose/send"));
+    }
+
+    #[test]
+    fn delivery_request_distinguishes_coremail_send_from_draft() {
+        assert!(is_delivery_request(
+            "/coremail/common/mbox/compose.jsp",
+            Some(r#"{"action":"deliver","attrs":{"content":"x"}}"#),
+        ));
+        assert!(!is_delivery_request(
+            "/coremail/common/mbox/compose.jsp",
+            Some(r#"{"action":"save","attrs":{"content":"x"}}"#),
+        ));
+        assert!(is_delivery_request("/api/mail/send", None));
     }
 
     #[test]
@@ -289,7 +402,7 @@ mod tests {
 
     #[test]
     fn test_extract_content_for_dlp_normal() {
-        let body = r#"{"id":"1774418005615","attrs":{"subject":"Test主题","content":"emailbodyContent"},"action":"deliver"}"#;
+        let body = r#"{"id":"1000000000001","attrs":{"subject":"Test主题","content":"emailbodyContent"},"action":"deliver"}"#;
         let result = extract_content_for_dlp(body);
         assert!(result.is_some());
         let text = result.unwrap();
@@ -297,24 +410,24 @@ mod tests {
         assert!(text.contains("emailbodyContent"));
         // packetContains id Segment
         assert!(
-            !text.contains("1774418005615"),
+            !text.contains("1000000000001"),
             "Should not contain JSON id field"
         );
     }
 
     #[test]
     fn test_extract_content_for_dlp_no_phone_in_id() {
-        // found Scenario:id MediumContainsClassMobile phoneNumber
-        let body = r#"{"id":"1774418005615","attrs":{"account":"support@example.com","content":"<div>38D3670BE3FE3409</div>"},"action":"deliver"}"#;
+        // Synthetic numeric metadata must not be mistaken for a mobile number.
+        let body = r#"{"id":"1000000000001","attrs":{"account":"support@example.com","content":"<div>0123456789ABCDEF</div>"},"action":"deliver"}"#;
         let result = extract_content_for_dlp(body);
         assert!(result.is_some());
         let text = result.unwrap();
         assert!(
-            !text.contains("17744180056"),
+            !text.contains("10000000000"),
             "Extracted content should not contain digits from the id field"
         );
         assert!(
-            text.contains("38D3670BE3FE3409"),
+            text.contains("0123456789ABCDEF"),
             "Should contain the actual email content"
         );
     }
@@ -458,11 +571,11 @@ mod tests {
 
     #[test]
     fn test_extract_content_preserves_id_number_across_tags() {
-        // found: ID cardNumber HTML
-        let body = r#"{"attrs":{"content":"<span>610582</span><span>19950624</span><span>0513</span>","subject":""}}"#;
+        // A synthetic ID with an invalid region code is split across HTML tags.
+        let body = r#"{"attrs":{"content":"<span>000000</span><span>19950624</span><span>0519</span>","subject":""}}"#;
         let result = extract_content_for_dlp(body).unwrap();
         assert!(
-            result.contains("610582199506240513"),
+            result.contains("000000199506240519"),
             "ID number split across tags should be rejoined after stripping"
         );
     }

@@ -1,0 +1,19 @@
+From: =?utf-8?B?5Lya6K6u56eY5Lmm?= <sec@partner-meet.example>
+To: pm@corp.internal
+Date: Tue, 01 Sep 2026 10:18:00 +0800
+Message-ID: <0008-b9@synth.example>
+Subject: 纪要及行动项（含跟踪表）
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+纪要正文见邮件，行动项跟踪表在附件（请启用宏自动刷新）。
+--BS
+Content-Type: application/vnd.ms-excel
+Content-Disposition: attachment; filename="行动项跟踪表.xls"
+Content-Transfer-Encoding: base64
+
+0M8R4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+--BS--

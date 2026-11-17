@@ -10,11 +10,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub struct VerdictMetrics {
     /// 判定放行并成功转发下游（不含 fail-open 放行）
     pub accepted: AtomicU64,
-    /// 判定进入隔离区（250 对发件人透明）
+    /// Inline verdict 进入隔离区（250 对发件人透明；不含出站 DLP 自行隔离）
     pub quarantined: AtomicU64,
-    /// 判定拒绝（550）
+    /// Inline verdict 拒绝（550；不含出站 DLP 自行阻断）
     pub rejected: AtomicU64,
-    /// 引擎判定超时/不可用且 fail-open 放行
+    /// 出站 DLP 未提前终止且实际尝试 fail-open 下游中继（不表示最终成功投递）
     pub timeout_failopen: AtomicU64,
 }
 

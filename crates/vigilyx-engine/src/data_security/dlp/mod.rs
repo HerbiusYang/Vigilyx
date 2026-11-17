@@ -46,26 +46,28 @@ impl DlpScanResult {
         self.matches.is_empty()
     }
 
-    /// Statistics JR/T 0197-2020 level ofmatch total
-
-    /// `details` Medium modeofmatchInstance, Deduplicate ofmode Class.
-    /// if:1 FileContains 30 Mobile phoneNumber(C3) + 5 CVV(C4),
-    /// `count_items_at_level(3)` Return 35,`count_items_at_level(4)` Return 5.
+    /// Count detected field values at or above a candidate security level.
+    /// These are field matches, not a count of distinct people or legal violations.
     pub fn count_items_at_level(&self, min_level: u8) -> usize {
         self.details
             .iter()
-            .filter(|(name, _)| crate::data_security::jrt::jrt_level(name) >= min_level)
+            .filter(|(name, _)| {
+                crate::data_security::financial_policy::match_level(name, &self.matches)
+                    >= min_level
+            })
             .map(|(_, values)| values.len())
             .sum()
     }
 
-    /// According to JR/T level match Count
+    pub(super) fn merge(&mut self, other: Self) {
+        merge_dlp_results(self, other);
+    }
 
-    /// Return (level -> item_count) Mapping, packetContains matchoflevel.
-    pub fn items_by_jrt_level(&self) -> std::collections::HashMap<u8, usize> {
+    /// Distribution of candidate security levels among detected fields.
+    pub fn items_by_security_level(&self) -> std::collections::HashMap<u8, usize> {
         let mut counts = std::collections::HashMap::new();
         for (name, values) in &self.details {
-            let level = crate::data_security::jrt::jrt_level(name);
+            let level = crate::data_security::financial_policy::match_level(name, &self.matches);
             if level > 0 {
                 *counts.entry(level).or_insert(0) += values.len();
             }
@@ -120,13 +122,68 @@ const ENCODED_DECODE_BUDGET: usize = 100 * 1024;
 /// Coremail compose.jsp of JSON body, Extract `attrs.content` + `attrs.subject`,
 /// Avoid JSON Yuandata(id, CSS class name) match.
 /// 非 Coremail URI 且 Content-Type 为 text/html 的 body 同样先剥标签再扫描,
-/// 防止攻击者用 <span>/<style> 标签拆散身份证等敏感串绕过检测。
+/// 防止攻击者用 `<span>`/`<style>` 标签拆散身份证等敏感串绕过检测。
 pub fn extract_dlp_text(body: &str, uri: &str, content_type: Option<&str>) -> String {
     // Checkwhether Coremail compose URI
     if super::coremail::is_coremail_compose_uri(uri)
         && let Some(content) = super::coremail::extract_content_for_dlp(body)
     {
         return content;
+    }
+    // Transport envelope addresses identify recipients; they are not sensitive
+    // content being sent. Keep subject/body/unknown payload fields inspectable.
+    if super::coremail::is_delivery_request(uri, Some(body)) {
+        fn metadata(key: &str) -> bool {
+            matches!(
+                key.to_ascii_lowercase().as_str(),
+                "to" | "from"
+                    | "cc"
+                    | "bcc"
+                    | "sender"
+                    | "recipients"
+                    | "torecipients"
+                    | "ccrecipients"
+                    | "bccrecipients"
+                    | "replyto"
+                    | "account"
+                    | "sid"
+                    | "id"
+                    | "messageid"
+                    | "composeid"
+                    | "headers"
+                    | "header"
+                    | "csrf"
+                    | "csrftoken"
+            )
+        }
+        fn content(value: &mut serde_json::Value) {
+            match value {
+                serde_json::Value::Object(fields) => {
+                    fields.retain(|key, _| !metadata(key));
+                    for value in fields.values_mut() {
+                        content(value);
+                    }
+                }
+                serde_json::Value::Array(values) => {
+                    for value in values {
+                        content(value);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(body) {
+            content(&mut value);
+            return value.to_string();
+        }
+        if content_type.is_some_and(|value| value.starts_with("application/x-www-form-urlencoded"))
+        {
+            return url::form_urlencoded::parse(body.as_bytes())
+                .filter(|(key, _)| !metadata(key))
+                .map(|(key, value)| format!("{key}: {value}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
     }
     // 非 Coremail 的 text/html body: 剥掉标签/样式块后扫描
     let is_html = content_type
@@ -211,8 +268,7 @@ pub fn scan_text(text: &str) -> DlpScanResult {
         start = end;
     }
 
-    // Step 3: 计数阈值在合并后的全文结果上统一应用,
-    // 避免手机号/邮箱/大金额实例被窗口边界拆散后达不到阈值
+    // Apply the generic business-amount corroboration after merging windows.
     apply_count_thresholds(&mut merged, unique_large_amounts.len());
     merged
 }
@@ -262,13 +318,10 @@ fn enforce_category_caps(result: &mut DlpScanResult) {
     }
 }
 
-/// 计数阈值: 手机号/邮箱需 >=3 个不同实例, 大金额需 >=2 个实例
+/// Generic business amount detection still requires corroboration. Personal
+/// contact information is retained from the first valid item.
 fn apply_count_thresholds(result: &mut DlpScanResult, unique_large_amount_count: usize) {
-    const MIN_UNIQUE: &[(&str, usize)] = &[
-        ("phone_number", 3),
-        ("email_address", 3),
-        ("large_amount", 2),
-    ];
+    const MIN_UNIQUE: &[(&str, usize)] = &[("large_amount", 2)];
     for &(name, min) in MIN_UNIQUE {
         let count = if name == "large_amount" {
             unique_large_amount_count
@@ -337,7 +390,7 @@ fn scan_plain_text(text: &str, unique_large_amounts: &mut HashSet<String>) -> Dl
         }
     }
 
-    // Mobile phoneNumber (idx 2) - 原始命中, >=3 不同号码阈值由 scan_text 合并后统一应用
+    // Mobile phoneNumber (idx 2) - retain the first validated number
     if hits.matched(2) {
         let phone_matches = find_chinese_phones(text);
         if !phone_matches.is_empty() {
@@ -368,7 +421,7 @@ fn scan_plain_text(text: &str, unique_large_amounts: &mut HashSet<String>) -> Dl
         }
     }
 
-    // email (idx 5) - 原始命中, >=3 不同地址阈值由 scan_text 合并后统一应用
+    // email (idx 5) - retain the first non-system address
     if hits.matched(5) {
         let email_matches = find_emails(text);
         if !email_matches.is_empty() {
@@ -494,7 +547,7 @@ fn scan_plain_text(text: &str, unique_large_amounts: &mut HashSet<String>) -> Dl
 
     // JR/T 0197-2020 mode (idx 16-29)
 
-    // (idx 16) - C4, At least 2 SameKeywords
+    // (idx 16) - level-4, At least 2 SameKeywords
     if hits.matched(16) {
         let matches = find_keyword_matches(&RE_BIOMETRIC, text, 2);
         if !matches.is_empty() {
@@ -503,7 +556,7 @@ fn scan_plain_text(text: &str, unique_large_amounts: &mut HashSet<String>) -> Dl
         }
     }
 
-    // (idx 17) - C4, At least 2 SameKeywords
+    // (idx 17) - level-4, At least 2 SameKeywords
     if hits.matched(17) {
         let matches = find_keyword_matches(&RE_MEDICAL, text, 2);
         if !matches.is_empty() {
@@ -512,7 +565,7 @@ fn scan_plain_text(text: &str, unique_large_amounts: &mut HashSet<String>) -> Dl
         }
     }
 
-    // Info (idx 18) - C3
+    // Info (idx 18) - level-3
     if hits.matched(18) {
         let matches = find_vehicle_info(text);
         if !matches.is_empty() {
@@ -521,7 +574,7 @@ fn scan_plain_text(text: &str, unique_large_amounts: &mut HashSet<String>) -> Dl
         }
     }
 
-    // Info (idx 19) - C3
+    // Info (idx 19) - level-3
     if hits.matched(19) {
         let matches = find_keyword_matches(&RE_PROPERTY, text, 1);
         if !matches.is_empty() {
@@ -530,7 +583,7 @@ fn scan_plain_text(text: &str, unique_large_amounts: &mut HashSet<String>) -> Dl
         }
     }
 
-    // / (idx 20) - C3
+    // / (idx 20) - level-3
     if hits.matched(20) {
         let matches = find_context_matches(&RE_INCOME, text);
         if !matches.is_empty() {
@@ -539,7 +592,7 @@ fn scan_plain_text(text: &str, unique_large_amounts: &mut HashSet<String>) -> Dl
         }
     }
 
-    // bit / (idx 21) - C3
+    // bit / (idx 21) - level-3
     if hits.matched(21) {
         let matches = find_context_matches(&RE_GEO, text);
         if !matches.is_empty() {
@@ -548,7 +601,7 @@ fn scan_plain_text(text: &str, unique_large_amounts: &mut HashSet<String>) -> Dl
         }
     }
 
-    // VerifyCode/Digit/OTP (idx 22) - C3
+    // VerifyCode/Digit/OTP (idx 22) - level-3
     if hits.matched(22) && !result.matches.contains(&"cvv_code".to_string()) {
         let matches = find_context_matches(&RE_OTP, text);
         if !matches.is_empty() {
@@ -559,7 +612,7 @@ fn scan_plain_text(text: &str, unique_large_amounts: &mut HashSet<String>) -> Dl
         }
     }
 
-    // / (idx 23) - C3
+    // / (idx 23) - level-3
     if hits.matched(23) {
         let matches = find_context_matches(&RE_LOAN, text);
         if !matches.is_empty() {
@@ -570,7 +623,7 @@ fn scan_plain_text(text: &str, unique_large_amounts: &mut HashSet<String>) -> Dl
         }
     }
 
-    // (idx 24) - C3
+    // (idx 24) - level-3
     if hits.matched(24) {
         let matches = find_context_matches(&RE_INSURANCE, text);
         if !matches.is_empty() {
@@ -581,7 +634,7 @@ fn scan_plain_text(text: &str, unique_large_amounts: &mut HashSet<String>) -> Dl
         }
     }
 
-    // (idx 25) - C3
+    // (idx 25) - level-3
     if hits.matched(25) {
         let matches = find_context_matches(&RE_FAMILY, text);
         if !matches.is_empty() {
@@ -592,7 +645,7 @@ fn scan_plain_text(text: &str, unique_large_amounts: &mut HashSet<String>) -> Dl
         }
     }
 
-    // Info (idx 26) - C2
+    // Info (idx 26) - level-2
     if hits.matched(26) {
         let matches = find_context_matches(&RE_EMPLOYEE, text);
         if !matches.is_empty() {
@@ -601,7 +654,7 @@ fn scan_plain_text(text: &str, unique_large_amounts: &mut HashSet<String>) -> Dl
         }
     }
 
-    // Recording (idx 27) - C2, At least 2 SameKeywords
+    // Recording (idx 27) - level-2, At least 2 SameKeywords
     if hits.matched(27) {
         let matches = find_keyword_matches(&RE_JUDICIAL, text, 2);
         if !matches.is_empty() {
@@ -612,7 +665,7 @@ fn scan_plain_text(text: &str, unique_large_amounts: &mut HashSet<String>) -> Dl
         }
     }
 
-    // Info (idx 28) - C2
+    // Info (idx 28) - level-2
     if hits.matched(28) {
         let matches = find_context_matches(&RE_EDUCATION, text);
         if !matches.is_empty() {
@@ -621,7 +674,7 @@ fn scan_plain_text(text: &str, unique_large_amounts: &mut HashSet<String>) -> Dl
         }
     }
 
-    // Execute Number (idx 29) - C2
+    // Execute Number (idx 29) - level-2
     if hits.matched(29) {
         let matches = find_context_matches(&RE_BIZ_LICENSE, text);
         if !matches.is_empty() {
@@ -717,7 +770,7 @@ fn decode_hex(hex: &str) -> Option<Vec<u8>> {
         return None;
     }
     let mut out = Vec::with_capacity(hex.len() / 2);
-    for pair in hex.as_bytes().chunks_exact(2) {
+    for pair in hex.as_bytes().as_chunks::<2>().0 {
         let hi = (pair[0] as char).to_digit(16)?;
         let lo = (pair[1] as char).to_digit(16)?;
         out.push(((hi << 4) | lo) as u8);

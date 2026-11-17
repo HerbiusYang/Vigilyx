@@ -34,6 +34,7 @@ spec:
         app: vigilyx
         component: sandbox
     spec:
+      automountServiceAccountToken: false
       # Schedule onto nodes that support KVM
       nodeSelector:
         sandbox-capable: "true"
@@ -42,6 +43,19 @@ spec:
           operator: "Equal"
           value: "true"
           effect: "NoSchedule"
+      # A privileged KVM sandbox must not share a node with ordinary
+      # workloads.  The node label/taint selects eligible hosts; this required
+      # anti-affinity enforces the dedicated-node boundary at scheduling time.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: component
+                    operator: NotIn
+                    values:
+                      - sandbox
+              topologyKey: kubernetes.io/hostname
       containers:
         - name: cape
           # SECURITY: Pinned to an immutable digest (resolved from the `latest`
@@ -52,6 +66,12 @@ spec:
             - containerPort: 8000
               name: api
           env:
+            - name: SANDBOX_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: vigilyx-sandbox-secret
+                  key: SANDBOX_API_TOKEN
+                  optional: false
             - name: http_proxy
               valueFrom:
                 configMapKeyRef:
@@ -78,6 +98,8 @@ spec:
             # dedicated `sandbox-capable=true` nodes that run no other workloads.
             # Do not schedule this deployment on shared nodes.
             privileged: true  # Required by KVM
+          # CAPE does not need Kubernetes API credentials.
+          # The network policy separately restricts API ingress to the engine.
           volumeMounts:
             - name: storage
               mountPath: /opt/CAPEv2/storage

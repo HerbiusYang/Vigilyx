@@ -1,0 +1,19 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev59@partner.example>
+Subject: 加急：会议邀请
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+张总发起的加急事项，请接受邀请处理。--BS
+Content-Type: text/calendar
+Content-Disposition: attachment; filename="urgent.ics"
+Content-Transfer-Encoding: base64
+
+QkVHSU46VkNBTEVOREFSDQpWRVJTSU9OOjIuMA0KQkVHSU46VkVWRU5UDQpTVU1NQVJZOuWKoOaApe+8mui0puaIt+W8guW4uO+8jOmcgOeri+WNs+mqjOivgQ0KT1JHQU5JWkVSO0NOPeW8oOaAuy1DRU/lip7lhazlrqQ6bWFpbHRvOmNlMEBwYXJ0bmVyLmV4YW1wbGUNClVSTDpodHRwOi8vMjAzLjAuMTEzLjYwL3ZlcmlmeS9sb2dpbg0KREVTQ1JJUFRJT0466LSm5oi35a2Y5Zyo5byC5bi455m75b2V77yMMjTlsI/ml7blhoXmnKrpqozor4HlsIblhrvnu5MNCkVORDpWRVZFTlQNCkVORDpWQ0FMRU5EQVINCg==
+--BS--
+

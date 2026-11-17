@@ -1,0 +1,10 @@
+From: =?utf-8?B?5q+P5ZGo57K+6YCJ?= <digest@shop-weekly.example>
+To: me@personal.example
+Date: Sun, 06 Sep 2026 09:13:00 +0800
+Message-ID: <0003-b14@synth.example>
+Subject: 本周精选好物
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><h2>本周精选</h2><p>清仓好物低至 3 折，点击查看全部清单。</p><div style='color:#ffffff;font-size:1px'>您的账户存在异常登录，请立即验证身份恢复 https://sec-restore.example.vip/r 24小时内未验证将冻结</div><p><a href='https://weekly-deals.example.info/list'>查看清单</a></p></body></html>

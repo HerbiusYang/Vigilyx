@@ -14,6 +14,7 @@ pub mod metrics;
 mod routes;
 mod state;
 mod trace_id;
+mod training_redaction;
 mod websocket;
 
 // Re-export AppState at crate root for backward compatibility
@@ -23,15 +24,20 @@ use anyhow::Result;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use futures::StreamExt;
+use serde::Serialize;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock, broadcast};
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tracing::{Level, error, info, warn};
+use uuid::Uuid;
 use vigilyx_core::{Config, DataSecurityIncident, SecurityVerdictSummary, TrafficStats, WsMessage};
 use vigilyx_db::VigilDb;
-use vigilyx_db::mq::{DataPayloadAuth, MqClient, MqConfig, topics, verify_data_payload};
+use vigilyx_db::cache::{CacheDataset, CacheEnvelope, CacheKey, ReadCacheClient, ReadCacheConfig};
+use vigilyx_db::mq::{
+    DataPayloadAuth, MqClient, MqConfig, require_data_plane_token, topics, verify_data_payload,
+};
 
 use vigilyx_engine::ioc::IocManager;
 use vigilyx_engine::whitelist::WhitelistManager;
@@ -46,24 +52,139 @@ use crate::handlers::{MtaStatus, SnifferStatus};
 /// Periodically calculates expensive statistics queries and caches results so API handlers can return cached data directly.
 /// - External login statistics (original query ~29s) -> Refreshed every 60 seconds
 /// - Traffic statistics (original query ~4.5s) -> Refreshed every 30 seconds
+/// - Security overview/delivery statistics -> Warmed every 30 seconds
 async fn refresh_dashboard_cache(state: Arc<AppState>) {
     // Refresh immediately on first startup (warm-up)
     info!("Dashboard cache warm-up starting...");
+    let mut last_login_refresh: Option<Instant> = None;
 
     loop {
         // Refresh traffic statistics (sessions COUNT)
-        if let Ok(stats) = state.db.get_stats().await {
+        let traffic_result = {
+            let _guard = state.cache.traffic_stats_refresh_lock.lock().await;
+            state.db.get_stats().await
+        };
+        if let Ok(stats) = traffic_result {
             let mut cache = state.cache.traffic_stats.write().await;
-            *cache = Some((Instant::now(), stats));
+            *cache = Some((Instant::now(), stats.clone()));
+            shadow_write_read_cache(
+                &state,
+                CacheDataset::SessionCounts,
+                CacheKey::session_counts(),
+                &stats,
+            )
+            .await;
         }
 
-        // Refresh external login statistics (GROUP BY + COUNT DISTINCT + json_extract)
-        if let Ok(stats) = state.db.get_external_login_stats().await {
-            let mut cache = state.cache.login_stats.write().await;
-            *cache = Some((Instant::now(), stats));
+        // The security endpoint has its own process-local snapshot and an
+        // optional distributed read cache. Warm both paths from the same
+        // background task so the first dashboard visit does not pay the
+        // delivery-chain aggregate cost.
+        let security_result = state.engine_db.get_security_stats().await;
+        match security_result {
+            Ok(stats) => {
+                shadow_write_read_cache(
+                    &state,
+                    CacheDataset::SecurityOverview24h,
+                    CacheKey::security_overview(),
+                    &stats,
+                )
+                .await;
+            }
+            Err(error) => warn!(%error, "Dashboard security statistics warm-up failed"),
+        }
+
+        // External login statistics scan a large, long-lived session table.
+        // Keep the initial warm-up, then refresh at most once per minute;
+        // otherwise the 30-second loop can continuously re-run the expensive
+        // query and compete with every dashboard/list request.
+        let login_due = last_login_refresh
+            .is_none_or(|last_refresh| last_refresh.elapsed() >= Duration::from_secs(60));
+        if login_due {
+            let login_result = {
+                let _guard = state.cache.login_stats_refresh_lock.lock().await;
+                state.db.get_external_login_stats().await
+            };
+            last_login_refresh = Some(Instant::now());
+            if let Ok(stats) = login_result {
+                let mut cache = state.cache.login_stats.write().await;
+                *cache = Some((Instant::now(), stats.clone()));
+                shadow_write_read_cache(
+                    &state,
+                    CacheDataset::ExternalLogin24h,
+                    CacheKey::external_login(),
+                    &stats,
+                )
+                .await;
+            }
         }
 
         tokio::time::sleep(Duration::from_secs(30)).await;
+    }
+}
+
+/// Publish a background-computed aggregate to L2 when the dataset is enabled
+/// for reads or shadow writes.  The distributed lease makes multiple API
+/// instances share one refresh result instead of all writing the same key.
+async fn shadow_write_read_cache<T: Serialize>(
+    state: &AppState,
+    dataset: CacheDataset,
+    cache_key: CacheKey,
+    data: &T,
+) {
+    let Some(read_cache) = state.cache.read_cache.as_ref() else {
+        return;
+    };
+    let config = read_cache.config();
+    if !(config.enabled(dataset) || config.shadow_write_enabled(dataset)) {
+        return;
+    }
+
+    let token = Uuid::new_v4().to_string();
+    let lease = match read_cache
+        .try_acquire_refresh_lease(cache_key, &token)
+        .await
+    {
+        Ok(true) => true,
+        Ok(false) => {
+            metrics::READ_CACHE_LOCK_CONTENTION_TOTAL
+                .with_label_values(&[metrics::cache_dataset_label(dataset)])
+                .inc();
+            metrics::record_cache_request(dataset, "l2", "lease_contention");
+            false
+        }
+        Err(error) => {
+            metrics::record_cache_request(dataset, "l2", "lease_error");
+            metrics::record_cache_refresh_failure(dataset, &error);
+            false
+        }
+    };
+    if !lease {
+        return;
+    }
+
+    let envelope = CacheEnvelope::for_dataset(dataset, data, None);
+    let refresh_started = Instant::now();
+    match read_cache.set(cache_key, &envelope).await {
+        Ok(payload_bytes) => {
+            metrics::record_cache_request(dataset, "l2", "write");
+            metrics::READ_CACHE_REFRESH_DURATION_SECONDS
+                .with_label_values(&[metrics::cache_dataset_label(dataset)])
+                .observe(refresh_started.elapsed().as_secs_f64());
+            metrics::READ_CACHE_ENTRY_BYTES
+                .with_label_values(&[metrics::cache_dataset_label(dataset)])
+                .set(payload_bytes as f64);
+            metrics::record_cache_observation(dataset, envelope.generated_at);
+        }
+        Err(error) => {
+            metrics::record_cache_refresh_failure(dataset, &error);
+            metrics::record_cache_fallback(dataset, metrics::cache_error_reason(&error));
+            tracing::warn!(dataset = dataset.slug(), %error, "Read-cache background write failed");
+        }
+    }
+
+    if let Err(error) = read_cache.release_refresh_lease(cache_key, &token).await {
+        tracing::debug!(dataset = dataset.slug(), %error, "Read-cache background lease release failed");
     }
 }
 
@@ -89,15 +210,27 @@ async fn api_not_found() -> impl axum::response::IntoResponse {
 
 fn validate_internal_token_scope_split() -> Result<()> {
     let internal_api_token = std::env::var("INTERNAL_API_TOKEN").unwrap_or_default();
+    let sniffer_api_token = std::env::var("SNIFFER_API_TOKEN").unwrap_or_default();
+    let mta_api_token = std::env::var("MTA_API_TOKEN").unwrap_or_default();
     let ai_internal_token = std::env::var("AI_INTERNAL_TOKEN").unwrap_or_default();
+    let mq_auth_token = std::env::var("MQ_AUTH_TOKEN").unwrap_or_default();
 
-    if !internal_api_token.is_empty()
-        && !ai_internal_token.is_empty()
-        && internal_api_token == ai_internal_token
-    {
-        anyhow::bail!(
-            "AI_INTERNAL_TOKEN must differ from INTERNAL_API_TOKEN to preserve internal service boundaries"
-        );
+    let tokens = [
+        ("INTERNAL_API_TOKEN", internal_api_token),
+        ("SNIFFER_API_TOKEN", sniffer_api_token),
+        ("MTA_API_TOKEN", mta_api_token),
+        ("AI_INTERNAL_TOKEN", ai_internal_token),
+        ("MQ_AUTH_TOKEN", mq_auth_token),
+    ];
+    if let Some((name, _)) = tokens.iter().find(|(_, value)| value.len() < 32) {
+        anyhow::bail!("{name} must contain at least 32 bytes");
+    }
+    let unique = tokens
+        .iter()
+        .map(|(_, value)| value.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    if unique.len() != tokens.len() {
+        anyhow::bail!("Internal API, AI, and message-bus tokens must all differ");
     }
 
     Ok(())
@@ -112,10 +245,9 @@ async fn main() -> Result<()> {
         eprintln!("[PANIC] {}\n\nBacktrace:\n{}", info, backtrace);
     }));
 
-    // jsonwebtoken 11: dependency feature merging can enable both crypto
-    // backends, which disables auto-selection and panics on first token
-    // operation. Pin the pure-Rust provider explicitly.
-    let _ = jsonwebtoken::crypto::rust_crypto::DEFAULT_PROVIDER.install_default();
+    // jsonwebtoken 11: install the selected AWS-LC provider explicitly so
+    // feature merging cannot leave provider selection ambiguous.
+    let _ = jsonwebtoken::crypto::aws_lc::DEFAULT_PROVIDER.install_default();
 
     // Initialize logging (JSON format in production via LOG_FORMAT=json)
     let env_filter = tracing_subscriber::EnvFilter::from_default_env();
@@ -130,9 +262,72 @@ async fn main() -> Result<()> {
             .with_env_filter(env_filter)
             .init();
     }
+    // Schema changes run in a short-lived one-shot container. The long-lived
+    // API process never receives the PostgreSQL owner credential in its
+    // environment, so an API compromise cannot recover migration authority.
+    if std::env::var("VIGILYX_MIGRATE_ONLY").as_deref() == Ok("true") {
+        let database_url = std::env::var("DATABASE_URL")
+            .map_err(|_| anyhow::anyhow!("DATABASE_URL is required for migration mode"))?;
+        let migration_db = Database::new(&database_url).await?;
+        migration_db.init().await?;
+        let migration_engine_db = VigilDb::new(&database_url).await?;
+        migration_engine_db.init_security_tables().await?;
+        info!("Database migrations completed");
+        return Ok(());
+    }
+
+    // Provision the independent audit identity from a one-shot container.
+    // Existing accounts are never overwritten, and the long-lived API
+    // container is not given AUDIT_BOOTSTRAP_PASSWORD.
+    if std::env::var("VIGILYX_PROVISION_AUDIT_ONLY").as_deref() == Ok("true") {
+        let database_url = std::env::var("DATABASE_URL")
+            .map_err(|_| anyhow::anyhow!("DATABASE_URL is required for audit provisioning"))?;
+        let username =
+            std::env::var("AUDIT_USERNAME").unwrap_or_else(|_| "privacy-auditor".to_string());
+        let password = std::env::var("AUDIT_BOOTSTRAP_PASSWORD")
+            .map_err(|_| anyhow::anyhow!("AUDIT_BOOTSTRAP_PASSWORD is required"))?;
+        if username.trim().is_empty()
+            || username.chars().count() > 128
+            || username.chars().any(char::is_control)
+        {
+            anyhow::bail!("AUDIT_USERNAME is invalid");
+        }
+        crate::auth::validate_new_password(&username, &password)
+            .map_err(|error| anyhow::anyhow!("AUDIT_BOOTSTRAP_PASSWORD is invalid: {error}"))?;
+
+        let audit_db = VigilDb::new(&database_url).await?;
+        match audit_db.get_platform_auth_user(&username).await? {
+            Some(existing) if existing.role_id == vigilyx_db::AUDIT_ROLE_ID => {
+                info!("Independent audit identity already exists; leaving it unchanged");
+            }
+            Some(_) => anyhow::bail!(
+                "AUDIT_USERNAME already belongs to a non-audit account; refusing role mutation"
+            ),
+            None => {
+                let password_hash = crate::auth::hash_password(&password)
+                    .map_err(|error| anyhow::anyhow!("failed to hash audit password: {error}"))?;
+                audit_db
+                    .create_platform_user(
+                        &username,
+                        "Privacy Auditor",
+                        &password_hash,
+                        vigilyx_db::AUDIT_ROLE_ID,
+                        true,
+                    )
+                    .await?;
+                info!("Independent audit identity provisioned; password change required");
+            }
+        }
+        return Ok(());
+    }
+
+    vigilyx_core::validate_config_encryption_key()
+        .map_err(|error| anyhow::anyhow!("configuration encryption is required: {error}"))?;
 
     info!("Vigilyx API service starting...");
     validate_internal_token_scope_split()?;
+    require_data_plane_token()
+        .map_err(|error| anyhow::anyhow!("data-plane authentication is required: {error}"))?;
 
     // Load configuration
     let config = Config::from_env()?;
@@ -145,14 +340,11 @@ async fn main() -> Result<()> {
     );
     info!("  - Database: {}", db_log);
 
-    // Initialize database
     let db = Database::new(&config.database_url).await?;
-    db.init().await?;
     info!("Database initialization complete");
 
-    // Initialize security engine DB (shares same PostgreSQL database)
+    // Runtime security DB uses the same least-privilege API role.
     let engine_db = VigilDb::new(&config.database_url).await?;
-    engine_db.init_security_tables().await?;
     info!("Security engine DB initialization complete");
 
     // Initialize managers (lightweight DB wrappers for API CRUD)
@@ -189,6 +381,24 @@ async fn main() -> Result<()> {
             }
         };
 
+    // The read cache is an optional operational dependency. Invalid or
+    // unavailable cache configuration must degrade to PostgreSQL and must not
+    // prevent API startup or affect the message bus.
+    let read_cache = match ReadCacheConfig::from_env() {
+        Ok(cache_config) => {
+            info!(config = ?cache_config, "Read-cache configuration loaded");
+            if cache_config.should_initialize() {
+                Some(ReadCacheClient::new(cache_config))
+            } else {
+                None
+            }
+        }
+        Err(error) => {
+            warn!(%error, "Read-cache configuration invalid; cache disabled, using PostgreSQL");
+            None
+        }
+    };
+
     // Initialize authentication configuration
     let auth_config = match AuthConfig::from_env() {
         Ok(config) => {
@@ -219,10 +429,11 @@ async fn main() -> Result<()> {
         error!(error = %error, "Platform RBAC bootstrap failed");
         std::process::exit(1);
     }
-    info!(username = %auth_config.username, "Platform RBAC bootstrap complete");
+    info!("Platform RBAC bootstrap complete");
     let auth_state = AuthState {
         config: Arc::new(auth_config),
-        // Per-IP login rate limit: Max 10 failures within 60 second window
+        // IP + account login rate limit: max 10 IP failures or 30 account
+        // failures within the 60-second window.
         login_rate_limiter: Arc::new(crate::auth::LoginRateLimiter::new(10, 60)),
     };
 
@@ -257,6 +468,9 @@ async fn main() -> Result<()> {
         cache: CacheState {
             login_stats: RwLock::new(None),
             traffic_stats: RwLock::new(None),
+            traffic_stats_refresh_lock: Mutex::new(()),
+            login_stats_refresh_lock: Mutex::new(()),
+            read_cache: read_cache.clone(),
         },
         ws_tickets: auth::WsTicketStore::new(),
         ws_auth_epoch: std::sync::atomic::AtomicU64::new(0),
@@ -284,6 +498,39 @@ async fn main() -> Result<()> {
         },
     });
 
+    // Warm the optional L2 cache connection without making it part of API
+    // readiness. A stopped/slow cache is observable but harmless.
+    if let Some(read_cache) = read_cache {
+        tokio::spawn(async move {
+            if let Err(error) = read_cache.warm_up().await {
+                warn!(%error, "Read-cache warm-up failed; PostgreSQL fallback remains active");
+            }
+        });
+    }
+
+    // Warm expensive data-security aggregates independently of the first
+    // browser visit. The DB snapshots coalesce requests and refresh in the
+    // background, so concurrent tabs do not each scan millions of rows.
+    {
+        let state_bg = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                interval.tick().await;
+                if let Err(error) = state_bg.db.get_email_data_security_stats().await {
+                    warn!(%error, "Data-security email stats warm-up failed");
+                }
+                if let Err(error) = state_bg.db.get_data_security_stats().await {
+                    warn!(%error, "Data-security overview warm-up failed");
+                }
+                if let Err(error) = state_bg.db.get_data_security_engine_totals().await {
+                    warn!(%error, "Data-security totals warm-up failed");
+                }
+            }
+        });
+    }
+
     // Start dashboard cache background refresh task
     {
         let state_bg = state.clone();
@@ -292,7 +539,7 @@ async fn main() -> Result<()> {
         });
     }
 
-    // Per-IP login rate limiter: Clean expired entries every 5 minutes (prevents unbounded memory growth)
+    // Login rate limiter: clean expired IP/account entries every 5 minutes.
     {
         let limiter = state.auth.login_rate_limiter.clone();
         tokio::spawn(async move {
@@ -539,14 +786,11 @@ async fn subscribe_redis_messages(
 
     info!("Starting Redis Pub/Sub subscription (Stats + Engine results)...");
 
-    // SEC (C1/M-2): data-plane payloads carry a v1 HMAC envelope; read the
-    // token once at startup. With the token configured, verification fails
-    // closed; without it the data plane is unauthenticated by construction
-    // (insecure mode, flagged at error level).
-    let data_token = std::env::var("INTERNAL_API_TOKEN").unwrap_or_default();
-    if data_token.is_empty() {
-        error!("INTERNAL_API_TOKEN not set — data-plane messages are accepted unauthenticated (insecure mode)");
-    }
+    // SEC (C1/M-2): data-plane payloads carry a v1 HMAC envelope. Startup
+    // already fails without the shared token; keep the local copy stable for
+    // the lifetime of this subscription loop.
+    let data_token = require_data_plane_token()
+        .map_err(|error| anyhow::anyhow!("data-plane authentication is required: {error}"))?;
 
     // Process message
     let mut stream = pubsub.on_message();
@@ -564,18 +808,6 @@ async fn subscribe_redis_messages(
         // touching the payload; forged messages never reach WebSocket clients.
         let payload = match verify_data_payload(&raw_payload, &data_token) {
             DataPayloadAuth::Verified(json) => json,
-            DataPayloadAuth::Legacy(raw) => {
-                use std::sync::atomic::{AtomicBool, Ordering};
-                static LEGACY_WARNED: AtomicBool = AtomicBool::new(false);
-                // Reachable only when INTERNAL_API_TOKEN is unset (SEC M-2).
-                if !LEGACY_WARNED.swap(true, Ordering::Relaxed) {
-                    error!(
-                        channel,
-                        "INTERNAL_API_TOKEN not set — accepted unsigned data-plane message (insecure mode)"
-                    );
-                }
-                raw.to_string()
-            }
             DataPayloadAuth::Rejected => {
                 warn!(
                     channel,
@@ -631,7 +863,7 @@ async fn subscribe_redis_messages(
             }
             topics::ENGINE_DS_INCIDENT => {
                 if let Ok(i) = serde_json::from_str::<DataSecurityIncident>(&payload) {
-                    Some(WsMessage::DataSecurityAlert(i))
+                    Some(WsMessage::DataSecurityAlert(redact_ws_incident(i)))
                 } else {
                     None
                 }
@@ -681,6 +913,13 @@ fn verdict_level_label(threat_level: &str) -> &'static str {
     }
 }
 
+fn redact_ws_incident(mut incident: DataSecurityIncident) -> DataSecurityIncident {
+    incident.evidence.clear();
+    incident.details = None;
+    incident.detected_user = None;
+    incident
+}
+
 #[cfg(test)]
 mod tests {
     use super::{api_not_found, spa_fallback, verdict_level_label};
@@ -717,9 +956,7 @@ mod tests {
         let api_app = Router::new()
             .route("/health", get(|| async { "ok" }))
             .fallback(api_not_found);
-        let app = Router::new()
-            .nest("/api", api_app)
-            .fallback(spa_fallback);
+        let app = Router::new().nest("/api", api_app).fallback(spa_fallback);
 
         let response = app
             .oneshot(
@@ -732,6 +969,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
-        assert_eq!(response.headers()[axum::http::header::CONTENT_TYPE], "application/json");
+        assert_eq!(
+            response.headers()[axum::http::header::CONTENT_TYPE],
+            "application/json"
+        );
     }
 }

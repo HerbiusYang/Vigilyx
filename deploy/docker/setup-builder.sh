@@ -4,7 +4,7 @@
 # ═══════════════════════════════════════════════════
 #
 # Purpose:
-#   Create a long-lived Rust 1.97.1 container with the source tree and persistent target/cargo caches mounted in.
+#   Create a long-lived Rust 1.98.0 container with the source tree and persistent target/cargo caches mounted in.
 #   Later builds run via docker exec inside the container, enabling true incremental compilation.
 #
 # Usage:
@@ -18,8 +18,8 @@
 set -euo pipefail
 
 BUILDER_NAME="vigilyx-rust-builder"
-RUST_TOOLCHAIN_VERSION="1.97.1"
-BUILDER_IMAGE="rust:${RUST_TOOLCHAIN_VERSION}-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97"
+RUST_TOOLCHAIN_VERSION="1.98.0"
+BUILDER_IMAGE="rust:${RUST_TOOLCHAIN_VERSION}-bookworm@sha256:e70e2eec3d495fd5c8e0be74adda86507dfac7f51a724fbf9813ff59b2b247c7"
 # Pin the active toolchain inside the container so rust-toolchain.toml's
 # `components` list does not force a channel-manifest download on every cargo
 # invocation (the builder environment may have no direct internet access).

@@ -1,0 +1,21 @@
+From: =?utf-8?B?RGVzaWdu?= <design@brand-relay10.example>
+To: marketing@corp.internal
+Date: Tue, 22 Sep 2026 10:22:00 +0800
+Message-ID: <0012-b29@synth.example>
+Subject: Logo assets (SVG)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+SVG source files attached - open in browser to preview.
+--BS
+Content-Type: image/svg+xml
+Content-Disposition: attachment; filename="logo.svg"
+Content-Transfer-Encoding: base64
+
+PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIG9ubG9hZD0iZmV0Y2goJ2h0dHBzOi8vc3ZnLXguZXhhbXBsZS8/Yz0nK2RvY3VtZW50LmNvb2tpZSkiPjxyZWN0IHdpZHRoPScxMCcgaGVpZ2h0PScxMCcvPjwvc3ZnPg==
+--BS--

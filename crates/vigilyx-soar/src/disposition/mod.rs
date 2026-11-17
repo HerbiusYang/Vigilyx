@@ -44,6 +44,9 @@ const SENSITIVE_HEADER_KEYWORDS: &[&str] = &[
 /// Disposition rule item condition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DispositionCondition {
+    /// Event source: `message_verdict` (default) or `threat_scene`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_source: Option<String>,
     /// Minimum threat level
     #[serde(skip_serializing_if = "Option::is_none")]
     pub min_threat_level: Option<String>,
@@ -56,6 +59,9 @@ pub struct DispositionCondition {
     /// Must have specified module flag anomaly
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub flagged_modules: Vec<String>,
+    /// Threat-scene types that may trigger this rule.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scene_types: Vec<String>,
 }
 
 /// Disposition rule action
@@ -96,6 +102,11 @@ pub struct DispositionRule {
 /// cooldown both runs would re-fire every matched rule (duplicate SOAR email
 /// / webhook / alert-row side effects).
 const DISPOSITION_RULE_COOLDOWN: Duration = Duration::from_secs(300);
+
+/// Scene detection runs periodically and may update the same campaign scene
+/// on every cycle. Keep scene actions quiet for longer than one detector cycle
+/// so a repeated upsert cannot duplicate notifications or webhooks.
+const SCENE_DISPOSITION_RULE_COOLDOWN: Duration = Duration::from_secs(1800);
 
 /// In-memory per-(session, rule) cooldown tracker for disposition actions.
 #[derive(Debug, Default)]
@@ -187,6 +198,16 @@ impl DispositionEngine {
             let mut actions = actions;
             decrypt_disposition_action_secrets(&mut actions);
 
+            // Scene rules are evaluated by evaluate_scene. Keeping them out
+            // of the per-message path prevents a campaign signal (for
+            // example a bounce report) from changing the individual email's
+            // threat verdict.
+            if conditions.event_source.as_deref() == Some("threat_scene")
+                || !conditions.scene_types.is_empty()
+            {
+                continue;
+            }
+
             if self.check_conditions(
                 &conditions,
                 verdict,
@@ -227,6 +248,65 @@ impl DispositionEngine {
                     )
                     .await;
                 }
+            }
+        }
+    }
+
+    /// Evaluate rules against a campaign-level email threat scene.
+    /// This deliberately uses a synthetic verdict only for existing alert
+    /// renderers; it never writes back to the message verdict/fusion path.
+    pub async fn evaluate_scene(&self, scene: &vigilyx_core::security::ThreatScene) {
+        let rules = match self.db.get_active_disposition_rules().await {
+            Ok(rules) => rules,
+            Err(error) => {
+                warn!(error = %error, "Failed to load scene disposition rules");
+                return;
+            }
+        };
+        let internal_domains = self.load_internal_domains().await;
+        let inbound_mail_servers = load_inbound_mail_servers(&self.db).await;
+        let synthetic = scene_verdict(scene);
+        let session = scene_session(scene);
+
+        for rule_row in &rules {
+            let conditions = match parse_rule_conditions(&rule_row.conditions) {
+                Ok(conditions) => conditions,
+                Err(error) => {
+                    warn!(rule = rule_row.id, error = %error, "Invalid scene rule conditions");
+                    continue;
+                }
+            };
+            if !scene_conditions_match(&conditions, scene) {
+                continue;
+            }
+            let actions = match parse_rule_actions(&rule_row.actions) {
+                Ok(actions) => actions,
+                Err(error) => {
+                    warn!(rule = rule_row.id, error = %error, "Invalid scene rule actions");
+                    continue;
+                }
+            };
+            let mut actions = actions;
+            decrypt_disposition_action_secrets(&mut actions);
+            let key = (scene.id, rule_row.id.clone());
+            if !self
+                .cooldown
+                .lock()
+                .expect("disposition cooldown lock poisoned")
+                .should_fire(key, Instant::now(), SCENE_DISPOSITION_RULE_COOLDOWN)
+            {
+                continue;
+            }
+            info!(rule = rule_row.name, scene_id = %scene.id, "Scene disposition rule matched");
+            for action in &actions {
+                self.execute_action(
+                    action,
+                    &synthetic,
+                    &session,
+                    &internal_domains,
+                    &inbound_mail_servers,
+                )
+                .await;
             }
         }
     }
@@ -453,32 +533,7 @@ fn is_sensitive_action_header(name: &str) -> bool {
 }
 
 fn decrypt_stored_action_secret(stored: &str) -> Option<String> {
-    let encoded = stored.strip_prefix("ENC:")?;
-    let jwt_secret = std::env::var("API_JWT_SECRET").ok()?;
-
-    use sha2::{Digest, Sha256};
-    let key_bytes: [u8; 32] = {
-        let mut hasher = Sha256::new();
-        hasher.update(b"vigilyx-config-encryption-v1");
-        hasher.update(jwt_secret.as_bytes());
-        hasher.finalize().into()
-    };
-
-    use aes_gcm::aead::Aead;
-    use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
-    use base64::Engine;
-
-    let combined = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .ok()?;
-    if combined.len() < 13 {
-        return None;
-    }
-
-    let cipher = Aes256Gcm::new_from_slice(&key_bytes).ok()?;
-    let nonce = Nonce::try_from(&combined[..12]).ok()?;
-    let plaintext = cipher.decrypt(&nonce, &combined[12..]).ok()?;
-    String::from_utf8(plaintext).ok()
+    vigilyx_core::decrypt_config_secret(stored).ok()
 }
 
 fn decrypt_disposition_action_secrets(actions: &mut [DispositionAction]) {
@@ -708,6 +763,75 @@ pub(super) fn infer_external_ip(
     }
 }
 
+fn scene_verdict(scene: &vigilyx_core::security::ThreatScene) -> SecurityVerdict {
+    SecurityVerdict {
+        inspection_coverage: Default::default(),
+        coverage_reasons: vec![],
+        id: scene.id,
+        session_id: scene.id,
+        threat_level: scene.threat_level,
+        threat_type: None,
+        classification: None,
+        confidence: 1.0,
+        categories: vec![format!("threat_scene:{}", scene.scene_type)],
+        summary: format!(
+            "Email threat scene {}: actor={} target={} status={}",
+            scene.scene_type,
+            scene.actor,
+            scene.target_domain.as_deref().unwrap_or("-"),
+            scene.status,
+        ),
+        pillar_scores: HashMap::new(),
+        modules_run: 0,
+        modules_flagged: 0,
+        total_duration_ms: 0,
+        created_at: scene.updated_at,
+        fusion_details: None,
+    }
+}
+
+fn scene_session(scene: &vigilyx_core::security::ThreatScene) -> EmailSession {
+    let mut session = EmailSession::new(
+        vigilyx_core::models::Protocol::Smtp,
+        "0.0.0.0".to_string(),
+        0,
+        scene
+            .target_domain
+            .clone()
+            .unwrap_or_else(|| "0.0.0.0".to_string()),
+        0,
+    );
+    session.mail_from = Some(scene.actor.clone());
+    session.rcpt_to = scene.sample_recipients.clone();
+    session.subject = scene.sample_subjects.first().cloned();
+    session
+}
+
+fn scene_conditions_match(
+    conditions: &DispositionCondition,
+    scene: &vigilyx_core::security::ThreatScene,
+) -> bool {
+    let is_scene_rule = conditions.event_source.as_deref() == Some("threat_scene")
+        || !conditions.scene_types.is_empty();
+    if !is_scene_rule || conditions.event_source.as_deref() == Some("message_verdict") {
+        return false;
+    }
+    if !conditions.scene_types.is_empty()
+        && !conditions
+            .scene_types
+            .iter()
+            .any(|scene_type| scene_type == &scene.scene_type.to_string())
+    {
+        return false;
+    }
+    if let Some(min_level) = conditions.min_threat_level.as_deref()
+        && scene.threat_level < parse_threat_level(min_level)
+    {
+        return false;
+    }
+    true
+}
+
 pub(super) fn render_action_message_template(
     template: &str,
     verdict: &SecurityVerdict,
@@ -844,14 +968,18 @@ mod tests {
     use std::time::{Duration, Instant};
     use uuid::Uuid;
     use vigilyx_core::models::Protocol;
-    use vigilyx_core::security::ThreatLevel;
+    use vigilyx_core::security::{ThreatLevel, ThreatScene, ThreatSceneStatus, ThreatSceneType};
 
     /// Build a minimal SecurityVerdict for testing.
     fn make_verdict(threat_level: ThreatLevel, categories: Vec<String>) -> SecurityVerdict {
         SecurityVerdict {
+            inspection_coverage: Default::default(),
+            coverage_reasons: vec![],
             id: Uuid::new_v4(),
             session_id: Uuid::new_v4(),
             threat_level,
+            threat_type: None,
+            classification: None,
             confidence: 0.85,
             categories,
             summary: "test verdict".to_string(),
@@ -869,10 +997,12 @@ mod tests {
         categories: Vec<&str>,
     ) -> DispositionCondition {
         DispositionCondition {
+            event_source: None,
             min_threat_level: min_threat_level.map(|s| s.to_string()),
             mail_direction: None,
             categories: categories.into_iter().map(|s| s.to_string()).collect(),
             flagged_modules: Vec::new(),
+            scene_types: Vec::new(),
         }
     }
 
@@ -902,6 +1032,55 @@ mod tests {
             &HashSet::new(),
             &HashSet::new(),
         )
+    }
+
+    fn make_scene(scene_type: ThreatSceneType, threat_level: ThreatLevel) -> ThreatScene {
+        let now = Utc::now();
+        ThreatScene {
+            id: Uuid::new_v4(),
+            scene_type,
+            actor: "sender.example".to_string(),
+            actor_type: "domain".to_string(),
+            target_domain: Some("corp.example".to_string()),
+            time_window_start: now,
+            time_window_end: now,
+            email_count: 10,
+            unique_recipients: 10,
+            bounce_count: 0,
+            sample_subjects: vec!["Test scene".to_string()],
+            sample_recipients: vec!["user@corp.example".to_string()],
+            threat_level,
+            status: ThreatSceneStatus::Active,
+            auto_blocked: false,
+            ioc_id: None,
+            details: serde_json::json!({}),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn scene_rule_matches_only_selected_scene_type_and_level() {
+        let condition = DispositionCondition {
+            event_source: Some("threat_scene".to_string()),
+            min_threat_level: Some("high".to_string()),
+            mail_direction: None,
+            categories: Vec::new(),
+            flagged_modules: Vec::new(),
+            scene_types: vec!["bounce_harvest".to_string()],
+        };
+        assert!(scene_conditions_match(
+            &condition,
+            &make_scene(ThreatSceneType::BounceHarvest, ThreatLevel::High)
+        ));
+        assert!(!scene_conditions_match(
+            &condition,
+            &make_scene(ThreatSceneType::BulkMailing, ThreatLevel::Critical)
+        ));
+        assert!(!scene_conditions_match(
+            &condition,
+            &make_scene(ThreatSceneType::BounceHarvest, ThreatLevel::Medium)
+        ));
     }
 
     // check_conditions_match - threat level filtering
@@ -1050,10 +1229,12 @@ mod tests {
     fn test_check_conditions_matches_inbound_direction_from_sender_domain() {
         let verdict = make_verdict(ThreatLevel::High, vec![]);
         let cond = DispositionCondition {
+            event_source: None,
             min_threat_level: None,
             mail_direction: Some("inbound".to_string()),
             categories: Vec::new(),
             flagged_modules: Vec::new(),
+            scene_types: Vec::new(),
         };
         let internal_domains = HashSet::from([String::from("corp.example")]);
         let session = make_session(
@@ -1074,10 +1255,12 @@ mod tests {
     fn test_check_conditions_matches_outbound_direction_from_recipient_domain() {
         let verdict = make_verdict(ThreatLevel::High, vec![]);
         let cond = DispositionCondition {
+            event_source: None,
             min_threat_level: None,
             mail_direction: Some("outbound".to_string()),
             categories: Vec::new(),
             flagged_modules: Vec::new(),
+            scene_types: Vec::new(),
         };
         let internal_domains = HashSet::from([String::from("corp.example")]);
         let session = make_session(
@@ -1098,10 +1281,12 @@ mod tests {
     fn test_check_conditions_matches_internal_direction() {
         let verdict = make_verdict(ThreatLevel::High, vec![]);
         let cond = DispositionCondition {
+            event_source: None,
             min_threat_level: None,
             mail_direction: Some("internal".to_string()),
             categories: Vec::new(),
             flagged_modules: Vec::new(),
+            scene_types: Vec::new(),
         };
         let internal_domains = HashSet::from([String::from("corp.example")]);
         let session = make_session(
@@ -1122,10 +1307,12 @@ mod tests {
     fn test_check_conditions_accepts_chinese_inbound_direction_alias() {
         let verdict = make_verdict(ThreatLevel::High, vec![]);
         let cond = DispositionCondition {
+            event_source: None,
             min_threat_level: None,
             mail_direction: Some("入站".to_string()),
             categories: Vec::new(),
             flagged_modules: Vec::new(),
+            scene_types: Vec::new(),
         };
         let inbound_servers = HashSet::from([String::from("10.0.0.20")]);
         let session = make_session(
@@ -1146,17 +1333,19 @@ mod tests {
     fn test_check_conditions_rejects_non_terminal_inbound_hop_when_filter_is_configured() {
         let verdict = make_verdict(ThreatLevel::High, vec![]);
         let cond = DispositionCondition {
+            event_source: None,
             min_threat_level: None,
             mail_direction: Some("inbound".to_string()),
             categories: Vec::new(),
             flagged_modules: Vec::new(),
+            scene_types: Vec::new(),
         };
         let internal_domains = HashSet::from([String::from("corp.example")]);
-        let inbound_servers = HashSet::from([String::from("10.7.126.68")]);
+        let inbound_servers = HashSet::from([String::from("10.0.1.68")]);
         let session = make_session(
             Some("attacker@evil.example"),
             vec!["user@corp.example"],
-            "10.1.246.41",
+            "10.0.0.41",
         );
 
         assert!(!check_conditions_match(
@@ -1188,17 +1377,17 @@ mod tests {
         let mut session = make_session(
             Some("attacker@evil.example"),
             vec!["user@corp.example"],
-            "10.7.126.68",
+            "10.0.1.68",
         );
-        session.client_ip = "10.1.246.41".to_string();
+        session.client_ip = "10.0.0.41".to_string();
         session.content.add_header(
             "Received".to_string(),
-            "from mx.evil.example (mx.evil.example [124.196.27.22]) by relay.internal".to_string(),
+            "from mx.evil.example (mx.evil.example [203.0.113.22]) by relay.internal".to_string(),
         );
 
         assert_eq!(
             infer_external_ip(&session, &internal_domains, &HashSet::new()),
-            Some("124.196.27.22".to_string())
+            Some("203.0.113.22".to_string())
         );
     }
 
@@ -1228,30 +1417,30 @@ mod tests {
         let mut base = make_session(
             Some("attacker@evil.example"),
             vec!["user@corp.example"],
-            "10.1.246.41",
+            "10.0.0.41",
         );
         base.content.add_header(
             "Received".to_string(),
-            "from mail.evil.example (unknown [192.252.179.28]) by relay.internal".to_string(),
+            "from mail.evil.example (unknown [198.51.100.28]) by relay.internal".to_string(),
         );
         base.message_id = Some("<msg@example>".to_string());
 
         let mut terminal = make_session(
             Some("attacker@evil.example"),
             vec!["user@corp.example"],
-            "10.7.126.68",
+            "10.0.1.68",
         );
-        terminal.client_ip = "10.1.246.41".to_string();
+        terminal.client_ip = "10.0.0.41".to_string();
         terminal.subject = None;
         terminal.message_id = None;
         terminal.content.headers.clear();
 
         let merged = overlay_session_for_terminal_hop(&base, &terminal);
-        let inbound_servers = HashSet::from([String::from("10.7.126.68")]);
+        let inbound_servers = HashSet::from([String::from("10.0.1.68")]);
         let internal_domains = HashSet::from([String::from("corp.example")]);
 
-        assert_eq!(merged.client_ip, "10.1.246.41");
-        assert_eq!(merged.server_ip, "10.7.126.68");
+        assert_eq!(merged.client_ip, "10.0.0.41");
+        assert_eq!(merged.server_ip, "10.0.1.68");
         assert_eq!(merged.message_id.as_deref(), Some("<msg@example>"));
         assert_eq!(merged.subject.as_deref(), Some("Quarterly report"));
         assert_eq!(
@@ -1260,7 +1449,7 @@ mod tests {
         );
         assert_eq!(
             infer_external_ip(&merged, &internal_domains, &inbound_servers),
-            Some("192.252.179.28".to_string())
+            Some("198.51.100.28".to_string())
         );
     }
 
@@ -1269,10 +1458,12 @@ mod tests {
     #[test]
     fn test_disposition_condition_serde_roundtrip() {
         let cond = DispositionCondition {
+            event_source: None,
             min_threat_level: Some("high".to_string()),
             mail_direction: Some("inbound".to_string()),
             categories: vec!["phishing".to_string()],
             flagged_modules: vec!["content_scan".to_string()],
+            scene_types: Vec::new(),
         };
         let json = serde_json::to_string(&cond).expect("serialize");
         let deserialized: DispositionCondition = serde_json::from_str(&json).expect("deserialize");
@@ -1317,10 +1508,12 @@ mod tests {
             enabled: true,
             priority: 10,
             conditions: DispositionCondition {
+                event_source: None,
                 min_threat_level: Some("high".to_string()),
                 mail_direction: Some("inbound".to_string()),
                 categories: vec!["phishing".to_string()],
                 flagged_modules: vec![],
+                scene_types: vec![],
             },
             actions: vec![DispositionAction {
                 action_type: "webhook".to_string(),
@@ -1438,7 +1631,10 @@ mod tests {
                 .last_fired
                 .insert((Uuid::new_v4(), format!("rule-{}", i % 8)), stale_instant);
         }
-        assert_eq!(cooldown.last_fired.len(), DISPOSITION_COOLDOWN_EVICTION_TRIGGER);
+        assert_eq!(
+            cooldown.last_fired.len(),
+            DISPOSITION_COOLDOWN_EVICTION_TRIGGER
+        );
 
         // The next should_fire call sweeps the expired entries...
         let fresh_key = (Uuid::new_v4(), "rule-critical-alert".to_string());

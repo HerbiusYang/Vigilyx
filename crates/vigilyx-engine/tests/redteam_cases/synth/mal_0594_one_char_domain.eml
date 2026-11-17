@@ -1,0 +1,11 @@
+From: =?utf-8?B?SVQg5pyN5Yqh5Y+w?= <itsm@corp.interna1.example>
+To: dev@corp.internal
+Date: Mon, 28 Sep 2026 08:10:00 +0800
+Message-ID: <0000-b34@synth.example>
+Reply-To: itsm@corp.interna1.example
+Subject: 网关发布窗口变更通知
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+各位：因机房电力检修，网关发布窗口从周四 23:00 调整至周五 23:00，
+灰度比例不变，值班表顺延。具体见值班本。

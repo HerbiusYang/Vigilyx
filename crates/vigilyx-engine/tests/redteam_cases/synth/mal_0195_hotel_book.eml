@@ -1,0 +1,11 @@
+From: =?utf-8?B?6K6i5Y2V5pyN5Yqh?= <book@stay-svc.example>
+To: me@personal.example
+Date: Fri, 04 Sep 2026 10:14:00 +0800
+Message-ID: <0004-b12@synth.example>
+Subject: 预订未完成（房费未付）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您的房费支付未完成，订单将取消。续付：
+https://stay-pay.example.info/c
+（卡号+有效期+CVV）

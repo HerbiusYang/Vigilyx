@@ -1,0 +1,19 @@
+From: =?utf-8?B?5YaF5o6n5Yqe5YWs5a6k?= <audit@partner.example>
+To: finance@corp.internal
+Date: Tue, 25 Aug 2026 10:36:00 +0800
+Message-ID: <0016-b2@synth.example>
+Subject: 内控自查表（宏版）
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+自查表需启用宏后填写，周五回收。
+--BS
+Content-Type: application/vnd.ms-word.document.macroEnabled.12
+Content-Disposition: attachment; filename="内控自查表.docm"
+Content-Transfer-Encoding: base64
+
+UEsDBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+--BS--

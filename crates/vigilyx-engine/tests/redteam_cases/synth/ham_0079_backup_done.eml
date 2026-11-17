@@ -1,0 +1,10 @@
+From: =?utf-8?B?5aSH5Lu957O757uf?= <backup@corp.internal>
+To: ops@corp.internal
+Date: Thu, 27 Aug 2026 09:53:00 +0800
+Message-ID: <0038-b4@synth.example>
+Subject: [OK] 夜间全量备份完成
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+全量 2.1T 完成 03:12，校验通过，快照保留 14 份。
+异地副本延迟 40 分钟同步完成。

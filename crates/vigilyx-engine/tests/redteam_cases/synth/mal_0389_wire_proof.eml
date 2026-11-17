@@ -1,0 +1,10 @@
+From: =?utf-8?B?5Y+45bqT?= <tk@treasury-relay5.example>
+To: bank-rel@corp.internal
+Date: Thu, 17 Sep 2026 09:13:00 +0800
+Message-ID: <0003-b24@synth.example>
+Subject: 水单与账务不符（重发凭证）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+请以本邮件附件水单为准重新核对（对方账户已变更）：
+户名：XX贸易；卡号：6225 3390 8812 0077

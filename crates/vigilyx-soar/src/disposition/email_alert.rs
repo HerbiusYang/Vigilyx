@@ -25,33 +25,7 @@ use super::{
 
 /// SEC-REMAINING-001: smtp_password (AES-256-GCM, vigilyx-api Shared)
 fn decrypt_smtp_password(stored: &str) -> Option<String> {
-    let encoded = stored.strip_prefix("ENC:")?;
-    let jwt_secret = std::env::var("API_JWT_SECRET").ok()?;
-
-    // Key (vigilyx-api/handlers/security/alerts.rs)
-    use sha2::{Digest, Sha256};
-    let key_bytes: [u8; 32] = {
-        let mut hasher = Sha256::new();
-        hasher.update(b"vigilyx-config-encryption-v1");
-        hasher.update(jwt_secret.as_bytes());
-        hasher.finalize().into()
-    };
-
-    use aes_gcm::aead::Aead;
-    use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
-    use base64::Engine;
-
-    let combined = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
-        .ok()?;
-    if combined.len() < 13 {
-        return None;
-    }
-
-    let cipher = Aes256Gcm::new_from_slice(&key_bytes).ok()?;
-    let nonce = Nonce::try_from(&combined[..12]).ok()?;
-    let plaintext = cipher.decrypt(&nonce, &combined[12..]).ok()?;
-    String::from_utf8(plaintext).ok()
+    vigilyx_core::decrypt_config_secret(stored).ok()
 }
 
 pub(super) fn parse_threat_level(s: &str) -> ThreatLevel {
@@ -695,9 +669,13 @@ mod tests {
         summary: &str,
     ) -> SecurityVerdict {
         SecurityVerdict {
+            inspection_coverage: Default::default(),
+            coverage_reasons: vec![],
             id: Uuid::new_v4(),
             session_id: Uuid::new_v4(),
             threat_level,
+            threat_type: None,
+            classification: None,
             confidence: 0.92,
             categories,
             summary: summary.to_string(),

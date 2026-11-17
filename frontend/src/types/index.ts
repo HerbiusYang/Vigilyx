@@ -4,8 +4,52 @@ export type Protocol = 'SMTP' | 'POP3' | 'IMAP' | 'HTTP' | 'UNKNOWN'
 // Session status
 export type SessionStatus = 'active' | 'completed' | 'timeout' | 'error'
 
-// Traffic direction
-export type Direction = 'inbound' | 'outbound'
+export type PrivacyResourceType = 'session' | 'http_session' | 'attachment'
+export type PrivacyScope = 'body' | 'html' | 'headers' | 'verdict' | 'attachment_download' | 'eml_download' | 'http_body'
+type PrivacyAccessRequestStatus = 'requested' | 'approved' | 'rejected' | 'revoked' | 'expired'
+
+export interface PrivacyResourceRef {
+  resource_type: PrivacyResourceType
+  resource_id: string
+}
+
+export interface PrivacyLease {
+  request_id: string
+  resource_type: PrivacyResourceType
+  resource_id: string
+  scopes: PrivacyScope[]
+  expires_at: string
+  uses_remaining: number
+  lease_handle: string
+}
+
+export interface PrivacyAccessRequest {
+  request_id: string
+  requester_id: string
+  approver_id?: string | null
+  resource_type: PrivacyResourceType
+  resource_id: string
+  scopes: PrivacyScope[]
+  purpose: string
+  status: PrivacyAccessRequestStatus
+  created_at: string
+  expires_at: string
+  approved_at?: string | null
+  rejected_at?: string | null
+}
+
+export interface PrivacyAccessContext {
+  current_user: {
+    id: string
+    role_id: string
+    username: string
+    display_name: string
+    role: string
+    permissions: string[]
+    factor_configured: boolean
+  }
+  active_leases: PrivacyLease[]
+}
 
 // Traffic statistics
 export interface TrafficStats {
@@ -21,7 +65,7 @@ export interface TrafficStats {
 }
 
 // Email attachment
-export interface EmailAttachment {
+interface EmailAttachment {
   filename: string
   content_type: string
   size: number
@@ -30,21 +74,21 @@ export interface EmailAttachment {
 }
 
 // Email link
-export interface EmailLink {
+interface EmailLink {
   url: string
   text: string | null
   suspicious: boolean
 }
 
 // SMTP authentication info
-export interface SmtpAuthInfo {
+interface SmtpAuthInfo {
   auth_method: string
   username?: string | null
   auth_success?: boolean | null
 }
 
 // SMTP dialog entry
-export interface SmtpDialogEntry {
+interface SmtpDialogEntry {
   direction: 'inbound' | 'outbound'
   command: string
   size: number
@@ -87,36 +131,10 @@ export interface EmailSession {
   message_id?: string | null
   auth_info?: SmtpAuthInfo | null
   threat_level?: string | null
+  threat_type?: ThreatType | null
+  classification?: string | null
   source: 'sniffer' | 'mta_proxy' | 'import'
-}
-
-// Email packet
-export interface EmailPacket {
-  id: string
-  session_id: string
-  protocol: Protocol
-  src_ip: string
-  src_port: number
-  dst_ip: string
-  dst_port: number
-  direction: Direction
-  size: number
-  timestamp: string
-  command: string | null
-  raw_data: string | null
-}
-
-// WebSocket message
-export interface WsMessage {
-  type: 'NewSession' | 'SessionUpdate' | 'StatsUpdate' | 'SecurityVerdict' | 'DataSecurityAlert' | 'Alert' | 'SessionInvalidated' | 'RefreshNeeded' | 'Ping' | 'Pong'
-  data?: TrafficStats | WsSessionSignal | SecurityVerdictSummary | DataSecurityIncident | string | { skipped: number } | null
-}
-
-export interface WsSessionSignal {
-  id: string
-  protocol: Protocol
-  status: SessionStatus
-  threat_level?: string | null
+  privacy?: { state: 'redacted' | 'revealed'; scopes?: PrivacyScope[] }
 }
 
 // ============================================
@@ -124,39 +142,71 @@ export interface WsSessionSignal {
 // ============================================
 
 // Threat level
-export type ThreatLevel = 'safe' | 'low' | 'medium' | 'high' | 'critical'
+type ThreatLevel = 'safe' | 'low' | 'medium' | 'high' | 'critical'
+
+// Primary malicious-email classification. It is a separate result axis, but
+// malicious families are exposed only when ThreatLevel is Medium or higher.
+type ThreatType =
+  | 'phishing'
+  | 'bec_fraud'
+  | 'malware_delivery'
+  | 'mailbox_enumeration'
+  | 'social_engineering'
+  | 'injection_abuse'
+  | 'malicious_other'
 
 // Detection pillar
-export type Pillar = 'content' | 'attachment' | 'package' | 'link' | 'semantic'
+type Pillar = 'content' | 'attachment' | 'package' | 'link' | 'semantic'
 
-// Security verdict summary (WebSocket push)
-export interface SecurityVerdictSummary {
-  verdict_id: string
-  session_id: string
-  threat_level: string
-  confidence: number
-  categories: string[]
-  summary: string
-  modules_run: number
-  modules_flagged: number
-  total_duration_ms: number
-}
+// Inspection coverage
+type InspectionCoverage = 'unknown' | 'complete' | 'limited'
 
 // D-S BPA quadruple (v5.0 TBM)
-export interface Bpa {
+interface Bpa {
   b: number       // belief (malicious confidence)
   d: number       // disbelief (benign confidence)
   u: number       // uncertainty
   epsilon?: number // open-world leakage m(∅), default 0
 }
 
-// Engine BPA detail
-export interface EngineBpaDetail {
+// Strategy-specific BPA diagnostic. Default clustered_ds_v2 returns evidence
+// cluster BPA values combined once after causal-artifact deduplication.
+interface EngineBpaDetail {
   engine_id: string
   engine_name: string
   bpa: Bpa
   modules: string[]
   key_factors?: string[]
+}
+
+export type EpistemicState = 'unknown' | 'threat_supported' | 'normal_supported' | 'conflicted'
+
+interface RiskConstraintTrace {
+  id: string
+  lower: number
+  upper: number
+  basis: string[]
+}
+
+interface RiskConstraintConflict {
+  effective_lower: number
+  effective_upper: number
+  constraint_ids: string[]
+}
+
+export interface ShadowFusionResult {
+  model: string
+  model_version: number
+  fused_bpa: Bpa
+  k_conflict: number
+  risk_base: number
+  risk_constrained: number
+  epistemic_state: EpistemicState
+  source_details: EngineBpaDetail[]
+  active_constraints: RiskConstraintTrace[]
+  constraint_conflict?: RiskConstraintConflict
+  artifact_count: number
+  fallback_artifact_count: number
 }
 
 // D-S fusion details
@@ -174,7 +224,9 @@ export interface FusionDetails {
   fusion_method?: string
   // Post-fusion safety circuit breaker
   circuit_breaker?: {
+    // Legacy field name; clustered_ds_v2 stores an evidence-cluster label here.
     trigger_module_id: string
+    // Legacy strategies store module belief; clustered_ds_v2 stores source score.
     trigger_belief: number
     floor_value: number
     original_risk: number
@@ -186,13 +238,20 @@ export interface FusionDetails {
     original_risk: number
     flagged_modules: string[]
   }
+  // Experimental results computed in parallel; never authoritative.
+  primary_result?: ShadowFusionResult
+  shadow_results?: ShadowFusionResult[]
 }
 
 // Full security verdict
 export interface SecurityVerdict {
+  inspection_coverage?: InspectionCoverage
+  coverage_reasons?: string[]
   id: string
   session_id: string
   threat_level: ThreatLevel
+  threat_type?: ThreatType | null
+  classification?: string | null
   confidence: number
   categories: string[]
   summary: string
@@ -243,14 +302,66 @@ export interface IocEntry {
   expires_at?: string
 }
 
-// Whitelist entry
-export interface WhitelistEntry {
-  id: string
-  entry_type: string
-  value: string
-  description?: string
-  created_at: string
-  created_by: string
+interface IocShadowScore {
+  prior_log_odds: number
+  raw_log_likelihood_ratio: number
+  decayed_log_likelihood_ratio: number
+  log_odds: number
+  probability: number
+  decay_factor: number
+  evidence_count: number
+  evidence_interval_lower: number
+  evidence_interval_upper: number
+}
+
+export interface IocShadowTelemetry {
+  ioc_type: string
+  indicator: string
+  traffic: {
+    observed_count: number
+    outbound_count: number
+    inbound_count: number
+    unknown_direction_count: number
+    provisional_threat_count: number
+    distinct_session_count: number
+    distinct_activity_count: number
+    first_seen: string
+    last_seen: string
+  }
+  outcomes: {
+    malicious: number
+    normal: number
+    unresolved: number
+  }
+  score: IocShadowScore
+  prior_source: string
+  calibration_status: string
+  half_life_hours: number
+  age_seconds: number
+  clusters: Array<{
+    cluster: string
+    observations: number
+    distinct_activities: number
+    detector_families: number
+    external_providers: number
+  }>
+  actionability: 'shadow_only' | string
+}
+
+export interface IocCalibrationSummary {
+  status: string
+  labeled_observations: number
+  malicious_observations: number
+  normal_observations: number
+  brier_score: number | null
+  reliability: Array<{
+    lower: number
+    upper: number
+    sample_count: number
+    predicted_mean: number
+    observed_malicious_rate: number
+  }>
+  note: string
 }
 
 // Disposition rule
@@ -267,7 +378,7 @@ export interface DispositionRule {
 }
 
 // External login hourly bucket
-export interface HourlyLoginEntry {
+interface HourlyLoginEntry {
   hour: string
   smtp: number
   pop3: number
@@ -290,11 +401,87 @@ export interface ExternalLoginStats {
 }
 
 // Security statistics
+interface DeliveryNodeComparisonStats {
+  node_index: number
+  server_ips?: string[]
+  comparable_total: number
+  vendor_blocked_total: number
+  vendor_passed_total: number
+  terminal_delivered_total?: number
+  vendor_unconfirmed_total?: number
+  vigilyx_risky_total?: number
+  both_threat_total: number
+  vigilyx_only_threat_total: number
+  vendor_only_threat_total: number
+  both_threat_rate: number
+  vigilyx_only_threat_rate: number
+  vendor_only_threat_rate: number
+  vendor_unconfirmed_rate?: number
+}
+
+export type DeliveryRiskDetailKind =
+  | 'first_hop'
+  | 'risky_first_hop'
+  | 'reused_hop'
+  | 'dangerous_forwarded'
+  | 'node_settled'
+  | 'node_risky'
+  | 'node_rejected'
+  | 'node_forwarded'
+  | 'terminal_delivered'
+  | 'agreement'
+  | 'disagreement'
+  | 'both_threat'
+  | 'vigilyx_only'
+  | 'vendor_only'
+  | 'safe_passed'
+  | 'unconfirmed'
+
+export interface DeliveryRiskDetailItem {
+  chain_id: string
+  session_id: string
+  hop_index: number
+  server_ip: string
+  observed_at: string
+  threat_level: string | null
+  action_evidence: 'first_hop' | 'reused_hop' | 'explicit_rejection' | 'path_termination' | 'terminal_delivery' | 'forwarded' | 'unconfirmed'
+  message_id: string | null
+  mail_from: string | null
+  rcpt_to: string[]
+  subject: string | null
+}
+
+export interface DeliveryRiskDetailPage {
+  items: DeliveryRiskDetailItem[]
+  total: number
+  limit: number
+  offset: number
+  snapshot_at: string
+  scope: 'all_history'
+  kind: DeliveryRiskDetailKind
+  server_ip: string | null
+}
+
 export interface SecurityStats {
   total_scanned: number
   level_counts: Record<string, number>
   high_threats_24h: number
   ioc_count: number
+  level_counts_24h?: Record<string, number>
+  analyzed_24h?: number
+  analyzed_previous_24h?: number
+  high_threats_previous_24h?: number
+  alerts_24h?: number
+  quarantined_24h?: number
+  first_hop_emails_total?: number
+  first_hop_dangerous_total?: number
+  downstream_reused_hops_total?: number
+  dangerous_forwarded_total?: number
+  dangerous_forwarded_rate?: number
+  delivery_node_comparisons?: DeliveryNodeComparisonStats[]
+  terminal_mail_servers?: string[]
+  delivery_stats_as_of?: string
+  delivery_stats_scope?: 'all_history'
 }
 
 // Engine status
@@ -316,7 +503,7 @@ export interface EngineStatus {
 }
 
 // Module metrics
-export interface ModuleMetric {
+interface ModuleMetric {
   module_id: string
   total_runs: number
   avg_duration_ms: number
@@ -378,6 +565,9 @@ export interface VerdictWithMeta {
   verdict_id: string
   session_id: string
   threat_level: string
+  threat_type?: ThreatType | null
+  classification?: string | null
+  risk_score: number | null
   confidence: number
   categories: string[]
   summary: string
@@ -407,6 +597,18 @@ export interface PaginatedResponse<T> {
   page: number
   limit: number
   total_pages: number
+  /** Session lists can omit the exact count while still supporting next-page navigation. */
+  has_more?: boolean
+  total_is_exact?: boolean
+  next_cursor?: string | null
+}
+
+export interface SessionCountResponse {
+  total: number
+  total_pages: number
+  counted_at?: string
+  /** False when `total` is the database estimate after the exact count timed out. */
+  exact?: boolean
 }
 
 // Login response
@@ -499,49 +701,8 @@ export interface AlertRecord {
   created_at: string
 }
 
-// HMM posterior probabilities for attack stages
-export interface HmmPhaseResult {
-  normal: number
-  reconnaissance: number
-  trust_building: number
-  attack_execution: number
-  harvest: number
-  dominant_state: string
-  temporal_risk: number
-}
-
-// Communication graph anomaly result
-export interface GraphAnomalyResult {
-  is_anomalous: boolean
-  pattern_label: string
-  anomaly_score: number
-}
-
-// Hawkes self-exciting process result
-export interface HawkesResult {
-  intensity: number
-  intensity_ratio: number
-  burst_detected: boolean
-}
-
-// Temporal analysis result
-export interface TemporalResult {
-  sender_key: string
-  cusum_alarm: boolean
-  cusum_s_pos: number
-  ewma_drift_score: number
-  ewma_drifting: boolean
-  sender_risk: number
-  sender_watchlisted: boolean
-  hmm_phase?: HmmPhaseResult
-  graph_anomaly?: GraphAnomalyResult
-  hawkes?: HawkesResult
-  temporal_risk: number
-  risk_upgraded: boolean
-}
-
 // DLP mode
-export interface DlpPattern {
+interface DlpPattern {
   id: string
   name: string
   description: string
@@ -567,10 +728,10 @@ export interface ContentRules {
 // ============================================
 
 // Data security event type
-export type DataSecurityIncidentType = 'draft_box_abuse' | 'file_transit_abuse' | 'self_sending' | 'volume_anomaly' | 'jrt_compliance_violation'
+type DataSecurityIncidentType = 'sensitive_data_transfer' | 'bulk_sensitive_transfer' | 'draft_box_abuse' | 'file_transit_abuse' | 'self_sending' | 'volume_anomaly' | 'jrt_compliance_violation'
 
 // Data security severity
-export type DataSecuritySeverity = 'info' | 'low' | 'medium' | 'high' | 'critical'
+type DataSecuritySeverity = 'info' | 'low' | 'medium' | 'high' | 'critical'
 
 // Data security event
 export interface DataSecurityIncident {
@@ -592,7 +753,7 @@ export interface DataSecurityIncident {
 }
 
 // Hourly stats bucket
-export interface HourlyBucket {
+interface HourlyBucket {
   hour: string
   count: number
 }
@@ -605,9 +766,12 @@ export interface DataSecurityStats {
   self_send_count: number
   volume_anomaly_count: number
   jrt_compliance_count?: number
+  sensitive_transfer_count?: number
+  bulk_transfer_count?: number
   high_severity_24h: number
   incidents_by_severity: Record<string, number>
   hourly_sessions?: HourlyBucket[]
+  hourly_email_reviews?: HourlyBucket[]
   hourly_incidents?: HourlyBucket[]
 }
 
@@ -616,6 +780,64 @@ export interface DataSecurityEngineStatus {
   running: boolean
   http_sessions_processed: number
   incidents_detected: number
+}
+
+// Unified outbound email data-security review (mirror + MTA proxy)
+export type EmailReviewSource = 'sniffer' | 'mta_proxy' | 'import'
+type EmailReviewDirection = 'inbound' | 'outbound' | 'internal' | 'unknown'
+export type EmailAuditClass = 'confirmed_outbound' | 'outbound_candidate' | 'attribution_pending' | 'legacy'
+export type EmailInspectionStatus = 'inspected' | 'encrypted' | 'incomplete' | 'failed'
+export type EmailDlpResult = 'clean' | 'hit' | 'unknown'
+export type EmailReviewAction = 'audit' | 'allow' | 'alert' | 'quarantine' | 'block' | 'reject' | 'tempfail'
+type EmailDlpEvidenceDetail = { count?: number; present?: boolean } | string[]
+
+export interface EmailDataSecurityReview {
+  id: string
+  session_id: string
+  dedupe_key: string
+  source: EmailReviewSource
+  direction: EmailReviewDirection
+  audit_class: EmailAuditClass
+  direction_reason?: string | null
+  inspection_reason?: string | null
+  inspection_status: EmailInspectionStatus
+  dlp_result: EmailDlpResult
+  max_jrt_level?: number | null
+  dlp_matches: string[]
+  dlp_details?: Record<string, EmailDlpEvidenceDetail> | null
+  action: EmailReviewAction
+  delivery_status?: string | null
+  quarantine_id?: string | null
+  verdict_id?: string | null
+  client_ip: string
+  mail_from?: string | null
+  external_recipient_domains: string[]
+  recipient_count: number
+  subject?: string | null
+  content_hash?: string | null
+  attachment_count: number
+  attachments_scanned: number
+  attachment_inspection_complete: boolean
+  encrypted: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface EmailDataSecurityStats {
+  total: number
+  inspected: number
+  encrypted: number
+  incomplete: number
+  failed: number
+  dlp_hits: number
+  quarantined: number
+  blocked: number
+  rejected: number
+  unknown_direction: number
+  confirmed_outbound: number
+  outbound_candidates: number
+  attribution_pending: number
+  incomplete_sessions: number
 }
 
 // HTTP session (data security)
@@ -643,11 +865,12 @@ export interface HttpSessionItem {
   body_temp_file: string | null
   timestamp: string
   network_session_id: string | null
+  privacy?: { state: 'redacted' | 'revealed'; scopes?: PrivacyScope[] }
 }
 
 // Threat scene types
-export type ThreatSceneType = 'bulk_mailing' | 'bounce_harvest' | 'internal_domain_impersonation'
-export type ThreatSceneStatus = 'active' | 'acknowledged' | 'auto_blocked' | 'resolved'
+type ThreatSceneType = 'bulk_mailing' | 'bounce_harvest' | 'internal_domain_impersonation'
+type ThreatSceneStatus = 'active' | 'acknowledged' | 'auto_blocked' | 'resolved'
 
 export interface ThreatScene {
   id: string
@@ -678,7 +901,7 @@ export interface ThreatSceneRule {
   updated_at: string
 }
 
-export interface SceneTypeStats {
+interface SceneTypeStats {
   active: number
   acknowledged: number
   auto_blocked: number

@@ -1,0 +1,10 @@
+From: =?utf-8?B?5rW35Y2X6Iiq56m6?= <service@hnair.example>
+To: me@personal.example
+Date: Mon, 07 Sep 2026 09:36:00 +0800
+Message-ID: <0026-b15@synth.example>
+Subject: 值机提醒：HU7802 明日 07:55
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>HU7802 杭州-三亚 明日 07:55，值机已开放。</p><a href='https://www.hnair-example.com/checkin' style='color:#c8102e'>在线值机</a><p style='font-size:12px'>值机免费，谨防收费值机诈骗。</p></body></html>

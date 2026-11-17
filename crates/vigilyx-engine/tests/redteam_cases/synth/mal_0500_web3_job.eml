@@ -1,0 +1,11 @@
+From: =?utf-8?B?VGFsZW50IC0gQ2hhaW5MYWI=?= <hr@chainlab-talent.example>
+To: dev@corp.internal
+Date: Tue, 22 Sep 2026 10:29:00 +0800
+Message-ID: <0019-b29@synth.example>
+Subject: Skills assessment (repo)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Clone our assessment repo and run tests:
+git clone https://chainlab-talent.example/assess.git && cd assess && npm test
+(Dependencies are pre-pinned.)

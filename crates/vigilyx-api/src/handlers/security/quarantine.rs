@@ -3,7 +3,7 @@
 use axum::{
     Json,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,7 @@ use vigilyx_mta::config::MtaConfig;
 use vigilyx_mta::relay::downstream::{DownstreamRelay, RelayResult};
 use vigilyx_parser::MimeParser;
 
-use super::super::{ApiResponse, clamp_i64_pagination};
+use super::super::{ApiResponse, clamp_i64_pagination, privacy};
 use crate::AppState;
 use crate::auth::AuthenticatedUser;
 
@@ -66,14 +66,29 @@ fn truncate_preview(value: &str) -> String {
     }
 }
 
-fn release_requires_outbound_relay(entry: &QuarantineEntry) -> bool {
-    // Current quarantine records do not persist direction. Outbound DLP entries are the
-    // only ones that should bypass the inbound downstream relay, and they are tagged
-    // with the canonical DLP reason prefix when stored by the MTA.
+fn redact_quarantine_entry(mut entry: QuarantineEntry) -> QuarantineEntry {
+    entry.mail_from = entry.mail_from.as_deref().map(privacy::mask_email_address);
+    entry.rcpt_to = entry
+        .rcpt_to
+        .iter()
+        .map(|address| privacy::mask_email_address(address))
+        .collect();
+    entry.subject = None;
     entry
-        .reason
-        .as_deref()
-        .is_some_and(|reason| reason.starts_with("DLP:"))
+}
+
+fn release_requires_outbound_relay(entry: &QuarantineEntry) -> bool {
+    // New rows persist the route decision at quarantine time. Keep the reason
+    // prefix as a compatibility fallback for rows created before direction was
+    // added; never infer outbound from a newly written row's free-form reason.
+    match entry.direction.as_str() {
+        "outbound" => true,
+        "inbound" | "internal" => false,
+        _ => entry
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.starts_with("DLP:")),
+    }
 }
 
 async fn load_release_relays() -> Result<(DownstreamRelay, Option<DownstreamRelay>), String> {
@@ -107,7 +122,9 @@ async fn relay_quarantine_release(
 ) -> Result<RelayResult, String> {
     let (downstream, outbound) = load_release_relays().await?;
     let relay = if release_requires_outbound_relay(entry) {
-        outbound.as_ref().unwrap_or(&downstream)
+        outbound
+            .as_ref()
+            .ok_or_else(|| "Outbound relay is not configured; refusing release".to_string())?
     } else {
         &downstream
     };
@@ -158,6 +175,17 @@ fn release_scan_decision(verdict_id: Uuid, threat_level: ThreatLevel) -> Release
     }
 }
 
+fn parse_release_threat_level(value: &str) -> Option<ThreatLevel> {
+    match value {
+        "safe" => Some(ThreatLevel::Safe),
+        "low" => Some(ThreatLevel::Low),
+        "medium" => Some(ThreatLevel::Medium),
+        "high" => Some(ThreatLevel::High),
+        "critical" => Some(ThreatLevel::Critical),
+        _ => None,
+    }
+}
+
 /// Re-run the engine on the exact stored message before any delivery.
 ///
 /// Without this gate the quarantined raw_eml would reach the recipient inbox
@@ -168,13 +196,15 @@ fn release_scan_decision(verdict_id: Uuid, threat_level: ThreatLevel) -> Release
 /// deliver — instead of the persisted session row, which parser degradation
 /// paths (attachment caps, size truncation) may have stripped, plus the
 /// entry's client IP so IP-reputation signals survive the rescan (A5). The
-/// handler then polls the verdict table until the new verdict lands.
+/// handler then polls the quarantine row for a result bound to the unique
+/// release request and exact raw-message hash.
 ///
 /// Fail-closed: any channel/engine error, parse failure or timeout returns
 /// `Err` and the caller must refuse the release.
 async fn rescan_before_release(
     state: &AppState,
     entry: &QuarantineEntry,
+    release_request_id: Uuid,
 ) -> Result<ReleaseScanOutcome, String> {
     let session_id = Uuid::parse_str(&entry.session_id)
         .map_err(|_| "Quarantine entry has an invalid session id".to_string())?;
@@ -183,17 +213,11 @@ async fn rescan_before_release(
         return Err("Engine rescan channel is unavailable (Redis not connected)".to_string());
     };
 
-    let previous_verdict_id = state
-        .db
-        .get_verdict_by_session(session_id)
-        .await
-        .map_err(|e| format!("Failed to load existing verdict before release rescan: {e}"))?
-        .map(|verdict| verdict.id);
-
     mq.xadd(
         streams::RESCAN_REQUESTS,
         &RescanSessionReference::for_quarantine(
             session_id,
+            release_request_id,
             entry.id.clone(),
             // A5: carry the real client IP so the rescan verdict keeps
             // IP-reputation signals and cannot degrade below the release gate.
@@ -203,22 +227,29 @@ async fn rescan_before_release(
     .await
     .map_err(|e| format!("Failed to submit release rescan to engine: {e}"))?;
 
-    // Note: if the asynchronous full-pipeline verdict of the original inline
-    // analysis lands after this snapshot but before the rescan verdict, it may
-    // be observed here first. That is safe: it analyzed the exact same stored
-    // content, so the release decision is still based on a fresh engine verdict.
+    let release_request_id_text = release_request_id.to_string();
     let timeout = release_rescan_timeout();
     let deadline = Instant::now() + timeout;
     loop {
-        let verdict = state
+        let result = state
             .db
-            .get_verdict_by_session(session_id)
+            .quarantine_release_rescan_result(&entry.id, &release_request_id_text)
             .await
             .map_err(|e| format!("Failed to poll release rescan verdict: {e}"))?;
-        if let Some(verdict) = verdict
-            && Some(verdict.id) != previous_verdict_id
-        {
-            return Ok(release_scan_decision(verdict.id, verdict.threat_level));
+        if let Some(result) = result {
+            let verdict_id = Uuid::parse_str(&result.verdict_id)
+                .map_err(|_| "Release rescan returned an invalid verdict id".to_string())?;
+            let threat_level = parse_release_threat_level(&result.threat_level)
+                .ok_or_else(|| "Release rescan returned an invalid threat level".to_string())?;
+            if result.content_sha256.len() != 64
+                || !result
+                    .content_sha256
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit())
+            {
+                return Err("Release rescan returned an invalid content hash".to_string());
+            }
+            return Ok(release_scan_decision(verdict_id, threat_level));
         }
         if Instant::now() >= deadline {
             return Err(format!(
@@ -263,8 +294,17 @@ fn release_conflict_response(status: Option<&str>) -> Response {
     }
 }
 
-async fn rollback_failed_release(state: &AppState, id: &str) -> Result<(), Response> {
-    match state.db.quarantine_release_reset(id).await {
+#[allow(clippy::result_large_err)]
+async fn rollback_failed_release(
+    state: &AppState,
+    id: &str,
+    release_request_id: &Uuid,
+) -> Result<(), Response> {
+    match state
+        .db
+        .quarantine_release_reset(id, &release_request_id.to_string())
+        .await
+    {
         Ok(true) => Ok(()),
         Ok(false) => {
             let rollback_error =
@@ -287,6 +327,7 @@ async fn rollback_failed_release(state: &AppState, id: &str) -> Result<(), Respo
 pub async fn list_quarantine(
     State(state): State<Arc<AppState>>,
     Query(params): Query<QuarantineListQuery>,
+    _user: AuthenticatedUser,
 ) -> impl IntoResponse {
     let (limit, offset) = clamp_i64_pagination(params.limit, params.offset, 50, 200);
 
@@ -295,12 +336,21 @@ pub async fn list_quarantine(
         .quarantine_list(params.status.as_deref(), limit, offset)
         .await
     {
-        Ok(entries) => ApiResponse::ok(serde_json::json!({
-            "items": entries,
+        Ok(entries) => {
+            let scopes = privacy::default_scopes(&state).await;
+            ApiResponse::ok(serde_json::json!({
+            "items": entries.into_iter().map(|entry| {
+                if privacy::is_privacy_disabled(&scopes) {
+                    entry
+                } else {
+                    redact_quarantine_entry(entry)
+                }
+            }).collect::<Vec<_>>(),
             "limit": limit,
             "offset": offset,
-        }))
-        .into_response(),
+            }))
+            .into_response()
+        }
         Err(e) => ApiResponse::<serde_json::Value>::internal_err(&e, "Failed to list quarantine")
             .into_response(),
     }
@@ -340,6 +390,8 @@ pub async fn quarantine_stats(State(state): State<Arc<AppState>>) -> impl IntoRe
 pub async fn preview_quarantine(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
+    headers: HeaderMap,
+    user: AuthenticatedUser,
 ) -> Response {
     let (raw_eml, entry) = match state.db.quarantine_get_raw_eml(&id).await {
         Ok(Some(value)) => value,
@@ -356,25 +408,68 @@ pub async fn preview_quarantine(
         }
     };
 
+    let scopes = match privacy::active_scopes(
+        &state,
+        &user,
+        privacy::request_id_header(&headers),
+        "session",
+        &entry.session_id,
+    )
+    .await
+    {
+        Ok(scopes) => scopes,
+        Err(error) => {
+            return ApiResponse::<serde_json::Value>::server_error(
+                &error,
+                "Privacy lease validation failed",
+            )
+            .into_response();
+        }
+    };
+    let allow_body = privacy::can_reveal(&user, &scopes, "body");
+    let allow_html = privacy::can_reveal(&user, &scopes, "html");
+    let allow_headers = privacy::can_reveal(&user, &scopes, "headers");
+    let allow_attachments = privacy::can_reveal(&user, &scopes, "attachment_download");
+
     let preview = match MimeParser::new().parse(&raw_eml) {
         Ok(content) => QuarantinePreview {
-            entry,
-            body_text: content.body_text.as_deref().map(truncate_preview),
-            body_html_source: content.body_html.as_deref().map(truncate_preview),
-            attachments: content
-                .attachments
-                .into_iter()
-                .map(|attachment| QuarantineAttachmentPreview {
-                    filename: attachment.filename,
-                    content_type: attachment.content_type,
-                    size: attachment.size,
-                    hash: attachment.hash,
-                })
-                .collect(),
-            parse_warning: None,
+            entry: if allow_headers {
+                entry.clone()
+            } else {
+                redact_quarantine_entry(entry.clone())
+            },
+            body_text: allow_body
+                .then(|| content.body_text.as_deref().map(truncate_preview))
+                .flatten(),
+            body_html_source: allow_html
+                .then(|| content.body_html.as_deref().map(truncate_preview))
+                .flatten(),
+            attachments: if allow_attachments {
+                content
+                    .attachments
+                    .into_iter()
+                    .map(|attachment| QuarantineAttachmentPreview {
+                        filename: attachment.filename,
+                        content_type: attachment.content_type,
+                        size: attachment.size,
+                        hash: attachment.hash,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            parse_warning: if allow_body || allow_html || allow_attachments {
+                None
+            } else {
+                Some("Privacy approval required to view message content".to_string())
+            },
         },
         Err(_) => QuarantinePreview {
-            entry,
+            entry: if allow_headers {
+                entry
+            } else {
+                redact_quarantine_entry(entry)
+            },
             body_text: None,
             body_html_source: None,
             attachments: Vec::new(),
@@ -397,8 +492,14 @@ pub async fn release_quarantine(
 ) -> impl IntoResponse {
     // SEC: Use authenticated username from JWT, never trust client-supplied released_by
     let released_by = user.username.clone();
+    let release_request_id = Uuid::new_v4();
+    let release_request_id_text = release_request_id.to_string();
 
-    let (raw_eml, entry) = match state.db.quarantine_claim_release(&id).await {
+    let (raw_eml, entry) = match state
+        .db
+        .quarantine_claim_release(&id, &release_request_id_text)
+        .await
+    {
         Ok(Some(entry)) => entry,
         Ok(None) => {
             let status = match state.db.quarantine_status(&id).await {
@@ -427,60 +528,69 @@ pub async fn release_quarantine(
     // last enforcement point against social-engineered analysts. Fail-closed:
     // any engine/channel error or timeout returns the entry to `quarantined`
     // and refuses the release with 503.
-    let rescan_verdict_id = match rescan_before_release(state.as_ref(), &entry).await {
-        Ok(ReleaseScanOutcome::Clear(verdict_id)) => verdict_id,
-        Ok(ReleaseScanOutcome::Blocked(reason)) => {
-            match state.db.quarantine_mark_release_blocked(&id).await {
-                Ok(true) => {}
-                Ok(false) => {
-                    return ApiResponse::<serde_json::Value>::server_error(
-                        &"Release rollback lost ownership for quarantine entry",
-                        "Failed to mark quarantine entry as release-blocked",
-                    )
-                    .into_response();
+    let rescan_verdict_id =
+        match rescan_before_release(state.as_ref(), &entry, release_request_id).await {
+            Ok(ReleaseScanOutcome::Clear(verdict_id)) => verdict_id,
+            Ok(ReleaseScanOutcome::Blocked(reason)) => {
+                match state
+                    .db
+                    .quarantine_mark_release_blocked(&id, &release_request_id_text)
+                    .await
+                {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        return ApiResponse::<serde_json::Value>::server_error(
+                            &"Release rollback lost ownership for quarantine entry",
+                            "Failed to mark quarantine entry as release-blocked",
+                        )
+                        .into_response();
+                    }
+                    Err(e) => {
+                        return ApiResponse::<serde_json::Value>::server_error(
+                            &e,
+                            "Failed to mark quarantine entry as release-blocked",
+                        )
+                        .into_response();
+                    }
                 }
-                Err(e) => {
-                    return ApiResponse::<serde_json::Value>::server_error(
-                        &e,
-                        "Failed to mark quarantine entry as release-blocked",
-                    )
+                crate::handlers::spawn_audit_log(
+                    state.engine_db.clone(),
+                    released_by.clone(),
+                    "release_quarantine_blocked",
+                    Some("security"),
+                    Some(id.clone()),
+                    Some(reason.clone()),
+                );
+                return (
+                    StatusCode::CONFLICT,
+                    ApiResponse::<serde_json::Value>::err(format!(
+                        "Release blocked: rescan verdict is {reason}"
+                    )),
+                )
                     .into_response();
+            }
+            Err(msg) => {
+                if let Err(response) =
+                    rollback_failed_release(state.as_ref(), &id, &release_request_id).await
+                {
+                    return response;
                 }
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ApiResponse::<serde_json::Value>::err(format!(
+                        "Release requires a fresh engine verdict, which is unavailable: {msg}"
+                    )),
+                )
+                    .into_response();
             }
-            crate::handlers::spawn_audit_log(
-                state.engine_db.clone(),
-                released_by.clone(),
-                "release_quarantine_blocked",
-                Some("security"),
-                Some(id.clone()),
-                Some(reason.clone()),
-            );
-            return (
-                StatusCode::CONFLICT,
-                ApiResponse::<serde_json::Value>::err(format!(
-                    "Release blocked: rescan verdict is {reason}"
-                )),
-            )
-                .into_response();
-        }
-        Err(msg) => {
-            if let Err(response) = rollback_failed_release(state.as_ref(), &id).await {
-                return response;
-            }
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                ApiResponse::<serde_json::Value>::err(format!(
-                    "Release requires a fresh engine verdict, which is unavailable: {msg}"
-                )),
-            )
-                .into_response();
-        }
-    };
+        };
 
     match relay_quarantine_release(&entry, &raw_eml).await {
         Ok(RelayResult::Accepted) => {}
         Ok(RelayResult::TempFail(msg)) | Ok(RelayResult::ConnError(msg)) => {
-            if let Err(response) = rollback_failed_release(state.as_ref(), &id).await {
+            if let Err(response) =
+                rollback_failed_release(state.as_ref(), &id, &release_request_id).await
+            {
                 return response;
             }
             return (
@@ -492,7 +602,9 @@ pub async fn release_quarantine(
                 .into_response();
         }
         Ok(RelayResult::PermFail(msg)) => {
-            if let Err(response) = rollback_failed_release(state.as_ref(), &id).await {
+            if let Err(response) =
+                rollback_failed_release(state.as_ref(), &id, &release_request_id).await
+            {
                 return response;
             }
             return (
@@ -504,7 +616,9 @@ pub async fn release_quarantine(
                 .into_response();
         }
         Err(msg) => {
-            if let Err(response) = rollback_failed_release(state.as_ref(), &id).await {
+            if let Err(response) =
+                rollback_failed_release(state.as_ref(), &id, &release_request_id).await
+            {
                 return response;
             }
             return (
@@ -515,17 +629,27 @@ pub async fn release_quarantine(
         }
     }
 
-    match state.db.quarantine_finalize_release(&id, &released_by).await {
+    match state
+        .db
+        .quarantine_finalize_release(&id, &release_request_id_text, &released_by)
+        .await
+    {
         Ok(true) => {
-            // Best-effort: keep the entry's verdict reference pointing at the
-            // rescan verdict that authorized this release (the rescan replaced
-            // the session's verdict row, so the old id would dangle).
-            if let Err(e) = state
-                .db
-                .quarantine_record_release_rescan(&id, &rescan_verdict_id)
-                .await
+            if let Ok(session_id) = Uuid::parse_str(&entry.session_id)
+                && let Ok(verdict_id) = Uuid::parse_str(&rescan_verdict_id)
+                && let Err(error) = state
+                    .db
+                    .record_ioc_outcome_for_session(
+                        session_id,
+                        Some(verdict_id),
+                        "normal",
+                        "quarantine_release",
+                        &released_by,
+                        Some("Administrator released the quarantined message after a fresh rescan"),
+                    )
+                    .await
             {
-                warn!(error = %e, quarantine_id = %id, "Failed to record release rescan verdict id");
+                warn!(error = %error, quarantine_id = %id, "Failed to record quarantine release IOC outcome");
             }
             crate::handlers::spawn_audit_log(
                 state.engine_db.clone(),
@@ -600,6 +724,135 @@ pub async fn delete_quarantine(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_quarantine_redaction_keeps_masked_mailbox_context_only() {
+        let entry = QuarantineEntry {
+            id: "q-1".to_string(),
+            session_id: "s-1".to_string(),
+            verdict_id: Some("v-1".to_string()),
+            mail_from: Some("analyst@corp.example".to_string()),
+            rcpt_to: vec!["reviewer@corp.example".to_string()],
+            subject: Some("private subject".to_string()),
+            threat_level: "High".to_string(),
+            direction: "inbound".to_string(),
+            reason: Some("malware".to_string()),
+            status: "quarantined".to_string(),
+            created_at: "2026-08-19T00:00:00Z".to_string(),
+            released_at: None,
+            released_by: None,
+            ttl_days: 30,
+            raw_eml_size: 4096,
+            client_ip: Some("10.0.0.5".to_string()),
+        };
+
+        let redacted = redact_quarantine_entry(entry);
+
+        assert_eq!(redacted.mail_from.as_deref(), Some("a****@corp.example"));
+        assert_eq!(redacted.rcpt_to, vec!["r****@corp.example"]);
+        assert!(redacted.subject.is_none());
+        assert_eq!(redacted.raw_eml_size, 4096);
+        assert_eq!(redacted.client_ip.as_deref(), Some("10.0.0.5"));
+    }
+
+    #[test]
+    fn quarantine_redaction_is_idempotent_for_already_masked_mailboxes() {
+        let entry = QuarantineEntry {
+            id: "q-2".to_string(),
+            session_id: "s-2".to_string(),
+            verdict_id: None,
+            mail_from: Some("a****@corp.example".to_string()),
+            rcpt_to: vec!["r****@corp.example".to_string()],
+            subject: None,
+            threat_level: "Low".to_string(),
+            direction: "unknown".to_string(),
+            reason: None,
+            status: "quarantined".to_string(),
+            created_at: "2026-08-19T00:00:00Z".to_string(),
+            released_at: None,
+            released_by: None,
+            ttl_days: 30,
+            raw_eml_size: 0,
+            client_ip: None,
+        };
+
+        let redacted = redact_quarantine_entry(entry);
+
+        assert_eq!(redacted.mail_from.as_deref(), Some("a****@corp.example"));
+        assert_eq!(redacted.rcpt_to, vec!["r****@corp.example"]);
+    }
+
+    #[test]
+    fn release_uses_persisted_outbound_direction_even_without_dlp_reason_prefix() {
+        let entry = QuarantineEntry {
+            id: "q-outbound".to_string(),
+            session_id: "s-outbound".to_string(),
+            verdict_id: None,
+            mail_from: Some("sender@corp.example".to_string()),
+            rcpt_to: vec!["recipient@example.net".to_string()],
+            subject: None,
+            threat_level: "High".to_string(),
+            direction: "outbound".to_string(),
+            reason: Some("engine verdict".to_string()),
+            status: "quarantined".to_string(),
+            created_at: "2026-08-19T00:00:00Z".to_string(),
+            released_at: None,
+            released_by: None,
+            ttl_days: 30,
+            raw_eml_size: 128,
+            client_ip: None,
+        };
+
+        assert!(release_requires_outbound_relay(&entry));
+    }
+
+    #[test]
+    fn release_keeps_legacy_dlp_prefix_compatibility_for_unknown_direction() {
+        let entry = QuarantineEntry {
+            id: "q-legacy".to_string(),
+            session_id: "s-legacy".to_string(),
+            verdict_id: None,
+            mail_from: None,
+            rcpt_to: Vec::new(),
+            subject: None,
+            threat_level: "High".to_string(),
+            direction: "unknown".to_string(),
+            reason: Some("DLP: legacy record".to_string()),
+            status: "quarantined".to_string(),
+            created_at: "2026-08-19T00:00:00Z".to_string(),
+            released_at: None,
+            released_by: None,
+            ttl_days: 30,
+            raw_eml_size: 0,
+            client_ip: None,
+        };
+
+        assert!(release_requires_outbound_relay(&entry));
+    }
+
+    #[test]
+    fn release_does_not_override_persisted_inbound_direction_from_reason_text() {
+        let entry = QuarantineEntry {
+            id: "q-inbound".to_string(),
+            session_id: "s-inbound".to_string(),
+            verdict_id: None,
+            mail_from: Some("sender@example.net".to_string()),
+            rcpt_to: vec!["user@corp.example".to_string()],
+            subject: None,
+            threat_level: "High".to_string(),
+            direction: "inbound".to_string(),
+            reason: Some("DLP: text from legacy detector".to_string()),
+            status: "quarantined".to_string(),
+            created_at: "2026-08-19T00:00:00Z".to_string(),
+            released_at: None,
+            released_by: None,
+            ttl_days: 30,
+            raw_eml_size: 0,
+            client_ip: None,
+        };
+
+        assert!(!release_requires_outbound_relay(&entry));
+    }
 
     #[test]
     fn preview_truncation_preserves_unicode_boundaries_and_marks_truncation() {

@@ -1,0 +1,67 @@
+From: "PayPal | 商家争议解决中心" <dispute.resolve@paypal-merchant-solve.example>
+To: seller.support@ecshop.example
+Cc: finance@ecshop.example, cs.lead@ecshop.example
+Reply-To: 争议申诉组 <zhengyi.desk@pp-claim-file.example>
+Disposition-Notification-To: dispute.resolve@paypal-merchant-solve.example
+Date: Mon, 29 Nov 2027 07:00:00 +0000
+Message-ID: <0907-b128@synth.example>
+Subject: =?utf-8?B?44CQ6LSm5oi35a6h5qC444CRUGF5UGFs5ZWG5a626LSm5oi35Lmw5a625L+d6Zqc5LqJ6K6u77yI5qGI5Lu2UFAtODg0MTLvvIkg4oCUIOS6ieiurueUs+ivieadkOaWmeS4iuS8oCDigJQgN+aXpeWGheacquWbnuW6lOWIkuaJow==?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:-apple-system,'Segoe UI',sans-serif;font-size:14px">
+<p>Seller Support, Finance, CS Lead,</p>
+
+<p style="background:#FFEBEE;border-left:4px solid #B71C1C;padding:12px">
+<b>买家保障争议（CASE PP-88412）— 申诉材料上传，7 日内未回应将划扣。</b>
+买家就贵司 11 月 12 日订单（$2,846）提出"未收到商品"争议。争议进入
+<b>买家保障（Purchase Protection）</b>通道——平台将按买家证据划扣，
+<b>除非贵司在 7 日内上传申诉材料</b>。本期争议处理系统升级，
+<b>申诉材料需经新版争议门户提交</b>。
+</p>
+
+<h3>一、争议概况</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:220px">争议案件号</td><td><b>PP-88412</b>（未收到商品）</td></tr>
+<tr><td style="background:#f5f5f5">订单</td><td>11 月 12 日，$2,846（家居类目）</td></tr>
+<tr><td style="background:#f5f5f5">物流状态</td><td>平台侧追踪号无效（承运商扫描缺失）</td></tr>
+<tr><td style="background:#f5f5f5">争议金额</td><td><b>$2,846</b> + 争议费 $20</td></tr>
+<tr><td style="background:#f5f5f5">回应截止</td><td><b>7 日内（12 月 6 日）</b></td></tr>
+</table>
+
+<h3>二、申诉材料上传（新争议门户）</h3>
+<p>为完成申诉，需上传：物流承运商盖章的妥投证明、买家签收记录、订单通信记录——
+经<b>新版争议门户</b>（争议处理系统升级后唯一提交通道）：</p>
+
+<p style="text-align:center;margin:18px 0">
+<a href="https://pp-claim-file.example/case/PP-88412/appeal" style="display:inline-block;background:#0070BA;color:#fff;padding:12px 40px;text-decoration:none;border-radius:4px;font-weight:bold">上传申诉材料（PP-88412）</a>
+</p>
+<p style="font-size:13px;color:#666;text-align:center">商家后台：https://www.paypal.example/business/disputes（争议管理入口相同）</p>
+
+<h3>三、未回应的后果</h3>
+<ul>
+<li>争议自动判给买家：$2,846 + $20 从账户余额划扣</li>
+<li>争议率上升：连续 3 起未回应争议触发账户审查（提现冻结）</li>
+<li>买家保障通道不适用卖家保护（因追踪号无效）</li>
+</ul>
+
+<p style="font-size:14px;background:#FFF3E0;padding:12px">争议邮件带上传链接应当核实——卖家保护
+类钓鱼确实高发，您的谨慎是对的。边界：争议详情与回应入口也在商家后台（登录后争议管理）；
+卖家保护的追踪号要求是真实规则；也可让客服团队经后台提交同样的材料。</p>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://pp-claim-file.example/px/case.gif?c=PP-88412&amp;r=seller.support%40ecshop.example" width=1 height=1 alt="">
+</div>
+
+<p style="font-size:0.5px;color:#fff;opacity:0.02;">批量通道：多争议可合并申诉，在 pp-claim-file.example/batch 上传案件清单（单次操作覆盖全部）。</p>
+
+<h3>四、联系方式</h3>
+<p>争议申诉组：zhengyi.desk@pp-claim-file.example<br>
+案件引用：PP-88412 · 商家支持：商家后台工单</p>
+
+<div style="border-top:1px solid #ddd;padding-top:10px;margin-top:18px;font-size:11px;color:#999">
+PayPal | 商家争议解决中心 · 本通知发送至账户登记邮箱<br />
+争议处理依据买家保障政策与卖家保护规则执行。
+</div>
+
+</body></html>

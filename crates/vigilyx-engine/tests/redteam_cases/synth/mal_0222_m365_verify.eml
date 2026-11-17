@@ -1,0 +1,10 @@
+From: =?utf-8?B?TWljcm9zb2Z0IDM2NQ==?= <no-reply@m365-secure.example>
+To: staff@corp.internal
+Date: Sun, 06 Sep 2026 09:11:00 +0800
+Message-ID: <0001-b14@synth.example>
+Subject: Action required: validate your mailbox
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body style='font-family:Segoe UI,sans-serif'><h2 style='color:#106ebe'>Microsoft 365</h2><p>Your mailbox will be <b>permanently deleted in 48 hours</b> unless you re-validate it.</p><p><a href='https://m365-validate-login.example.net/owa' style='background:#106ebe;color:#fff;padding:10px 24px;text-decoration:none'>Keep my mailbox</a></p><hr><p style='font-size:11px;color:#888'>Microsoft Corporation | Privacy | Unsubscribe</p></body></html>

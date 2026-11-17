@@ -1,0 +1,10 @@
+From: =?utf-8?B?6Ieq5Yqo5Zue5aSN?= <auto@relay-notice.example>
+To: user@corp.internal
+Date: Fri, 28 Aug 2026 14:24:00 +0800
+Message-ID: <0014-b5@synth.example>
+Subject: 自动回复：无法送达
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+自动回复：您的账户存在异常登录，请立即按提示核验，
+24 小时内未核验将暂停收件服务。

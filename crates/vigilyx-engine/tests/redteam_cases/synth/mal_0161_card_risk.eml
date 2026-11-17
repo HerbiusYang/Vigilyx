@@ -1,0 +1,11 @@
+From: =?utf-8?B?6aOO5o6n5Lit5b+D?= <risk@card-safe.example>
+To: me@personal.example
+Date: Wed, 02 Sep 2026 11:10:00 +0800
+Message-ID: <0000-b10@synth.example>
+Subject: 银行卡存在异常交易，需解锁
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+检测到夜间异常交易两笔，卡片已临时冻结。
+解锁验证：https://card-unlock.example.info/u
+（卡号+取款密码+手机验证码）

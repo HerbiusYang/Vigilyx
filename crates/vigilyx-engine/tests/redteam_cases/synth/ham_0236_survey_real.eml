@@ -1,0 +1,10 @@
+From: =?utf-8?B?5a6i5oi35LmL5aOw?= <survey@svc.example>
+To: me@personal.example
+Date: Sun, 06 Sep 2026 09:45:00 +0800
+Message-ID: <0035-b14@synth.example>
+Subject: 邀请评价您本次的维修服务
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>您 9/2 的空调维修已完成，愿意花 30 秒评价吗？</p><a href='https://survey.svc.example/f/wb8842' style='color:#1677ff'>开始评价</a><p style='font-size:12px'>仅用于服务改进，无任何奖励诱导。</p></body></html>

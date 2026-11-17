@@ -1,0 +1,12 @@
+From: =?utf-8?B?6YKu5Lu2572R5YWz?= <gateway@partner.example>
+To: user@corp.internal
+Date: Tue, 25 Aug 2026 10:28:00 +0800
+Message-ID: <0008-b2@synth.example>
+Received: from gw.partner.example (gw.partner.example [198.51.100.9]) by mx.corp.internal; 
+Authentication-Results: mx.corp.internal; spf=pass dkim=pass dmarc=pass
+Subject: 被拦截邮件的放行申请
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您有一封被误拦的外部来信，点击核对放行（需域账号登录）：
+https://release-gate.example.co/unlock

@@ -1,0 +1,11 @@
+From: =?utf-8?B?5Zyw6ZOB5pyN5Yqh?= <dt@metro-svc.example>
+To: commuter@personal.example
+Date: Sat, 05 Sep 2026 10:19:00 +0800
+Message-ID: <0009-b13@synth.example>
+Subject: 乘车码异常（风控）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您的乘车码触发风控，解除需核验：
+https://metro-jc.example.org/v
+（手机号+支付密码）

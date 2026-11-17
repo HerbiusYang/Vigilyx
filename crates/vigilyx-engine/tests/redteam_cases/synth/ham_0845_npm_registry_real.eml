@@ -1,0 +1,59 @@
+From: "npm Registry | 账户与安全通知" <notice@npmjs.example>
+To: dev-lead@corp.internal
+Cc: opensource-office@corp.internal
+Date: Wed, 26 Aug 2026 19:00:00 +0800
+Message-ID: <0845-b137@synth.example>
+Subject: =?utf-8?B?44CQ5a6J5YWo5o+Q6YaS44CRbnBt6LSm5oi357u05oqk5o+Q56S65LiO5L6d6LWW5Y2H57qn5bu66K6u77yIQGd4c2NvcGUvY2xlLXRvb2xz77yJ?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+@gxscope/cli-tools 维护者、开源合规办公室：
+
+您好。贵司名下 npm 包 @gxscope/cli-tools（近 30 日下载
+47,312 次）的例行依赖扫描已完成，现将结果与建议的账户
+维护事项一并通知，请开源合规办公室知悉并安排跟进。
+
+一、扫描结果
+1. 2.1.3 与 2.2.0-rc.1 两个版本的 install 脚本包含网络
+   请求（postinstall 段，telemetry 上报），属声明缺失而非
+   恶意行为判定，建议在 package.json 与 README 中补充
+   用途声明，仓库内修改即可，无需向 registry 提交材料；
+2. 依赖树中 lodash 4.17.15 存在已知高危漏洞（原型污染），
+   在仓库内执行 npm audit fix 升级至 4.17.21 即可；
+3. 包的发布签名密钥状态正常，无需更换。
+
+二、账户维护建议
+1. 若尚未启用，建议为发布账户开启强制 2FA（账户设置 →
+   Two-Factor Requirement），启用后 publish 需要 OTP，
+   可显著降低 token 单点泄露的风险；
+2. 检查并回收长期未使用的 Access Tokens，需要的自动化
+   场景请改用 granular access token 并设置到期时间；
+3. 开源合规流程如需对包名做保护性注册，可参考 registry
+   官网的 organizations 方案，无"维护权转移预登记"这类
+   程序。
+
+三、重要声明
+1. npm 不会因"审计未完成"冻结包的发布，依赖扫描结果
+   只在仓库侧给出建议，不存在"48 小时冻结""abandoned
+   公示""包名接管程序""镜像联盟同步执行"这类流程，
+   包的归属只随账户凭据变化，别句访问权限以 registry
+   官方站点为准；
+2. npm 在任何邮件中都不会索要 access token、OTP、密码
+   或"账户注册邮箱后缀"，凭据只在官方站点登录时输入，
+   凡要求"生成 token 后回复邮件以便身份比对"的，无论
+   权限级别声称多么受限，都是仿冒——read-only token
+   同样可以读取 scope 下全部包的元数据与发布历史；
+3. 申诉、验证类操作一律在 npmjs.com 官方站内进行，
+   不存在与官方队列并行的"快轨"治理机构，申诉免费，
+   周期以站内显示为准；
+4. 判别仿冒的最简办法：核对发件域名是否为官方域名，
+   并直接登录官网查看账户通知，官方通知均会在站内
+   同步留痕。
+
+四、其他
+本通知为账户例行安全提醒，不涉及任何收费项目。如贵司
+开源合规办公室需要扫描报告原文，可登录官网在组织的
+insights 页面自行导出。
+
+npm Registry 账户安全团队
+（站内同步：登录后在 Notifications 栏可见同文通知）

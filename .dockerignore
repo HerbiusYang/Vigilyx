@@ -20,6 +20,8 @@ python/.ruff_cache/
 # Local data
 data/
 logs/
+.audit/
+.rollback/
 *.db
 *.db-wal
 *.db-shm

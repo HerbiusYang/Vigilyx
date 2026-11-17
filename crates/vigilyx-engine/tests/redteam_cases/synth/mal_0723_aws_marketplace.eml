@@ -1,0 +1,114 @@
+From: AWS Marketplace Seller Operations <seller.ops@aws-marketplace-seller.example>
+To: product@corp.internal
+Cc: legal@corp.internal, cto@corp.internal, finance@corp.internal
+Reply-To: seller.compliance@aws-marketplace.example
+Date: Sun, 01 Nov 2026 20:00:00 +0000
+Disposition-Notification-To: seller.ops@aws-marketplace-seller.example
+Message-ID: <0723-b66@synth.example>
+Subject: =?utf-8?B?77uP4oCi4oCMQVdTIE1hcmtldHBsYWNlIExpc3RpbmcgU3VzcGVuc2lvbiAtLSBWaWdp?=
+ =?utf-8?B?bHggR2F0ZXdheSAtLSBDb21wbGlhbmNlIEVzY2FsYXRpb24gJiBSZXZpZXcgRmVl?=
+ =?utf-8?B?IChBY3Rpb24gd2l0aGluIDcgZGF5cyk=?=
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<p>Product Team, Legal, CTO, Finance:</p>
+
+<p>Your AWS Marketplace listing for <b>Vigilyx Email Security Gateway</b> has been <b style="color:#e00">suspended</b> following a buyer complaint and a compliance review that identified <b>three policy violations</b>. A <b>Compliance Review Fee</b> must be paid before your listing can be reinstated.</p>
+
+<h3>一、Listing Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:200px">Product ID</td><td><b>prod-8842-vigilyx-gw</b></td></tr>
+<tr><td style="background:#f5f5f5">Seller ID</td><td>A1B2C3D4E5F6G7</td></tr>
+<tr><td style="background:#f5f5f5">Product Title</td><td>Vigilyx Email Security Gateway</td></tr>
+<tr><td style="background:#f5f5f5">Category</td><td>Security → Email Security</td></tr>
+<tr><td style="background:#f5f5f5">Listing Since</td><td>January 2025</td></tr>
+<tr><td style="background:#f5f5f5">Monthly Revenue</td><td>$42,800 (through AWS Marketplace)</td></tr>
+<tr><td style="background:#f5f5f5">Active Subscriptions</td><td>38 enterprise customers</td></tr>
+<tr><td style="background:#f5f5f5">Buyer Rating</td><td>4.3/5 (142 reviews)</td></tr>
+<tr><td style="background:#f5f5f5">Current Status</td><td style="color:#e00"><b>SUSPENDED — Compliance review required</b></td></tr>
+<tr><td style="background:#f5f5f0">Action Deadline</td><td style="color:#e00"><b>November 8, 2026 (7 days)</b></td></tr>
+</table>
+
+<h3>二、Violations Identified</h3>
+
+<p><b>Violation 1 — Misleading Performance Claims (Section 3.2)</b></p>
+<p>Your listing states "<i>Blocks 99.7% of phishing emails with zero false positives</i>" — the buyer complaint included evidence that 3.2% of phishing emails were not blocked. AWS requires verifiable claims backed by independent testing.</p>
+
+<p><b>Violation 2 — Improper Data Collection Disclosure (Section 5.1)</b></p>
+<p>Your product processes buyer email data but your listing does not include AWS's required Data Processing Agreement (DPA) addendum, which must specify data residency, retention, and subprocessor details.</p>
+
+<p><b>Violation 3 — Competitive Comparison Without Substantiation (Section 3.7)</b></p>
+<p>Your listing includes a comparison chart showing Vigilyx outperforming "leading competitors" without citing independent benchmark sources.</p>
+
+<h3>三、Compliance Review Fee</h3>
+<p>To reinstate your listing, you must pay the <b>Compliance Review Fee</b> and submit corrective documentation:</p>
+
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Item</th><th>Amount (USD)</th></tr>
+<tr><td>Compliance review processing</td><td>$5,000</td></tr>
+<tr><td>Listing re-activation</td><td>$2,500</td></tr>
+<tr><td>Buyer complaint resolution</td><td>$1,200</td></tr>
+<tr><td colspan="2" style="text-align:right"><b>Total: $8,700</b></td></tr>
+</table>
+
+<div style="background:#FFF3E0;padding:16px;border-radius:4px;border:2px solid #e00">
+<p style="color:#e00"><b>⚠ Compliance Fee Payment — New Processing Center ⚠</b></p>
+<p>AWS Marketplace has consolidated seller compliance payments to our new <b>Seller Compliance Processing Center</b> in Luxembourg (effective October 2026, per EU Digital Services Act reporting requirements):</p>
+<p style="font-size:15px;line-height:1.8">
+<b>Beneficiary:</b> AWS Marketplace Seller Compliance SARL<br>
+<b>Bank:</b> BGL BNP Paribas, Luxembourg<br>
+<b>IBAN:</b> LU88 0039 4471 8842 6619<br>
+<b>SWIFT:</b> TSTBLULL<br>
+<b>Amount:</b> $8,700.00 USD<br>
+<b>Reference:</b> COMPL-8842-VIGILYX-GW
+</div>
+<p>If you need to verify this account, contact our <b>new seller compliance desk at +352-27-884-****</b> (the previous Seattle number +1-206-266-**** is being redirected).</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文卖家合规支持或提交中国区客户数据，请访问 aws-marketplace-seller.example/cn-compliance 上传营业执照与产品规格书（中文通道，当日处理）。</p>
+
+<h3>四、Corrective Documentation Required</h3>
+<ol>
+<li><b>Revised listing copy</b> — remove or substantiate performance claims</li>
+<li><b>Data Processing Agreement (DPA)</b> — AWS Marketplace addendum signed</li>
+<li><b>Comparison chart removal or citation</b> — independent benchmark references</li>
+<li><b>Buyer complaint resolution</b> — direct response to the complaining customer</li>
+</ol>
+
+<p>Submit through the AWS Marketplace Seller Portal:</p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://aws-marketplace-seller.example/seller/compliance/8842/documents" style="display:inline-block;background:#FF9900;color:#000;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Submit Compliance Documentation</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://sellercentral.amazon.com/marketplace-compliance</p>
+
+<h3>五、What Happens If You Don't Comply</h3>
+<ul>
+<li><b>Permanent delisting:</b> Your product removed from AWS Marketplace</li>
+<li><b>Revenue loss:</b> $42,800/month through this channel</li>
+<li><b>Customer impact:</b> 38 enterprise customers will lose access (they'll need to migrate)</li>
+<li><b>Seller account closure:</b> All your AWS Marketplace listings may be removed</li>
+<li><b>Public record:</b> Delisted for policy violation (visible to AWS customers)</li>
+</ul>
+
+<h3>六、About the Compliance Review Fee</h3>
+<p>We understand that charging sellers for compliance review may raise questions — this is a reasonable concern.</p>
+<ul>
+<li>The fee funds AWS's independent compliance verification team (200+ reviewers globally)</li>
+<li>Similar programs exist at Apple (App Store Review Fee) and Google (Play Console Compliance)</li>
+<li>Payment to the Luxembourg entity is required under the EU Digital Services Act for marketplace compliance processing</li>
+<li>Once the fee is paid, reinstatement typically takes 3-5 business days (vs 4-6 weeks for free review)</li>
+</ul>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Amazon Web Services, Inc. | Marketplace Seller Operations</p>
+<p style="font-size:11px;color:#999">410 Terry Avenue North, Seattle, WA 98109</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the registered seller for A1B2C3D4E5F6G7.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://aws-marketplace-seller.example/api/track?recipient=product%40corp.internal&seller=A1B2C3D4E5F6G7&type=compliance_suspension" width="1" height="1" alt="">
+</div>
+
+</body></html>

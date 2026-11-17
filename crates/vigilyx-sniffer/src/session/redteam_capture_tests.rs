@@ -44,10 +44,10 @@ fn pkt(direction: Direction, seq: u32, flags: u8, payload: &[u8]) -> RawpacketIn
     }
 }
 
-const MAIL: &[u8] = b"From: sender@partner-external.com\r\n\
-To: employee@ccabchina.com\r\n\
+const MAIL: &[u8] = b"From: sender@partner.example\r\n\
+To: employee@internal.example\r\n\
 Subject: capture-layer-test\r\n\
-Message-ID: <rt-cap-001@partner-external.com>\r\n\
+Message-ID: <rt-cap-001@partner.example>\r\n\
 MIME-Version: 1.0\r\n\
 Content-Type: text/html; charset=utf-8\r\n\
 \r\n\
@@ -74,9 +74,9 @@ impl Dialog {
         s(&mut packets, b"220 mx.test ESMTP\r\n");
         c(&mut packets, b"EHLO redteam.test\r\n");
         s(&mut packets, b"250-mx.test\r\n250 SIZE 26214400\r\n");
-        c(&mut packets, b"MAIL FROM:<sender@partner-external.com>\r\n");
+        c(&mut packets, b"MAIL FROM:<sender@partner.example>\r\n");
         s(&mut packets, b"250 2.1.0 OK\r\n");
-        c(&mut packets, b"RCPT TO:<employee@ccabchina.com>\r\n");
+        c(&mut packets, b"RCPT TO:<employee@internal.example>\r\n");
         s(&mut packets, b"250 2.1.5 OK\r\n");
         c(&mut packets, b"DATA\r\n");
         s(&mut packets, b"354 go ahead\r\n");
@@ -131,7 +131,9 @@ fn rt_baseline_dialog_produces_complete_email() {
     let sessions = run(&manager, &Dialog::new(MAIL).packets);
     eprintln!("baseline: {}", summarize(&sessions));
     assert!(
-        sessions.iter().any(|s| s.email_count == 1 && s.content.is_complete),
+        sessions
+            .iter()
+            .any(|s| s.email_count == 1 && s.content.is_complete),
         "baseline must publish a complete email, got: {}",
         summarize(&sessions)
     );
@@ -187,7 +189,9 @@ fn rt_divergent_overlap_first_wins() {
         .packets
         .iter()
         .position(|p| {
-            p.direction == Direction::Outbound && p.payload.len() == 200 && p.payload.starts_with(b"F")
+            p.direction == Direction::Outbound
+                && p.payload.len() == 200
+                && p.payload.starts_with(b"F")
         })
         .expect("data segment");
     let orig_seq = dialog.packets[idx].tcp_seq;

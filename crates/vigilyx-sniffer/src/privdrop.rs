@@ -18,9 +18,8 @@ use std::io;
 /// Failure semantics:
 /// - Not running as root (or non-unix): no-op success — dev runs and
 ///   container setups that already use a non-root user are unaffected.
-/// - Target user unknown: `Err(UserUnknown)` — callers log at error level
-///   and continue as root (a configuration error, not a mechanism failure;
-///   capture must not break silently on upgrade).
+/// - Target user unknown: `Err(UserUnknown)` — callers must stop rather than
+///   silently keeping root privileges after a configuration error.
 /// - setgroups/setgid/setuid syscall failure: `Err(io::Error)` — fatal; these
 ///   cannot legitimately fail for root and continuing would silently keep
 ///   the very privileges this module exists to shed.
@@ -60,7 +59,12 @@ pub fn drop_privileges(user: &str) -> Result<(), DropError> {
             return Err(DropError::Syscall(io::Error::last_os_error()));
         }
     }
-    tracing::info!(user, uid = pwd.uid, gid = pwd.gid, "privdrop: privileges dropped");
+    tracing::info!(
+        user,
+        uid = pwd.uid,
+        gid = pwd.gid,
+        "privdrop: privileges dropped"
+    );
     Ok(())
 }
 
@@ -156,9 +160,9 @@ pub fn configured_drop_user() -> Option<String> {
 
 /// Apply the configured privilege drop after root-only setup completed.
 ///
-/// `UserUnknown` logs at error level and keeps the process running (visible
-/// misconfiguration, capture unaffected); syscall failures return `Err` and
-/// the caller must treat them as fatal.
+/// Any configured privilege-drop failure is fatal. Continuing as root after a
+/// typo in `SNIFFER_DROP_USER` defeats the security boundary this module is
+/// responsible for enforcing.
 #[cfg(unix)]
 pub fn drop_privileges_if_configured() -> Result<(), DropError> {
     let Some(user) = configured_drop_user() else {
@@ -166,13 +170,6 @@ pub fn drop_privileges_if_configured() -> Result<(), DropError> {
     };
     match drop_privileges(&user) {
         Ok(()) => Ok(()),
-        Err(error @ DropError::UserUnknown(_)) => {
-            tracing::error!(
-                error = %error,
-                "privdrop skipped — continuing as root; set SNIFFER_DROP_USER to an existing unprivileged account"
-            );
-            Ok(())
-        }
         Err(error) => Err(error),
     }
 }
@@ -188,7 +185,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unknown_user_is_reported_not_fatal_semantic() {
+    fn unknown_user_is_reported_as_fatal_configuration_error() {
         if !nix_euid_is_root() {
             // Non-root runs cannot exercise the syscall path; assert the
             // classification only.

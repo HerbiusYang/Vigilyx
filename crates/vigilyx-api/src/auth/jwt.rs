@@ -76,7 +76,6 @@ pub fn generate_token(
 /// is enforced by `require_auth` against the per-user
 /// `platform_users.token_version` after the identity lookup — a global
 /// counter here would let one user's logout invalidate every operator.
-#[allow(dead_code)]
 pub fn verify_token(config: &AuthConfig, token: &str) -> Result<Claims, AuthError> {
     let mut validation = Validation::default();
     validation.set_issuer(&[JWT_ISSUER]);
@@ -136,8 +135,14 @@ mod tests {
         let alice_old_claims = verify_token(&config, &alice_old).expect("crypto valid");
         let bob_claims = verify_token(&config, &bob).expect("crypto valid");
 
-        assert!(alice_old_claims.tv < alice_row_tv, "alice's old token revoked");
-        assert!(bob_claims.tv >= bob_row_tv, "bob unaffected by alice's logout");
+        assert!(
+            alice_old_claims.tv < alice_row_tv,
+            "alice's old token revoked"
+        );
+        assert!(
+            bob_claims.tv >= bob_row_tv,
+            "bob unaffected by alice's logout"
+        );
 
         let alice_new = generate_token(&config, "alice", "admin", alice_row_tv).expect("token");
         let alice_new_claims = verify_token(&config, &alice_new).expect("crypto valid");

@@ -9,17 +9,19 @@
 //! Policies:
 //! - Time policy (time_policy) - non-working-hours alerts
 
+pub mod bulk_transfer;
 pub mod chunked_upload;
 pub mod coremail;
 pub mod dlp;
 pub mod document_extract;
 pub mod draft_detect;
+pub mod email_dlp;
+pub mod email_review;
 pub mod engine;
 pub mod file_transit_detect;
-pub mod jrt;
-pub mod jrt_compliance;
+pub mod financial_policy;
+pub mod mail_transfer_detect;
 pub mod redact;
-pub mod self_send_detect;
 pub mod time_policy;
 pub mod volume_anomaly;
 
@@ -84,7 +86,7 @@ pub async fn read_temp_path_limited_async(path: &str, max_bytes: usize) -> Optio
     Some(data)
 }
 
-/// Detector analysis result: incident + optional DLP result (for JR/T compliance tracking).
+/// Detector analysis result: incident + optional DLP result (for bulk transfer tracking).
 pub type DetectorResult = Option<(DataSecurityIncident, Option<DlpScanResult>)>;
 
 /// Data security detector trait.
@@ -95,7 +97,7 @@ pub trait DataSecurityDetector: Send + Sync {
     fn name(&self) -> &str;
     /// Analyze an HTTP session. Returns (incident, dlp_result) if a security issue is found.
 
-    /// `dlp_result` is used by JR/T 0197-2020 compliance tracking to accumulate
+    /// `dlp_result` is used by product bulk-transfer tracking to accumulate
     /// sensitive data counts by classification level.
     /// If the detector does not perform DLP internally, returns None for the second element.
     fn analyze(&self, session: &HttpSession) -> DetectorResult;
@@ -238,21 +240,21 @@ mod tests {
 
     #[test]
     fn test_extract_snippet_basic() {
-        let text = "客户ID cardNumberCode/Digit是 110101199001011237 请妥善保管";
-        let values = vec!["110101199001011237".to_string()];
+        let text = "客户ID cardNumberCode/Digit是 000000200001010005 请妥善保管";
+        let values = vec!["000000200001010005".to_string()];
         let result = extract_snippet(text, &values);
         assert!(result.is_some());
         let s = result.unwrap();
         assert!(
-            s.contains("【110101199001011237】"),
+            s.contains("【000000200001010005】"),
             "Value should be highlighted"
         );
     }
 
     #[test]
     fn test_extract_snippet_with_context() {
-        let text = "first面of文字 110101199001011237 后面of文字";
-        let values = vec!["110101199001011237".to_string()];
+        let text = "first面of文字 000000200001010005 后面of文字";
+        let values = vec!["000000200001010005".to_string()];
         let result = extract_snippet(text, &values).unwrap();
         assert!(
             result.contains("first面of文字"),
@@ -317,8 +319,8 @@ mod tests {
 
     #[test]
     fn test_extract_snippet_value_at_start() {
-        let text = "110101199001011237 是ID cardNumber";
-        let values = vec!["110101199001011237".to_string()];
+        let text = "000000200001010005 是ID cardNumber";
+        let values = vec!["000000200001010005".to_string()];
         let result = extract_snippet(text, &values).unwrap();
         assert!(
             result.starts_with("【"),
@@ -328,8 +330,8 @@ mod tests {
 
     #[test]
     fn test_extract_snippet_value_at_end() {
-        let text = "ID cardNumber是 110101199001011237";
-        let values = vec!["110101199001011237".to_string()];
+        let text = "ID cardNumber是 000000200001010005";
+        let values = vec!["000000200001010005".to_string()];
         let result = extract_snippet(text, &values).unwrap();
         assert!(
             !result.ends_with("…"),

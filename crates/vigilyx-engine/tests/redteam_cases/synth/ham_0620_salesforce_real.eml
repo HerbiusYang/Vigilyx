@@ -1,0 +1,84 @@
+From: Salesforce Trust <trust@salesforce.example>
+To: soc@corp.internal
+Cc: ciso@corp.internal, legal@corp.internal
+Date: Wed, 28 Oct 2026 14:00:00 -0800
+Message-ID: <0620-b62@synth.example>
+Subject: [SIRT-2026-4471] Security incident affecting your Salesforce org (00D5e0000008842)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Dear Security Team,
+
+SECURITY INCIDENT NOTIFICATION: Salesforce has identified
+unauthorized access to your Salesforce org between October
+20-24, 2026. Customer data may have been accessed.
+
+Incident Summary:
+  Incident ID: SIRT-2026-4471
+  Your Org ID: 00D5e0000008842
+  Incident Type: Unauthorized data access via compromised
+    OAuth refresh token (from 3rd-party AppExchange app)
+  Affected Data: Leads, Contacts, Opportunities (~8,400 records)
+  Attack Period: October 20-24, 2026
+  Discovered: October 27, 2026
+  Severity: HIGH — GDPR Article 33 notification required
+
+Affected Data:
+  Contacts: 3,247 (Name, Email, Phone, Company, Title)
+  Leads: 2,108 (Name, Email, Phone, Source)
+  Opportunities: 486 (Name, Amount, Stage, Close Date, Owner)
+  Accounts: 1,892 (Name, Industry, Website, Address)
+  Custom Objects: 667 (Request details)
+
+Required Actions:
+
+  1. Revoke the compromised OAuth token:
+     Navigate to your Salesforce org manually:
+     → login.salesforce.com (type URL manually)
+     → Setup → Apps → Connected Apps
+     → Find "DataGrid Pro" → Revoke all tokens
+
+  2. Review your audit trail:
+     Setup → Security → View Audit Trail
+     (Review all API calls during Oct 20-24)
+
+  3. Reset all connected app passwords
+
+  4. Notify your supervisory authority (GDPR Art. 33)
+     within 72 hours
+
+  Important Security Notes:
+  Salesforce SIRT will NEVER:
+  - Ask you to upload audit logs or API data through a
+    third-party portal
+  - Use Okta authentication to collect your data
+  - Request offline_access or any OAuth permission
+  - Ask you to "export affected records" and upload them
+  - Offer a "Chinese incident response channel"
+
+  All investigation is conducted by Salesforce's internal
+  team using data already available to us (as the service
+  provider). We do NOT need you to upload your audit logs
+  or customer data exports.
+
+  To verify this incident:
+  1. Navigate to trust.salesforce.com in your browser
+  2. Click "Security Incident Notifications"
+  3. Find incident SIRT-2026-4471
+
+  If you receive an email asking you to upload audit logs
+  or customer data to an "incident portal," it is a phishing
+  attempt exploiting a real security incident.
+
+GDPR / Regulatory Obligations:
+  Article 33: Notify supervisory authority within 72 hours
+  Failure: Fines up to €10 million or 2% of global turnover
+
+Contact:
+  Salesforce Security Incident Response Team (SIRT)
+  Phone: +1-800-220-**** (24/7)
+  Trust Portal: trust.salesforce.com (navigate manually)
+
+Salesforce, Inc. | Security Incident Response
+415 Mission Street, Suite 300, San Francisco, CA 94105
+You are receiving this because you are the security contact for org 00D5e0000008842.

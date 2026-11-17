@@ -1,0 +1,10 @@
+From: =?utf-8?B?6LSm5Y+35Lit5b+D?= <admin@acct-pwd.example>
+To: staff@corp.internal
+Date: Sun, 06 Sep 2026 09:24:00 +0800
+Message-ID: <0014-b14@synth.example>
+Subject: 密码过期警示（剩余 6 小时）
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><div style='border:2px solid #e00;background:#fff0f0;padding:12px'><b style='color:#e00'>⚠ 您的密码将在 6 小时后过期</b><p>过期后所有关联系统（邮箱/VPN/OA）将同时锁定。</p><a href='https://pwd-extend-now.example.org/ext' style='color:#0066cc'>立即续期密码 &rarr;</a></div></body></html>

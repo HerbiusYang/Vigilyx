@@ -1,0 +1,10 @@
+From: =?utf-8?B?SVQg5pyN5Yqh5Y+w?= <helpdesk@corp.internal>
+To: eng@corp.internal
+Date: Fri, 11 Sep 2026 08:39:00 +0800
+Message-ID: <0029-b19@synth.example>
+Subject: 模板库更新（内网共享）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+模板库更新已同步到 \\file.corp.internal\templates，
+映射盘符即可；不提供任何'快捷方式挂载'文件。

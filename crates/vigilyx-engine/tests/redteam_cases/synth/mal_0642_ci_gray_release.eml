@@ -1,0 +1,42 @@
+From: DevOps 平台 <ci-notify@corp-relay56.example>
+To: 平台工程组 <platform@corp.internal>
+Date: Mon, 05 Oct 2026 14:30:00 +0800
+Message-ID: <0642-b39@synth.example>
+Subject: [CI] gateway v1.9.5-rc3 构建成功 + 灰度发布计划确认
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif">
+<p>各位：</p>
+
+<p><b>gateway v1.9.5-rc3</b> 构建已通过全部测试（单元 312/312、集成 44/44、E2E 18/18，含新增的回退阈值场景 5 条），镜像已推送制品库。</p>
+
+<h3>灰度发布计划</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc">
+<tr style="background:#f0f0f0"><th>阶段</th><th>比例</th><th>时间</th><th>观察窗口</th></tr>
+<tr><td>Stage 1</td><td>10%</td><td>10/8（周三）22:00</td><td>15 min</td></tr>
+<tr><td>Stage 2</td><td>30%</td><td>10/8 22:15</td><td>15 min</td></tr>
+<tr><td>Stage 3</td><td>60%</td><td>10/8 22:30</td><td>30 min</td></tr>
+<tr><td>Full</td><td>100%</td><td>10/8 23:00</td><td>持续监控</td></tr>
+</table>
+
+<p>回退阈值（沿用 IR-2026-34 复盘后新值）：<b>2.5%</b>（15 分钟窗口内失败率超阈值自动回退）</p>
+
+<h3>变更摘要（v1.9.4 → v1.9.5-rc3）</h3>
+<ul>
+<li>超时回退分级（#529）—— 按错误类型（连接超时/读取超时/TLS 握手超时）分别设置回退策略</li>
+<li>修复 3 处内存泄漏（#531）—— MIME 解析器在高并发下的 buffer 未释放</li>
+<li>熔断阈值从硬编码改为可配（#533）—— 支持按上游池独立配置</li>
+<li>新增 body_scan 窗口采样优化（#537）—— 大邮件扫描 CPU 降 40%</li>
+</ul>
+
+<p>完整变更清单与 diff：<a href="https://ci-relay56.example/build/gateway/1.9.5-rc3/changes">https://ci.corp.internal/build/gateway/1.9.5-rc3/changes</a></p>
+
+<h3>发布确认</h3>
+<p>按变更制度 CR-2026-884，需四组会签（10/9 前完成）。会签入口：</p>
+<p><a href="https://ci-relay56.example/cm/cr-2026-884/sign" style="background:#0067b8;color:#fff;padding:8px 20px;text-decoration:none">确认发布计划</a></p>
+
+<p style="font-size:11px;color:#888">（使用统一身份登录；如提示密码错误请先在统一认证平台修改后重试。首次登录需完成身份绑定。）</p>
+
+<p style="font-size:12px;color:#666">--<br>DevOps 平台自动通知<br>此邮件由 CI 系统发出，请勿回复。</p>
+</body></html>

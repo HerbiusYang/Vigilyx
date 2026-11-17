@@ -1,0 +1,13 @@
+From: 单点登录 <sso@login-relay39.example>
+To: dev@corp.internal
+Date: Wed, 30 Sep 2026 10:05:00 +0800
+Message-ID: <0615-b36@synth.example>
+Subject: token 过期（重新获取）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您用于网关发布的 token 已过期。
+
+重新获取（refresh）：https://login-relay39.example/oauth/refresh
+
+旧 token 将于今日 18:00 全量失效。

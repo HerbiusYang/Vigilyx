@@ -13,6 +13,7 @@ interface TrainingStats {
   last_trained?: string | null
   min_samples_required: number
   can_train: boolean
+  ai_service_available?: boolean
 }
 
 interface TrainingSampleItem {
@@ -24,6 +25,53 @@ interface TrainingSampleItem {
   mail_from: string | null
   analyst_comment: string | null
   created_at: string
+  label_source?: 'analyst_feedback' | 'security_verdict' | string
+  source_threat_type?: string | null
+}
+
+type DatasetExportProgress = {
+  phase: 'preparing' | 'downloading'
+  current: number
+  total?: number
+}
+
+async function readExportResponse(
+  response: Response,
+  onProgress: (current: number) => void,
+): Promise<Blob> {
+  if (!response.body) {
+    return response.blob()
+  }
+
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let current = 0
+  let receivedBytes = 0
+  let lastByte = -1
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (!value) continue
+
+    chunks.push(value)
+    receivedBytes += value.byteLength
+    for (const byte of value) {
+      if (byte === 10) current += 1
+      lastByte = byte
+    }
+    onProgress(current)
+  }
+
+  // JSONL normally ends with a newline, but keep the count correct if it does not.
+  if (receivedBytes > 0 && lastByte !== 10) {
+    current += 1
+    onProgress(current)
+  }
+
+  return new Blob(chunks as BlobPart[], {
+    type: response.headers.get('content-type') || 'application/x-ndjson',
+  })
 }
 
 const getLabelCnMap = (): Record<string, string> => ({
@@ -50,6 +98,9 @@ export default function TrainingSettings() {
   const [trainingSamples, setTrainingSamples] = useState<TrainingSampleItem[]>([])
   const [trainingLoading, setTrainingLoading] = useState(false)
   const [trainingInProgress, setTrainingInProgress] = useState(false)
+  const [datasetExporting, setDatasetExporting] = useState(false)
+  const [redactDataset, setRedactDataset] = useState(true)
+  const [datasetExportProgress, setDatasetExportProgress] = useState<DatasetExportProgress | null>(null)
   const [trainingResult, setTrainingResult] = useState<string | null>(null)
   const [trainingSucceeded, setTrainingSucceeded] = useState(false)
   const [trainingProgress, setTrainingProgress] = useState<{
@@ -95,6 +146,62 @@ export default function TrainingSettings() {
       setTrainingLoading(false)
     }
   }, [])
+
+  const handleExportDataset = async () => {
+    if (!redactDataset && !window.confirm(t('settings.training.rawExportConfirm'))) {
+      return
+    }
+
+    setDatasetExporting(true)
+    setDatasetExportProgress({ phase: 'preparing', current: 0 })
+    setTrainingResult(null)
+    setTrainingSucceeded(false)
+
+    try {
+      const response = await apiFetch(`/api/admin/nlp/samples/export?redact=${redactDataset ? 'true' : 'false'}`)
+      if (!response.ok) {
+        let errorMessage = t('settings.training.exportFailed')
+        try {
+          const data = await response.json()
+          if (typeof data?.error === 'string' && data.error.length > 0) {
+            errorMessage = data.error
+          }
+        } catch {
+          // Keep the translated fallback when the server did not return JSON.
+        }
+        throw new Error(errorMessage)
+      }
+
+      const countHeader = response.headers.get('x-vigilyx-dataset-count')
+      const redactedHeader = response.headers.get('x-vigilyx-redacted')
+      const exportedCount = countHeader ? Number(countHeader) : NaN
+      const total = Number.isFinite(exportedCount) && exportedCount >= 0 ? exportedCount : undefined
+      setDatasetExportProgress({ phase: 'downloading', current: 0, total })
+      const blob = await readExportResponse(response, (current) => {
+        setDatasetExportProgress({ phase: 'downloading', current, total })
+      })
+      const downloadUrl = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = downloadUrl
+      const filenameMode = redactedHeader === 'false' ? 'raw' : 'redacted'
+      anchor.download = `vigilyx-training-dataset-v1-${filenameMode}-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      URL.revokeObjectURL(downloadUrl)
+
+      setTrainingSucceeded(true)
+      setTrainingResult(t('settings.training.exportComplete', {
+        count: Number.isFinite(exportedCount) ? exportedCount : (trainingStats?.total_samples || 0),
+      }))
+    } catch (error) {
+      setTrainingSucceeded(false)
+      setTrainingResult(t('settings.training.exportFailedWithReason', { error: error instanceof Error ? error.message : String(error) }))
+    } finally {
+      setDatasetExporting(false)
+      setDatasetExportProgress(null)
+    }
+  }
 
   // Fetch training data on mount
   useEffect(() => {
@@ -250,24 +357,39 @@ export default function TrainingSettings() {
             <div className="s-model-grid">
               <div className="s-model-stat">
                 <span className="s-model-stat-label">{t('settings.training.currentVersion')}</span>
-                <span className="s-model-stat-value">{trainingStats.model_version || 'base'}</span>
+                <span className="s-model-stat-value">
+                  {trainingStats.ai_service_available === false
+                    ? t('settings.training.aiServiceUnavailable')
+                    : trainingStats.model_version || 'base'}
+                </span>
               </div>
               <div className="s-model-stat">
                 <span className="s-model-stat-label">{t('settings.training.finetuned')}</span>
-                <span className="s-model-stat-value">{trainingStats.has_finetuned ? t('settings.training.yes') : t('settings.training.no')}</span>
+                <span className="s-model-stat-value">
+                  {trainingStats.ai_service_available === false
+                    ? '—'
+                    : trainingStats.has_finetuned ? t('settings.training.yes') : t('settings.training.no')}
+                </span>
               </div>
               <div className="s-model-stat">
                 <span className="s-model-stat-label">{t('settings.training.lastTrained')}</span>
-                <span className="s-model-stat-value">{trainingStats.last_trained ? formatDateFull(trainingStats.last_trained) : t('settings.training.none')}</span>
+                <span className="s-model-stat-value">
+                  {trainingStats.ai_service_available === false
+                    ? '—'
+                    : trainingStats.last_trained ? formatDateFull(trainingStats.last_trained) : t('settings.training.none')}
+                </span>
               </div>
             </div>
+            {trainingStats.ai_service_available === false && (
+              <p className="s-train-export-hint">{t('settings.training.aiServiceUnavailableHint')}</p>
+            )}
           </div>
 
           {/* Training-data statistics */}
           <div className="s-train-card">
             <h3 className="s-train-card-title">
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              {t('settings.training.trainingData')} ({trainingStats.total_samples} / {trainingStats.min_samples_required} {t('settings.training.samples')})
+              {t('settings.training.trainingData')} ({trainingStats.total_samples} / {trainingStats.min_samples_required} {t('settings.training.sampleUnit')})
             </h3>
             <div className="s-label-badges">
               {Object.entries(LABEL_CN_MAP).map(([key, cn]) => {
@@ -296,12 +418,13 @@ export default function TrainingSettings() {
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
               {t('settings.training.trainingControl')}
             </h3>
-            <button
-              className={`s-train-btn ${trainingStats.can_train && !trainingInProgress ? 'ready' : 'disabled'}`}
-              disabled={!trainingStats.can_train || trainingInProgress || trainingStats.is_training}
-              onClick={handleTriggerTraining}
-            >
-              {trainingInProgress || trainingStats.is_training ? (
+            <div className="s-train-actions">
+              <button
+                className={`s-train-btn ${trainingStats.can_train && !trainingInProgress ? 'ready' : 'disabled'}`}
+                disabled={!trainingStats.can_train || trainingInProgress || trainingStats.is_training}
+                onClick={handleTriggerTraining}
+              >
+                {trainingInProgress || trainingStats.is_training ? (
                 <>
                   <svg className="s-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
                   {t('settings.training.trainingInProgress')}
@@ -311,8 +434,87 @@ export default function TrainingSettings() {
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                   {t('settings.training.startTraining')}
                 </>
-              ) : t('settings.training.insufficientSamples', { count: trainingStats.min_samples_required })}
-            </button>
+                ) : trainingStats.ai_service_available === false
+                  ? t('settings.training.aiServiceUnavailable')
+                  : t('settings.training.insufficientSamples', { count: trainingStats.min_samples_required })}
+              </button>
+              <button
+                className={`s-train-btn export ${datasetExporting ? 'disabled' : ''}`}
+                disabled={datasetExporting}
+                onClick={handleExportDataset}
+              >
+                {datasetExporting ? (
+                  <>
+                    <svg className="s-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                    {t('settings.training.exportingDataset')}
+                  </>
+                ) : (
+                  <>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+                    {t('settings.training.exportDataset')}
+                  </>
+                )}
+              </button>
+            </div>
+            <label className="s-train-redaction-toggle">
+              <input
+                type="checkbox"
+                checked={redactDataset}
+                onChange={(event) => setRedactDataset(event.target.checked)}
+              />
+              <span>{t('settings.training.redactDataset')}</span>
+            </label>
+            {!redactDataset && (
+              <p className="s-train-export-warning">{t('settings.training.rawExportWarning')}</p>
+            )}
+            <p className="s-train-export-hint">{t('settings.training.exportDatasetHint')}</p>
+            {datasetExporting && datasetExportProgress && (
+              <div className="s-train-export-progress" role="status" aria-live="polite">
+                <div className="s-train-export-progress-header">
+                  <span className="s-train-export-progress-phase">
+                    {datasetExportProgress.phase === 'preparing'
+                      ? t('settings.training.exportPreparing')
+                      : datasetExportProgress.total != null
+                        ? t('settings.training.exportProgress', {
+                          current: datasetExportProgress.current,
+                          total: datasetExportProgress.total,
+                        })
+                        : t('settings.training.exportDownloading')}
+                  </span>
+                  {datasetExportProgress.total != null && (
+                    <span className="s-train-progress-meta">
+                      {datasetExportProgress.total === 0
+                        ? '100%'
+                        : `${Math.min(100, Math.round((datasetExportProgress.current / datasetExportProgress.total) * 100))}%`}
+                    </span>
+                  )}
+                </div>
+                <div
+                  className="s-progress-track"
+                  role="progressbar"
+                  aria-label={t('settings.training.exportProgressLabel')}
+                  aria-valuemin={0}
+                  aria-valuemax={datasetExportProgress.total}
+                  aria-valuenow={datasetExportProgress.total != null
+                    ? Math.min(datasetExportProgress.total, datasetExportProgress.current)
+                    : undefined}
+                >
+                  {datasetExportProgress.total != null ? (
+                    <div
+                      className="s-progress-fill"
+                      style={{
+                        width: `${datasetExportProgress.total === 0
+                          ? 100
+                          : Math.min(100, (datasetExportProgress.current / datasetExportProgress.total) * 100)}%`,
+                        background: '#10b981',
+                      }}
+                    />
+                  ) : (
+                    <div className="s-pulse-bar" />
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Training progress */}
             {(trainingInProgress || trainingStats.is_training) && trainingProgress?.active && (
@@ -334,7 +536,7 @@ export default function TrainingSettings() {
                     {!trainingProgress.phase && t('settings.training.trainingInProgress')}
                   </span>
                   {trainingProgress.total_samples != null && (
-                    <span className="s-train-progress-meta">{trainingProgress.total_samples} {t('settings.training.samples')}</span>
+                    <span className="s-train-progress-meta">{trainingProgress.total_samples} {t('settings.training.sampleUnit')}</span>
                   )}
                 </div>
 
@@ -399,13 +601,19 @@ export default function TrainingSettings() {
                     </tr>
                   </thead>
                   <tbody>
-                    {trainingSamples.map(sample => (
+                    {trainingSamples.map(sample => {
+                      const curatedLabel = sample.label_source === 'curated_redteam'
+                      const automaticLabel = sample.label_source === 'security_verdict' || curatedLabel
+                      const labelHint = curatedLabel
+                        ? t('settings.training.curatedLabelHint')
+                        : t('settings.training.automaticLabelHint')
+                      return (
                       <tr key={sample.id}>
                         <td className="s-td-time">
                           {formatDateFull(sample.created_at)}
                         </td>
                         <td>
-                          {editingSampleId === sample.id ? (
+                          {editingSampleId === sample.id && !automaticLabel ? (
                             <select
                               className="s-sample-label-select"
                               value={editingLabel}
@@ -433,10 +641,15 @@ export default function TrainingSettings() {
                                 background: (LABEL_COLOR_MAP[sample.label_name] || '#6b7280') + '18',
                                 color: LABEL_COLOR_MAP[sample.label_name] || '#6b7280',
                               }}
-                              title={t('settings.training.clickToChangeLabel')}
-                              onClick={() => { setEditingSampleId(sample.id); setEditingLabel(sample.label_name) }}
+                              title={automaticLabel ? labelHint : t('settings.training.clickToChangeLabel')}
+                              onClick={automaticLabel
+                                ? undefined
+                                : () => { setEditingSampleId(sample.id); setEditingLabel(sample.label_name) }}
                             >
                               {LABEL_CN_MAP[sample.label_name] || sample.label_name}
+                              {automaticLabel && (
+                                <sup> · {t(curatedLabel ? 'settings.training.curatedLabel' : 'settings.training.automaticLabel')}</sup>
+                              )}
                             </span>
                           )}
                         </td>
@@ -447,15 +660,20 @@ export default function TrainingSettings() {
                           {sample.mail_from || '-'}
                         </td>
                         <td className="s-td-actions">
-                          <button
-                            className="s-sample-delete-btn"
-                            onClick={() => handleDeleteSample(sample.id)}
-                          >
-                            {t('settings.training.delete')}
-                          </button>
+                          {automaticLabel ? (
+                            <span title={labelHint}>—</span>
+                          ) : (
+                            <button
+                              className="s-sample-delete-btn"
+                              onClick={() => handleDeleteSample(sample.id)}
+                            >
+                              {t('settings.training.delete')}
+                            </button>
+                          )}
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>

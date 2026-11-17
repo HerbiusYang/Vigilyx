@@ -1,0 +1,11 @@
+From: =?utf-8?B?UmVzZWFyY2hlcg==?= <sec@0day-research.example>
+To: sec-research@corp.internal
+Date: Tue, 22 Sep 2026 10:38:00 +0800
+Message-ID: <0028-b29@synth.example>
+Subject: Re: your gateway post - PoC
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Nice writeup. I have a working PoC for the deserialization chain you mentioned:
+https://github-research-clone.example/poc/deser.py
+(Private until disclosure - please don't share.)

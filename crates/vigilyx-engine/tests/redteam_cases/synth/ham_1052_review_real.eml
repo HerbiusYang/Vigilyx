@@ -1,0 +1,75 @@
+From: "Apple Developer Support | 开发者支持" <devsupport@apple-developer.example>
+To: shuai.chengyu@indie.dev.example
+Date: Fri, 04 Sep 2026 15:10:00 +0800
+Message-ID: <1052-b206@synth.example>
+Subject: =?utf-8?B?44CQ5a6h5qC45pSv5oyB44CR5Yqg5oCl5a6h5qC4RXhwZWRpdGVkIFJldmlld+WFjei0ueeUs+ivt+aMh+W8leS4jumYn+WIl+ivtOaYjg==?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+帅成渝开发者（NoteLite 轻笔记，
+4.7.2 build 118）：
+
+您好。Apple 开发者支持（官方域
+apple-developer.example，与 App
+Store Connect 内"联系我们"入口
+一致）。注意到您收到"应用市场
+加速审核中心"的付费加急推销
+（2,800 元/48 小时），就加急
+审核与队列的真实规则说明如下。
+
+一、加急审核（Expedited Review）
+免费，且您的情况可以申请
+1. 申请入口：App Store Connect
+   联系我们页面 → App Review →
+   Request an Expedited Review，
+   表单用中文填写即可；
+2. 适用面比传言宽：与重大版本
+   发布节点、用户影响相关的
+   时间敏感更新（如您的新版
+   配合系统适配与节日功能
+   上线）即可作为理由，并非
+   仅限"发布会级"事件；
+3. 免费、无次数上限的公开规则，
+   不存在"加急信用额度用废"
+   的机制——这类说法是付费
+   加急推销为劝退自办编造的；
+4. 加急通常 24-48 小时出结果，
+   与所谓"通道"承诺的时效
+   相同，价格是零。
+
+二、重审队列与账号记录的真实
+情况
+1. 因 IAP 说明被拒后重新提交，
+   排期通常 2-7 天（当前队列
+   可在 App Store Connect 状态
+   页实时查看），不是 12-18 天；
+2. 拒审不产生"信誉分"或
+   "人工重点审查"惩罚记录——
+   每个版本按其自身材料审核，
+   修复说明写清楚即可。
+
+三、关于"材料侧优化、不违规
+插队"
+第三方无法改变您的队列位置，
+所谓"预检服务"能做的只是
+您自己照 Resolution Center
+的拒审指引修复——那些指引
+本身就是免费的、逐条的。
+"包不一样了"的真相：改包的
+是您，被收费的也是您。
+
+四、反诈声明
+App Review 没有任何付费加速
+渠道，也从不会通过第三方收费；
+审核状态以 App Store Connect
+为准。收到类似推销请通过
+Connect 内"报告疑虑"提交。
+
+给独立开发者的一句话：改包
+免费、加急免费、队列自己会动
+——花钱买的不是 16 天，是
+"以为官方路走不通"的 16 天。
+
+Apple Developer Support
+（本邮件可通过 Connect 内案例
+编号 DS-2611924 回溯核对）

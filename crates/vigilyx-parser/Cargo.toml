@@ -36,9 +36,6 @@ serde_json.workspace = true
 # Logging
 tracing.workspace = true
 
-# Time
-chrono.workspace = true
-
 [dev-dependencies]
 proptest = "1.11"
 

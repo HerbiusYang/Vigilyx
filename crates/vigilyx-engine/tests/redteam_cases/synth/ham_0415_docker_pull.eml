@@ -1,0 +1,9 @@
+From: =?utf-8?B?RG9ja2Vy?= <notify@docker.example>
+To: dev@corp.internal
+Date: Sun, 20 Sep 2026 09:44:00 +0800
+Message-ID: <0034-b27@synth.example>
+Subject: Image pulled 1k+ times
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Milestone notification.

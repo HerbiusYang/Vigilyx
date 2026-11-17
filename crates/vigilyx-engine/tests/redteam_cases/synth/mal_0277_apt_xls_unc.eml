@@ -1,0 +1,21 @@
+From: =?utf-8?B?6YeH6LSt5Lit5b+D?= <op@city-smart-rfp.example>
+To: bd@corp.internal
+Date: Wed, 09 Sep 2026 08:26:00 +0800
+Message-ID: <0016-b17@synth.example>
+Subject: 智慧城市二期需求调研表
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+调研表请于本周末前回填。
+--BS
+Content-Type: application/vnd.ms-excel
+Content-Disposition: attachment; filename="需求调研表.xls"
+Content-Transfer-Encoding: base64
+
+0M8R4AAAAAA=
+--BS--

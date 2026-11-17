@@ -1,0 +1,9 @@
+From: =?utf-8?B?5ZWG5oi35pyN5Yqh?= <shj@pay.example>
+To: merchant@corp.internal
+Date: Thu, 24 Sep 2026 09:32:00 +0800
+Message-ID: <0022-b31@synth.example>
+Subject: 结算延迟说明（通道维护）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+今日结算延至明晨，账户不变。

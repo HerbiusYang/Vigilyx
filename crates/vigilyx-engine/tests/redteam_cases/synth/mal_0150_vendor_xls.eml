@@ -1,0 +1,19 @@
+From: =?utf-8?B?5Y2O5L+hLeWvuei0pg==?= <dzhz@hongxin-trade.example>
+To: ap@corp.internal
+Date: Tue, 01 Sep 2026 10:19:00 +0800
+Message-ID: <0009-b9@synth.example>
+Subject: 9月对账单（差异两笔）
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+对账单见附件，两笔差异黄色标注，请核对回签。
+--BS
+Content-Type: application/vnd.ms-excel
+Content-Disposition: attachment; filename="对账单202609.xls"
+Content-Transfer-Encoding: base64
+
+0M8R4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+--BS--

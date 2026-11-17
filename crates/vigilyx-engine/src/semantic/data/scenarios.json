@@ -1,0 +1,556 @@
+{
+  "version": 1,
+  "description": "Existing semantic scenarios module data; consumed through the unified module-data registry.",
+  "lists": {
+    "semantic_scenario_policy_v1": {
+      "description": "Observation-only semantic scenario definitions. Every variant requires a recipient-directed action and object in the same bounded claim; these findings do not enter threat fusion.",
+      "category": "semantic_context",
+      "source_file": "modules/semantic_policy.rs",
+      "items": [
+        {
+          "scenario_id": "credential_request",
+          "variants": [
+            {
+              "actions_any": [
+                "登录",
+                "验证",
+                "点击",
+                "提交",
+                "发送",
+                "回复",
+                "索要",
+                "获取",
+                "输入",
+                "提供",
+                "login",
+                "log in",
+                "click",
+                "verify",
+                "submit",
+                "send",
+                "reply",
+                "request",
+                "get",
+                "enter",
+                "provide",
+                "填写",
+                "填入",
+                "上传",
+                "回传",
+                "告知",
+                "核验",
+                "校验",
+                "认证",
+                "告诉",
+                "透露",
+                "答复",
+                "补交",
+                "转交",
+                "share",
+                "tell",
+                "disclose",
+                "give",
+                "email",
+                "forward",
+                "respond",
+                "transmit",
+                "登陆"
+              ],
+              "objects_any": [
+                "验证码",
+                "短信验证码",
+                "手机验证码",
+                "密码",
+                "口令",
+                "凭证",
+                "token",
+                "verification code",
+                "password",
+                "credential",
+                "动态口令",
+                "动态密码",
+                "一次性密码",
+                "校验码",
+                "安全码",
+                "恢复码",
+                "备用码",
+                "登录凭据",
+                "登录密码",
+                "支付密码",
+                "邮箱密码",
+                "账密",
+                "私钥",
+                "助记词",
+                "密保信息",
+                "动态码",
+                "验-证-码",
+                "登录口令",
+                "短信口令",
+                "动态验证口令",
+                "动态验证码",
+                "passcode",
+                "one-time password",
+                "one time password",
+                "one-time code",
+                "one time code",
+                "otp",
+                "2fa code",
+                "mfa code",
+                "security code",
+                "recovery code",
+                "backup code",
+                "private key",
+                "seed phrase",
+                "recovery phrase",
+                "login password",
+                "banking password",
+                "短信动态验证码",
+                "passwords",
+                "passcodes",
+                "verification codes",
+                "one-time passwords",
+                "one time passwords",
+                "one-time codes",
+                "one time codes",
+                "otps",
+                "2fa codes",
+                "mfa codes",
+                "authentication code",
+                "authentication codes",
+                "security codes",
+                "recovery codes",
+                "backup codes",
+                "private keys",
+                "seed phrases",
+                "recovery phrases"
+              ]
+            }
+          ]
+        },
+        {
+          "scenario_id": "account_access_request",
+          "variants": [
+            {
+              "actions_any": [
+                "点击",
+                "验证",
+                "打开",
+                "click",
+                "verify",
+                "open",
+                "登录",
+                "核验",
+                "扫码",
+                "扫描",
+                "校验",
+                "认证",
+                "sign in",
+                "authenticate",
+                "登陆"
+              ],
+              "objects_any": [
+                "账号",
+                "账户",
+                "登录页面",
+                "account",
+                "login page",
+                "帐号",
+                "邮箱",
+                "mailbox",
+                "认证页面",
+                "认证平台",
+                "账号信息",
+                "username",
+                "banking username"
+              ]
+            },
+            {
+              "actions_any": [
+                "activate",
+                "review",
+                "confirm",
+                "trust",
+                "secure",
+                "continue",
+                "restore",
+                "unlock",
+                "re-authenticate",
+                "complete",
+                "激活",
+                "保护",
+                "查看",
+                "继续",
+                "前往",
+                "恢复",
+                "完成",
+                "绑定",
+                "重置",
+                "解锁",
+                "核实",
+                "更改",
+                "变更",
+                "update",
+                "sign in",
+                "authenticate"
+              ],
+              "objects_any": [
+                "account",
+                "device",
+                "trusted device",
+                "verification",
+                "authentication",
+                "security activity",
+                "activity",
+                "账号",
+                "账户",
+                "受信任设备",
+                "设备",
+                "认证",
+                "身份",
+                "安全活动",
+                "帐号",
+                "身份验证",
+                "安全验证",
+                "账户访问",
+                "邮箱",
+                "mailbox",
+                "认证页面",
+                "认证平台",
+                "账号信息",
+                "username",
+                "banking username"
+              ]
+            }
+          ]
+        },
+        {
+          "scenario_id": "payment_account_change_request",
+          "variants": [
+            {
+              "actions_any": [
+                "付款",
+                "支付",
+                "转账",
+                "汇款",
+                "确认",
+                "pay",
+                "transfer",
+                "confirm",
+                "转入",
+                "划转",
+                "汇入",
+                "打款",
+                "购买",
+                "buy",
+                "缴纳",
+                "交纳",
+                "充值",
+                "垫付",
+                "转存",
+                "汇至",
+                "划入",
+                "转至",
+                "借给",
+                "wire",
+                "remit",
+                "转款"
+              ],
+              "objects_any": [
+                "收款账户",
+                "新账户",
+                "bank account",
+                "购物卡",
+                "银行账户",
+                "银行账号",
+                "对公账户",
+                "收款账号",
+                "新账号",
+                "收款信息",
+                "收款银行",
+                "收款方",
+                "礼品卡",
+                "gift card",
+                "保证金",
+                "解冻费",
+                "手续费",
+                "押金",
+                "预付款",
+                "货款",
+                "尾款",
+                "安全账户",
+                "收款户名",
+                "new bank account",
+                "beneficiary account",
+                "recipient account",
+                "routing number"
+              ]
+            },
+            {
+              "actions_any": [
+                "修改",
+                "change",
+                "更换",
+                "更新",
+                "更改",
+                "变更",
+                "缴纳",
+                "交纳",
+                "充值",
+                "垫付",
+                "转存",
+                "汇至",
+                "划入",
+                "转至",
+                "借给",
+                "wire",
+                "remit",
+                "转款"
+              ],
+              "objects_any": [
+                "付款",
+                "款项",
+                "收款账户",
+                "新账户",
+                "payment",
+                "bank account",
+                "银行账户",
+                "银行账号",
+                "对公账户",
+                "收款账号",
+                "新账号",
+                "收款信息",
+                "收款银行",
+                "收款方",
+                "保证金",
+                "解冻费",
+                "手续费",
+                "押金",
+                "预付款",
+                "货款",
+                "尾款",
+                "安全账户",
+                "收款户名",
+                "new bank account",
+                "beneficiary account",
+                "recipient account",
+                "routing number"
+              ]
+            }
+          ]
+        },
+        {
+          "scenario_id": "sensitive_data_request",
+          "variants": [
+            {
+              "actions_any": [
+                "发送",
+                "回复",
+                "提交",
+                "附上",
+                "提供",
+                "send",
+                "reply",
+                "submit",
+                "attach",
+                "provide",
+                "填写",
+                "填入",
+                "上传",
+                "回传",
+                "告知",
+                "补录",
+                "告诉",
+                "出示",
+                "寄送",
+                "寄回",
+                "答复",
+                "补交",
+                "透露",
+                "转交",
+                "帮拍",
+                "拍张",
+                "交换",
+                "发张",
+                "发一张",
+                "转给",
+                "发给",
+                "upload",
+                "share",
+                "email",
+                "forward",
+                "transmit",
+                "give"
+              ],
+              "objects_any": [
+                "身份证",
+                "照片",
+                "人脸",
+                "人脸视频",
+                "资料",
+                "实名补录",
+                "身份证号码",
+                "证件号码",
+                "证件照片",
+                "护照",
+                "银行卡号",
+                "手机号码",
+                "联系方式",
+                "通讯录",
+                "客户名单",
+                "银行卡",
+                "卡号",
+                "手机号",
+                "姓名",
+                "全名",
+                "常住地址",
+                "通讯地址",
+                "联系电话",
+                "联络电话",
+                "个人信息",
+                "个人基本信息",
+                "身份信息",
+                "开户行",
+                "账户信息",
+                "收款户名",
+                "私密照片",
+                "裸照",
+                "日常照",
+                "护照号码",
+                "证件原件",
+                "passport",
+                "identity document",
+                "id card",
+                "phone number",
+                "bank card",
+                "card number",
+                "personal information",
+                "full name",
+                "mobile number"
+              ]
+            }
+          ]
+        },
+        {
+          "scenario_id": "off_platform_contact_request",
+          "variants": [
+            {
+              "actions_any": [
+                "加",
+                "添加",
+                "联系",
+                "致电",
+                "contact",
+                "call",
+                "add"
+              ],
+              "objects_any": [
+                "微信",
+                "企业微信",
+                "钉钉",
+                "whatsapp",
+                "telegram",
+                "qq",
+                "薇信",
+                "vx",
+                "wechat"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "semantic_cross_claim_candidate_policy_v1": {
+      "description": "Non-scoring semantic observations require a physically bound HTML CTA and source-attributed request or quota context in the same bounded block, except configured header context. Generic CTAs, competing links, counter-context, and incomplete inspection are explicitly marked ambiguous or countered. Unknown target ownership and fetch failures remain coverage, not threat evidence.",
+      "category": "semantic_context",
+      "source_file": "modules/semantic_policy.rs",
+      "items": [
+        {
+          "scenario_id": "account_security_verification",
+          "context_scenario_id": "account_access_request",
+          "context_objects_any": [
+            "身份验证",
+            "身份",
+            "认证"
+          ],
+          "linked_variants_any": [
+            {
+              "actions_any": [
+                "验证",
+                "认证",
+                "verify"
+              ],
+              "objects_any": [
+                "身份验证",
+                "身份",
+                "认证",
+                "账号",
+                "账户",
+                "链接"
+              ]
+            },
+            {
+              "actions_any": [
+                "完成",
+                "complete"
+              ],
+              "objects_any": [
+                "身份验证",
+                "身份",
+                "认证",
+                "账号",
+                "账户"
+              ]
+            }
+          ],
+          "ambiguous_linked_actions_any": [
+            "处理",
+            "点击",
+            "打开",
+            "继续",
+            "查看",
+            "前往"
+          ],
+          "ambiguous_linked_objects_any": [
+            "链接"
+          ],
+          "allow_header_context": true
+        },
+        {
+          "scenario_id": "storage_quota_reward",
+          "context_scenario_id": null,
+          "context_objects_any": [
+            "存储空间",
+            "存储容量",
+            "存储配额",
+            "容量",
+            "配额"
+          ],
+          "linked_variants_any": [
+            {
+              "actions_any": [
+                "领取",
+                "获取"
+              ],
+              "objects_any": [
+                "免费空间",
+                "免费容量"
+              ]
+            },
+            {
+              "actions_any": [
+                "扩容"
+              ],
+              "objects_any": [
+                "免费空间",
+                "免费容量"
+              ]
+            }
+          ],
+          "ambiguous_linked_actions_any": [],
+          "ambiguous_linked_objects_any": [],
+          "allow_header_context": true
+        }
+      ]
+    }
+  }
+}

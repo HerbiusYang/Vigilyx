@@ -1,0 +1,10 @@
+From: =?utf-8?B?6Zi/6YeM5LqR?= <bill@aliyun-notify2.example>
+To: ops@corp.internal
+Date: Tue, 08 Sep 2026 09:16:00 +0800
+Message-ID: <0006-b16@synth.example>
+Subject: 您的云账单已出（欠费预警）
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+
+<html><body><p>本月账单 ¥12,408.50，账户余额不足即将停机。</p><p><a href='https://aliyun-recharge2.example.info/pay' style='background:#ff6a00;color:#fff;padding:10px 28px;text-decoration:none'>立即充值</a></p><p style='font-size:12px'>停机后数据保留 15 天。</p></body></html>

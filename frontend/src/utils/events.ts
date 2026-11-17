@@ -18,10 +18,14 @@ export const EVENTS = {
   UI_PREFERENCES_CHANGED: 'vigilyx:ui-preferences-changed',
   /** Fired when deployment mode changes (mirror/mta) */
   DEPLOY_MODE_CHANGED: 'vigilyx:deploy-mode-changed',
+  /** Fired after the administrator changes the global privacy policy */
+  PRIVACY_POLICY_CHANGED: 'vigilyx:privacy-policy-changed',
   /** Navigate to a specific settings tab */
   NAVIGATE_SETTINGS: 'vigilyx:navigate-settings',
   /** Fired after database stats/data is cleared */
   STATS_CLEARED: 'vigilyx:stats-cleared',
   /** Triggers alert-center list refresh when a P0-P3 alert arrives */
   ALERT: 'vigilyx:alert',
+  /** Carries the session id after the engine persists a fresh verdict */
+  SECURITY_VERDICT: 'vigilyx:security-verdict',
 } as const;

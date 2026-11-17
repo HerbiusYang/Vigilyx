@@ -1,0 +1,11 @@
+From: =?utf-8?B?5Lya5ZGY5pel?= <act@shop-fest.example>
+To: user@corp.internal
+Date: Sat, 29 Aug 2026 10:15:00 +0800
+Message-ID: <0005-b6@synth.example>
+Subject: 抽奖码已生成，待激活
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+您的会员日抽奖码已生成，激活后可抽：
+https://act-draw.example.club/active
+奖品保留 48 小时。

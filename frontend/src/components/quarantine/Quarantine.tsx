@@ -1,7 +1,9 @@
-import { Fragment, useState, useEffect, useCallback } from 'react'
+import { Fragment, useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { apiFetch } from '../../utils/api'
+import { usePrivacyAccess } from '../../hooks/usePrivacyAccess'
+import { usePrivacyPolicy } from '../../hooks/usePrivacyPolicy'
 import { formatTimeFull, formatSize } from '../../utils/format'
 
 interface QuarantineEntry {
@@ -72,13 +74,62 @@ export default function Quarantine() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<PendingAction>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [previewById, setPreviewById] = useState<Record<string, QuarantinePreview>>({})
+  const [previewCache, setPreviewById] = useState<Record<string, QuarantinePreview>>({})
+  const [previewCacheKey, setPreviewCacheKey] = useState('')
   const [previewLoadingId, setPreviewLoadingId] = useState<string | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<string>('quarantined')
   const [page, setPage] = useState(0)
   const limit = 30
   const pendingCount = (stats?.quarantined ?? 0) + (stats?.releasing ?? 0)
+  const expandedEntry = expandedId ? entries.find(entry => entry.id === expandedId) : undefined
+  const privacyAccess = usePrivacyAccess(expandedEntry ? { resource_type: 'session', resource_id: expandedEntry.session_id } : null)
+  const privacyPolicy = usePrivacyPolicy()
+  const previewHeaders = privacyAccess.leaseHeaders('body')
+    ?? privacyAccess.leaseHeaders('html')
+    ?? privacyAccess.leaseHeaders('headers')
+    ?? privacyAccess.leaseHeaders('attachment_download')
+  const authorizationKey = JSON.stringify([
+    expandedEntry?.id, privacyPolicy.enabled, privacyPolicy.loading, privacyPolicy.error,
+    privacyAccess.error, privacyAccess.lease?.lease_handle,
+    privacyAccess.lease?.expires_at, privacyAccess.lease?.scopes,
+  ])
+  const currentAuthorizationKey = useRef(authorizationKey)
+  currentAuthorizationKey.current = authorizationKey
+  const previewById = previewCacheKey === authorizationKey ? previewCache : {}
+
+  useEffect(() => {
+    setPreviewById({})
+    setPreviewCacheKey(authorizationKey)
+    setPreviewError(null)
+    setPreviewLoadingId(null)
+    if (!expandedEntry || privacyPolicy.loading || privacyPolicy.error) return
+
+    const entryId = expandedEntry.id
+    const controller = new AbortController()
+    const isCurrent = () => !controller.signal.aborted && currentAuthorizationKey.current === authorizationKey
+    setPreviewLoadingId(entryId)
+    void (async () => {
+      try {
+        const response = await apiFetch(`/api/security/quarantine/${entryId}/preview`, {
+          headers: previewHeaders, signal: controller.signal,
+        })
+        if (!response.ok) throw new Error(await getApiError(response, t('quarantine.previewFailed')))
+        const data = await response.json()
+        if (!data.success || !data.data) throw new Error(data.error || t('quarantine.previewFailed'))
+        if (isCurrent()) setPreviewById({ [entryId]: data.data })
+      } catch (previewFailure) {
+        if (isCurrent()) {
+          setPreviewById({})
+          setPreviewError(previewFailure instanceof Error && previewFailure.message
+            ? previewFailure.message : t('quarantine.previewFailed'))
+        }
+      } finally {
+        if (isCurrent()) setPreviewLoadingId(null)
+      }
+    })()
+    return () => controller.abort()
+  }, [authorizationKey, t])
 
   // Load the deployment mode from the API
   useEffect(() => {
@@ -214,7 +265,7 @@ export default function Quarantine() {
     }
   }
 
-  const handlePreview = async (entry: QuarantineEntry) => {
+  const handlePreview = (entry: QuarantineEntry) => {
     if (expandedId === entry.id) {
       setExpandedId(null)
       return
@@ -222,28 +273,6 @@ export default function Quarantine() {
 
     setExpandedId(entry.id)
     setPreviewError(null)
-    if (previewById[entry.id]) return
-
-    setPreviewLoadingId(entry.id)
-    try {
-      const response = await apiFetch(`/api/security/quarantine/${entry.id}/preview`)
-      if (!response.ok) {
-        throw new Error(await getApiError(response, t('quarantine.previewFailed')))
-      }
-      const data = await response.json()
-      if (!data.success || !data.data) {
-        throw new Error(data.error || t('quarantine.previewFailed'))
-      }
-      setPreviewById(current => ({ ...current, [entry.id]: data.data }))
-    } catch (previewFailure) {
-      setPreviewError(
-        previewFailure instanceof Error && previewFailure.message
-          ? previewFailure.message
-          : t('quarantine.previewFailed')
-      )
-    } finally {
-      setPreviewLoadingId(null)
-    }
   }
 
   return (

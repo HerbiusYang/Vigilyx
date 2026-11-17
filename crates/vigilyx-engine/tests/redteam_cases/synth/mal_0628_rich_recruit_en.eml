@@ -1,0 +1,37 @@
+From: Meridian Labs Talent <talent@meridianlabs-careers.example>
+To: dev@corp.internal
+Date: Thu, 01 Oct 2026 18:05:00 +0800
+Message-ID: <0628-b37@synth.example>
+Subject: Senior Rust Engineer (Platform, Remote, USD) — re: your tower-lsp talk
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Hi Wei,
+
+This is Elena from Meridian Labs — we're a 40-person infrastructure company (backed by the usual east-coast suspects, Series B) building an overlay network runtime; the closest public analogy is what Tailscale did for networking, but for job scheduling across clouds.
+
+I caught your Rust Hangzhou talk in June — specifically the part where you described rebuilding tower-lsp's request pipeline around a type-state session machine, and the aside about backpressure being "a documentation problem disguised as an API problem." That's unusually close to a hard problem we have right now: our scheduler's control plane currently loses agent heartbeats under partial partition, and the fix we shipped (a windowed retry buffer) is, frankly, the kind of thing your talk would mock.
+
+The role:
+  - Senior Rust Engineer, Platform (P5/P6 depending on interview signal)
+  - Fully remote (UTC-4 to UTC+9 overlap), quarterly onsites (next one is Kyoto in December)
+  - Comp: $180k–$235k base + 0.05%–0.15% equity, paid in USD or your local entity
+  - Stack: Rust (tokio, tower), eBPF sidecars, ClickHouse for telemetry
+  - Team: two ex-Databricks, one ex-Tailscale, and a very opinionated SRE
+
+Interview process (3 rounds, ~2 weeks total):
+  1. 45-min systems chat with our staff engineer (no leetcode; we'll discuss the heartbeat problem above)
+  2. Paid take-home (2h cap, $400 flat regardless of outcome) — a small design doc + optional prototype
+  3. Founders chat
+
+One logistics note: the take-home brief and the telemetry packet for round 1 are too large for email (the packet includes a 40MB flamegraph bundle), so we host them on our candidate portal. It accepts corporate SSO — most company identities work, which also saves you from creating yet another password:
+
+    https://meridianlabs-careers.example/portal/wei-rust-senior
+
+No rush on any of this — if you're not looking but open to a call in a quarter, just say so; I'll keep the portal slot reserved for 30 days either way.
+
+Best,
+Elena Vasquez
+Talent, Meridian Labs
+elena@meridianlabs-careers.example
+(PGP 0x4F2A 91C3 if you prefer encrypted replies)

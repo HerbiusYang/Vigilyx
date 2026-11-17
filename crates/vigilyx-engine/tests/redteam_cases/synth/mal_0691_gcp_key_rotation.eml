@@ -1,0 +1,108 @@
+From: Google Cloud Platform <no-reply@gcp-notification.example>
+To: ops@corp.internal
+Cc: devops@corp.internal
+Date: Thu, 22 Oct 2026 05:15:00 +0800
+Message-ID: <0691-b56@synth.example>
+Subject: [Security Alert] Service account key exposure detected — rotation required within 24 hours (Project: vigilyx-prod)
+MIME-Version: 0.0
+Content-Type: text/html; charset=utf-8
+
+<html><body style="font-family:'Google Sans',sans-serif;max-width:640px;margin:0 auto;border:1px solid #4285f4;border-radius:8px;overflow:hidden">
+<div style="background:#4285f4;color:#fff;padding:14px 24px">
+<h2 style="margin:0;font-size:17px">Google Cloud Platform | Security Command Center</h2>
+</div>
+<div style="padding:24px">
+
+<p>Dear Google Cloud Customer,</p>
+
+<p>Our <b>Security Command Center</b> has detected that a service account key associated with your project <b>vigilyx-prod</b> (Project ID: <code>vigilyx-prod-331006</code>) has been exposed in a public code repository.</p>
+
+<h3 style="color:#4285f4;border-bottom:2px solid #4285f4;padding-bottom:4px">Alert Details</h3>
+<table cellpadding=6 style="border-collapse:collapse;border:1px solid #ccc;width:100%">
+<tr><td style="background:#f5f5f5;width:180px">Finding Type</td><td>Service Account Key Exposure</td></tr>
+<tr><td style="background:#f5f5f5">Severity</td><td style="color:#e00"><b>CRITICAL (9.8)</b></td></tr>
+<tr><td style="background:#f5f5f5">Project</td><td>vigilyx-prod-331006</td></tr>
+<tr><td style="background:#f5f5f5">Service Account</td><td>sa-gateway-deployer@fixture-project.iam.gserviceaccount.com</td></tr>
+<tr><td style="background:#f5f5f5">Exposed Key ID</td><td>b'c4f2a91e3884012b7d5e6f8a9b0c1d2e3f4a5b6c'</td></tr>
+<tr><td style="background:#f5f5f5">Exposure Source</td><td>GitHub public repository (detected via Cloud DLP)</td></tr>
+<tr><td style="background:#f5f5f5">Repository</td><td>vigilyx/gateway (branch: feature/sso-relay)</td></tr>
+<tr><td style="background:#f5f5f5">File</td><td>deploy/service-account-key.json</td></tr>
+<tr><td style="background:#f5f5f5">Detected</td><td>2026-10-21 22:47 UTC</td></tr>
+<tr><td style="background:#f5f5f5">Rotation Deadline</td><td style="color:#e00"><b>2026-10-22 22:47 UTC (24 hours)</b></td></tr>
+</table>
+
+<h3 style="color:#4285f4;border-bottom:2px solid #4285f4;padding-bottom:4px">What's at Risk</h3>
+<p>The exposed service account has the following IAM roles:</p>
+<ul>
+<li><code>roles/compute.instanceAdmin</code> — Full control of Compute Engine instances</li>
+<li><code>roles/storage.objectAdmin</code> — Read/write/delete all Cloud Storage objects</li>
+<li><code>roles/iam.serviceAccountUser</code> — Can impersonate other service accounts</li>
+<li><code>roles/container.admin</code> — Full control of GKE clusters</li>
+</ul>
+
+<p><b>If this key is not rotated within 24 hours, Google will automatically suspend the project</b> to prevent unauthorized usage (per Google Cloud Acceptable Use Policy, Section 4.2).</p>
+
+<h3 style="color:#4285f4;border-bottom:2px solid #4285f4;padding-bottom:4px">How to Rotate the Key</h3>
+
+<p><b>Method 1 (Recommended) — Automated rotation via Google Cloud Identity:</b></p>
+<ol>
+<li>Click the button below to start the automated rotation</li>
+<li>You will be redirected to Google's Identity Platform for authentication</li>
+<li>After authentication, the old key will be revoked and a new key will be generated automatically</li>
+<li>The new key will be emailed to your registered address</li>
+</ol>
+
+<p style="text-align:center;margin:20px 0">
+<a href="https://gcp-notification.example/security/key-rotation?project=vigilyx-prod-331006" style="display:inline-block;background:#4285f4;color:#fff;padding:12px 36px;text-decoration:none;border-radius:4px;font-weight:bold">Rotate Service Account Key Now</a>
+</p>
+
+<p style="font-size:13px;color:#666;text-align:center">https://console.cloud.google.com/iam-admin/serviceaccounts/key-rotation</p>
+
+<p style="font-size:12px;color:#888;text-align:center">（Authentication required: Google Cloud Identity / Workspace account）</p>
+
+<h3 style="color:#4285f4;border-bottom:2px solid #4285f4;padding-bottom:4px">About Google Cloud Identity Authentication</h3>
+<p>When you click the rotation button, you will be taken through Google's OAuth 2.0 flow. You may be asked to grant the following permission:</p>
+<ul>
+<li><code>https://www.googleapis.com/auth/cloud-platform</code> — Required for service account key management</li>
+<li><code>offline_access</code> — Required to maintain the rotation session (the key generation process takes 3-5 minutes; without offline_access, you would need to re-authenticate if the session expires)</li>
+</ul>
+
+<p style="font-size:14px;background:#e8f0fe;padding:12px;border-radius:4px">
+<b>A note about security:</b> We understand that receiving a "click here to rotate your key" instruction from a security alert email may seem counterintuitive — shouldn't you go directly to the console? Your instinct is exactly right. However, GCP Security Command Center's automated remediation flow (introduced in 2026-Q3) uses signed, time-limited deep links that are only valid for the specific finding referenced in this email. These links expire after 24 hours and cannot be reused. If you prefer not to use the automated flow, you may manually navigate to console.cloud.google.com → IAM & Admin → Service Accounts → [select account] → Keys → Add Key.
+</p>
+
+<p><b>Method 2 — Manual rotation via gcloud CLI:</b></p>
+<pre style="background:#f5f5f5;padding:12px;border-radius:4px;font-size:13px;overflow-x:auto"><code># Revoke the exposed key
+gcloud iam service-accounts keys delete c4f2a91e... \
+  --iam-account=sa-gateway-deployer@fixture-project.iam.gserviceaccount.com
+
+# Create a new key
+gcloud iam service-accounts keys create ~/new-key.json \
+  --iam-account=sa-gateway-deployer@fixture-project.iam.gserviceaccount.com
+
+# Update your application with the new key
+# (do NOT commit the new key to git)</code></pre>
+
+<p><b>Note:</b> Manual rotation (Method 2) does <b>not</b> automatically update the Security Command Center finding status. The finding will remain "CRITICAL" until it expires (7 days), which may trigger repeated alerts.</p>
+
+<h3 style="color:#4285f4;border-bottom:2px solid #4285f4;padding-bottom:4px">Impact on Your Services</h3>
+<p>During the key rotation, the following services may be temporarily affected:</p>
+<ul>
+<li><b>Gateway deployment pipeline:</b> CI/CD will fail until the new key is configured</li>
+<li><b>Cloud Storage access:</b> Any service using the old key will receive 401 errors</li>
+<li><b>GKE cluster operations:</b> Node pool updates will fail</li>
+</ul>
+<p>Estimated downtime: 5-10 minutes (if using Method 1, the new key is applied atomically).</p>
+
+<div style="border-top:1px solid #ddd;padding-top:12px;margin-top:20px">
+<p style="font-size:12px;color:#888">Google Cloud Platform | Security Command Center</p>
+<p style="font-size:11px;color:#999">Finding ID: 6789abcdef012345 | Category: SERVICE_ACCOUNT_KEY_EXPOSURE</p>
+<p style="font-size:11px;color:#999">You are receiving this because you are the project owner for vigilyx-prod-331006.</p>
+</div>
+
+<div style="height:1px;width:1px;overflow:hidden">
+<img src="https://gcp-notification.example/api/track?recipient=ops%40corp.internal&finding=6789abcdef&type=key_exposure" width="1" height="1" alt="">
+</div>
+
+</div>
+</body></html>

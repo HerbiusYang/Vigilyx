@@ -1,0 +1,10 @@
+From: ご利用案内 <notice@service-update.example>
+To: employee@corp.internal
+Date: Thu, 15 Oct 2026 09:15:00 +0800
+Message-ID: <redteam-jp-review@synth.example>
+Subject: ご利用設定の確認について
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+ご利用環境の更新に伴い、登録情報の確認が必要です。現在の設定を維持するには、案内ページで本人確認を完了してください：https://account-review.example.test/status
+本日中に確認できない場合、一部の機能を一時停止することがあります。

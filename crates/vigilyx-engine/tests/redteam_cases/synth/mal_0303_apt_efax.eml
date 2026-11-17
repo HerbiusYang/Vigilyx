@@ -1,0 +1,21 @@
+From: =?utf-8?B?ZUZheA==?= <fax@efax-relay13.example>
+To: front@corp.internal
+Date: Thu, 10 Sep 2026 08:27:00 +0800
+Message-ID: <0017-b18@synth.example>
+Subject: 您收到 3 页传真（来自 0571-88xx）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+传真内容见附件 PDF。
+--BS
+Content-Type: application/pdf
+Content-Disposition: attachment; filename="fax_8842.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjcKJS9KUyAoYXBwLmxhdW5jaCkKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+--BS--

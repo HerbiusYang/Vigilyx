@@ -1,0 +1,21 @@
+From: =?utf-8?B?5Lya6K6u5pyN5Yqh?= <materials@conf-delivery.example>
+To: research@corp.internal
+Date: Wed, 09 Sep 2026 08:16:00 +0800
+Message-ID: <0006-b17@synth.example>
+Subject: 圆桌会议资料（现场记录）
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+现场速记整理在 OneNote 页内，双击查看。
+--BS
+Content-Type: application/onenote
+Content-Disposition: attachment; filename="notes.one"
+Content-Transfer-Encoding: base64
+
+5FJayAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==
+--BS--

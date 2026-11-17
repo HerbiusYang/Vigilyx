@@ -1,0 +1,9 @@
+From: =?utf-8?B?6KGM5pS/LeS8muiuruWupA==?= <meetingroom@partner.example>
+To: admin@corp.internal
+Date: Tue, 25 Aug 2026 10:38:00 +0800
+Message-ID: <0018-b2@synth.example>
+Subject: 外部访客Wi-Fi已开通
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>访客 Wi-Fi 已按你的申请开通，扫码连接（有效期 48 小时）：</p><p><img src='https://wifi-qrcdn.example/v.png' alt='访客WiFi二维码'></p></body></html>

@@ -1,0 +1,9 @@
+From: =?utf-8?B?5rWL6K+V5pSv5oyB?= <it-support@partner.example>
+To: employee@corp.internal
+Date: Thu, 13 Aug 2026 10:00:00 +0800
+Message-ID: <ev58@partner.example>
+Subject: 帳戶通知
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body><p>你嘅帳戶已被凍結，請立即確認，唔係會被停用。</p><form action='http://203.0.113.60/verify'><button>立即確認</button></form><p>或訪問 security-check.cοm 手動確認</p></body></html>

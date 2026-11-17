@@ -7,6 +7,11 @@ authors.workspace = true
 license.workspace = true
 description = "Vigilyx MTA 代理 — SMTP 中继 + 内嵌安全引擎"
 
+[features]
+default = []
+# Explicit opt-in for the disposable PostgreSQL linkage test.
+infra-tests = []
+
 [lib]
 # This crate currently exposes module-level docs only; running rustdoc tests in the
 # workspace triggers an unrelated dependency-resolution failure and blocks backend deploys.
@@ -28,15 +33,15 @@ vigilyx-core = { path = "../vigilyx-core" }
 vigilyx-parser = { path = "../vigilyx-parser" }
 vigilyx-db = { path = "../vigilyx-db" }
 vigilyx-engine = { path = "../vigilyx-engine" }
-vigilyx-soar = { path = "../vigilyx-soar" }
 
 # Async runtime
 tokio.workspace = true
 
 # TLS
 tokio-rustls = "0.26"
-rustls = "0.23"
-rustls-pemfile = "2"
+# RUSTSEC-2026-0346..0349 fixed in 0.23.46. PEM parsing uses rustls-pki-types
+# (re-exported by rustls); rustls-pemfile is unmaintained (RUSTSEC-2025-0134).
+rustls = "0.23.46"
 rustls-webpki.workspace = true  # RUSTSEC-2026-0049: pin minimum safe version
 
 # DB (load UI settings from the database)
@@ -80,11 +85,13 @@ futures = "0.3"
 # HTTP client (MTA status reporting to the API)
 reqwest = { version = "0.13", features = ["json"] }
 
-# DNS resolver for the MTA-owned SPF/DMARC boundary
-hickory-resolver = { version = "0.26.1", features = ["tokio"] }
+# Standards-complete SPF, DKIM, and DMARC verification. Disable reporting and
+# key-generation features: the inline boundary needs verification only.
+mail-auth = { version = "=0.12.1", default-features = false, features = ["dns-hickory", "ring"] }
 
 [dev-dependencies]
 criterion = "0.8"
+rcgen = "0.14.9"
 
 [lints]
 workspace = true
